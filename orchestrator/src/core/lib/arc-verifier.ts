@@ -17,9 +17,9 @@
  * `MARS_ARC_VERIFY_DISABLED=1` (in-memory) and suppresses all runs. Useful
  * during incident storms to stop the verifier from adding noise.
  *
- * Concurrency: at most one verifier run at a time, implemented via a promise
- * chain (concurrencyTail). The merge path never blocks — `triggerArcVerification`
- * returns immediately and the work executes after the current run finishes.
+ * Concurrency: the daemon owns arc-verifier admission and execution through its
+ * tracked worker pool. This module only performs the synchronous kill-switch and
+ * dedup admission checks.
  */
 
 import { execFile } from 'node:child_process'
@@ -49,11 +49,7 @@ export const triggeredOriginIds = new Set<string>()
 /** For test isolation ONLY. Never call in production. */
 export const _clearTriggeredForTests = (): void => {
   triggeredOriginIds.clear()
-  concurrencyTail = Promise.resolve()
 }
-
-/** At-most-one concurrency gate: each scheduled run waits for the previous. */
-let concurrencyTail: Promise<void> = Promise.resolve()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Kill-switch
@@ -388,7 +384,7 @@ export async function runArcVerification(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Fire-and-forget trigger (dedup + concurrency guard)
+// Admission trigger (dedup + kill-switch guard)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type TriggerResult =
@@ -399,10 +395,9 @@ export type TriggerResult =
 /**
  * Trigger arc verification for the given origin id.
  *
- * Returns immediately. The actual verification runs asynchronously, chained
- * behind any currently-running verification (at-most-one concurrency). The
- * merge path must NOT await this return value — fire-and-forget is intentional
- * so the merge step is never blocked.
+ * Returns immediately. The daemon owns scheduling and execution after this
+ * admission succeeds, so verifier subprocesses remain visible to pause and
+ * daemon status.
  *
  * Dedup: once triggered for an originId, subsequent calls with the same id
  * return `'skipped-dedup'` immediately (per daemon lifetime).
@@ -412,34 +407,10 @@ export type TriggerResult =
  */
 export function triggerArcVerification(
   originId: string,
-  opts?: ArcStatusOptions & { cwd?: string },
 ): TriggerResult {
   if (isArcVerifyDisabled()) return 'skipped-disabled'
   if (triggeredOriginIds.has(originId)) return 'skipped-dedup'
   triggeredOriginIds.add(originId)
-
-  const cwd = opts?.cwd ?? process.env.MARS_REPO ?? process.cwd()
-
-  // Schedule the verification after the current run finishes.
-  const prev = concurrencyTail
-  let resolveNext!: () => void
-  concurrencyTail = new Promise<void>((r) => {
-    resolveNext = r
-  })
-
-  void prev.then(async () => {
-    try {
-      await runArcVerification(originId, {
-        cwd,
-        integrationBranch: opts?.integrationBranch,
-      })
-    } catch {
-      // Non-fatal: errors are swallowed so a verifier crash never propagates
-      // to the merge path or daemon dispatch loop.
-    } finally {
-      resolveNext()
-    }
-  })
 
   return 'triggered'
 }

@@ -3,16 +3,15 @@
  * `task.terminal { reason: 'done' }` events.
  *
  * When the last task of an arc reaches `done` and the arc has at least one
- * commit on the integration branch, {@link triggerArcVerification} is called
- * (fire-and-forget). The verifier then runs a cheap haiku-tier Claude agent
- * against main to spot-check done criteria and verifyCmd results.
+ * commit on the integration branch, the origin is handed to the daemon's
+ * arc-verifier dispatcher. The dispatcher owns concurrency, pause state, and
+ * in-flight tracking before running a cheap haiku-tier agent against main.
  *
  * Dedup is enforced at two layers:
  *   1. `processedOnce` inside `drainWithStall` ensures each outbox event is
  *      handled at-most-once per subscriber, even across daemon restarts.
- *   2. `triggeredOriginIds` in arc-verifier.ts ensures each arc is verified
- *      at most once per daemon lifetime (guards against multiple `task.terminal`
- *      events for tasks in the same arc).
+ *   2. The daemon dispatcher uses `triggeredOriginIds` in arc-verifier.ts to
+ *      ensure each arc is admitted at most once per daemon lifetime.
  */
 
 import type { DbClient } from '../../core/lib/db.js'
@@ -20,13 +19,19 @@ import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
 import { resolveOriginIdForTask } from '../../core/lib/origin.js'
-import { triggerArcVerification } from '../../core/lib/arc-verifier.js'
 import { registerSubscriberName } from '../registry.js'
 import { createTaskStore } from '../../core/store/task-store.js'
 import { incrementRescueSuccess } from '../../core/daemon/kpi-store.js'
 
 export const ARC_VERIFIER_SUBSCRIBER = 'arc-verifier'
 registerSubscriberName(ARC_VERIFIER_SUBSCRIBER)
+
+export type ArcVerificationDispatchResult =
+  | 'triggered'
+  | 'skipped-disabled'
+  | 'skipped-dedup'
+  | 'skipped-paused'
+  | 'skipped-capacity'
 
 /**
  * Register the arc-verifier subscriber. Idempotent: re-registering an
@@ -50,6 +55,7 @@ export async function ensureArcVerifierSubscriber(client: DbClient): Promise<voi
  */
 export async function drainArcVerifier(
   client: DbClient,
+  dispatchArcVerification: (originId: string) => ArcVerificationDispatchResult,
   log?: (msg: string) => void,
 ): Promise<{ processed: number }> {
   return drainWithStall({
@@ -78,11 +84,9 @@ export async function drainArcVerifier(
         }
       }
 
-      // triggerArcVerification handles dedup, flag-check, and concurrency.
-      // It returns immediately; the actual verification runs asynchronously.
-      const result = triggerArcVerification(originId, {
-        cwd: process.env.MARS_REPO,
-      })
+      // The daemon dispatcher owns admission and execution. The outbox handler
+      // must never spawn a provider directly: that would bypass pause/status.
+      const result = dispatchArcVerification(originId)
       log?.(`[arc-verifier] ${originId}: ${result}`)
       return result === 'triggered'
     },

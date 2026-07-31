@@ -52,6 +52,7 @@ export type DispatchKind =
   | 'refine'
   | 'glossary-write'
   | 'adr-add'
+  | 'arc-verify'
   | 'merge'
 
 /** A kind that participates in the claim → commit two-phase lifecycle. */

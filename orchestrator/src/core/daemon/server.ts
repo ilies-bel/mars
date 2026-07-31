@@ -56,6 +56,11 @@ import {
   drainArcVerifier,
   ensureArcVerifierSubscriber,
 } from '../../outbox/subscribers/arc-verifier-subscriber'
+import {
+  isArcVerifyDisabled,
+  runArcVerification,
+  triggerArcVerification,
+} from '../lib/arc-verifier'
 import { buildTranscriptAppendSubscriber } from '../../outbox/subscribers/transcript-append'
 import { readAllTranscriptsForTask } from '../lib/claude-transcript'
 import type { ClaudeEvent } from '../lib/claude-stream'
@@ -996,12 +1001,17 @@ export const startDaemon = async (
   const initialCaps = initialConfig.caps
   const structuredWriteSem = makeSem(initialCaps.structuredWrite)
   // 'merge' is a tracker-only kind (no per-kind semaphore); excluded here.
-  const sems: Record<Exclude<DispatchKind, 'merge'>, Semaphore> = {
+  const sems: Record<Exclude<DispatchKind, 'merge' | 'arc-verify'>, Semaphore> & {
+    arcVerify: Semaphore
+  } = {
     triage: makeSem(initialCaps.triage),
     implement: makeSem(initialCaps.implement),
     refine: makeSem(initialCaps.refine),
     'glossary-write': structuredWriteSem,
     'adr-add': structuredWriteSem,
+    // Arc verification is best-effort post-merge analysis. Keep its historic
+    // single-run cap, but make the run visible to the daemon worker pool.
+    arcVerify: makeSem(1),
   }
   // Verify concurrency semaphore: caps parallel verify (npm test / typecheck)
   // steps independently of the implement cap. Default: MARS_MAX_VERIFY (2).
@@ -1014,7 +1024,7 @@ export const startDaemon = async (
   // sets the initial cap here and updates it on `reload-config`.
   setInstallSemCap(initialCaps.setupInstall)
   log(
-    `concurrency caps: implement=${sems.implement.limit} triage=${sems.triage.limit} refine=${sems.refine.limit} structured-write=${structuredWriteSem.limit} setup-install=${initialCaps.setupInstall} verify=${verifySem.limit}`,
+    `concurrency caps: implement=${sems.implement.limit} triage=${sems.triage.limit} refine=${sems.refine.limit} structured-write=${structuredWriteSem.limit} arc-verify=${sems.arcVerify.limit} setup-install=${initialCaps.setupInstall} verify=${verifySem.limit}`,
   )
   if (restoredOperatorPause) {
     log(
@@ -1040,9 +1050,53 @@ export const startDaemon = async (
   let drainRunning = false
   let drainAgain = false
 
+  // Unlike task dispatch, arc verification is best-effort and must shed rather
+  // than accumulate a backlog. This set normally holds at most one id: it
+  // bridges the synchronous outbox handler to the single-flight drain loop.
+  const pendingArcVerifications = new Set<string>()
+
   // Forward-declared so dispatchers can call it from finally; assigned after
   // both dispatchers exist.
   let drain: () => Promise<void> = async () => {}
+
+  const dispatchArcVerification = async (originId: string): Promise<void> => {
+    pendingArcVerifications.delete(originId)
+    if (isArcVerifyDisabled()) {
+      log(`[arc-verifier] ${originId}: skipped; arc verification is disabled`)
+      void drain()
+      return
+    }
+    await acquire(sems.arcVerify)
+    const releaseTracking = tracker.commitInFlight(originId, 'arc-verify')
+    log(`[arc-verifier] ${originId} dispatching`)
+    try {
+      await runArcVerification(originId, {
+        cwd: process.env.MARS_REPO ?? process.cwd(),
+      })
+    } catch (err) {
+      // Best-effort post-merge analysis must never destabilize the daemon.
+      log(`[arc-verifier] ${originId} failed: ${(err as Error).message}`)
+    } finally {
+      releaseTracking()
+      release(sems.arcVerify)
+      void drain()
+    }
+  }
+
+  const scheduleArcVerification = (originId: string) => {
+    if (!acceptingWork || isPaused) return 'skipped-paused' as const
+    if (sems.arcVerify.inUse + pendingArcVerifications.size >= sems.arcVerify.limit) {
+      log(`[arc-verifier] ${originId}: shedding verification; pool is at capacity`)
+      return 'skipped-capacity' as const
+    }
+
+    const result = triggerArcVerification(originId)
+    if (result !== 'triggered') return result
+
+    pendingArcVerifications.add(originId)
+    void drain()
+    return result
+  }
 
   const dispatchTriage = async (taskId: string): Promise<void> => {
     if (tracker.isInFlight(taskId)) return
@@ -1935,6 +1989,15 @@ export const startDaemon = async (
         // staying alive. Catch per-pass, log, and let the do/while exit
         // cleanly — the poll-fallback tick (or the next bus event) retries.
         try {
+          // Arc verification: the outbox subscriber only queues an admitted
+          // origin here. Start it through the same drain-owned acquire/release
+          // lifecycle as other daemon work; excess events were shed on entry.
+          while (sems.arcVerify.inUse < sems.arcVerify.limit) {
+            const originId = pendingArcVerifications.values().next().value
+            if (originId === undefined) break
+            void dispatchArcVerification(originId)
+          }
+
           // Triage: pick a candidate that isn't already claimed/in-flight,
           // mark it claimed BEFORE the dispatchTriage call so the next drain
           // pass can't pick it again. tracker.claim returns false when the id
@@ -4650,7 +4713,11 @@ export const startDaemon = async (
   void (async () => {
     try {
       await ensureArcVerifierSubscriber(getCompositionRootClient())
-      const { processed } = await drainArcVerifier(getCompositionRootClient(), log)
+      const { processed } = await drainArcVerifier(
+        getCompositionRootClient(),
+        scheduleArcVerification,
+        log,
+      )
       if (processed > 0)
         log(`[arc-verifier] triggered ${processed} verification(s) on boot`)
     } catch (err) {
@@ -5642,7 +5709,11 @@ export const startDaemon = async (
   const arcVerifierDrain = setInterval(
     singleFlight(async () => {
       try {
-        await drainArcVerifier(getCompositionRootClient(), log)
+        await drainArcVerifier(
+          getCompositionRootClient(),
+          scheduleArcVerification,
+          log,
+        )
       } catch (err) {
         log(`[arc-verifier] drain errored: ${(err as Error).message}`)
       }

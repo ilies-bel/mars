@@ -2,7 +2,7 @@
  * Arc-verifier unit tests.
  *
  * Verifies observable behaviours:
- *   1. trigger dedup — one run per originId (subsequent calls return skipped-dedup)
+ *   1. trigger dedup — one admission per originId (subsequent calls return skipped-dedup)
  *   2. no-merge arcs skipped — arc with no landed commits → no agent call, no AQ item
  *   3. failing verdict → exactly one arc-verification-failed AQ item
  *   4. kill-switch flag suppresses all runs
@@ -143,7 +143,7 @@ describe('arc-verifier', () => {
 
   it('[flag] returns skipped-disabled and schedules no work when flag is on', () => {
     process.env.MARS_ARC_VERIFY_DISABLED = '1'
-    const result = triggerArcVerification('origin-flagged', { cwd: '/tmp' })
+    const result = triggerArcVerification('origin-flagged')
     expect(result).toBe('skipped-disabled')
     // No work was scheduled — neither the action queue nor provider runner is called.
     expect(raiseSpy).not.toHaveBeenCalled()
@@ -153,24 +153,39 @@ describe('arc-verifier', () => {
   // ── triggerArcVerification — dedup ──────────────────────────────────────────
 
   it('[dedup] returns triggered on first call and skipped-dedup on second', () => {
-    const r1 = triggerArcVerification('origin-dedup-1', { cwd: '/tmp' })
-    const r2 = triggerArcVerification('origin-dedup-1', { cwd: '/tmp' })
+    const r1 = triggerArcVerification('origin-dedup-1')
+    const r2 = triggerArcVerification('origin-dedup-1')
     expect(r1).toBe('triggered')
     expect(r2).toBe('skipped-dedup')
   })
 
   it('[dedup] different originIds each get their own trigger', () => {
-    const r1 = triggerArcVerification('origin-a', { cwd: '/tmp' })
-    const r2 = triggerArcVerification('origin-b', { cwd: '/tmp' })
+    const r1 = triggerArcVerification('origin-a')
+    const r2 = triggerArcVerification('origin-b')
     expect(r1).toBe('triggered')
     expect(r2).toBe('triggered')
   })
 
+  it('[dispatch] admits work without spawning a verifier outside the daemon pool', async () => {
+    getDefaultTaskStoreMock.mockResolvedValue(
+      makeStore({
+        status: 'arc-done',
+        tasks: [{ id: 'task-dispatch', status: 'done' }],
+        landedCommits: ['sha-dispatch'],
+      }),
+    )
+
+    expect(triggerArcVerification('origin-daemon-dispatch')).toBe('triggered')
+    await Promise.resolve()
+
+    expect(runHeadlessProviderMock).not.toHaveBeenCalled()
+  })
+
   it('[dedup] skipped-dedup is returned synchronously without scheduling work', () => {
     // First call marks the originId.
-    triggerArcVerification('origin-dedup-sync', { cwd: '/tmp' })
+    triggerArcVerification('origin-dedup-sync')
     // Second call must return without touching the agent or action-queue.
-    const result = triggerArcVerification('origin-dedup-sync', { cwd: '/tmp' })
+    const result = triggerArcVerification('origin-dedup-sync')
     expect(result).toBe('skipped-dedup')
     // We cannot assert the provider wasn't called yet (async work may still be
     // in-flight), but the return value proves the gate fired.
