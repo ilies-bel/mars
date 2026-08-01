@@ -5,6 +5,128 @@ import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { genericRecoveryRecipe, getRecipe, getRecipeOrGeneric, hasRecipe, recipes } from '../fix-recipes'
 
+const RECIPE_CONTRACT_CONTEXT = {
+  targetPath: '/tmp/worktrees/recipe-contract',
+  statusOutput: 'captured failure evidence',
+  targetBranch: 'task/recipe-contract',
+  integrationBranch: 'main',
+  originalPrompt: '',
+}
+
+const RECIPE_CONTRACT_TABLE = [
+  {
+    signature: 'code:commit-contract/uncommitted-changes',
+    expectedTitle: 'Commit 1 path(s) the coder left uncommitted on task/recipe-contract',
+  },
+  {
+    signature: 'merge:preflight/uncommitted-changes',
+    expectedTitle: 'Resolve dirty changes blocking merge into task/recipe-contract',
+    // A shared merge-target cleanup can unblock many unrelated source tasks;
+    // their prompts must not steer it away from restoring the merge target.
+    originalPromptExemption: 'shared merge-target cleanup has no single relevant source prompt',
+  },
+  {
+    signature: 'behaviour-verify:dod-unmet/dod-unmet',
+    expectedTitle: 'Close the behavioural gap on task/recipe-contract: Definition-of-Done criteria unmet on the live surface',
+  },
+  {
+    signature: 'setup:install/install-frozen-lockfile',
+    expectedTitle: 'Resolve dependency install failure in worktree setup',
+    // Setup failed before the code step; the source task cannot diagnose a
+    // lockfile or registry failure and would distract from remediation.
+    originalPromptExemption: 'install recovery is scoped to setup evidence, not source-task intent',
+  },
+  {
+    signature: 'setup:install/install-timeout',
+    expectedTitle: 'Resolve wedged install (SIGKILL); check for lockfile drift or network issues',
+    // Setup failed before the code step; the source task cannot diagnose a
+    // lockfile or registry failure and would distract from remediation.
+    originalPromptExemption: 'install recovery is scoped to setup evidence, not source-task intent',
+  },
+  {
+    signature: 'verify:has-diff/no-commits-ahead',
+    expectedTitle: 'Re-do the original task and commit your work (failing branch task/recipe-contract)',
+  },
+  {
+    signature: 'merge:vcs-supervisor-aborted/not-fast-forward',
+    expectedTitle: 'Re-land task/recipe-contract onto current main (diverged after VCS supervisor rebased)',
+  },
+  {
+    signature: 'verify:typecheck/typecheck-property-not-exist',
+    expectedTitle: 'Fix property-does-not-exist error(s) to resolve TS2339/TS2353 typecheck failure',
+  },
+  {
+    signature: 'verify:typecheck/typecheck-missing-export',
+    expectedTitle: 'Implement missing exported member(s) to resolve TS2694 typecheck failure',
+  },
+  {
+    signature: 'verify:typecheck/typecheck-arg-type-mismatch',
+    expectedTitle: 'Fix argument type mismatch(es) to resolve TS2345 typecheck failure',
+  },
+  {
+    signature: 'verify:typecheck/typecheck-excess-property',
+    expectedTitle: 'Remove excess property(ies) from object literals to resolve TS2353 typecheck failure',
+  },
+  {
+    signature: 'verify:typecheck/typecheck-cannot-find-name',
+    expectedTitle: 'Fix cannot-find-name error(s) to resolve TS2304 typecheck failure',
+  },
+  {
+    signature: 'verify:typecheck/typecheck-type-mismatch',
+    expectedTitle: 'Fix type-mismatch error(s) to resolve TS2322 typecheck failure',
+  },
+  {
+    signature: 'verify:test/test-assertion-error',
+    expectedTitle: 'Fix failing test assertions in task/recipe-contract',
+  },
+  {
+    signature: 'verify:test/test-no-suite-found',
+    expectedTitle: 'Remove or populate the empty test file blocking verify:test on task/recipe-contract',
+  },
+  {
+    signature: 'code/uncommitted-changes',
+    expectedTitle: 'Commit the work the coder left uncommitted on task/recipe-contract',
+  },
+].map((recipe) => ({ ...recipe, ctx: RECIPE_CONTRACT_CONTEXT }))
+
+describe('registered recipe contracts', () => {
+  it('covers every registered recipe', () => {
+    expect(RECIPE_CONTRACT_TABLE.map(({ signature }) => signature).sort()).toEqual(
+      Object.keys(recipes).sort(),
+    )
+  })
+
+  describe.each(RECIPE_CONTRACT_TABLE)('$signature', ({ signature, expectedTitle, ctx, originalPromptExemption }) => {
+    it('is registered under its signature', () => {
+      expect(hasRecipe(signature)).toBe(true)
+    })
+
+    it('produces the stable title for the contract context', () => {
+      expect(getRecipe(signature).title(ctx)).toBe(expectedTitle)
+    })
+
+    it('embeds the failing branch and worktree path', () => {
+      const prompt = getRecipe(signature).buildPrompt(ctx)
+      expect(prompt).toContain(ctx.targetBranch)
+      expect(prompt).toContain(ctx.targetPath)
+    })
+
+    it('inlines the original task prompt when one applies', () => {
+      if (originalPromptExemption) {
+        // The exemption is data, rather than a weaker assertion: new recipes
+        // must explicitly justify why source-task context is inappropriate.
+        expect(originalPromptExemption).toBeTruthy()
+        return
+      }
+
+      const originalPrompt = `contract source task for ${signature}`
+      const recipe = getRecipe(signature)
+      expect(recipe.buildPrompt({ ...ctx, originalPrompt })).toContain(originalPrompt)
+      expect(recipe.buildPrompt(ctx)).not.toContain(originalPrompt)
+    })
+  })
+})
+
 describe('fix-recipes', () => {
   describe('merge:preflight/uncommitted-changes recipe', () => {
     const ctx = {
@@ -13,13 +135,6 @@ describe('fix-recipes', () => {
       targetBranch: 'main',
       originalPrompt: '',
     }
-
-    it('produces stable title for stable input', () => {
-      const recipe = getRecipe('merge:preflight/uncommitted-changes')
-      expect(recipe.title(ctx)).toBe(
-        'Resolve dirty changes blocking merge into main',
-      )
-    })
 
     it('produces stable prompt for stable input (snapshot)', () => {
       const recipe = getRecipe('merge:preflight/uncommitted-changes')
@@ -90,13 +205,6 @@ describe('fix-recipes', () => {
       originalPrompt: '',
     }
 
-    it('produces a stable title', () => {
-      const recipe = getRecipe('setup:install/install-frozen-lockfile')
-      expect(recipe.title(ctx)).toBe(
-        'Resolve dependency install failure in worktree setup',
-      )
-    })
-
     it('embeds the failing path, branch, and install error into the prompt', () => {
       const recipe = getRecipe('setup:install/install-frozen-lockfile')
       const prompt = recipe.buildPrompt(ctx)
@@ -117,13 +225,6 @@ describe('fix-recipes', () => {
       integrationBranch: 'main',
       originalPrompt: '',
     }
-
-    it('produces a stable title', () => {
-      const recipe = getRecipe('verify:has-diff/no-commits-ahead')
-      expect(recipe.title(ctx)).toBe(
-        'Re-do the original task and commit your work (failing branch task/abc)',
-      )
-    })
 
     it('counts via `git rev-list --count integration..HEAD` against the recovery cwd, not the failing worktree', () => {
       const recipe = getRecipe('verify:has-diff/no-commits-ahead')
@@ -258,20 +359,6 @@ describe('fix-recipes', () => {
       })
     })
 
-    it('inlines the original task prompt when provided so the agent skips .mars/mars.db spelunking', () => {
-      const recipe = getRecipe('verify:has-diff/no-commits-ahead')
-      const promptWithSource = recipe.buildPrompt({
-        ...ctx,
-        originalPrompt: 'rename foo to bar in src/baz.ts',
-      })
-      expect(promptWithSource).toContain('rename foo to bar in src/baz.ts')
-      expect(promptWithSource).toMatch(/inlined/i)
-      // Without it, no inlined section and no leftover marker.
-      const promptWithout = recipe.buildPrompt(ctx)
-      expect(promptWithout).not.toContain('rename foo to bar in src/baz.ts')
-      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
-    })
-
     it('instructs the agent to inspect the failing worktree read-only and lift its diff when present', () => {
       const recipe = getRecipe('verify:has-diff/no-commits-ahead')
       const prompt = recipe.buildPrompt(ctx)
@@ -316,13 +403,6 @@ describe('fix-recipes', () => {
       integrationBranch: 'main',
       originalPrompt: '',
     }
-
-    it('produces a stable title that names the failing branch', () => {
-      const recipe = getRecipe('verify:test/test-assertion-error')
-      expect(recipe.title(ctx)).toBe(
-        'Fix failing test assertions in task/abc',
-      )
-    })
 
     it('embeds the failing path, branch, integration branch, and test output', () => {
       const recipe = getRecipe('verify:test/test-assertion-error')
@@ -393,22 +473,6 @@ describe('fix-recipes', () => {
       expect(prompt).toContain('git rev-list --count main..HEAD')
     })
 
-    it('inlines the original task prompt when provided', () => {
-      const recipe = getRecipe('verify:test/test-assertion-error')
-      const promptWithSource = recipe.buildPrompt({
-        ...ctx,
-        originalPrompt: 'add mars ui stop subcommand in src/cli/ui-stop.ts',
-      })
-      expect(promptWithSource).toContain(
-        'add mars ui stop subcommand in src/cli/ui-stop.ts',
-      )
-      expect(promptWithSource).toMatch(/inlined/i)
-      const promptWithout = recipe.buildPrompt(ctx)
-      expect(promptWithout).not.toContain(
-        'add mars ui stop subcommand in src/cli/ui-stop.ts',
-      )
-      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
-    })
   })
 
   describe('getRecipe', () => {
@@ -433,15 +497,6 @@ describe('fix-recipes', () => {
       integrationBranch: 'main',
       originalPrompt: '',
     }
-
-    it('produces a stable title that names the branch and integration branch', () => {
-      const recipe = getRecipe(
-        'merge:vcs-supervisor-aborted/not-fast-forward',
-      )
-      expect(recipe.title(ctx)).toBe(
-        'Re-land task/abc onto current main (diverged after VCS supervisor rebased)',
-      )
-    })
 
     it('falls back to `main` when integrationBranch is absent', () => {
       const recipe = getRecipe(
@@ -511,21 +566,6 @@ describe('fix-recipes', () => {
       expect(prompt).toContain('git add -A && git commit')
     })
 
-    it('inlines the original task prompt when provided', () => {
-      const recipe = getRecipe(
-        'merge:vcs-supervisor-aborted/not-fast-forward',
-      )
-      const promptWithSource = recipe.buildPrompt({
-        ...ctx,
-        originalPrompt: 'add the nudge link in TodoPage.tsx',
-      })
-      expect(promptWithSource).toContain('add the nudge link in TodoPage.tsx')
-      expect(promptWithSource).toMatch(/inlined/i)
-      const promptWithout = recipe.buildPrompt(ctx)
-      expect(promptWithout).not.toContain('add the nudge link in TodoPage.tsx')
-      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
-    })
-
     it('uses merge-base-scoped diff ($BASE..HEAD) instead of raw integration..HEAD to avoid stale-baseline reversions', () => {
       const recipe = getRecipe(
         'merge:vcs-supervisor-aborted/not-fast-forward',
@@ -566,17 +606,6 @@ describe('fix-recipes', () => {
       originalPrompt: '',
     }
 
-    it('is registered under the correct signature', () => {
-      expect(hasRecipe('verify:typecheck/typecheck-excess-property')).toBe(true)
-    })
-
-    it('produces a stable title', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-excess-property')
-      expect(recipe.title(ctx)).toBe(
-        'Remove excess property(ies) from object literals to resolve TS2353 typecheck failure',
-      )
-    })
-
     it('prompt contains TS2353, step instructions, and constraint against reverting the type', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-excess-property')
       const prompt = recipe.buildPrompt(ctx)
@@ -609,31 +638,6 @@ describe('fix-recipes', () => {
       expect(prompt).toMatch(/emptySummary|shared.*fixture|fixture.*shared/i)
     })
 
-    it('embeds the failing branch and worktree path', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-excess-property')
-      const prompt = recipe.buildPrompt(ctx)
-      expect(prompt).toContain(ctx.targetBranch)
-      expect(prompt).toContain(ctx.targetPath)
-    })
-
-    it('inlines the original task prompt when provided so the agent skips .mars/mars.db spelunking', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-excess-property')
-      const promptWithSource = recipe.buildPrompt({
-        ...ctx,
-        originalPrompt:
-          'remove removedField from SomeType and all call sites',
-      })
-      expect(promptWithSource).toContain(
-        'remove removedField from SomeType and all call sites',
-      )
-      expect(promptWithSource).toMatch(/inlined/i)
-      const promptWithout = recipe.buildPrompt(ctx)
-      expect(promptWithout).not.toContain(
-        'remove removedField from SomeType and all call sites',
-      )
-      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
-    })
-
     it('instructs the agent to run vitest after typecheck is clean, to catch assertion-level regressions', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-excess-property')
       const prompt = recipe.buildPrompt(ctx)
@@ -650,17 +654,6 @@ describe('fix-recipes', () => {
       integrationBranch: 'main',
       originalPrompt: '',
     }
-
-    it('is registered under the correct signature', () => {
-      expect(hasRecipe('verify:typecheck/typecheck-property-not-exist')).toBe(true)
-    })
-
-    it('produces a stable title', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-property-not-exist')
-      expect(recipe.title(ctx)).toBe(
-        'Fix property-does-not-exist error(s) to resolve TS2339/TS2353 typecheck failure',
-      )
-    })
 
     it('prompt contains TS2339 and TS2353, step instructions, and constraint against ts-ignore', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-property-not-exist')
@@ -696,30 +689,6 @@ describe('fix-recipes', () => {
       expect(prompt).toMatch(/missing implementation/i)
     })
 
-    it('embeds the failing branch and worktree path', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-property-not-exist')
-      const prompt = recipe.buildPrompt(ctx)
-      expect(prompt).toContain(ctx.targetBranch)
-      expect(prompt).toContain(ctx.targetPath)
-    })
-
-    it('inlines the original task prompt when provided so the agent skips .mars/mars.db spelunking', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-property-not-exist')
-      const promptWithSource = recipe.buildPrompt({
-        ...ctx,
-        originalPrompt: 'remove removedField from SomeType and all call sites',
-      })
-      expect(promptWithSource).toContain(
-        'remove removedField from SomeType and all call sites',
-      )
-      expect(promptWithSource).toMatch(/inlined/i)
-      const promptWithout = recipe.buildPrompt(ctx)
-      expect(promptWithout).not.toContain(
-        'remove removedField from SomeType and all call sites',
-      )
-      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
-    })
-
     it('instructs the agent to re-run typecheck after each fix to confirm error count drops', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-property-not-exist')
       const prompt = recipe.buildPrompt(ctx)
@@ -738,17 +707,6 @@ describe('fix-recipes', () => {
       originalPrompt: '',
     }
 
-    it('is registered under the correct signature', () => {
-      expect(hasRecipe('verify:typecheck/typecheck-missing-export')).toBe(true)
-    })
-
-    it('produces a stable title', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-missing-export')
-      expect(recipe.title(ctx)).toBe(
-        'Implement missing exported member(s) to resolve TS2694 typecheck failure',
-      )
-    })
-
     it('prompt contains TS2694, step instructions, and constraint not to modify tests', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-missing-export')
       const prompt = recipe.buildPrompt(ctx)
@@ -759,30 +717,6 @@ describe('fix-recipes', () => {
       expect(prompt).toMatch(/Do NOT delete or modify the test file/i)
       expect(prompt).toMatch(/Do NOT add an `export \* from`/i)
       expect(prompt).toContain('Save your work')
-    })
-
-    it('embeds the failing branch and worktree path', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-missing-export')
-      const prompt = recipe.buildPrompt(ctx)
-      expect(prompt).toContain(ctx.targetBranch)
-      expect(prompt).toContain(ctx.targetPath)
-    })
-
-    it('inlines the original task prompt when provided so the agent skips .mars/mars.db spelunking', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-missing-export')
-      const promptWithSource = recipe.buildPrompt({
-        ...ctx,
-        originalPrompt: 'add markOriginDoneFromRecovery to blocker-resolution.ts',
-      })
-      expect(promptWithSource).toContain(
-        'add markOriginDoneFromRecovery to blocker-resolution.ts',
-      )
-      expect(promptWithSource).toMatch(/inlined/i)
-      const promptWithout = recipe.buildPrompt(ctx)
-      expect(promptWithout).not.toContain(
-        'add markOriginDoneFromRecovery to blocker-resolution.ts',
-      )
-      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
     })
 
     it('mentions cascade TS7006 errors so the agent understands they are not independent', () => {
@@ -803,17 +737,6 @@ describe('fix-recipes', () => {
       originalPrompt: '',
     }
 
-    it('is registered under the correct signature', () => {
-      expect(hasRecipe('verify:typecheck/typecheck-arg-type-mismatch')).toBe(true)
-    })
-
-    it('produces a stable title', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-arg-type-mismatch')
-      expect(recipe.title(ctx)).toBe(
-        'Fix argument type mismatch(es) to resolve TS2345 typecheck failure',
-      )
-    })
-
     it('prompt contains TS2345, step instructions, and constraint against ts-ignore', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-arg-type-mismatch')
       const prompt = recipe.buildPrompt(ctx)
@@ -833,30 +756,6 @@ describe('fix-recipes', () => {
       expect(prompt).toMatch(/err \? reject\(err\) : resolve\(\)/i)
     })
 
-    it('embeds the failing branch and worktree path', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-arg-type-mismatch')
-      const prompt = recipe.buildPrompt(ctx)
-      expect(prompt).toContain(ctx.targetBranch)
-      expect(prompt).toContain(ctx.targetPath)
-    })
-
-    it('inlines the original task prompt when provided so the agent skips .mars/mars.db spelunking', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-arg-type-mismatch')
-      const promptWithSource = recipe.buildPrompt({
-        ...ctx,
-        originalPrompt: 'add isDaemonAlive helper in src/core/daemon/liveness.ts',
-      })
-      expect(promptWithSource).toContain(
-        'add isDaemonAlive helper in src/core/daemon/liveness.ts',
-      )
-      expect(promptWithSource).toMatch(/inlined/i)
-      const promptWithout = recipe.buildPrompt(ctx)
-      expect(promptWithout).not.toContain(
-        'add isDaemonAlive helper in src/core/daemon/liveness.ts',
-      )
-      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
-    })
-
     it('instructs the agent to adapt the argument to match the declared parameter, not change the parameter type', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-arg-type-mismatch')
       const prompt = recipe.buildPrompt(ctx)
@@ -873,17 +772,6 @@ describe('fix-recipes', () => {
       integrationBranch: 'main',
       originalPrompt: '',
     }
-
-    it('is registered under the correct signature', () => {
-      expect(hasRecipe('verify:typecheck/typecheck-cannot-find-name')).toBe(true)
-    })
-
-    it('produces a stable title', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-cannot-find-name')
-      expect(recipe.title(ctx)).toBe(
-        'Fix cannot-find-name error(s) to resolve TS2304 typecheck failure',
-      )
-    })
 
     it('prompt contains TS2304, step instructions, and constraint against ts-ignore', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-cannot-find-name')
@@ -911,30 +799,6 @@ describe('fix-recipes', () => {
       expect(prompt).toMatch(/missing import/i)
     })
 
-    it('embeds the failing branch and worktree path', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-cannot-find-name')
-      const prompt = recipe.buildPrompt(ctx)
-      expect(prompt).toContain(ctx.targetBranch)
-      expect(prompt).toContain(ctx.targetPath)
-    })
-
-    it('inlines the original task prompt when provided so the agent skips .mars/mars.db spelunking', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-cannot-find-name')
-      const promptWithSource = recipe.buildPrompt({
-        ...ctx,
-        originalPrompt: 'delete NO_RECIPE_ACTION_QUEUE_KIND and all its usages from queue-fix-tasks.ts',
-      })
-      expect(promptWithSource).toContain(
-        'delete NO_RECIPE_ACTION_QUEUE_KIND and all its usages from queue-fix-tasks.ts',
-      )
-      expect(promptWithSource).toMatch(/inlined/i)
-      const promptWithout = recipe.buildPrompt(ctx)
-      expect(promptWithout).not.toContain(
-        'delete NO_RECIPE_ACTION_QUEUE_KIND and all its usages from queue-fix-tasks.ts',
-      )
-      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
-    })
-
     it('instructs agent to re-run typecheck after each fix to confirm error count drops', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-cannot-find-name')
       const prompt = recipe.buildPrompt(ctx)
@@ -959,17 +823,6 @@ describe('fix-recipes', () => {
       integrationBranch: 'main',
       originalPrompt: '',
     }
-
-    it('is registered under the correct signature', () => {
-      expect(hasRecipe('verify:typecheck/typecheck-type-mismatch')).toBe(true)
-    })
-
-    it('produces a stable title', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-type-mismatch')
-      expect(recipe.title(ctx)).toBe(
-        'Fix type-mismatch error(s) to resolve TS2322 typecheck failure',
-      )
-    })
 
     it('prompt contains TS2322, step instructions, and constraint against ts-ignore', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-type-mismatch')
@@ -1001,30 +854,6 @@ describe('fix-recipes', () => {
       const prompt = recipe.buildPrompt(ctx)
       expect(prompt).toMatch(/switch/i)
       expect(prompt).toMatch(/exhaustive/i)
-    })
-
-    it('embeds the failing branch and worktree path', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-type-mismatch')
-      const prompt = recipe.buildPrompt(ctx)
-      expect(prompt).toContain(ctx.targetBranch)
-      expect(prompt).toContain(ctx.targetPath)
-    })
-
-    it('inlines the original task prompt when provided so the agent skips .mars/mars.db spelunking', () => {
-      const recipe = getRecipe('verify:typecheck/typecheck-type-mismatch')
-      const promptWithSource = recipe.buildPrompt({
-        ...ctx,
-        originalPrompt: "add 'investigate' daemon action for stale worktrees",
-      })
-      expect(promptWithSource).toContain(
-        "add 'investigate' daemon action for stale worktrees",
-      )
-      expect(promptWithSource).toMatch(/inlined/i)
-      const promptWithout = recipe.buildPrompt(ctx)
-      expect(promptWithout).not.toContain(
-        "add 'investigate' daemon action for stale worktrees",
-      )
-      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
     })
 
     it('instructs agent to not narrow the value to an existing member when the new value is intentional', () => {
@@ -1481,11 +1310,6 @@ describe('handleTaskFailureWithFixTask unknown-signature path', () => {
     expect(fix?.fixForTaskId).toBe(t.id)
     expect(fix?.prompt).toContain(originalPrompt)
 
-    const all = await q.resolveQueueClient().execute({
-      sql: `SELECT id FROM tasks`,
-      args: [],
-    })
-    expect(all.rows.length).toBe(2)
   })
 })
 
@@ -1502,17 +1326,6 @@ describe('verify:test/test-no-suite-found recipe', () => {
     integrationBranch: 'main',
     originalPrompt: '',
   }
-
-  it('is registered under the correct signature', () => {
-    expect(hasRecipe('verify:test/test-no-suite-found')).toBe(true)
-  })
-
-  it('produces a stable title naming the failing branch', () => {
-    const recipe = getRecipe('verify:test/test-no-suite-found')
-    expect(recipe.title(ctx)).toBe(
-      'Remove or populate the empty test file blocking verify:test on task/abc',
-    )
-  })
 
   it('prompt instructs the agent to identify the empty file from the failure output', () => {
     const recipe = getRecipe('verify:test/test-no-suite-found')
@@ -1556,17 +1369,6 @@ describe('verify:test/test-no-suite-found recipe', () => {
     expect(prompt).toContain('Save your work')
   })
 
-  it('inlines the original task prompt when provided', () => {
-    const recipe = getRecipe('verify:test/test-no-suite-found')
-    const promptWithSource = recipe.buildPrompt({
-      ...ctx,
-      originalPrompt: 'add agent registry with writer entry',
-    })
-    expect(promptWithSource).toContain('add agent registry with writer entry')
-    expect(promptWithSource).toMatch(/inlined/i)
-    const promptWithout = recipe.buildPrompt(ctx)
-    expect(promptWithout).not.toContain('add agent registry with writer entry')
-  })
 })
 describe('lift-diff stale-baseline guard (all five lift-diff / re-land recipe sites)', () => {
   // Regression guard for the incident where a recovery task lifted
@@ -1659,13 +1461,6 @@ describe('code/uncommitted-changes recipe', () => {
     )
   })
 
-  it('produces a stable title that names the failing branch', () => {
-    const recipe = getRecipe('code/uncommitted-changes')
-    expect(recipe.title(ctx)).toBe(
-      'Commit the work the coder left uncommitted on task/abc',
-    )
-  })
-
   it('embeds the worktree, both branches, and the captured auto-commit error', () => {
     const recipe = getRecipe('code/uncommitted-changes')
     const prompt = recipe.buildPrompt(ctx)
@@ -1716,19 +1511,6 @@ describe('code/uncommitted-changes recipe', () => {
     const prompt = recipe.buildPrompt(ctx)
     expect(prompt).toContain('git rev-list --count main..HEAD')
     expect(prompt).toMatch(/MUST print a non-zero integer before you exit/i)
-  })
-
-  it('inlines the original task prompt only when one was recorded', () => {
-    const recipe = getRecipe('code/uncommitted-changes')
-    const withSource = recipe.buildPrompt({
-      ...ctx,
-      originalPrompt: 'add the writer entry to the agent registry',
-    })
-    expect(withSource).toContain('add the writer entry to the agent registry')
-    expect(withSource).toMatch(/inlined/i)
-    expect(recipe.buildPrompt(ctx)).not.toContain(
-      'add the writer entry to the agent registry',
-    )
   })
 
   it('degrades to a placeholder when no evidence was captured', () => {
