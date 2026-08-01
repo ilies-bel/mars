@@ -11,7 +11,12 @@ import type { ClaudeEvent } from '../../lib/claude-stream'
 // implementation. Both resolveClaudeBin and runSubprocessStreaming are
 // included so the spy can confirm claude's resolver is never touched by
 // the gemini adapter.
-vi.mock('../../lib/git/claude', () => ({
+// Spread importOriginal rather than listing exports by hand: the adapter also
+// pulls pure helpers (isBlankPrompt, emptyPromptResult) from this module, and
+// a hand-written export list silently turns any newly-imported helper into
+// `undefined` at call time.
+vi.mock('../../lib/git/claude', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/git/claude')>()),
   runSubprocessStreaming: vi.fn(),
   buildWorkerEnv: vi.fn(() => ({})),
   resolveClaudeBin: vi.fn(),
@@ -215,5 +220,28 @@ describe('geminiHeadless capabilities', () => {
     expect(capabilities.usageSemantics).toBe('none')
     expect(capabilities.quotaRejected).toBe(false)
     expect(capabilities.sessionId).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Regression: an empty prompt must never reach the CLI.
+//
+// `gemini -p ''` falls back to reading the prompt from stdin. Dispatched
+// workers get stdin=/dev/null, so the CLI reads EOF and exits non-zero having
+// produced no usable diagnostic — the same contentless failure shape that made
+// a codex quota rejection unreadable in production.
+// ---------------------------------------------------------------------------
+
+describe('geminiHeadless.run — empty prompt fails fast without spawning', () => {
+  it.each([
+    ['empty string', ''],
+    ['whitespace only', '  \n\t '],
+  ])('refuses to spawn for a %s prompt', async (_label, prompt) => {
+    const result = await geminiHeadless.run(prompt, { cwd: '/tmp', model: 'gemini-2.5-pro' })
+
+    expect(runSubprocessStreaming).not.toHaveBeenCalled()
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toMatch(/refusing to spawn gemini with an empty prompt/i)
+    expect(result.conversation).toEqual([])
   })
 })
