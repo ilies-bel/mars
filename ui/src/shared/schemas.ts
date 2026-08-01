@@ -1210,8 +1210,18 @@ export const chatConversationEntrySchema = z.object({
   resolution: z.enum(['resolved']).nullable(),
 })
 
+/** Aggregate token weight and lifetime for one Subject in the conversation. */
+export const subjectBoundarySchema = z.object({
+  subjectId: z.string(),
+  startedAt: z.string(),
+  closedAt: z.string().nullable(),
+  producedTokens: z.number().nonnegative(),
+  carriedTokens: z.number().nonnegative(),
+})
+
 export const chatConversationResponseSchema = z.object({
   entries: z.array(chatConversationEntrySchema),
+  boundaries: z.array(subjectBoundarySchema).default([]),
   /** Final sequence Mars excludes from its current provider-memory window. */
   memoryStartsAfterSeq: z.number().int().nonnegative(),
   /** Epoch milliseconds when the readable-memory window was last cut. */
@@ -1239,6 +1249,7 @@ export type ChatThread = z.infer<typeof chatThreadSchema>
 export type ChatThreadsResponse = z.infer<typeof chatThreadsResponseSchema>
 export type ChatThreadDetail = z.infer<typeof chatThreadDetailSchema>
 export type ChatConversationEntry = z.infer<typeof chatConversationEntrySchema>
+export type SubjectBoundary = z.infer<typeof subjectBoundarySchema>
 export type ChatConversationResponse = z.infer<typeof chatConversationResponseSchema>
 
 // ---------------------------------------------------------------------------

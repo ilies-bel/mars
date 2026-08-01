@@ -103,4 +103,41 @@ describe('ConversationTimeline', () => {
     expect(html).toContain('This was persisted before opening another subject.')
     expect(html).not.toContain('Handled by the live tail.')
   })
+
+  it('places Subject seams around closed messages while leaving an open Subject without an end aggregate', () => {
+    const html = renderToStaticMarkup(
+      <ConversationTimeline
+        entries={[
+          {
+            id: 'situation', seq: 1, threadId: 'closed-subject', subjectId: 'closed-subject', subjectTitle: 'Completed subject', subjectClosed: true,
+            role: 'assistant', content: 'Situation: this Subject starts here.', segments: [],
+            createdAt: '2026-01-01T00:00:00.000Z', kind: 'situation', backingEntityId: null, resolution: null,
+          },
+          {
+            id: 'final', seq: 2, threadId: 'closed-subject', subjectId: 'closed-subject', subjectTitle: 'Completed subject', subjectClosed: true,
+            role: 'assistant', content: 'The last completed message.', segments: [],
+            createdAt: '2026-01-01T00:01:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
+          },
+          {
+            id: 'open-situation', seq: 3, threadId: 'open-subject', subjectId: 'open-subject', subjectTitle: 'Open subject', subjectClosed: false,
+            role: 'assistant', content: 'Situation: this one remains open.', segments: [],
+            createdAt: '2026-01-01T00:02:00.000Z', kind: 'situation', backingEntityId: null, resolution: null,
+          },
+        ]}
+        boundaries={[
+          { subjectId: 'closed-subject', startedAt: '2026-01-01T00:00:00.000Z', closedAt: '2026-01-01T00:02:00.000Z', producedTokens: 350, carriedTokens: 180 },
+          { subjectId: 'open-subject', startedAt: '2026-01-01T00:02:00.000Z', closedAt: null, producedTokens: 100, carriedTokens: 90 },
+        ]}
+        memoryStartsAfterSeq={2}
+      />,
+    )
+
+    expect(html.match(/data-testid="subject-boundary-start"/g)).toHaveLength(2)
+    expect(html.match(/data-testid="subject-boundary-end"/g)).toHaveLength(1)
+    expect(html).toContain('350 produced')
+    expect(html).toContain('180 carried')
+    expect(html.indexOf('Subject started')).toBeLessThan(html.indexOf('Situation: this Subject starts here.'))
+    expect(html.indexOf('The last completed message.')).toBeLessThan(html.indexOf('Subject complete'))
+    expect(html).toContain('data-testid="memory-boundary-line"')
+  })
 })

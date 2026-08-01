@@ -10,6 +10,7 @@ interface ChatStoreModule {
   initChatStore: typeof import('../chat-store').initChatStore
   createThread: typeof import('../chat-store').createThread
   appendMessage: typeof import('../chat-store').appendMessage
+  closeSubject: typeof import('../chat-store').closeSubject
   listConversationEntries: typeof import('../chat-store').listConversationEntries
   startThreadFromAlert: typeof import('../chat-store').startThreadFromAlert
   resolveAlertThread: typeof import('../chat-store').resolveAlertThread
@@ -116,6 +117,50 @@ describe('listConversationEntries', () => {
       memoryCutAt: 1_700_000_000_000,
       memoryCutReason: 'capacity',
     })
+  })
+
+  it('returns each Subject boundary with its aggregate produced and carried token weight', async () => {
+    const chat = await loadModule(repo)
+    await chat.initChatStore()
+    const closed = await chat.createThread('Completed investigation')
+    const open = await chat.createThread('Still investigating')
+    await chat.appendMessage(closed.id, 'assistant', 'Situation: investigating.', [
+      { type: 'result', inputTokens: 120, outputTokens: 20 },
+    ])
+    await chat.appendMessage(closed.id, 'assistant', 'Found the issue.', [
+      { type: 'result', inputTokens: 180, outputTokens: 30 },
+    ])
+    await chat.appendMessage(open.id, 'assistant', 'Situation: still open.', [
+      { type: 'result', inputTokens: 90, outputTokens: 10 },
+    ])
+    await chat.closeSubject(closed.id)
+
+    const services = createAppServices({
+      traceStore: nullTraceStore,
+      buildAlertSources: async () => ({
+        listFailedArcs: async () => [],
+        listStaleWorktrees: async () => [],
+      }),
+    })
+
+    const conversation = await services.viewChatConversation()
+
+    expect(conversation.boundaries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        subjectId: closed.id,
+        startedAt: expect.any(String),
+        closedAt: expect.any(String),
+        producedTokens: 350,
+        carriedTokens: 180,
+      }),
+      expect.objectContaining({
+        subjectId: open.id,
+        startedAt: expect.any(String),
+        closedAt: null,
+        producedTokens: 100,
+        carriedTokens: 90,
+      }),
+    ]))
   })
 
   it('keeps a validation message in place and marks it resolved when its task completes', async () => {

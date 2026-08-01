@@ -26,6 +26,7 @@ import { relativeTime, smartTitle } from './chatPageUtils'
 import type { ChatThread, ActionQueueItem } from '@/shared/schemas'
 
 const mockFetchChatHistory = vi.hoisted(() => vi.fn())
+const mockFetchChatConversation = vi.hoisted(() => vi.fn())
 
 // ---------------------------------------------------------------------------
 // window.matchMedia stub (happy-dom doesn't implement it)
@@ -91,6 +92,7 @@ vi.mock('@/shared/api', () => ({
   fetchChatThreads: vi.fn().mockResolvedValue([]),
   fetchChatThread: vi.fn().mockResolvedValue(null),
   fetchChatHistory: (...args: unknown[]) => mockFetchChatHistory(...args),
+  fetchChatConversation: (...args: unknown[]) => mockFetchChatConversation(...args),
   fetchCodexAuthState: vi.fn().mockResolvedValue(null),
   refreshCodexAuth: vi.fn().mockResolvedValue(null),
   fetchGlossary: vi.fn().mockResolvedValue([]),
@@ -355,6 +357,9 @@ describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
 
   beforeEach(() => {
     mockFetchChatHistory.mockResolvedValue([])
+    mockFetchChatConversation.mockResolvedValue({
+      entries: [], boundaries: [], memoryStartsAfterSeq: 0, memoryCutAt: null, memoryCutReason: null,
+    })
     mockStartThreadFromAlert.mockResolvedValue({ threadId: 'subject-thread-123' })
     mockUseActionQueue.mockReturnValue({
       items: [],
@@ -460,11 +465,24 @@ describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
     expect(subject?.getAttribute('data-thread-id')).toBe('subject-thread-123')
   })
 
-  it('keeps evaporated Subjects above the newly opened Subject', async () => {
-    mockFetchChatHistory.mockResolvedValue([
-      makeThread({ id: 'past-second', title: 'Second past Subject', createdAt: '2026-07-31T09:00:00.000Z' }),
-      makeThread({ id: 'past-first', title: 'First past Subject', createdAt: '2026-07-31T08:00:00.000Z' }),
-    ])
+  it('keeps closed Subject messages expanded in the chronological feed', async () => {
+    mockFetchChatConversation.mockResolvedValue({
+      entries: [
+        {
+          id: 'past-first-message', seq: 1, threadId: 'past-first', subjectId: 'past-first', subjectTitle: 'First past Subject', subjectClosed: true,
+          role: 'assistant', content: 'First past message.', segments: [], createdAt: '2026-07-31T08:00:00.000Z', kind: 'situation', backingEntityId: null, resolution: null,
+        },
+        {
+          id: 'past-second-message', seq: 2, threadId: 'past-second', subjectId: 'past-second', subjectTitle: 'Second past Subject', subjectClosed: true,
+          role: 'assistant', content: 'Second past message.', segments: [], createdAt: '2026-07-31T09:00:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
+        },
+      ],
+      boundaries: [
+        { subjectId: 'past-first', startedAt: '2026-07-31T08:00:00.000Z', closedAt: '2026-07-31T08:01:00.000Z', producedTokens: 10, carriedTokens: 5 },
+        { subjectId: 'past-second', startedAt: '2026-07-31T09:00:00.000Z', closedAt: '2026-07-31T09:01:00.000Z', producedTokens: 20, carriedTokens: 10 },
+      ],
+      memoryStartsAfterSeq: 0, memoryCutAt: null, memoryCutReason: null,
+    })
     const arcItem = makeArcFailedItem()
     mockUseActionQueue.mockReturnValue({
       items: [arcItem],
@@ -483,11 +501,12 @@ describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
-    const pastColumn = container.querySelector('[data-testid="past-subjects-column"]')
-    expect(pastColumn?.textContent).toContain('First past Subject')
-    expect(pastColumn?.textContent).toContain('Second past Subject')
-    expect(pastColumn?.textContent!.indexOf('First past Subject')).toBeLessThan(
-      pastColumn?.textContent!.indexOf('Second past Subject') ?? -1,
+    expect(container.querySelector('[data-testid="past-subjects-column"]')).toBeNull()
+    expect(container.querySelector('[data-testid="chat-history-section"]')).toBeNull()
+    expect(container.textContent).toContain('First past message.')
+    expect(container.textContent).toContain('Second past message.')
+    expect(container.textContent!.indexOf('First past message.')).toBeLessThan(
+      container.textContent!.indexOf('Second past message.'),
     )
 
     await act(async () => {
@@ -498,8 +517,5 @@ describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
     })
 
     expect(container.querySelector('[data-testid="active-subject"]')).not.toBeNull()
-    expect(container.innerHTML.indexOf('data-testid="past-subjects-column"')).toBeLessThan(
-      container.innerHTML.indexOf('data-testid="active-subject"'),
-    )
   })
 })

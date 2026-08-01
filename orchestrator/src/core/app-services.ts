@@ -246,6 +246,7 @@ export interface AppServices {
   viewChatHistory: () => Promise<{ threads: import('./lib/chat-store').ChatThreadApiView[] }>
   viewChatConversation: () => Promise<{
     entries: import('./lib/chat-store').ChatConversationEntryApiView[]
+    boundaries: import('./lib/chat-store').SubjectBoundaryApiView[]
     memoryStartsAfterSeq: number
     memoryCutAt: number | null
     memoryCutReason: import('./daemon/chat-memory-window').MemoryCutReason | null
@@ -1283,14 +1284,16 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   }
 
   const viewChatConversation: AppServices['viewChatConversation'] = async () => {
-    const { listConversationEntries } = await import('./lib/chat-store')
+    const { listConversationEntries, listSubjectBoundaries } = await import('./lib/chat-store')
     const { readMainMemoryWindow } = await import('./daemon/chat-memory-window')
-    const [entries, memoryWindow] = await Promise.all([
+    const [entries, boundaries, memoryWindow] = await Promise.all([
       listConversationEntries(),
+      listSubjectBoundaries(),
       readMainMemoryWindow(),
     ])
     return {
       entries,
+      boundaries,
       memoryStartsAfterSeq: memoryWindow.startsAfterSeq,
       memoryCutAt: memoryWindow.cutAt,
       memoryCutReason: memoryWindow.reason,

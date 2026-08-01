@@ -100,6 +100,7 @@ export const stubAppServices = (
   viewChatHistory: async () => ({ threads: [] }),
   viewChatConversation: async () => ({
     entries: [],
+    boundaries: [],
     memoryStartsAfterSeq: 0,
     memoryCutAt: null,
     memoryCutReason: null,

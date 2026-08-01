@@ -36,7 +36,6 @@ import {
   renameChatThread,
   setMessageFeedback,
   clearMessageFeedback,
-  fetchChatHistory,
   fetchCodexAuthState,
   fetchProjectMeta,
   fetchGlossary,
@@ -46,7 +45,7 @@ import {
   type AttachmentInfo,
 } from '@/shared/api'
 import { useFocusedProjectId, useFocusedProject } from '@/shared/useFocusedProject'
-import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail, GlossaryTerm } from '@/shared/schemas'
+import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail, GlossaryTerm, SubjectBoundary } from '@/shared/schemas'
 import type { MarsUIMessage } from '@/shared/marsChatTransport'
 import { useMarsChat } from '@/shared/useMarsChat'
 import { chatMessageToUIMessage, transcriptSignature } from '@/shared/chatMessageMapping'
@@ -80,8 +79,6 @@ import { PROCESS_LEVEL_OPS, QueueThreadDetail } from '@/widgets/chat/QueueThread
 import { SidebarFilters, type SidebarFiltersValue } from '@/widgets/chat/SidebarFilters'
 import {
   filterSidebarThreads,
-  filterThreadsByFork,
-  filterThreadsByTitle,
   isResolvedSelection,
   sortByUrgencyThenAge,
   type ForkFilter,
@@ -97,8 +94,8 @@ import { linkifyTaskIds } from '@/shared/linkifyTaskIds'
 import { formatDuration } from '@/shared/time'
 import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle } from './chatPageUtils'
 import { OpeningNextMoves } from '@/widgets/chat/OpeningNextMoves'
-import { PastSubjectsColumn } from '@/widgets/chat/PastSubjectsColumn'
 import { ConversationTimeline } from '@/widgets/chat/ConversationTimeline'
+import { SubjectBoundaryLine } from '@/widgets/chat/SubjectBoundaryLine'
 import type { DisplayRow } from '@/widgets/chat/OpeningNextMoves'
 import { useTasks } from '@/hooks/useTasks'
 import { SkeletonList } from '@/components/Skeleton'
@@ -1053,6 +1050,7 @@ export const LiveAssistantBubble = ({ buffer, terms = [] }: { buffer: LiveBuffer
 
 interface ChatConversationProps {
   threadId: string
+  boundary?: SubjectBoundary
   projectId?: string
   /** Prefill flowing into the composer (chip / slash / discuss). */
   prefill?: string
@@ -1076,6 +1074,7 @@ interface ChatConversationProps {
  */
 const ChatConversation = ({
   threadId,
+  boundary,
   projectId,
   prefill,
   onPrefillConsumed,
@@ -1283,6 +1282,7 @@ const ChatConversation = ({
 
   return (
     <>
+      {boundary && <SubjectBoundaryLine boundary={boundary} position="start" />}
       <Conversation className="flex-1">
         <ConversationContent>
           {showWelcome ? (
@@ -2346,27 +2346,9 @@ export const ThreadSidebar = ({
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['chat-threads'] }),
   })
 
-  // Open Subjects are sorted by urgency → age → id. Resolved projections live
-  // in History; their transcripts remain available there.
+  // Open Subjects are sorted by urgency → age → id. Closed transcripts remain
+  // expanded in the chronological conversation rather than an archive panel.
   const threads = sortByUrgencyThenAge(filterSidebarThreads(data ?? [], filters, forkFilter))
-
-  const { data: historyData } = useQuery({
-    queryKey: ['chat-history', projectId],
-    queryFn: () => fetchChatHistory(projectId),
-  })
-
-  const allHistoryThreads = historyData ?? []
-  const historyThreads = filterThreadsByFork(
-    filterThreadsByTitle(allHistoryThreads, filters.query),
-    forkFilter,
-  )
-  const historyForksByParent = new Map<string, ChatThread[]>()
-  for (const thread of allHistoryThreads) {
-    if (thread.parentThreadId === null) continue
-    const forks = historyForksByParent.get(thread.parentThreadId) ?? []
-    forks.push(thread)
-    historyForksByParent.set(thread.parentThreadId, forks)
-  }
 
   return (
     <aside className="flex w-64 flex-shrink-0 flex-col border-r border-primary/30 bg-background">
@@ -2433,47 +2415,6 @@ export const ThreadSidebar = ({
           </button>
         </div>
 
-        {historyThreads.length > 0 && (
-          <details data-testid="chat-history-section" className="mt-2">
-            <summary className="cursor-pointer px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-primary/40 hover:text-primary/60">
-              History
-            </summary>
-            <div className="space-y-0.5 pt-0.5">
-              {historyThreads.map((t) => {
-                const forks = historyForksByParent.get(t.id) ?? []
-                return (
-                  <div key={t.id}>
-                    <ThreadItem
-                      thread={t}
-                      isSelected={t.id === selectedId}
-                      onSelect={() => {
-                        onSelect(t.id)
-                        onForkFilterChange({ parentThreadId: t.id })
-                      }}
-                      onRename={(title) => rename({ id: t.id, title })}
-                    />
-                    {filters.query.trim() !== '' && forks.length > 0 && !forkFilter.parentThreadId && !forkFilter.hasParent && (
-                      <details data-testid={`history-forks-${t.id}`} className="ml-3">
-                        <summary className="cursor-pointer px-2 py-1 font-mono text-[10px] text-primary/50">
-                          {forks.length} forks
-                        </summary>
-                        {forks.map((fork) => (
-                          <ThreadItem
-                            key={fork.id}
-                            thread={fork}
-                            isSelected={fork.id === selectedId}
-                            onSelect={() => onSelect(fork.id)}
-                            onRename={(title) => rename({ id: fork.id, title })}
-                          />
-                        ))}
-                      </details>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </details>
-        )}
       </div>
 
       {/* Agent configuration — read-only view of the model, system prompt,
@@ -2592,18 +2533,10 @@ export const ChatPage = () => {
     queryFn: () => hasForkFilter ? fetchChatThreads(projectId, forkFilter) : fetchChatThreads(projectId),
   })
 
-  // The history endpoint is the daemon's evaporated-thread projection for the
-  // current session. Render it in the feed immediately above the active Subject.
-  const { data: pastThreads = [] } = useQuery({
-    queryKey: ['chat-history', projectId],
-    queryFn: () => fetchChatHistory(projectId),
-    staleTime: 30_000,
-  })
-
-  // The conversation endpoint is the persisted portion of Mars's single
-  // chronological conversation, rendered as a timeline below the past Subjects.
+  // The conversation endpoint is Mars's single chronological conversation.
   const { data: conversation = {
     entries: [],
+    boundaries: [],
     memoryStartsAfterSeq: 0,
     memoryCutAt: null,
     memoryCutReason: null,
@@ -3003,10 +2936,10 @@ export const ChatPage = () => {
                   </p>
                 )}
               </div>
-              <PastSubjectsColumn pastThreads={pastThreads} projectId={projectId} />
               <div className="mt-6">
                 <ConversationTimeline
                   entries={conversation.entries}
+                  boundaries={conversation.boundaries}
                   memoryStartsAfterSeq={conversation.memoryStartsAfterSeq}
                   activeThreadId={activeConversationThreadId}
                   projectId={projectId}
@@ -3029,6 +2962,7 @@ export const ChatPage = () => {
                   <ChatConversation
                     key={activeConversationThreadId}
                     threadId={activeConversationThreadId}
+                    boundary={conversation.boundaries.find((boundary) => boundary.subjectId === activeConversationThreadId)}
                     projectId={projectId}
                     prefill={prefill}
                     onPrefillConsumed={() => setPrefill(undefined)}

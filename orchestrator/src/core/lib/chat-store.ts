@@ -171,6 +171,17 @@ export interface ChatConversationEntryApiView {
   resolution: 'resolved' | null
 }
 
+/** Aggregate token weight and lifetime for one Subject in the conversation. */
+export interface SubjectBoundaryApiView {
+  subjectId: string
+  startedAt: string
+  closedAt: string | null
+  /** Aggregate provider token cost across the Subject's completed turns. */
+  producedTokens: number
+  /** Input context reported by the final completed provider turn. */
+  carriedTokens: number
+}
+
 /**
  * Compute the attention status for a thread given its run status and the role
  * of the most recent message. This is a pure function — no side effects.
@@ -742,6 +753,56 @@ export const listConversationEntries = async (): Promise<ChatConversationEntryAp
         : null,
     }
   })
+}
+
+/**
+ * List aggregate Subject seams for the continuous conversation. Provider
+ * result segments are intentionally read from durable messages rather than
+ * the UI projection: produced tokens are additive, while carried context is
+ * the final non-null provider input measurement for that Subject.
+ */
+export const listSubjectBoundaries = async (): Promise<SubjectBoundaryApiView[]> => {
+  const c = stateClient()
+  const result = await c.execute(`
+    SELECT t.id, t.created_at, t.closed_at, m.segments, m.seq
+      FROM chat_threads t
+ LEFT JOIN chat_messages m ON m.thread_id = t.id
+     ORDER BY t.created_at ASC, t.id ASC, m.seq ASC
+  `)
+  const boundaries = new Map<string, SubjectBoundaryApiView>()
+  for (const row of result.rows as unknown as Record<string, unknown>[]) {
+    const subjectId = row.id as string
+    const boundary = boundaries.get(subjectId) ?? {
+      subjectId,
+      startedAt: new Date(Number(row.created_at)).toISOString(),
+      closedAt: row.closed_at == null ? null : new Date(Number(row.closed_at)).toISOString(),
+      producedTokens: 0,
+      carriedTokens: 0,
+    }
+    let segments: unknown[] = []
+    if (typeof row.segments === 'string') {
+      try {
+        const parsed = JSON.parse(row.segments) as unknown
+        if (Array.isArray(parsed)) segments = parsed
+      } catch {
+        // A malformed legacy segment payload cannot contribute reliable usage.
+      }
+    } else if (Array.isArray(row.segments)) {
+      segments = row.segments
+    }
+    for (const segment of segments) {
+      if (typeof segment !== 'object' || segment === null || Array.isArray(segment)) continue
+      const resultSegment = segment as Record<string, unknown>
+      if (resultSegment.type !== 'result') continue
+      boundary.producedTokens += Math.max(0, typeof resultSegment.inputTokens === 'number' ? resultSegment.inputTokens : 0)
+        + Math.max(0, typeof resultSegment.outputTokens === 'number' ? resultSegment.outputTokens : 0)
+      if (typeof resultSegment.inputTokens === 'number' && resultSegment.inputTokens >= 0) {
+        boundary.carriedTokens = resultSegment.inputTokens
+      }
+    }
+    boundaries.set(subjectId, boundary)
+  }
+  return [...boundaries.values()]
 }
 
 /**
