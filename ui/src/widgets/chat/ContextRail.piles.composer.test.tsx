@@ -176,6 +176,34 @@ describe('ContextRail piles', () => {
     await act(async () => root.unmount())
   })
 
+  it('expands the ADR pile in place and collapses it back to the newest three', async () => {
+    state.items = []
+    state.adrs = [1, 2, 3, 4, 5, 6, 7].map((number) => ({
+      number,
+      title: `ADR ${number}`,
+      slug: `adr-${number}`,
+    }))
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(<ContextRail />)
+    })
+
+    const section = container.querySelector('section[aria-label="ADRs"]') as HTMLElement
+    const toggle = section.querySelector('button') as HTMLButtonElement
+    expect(section.querySelectorAll('[data-testid="context-rail-adr-row"]')).toHaveLength(3)
+    expect(toggle.textContent).toContain('See all 7')
+
+    await act(async () => toggle.click())
+    expect(section.querySelectorAll('[data-testid="context-rail-adr-row"]')).toHaveLength(7)
+    expect(toggle.textContent).toContain('Show less')
+
+    await act(async () => toggle.click())
+    expect(section.querySelectorAll('[data-testid="context-rail-adr-row"]')).toHaveLength(3)
+    await act(async () => root.unmount())
+  })
+
   it('keeps the rail visible when action-queue and ADR queries fail', async () => {
     state.items = []
     state.adrs = []
