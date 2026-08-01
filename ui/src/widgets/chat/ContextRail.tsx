@@ -16,13 +16,12 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchAdrs, fetchGlossary, fetchTasksForThread } from '@/shared/api'
-import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { useThreadFocus } from './useThreadFocus'
 import { buildActivityFeed } from './activityFeed'
 import { dispatchAlertVerb, verbButtonClass } from './alertVerbs'
 import { priorityBadgeClass } from './QueueThreadRow'
-import { isAlertQueueItem } from './queueThreads'
+import type { OpenWorkItem } from './openWork'
 
 import type { GlossaryTerm, ChatSegmentAttachment, ChatThreadDetail, ProgressTask, ActionQueueItem, AdrEntry } from '@/shared/schemas'
 import type { ThreadFocusResult } from './useThreadFocus'
@@ -389,11 +388,11 @@ const RailPile = ({ title, count, children }: RailPileProps) => {
 }
 
 interface AlertsPileProps {
-  items: ActionQueueItem[]
-  onOpenAlert?: (item: ActionQueueItem) => void
+  items: OpenWorkItem[]
+  onOpenWork?: (item: OpenWorkItem) => void
 }
 
-const AlertsPile = ({ items, onOpenAlert }: AlertsPileProps) => (
+const AlertsPile = ({ items, onOpenWork }: AlertsPileProps) => (
   <RailPile title="Alerts" count={items.length}>
     {(visibleCount) =>
       items.length === 0 ? (
@@ -401,17 +400,28 @@ const AlertsPile = ({ items, onOpenAlert }: AlertsPileProps) => (
       ) : (
         <ul className="flex flex-col gap-0.5">
           {items.slice(0, visibleCount).map((item) => (
-            <li key={item.id}>
+            <li key={`${item.source}:${item.id}`}>
               <button
                 type="button"
                 className="flex w-full items-center gap-1 text-left font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
-                onClick={() => onOpenAlert?.(item)}
+                onClick={() => onOpenWork?.(item)}
                 data-testid="context-rail-alert-row"
               >
-                <span className={`shrink-0 uppercase ${priorityBadgeClass(item.priority)}`}>
-                  {item.priority} · {kindBadgeLabel(item.kind)}
-                </span>
-                <span className="min-w-0 truncate">{item.title}</span>
+                {item.source === 'alert' ? (
+                  <>
+                    <span className={`shrink-0 uppercase ${priorityBadgeClass(item.item.priority)}`}>
+                      {item.item.priority} · {kindBadgeLabel(item.item.kind)}
+                    </span>
+                    <span className="min-w-0 truncate">{item.item.title}</span>
+                  </>
+                ) : (
+                  <>
+                    <span className={`shrink-0 uppercase ${priorityBadgeClass(item.priority >= 3 ? 'high' : item.priority >= 2 ? 'normal' : 'low')}`}>
+                      {item.priority} · blocked
+                    </span>
+                    <span className="min-w-0 truncate">{item.task.title}</span>
+                  </>
+                )}
               </button>
             </li>
           ))}
@@ -650,8 +660,10 @@ export interface ContextRailProps {
   /** Live streaming buffer for the active thread. Passed from ChatConversation
    * so the activity panel can render in-flight tool calls. */
   liveBuffer?: LiveBuffer | null
-  /** Opens an operational alert's Subthread in the chat pane. */
-  onOpenAlert?: (item: ActionQueueItem) => void
+  /** Ranked unresolved alerts and blocked tasks, supplied by ChatPage. */
+  openWork?: OpenWorkItem[]
+  /** Opens an alert conversation or a blocked task detail based on its source. */
+  onOpenWork?: (item: OpenWorkItem) => void
   /** When true the rail collapses to a narrow icon strip. */
   collapsed?: boolean
   /** Callback to toggle the collapsed state from outside. */
@@ -667,7 +679,8 @@ export const ContextRail = ({
   threadDetail,
   isStreaming,
   liveBuffer,
-  onOpenAlert,
+  openWork = [],
+  onOpenWork,
   collapsed = false,
   onToggleCollapse,
 }: ContextRailProps) => {
@@ -678,19 +691,6 @@ export const ContextRail = ({
     staleTime: 15_000,
   })
   const focusResult = useThreadFocus(threadDetail?.thread)
-  const { items: queueItems } = useActionQueue()
-  const alertItems = useMemo(
-    () =>
-      queueItems
-        .filter((item) => isAlertQueueItem(item) && item.resolution == null)
-        .sort((a, b) => {
-          const priorityRank = { high: 3, normal: 2, low: 1 }
-          const priorityDifference = priorityRank[b.priority] - priorityRank[a.priority]
-          return priorityDifference || b.at.localeCompare(a.at)
-        }),
-    [queueItems],
-  )
-
   // Build the activity feed from live buffer + persisted thread history.
   // Only computed when there is an active thread to avoid unnecessary work.
   const activityFeed = useMemo(
@@ -758,7 +758,7 @@ export const ContextRail = ({
         </PanelSection>
       )}
 
-      <AlertsPile items={alertItems} onOpenAlert={onOpenAlert} />
+      <AlertsPile items={openWork} onOpenWork={onOpenWork} />
 
       <ArtifactsRail
         tasks={tasks}

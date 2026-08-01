@@ -11,6 +11,7 @@ const makeTask = (
   error: null,
   dropReason: null,
   retryCount: 0,
+  priority: 2,
   blockerTaskId: null,
   createdAt: '2024-01-01T00:00:00Z',
   updatedAt: '2024-01-01T00:00:00Z',
@@ -52,6 +53,7 @@ describe('groupTasks – card title resolution', () => {
 
     expect(card).toBeDefined()
     expect(card?.title).toBe('Add login feature')
+    expect(card?.priority).toBe(2)
   })
 
   it('falls back to own prompt when originId is not present in the task list', () => {

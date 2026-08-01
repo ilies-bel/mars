@@ -73,6 +73,7 @@ import { PaperclipIcon, MicIcon, SquareIcon, XIcon, PauseIcon } from 'lucide-rea
 import { AgentConfigPanel } from '@/widgets/chat/AgentConfigPanel'
 import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
+import { buildRankedOpenWork, type OpenWorkItem } from '@/widgets/chat/openWork'
 import { ChatHero, type HeroDelta } from '@/widgets/chat/ChatHero'
 import { priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
 import { PROCESS_LEVEL_OPS, QueueThreadDetail } from '@/widgets/chat/QueueThreadDetail'
@@ -2575,6 +2576,10 @@ export const ChatPage = () => {
   // Task snapshot used to surface blocked tasks that are not yet projected into
   // the action queue (e.g. tasks waiting on a blocker that hasn't failed yet).
   const { snapshot: taskSnapshot } = useTasks()
+  const openWork = useMemo(
+    () => buildRankedOpenWork(queueItems, taskSnapshot?.columns.in_progress ?? []),
+    [queueItems, taskSnapshot],
+  )
 
   // Threads at the root so a deep-linked queue item can resolve to its merged
   // alert-origin conversation. React Query dedupes this against the sidebar's
@@ -2804,6 +2809,14 @@ export const ChatPage = () => {
     }
     setActiveSubthreadId(threadId)
   }, [projectId, qc])
+
+  const handleOpenWork = useCallback((item: OpenWorkItem) => {
+    if (item.source === 'blocked-task') {
+      window.location.hash = taskHash(item.task.id, 'chat')
+      return
+    }
+    void handleOpenSubthread(item.item)
+  }, [handleOpenSubthread])
 
   // Alerts rendered in the main thread spawn their subthread the same way the
   // Bell does — through the daemon-deduped startThreadFromAlert — so the two
@@ -3107,7 +3120,8 @@ export const ChatPage = () => {
         threadDetail={activeThreadDetail}
         isStreaming={activeIsStreaming}
         liveBuffer={activeLiveBuffer}
-        onOpenAlert={handleOpenSubthread}
+        openWork={openWork}
+        onOpenWork={handleOpenWork}
         collapsed={railCollapsed}
         onToggleCollapse={() => setRailCollapsed((v) => !v)}
       />

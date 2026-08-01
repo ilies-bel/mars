@@ -51,6 +51,7 @@ const minTask = (overrides: Record<string, unknown> = {}) => ({
   error: null,
   dropReason: null,
   retryCount: 0,
+  priority: 2,
   blockerTaskId: null,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
@@ -142,6 +143,7 @@ describe('fetchTasks', () => {
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe('task-1')
     expect(result[0].status).toBe('queued')
+    expect(result[0].priority).toBe(2)
   })
 
   it('returns an empty array when the server sends an empty task list', async () => {
@@ -283,6 +285,7 @@ const minProgressTask = (overrides: Record<string, unknown> = {}) => ({
   error: null,
   dropReason: null,
   retryCount: 0,
+  priority: 2,
   blockerTaskId: null,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),

@@ -152,6 +152,7 @@ const makeUITask = (id: string, title: string, status = 'blocked') => ({
   failed: false,
   dropReason: null,
   retryCount: 0,
+  priority: 2,
   blockerTaskId: null,
   spec: null,
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -410,6 +411,27 @@ describe('ChatPage — seeded opening message (no thread selected)', () => {
 
     const header = container.querySelector('[data-testid="queue-group-header"]')
     expect(header?.textContent).toContain('2 blocked tasks')
+  })
+
+  it('opens a blocked task from the context rail in its task detail', async () => {
+    mockUseTasks.mockReturnValue({
+      snapshot: makeSnapshot([makeUITask('t1', 'Deploy waiting')]),
+      error: null,
+      connected: true,
+    })
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <ChatPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const row = container.querySelector('[data-testid="context-rail-alert-row"]') as HTMLButtonElement
+    expect(row.textContent).toContain('Deploy waiting')
+    await act(async () => row.click())
+    expect(window.location.hash).toBe('#/task/t1?from=chat')
   })
 
   it('does not duplicate a blocked task already represented in the action queue', async () => {

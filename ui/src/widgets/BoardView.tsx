@@ -46,6 +46,7 @@ const toUI = (t: ProgressTask): UITask => ({
   failed: t.status === 'failed',
   dropReason: t.dropReason ?? null,
   retryCount: t.retryCount ?? 0,
+  priority: t.priority,
   blockerTaskId: t.blockerTaskId ?? null,
   spec: t.spec ?? null,
   failureSignature: t.failureSignature ?? null,

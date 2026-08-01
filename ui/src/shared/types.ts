@@ -27,6 +27,7 @@ export interface UITask {
   failed: boolean
   dropReason: string | null
   retryCount: number
+  priority: number
   blockerTaskId: string | null
   /**
    * Structured-task contract. Null for ad-hoc tasks. When present, the

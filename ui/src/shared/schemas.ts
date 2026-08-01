@@ -85,6 +85,7 @@ export const taskSchema = z.object({
   error: z.string().nullable(),
   dropReason: z.string().nullable(),
   retryCount: z.number(),
+  priority: z.number(),
   blockerTaskId: z.string().nullable().optional(),
   /**
    * Machine-readable failure signature stamped at failure time (e.g.

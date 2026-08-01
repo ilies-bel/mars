@@ -3,13 +3,16 @@ import { describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ContextRail } from './ContextRail'
+import { buildRankedOpenWork } from './openWork'
 import type { ActionQueueItem } from '@/shared/schemas'
+import type { UITask } from '@/shared/types'
 
 const state = vi.hoisted(() => ({
   items: [] as ActionQueueItem[],
   adrs: [] as Array<{ number: number; title: string; slug: string }>,
   queueError: null as Error | null,
   adrsError: null as Error | null,
+  blockedTasks: [] as UITask[],
 }))
 
 vi.mock('@tanstack/react-query', () => ({
@@ -57,6 +60,28 @@ const alert = (id: string): ActionQueueItem => ({
   decisions: [],
 })
 
+const blockedTask = (id: string): UITask => ({
+  id,
+  title: `Blocked ${id}`,
+  status: 'blocked',
+  priority: 2,
+  role: 'orchestrator',
+  failed: false,
+  dropReason: null,
+  retryCount: 0,
+  blockerTaskId: null,
+  spec: null,
+  createdAt: `2026-01-0${id}T00:00:00.000Z`,
+  updatedAt: `2026-01-0${id}T00:00:00.000Z`,
+})
+
+const rail = (onOpenWork?: (item: ReturnType<typeof buildRankedOpenWork>[number]) => void) => (
+  <ContextRail
+    openWork={buildRankedOpenWork(state.items, state.blockedTasks)}
+    onOpenWork={onOpenWork}
+  />
+)
+
 describe('ContextRail piles', () => {
   it('shows exactly three open alert rows by default', async () => {
     state.items = ['1', '2', '3', '4'].map(alert)
@@ -64,7 +89,7 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail />)
+      root.render(rail())
     })
 
     expect(container.querySelectorAll('[data-testid="context-rail-alert-row"]')).toHaveLength(3)
@@ -77,7 +102,7 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail />)
+      root.render(rail())
     })
 
     const toggle = container.querySelector('button[aria-expanded="false"]') as HTMLButtonElement
@@ -96,7 +121,7 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail />)
+      root.render(rail())
     })
 
     expect(container.textContent).not.toContain('See all')
@@ -117,7 +142,7 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail />)
+      root.render(rail())
     })
 
     expect(container.textContent).toContain('Alert open')
@@ -132,27 +157,47 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail />)
+      root.render(rail())
     })
 
     expect(container.textContent).toContain('No alerts')
     await act(async () => root.unmount())
   })
 
-  it('opens the selected alert Subthread through the supplied callback', async () => {
+  it('opens the selected work item through the supplied source-aware callback', async () => {
     const item = alert('open')
-    const onOpenAlert = vi.fn()
+    const onOpenWork = vi.fn()
     state.items = [item]
     const container = document.createElement('div')
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail onOpenAlert={onOpenAlert} />)
+      root.render(rail(onOpenWork))
     })
     await act(async () => (container.querySelector('[data-testid="context-rail-alert-row"]') as HTMLButtonElement).click())
 
-    expect(onOpenAlert).toHaveBeenCalledWith(item)
+    expect(onOpenWork).toHaveBeenCalledWith(expect.objectContaining({ source: 'alert', item }))
     await act(async () => root.unmount())
+  })
+
+  it('includes blocked tasks without relabelling them as alerts and opens their detail callback', async () => {
+    const onOpenWork = vi.fn()
+    state.items = [alert('represented')]
+    state.blockedTasks = [blockedTask('represented'), blockedTask('waiting')]
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(rail(onOpenWork))
+    })
+
+    expect(container.querySelectorAll('[data-testid="context-rail-alert-row"]')).toHaveLength(2)
+    expect(container.textContent).toContain('Blocked waiting')
+    expect(container.textContent).toContain('blocked')
+    await act(async () => (container.querySelectorAll('[data-testid="context-rail-alert-row"]')[1] as HTMLButtonElement).click())
+    expect(onOpenWork).toHaveBeenCalledWith(expect.objectContaining({ source: 'blocked-task', id: 'waiting' }))
+    await act(async () => root.unmount())
+    state.blockedTasks = []
   })
 
   it('shows the three newest ADRs with safe project ADR links', async () => {
@@ -167,7 +212,7 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail projectId="project-1" />)
+      root.render(<ContextRail projectId="project-1" openWork={buildRankedOpenWork(state.items, state.blockedTasks)} />)
     })
 
     const rows = [...container.querySelectorAll('[data-testid="context-rail-adr-row"]')]
@@ -187,7 +232,7 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail />)
+      root.render(rail())
     })
 
     const section = container.querySelector('section[aria-label="ADRs"]') as HTMLElement
@@ -213,7 +258,7 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail />)
+      root.render(rail())
     })
 
     expect(container.querySelector('[aria-label="Context rail"]')).not.toBeNull()

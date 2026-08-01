@@ -11,6 +11,7 @@ const minTask = (id: string, overrides: Partial<UITask> = {}): UITask => ({
   failed: false,
   dropReason: null,
   retryCount: 0,
+  priority: 2,
   blockerTaskId: null,
   spec: null,
   createdAt: '2024-01-01T00:00:00Z',
