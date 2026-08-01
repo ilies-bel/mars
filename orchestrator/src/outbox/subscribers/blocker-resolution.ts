@@ -37,8 +37,18 @@ export async function ensureBlockerResolutionSubscriber(client: DbClient): Promi
  * Drain all pending `task.terminal` events and settle whatever was waiting on
  * the completing task:
  *
- *  - `reason: 'done'`  → unblock any dependent whose every blocker is now
- *    `done` (`Arc.unblockByCompletion`).
+ *  - `reason: 'done'` / `reason: 'dropped'` → unblock any dependent whose every
+ *    blocker has now SETTLED (`Arc.unblockByCompletion`). `dropped` is terminal
+ *    and can never become `done`, so a dependent left waiting on a dropped
+ *    blocker is stranded permanently — the same class of bug as a stranded
+ *    origin, and the same reason the operator had to run `mars unblock` by
+ *    hand. Dropping is an explicit "this work is not happening" decision that
+ *    raises no action-queue row to resolve (ADR-0028 closes rows on `dropped`),
+ *    so parking dependents would give the operator nothing to act on; the
+ *    row-deleting sibling `Arc.drop` already releases dependents inline.
+ *  - `reason: 'purged'` → ignored. `Arc.drop` emits it immediately before
+ *    `DELETE FROM tasks` and has already released dependents in that same
+ *    transaction.
  *  - `reason: 'failed'` → when the failing task is a recovery Chore, fail the
  *    ORIGIN it was spawned for (`Arc.failStrandedOriginOnRecoveryFailure`).
  *    A recovery is a leaf that is never re-run (ADR-0040), so its origin's one
@@ -77,7 +87,7 @@ export async function drainBlockerResolution(
         return failed.length > 0
       }
 
-      if (payload.reason !== 'done') return false
+      if (payload.reason !== 'done' && payload.reason !== 'dropped') return false
 
       const result = await Arc.unblockByCompletion(payload.taskId)
       return result.outcomes.some((o) => o.outcome === 'queued' || o.outcome === 'failed')

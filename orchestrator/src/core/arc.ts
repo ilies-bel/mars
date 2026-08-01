@@ -35,6 +35,7 @@ import {
   updateTask,
   resolveQueueClient,
   MAX_PRIORITY,
+  UNSETTLED_BLOCKER_SQL,
   type Task,
   type TaskPlan,
   type TaskStatus,
@@ -603,7 +604,7 @@ export class Arc {
                    AND NOT EXISTS (
                      SELECT 1 FROM task_blockers b
                      JOIN tasks t ON t.id = b.blocker_task_id
-                     WHERE b.task_id = ? AND t.status != 'done'
+                     WHERE b.task_id = ? AND ${UNSETTLED_BLOCKER_SQL}
                        AND b.state IN ('confirmed', 'pending-review')
                    )`,
           args: [now, taskId, taskId],
@@ -643,7 +644,7 @@ export class Arc {
                  AND NOT EXISTS (
                    SELECT 1 FROM task_blockers b
                    JOIN tasks t ON t.id = b.blocker_task_id
-                   WHERE b.task_id = ? AND t.status != 'done'
+                   WHERE b.task_id = ? AND ${UNSETTLED_BLOCKER_SQL}
                      AND b.state IN ('confirmed', 'pending-review')
                  )`,
         args: [now, taskId, taskId],
@@ -2287,10 +2288,16 @@ export class Arc {
 
   /**
    * Unblock-by-completion write funnel (ADR-0052 sole-writer). When a task
-   * lands `done`, look up every task that has it listed as a blocker in
-   * `task_blockers` and transition each from `blocked` -> `queued` (or
-   * `failed` if the retry budget is exhausted). A dependent only flips if
-   * every one of its blockers resolves to a `done` task.
+   * SETTLES — reaches `done` or `dropped`, see
+   * {@link SETTLED_BLOCKER_STATUSES} — look up every task that has it listed
+   * as a blocker in `task_blockers` and transition each from `blocked` ->
+   * `queued`. A dependent only flips if every one of its blockers has settled.
+   *
+   * "Completion" here means the blocker's lifecycle completed WITHOUT failing:
+   * `dropped` is as final as `done` and can never become `done`, so a
+   * dependent left waiting on it is stranded permanently. `failed` is NOT
+   * settled and is not routed here — a failed blocker keeps its dependents in
+   * `blocked` for operator resolution (the failure does not cascade).
    *
    * STATIC because the subscriber/daemon call this with a *blocker* id that is
    * not an arc root — the relocated body keeps the per-row `store.atomic` scope
@@ -2310,8 +2317,12 @@ export class Arc {
   ): Promise<UnblockByTaskResult> {
     // Diagnose Chore intercept — must run before the generic blocker loop so
     // the parent is never flipped to 'queued' through the ordinary path.
+    // The verdict branch only owns a diagnose Chore that actually SUCCEEDED —
+    // a dropped diagnose Chore produced no verdict to act on, so it falls
+    // through to the ordinary settlement loop below (which releases the
+    // parent instead of consulting a verdict that does not exist).
     const completingTask = await getTask(blockerTaskId)
-    if (completingTask?.kind === 'diagnose') {
+    if (completingTask?.kind === 'diagnose' && completingTask.status === 'done') {
       // Dynamic import breaks the potential cycle with diagnose-followup.
       // Best-effort: a followup failure must not mask the Chore's done event.
       try {
@@ -2347,7 +2358,7 @@ export class Arc {
         sql: `SELECT 1
                 FROM task_blockers b
                 JOIN tasks t ON t.id = b.blocker_task_id
-               WHERE b.task_id = ? AND t.status != 'done'
+               WHERE b.task_id = ? AND ${UNSETTLED_BLOCKER_SQL}
                  AND b.state IN ('confirmed', 'pending-review')
                LIMIT 1`,
         args: [row.id],
@@ -2761,12 +2772,16 @@ export class Arc {
     // eligible dependents at unblock time — mars-3d63fe52.)
     const now = new Date().toISOString()
 
-    // Any confirmed/pending-review blocker edge whose blocker is not yet done?
+    // Any confirmed/pending-review blocker edge whose blocker has not settled
+    // (SETTLED_BLOCKER_STATUSES: done or dropped)? This is also the boot-time
+    // heal for rows already stranded behind a `dropped` blocker: the
+    // `orphaned-blocked-scan` reconciler drives every `blocked` row through
+    // here via Arc.recoverAllBlocked on each daemon start.
     const incomplete = await store.query({
       sql: `SELECT 1
               FROM task_blockers b
               JOIN tasks t ON t.id = b.blocker_task_id
-             WHERE b.task_id = ? AND t.status != 'done'
+             WHERE b.task_id = ? AND ${UNSETTLED_BLOCKER_SQL}
                AND b.state IN ('confirmed', 'pending-review')
              LIMIT 1`,
       args: [taskId],
@@ -2899,7 +2914,12 @@ export class Arc {
           sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
           args: [row.id, committerTaskId],
         })
-        // Re-queue only when no other non-terminal blocker still exists.
+        // Re-queue only when no other non-terminal blocker still exists. This
+        // release path is deliberately wider than UNSETTLED_BLOCKER_SQL: a
+        // dead committer's siblings are being rescued, so `failed` blockers
+        // are ignored here too. `dropped` belongs in the same list for the
+        // same reason it belongs in SETTLED_BLOCKER_STATUSES — it is terminal
+        // and can never reach `done`.
         // updated_at precedes status in the SET clause — the conditional WHERE
         // cannot be expressed through setTaskStatus; the task.unblocked event is
         // emitted atomically in the same transaction (ADR-0030).
@@ -2912,7 +2932,7 @@ export class Arc {
                        FROM task_blockers b
                        JOIN tasks t2 ON t2.id = b.blocker_task_id
                       WHERE b.task_id = ?
-                        AND t2.status NOT IN ('done', 'failed')
+                        AND t2.status NOT IN ('done', 'failed', 'dropped')
                         AND b.state IN ('confirmed', 'pending-review')
                    )`,
           args: [now, row.id, row.id],

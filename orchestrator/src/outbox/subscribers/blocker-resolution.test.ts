@@ -205,6 +205,76 @@ describe('blocker-resolution outbox subscriber', () => {
     expect((await q.getTask(dep.id))?.status).toBe('blocked')
   })
 
+  // Regression: a `dropped` blocker is terminal and can never reach `done`, so
+  // a dependent waiting on it was stranded in `blocked` forever. Live case:
+  // mars-95f2318e blocked on fix-3a03bbf2 (dropReason='arc-rescued'), cleared
+  // by hand with `mars unblock`.
+  it('releases a dependent whose only unsatisfied blocker is dropped', async () => {
+    const { q, sub, pub } = await loadModules(repo)
+    const dep = await q.enqueueTask('dependent', undefined, { skipTriage: true })
+    const blocker = await q.enqueueTask('blocker', undefined, { skipTriage: true })
+    await blockTask(q, dep.id, blocker.id)
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'dropped' WHERE id = ?`,
+      args: [blocker.id],
+    })
+
+    await sub.ensureBlockerResolutionSubscriber(q.resolveQueueClient())
+    await pub.publishWithRetry(q.resolveQueueClient(), 'task.terminal', {
+      taskId: blocker.id,
+      reason: 'dropped',
+    })
+    const { processed } = await sub.drainBlockerResolution(q.resolveQueueClient())
+
+    expect(processed).toBeGreaterThan(0)
+    expect((await q.getTask(dep.id))?.status).toBe('queued')
+  })
+
+  it('keeps a dependent blocked when a dropped blocker is not its last unsettled one', async () => {
+    const { q, sub, pub } = await loadModules(repo)
+    const dep = await q.enqueueTask('dependent', undefined, { skipTriage: true })
+    const droppedBlocker = await q.enqueueTask('dropped-blocker', undefined, { skipTriage: true })
+    const liveBlocker = await q.enqueueTask('live-blocker', undefined, { skipTriage: true })
+    await blockTask(q, dep.id, droppedBlocker.id)
+    await q.addBlockers(dep.id, [liveBlocker.id])
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'dropped' WHERE id = ?`,
+      args: [droppedBlocker.id],
+    })
+
+    await sub.ensureBlockerResolutionSubscriber(q.resolveQueueClient())
+    await pub.publishWithRetry(q.resolveQueueClient(), 'task.terminal', {
+      taskId: droppedBlocker.id,
+      reason: 'dropped',
+    })
+    await sub.drainBlockerResolution(q.resolveQueueClient())
+
+    expect((await q.getTask(dep.id))?.status).toBe('blocked')
+  })
+
+  // The `failed` half of the contract must NOT change: an ordinary failed
+  // blocker still parks its dependents for operator resolution (CLAUDE.md
+  // § Blockers — "the failure does not cascade down the chain").
+  it('still strands a dependent behind an ordinary failed blocker (no cascade release)', async () => {
+    const { q, sub, pub } = await loadModules(repo)
+    const dep = await q.enqueueTask('dependent', undefined, { skipTriage: true })
+    const blocker = await q.enqueueTask('blocker', undefined, { skipTriage: true })
+    await blockTask(q, dep.id, blocker.id)
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
+      args: [blocker.id],
+    })
+
+    await sub.ensureBlockerResolutionSubscriber(q.resolveQueueClient())
+    await pub.publishWithRetry(q.resolveQueueClient(), 'task.terminal', {
+      taskId: blocker.id,
+      reason: 'failed',
+    })
+    await sub.drainBlockerResolution(q.resolveQueueClient())
+
+    expect((await q.getTask(dep.id))?.status).toBe('blocked')
+  })
+
   it('is idempotent — draining twice on the same event is a no-op the second time', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, sub, pub } = await loadModules(repo)
