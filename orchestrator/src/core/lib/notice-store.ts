@@ -37,7 +37,10 @@ export interface NoticeRow {
   payload: Record<string, unknown>
   body: string
   source: string | null
+  failureSignature: string | null
+  count: number
   createdAt: string
+  updatedAt: string
   acknowledgedAt: string | null
   preloadedResponses: Array<PreloadedResponse & { entityId: string }>
 }
@@ -52,7 +55,10 @@ interface StoredNoticeRow {
   payload: string
   body: string
   source: string | null
+  failure_signature: string | null
+  count: number
   created_at: string
+  updated_at: string
   acknowledged_at: string | null
 }
 
@@ -106,7 +112,10 @@ const rowToNotice = (row: Record<string, unknown>): Notice => {
     payload,
     body: r.body,
     source: r.source ?? null,
+    failureSignature: r.failure_signature ?? null,
+    count: r.count ?? 1,
     createdAt: r.created_at,
+    updatedAt: r.updated_at ?? r.created_at,
     acknowledgedAt: r.acknowledged_at ?? null,
     preloadedResponses: preloadedResponsesFor(r.kind, payload),
   }
@@ -127,35 +136,44 @@ export const createNotice = async (
   const c = stateClient()
   const id = generateNoticeId()
   const ts = now()
+  const failureSignature =
+    (typeof payload['failureSignature'] === 'string' && payload['failureSignature']) ||
+    (typeof payload['signature'] === 'string' && payload['signature']) ||
+    null
   const notice: Notice = {
     id,
     kind,
     payload,
     body: '',
     source,
+    failureSignature,
+    count: 1,
     createdAt: ts,
+    updatedAt: ts,
     acknowledgedAt: null,
     preloadedResponses: preloadedResponsesFor(kind, payload),
   }
-  const { noticeToChatMessage, appendMessage } = await import('./chat-store.js')
+  const { noticeToChatMessage, upsertNoticeChatMessage } = await import('./chat-store.js')
   const message = noticeToChatMessage(notice)
   notice.body = message.body
-  await c.execute({
-    sql: `INSERT INTO notices (id, kind, payload, body, source, created_at, acknowledged_at)
-          VALUES (?, ?, ?, ?, ?, ?, NULL)`,
-    args: [id, kind, JSON.stringify(payload), message.body, source, ts],
+  const result = await c.execute({
+    sql: `INSERT INTO notices
+            (id, kind, payload, body, source, failure_signature, count, created_at, updated_at, acknowledged_at)
+          VALUES (?, ?, ?, ?, ?, ?, 1, ?, now(), NULL)
+          ON CONFLICT (failure_signature) WHERE acknowledged_at IS NULL
+          DO UPDATE SET count = notices.count + 1, updated_at = now()
+          RETURNING *`,
+    args: [id, kind, JSON.stringify(payload), message.body, source, failureSignature, ts],
   })
-  const currentFeed = await c.execute(`
-    SELECT id FROM chat_threads
-     WHERE evaporated_at IS NULL
-     ORDER BY updated_at DESC, created_at DESC, id DESC
-     LIMIT 1
-  `)
-  const threadId = (currentFeed.rows[0] as { id?: unknown } | undefined)?.id
-  if (typeof threadId === 'string') {
-    await appendMessage(threadId, 'assistant', message.body)
-  }
-  return notice
+  const saved = rowToNotice(result.rows[0] as Record<string, unknown>)
+  const updatedMessage = noticeToChatMessage(saved)
+  saved.body = updatedMessage.body
+  await c.execute({
+    sql: `UPDATE notices SET body = ? WHERE id = ?`,
+    args: [saved.body, saved.id],
+  })
+  await upsertNoticeChatMessage(saved.id, saved.body)
+  return saved
 }
 
 /** List every open (unacknowledged) Notice, newest-first. */

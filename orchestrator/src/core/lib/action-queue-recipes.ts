@@ -576,9 +576,9 @@ const RECIPE_DEFINITIONS = {
   'signature-storm': {
     humanSummary: (ctx) => {
       const signature = str(ctx.payload['signature'])
-      const streak = ctx.payload['streak']
+      const count = ctx.payload['count'] ?? ctx.payload['streak']
       return signature
-        ? `The same failure ("${signature}") hit ${streak} tasks in a row — the environment may be broken. Queue is PAUSED.`
+        ? `${count} tasks failed with signature ${signature}.`
         : 'The same failure hit multiple tasks in a row — the environment may be broken. Queue is PAUSED.'
     },
     humanDetail: (ctx) => ({
@@ -587,7 +587,7 @@ const RECIPE_DEFINITIONS = {
       signature: str(ctx.payload['signature']),
       streak: ctx.payload['streak'],
     }),
-    verbs: [],
+    verbs: [{ op: 'show-all', label: 'Show all', style: 'default' }],
   },
 
   'gate-enrichment': {

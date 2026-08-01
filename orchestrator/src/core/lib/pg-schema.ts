@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0012'
+export const SCHEMA_VERSION = '0013'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -733,19 +733,34 @@ const DDL: readonly string[] = [
   // no backing entity, so it clears only when the operator acknowledges it —
   // `acknowledged_at` stamps that gesture.
   `CREATE TABLE IF NOT EXISTS notices (
-    id              text PRIMARY KEY,
-    kind            text NOT NULL,
-    payload         text NOT NULL DEFAULT '{}',
-    body            text NOT NULL,
-    source          text,
-    created_at      text NOT NULL,
-    acknowledged_at text
+    id                text PRIMARY KEY,
+    kind              text NOT NULL,
+    payload           text NOT NULL DEFAULT '{}',
+    body              text NOT NULL,
+    source            text,
+    failure_signature text,
+    count             integer NOT NULL DEFAULT 1,
+    created_at        text NOT NULL,
+    updated_at        timestamptz NOT NULL DEFAULT now(),
+    acknowledged_at   text
   )`,
   // Existing Notice rows predate recipe-backed rendering. Keep them readable
   // while new writes always provide their own typed kind and payload.
   `ALTER TABLE IF EXISTS notices ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'spend-control-notice'`,
   `ALTER TABLE IF EXISTS notices ADD COLUMN IF NOT EXISTS payload text NOT NULL DEFAULT '{}'`,
+  `ALTER TABLE IF EXISTS notices ADD COLUMN IF NOT EXISTS failure_signature text`,
+  `ALTER TABLE IF EXISTS notices ADD COLUMN IF NOT EXISTS count integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE IF EXISTS notices ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()`,
   `CREATE INDEX IF NOT EXISTS idx_notices_acknowledged_at ON notices(acknowledged_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS uq_notices_open_failure_signature
+     ON notices(failure_signature) WHERE acknowledged_at IS NULL`,
+  // A Notice's chat mirror is an updateable projection rather than an
+  // append-only transcript entry. Add this after `notices` exists so the FK
+  // remains valid for fresh databases as well as upgrades.
+  `ALTER TABLE IF EXISTS chat_messages
+     ADD COLUMN IF NOT EXISTS notice_id text REFERENCES notices(id) ON DELETE CASCADE`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_messages_notice_id
+     ON chat_messages(notice_id) WHERE notice_id IS NOT NULL`,
 
   // ── settings / preferences ────────────────────────────────────────────────
   `CREATE TABLE IF NOT EXISTS app_settings (
