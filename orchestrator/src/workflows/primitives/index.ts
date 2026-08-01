@@ -2513,7 +2513,18 @@ export const review = async (
         // Build firstFailedOutput with the gate identity, exit code, and
         // stderr excerpt so the Fixer prompt shows the real failure context.
         const firstFailed = failed[0]
-        const firstFailedOutput = firstFailed
+        // A conventional 128+N exit means the child died from signal N, not
+        // that its verify command reported a defect. Keep the signal separate
+        // from the gate that happened to be running: otherwise a SIGTERM while
+        // typecheck runs is incorrectly recorded as `verify:typecheck`.
+        const killedBy =
+          firstFailed?.exitCode === 143
+            ? 'sigterm'
+            : firstFailed?.exitCode === 137
+              ? 'sigkill'
+              : null
+        const failingStep = killedBy === null ? `verify:${firstFailedName}` : 'verify:killed'
+        const firstFailedOutputBody = firstFailed
           ? firstFailed.cmd !== undefined
             ? failureExcerpt(
                 [
@@ -2530,6 +2541,14 @@ export const review = async (
               )
             : failureExcerpt(firstFailed.output)
           : summary
+        // `computeFailureSignature` preserves an explicit signature at the
+        // start of the output. This lets the downstream failure handler derive
+        // the same infrastructure signature instead of reclassifying an empty
+        // killed child as an unclassified typecheck failure.
+        const firstFailedOutput =
+          killedBy === null
+            ? firstFailedOutputBody
+            : `${failingStep}/${killedBy}\n${firstFailedOutputBody}`
         const ranVerifySteps: RanVerifyStep[] = r.steps
           .filter(
             (s): s is typeof s & { cmd: string; stepDir: string } =>
@@ -2543,8 +2562,8 @@ export const review = async (
             passed: s.passed,
           }))
         const verifySignature = computeFailureSignature(
-          `verify:${firstFailedName}`,
-          summary,
+          failingStep,
+          firstFailedOutput,
         )
         await updateTask(
           taskId,
@@ -2552,7 +2571,7 @@ export const review = async (
             status: 'failed',
             error: summary,
             failedPhase: 'verify',
-            failureReason: `verify:${firstFailedName}`,
+            failureReason: failingStep,
             failureSignature: verifySignature,
             failureReasonCode: verifySignature,
           },
@@ -2569,7 +2588,7 @@ export const review = async (
           fn: () =>
             handleTaskFailureWithFixTask({
               taskId,
-              failingStep: `verify:${firstFailedName}`,
+              failingStep,
               errorOutput: firstFailedOutput,
               branch,
               ranVerifySteps,

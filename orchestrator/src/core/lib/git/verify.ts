@@ -217,7 +217,11 @@ const runVerifyStep = async (
   const output =
     signal?.aborted
       ? `step killed by abort signal\n${rawOutput}`
-      : rawOutput
+      : r.exitCode === 143
+        ? `verify child killed by SIGTERM (exit 143)\n${rawOutput}`
+        : r.exitCode === 137
+          ? `verify child killed by SIGKILL (exit 137)\n${rawOutput}`
+          : rawOutput
   return {
     name,
     passed: false,

@@ -685,6 +685,16 @@ export const computeFailureSignature = (
   rawFailingStep: string,
   errorOutput: string,
 ): string => {
+  // `runVerifyStep` adds this marker when a child exits by SIGTERM or
+  // SIGKILL. It must override the command's nominal gate name: a SIGTERM
+  // during `typecheck` is an infrastructure kill, not a type error.
+  const kill = firstNonBlankLine(errorOutput).match(
+    /^verify child killed by SIG(TERM|KILL) \(exit 1(?:43|37)\)$/i,
+  )
+  if (kill !== null) {
+    return `verify:killed/sig${kill[1]!.toLowerCase()}`
+  }
+
   // Normalise the step id. Prose values (e.g. "Re-queue time bound exceeded:
   // 1 attempt(s) over 270m …") fail the grammar and are replaced with
   // UNKNOWN_STEP_ID so no prose can reach the signature.

@@ -16,6 +16,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { verifyChanges } from '../verify'
+import { computeFailureSignature } from '../../failure-signature'
 
 describe('VerifyStep — exitCode / stdout / stderr fields', () => {
   let tmpDir: string
@@ -82,6 +83,28 @@ describe('VerifyStep — exitCode / stdout / stderr fields', () => {
     expect(step!.stderr).toContain('errout')
     // output (merged) must still contain the text
     expect(step!.output).toContain('errout')
+  })
+
+  it('classifies a verify child exiting 143 as SIGTERM, never as a typecheck failure', async () => {
+    tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-verify-fields-sigterm-'))
+
+    const result = await verifyChanges({
+      cwd: tmpDir,
+      steps: [
+        {
+          name: 'typecheck',
+          cmd: 'node',
+          args: ['-e', 'process.exit(143)'],
+          required: true,
+        },
+      ],
+    })
+
+    const step = result.steps[0]!
+    expect(step.exitCode).toBe(143)
+    expect(computeFailureSignature('verify:typecheck', step.output)).toBe(
+      'verify:killed/sigterm',
+    )
   })
 
   it(

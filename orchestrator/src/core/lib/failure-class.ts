@@ -69,6 +69,7 @@ export function classifyFailure(failureSignature: string): FailureCategory {
 
   if (
     failureSignature.startsWith('phantom-task watchdog:') ||
+    failureSignature.startsWith('verify:killed/') ||
     failureSignature.endsWith('/install-timeout') ||
     // The daemon cannot write <repo>/.git/worktrees/<id>/ — a sandbox or
     // permission condition on the host. A recovery fixer would fail at the

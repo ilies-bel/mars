@@ -185,6 +185,7 @@ describe('verify — command failure persists stdout+stderr+exitCode+gate identi
     // Must include the full command (cmd + args joined).
     expect(errorOutput).toContain('npm test')
   })
+
 })
 
 // ---------------------------------------------------------------------------

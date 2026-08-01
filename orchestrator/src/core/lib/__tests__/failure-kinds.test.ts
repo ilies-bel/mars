@@ -5,6 +5,7 @@ import {
   WORKTREE_MISSING_ACTIONS,
   failedTaskTitle,
   isGenericFailureLabel,
+  isEnvironmentalSignature,
   lookupFailureKind,
   unknownFailureKind,
 } from '../failure-kinds'
@@ -28,6 +29,12 @@ describe('FAILURE_KINDS registry', () => {
     expect(FAILURE_KINDS.map((k) => k.signature)).toContain(
       'verify:has-diff/no-commits-ahead',
     )
+  })
+
+  it('labels SIGTERM-killed verification as an environmental kill', () => {
+    const entry = lookupFailureKind('verify:killed/sigterm')
+    expect(entry?.warmTitle).toBe('Verification was killed before it could finish')
+    expect(isEnvironmentalSignature('verify:killed/sigterm')).toBe(true)
   })
 
   it('contains an entry for verify:worktree-hygiene/worktree-missing', () => {

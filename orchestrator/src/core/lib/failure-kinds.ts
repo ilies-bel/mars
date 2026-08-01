@@ -565,6 +565,28 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: DEFAULT_ACTIONS,
       },
 
+      // ── verify:killed ───────────────────────────────────────────────────
+      // A 128+signal exit is process death, not evidence that the command
+      // which happened to be running failed. These signatures auto-requeue
+      // through the environmental restart path instead of spending the task's
+      // single recovery attempt on a non-existent code defect.
+      {
+        signature: 'verify:killed/sigterm',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: 'Verification was killed before it could finish',
+        verboseReason:
+          'The verification process received SIGTERM before reporting a result. The task is re-queued so verification can run again.',
+        actions: DEFAULT_ACTIONS,
+      },
+      {
+        signature: 'verify:killed/sigkill',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: 'Verification was killed before it could finish',
+        verboseReason:
+          'The verification process received SIGKILL before reporting a result. This commonly indicates host memory pressure; the task is re-queued so verification can run again.',
+        actions: DEFAULT_ACTIONS,
+      },
+
       // ── verify:test ──────────────────────────────────────────────────────
       // The verify step ran the project's test suite and it failed. The
       // assertion sub-class has a registered recovery recipe of the same
