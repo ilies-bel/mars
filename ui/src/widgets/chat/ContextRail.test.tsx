@@ -2,8 +2,7 @@
  * ContextRail component tests.
  *
  * Covers observable behaviour through the public interface:
- *   - The "Live tasks" panel is absent from the rail (replaced by session context).
- *   - The always-visible artifact rail presents Tasks, Files, and Meta.
+ *   - The thread-scoped artifact rail presents Tasks, Files, and Meta.
  *   - Focus panel: renders the active thread title + status chip, or a
  *     "No active thread" placeholder when no thread is active.
  *
@@ -23,6 +22,7 @@ import type { ActionQueueItem, ChatThreadDetail, ProgressTask } from '@/shared/s
 // vi.hoisted ensures the state object is initialised before vi.mock factories run.
 const mockState = vi.hoisted(() => ({
   queryOverride: null as ((opts: { queryKey: unknown[] }) => unknown) | null,
+  threadTasks: {} as Record<string, string[]>,
 }))
 
 // Shared state for useThreadFocus hook mocks.
@@ -32,11 +32,18 @@ const mockFocusState = vi.hoisted(() => ({
   tasks: null as ProgressTask[] | null,
 }))
 
-// All panels (Glossary, Skills, SessionArtifacts, Vision) call useQuery.
+// Query-backed panels call useQuery.
 // The default returns isLoading=true (a safe "Loading…" state for most tests).
 // Tests that need specific data can set mockState.queryOverride.
 vi.mock('@tanstack/react-query', () => ({
   useQuery: (opts: { queryKey: unknown[] }) => {
+    if (opts.queryKey[0] === 'thread-tasks') {
+      return {
+        data: mockState.threadTasks[String(opts.queryKey[1])] ?? [],
+        isLoading: false,
+        isError: false,
+      }
+    }
     if (mockState.queryOverride) return mockState.queryOverride(opts)
     return { data: undefined, isLoading: true, isError: false }
   },
@@ -87,44 +94,15 @@ vi.mock('@/hooks/useProgress', () => ({
 const renderRail = () => {
   mockState.queryOverride = null
   return renderToStaticMarkup(
-    <ContextRail sessionStartedAt={0} onInsertPrompt={() => {}} />,
+    <ContextRail />,
   )
 }
 
 // ---------------------------------------------------------------------------
-// Absence of Live tasks panel
+// Presence of thread context panels
 // ---------------------------------------------------------------------------
 
-describe('ContextRail – Live tasks panel is absent', () => {
-  it('does not render a "Live tasks" section header', () => {
-    const html = renderRail()
-    // Case-insensitive check: the section title must not appear anywhere.
-    expect(html.toLowerCase()).not.toContain('live tasks')
-  })
-
-  it('does not render a status chip link to the Progress page', () => {
-    const html = renderRail()
-    // The Live tasks panel rendered status chips as links to #/progress?q=...
-    expect(html).not.toContain('#/progress?q=')
-  })
-
-  it('does not render the context-rail-description test id', () => {
-    const html = renderRail()
-    // That test id was specific to Live tasks rows.
-    expect(html).not.toContain('data-testid="context-rail-description"')
-  })
-
-  it('does not render the context-rail-status-link test id', () => {
-    const html = renderRail()
-    expect(html).not.toContain('data-testid="context-rail-status-link"')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Presence of session context panels
-// ---------------------------------------------------------------------------
-
-describe('ContextRail – session context panels are present', () => {
+describe('ContextRail – thread context panels are present', () => {
   it('renders the four artifact section headers', () => {
     const html = renderRail()
     expect(html).toContain('Tasks')
@@ -138,10 +116,6 @@ describe('ContextRail – session context panels are present', () => {
     expect(html).toContain('Glossary')
   })
 
-  it('renders the Skills section header', () => {
-    const html = renderRail()
-    expect(html).toContain('Skills')
-  })
 })
 
 // ---------------------------------------------------------------------------
@@ -174,8 +148,6 @@ describe('ContextRail – Focus panel', () => {
     }
     const html = renderToStaticMarkup(
       <ContextRail
-        sessionStartedAt={0}
-        onInsertPrompt={() => {}}
         activeThreadId="thread-focus-1"
         threadDetail={threadDetail}
         isStreaming={true}
@@ -205,8 +177,6 @@ describe('ContextRail – Focus panel', () => {
     }
     const html = renderToStaticMarkup(
       <ContextRail
-        sessionStartedAt={0}
-        onInsertPrompt={() => {}}
         activeThreadId="thread-focus-2"
         threadDetail={threadDetail}
         isStreaming={false}
@@ -219,6 +189,32 @@ describe('ContextRail – Focus panel', () => {
 
 
 describe('ContextRail – artifact rail', () => {
+  it('renders only tasks linked to the selected thread and shows an empty state for an unlinked thread', () => {
+    mockState.threadTasks = {
+      'thread-with-tasks': ['mars-linked-one', 'mars-linked-two'],
+      'thread-without-tasks': [],
+    }
+
+    const linkedHtml = renderToStaticMarkup(
+      <ContextRail
+        threadId="thread-with-tasks"
+        activeThreadId="thread-with-tasks"
+      />,
+    )
+    const emptyHtml = renderToStaticMarkup(
+      <ContextRail
+        threadId="thread-without-tasks"
+        activeThreadId="thread-without-tasks"
+      />,
+    )
+    mockState.threadTasks = {}
+
+    expect(linkedHtml.match(/data-testid="context-rail-task-row"/g)).toHaveLength(2)
+    expect(linkedHtml).toContain('mars-linked-one')
+    expect(linkedHtml).toContain('mars-linked-two')
+    expect(emptyHtml).toContain('No tasks created in this thread')
+  })
+
   it('renders linked task, file, and project-meta sections', () => {
     const html = renderToStaticMarkup(
       <ArtifactsRail
@@ -245,7 +241,7 @@ describe('ContextRail – artifact rail', () => {
 
   describe('Tasks section', () => {
     it('keeps a subdued placeholder when no tasks were created', () => {
-      expect(renderEmptyArtifactRail()).toContain('No tasks created this session')
+      expect(renderEmptyArtifactRail()).toContain('No tasks created in this thread')
     })
   })
 
@@ -312,8 +308,6 @@ describe('ContextRail – FocusPanel linked entity', () => {
 
     const html = renderToStaticMarkup(
       <ContextRail
-        sessionStartedAt={0}
-        onInsertPrompt={() => {}}
         activeThreadId="thread-alert-1"
         threadDetail={threadDetail}
       />,
@@ -378,8 +372,6 @@ describe('ContextRail – FocusPanel linked entity', () => {
 
     const html = renderToStaticMarkup(
       <ContextRail
-        sessionStartedAt={0}
-        onInsertPrompt={() => {}}
         activeThreadId="thread-task-1"
         threadDetail={threadDetail}
       />,
@@ -454,8 +446,6 @@ describe('ContextRail – FocusPanel linked entity', () => {
 
     const html = renderToStaticMarkup(
       <ContextRail
-        sessionStartedAt={0}
-        onInsertPrompt={() => {}}
         activeThreadId="thread-criteria-1"
         threadDetail={threadDetail}
       />,
@@ -514,8 +504,6 @@ describe('ContextRail – FocusPanel linked entity', () => {
 
     const html = renderToStaticMarkup(
       <ContextRail
-        sessionStartedAt={0}
-        onInsertPrompt={() => {}}
         activeThreadId="thread-alert-only"
         threadDetail={threadDetail}
       />,
@@ -579,8 +567,6 @@ describe('ContextRail – FocusPanel linked entity', () => {
 
     const html = renderToStaticMarkup(
       <ContextRail
-        sessionStartedAt={0}
-        onInsertPrompt={() => {}}
         activeThreadId="thread-empty-1"
         threadDetail={threadDetail}
       />,
@@ -611,8 +597,6 @@ describe('ContextRail – FocusPanel linked entity', () => {
 
     const html = renderToStaticMarkup(
       <ContextRail
-        sessionStartedAt={0}
-        onInsertPrompt={() => {}}
         activeThreadId="thread-unlinked"
         threadDetail={threadDetail}
       />,
@@ -678,8 +662,6 @@ describe('ContextRail – FocusPanel verbs row', () => {
 
     const html = renderToStaticMarkup(
       <ContextRail
-        sessionStartedAt={0}
-        onInsertPrompt={() => {}}
         activeThreadId="thread-verbs-1"
         threadDetail={threadDetail}
       />,
@@ -744,8 +726,6 @@ describe('ContextRail – FocusPanel verbs row', () => {
 
     const html = renderToStaticMarkup(
       <ContextRail
-        sessionStartedAt={0}
-        onInsertPrompt={() => {}}
         activeThreadId="thread-task-only"
         threadDetail={threadDetail}
       />,
@@ -803,8 +783,6 @@ describe('ContextRail – FocusPanel verbs row', () => {
 
     const html = renderToStaticMarkup(
       <ContextRail
-        sessionStartedAt={0}
-        onInsertPrompt={() => {}}
         activeThreadId="thread-resolved-1"
         threadDetail={threadDetail}
       />,

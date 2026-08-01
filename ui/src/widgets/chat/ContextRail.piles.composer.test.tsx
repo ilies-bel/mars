@@ -64,7 +64,7 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail sessionStartedAt={0} onInsertPrompt={() => {}} />)
+      root.render(<ContextRail />)
     })
 
     expect(container.querySelectorAll('[data-testid="context-rail-alert-row"]')).toHaveLength(3)
@@ -77,7 +77,7 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail sessionStartedAt={0} onInsertPrompt={() => {}} />)
+      root.render(<ContextRail />)
     })
 
     const toggle = container.querySelector('button[aria-expanded="false"]') as HTMLButtonElement
@@ -96,7 +96,7 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail sessionStartedAt={0} onInsertPrompt={() => {}} />)
+      root.render(<ContextRail />)
     })
 
     expect(container.textContent).not.toContain('See all')
@@ -117,7 +117,7 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail sessionStartedAt={0} onInsertPrompt={() => {}} />)
+      root.render(<ContextRail />)
     })
 
     expect(container.textContent).toContain('Alert open')
@@ -132,7 +132,7 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail sessionStartedAt={0} onInsertPrompt={() => {}} />)
+      root.render(<ContextRail />)
     })
 
     expect(container.textContent).toContain('No alerts')
@@ -147,7 +147,7 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail sessionStartedAt={0} onInsertPrompt={() => {}} onOpenAlert={onOpenAlert} />)
+      root.render(<ContextRail onOpenAlert={onOpenAlert} />)
     })
     await act(async () => (container.querySelector('[data-testid="context-rail-alert-row"]') as HTMLButtonElement).click())
 
@@ -167,7 +167,7 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail projectId="project-1" sessionStartedAt={0} onInsertPrompt={() => {}} />)
+      root.render(<ContextRail projectId="project-1" />)
     })
 
     const rows = [...container.querySelectorAll('[data-testid="context-rail-adr-row"]')]
@@ -185,7 +185,7 @@ describe('ContextRail piles', () => {
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<ContextRail sessionStartedAt={0} onInsertPrompt={() => {}} />)
+      root.render(<ContextRail />)
     })
 
     expect(container.querySelector('[aria-label="Context rail"]')).not.toBeNull()

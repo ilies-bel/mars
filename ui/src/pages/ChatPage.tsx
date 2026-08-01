@@ -2553,9 +2553,6 @@ export const ChatPage = () => {
     if (isMdScreen) setSidebarOpen(false)
   }, [isMdScreen])
 
-  // Capture the epoch ms when this ChatPage first mounts so the right rail can
-  // keep its tasks and ADRs scoped to this operator session.
-  const sessionStartedAt = useRef(Date.now()).current
   const qc = useQueryClient()
 
   // Live queue rows + resolved-rows archive back the main-pane detail / resolved
@@ -2567,17 +2564,6 @@ export const ChatPage = () => {
   // Task snapshot used to surface blocked tasks that are not yet projected into
   // the action queue (e.g. tasks waiting on a blocker that hasn't failed yet).
   const { snapshot: taskSnapshot } = useTasks()
-
-  const sessionTaskIds = useMemo(
-    () =>
-      taskSnapshot
-        ? Object.values(taskSnapshot.columns)
-            .flat()
-            .filter((task) => Date.parse(task.createdAt) >= sessionStartedAt)
-            .map((task) => task.id)
-        : [],
-    [taskSnapshot, sessionStartedAt],
-  )
 
   // Threads at the root so a deep-linked queue item can resolve to its merged
   // alert-origin conversation. React Query dedupes this against the sidebar's
@@ -3039,7 +3025,6 @@ export const ChatPage = () => {
 
       <ContextRail
         projectId={projectId}
-        tasks={sessionTaskIds}
         files={threadAttachments}
         meta={projectMeta}
         threadId={selectedThreadId ?? undefined}
@@ -3047,8 +3032,6 @@ export const ChatPage = () => {
         threadDetail={activeThreadDetail}
         isStreaming={activeIsStreaming}
         liveBuffer={activeLiveBuffer}
-        sessionStartedAt={sessionStartedAt}
-        onInsertPrompt={handleInsertPrompt}
         onOpenAlert={handleOpenSubject}
         collapsed={railCollapsed}
         onToggleCollapse={() => setRailCollapsed((v) => !v)}

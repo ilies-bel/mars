@@ -48,6 +48,7 @@ import {
 import { listStewardLedgerFor, listStewardLedgerSince } from '../steward-ledger'
 import type { ChatRunner, AttachmentInfo } from './chat-runner'
 import type { ChatStreamHub, SeqChunk } from './chat-stream-hub'
+import { listTasksForThread } from './chat-thread-tasks'
 import { getRepoRoot } from '../context'
 import { z } from 'zod'
 
@@ -1720,6 +1721,7 @@ export const startHttpServer = async (
     // GET /view/chat/threads — list all threads newest-first with last-message preview.
     // GET /view/chat/thread/:id — fetch a single thread with all messages ordered by
     //   created_at ASC, or 404 when the thread does not exist.
+    // GET /chat/threads/:id/tasks — list task IDs linked to one chat thread.
     // POST /chat/threads — create a new thread. Body: { title?: string }.
     // POST /chat/threads/:id/title — rename a thread. Body: { title: string }.
     // POST /chat/threads/:id/delete — delete a thread and cascade its messages.
@@ -1780,6 +1782,19 @@ export const startHttpServer = async (
             }
             sendJson(res, 200, result)
           })
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+    {
+      const threadTasksMatch =
+        req.method === 'GET' && req.url
+          ? req.url.match(/^\/chat\/threads\/([^/?]+)\/tasks(?:\?.*)?$/)
+          : null
+      if (threadTasksMatch && threadTasksMatch[1]) {
+        const threadId = decodeURIComponent(threadTasksMatch[1])
+        listTasksForThread(threadId)
+          .then((links) => sendJson(res, 200, { tasks: links.map((link) => link.taskId) }))
           .catch((err: unknown) => sendError(res, err))
         return
       }

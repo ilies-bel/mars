@@ -758,6 +758,7 @@ export const startServer = async (
         // Chat proxy routes — forward to the daemon's chat-store endpoints.
         // GET  /api/chat/threads             → daemon /view/chat/threads
         // GET  /api/chat/thread/:id          → daemon /view/chat/thread/:id
+        // GET  /api/chat/threads/:id/tasks   → daemon /chat/threads/:id/tasks
         // POST /api/chat/threads             → daemon /chat/threads (create)
         // POST /api/chat/threads/:id/message → daemon /chat/threads/:id/message
         // POST /api/chat/threads/:id/stop    → daemon /chat/threads/:id/stop
@@ -866,6 +867,24 @@ export const startServer = async (
           const r = await proxyGet(
             ctx.stateDir,
             `/view/chat/thread/${encodeURIComponent(threadId)}`,
+          )
+          return jsonResponse(r.status, r.body)
+        }
+
+        if (
+          path.startsWith('/api/chat/threads/') &&
+          path.endsWith('/tasks') &&
+          req.method === 'GET'
+        ) {
+          const threadId = decodeURIComponent(
+            path.slice('/api/chat/threads/'.length, -'/tasks'.length),
+          )
+          if (!threadId) {
+            return jsonResponse(400, { error: 'threadId is required' })
+          }
+          const r = await proxyGet(
+            ctx.stateDir,
+            `/chat/threads/${encodeURIComponent(threadId)}/tasks`,
           )
           return jsonResponse(r.status, r.body)
         }

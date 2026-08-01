@@ -3,12 +3,10 @@
  *
  * Stacked panels:
  *   - Focus           : the active thread's title and status chip.
- *   - Project context: session artifacts, open operator alerts, ADRs, and
+ *   - Project context: thread artifacts, open operator alerts, ADRs, and
  *                      project vision/theme.
  *   - Glossary        : searchable term list from /api/glossary; definition +
  *                       avoid-aliases on expand.
- *   - Skills          : list from /api/skills; clicking a skill inserts its slash
- *                       prompt into the composer via `onInsertPrompt`.
  *
  * The rail is responsive via a controlled `collapsed` prop: callers render an
  * icon strip at narrow widths and restore the full rail at wider ones.
@@ -17,7 +15,7 @@
 
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { fetchAdrs, fetchGlossary, fetchSkills } from '@/shared/api'
+import { fetchAdrs, fetchGlossary, fetchTasksForThread } from '@/shared/api'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { useThreadFocus } from './useThreadFocus'
@@ -26,7 +24,7 @@ import { dispatchAlertVerb, verbButtonClass } from './alertVerbs'
 import { priorityBadgeClass } from './QueueThreadRow'
 import { isAlertQueueItem } from './queueThreads'
 
-import type { GlossaryTerm, Skill, ChatSegmentAttachment, ChatThreadDetail, ProgressTask, ActionQueueItem, AdrEntry } from '@/shared/schemas'
+import type { GlossaryTerm, ChatSegmentAttachment, ChatThreadDetail, ProgressTask, ActionQueueItem, AdrEntry } from '@/shared/schemas'
 import type { ThreadFocusResult } from './useThreadFocus'
 import type { LiveBuffer } from '@/shared/chatBuffer'
 import type { ActivityEntry } from './activityFeed'
@@ -329,73 +327,7 @@ const GlossaryPanel = () => {
 }
 
 // ---------------------------------------------------------------------------
-// Skills panel
-// ---------------------------------------------------------------------------
-
-interface SkillsPanelProps {
-  onInsertPrompt: (prompt: string) => void
-}
-
-const SkillsPanel = ({ onInsertPrompt }: SkillsPanelProps) => {
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['skills'],
-    queryFn: fetchSkills,
-    staleTime: 60_000,
-  })
-
-  if (isLoading) {
-    return (
-      <p className="px-3 py-2 font-mono text-[10px] text-muted-foreground animate-pulse">
-        Loading…
-      </p>
-    )
-  }
-
-  if (isError || !data) {
-    return (
-      <p className="px-3 py-2 font-mono text-[10px] text-error/70">
-        Skills unavailable
-      </p>
-    )
-  }
-
-  if (data.length === 0) {
-    return (
-      <p className="px-3 py-2 font-mono text-[10px] text-muted-foreground/60">
-        No skills found
-      </p>
-    )
-  }
-
-  return (
-    <ul className="flex flex-col gap-0.5 py-1">
-      {data.map((skill: Skill) => (
-        <li key={skill.name}>
-          <button
-            type="button"
-            className="flex w-full flex-col gap-0.5 rounded px-2 py-1.5 text-left transition-colors hover:bg-primary/10"
-            onClick={() => onInsertPrompt(`/${skill.name} `)}
-            title={`Insert /${skill.name} into composer`}
-          >
-            <span className="font-mono text-[10px] font-semibold text-foreground">
-              /{skill.name}
-            </span>
-            {skill.description && (
-              <span className="font-mono text-[10px] text-muted-foreground leading-snug">
-                {skill.description.length > 80
-                  ? skill.description.slice(0, 77) + '…'
-                  : skill.description}
-              </span>
-            )}
-          </button>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Session artifact rail
+// Thread artifact rail
 // ---------------------------------------------------------------------------
 
 export interface ProjectMeta {
@@ -543,7 +475,7 @@ export const ArtifactsRail = ({ tasks, files, meta, projectId }: ArtifactsRailPr
     <div data-testid="artifacts-rail">
       <RailSection title="Tasks">
         {tasks.length === 0 ? (
-          emptyArtifacts('No tasks created this session')
+          emptyArtifacts('No tasks created in this thread')
         ) : (
           <ul className="flex flex-col gap-0.5">
             {tasks.map((id) => (
@@ -551,6 +483,7 @@ export const ArtifactsRail = ({ tasks, files, meta, projectId }: ArtifactsRailPr
                 <a
                   href={`#/task/${encodeURIComponent(id)}?from=chat`}
                   className="font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
+                  data-testid="context-rail-task-row"
                 >
                   Task {id}
                 </a>
@@ -702,11 +635,9 @@ const PanelSection = ({ title, defaultOpen = true, children }: PanelSectionProps
 
 export interface ContextRailProps {
   projectId?: string
-  /** Tasks created after this ChatPage mounted. */
-  tasks?: string[]
   /** Attachments shared by the selected thread. */
   files?: ChatSegmentAttachment[]
-  /** Stable project context surfaced alongside session artifacts. */
+  /** Stable project context surfaced alongside thread artifacts. */
   meta?: ProjectMeta
   /** The currently selected chat thread. Used to scope session-artifact data. */
   threadId?: string
@@ -719,11 +650,6 @@ export interface ContextRailProps {
   /** Live streaming buffer for the active thread. Passed from ChatConversation
    * so the activity panel can render in-flight tool calls. */
   liveBuffer?: LiveBuffer | null
-  /** Epoch ms when the current chat session started (unused after removing Live
-   * tasks panel; kept in props for API stability while callers adapt). */
-  sessionStartedAt: number
-  /** Called when a skill row is clicked; inserts the prompt into the composer. */
-  onInsertPrompt: (prompt: string) => void
   /** Opens an operational alert's Subject in the chat pane. */
   onOpenAlert?: (item: ActionQueueItem) => void
   /** When true the rail collapses to a narrow icon strip. */
@@ -734,18 +660,23 @@ export interface ContextRailProps {
 
 export const ContextRail = ({
   projectId,
-  tasks = [],
   files = [],
   meta = { vision: null, theme: null },
+  threadId,
   activeThreadId,
   threadDetail,
   isStreaming,
   liveBuffer,
-  onInsertPrompt,
   onOpenAlert,
   collapsed = false,
   onToggleCollapse,
 }: ContextRailProps) => {
+  const { data: tasks = [] } = useQuery({
+    queryKey: ['thread-tasks', threadId],
+    queryFn: () => fetchTasksForThread(threadId!),
+    enabled: Boolean(threadId),
+    staleTime: 15_000,
+  })
   const focusResult = useThreadFocus(threadDetail?.thread)
   const { items: queueItems } = useActionQueue()
   const alertItems = useMemo(
@@ -840,9 +771,6 @@ export const ContextRail = ({
         <GlossaryPanel />
       </PanelSection>
 
-      <PanelSection title="Skills" defaultOpen={false}>
-        <SkillsPanel onInsertPrompt={onInsertPrompt} />
-      </PanelSection>
     </aside>
   )
 }

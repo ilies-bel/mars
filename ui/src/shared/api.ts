@@ -1,4 +1,4 @@
-import type { ZodType } from 'zod'
+import { z, type ZodType } from 'zod'
 import { DAEMON_ERROR } from './daemonErrors'
 import {
   actionQueueHistoryResponseSchema,
@@ -675,6 +675,19 @@ export const fetchChatThread = async (
     appendProject(`/api/chat/thread/${encodeURIComponent(id)}`, projectId),
     chatThreadDetailSchema,
   )
+}
+
+const threadTasksResponseSchema = z.object({
+  tasks: z.array(z.string()),
+})
+
+/** List task IDs linked to one chat thread, in creation order. */
+export const fetchTasksForThread = async (threadId: string): Promise<string[]> => {
+  const json = await fetchJson(
+    `/api/chat/threads/${encodeURIComponent(threadId)}/tasks`,
+    threadTasksResponseSchema,
+  )
+  return json.tasks
 }
 
 /**
