@@ -198,6 +198,10 @@ export const makeSem = (limit: number): Semaphore => ({
   waiters: [],
 })
 
+/** Select the built-in coordinator pipeline for coordinator-owned tasks. */
+export const pickWorkflowFor = (task: Task): 'implement' | 'coordinator' =>
+  task.spec?.executionMode === 'coordinated' ? 'coordinator' : 'implement'
+
 export const acquire = (s: Semaphore): Promise<void> => {
   if (s.inUse < s.limit) {
     s.inUse += 1
@@ -1311,6 +1315,7 @@ export const startDaemon = async (
       // entirely engine-driven — there is no `resumeFrom` hint in the input.
       const taskStore = await getDefaultTaskStore()
       const workflowStore = createQueueWorkflowStore()
+      const workflowKind = pickWorkflowFor(task)
       // Resolve the workflow to run by NAME: the task's `workflow` field wins,
       // else default-by-kind. NO fallback (supersedes ADR-0056's clause): a
       // missing/malformed file fails the task right here with an actionable
@@ -1321,24 +1326,34 @@ export const startDaemon = async (
       // TaskStore (S4), so task-state writes keep going through the aggregate.
       const workflowName = task.workflow ?? task.kind ?? 'task'
       let workflowToRun
-      try {
-        workflowToRun = await loadWorkflowByName(workflowName)
-      } catch (loadErr) {
-        const loadMsg =
-          loadErr instanceof Error ? loadErr.message : String(loadErr)
-        log(`[implement] ${task.id} workflow load failed: ${loadMsg}`)
-        await updateTask(task.id, {
-          status: 'failed',
-          error: loadMsg,
-          failureReason: loadMsg,
-          failureReasonCode: 'dispatch:workflow-load',
-          failureSignature: computeFailureSignature(
-            'dispatch:workflow-load',
-            workflowName,
-          ),
-        })
-        bus.emit('task.failed', { taskId: task.id, error: loadMsg })
-        return
+      if (workflowKind === 'coordinator') {
+        // This module is intentionally loaded only for coordinator-owned work:
+        // ordinary tasks continue to resolve their user-selected workflow.
+        // The string variable keeps this daemon slice independently type-checkable
+        // until the coordinator pipeline lands from its prerequisite slice.
+        const coordinatorWorkflowModule = '../../workflows/coordinator-workflow'
+        const { coordinatorWorkflow } = await import(coordinatorWorkflowModule)
+        workflowToRun = coordinatorWorkflow
+      } else {
+        try {
+          workflowToRun = await loadWorkflowByName(workflowName)
+        } catch (loadErr) {
+          const loadMsg =
+            loadErr instanceof Error ? loadErr.message : String(loadErr)
+          log(`[implement] ${task.id} workflow load failed: ${loadMsg}`)
+          await updateTask(task.id, {
+            status: 'failed',
+            error: loadMsg,
+            failureReason: loadMsg,
+            failureReasonCode: 'dispatch:workflow-load',
+            failureSignature: computeFailureSignature(
+              'dispatch:workflow-load',
+              workflowName,
+            ),
+          })
+          bus.emit('task.failed', { taskId: task.id, error: loadMsg })
+          return
+        }
       }
       // Pino-shaped logger adapter over the daemon's `log`. The engine emits
       // structured run/step lifecycle lines (`step.started`, `step.completed`,
@@ -1388,28 +1403,30 @@ export const startDaemon = async (
       const resumeFromCodePhase = task.failedPhase === 'code' && !!task.worktreePath
       const result = await runWorkflow(
         workflowToRun,
-        {
-          taskId: task.id,
-          prompt: task.prompt,
-          plan: task.plan,
-          tags: task.tags ?? ['coder'],
-          kind: task.kind ?? 'task',
-          integrationBranch,
-          spec: task.spec
-            ? {
-                files: [...task.spec.files],
-                verifyCmd: task.spec.verifyCmd,
-                doneCriteria: [...task.spec.doneCriteria],
-                taskType: task.spec.taskType,
-                readFirst: [...(task.spec.readFirst ?? [])],
-                prescriptiveAction: task.spec.prescriptiveAction ?? null,
-              }
-            : null,
-          resumeFromCodePhase,
-          recoveryPayload: task.recoveryPayload ?? null,
-          fixForTaskId: task.fixForTaskId ?? null,
-          qa: task.qa ?? 'auto',
-        },
+        workflowKind === 'coordinator'
+          ? { coordinatorTaskId: task.id }
+          : {
+            taskId: task.id,
+            prompt: task.prompt,
+            plan: task.plan,
+            tags: task.tags ?? ['coder'],
+            kind: task.kind ?? 'task',
+            integrationBranch,
+            spec: task.spec
+              ? {
+                  files: [...task.spec.files],
+                  verifyCmd: task.spec.verifyCmd,
+                  doneCriteria: [...task.spec.doneCriteria],
+                  taskType: task.spec.taskType,
+                  readFirst: [...(task.spec.readFirst ?? [])],
+                  prescriptiveAction: task.spec.prescriptiveAction ?? null,
+                }
+              : null,
+            resumeFromCodePhase,
+            recoveryPayload: task.recoveryPayload ?? null,
+            fixForTaskId: task.fixForTaskId ?? null,
+            qa: task.qa ?? 'auto',
+          },
         {
           store: workflowStore,
           services: {
