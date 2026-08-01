@@ -57,7 +57,6 @@ import {
   cleanWorktreeIfNoCommitsAhead,
   verifyChanges,
   selectVerifySteps,
-  getChangedFiles,
   isInfraFailureOutput,
 } from '../../core/lib/git/verify'
 import {
@@ -1761,15 +1760,15 @@ export interface ReviewResult {
 }
 
 /**
- * Scope-aware review of the worktree's committed changes. Formerly named
+ * Full-workspace review of the worktree's committed changes. Formerly named
  * `verify`. Two review types:
  *
- *   - `reviewType:'auto'` (default) — runs scope-aware typecheck/tests/lint:
+ *   - `reviewType:'auto'` (default) — runs every configured typecheck/test/lint gate:
  *     - `kind:'diagnose'` short-circuits (no artefact to verify),
  *     - non-fix tasks run the verify-time dirty-main check and, if the
  *       integration branch is dirty, park behind a `main-commiter` recovery and
  *       throw the `verify:main-dirty` sentinel,
- *     - selects verify steps from the recipe scopes ∩ the files the task changed
+ *     - selects every configured verify scope so cross-package contracts are checked
  *       (a main-commiter recovery skips all test/typecheck/lint steps),
  *     - runs `verifyChanges` (the has-diff / commits-ahead gate always runs),
  *     - on failure stamps the task, spawns the recovery fix-task through `store`,
@@ -2322,18 +2321,12 @@ export const review = async (
       const recipeScopes = await loadVerifyGates(store)
       // Gate-enrichment merge (PRD 745f33e0): human-approved shadow/enforcing
       // checks from the signature-keyed registry are appended BEHIND
-      // loadVerifyGates and flow through unchanged ADR-0018 selection below
-      // (path containment + always-on root floor) — no recipe schema change,
+      // loadVerifyGates and flow through unchanged full-workspace selection below
+      // — no recipe schema change,
       // and the seam survives the manifest.json→verify.json migration.
       // `appendEnrichmentScopes` never throws (registry failure → recipe
       // scopes untouched).
       const scopes = await appendEnrichmentScopes(store, recipeScopes)
-      const changedFiles = await getChangedFiles(
-        worktreePath,
-        integrationBranch,
-        branch,
-        buildPhaseCtx(trace, taskId, 'verify'),
-      )
       const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE, checkIntegrationBranchDirty } = await import(
         '../../core/lib/main-dirty'
       )
@@ -2342,16 +2335,13 @@ export const review = async (
           ? parseMainCommiterPayload(recoveryPayload)
           : null
       const isMainCommitter = commiterPayload?.recipe === MAIN_COMMITER_RECIPE
-      const steps = isMainCommitter ? [] : selectVerifySteps(scopes, changedFiles)
+      const steps = isMainCommitter ? [] : selectVerifySteps(scopes)
 
       let r = await verifyChanges({
         cwd: verifyCwd,
         steps,
         branch,
         integrationBranch,
-        // changedFiles is informational for tracing only — verify gates are
-        // optional, so a task with zero configured task-tier steps passes.
-        changedFiles: isMainCommitter ? undefined : changedFiles,
         traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
       })
 

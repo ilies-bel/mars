@@ -595,9 +595,8 @@ export const loadEnrichmentScopes = async (
 
 /**
  * Merge the enrichment scopes into the recipe scopes — the seam sits BEHIND
- * `loadVerifyScopes` so the merged list flows through UNCHANGED ADR-0018
- * selection (path containment + always-on root floor) and unchanged
- * `verifyChanges` execution, and survives the pending ADR-0003
+ * `loadVerifyScopes` so the merged list flows through full-workspace selection
+ * and unchanged `verifyChanges` execution, and survives the pending ADR-0003
  * manifest.json→verify.json migration.
  *
  * Never throws: any registry failure yields the recipe scopes untouched —

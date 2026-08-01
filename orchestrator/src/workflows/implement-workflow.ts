@@ -68,8 +68,8 @@ export const implementInputSchema = z.object({
    */
   fixForTaskId: z.string().nullable().default(null),
   /**
-   * QA mode for the review step. `'auto'` (default) runs scope-aware
-   * typecheck/tests/lint. `'manual'` parks for human QA (not yet fully
+   * QA mode for the review step. `'auto'` (default) runs every configured
+   * typecheck/test/lint gate. `'manual'` parks for human QA (not yet fully
    * implemented — the review primitive throws on `'manual'`).
    * Sourced from `tasks.qa`; defaults to `'auto'` for tasks enqueued
    * before this column existed.

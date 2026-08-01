@@ -446,8 +446,8 @@ export interface Task {
    */
   workflow: string | null
   /**
-   * QA mode for the review step. `'auto'` (default) runs scope-aware
-   * typecheck/tests/lint. `'manual'` parks the task for a human to exercise
+   * QA mode for the review step. `'auto'` (default) runs every configured
+   * typecheck/test/lint gate. `'manual'` parks the task for a human to exercise
    * the running app before merge (not yet fully implemented — the review
    * primitive currently throws on `'manual'`). Selected at enqueue via
    * `mars task add --qa <auto|manual>`.

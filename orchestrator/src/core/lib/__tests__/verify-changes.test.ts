@@ -256,7 +256,7 @@ describe('loadVerifyScopes', () => {
 
   it('missing manifest yields passed:true with zero steps end-to-end', async () => {
     const scopes = await loadVerifyScopes(resolve(workDir, 'absent.json'))
-    const steps = selectVerifySteps(scopes, [])
+    const steps = selectVerifySteps(scopes)
     expect(steps).toEqual([])
     // verifyChanges with no steps passes immediately (no required failures)
     const result = await verifyChanges({ steps, cwd: workDir })
@@ -348,7 +348,7 @@ describe('loadVerifyScopes', () => {
   })
 })
 
-describe('selectVerifySteps (scope-aware selection from the real diff)', () => {
+describe('selectVerifySteps (full-workspace verification)', () => {
   const recipe: VerifyScope[] = [
     {
       scope: '.',
@@ -364,11 +364,8 @@ describe('selectVerifySteps (scope-aware selection from the real diff)', () => {
     },
   ]
 
-  it('runs the root scope plus both subtrees when changed files span two subtrees', () => {
-    const steps = selectVerifySteps(recipe, [
-      'apps/web/src/App.tsx',
-      'services/api/handlers/users.go',
-    ])
+  it('runs every scope even when the task changed only one subtree', () => {
+    const steps = selectVerifySteps(recipe)
     expect(steps.map((s) => [s.name, s.cmd, s.dir])).toEqual([
       ['root-lint', 'rootcmd', '.'],
       ['test', 'web-test', 'apps/web'],
@@ -376,31 +373,20 @@ describe('selectVerifySteps (scope-aware selection from the real diff)', () => {
     ])
   })
 
-  it('runs the root scope plus only the touched subtree, not the other', () => {
-    const steps = selectVerifySteps(recipe, ['apps/web/src/index.ts'])
+  it('runs consumer gates for an unrelated producer change', () => {
+    const steps = selectVerifySteps(recipe)
     expect(steps.map((s) => [s.name, s.dir])).toEqual([
       ['root-lint', '.'],
       ['test', 'apps/web'],
+      ['test', 'services/api'],
     ])
-    expect(steps.some((s) => s.cmd === 'api-test')).toBe(false)
-  })
-
-  it('runs only the root scope when nothing but docs / root config changed', () => {
-    const steps = selectVerifySteps(recipe, ['README.md', 'package.json'])
-    expect(steps.map((s) => [s.name, s.dir])).toEqual([['root-lint', '.']])
-  })
-
-  it('contributes no steps for a scope whose subtree contains no changed file', () => {
-    const steps = selectVerifySteps(recipe, ['services/api/main.go'])
-    expect(steps.some((s) => s.dir === 'apps/web')).toBe(false)
-    expect(steps.map((s) => s.dir)).toEqual(['.', 'services/api'])
   })
 
   it('always runs the root floor even when the recipe declares it after narrower scopes', () => {
     const reordered: VerifyScope[] = [recipe[1], recipe[2], recipe[0]]
-    const steps = selectVerifySteps(reordered, ['apps/web/x.ts'])
+    const steps = selectVerifySteps(reordered)
     expect(steps[0].dir).toBe('.')
-    expect(steps.map((s) => s.dir)).toEqual(['.', 'apps/web'])
+    expect(steps.map((s) => s.dir)).toEqual(['.', 'apps/web', 'services/api'])
   })
 })
 
@@ -483,8 +469,7 @@ describe('getChangedFiles', () => {
 // state — tasks code in parallel while `main` keeps advancing) must report
 // only the files it changed itself. A two-dot `main..branch` diff compares the
 // two tips and therefore also reports everything `main` changed after the
-// fork, inflating the list and making selectVerifySteps pull in verify scopes
-// the task never touched. Only three-dot (merge-base) semantics is correct.
+// fork. Only three-dot (merge-base) semantics is correct.
 describe('getChangedFiles on a branch behind the integration branch', () => {
   let repo: string
 
@@ -529,23 +514,35 @@ describe('getChangedFiles on a branch behind the integration branch', () => {
     expect([...files].sort()).toEqual(['orchestrator/task-change.ts'])
   })
 
-  it('does not select verify scopes the task never touched', async () => {
-    const changed = await getChangedFiles(repo, 'main', 'task/behind')
+  it('fails verification when an orchestrator-only change breaks a UI consumer gate', async () => {
+    execFileSync('git', ['checkout', '-q', 'task/behind'], { cwd: repo })
     const mkStep = (name: string, dir: string) => ({
       name,
-      cmd: name,
-      args: [] as string[],
+      cmd: 'node',
+      args: ['-e', 'process.exit(0)'] as string[],
       required: true,
       dir,
     })
     const scopes: VerifyScope[] = [
       { scope: '.', steps: [mkStep('root-lint', '.')] },
       { scope: 'orchestrator', steps: [mkStep('orch-test', 'orchestrator')] },
-      { scope: 'ui', steps: [mkStep('ui-test', 'ui')] },
+      {
+        scope: 'ui',
+        steps: [
+          {
+            ...mkStep('ui-test', 'ui'),
+            cmd: 'node',
+            args: ['-e', 'process.exit(1)'],
+          },
+        ],
+      },
     ]
-    const selected = selectVerifySteps(scopes, changed).map((s) => s.name)
-    expect(selected).toEqual(['root-lint', 'orch-test'])
-    expect(selected).not.toContain('ui-test')
+    const result = await verifyChanges({
+      cwd: repo,
+      steps: selectVerifySteps(scopes),
+    })
+    expect(result.passed).toBe(false)
+    expect(result.steps.find((step) => step.name === 'ui-test')?.passed).toBe(false)
   })
 })
 
@@ -712,8 +709,6 @@ describe('main-commiter recovery — verify step exemption', () => {
       ],
     },
   ]
-  const changedFiles = ['src/foo.ts']
-
   it('selects zero verify steps when recovery_payload.recipe is main-commiter', () => {
     const payload = serialiseMainCommiterPayload({
       recipe: MAIN_COMMITER_RECIPE,
@@ -723,7 +718,7 @@ describe('main-commiter recovery — verify step exemption', () => {
     const steps =
       commiterPayload?.recipe === MAIN_COMMITER_RECIPE
         ? []
-        : selectVerifySteps(scopeWithSteps, changedFiles)
+        : selectVerifySteps(scopeWithSteps)
     expect(steps).toEqual([])
   })
 
@@ -732,7 +727,7 @@ describe('main-commiter recovery — verify step exemption', () => {
     const steps =
       commiterPayload?.recipe === MAIN_COMMITER_RECIPE
         ? []
-        : selectVerifySteps(scopeWithSteps, changedFiles)
+        : selectVerifySteps(scopeWithSteps)
     expect(steps.map((s) => s.name)).toEqual(['test', 'typecheck', 'lint'])
   })
 
@@ -746,7 +741,7 @@ describe('main-commiter recovery — verify step exemption', () => {
     const steps =
       commiterPayload?.recipe === MAIN_COMMITER_RECIPE
         ? []
-        : selectVerifySteps(scopeWithSteps, changedFiles)
+        : selectVerifySteps(scopeWithSteps)
     expect(steps.map((s) => s.name)).toEqual(['test', 'typecheck', 'lint'])
   })
 
@@ -757,8 +752,7 @@ describe('main-commiter recovery — verify step exemption', () => {
     const r = await verifyChanges({
       cwd: process.cwd(),
       steps: [],
-      // changedFiles intentionally absent — mirrors the primitive's call for
-      // the main-committer recipe (isMainCommitter ? undefined : changedFiles)
+      // The main-committer recipe intentionally supplies no verify steps.
     })
     expect(r.passed).toBe(true)
     expect(r.steps).toEqual([])
@@ -973,4 +967,3 @@ describe('has-diff appears in gate outcomes when it passes', () => {
     expect(r.steps[0].passed).toBe(true)
   })
 })
-

@@ -165,14 +165,9 @@ export interface VerifyArgs {
    *  flagging every failing verify run as warn. */
   traceCtx?: TraceCtx
   /**
-   * Repo-relative paths of files the task branch changed. When provided and
-   * non-empty, `verifyChanges` enforces that at least one task-tier step is
-   * configured: a zero-step run with changed files is a configuration error
-   * (the supervisor manifest declares no verify scopes for the changed paths)
-   * and must NOT silently pass.
-   *
-   * Omit (or pass an empty array) to allow zero-step runs — the main-committer
-   * recipe and genuine no-diff no-ops leave this unset.
+   * Repo-relative paths of files the task branch changed, retained for callers
+   * that record diff metadata alongside verification. They never determine
+   * which gates run: every configured scope is always selected.
    */
   changedFiles?: ReadonlyArray<string>
   /**
@@ -668,14 +663,6 @@ const normalizeScope = (scope: string | undefined): string => {
   return s === '' || s === '.' ? '.' : s
 }
 
-// Path-containment test: is `file` (a repo-root-relative path) inside the
-// subtree `scope`? The root scope contains every file.
-const fileInScope = (file: string, scope: string): boolean => {
-  if (scope === '.') return true
-  const f = file.replace(/\\/g, '/').replace(/^\.\//, '')
-  return f === scope || f.startsWith(`${scope}/`)
-}
-
 /**
  * Load the recipe's verify steps grouped by scope. Unlike the previous
  * collapse-by-name behaviour, two scopes that declare a step with the
@@ -738,26 +725,19 @@ export const loadVerifyScopes = async (
 }
 
 /**
- * Select the verify steps to run for a task from the recipe scopes and
- * the files the task actually changed. The root scope ('.') is an
- * always-on floor; every narrower scope whose subtree contains at least
- * one changed file is layered on top. Root steps come first, then the
- * matched narrower scopes in declared order. Each returned step carries
- * the `dir` of its scope so {@link verifyChanges} runs it where it
- * belongs.
+ * Select every configured task verify step. A producer can change a contract
+ * consumed from any other scope, so path-scoped selection cannot safely
+ * determine which suites may observe the change. Root steps run first; the
+ * remaining scopes retain their declared order. Each returned step carries
+ * the `dir` of its scope so {@link verifyChanges} runs it where it belongs.
  */
 export const selectVerifySteps = (
   scopes: ReadonlyArray<VerifyScope>,
-  changedFiles: ReadonlyArray<string>,
 ): VerifyStepSpec[] => {
   const roots = scopes.filter((s) => s.scope === '.')
   const rest = scopes.filter((s) => s.scope !== '.')
   const selected: VerifyStepSpec[] = []
   for (const sc of [...roots, ...rest]) {
-    const matched =
-      sc.scope === '.' ||
-      changedFiles.some((f) => fileInScope(f, sc.scope))
-    if (!matched) continue
     for (const step of sc.steps) {
       selected.push({ ...step, dir: sc.scope })
     }
@@ -780,13 +760,11 @@ export const selectVerifySteps = (
  * never touched. Measured on this repo, a branch 1 commit ahead / 88 behind
  * reported 218 files under two-dot vs the 23 it actually changed.
  *
- * The consequence is not cosmetic: this list feeds {@link selectVerifySteps},
- * which layers on a verify scope for every scope whose subtree contains a
- * changed file. Over-reporting makes verify run test suites for scopes the
- * task never went near (an `orchestrator/`-only task pulling in `ui/`), where
- * failures have nothing to do with the task. The same two-dot trap has also
- * produced misleading `--stat` output during merges, where `main`'s newer
- * commits show up as deletions.
+ * This information is retained for traceability and callers that need to
+ * describe the task diff. It does not control test-suite selection: every
+ * configured scope is verified to protect cross-package contracts. The same
+ * two-dot trap has also produced misleading `--stat` output during merges,
+ * where `main`'s newer commits show up as deletions.
  *
  * Two-dot is still correct for "how far ahead is B" (`rev-list --count A..B`)
  * and for ranges on a single linear history — do not blanket-convert those.
@@ -812,4 +790,3 @@ export const getChangedFiles = async (
     return []
   }
 }
-

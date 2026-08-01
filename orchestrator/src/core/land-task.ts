@@ -30,7 +30,6 @@ import { resolveAllRowsForTask } from './lib/action-queue'
 import {
   selectVerifySteps,
   verifyChanges,
-  getChangedFiles,
 } from './lib/git/verify'
 import { loadVerifyGates } from './verify-gates'
 import { removeWorktree } from './lib/git/worktree'
@@ -124,15 +123,9 @@ export const landTask = async (
   }
 
   // ── 4. Run verify gate ────────────────────────────────────────────────────
-  const changedFiles = await getChangedFiles(
-    worktreePath,
-    integrationBranch,
-    branch,
-  )
-
   const client = resolveQueueClient()
   const scopes = await loadVerifyGates(client)
-  const steps = selectVerifySteps(scopes, changedFiles)
+  const steps = selectVerifySteps(scopes)
 
   const verifyResult = await verifyChanges({
     cwd: worktreePath,

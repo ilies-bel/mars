@@ -101,7 +101,7 @@ export const PRIMITIVE_CATALOG: Readonly<Record<PrimitiveName, PrimitiveCatalogE
   verify: {
     name: 'verify',
     description:
-      "Scope-aware static gate over the worktree's committed changes — typecheck, tests, and lint selected from the recipe scopes ∩ the files the task changed.",
+      "Full-workspace static gate over the worktree's committed changes — every configured typecheck, test, and lint scope runs to protect cross-package contracts.",
     phase: 'verify',
     executor: 'shell',
     workerNames: [],
