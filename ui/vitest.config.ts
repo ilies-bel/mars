@@ -32,21 +32,18 @@ export default defineConfig({
           // Provide minimal Bun runtime globals so tests written against Bun's
           // API (Bun.serve, Bun.write) also execute under `npx vitest run`.
           setupFiles: ['server/__testing__/bun-vitest-setup.ts'],
-          // Include all src/ tests EXCEPT *.composer.test.* (those need DOM)
-          // and ChatPage.test.tsx (moved to dom to support slash-palette keyboard tests)
-          // plus the server tests that use Node.js HTTP and mocks.
-          include: [
-            'src/**/*.test.{ts,tsx}',
-            'server/actionQueue.test.ts',
-            'server/daemonHttp.test.ts',
-            'server/kpis.test.ts',
-            'server/projectHealth.test.ts',
-            'server/projectsStart.test.ts',
-            'server/projectContext.test.ts',
-            'server/projects.test.ts',
-            'server/chatUploads.test.ts',
-            'server/releaseNotes.test.ts',
-          ],
+          // Every src/ test EXCEPT *.composer.test.* (those need DOM) and the
+          // ChatPage suites (moved to the dom project for slash-palette
+          // keyboard tests), plus EVERY server/ test.
+          //
+          // Both entries are globs on purpose. This list used to name nine
+          // server files one by one; ui/server/ grew to 21 and the list was
+          // never updated, so ui/server/chatRoutes.test.ts executed under no
+          // runner at all. A glob cannot go stale.
+          //
+          // Server tests written against `bun:test` run here too — the
+          // `bun:test` alias above points at src/bun-test-compat.ts.
+          include: ['src/**/*.test.{ts,tsx}', 'server/**/*.test.ts'],
           exclude: [
             'src/**/*.composer.test.tsx',
             'src/pages/ChatPage.test.tsx',
