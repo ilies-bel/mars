@@ -10,5 +10,9 @@
   ],
   "ignore": [
     "src/init/templates/**"
+  ],
+  "ignoreBinaries": [
+    "osascript",
+    "rg"
   ]
 }
