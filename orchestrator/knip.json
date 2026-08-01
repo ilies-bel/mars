@@ -1,12 +1,18 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
-    "src/core/index.ts",
     "src/**/*.{test,spec}.ts",
     "src/**/__tests__/**/*.ts"
   ],
   "project": [
     "src/**/*.{ts,tsx,mts,cts,js,mjs,cjs,jsx}",
     "bin/**/*.{js,mjs,cjs}"
+  ],
+  "ignore": [
+    "src/init/templates/**"
+  ],
+  "ignoreBinaries": [
+    "osascript",
+    "rg"
   ]
 }

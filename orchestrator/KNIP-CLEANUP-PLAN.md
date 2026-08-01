@@ -1,5 +1,36 @@
 # Knip cleanup plan (transient)
 
+> **STATUS 2026-08-01 — PARTIALLY SUPERSEDED. READ THIS BOX FIRST.**
+>
+> This file is kept only because Slice 1 is still open. Its analysis is
+> otherwise stale and **Slice 4 is dangerous — do not execute it.**
+>
+> - **Slice 4 is WRONG. Do NOT `git rm -r orchestrator/src/bus`.**
+>   `src/bus/` is the LIVE event bus: 41 files under `orchestrator/src`
+>   import from it (`events.ts`, `publisher.ts`, `subscribers.ts`,
+>   `processed-once.ts`, `log.ts`), and it has six test files of its own.
+>   The claim that it has "zero importers" was true of a much older tree
+>   and is false today. Only the orphaned WebSocket transport within it
+>   (`client.ts`, `daemon.ts`) was dead; both were deleted, together with
+>   the `ws` / `@types/ws` dependencies. `better-sqlite3` is no longer a
+>   dependency at all, so that half of the slice is moot.
+> - **Slice 5 is DONE**, and wider than described: `orchestrator/knip.json`
+>   now ignores all of `src/init/templates/**`, not just the one
+>   provider-registry asset. Those templates are copied into consumer
+>   repos by `mars init` and are discovered by a runtime `readdirSync`,
+>   so static analysis can never see them.
+> - **Slices 2 and 3 are DONE** (already were, per the notes below).
+> - **Slice 1 is the only work left**, and its counts are stale: with the
+>   entry list corrected, knip reports **118 unused exports and 99 unused
+>   exported types**, not 23 and 26.
+> - The whole "Mastra registration surface" section below is obsolete.
+>   Mastra has been removed from this repo; workflows run on the in-house
+>   `@mars/workflow` engine. `src/core/index.ts`, the file that section is
+>   built around, **no longer exists** — it was still listed as the sole
+>   production entry in `orchestrator/knip.json` until it was removed.
+> - Unused *files* and unused *dependencies* are now both at zero. Do not
+>   re-derive them from this document.
+
 Pre-curated working notes for the orchestrator knip-cleanup task
 (parent: mars-e95b5ee0). The first two implementors stalled
 cross-checking ~60 findings against Mastra registrations within the

@@ -1,11 +1,5 @@
 {
 	"$schema": "https://unpkg.com/knip@6/schema.json",
-	"entry": [],
-	"project": [],
-	"workspaces": {
-		".": {
-			"entry": [],
-			"project": []
-		}
-	}
+	"entry": ["scripts/*.mjs", "tools/ci-listener/server.ts"],
+	"project": ["scripts/**/*.{js,mjs,cjs}", "tools/**/*.{ts,mts,cts,js,mjs,cjs}"]
 }
