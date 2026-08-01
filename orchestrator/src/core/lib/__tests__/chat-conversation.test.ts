@@ -10,7 +10,7 @@ interface ChatStoreModule {
   initChatStore: typeof import('../chat-store').initChatStore
   createThread: typeof import('../chat-store').createThread
   appendMessage: typeof import('../chat-store').appendMessage
-  closeSubject: typeof import('../chat-store').closeSubject
+  closeSubthread: typeof import('../chat-store').closeSubthread
   listConversationEntries: typeof import('../chat-store').listConversationEntries
   startThreadFromAlert: typeof import('../chat-store').startThreadFromAlert
   resolveAlertThread: typeof import('../chat-store').resolveAlertThread
@@ -41,11 +41,11 @@ describe('listConversationEntries', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('returns every Subject message in global persistence order with its subject context', async () => {
+  it('returns every Subthread message in global persistence order with its subthread context', async () => {
     const chat = await loadModule(repo)
     await chat.initChatStore()
-    const first = await chat.createThread('First subject')
-    const second = await chat.createThread('Second subject')
+    const first = await chat.createThread('First subthread')
+    const second = await chat.createThread('Second subthread')
     const firstMessage = await chat.appendMessage(first.id, 'user', 'first persisted text')
     const secondMessage = await chat.appendMessage(
       second.id,
@@ -60,9 +60,9 @@ describe('listConversationEntries', () => {
       expect.objectContaining({
         id: firstMessage.id,
         threadId: first.id,
-        subjectId: first.id,
-        subjectTitle: 'First subject',
-        subjectClosed: false,
+        subthreadId: first.id,
+        subthreadTitle: 'First subthread',
+        subthreadClosed: false,
         role: 'user',
         content: 'first persisted text',
         segments: [],
@@ -73,9 +73,9 @@ describe('listConversationEntries', () => {
       expect.objectContaining({
         id: secondMessage.id,
         threadId: second.id,
-        subjectId: second.id,
-        subjectTitle: 'Second subject',
-        subjectClosed: true,
+        subthreadId: second.id,
+        subthreadTitle: 'Second subthread',
+        subthreadClosed: true,
         role: 'assistant',
         content: 'second persisted text',
         segments: [],
@@ -89,9 +89,9 @@ describe('listConversationEntries', () => {
   it('keeps every durable message while reporting the current readable-memory cut', async () => {
     const chat = await loadModule(repo)
     await chat.initChatStore()
-    const subject = await chat.createThread('Finished subject')
-    await chat.appendMessage(subject.id, 'assistant', 'Older, durable narration')
-    await chat.appendMessage(subject.id, 'assistant', 'Newer, durable narration')
+    const subthread = await chat.createThread('Finished subthread')
+    await chat.appendMessage(subthread.id, 'assistant', 'Older, durable narration')
+    await chat.appendMessage(subthread.id, 'assistant', 'Newer, durable narration')
     const { advanceMainMemoryWindow } = await import('../../daemon/chat-memory-window')
     await advanceMainMemoryWindow(undefined, {
       startsAfterSeq: 1,
@@ -119,7 +119,7 @@ describe('listConversationEntries', () => {
     })
   })
 
-  it('returns each Subject boundary with its aggregate produced and carried token weight', async () => {
+  it('returns each Subthread boundary with its aggregate produced and carried token weight', async () => {
     const chat = await loadModule(repo)
     await chat.initChatStore()
     const closed = await chat.createThread('Completed investigation')
@@ -133,7 +133,7 @@ describe('listConversationEntries', () => {
     await chat.appendMessage(open.id, 'assistant', 'Situation: still open.', [
       { type: 'result', inputTokens: 90, outputTokens: 10 },
     ])
-    await chat.closeSubject(closed.id)
+    await chat.closeSubthread(closed.id)
 
     const services = createAppServices({
       traceStore: nullTraceStore,
@@ -147,14 +147,14 @@ describe('listConversationEntries', () => {
 
     expect(conversation.boundaries).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        subjectId: closed.id,
+        subthreadId: closed.id,
         startedAt: expect.any(String),
         closedAt: expect.any(String),
         producedTokens: 350,
         carriedTokens: 180,
       }),
       expect.objectContaining({
-        subjectId: open.id,
+        subthreadId: open.id,
         startedAt: expect.any(String),
         closedAt: null,
         producedTokens: 100,
@@ -173,9 +173,9 @@ describe('listConversationEntries', () => {
             VALUES (?, ?, 'awaiting-human', ?, ?)`,
       args: ['task-awaiting-approval', 'approve this task', timestamp, timestamp],
     })
-    const subject = await chat.createThread('Approval needed')
+    const subthread = await chat.createThread('Approval needed')
     const message = await chat.appendMessage(
-      subject.id,
+      subthread.id,
       'assistant',
       'Please approve the implementation.',
       [{ type: 'text', text: 'Please approve the implementation.' }],

@@ -268,7 +268,7 @@ describe('GET /view/wywa-delta — auto-recipe runs', () => {
   })
 })
 
-// ── throttled threads and closed Subjects ────────────────────────────────────
+// ── throttled threads and closed Subthreads ────────────────────────────────────
 
 describe('GET /view/wywa-delta — chat thread events', () => {
   let repo: string
@@ -300,16 +300,16 @@ describe('GET /view/wywa-delta — chat thread events', () => {
     }
   })
 
-  it('surfaces closed Subjects as closed-subject items', async () => {
+  it('surfaces closed Subthreads as closed-subthread items', async () => {
     const { httpServer, chatStore } = await loadModules(repo)
     const thread = await chatStore.createThread('idle-thread')
-    await chatStore.closeSubject(thread.id)
+    await chatStore.closeSubthread(thread.id)
     const { port, close } = await httpServer.startHttpServer(makeDeps())
     try {
       const res = await fetch(`http://127.0.0.1:${port}/view/wywa-delta`)
       expect(res.status).toBe(200)
       const body = (await res.json()) as { events: Array<{ kind: string; summary: string }> }
-      const closed = body.events.find((e) => e.kind === 'closed-subject')
+      const closed = body.events.find((e) => e.kind === 'closed-subthread')
       expect(closed).toBeDefined()
       expect(closed?.summary).toContain(thread.id)
     } finally {

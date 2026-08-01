@@ -43,13 +43,13 @@ interface PendingConversationNotice {
 
 const deliverPendingNotice = async (notice: PendingConversationNotice): Promise<boolean> => {
   const c = stateClient()
-  const subject = await c.execute(`
+  const subthread = await c.execute(`
     SELECT id FROM chat_threads
      WHERE closed_at IS NULL
      ORDER BY updated_at DESC, created_at DESC, id DESC
      LIMIT 1
   `)
-  const threadId = (subject.rows[0] as { id?: unknown } | undefined)?.id
+  const threadId = (subthread.rows[0] as { id?: unknown } | undefined)?.id
   if (typeof threadId !== 'string') return false
 
   await appendMessage(

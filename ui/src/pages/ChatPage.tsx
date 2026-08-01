@@ -30,8 +30,8 @@ import {
   fetchChatConversation,
   fetchChatThread,
   createChatThread,
-  createSubjectAndSend,
-  endChatSubject,
+  createSubthreadAndSend,
+  endChatSubthread,
   uploadAttachment,
   renameChatThread,
   setMessageFeedback,
@@ -45,7 +45,7 @@ import {
   type AttachmentInfo,
 } from '@/shared/api'
 import { useFocusedProjectId, useFocusedProject } from '@/shared/useFocusedProject'
-import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail, GlossaryTerm, SubjectBoundary } from '@/shared/schemas'
+import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail, GlossaryTerm, SubthreadBoundary } from '@/shared/schemas'
 import type { MarsUIMessage } from '@/shared/marsChatTransport'
 import { useMarsChat } from '@/shared/useMarsChat'
 import { chatMessageToUIMessage, transcriptSignature } from '@/shared/chatMessageMapping'
@@ -77,6 +77,7 @@ import { ChatHero, type HeroDelta } from '@/widgets/chat/ChatHero'
 import { priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
 import { PROCESS_LEVEL_OPS, QueueThreadDetail } from '@/widgets/chat/QueueThreadDetail'
 import { SidebarFilters, type SidebarFiltersValue } from '@/widgets/chat/SidebarFilters'
+import { MainThreadRow } from '@/widgets/chat/MainThreadRow'
 import {
   filterSidebarThreads,
   isResolvedSelection,
@@ -87,6 +88,8 @@ import {
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
 import { startThreadFromAlert } from '@/entities/alerts/api'
+import { useAlerts } from '@/entities/alerts'
+import { MainThreadAlerts } from '@/widgets/chat/MainThreadAlerts'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
@@ -95,7 +98,8 @@ import { formatDuration } from '@/shared/time'
 import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle } from './chatPageUtils'
 import { OpeningNextMoves } from '@/widgets/chat/OpeningNextMoves'
 import { ConversationTimeline } from '@/widgets/chat/ConversationTimeline'
-import { SubjectBoundaryLine } from '@/widgets/chat/SubjectBoundaryLine'
+import { CompactionNotice } from '@/widgets/chat/CompactionNotice'
+import { SubthreadBoundaryLine } from '@/widgets/chat/SubthreadBoundaryLine'
 import type { DisplayRow } from '@/widgets/chat/OpeningNextMoves'
 import { useTasks } from '@/hooks/useTasks'
 import { SkeletonList } from '@/components/Skeleton'
@@ -767,6 +771,9 @@ const renderPart = (
   if (part.type === 'data-alert') {
     return <AlertCardFromSegment key={key} alert={part.data} />
   }
+  if (part.type === 'data-compaction') {
+    return <CompactionNotice key={key} segment={part.data} />
+  }
   if (part.type === 'data-attachment') {
     return <AttachmentDisplay key={key} attachment={part.data} />
   }
@@ -863,9 +870,11 @@ interface ThreadItemProps {
   isSelected: boolean
   onSelect: () => void
   onRename: (title: string) => void
+  /** Inset the row so subthreads read as subordinate to the main thread above. */
+  indented?: boolean
 }
 
-const ThreadItem = ({ thread, isSelected, onSelect, onRename }: ThreadItemProps) => {
+const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false }: ThreadItemProps) => {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -895,10 +904,19 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename }: ThreadItemProps)
   const typeIcon = thread.origin === 'alert' ? '🔔' : '💬'
   const iconDimmed = thread.origin === 'alert' && thread.alertResolved
 
+  // Show the objective only when it says something the title does not. Creation
+  // falls back to the title/opening message when no explicit objective is given,
+  // so without this check most rows would print the same sentence twice.
+  const objective = thread.objective?.trim()
+  const showObjective = Boolean(objective) && objective !== thread.title?.trim() && objective !== title
+
   return (
     <div
       className={[
-        'group flex items-center gap-1 rounded px-2 py-1.5 cursor-pointer border-b border-primary/10',
+        'group flex flex-col rounded py-1.5 cursor-pointer border-b border-primary/10',
+        // The inset plus a rule is the structural half of the hierarchy; the
+        // main-thread row carries the weight half.
+        indented ? 'ml-3 border-l border-primary/15 pl-2 pr-2' : 'px-2',
         isSelected ? 'bg-primary/20 text-foreground' : 'text-primary hover:bg-primary/10 hover:text-foreground',
       ].join(' ')}
       role="button"
@@ -907,6 +925,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename }: ThreadItemProps)
       onDoubleClick={startEdit}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect() } }}
     >
+      <div className="flex items-center gap-1">
       {editing ? (
         <input
           ref={inputRef}
@@ -958,6 +977,16 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename }: ThreadItemProps)
             />
           )}
         </>
+      )}
+      </div>
+      {showObjective && !editing && (
+        <p
+          data-testid="subthread-objective"
+          title={objective}
+          className="mt-0.5 truncate pl-[18px] font-mono text-[9px] text-muted-foreground"
+        >
+          {objective}
+        </p>
       )}
     </div>
   )
@@ -1050,7 +1079,7 @@ export const LiveAssistantBubble = ({ buffer, terms = [] }: { buffer: LiveBuffer
 
 interface ChatConversationProps {
   threadId: string
-  boundary?: SubjectBoundary
+  boundary?: SubthreadBoundary
   projectId?: string
   /** Prefill flowing into the composer (chip / slash / discuss). */
   prefill?: string
@@ -1060,8 +1089,8 @@ interface ChatConversationProps {
   /** Called whenever the live buffer for this thread changes. Used to lift
    * the buffer up to ChatPage so ContextRail can render the activity panel. */
   onLiveBufferChange?: (buf: LiveBuffer | null) => void
-  /** Return the page to the Subject boundary once this Subject closes. */
-  onSubjectClosed: (threadId: string) => void
+  /** Return the page to the Subthread boundary once this Subthread closes. */
+  onSubthreadClosed: (threadId: string) => void
   glossaryTerms: GlossaryTerm[]
 }
 
@@ -1080,7 +1109,7 @@ const ChatConversation = ({
   onPrefillConsumed,
   onInsertPrompt,
   onLiveBufferChange,
-  onSubjectClosed,
+  onSubthreadClosed,
   glossaryTerms,
 }: ChatConversationProps) => {
   const qc = useQueryClient()
@@ -1190,22 +1219,22 @@ const ChatConversation = ({
     void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
   }, [stop, qc, threadId])
 
-  const { mutate: endSubject, isPending: isEndingSubject } = useMutation({
-    mutationFn: () => endChatSubject(threadId, projectId),
+  const { mutate: endSubthread, isPending: isEndingSubthread } = useMutation({
+    mutationFn: () => endChatSubthread(threadId, projectId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
       void qc.invalidateQueries({ queryKey: ['chat-history'] })
       void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
-      onSubjectClosed(threadId)
+      onSubthreadClosed(threadId)
     },
   })
 
   useEffect(() => {
     if (threadDetail?.thread.closedAt !== null && threadDetail?.thread.closedAt !== undefined) {
-      onSubjectClosed(threadId)
+      onSubthreadClosed(threadId)
     }
-  }, [threadDetail?.thread.closedAt, threadId, onSubjectClosed])
+  }, [threadDetail?.thread.closedAt, threadId, onSubthreadClosed])
 
   // Direct retry: resubmit the last real user message without touching the
   // composer or inserting any synthetic "Please retry…" prompt into the transcript.
@@ -1282,7 +1311,7 @@ const ChatConversation = ({
 
   return (
     <>
-      {boundary && <SubjectBoundaryLine boundary={boundary} position="start" />}
+      {boundary && <SubthreadBoundaryLine boundary={boundary} position="start" />}
       <Conversation className="flex-1">
         <ConversationContent>
           {showWelcome ? (
@@ -1328,12 +1357,12 @@ const ChatConversation = ({
         <div className="flex justify-end px-3 pt-2">
           <button
             type="button"
-            data-testid="end-subject"
+            data-testid="end-subthread"
             className="font-mono text-[10px] text-muted-foreground hover:text-foreground"
-            disabled={isEndingSubject || isBusy || serverRunning}
-            onClick={() => endSubject()}
+            disabled={isEndingSubthread || isBusy || serverRunning}
+            onClick={() => endSubthread()}
           >
-            {isEndingSubject ? 'Ending…' : 'End Subject'}
+            {isEndingSubthread ? 'Ending…' : 'End Subthread'}
           </button>
         </div>
       )}
@@ -2311,6 +2340,10 @@ interface ThreadSidebarProps {
   onForkFilterChange?: (filter: ForkFilter) => void
   selectedItem: ActionQueueItem | null
   onFastAction: (action: 'restart') => void
+  /** Return the reading pane to the main thread. */
+  onSelectMainThread: () => void
+  /** Open alerts, badged on the main-thread row. */
+  alertCount?: number
 }
 
 export const ThreadSidebar = ({
@@ -2323,6 +2356,8 @@ export const ThreadSidebar = ({
   onForkFilterChange = () => {},
   selectedItem,
   onFastAction,
+  onSelectMainThread,
+  alertCount = 0,
 }: ThreadSidebarProps) => {
   const qc = useQueryClient()
   const hasForkFilter = Boolean(forkFilter.parentThreadId || forkFilter.hasParent)
@@ -2346,7 +2381,7 @@ export const ThreadSidebar = ({
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['chat-threads'] }),
   })
 
-  // Open Subjects are sorted by urgency → age → id. Closed transcripts remain
+  // Open Subthreads are sorted by urgency → age → id. Closed transcripts remain
   // expanded in the chronological conversation rather than an archive panel.
   const threads = sortByUrgencyThenAge(filterSidebarThreads(data ?? [], filters, forkFilter))
 
@@ -2361,12 +2396,27 @@ export const ThreadSidebar = ({
           + New thread
         </button>
       </div>
+      {/* Pinned OUTSIDE the scroll region: the main thread must stay visible
+          however many subthreads pile up below it. */}
+      <div className="px-2 pt-2">
+        <MainThreadRow
+          isSelected={selectedId === null}
+          onSelect={onSelectMainThread}
+          subthreadCount={threads.length}
+          alertCount={alertCount}
+        />
+      </div>
       <SidebarFilters
         value={{ ...filters, selectedItem } satisfies SidebarFiltersValue}
         onChange={({ selectedItem: _selectedItem, ...nextFilters }) => onFiltersChange(nextFilters)}
         onFastAction={onFastAction}
       />
       <div className="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-0.5">
+        {threads.length > 0 && (
+          <p className="px-2 pb-1 font-mono text-[9px] uppercase tracking-wide text-primary/50">
+            Subthreads
+          </p>
+        )}
         {isPending ? (
           <SkeletonList
             rows={3}
@@ -2384,6 +2434,7 @@ export const ThreadSidebar = ({
         {threads.map((t) => (
           <ThreadItem
             key={t.id}
+            indented
             thread={t}
             isSelected={t.id === selectedId}
             onSelect={() => onSelect(t.id)}
@@ -2641,23 +2692,23 @@ export const ChatPage = () => {
     }
   }, [selectedQueueItemId, threadsData])
 
-  // Start a fresh inline Subject in one gesture. The daemon commits the
+  // Start a fresh inline Subthread in one gesture. The daemon commits the
   // situation report and first user message together before starting the run,
-  // so a failed request cannot leave a blank Subject behind.
+  // so a failed request cannot leave a blank Subthread behind.
   const [sendError, setSendError] = useState<string | null>(null)
   const { mutate: createAndSend, isPending: isCreatingThread } = useMutation({
     mutationFn: async ({ message, files }: { message: string; files: File[] }) => {
       if (files.length > 0) {
-        throw new Error('Add attachments after starting a Subject.')
+        throw new Error('Add attachments after starting a Subthread.')
       }
-      return createSubjectAndSend(message, projectId)
+      return createSubthreadAndSend(message, projectId)
     },
     onMutate: () => setSendError(null),
     onSuccess: (thread) => {
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
       void qc.invalidateQueries({ queryKey: ['chat-thread', thread.id] })
       void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
-      setActiveSubjectThreadId(thread.id)
+      setActiveSubthreadId(thread.id)
       setSelectedThreadId(null)
       setSelectedQueueItemId(null)
     },
@@ -2715,21 +2766,33 @@ export const ChatPage = () => {
   // Tracks the thread opened inline beneath the opening block when the user
   // clicks a next-move chip. Kept separate from selectedThreadId so the
   // opening block is never unmounted.
-  const [activeSubjectThreadId, setActiveSubjectThreadId] = useState<string | null>(null)
-  const activeConversationThreadId = selectedThreadId ?? activeSubjectThreadId
+  const [activeSubthreadId, setActiveSubthreadId] = useState<string | null>(null)
+  const activeConversationThreadId = selectedThreadId ?? activeSubthreadId
 
-  const handleSubjectClosed = useCallback((threadId: string) => {
-    if (activeSubjectThreadId === threadId) setActiveSubjectThreadId(null)
+  const handleSubthreadClosed = useCallback((threadId: string) => {
+    if (activeSubthreadId === threadId) setActiveSubthreadId(null)
     if (selectedThreadId === threadId) setSelectedThreadId(null)
     void qc.invalidateQueries({ queryKey: ['chat-threads'] })
     void qc.invalidateQueries({ queryKey: ['chat-history'] })
     void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
-  }, [activeSubjectThreadId, selectedThreadId, qc])
+  }, [activeSubthreadId, selectedThreadId, qc])
 
-  // Opens a Subject inline when a chip is picked. Arc-failed rows (alerts)
+  // Opens a Subthread inline when a chip is picked. Arc-failed rows (alerts)
   // reuse the daemon-deduped thread via startThreadFromAlert; other rows get
   // a fresh generic thread.
-  const handleOpenSubject = useCallback(async (row: ActionQueueItem) => {
+  const { alerts: openAlerts } = useAlerts()
+
+  // Returning to the main thread clears every pinned selection — the seeded
+  // feed is what renders when nothing else is claiming the reading pane.
+  const handleSelectMainThread = useCallback(() => {
+    setSelectedThreadId(null)
+    setActiveSubthreadId(null)
+    setSelectedQueueItemId(null)
+    setWhatHappenedActive(false)
+  }, [])
+
+
+  const handleOpenSubthread = useCallback(async (row: ActionQueueItem) => {
     let threadId: string
     if (row.kind === 'arc-failed') {
       const result = await startThreadFromAlert(row.entityId)
@@ -2739,8 +2802,25 @@ export const ChatPage = () => {
       threadId = thread.id
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
     }
-    setActiveSubjectThreadId(threadId)
+    setActiveSubthreadId(threadId)
   }, [projectId, qc])
+
+  // Alerts rendered in the main thread spawn their subthread the same way the
+  // Bell does — through the daemon-deduped startThreadFromAlert — so the two
+  // entry points can never produce two threads for one alert.
+  const [alertSpawnPending, setAlertSpawnPending] = useState(false)
+  const handleDiscussAlert = useCallback(async (arcId: string) => {
+    setAlertSpawnPending(true)
+    try {
+      const result = await startThreadFromAlert(arcId)
+      setActiveSubthreadId(result.threadId)
+      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+    } finally {
+      // Always clear: leaving the flag set on a failed spawn would disable
+      // every Discuss button until remount.
+      setAlertSpawnPending(false)
+    }
+  }, [qc])
 
   // Seeded opening message: when actionable items exist show a compact,
   // grouped queue summary so the operator sees real pending work at a glance.
@@ -2791,6 +2871,8 @@ export const ChatPage = () => {
           onForkFilterChange={setForkFilter}
           selectedItem={selectedSidebarItem}
           onFastAction={restartSelectedThread}
+          onSelectMainThread={handleSelectMainThread}
+          alertCount={openAlerts.length}
         />
       )}
 
@@ -2818,6 +2900,11 @@ export const ChatPage = () => {
               onForkFilterChange={setForkFilter}
               selectedItem={selectedSidebarItem}
               onFastAction={restartSelectedThread}
+              onSelectMainThread={() => {
+                handleSelectMainThread()
+                setSidebarOpen(false)
+              }}
+              alertCount={openAlerts.length}
             />
           </div>
         </>
@@ -2923,10 +3010,10 @@ export const ChatPage = () => {
                         window.location.hash = taskHash(row.id, 'chat')
                         return
                       }
-                      // Real queue rows open their Subject inline, in the same
+                      // Real queue rows open their Subthread inline, in the same
                       // scroll, so the opening block is never unmounted.
                       const item = queueItems.find((q) => q.id === row.id)
-                      if (item) void handleOpenSubject(item)
+                      if (item) void handleOpenSubthread(item)
                     }}
                   />
                 ) : (
@@ -2948,27 +3035,39 @@ export const ChatPage = () => {
                     void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
                     if (threadId) {
                       setSelectedThreadId(null)
-                      setActiveSubjectThreadId(threadId)
+                      setActiveSubthreadId(threadId)
                     }
                   }}
                 />
               </div>
+              {/* Alert notifications live in the main thread, at its live end.
+                  Two or more merge into one event timeline so an operator
+                  returning from away reads one artifact, not a wall of cards. */}
+              {openAlerts.length > 0 && (
+                <div className="mt-4">
+                  <MainThreadAlerts
+                    alerts={openAlerts}
+                    onDiscuss={(arcId) => { void handleDiscussAlert(arcId) }}
+                    pending={alertSpawnPending}
+                  />
+                </div>
+              )}
               {activeConversationThreadId && (
                 <div
-                  data-testid="active-subject"
+                  data-testid="active-subthread"
                   data-thread-id={activeConversationThreadId}
                   className="mt-4 flex flex-col"
                 >
                   <ChatConversation
                     key={activeConversationThreadId}
                     threadId={activeConversationThreadId}
-                    boundary={conversation.boundaries.find((boundary) => boundary.subjectId === activeConversationThreadId)}
+                    boundary={conversation.boundaries.find((boundary) => boundary.subthreadId === activeConversationThreadId)}
                     projectId={projectId}
                     prefill={prefill}
                     onPrefillConsumed={() => setPrefill(undefined)}
                     onInsertPrompt={handleInsertPrompt}
                     onLiveBufferChange={setActiveLiveBuffer}
-                    onSubjectClosed={handleSubjectClosed}
+                    onSubthreadClosed={handleSubthreadClosed}
                     glossaryTerms={glossary ?? []}
                   />
                 </div>
@@ -3008,7 +3107,7 @@ export const ChatPage = () => {
         threadDetail={activeThreadDetail}
         isStreaming={activeIsStreaming}
         liveBuffer={activeLiveBuffer}
-        onOpenAlert={handleOpenSubject}
+        onOpenAlert={handleOpenSubthread}
         collapsed={railCollapsed}
         onToggleCollapse={() => setRailCollapsed((v) => !v)}
       />

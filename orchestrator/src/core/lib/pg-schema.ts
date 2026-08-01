@@ -641,6 +641,8 @@ const DDL: readonly string[] = [
     origin         text,
     alert_item_id  text,
     alert_resolved bigint NOT NULL DEFAULT 0,
+    objective      text,
+    archived_at    bigint,
     closed_at      bigint,
     terminal_event_type text,
     terminal_entity_id text,
@@ -755,6 +757,15 @@ const DDL: readonly string[] = [
      ALTER TABLE chat_threads DROP COLUMN evaporated_at;
    END
    $$`,
+  // A Subthread states why it exists. `objective` is the sentence the operator
+  // (or the alert that spawned it) put on the record at creation; `archived_at`
+  // is stamped when the operator accepts the archive prompt. Archiving is
+  // distinct from closing: `closed_at` means the work ended, `archived_at`
+  // means the operator has filed it away and no longer wants it in the list.
+  // A Subthread can be closed but not archived (waiting on the prompt), and
+  // never the reverse.
+  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS objective text`,
+  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS archived_at bigint`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS closed_at bigint`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS terminal_event_type text`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS terminal_entity_id text`,
@@ -827,15 +838,63 @@ const DDL: readonly string[] = [
     content    text NOT NULL,
     segments   text,
     created_at bigint NOT NULL,
-    context_scope text NOT NULL DEFAULT 'subject' CHECK (context_scope IN ('main', 'subject')),
+    context_scope text NOT NULL DEFAULT 'subthread' CHECK (context_scope IN ('main', 'subthread')),
     seq        bigint GENERATED ALWAYS AS IDENTITY
   )`,
   // Backfill `seq` for databases created before this column was added.
   // IF NOT EXISTS makes this idempotent on fresh databases (where seq already
   // exists from the CREATE TABLE above).
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS seq bigint GENERATED ALWAYS AS IDENTITY`,
-  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS context_scope text NOT NULL DEFAULT 'subject'
-     CHECK (context_scope IN ('main', 'subject'))`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS context_scope text NOT NULL DEFAULT 'subthread'
+     CHECK (context_scope IN ('main', 'subthread'))`,
+  // `context_scope = 'subject'` -> `'subthread'`. The CREATE TABLE / ADD COLUMN
+  // statements above only describe a FRESH database: on one already provisioned
+  // they are no-ops, so an existing column keeps its old default AND its old
+  // `CHECK (context_scope IN ('main', 'subject'))`. Without this block the
+  // daemon boots against a database whose constraint rejects every row the new
+  // code writes.
+  //
+  // The order below is the only correct one: the legacy constraint forbids
+  // 'subthread', so it must be dropped BEFORE the backfill, and the new
+  // constraint added only AFTER every row is migrated. The constraint name is
+  // looked up rather than assumed — it is auto-generated, and consumer
+  // databases provisioned by older binaries do not all carry the same one.
+  //
+  // Idempotent by construction: the whole DDL batch replays inside one
+  // transaction on EVERY daemon boot. Re-running this finds no legacy rows, and
+  // the guarded add re-creates the constraint only when it is absent.
+  `DO $$
+   DECLARE
+     con_name text;
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'chat_messages'
+          AND column_name = 'context_scope'
+     ) THEN
+       RETURN;
+     END IF;
+
+     -- Drop whichever check constraint currently governs context_scope.
+     FOR con_name IN
+       SELECT c.conname
+         FROM pg_constraint c
+         JOIN pg_class t ON t.oid = c.conrelid
+         JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = 'public' AND t.relname = 'chat_messages'
+          AND c.contype = 'c'
+          AND pg_get_constraintdef(c.oid) ILIKE '%context_scope%'
+     LOOP
+       EXECUTE format('ALTER TABLE chat_messages DROP CONSTRAINT %I', con_name);
+     END LOOP;
+
+     UPDATE chat_messages SET context_scope = 'subthread' WHERE context_scope = 'subject';
+     ALTER TABLE chat_messages ALTER COLUMN context_scope SET DEFAULT 'subthread';
+     ALTER TABLE chat_messages
+       ADD CONSTRAINT chat_messages_context_scope_check
+       CHECK (context_scope IN ('main', 'subthread'));
+   END
+   $$`,
   // Chat message envelope: kind ('validation' | 'acknowledgment' | 'situation' | 'notice') and optional
   // backing entity link for auto-clear projection (slice 1 of PRD cdf6a60a).
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'acknowledgment'`,

@@ -31,7 +31,7 @@ import { ChatStreamHub } from '../chat-stream-hub'
 import type { UiMessageChunk } from '../ui-message-chunks'
 import { CodexApiError, type StreamCodexResponseOpts } from '../codex-api'
 import type { ChatMessage } from '../../lib/chat-store'
-import { MAIN_SESSION_PROVIDER_REQUEST_IDENTITY } from '../chat-context'
+import { MAIN_THREAD_PROVIDER_REQUEST_IDENTITY } from '../chat-context'
 import { PROVIDERS } from '../../workers/providers'
 
 // ── SSE event fixtures ────────────────────────────────────────────────────────
@@ -199,7 +199,7 @@ const msg = (role: 'user' | 'assistant', content: string, segments: unknown = nu
   content,
   segments,
   created_at: 0,
-  context_scope: 'subject',
+  context_scope: 'subthread',
   kind: 'acknowledgment',
   backing_entity_id: null,
 })
@@ -443,7 +443,7 @@ vi.mock('../chat-memory-window', () => ({
 vi.mock('../../lib/chat-store', () => ({
   appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: 0 }),
   getThread: vi.fn(),
-  listMainSessionMessages: vi.fn().mockResolvedValue([]),
+  listMainThreadMessages: vi.fn().mockResolvedValue([]),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
 }))
@@ -474,7 +474,8 @@ const AUTH = { accessToken: 'tok', accountId: 'acc', refreshToken: 'ref' }
 const threadFixture = {
   id: 't1', title: '', status: 'idle' as const, created_at: 0, updated_at: 0,
   posture: 'triage' as const,
-  origin: null, alert_item_id: null, alert_resolved: false, closed_at: null,
+  origin: null, alert_item_id: null, alert_resolved: false,
+  objective: null, archived_at: null, closed_at: null,
   parent_thread_id: null, fork_idempotency_key: null,
 }
 
@@ -525,7 +526,7 @@ describe('ChatRunner UIMessage-chunk streaming', () => {
       messages: [],
       feedbacks: new Map(),
     })
-    vi.mocked(chatStore.listMainSessionMessages).mockResolvedValue([])
+    vi.mocked(chatStore.listMainThreadMessages).mockResolvedValue([])
     vi.mocked(chatMemoryWindow.selectMemoryCut).mockResolvedValue(null)
     vi.mocked(chatMemoryWindow.readMainMemoryWindow).mockResolvedValue({ startsAfterSeq: 0, lastUsedAt: null, cutAt: null, reason: null })
     vi.mocked(chatMemoryWindow.advanceMainMemoryWindow).mockResolvedValue(undefined)
@@ -585,7 +586,7 @@ describe('ChatRunner state machine', () => {
       messages: [],
       feedbacks: new Map(),
     })
-    vi.mocked(chatStore.listMainSessionMessages).mockResolvedValue([])
+    vi.mocked(chatStore.listMainThreadMessages).mockResolvedValue([])
     vi.mocked(chatMemoryWindow.selectMemoryCut).mockResolvedValue(null)
     vi.mocked(chatMemoryWindow.readMainMemoryWindow).mockResolvedValue({ startsAfterSeq: 0, lastUsedAt: null, cutAt: null, reason: null })
     vi.mocked(chatMemoryWindow.advanceMainMemoryWindow).mockResolvedValue(undefined)
@@ -725,7 +726,7 @@ describe('ChatRunner state machine', () => {
   it('does not auto-title when thread already has messages', async () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { ...threadFixture },
-      messages: [{ id: 'm1', thread_id: 't1', role: 'user', content: 'prior', segments: null, created_at: 0, context_scope: 'subject', kind: 'acknowledgment' as const, backing_entity_id: null }],
+      messages: [{ id: 'm1', thread_id: 't1', role: 'user', content: 'prior', segments: null, created_at: 0, context_scope: 'subthread', kind: 'acknowledgment' as const, backing_entity_id: null }],
       feedbacks: new Map(),
     })
 
@@ -736,49 +737,49 @@ describe('ChatRunner state machine', () => {
     expect(vi.mocked(chatStore.updateThreadTitle)).not.toHaveBeenCalled()
   })
 
-  it('replays the Main prefix before only the active Subject transcript', async () => {
+  it('replays the Main prefix before only the active Subthread transcript', async () => {
     const activeToolSegments = [
       { type: 'tool_use', id: 'active-call', tool: 'shell', name: 'ls', input: { command: 'ls' } },
       { type: 'tool_result', tool_use_id: 'active-call', content: { stdout: 'active-only' }, isError: false },
-      { type: 'text', text: 'The active Subject has one file.' },
+      { type: 'text', text: 'The active Subthread has one file.' },
     ]
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { ...threadFixture, id: 'active-subject' },
+      thread: { ...threadFixture, id: 'active-subthread' },
       messages: [{
-        id: 'active-tool-turn', thread_id: 'active-subject', role: 'assistant',
-        content: 'The active Subject has one file.', segments: activeToolSegments,
-        created_at: 0, context_scope: 'subject', kind: 'acknowledgment', backing_entity_id: null,
+        id: 'active-tool-turn', thread_id: 'active-subthread', role: 'assistant',
+        content: 'The active Subthread has one file.', segments: activeToolSegments,
+        created_at: 0, context_scope: 'subthread', kind: 'acknowledgment', backing_entity_id: null,
       }],
       feedbacks: new Map(),
     })
-    vi.mocked(chatStore.listMainSessionMessages).mockResolvedValue([
+    vi.mocked(chatStore.listMainThreadMessages).mockResolvedValue([
       {
-        id: 'main-notice', thread_id: 'closed-subject', role: 'assistant', content: 'Mars lowered workers to two.',
+        id: 'main-notice', thread_id: 'closed-subthread', role: 'assistant', content: 'Mars lowered workers to two.',
         segments: null, created_at: 0, context_scope: 'main', kind: 'acknowledgment', backing_entity_id: null,
       },
       {
-        id: 'boundary', thread_id: 'closed-subject', role: 'assistant', content: 'Situation: 1 running task.',
-        segments: null, created_at: 0, context_scope: 'subject', kind: 'situation', backing_entity_id: null,
+        id: 'boundary', thread_id: 'closed-subthread', role: 'assistant', content: 'Situation: 1 running task.',
+        segments: null, created_at: 0, context_scope: 'subthread', kind: 'situation', backing_entity_id: null,
       },
       {
-        id: 'closed-investigation', thread_id: 'closed-subject', role: 'assistant', content: 'x'.repeat(200_000),
-        segments: null, created_at: 0, context_scope: 'subject', kind: 'acknowledgment', backing_entity_id: null,
+        id: 'closed-investigation', thread_id: 'closed-subthread', role: 'assistant', content: 'x'.repeat(200_000),
+        segments: null, created_at: 0, context_scope: 'subthread', kind: 'acknowledgment', backing_entity_id: null,
       },
     ])
 
     const runner = new ChatRunner()
-    await runner.sendMessage('active-subject', 'Continue this Subject.', '/repo', undefined)
+    await runner.sendMessage('active-subthread', 'Continue this Subthread.', '/repo', undefined)
     await new Promise((r) => setTimeout(r, 20))
 
     const input = mockStream.mock.calls[0]![0].input
-    expect(mockStream.mock.calls[0]![0].requestIdentity).toBe(MAIN_SESSION_PROVIDER_REQUEST_IDENTITY)
+    expect(mockStream.mock.calls[0]![0].requestIdentity).toBe(MAIN_THREAD_PROVIDER_REQUEST_IDENTITY)
     expect(input).toEqual([
       { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Mars lowered workers to two.' }] },
       { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Situation: 1 running task.' }] },
       { type: 'function_call', name: 'shell', arguments: JSON.stringify({ command: 'ls' }), call_id: 'active-call' },
       { type: 'function_call_output', call_id: 'active-call', output: JSON.stringify({ stdout: 'active-only' }) },
-      { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'The active Subject has one file.' }] },
-      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Continue this Subject.' }] },
+      { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'The active Subthread has one file.' }] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Continue this Subthread.' }] },
     ])
   })
 
@@ -796,7 +797,7 @@ describe('ChatRunner state machine', () => {
       undefined,
       { startsAfterSeq: 9, reason: 'retention-lapse' },
     )
-    expect(chatStore.listMainSessionMessages).toHaveBeenCalledWith(9)
+    expect(chatStore.listMainThreadMessages).toHaveBeenCalledWith(9)
     expect(chatMemoryWindow.markMainMemoryWindowUsed).toHaveBeenCalledWith(undefined)
     expect(vi.mocked(mockStream).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(chatMemoryWindow.markMainMemoryWindowUsed).mock.invocationCallOrder[0]!,
@@ -970,8 +971,8 @@ describe('ChatRunner state machine', () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { ...threadFixture, title: 'Chat' },
       messages: [
-        { id: 'm0', thread_id: 't1', role: 'user', content: 'hello', segments: [{ type: 'text', text: 'hello' }], created_at: 0, context_scope: 'subject', kind: 'acknowledgment' as const, backing_entity_id: null },
-        { id: 'm1', thread_id: 't1', role: 'assistant', content: 'hi there', segments: [{ type: 'text', text: 'hi there' }], created_at: 0, context_scope: 'subject', kind: 'acknowledgment' as const, backing_entity_id: null },
+        { id: 'm0', thread_id: 't1', role: 'user', content: 'hello', segments: [{ type: 'text', text: 'hello' }], created_at: 0, context_scope: 'subthread', kind: 'acknowledgment' as const, backing_entity_id: null },
+        { id: 'm1', thread_id: 't1', role: 'assistant', content: 'hi there', segments: [{ type: 'text', text: 'hi there' }], created_at: 0, context_scope: 'subthread', kind: 'acknowledgment' as const, backing_entity_id: null },
       ],
       feedbacks: new Map(),
     })
@@ -1002,7 +1003,7 @@ describe('ChatRunner state machine', () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { ...threadFixture, title: 'Alert', origin: 'alert', alert_item_id: 'item-1' },
       messages: [
-        { id: 'm0', thread_id: 't1', role: 'assistant', content: 'Daemon running stale code', segments: [alertSeg], created_at: 0, context_scope: 'subject', kind: 'acknowledgment' as const, backing_entity_id: null },
+        { id: 'm0', thread_id: 't1', role: 'assistant', content: 'Daemon running stale code', segments: [alertSeg], created_at: 0, context_scope: 'subthread', kind: 'acknowledgment' as const, backing_entity_id: null },
       ],
       feedbacks: new Map(),
     })

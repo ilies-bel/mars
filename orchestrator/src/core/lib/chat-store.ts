@@ -40,8 +40,8 @@ export type AttentionStatus = 'generating' | 'ready' | 'drafting' | 'idle'
 export type MessageRole = 'user' | 'assistant'
 export type FeedbackRating = 'up' | 'down'
 
-/** The durable domain event that ends a Subject, when one is known at opening. */
-export interface SubjectTerminalCondition {
+/** The durable domain event that ends a Subthread, when one is known at opening. */
+export interface SubthreadTerminalCondition {
   eventType: string
   entityId: string
 }
@@ -68,12 +68,20 @@ export interface ChatThread {
   alert_item_id: string | null
   /** True when the underlying action-queue item has been resolved. */
   alert_resolved: boolean
+  /** Why this Subthread exists, in one sentence. Null when none was declared. */
+  objective: string | null
   /**
-   * Epoch-millisecond timestamp set when the Subject is closed.
-   * Null while the Subject is active.
+   * Epoch-millisecond timestamp set when the operator archives the Subthread.
+   * Independent of `closed_at`: closing means the work ended, archiving means
+   * the operator filed it away. Null while the Subthread is still listed.
+   */
+  archived_at: number | null
+  /**
+   * Epoch-millisecond timestamp set when the Subthread is closed.
+   * Null while the Subthread is active.
    */
   closed_at: number | null
-  /** Domain event that closes this Subject, or null when it needs an explicit close. */
+  /** Domain event that closes this Subthread, or null when it needs an explicit close. */
   terminal_event_type?: string | null
   /** Entity id in the terminal event payload that must match before closure. */
   terminal_entity_id?: string | null
@@ -88,7 +96,7 @@ export interface ChatMessage {
   content: string
   segments: unknown | null
   created_at: number
-  /** Reusable Main-session context or local Subject transcript. */
+  /** Reusable Main-session context or local Subthread transcript. */
   context_scope: ChatContextScope
   /** Envelope kind for UI presentation. */
   kind: ChatMessageKind
@@ -128,9 +136,13 @@ export interface ChatThreadApiView {
   alertItemId: string | null
   /** True when the underlying action-queue item has been resolved. */
   alertResolved: boolean
-  /** Set once the Subject ends; null while it remains active. */
+  /** Why this Subthread exists, in one sentence. Null when none was declared. */
+  objective: string | null
+  /** Set once the operator archives the Subthread; null while it stays listed. */
+  archivedAt: string | null
+  /** Set once the Subthread ends; null while it remains active. */
   closedAt: string | null
-  /** Declared automatic terminal event, if this Subject has one. */
+  /** Declared automatic terminal event, if this Subthread has one. */
   terminalEventType: string | null
   parentThreadId: string | null
 }
@@ -157,10 +169,10 @@ export interface ChatConversationEntryApiView {
   /** Global durable insertion order, used to locate memory-window boundaries. */
   seq: number
   threadId: string
-  /** Subject identity (the backing chat thread). */
-  subjectId: string
-  subjectTitle: string
-  subjectClosed: boolean
+  /** Subthread identity (the backing chat thread). */
+  subthreadId: string
+  subthreadTitle: string
+  subthreadClosed: boolean
   role: MessageRole
   content: string
   segments: unknown[]
@@ -171,12 +183,12 @@ export interface ChatConversationEntryApiView {
   resolution: 'resolved' | null
 }
 
-/** Aggregate token weight and lifetime for one Subject in the conversation. */
-export interface SubjectBoundaryApiView {
-  subjectId: string
+/** Aggregate token weight and lifetime for one Subthread in the conversation. */
+export interface SubthreadBoundaryApiView {
+  subthreadId: string
   startedAt: string
   closedAt: string | null
-  /** Aggregate provider token cost across the Subject's completed turns. */
+  /** Aggregate provider token cost across the Subthread's completed turns. */
   producedTokens: number
   /** Input context reported by the final completed provider turn. */
   carriedTokens: number
@@ -215,6 +227,8 @@ export const toThreadApiView = (
   origin: t.origin,
   alertItemId: t.alert_item_id,
   alertResolved: t.alert_resolved,
+  objective: t.objective,
+  archivedAt: t.archived_at === null ? null : new Date(t.archived_at).toISOString(),
   closedAt: t.closed_at === null ? null : new Date(t.closed_at).toISOString(),
   terminalEventType: t.terminal_event_type ?? null,
   parentThreadId: t.parent_thread_id,
@@ -314,9 +328,9 @@ const PreloadedVerbTargetSchema = z.object({
   entityId: z.string().trim().min(1).optional(),
 })
 
-/** A one-tap target that opens a fresh Subject without a provider turn. */
-const PreloadedSubjectTargetSchema = z.object({
-  type: z.literal('subject'),
+/** A one-tap target that opens a fresh Subthread without a provider turn. */
+const PreloadedSubthreadTargetSchema = z.object({
+  type: z.literal('subthread'),
   title: z.string().trim().min(1),
 })
 
@@ -326,7 +340,7 @@ export const PreloadedResponseSchema = z.object({
   label: z.string().trim().min(1),
   target: z.discriminatedUnion('type', [
     PreloadedVerbTargetSchema,
-    PreloadedSubjectTargetSchema,
+    PreloadedSubthreadTargetSchema,
   ]),
 })
 export type PreloadedResponse = z.infer<typeof PreloadedResponseSchema>
@@ -471,6 +485,8 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   origin: (row.origin as string | null) ?? null,
   alert_item_id: (row.alert_item_id as string | null) ?? null,
   alert_resolved: Boolean(row.alert_resolved),
+  objective: (row.objective as string | null) ?? null,
+  archived_at: (row.archived_at as number | null) ?? null,
   closed_at: (row.closed_at as number | null) ?? null,
   terminal_event_type: (row.terminal_event_type as string | null) ?? null,
   terminal_entity_id: (row.terminal_entity_id as string | null) ?? null,
@@ -488,7 +504,7 @@ const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
     content: row.content as string,
     segments: rawSegments != null ? (JSON.parse(rawSegments) as unknown) : null,
     created_at: row.created_at as number,
-    context_scope: row.context_scope === 'main' ? 'main' : 'subject',
+    context_scope: row.context_scope === 'main' ? 'main' : 'subthread',
     kind: (rawKind === 'validation' || rawKind === 'situation' || rawKind === 'notice' ? rawKind : 'acknowledgment') as ChatMessageKind,
     backing_entity_id: (row.backing_entity_id as string | null) ?? null,
   }
@@ -496,19 +512,40 @@ const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
+/** Everything a Subthread can declare about itself at creation. */
+export interface CreateThreadOptions {
+  /** Domain event that closes this Subthread when it reaches the outbox. */
+  terminalEvent?: string
+  /** Entity id in the terminal event payload that must match before closure. */
+  terminalEntityId?: string
+  /** Deterministic opening narration, stored as a zero-token situation message. */
+  situationReport?: string
+  firstUserMessage?: { content: string; segments?: unknown }
+  /**
+   * Why this Subthread exists, in one sentence. Drives the archive prompt: a
+   * Subthread with no objective has no completion to judge, so it is never
+   * proposed for archival and waits for an explicit operator gesture.
+   */
+  objective?: string
+  /** 'alert' for alert-spawned Subthreads; null/undefined for operator-created ones. */
+  origin?: string
+  /** The action-queue item this Subthread was spawned from, when origin is 'alert'. */
+  alertItemId?: string
+}
+
 /**
  * Create a new chat thread. `title` defaults to an empty string when omitted —
- * callers can update it later via {@link updateThreadTitle}. A Subject may
- * declare the domain event and entity that close it when that event reaches
- * the outbox.
+ * callers can update it later via {@link updateThreadTitle}.
+ *
+ * Everything past the title is an options object: the positional tail had
+ * already reached five parameters, and the objective/origin/alert fields this
+ * rework adds would have made every call site a run of `undefined`s.
  */
 export const createThread = async (
   title?: string,
-  terminalEvent?: string,
-  terminalEntityId?: string,
-  situationReport?: string,
-  firstUserMessage?: { content: string; segments?: unknown },
+  options: CreateThreadOptions = {},
 ): Promise<ChatThread> => {
+  const { terminalEvent, terminalEntityId, situationReport, firstUserMessage, objective, origin, alertItemId } = options
   const c = stateClient()
   const id = randomUUID()
   const ts = now()
@@ -516,9 +553,9 @@ export const createThread = async (
   await withTransaction(c, async (tx) => {
     await tx.execute({
       sql: `INSERT INTO chat_threads
-              (id, title, status, terminal_event_type, terminal_entity_id, created_at, updated_at)
-            VALUES (?, ?, 'idle', ?, ?, ?, ?)`,
-      args: [id, threadTitle, terminalEvent ?? null, terminalEntityId ?? null, ts, ts],
+              (id, title, status, terminal_event_type, terminal_entity_id, objective, origin, alert_item_id, created_at, updated_at)
+            VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?, ?)`,
+      args: [id, threadTitle, terminalEvent ?? null, terminalEntityId ?? null, objective ?? null, origin ?? null, alertItemId ?? null, ts, ts],
     })
     if (situationReport !== undefined) {
       await tx.execute({
@@ -530,7 +567,7 @@ export const createThread = async (
     if (firstUserMessage !== undefined) {
       await tx.execute({
         sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind, backing_entity_id)
-              VALUES (?, ?, 'user', ?, ?, ?, 'subject', 'acknowledgment', NULL)`,
+              VALUES (?, ?, 'user', ?, ?, ?, 'subthread', 'acknowledgment', NULL)`,
         args: [
           randomUUID(),
           id,
@@ -548,9 +585,11 @@ export const createThread = async (
     posture: 'triage',
     created_at: ts,
     updated_at: ts,
-    origin: null,
-    alert_item_id: null,
+    origin: origin ?? null,
+    alert_item_id: alertItemId ?? null,
     alert_resolved: false,
+    objective: objective ?? null,
+    archived_at: null,
     closed_at: null,
     terminal_event_type: terminalEvent ?? null,
     terminal_entity_id: terminalEntityId ?? null,
@@ -642,9 +681,12 @@ export const forkThread = async (opts: {
   await c.execute({
     sql: `INSERT INTO chat_threads
             (id, title, status, created_at, updated_at, origin, alert_item_id,
-             alert_resolved, parent_thread_id, fork_idempotency_key)
-          VALUES (?, ?, 'idle', ?, ?, NULL, NULL, 0, ?, ?)`,
-    args: [id, opts.goal, ts, ts, opts.sourceThreadId, opts.idempotencyKey],
+             alert_resolved, objective, parent_thread_id, fork_idempotency_key)
+          VALUES (?, ?, 'idle', ?, ?, NULL, NULL, 0, ?, ?, ?)`,
+    // A fork's goal IS its objective — it is the reason the operator split this
+    // Subthread off. Stored in both columns so the archive prompt has something
+    // to judge even after the title is edited.
+    args: [id, opts.goal, ts, ts, opts.goal, opts.sourceThreadId, opts.idempotencyKey],
   })
 
   const seed = await buildForkSeed(opts.sourceThreadId, opts.files)
@@ -661,11 +703,13 @@ export const forkThread = async (opts: {
       updated_at: ts,
       origin: null,
       alert_item_id: null,
-    alert_resolved: false,
-    closed_at: null,
-    terminal_event_type: null,
-    terminal_entity_id: null,
-    parent_thread_id: opts.sourceThreadId,
+      alert_resolved: false,
+      objective: opts.goal,
+      archived_at: null,
+      closed_at: null,
+      terminal_event_type: null,
+      terminal_entity_id: null,
+      parent_thread_id: opts.sourceThreadId,
       fork_idempotency_key: opts.idempotencyKey,
     },
     deduped: false,
@@ -680,7 +724,7 @@ export interface ThreadListOptions {
 }
 
 /**
- * List all active (open) Subjects newest-first. Each thread is
+ * List all active (open) Subthreads newest-first. Each thread is
  * augmented with the text and role of its most recent message.
  */
 export const listThreads = async (options: ThreadListOptions = {}): Promise<ThreadPreview[]> => {
@@ -719,14 +763,14 @@ export const listThreads = async (options: ThreadListOptions = {}): Promise<Thre
 }
 
 /**
- * List the persisted conversation across every Subject in the one global
+ * List the persisted conversation across every Subthread in the one global
  * insertion order. `chat_messages.seq` is deliberately the sole sort key: it
  * is the ordering the persistence layer assigned, even when timestamps tie.
  */
 export const listConversationEntries = async (): Promise<ChatConversationEntryApiView[]> => {
   const c = stateClient()
   const result = await c.execute(`
-    SELECT m.*, t.title AS subject_title, t.closed_at AS subject_closed_at,
+    SELECT m.*, t.title AS subthread_title, t.closed_at AS subthread_closed_at,
            t.alert_resolved, backing_task.status AS backing_task_status
       FROM chat_messages m
       JOIN chat_threads t ON t.id = m.thread_id
@@ -739,9 +783,9 @@ export const listConversationEntries = async (): Promise<ChatConversationEntryAp
       id: message.id,
       seq: Number(row.seq),
       threadId: message.thread_id,
-      subjectId: message.thread_id,
-      subjectTitle: row.subject_title as string,
-      subjectClosed: row.subject_closed_at != null,
+      subthreadId: message.thread_id,
+      subthreadTitle: row.subthread_title as string,
+      subthreadClosed: row.subthread_closed_at != null,
       role: message.role,
       content: message.content,
       segments: Array.isArray(message.segments) ? message.segments : [],
@@ -756,12 +800,12 @@ export const listConversationEntries = async (): Promise<ChatConversationEntryAp
 }
 
 /**
- * List aggregate Subject seams for the continuous conversation. Provider
+ * List aggregate Subthread seams for the continuous conversation. Provider
  * result segments are intentionally read from durable messages rather than
  * the UI projection: produced tokens are additive, while carried context is
- * the final non-null provider input measurement for that Subject.
+ * the final non-null provider input measurement for that Subthread.
  */
-export const listSubjectBoundaries = async (): Promise<SubjectBoundaryApiView[]> => {
+export const listSubthreadBoundaries = async (): Promise<SubthreadBoundaryApiView[]> => {
   const c = stateClient()
   const result = await c.execute(`
     SELECT t.id, t.created_at, t.closed_at, m.segments, m.seq
@@ -769,11 +813,11 @@ export const listSubjectBoundaries = async (): Promise<SubjectBoundaryApiView[]>
  LEFT JOIN chat_messages m ON m.thread_id = t.id
      ORDER BY t.created_at ASC, t.id ASC, m.seq ASC
   `)
-  const boundaries = new Map<string, SubjectBoundaryApiView>()
+  const boundaries = new Map<string, SubthreadBoundaryApiView>()
   for (const row of result.rows as unknown as Record<string, unknown>[]) {
-    const subjectId = row.id as string
-    const boundary = boundaries.get(subjectId) ?? {
-      subjectId,
+    const subthreadId = row.id as string
+    const boundary = boundaries.get(subthreadId) ?? {
+      subthreadId,
       startedAt: new Date(Number(row.created_at)).toISOString(),
       closedAt: row.closed_at == null ? null : new Date(Number(row.closed_at)).toISOString(),
       producedTokens: 0,
@@ -800,16 +844,16 @@ export const listSubjectBoundaries = async (): Promise<SubjectBoundaryApiView[]>
         boundary.carriedTokens = resultSegment.inputTokens
       }
     }
-    boundaries.set(subjectId, boundary)
+    boundaries.set(subthreadId, boundary)
   }
   return [...boundaries.values()]
 }
 
 /**
- * List all closed Subjects newest-first. Used to populate the History
+ * List all closed Subthreads newest-first. Used to populate the History
  * section in the chat sidebar.
  */
-export const listClosedSubjects = async (): Promise<ThreadPreview[]> => {
+export const listClosedSubthreads = async (): Promise<ThreadPreview[]> => {
   const c = stateClient()
   const result = await c.execute(`
     SELECT t.*,
@@ -824,7 +868,7 @@ export const listClosedSubjects = async (): Promise<ThreadPreview[]> => {
              ORDER BY m.created_at DESC, m.seq DESC
              LIMIT 1) AS last_message_role
       FROM chat_threads t
-     WHERE t.closed_at IS NOT NULL
+     WHERE t.closed_at IS NOT NULL AND t.archived_at IS NULL
      ORDER BY t.closed_at DESC, t.id DESC
   `)
   return (result.rows as unknown as Record<string, unknown>[]).map((row) => ({
@@ -892,7 +936,7 @@ export const appendMessage = async (
   const segmentsJson = segments !== undefined ? JSON.stringify(segments) : null
   const kind: ChatMessageKind = opts?.kind ?? 'acknowledgment'
   const backingEntityId = opts?.backingEntityId ?? null
-  const contextScope = opts?.contextScope ?? (kind === 'situation' || kind === 'notice' ? 'main' : 'subject')
+  const contextScope = opts?.contextScope ?? (kind === 'situation' || kind === 'notice' ? 'main' : 'subthread')
   await c.execute({
     sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind, backing_entity_id)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -941,8 +985,8 @@ export const getPreloadedResponse = async (
   return null
 }
 
-/** Return Main-session entries and compact Subject boundaries in conversation order. */
-export const listMainSessionMessages = async (startsAfterSeq = 0): Promise<ChatMessage[]> => {
+/** Return Main-session entries and compact Subthread boundaries in conversation order. */
+export const listMainThreadMessages = async (startsAfterSeq = 0): Promise<ChatMessage[]> => {
   const c = stateClient()
   const result = await c.execute({
     sql: `SELECT * FROM chat_messages
@@ -1009,10 +1053,10 @@ export const setThreadPosture = async (id: string, posture: ChatPosture): Promis
 }
 
 /**
- * Close a Subject by stamping `closed_at` with the current epoch-millisecond
+ * Close a Subthread by stamping `closed_at` with the current epoch-millisecond
  * timestamp. Idempotent: the original closure timestamp is preserved.
  */
-export const closeSubject = async (id: string): Promise<void> => {
+export const closeSubthread = async (id: string): Promise<void> => {
   const { flushRoutineConversationNotices } = await import('./conversation-delivery.js')
   await flushRoutineConversationNotices(() => false)
   const c = stateClient()
@@ -1020,6 +1064,40 @@ export const closeSubject = async (id: string): Promise<void> => {
   await c.execute({
     sql: `UPDATE chat_threads SET closed_at = ? WHERE id = ? AND closed_at IS NULL`,
     args: [ts, id],
+  })
+}
+
+/**
+ * Archive a Subthread by stamping `archived_at`. Idempotent: the original
+ * archival timestamp is preserved.
+ *
+ * Archiving also closes: an operator who files a Subthread away has declared
+ * the work over, and leaving `closed_at` null would keep the terminal-event
+ * Subscriber watching for a closure that can no longer matter. A Subthread that
+ * was already closed keeps its original `closed_at`.
+ */
+export const archiveSubthread = async (id: string): Promise<void> => {
+  const c = stateClient()
+  const ts = now()
+  await c.execute({
+    sql: `UPDATE chat_threads
+             SET archived_at = ?,
+                 closed_at = COALESCE(closed_at, ?),
+                 updated_at = ?
+           WHERE id = ? AND archived_at IS NULL`,
+    args: [ts, ts, ts, id],
+  })
+}
+
+/**
+ * Restore an archived Subthread to the list. `closed_at` is deliberately left
+ * alone: un-archiving undoes the filing gesture, not the closure it recorded.
+ */
+export const unarchiveSubthread = async (id: string): Promise<void> => {
+  const c = stateClient()
+  await c.execute({
+    sql: `UPDATE chat_threads SET archived_at = NULL, updated_at = ? WHERE id = ?`,
+    args: [now(), id],
   })
 }
 
@@ -1128,7 +1206,7 @@ export const startThreadFromAlert = async (
   title: string,
   segment: AlertSegment,
   situationReport?: string,
-  terminal?: SubjectTerminalCondition,
+  terminal?: SubthreadTerminalCondition,
 ): Promise<ChatThread> => {
   const existing = await findThreadByArc(arcId)
   if (existing) return existing
@@ -1137,12 +1215,17 @@ export const startThreadFromAlert = async (
   const threadId = randomUUID()
   const msgId = randomUUID()
   const ts = now()
+  // An alert-spawned Subthread has exactly one reason to exist, and it is not a
+  // matter of interpretation: resolve the alert it came from. Recording it as
+  // the objective means the archive prompt treats alert- and operator-created
+  // Subthreads through the same field rather than special-casing origin.
+  const objective = `Resolve: ${title}`
   await c.execute({
     sql: `INSERT INTO chat_threads
             (id, title, status, created_at, updated_at, origin, alert_item_id, alert_resolved,
-             terminal_event_type, terminal_entity_id)
-          VALUES (?, ?, 'idle', ?, ?, 'alert', ?, 0, ?, ?)`,
-    args: [threadId, title, ts, ts, arcId, terminal?.eventType ?? null, terminal?.entityId ?? null],
+             objective, terminal_event_type, terminal_entity_id)
+          VALUES (?, ?, 'idle', ?, ?, 'alert', ?, 0, ?, ?, ?)`,
+    args: [threadId, title, ts, ts, arcId, objective, terminal?.eventType ?? null, terminal?.entityId ?? null],
   })
   if (situationReport !== undefined) {
     await c.execute({
@@ -1173,6 +1256,8 @@ export const startThreadFromAlert = async (
     origin: 'alert',
     alert_item_id: arcId,
     alert_resolved: false,
+    objective,
+    archived_at: null,
     closed_at: null,
     terminal_event_type: terminal?.eventType ?? null,
     terminal_entity_id: terminal?.entityId ?? null,
@@ -1182,7 +1267,7 @@ export const startThreadFromAlert = async (
 }
 
 /**
- * Resolve an alert-origin thread and close its Subject.
+ * Resolve an alert-origin thread and close its Subthread.
  *
  * @returns `true` on the first resolution, `false` when the thread was already
  *   resolved (second call is a no-op).
@@ -1195,6 +1280,6 @@ export const resolveAlertThread = async (threadId: string): Promise<boolean> => 
           WHERE id = ? AND alert_resolved = 0`,
     args: [now(), threadId],
   })
-  await closeSubject(threadId)
+  await closeSubthread(threadId)
   return ((result as unknown as { rowsAffected?: number }).rowsAffected ?? 0) > 0
 }

@@ -11,7 +11,7 @@ Object.defineProperty(window, 'matchMedia', {
 })
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
-const { createSubjectAndSend } = vi.hoisted(() => ({ createSubjectAndSend: vi.fn() }))
+const { createSubthreadAndSend } = vi.hoisted(() => ({ createSubthreadAndSend: vi.fn() }))
 const { sendMessage } = vi.hoisted(() => ({ sendMessage: vi.fn().mockResolvedValue(undefined) }))
 
 vi.mock('@/entities/actionQueue/useActionQueue', () => ({
@@ -36,7 +36,7 @@ vi.mock('@/shared/api', () => ({
   fetchChatConversation: vi.fn().mockResolvedValue({ entries: [], boundaries: [], memoryStartsAfterSeq: 0, memoryCutAt: null, memoryCutReason: null }), fetchChatHistory: vi.fn().mockResolvedValue([]),
   fetchCodexAuthState: vi.fn().mockResolvedValue(null), refreshCodexAuth: vi.fn().mockResolvedValue(null),
   fetchProjectMeta: vi.fn().mockResolvedValue({ vision: null, theme: null }), fetchGlossary: vi.fn().mockResolvedValue([]),
-  createChatThread: vi.fn(), createSubjectAndSend, postChatMessage: vi.fn(), uploadAttachment: vi.fn(),
+  createChatThread: vi.fn(), createSubthreadAndSend, postChatMessage: vi.fn(), uploadAttachment: vi.fn(),
   renameChatThread: vi.fn(), setMessageFeedback: vi.fn(), clearMessageFeedback: vi.fn(), invokeAction: vi.fn(),
   ApiError: class ApiError extends Error { kind = 'other' },
 }))
@@ -46,9 +46,9 @@ let container: HTMLDivElement
 let root: ReturnType<typeof createRoot>
 
 beforeEach(() => {
-  createSubjectAndSend.mockReset()
+  createSubthreadAndSend.mockReset()
   sendMessage.mockClear()
-  createSubjectAndSend.mockResolvedValue({ id: 'subject-1', title: '', status: 'running', attentionStatus: 'generating', createdAt: '', updatedAt: '', origin: null, alertItemId: null, alertResolved: false, parentThreadId: null })
+  createSubthreadAndSend.mockResolvedValue({ id: 'subthread-1', title: '', status: 'running', attentionStatus: 'generating', createdAt: '', updatedAt: '', origin: null, alertItemId: null, alertResolved: false, parentThreadId: null })
   window.location.hash = '#/chat'
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -59,8 +59,8 @@ afterEach(async () => {
   container.remove()
 })
 
-describe('ChatPage Subject boundary composer', () => {
-  it('starts and activates one inline Subject without changing the chat URL', async () => {
+describe('ChatPage Subthread boundary composer', () => {
+  it('starts and activates one inline Subthread without changing the chat URL', async () => {
     await act(async () => {
       root.render(<QueryClientProvider client={qc()}><ChatPage /></QueryClientProvider>)
     })
@@ -73,13 +73,13 @@ describe('ChatPage Subject boundary composer', () => {
     await act(async () => {
       (container.querySelector('[data-testid="hero-send"]') as HTMLButtonElement).click()
     })
-    await vi.waitFor(() => expect(createSubjectAndSend).toHaveBeenCalledWith('Review the deployment', undefined))
-    expect(container.querySelector('[data-testid="active-subject"]')?.getAttribute('data-thread-id')).toBe('subject-1')
+    await vi.waitFor(() => expect(createSubthreadAndSend).toHaveBeenCalledWith('Review the deployment', undefined))
+    expect(container.querySelector('[data-testid="active-subthread"]')?.getAttribute('data-thread-id')).toBe('subthread-1')
     expect(window.location.hash).toBe('#/chat')
   })
 
-  it('keeps the drafted text when starting a Subject fails', async () => {
-    createSubjectAndSend.mockRejectedValueOnce(new Error('offline'))
+  it('keeps the drafted text when starting a Subthread fails', async () => {
+    createSubthreadAndSend.mockRejectedValueOnce(new Error('offline'))
     await act(async () => {
       root.render(<QueryClientProvider client={qc()}><ChatPage /></QueryClientProvider>)
     })
@@ -92,10 +92,10 @@ describe('ChatPage Subject boundary composer', () => {
     })
     await vi.waitFor(() => expect(container.querySelector('[data-testid="hero-send-error"]')).not.toBeNull())
     expect((container.querySelector('[data-testid="hero-composer"]') as HTMLTextAreaElement).value).toBe('Keep this draft')
-    expect(container.querySelector('[data-testid="active-subject"]')).toBeNull()
+    expect(container.querySelector('[data-testid="active-subthread"]')).toBeNull()
   })
 
-  it('sends the next message to the active Subject instead of creating another one', async () => {
+  it('sends the next message to the active Subthread instead of creating another one', async () => {
     await act(async () => {
       root.render(<QueryClientProvider client={qc()}><ChatPage /></QueryClientProvider>)
     })
@@ -106,16 +106,16 @@ describe('ChatPage Subject boundary composer', () => {
       hero.dispatchEvent(new Event('change', { bubbles: true }))
       ;(container.querySelector('[data-testid="hero-send"]') as HTMLButtonElement).click()
     })
-    await vi.waitFor(() => expect(container.querySelector('[data-testid="active-subject"]')).not.toBeNull())
+    await vi.waitFor(() => expect(container.querySelector('[data-testid="active-subthread"]')).not.toBeNull())
 
-    const activeComposer = container.querySelector('[data-testid="active-subject"] textarea') as HTMLTextAreaElement
+    const activeComposer = container.querySelector('[data-testid="active-subthread"] textarea') as HTMLTextAreaElement
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(activeComposer, 'Continue here')
       activeComposer.dispatchEvent(new Event('input', { bubbles: true }))
       activeComposer.dispatchEvent(new Event('change', { bubbles: true }))
-      ;(container.querySelector('[data-testid="active-subject"] [data-testid="send-btn"]') as HTMLButtonElement).click()
+      ;(container.querySelector('[data-testid="active-subthread"] [data-testid="send-btn"]') as HTMLButtonElement).click()
     })
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledWith({ text: 'Continue here' }, undefined))
-    expect(createSubjectAndSend).toHaveBeenCalledTimes(1)
+    expect(createSubthreadAndSend).toHaveBeenCalledTimes(1)
   })
 })

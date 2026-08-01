@@ -34,7 +34,7 @@ describe('conversation notice delivery', () => {
 
   it('delivers an urgent Notice immediately without spending a provider turn', async () => {
     const { chat, delivery } = await loadStores(repo)
-    const subject = await chat.createThread('Current subject')
+    const subthread = await chat.createThread('Current subthread')
 
     await delivery.postConversationNotice({
       body: 'A worker needs attention.',
@@ -42,7 +42,7 @@ describe('conversation notice delivery', () => {
       hasActiveRuns: () => true,
     })
 
-    const detail = await chat.getThread(subject.id)
+    const detail = await chat.getThread(subthread.id)
     expect(detail?.thread.status).toBe('idle')
     expect(detail?.messages).toEqual([
       expect.objectContaining({
@@ -57,7 +57,7 @@ describe('conversation notice delivery', () => {
 
   it('preserves ordered preloaded responses on the delivered Notice', async () => {
     const { chat, delivery } = await loadStores(repo)
-    const subject = await chat.createThread('Current subject')
+    const subthread = await chat.createThread('Current subthread')
 
     await delivery.postConversationNotice({
       body: 'A worker needs attention.',
@@ -68,7 +68,7 @@ describe('conversation notice delivery', () => {
           type: 'preloaded_responses',
           responses: [
             { id: 'restart', label: 'Restart', target: { type: 'verb', op: 'restart', entityId: 'task-1' } },
-            { id: 'review', label: 'Review', target: { type: 'subject', title: 'Review task-1' } },
+            { id: 'review', label: 'Review', target: { type: 'subthread', title: 'Review task-1' } },
           ],
         },
       ],
@@ -76,7 +76,7 @@ describe('conversation notice delivery', () => {
       hasActiveRuns: () => false,
     })
 
-    const detail = await chat.getThread(subject.id)
+    const detail = await chat.getThread(subthread.id)
     expect(detail?.messages[0]?.segments).toEqual([
       { type: 'text', text: 'A worker needs attention.' },
       expect.objectContaining({
@@ -91,25 +91,25 @@ describe('conversation notice delivery', () => {
 
   it('holds routine Notices until the active run reaches a natural pause', async () => {
     const { chat, delivery } = await loadStores(repo)
-    const subject = await chat.createThread('Current subject')
+    const subthread = await chat.createThread('Current subthread')
 
     await delivery.postConversationNotice({
       body: 'Routine status update.',
       priority: 'routine',
       hasActiveRuns: () => true,
     })
-    expect((await chat.getThread(subject.id))?.messages).toEqual([])
+    expect((await chat.getThread(subthread.id))?.messages).toEqual([])
 
     await delivery.flushRoutineConversationNotices(() => false)
 
-    expect((await chat.getThread(subject.id))?.messages).toEqual([
+    expect((await chat.getThread(subthread.id))?.messages).toEqual([
       expect.objectContaining({ content: 'Routine status update.', kind: 'notice', context_scope: 'main' }),
     ])
   })
 
   it('delivers routine Notices immediately when no run is active', async () => {
     const { chat, delivery } = await loadStores(repo)
-    const subject = await chat.createThread('Current subject')
+    const subthread = await chat.createThread('Current subthread')
 
     await delivery.postConversationNotice({
       body: 'The queue is clear.',
@@ -117,12 +117,12 @@ describe('conversation notice delivery', () => {
       hasActiveRuns: () => false,
     })
 
-    expect((await chat.getThread(subject.id))?.messages).toEqual([
+    expect((await chat.getThread(subthread.id))?.messages).toEqual([
       expect.objectContaining({ content: 'The queue is clear.', kind: 'notice', context_scope: 'main' }),
     ])
   })
 
-  it('keeps an autonomous Notice pending instead of creating a Subject', async () => {
+  it('keeps an autonomous Notice pending instead of creating a Subthread', async () => {
     const { chat, delivery } = await loadStores(repo)
 
     const result = await delivery.postConversationNotice({
@@ -136,18 +136,18 @@ describe('conversation notice delivery', () => {
     expect(await chat.listThreads()).toEqual([])
   })
 
-  it('flushes a waiting routine Notice when its Subject closes', async () => {
+  it('flushes a waiting routine Notice when its Subthread closes', async () => {
     const { chat, delivery } = await loadStores(repo)
-    const subject = await chat.createThread('Closing subject')
+    const subthread = await chat.createThread('Closing subthread')
 
     await delivery.postConversationNotice({
       body: 'Saved for the next pause.',
       priority: 'routine',
       hasActiveRuns: () => true,
     })
-    await chat.closeSubject(subject.id)
+    await chat.closeSubthread(subthread.id)
 
-    const detail = await chat.getThread(subject.id)
+    const detail = await chat.getThread(subthread.id)
     expect(detail?.thread.closed_at).not.toBeNull()
     expect(detail?.messages).toEqual([
       expect.objectContaining({ content: 'Saved for the next pause.', kind: 'notice', context_scope: 'main' }),

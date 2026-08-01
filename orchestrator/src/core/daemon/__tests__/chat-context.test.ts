@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { buildMainSessionPrefix } from '../chat-context'
+import { buildMainThreadPrefix } from '../chat-context'
 import type { ChatMessage } from '../../lib/chat-store'
 
 const message = (
   id: string,
   content: string,
-  context_scope: 'main' | 'subject',
+  context_scope: 'main' | 'subthread',
   kind: ChatMessage['kind'] = 'acknowledgment',
 ): ChatMessage => ({
   id,
-  thread_id: 'subject-a',
+  thread_id: 'subthread-a',
   role: 'assistant',
   content,
   segments: null,
@@ -19,15 +19,15 @@ const message = (
   backing_entity_id: null,
 })
 
-describe('buildMainSessionPrefix', () => {
-  it('keeps only reusable Main entries and compact Subject boundaries', () => {
-    const prefix = buildMainSessionPrefix([
+describe('buildMainThreadPrefix', () => {
+  it('keeps only reusable Main entries and compact Subthread boundaries', () => {
+    const prefix = buildMainThreadPrefix([
       message('notice', 'Mars lowered workers to two.', 'main'),
-      message('closed-investigation', 'x'.repeat(200_000), 'subject'),
-      message('subject-boundary', 'Situation: 1 running task.', 'subject', 'situation'),
-      message('active-subject', 'Investigate the timeout.', 'subject'),
+      message('closed-investigation', 'x'.repeat(200_000), 'subthread'),
+      message('subthread-boundary', 'Situation: 1 running task.', 'subthread', 'situation'),
+      message('active-subthread', 'Investigate the timeout.', 'subthread'),
     ])
 
-    expect(prefix.map((entry) => entry.id)).toEqual(['notice', 'subject-boundary'])
+    expect(prefix.map((entry) => entry.id)).toEqual(['notice', 'subthread-boundary'])
   })
 })

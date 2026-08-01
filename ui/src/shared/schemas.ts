@@ -1093,15 +1093,15 @@ const preloadedVerbTargetSchema = z.object({
   entityId: z.string().optional(),
 })
 
-const preloadedSubjectTargetSchema = z.object({
-  type: z.literal('subject'),
+const preloadedSubthreadTargetSchema = z.object({
+  type: z.literal('subthread'),
   title: z.string(),
 })
 
 export const preloadedResponseSchema = z.object({
   id: z.string(),
   label: z.string(),
-  target: z.discriminatedUnion('type', [preloadedVerbTargetSchema, preloadedSubjectTargetSchema]),
+  target: z.discriminatedUnion('type', [preloadedVerbTargetSchema, preloadedSubthreadTargetSchema]),
 })
 
 export const preloadedResponsesSegmentSchema = z.object({
@@ -1109,8 +1109,28 @@ export const preloadedResponsesSegmentSchema = z.object({
   responses: z.array(preloadedResponseSchema),
 })
 
+/**
+ * A compaction checkpoint written by the idle sweeper. The daemon has produced
+ * these since compaction existed, but nothing on this side described them, so
+ * the UI dropped them as an unknown segment type and a compacted thread looked
+ * identical to one that had simply said less.
+ */
+export const chatSegmentCompactionSchema = z.object({
+  type: z.literal('compaction'),
+  summary: z.string(),
+  /** Id of the last message this checkpoint covers. */
+  coveredThrough: z.string(),
+  /** How many messages the checkpoint stands in for, cumulative across checkpoints. */
+  messageCount: z.number(),
+  taskIds: z.array(z.string()).default([]),
+  adrRefs: z.array(z.string()).default([]),
+  glossaryRefs: z.array(z.string()).default([]),
+  artifactRefs: z.array(z.string()).default([]),
+})
+
 export const chatSegmentSchema = z.discriminatedUnion('type', [
   chatSegmentTextSchema,
+  chatSegmentCompactionSchema,
   chatSegmentThinkingSchema,
   chatSegmentToolUseSchema,
   chatSegmentAlertSchema,
@@ -1174,9 +1194,17 @@ export const chatThreadSchema = z.object({
   alertItemId: z.string().nullable().optional(),
   /** True when the underlying action-queue item has been resolved. */
   alertResolved: z.boolean().optional().default(false),
-  /** Set once the Subject closes; null while it remains active. */
+  /**
+   * Why this Subthread exists, in one sentence, recorded when it was created.
+   * Null for Subthreads that predate the objective field — they are never
+   * proposed for archival, because there is no stated goal to judge as met.
+   */
+  objective: z.string().nullable().optional().default(null),
+  /** Set once the operator archives the Subthread; null while it stays listed. */
+  archivedAt: z.string().nullable().optional().default(null),
+  /** Set once the Subthread closes; null while it remains active. */
   closedAt: z.string().nullable().optional().default(null),
-  /** Domain event that closes the Subject automatically, if declared. */
+  /** Domain event that closes the Subthread automatically, if declared. */
   terminalEventType: z.string().nullable().optional().default(null),
   /** Source thread for a fork, or null for a root conversation. */
   parentThreadId: z.string().nullable().optional().default(null),
@@ -1191,15 +1219,15 @@ export const chatThreadDetailSchema = z.object({
   messages: z.array(chatMessageSchema),
 })
 
-/** One persisted message in the cross-Subject conversation projection. */
+/** One persisted message in the cross-Subthread conversation projection. */
 export const chatConversationEntrySchema = z.object({
   id: z.string(),
   /** Global durable insertion order, used to place the memory boundary. */
   seq: z.number().int().positive(),
   threadId: z.string(),
-  subjectId: z.string(),
-  subjectTitle: z.string(),
-  subjectClosed: z.boolean(),
+  subthreadId: z.string(),
+  subthreadTitle: z.string(),
+  subthreadClosed: z.boolean(),
   role: z.enum(['user', 'assistant']),
   /** Durable plain text used when this message predates typed segments. */
   content: z.string(),
@@ -1210,9 +1238,9 @@ export const chatConversationEntrySchema = z.object({
   resolution: z.enum(['resolved']).nullable(),
 })
 
-/** Aggregate token weight and lifetime for one Subject in the conversation. */
-export const subjectBoundarySchema = z.object({
-  subjectId: z.string(),
+/** Aggregate token weight and lifetime for one Subthread in the conversation. */
+export const subthreadBoundarySchema = z.object({
+  subthreadId: z.string(),
   startedAt: z.string(),
   closedAt: z.string().nullable(),
   producedTokens: z.number().nonnegative(),
@@ -1221,7 +1249,7 @@ export const subjectBoundarySchema = z.object({
 
 export const chatConversationResponseSchema = z.object({
   entries: z.array(chatConversationEntrySchema),
-  boundaries: z.array(subjectBoundarySchema).default([]),
+  boundaries: z.array(subthreadBoundarySchema).default([]),
   /** Final sequence Mars excludes from its current provider-memory window. */
   memoryStartsAfterSeq: z.number().int().nonnegative(),
   /** Epoch milliseconds when the readable-memory window was last cut. */
@@ -1239,6 +1267,7 @@ export type ChatSegmentThinking = z.infer<typeof chatSegmentThinkingSchema>
 export type ChatSegmentToolUse = z.infer<typeof chatSegmentToolUseSchema>
 export type ChatSegmentToolResult = z.infer<typeof chatSegmentToolResultSchema>
 export type ChatSegmentAttachment = z.infer<typeof chatSegmentAttachmentSchema>
+export type ChatSegmentCompaction = z.infer<typeof chatSegmentCompactionSchema>
 export type ChatSegmentResult = z.infer<typeof chatSegmentResultSchema>
 export type ChatSegmentError = z.infer<typeof chatSegmentErrorSchema>
 export type PreloadedResponse = z.infer<typeof preloadedResponseSchema>
@@ -1249,7 +1278,7 @@ export type ChatThread = z.infer<typeof chatThreadSchema>
 export type ChatThreadsResponse = z.infer<typeof chatThreadsResponseSchema>
 export type ChatThreadDetail = z.infer<typeof chatThreadDetailSchema>
 export type ChatConversationEntry = z.infer<typeof chatConversationEntrySchema>
-export type SubjectBoundary = z.infer<typeof subjectBoundarySchema>
+export type SubthreadBoundary = z.infer<typeof subthreadBoundarySchema>
 export type ChatConversationResponse = z.infer<typeof chatConversationResponseSchema>
 
 // ---------------------------------------------------------------------------

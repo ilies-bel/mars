@@ -11,12 +11,12 @@ describe('PreloadedResponses', () => {
         resolved={false}
         responses={[
           { id: 'first', label: 'First choice', target: { type: 'verb', op: 'restart', entityId: 'task-1' } },
-          { id: 'second', label: 'Open a Subject', target: { type: 'subject', title: 'Investigate task' } },
+          { id: 'second', label: 'Open a Subthread', target: { type: 'subthread', title: 'Investigate task' } },
         ]}
       />,
     )
 
-    expect(html.indexOf('First choice')).toBeLessThan(html.indexOf('Open a Subject'))
+    expect(html.indexOf('First choice')).toBeLessThan(html.indexOf('Open a Subthread'))
   })
 
   it('disables resolved backing responses with a Resolved label', () => {
@@ -45,15 +45,15 @@ describe('PreloadedResponses', () => {
     const html = renderToStaticMarkup(
       <ConversationTimeline entries={[
         {
-          id: 'notice-1', seq: 1, threadId: 'subject-1', subjectId: 'subject-1', subjectTitle: 'Subject', subjectClosed: false,
+          id: 'notice-1', seq: 1, threadId: 'subthread-1', subthreadId: 'subthread-1', subthreadTitle: 'Subthread', subthreadClosed: false,
           role: 'assistant', content: 'Choose.', segments: [{
             type: 'preloaded_responses',
-            responses: [{ id: 'open', label: 'Open it', target: { type: 'subject', title: 'Investigate' } }],
+            responses: [{ id: 'open', label: 'Open it', target: { type: 'subthread', title: 'Investigate' } }],
           }],
           createdAt: '2026-01-01T00:00:00.000Z', kind: 'notice', backingEntityId: null, resolution: null,
         },
         {
-          id: 'coder-1', seq: 2, threadId: 'subject-1', subjectId: 'subject-1', subjectTitle: 'Subject', subjectClosed: false,
+          id: 'coder-1', seq: 2, threadId: 'subthread-1', subthreadId: 'subthread-1', subthreadTitle: 'Subthread', subthreadClosed: false,
           role: 'assistant', content: 'Plain narration.', segments: [],
           createdAt: '2026-01-01T00:01:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
         },

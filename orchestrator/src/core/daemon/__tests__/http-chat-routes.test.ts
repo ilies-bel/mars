@@ -30,7 +30,7 @@ vi.mock('../codex-api', async (importOriginal) => {
 })
 
 describe('GET /view/chat/conversation', () => {
-  it('serves the chronological cross-subject conversation projection', async () => {
+  it('serves the chronological cross-subthread conversation projection', async () => {
     const { startHttpServer } = await import('../http-server')
     server = await startHttpServer({
       chatRunner: new ChatRunner(),
@@ -45,11 +45,11 @@ describe('GET /view/chat/conversation', () => {
       snoozeItem: async () => {}, recipeCatalog: nullRecipeCatalog, traceStore: nullTraceStore,
       appServices: stubAppServices({
         viewChatConversation: async () => ({ entries: [{
-          id: 'message-1', seq: 42, threadId: 'subject-1', subjectId: 'subject-1', subjectTitle: 'A subject', subjectClosed: false,
+          id: 'message-1', seq: 42, threadId: 'subthread-1', subthreadId: 'subthread-1', subthreadTitle: 'A subthread', subthreadClosed: false,
           role: 'assistant', content: 'Persisted narration', segments: [], createdAt: '2026-01-01T00:00:00.000Z',
           kind: 'acknowledgment', backingEntityId: null, resolution: null,
         }], boundaries: [{
-          subjectId: 'subject-1', startedAt: '2026-01-01T00:00:00.000Z', closedAt: null, producedTokens: 25, carriedTokens: 20,
+          subthreadId: 'subthread-1', startedAt: '2026-01-01T00:00:00.000Z', closedAt: null, producedTokens: 25, carriedTokens: 20,
         }], memoryStartsAfterSeq: 42, memoryCutAt: 1_700_000_000_000, memoryCutReason: 'capacity' }),
       }),
     })
@@ -59,9 +59,9 @@ describe('GET /view/chat/conversation', () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual(expect.objectContaining({
       entries: [expect.objectContaining({
-        seq: 42, subjectTitle: 'A subject', content: 'Persisted narration',
+        seq: 42, subthreadTitle: 'A subthread', content: 'Persisted narration',
       })],
-      boundaries: [expect.objectContaining({ subjectId: 'subject-1', producedTokens: 25, carriedTokens: 20 })],
+      boundaries: [expect.objectContaining({ subthreadId: 'subthread-1', producedTokens: 25, carriedTokens: 20 })],
       memoryStartsAfterSeq: 42,
       memoryCutAt: 1_700_000_000_000,
       memoryCutReason: 'capacity',
@@ -74,7 +74,7 @@ describe('POST /chat/threads/:id/delete', () => {
     server = await startFeedbackServer()
 
     const response = await fetch(
-      `http://127.0.0.1:${server.port}/chat/threads/subject-1/delete`,
+      `http://127.0.0.1:${server.port}/chat/threads/subthread-1/delete`,
       { method: 'POST' },
     )
 
@@ -83,7 +83,7 @@ describe('POST /chat/threads/:id/delete', () => {
 })
 
 describe('POST /chat/threads/:id/end', () => {
-  it('closes an open-ended Subject without sending a provider message', async () => {
+  it('closes an open-ended Subthread without sending a provider message', async () => {
     server = await startFeedbackServer()
 
     const response = await fetch(
@@ -93,7 +93,7 @@ describe('POST /chat/threads/:id/end', () => {
 
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({ ok: true })
-    expect(mockCloseSubject).toHaveBeenCalledWith('t1')
+    expect(mockCloseSubthread).toHaveBeenCalledWith('t1')
     expect(mockStream).not.toHaveBeenCalled()
   })
 })
@@ -150,7 +150,7 @@ vi.mock('../../lib/chat-store', () => ({
     feedbacks: new Map(),
   }),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
-  closeSubject: vi.fn().mockResolvedValue(undefined),
+  closeSubthread: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
   setMessageFeedback: vi.fn().mockResolvedValue({
     message_id: 'msg-1',
@@ -177,7 +177,7 @@ const messageEvent = (text: string): unknown => ({
 const {
   setMessageFeedback: mockSetMessageFeedback,
   clearMessageFeedback: mockClearMessageFeedback,
-  closeSubject: mockCloseSubject,
+  closeSubthread: mockCloseSubthread,
 } = await import('../../lib/chat-store')
 
 const nullRecipeCatalog: RecipeCatalog = {

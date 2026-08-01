@@ -11,7 +11,7 @@
  * a pre-seeded QueryClient — effects never run, so only the initial render
  * is exercised.
  *
- * Interactive tests (handleOpenSubject) use createRoot + act to exercise
+ * Interactive tests (handleOpenSubthread) use createRoot + act to exercise
  * user interactions that require a live DOM.
  */
 
@@ -348,10 +348,10 @@ describe('ThreadSidebar – pending state', () => {
 })
 
 // ---------------------------------------------------------------------------
-// ChatPage — handleOpenSubject: chip pick opens a Subject inline
+// ChatPage — handleOpenSubthread: chip pick opens a Subthread inline
 // ---------------------------------------------------------------------------
 
-describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
+describe('ChatPage – handleOpenSubthread: chip opens Subthread inline', () => {
   let container: HTMLDivElement
   let root: ReturnType<typeof createRoot>
 
@@ -360,7 +360,7 @@ describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
     mockFetchChatConversation.mockResolvedValue({
       entries: [], boundaries: [], memoryStartsAfterSeq: 0, memoryCutAt: null, memoryCutReason: null,
     })
-    mockStartThreadFromAlert.mockResolvedValue({ threadId: 'subject-thread-123' })
+    mockStartThreadFromAlert.mockResolvedValue({ threadId: 'subthread-thread-123' })
     mockUseActionQueue.mockReturnValue({
       items: [],
       error: null,
@@ -380,7 +380,7 @@ describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
     vi.clearAllMocks()
   })
 
-  it('clicking an arc-failed chip calls startThreadFromAlert and sets the active subject thread', async () => {
+  it('clicking an arc-failed chip calls startThreadFromAlert and sets the active subthread thread', async () => {
     const arcItem = makeArcFailedItem()
     mockUseActionQueue.mockReturnValue({
       items: [arcItem],
@@ -401,7 +401,7 @@ describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
     const chip = container.querySelector('[data-testid="next-move-chip"]')
     expect(chip).not.toBeNull()
 
-    // Click the chip — triggers handleOpenSubject
+    // Click the chip — triggers handleOpenSubthread
     await act(async () => {
       chip!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       // Allow the async startThreadFromAlert promise to resolve
@@ -412,10 +412,10 @@ describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
     // startThreadFromAlert should have been called with the arc entityId
     expect(mockStartThreadFromAlert).toHaveBeenCalledWith('arc-xyz-123')
 
-    // The active subject div should now exist with the returned thread id
-    const subject = container.querySelector('[data-testid="active-subject"]')
-    expect(subject).not.toBeNull()
-    expect(subject?.getAttribute('data-thread-id')).toBe('subject-thread-123')
+    // The active subthread div should now exist with the returned thread id
+    const subthread = container.querySelector('[data-testid="active-subthread"]')
+    expect(subthread).not.toBeNull()
+    expect(subthread?.getAttribute('data-thread-id')).toBe('subthread-thread-123')
 
     // Opening block must remain visible — no unmount
     const opening = container.querySelector('[data-testid="mars-opening-message"]')
@@ -431,7 +431,7 @@ describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
       projectsEmpty: false,
     })
     // Both calls return the same thread (daemon dedup)
-    mockStartThreadFromAlert.mockResolvedValue({ threadId: 'subject-thread-123' })
+    mockStartThreadFromAlert.mockResolvedValue({ threadId: 'subthread-thread-123' })
 
     await act(async () => {
       root.render(
@@ -460,26 +460,26 @@ describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
 
     expect(mockStartThreadFromAlert).toHaveBeenCalledTimes(2)
 
-    // The active subject still shows the (same) thread id
-    const subject = container.querySelector('[data-testid="active-subject"]')
-    expect(subject?.getAttribute('data-thread-id')).toBe('subject-thread-123')
+    // The active subthread still shows the (same) thread id
+    const subthread = container.querySelector('[data-testid="active-subthread"]')
+    expect(subthread?.getAttribute('data-thread-id')).toBe('subthread-thread-123')
   })
 
-  it('keeps closed Subject messages expanded in the chronological feed', async () => {
+  it('keeps closed Subthread messages expanded in the chronological feed', async () => {
     mockFetchChatConversation.mockResolvedValue({
       entries: [
         {
-          id: 'past-first-message', seq: 1, threadId: 'past-first', subjectId: 'past-first', subjectTitle: 'First past Subject', subjectClosed: true,
+          id: 'past-first-message', seq: 1, threadId: 'past-first', subthreadId: 'past-first', subthreadTitle: 'First past Subthread', subthreadClosed: true,
           role: 'assistant', content: 'First past message.', segments: [], createdAt: '2026-07-31T08:00:00.000Z', kind: 'situation', backingEntityId: null, resolution: null,
         },
         {
-          id: 'past-second-message', seq: 2, threadId: 'past-second', subjectId: 'past-second', subjectTitle: 'Second past Subject', subjectClosed: true,
+          id: 'past-second-message', seq: 2, threadId: 'past-second', subthreadId: 'past-second', subthreadTitle: 'Second past Subthread', subthreadClosed: true,
           role: 'assistant', content: 'Second past message.', segments: [], createdAt: '2026-07-31T09:00:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
         },
       ],
       boundaries: [
-        { subjectId: 'past-first', startedAt: '2026-07-31T08:00:00.000Z', closedAt: '2026-07-31T08:01:00.000Z', producedTokens: 10, carriedTokens: 5 },
-        { subjectId: 'past-second', startedAt: '2026-07-31T09:00:00.000Z', closedAt: '2026-07-31T09:01:00.000Z', producedTokens: 20, carriedTokens: 10 },
+        { subthreadId: 'past-first', startedAt: '2026-07-31T08:00:00.000Z', closedAt: '2026-07-31T08:01:00.000Z', producedTokens: 10, carriedTokens: 5 },
+        { subthreadId: 'past-second', startedAt: '2026-07-31T09:00:00.000Z', closedAt: '2026-07-31T09:01:00.000Z', producedTokens: 20, carriedTokens: 10 },
       ],
       memoryStartsAfterSeq: 0, memoryCutAt: null, memoryCutReason: null,
     })
@@ -501,7 +501,7 @@ describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
-    expect(container.querySelector('[data-testid="past-subjects-column"]')).toBeNull()
+    expect(container.querySelector('[data-testid="past-subthreads-column"]')).toBeNull()
     expect(container.querySelector('[data-testid="chat-history-section"]')).toBeNull()
     expect(container.textContent).toContain('First past message.')
     expect(container.textContent).toContain('Second past message.')
@@ -516,6 +516,6 @@ describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
       await Promise.resolve()
     })
 
-    expect(container.querySelector('[data-testid="active-subject"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="active-subthread"]')).not.toBeNull()
   })
 })

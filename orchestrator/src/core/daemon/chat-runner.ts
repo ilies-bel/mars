@@ -38,7 +38,7 @@ import { corePurgeTask } from './purge-task'
 import {
   appendMessage,
   getThread,
-  listMainSessionMessages,
+  listMainThreadMessages,
   setThreadPosture,
   setThreadStatus,
   updateThreadTitle,
@@ -50,7 +50,7 @@ import {
 import type { ViewStreamHub } from './view/stream-hub'
 import type { ChatStreamHub } from './chat-stream-hub'
 import { resolveChatSystemPrompt } from './chat-system-prompt'
-import { buildMainSessionPrefix, MAIN_SESSION_PROVIDER_REQUEST_IDENTITY } from './chat-context'
+import { buildMainThreadPrefix, MAIN_THREAD_PROVIDER_REQUEST_IDENTITY } from './chat-context'
 import {
   advanceMainMemoryWindow,
   markMainMemoryWindowUsed,
@@ -1036,12 +1036,12 @@ export class ChatRunner {
       const memoryCut = await selectMemoryCut(undefined, this.conversationMemory)
       if (memoryCut) await advanceMainMemoryWindow(undefined, memoryCut)
       const memoryWindow = await readMainMemoryWindow()
-      const mainSessionMessages = await listMainSessionMessages(memoryWindow.startsAfterSeq)
-      const mainPrefix = buildApiInput(buildMainSessionPrefix(mainSessionMessages))
-      const subjectInput = buildApiInput(
+      const mainThreadMessages = await listMainThreadMessages(memoryWindow.startsAfterSeq)
+      const mainPrefix = buildApiInput(buildMainThreadPrefix(mainThreadMessages))
+      const subthreadInput = buildApiInput(
         transcript.filter((message) => message.context_scope !== 'main' && message.kind !== 'situation'),
       )
-      const input: ResponseInputItem[] = [...mainPrefix, ...subjectInput]
+      const input: ResponseInputItem[] = [...mainPrefix, ...subthreadInput]
       if (content.length > 0) {
         input.push({ type: 'message', role: 'user', content: [{ type: 'input_text', text: promptContent }] })
       }
@@ -1087,7 +1087,7 @@ export class ChatRunner {
                 instructions: instructionsForPosture(),
                 input,
                 tools: toolsForPosture(),
-                requestIdentity: MAIN_SESSION_PROVIDER_REQUEST_IDENTITY,
+                requestIdentity: MAIN_THREAD_PROVIDER_REQUEST_IDENTITY,
                 signal: abort.signal,
                 onEvent: (event) => {
                   for (const seg of parseEventToSegments(event)) {

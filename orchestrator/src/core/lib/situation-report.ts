@@ -1,5 +1,5 @@
 /**
- * Deterministic opening narration for a Subject. Its collaborators are reads
+ * Deterministic opening narration for a Subthread. Its collaborators are reads
  * from the daemon's current stores, deliberately keeping this path outside the
  * paid chat runner/provider boundary.
  */
@@ -25,7 +25,7 @@ const taskCount = (tasks: readonly SituationTask[], status: string): number =>
 const plural = (count: number, singular: string, pluralNoun = `${singular}s`): string =>
   `${count} ${count === 1 ? singular : pluralNoun}`
 
-/** Read current stored state and render the first, zero-token Subject message. */
+/** Read current stored state and render the first, zero-token Subthread message. */
 export const buildSituationReport = async (
   sources: SituationReportSources,
 ): Promise<string> => {

@@ -139,7 +139,7 @@ describe('ContextRail piles', () => {
     await act(async () => root.unmount())
   })
 
-  it('opens the selected alert Subject through the supplied callback', async () => {
+  it('opens the selected alert Subthread through the supplied callback', async () => {
     const item = alert('open')
     const onOpenAlert = vi.fn()
     state.items = [item]
