@@ -341,7 +341,7 @@ export const provisionCommitterWorktree = async (
   if (readPersistedPaused()) {
     throw new Error(
       'provisionCommitterWorktree: daemon is paused — refusing to capture and migrate ' +
-        'uncommitted changes off the integration checkout. Run `mars daemon resume` once ' +
+        'uncommitted changes off the integration checkout. Resolve the dispatch state through `mars operator` once ' +
         'the working tree is ready to be processed.',
     )
   }

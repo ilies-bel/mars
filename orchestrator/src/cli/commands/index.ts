@@ -46,7 +46,6 @@ import { deployCommands } from './deploy'
 import { purgeCommands } from './purge'
 import { mcpWorkerCommands } from './mcp-worker'
 import { worktreeCommands } from './worktree'
-import { budgetCommands } from './budget'
 import { stewardCommands } from './steward'
 import { previewValidationCommands } from './preview-validation'
 
@@ -91,7 +90,6 @@ export const allCommands: readonly Command[] = [
   ...purgeCommands,
   ...mcpWorkerCommands,
   ...worktreeCommands,
-  ...budgetCommands,
   ...stewardCommands,
 ]
 

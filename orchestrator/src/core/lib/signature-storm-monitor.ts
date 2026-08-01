@@ -60,7 +60,7 @@ export interface MonitorDb {
  * Reset: any successful task completion calls {@link resetFailureSignatureStreak}
  * which zeroes the streak and clears `tripped`. Dispatch itself resumes when
  * the Steward lands a fix, when the daemon's bounded fallback timer fires, or
- * when the operator runs `mars daemon resume` — all three clear this flag and
+ * when the operator clears the pause — all three clear this flag and
  * the pause together.
  */
 
@@ -314,7 +314,7 @@ export const recordFailureSignature = async (
  *
  * Does NOT itself resume the queue — the daemon owns the pause state and
  * clears it alongside this flag (Steward success, fallback timer, or
- * `mars daemon resume`).
+ * the operator clears the pause).
  */
 export const resetFailureSignatureStreak = async (
   client: MonitorDb,
@@ -356,7 +356,7 @@ const raiseSignatureStormRow = async (
       `diagnose the root cause and land a fix. ` +
       `\n\nResume is AUTOMATIC on two paths: the Steward landing a fix (which also resolves this ` +
       `row), or a bounded fallback timer so dispatch can never stay dead if the Steward fails. ` +
-      `\`mars daemon resume\` resumes immediately and clears the breaker.`,
+      `Use \`mars operator\` to inspect control levers before resuming dispatch.`,
     payload: { signature, streak },
     context: {},
     raisedBy: 'daemon:signature-storm-monitor',

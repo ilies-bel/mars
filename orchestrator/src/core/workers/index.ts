@@ -568,7 +568,7 @@ const buildWorker = (config: WorkerConfig): Worker => {
             `(maxContextTokens=${config.maxContextTokens}). ${config.provider} reports ` +
             `'${provider.headless.capabilities.usageSemantics}' usage — context occupancy is never observable ` +
             `mid-run, so no turn can be compared against the window. Enforced instead: the pre-flight prompt-fit ` +
-            `check (input side) and the window/arc token ceilings ('mars budget'), which bound SPEND after each run.`,
+            `check (input side) and the window/arc token ceilings ('mars operator'), which bound SPEND after each run.`,
         )
       }
       return config.runtime === 'pty'

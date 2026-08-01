@@ -299,7 +299,7 @@ describe('signature-storm-monitor — unit', () => {
   it('readSignatureStormState reports not-tripped after resetFailureSignatureStreak (simulates resume)', async () => {
     // This models the daemon restart scenario:
     //   1. Storm trips → tripped=true persisted in DB.
-    //   2. Operator calls `mars daemon resume` → resetFailureSignatureStreak clears tripped.
+    //   2. Operator clears the pause → resetFailureSignatureStreak clears tripped.
     //   3. Next daemon startup reads the state → not tripped → no re-pause.
     const { sm, client } = await loadModules(repo)
     const sig = 'setup:install-failed/unclassified'

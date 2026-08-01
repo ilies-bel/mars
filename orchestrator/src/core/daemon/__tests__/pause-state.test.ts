@@ -3,7 +3,7 @@
  *
  * The bug these lock down: `tripped` (durable, storm breaker) and `isPaused`
  * (in-memory, daemon) used to move independently, so `mars daemon status` could
- * report PAUSED with nothing on disk explaining it, and `mars daemon resume`
+ * report PAUSED with nothing on disk explaining it, and the legacy resume control
  * cleared one flag but not the other.
  */
 

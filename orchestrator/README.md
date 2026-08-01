@@ -214,7 +214,7 @@ env vars below without restarting); a kill + restart also picks them up.
   (PRD 6cf85bc9). Its OWN semaphore, separate from the task dispatch pool:
   a scoring run is not a Task and never competes for an implement slot.
   Each run is one pinned fast-tier judge call; suppress all scoring at
-  runtime with `mars daemon set-flag scoring off` (in-memory,
+  runtime with `mars operator set scoring off` (persisted,
   `MARS_SCORING_DISABLED=1`; `MARS_REFLECT_DISABLED=1` also disables it).
 
 Excess work queues into in-memory pending sets and drains as slots free

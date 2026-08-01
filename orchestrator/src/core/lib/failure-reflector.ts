@@ -60,7 +60,7 @@ export interface SpawnFailureReflectorOpts {
  * (`acquire(sems.*)` in server.ts). Without a cap of its own, a failure storm
  * spawns one headless provider run per failure simultaneously — a 900-task
  * backlog melted the host at ~150 concurrent `codex exec` processes, invisible
- * to `mars daemon pause` because the pool genuinely held zero of them.
+ * to an operator dispatch pause because the pool genuinely held zero of them.
  *
  * Overflow is DROPPED, not queued. Reflector output is a best-effort
  * harness-improvement draft proposal, so shedding load under a storm is the
@@ -77,8 +77,8 @@ export const _resetFailureReflectorGateForTests = (): void => {
 
 /**
  * Returns `true` when self-heal is disabled via
- * `mars daemon set-flag recovery off` (sets MARS_RECOVERY_DISABLED=1
- * in-memory).
+ * `mars operator set recovery off` (sets MARS_RECOVERY_DISABLED=1
+ * persistently).
  *
  * The failure handler's own kill-switch check returns early only for origin
  * tasks (`fixForTaskId === null`); recovery-task failures fall through to the

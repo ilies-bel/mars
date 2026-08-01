@@ -13,9 +13,8 @@
  * (deduped per originId; the operator decides the remediation). On a passing
  * verdict the outcome is recorded as a trace event for the Studio timeline.
  *
- * Kill-switch: `mars daemon set-flag arc-verify on` sets
- * `MARS_ARC_VERIFY_DISABLED=1` (in-memory) and suppresses all runs. Useful
- * during incident storms to stop the verifier from adding noise.
+ * `MARS_ARC_VERIFY_DISABLED=1` suppresses all runs. This is an environment-
+ * level emergency escape hatch during incident storms.
  *
  * Concurrency: the daemon owns arc-verifier admission and execution through its
  * tracked worker pool. This module only performs the synchronous kill-switch and
@@ -56,8 +55,7 @@ export const _clearTriggeredForTests = (): void => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Returns `true` when `MARS_ARC_VERIFY_DISABLED=1` is set (in-memory;
- * toggled via `mars daemon set-flag arc-verify on|off`).
+ * Returns `true` when `MARS_ARC_VERIFY_DISABLED=1` is set in the daemon.
  */
 export const isArcVerifyDisabled = (): boolean =>
   process.env.MARS_ARC_VERIFY_DISABLED === '1'

@@ -708,7 +708,7 @@ const DDL: readonly string[] = [
   // Signature-storm circuit breaker: singleton streak row that counts
   // consecutive identical failure signatures across DIFFERENT origin tasks.
   // When the streak reaches the threshold, `tripped` is set to true and
-  // the daemon pauses dispatch + spawns a steward. Reset by any successful
+  // dispatch pauses + spawns a steward. Reset by any successful
   // task completion (streak_count=0, tripped=false). Singleton via CHECK(id=1).
   `CREATE TABLE IF NOT EXISTS failure_signature_streak (
     id                  bigint PRIMARY KEY CHECK (id = 1),

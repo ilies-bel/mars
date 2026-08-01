@@ -228,70 +228,6 @@ const reloadConfigHandler = handler('reload-config', async (_req, deps) => {
   }
 })
 
-const setFlagHandler = handler('set-flag', async (req, deps) => {
-  // In-memory kill-switch toggle. No persistence — a daemon
-  // restart legitimately re-reads the spawn env. Allowlist is
-  // narrow on purpose; extend deliberately rather than exposing
-  // arbitrary env mutation over IPC.
-  //
-  //   recovery   on|off — suppress fix-task / Investigator spawns.
-  //   scoring    on|off — suppress post-instance Scorer runs (PRD 6cf85bc9).
-  //     Every scored instance costs one Haiku-class judge call; this is the
-  //     instant spend brake. `on` re-enables, `off` disables (the env var
-  //     underneath is MARS_SCORING_DISABLED, mirroring recovery's polarity:
-  //     the flag names the FEATURE, the env var names the disable).
-  //   arc-verify on|off — suppress post-merge arc-outcome verifier runs.
-  //     `on` disables the verifier (sets MARS_ARC_VERIFY_DISABLED=1);
-  //     `off` re-enables it. Use during incident storms to stop the verifier
-  //     from adding noise while you diagnose.
-  const SUPPORTED_FLAGS = ['recovery', 'scoring', 'arc-verify'] as const
-  if (!SUPPORTED_FLAGS.includes(req.flag as (typeof SUPPORTED_FLAGS)[number])) {
-    return {
-      ok: false,
-      error: `set-flag: unknown flag '${req.flag}'; supported flags: ${SUPPORTED_FLAGS.join(', ')}`,
-    }
-  }
-  if (req.value !== 'on' && req.value !== 'off') {
-    return {
-      ok: false,
-      error: `set-flag: value must be 'on' or 'off'; got '${req.value}'`,
-    }
-  }
-  if (req.flag === 'recovery') {
-    if (req.value === 'on') {
-      process.env.MARS_RECOVERY_DISABLED = '1'
-    } else {
-      delete process.env.MARS_RECOVERY_DISABLED
-    }
-    deps.log(
-      `set-flag: recovery=${req.value} (MARS_RECOVERY_DISABLED=${process.env.MARS_RECOVERY_DISABLED ?? '<unset>'})`,
-    )
-  } else if (req.flag === 'arc-verify') {
-    // arc-verify: 'on' disables the verifier (sets MARS_ARC_VERIFY_DISABLED=1),
-    // 'off' re-enables it. Mirrors the recovery/scoring polarity convention:
-    // the flag names the FEATURE, the env var names the DISABLE.
-    if (req.value === 'on') {
-      process.env.MARS_ARC_VERIFY_DISABLED = '1'
-    } else {
-      delete process.env.MARS_ARC_VERIFY_DISABLED
-    }
-    deps.log(
-      `set-flag: arc-verify=${req.value} (MARS_ARC_VERIFY_DISABLED=${process.env.MARS_ARC_VERIFY_DISABLED ?? '<unset>'})`,
-    )
-  } else {
-    // scoring: 'off' disables (sets MARS_SCORING_DISABLED=1), 'on' re-enables.
-    if (req.value === 'off') {
-      process.env.MARS_SCORING_DISABLED = '1'
-    } else {
-      delete process.env.MARS_SCORING_DISABLED
-    }
-    deps.log(
-      `set-flag: scoring=${req.value} (MARS_SCORING_DISABLED=${process.env.MARS_SCORING_DISABLED ?? '<unset>'})`,
-    )
-  }
-  return { ok: true, data: { flag: req.flag, value: req.value } }
-})
-
 const pingHandler = handler('ping', async (_req, _deps) => {
   return { ok: true, data: { pid: process.pid } }
 })
@@ -568,48 +504,6 @@ const spendControlSetHandler = handler('spend-control.set', async (req, deps) =>
   return { ok: true, data: updated }
 })
 
-const pauseHandler = handler('pause', async (_req, deps) => {
-  // First cause wins: when the storm breaker or a quota rejection already
-  // paused dispatch, an operator pause does not overwrite that reason —
-  // status keeps naming the real cause, and one resume clears it.
-  deps.pauseDispatch('operator')
-  const state = deps.getPauseState()
-  // Persist so the pause survives a daemon restart. The operator asked for a
-  // stopped queue; a respawn must not silently resume it.
-  deps.persistIsPaused(true)
-  deps.log(
-    `daemon paused; dispatch suspended (reason=${state.reason}, inFlight=${deps.tracker.inFlightCount()})`,
-  )
-  return {
-    ok: true,
-    data: {
-      paused: true,
-      reason: state.reason,
-      inFlight: deps.tracker.inFlightCount(),
-    },
-  }
-})
-
-const resumeHandler = handler('resume', async (_req, deps) => {
-  const previous = deps.getPauseState()
-  deps.resumeDispatch()
-  deps.persistIsPaused(false)
-  // Clear the persisted signature-storm tripped flag so a subsequent daemon
-  // restart does not re-pause a queue the operator deliberately resumed.
-  // `resumeDispatch` already clears it for a pause whose reason IS 'storm';
-  // this covers the case where an earlier cause (operator, quota) won the
-  // pause slot while the breaker tripped underneath it, leaving the durable
-  // flag armed with nothing in memory pointing at it. Idempotent when no
-  // storm was active: the UPDATE is a no-op when the row has tripped=false
-  // or does not exist.
-  await deps.resetSignatureStorm()
-  void deps.drain()
-  deps.log(
-    `daemon resumed; dispatch re-enabled (cleared reason=${previous.reason ?? 'none'})`,
-  )
-  return { ok: true, data: { paused: false, clearedReason: previous.reason } }
-})
-
 const taskContextForWorkerHandler = handler('task.contextForWorker', async (req, _deps) => {
   const task = await getTask(req.id)
   if (!task) {
@@ -667,15 +561,12 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   initHandler,
   statusHandler,
   reloadConfigHandler,
-  setFlagHandler,
   pingHandler,
   investigateHandler,
   diagnoseFailureHandler,
   releaseLeaseHandler,
   stepDoneHandler,
   stepResetHandler,
-  pauseHandler,
-  resumeHandler,
   shutdownHandler,
   killHandler,
   taskNoteHandler,

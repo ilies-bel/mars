@@ -2,7 +2,7 @@
  * Unit tests for the persisted `paused` flag in daemon.json.
  *
  * Covers `readPersistedPaused` and `persistPaused` — the two config helpers
- * introduced in ADR-0058 so that `mars daemon pause` survives a daemon restart.
+ * introduced in ADR-0058 so a persisted dispatch pause survives a daemon restart.
  *
  * Test strategy: point `MARS_REPO` at a temp dir, manipulate daemon.json
  * directly, and verify the helpers read and write the expected values.

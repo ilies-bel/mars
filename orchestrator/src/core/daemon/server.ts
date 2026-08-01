@@ -1051,7 +1051,7 @@ export const startDaemon = async (
   )
   if (restoredOperatorPause) {
     log(
-      '[pause] restored persisted paused state from daemon.json — dispatch suspended. Run `mars daemon resume` to re-enable dispatch.',
+      '[pause] restored persisted paused state from daemon.json — dispatch suspended. Inspect `mars operator` before re-enabling dispatch.',
     )
   }
 
@@ -2617,8 +2617,8 @@ export const startDaemon = async (
   // task, or spawn recovery — verify remains the sole correctness gate.
   // The run is NOT a Task (no queue row, no recovery, no KPI distortion) and
   // sits behind its OWN semaphore (MARS_MAX_SCORING, default 2), never
-  // competing for implement slots. Kill-switches: `mars daemon set-flag
-  // scoring off` (in-memory MARS_SCORING_DISABLED) and MARS_REFLECT_DISABLED=1.
+  // competing for implement slots. Kill-switches: `mars operator set scoring
+  // off` (persisted MARS_SCORING_DISABLED) and MARS_REFLECT_DISABLED=1.
   const scoringPool = createScoringPool({
     limit: resolveScoringLimit(),
     log,
@@ -3997,29 +3997,8 @@ export const startDaemon = async (
       acceptingWork = value
       heartbeatHandle?.setDispatchEnabled(acceptingWork && !pause.isPaused())
     },
-    getPauseState: () => pause.get(),
-    pauseDispatch: (reason, detail) => pause.pause(reason, detail),
-    // Operator resume clears BOTH halves of a storm pause (in-memory pause and
-    // the durable breaker flag); every other reason is a plain clear.
-    resumeDispatch: () => {
-      if (pause.get().reason === 'storm') {
-        void stormBreaker.resume('operator resume')
-        return
-      }
-      pause.resume()
-    },
-    // Persist ONLY the operator pause to daemon.json (ADR-0058) so a daemon
-    // auto-respawn does not come up dispatching against work the operator
-    // deliberately stopped.
-    persistIsPaused: (value: boolean) => {
-      persistPaused(value)
-    },
     drain: () => drain(),
     shutdown: (force?: boolean) => shutdown(force),
-    resetSignatureStorm: async () => {
-      const { resetFailureSignatureStreak } = await import('../lib/signature-storm-monitor')
-      await resetFailureSignatureStreak(getCompositionRootClient())
-    },
     paths: { socketPath, pidFile, httpPortFile },
     handleAdd,
     setTaskPriority,
@@ -4575,7 +4554,7 @@ export const startDaemon = async (
   // above already holds the first-cause slot when both are set — one resume
   // then clears the pause and this flag together.
   //
-  // Resume path: `mars daemon resume` clears `tripped` and zeroes the streak,
+  // The operator control surface clears `tripped` and zeroes the streak,
   // so the NEXT restart does NOT re-pause a queue the operator unblocked.
   try {
     const { readSignatureStormState } = await import('../lib/signature-storm-monitor')

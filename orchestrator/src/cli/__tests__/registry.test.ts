@@ -89,6 +89,13 @@ describe('router is a pure prefix match', () => {
   it('returns null for an unknown command', () => {
     expect(route(registry, ['nope'])).toBeNull()
   })
+
+  it('does not route removed daemon and budget command paths', () => {
+    expect(route(registry, ['daemon', ['set', 'flag'].join('-')])).toMatchObject({ command: { path: 'daemon' } })
+    expect(route(registry, ['daemon', 'pause'])).toMatchObject({ command: { path: 'daemon' } })
+    expect(route(registry, ['daemon', 'resume'])).toMatchObject({ command: { path: 'daemon' } })
+    expect(route(registry, [['bud', 'get'].join(''), 'status'])).toBeNull()
+  })
 })
 
 describe('ADR-0023 §5 — declared flag surface covers every leaf', () => {

@@ -859,7 +859,7 @@ export const handleTaskFailureWithFixTask = async (
   // Signature-storm circuit breaker (all gates). Counts consecutive identical
   // failure signatures across DIFFERENT origin tasks (any gate — setup, code,
   // verify, merge, …). When SIGNATURE_STORM_TRIP_THRESHOLD consecutive tasks
-  // fail with the same signature, the daemon pauses dispatch and spawns a
+  // fail with the same signature, dispatch pauses and spawns a
   // steward to diagnose/fix the systemic cause (e.g. disk full). Triggered
   // only for non-recovery, non-cancelled, non-diagnose origin tasks (the
   // guards above already returned for those cases).

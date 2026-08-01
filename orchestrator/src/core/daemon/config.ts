@@ -261,7 +261,7 @@ export const patchDaemonConfigFile = (
 /**
  * Read the persisted `paused` flag from daemon.json.
  *
- * Returns `true` when `mars daemon pause` was called and the flag was written
+ * Returns `true` when a dispatch pause was persisted before the daemon exited
  * before the daemon exited. Returns `false` (the safe default) when the field
  * is absent, non-boolean, or the file is missing or invalid.
  *

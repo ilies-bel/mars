@@ -172,7 +172,7 @@ describe('StewardPage', () => {
     })
     const html = renderToStaticMarkup(<StewardPage />)
     expect(html).toContain('State disagreement detected')
-    expect(html).toContain('mars daemon resume')
+    expect(html).toContain('mars operator')
   })
 
   it('does not show a disagreement banner when tripped matches isPaused', () => {

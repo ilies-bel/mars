@@ -994,7 +994,7 @@ describe('buildActionQueueView — operational alert copy', () => {
 
     const byId = new Map(rows.map((row) => [row.id, row]))
     expect(byId.get('storm')!.title).toContain('6 tasks failed with `code/unclassified`')
-    expect(byId.get('storm')!.body).toContain('mars daemon resume')
+    expect(byId.get('storm')!.body).toContain('mars operator')
     expect(byId.get('gate')!.title).toContain('Gate test')
     expect(byId.get('gate')!.body).toContain('verify:test/test-assertion-error')
     expect(byId.get('daemon')!.title).toContain('pid 4242')

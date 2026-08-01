@@ -567,9 +567,7 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
       signature: str(ctx.payload['signature']),
       streak: ctx.payload['streak'],
     }),
-    verbs: [
-      { op: 'resume', label: 'Resume queue', style: 'primary' },
-    ],
+    verbs: [],
   },
 
   'gate-enrichment': {

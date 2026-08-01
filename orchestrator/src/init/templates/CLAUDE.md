@@ -78,8 +78,8 @@ re-confirmed, even within the same session.
 - Per-repo state lives under `.mars/` (gitignored): `pg/data/` (the
   embedded Postgres data dir), `pg.dsn`/`pg.port`,
   `worktrees/<task-id>/`, `.merge.lock`.
-- **Incident kill-switch:** `mars daemon set-flag recovery on|off` suppresses
-  fix-task / Investigator spawns in-memory (not persisted across daemon
+- **Incident kill-switch:** `mars operator set recovery on|off` suppresses
+  fix-task / Investigator spawns (persisted across daemon
   restarts). Toggle off during failure storms to stop the self-heal cascade
   while you diagnose.
 

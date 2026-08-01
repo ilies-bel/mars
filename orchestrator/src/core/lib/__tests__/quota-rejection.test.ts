@@ -9,7 +9,7 @@
  * 1. `quotaRejected` is surfaced on the RunClaudeResult parsed from those events.
  * 2. The code step re-queues the task with its worktree intact — no failed
  *    status, no recovery fix-task row inserted, no recovery slot consumed.
- * 3. The daemon pauses dispatch until resetsAt and raises exactly one
+ * 3. Dispatch pauses until resetsAt and raises exactly one
  *    level-triggered 'provider-rate-limited' action-queue row.
  *
  * Coverage split:

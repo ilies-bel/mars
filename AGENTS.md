@@ -223,8 +223,8 @@ recovery-spawn path itself.
 - To inspect live runs, open `mars ui` (read-only Kanban + trace dashboard)
   or query the daemon HTTP API: read `PORT=$(cat .mars/http.port)` first —
   the daemon binds an OS-assigned ephemeral port (see Conventions).
-- **Incident kill-switch:** `mars daemon set-flag recovery on|off` suppresses
-  fix-task / Investigator spawns in-memory (not persisted across daemon
+- **Incident kill-switch:** `mars operator set recovery on|off` suppresses
+  fix-task / Investigator spawns (persisted across daemon
   restarts). Toggle off during failure storms (e.g. quota cascades) to stop
   the self-heal cycle while you diagnose.
 

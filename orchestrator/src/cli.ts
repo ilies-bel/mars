@@ -259,7 +259,7 @@ Commands:
                                 .mars/worktrees/ by task existence and status,
                                 compute disk usage, and print a table with a
                                 reclaimable-bytes footer. Nothing is deleted.
-  daemon <start|stop|restart|kill|status|reload|set-flag|pause|resume> [flags]
+  daemon <start|stop|restart|kill|status|reload> [flags]
                                 run the orchestration daemon. 'start' forks to
                                 background (also --detach). 'stop' stops
                                 accepting new tasks then waits for in-flight to
@@ -271,28 +271,8 @@ Commands:
                                 --status) prints inFlight + queue counts.
                                 'reload' re-reads .mars/daemon.json (falling
                                 back to MARS_MAX_* env vars and built-in
-                                defaults) without restarting. 'set-flag
-                                recovery <on|off>' toggles the
-                                MARS_RECOVERY_DISABLED kill-switch in-memory;
-                                'set-flag scoring off' suppresses post-instance
-                                Scorer runs (MARS_SCORING_DISABLED, in-memory,
-                                not persisted across restarts). 'pause'
-                                suspends dispatch while keeping the daemon
-                                alive (in-flight tasks continue). 'resume'
-                                re-enables dispatch after a pause.
-  budget set [--window <dur>] [--window-tokens <N>] [--arc-tokens <N>]
-                                configure the Spend meter (observe-and-warn
-                                token-budget alerting). Any subset of flags;
-                                thresholds persist under the 'budget' key in
-                                .mars/daemon.json and the daemon spend sweep
-                                picks them up within ~30s (no restart). Absent
-                                config = meter disabled. Units are raw
-                                cache-weighted tokens (cache reads at 0.1x).
-  budget status [--json]        print configured thresholds, current rolling-
-                                window burn (% of threshold + band), top live
-                                arcs vs the per-arc ceiling, and any open
-                                budget-* action-queue rows. The meter never
-                                pauses dispatch — it only warns.
+                                defaults) without restarting. Use 'mars operator'
+                                to inspect and change persisted control levers.
   sync                          run the daemon's startup reconcile on demand:
                                 re-queue orphaned-blocked tasks (blocked with
                                 no live blocker edges), finalize landed merges,
@@ -403,7 +383,7 @@ Commands:
                                 bare mean), latest score, and error-row
                                 count. With --workflow, also lists the
                                 window's rows with rationales. Kill-switch:
-                                'mars daemon set-flag scoring off'.
+                                'mars operator set scoring off'.
   skill-forge scan [--limit <n>]
                                 scan completed arc reflection reports for
                                 recurring lessons (seen in 3+ distinct arcs)
@@ -950,7 +930,7 @@ Flags (clean only):
 Errors during 'git worktree remove' are caught, logged with the directory
 path, and counted; the verb still processes remaining worktrees and exits
 0 unless every action failed.`,
-  daemon: `mars daemon <start|stop|restart|kill|status|reload|set-flag|pause|resume> [flags]
+  daemon: `mars daemon <start|stop|restart|kill|status|reload> [flags]
 
 Run the orchestration daemon. CLI write ops auto-spawn it when needed.
 
@@ -969,56 +949,8 @@ Subcommands:
   status             print pid, startedAt, inFlight, and queue counts.
                      Equivalent to the legacy --status flag form.
   reload             re-read .mars/daemon.json (falling back to MARS_MAX_*
-                     env vars and built-in defaults) without restarting
-  set-flag <flag> <on|off>
-                     toggle an in-memory kill-switch on the running daemon.
-                     Supported flags:
-                       recovery: 'on' sets MARS_RECOVERY_DISABLED=1
-                     (fix-task/Investigator spawns are suppressed); 'off'
-                     unsets it.
-                       scoring: 'off' sets MARS_SCORING_DISABLED=1 (post-
-                     instance Scorer runs are suppressed — the instant brake
-                     on the one-judge-call-per-instance spend); 'on' unsets
-                     it. Not persisted — a daemon restart re-reads the
-                     spawn env.
-  pause              suspend dispatch: stop acquiring new work while keeping
-                     the daemon alive. In-flight tasks continue to completion.
-                     Task add/unblock/purge/restart still work (state
-                     mutations; they do not dispatch). Survives reload but
-                     NOT a daemon restart. Use 'resume' to re-enable.
-  resume             re-enable dispatch after a pause. Kicks the drain loop
-                     so any tasks queued during the pause are dispatched.`,
-  budget: `mars budget <set|status> [flags]
-
-The Spend meter: observe-and-warn token-budget alerting. Two independent
-meters, each with its own threshold and its own level-triggered action-queue
-row: a rolling wall-clock window over ALL arcs (including in-flight ones) and
-a per-live-arc lifetime ceiling. Units are raw cache-weighted tokens
-(input + output + cacheCreate + cacheRead*0.1 — the cost_per_arc weighting).
-The meter NEVER pauses dispatch and NEVER suppresses recoveries; the
-operator is the only actuator.
-
-Subcommands:
-  set [--window <dur>] [--window-tokens <N>] [--arc-tokens <N>]
-      Persist thresholds (any subset) under the 'budget' key in
-      .mars/daemon.json via merge-patch — other keys are preserved and
-      unnamed thresholds keep their prior values. Durations accept ms/s/m/h/d
-      suffixes (e.g. 4h). The daemon's spend sweep re-reads the file every
-      tick (default 30s, MARS_SPEND_SWEEP_MS), so changes take effect
-      without a restart. Absent config = meter disabled (no rows).
-
-  status [--json]
-      Print configured thresholds, current window spend with % of threshold
-      and a good/warn/bad band (<70% good, 70-100% warn, >=100% bad), the
-      top live arcs by lifetime spend vs the per-arc ceiling, and any open
-      'budget-window' / 'budget-arc' action-queue rows. --json emits the
-      same shape for scripting. An unconfigured meter says so instead of
-      printing zeros. Reads the DB directly — works with the daemon down.
-
-Rows are level-triggered (ADR-0048): the sweep is both raiser and resolver.
-The window row auto-resolves when spend drops below ~90% of the threshold
-(hysteresis); a per-arc row auto-resolves when its arc reaches terminal
-status.`,
+                     env vars and built-in defaults) without restarting. Use
+                     'mars operator' to inspect persisted control levers.`,
   triage: `mars triage [<task-id>]
 
 Run triage once on one draft, or all drafts in parallel. Haiku assesses

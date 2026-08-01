@@ -1,6 +1,6 @@
 /**
  * `daemon` command group: `start`, `stop`, `restart`, `kill`, `status`,
- * `reload`, `set-flag`, plus the group fallback. Legacy flag-form aliases
+ * `reload`, plus the group fallback. Legacy flag-form aliases
  * (`mars daemon --detach` / `--stop`) are normalised by the group fallback,
  * which re-dispatches to the canonical leaf.
  *
@@ -181,90 +181,6 @@ const daemonReload: Command = {
   },
 }
 
-const daemonSetFlag: Command = {
-  path: 'daemon set-flag',
-  summary: 'toggle a daemon flag (on|off)',
-  usage: 'usage: mars daemon set-flag <flag> <on|off>',
-  run: async (args, deps) => {
-    const positional = args.positional.filter((a) => !a.startsWith('--'))
-    const flag = positional[0]
-    const value = positional[1]
-    if (!flag || !value) {
-      deps.err('usage: mars daemon set-flag <flag> <on|off>')
-      return { code: 2 }
-    }
-    if (value !== 'on' && value !== 'off') {
-      deps.err(`mars daemon set-flag: value must be 'on' or 'off'; got '${value}'`)
-      return { code: 2 }
-    }
-    try {
-      const data = (await deps.daemon.sendRequest(
-        { op: 'set-flag', flag, value },
-      )) as { flag: string; value: string }
-      deps.out(`flag ${data.flag}=${data.value}`)
-    } catch (err) {
-      const msg = errorMessage(err)
-      if (isDaemonDownError(msg)) {
-        deps.err("daemon not running; use 'mars daemon start' to start it")
-        return { code: 1 }
-      }
-      throw err
-    }
-    return { code: 0 }
-  },
-}
-
-const daemonPause: Command = {
-  path: 'daemon pause',
-  summary: 'suspend dispatch (in-flight tasks continue; daemon stays alive)',
-  usage: 'usage: mars daemon pause',
-  run: async (_args, deps) => {
-    try {
-      const data = (await deps.daemon.sendRequest(
-        { op: 'pause' },
-      )) as { paused: boolean; reason: string | null; inFlight: number }
-      deps.out(
-        `daemon paused (reason: ${data.reason ?? 'operator'}): dispatch suspended (${data.inFlight} task(s) in flight). Run \`mars daemon resume\` to resume.`,
-      )
-    } catch (err) {
-      const msg = errorMessage(err)
-      if (isDaemonDownError(msg)) {
-        deps.err("daemon not running; use 'mars daemon start' to start it")
-        return { code: 1 }
-      }
-      throw err
-    }
-    return { code: 0 }
-  },
-}
-
-const daemonResume: Command = {
-  path: 'daemon resume',
-  summary: 'resume dispatch after a pause',
-  usage: 'usage: mars daemon resume',
-  run: async (_args, deps) => {
-    try {
-      const data = (await deps.daemon.sendRequest({ op: 'resume' })) as {
-        paused: boolean
-        clearedReason: string | null
-      }
-      deps.out(
-        data.clearedReason !== null
-          ? `daemon resumed: dispatch re-enabled (cleared ${data.clearedReason} pause)`
-          : 'daemon resumed: dispatch re-enabled (was not paused)',
-      )
-    } catch (err) {
-      const msg = errorMessage(err)
-      if (isDaemonDownError(msg)) {
-        deps.err("daemon not running; use 'mars daemon start' to start it")
-        return { code: 1 }
-      }
-      throw err
-    }
-    return { code: 0 }
-  },
-}
-
 const daemonStatus: Command = {
   path: 'daemon status',
   summary: 'print daemon pid, counts, and in-flight tasks',
@@ -296,7 +212,7 @@ const daemonStatus: Command = {
     const pauseLine = describePauseState(data.pause)
     if (pauseLine !== null) {
       deps.out(
-        `⏸ PAUSED (${pauseLine}) — dispatch suspended; run \`mars daemon resume\` to resume`,
+        `⏸ PAUSED (${pauseLine}) — dispatch suspended; use \`mars operator\` to inspect control levers`,
       )
     }
     deps.out(`pid:        ${data.pid}`)
@@ -705,12 +621,9 @@ const daemonSpendControl: Command = {
 const daemonGroup: Command = {
   path: 'daemon',
   summary: 'daemon subcommands',
-  usage:
-    'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume|spend-control|usage> [flags]',
+  usage: 'usage: mars daemon <start|stop|restart|kill|status|reload> [flags]',
   run: (_args, deps) => {
-    deps.err(
-      'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume|spend-control|usage> [flags]',
-    )
+    deps.err('usage: mars daemon <start|stop|restart|kill|status|reload> [flags]')
     return { code: 2 }
   },
 }
@@ -722,11 +635,8 @@ export const daemonCommands: readonly Command[] = [
   daemonKill,
   daemonStatus,
   daemonReload,
-  daemonSetFlag,
   daemonSetCap,
   daemonSetLever,
-  daemonPause,
-  daemonResume,
   daemonSpendControl,
   daemonUsage,
   daemonGroup,

@@ -6,7 +6,7 @@
 //   1. `usage_snapshots` recorded `{0,0,0,0}` every minute forever, so the
 //      dispatch spend-control probe saw no spend at all.
 //   2. `step_ended.usageSignals` were zero, so the window/arc token ceilings
-//      (`mars budget`) could never fire under codex either.
+//      (the operator budget controls) could never fire under codex either.
 //   3. The in-run context ceiling is unenforceable on codex, and was withheld
 //      SILENTLY — an operator had no way to see the ceiling was not armed.
 

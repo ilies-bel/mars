@@ -99,8 +99,8 @@ describe('mars init: root CLAUDE.md template', () => {
     // ADR commands
     expect(written).toMatch(/mars adr\s+(add|list|show)/)
 
-    // Incident kill-switch (ADR-era: mars daemon set-flag recovery on|off)
-    expect(written).toContain('mars daemon set-flag recovery')
+    // Incident kill-switch is available through the unified operator surface.
+    expect(written).toContain('mars operator set recovery')
   })
 
   it('contains no references to framework-internal paths that only exist inside the mars-framework repo', () => {

@@ -75,7 +75,6 @@ export type DaemonRequest =
   | { op: 'init'; opts: RunInitOptions }
   | { op: 'status' }
   | { op: 'reload-config' }
-  | { op: 'set-flag'; flag: string; value: string }
   | { op: 'sync' }
   | { op: 'shutdown'; force?: boolean; drain?: boolean }
   | { op: 'kill' }
@@ -91,8 +90,6 @@ export type DaemonRequest =
   // metadata, and re-queues (or restores blocked status) so the next dispatch
   // begins at `stepName`. Requires an idle, unleased task.
   | { op: 'step-reset'; id: string; stepName: string }
-  | { op: 'pause' }
-  | { op: 'resume' }
   | { op: 'task.note'; id: string; body: string; author?: string }
   | { op: 'task.check'; id: string; criterionIndex: number; uncheck?: boolean; author?: string }
   /** Append an evidence row for a mutation made through the worker MCP server. */
@@ -185,7 +182,7 @@ export interface DaemonStatusPayload {
    * The daemon's ONE dispatch-pause state, carrying the reason dispatch is
    * suspended ('operator' | 'storm' | 'quota') so status can say WHY rather
    * than just that it is paused. In-flight tasks continue; no new work is
-   * dispatched. Cleared by `mars daemon resume` — which also clears the
+   * dispatched. Cleared by the operator control surface — which also clears the
    * signature-storm breaker when that is what paused dispatch. A `storm`
    * pause is restored at startup from the durable breaker flag.
    */

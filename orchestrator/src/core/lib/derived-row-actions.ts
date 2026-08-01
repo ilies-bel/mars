@@ -147,7 +147,7 @@ export const derivedRowActions = (rowKind: string, entityId?: string): ActionDes
         id: 'resume',
         label: 'Resume queue',
         op: 'copy',
-        hint: 'mars daemon resume',
+        hint: 'mars operator',
       },
     ]
   }

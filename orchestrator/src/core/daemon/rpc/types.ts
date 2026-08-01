@@ -34,7 +34,6 @@ import type { EventEmitter } from 'node:events'
 import type { RunInitOptions, RunInitResult } from '../../../workflows/init-workflow'
 import type { DaemonRequest, DaemonResponse, DaemonStatusPayload } from '../protocol'
 import type { TaskFlightTracker } from '../task-flight-tracker'
-import type { DispatchPauseState, PauseReason } from '../pause-state'
 import type { Semaphore } from '../server'
 import type { ContinueResult } from '../continue-task'
 import type {
@@ -77,7 +76,7 @@ export interface RpcDaemonPaths {
  * The `handle*` members are the named handler functions `startDaemon` already
  * defines; each leaf's `run` is a thin adapter that unpacks `req` and calls the
  * matching one. The remaining members are the raw primitives the
- * formerly-inline cases (`task.priority`, `sync`, `reload-config`, `set-flag`,
+ * formerly-inline cases (`task.priority`, `sync`, `reload-config`,
  * `ping`, `investigate`, `diagnose-failure`, `shutdown`, `kill`) reach into.
  *
  * `acceptingWork` is exposed as live accessors — NOT a captured boolean
@@ -96,37 +95,10 @@ export interface DaemonDeps {
   getAcceptingWork(): boolean
   /** Flip the LIVE `acceptingWork` flag (drain / shutdown / kill toggle it). */
   setAcceptingWork(value: boolean): void
-  /** Read the LIVE dispatch-pause state, including WHY dispatch is paused. */
-  getPauseState(): DispatchPauseState
-  /**
-   * Suspend dispatch for `reason`. Returns false when a pause was already in
-   * effect (first cause wins; the existing reason is preserved).
-   */
-  pauseDispatch(reason: PauseReason, detail?: string): boolean
-  /**
-   * Resume dispatch, clearing every half of the current pause — a `storm`
-   * pause also clears the durable signature-storm breaker flag.
-   */
-  resumeDispatch(): void
-  /**
-   * Persist the OPERATOR pause to `daemon.json` so it survives a restart.
-   * Called by the pause/resume RPC handlers alongside `pauseDispatch` /
-   * `resumeDispatch`. Only the operator pause is persisted here: a `storm`
-   * pause is restored from the breaker's own durable `tripped` flag, and a
-   * `quota` pause is deliberately transient.
-   */
-  persistIsPaused(value: boolean): void
   /** Kick the drain loop (reload-config raises caps then re-drains). */
   drain(): Promise<void>
   /** The daemon's graceful-exit routine (shutdown delegates to it). */
   shutdown(force?: boolean): Promise<void>
-  /**
-   * Clear the persisted signature-storm `tripped` flag and streak on operator
-   * resume.  Idempotent: a no-op when no storm row exists or `tripped` is
-   * already `false`.  Wired so a subsequent daemon restart does NOT re-pause
-   * a queue the operator deliberately resumed.
-   */
-  resetSignatureStorm(): Promise<void>
   /** Daemon socket/pid/http-port files, unlinked by `kill`. */
   paths: RpcDaemonPaths
 

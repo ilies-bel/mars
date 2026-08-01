@@ -370,7 +370,7 @@ const OPERATIONAL_ALERT_COPY: Record<
         `The same failure signature is recurring across tasks, so dispatch is paused. ` +
         `There is no single task transcript for this incident. Dispatch resumes as soon as the Steward reports ` +
         `an outcome (fix, no-op, or failure), or on the bounded crash/hang fallback. ` +
-        `Inspect \`.mars/watch.log\`, correct the shared cause, then run \`mars daemon resume\` to resume immediately.`,
+        `Inspect \`.mars/watch.log\`, correct the shared cause, then inspect \`mars operator\` before resuming dispatch.`,
     }
   },
   'gate-enrichment-stale': null,

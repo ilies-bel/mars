@@ -137,12 +137,10 @@ describe('mars operator status', () => {
       ],
     })
     const result = await runCommandInProcess(['operator', 'status'], { ...deps, daemon })
-    const legacy = await runCommandInProcess(['budget', 'status'], { ...deps, daemon })
 
     expect(result.code).toBe(0)
     expect(result.out.join('\n')).toContain('window:')
     expect(result.out.join('\n')).toContain('per-arc ceiling:')
     expect(result.out.join('\n')).toContain('top live arcs by lifetime spend:')
-    expect(result.out.slice(4)).toEqual(legacy.out)
   })
 })

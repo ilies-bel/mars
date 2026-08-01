@@ -20,7 +20,6 @@ import { makeSem } from '../server'
 import type { DaemonDeps } from '../rpc/types'
 import type { DaemonRequest } from '../protocol'
 import type { TaskFlightTracker } from '../task-flight-tracker'
-import { createPauseController, type PauseController } from '../pause-state'
 
 /** A no-op tracker stub exposing the methods the leaves under test touch. */
 const fakeTracker = (overrides: Partial<TaskFlightTracker> = {}): TaskFlightTracker =>
@@ -45,22 +44,14 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
   deps: DaemonDeps
   state: {
     accepting: boolean
-    pause: PauseController
-    persisted: boolean | null
     drained: number
     shutdownCalls: boolean[]
-    stormResets: number
   }
 } => {
   const state = {
     accepting: true,
-    // The real controller — the seam's job is threading pause REASON through,
-    // so a boolean stub would not exercise what changed.
-    pause: createPauseController(),
-    persisted: null as boolean | null,
     drained: 0,
     shutdownCalls: [] as boolean[],
-    stormResets: 0,
   }
   const notImpl = (name: string) => () => {
     throw new Error(`unexpected call to ${name}`)
@@ -80,22 +71,11 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     setAcceptingWork: (v) => {
       state.accepting = v
     },
-    getPauseState: () => state.pause.get(),
-    pauseDispatch: (reason, detail) => state.pause.pause(reason, detail),
-    resumeDispatch: () => {
-      state.pause.resume()
-    },
-    persistIsPaused: (v) => {
-      state.persisted = v
-    },
     drain: async () => {
       state.drained += 1
     },
     shutdown: async (force) => {
       state.shutdownCalls.push(force === true)
-    },
-    resetSignatureStorm: async () => {
-      state.stormResets += 1
     },
     paths: { socketPath: '/tmp/x.sock', pidFile: '/tmp/x.pid', httpPortFile: '/tmp/x.port' },
     handleAdd: notImpl('handleAdd') as DaemonDeps['handleAdd'],
@@ -144,11 +124,11 @@ describe('RPC registry', () => {
   it('registers exactly one leaf per protocol op, no duplicates', () => {
     // Every handler op is unique (buildRpcRegistry throws on dup).
     expect(() => buildRpcRegistry(allRpcHandlers)).not.toThrow()
-    // Spot-check the count matches the 47-op protocol surface
-    // (38 + preview.spawn + preview.status + preview.teardown + merge.cancel
+    // Spot-check the count matches the 44-op protocol surface
+    // (35 + preview.spawn + preview.status + preview.teardown + merge.cancel
     //  + spend-control.show + spend-control.set + apply-lever + task.contextForWorker
     //  + mcp.audit.append).
-    expect(rpcRegistry.size).toBe(47)
+    expect(rpcRegistry.size).toBe(44)
   })
 
   it('rejects duplicate ops', () => {
@@ -274,74 +254,7 @@ describe('inline-case leaves reach live closure state', () => {
   })
 })
 
-describe('pause / resume', () => {
-  it('pause records reason=operator, persists it, and returns inFlight count', async () => {
-    const { deps, state } = makeDeps({ tracker: fakeTracker({ inFlightCount: () => 3 }) })
-    expect(state.pause.isPaused()).toBe(false)
-    expect(state.persisted).toBeNull()
-    const res = await dispatchRpc(rpcRegistry, { op: 'pause' }, deps)
-    expect(res).toEqual({
-      ok: true,
-      data: { paused: true, reason: 'operator', inFlight: 3 },
-    })
-    expect(state.pause.get().reason).toBe('operator')
-    // persistIsPaused must be called so the pause survives a daemon restart
-    expect(state.persisted).toBe(true)
-  })
-
-  it('pause does NOT overwrite an existing storm pause — first cause wins', async () => {
-    const { deps, state } = makeDeps()
-    state.pause.pause('storm', 'code/api-unreachable x3')
-    const res = await dispatchRpc(rpcRegistry, { op: 'pause' }, deps)
-    expect(res).toEqual({
-      ok: true,
-      data: { paused: true, reason: 'storm', inFlight: 0 },
-    })
-    expect(state.pause.get().detail).toBe('code/api-unreachable x3')
-  })
-
-  it('resume clears the pause, reports the cleared reason, and kicks drain', async () => {
-    const { deps, state } = makeDeps()
-    state.pause.pause('storm')
-    const res = await dispatchRpc(rpcRegistry, { op: 'resume' }, deps)
-    expect(res).toEqual({ ok: true, data: { paused: false, clearedReason: 'storm' } })
-    expect(state.pause.isPaused()).toBe(false)
-    // persistIsPaused(false) must be called so the daemon does not come back paused
-    expect(state.persisted).toBe(false)
-    // drain() was called once by resumeHandler
-    expect(state.drained).toBe(1)
-  })
-
-  it('resume calls resetSignatureStorm to clear the persisted tripped flag', async () => {
-    // Ensures a subsequent daemon restart does not re-pause a queue the
-    // operator deliberately resumed (the signature-storm two-lifetime bug fix).
-    // Deliberately an OPERATOR pause: `resumeDispatch` only clears the durable
-    // breaker flag for a pause whose reason is 'storm', so the handler must
-    // clear it unconditionally to cover a breaker that tripped underneath an
-    // earlier cause.
-    const { deps, state } = makeDeps()
-    state.pause.pause('operator')
-    await dispatchRpc(rpcRegistry, { op: 'resume' }, deps)
-    expect(state.stormResets).toBe(1)
-  })
-
-  it('pause → task add (work-spawning op) is still accepted while paused', async () => {
-    // Pause only stops dispatch, not DB mutations. Work-spawning ops remain
-    // accepted (acceptingWork=true; only the pause state prevents drain).
-    const task = { id: 't1' }
-    const handleAdd = vi.fn().mockResolvedValue(task) as DaemonDeps['handleAdd']
-    const { deps, state } = makeDeps({ handleAdd })
-    state.pause.pause('operator')
-    // acceptingWork is still true — the DRAINING gate must not trigger
-    const res = await dispatchRpc(
-      rpcRegistry,
-      { op: 'add', prompt: 'do a thing' },
-      deps,
-    )
-    expect(res).toEqual({ ok: true, data: task })
-    expect(handleAdd).toHaveBeenCalledOnce()
-  })
-
+describe('status pause state', () => {
   it('status surfaces the pause reason, not just the fact of a pause', async () => {
     const payload = {
       pid: 1,

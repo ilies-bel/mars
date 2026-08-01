@@ -66,7 +66,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // mars workflow validate --file <path>: validate an arbitrary file instead of
   // the kind-derived .mars/workflows/<name>-workflow.js path.
   '--file',
-  // mars budget set — spend-meter thresholds (lib/spend-meter.ts).
+  // Spend-meter thresholds (lib/spend-meter.ts).
   '--window',
   '--window-tokens',
   '--arc-tokens',

@@ -259,7 +259,7 @@ describe('storm breaker — pause ownership', () => {
     const breaker = createStormBreaker(h.deps)
 
     // Operator pause holds the first-cause slot.
-    expect(h.deps.pause.pause('operator', 'mars daemon pause')).toBe(true)
+    expect(h.deps.pause.pause('operator', 'operator dispatch pause')).toBe(true)
 
     breaker.onTrip(TRIP)
     await breaker.settled()
@@ -276,7 +276,7 @@ describe('storm breaker — pause ownership', () => {
     const h = harness(async () => report())
     const breaker = createStormBreaker(h.deps)
 
-    h.deps.pause.pause('operator', 'mars daemon pause')
+    h.deps.pause.pause('operator', 'operator dispatch pause')
     await breaker.resume('successful task mars-1234')
 
     expect(h.deps.pause.get()).toMatchObject({ paused: true, reason: 'operator' })

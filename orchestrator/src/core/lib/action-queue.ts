@@ -230,7 +230,7 @@ export const ACTION_QUEUE_KINDS = [
   // PAUSED and a steward has been dispatched to diagnose the root cause.
   // Level-triggered (ADR-0048): exactly one row per storm episode, keyed on
   // the signature; idempotent raises bump seen_count. Cleared when the
-  // operator fixes the environment and runs `mars daemon resume`.
+  // operator fixes the environment and clears the dispatch pause.
   // Resume is MANUAL — the streak resets on the first successful task
   // completion but the queue stays paused until the operator acts.
   'signature-storm',

@@ -263,7 +263,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
             Breaker is {tripped ? 'tripped' : 'clear'} in Postgres, but dispatch is{' '}
             {isPaused ? 'paused' : 'running'} in memory. The daemon was likely restarted while the
             breaker was {tripped ? 'tripped' : 'clear'}. Run{' '}
-            <code className="rounded bg-warn/20 px-1">mars daemon resume</code> to re-align.
+            <code className="rounded bg-warn/20 px-1">mars operator</code> to re-align.
           </p>
         </div>
       )}

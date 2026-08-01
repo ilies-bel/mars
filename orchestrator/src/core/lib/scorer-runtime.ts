@@ -19,8 +19,8 @@
  *     action-queue distortion. Its trace events and judge usage attach to the
  *     ORIGIN instance's ids so the spend governor sees the overhead.
  *
- * Kill-switches: `mars daemon set-flag scoring off` (sets
- * MARS_SCORING_DISABLED=1 in the daemon process, in-memory only) and
+ * Kill-switches: `mars operator set scoring off` (sets
+ * MARS_SCORING_DISABLED=1 in the daemon process, persistently) and
  * MARS_REFLECT_DISABLED=1 (scoring is signal capture; that env var stays the
  * single comprehensive disable).
  */

@@ -5,12 +5,12 @@
  * `isPaused` boolean and the signature-storm breaker's durable `tripped` row.
  * Nothing reconciled them, so `mars daemon status` could report PAUSED with no
  * operator pause anywhere on disk (the pause came purely from a storm trip),
- * and `mars daemon resume` cleared one flag but not the other — leaving
+ * and the old resume control cleared one flag but not the other — leaving
  * dispatch either dead or silently resumed with the breaker still armed.
  *
  * Now every pause goes through one controller that records WHY:
  *
- *   'operator' — `mars daemon pause`
+ *   'operator' — a persisted operator dispatch pause
  *   'storm'    — the signature-storm circuit breaker tripped
  *   'quota'    — the provider rejected runs on a rate/spend limit
  *

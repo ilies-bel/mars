@@ -26,7 +26,6 @@ import {
   parsePositiveInt,
   writeBudgetConfig,
 } from '../../core/lib/spend-meter'
-import { renderBudgetStatus } from './budget'
 import { errorMessage, isDaemonDownError } from './shared'
 
 const operatorStatus: Command = {
@@ -49,7 +48,48 @@ const operatorStatus: Command = {
       }
       deps.out(`dispatch: on  in-flight: ${status.inFlight.length}`)
     }
-    renderBudgetStatus(await computeBudgetStatus(deps.store), deps.out)
+    const budget = await computeBudgetStatus(deps.store)
+    if (!budget.configured) {
+      deps.out('spend meter: not configured')
+      deps.out("set thresholds with 'mars operator set budget-window <duration>', 'mars operator set budget-window-tokens <N>', and 'mars operator set budget-arc-tokens <N>'")
+    } else {
+      if (budget.window === null) {
+        deps.out('window:  not configured (needs both budget-window and budget-window-tokens)')
+      } else {
+        const window = budget.window
+        const tokens = (value: number): string => value >= 1_000_000
+          ? `${(value / 1_000_000).toFixed(1)}M`
+          : value >= 1_000 ? `${(value / 1_000).toFixed(1)}k` : String(Math.round(value))
+        const duration = (milliseconds: number): string => milliseconds % 3_600_000 === 0
+          ? `${milliseconds / 3_600_000}h`
+          : milliseconds % 60_000 === 0 ? `${milliseconds / 60_000}m`
+            : milliseconds % 1_000 === 0 ? `${milliseconds / 1_000}s` : `${milliseconds}ms`
+        deps.out(`window:  ${tokens(window.spendTokens)} / ${tokens(window.thresholdTokens)} weighted tokens over ${duration(window.windowMs)} (${(window.ratio * 100).toFixed(1)}% — ${window.band})`)
+        if (window.topArcs.length > 0) {
+          deps.out('  top contributing arcs:')
+          window.topArcs.forEach((arc) => deps.out(`    ${arc.arcId}  ${tokens(arc.spendTokens)}`))
+        }
+      }
+      if (budget.arcs === null) {
+        deps.out('per-arc ceiling: not configured (needs budget-arc-tokens)')
+      } else {
+        const arcs = budget.arcs
+        const tokens = (value: number): string => value >= 1_000_000
+          ? `${(value / 1_000_000).toFixed(1)}M`
+          : value >= 1_000 ? `${(value / 1_000).toFixed(1)}k` : String(Math.round(value))
+        deps.out(`per-arc ceiling: ${tokens(arcs.ceilingTokens)} weighted tokens`)
+        if (arcs.liveArcs.length === 0) deps.out('  no live arcs with recorded spend')
+        else {
+          deps.out('  top live arcs by lifetime spend:')
+          arcs.liveArcs.forEach((arc) => deps.out(`    ${arc.arcId}  ${tokens(arc.spendTokens)} (${(arc.ratio * 100).toFixed(1)}%)${arc.overCeiling ? '  ⚠ OVER CEILING' : ''}`))
+        }
+      }
+      if (budget.openRows.length === 0) deps.out('open budget rows: none')
+      else {
+        deps.out('open budget rows:')
+        budget.openRows.forEach((row) => deps.out(`  [${row.kind}] ${row.id}  seen×${row.seenCount}  ${row.title}`))
+      }
+    }
     return { code: 0 }
   },
 }
