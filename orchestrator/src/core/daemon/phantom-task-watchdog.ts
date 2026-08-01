@@ -26,11 +26,11 @@
  *        Only a process that is alive but has produced no events for longer
  *        than the ceiling triggers a kill.
  *
- *     c. ALIVE PID + no heartbeat yet (process just started, or heartbeat
- *        path not wired for this dispatch kind): the task is NOT ceiling-killed.
- *        The dead-PID check in (1) remains the only kill path until the first
- *        heartbeat arrives. This eliminates false positives from the window
- *        between process spawn and the first event.
+ *     c. ALIVE PID + no heartbeat yet (process just started, or the provider
+ *        has not emitted its first event): the task is NOT failed. The
+ *        dead-PID check in (1) remains the only kill path until the first
+ *        heartbeat arrives. Silence alone is not evidence that a worker is
+ *        phantom; providers have different startup and streaming behaviour.
  *
  *     The "alive pid must never be ceiling-killed on updatedAt staleness alone"
  *     rule is enforced by routing alive-PID tasks through (b) or (c) — never
@@ -70,16 +70,11 @@ export const PHANTOM_TASK_KIND: ActionQueueKind = 'phantom-task'
 export const DEFAULT_CEILING_MS = 30 * 60_000
 
 /**
- * Grace window for zero-event detection: 3 minutes.
- *
- * A dispatched task whose subprocess is alive but has produced ZERO trace
- * events is killed after this window.  Three minutes is conservative enough
- * to absorb normal process startup latency and first-token delay on a slow
- * model, while still providing a fast-kill that beats the full 30-minute
- * ceiling by an order of magnitude.
+ * Override this daemon-wide progress ceiling with
+ * `MARS_PHANTOM_WATCHDOG_CEILING_MS`. It applies only after a worker has
+ * emitted activity; an alive worker that has not emitted an event is never
+ * failed for silence, so no provider-specific first-event timeout is needed.
  */
-export const ZERO_EVENTS_GRACE_MS = 3 * 60_000
-
 const resolvedCeilingMs = (): number => {
   const raw = process.env.MARS_PHANTOM_WATCHDOG_CEILING_MS
   if (!raw) return DEFAULT_CEILING_MS
@@ -120,7 +115,7 @@ const resolvedLeaseExpiryMs = (): number => {
  * @param taskId     Task identifier (used as fallback goal when prompt is absent).
  * @param status     The status the task was stuck in (kept for internal context;
  *                   not surfaced in the human-facing text).
- * @param reason     Detection mechanism ('dead-pid' | 'ceiling' | 'zero-events').
+ * @param reason     Detection mechanism ('dead-pid' | 'ceiling').
  * @param ageMinutes How long the task has been stuck, in minutes.
  * @param prompt     The task's prompt text; first line / first 60 chars used as
  *                   a plain-language goal summary.
@@ -128,7 +123,7 @@ const resolvedLeaseExpiryMs = (): number => {
 export const buildPhantomBody = (
   taskId: string,
   status: string,
-  reason: 'dead-pid' | 'ceiling' | 'zero-events',
+  reason: 'dead-pid' | 'ceiling',
   ageMinutes: number,
   prompt?: string,
 ): string => {
@@ -136,10 +131,8 @@ export const buildPhantomBody = (
     prompt?.split('\n')[0]?.trim().replace(/[.,:;!?]+$/, '').slice(0, 60) || `task ${taskId}`
   const reasonDetail =
     reason === 'dead-pid'
-      ? `its worker process exited unexpectedly`
-      : reason === 'zero-events'
-        ? `the worker started ${ageMinutes} min ago without producing any output (grace: ${Math.round(ZERO_EVENTS_GRACE_MS / 60_000)} min)`
-        : `the worker made no progress for ${ageMinutes} min (ceiling: ${Math.round(resolvedCeilingMs() / 60_000)} min)`
+      ? `its worker process was not alive when checked`
+      : `the worker made no progress for ${ageMinutes} min (ceiling: ${Math.round(resolvedCeilingMs() / 60_000)} min)`
   return (
     `"${goal}" stalled — ${reasonDetail}, so Mars stopped it. ` +
     `Restart to try again, or drop it if the work is no longer needed.`
@@ -193,7 +186,7 @@ export const sweepPhantomTasks = async (
     for (const task of tasks) {
       const entry = inFlightByTask.get(task.id)
 
-      let phantomReason: 'dead-pid' | 'ceiling' | 'zero-events' | null = null
+      let phantomReason: 'dead-pid' | 'ceiling' | null = null
 
       if (entry?.pid !== undefined) {
         // Belt: PID is known — check liveness. Dead PID ⟹ phantom immediately.
@@ -203,16 +196,9 @@ export const sweepPhantomTasks = async (
         // Alive PID: never ceiling-kill based on updatedAt staleness alone.
         // Use the activity heartbeat (lastActivityMs) instead — a coder
         // streaming output keeps this fresh, so long runs are never killed.
-        // If no heartbeat data yet (process just started), check the zero-events
-        // fast-kill path: a process that is alive but has emitted NO events at all
-        // after the grace window has elapsed is almost certainly stuck at startup.
         if (phantomReason === null && entry.lastActivityMs !== undefined) {
           if (now - entry.lastActivityMs > ceiling) {
             phantomReason = 'ceiling'
-          }
-        } else if (phantomReason === null && entry.lastActivityMs === undefined) {
-          if (now - entry.startedAt > ZERO_EVENTS_GRACE_MS) {
-            phantomReason = 'zero-events'
           }
         }
       } else if (entry !== undefined) {
@@ -262,6 +248,12 @@ export const sweepPhantomTasks = async (
 
       const ageMinutes = Math.round((now - Date.parse(task.updatedAt)) / 60_000)
       const failedPhase = FAILED_PHASE_FOR_STATUS[status]
+      const observation =
+        phantomReason === 'dead-pid'
+          ? `worker PID ${entry?.pid ?? 'unrecorded'} was not alive when checked; last event: ${entry?.lastActivityMs === undefined ? 'none recorded' : new Date(entry.lastActivityMs).toISOString()}`
+          : entry?.lastActivityMs !== undefined
+            ? `worker PID ${entry.pid} was alive but its event stream was silent for ${Math.round((now - entry.lastActivityMs) / 60_000)} min (ceiling: ${Math.round(ceiling / 60_000)} min)`
+            : `no worker PID was recorded and the task row was unchanged for ${ageMinutes} min (ceiling: ${Math.round(ceiling / 60_000)} min)`
 
       // Mark the task failed BEFORE reclaiming the slot so there is never a
       // window where the slot is free but the task is still 'running'.
@@ -270,7 +262,7 @@ export const sweepPhantomTasks = async (
         failedPhase,
         failureReason: `phantom-task watchdog: ${phantomReason}`,
         failureReasonCode: `phantom-task:${phantomReason}`,
-        error: `Task auto-failed by phantom-task watchdog (reason: ${phantomReason}, age: ${ageMinutes} min)`,
+        error: `Task auto-failed by phantom-task watchdog (reason: ${phantomReason}; observation: ${observation}; task age: ${ageMinutes} min)`,
       }).catch(() => {
         // Best-effort: if the write fails, skip the reclaim and item raise to
         // avoid inconsistency (don't free the slot if the row stays 'running').

@@ -24,7 +24,6 @@ interface WatchdogModule {
   PHANTOM_TASK_KIND: typeof import('../phantom-task-watchdog').PHANTOM_TASK_KIND
   DEFAULT_CEILING_MS: typeof import('../phantom-task-watchdog').DEFAULT_CEILING_MS
   DEFAULT_LEASE_EXPIRY_MS: typeof import('../phantom-task-watchdog').DEFAULT_LEASE_EXPIRY_MS
-  ZERO_EVENTS_GRACE_MS: typeof import('../phantom-task-watchdog').ZERO_EVENTS_GRACE_MS
 }
 
 const setupRepo = (): string => {
@@ -371,6 +370,8 @@ describe('sweepPhantomTasks — PID liveness', () => {
     const reloaded = await q.getTask(task.id)
     expect(reloaded?.status).toBe('failed')
     expect(reloaded?.failedPhase).toBe('code')
+    expect(reloaded?.error).toContain('worker PID 99999 was not alive when checked')
+    expect(reloaded?.error).toContain('last event: none recorded')
 
     const items = await actionQueue.listActionQueueItems('open')
     expect(items).toHaveLength(1)
@@ -379,7 +380,7 @@ describe('sweepPhantomTasks — PID liveness', () => {
 
   it('does NOT fail a running task when its PID is alive and actively producing events', async () => {
     // Simulate a legitimately running task: alive PID + recent activity heartbeat.
-    // Both the ceiling path and the zero-events path must leave this task alone.
+    // Both liveness and the activity ceiling must leave this task alone.
     const { q, watchdog } = await loadModules(repo)
     const nowMs = Date.now()
     const task = await q.enqueueTask('some work', undefined, { skipTriage: true })
@@ -474,10 +475,10 @@ describe('sweepPhantomTasks — PID liveness', () => {
     expect(reloaded?.status).toBe('running')
   })
 
-  it('alive pid + stale row + no events past grace window is killed via zero-events (not ceiling)', async () => {
-    // An alive process started 35 minutes ago with ZERO events is a phantom —
-    // the zero-events path fires and kills it faster than the 30-min ceiling.
-    // This test confirms the kill reason is 'zero-events', not 'ceiling'.
+  it('keeps an alive worker running when it has not emitted events yet', async () => {
+    // Providers can take several minutes to emit their first event. Process
+    // liveness, not a silent event stream, is the required evidence for a
+    // zero-event worker to be declared phantom.
     const { q, actionQueue, watchdog } = await loadModules(repo)
     const nowMs = Date.now()
     const task = await q.enqueueTask('some work', undefined, { skipTriage: true })
@@ -492,130 +493,22 @@ describe('sweepPhantomTasks — PID liveness', () => {
       {
         taskId: task.id,
         kind: 'implement' as const,
-        startedAt: nowMs - 35 * 60_000, // 35 min since spawn — well past 3-min grace
+        startedAt: nowMs - 35 * 60_000,
         pid: 12345,
-        // No lastActivityMs — process has emitted zero events in 35 minutes
+        // No lastActivityMs — process has emitted zero events in 35 minutes.
       },
     ]
-    const isAlive = vi.fn().mockReturnValue(true) // PID is alive but zombie-quiet
-    const reclaimSlot = vi.fn()
-
-    const { failed } = await watchdog.sweepPhantomTasks(inFlightEntries, reclaimSlot, isAlive, nowMs)
-
-    // Killed by the zero-events path, not updatedAt ceiling.
-    expect(failed).toContain(task.id)
-    const reloaded = await q.getTask(task.id)
-    expect(reloaded?.status).toBe('failed')
-    expect(reloaded?.failureReasonCode).toBe('phantom-task:zero-events')
-
-    const items = await actionQueue.listActionQueueItems('open')
-    expect(items).toHaveLength(1)
-    expect(items[0].payload).toMatchObject({ reason: 'zero-events' })
-  })
-})
-
-// ── Zero-event fast-kill ─────────────────────────────────────────────────────
-
-describe('sweepPhantomTasks — zero-events fast-kill', () => {
-  let repo: string
-
-  beforeEach(() => {
-    repo = setupRepo()
-  })
-
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    delete process.env.MARS_PHANTOM_WATCHDOG_CEILING_MS
-    rmSync(repo, { recursive: true, force: true })
-  })
-
-  it('kills a running task with an alive PID that has emitted zero events past the grace window', async () => {
-    // An alive subprocess that produces no events for longer than ZERO_EVENTS_GRACE_MS
-    // is almost certainly stuck at startup — kill it fast rather than waiting the full ceiling.
-    const { q, actionQueue, watchdog } = await loadModules(repo)
-    const nowMs = Date.now()
-    const task = await q.enqueueTask('some work', undefined, { skipTriage: true })
-
-    // Task row is freshly updated — NOT stale by ceiling standards.
-    const recentUpdatedAt = new Date(nowMs - 2 * 60_000).toISOString()
-    await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET status = 'running', updated_at = ? WHERE id = ?`,
-      args: [recentUpdatedAt, task.id],
-    })
-
-    // In-flight entry: alive PID, no lastActivityMs (zero events), started 4 min ago
-    // (past the 3-min ZERO_EVENTS_GRACE_MS).
-    const inFlightEntries = [
-      {
-        taskId: task.id,
-        kind: 'implement' as const,
-        startedAt: nowMs - 4 * 60_000, // 4 minutes ago — past grace window
-        pid: 12345,
-        // no lastActivityMs → zero events produced
-      },
-    ]
-    const isAlive = vi.fn().mockReturnValue(true) // PID is alive
-    const reclaimSlot = vi.fn()
-
-    const { failed } = await watchdog.sweepPhantomTasks(inFlightEntries, reclaimSlot, isAlive, nowMs)
-
-    // Must be fast-killed despite the row being within the normal ceiling.
-    expect(failed).toContain(task.id)
-
-    const reloaded = await q.getTask(task.id)
-    expect(reloaded?.status).toBe('failed')
-    expect(reloaded?.failedPhase).toBe('code')
-    expect(reloaded?.failureReasonCode).toBe('phantom-task:zero-events')
-
-    expect(reclaimSlot).toHaveBeenCalledWith(task.id, 'implement')
-
-    // Action-queue item raised with the zero-events reason.
-    const items = await actionQueue.listActionQueueItems('open')
-    expect(items).toHaveLength(1)
-    expect(items[0].kind).toBe(watchdog.PHANTOM_TASK_KIND)
-    expect(items[0].payload).toMatchObject({ reason: 'zero-events' })
-  })
-
-  it('does NOT kill a running task with alive PID and zero events within the grace window', async () => {
-    // A newly dispatched task hasn't had time to produce events yet — do not kill it.
-    const { q, watchdog } = await loadModules(repo)
-    const nowMs = Date.now()
-    const task = await q.enqueueTask('some work', undefined, { skipTriage: true })
-
-    const recentUpdatedAt = new Date(nowMs - 1 * 60_000).toISOString()
-    await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET status = 'running', updated_at = ? WHERE id = ?`,
-      args: [recentUpdatedAt, task.id],
-    })
-
-    const inFlightEntries = [
-      {
-        taskId: task.id,
-        kind: 'implement' as const,
-        startedAt: nowMs - 1 * 60_000, // 1 minute ago — within the 3-min grace window
-        pid: 12345,
-        // no lastActivityMs → zero events produced, but still within grace
-      },
-    ]
-    const isAlive = vi.fn().mockReturnValue(true)
+    const isAlive = vi.fn().mockReturnValue(true) // PID is alive but quiet
     const reclaimSlot = vi.fn()
 
     const { failed } = await watchdog.sweepPhantomTasks(inFlightEntries, reclaimSlot, isAlive, nowMs)
 
     expect(failed).not.toContain(task.id)
-    expect(reclaimSlot).not.toHaveBeenCalled()
-
     const reloaded = await q.getTask(task.id)
     expect(reloaded?.status).toBe('running')
-  })
 
-  it('ZERO_EVENTS_GRACE_MS is a named constant shorter than DEFAULT_CEILING_MS', async () => {
-    // Guard: the grace window must be meaningfully shorter than the ceiling —
-    // otherwise the fast-kill provides no benefit over the existing ceiling path.
-    // This test will fail if someone accidentally sets ZERO_EVENTS_GRACE_MS >= DEFAULT_CEILING_MS.
-    const { watchdog } = await loadModules(repo)
-    expect(watchdog.ZERO_EVENTS_GRACE_MS).toBeLessThan(watchdog.DEFAULT_CEILING_MS)
-    expect(watchdog.ZERO_EVENTS_GRACE_MS).toBeGreaterThan(0)
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(0)
   })
 })
 
@@ -826,23 +719,10 @@ describe('buildPhantomBody — plain-language output', () => {
   it('uses plain language for dead-pid reason', () => {
     const body = watchdog.buildPhantomBody('mars-abc123', 'running', 'dead-pid', 5, 'Fix auth bug')
     expect(body).toContain('Fix auth bug')
-    expect(body).toContain('exited unexpectedly')
+    expect(body).toContain('not alive when checked')
     expect(body).not.toContain('recorded subprocess PID')
   })
 
-  it('uses plain language for zero-events reason', () => {
-    const body = watchdog.buildPhantomBody(
-      'mars-abc123',
-      'running',
-      'zero-events',
-      4,
-      'Run database migration',
-    )
-    expect(body).toContain('Run database migration')
-    expect(body).toContain('output')
-    expect(body).not.toContain('trace events')
-    expect(body).not.toContain('phantom')
-  })
 })
 
 // ── action-queue title format ─────────────────────────────────────────────────
