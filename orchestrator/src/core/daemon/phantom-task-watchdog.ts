@@ -61,7 +61,8 @@
  */
 
 import { getTask, listTasks, updateTask } from '../queue'
-import { type ActionQueueKind, raiseActionQueueItem } from '../lib/action-queue'
+import { raiseActionQueueItem } from '../lib/action-queue'
+import type { ActionQueueKind } from '../lib/action-queue-kinds'
 import type { DispatchKind, InFlightEntry } from './task-flight-tracker'
 
 export const PHANTOM_TASK_KIND: ActionQueueKind = 'phantom-task'

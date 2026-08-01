@@ -17,7 +17,8 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { ACTION_QUEUE_KINDS, buildAlertSegment, type RaiseActionQueueItem } from './action-queue'
+import { buildAlertSegment, type RaiseActionQueueItem } from './action-queue'
+import { ACTION_QUEUE_KINDS } from './action-queue-kinds'
 import {
   lookupRecipe,
   getRecipeVerbs,

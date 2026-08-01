@@ -1,6 +1,7 @@
 import { computeFailureSignature } from './lib/failure-signature'
 import { assessStormExcerpt } from './agents/steward'
-import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
+import { raiseActionQueueItem } from './lib/action-queue'
+import type { ActionQueueKind } from './lib/action-queue-kinds'
 import { clearBlockers, getTask, updateTask } from './queue'
 
 export const DEFAULT_FIX_RETRY_BUDGET = 0

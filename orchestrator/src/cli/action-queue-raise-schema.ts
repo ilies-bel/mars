@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { ACTION_QUEUE_KINDS } from '../core/lib/action-queue'
+import { ACTION_QUEUE_KINDS } from '../core/lib/action-queue-kinds'
 
 const actionQueuePriority = z.enum(['urgent', 'high', 'normal', 'low'])
 const knownCategory = z.enum(['orchestrator', 'reflector', 'daemon', 'user'])

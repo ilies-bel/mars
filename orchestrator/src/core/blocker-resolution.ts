@@ -6,7 +6,8 @@ import {
   raiseRecoveryExhaustedActionQueue,
 } from './queue-retry'
 import { getTask } from './queue'
-import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
+import { raiseActionQueueItem } from './lib/action-queue'
+import type { ActionQueueKind } from './lib/action-queue-kinds'
 import {
   WORKTREE_AHEAD_FAILURE_REASON,
   WorktreeAheadPayloadSchema,

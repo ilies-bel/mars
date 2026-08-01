@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { derivedRowActions } from '../derived-row-actions'
-import { ACTION_QUEUE_KINDS } from '../action-queue'
+import { ACTION_QUEUE_KINDS } from '../action-queue-kinds'
 
 describe('awaiting-validation kind + actions', () => {
   it('is a registered action-queue kind', () => {
@@ -31,4 +31,3 @@ describe('awaiting-validation kind + actions', () => {
     expect(derivedRowActions('failed-task')).toEqual([])
   })
 })
-

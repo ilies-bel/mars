@@ -24,7 +24,7 @@ import {
   type RecipeHumanDetail,
   type RecipeVerb,
 } from '../../lib/action-queue-recipes'
-import { isActionQueueKind, type ActionQueueKind } from '../../lib/action-queue'
+import { isActionQueueKind, type ActionQueueKind } from '../../lib/action-queue-kinds'
 
 /**
  * The display kind is the persisted action-queue kind. It is deliberately not

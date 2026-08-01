@@ -13,7 +13,8 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs'
-import { type ActionQueueKind, raiseActionQueueItem } from '../lib/action-queue'
+import { raiseActionQueueItem } from '../lib/action-queue'
+import type { ActionQueueKind } from '../lib/action-queue-kinds'
 
 export const DAEMON_DIED_ACTION_QUEUE_KIND: ActionQueueKind = 'daemon-died'
 

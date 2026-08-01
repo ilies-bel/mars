@@ -29,7 +29,7 @@ import { lookupFailureKind } from '../../../core/lib/failure-kinds'
 import {
   ACTION_QUEUE_KINDS,
   isActionQueueKind,
-} from '../../../core/lib/action-queue'
+} from '../../../core/lib/action-queue-kinds'
 import {
   claudeStreamArgs,
   codegraphMcpConfigJson,

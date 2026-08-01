@@ -4,7 +4,7 @@
  */
 
 import { resolveStateClient } from '../store/state-client'
-import type { ActionQueueKind } from './action-queue'
+import type { ActionQueueKind } from './action-queue-kinds'
 import {
   getRecipePreloadedResponses,
   humanSummary,

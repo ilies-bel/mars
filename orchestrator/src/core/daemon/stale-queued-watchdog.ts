@@ -17,7 +17,8 @@
  */
 
 import { listTasks } from '../queue'
-import { type ActionQueueKind, raiseActionQueueItem } from '../lib/action-queue'
+import { raiseActionQueueItem } from '../lib/action-queue'
+import type { ActionQueueKind } from '../lib/action-queue-kinds'
 
 export const STALE_QUEUED_KIND: ActionQueueKind = 'stale-queued'
 export const STALE_QUEUED_SUMMARY_KIND: ActionQueueKind = 'stale-queued-summary'

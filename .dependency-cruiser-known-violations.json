@@ -1533,24 +1533,6 @@
   },
   {
     "type": "module",
-    "from": "orchestrator/src/init/agents-md.ts",
-    "to": "orchestrator/src/init/agents-md.ts",
-    "rule": {
-      "severity": "warn",
-      "name": "no-orphans"
-    }
-  },
-  {
-    "type": "module",
-    "from": "orchestrator/src/stubs/react-devtools-core.ts",
-    "to": "orchestrator/src/stubs/react-devtools-core.ts",
-    "rule": {
-      "severity": "warn",
-      "name": "no-orphans"
-    }
-  },
-  {
-    "type": "module",
     "from": "orchestrator/vitest.config.ts",
     "to": "orchestrator/vitest.config.ts",
     "rule": {

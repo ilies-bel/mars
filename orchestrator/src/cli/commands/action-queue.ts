@@ -15,11 +15,8 @@
  */
 
 import { readFileSync } from 'node:fs'
-import {
-  ACTION_QUEUE_KINDS,
-  isActionQueueKind,
-  raiseActionQueueItem,
-} from '../../core/lib/action-queue'
+import { raiseActionQueueItem } from '../../core/lib/action-queue'
+import { ACTION_QUEUE_KINDS, isActionQueueKind } from '../../core/lib/action-queue-kinds'
 import { actionQueueRaiseSchema } from '../action-queue-raise-schema'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, readDaemonPort } from './shared'

@@ -11,7 +11,7 @@
  * exhaustiveness test enforces this.
  */
 
-import type { ActionQueueKind } from './action-queue'
+import type { ActionQueueKind } from './action-queue-kinds'
 import { classifyMarsVerb } from './chat-mars-verbs'
 
 // ── Types ────────────────────────────────────────────────────────────────────

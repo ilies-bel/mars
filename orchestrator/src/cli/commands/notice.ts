@@ -3,7 +3,7 @@
  */
 
 import { createNotice } from '../../core/lib/notice-store'
-import { isActionQueueKind } from '../../core/lib/action-queue'
+import { isActionQueueKind } from '../../core/lib/action-queue-kinds'
 import type { Command } from '../command'
 import { errorMessage } from './shared'
 

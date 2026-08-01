@@ -19,7 +19,8 @@
 import { listTasks } from '../queue'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { lookupFailureKind, unknownFailureKind } from '../lib/failure-kinds'
-import { type ActionQueueKind, raiseActionQueueItem } from '../lib/action-queue'
+import { raiseActionQueueItem } from '../lib/action-queue'
+import type { ActionQueueKind } from '../lib/action-queue-kinds'
 
 export const DAEMON_KILLED_ACTION_QUEUE_KIND: ActionQueueKind = 'daemon-killed'
 

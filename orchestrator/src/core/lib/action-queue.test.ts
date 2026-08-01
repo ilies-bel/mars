@@ -959,7 +959,7 @@ describe('supersedeOrphanedHitlActionQueueRows — orphan sweep', () => {
 describe('ACTION_QUEUE_KINDS membership — writer kind constants', () => {
   it('every raiseActionQueueItem writer kind constant is a member of ACTION_QUEUE_KINDS', async () => {
     // Import ACTION_QUEUE_KINDS fresh so any module-cache state is irrelevant.
-    const { isActionQueueKind } = await import('./action-queue')
+    const { isActionQueueKind } = await import('./action-queue-kinds')
 
     const writerKinds: [string, string][] = [
       ['RECOVERY_FAILED_ACTION_QUEUE_KIND', RECOVERY_FAILED_ACTION_QUEUE_KIND],

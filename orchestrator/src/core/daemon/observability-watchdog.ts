@@ -14,7 +14,8 @@
  */
 
 import { openDb } from '../lib/db'
-import { type ActionQueueKind, raiseActionQueueItem } from '../lib/action-queue'
+import { raiseActionQueueItem } from '../lib/action-queue'
+import type { ActionQueueKind } from '../lib/action-queue-kinds'
 
 export const OBSERVABILITY_WATCHDOG_KIND: ActionQueueKind = 'observability-store-oversize'
 

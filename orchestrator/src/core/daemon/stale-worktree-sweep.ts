@@ -16,7 +16,8 @@
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { listTasks } from '../queue'
-import { type ActionQueueKind, raiseActionQueueItem } from '../lib/action-queue'
+import { raiseActionQueueItem } from '../lib/action-queue'
+import type { ActionQueueKind } from '../lib/action-queue-kinds'
 import { getDefaultMergeJobStore } from '../store/merge-job-store'
 
 export const STALE_WORKTREE_KIND: ActionQueueKind = 'stale-worktree'
