@@ -38,7 +38,10 @@ describe('duplicate session id rejection', () => {
         args: ['sleep', '30'],
         env: {},
       }),
-    ).rejects.toThrow(`Session id "${id}" is already in use`);
+      // The message must name the offending id AND the way out — "already in
+      // use" alone left callers guessing. src/start.ts rejects before spawning
+      // so no process leaks on the duplicate call.
+    ).rejects.toThrow(`Session "${id}" is already running; call kill() or forceKill() first`);
   });
 
   it('leaves the original session live and reachable after a rejected duplicate call', async () => {

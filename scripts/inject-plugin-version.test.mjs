@@ -41,9 +41,9 @@ function runScript(tag, root) {
 
 function makeFixtureRoot(pluginJson) {
   const root = mkdtempSync(join(tmpdir(), "mars-plugin-inject-"));
-  mkdirSync(join(root, ".claude"), { recursive: true });
+  mkdirSync(join(root, ".claude", ".claude-plugin"), { recursive: true });
   writeFileSync(
-    join(root, ".claude", "plugin.json"),
+    join(root, ".claude", ".claude-plugin", "plugin.json"),
     JSON.stringify(pluginJson, null, 2) + "\n",
   );
   return root;
@@ -67,7 +67,7 @@ try {
     const r = runScript("v0.3.1", root);
     check("exits 0 on success", r.status === 0, `status=${r.status}\nstderr=${r.stderr}`);
     const out = JSON.parse(
-      readFileSync(join(root, ".claude", "plugin.json"), "utf8"),
+      readFileSync(join(root, ".claude", ".claude-plugin", "plugin.json"), "utf8"),
     );
     check(
       "injects semver version without v prefix",
@@ -96,7 +96,7 @@ try {
       `status=${r.status}\nstderr=${r.stderr}`,
     );
     const out = JSON.parse(
-      readFileSync(join(root, ".claude", "plugin.json"), "utf8"),
+      readFileSync(join(root, ".claude", ".claude-plugin", "plugin.json"), "utf8"),
     );
     check(
       "prerelease version preserved verbatim",
@@ -112,14 +112,14 @@ try {
       dirname(fileURLToPath(import.meta.url)),
       "..",
     );
-    const pluginPath = join(repoRoot, ".claude", "plugin.json");
+    const pluginPath = join(repoRoot, ".claude", ".claude-plugin", "plugin.json");
     let pluginJson;
     try {
       pluginJson = JSON.parse(readFileSync(pluginPath, "utf8"));
     } catch (e) {
       failures++;
       console.error(
-        `  ✗ .claude/plugin.json exists in repo — could not read: ${e.message}`,
+        `  ✗ .claude/.claude-plugin/plugin.json exists in repo — could not read: ${e.message}`,
       );
       pluginJson = null;
     }
@@ -137,7 +137,7 @@ try {
   {
     const root = mkdtempSync(join(tmpdir(), "mars-plugin-missing-"));
     fixtures.push(root);
-    mkdirSync(join(root, ".claude"), { recursive: true }); // intentionally no plugin.json
+    mkdirSync(join(root, ".claude", ".claude-plugin"), { recursive: true }); // intentionally no plugin.json
     const r = runScript("v0.1.0", root);
     check(
       "missing plugin.json exits non-zero",

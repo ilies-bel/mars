@@ -2,7 +2,7 @@
 	"packageManager": "pnpm@10.28.2",
 	"scripts": {
 		"validate-manifest": "node scripts/check-manifest.mjs",
-		"test-scripts": "node scripts/check-manifest.test.mjs && node scripts/is-prerelease.test.mjs && node scripts/compute-next-tag.test.mjs && node scripts/inject-plugin-version.test.mjs",
+		"test-scripts": "node scripts/run-script-tests.mjs",
 		"knip": "knip --no-progress --no-exit-code",
 		"arch": "node scripts/arch-guard.mjs",
 		"arch:baseline": "node scripts/arch-guard.mjs --baseline",

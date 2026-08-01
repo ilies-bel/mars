@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Injects the framework release tag as the plugin version into
-// .claude/plugin.json. Called by the release workflow before bundling so the
+// .claude/.claude-plugin/plugin.json. Called by the release workflow before
+// bundling so the
 // plugin reports the same version as the framework release — satisfying the
 // "no second version field" invariant: the committed plugin.json carries no
 // version, and the version is added only at release time.
@@ -22,7 +23,15 @@ const FRAMEWORK_ROOT = process.env.MARS_PLUGIN_ROOT
   ? resolve(process.env.MARS_PLUGIN_ROOT)
   : resolve(SCRIPT_DIR, "..");
 
-const PLUGIN_JSON_PATH = join(FRAMEWORK_ROOT, ".claude", "plugin.json");
+// f5bfd437 nested the plugin root under .claude/.claude-plugin/ so Claude Code
+// stops double-registering every /mars:* skill. This path moved with it; the
+// old .claude/plugin.json no longer exists in the repo.
+const PLUGIN_JSON_PATH = join(
+  FRAMEWORK_ROOT,
+  ".claude",
+  ".claude-plugin",
+  "plugin.json",
+);
 
 function fail(message) {
   console.error(`✗ inject-plugin-version: ${message}`);
@@ -50,17 +59,17 @@ let raw;
 try {
   raw = readFileSync(PLUGIN_JSON_PATH, "utf8");
 } catch {
-  fail(`.claude/plugin.json not found at framework root (${PLUGIN_JSON_PATH})`);
+  fail(`.claude/.claude-plugin/plugin.json not found at framework root (${PLUGIN_JSON_PATH})`);
 }
 
 let plugin;
 try {
   plugin = JSON.parse(raw);
 } catch (err) {
-  fail(`.claude/plugin.json is not valid JSON: ${err.message}`);
+  fail(`.claude/.claude-plugin/plugin.json is not valid JSON: ${err.message}`);
 }
 
 plugin.version = version;
 
 writeFileSync(PLUGIN_JSON_PATH, JSON.stringify(plugin, null, 2) + "\n");
-console.log(`✓ set .claude/plugin.json version to ${version}`);
+console.log(`✓ set .claude/.claude-plugin/plugin.json version to ${version}`);
