@@ -62,6 +62,39 @@ export const TERMINAL_TASK_STATUSES: ReadonlySet<TaskStatus> = new Set([
 ])
 
 /**
+ * The statuses at which a blocker STOPS gating its dependents.
+ *
+ * - `done`    — the blocked-on work landed; the dependent's premise holds.
+ * - `dropped` — the blocked-on work was explicitly called off (superseded,
+ *   origin-succeeded, arc-rescued, resliced, …). It is terminal and will never
+ *   reach `done`, so a dependent waiting for it waits forever. Dropping is a
+ *   deliberate "this is not happening" decision, it raises no action-queue row
+ *   to resolve (ADR-0028 treats `dropped` as a CLOSING terminal reason), and
+ *   the row-deleting sibling gesture `mars drop` already releases dependents
+ *   inline (see `Arc.drop`). Releasing here makes both drop shapes agree.
+ *
+ * `failed` is deliberately ABSENT. A failed blocker leaves its dependents
+ * waiting in `blocked` for operator resolution via the action-queue row the
+ * failure raises — the failure does not cascade down the chain (CLAUDE.md
+ * § Blockers). The single carve-out is an origin waiting on its OWN failed
+ * one-shot recovery, which `Arc.failStrandedOriginOnRecoveryFailure` fails
+ * explicitly rather than releasing.
+ */
+export const SETTLED_BLOCKER_STATUSES: ReadonlySet<TaskStatus> = new Set([
+  'done',
+  'dropped',
+])
+
+/**
+ * SQL predicate fragment — "this blocker still gates its dependent". The
+ * mirror image of {@link SETTLED_BLOCKER_STATUSES}, kept as one exported
+ * string so every gating query (promote, unblock, recover, hasIncomplete,
+ * listBlockers) shares a single definition and cannot drift apart. `t` must
+ * be the alias bound to the BLOCKER row.
+ */
+export const UNSETTLED_BLOCKER_SQL = `t.status NOT IN ('done', 'dropped')`
+
+/**
  * Transient lifecycle phase between a freshly-promoted task (draft → triaging)
  * and dispatch-eligible (`'queued'`). Triaging tasks are visible to readers
  * but the dispatcher MUST NOT dispatch them — they are awaiting deterministic
@@ -1965,19 +1998,24 @@ export const listBlockers = async (taskId: string): Promise<string[]> => {
     sql: `SELECT b.blocker_task_id AS id
             FROM task_blockers b
             JOIN tasks t ON t.id = b.blocker_task_id
-           WHERE b.task_id = ? AND t.status != 'done'
+           WHERE b.task_id = ? AND ${UNSETTLED_BLOCKER_SQL}
              AND b.state IN ('confirmed', 'pending-review')`,
     args: [taskId],
   })
   return r.rows.map((row) => (row as unknown as { id: string }).id)
 }
 
+/**
+ * True when at least one confirmed/pending-review blocker edge still gates
+ * `taskId` — i.e. points at a blocker that has not SETTLED
+ * ({@link SETTLED_BLOCKER_STATUSES}: `done` or `dropped`).
+ */
 export const hasIncompleteBlockers = async (taskId: string, store?: TaskStore): Promise<boolean> => {
   const stmt = {
     sql: `SELECT 1
             FROM task_blockers b
             JOIN tasks t ON t.id = b.blocker_task_id
-           WHERE b.task_id = ? AND t.status != 'done'
+           WHERE b.task_id = ? AND ${UNSETTLED_BLOCKER_SQL}
              AND b.state IN ('confirmed', 'pending-review')
            LIMIT 1`,
     args: [taskId],

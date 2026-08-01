@@ -245,8 +245,23 @@ const mergeJobsStartupReconcile: Reconciler = {
 
 /**
  * 3. Orphaned-blocked scan — re-queue any `blocked` task whose blocker edges
- *    have all resolved or been removed (the zero-edge orphan case). Must run
- *    AFTER drift repair so we don't promote a task that was demoted in step 2.
+ *    have all SETTLED (`done` or `dropped`) or been removed (the zero-edge
+ *    orphan case). Must run AFTER drift repair so we don't promote a task that
+ *    was demoted in step 2.
+ *
+ *    This is also the boot-time heal for rows stranded behind a `dropped`
+ *    blocker. `Arc.recoverAllBlocked` walks EVERY `blocked` row and
+ *    re-evaluates it against `UNSETTLED_BLOCKER_SQL`, so a dependent whose only
+ *    unsettled edge points at a dropped blocker is released here — the same
+ *    "a crash (or a pre-fix row) never strands a dependent permanently"
+ *    guarantee `stranded-origin-recovery-repair` gives the failed-recovery
+ *    case. No separate sweep is needed: widening the predicate is what makes
+ *    the existing scan cover the drop case.
+ *
+ *    Ordering note: it runs AFTER `terminal-origin-chore-repair`, which is the
+ *    step that drops recovery Chores whose origin already went terminal. A
+ *    Chore dropped in that step therefore releases its dependents in the same
+ *    boot pass rather than on the next one.
  */
 const orphanedBlockedScan: Reconciler = {
   name: 'orphaned-blocked-scan',

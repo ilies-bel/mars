@@ -128,6 +128,54 @@ describe('runStartupReconcile — orphaned-blocked scan', () => {
     expect(summary.orphanedBlockedRequeued).toBe(0)
   })
 
+  // Boot-time heal for rows stranded before the drop-release fix landed. A
+  // `dropped` blocker is terminal and can never reach `done`, so the dependent
+  // would otherwise sit in `blocked` forever with no action-queue row to
+  // resolve. Live case: mars-95f2318e behind fix-3a03bbf2 (arc-rescued).
+  it('re-queues a blocked task whose only blocker is dropped', async () => {
+    const { q, reconcile } = await loadModules(repo)
+
+    const blocker = await q.enqueueTask('dropped blocker', undefined, { skipTriage: true })
+    const dependent = await q.enqueueTask('stranded dependent', undefined, { skipTriage: true })
+    await q.addBlockers(dependent.id, [blocker.id])
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'dropped' WHERE id = ?`,
+      args: [blocker.id],
+    })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+      args: [dependent.id],
+    })
+
+    const summary = await reconcile.runStartupReconcile(makeDeps())
+
+    expect((await q.getTask(dependent.id))?.status).toBe('queued')
+    expect(summary.orphanedBlockedRequeued).toBe(1)
+  })
+
+  // The `failed` half of the contract is unchanged: a dependent behind an
+  // ordinary failed blocker keeps waiting for explicit operator resolution.
+  it('leaves a blocked task blocked when its only blocker is failed', async () => {
+    const { q, reconcile } = await loadModules(repo)
+
+    const blocker = await q.enqueueTask('failed blocker', undefined, { skipTriage: true })
+    const dependent = await q.enqueueTask('waiting dependent', undefined, { skipTriage: true })
+    await q.addBlockers(dependent.id, [blocker.id])
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
+      args: [blocker.id],
+    })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+      args: [dependent.id],
+    })
+
+    const summary = await reconcile.runStartupReconcile(makeDeps())
+
+    expect((await q.getTask(dependent.id))?.status).toBe('blocked')
+    expect(summary.orphanedBlockedRequeued).toBe(0)
+  })
+
   it('is idempotent — second pass is a no-op when the queue is already consistent', async () => {
     const { q, reconcile } = await loadModules(repo)
 

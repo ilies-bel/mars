@@ -209,16 +209,28 @@ invoking — this CLAUDE.md note may lag the CLI.
 ## Blockers
 
 Blocker edges live in the `task_blockers` junction table (`task_id` waits
-on `blocker_task_id`). When a task is enqueued with `--blocked-by <id>`,
-if any named blocker is not yet `done`, the task lands immediately in
-`status='blocked'` (never `'queued'`); if all named blockers are already
-`done`, it lands in `'queued'`. A `blocked` task only flips to `queued`
-once **every** one of its blockers reaches `done` — and a successful
-recovery counts as its origin reaching `done`, so a recovered blocker
-unblocks the whole chain. The blocker-resolution outbox subscriber
-(`drainBlockerResolution`) drives this on each completion; a startup
-reconcile sweep (`blockerDriftRepair`) normalises any legacy rows that
-slipped through so a crash never strands dependents permanently.
+on `blocker_task_id`). A blocker stops gating its dependents once it
+**settles** — reaches `done` *or* `dropped` (`SETTLED_BLOCKER_STATUSES` /
+`UNSETTLED_BLOCKER_SQL` in `orchestrator/src/core/queue.ts` are the single
+definition; every gating query shares them). When a task is enqueued with
+`--blocked-by <id>`, if any named blocker has not settled the task lands
+immediately in `status='blocked'` (never `'queued'`); if all named
+blockers have settled, it lands in `'queued'`. A `blocked` task only flips
+to `queued` once **every** one of its blockers has settled — and a
+successful recovery counts as its origin reaching `done`, so a recovered
+blocker unblocks the whole chain. The blocker-resolution outbox subscriber
+(`drainBlockerResolution`) drives this on each `task.terminal`
+`{ reason: 'done' | 'dropped' }`; a startup reconcile sweep
+(`blockerDriftRepair`) normalises any legacy rows that slipped through,
+and `orphanedBlockedScan` re-evaluates every `blocked` row at boot so a
+crash — or a row stranded before this rule existed — never strands
+dependents permanently.
+
+`dropped` settles because it is terminal and can never become `done`:
+dropping is an explicit "this work is not happening" decision, it raises
+no action queue row to resolve, and `mars drop` (which deletes the row)
+already releases dependents inline. `failed` does **not** settle — see
+below.
 
 When a task fails, the orchestrator spawns exactly **one** recovery task
 per origin failure to finish or fix the work. A recovery task is itself
