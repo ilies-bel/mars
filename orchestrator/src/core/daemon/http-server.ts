@@ -60,7 +60,7 @@ import {
 } from './view/wywa-delta'
 import { listStewardLedgerFor, listStewardLedgerSince } from '../steward-ledger'
 import type { ChatRunner, AttachmentInfo } from './chat-runner'
-import type { ChatStreamHub, SeqChunk } from './chat-stream-hub'
+import type { ChatStreamHub, SeqChunk } from './chat-contracts'
 import { listTasksForThread } from './chat-thread-tasks'
 import { getRepoRoot } from '../context'
 import { z } from 'zod'

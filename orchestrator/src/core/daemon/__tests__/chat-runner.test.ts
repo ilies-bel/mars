@@ -28,7 +28,7 @@ import {
   parseEventToSegments,
 } from '../chat-runner'
 import { ChatStreamHub } from '../chat-stream-hub'
-import type { UiMessageChunk } from '../ui-message-chunks'
+import type { UiMessageChunk } from '../chat-contracts'
 import { CodexApiError, type StreamCodexResponseOpts } from '../codex-api'
 import type { ChatMessage } from '../../lib/chat-store'
 import { MAIN_THREAD_PROVIDER_REQUEST_IDENTITY } from '../chat-context'

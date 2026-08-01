@@ -14,21 +14,15 @@
  * reconnect for a just-finished run still replays the whole reply.
  */
 
-import { ChunkMapper, type UiMessageChunk } from './ui-message-chunks'
-import type { ChatSegment } from './chat-runner'
-
-/** One buffered chunk, tagged with its run generation and per-run sequence. */
-export interface SeqChunk {
-  gen: number
-  seq: number
-  chunk: UiMessageChunk
-}
-
-/** A subscriber's callbacks. `onEnd` fires once when the run seals. */
-interface Sub {
-  onChunk: (c: SeqChunk) => void
-  onEnd: () => void
-}
+import { ChunkMapper } from './ui-message-chunks'
+import type {
+  ChatSegment,
+  ChatStreamHub as ChatStreamHubContract,
+  ChatStreamSubscriber,
+  RunSnapshot,
+  SeqChunk,
+  UiMessageChunk,
+} from './chat-contracts'
 
 interface ThreadRun {
   gen: number
@@ -38,16 +32,9 @@ interface ThreadRun {
   active: boolean
 }
 
-/** Snapshot of a thread's current run, for a connecting subscriber to replay. */
-export interface RunSnapshot {
-  gen: number
-  buffer: SeqChunk[]
-  active: boolean
-}
-
-export class ChatStreamHub {
+export class ChatStreamHub implements ChatStreamHubContract {
   private runs = new Map<string, ThreadRun>()
-  private subs = new Map<string, Set<Sub>>()
+  private subs = new Map<string, Set<ChatStreamSubscriber>>()
   private genCounter = 0
 
   /**
@@ -97,7 +84,7 @@ export class ChatStreamHub {
    * this call) are delivered; the caller is responsible for replaying the
    * current snapshot buffer first. Returns an unsubscribe function.
    */
-  subscribe(threadId: string, sub: Sub): () => void {
+  subscribe(threadId: string, sub: ChatStreamSubscriber): () => void {
     let set = this.subs.get(threadId)
     if (!set) {
       set = new Set()

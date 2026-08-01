@@ -4,8 +4,8 @@
  * snapshot/replay (the resume primitive), run sealing, and generation bumping.
  */
 import { describe, it, expect } from 'vitest'
-import { ChatStreamHub, type SeqChunk } from '../chat-stream-hub'
-import type { UiMessageChunk } from '../ui-message-chunks'
+import { ChatStreamHub } from '../chat-stream-hub'
+import type { SeqChunk, UiMessageChunk } from '../chat-contracts'
 
 const chunkTypes = (scs: SeqChunk[]): string[] => scs.map((s) => s.chunk.type)
 

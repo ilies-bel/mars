@@ -16,41 +16,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import type { ChatSegment } from './chat-runner'
-
-/** Usage stats carried on the terminal `finish` chunk's `messageMetadata`. */
-export interface UiMessageMetadata {
-  /** Provider input + output tokens spent to produce this message. */
-  turnTokens: number
-  usage?: {
-    durationMs: number | null
-    inputTokens: number | null
-    outputTokens: number | null
-    cacheReadTokens: number | null
-    cost: number | null
-  }
-}
-
-/**
- * The minimal `UIMessageChunk` union Mars emits. Mirrors the objects the client
- * transport previously produced. Rendering (AI-SDK `useChat`) narrows on `type`.
- */
-export type UiMessageChunk =
-  | { type: 'start' }
-  | { type: 'start-step' }
-  | { type: 'text-start'; id: string }
-  | { type: 'text-delta'; id: string; delta: string }
-  | { type: 'text-end'; id: string }
-  | { type: 'reasoning-start'; id: string }
-  | { type: 'reasoning-delta'; id: string; delta: string }
-  | { type: 'reasoning-end'; id: string }
-  | { type: 'tool-input-start'; toolCallId: string; toolName: string }
-  | { type: 'tool-input-available'; toolCallId: string; toolName: string; input: unknown }
-  | { type: 'tool-output-available'; toolCallId: string; output: unknown }
-  | { type: 'tool-output-error'; toolCallId: string; errorText: string }
-  | { type: 'finish-step' }
-  | { type: 'finish'; finishReason: 'stop' | 'error'; messageMetadata?: UiMessageMetadata }
-  | { type: 'error'; errorText: string }
+import type { ChatSegment, UiMessageChunk } from './chat-contracts'
 
 /** Render arbitrary tool-error content to a string for `errorText`. */
 const stringifyError = (content: unknown): string => {

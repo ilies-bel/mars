@@ -6,8 +6,8 @@
  * MUST match what the client used to emit so history and live render identically.
  */
 import { describe, it, expect } from 'vitest'
-import { ChunkMapper, type UiMessageChunk } from '../ui-message-chunks'
-import type { ChatSegment } from '../chat-runner'
+import { ChunkMapper } from '../ui-message-chunks'
+import type { ChatSegment, UiMessageChunk } from '../chat-contracts'
 
 const types = (chunks: UiMessageChunk[]): string[] => chunks.map((c) => c.type)
 

@@ -48,7 +48,7 @@ import {
   type CompactionSegment,
 } from '../lib/chat-store'
 import type { ViewStreamHub } from './view/stream-hub'
-import type { ChatStreamHub } from './chat-stream-hub'
+import type { ChatSegment, ChatStreamHub } from './chat-contracts'
 import { resolveChatSystemPrompt } from './chat-system-prompt'
 import { buildMainThreadPrefix, MAIN_THREAD_PROVIDER_REQUEST_IDENTITY } from './chat-context'
 import {
@@ -84,26 +84,6 @@ export interface AttachmentInfo {
   name: string
   size: number
 }
-
-// ── Segment types ─────────────────────────────────────────────────────────────
-
-/**
- * A single typed segment produced from the Codex Responses SSE stream. Each
- * segment maps to one recognisable unit of the run: a text block, a reasoning
- * summary, a tool call, its result, the final usage summary, or an error.
- *
- * The `attachment` variant is produced by the HTTP route when the user
- * message carries file attachments. It is persisted on the user message and
- * rendered by the UI; it is NOT emitted by the stream parser.
- */
-export type ChatSegment =
-  | { type: 'text'; text: string }
-  | { type: 'thinking'; thinking: string }
-  | { type: 'tool_use'; id: string; name: string; tool: string; input: unknown; status?: 'executed' | 'proposed' | 'error' }
-  | { type: 'tool_result'; tool_use_id: string; content: unknown; isError: boolean }
-  | { type: 'result'; durationMs: number | null; inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cost: number | null }
-  | { type: 'error'; message: string }
-  | { type: 'attachment'; path: string; mimeType: string; name: string; size: number; kindHint: 'image' | 'audio' | 'video' }
 
 // MIME type classification used when building attachment segments and prompt text.
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
