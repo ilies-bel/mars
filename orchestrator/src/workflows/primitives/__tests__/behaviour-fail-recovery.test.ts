@@ -117,7 +117,7 @@ const taskWithCriteria = (id: string, doneCriteria: string[]): Task =>
       files: [],
       verifyCmd: null,
       doneCriteria,
-      taskType: 'auto',
+      mergeMode: 'auto',
     },
     fixForTaskId: null,
   }) as unknown as Task

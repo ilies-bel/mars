@@ -580,7 +580,7 @@ export const persistSuggestions = async (
           files: [],
           verifyCmd: null,
           doneCriteria: [s.title],
-          taskType: 'auto',
+          mergeMode: 'auto',
         },
       })
     } else {

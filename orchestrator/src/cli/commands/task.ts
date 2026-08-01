@@ -24,7 +24,7 @@ import type { Command, CommandDeps, CommandResult } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
 
 const TASK_ADD_USAGE =
-  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [--workflow <name>] [--live (disabled)] [--supersede <task-id>] [--qa auto|manual] [plan flags]'
+  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--merge auto|gated] [--workflow <name>] [--live (disabled)] [--supersede <task-id>] [--qa auto|manual] [plan flags]'
 
 interface EnqueueParams {
   prompt: string
@@ -133,6 +133,11 @@ export const taskAdd: Command = {
     const live = args.positional.includes('--live')
     const deferrableFlag = args.positional.includes('--deferrable')
     const positional = args.positional.filter((a) => a !== '--live' && a !== '--deferrable')
+    const unknownFlag = positional.find((arg) => arg.startsWith('--'))
+    if (unknownFlag !== undefined) {
+      deps.err(`[mars] error: unknown flag ${unknownFlag}; use --merge auto|gated`)
+      return { code: 2 }
+    }
     const workflowFlag = args.flags['--workflow']?.trim()
     if (live && workflowFlag !== undefined && workflowFlag !== 'live') {
       deps.err(

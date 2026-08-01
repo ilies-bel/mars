@@ -156,10 +156,10 @@ itself writes nothing to those files.
 ## Structured tasks
 
 `mars task add` accepts `--files`, `--verify`, `--done`, and
-`--type auto|checkpoint` (default `auto`; no other values are valid —
+`--merge auto|gated` (default `auto`; no other values are valid —
 the CLI rejects `chore`, `feat`, etc.). Any of them stores a typed
 spec; the implementor receives `<files>`, `<verify>`, `<done>`,
-`<task_type>`, `<task_id>` sections so completion is a checklist. The
+`<merge_mode>`, `<task_id>` sections so completion is a checklist. The
 slicer always emits structured tasks; free-prose still works and
 degrades to prompt-only. Other useful flags: `--priority 0..3 (0 = lowest, 3 = highest — NOT bug-tracker P-numbers)`,
 `--tag coder|writer`, `--blocked-by <id>` (repeatable). Always

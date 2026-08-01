@@ -115,7 +115,7 @@ export type DaemonRequest =
   /**
    * Read the worker-safe context for a task. Returns only fields relevant to
    * the dispatched agent: id, title, prompt, files, verify cmd, done criteria
-   * with check state, task type, status, and blocker ids. No internal counters,
+   * with check state, merge mode, status, and blocker ids. No internal counters,
    * auth tokens, or raw DB rows are returned.
    */
   | { op: 'task.contextForWorker'; id: string }

@@ -73,7 +73,7 @@ function runDiagnostic(key: KpiKey, arcs: KpiArc[], currentValue: number): Diagn
     if (failed.length > 0) {
       findings.push({
         label: 'Recommended action',
-        detail: 'Review the failed arcs below. Check if failures share a common verify command or task type. Tighten prompts with explicit file paths and done-criteria.',
+        detail: 'Review the failed arcs below. Check if failures share a common verify command or merge mode. Tighten prompts with explicit file paths and done-criteria.',
         severity: 'action',
       })
     }

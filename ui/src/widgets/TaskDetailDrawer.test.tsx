@@ -706,7 +706,7 @@ describe('TaskDetailBody – failed task with error', () => {
       prescriptiveAction: 'Refactor the frobnicator',
       verifyCmd: 'bun test src',
       doneCriteria: ['tests pass', 'lint clean'],
-      taskType: 'auto',
+      mergeMode: 'auto',
     },
   })
 
@@ -838,7 +838,7 @@ describe('TaskDetailBody – workflow step indicator', () => {
         prescriptiveAction: null,
         verifyCmd: null,
         doneCriteria: [],
-        taskType: 'auto',
+        mergeMode: 'auto',
       },
     })
     const html = renderBody(t)

@@ -71,7 +71,7 @@ const taskSpecSchema = z
     prescriptiveAction: z.string().nullable(),
     verifyCmd: z.string().nullable(),
     doneCriteria: z.array(z.string()),
-    taskType: z.string(),
+    mergeMode: z.string(),
   })
   .nullable()
 

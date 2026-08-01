@@ -7,7 +7,7 @@ const nonCoordinatorSpec: Task['spec'] = {
   files: [],
   verifyCmd: null,
   doneCriteria: [],
-  taskType: 'auto',
+  mergeMode: 'auto',
 }
 
 describe('pickWorkflowFor', () => {
@@ -17,7 +17,7 @@ describe('pickWorkflowFor', () => {
         files: [],
         verifyCmd: null,
         doneCriteria: [],
-        taskType: 'auto',
+        mergeMode: 'auto',
         executionMode: 'coordinated',
       })),
     ).toBe('coordinator')

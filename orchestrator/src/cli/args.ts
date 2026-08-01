@@ -2,7 +2,7 @@
  * Shared CLI argument parsing — pure, side-effect-free helpers (ADR-0023 §5).
  *
  * `parseArgs` turns raw argv into a {@link ParsedArgs} (the same shape the old
- * inline parser produced). Per-flag helpers (`parsePriority`, `parseTaskType`,
+ * inline parser produced). Per-flag helpers (`parsePriority`, `parseMergeMode`,
  * `parseTaskSpec`, …) validate a single flag and return either a typed value
  * or a structured error, so every Command validates flags identically and the
  * registry-iterating "every leaf rejects unknown flags" test has a single
@@ -49,7 +49,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--files',
   '--verify',
   '--done',
-  '--type',
+  '--merge',
   '--wrapper',
   '--session',
   '--model',
@@ -355,12 +355,12 @@ export const parsePriority = (raw: string): FlagResult<number> => {
   return { ok: true, value: n }
 }
 
-/** `--type`: one of auto|checkpoint (the only valid task types). */
-export const parseTaskType = (
+/** `--merge`: one of auto|gated (the only valid merge modes). */
+export const parseMergeMode = (
   raw: string,
-): FlagResult<'auto' | 'checkpoint'> => {
-  if (raw !== 'auto' && raw !== 'checkpoint') {
-    return { ok: false, message: `type must be one of auto, checkpoint; got '${raw}'` }
+): FlagResult<'auto' | 'gated'> => {
+  if (raw !== 'auto' && raw !== 'gated') {
+    return { ok: false, message: `merge must be one of auto, gated; got '${raw}'` }
   }
   return { ok: true, value: raw }
 }
@@ -369,7 +369,7 @@ export interface TaskSpec {
   files: readonly string[]
   verifyCmd: string | null
   doneCriteria: readonly string[]
-  taskType: 'auto' | 'checkpoint'
+  mergeMode: 'auto' | 'gated'
 }
 
 /**
@@ -382,9 +382,9 @@ export const hasUnbalancedQuotes = (value: string): boolean =>
   (value.split('"').length - 1) % 2 !== 0 || (value.split("'").length - 1) % 2 !== 0
 
 /**
- * Build a structured-task spec from the `--files`/`--verify`/`--done`/`--type`
+ * Build a structured-task spec from the `--files`/`--verify`/`--done`/`--merge`
  * flags. Returns `{ ok: true, value: undefined }` when none are present (the
- * row keeps the legacy free-prose shape). Validates `--type` when present.
+ * row keeps the legacy free-prose shape). Validates `--merge` when present.
  */
 export const parseTaskSpec = (
   args: Pick<ParsedArgs, 'flags' | 'multiFlags'>,
@@ -392,12 +392,12 @@ export const parseTaskSpec = (
   const filesList = args.multiFlags['--files'] ?? []
   const doneList = args.multiFlags['--done'] ?? []
   const verifyRaw = args.flags['--verify']
-  const typeRaw = args.flags['--type']
+  const mergeRaw = args.flags['--merge']
   const anySpec =
     filesList.length > 0 ||
     doneList.length > 0 ||
     verifyRaw !== undefined ||
-    typeRaw !== undefined
+    mergeRaw !== undefined
   if (!anySpec) return { ok: true, value: undefined }
 
   if (verifyRaw !== undefined && hasUnbalancedQuotes(verifyRaw)) {
@@ -407,11 +407,11 @@ export const parseTaskSpec = (
     }
   }
 
-  let taskType: 'auto' | 'checkpoint' = 'auto'
-  if (typeRaw !== undefined) {
-    const parsed = parseTaskType(typeRaw)
+  let mergeMode: 'auto' | 'gated' = 'auto'
+  if (mergeRaw !== undefined) {
+    const parsed = parseMergeMode(mergeRaw)
     if (!parsed.ok) return parsed
-    taskType = parsed.value
+    mergeMode = parsed.value
   }
   return {
     ok: true,
@@ -419,7 +419,7 @@ export const parseTaskSpec = (
       files: filesList,
       verifyCmd: verifyRaw ?? null,
       doneCriteria: doneList,
-      taskType,
+      mergeMode,
     },
   }
 }

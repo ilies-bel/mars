@@ -91,7 +91,7 @@ export const slicerOutputSchema = z.object({
           modifies: z.array(z.string()).default([]),
           creates: z.array(z.string()).default([]),
           verifyCmd: z.string().nullable().default(null),
-          taskType: z.enum(['auto', 'checkpoint']).default('auto'),
+          mergeMode: z.enum(['auto', 'gated']).default('auto'),
           /**
            * Present on hitl slices, absent on coder slices. Describes the
            * ONE Coder-dispatchable artifact (e.g. a verify script) a Coder
@@ -255,9 +255,9 @@ For each slice, produce:
   command MUST cd into that subdirectory first, e.g.
   "cd orchestrator && npx vitest run src/foo.test.ts". Empty string
   if the project's default verify is sufficient.
-- taskType — "auto" for slices the implementor can drive end-to-end and
-  commit, or "checkpoint" for slices that need human verification before
-  merge. Default "auto"; reach for "checkpoint" only when a human must
+- mergeMode — "auto" for slices the implementor can drive end-to-end and
+  commit, or "gated" for slices that need human verification before
+  merge. Default "auto"; reach for "gated" only when a human must
   visually confirm an output the verifier cannot.
 - subDeliverable — REQUIRED on hitl slices; FORBIDDEN on coder slices.
   Describes ONE Coder-dispatchable artifact (e.g. a verify script) that
@@ -270,7 +270,7 @@ For each slice, produce:
 Return ONLY a single JSON object matching exactly this shape, with no
 surrounding prose, no code fences, and no commentary:
 
-{"slices":[{"title":"...","type":"AFK","kind":"coder","whatToBuild":"...","acceptanceCriteria":["..."],"blockedBy":[],"readFirst":["src/foo.ts"],"prescriptiveAction":"In fooFn (foo.ts:42), change return type from string to number and update all call sites.","modifies":["src/foo.ts"],"creates":["src/foo.test.ts"],"verifyCmd":"cd src && npx vitest run foo.test.ts","taskType":"auto"}]}
+{"slices":[{"title":"...","type":"AFK","kind":"coder","whatToBuild":"...","acceptanceCriteria":["..."],"blockedBy":[],"readFirst":["src/foo.ts"],"prescriptiveAction":"In fooFn (foo.ts:42), change return type from string to number and update all call sites.","modifies":["src/foo.ts"],"creates":["src/foo.test.ts"],"verifyCmd":"cd src && npx vitest run foo.test.ts","mergeMode":"auto"}]}
 
 PRD to decompose
 ================
@@ -1410,7 +1410,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
               verifyCmd: null,
               previewCmd: null,
               doneCriteria: [],
-              taskType: 'auto',
+              mergeMode: 'auto',
               executionMode: 'coordinated',
               slicePlan: parsed.slices,
             },
@@ -1437,7 +1437,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
               files,
               verifyCmd,
               doneCriteria: slice.acceptanceCriteria,
-              taskType: slice.taskType,
+              mergeMode: slice.mergeMode,
               sliceKind: slice.kind,
               subDeliverable: slice.subDeliverable,
             },
@@ -1473,7 +1473,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
                 files: sub.files ?? [],
                 verifyCmd: null,
                 doneCriteria: sub.acceptanceCriteria,
-                taskType: 'auto',
+                mergeMode: 'auto',
                 sliceKind: 'coder',
               },
             })

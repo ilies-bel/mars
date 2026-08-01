@@ -13,7 +13,7 @@ export interface ReleaseNoteSpec {
   files: readonly string[]
   verifyCmd: string | null
   doneCriteria: readonly string[]
-  taskType: string
+  mergeMode: string
 }
 
 /**

@@ -455,7 +455,7 @@ describe('startWorkerMcpServer', () => {
         { text: 'mars_task_context is registered', checked: true },
         { text: 'handler returns worker-safe fields', checked: false },
       ],
-      taskType: 'auto',
+      mergeMode: 'auto',
       status: 'running',
       blockers: ['mars-blocker-1'],
     }
@@ -494,7 +494,7 @@ describe('startWorkerMcpServer', () => {
     expect(parsed.files).toEqual(seededContext.files)
     expect(parsed.verify).toBe(seededContext.verify)
     expect(parsed.done).toEqual(seededContext.done)
-    expect(parsed.taskType).toBe(seededContext.taskType)
+    expect(parsed.mergeMode).toBe(seededContext.mergeMode)
     expect(parsed.status).toBe(seededContext.status)
     expect(parsed.blockers).toEqual(seededContext.blockers)
 

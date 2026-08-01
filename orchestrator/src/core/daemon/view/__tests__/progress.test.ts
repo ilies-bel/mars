@@ -48,7 +48,7 @@ const makeRow = (overrides: Partial<ProgressTaskRow> = {}): ProgressTaskRow => (
   prescriptiveAction: null,
   verifyCmd: null,
   doneCriteriaJson: null,
-  taskType: null,
+  mergeMode: null,
   originId: null,
   fixForTaskId: null,
   kind: null,

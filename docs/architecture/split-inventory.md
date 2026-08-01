@@ -317,7 +317,7 @@ implementation modules the leaf calls, not leaves.
 | `task` (usage) | 517 | `task/usage.ts` |
 
 `task add` is 214 lines (118–331) — the flag surface (`--files`, `--verify`,
-`--done`, `--type`, `--priority`, `--tag`, `--blocked-by`) plus spec assembly.
+`--done`, `--merge`, `--priority`, `--tag`, `--blocked-by`) plus spec assembly.
 Split further: `task/add.ts` (the Command) + `task/add-spec.ts` (pure
 `ParsedArgs → CreateOriginSpec` builder, unit-testable with zero deps). That
 builder is the thing the slicer and the MCP surface both want and neither can
@@ -892,7 +892,7 @@ functions. Split by role, not by table:
 
 | Concern | lines | → target |
 | --- | --- | --- |
-| Status/tag/type constants + guards (`TERMINAL_TASK_STATUSES`, `SETTLED_BLOCKER_STATUSES`, `NON_DISPATCHABLE_STATUSES`, `isDispatchableStatus`, `BLOCKER_STATES`, `TASK_TAGS`, `TASK_TYPES`, `MIN/MAX_PRIORITY`, `validatePriority`, `deriveTaskKind`, `assertTaskKindInvariant`) | 59–612 | `core/task/status.ts` + `core/task/tags.ts` + `core/task/priority.ts` — **pure, zero deps, movable today, and the single biggest cycle-breaking win in the repo** |
+| Status/tag/type constants + guards (`TERMINAL_TASK_STATUSES`, `SETTLED_BLOCKER_STATUSES`, `NON_DISPATCHABLE_STATUSES`, `isDispatchableStatus`, `BLOCKER_STATES`, `TASK_TAGS`, `MERGE_MODES`, `MIN/MAX_PRIORITY`, `validatePriority`, `deriveTaskKind`, `assertTaskKindInvariant`) | 59–612 | `core/task/status.ts` + `core/task/tags.ts` + `core/task/priority.ts` — **pure, zero deps, movable today, and the single biggest cycle-breaking win in the repo** |
 | `IllegalTransitionError` | 136 | `core/task/errors.ts` |
 | Client/schema (`resolveQueueClient`, `ensureQueueSchema`, `migrateQueueSchema`) | 614–641 | `core/store/queue-client.ts` |
 | Transcript (`capConversationJson`, `upsertTranscript`, `getTranscript`) | 642–757 | `core/store/transcript-store.ts` — **this is not queue code** |
@@ -1062,7 +1062,7 @@ split is worthless if nobody writes the test that the extraction enables:
 | --- | --- |
 | `core/arc/policy/drop.ts` (§3.2 Move 3) | drop-cascade planning, incl. the dangling-edge hazard from CLAUDE.md |
 | `ui/src/widgets/task-detail/subgraphLayout.ts` (§2.3) | 120 lines of geometry, currently needs a mounted drawer |
-| `cli/commands/task/add-spec.ts` (§1.3) | `ParsedArgs → CreateOriginSpec`, the full `--files/--verify/--done/--type/--priority/--tag/--blocked-by` matrix |
+| `cli/commands/task/add-spec.ts` (§1.3) | `ParsedArgs → CreateOriginSpec`, the full `--files/--verify/--done/--merge/--priority/--tag/--blocked-by` matrix |
 
 And one net-new suite that is not a split at all: **step 9's arch test.** It has
 no existing counterpart and is the load-bearing deliverable of this whole plan.

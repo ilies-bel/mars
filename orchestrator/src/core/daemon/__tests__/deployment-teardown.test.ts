@@ -115,7 +115,7 @@ const parkAtGate = async (
   prompt = 'preview me',
 ): Promise<string> => {
   const task = await q.enqueueTask(prompt, undefined, {
-    spec: { files: [], verifyCmd: null, doneCriteria: [], taskType: 'auto' },
+    spec: { files: [], verifyCmd: null, doneCriteria: [], mergeMode: 'auto' },
   })
   await q.updateTask(task.id, {
     status: 'awaiting-validation',

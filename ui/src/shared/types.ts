@@ -16,7 +16,7 @@ export interface UITaskSpec {
   prescriptiveAction?: string | null
   verifyCmd: string | null
   doneCriteria: string[]
-  taskType: string
+  mergeMode: string
 }
 
 export interface UITask {

@@ -325,7 +325,7 @@ const taskWithSpec = (spec: {
       files: [],
       verifyCmd: null,
       doneCriteria: spec.doneCriteria,
-      taskType: 'auto',
+      mergeMode: 'auto',
     },
   }) as unknown as Task
 

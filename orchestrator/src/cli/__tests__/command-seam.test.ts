@@ -135,7 +135,7 @@ describe('task add (daemon-routed)', () => {
     expect(fake.calls).toHaveLength(0)
   })
 
-  it('builds a structured spec from --files/--verify/--done/--type', async () => {
+  it('builds a structured spec from --files/--verify/--done/--merge', async () => {
     const fake = makeFakeDaemon(() => ({ id: 'mars-task-9999', status: 'queued' }))
     const { store, ctx } = await loadStoreAndCtx()
     const r = await runCommandInProcess(
@@ -144,7 +144,7 @@ describe('task add (daemon-routed)', () => {
         '--files', 'a.ts',
         '--done', 'compiles',
         '--verify', 'npm test',
-        '--type', 'checkpoint',
+        '--merge', 'gated',
       ],
       { store, ctx, daemon: fake },
     )
@@ -155,9 +155,21 @@ describe('task add (daemon-routed)', () => {
         files: ['a.ts'],
         verifyCmd: 'npm test',
         doneCriteria: ['compiles'],
-        taskType: 'checkpoint',
+        mergeMode: 'gated',
       },
     })
+  })
+
+  it('rejects the retired --type flag instead of treating it as prompt text', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'structured', '--type', 'auto'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain('unknown flag --type')
+    expect(fake.calls).toHaveLength(0)
   })
 })
 

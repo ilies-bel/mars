@@ -85,7 +85,7 @@ describe('persistSuggestions routing', () => {
     const [_prompt, _plan, opts] = (enqueueTask as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(opts?.author).toEqual({ kind: 'agent', name: 'reflector' })
     expect(opts?.spec).toBeDefined()
-    expect(opts?.spec?.taskType).toBe('auto')
+    expect(opts?.spec?.mergeMode).toBe('auto')
     expect(opts?.spec?.doneCriteria).toHaveLength(1)
   })
 

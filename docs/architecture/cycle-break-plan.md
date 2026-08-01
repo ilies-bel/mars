@@ -128,15 +128,15 @@ Their own doc-comments say so: *"Thin wrapper over {@link Arc.addBlocker}
 - **New leaf** `orchestrator/src/core/task-types.ts` — everything from
   `queue.ts` lines 21–593 and the later interface blocks, i.e.
   `TaskStatus`, `TaskDropReason`, `BlockerState`, `BlockerCauseKind`,
-  `Blocker`, `TaskKind`, `TaskTag`, `FailedPhase`, `TaskType`,
-  `TASK_TYPES`, `SubDeliverableSpec`, `TaskSpec`, `TaskPlan`,
+  `Blocker`, `TaskKind`, `TaskTag`, `FailedPhase`, `MergeMode`,
+  `MERGE_MODES`, `SubDeliverableSpec`, `TaskSpec`, `TaskPlan`,
   `QaReportCriterion`, `QaReport`, `Task`, `MAX_PRIORITY`,
   `UpsertTranscriptInput`, `TaskTranscriptRow`, `EnqueueTaskOptions`,
   `DropTaskResult`, `UnblockTaskResult`. Zero imports except
   `SliceSpec` (see 1e).
 - **New leaf** `orchestrator/src/core/task-sql.ts` — `TASK_SEL`,
   `UNSETTLED_BLOCKER_SQL`, `rowToTask`, `assertTaskKindInvariant`,
-  `coerceToString`, `validatePriority`, `isTaskTag`, `isTaskType`.
+  `coerceToString`, `validatePriority`, `isTaskTag`, `isMergeMode`.
   Imports `task-types.ts` only.
 - `core/queue.ts` keeps only reads and non-arc writes; **its 12 `Arc.*`
   wrappers are deleted** and every caller is repointed at `Arc` directly.

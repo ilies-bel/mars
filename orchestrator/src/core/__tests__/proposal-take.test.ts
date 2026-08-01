@@ -96,7 +96,7 @@ describe('proposal take — creates one task with workflow=live and proposal lin
         files: [],
         verifyCmd: null,
         doneCriteria: ['As a user I can do something'],
-        taskType: 'auto',
+        mergeMode: 'auto',
       },
     })
 

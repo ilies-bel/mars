@@ -80,7 +80,7 @@ const createTask = async (store: DomainTaskStore, opts?: { doneCriteria?: string
               readFirst: [],
               prescriptiveAction: null,
               verifyCmd: null,
-              taskType: 'auto',
+              mergeMode: 'auto',
             },
           }
         : undefined,

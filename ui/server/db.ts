@@ -88,7 +88,7 @@ interface TaskRow {
   prescriptive_action: string | null
   verify_cmd: string | null
   done_criteria_json: string | null
-  task_type: string | null
+  merge_mode: string | null
 }
 
 export interface TaskSpec {
@@ -97,7 +97,7 @@ export interface TaskSpec {
   prescriptiveAction?: string | null
   verifyCmd: string | null
   doneCriteria: string[]
-  taskType: string
+  mergeMode: string
 }
 
 export interface Task {
@@ -170,14 +170,14 @@ const rowToTask = (row: TaskRow): Task => {
   const prescriptiveAction = row.prescriptive_action ?? null
   const verifyCmd = row.verify_cmd ?? null
   const doneCriteriaJson = row.done_criteria_json ?? null
-  const taskType = row.task_type ?? null
+  const mergeMode = row.merge_mode ?? null
   const anySpec =
     filesJson !== null ||
     readFirstJson !== null ||
     prescriptiveAction !== null ||
     verifyCmd !== null ||
     doneCriteriaJson !== null ||
-    taskType !== null
+    mergeMode !== null
   const spec: TaskSpec | null = anySpec
     ? {
         files: parseJsonArray(filesJson),
@@ -185,7 +185,7 @@ const rowToTask = (row: TaskRow): Task => {
         prescriptiveAction,
         verifyCmd,
         doneCriteria: parseJsonArray(doneCriteriaJson),
-        taskType: taskType ?? 'auto',
+        mergeMode: mergeMode ?? 'auto',
       }
     : null
   return {
@@ -265,7 +265,7 @@ export class TaskDb {
     const hasPrescriptiveAction = colNames.has('prescriptive_action')
     const hasVerifyCmd = colNames.has('verify_cmd')
     const hasDoneCriteriaJson = colNames.has('done_criteria_json')
-    const hasTaskType = colNames.has('task_type')
+    const hasMergeMode = colNames.has('merge_mode')
     const hasParentProposalId = colNames.has('parent_proposal_id')
     const hasOriginId = colNames.has('origin_id')
 
@@ -289,7 +289,7 @@ export class TaskDb {
       hasPrescriptiveAction ? 't.prescriptive_action' : `NULL AS prescriptive_action`,
       hasVerifyCmd ? 't.verify_cmd' : `NULL AS verify_cmd`,
       hasDoneCriteriaJson ? 't.done_criteria_json' : `NULL AS done_criteria_json`,
-      hasTaskType ? 't.task_type' : `NULL AS task_type`,
+      hasMergeMode ? 't.merge_mode' : `NULL AS merge_mode`,
     ]
 
     select.push(hasParentProposalId ? 't.parent_proposal_id' : 'NULL AS parent_proposal_id')

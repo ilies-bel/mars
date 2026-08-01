@@ -24,8 +24,8 @@ import {
   coerceToString,
   validatePriority,
   isTaskTag,
-  isTaskType,
-  TASK_TYPES,
+  isMergeMode,
+  MERGE_MODES,
   TASK_SEL,
   rowToTask,
   assertTaskKindInvariant,
@@ -380,13 +380,13 @@ export class Arc {
       )
     }
     const taskSpec = opts?.spec ?? null
-    if (taskSpec !== null && !isTaskType(taskSpec.taskType)) {
+    if (taskSpec !== null && !isMergeMode(taskSpec.mergeMode)) {
       throw new Error(
-        `spec.taskType must be one of ${TASK_TYPES.join(', ')}; got '${String(taskSpec.taskType)}'`,
+        `spec.mergeMode must be one of ${MERGE_MODES.join(', ')}; got '${String(taskSpec.mergeMode)}'`,
       )
     }
     const verifyCmd = taskSpec ? taskSpec.verifyCmd : null
-    const taskType = taskSpec ? taskSpec.taskType : null
+    const mergeMode = taskSpec ? taskSpec.mergeMode : null
     const readFirstJson = taskSpec
       ? JSON.stringify(taskSpec.readFirst ?? [])
       : null
@@ -426,7 +426,7 @@ export class Arc {
     const deferrable = opts?.deferrable === true ? 1 : 0
     await resolvedStore.atomic(async (tx) => {
       await tx.execute({
-        sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, intent, origin_session_id, workflow, compensates_arc_id, followup_dedup_key, qa, "deferrable", created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, merge_mode, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, intent, origin_session_id, workflow, compensates_arc_id, followup_dedup_key, qa, "deferrable", created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
           id,
           promptText,
@@ -442,7 +442,7 @@ export class Arc {
           tagsJson,
           kind,
           verifyCmd,
-          taskType,
+          mergeMode,
           readFirstJson,
           prescriptiveAction,
           sliceKindVal,

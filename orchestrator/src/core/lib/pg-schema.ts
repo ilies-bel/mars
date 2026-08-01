@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0020'
+export const SCHEMA_VERSION = '0021'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -142,7 +142,7 @@ const DDL: readonly string[] = [
     dev_server_url       text,
     dev_server_pid       bigint,
     preview_validated    bigint NOT NULL DEFAULT 0,
-    task_type            text,
+    merge_mode            text,
     read_first_json      text,
     prescriptive_action  text,
     slice_kind           text,
@@ -172,6 +172,22 @@ const DDL: readonly string[] = [
      ALTER COLUMN leased_at TYPE timestamptz USING leased_at::timestamptz,
      ALTER COLUMN created_at TYPE timestamptz USING created_at::timestamptz,
      ALTER COLUMN updated_at TYPE timestamptz USING updated_at::timestamptz`,
+  // The worker CLI runs source directly, so a daemon may reconnect while an
+  // upgrade is in progress.  The transaction-scoped advisory lock in
+  // ensureSchema serializes this rename with every other bootstrapper; the
+  // guarded block makes both fresh and already-migrated databases replayable.
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'tasks'
+          AND column_name = 'task_type'
+     ) THEN
+       ALTER TABLE tasks RENAME COLUMN task_type TO merge_mode;
+     END IF;
+     UPDATE tasks SET merge_mode = 'gated' WHERE merge_mode = 'checkpoint';
+   END
+   $$`,
   // Backfill `requeue_anchor_ms` for databases created before this column was
   // added. IF NOT EXISTS makes this idempotent on fresh databases (where the
   // column already exists from the CREATE TABLE above).

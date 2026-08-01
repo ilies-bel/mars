@@ -56,6 +56,30 @@ describe('ensureSchema', () => {
     expect(r.rows).toEqual([{ version: SCHEMA_VERSION }])
   })
 
+  it('renames the legacy merge-gate column and maps its retired value in place', async () => {
+    const c = await freshSchemaClient()
+    try {
+      await __execSchemaBatch(c, [
+        `ALTER TABLE tasks RENAME COLUMN merge_mode TO task_type`,
+        {
+          sql: `INSERT INTO tasks (id, prompt, status, task_type, created_at, updated_at)
+                VALUES ('legacy-gate', 'keep this task', 'queued', 'checkpoint', now(), now())`,
+        },
+      ])
+
+      await ensureSchema(c)
+
+      const columns = await columnsOf(c, 'tasks')
+      expect(columns.has('task_type')).toBe(false)
+      expect(columns.has('merge_mode')).toBe(true)
+      expect((await c.execute(`SELECT merge_mode FROM tasks WHERE id = 'legacy-gate'`)).rows)
+        .toEqual([{ merge_mode: 'gated' }])
+      await expect(ensureSchema(c)).resolves.toBeUndefined()
+    } finally {
+      await c.close()
+    }
+  })
+
   it('creates chat threads without provider-session columns', async () => {
     const c = await freshSchemaClient()
     const columns = await columnsOf(c, 'chat_threads')
@@ -412,7 +436,7 @@ describe('ensureSchema', () => {
       'failure_signature', 'kind', 'priority', 'tag', 'tags_json', 'origin_id',
       'parent_proposal_id', 'slice_index', 'failed_phase', 'resume_from',
       'verify_cmd', 'dev_server_url', 'dev_server_pid',
-      'preview_validated', 'task_type', 'read_first_json',
+      'preview_validated', 'merge_mode', 'read_first_json',
       'prescriptive_action', 'slice_kind', 'sub_deliverable_json',
       'integration_head_sha', 'followup_dedup_key', 'intent', 'lease_owner',
       'leased_at', 'lease_note', 'origin_session_id', 'workflow',

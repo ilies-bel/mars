@@ -171,7 +171,7 @@ export async function startWorkerMcpServer(
             {
               name: 'mars_task_context',
               description:
-                'Fetch structured context for the current task: id, title, prompt, files, verify command, done criteria with check state, task type, status, and blocker ids',
+                'Fetch structured context for the current task: id, title, prompt, files, verify command, done criteria with check state, merge mode, status, and blocker ids',
               inputSchema: {
                 type: 'object',
                 properties: {},

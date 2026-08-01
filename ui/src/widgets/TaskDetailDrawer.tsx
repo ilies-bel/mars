@@ -658,7 +658,7 @@ export const TaskDetailBody = ({
       <div data-testid="task-detail-meta" className="flex flex-col gap-2">
         <SectionLabel>Meta</SectionLabel>
         <div className="grid grid-cols-2 gap-2">
-          <MetaCell label="Type" value={spec?.taskType ?? '—'} />
+          <MetaCell label="Merge" value={spec?.mergeMode ?? '—'} />
           <MetaCell label="Branch" value={task.branch ?? '—'} />
           <MetaCell label="Created" value={relativeTime(task.createdAt) || task.createdAt} />
           <MetaCell label="Updated" value={relativeTime(task.updatedAt) || task.updatedAt} />

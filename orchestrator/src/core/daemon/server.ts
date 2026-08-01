@@ -1379,7 +1379,7 @@ export const startDaemon = async (
                   files: [...task.spec.files],
                   verifyCmd: task.spec.verifyCmd,
                   doneCriteria: [...task.spec.doneCriteria],
-                  taskType: task.spec.taskType,
+                  mergeMode: task.spec.mergeMode,
                   readFirst: [...(task.spec.readFirst ?? [])],
                   prescriptiveAction: task.spec.prescriptiveAction ?? null,
                 }
@@ -3424,7 +3424,7 @@ export const startDaemon = async (
           files: [],
           verifyCmd: null,
           doneCriteria,
-          taskType: 'auto',
+          mergeMode: 'auto',
         },
       })
     } catch (err) {

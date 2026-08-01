@@ -111,7 +111,7 @@ const makeTask = (
     verifyCmd: spec.verifyCmd ?? null,
     doneCriteria: spec.doneCriteria ?? [],
     files: [],
-    taskType: 'auto' as const,
+    mergeMode: 'auto' as const,
   },
 })
 

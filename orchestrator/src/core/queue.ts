@@ -237,29 +237,29 @@ export type FailedPhase = 'code' | 'verify' | 'merge'
  * Structured-task contract (gsd-executor-style). When a task ships with a
  * spec, the implementor agent receives the prompt rendered as four explicit
  * sections — `<files>` (in-scope paths), `<verify>` (verification command),
- * `<done>` (boolean done criteria), and `task_type` — instead of free prose.
+ * `<done>` (boolean done criteria), and `<merge_mode>` — instead of free prose.
  *
- * `task_type='auto'` is the default: the agent executes end-to-end and
- * commits. `task_type='checkpoint'` pauses before merge for explicit human
- * verification (mirrors gsd's `checkpoint:human-verify`). Direct
- * `mars task add` rows without `--type` default to `'auto'`.
+ * `<merge_mode>auto</merge_mode>` is the default: the agent executes end-to-end
+ * and commits. `<merge_mode>gated</merge_mode>` pauses before merge for explicit
+ * human verification. Direct `mars task add` rows without `--merge` default to
+ * `'auto'`.
  *
  * Every field is optional on the type to preserve legacy free-form rows:
  * an empty/NULL spec degrades cleanly to the pre-existing prompt-only
  * behaviour. Slicer emissions always populate a full spec.
  */
-export type TaskType = 'auto' | 'checkpoint'
+export type MergeMode = 'auto' | 'gated'
 
-export const TASK_TYPES: readonly TaskType[] = ['auto', 'checkpoint'] as const
+export const MERGE_MODES: readonly MergeMode[] = ['auto', 'gated'] as const
 
-export const isTaskType = (value: unknown): value is TaskType =>
-  value === 'auto' || value === 'checkpoint'
+export const isMergeMode = (value: unknown): value is MergeMode =>
+  value === 'auto' || value === 'gated'
 
 export interface TaskSpec {
   files: readonly string[]
   verifyCmd: string | null
   doneCriteria: readonly string[]
-  taskType: TaskType
+  mergeMode: MergeMode
   /**
    * Ordered list of files the implementor should read before editing.
    * Populated by the slicer; absent or empty on ad-hoc rows.
@@ -299,7 +299,7 @@ export const EMPTY_TASK_SPEC: TaskSpec = {
   files: [],
   verifyCmd: null,
   doneCriteria: [],
-  taskType: 'auto',
+  mergeMode: 'auto',
 }
 
 export interface TaskPlan {
@@ -784,7 +784,7 @@ SELECT
   t.verify_cmd,
   (SELECT COALESCE(json_agg(criterion ORDER BY position)::text, '[]')
      FROM task_done_criteria WHERE task_id = t.id) AS done_criteria_json,
-  t.task_type, t.read_first_json, t.prescriptive_action, t.slice_kind,
+  t.merge_mode, t.read_first_json, t.prescriptive_action, t.slice_kind,
   t.sub_deliverable_json, t.integration_head_sha,
   t.dev_server_url, t.dev_server_pid, t.preview_validated, t.intent,
   t.lease_owner, t.leased_at, t.lease_note,
@@ -929,7 +929,7 @@ const rowToTaskSpec = (row: Record<string, unknown>): TaskSpec | null => {
   const rawFiles = (row.files_json as string | null) ?? null
   const rawVerify = (row.verify_cmd as string | null) ?? null
   const rawDone = (row.done_criteria_json as string | null) ?? null
-  const rawType = (row.task_type as string | null) ?? null
+  const rawType = (row.merge_mode as string | null) ?? null
   const rawReadFirst = (row.read_first_json as string | null) ?? null
   const rawPrescriptive = (row.prescriptive_action as string | null) ?? null
   const rawSliceKind = (row.slice_kind as string | null) ?? null
@@ -956,7 +956,7 @@ const rowToTaskSpec = (row: Record<string, unknown>): TaskSpec | null => {
     files: parseStringArray(rawFiles),
     verifyCmd: rawVerify,
     doneCriteria: parseStringArray(rawDone),
-    taskType: isTaskType(rawType) ? rawType : 'auto',
+    mergeMode: isMergeMode(rawType) ? rawType : 'auto',
     readFirst: parseStringArray(rawReadFirst),
     prescriptiveAction: rawPrescriptive,
     sliceKind:

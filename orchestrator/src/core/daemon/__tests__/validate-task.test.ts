@@ -76,7 +76,7 @@ const parkAtGate = async (
       files: [],
       verifyCmd: null,
       doneCriteria: [],
-      taskType: 'auto',
+      mergeMode: 'auto',
     },
   })
   await q.updateTask(task.id, {

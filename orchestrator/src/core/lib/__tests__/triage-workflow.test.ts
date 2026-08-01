@@ -215,7 +215,7 @@ describe('triage workflow', () => {
         files: ['src/foo.ts'],
         verifyCmd: null,
         doneCriteria: ['foo is implemented'],
-        taskType: 'auto' as const,
+        mergeMode: 'auto' as const,
       },
     })
 
@@ -512,7 +512,7 @@ describe('triage workflow — optimised data access', () => {
         files: ['src/foo.ts'],
         verifyCmd: null,
         doneCriteria: ['foo is implemented'],
-        taskType: 'auto' as const,
+        mergeMode: 'auto' as const,
       },
     })
 
@@ -540,7 +540,7 @@ describe('triage workflow — optimised data access', () => {
         files: ['src/foo.ts'],
         verifyCmd: null,
         doneCriteria: ['foo is done'],
-        taskType: 'auto' as const,
+        mergeMode: 'auto' as const,
       },
     })
     await queue.addBlockers(task.id, [blocker.id])

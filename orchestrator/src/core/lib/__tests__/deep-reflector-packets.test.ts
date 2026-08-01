@@ -143,7 +143,7 @@ const wireHappyPath = async (opts: { workflow?: string; tags?: string[] } = {}) 
     priority: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    taskType: 'auto',
+    mergeMode: 'auto',
     plan: null,
     error: null,
     branch: null,

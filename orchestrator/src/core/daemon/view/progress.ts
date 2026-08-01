@@ -43,7 +43,7 @@ export interface ProgressTaskSpec {
   prescriptiveAction: string | null
   verifyCmd: string | null
   doneCriteria: string[]
-  taskType: string
+  mergeMode: string
 }
 
 /**
@@ -114,7 +114,7 @@ export interface ProgressTaskRow {
   prescriptiveAction: string | null
   verifyCmd: string | null
   doneCriteriaJson: string | null
-  taskType: string | null
+  mergeMode: string | null
   originId: string | null
   fixForTaskId: string | null
   kind: string | null
@@ -209,7 +209,7 @@ export const buildProgressView = async (
       row.filesJson !== null ||
       row.verifyCmd !== null ||
       row.doneCriteriaJson !== null ||
-      row.taskType !== null
+      row.mergeMode !== null
     const spec: ProgressTaskSpec | null = anySpec
       ? {
           files: parseJsonArray(row.filesJson),
@@ -217,7 +217,7 @@ export const buildProgressView = async (
           prescriptiveAction: row.prescriptiveAction,
           verifyCmd: row.verifyCmd,
           doneCriteria: parseJsonArray(row.doneCriteriaJson),
-          taskType: row.taskType ?? 'auto',
+          mergeMode: row.mergeMode ?? 'auto',
         }
       : null
 
@@ -328,7 +328,7 @@ export const createProgressTaskStore = (client: DbClient): ProgressTaskStore => 
              t.verify_cmd,
              (SELECT COALESCE(json_agg(criterion ORDER BY position)::text, '[]')
                 FROM task_done_criteria WHERE task_id = t.id) AS done_criteria_json,
-             t.task_type,
+             t.merge_mode,
              t.origin_id, t.fix_for_task_id, t.kind,
              t.compensates_arc_id,
              t.activity_detail,
@@ -362,7 +362,7 @@ export const createProgressTaskStore = (client: DbClient): ProgressTaskStore => 
         prescriptiveAction: (ro.prescriptive_action as string | null) ?? null,
         verifyCmd: (ro.verify_cmd as string | null) ?? null,
         doneCriteriaJson: (ro.done_criteria_json as string | null) ?? null,
-        taskType: (ro.task_type as string | null) ?? null,
+        mergeMode: (ro.merge_mode as string | null) ?? null,
         originId: (ro.origin_id as string | null) ?? null,
         fixForTaskId: (ro.fix_for_task_id as string | null) ?? null,
         kind: (ro.kind as string | null) ?? null,

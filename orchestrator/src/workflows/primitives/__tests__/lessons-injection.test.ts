@@ -80,7 +80,7 @@ describe('composePrompt — non-empty lessons rendering', () => {
 
   it('places the <lessons> block AFTER the structured-task spec block', () => {
     const spec = {
-      taskType: 'auto' as const,
+      mergeMode: 'auto' as const,
       files: ['src/foo.ts'],
       verifyCmd: 'npm test',
       doneCriteria: ['tests pass'],

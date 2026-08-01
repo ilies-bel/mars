@@ -14,7 +14,7 @@ import { relative } from 'node:path'
 
 import { runTool, nullTraceStore, type TraceCtx } from '../../core/lib/run-tool'
 import {
-  TASK_TYPES,
+  MERGE_MODES,
   type TaskTag,
   type TaskSpec,
   type Task,
@@ -49,7 +49,7 @@ export const specSchema = z
     files: z.array(z.string()),
     verifyCmd: z.string().nullable(),
     doneCriteria: z.array(z.string()),
-    taskType: z.enum(TASK_TYPES as readonly ['auto', 'checkpoint']),
+    mergeMode: z.enum(MERGE_MODES as readonly ['auto', 'gated']),
     readFirst: z.array(z.string()).default([]),
     prescriptiveAction: z.string().nullable().default(null),
   })
@@ -296,12 +296,12 @@ export const recoveryAttachesToOrigin = (
 const renderSpec = (spec: TaskSpec | null, taskId: string): string | null => {
   if (!spec) return null
   const parts: string[] = []
-  if (spec.taskType === 'checkpoint') {
+  if (spec.mergeMode === 'gated') {
     parts.push(
-      `<task_type>checkpoint — pause for human verification before merge</task_type>`,
+      `<merge_mode>gated — pause for human verification before merge</merge_mode>`,
     )
   } else {
-    parts.push(`<task_type>auto — execute end-to-end and commit</task_type>`)
+    parts.push(`<merge_mode>auto — execute end-to-end and commit</merge_mode>`)
   }
   if (spec.files.length > 0) {
     const lines = spec.files.map((f) => `  - ${f}`).join('\n')
