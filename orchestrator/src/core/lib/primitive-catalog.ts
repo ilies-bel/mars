@@ -1,7 +1,7 @@
 /**
- * Primitive catalog — the code-pinned identity of the six workflow
- * primitives (`orchestrator/src/workflows/primitives/`): setupWorktree,
- * runAgent, verify, behaviourVerify, merge, awaitHuman.
+ * Primitive catalog — the code-pinned identity of the six pipeline
+ * primitives: setupWorktree, runAgent, verify, behaviourVerify, merge, and
+ * awaitHuman.
  *
  * This module is a pure, read-only projection source for the daemon's
  * `GET /view/primitives` routes (app-services `viewPrimitives` /
@@ -23,7 +23,6 @@
 import { WORKER_CONFIGS, type WorkerName } from '../workers'
 import type { WorkerDeclaration } from '../workers/persisted-registry'
 import type { TraceEventPhase } from './trace-events-store'
-import type { PrimitiveWorkerProfile } from '../daemon/http-server'
 
 /** The closed set of primitive names, in pipeline order. */
 export const PRIMITIVE_NAMES = [
@@ -39,6 +38,21 @@ export type PrimitiveName = (typeof PRIMITIVE_NAMES)[number]
 
 export const isPrimitiveName = (value: string): value is PrimitiveName =>
   (PRIMITIVE_NAMES as readonly string[]).includes(value)
+
+/**
+ * One Worker's Authorization profile (glossary term) projected for an agent
+ * primitive — model, effort, permission mode, and forfeited tools. `source`
+ * distinguishes code-pinned WORKER_CONFIGS entries from operator-declared
+ * Workers in .mars/worker-registry.json.
+ */
+export interface PrimitiveWorkerProfile {
+  workerName: string
+  model: string
+  effort: string
+  permissionMode: string
+  forfeitedTools: string[]
+  source: 'built-in' | 'registry'
+}
 
 /**
  * WHO executes the primitive:

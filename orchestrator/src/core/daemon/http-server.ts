@@ -4,6 +4,7 @@ import { join, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { FAILURE_KINDS } from '../lib/failure-kinds'
 import { getProvider } from '../lib/deployment/registry'
+import type { PrimitiveWorkerProfile } from '../lib/primitive-catalog'
 import type { RecipeCatalog } from '../lib/recipes'
 import { buildOriginTree } from '../lib/origin-tree'
 import type { DerivedActionQueueFilter } from './view/action-queue'
@@ -194,22 +195,6 @@ export interface PrimitiveSummary {
   /** Trace phase its Step spans carry, or null (awaitHuman emits no spans). */
   phase: string | null
   executor: 'agent' | 'shell' | 'human'
-}
-
-/**
- * One Worker's Authorization profile (glossary term) as projected by
- * GET /view/primitives/:name — model, effort, permission mode, and the
- * forfeited tools (an empty list means the full tool surface).
- * `source` is 'built-in' for code-pinned WORKER_CONFIGS entries and
- * 'registry' for operator-declared Workers from .mars/worker-registry.json.
- */
-export interface PrimitiveWorkerProfile {
-  workerName: string
-  model: string
-  effort: string
-  permissionMode: string
-  forfeitedTools: string[]
-  source: 'built-in' | 'registry'
 }
 
 /**
