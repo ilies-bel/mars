@@ -15,6 +15,11 @@
 import { randomUUID } from 'node:crypto'
 import { resolveStateClient } from '../store/state-client'
 import type { ActionQueueKind } from './action-queue'
+import {
+  getRecipePreloadedResponses,
+  lookupRecipe,
+  type PreloadedResponse,
+} from './action-queue-recipes'
 
 const stateClient = resolveStateClient
 
@@ -34,6 +39,7 @@ export interface NoticeRow {
   source: string | null
   createdAt: string
   acknowledgedAt: string | null
+  preloadedResponses: Array<PreloadedResponse & { entityId: string }>
 }
 
 /** Public Notice view retained for the Bell and HTTP surfaces. */
@@ -53,6 +59,27 @@ interface StoredNoticeRow {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const now = (): string => new Date().toISOString()
+
+/** Resolve the recipe's compact response chips for a Notice's daemon action. */
+const preloadedResponsesFor = (
+  kind: ActionQueueKind,
+  payload: Record<string, unknown>,
+): Array<PreloadedResponse & { entityId: string }> => {
+  const entityId =
+    (typeof payload['entityId'] === 'string' && payload['entityId']) ||
+    (typeof payload['taskId'] === 'string' && payload['taskId']) ||
+    (typeof payload['proposalId'] === 'string' && payload['proposalId']) ||
+    kind
+  return getRecipePreloadedResponses(lookupRecipe(kind), {
+    kind,
+    entityId,
+    payload,
+    context: {},
+    title: typeof payload['title'] === 'string' ? payload['title'] : '',
+    body: typeof payload['body'] === 'string' ? payload['body'] : '',
+    raisedAt: typeof payload['raisedAt'] === 'string' ? payload['raisedAt'] : '',
+  }).map((response) => ({ ...response, entityId }))
+}
 
 /**
  * Reuse the same id scheme the action queue uses (`randomUUID().slice(0, 8)`)
@@ -81,6 +108,7 @@ const rowToNotice = (row: Record<string, unknown>): Notice => {
     source: r.source ?? null,
     createdAt: r.created_at,
     acknowledgedAt: r.acknowledged_at ?? null,
+    preloadedResponses: preloadedResponsesFor(r.kind, payload),
   }
 }
 
@@ -107,6 +135,7 @@ export const createNotice = async (
     source,
     createdAt: ts,
     acknowledgedAt: null,
+    preloadedResponses: preloadedResponsesFor(kind, payload),
   }
   const { noticeToChatMessage, appendMessage } = await import('./chat-store.js')
   const message = noticeToChatMessage(notice)

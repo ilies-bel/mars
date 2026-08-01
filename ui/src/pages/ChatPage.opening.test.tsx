@@ -59,6 +59,10 @@ vi.mock('@/entities/actionQueue/useActionQueueHistory', () => ({
   }),
 }))
 
+vi.mock('@/entities/notices', () => ({
+  useNotices: () => ({ notices: [], error: null, ack: vi.fn(), isPending: false }),
+}))
+
 vi.mock('@/shared/useFocusedProject', () => ({
   useFocusedProjectId: () => null,
   useFocusedProject: () => ({

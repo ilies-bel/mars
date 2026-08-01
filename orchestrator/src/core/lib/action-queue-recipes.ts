@@ -43,6 +43,12 @@ export type RecipeVerb = {
   style: 'primary' | 'danger' | 'default'
 }
 
+/** A labelled daemon operation that Mars can preload as a Notice response chip. */
+export type PreloadedResponse = {
+  op: string
+  label: string
+}
+
 /** Context object passed to recipe functions. */
 export type RecipeContext = {
   kind: ActionQueueKind
@@ -65,6 +71,11 @@ export type Recipe = {
    * Dismiss and Snooze are appended automatically by getRecipeVerbs.
    */
   verbs: RecipeVerb[] | ((ctx: RecipeContext) => RecipeVerb[])
+  /**
+   * Responses Mars can offer when this recipe is rendered as a Notice.
+   * Notice responses deliberately omit AlertCard-only presentation styling.
+   */
+  preloadedResponses: PreloadedResponse[] | ((ctx: RecipeContext) => PreloadedResponse[])
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -88,9 +99,18 @@ export const getRecipeVerbs = (
   return [...base, DISMISS, SNOOZE]
 }
 
+/** Return the daemon operations available as preloaded Notice response chips. */
+export const getRecipePreloadedResponses = (
+  recipe: Recipe,
+  ctx: RecipeContext,
+): PreloadedResponse[] =>
+  typeof recipe.preloadedResponses === 'function'
+    ? recipe.preloadedResponses(ctx)
+    : recipe.preloadedResponses
+
 // ── Recipe registry ───────────────────────────────────────────────────────────
 
-const REGISTRY: Record<ActionQueueKind, Recipe> = {
+const RECIPE_DEFINITIONS = {
   // ── Task failures ──────────────────────────────────────────────────────────
 
   failed: {
@@ -828,7 +848,22 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
     },
     verbs: [],
   },
-}
+} satisfies Record<ActionQueueKind, Omit<Recipe, 'preloadedResponses'>>
+
+/**
+ * The Alert verbs are the existing source of truth for each recipe's available
+ * daemon operations. A Notice presents the same operations as compact chips,
+ * without AlertCard's destructive/primary styling or Dismiss/Snooze tail verbs.
+ */
+const REGISTRY: Record<ActionQueueKind, Recipe> = Object.fromEntries(
+  Object.entries(RECIPE_DEFINITIONS).map(([kind, recipe]) => [
+    kind,
+    {
+      ...recipe,
+      preloadedResponses: recipe.verbs.map(({ op, label }) => ({ op, label })),
+    },
+  ]),
+) as Record<ActionQueueKind, Recipe>
 
 // ── Public API ────────────────────────────────────────────────────────────────
 

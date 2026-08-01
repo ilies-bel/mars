@@ -15,18 +15,26 @@ import { z } from 'zod'
 const BASE = import.meta.env.VITE_API_BASE ?? ''
 const QUERY_KEY = ['notices'] as const
 
+const preloadedResponseSchema = z.object({
+  op: z.string(),
+  label: z.string(),
+  entityId: z.string(),
+})
+
 const noticeSchema = z.object({
   id: z.string(),
   body: z.string(),
   source: z.string().nullable(),
   createdAt: z.string(),
   acknowledgedAt: z.string().nullable(),
+  preloadedResponses: z.array(preloadedResponseSchema).optional().default([]),
 })
 
 const noticesResponseSchema = z.object({ notices: z.array(noticeSchema) })
 const ackResponseSchema = z.object({ acknowledged: z.boolean() })
 
 export type Notice = z.infer<typeof noticeSchema>
+export type PreloadedResponse = z.infer<typeof preloadedResponseSchema>
 
 export async function fetchNotices(): Promise<Notice[]> {
   const r = await fetch(`${BASE}/api/notices`)

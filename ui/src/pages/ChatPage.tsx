@@ -84,6 +84,7 @@ import {
 } from '@/widgets/chat/queueThreads'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
+import { useNotices } from '@/entities/notices'
 import { startThreadFromAlert } from '@/entities/alerts/api'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlState'
@@ -94,6 +95,7 @@ import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle } from './cha
 import { OpeningNextMoves } from '@/widgets/chat/OpeningNextMoves'
 import { PastSubjectsColumn } from '@/widgets/chat/PastSubjectsColumn'
 import { ConversationTimeline } from '@/widgets/chat/ConversationTimeline'
+import { NoticeMessage } from '@/widgets/chat/NoticeMessage'
 import type { DisplayRow } from '@/widgets/chat/OpeningNextMoves'
 import { useTasks } from '@/hooks/useTasks'
 import { SkeletonList } from '@/components/Skeleton'
@@ -2587,6 +2589,7 @@ export const ChatPage = () => {
     queryKey: ['chat-conversation', projectId],
     queryFn: () => fetchChatConversation(projectId),
   })
+  const { notices } = useNotices()
 
   // Thread detail for the active thread, shared with ContextRail so the Focus
   // panel can display the title and status. React Query dedupes this against
@@ -2974,6 +2977,11 @@ export const ChatPage = () => {
                 )}
               </div>
               <PastSubjectsColumn pastThreads={pastThreads} projectId={projectId} />
+              {notices.length > 0 && (
+                <section className="mt-6 space-y-3" aria-label="Notices">
+                  {notices.map((notice) => <NoticeMessage key={notice.id} notice={notice} />)}
+                </section>
+              )}
               <div className="mt-6">
                 <ConversationTimeline
                   entries={conversationEntries}
