@@ -11,6 +11,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import { withTransaction } from './db'
 import { resolveStateClient } from '../store/state-client'
 import { humanSummary } from './action-queue-recipes'
 import type { NoticeRow } from './notice-store'
@@ -471,26 +472,40 @@ export const createThread = async (
   terminalEvent?: string,
   terminalEntityId?: string,
   situationReport?: string,
+  firstUserMessage?: { content: string; segments?: unknown },
 ): Promise<ChatThread> => {
   const c = stateClient()
   const id = randomUUID()
   const ts = now()
   const threadTitle = title ?? ''
-  await c.execute({
-    sql: `INSERT INTO chat_threads
-            (id, title, status, terminal_event, terminal_entity_id, created_at, updated_at)
-          VALUES (?, ?, 'idle', ?, ?, ?, ?)`,
-    args: [id, threadTitle, terminalEvent ?? null, terminalEntityId ?? null, ts, ts],
+  await withTransaction(c, async (tx) => {
+    await tx.execute({
+      sql: `INSERT INTO chat_threads
+              (id, title, status, terminal_event, terminal_entity_id, created_at, updated_at)
+            VALUES (?, ?, 'idle', ?, ?, ?, ?)`,
+      args: [id, threadTitle, terminalEvent ?? null, terminalEntityId ?? null, ts, ts],
+    })
+    if (situationReport !== undefined) {
+      await tx.execute({
+        sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, kind, backing_entity_id, notice_id)
+              VALUES (?, ?, 'assistant', ?, ?, ?, 'situation', NULL, NULL)`,
+        args: [randomUUID(), id, situationReport, JSON.stringify([{ type: 'text', text: situationReport }]), ts],
+      })
+    }
+    if (firstUserMessage !== undefined) {
+      await tx.execute({
+        sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, kind, backing_entity_id, notice_id)
+              VALUES (?, ?, 'user', ?, ?, ?, 'acknowledgment', NULL, NULL)`,
+        args: [
+          randomUUID(),
+          id,
+          firstUserMessage.content,
+          firstUserMessage.segments === undefined ? null : JSON.stringify(firstUserMessage.segments),
+          ts,
+        ],
+      })
+    }
   })
-  if (situationReport !== undefined) {
-    await appendMessage(
-      id,
-      'assistant',
-      situationReport,
-      [{ type: 'text', text: situationReport }],
-      { kind: 'situation' },
-    )
-  }
   return {
     id,
     title: threadTitle,

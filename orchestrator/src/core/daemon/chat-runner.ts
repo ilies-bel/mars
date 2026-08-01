@@ -718,6 +718,7 @@ export class ChatRunner {
     repoRoot: string,
     hub: ViewStreamHub | undefined,
     attachments?: AttachmentInfo[],
+    opts?: { userMessagePersisted?: boolean },
   ): Promise<{ alreadyRunning: boolean }> {
     if (this.activeRuns.has(threadId)) return { alreadyRunning: true }
     // If there's a pending throttle timer for this thread, cancel it and
@@ -733,7 +734,16 @@ export class ChatRunner {
 
     // Fire-and-forget: HTTP responds immediately; segments arrive via SSE.
     // Track the promise so shutdownDrain() can await completion before exit.
-    const runPromise = this._run(threadId, content, repoRoot, hub, abort, attachments, 0)
+    const runPromise = this._run(
+      threadId,
+      content,
+      repoRoot,
+      hub,
+      abort,
+      attachments,
+      0,
+      opts?.userMessagePersisted ?? false,
+    )
       .catch(() => {
         // Ensure the map entry is removed even if _run throws unexpectedly.
         this.activeRuns.delete(threadId)
@@ -826,6 +836,7 @@ export class ChatRunner {
     hub: ViewStreamHub | undefined,
     attachments: AttachmentInfo[] | undefined,
     retryCount: number,
+    userMessagePersisted: boolean,
   ): Promise<void> {
     this.activeRuns.delete(threadId)
 
@@ -850,7 +861,7 @@ export class ChatRunner {
       this.throttledRetries.delete(threadId)
       const abort = new AbortController()
       this.activeRuns.set(threadId, abort)
-      const runPromise = this._run(threadId, content, repoRoot, hub, abort, attachments, retryCount + 1)
+      const runPromise = this._run(threadId, content, repoRoot, hub, abort, attachments, retryCount + 1, userMessagePersisted)
         .catch(() => { this.activeRuns.delete(threadId) })
         .finally(() => { this._activeRunPromises.delete(threadId) })
       this._activeRunPromises.set(threadId, runPromise)
@@ -866,6 +877,7 @@ export class ChatRunner {
     abort: AbortController,
     attachments: AttachmentInfo[] | undefined,
     retryCount: number,
+    userMessagePersisted = false,
   ): Promise<void> {
     const cfg = resolveCodexOAuthConfig()
     const accumulatedSegments: ChatSegment[] = []
@@ -969,13 +981,13 @@ export class ChatRunner {
       // Persist the user message with typed segments so the UI can render it.
       // On throttle retries (retryCount > 0), the user message was already
       // persisted on the first attempt — skip to avoid duplicates.
-      if (retryCount === 0 && content.length > 0) {
+      if (retryCount === 0 && !userMessagePersisted && (content.length > 0 || (attachments?.length ?? 0) > 0)) {
         await appendMessage(threadId, 'user', content, userSegments)
       }
 
       // Auto-title: set the thread title to the first user message (≤60 chars)
       // when the thread has no title and no prior messages.
-      if (!threadData.thread.title && !hasMessages) {
+      if (!threadData.thread.title && (!hasMessages || userMessagePersisted)) {
         const title = content.slice(0, 60)
         await updateThreadTitle(threadId, title)
         hub?.broadcast('chat')
@@ -989,7 +1001,7 @@ export class ChatRunner {
       // retry the current user message is already persisted — drop it from the
       // replay so the attachment-augmented prompt below isn't duplicated.
       let transcript: readonly ChatMessage[] = threadData.messages
-      if (retryCount > 0 && content.length > 0) {
+      if ((retryCount > 0 || userMessagePersisted) && content.length > 0) {
         const last = transcript.at(-1)
         if (last && last.role === 'user') transcript = transcript.slice(0, -1)
       }
@@ -1229,12 +1241,12 @@ export class ChatRunner {
               this.codexAuthFailed = true
               for (const listener of this.authListeners) listener(true)
             }
-            await this._scheduleThrottle(threadId, content, repoRoot, hub, attachments, retryCount)
+            await this._scheduleThrottle(threadId, content, repoRoot, hub, attachments, retryCount, userMessagePersisted)
             return
           }
           // ── Rate/usage limit: throttle + auto-retry with backoff. ───────────
           if (err.kind === 'rate-limit') {
-            await this._scheduleThrottle(threadId, content, repoRoot, hub, attachments, retryCount)
+            await this._scheduleThrottle(threadId, content, repoRoot, hub, attachments, retryCount, userMessagePersisted)
             return
           }
           // ── http/network: terminal error (user-safe, no provider details). ──

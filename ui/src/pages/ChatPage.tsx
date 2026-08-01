@@ -30,7 +30,7 @@ import {
   fetchChatConversation,
   fetchChatThread,
   createChatThread,
-  postChatMessage,
+  createSubjectAndSend,
   uploadAttachment,
   renameChatThread,
   setMessageFeedback,
@@ -2672,30 +2672,24 @@ export const ChatPage = () => {
     }
   }, [selectedQueueItemId, threadsData])
 
-  // Create a new thread, upload any selected attachments, and post the first
-  // message in one gesture — used by the hero composer and projection Threads.
-  // Files are uploaded AFTER thread creation (the id is required for the upload
-  // endpoint). On failure nothing is cleared; the caller's clearState callback
-  // is only invoked on success.
+  // Start a fresh inline Subject in one gesture. The daemon commits the
+  // situation report and first user message together before starting the run,
+  // so a failed request cannot leave a blank Subject behind.
   const [sendError, setSendError] = useState<string | null>(null)
   const { mutate: createAndSend, isPending: isCreatingThread } = useMutation({
     mutationFn: async ({ message, files }: { message: string; files: File[] }) => {
-      const thread = await createChatThread(projectId)
-      let uploadedAttachments: AttachmentInfo[] | undefined
       if (files.length > 0) {
-        uploadedAttachments = await Promise.all(
-          files.map((f) => uploadAttachment(thread.id, f, projectId)),
-        )
+        throw new Error('Add attachments after starting a Subject.')
       }
-      await postChatMessage(thread.id, message, projectId, uploadedAttachments)
-      return thread
+      return createSubjectAndSend(message, projectId)
     },
     onMutate: () => setSendError(null),
     onSuccess: (thread) => {
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
       void qc.invalidateQueries({ queryKey: ['chat-thread', thread.id] })
       void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
-      setSelectedThreadId(thread.id)
+      setActiveSubjectThreadId(thread.id)
+      setSelectedThreadId(null)
       setSelectedQueueItemId(null)
     },
     onError: (err) => setSendError(sendErrorMessage(err)),

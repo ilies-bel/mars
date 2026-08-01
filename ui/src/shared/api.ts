@@ -725,6 +725,30 @@ export const createChatThread = async (projectId?: string): Promise<ChatThread> 
 }
 
 /**
+ * Start a fresh inline Subject with its situation report and first message in
+ * one request. The daemon only returns after it has accepted the chat run.
+ */
+export const createSubjectAndSend = async (
+  message: string,
+  projectId?: string,
+  attachments?: AttachmentInfo[],
+): Promise<ChatThread> => {
+  const path = appendProject('/api/chat/subjects', projectId)
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, ...(attachments && attachments.length > 0 ? { attachments } : {}) }),
+  })
+  if (!r.ok) await throwMutationError(path, r)
+  const raw = await r.json()
+  const result = chatThreadsResponseSchema.shape.threads.element.safeParse(raw)
+  if (!result.success) {
+    throw new Error(`POST ${path} → response failed schema validation: ${result.error.message}`)
+  }
+  return result.data
+}
+
+/**
  * Metadata returned by the daemon after a successful file upload.
  * Mirrors the daemon's `AttachmentInfo` interface and is accepted verbatim
  * by `postChatMessage`'s `attachments` parameter.

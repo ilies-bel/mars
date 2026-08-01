@@ -1727,6 +1727,8 @@ export const startHttpServer = async (
     //   created_at ASC, or 404 when the thread does not exist.
     // GET /chat/threads/:id/tasks — list task IDs linked to one chat thread.
     // POST /chat/threads — create a new thread. Body: { title?: string }.
+    // POST /chat/subjects — atomically create and seed a Subject, then start
+    //   its first chat run. Body: { message: string, attachments?: AttachmentInfo[] }.
     // POST /chat/threads/:id/title — rename a thread. Body: { title: string }.
     // All chat routes bypass the draining gate (lightweight user-data writes,
     // not task work). SSE channel 'chat' is broadcast after every write.
@@ -1924,6 +1926,63 @@ export const startHttpServer = async (
         })
         return
       }
+    }
+
+    if (req.method === 'POST' && req.url === '/chat/subjects') {
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(rawBody)
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+          return
+        }
+        const attachmentSchema = z.object({
+          id: z.string(), path: z.string(), mimeType: z.string(), name: z.string(), size: z.number(),
+        })
+        const result = z.object({
+          message: z.string(),
+          attachments: z.array(attachmentSchema).optional(),
+        }).refine(
+          (data) => data.message.length > 0 || (data.attachments?.length ?? 0) > 0,
+          { message: 'message or at least one attachment is required', path: ['message'] },
+        ).safeParse(parsed)
+        if (!result.success) {
+          sendJson(res, 400, { ok: false, error: 'body must be { message: string, attachments?: AttachmentInfo[] }' })
+          return
+        }
+        const userSegments = [
+          { type: 'text', text: result.data.message },
+          ...(result.data.attachments ?? []).map((attachment) => ({
+            type: 'attachment', path: attachment.path, mimeType: attachment.mimeType,
+            name: attachment.name, size: attachment.size,
+            kindHint: attachment.mimeType.startsWith('image/') ? 'image' : attachment.mimeType.startsWith('audio/') ? 'audio' : 'video',
+          })),
+        ]
+        deps.appServices.buildSituationReport()
+          .then((situation) => createThread(undefined, undefined, undefined, situation, {
+            content: result.data.message,
+            segments: userSegments,
+          }))
+          .then(async (thread) => {
+            const run = await deps.chatRunner.sendMessage(
+              thread.id,
+              result.data.message,
+              getRepoRoot(),
+              deps.viewStreamHub,
+              result.data.attachments,
+              { userMessagePersisted: true },
+            )
+            if (run.alreadyRunning) throw new Error('new Subject unexpectedly has an active run')
+            deps.viewStreamHub?.broadcast('chat')
+            sendJson(res, 202, toThreadApiView(thread))
+          })
+          .catch((err: unknown) => sendError(res, err))
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
     }
 
     if (req.method === 'POST' && req.url === '/chat/threads') {
