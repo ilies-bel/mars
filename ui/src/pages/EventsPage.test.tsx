@@ -819,13 +819,16 @@ const makeErrorClient = (error: Error): QueryClient => {
   return qc
 }
 
-// NOTE: vi.stubEnv / vi.unstubAllEnvs are not implemented in bun's test runner.
-// getFallbackCopy keys off import.meta.env.DEV which bun sets at build time and
-// cannot be stubbed at runtime.  We assert only on the prod-mode copy that renders
-// deterministically, and skip the DEV=true assertions that require env stubbing.
+// These three cases were skipped as "vi.stubEnv is not available in bun".
+// That premise was never true for this file: EventsPage.test.tsx lives under
+// ui/src/, which runs on vitest (see vitest.config.ts), not on bun — only
+// ui/server/ has a Bun-native half. vitest implements vi.stubEnv, and
+// logFallbackError reads import.meta.env.DEV at CALL time, not at module eval,
+// so the prod branch is reachable with a per-test stub.
 describe('EventsPage error state', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllEnvs()
   })
 
   it('renders the warm fallback headline', () => {
@@ -834,25 +837,26 @@ describe('EventsPage error state', () => {
     expect(html).toContain("Couldn&#x27;t load the events stream.")
   })
 
-  // Skipped: vitest always runs with import.meta.env.DEV=true (dev mode), so
-  // logFallbackError always calls console.error and this prod-mode assertion
-  // can't be verified without a way to set DEV=false per-test.
-  it.skip('console.error is not called in prod mode (import.meta.env.DEV is always true in vitest)', () => {
+  it('does not call console.error in prod mode', () => {
+    vi.stubEnv('DEV', false)
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    // logFallbackError only calls console.error in DEV mode; in prod it is a no-op
+    // logFallbackError only calls console.error in DEV mode; in prod it is a
+    // no-op so end-users never see diagnostics.
     logFallbackError(new Error('Connection refused'))
     expect(spy).not.toHaveBeenCalled()
   })
 
-  // DEV-mode assertions (console.error called once, raw error in DOM) are
-  // skipped: bun does not support vi.stubEnv so import.meta.env.DEV cannot be
-  // toggled at test time.
-  it.skip('renders the raw error in dev mode (requires vi.stubEnv – not available in bun)', () => {
+  it('renders the raw error detail in dev mode', () => {
     const html = renderPage(makeErrorClient(new Error('Connection refused')))
-    expect(html).toContain('Error: Connection refused')
+    // stringifyError() in shared/uiFallback.ts returns `error.message`, not the
+    // `Error: <message>` toString form — the skipped version of this test
+    // asserted the latter and would have failed the day it was re-enabled.
+    expect(html).toContain('Connection refused')
+    // The dev-only remedy line accompanies the detail; in prod both are null.
+    expect(html).toContain('Reload the page')
   })
 
-  it.skip('console.error is called once in dev mode (requires vi.stubEnv – not available in bun)', () => {
+  it('calls console.error once in dev mode', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     logFallbackError(new Error('Connection refused'))
     expect(spy).toHaveBeenCalledTimes(1)
