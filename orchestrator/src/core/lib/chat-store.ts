@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { resolveStateClient } from '../store/state-client'
 import { humanSummary } from './action-queue-recipes'
+import type { DbInValue } from './db.js'
 import type { NoticeRow } from './notice-store'
 
 const stateClient = resolveStateClient
@@ -56,8 +57,8 @@ export interface ChatFeedback {
   thread_id: string
   rating: FeedbackRating
   note: string | null
-  created_at: string
-  updated_at: string
+  created_at: number
+  updated_at: number
 }
 
 export interface ChatThread {
@@ -65,8 +66,8 @@ export interface ChatThread {
   title: string
   status: ThreadStatus
   posture: ChatPosture
-  created_at: string
-  updated_at: string
+  created_at: number
+  updated_at: number
   /** 'alert' for proactive alert-origin threads; null for user-created threads. */
   origin: string | null
   /** The action-queue item id this thread tracks. Null for non-alert threads. */
@@ -74,11 +75,11 @@ export interface ChatThread {
   /** True when the underlying action-queue item has been resolved. */
   alert_resolved: boolean
   /**
-   * ISO-8601 timestamp set when the thread is marked as evaporated (i.e. its
+   * Epoch-millisecond timestamp set when the thread is marked as evaporated (i.e. its
    * purpose has been fulfilled and it is eligible for retention-window purge).
    * Null for active threads.
    */
-  evaporated_at: string | null
+  evaporated_at: number | null
   /** Domain event that closes this Subject, or null when it needs an explicit close. */
   terminal_event?: string | null
   /** Entity id in the terminal event payload that must match before closure. */
@@ -93,7 +94,7 @@ export interface ChatMessage {
   role: MessageRole
   content: string
   segments: unknown | null
-  created_at: string
+  created_at: number
   /** Envelope kind — controls projection visibility (ADR-0048). */
   kind: ChatMessageKind
   /**
@@ -204,8 +205,8 @@ export const toThreadApiView = (
   title: t.title,
   status: t.status,
   attentionStatus: computeAttentionStatus(t.status, lastMessageRole),
-  createdAt: t.created_at,
-  updatedAt: t.updated_at,
+  createdAt: new Date(t.created_at).toISOString(),
+  updatedAt: new Date(t.updated_at).toISOString(),
   origin: t.origin,
   alertItemId: t.alert_item_id,
   alertResolved: t.alert_resolved,
@@ -251,7 +252,7 @@ export const toMessageApiView = (
     threadId: m.thread_id,
     role: m.role,
     segments,
-    createdAt: m.created_at,
+    createdAt: new Date(m.created_at).toISOString(),
     feedback: feedback ?? null,
   }
 }
@@ -369,7 +370,7 @@ export interface StructuredChatRefs {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const now = (): string => new Date().toISOString()
+const now = (): number => Date.now()
 
 /**
  * Collect the durable structured references carried by persisted segments.
@@ -420,12 +421,12 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   title: row.title as string,
   status: row.status as ThreadStatus,
   posture: row.posture === 'grill' ? 'grill' : 'triage',
-  created_at: row.created_at as string,
-  updated_at: row.updated_at as string,
+  created_at: row.created_at as number,
+  updated_at: row.updated_at as number,
   origin: (row.origin as string | null) ?? null,
   alert_item_id: (row.alert_item_id as string | null) ?? null,
   alert_resolved: Boolean(row.alert_resolved),
-  evaporated_at: (row.evaporated_at as string | null) ?? null,
+  evaporated_at: (row.evaporated_at as number | null) ?? null,
   terminal_event: (row.terminal_event as string | null) ?? null,
   terminal_entity_id: (row.terminal_entity_id as string | null) ?? null,
   parent_thread_id: (row.parent_thread_id as string | null) ?? null,
@@ -441,7 +442,7 @@ const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
     role: row.role as MessageRole,
     content: row.content as string,
     segments: rawSegments != null ? (JSON.parse(rawSegments) as unknown) : null,
-    created_at: row.created_at as string,
+    created_at: row.created_at as number,
     kind: (rawKind === 'validation' ? 'validation' : 'acknowledgment') as ChatMessageKind,
     backing_entity_id: (row.backing_entity_id as string | null) ?? null,
     notice_id: (row.notice_id as string | null) ?? null,
@@ -672,7 +673,7 @@ export const listConversationEntries = async (): Promise<ChatConversationEntryAp
       role: message.role,
       content: message.content,
       segments: Array.isArray(message.segments) ? message.segments : [],
-      createdAt: message.created_at,
+      createdAt: new Date(message.created_at).toISOString(),
       kind: message.kind,
       backingEntityId: message.backing_entity_id,
     }
@@ -916,7 +917,7 @@ export const setThreadPosture = async (id: string, posture: ChatPosture): Promis
 
 /**
  * Mark a thread as evaporated by stamping `evaporated_at` with the current
- * ISO-8601 timestamp. Idempotent: if the thread is already evaporated, the
+ * epoch-millisecond timestamp. Idempotent: if the thread is already evaporated, the
  * existing timestamp is preserved (the WHERE clause guards against overwrite).
  */
 export const markThreadEvaporated = async (id: string): Promise<void> => {
@@ -1001,8 +1002,8 @@ export const setMessageFeedback = async (
     thread_id: row.thread_id as string,
     rating: row.rating as FeedbackRating,
     note: (row.note as string | null) ?? null,
-    created_at: row.created_at as string,
-    updated_at: row.updated_at as string,
+    created_at: row.created_at as number,
+    updated_at: row.updated_at as number,
   }
 }
 
@@ -1137,19 +1138,17 @@ export const purgeEvaporatedThreads = async (opts?: {
   retentionMs?: number
   nowMs?: number
 }): Promise<{ purgedThreadIds: string[] }> => {
-  const cutoffIso = new Date(
-    (opts?.nowMs ?? Date.now()) - (opts?.retentionMs ?? TWO_DAYS_MS),
-  ).toISOString()
+  const cutoff = (opts?.nowMs ?? Date.now()) - (opts?.retentionMs ?? TWO_DAYS_MS)
   const c = stateClient()
   const result = await c.execute({
     sql: `SELECT id FROM chat_threads WHERE evaporated_at IS NOT NULL AND evaporated_at < ?`,
-    args: [cutoffIso],
+    args: [cutoff],
   })
   const threadIds = (result.rows as unknown as Array<{ id: string }>).map((r) => r.id)
   if (threadIds.length === 0) return { purgedThreadIds: [] }
   // Build one batch so messages + thread deletions are atomic per thread and
   // across all threads in a single transaction.
-  const stmts: Array<{ sql: string; args: readonly string[] }> = []
+  const stmts: Array<{ sql: string; args: readonly DbInValue[] }> = []
   for (const id of threadIds) {
     stmts.push({ sql: `DELETE FROM chat_messages WHERE thread_id = ?`, args: [id] })
     stmts.push({ sql: `DELETE FROM chat_threads WHERE id = ?`, args: [id] })

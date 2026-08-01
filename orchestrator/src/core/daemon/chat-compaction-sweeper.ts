@@ -50,7 +50,7 @@ export const sweepChatCompaction = async (
 ): Promise<ChatCompactionSweepResult> => {
   const client = openDb(dbTarget)
   try {
-    const cutoff = new Date(Date.now() - CHAT_COMPACTION_IDLE_MS).toISOString()
+    const cutoff = Date.now() - CHAT_COMPACTION_IDLE_MS
     const candidates = await client.execute({
       sql: `SELECT id, title, updated_at
               FROM chat_threads
@@ -60,7 +60,7 @@ export const sweepChatCompaction = async (
     let compactedThreads = 0
 
     for (const candidate of candidates.rows as unknown as Array<Record<string, unknown>>) {
-      if (typeof candidate.id !== 'string' || typeof candidate.title !== 'string' || typeof candidate.updated_at !== 'string') {
+      if (typeof candidate.id !== 'string' || typeof candidate.title !== 'string' || typeof candidate.updated_at !== 'number') {
         continue
       }
 
@@ -86,7 +86,7 @@ export const sweepChatCompaction = async (
           role: row.role === 'assistant' ? 'assistant' : 'user',
           content: row.content as string,
           segments,
-          created_at: row.created_at as string,
+          created_at: row.created_at as number,
           kind: row.kind === 'validation' ? 'validation' : 'acknowledgment',
           backing_entity_id: typeof row.backing_entity_id === 'string' ? row.backing_entity_id : null,
         }
@@ -188,7 +188,7 @@ export const sweepChatCompaction = async (
           glossaryRefs: [...new Set([...(previousCheckpoint?.glossaryRefs ?? []), ...newRefs.glossaryRefs])],
           artifactRefs: [...new Set([...(previousCheckpoint?.artifactRefs ?? []), ...newRefs.artifactRefs])],
         }
-        const timestamp = new Date().toISOString()
+        const timestamp = Date.now()
         const checkpointId = randomUUID()
         const results = await client.batch([
           {

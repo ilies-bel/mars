@@ -164,9 +164,9 @@ describe('loadChatFeedback', () => {
     const entries = await cfq.loadChatFeedback()
     expect(entries).toHaveLength(3)
     // Newest first: created_at DESC
-    const datesDesc = entries.map((e) => e.createdAt)
-    const sorted = [...datesDesc].sort((a, b) => (a > b ? -1 : a < b ? 1 : 0))
-    expect(datesDesc).toEqual(sorted)
+    const timestampsDesc = entries.map((e) => e.createdAt)
+    const sorted = [...timestampsDesc].sort((a, b) => b - a)
+    expect(timestampsDesc).toEqual(sorted)
   })
 
   it('truncates long userPrompt and assistantReply to 1500 chars with ellipsis', async () => {
@@ -254,17 +254,17 @@ describe('loadChatFeedback', () => {
     expect(entries[0].userPrompt).toBe('second user question')
   })
 
-  it('sinceIso filter excludes older entries', async () => {
+  it('sinceMs filter excludes older entries', async () => {
     const { cs, cfq } = await loadModules(repo)
     await cs.initChatStore()
     // Create two entries; we can't control timestamps precisely in these
-    // tests, so we verify that sinceIso with a far-future date returns nothing.
+    // tests, so we verify that sinceMs with a far-future date returns nothing.
     await makeRatedExchange(cs, { userContent: 'question' })
 
-    const empty = await cfq.loadChatFeedback({ sinceIso: '2099-01-01T00:00:00Z' })
+    const empty = await cfq.loadChatFeedback({ sinceMs: Date.parse('2099-01-01T00:00:00Z') })
     expect(empty).toHaveLength(0)
 
-    const all = await cfq.loadChatFeedback({ sinceIso: '2000-01-01T00:00:00Z' })
+    const all = await cfq.loadChatFeedback({ sinceMs: Date.parse('2000-01-01T00:00:00Z') })
     expect(all.length).toBeGreaterThan(0)
   })
 })

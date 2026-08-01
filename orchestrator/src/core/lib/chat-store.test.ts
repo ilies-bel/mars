@@ -255,14 +255,13 @@ describe('chat-store', () => {
     expect(thread.evaporated_at).toBeNull()
   })
 
-  it('markThreadEvaporated stamps evaporated_at with an ISO timestamp', async () => {
+  it('markThreadEvaporated stamps evaporated_at with epoch milliseconds', async () => {
     const m = await loadModule(repo)
     const thread = await m.createThread('to evaporate')
     await m.markThreadEvaporated(thread.id)
     const result = await m.getThread(thread.id)
     expect(result!.thread.evaporated_at).not.toBeNull()
-    // Must be a valid ISO-8601 date string
-    expect(() => new Date(result!.thread.evaporated_at!)).not.toThrow()
+    expect(result!.thread.evaporated_at).toBeTypeOf('number')
   })
 
   it('second call to markThreadEvaporated does not overwrite the original timestamp', async () => {

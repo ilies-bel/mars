@@ -270,7 +270,7 @@ const formatChatFeedbackSection = (
   const exchanges = chatFeedback
     .map((e) => {
       const lines: string[] = [
-        `[${e.rating.toUpperCase()}] ${e.createdAt.slice(0, 10)} | thread:${e.threadId.slice(0, 8)} | note:${e.note ?? '(none)'}`,
+        `[${e.rating.toUpperCase()}] ${new Date(e.createdAt).toISOString().slice(0, 10)} | thread:${e.threadId.slice(0, 8)} | note:${e.note ?? '(none)'}`,
         `  user: ${e.userPrompt || '(no preceding user message)'}`,
         `  assistant: ${e.assistantReply}`,
       ]

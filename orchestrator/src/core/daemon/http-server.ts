@@ -1507,11 +1507,11 @@ export const startHttpServer = async (
         .then(([releaseNotes, recoveryEvents, autoRuns, [evaporatedRaw, allThreads], stewardLedger]) => {
           const throttledThreads = allThreads
             .filter((t) => t.status === 'throttled')
-            .map((t) => ({ id: t.id, updatedAt: t.updated_at }))
+            .map((t) => ({ id: t.id, updatedAt: new Date(t.updated_at).toISOString() }))
 
           const evaporatedThreads = evaporatedRaw
-            .filter((t): t is typeof t & { evaporated_at: string } => t.evaporated_at !== null)
-            .map((t) => ({ id: t.id, evaporatedAt: t.evaporated_at }))
+            .filter((t): t is typeof t & { evaporated_at: number } => t.evaporated_at !== null)
+            .map((t) => ({ id: t.id, evaporatedAt: new Date(t.evaporated_at).toISOString() }))
 
           const delta = assembleDelta({
             releaseNotes: releaseNotes.entries,

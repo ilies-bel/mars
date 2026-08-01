@@ -64,7 +64,22 @@ describe('ensureSchema', () => {
     expect(columns.has('context_seeded')).toBe(false)
   })
 
-  it('removes provider-session columns from legacy chat threads without losing rows', async () => {
+  it('stores operational chat timestamps as epoch milliseconds', async () => {
+    const c = await freshSchemaClient()
+
+    expect(Object.fromEntries(await columnsOf(c, 'chat_threads'))).toMatchObject({
+      evaporated_at: 'bigint',
+      created_at: 'bigint',
+      updated_at: 'bigint',
+    })
+    expect((await columnsOf(c, 'chat_messages')).get('created_at')).toBe('bigint')
+    expect(Object.fromEntries(await columnsOf(c, 'chat_feedback'))).toMatchObject({
+      created_at: 'bigint',
+      updated_at: 'bigint',
+    })
+  })
+
+  it('migrates legacy chat timestamps to epoch milliseconds without losing rows', async () => {
     const c = openDb(freshKey())
     try {
       await __execSchemaBatch(c, [
@@ -82,10 +97,34 @@ describe('ensureSchema', () => {
           created_at text NOT NULL,
           updated_at text NOT NULL
         )`,
+        `CREATE TABLE chat_messages (
+          id text PRIMARY KEY,
+          thread_id text NOT NULL REFERENCES chat_threads(id),
+          role text NOT NULL,
+          content text NOT NULL,
+          segments text,
+          created_at text NOT NULL
+        )`,
+        `CREATE TABLE chat_feedback (
+          message_id text PRIMARY KEY REFERENCES chat_messages(id) ON DELETE CASCADE,
+          thread_id text NOT NULL,
+          rating text NOT NULL,
+          note text,
+          created_at text NOT NULL,
+          updated_at text NOT NULL
+        )`,
         {
           sql: `INSERT INTO chat_threads
-                  (id, title, status, posture, alert_resolved, session_id, context_seeded, created_at, updated_at)
-                VALUES ('legacy-thread', 'Keep me', 'idle', 'triage', 0, 'obsolete', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+                  (id, title, status, posture, alert_resolved, evaporated_at, session_id, context_seeded, created_at, updated_at)
+                VALUES ('legacy-thread', 'Keep me', 'idle', 'triage', 0, '1970-01-01T00:00:01.234Z', 'obsolete', 1, '1970-01-01T00:00:02.345Z', '1970-01-01T00:00:03.456Z')`,
+        },
+        {
+          sql: `INSERT INTO chat_messages (id, thread_id, role, content, created_at)
+                VALUES ('legacy-message', 'legacy-thread', 'user', 'Keep me too', '1970-01-01T00:00:04.567Z')`,
+        },
+        {
+          sql: `INSERT INTO chat_feedback (message_id, thread_id, rating, created_at, updated_at)
+                VALUES ('legacy-message', 'legacy-thread', 'up', '1970-01-01T00:00:05.678Z', '1970-01-01T00:00:06.789Z')`,
         },
       ])
 
@@ -94,8 +133,24 @@ describe('ensureSchema', () => {
       const columns = await columnsOf(c, 'chat_threads')
       expect(columns.has('session_id')).toBe(false)
       expect(columns.has('context_seeded')).toBe(false)
-      const row = await c.execute(`SELECT id, title FROM chat_threads WHERE id = 'legacy-thread'`)
-      expect(row.rows).toEqual([{ id: 'legacy-thread', title: 'Keep me' }])
+      expect(Object.fromEntries(columns)).toMatchObject({
+        evaporated_at: 'bigint',
+        created_at: 'bigint',
+        updated_at: 'bigint',
+      })
+      const row = await c.execute(`SELECT id, title, evaporated_at, created_at, updated_at FROM chat_threads WHERE id = 'legacy-thread'`)
+      expect(row.rows).toEqual([{
+        id: 'legacy-thread', title: 'Keep me', evaporated_at: 1234, created_at: 2345, updated_at: 3456,
+      }])
+      expect((await c.execute(`SELECT created_at FROM chat_messages WHERE id = 'legacy-message'`)).rows)
+        .toEqual([{ created_at: 4567 }])
+      expect((await c.execute(`SELECT created_at, updated_at FROM chat_feedback WHERE message_id = 'legacy-message'`)).rows)
+        .toEqual([{ created_at: 5678, updated_at: 6789 }])
+      expect((await columnsOf(c, 'chat_messages')).get('created_at')).toBe('bigint')
+      expect(Object.fromEntries(await columnsOf(c, 'chat_feedback'))).toMatchObject({
+        created_at: 'bigint',
+        updated_at: 'bigint',
+      })
     } finally {
       await c.close()
     }

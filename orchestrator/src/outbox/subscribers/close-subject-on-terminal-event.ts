@@ -36,13 +36,16 @@ export async function drainCloseSubjectOnTerminalEvent(
         (typeof payload.scorerId === 'string' && payload.scorerId)
       if (!entityId) return false
 
+      // chat_threads timestamps are bigint epoch milliseconds, not timestamptz:
+      // bind the value rather than using SQL now().
+      const ts = Date.now()
       const result = await client.execute({
         sql: `UPDATE chat_threads
-                SET evaporated_at = now(), updated_at = now()
+                SET evaporated_at = ?, updated_at = ?
               WHERE terminal_event = ?
                 AND terminal_entity_id = ?
                 AND evaporated_at IS NULL`,
-        args: [event.type, entityId],
+        args: [ts, ts, event.type, entityId],
       })
       return ((result as unknown as { rowsAffected?: number }).rowsAffected ?? 0) > 0
     },

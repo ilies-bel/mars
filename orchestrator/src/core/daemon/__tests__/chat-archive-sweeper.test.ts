@@ -24,16 +24,16 @@ import { sweepChatArchive, CHAT_ARCHIVE_RETENTION_DAYS } from '../chat-archive-s
 
 type DbClient = ReturnType<typeof openDb>
 
-function daysAgo(n: number): string {
-  return new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString()
+function daysAgo(n: number): number {
+  return Date.now() - n * 24 * 60 * 60 * 1000
 }
 
 async function insertThread(
   client: DbClient,
   id: string,
-  evaporatedAt: string | null,
+  evaporatedAt: number | null,
 ): Promise<void> {
-  const ts = new Date().toISOString()
+  const ts = Date.now()
   await client.execute({
     sql: `INSERT INTO chat_threads (id, title, status, created_at, updated_at, evaporated_at)
           VALUES (?, ?, 'idle', ?, ?, ?)`,
@@ -42,7 +42,7 @@ async function insertThread(
 }
 
 async function insertMessage(client: DbClient, id: string, threadId: string): Promise<void> {
-  const ts = new Date().toISOString()
+  const ts = Date.now()
   await client.execute({
     sql: `INSERT INTO chat_messages (id, thread_id, role, content, created_at)
           VALUES (?, ?, 'user', 'hello', ?)`,

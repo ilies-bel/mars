@@ -44,7 +44,7 @@ export const sweepChatArchive = async (
 ): Promise<ChatArchiveSweepResult> => {
   const client = openDb(dbTarget)
   try {
-    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString()
+    const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000
 
     // Collect IDs first so we can remove their upload directories after deletion.
     const found = await client.execute({

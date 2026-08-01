@@ -74,7 +74,7 @@ vi.mock('../chat-shell', () => ({
 }))
 
 vi.mock('../../lib/chat-store', () => ({
-  appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: '', kind: 'acknowledgment', backing_entity_id: null }),
+  appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: 0, kind: 'acknowledgment', backing_entity_id: null }),
   getThread: vi.fn(),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
@@ -106,8 +106,8 @@ const makeThreadFixture = (id: string) => ({
     title: '',
     status: 'idle' as const,
     posture: 'triage' as const,
-    created_at: '',
-    updated_at: '',
+    created_at: 0,
+    updated_at: 0,
     origin: null,
     alert_item_id: null,
     alert_resolved: false,
@@ -158,7 +158,7 @@ describe('ChatRunner integration — task-blocked "can you retry?"', () => {
     vi.mocked(chatSkills.discoverSkills).mockResolvedValue([])
     mcpMock.getTools.mockResolvedValue([])
     vi.mocked(chatStore.appendMessage).mockResolvedValue({
-      id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: '',
+      id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: 0,
       kind: 'acknowledgment', backing_entity_id: null,
     })
   })

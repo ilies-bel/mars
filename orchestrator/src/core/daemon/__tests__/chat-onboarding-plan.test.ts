@@ -46,7 +46,7 @@ vi.mock('../chat-mcp', () => ({
 vi.mock('../chat-shell', () => ({ runShellCommand: vi.fn() }))
 
 vi.mock('../../lib/chat-store', () => ({
-  appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: '', kind: 'acknowledgment', backing_entity_id: null }),
+  appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: 0, kind: 'acknowledgment', backing_entity_id: null }),
   getThread: vi.fn(),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
@@ -66,7 +66,7 @@ const mockShell = runShellCommand as unknown as MockInstance<
 
 const makeThreadFixture = (id: string) => ({
   thread: {
-    id, title: '', status: 'idle' as const, posture: 'triage' as const, created_at: '', updated_at: '', origin: null,
+    id, title: '', status: 'idle' as const, posture: 'triage' as const, created_at: 0, updated_at: 0, origin: null,
     alert_item_id: null, alert_resolved: false, evaporated_at: null, parent_thread_id: null,
     fork_idempotency_key: null,
   },

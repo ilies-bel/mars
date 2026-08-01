@@ -15,7 +15,7 @@ import { sweepChatCompaction } from '../chat-compaction-sweeper.js'
 
 type DbClient = ReturnType<typeof openDb>
 
-const oldEnough = (): string => new Date(Date.now() - 6 * 60_000).toISOString()
+const oldEnough = (): number => Date.now() - 6 * 60_000
 
 async function insertThread(client: DbClient, id: string, status = 'idle'): Promise<void> {
   const updatedAt = oldEnough()

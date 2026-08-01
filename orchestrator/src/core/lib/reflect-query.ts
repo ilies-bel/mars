@@ -497,7 +497,7 @@ export const loadRecentTaskCorpus = async (
     try {
       const { loadChatFeedback } = await import('./chat-feedback-query.js')
       chatFeedback = await loadChatFeedback({
-        sinceIso: sinceIso ?? undefined,
+        sinceMs: sinceIso ? Date.parse(sinceIso) : undefined,
         limit: 50,
       })
       if (chatFeedback.length > 0) {

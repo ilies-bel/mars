@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0014'
+export const SCHEMA_VERSION = '0015'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -641,11 +641,11 @@ const DDL: readonly string[] = [
     origin         text,
     alert_item_id  text,
     alert_resolved bigint NOT NULL DEFAULT 0,
-    evaporated_at  text,
+    evaporated_at  bigint,
     terminal_event text,
     terminal_entity_id text,
-    created_at     text   NOT NULL,
-    updated_at     text   NOT NULL
+    created_at     bigint NOT NULL,
+    updated_at     bigint NOT NULL
   )`,
   // Idempotent column migrations for already-provisioned databases.
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS qa text NOT NULL DEFAULT 'auto'`,
@@ -677,12 +677,43 @@ const DDL: readonly string[] = [
   // `deferrable` is a 0/1 flag (queue.ts reads it as Number(row.deferrable) === 1).
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS stall_diagnostics text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS "deferrable" bigint NOT NULL DEFAULT 0`,
-  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS evaporated_at text`,
+  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS evaporated_at bigint`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS terminal_event text`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS terminal_entity_id text`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS posture text NOT NULL DEFAULT 'triage'`,
   `ALTER TABLE IF EXISTS chat_threads DROP COLUMN IF EXISTS context_seeded`,
   `ALTER TABLE IF EXISTS chat_threads DROP COLUMN IF EXISTS session_id`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'chat_threads'
+          AND column_name = 'evaporated_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE chat_threads
+         ALTER COLUMN evaporated_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM evaporated_at::timestamptz) * 1000)::bigint;
+     END IF;
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'chat_threads'
+          AND column_name = 'created_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE chat_threads
+         ALTER COLUMN created_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM created_at::timestamptz) * 1000)::bigint;
+     END IF;
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'chat_threads'
+          AND column_name = 'updated_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE chat_threads
+         ALTER COLUMN updated_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM updated_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_alert_item_id
      ON chat_threads(alert_item_id)`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_evaporated_at
@@ -701,7 +732,7 @@ const DDL: readonly string[] = [
     role       text NOT NULL,
     content    text NOT NULL,
     segments   text,
-    created_at text NOT NULL,
+    created_at bigint NOT NULL,
     seq        bigint GENERATED ALWAYS AS IDENTITY
   )`,
   // Backfill `seq` for databases created before this column was added.
@@ -712,6 +743,19 @@ const DDL: readonly string[] = [
   // backing entity link for auto-clear projection (slice 1 of PRD cdf6a60a).
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'acknowledgment'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS backing_entity_id text`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'chat_messages'
+          AND column_name = 'created_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE chat_messages
+         ALTER COLUMN created_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM created_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
   `CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_id
      ON chat_messages(thread_id)`,
   `CREATE TABLE IF NOT EXISTS chat_thread_tasks (
@@ -727,9 +771,31 @@ const DDL: readonly string[] = [
     thread_id  text NOT NULL,
     rating     text NOT NULL CHECK (rating IN ('up','down')),
     note       text,
-    created_at text NOT NULL,
-    updated_at text NOT NULL
+    created_at bigint NOT NULL,
+    updated_at bigint NOT NULL
   )`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'chat_feedback'
+          AND column_name = 'created_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE chat_feedback
+         ALTER COLUMN created_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM created_at::timestamptz) * 1000)::bigint;
+     END IF;
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'chat_feedback'
+          AND column_name = 'updated_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE chat_feedback
+         ALTER COLUMN updated_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM updated_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
   `CREATE INDEX IF NOT EXISTS idx_chat_feedback_rating ON chat_feedback(rating)`,
   `CREATE INDEX IF NOT EXISTS idx_chat_feedback_thread_id
      ON chat_feedback(thread_id)`,

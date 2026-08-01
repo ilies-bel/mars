@@ -43,14 +43,19 @@ const chatFeedbackList: Command = {
       return { code: 1 }
     }
 
-    const sinceIso = args.flags['--since']
+    const since = args.flags['--since']
+    const sinceMs = since === undefined ? undefined : Date.parse(since)
+    if (since !== undefined && Number.isNaN(sinceMs)) {
+      deps.err(`--since must be an ISO timestamp; got '${since}'`)
+      return { code: 1 }
+    }
 
     const { loadChatFeedback } = await import('../../core/lib/chat-feedback-query')
 
     const entries = await loadChatFeedback({
       rating: ratingRaw as 'up' | 'down' | undefined,
       limit,
-      sinceIso,
+      sinceMs,
     })
 
     if (entries.length === 0) {
@@ -72,7 +77,7 @@ const chatFeedbackList: Command = {
     )
 
     for (const e of entries) {
-      const date = e.createdAt.slice(0, COL_DATE).padEnd(COL_DATE)
+      const date = new Date(e.createdAt).toISOString().slice(0, COL_DATE).padEnd(COL_DATE)
       const rating = e.rating.padEnd(COL_RATING)
       const thread = e.threadId.slice(0, COL_THREAD).padEnd(COL_THREAD)
       const rawNote = e.note ?? ''

@@ -196,7 +196,7 @@ const msg = (role: 'user' | 'assistant', content: string, segments: unknown = nu
   role,
   content,
   segments,
-  created_at: '',
+  created_at: 0,
   kind: 'acknowledgment',
   backing_entity_id: null,
 })
@@ -431,7 +431,7 @@ vi.mock('../chat-shell', () => ({
 }))
 
 vi.mock('../../lib/chat-store', () => ({
-  appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: '' }),
+  appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: 0 }),
   getThread: vi.fn(),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
@@ -460,7 +460,7 @@ const mockShell = runShellCommand as unknown as MockInstance<
 const AUTH = { accessToken: 'tok', accountId: 'acc', refreshToken: 'ref' }
 
 const threadFixture = {
-  id: 't1', title: '', status: 'idle' as const, created_at: '', updated_at: '',
+  id: 't1', title: '', status: 'idle' as const, created_at: 0, updated_at: 0,
   posture: 'triage' as const,
   origin: null, alert_item_id: null, alert_resolved: false, evaporated_at: null,
   parent_thread_id: null, fork_idempotency_key: null,
@@ -703,7 +703,7 @@ describe('ChatRunner state machine', () => {
   it('does not auto-title when thread already has messages', async () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { ...threadFixture },
-      messages: [{ id: 'm1', thread_id: 't1', role: 'user', content: 'prior', segments: null, created_at: '', kind: 'acknowledgment' as const, backing_entity_id: null }],
+      messages: [{ id: 'm1', thread_id: 't1', role: 'user', content: 'prior', segments: null, created_at: 0, kind: 'acknowledgment' as const, backing_entity_id: null }],
       feedbacks: new Map(),
     })
 
@@ -881,8 +881,8 @@ describe('ChatRunner state machine', () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { ...threadFixture, title: 'Chat' },
       messages: [
-        { id: 'm0', thread_id: 't1', role: 'user', content: 'hello', segments: [{ type: 'text', text: 'hello' }], created_at: '', kind: 'acknowledgment' as const, backing_entity_id: null },
-        { id: 'm1', thread_id: 't1', role: 'assistant', content: 'hi there', segments: [{ type: 'text', text: 'hi there' }], created_at: '', kind: 'acknowledgment' as const, backing_entity_id: null },
+        { id: 'm0', thread_id: 't1', role: 'user', content: 'hello', segments: [{ type: 'text', text: 'hello' }], created_at: 0, kind: 'acknowledgment' as const, backing_entity_id: null },
+        { id: 'm1', thread_id: 't1', role: 'assistant', content: 'hi there', segments: [{ type: 'text', text: 'hi there' }], created_at: 0, kind: 'acknowledgment' as const, backing_entity_id: null },
       ],
       feedbacks: new Map(),
     })
@@ -913,7 +913,7 @@ describe('ChatRunner state machine', () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { ...threadFixture, title: 'Alert', origin: 'alert', alert_item_id: 'item-1' },
       messages: [
-        { id: 'm0', thread_id: 't1', role: 'assistant', content: 'Daemon running stale code', segments: [alertSeg], created_at: '', kind: 'acknowledgment' as const, backing_entity_id: null },
+        { id: 'm0', thread_id: 't1', role: 'assistant', content: 'Daemon running stale code', segments: [alertSeg], created_at: 0, kind: 'acknowledgment' as const, backing_entity_id: null },
       ],
       feedbacks: new Map(),
     })

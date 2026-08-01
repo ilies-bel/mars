@@ -43,7 +43,7 @@ export interface ChatFeedbackEntry {
   threadId: string
   rating: 'up' | 'down'
   note: string | null
-  createdAt: string
+  createdAt: number
   /** The user message immediately preceding the rated reply, truncated to 1500 chars. */
   userPrompt: string
   /** The rated assistant reply's text content, truncated to 1500 chars. */
@@ -55,7 +55,7 @@ export interface ChatFeedbackEntry {
 export interface LoadChatFeedbackOptions {
   limit?: number
   rating?: 'up' | 'down'
-  sinceIso?: string
+  sinceMs?: number
 }
 
 /**
@@ -79,9 +79,9 @@ export const loadChatFeedback = async (
     conditions.push('cf.rating = ?')
     args.push(opts.rating)
   }
-  if (opts?.sinceIso !== undefined) {
+  if (opts?.sinceMs !== undefined) {
     conditions.push('cf.created_at >= ?')
-    args.push(opts.sinceIso)
+    args.push(opts.sinceMs)
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
@@ -116,7 +116,7 @@ export const loadChatFeedback = async (
     threadId: row['thread_id'] as string,
     rating: row['rating'] as 'up' | 'down',
     note: (row['note'] as string | null) ?? null,
-    createdAt: row['created_at'] as string,
+    createdAt: row['created_at'] as number,
     userPrompt: truncateText((row['user_prompt'] as string | null) ?? ''),
     assistantReply: truncateText((row['assistant_content'] as string | null) ?? ''),
     toolsUsed: extractToolsUsed(row['assistant_segments'] as string | null),
