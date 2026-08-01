@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { MARS_VERSION } from '../../version'
-import { classifyInstallRoute } from './install-route'
+import { classifyInstallRoute, type InstallRoute } from './install-route'
 
 /**
  * How often the daemon polls for a new GitHub release. Six hours balances
@@ -75,10 +75,17 @@ export const isNewerVersion = (latest: string, installed: string): boolean => {
  */
 export const pollGithubRelease = async (
   marsDir: string,
-  options?: { debug?: (msg: string) => void; fetchFn?: typeof fetch },
+  options?: {
+    debug?: (msg: string) => void
+    fetchFn?: typeof fetch
+    installedVersion?: string
+    installRoute?: InstallRoute
+  },
 ): Promise<void> => {
   const debug = options?.debug ?? (() => {})
   const fetchFn = options?.fetchFn ?? fetch
+  const installedVersion = options?.installedVersion ?? MARS_VERSION
+  const installRoute = options?.installRoute ?? classifyInstallRoute()
   const cacheFile = resolve(marsDir, 'update.json')
 
   try {
@@ -86,7 +93,7 @@ export const pollGithubRelease = async (
       'https://api.github.com/repos/ilies-bel/mars/releases/latest',
       {
         headers: {
-          'User-Agent': `mars-framework/${MARS_VERSION}`,
+          'User-Agent': `mars-framework/${installedVersion}`,
           Accept: 'application/vnd.github+json',
         },
       },
@@ -111,11 +118,11 @@ export const pollGithubRelease = async (
     }
 
     const latest = tagName.startsWith('v') ? tagName.slice(1) : tagName
-    const available = isNewerVersion(latest, MARS_VERSION)
-    const selfUpdatable = available && classifyInstallRoute() === 'prod'
+    const available = installRoute === 'prod' && isNewerVersion(latest, installedVersion)
+    const selfUpdatable = available && installRoute === 'prod'
 
     const cache: FrameworkUpdateCache = {
-      installed: MARS_VERSION,
+      installed: installedVersion,
       latest,
       available,
       checkedAt: new Date().toISOString(),
@@ -125,7 +132,7 @@ export const pollGithubRelease = async (
 
     await writeFile(cacheFile, JSON.stringify(cache, null, 2) + '\n', 'utf8')
     debug(
-      `[github-update-poller] updated: installed=${MARS_VERSION} latest=${latest} available=${available}`,
+      `[github-update-poller] updated: installed=${installedVersion} latest=${latest} available=${available}`,
     )
   } catch (err) {
     debug(`[github-update-poller] poll failed: ${(err as Error).message}`)

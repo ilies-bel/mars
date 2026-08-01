@@ -90,6 +90,28 @@ describe('GET /view/framework-update', () => {
     }
   })
 
+  it('returns a dev checkout cache without an update banner', async () => {
+    const cached: FrameworkUpdateState = {
+      installed: '0.15.0-48-gabc1234',
+      latest: '0.15.0',
+      available: false,
+      checkedAt: '2026-05-30T12:00:00.000Z',
+      releaseUrl: 'https://github.com/ilies-bel/mars/releases/tag/v0.15.0',
+      selfUpdatable: false,
+    }
+    const { startHttpServer } = await import('../http-server')
+    const { port, close } = await startHttpServer(
+      makeDeps({ viewFrameworkUpdate: async () => cached }),
+    )
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/view/framework-update`)
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual(cached)
+    } finally {
+      await close()
+    }
+  })
+
   it('surfaces errors from viewFrameworkUpdate as 500', async () => {
     const { startHttpServer } = await import('../http-server')
     const { port, close } = await startHttpServer(

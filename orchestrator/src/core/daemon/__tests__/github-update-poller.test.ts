@@ -14,8 +14,8 @@ import { isNewerVersion, pollGithubRelease } from '../github-update-poller'
 // ── isNewerVersion ────────────────────────────────────────────────────────────
 
 describe('isNewerVersion', () => {
-  it('returns false for equal versions', () => {
-    expect(isNewerVersion('1.0.0', '1.0.0')).toBe(false)
+  it('returns false when the installed release matches the latest release', () => {
+    expect(isNewerVersion('0.15.0', '0.15.0')).toBe(false)
   })
 
   it('returns true when latest has a higher patch', () => {
@@ -66,6 +66,36 @@ describe('isNewerVersion', () => {
 // ── pollGithubRelease ─────────────────────────────────────────────────────────
 
 describe('pollGithubRelease', () => {
+  it('does not advertise a release to a dev checkout ahead of its tag', async () => {
+    const marsDir = await mkdtemp(join(tmpdir(), 'mars-poller-test-'))
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({
+        tag_name: 'v0.15.0',
+        html_url: 'https://github.com/ilies-bel/mars/releases/tag/v0.15.0',
+      }),
+    })
+
+    await pollGithubRelease(marsDir, {
+      fetchFn: mockFetch as unknown as typeof fetch,
+      installedVersion: '0.15.0-48-gabc1234',
+      installRoute: 'dev',
+    })
+
+    const cache = JSON.parse(
+      await readFile(join(marsDir, 'update.json'), 'utf8'),
+    ) as Record<string, unknown>
+    expect(cache).toMatchObject({
+      installed: '0.15.0-48-gabc1234',
+      latest: '0.15.0',
+      available: false,
+      selfUpdatable: false,
+    })
+  })
+
   it('writes update.json with the correct shape on a successful fetch', async () => {
     const marsDir = await mkdtemp(join(tmpdir(), 'mars-poller-test-'))
 
@@ -79,7 +109,11 @@ describe('pollGithubRelease', () => {
       }),
     })
 
-    await pollGithubRelease(marsDir, { fetchFn: mockFetch as unknown as typeof fetch })
+    await pollGithubRelease(marsDir, {
+      fetchFn: mockFetch as unknown as typeof fetch,
+      installedVersion: '0.14.0',
+      installRoute: 'prod',
+    })
 
     const raw = await readFile(join(marsDir, 'update.json'), 'utf8')
     const cache = JSON.parse(raw) as Record<string, unknown>
@@ -200,12 +234,16 @@ describe('pollGithubRelease', () => {
       status: 200,
       statusText: 'OK',
       json: async () => ({
-        tag_name: 'v999.0.0',
-        html_url: 'https://github.com/ilies-bel/mars/releases/tag/v999.0.0',
+        tag_name: 'v0.15.0',
+        html_url: 'https://github.com/ilies-bel/mars/releases/tag/v0.15.0',
       }),
     })
 
-    await pollGithubRelease(marsDir, { fetchFn: mockFetch as unknown as typeof fetch })
+    await pollGithubRelease(marsDir, {
+      fetchFn: mockFetch as unknown as typeof fetch,
+      installedVersion: '0.14.0',
+      installRoute: 'prod',
+    })
 
     const raw = await readFile(join(marsDir, 'update.json'), 'utf8')
     const cache = JSON.parse(raw) as Record<string, unknown>

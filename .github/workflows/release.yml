@@ -101,6 +101,15 @@ jobs:
           set -euo pipefail
           node scripts/inject-plugin-version.mjs "${{ steps.version.outputs.tag }}"
 
+      - name: Inject framework version
+        # Tags are the canonical version record. Stamp the resolved tag into
+        # the generated source immediately before packaging so the release
+        # artifact reports its own version instead of the dev package version.
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          node orchestrator/scripts/sync-version.mjs "${TAG#v}"
+
       - name: Build Bundle tarball
         id: bundle
         # The Bundle is exactly manifest.json plus the union of the paths

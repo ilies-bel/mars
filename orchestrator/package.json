@@ -1,6 +1,6 @@
 {
   "name": "mars",
-  "version": "0.1.1",
+  "version": "0.0.0-dev",
   "description": "Provider-agnostic agent CLI orchestrator for parallel git worktrees on the in-house @mars/workflow engine.",
   "main": "src/cli.ts",
   "bin": {
