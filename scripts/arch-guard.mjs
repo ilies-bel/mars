@@ -41,7 +41,17 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const DEPCRUISE = join(REPO_ROOT, 'node_modules', '.bin', 'depcruise');
+// The real ESM entry point, NOT `node_modules/.bin/depcruise` — that one is a
+// shell wrapper, and handing it to `process.execPath` makes Node try to parse
+// `basedir=$(dirname ...)` as JavaScript. Under pnpm `node_modules/dependency-cruiser`
+// is a symlink into the virtual store, which resolves fine.
+const DEPCRUISE = join(
+  REPO_ROOT,
+  'node_modules',
+  'dependency-cruiser',
+  'bin',
+  'dependency-cruise.mjs',
+);
 
 /**
  * MODULE-COUNT FLOORS — the anti-vacuous-pass assertion (see reason 1 above).
@@ -153,7 +163,9 @@ function check() {
 
   for (const tree of TREES) {
     const baselinePath = join(tree.cwd, tree.baseline);
-    const args = existsSync(baselinePath) ? ['--known-violations', tree.baseline] : [];
+    // The flag is `--ignore-known`, NOT `--known-violations` (that is the name
+    // used in the docs' prose; the CLI rejects it with `unknown option`).
+    const args = existsSync(baselinePath) ? ['--ignore-known', tree.baseline] : [];
     if (args.length === 0) {
       console.error(
         `arch [${tree.name}]: no baseline at ${tree.baseline} — every pre-existing ` +
@@ -216,6 +228,13 @@ function check() {
 // ---------------------------------------------------------------------------
 // baseline
 // ---------------------------------------------------------------------------
+/** The baseline reporter emits a FLAT ARRAY of violations, not a cruise result. */
+function countBaseline(path) {
+  if (!existsSync(path)) return 0;
+  const parsed = JSON.parse(readFileSync(path, 'utf8'));
+  return Array.isArray(parsed) ? parsed.length : (parsed.summary?.violations ?? []).length;
+}
+
 function baseline() {
   console.log(
     '\n' +
@@ -239,9 +258,7 @@ function baseline() {
 
   for (const tree of TREES) {
     const baselinePath = join(tree.cwd, tree.baseline);
-    const before = existsSync(baselinePath)
-      ? (JSON.parse(readFileSync(baselinePath, 'utf8')).summary?.violations ?? []).length
-      : 0;
+    const before = countBaseline(baselinePath);
 
     // Sanity-check the cruise BEFORE freezing it: baselining a cruise that
     // parsed nothing would write an empty baseline and quietly un-ratchet
@@ -252,14 +269,15 @@ function baseline() {
       process.exit(1);
     }
 
-    const result = runDepcruise(tree, ['--output-type', 'baseline']);
-    if (!result.stdout || !result.stdout.trim().startsWith('{')) {
-      console.error(`arch:baseline [${tree.name}]: no baseline produced.\n${result.stderr}`);
+    // The `baseline` reporter writes to a FILE, not to stdout (`--output-to`
+    // is not optional for it — `-T baseline` with no `-f` emits nothing at all).
+    runDepcruise(tree, ['--output-type', 'baseline', '--output-to', tree.baseline]);
+    if (!existsSync(baselinePath)) {
+      console.error(`arch:baseline [${tree.name}]: no baseline written to ${tree.baseline}.`);
       process.exit(2);
     }
-    writeFileSync(baselinePath, result.stdout.trimEnd() + '\n');
 
-    const after = (JSON.parse(result.stdout).summary?.violations ?? []).length;
+    const after = countBaseline(baselinePath);
     const delta = after - before;
     const arrow = delta > 0 ? `GREW by ${delta}  <-- REVIEW THIS` : delta < 0 ? `shrank by ${-delta}` : 'unchanged';
     console.log(`  ${tree.name}: ${before} -> ${after} accepted violations (${arrow})`);
