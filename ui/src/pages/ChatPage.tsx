@@ -87,6 +87,8 @@ import {
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
 import { startThreadFromAlert } from '@/entities/alerts/api'
+import { useAlerts } from '@/entities/alerts'
+import { MainThreadAlerts } from '@/widgets/chat/MainThreadAlerts'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
@@ -2733,6 +2735,8 @@ export const ChatPage = () => {
   // Opens a Subthread inline when a chip is picked. Arc-failed rows (alerts)
   // reuse the daemon-deduped thread via startThreadFromAlert; other rows get
   // a fresh generic thread.
+  const { alerts: openAlerts } = useAlerts()
+
   const handleOpenSubthread = useCallback(async (row: ActionQueueItem) => {
     let threadId: string
     if (row.kind === 'arc-failed') {
@@ -2745,6 +2749,23 @@ export const ChatPage = () => {
     }
     setActiveSubthreadId(threadId)
   }, [projectId, qc])
+
+  // Alerts rendered in the main thread spawn their subthread the same way the
+  // Bell does — through the daemon-deduped startThreadFromAlert — so the two
+  // entry points can never produce two threads for one alert.
+  const [alertSpawnPending, setAlertSpawnPending] = useState(false)
+  const handleDiscussAlert = useCallback(async (arcId: string) => {
+    setAlertSpawnPending(true)
+    try {
+      const result = await startThreadFromAlert(arcId)
+      setActiveSubthreadId(result.threadId)
+      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+    } finally {
+      // Always clear: leaving the flag set on a failed spawn would disable
+      // every Discuss button until remount.
+      setAlertSpawnPending(false)
+    }
+  }, [qc])
 
   // Seeded opening message: when actionable items exist show a compact,
   // grouped queue summary so the operator sees real pending work at a glance.
@@ -2957,6 +2978,18 @@ export const ChatPage = () => {
                   }}
                 />
               </div>
+              {/* Alert notifications live in the main thread, at its live end.
+                  Two or more merge into one event timeline so an operator
+                  returning from away reads one artifact, not a wall of cards. */}
+              {openAlerts.length > 0 && (
+                <div className="mt-4">
+                  <MainThreadAlerts
+                    alerts={openAlerts}
+                    onDiscuss={(arcId) => { void handleDiscussAlert(arcId) }}
+                    pending={alertSpawnPending}
+                  />
+                </div>
+              )}
               {activeConversationThreadId && (
                 <div
                   data-testid="active-subthread"
