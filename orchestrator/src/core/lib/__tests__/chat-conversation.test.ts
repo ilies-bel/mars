@@ -3,6 +3,8 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+import { createAppServices } from '../../app-services'
+import { nullTraceStore } from '../run-tool'
 
 interface ChatStoreModule {
   initChatStore: typeof import('../chat-store').initChatStore
@@ -81,6 +83,39 @@ describe('listConversationEntries', () => {
         resolution: 'resolved',
       }),
     ])
+  })
+
+  it('keeps every durable message while reporting the current readable-memory cut', async () => {
+    const chat = await loadModule(repo)
+    await chat.initChatStore()
+    const subject = await chat.createThread('Finished subject')
+    await chat.appendMessage(subject.id, 'assistant', 'Older, durable narration')
+    await chat.appendMessage(subject.id, 'assistant', 'Newer, durable narration')
+    const { advanceMainMemoryWindow } = await import('../../daemon/chat-memory-window')
+    await advanceMainMemoryWindow(undefined, {
+      startsAfterSeq: 1,
+      reason: 'capacity',
+    }, 1_700_000_000_000)
+    const services = createAppServices({
+      traceStore: nullTraceStore,
+      buildAlertSources: async () => ({
+        listFailedArcs: async () => [],
+        listStaleWorktrees: async () => [],
+      }),
+    })
+
+    const conversation = await services.viewChatConversation()
+
+    expect(conversation.entries).toHaveLength(2)
+    expect(conversation.entries.map((entry) => entry.content)).toEqual([
+      'Older, durable narration',
+      'Newer, durable narration',
+    ])
+    expect(conversation).toMatchObject({
+      memoryStartsAfterSeq: 1,
+      memoryCutAt: 1_700_000_000_000,
+      memoryCutReason: 'capacity',
+    })
   })
 
   it('keeps a validation message in place and marks it resolved when its task completes', async () => {

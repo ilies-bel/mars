@@ -45,19 +45,24 @@ describe('GET /view/chat/conversation', () => {
       snoozeItem: async () => {}, recipeCatalog: nullRecipeCatalog, traceStore: nullTraceStore,
       appServices: stubAppServices({
         viewChatConversation: async () => ({ entries: [{
-          id: 'message-1', threadId: 'subject-1', subjectId: 'subject-1', subjectTitle: 'A subject', subjectClosed: false,
+          id: 'message-1', seq: 42, threadId: 'subject-1', subjectId: 'subject-1', subjectTitle: 'A subject', subjectClosed: false,
           role: 'assistant', content: 'Persisted narration', segments: [], createdAt: '2026-01-01T00:00:00.000Z',
           kind: 'acknowledgment', backingEntityId: null, resolution: null,
-        }] }),
+        }], memoryStartsAfterSeq: 42, memoryCutAt: 1_700_000_000_000, memoryCutReason: 'capacity' }),
       }),
     })
 
     const response = await fetch(`http://127.0.0.1:${server.port}/view/chat/conversation`)
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toEqual({ entries: [expect.objectContaining({
-      subjectTitle: 'A subject', content: 'Persisted narration',
-    })] })
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      entries: [expect.objectContaining({
+        seq: 42, subjectTitle: 'A subject', content: 'Persisted narration',
+      })],
+      memoryStartsAfterSeq: 42,
+      memoryCutAt: 1_700_000_000_000,
+      memoryCutReason: 'capacity',
+    }))
   })
 })
 

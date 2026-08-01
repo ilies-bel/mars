@@ -1171,6 +1171,8 @@ export const chatThreadDetailSchema = z.object({
 /** One persisted message in the cross-Subject conversation projection. */
 export const chatConversationEntrySchema = z.object({
   id: z.string(),
+  /** Global durable insertion order, used to place the memory boundary. */
+  seq: z.number().int().positive(),
   threadId: z.string(),
   subjectId: z.string(),
   subjectTitle: z.string(),
@@ -1180,13 +1182,18 @@ export const chatConversationEntrySchema = z.object({
   content: z.string(),
   segments: z.array(z.unknown()).optional().default([]),
   createdAt: z.string(),
-  kind: z.enum(['validation', 'acknowledgment']),
+  kind: z.enum(['validation', 'acknowledgment', 'situation']),
   backingEntityId: z.string().nullable(),
   resolution: z.enum(['resolved']).nullable(),
 })
 
 export const chatConversationResponseSchema = z.object({
   entries: z.array(chatConversationEntrySchema),
+  /** Final sequence Mars excludes from its current provider-memory window. */
+  memoryStartsAfterSeq: z.number().int().nonnegative(),
+  /** Epoch milliseconds when the readable-memory window was last cut. */
+  memoryCutAt: z.number().nullable(),
+  memoryCutReason: z.enum(['capacity', 'retention-lapse']).nullable(),
 })
 
 export type ChatSegmentAlertAction = z.infer<typeof chatSegmentAlertActionSchema>

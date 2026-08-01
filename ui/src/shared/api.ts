@@ -37,7 +37,7 @@ import {
   type StewardLedgerEntry,
   type WywaDeltaResponse,
   type ChatConfig,
-  type ChatConversationEntry,
+  type ChatConversationResponse,
   type ChatThread,
   type ChatThreadDetail,
   type Decision,
@@ -671,12 +671,11 @@ export const fetchChatThreads = async (
 }
 
 /** List every persisted message in the global Subject conversation order. */
-export const fetchChatConversation = async (projectId?: string): Promise<ChatConversationEntry[]> => {
-  const json = await fetchJson(
+export const fetchChatConversation = async (projectId?: string): Promise<ChatConversationResponse> => {
+  return fetchJson(
     appendProject('/api/chat/conversation', projectId),
     chatConversationResponseSchema,
   )
-  return json.entries
 }
 
 /**

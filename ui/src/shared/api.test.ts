@@ -12,6 +12,7 @@ import {
   ackActionQueueItem,
   dismissActionQueueItem,
   fetchActionQueue,
+  fetchChatConversation,
   fetchEvents,
   fetchOrigins,
   fetchProgress,
@@ -67,6 +68,56 @@ const minDraft = (overrides: Record<string, unknown> = {}) => ({
   updatedAt: Date.now(),
   acceptanceCount: 0,
   ...overrides,
+})
+
+const minConversationEntry = (overrides: Record<string, unknown> = {}) => ({
+  id: 'message-1',
+  seq: 1,
+  threadId: 'subject-1',
+  subjectId: 'subject-1',
+  subjectTitle: 'A subject',
+  subjectClosed: false,
+  role: 'assistant',
+  content: 'Durable narration',
+  segments: [],
+  createdAt: '2026-01-01T00:00:00.000Z',
+  kind: 'acknowledgment',
+  backingEntityId: null,
+  resolution: null,
+  ...overrides,
+})
+
+// ---------------------------------------------------------------------------
+// fetchChatConversation
+// ---------------------------------------------------------------------------
+
+describe('fetchChatConversation', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('returns the durable scroll with the daemon-selected memory boundary', async () => {
+    fetchSpy.mockResolvedValue(json({
+      entries: [minConversationEntry()],
+      memoryStartsAfterSeq: 42,
+      memoryCutAt: 1_700_000_000_000,
+      memoryCutReason: 'capacity',
+    }))
+
+    await expect(fetchChatConversation()).resolves.toMatchObject({
+      entries: [expect.objectContaining({ seq: 1, content: 'Durable narration' })],
+      memoryStartsAfterSeq: 42,
+      memoryCutAt: 1_700_000_000_000,
+      memoryCutReason: 'capacity',
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

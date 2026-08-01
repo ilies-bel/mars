@@ -169,6 +169,8 @@ export interface ChatMessageApiView {
  */
 export interface ChatConversationEntryApiView {
   id: string
+  /** Global durable insertion order, used to locate memory-window boundaries. */
+  seq: number
   threadId: string
   /** Subject identity (the backing chat thread). */
   subjectId: string
@@ -718,6 +720,7 @@ export const listConversationEntries = async (): Promise<ChatConversationEntryAp
     const message = rowToMessage(row)
     return {
       id: message.id,
+      seq: Number(row.seq),
       threadId: message.thread_id,
       subjectId: message.thread_id,
       subjectTitle: row.subject_title as string,

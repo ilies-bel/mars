@@ -99,7 +99,12 @@ export const stubAppServices = (
   viewChatThreads: async () => ({ threads: [] }),
   viewChatThread: async () => null,
   viewChatHistory: async () => ({ threads: [] }),
-  viewChatConversation: async () => ({ entries: [] }),
+  viewChatConversation: async () => ({
+    entries: [],
+    memoryStartsAfterSeq: 0,
+    memoryCutAt: null,
+    memoryCutReason: null,
+  }),
   viewSteward: async () => ({
     runtimeTuning: {
       acks: [],

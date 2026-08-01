@@ -2604,7 +2604,12 @@ export const ChatPage = () => {
 
   // The conversation endpoint is the persisted portion of Mars's single
   // chronological conversation, rendered as a timeline below the past Subjects.
-  const { data: conversationEntries = [] } = useQuery({
+  const { data: conversation = {
+    entries: [],
+    memoryStartsAfterSeq: 0,
+    memoryCutAt: null,
+    memoryCutReason: null,
+  } } = useQuery({
     queryKey: ['chat-conversation', projectId],
     queryFn: () => fetchChatConversation(projectId),
   })
@@ -3009,7 +3014,8 @@ export const ChatPage = () => {
               )}
               <div className="mt-6">
                 <ConversationTimeline
-                  entries={conversationEntries}
+                  entries={conversation.entries}
+                  memoryStartsAfterSeq={conversation.memoryStartsAfterSeq}
                   activeThreadId={activeConversationThreadId}
                 />
               </div>

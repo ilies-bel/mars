@@ -245,7 +245,12 @@ export interface AppServices {
   viewChatThreads: (options?: import('./lib/chat-store').ThreadListOptions) => Promise<{ threads: import('./lib/chat-store').ChatThreadApiView[] }>
   viewChatThread: (id: string) => Promise<{ thread: import('./lib/chat-store').ChatThreadApiView; messages: import('./lib/chat-store').ChatMessageApiView[] } | null>
   viewChatHistory: () => Promise<{ threads: import('./lib/chat-store').ChatThreadApiView[] }>
-  viewChatConversation: () => Promise<{ entries: import('./lib/chat-store').ChatConversationEntryApiView[] }>
+  viewChatConversation: () => Promise<{
+    entries: import('./lib/chat-store').ChatConversationEntryApiView[]
+    memoryStartsAfterSeq: number
+    memoryCutAt: number | null
+    memoryCutReason: import('./daemon/chat-memory-window').MemoryCutReason | null
+  }>
   viewSteward: (runtime: { liveCap: number; baselineCap: number; isPaused: boolean }) => Promise<{
     runtimeTuning: {
       acks: Array<{ text: string; timestamp: string; pair: { from: number; to: number } | null }>
@@ -1276,7 +1281,17 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
 
   const viewChatConversation: AppServices['viewChatConversation'] = async () => {
     const { listConversationEntries } = await import('./lib/chat-store')
-    return { entries: await listConversationEntries() }
+    const { readMainMemoryWindow } = await import('./daemon/chat-memory-window')
+    const [entries, memoryWindow] = await Promise.all([
+      listConversationEntries(),
+      readMainMemoryWindow(),
+    ])
+    return {
+      entries,
+      memoryStartsAfterSeq: memoryWindow.startsAfterSeq,
+      memoryCutAt: memoryWindow.cutAt,
+      memoryCutReason: memoryWindow.reason,
+    }
   }
 
   const listKpis: AppServices['listKpis'] = () => defaultListKpis()

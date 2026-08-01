@@ -34,7 +34,7 @@ vi.mock('@/shared/useMarsChat', () => ({
 }))
 vi.mock('@/shared/api', () => ({
   fetchChatThreads: vi.fn().mockResolvedValue([]), fetchChatThread: vi.fn().mockResolvedValue(null),
-  fetchChatConversation: vi.fn().mockResolvedValue([]), fetchChatHistory: vi.fn().mockResolvedValue([]),
+  fetchChatConversation: vi.fn().mockResolvedValue({ entries: [], memoryStartsAfterSeq: 0, memoryCutAt: null, memoryCutReason: null }), fetchChatHistory: vi.fn().mockResolvedValue([]),
   fetchCodexAuthState: vi.fn().mockResolvedValue(null), refreshCodexAuth: vi.fn().mockResolvedValue(null),
   fetchProjectMeta: vi.fn().mockResolvedValue({ vision: null, theme: null }), fetchGlossary: vi.fn().mockResolvedValue([]),
   createChatThread: vi.fn(), createSubjectAndSend, postChatMessage: vi.fn(), uploadAttachment: vi.fn(),

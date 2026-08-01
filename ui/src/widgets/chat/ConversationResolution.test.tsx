@@ -7,6 +7,7 @@ describe('ConversationTimeline resolution', () => {
   it('labels a resolved message without changing its persisted body or position', () => {
     const entry = chatConversationEntrySchema.parse({
       id: 'validation-message',
+      seq: 1,
       threadId: 'subject-1',
       subjectId: 'subject-1',
       subjectTitle: 'Approval needed',
