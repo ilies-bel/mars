@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 
+import type { Cluster } from './db'
 import { startServer } from './index.ts'
 import { makeDaemonStub } from './testDaemonStub.ts'
 
@@ -25,7 +26,7 @@ import { makeDaemonStub } from './testDaemonStub.ts'
 interface ProgressTaskBody {
   id: string
   status: string
-  cluster: 'Queued' | 'In progress' | 'Blocked' | 'Failed'
+  cluster: Cluster
 }
 
 interface ProgressBody {
@@ -107,12 +108,13 @@ const insertProposal = async (
 
 const countBy = (
   tasks: ProgressTaskBody[],
-): Record<'Queued' | 'In progress' | 'Blocked' | 'Failed', number> => {
-  const out: Record<'Queued' | 'In progress' | 'Blocked' | 'Failed', number> = {
+): Record<Cluster, number> => {
+  const out: Record<Cluster, number> = {
     Queued: 0,
     'In progress': 0,
     Blocked: 0,
     Failed: 0,
+    Done: 0,
   }
   for (const t of tasks) out[t.cluster] += 1
   return out
@@ -171,8 +173,7 @@ describe('GET /api/progress — column-view cluster contract', () => {
     expect(counts.Blocked).toBe(0)
     expect(counts.Failed).toBe(0)
 
-    // Every task carries exactly one of the four cluster tags — no
-    // task leaks a granular status into the cluster taxonomy.
+    // This active-column scenario deliberately excludes Done rows, which are tested below.
     for (const t of body.tasks) {
       expect(['Queued', 'In progress', 'Blocked', 'Failed']).toContain(t.cluster)
     }
@@ -246,6 +247,7 @@ describe('GET /api/progress — column-view cluster contract', () => {
     const body = (await res.json()) as ProgressBody
 
     const clusters = new Set(body.tasks.map((t) => t.cluster))
+    // This active-column scenario deliberately excludes Done rows, which are tested below.
     for (const c of clusters) {
       expect(['Queued', 'In progress', 'Blocked', 'Failed']).toContain(c)
     }
