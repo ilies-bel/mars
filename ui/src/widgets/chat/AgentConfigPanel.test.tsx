@@ -11,6 +11,9 @@ import type { ChatConfig } from '@/shared/schemas'
 
 const CONFIG: ChatConfig = {
   model: 'gpt-5.5',
+  retentionMs: 300_000,
+  minimumReusablePrefixTokens: 1024,
+  contextWindowTokens: 200_000,
   systemPrompt: 'You are Mars.',
   systemPromptSource: 'built-in',
   builtinTools: [
@@ -39,6 +42,12 @@ describe('AgentConfigContent', () => {
 
   it('renders the model', () => {
     expect(html).toContain('gpt-5.5')
+  })
+
+  it('renders the provider conversation-memory limits', () => {
+    expect(html).toContain('5 min')
+    expect(html).toContain('1,024 tokens')
+    expect(html).toContain('200,000 tokens')
   })
 
   it('renders the system prompt with its source label', () => {

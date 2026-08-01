@@ -922,6 +922,9 @@ describe('GET /view/chat/config — HTTP route wiring', () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as {
       model: string
+      retentionMs: number
+      minimumReusablePrefixTokens: number
+      contextWindowTokens: number
       systemPrompt: string
       systemPromptSource: string
       builtinTools: Array<{ name: string }>
@@ -929,6 +932,9 @@ describe('GET /view/chat/config — HTTP route wiring', () => {
       mcpServers: Array<{ name: string; status: string }>
     }
     expect(body.model).toBe('gpt-5.5')
+    expect(body.retentionMs).toBe(5 * 60 * 1000)
+    expect(body.minimumReusablePrefixTokens).toBe(1024)
+    expect(body.contextWindowTokens).toBe(200_000)
     expect(body.systemPromptSource).toBe('built-in')
     expect(body.systemPrompt.length).toBeGreaterThan(0)
     expect(body.builtinTools.map((t) => t.name)).toEqual(['shell', 'read_file', 'write_file', 'skill'])

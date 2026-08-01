@@ -49,6 +49,7 @@ import {
 import type { ViewStreamHub } from './view/stream-hub'
 import type { ChatStreamHub } from './chat-stream-hub'
 import { resolveChatSystemPrompt } from './chat-system-prompt'
+import { PROVIDERS, resolveProviderName, type ConversationMemoryFacts } from '../workers/providers'
 import {
   CodexApiError,
   loadCodexAuth,
@@ -634,7 +635,11 @@ export class ChatRunner {
    *   every streamed segment into it (mapped + buffered for resume); when absent
    *   (e.g. a bare `new ChatRunner()` in a unit test), streaming is a no-op.
    */
-  constructor(private readonly chatStreamHub?: ChatStreamHub) {}
+  constructor(
+    private readonly chatStreamHub?: ChatStreamHub,
+    private readonly conversationMemory: ConversationMemoryFacts =
+      PROVIDERS[resolveProviderName()].conversationMemory(resolveCodexOAuthConfig().model),
+  ) {}
 
   /** Returns true when all threads are stalled due to a Codex auth failure. */
   isAuthFailed(): boolean {
@@ -651,19 +656,24 @@ export class ChatRunner {
    */
   async describeConfig(repoRoot: string): Promise<{
     model: string
+    retentionMs: number
+    minimumReusablePrefixTokens: number
+    contextWindowTokens: number
     systemPrompt: string
     systemPromptSource: 'built-in' | 'override'
     builtinTools: Array<{ name: string; description: string }>
     skills: Array<{ name: string; description: string }>
     mcpServers: Array<{ name: string; command: string; status: 'connected' | 'failed'; tools: Array<{ name: string; description: string }> }>
   }> {
+    const model = resolveCodexOAuthConfig().model
     const [resolved, skills, mcpServers] = await Promise.all([
       resolveChatSystemPrompt(repoRoot),
       discoverSkills(repoRoot),
       this.mcp.describe(repoRoot),
     ])
     return {
-      model: resolveCodexOAuthConfig().model,
+      model,
+      ...this.conversationMemory,
       systemPrompt: resolved.prompt,
       systemPromptSource: resolved.source,
       builtinTools: TRIAGE_TOOLS.map((t) => ({ name: t.name, description: t.description })),

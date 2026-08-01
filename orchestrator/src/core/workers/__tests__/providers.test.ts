@@ -3,6 +3,24 @@ import { PROVIDERS, PROVIDER_MODELS } from '../providers'
 import { ASK_USER_DENIED_TOOL, WORKER_CONFIGS, READ_ONLY_DENIED_TOOLS, FIXER_BACKLOG_DENIED_TOOLS } from '../index'
 
 describe('PROVIDERS registry', () => {
+  it('publishes conversation-memory facts for every provider model', () => {
+    for (const provider of Object.values(PROVIDERS)) {
+      for (const model of Object.values(PROVIDER_MODELS[provider.name])) {
+        expect(provider.conversationMemory(model)).toMatchObject({
+          retentionMs: expect.any(Number),
+          minimumReusablePrefixTokens: expect.any(Number),
+          contextWindowTokens: expect.any(Number),
+        })
+      }
+    }
+  })
+
+  it('rejects an unknown model instead of borrowing another provider memory policy', () => {
+    expect(() => PROVIDERS.codex.conversationMemory('claude-sonnet-4-6')).toThrow(
+      "Provider 'codex' has no conversation-memory facts for model 'claude-sonnet-4-6'",
+    )
+  })
+
   it('declares provider-native model ids for every semantic tier', () => {
     expect(PROVIDER_MODELS.codex).toEqual({
       flagship: 'gpt-5.6-sol',

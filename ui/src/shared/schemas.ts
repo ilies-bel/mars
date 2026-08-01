@@ -1227,6 +1227,9 @@ export const chatConfigMcpServerSchema = z.object({
 
 export const chatConfigSchema = z.object({
   model: z.string(),
+  retentionMs: z.number().int().positive(),
+  minimumReusablePrefixTokens: z.number().int().positive(),
+  contextWindowTokens: z.number().int().positive(),
   systemPrompt: z.string(),
   systemPromptSource: z.enum(['built-in', 'override']),
   builtinTools: z.array(chatConfigToolSchema),

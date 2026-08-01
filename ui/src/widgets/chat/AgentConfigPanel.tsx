@@ -37,6 +37,16 @@ export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
     <SectionHeading>Model</SectionHeading>
     <p data-testid="agent-config-model" className="mt-1 font-mono text-[11px] text-foreground">{config.model}</p>
 
+    <SectionHeading>Conversation memory</SectionHeading>
+    <dl data-testid="agent-config-memory" className="mt-1 grid grid-cols-2 gap-x-2 gap-y-1 font-mono text-[10px]">
+      <dt className="text-primary/60">Cache retention</dt>
+      <dd>{Math.round(config.retentionMs / 60_000)} min</dd>
+      <dt className="text-primary/60">Reusable prefix</dt>
+      <dd>{config.minimumReusablePrefixTokens.toLocaleString()} tokens</dd>
+      <dt className="text-primary/60">Context window</dt>
+      <dd>{config.contextWindowTokens.toLocaleString()} tokens</dd>
+    </dl>
+
     <SectionHeading>System prompt</SectionHeading>
     <details className="mt-1">
       <summary className="cursor-pointer font-mono text-[11px] text-foreground hover:text-primary">

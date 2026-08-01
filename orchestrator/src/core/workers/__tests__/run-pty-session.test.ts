@@ -43,6 +43,12 @@ const PTY_TEST_HEADLESS_STUB = {
   readOutput: () => [],
 } as const
 
+const PTY_TEST_CONVERSATION_MEMORY = {
+  retentionMs: 300_000,
+  minimumReusablePrefixTokens: 1024,
+  contextWindowTokens: 200_000,
+} as const
+
 const makeFakeHandle = (): PtyHandle & { _exitListeners: Array<(code: number, signal: number) => void> } => {
   const exitListeners: Array<(code: number, signal: number) => void> = []
   return {
@@ -61,6 +67,7 @@ const makeProvider = (
   doneSignalWait: (sessionId: string, cwd: string, signal: AbortSignal) => Promise<void>,
 ): Provider => ({
   name: 'claude',
+  conversationMemory: () => PTY_TEST_CONVERSATION_MEMORY,
   spawnArgv: ({ model, sessionId }: { model?: string; sessionId?: string } = {}) => [
     'claude',
     ...(model ? ['--model', model] : []),
@@ -257,6 +264,7 @@ describe('runPtySession — no doneSignal (process-exit fallback)', () => {
   it('resolves with exitCode 0 when the pty process exits naturally', async () => {
     const providerNoSignal: Provider = {
       name: 'claude',
+      conversationMemory: () => PTY_TEST_CONVERSATION_MEMORY,
       spawnArgv: () => ['claude'],
       feedPrompt: async () => {},
       headless: PTY_TEST_HEADLESS_STUB,
@@ -530,6 +538,7 @@ describe('runPtySession — provider.prepare hook', () => {
 
     const provider: Provider = {
       name: 'claude',
+      conversationMemory: () => PTY_TEST_CONVERSATION_MEMORY,
       spawnArgv: () => ['claude'],
       feedPrompt: async () => {},
       prepare: prepareSpy,
@@ -562,6 +571,7 @@ describe('runPtySession — provider.prepare hook', () => {
 
     const provider: Provider = {
       name: 'claude',
+      conversationMemory: () => PTY_TEST_CONVERSATION_MEMORY,
       spawnArgv: () => ['claude'],
       feedPrompt: async () => {},
       prepare: prepareSpy,
@@ -588,6 +598,7 @@ describe('runPtySession — provider.prepare hook', () => {
 
     const provider: Provider = {
       name: 'claude',
+      conversationMemory: () => PTY_TEST_CONVERSATION_MEMORY,
       spawnArgv: () => ['claude'],
       feedPrompt: async () => {},
       prepare: prepareSpy,
@@ -746,6 +757,7 @@ describe('runPtySession — readiness gate', () => {
 
     const provider: Provider = {
       name: 'claude',
+      conversationMemory: () => PTY_TEST_CONVERSATION_MEMORY,
       spawnArgv: () => ['claude'],
       feedPrompt: async () => {
         feedPromptCalls.push('fed')
@@ -800,6 +812,7 @@ describe('runPtySession — readiness gate', () => {
 
     const provider: Provider = {
       name: 'claude',
+      conversationMemory: () => PTY_TEST_CONVERSATION_MEMORY,
       spawnArgv: () => ['claude'],
       feedPrompt: async () => {
         feedPromptCalls.push('fed')

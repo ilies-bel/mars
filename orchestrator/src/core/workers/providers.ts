@@ -26,6 +26,16 @@ export interface ProviderModels {
   readonly fast: string
 }
 
+/**
+ * Provider-declared limits that govern whether consecutive conversation
+ * requests can reuse a prefix and how much transcript can fit in one turn.
+ */
+export interface ConversationMemoryFacts {
+  readonly retentionMs: number
+  readonly minimumReusablePrefixTokens: number
+  readonly contextWindowTokens: number
+}
+
 /** Provider-native model ids behind MARS's semantic worker tiers. */
 export const PROVIDER_MODELS: Readonly<Record<ProviderName, ProviderModels>> = {
   claude: {
@@ -44,6 +54,35 @@ export const PROVIDER_MODELS: Readonly<Record<ProviderName, ProviderModels>> = {
     fast: 'gpt-5.6-luna',
   },
 } as const
+
+const conversationMemoryFor = (
+  provider: ProviderName,
+  models: Readonly<Record<string, ConversationMemoryFacts>>,
+): ((model: string) => ConversationMemoryFacts) => (model: string): ConversationMemoryFacts => {
+  const facts = models[model]
+  if (!facts) {
+    throw new Error(`Provider '${provider}' has no conversation-memory facts for model '${model}'`)
+  }
+  return facts
+}
+
+const CLAUDE_CONVERSATION_MEMORY: Readonly<Record<string, ConversationMemoryFacts>> = {
+  'claude-opus-4-7': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
+  'claude-sonnet-4-6': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
+  'claude-haiku-4-5-20251001': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
+}
+
+const GEMINI_CONVERSATION_MEMORY: Readonly<Record<string, ConversationMemoryFacts>> = {
+  'gemini-2.5-pro': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 4096, contextWindowTokens: 1_048_576 },
+  'gemini-2.5-flash': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 1_048_576 },
+}
+
+const CODEX_CONVERSATION_MEMORY: Readonly<Record<string, ConversationMemoryFacts>> = {
+  'gpt-5.5': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
+  'gpt-5.6-sol': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
+  'gpt-5.6-terra': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
+  'gpt-5.6-luna': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
+}
 
 // Runtime options forwarded to HeadlessAdapter.run when the orchestrator
 // dispatches a headless (non-interactive subprocess) invocation. Mirrors
@@ -197,6 +236,7 @@ export type ProviderDoneSignal = StatusFileDoneSignal | PromptScanDoneSignal
 //                  rendered.
 export interface Provider {
   readonly name: ProviderName
+  conversationMemory(model: string): ConversationMemoryFacts
   spawnArgv(opts: SpawnOpts): readonly string[]
   feedPrompt(handle: ProcessHandle, prompt: string): Promise<void>
   readonly doneSignal?: ProviderDoneSignal
@@ -213,6 +253,7 @@ export interface Provider {
 export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
   claude: {
     name: 'claude',
+    conversationMemory: conversationMemoryFor('claude', CLAUDE_CONVERSATION_MEMORY),
     // Argv for interactive (non-headless) claude invocations under the native
     // TTY harness. No `-p` flag — the agent runs in interactive mode and
     // receives the task prompt via feedPrompt below.
@@ -316,6 +357,7 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
   },
   gemini: {
     name: 'gemini',
+    conversationMemory: conversationMemoryFor('gemini', GEMINI_CONVERSATION_MEMORY),
     // Argv for interactive gemini invocations under the native TTY harness.
     // No headless/pipe flag — the agent runs interactively and receives the
     // task prompt via feedPrompt below.
@@ -343,6 +385,7 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
   },
   codex: {
     name: 'codex',
+    conversationMemory: conversationMemoryFor('codex', CODEX_CONVERSATION_MEMORY),
     // Argv for interactive codex invocations under the native TTY harness.
     // No headless/pipe flag — the agent runs interactively and receives the
     // task prompt via feedPrompt below.
