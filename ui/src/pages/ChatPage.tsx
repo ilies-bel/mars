@@ -38,13 +38,14 @@ import {
   fetchChatHistory,
   fetchCodexAuthState,
   fetchProjectMeta,
+  fetchGlossary,
   refreshCodexAuth,
   invokeAction,
   ApiError,
   type AttachmentInfo,
 } from '@/shared/api'
 import { useFocusedProjectId, useFocusedProject } from '@/shared/useFocusedProject'
-import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail } from '@/shared/schemas'
+import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail, GlossaryTerm } from '@/shared/schemas'
 import type { MarsUIMessage } from '@/shared/marsChatTransport'
 import { useMarsChat } from '@/shared/useMarsChat'
 import { chatMessageToUIMessage, transcriptSignature } from '@/shared/chatMessageMapping'
@@ -56,6 +57,7 @@ import {
 } from '@/components/ai-elements/conversation'
 import { Message, MessageContent } from '@/components/ai-elements/message'
 import { Response } from '@/components/ai-elements/response'
+import type { ResponseProps } from '@/components/ai-elements/response'
 import { Reasoning, ReasoningTrigger, ReasoningContent } from '@/components/ai-elements/reasoning'
 import { ToolGroup, type ToolGroupEntryData } from '@/components/ai-elements/tool'
 // Loader removed — ThinkingIndicator replaces it in ChatConversation
@@ -101,6 +103,8 @@ import { NoticeMessage } from '@/widgets/chat/NoticeMessage'
 import type { DisplayRow } from '@/widgets/chat/OpeningNextMoves'
 import { useTasks } from '@/hooks/useTasks'
 import { SkeletonList } from '@/components/Skeleton'
+import { GlossaryHighlighter } from '@/components/glossary/GlossaryHighlighter'
+import { highlightGlossary } from '@/shared/highlightGlossary'
 
 // ---------------------------------------------------------------------------
 // Welcome state: quick-action chips and slash palette
@@ -635,14 +639,97 @@ export const ToolActivityGroup = ({
   />
 )
 
+/** Markdown response that highlights glossary text without touching code or links. */
+const HighlightedResponse = ({ text, terms }: { text: string; terms: GlossaryTerm[] }) => {
+  const rehypePlugins = useMemo(
+    () => [
+      () => (tree: {
+        children?: Array<{
+          type: string
+          value?: string
+          tagName?: string
+          children?: unknown[]
+        }>
+      }) => {
+        const highlightChildren = (children: Array<{
+          type: string
+          value?: string
+          tagName?: string
+          children?: unknown[]
+        }>, excluded = false) => {
+          return children.flatMap((child) => {
+            if (child.type === 'text' && child.value && !excluded) {
+              return highlightGlossary(child.value, terms).map((segment) =>
+                segment.kind === 'text'
+                  ? { type: 'text', value: segment.value }
+                  : {
+                      type: 'element',
+                      tagName: 'span',
+                      properties: {
+                        className: [
+                          'glossary-term-highlight',
+                          'rounded-sm',
+                          'bg-primary/10',
+                          'px-0.5',
+                          'text-foreground',
+                          'underline',
+                          'decoration-primary/30',
+                          'decoration-dotted',
+                          'underline-offset-2',
+                          'transition-colors',
+                          'hover:bg-primary/20',
+                        ],
+                        'data-term': segment.term.term,
+                        title: `${segment.term.term}: ${segment.term.definition}`,
+                      },
+                      children: [{ type: 'text', value: segment.value }],
+                    },
+              )
+            }
+
+            if (Array.isArray(child.children)) {
+              child.children = highlightChildren(
+                child.children as Array<{
+                  type: string
+                  value?: string
+                  tagName?: string
+                  children?: unknown[]
+                }>,
+                excluded || child.tagName === 'a' || child.tagName === 'code' || child.tagName === 'pre',
+              )
+            }
+            return child
+          })
+        }
+
+        if (tree.children) tree.children = highlightChildren(tree.children)
+      },
+    ] as NonNullable<ResponseProps['rehypePlugins']>,
+    [terms],
+  )
+
+  return (
+    <Response
+      key={terms.map((term) => `${term.term}\u0000${term.definition}\u0000${term.surfaceForms.join('\u0000')}`).join('\u0001')}
+      rehypePlugins={rehypePlugins}
+    >
+      {linkifyTaskIds(text)}
+    </Response>
+  )
+}
+
 /** Render one `UIMessage` part as its AI Element. Returns null for inert parts. */
 const renderPart = (
   part: UIPart,
   key: number,
   onRetry: () => void,
+  terms: GlossaryTerm[],
+  isUser: boolean,
 ): ReactNode => {
   if (part.type === 'text') {
-    return <Response key={key}>{linkifyTaskIds(part.text)}</Response>
+    return isUser
+      ? <GlossaryHighlighter key={key} text={part.text} terms={terms} />
+      : <HighlightedResponse key={key} text={part.text} terms={terms} />
   }
   if (part.type === 'reasoning') {
     return (
@@ -706,6 +793,7 @@ export const MessageView = ({
   message,
   onRetry,
   onFeedbackChange,
+  terms = [],
 }: {
   message: MarsUIMessage
   /** Called when the user clicks "Try again" on an interrupted response; directly
@@ -713,6 +801,7 @@ export const MessageView = ({
   onRetry: () => void
   /** Called after a feedback write so the parent can invalidate its query cache. */
   onFeedbackChange?: () => void
+  terms?: GlossaryTerm[]
 }) => {
   const isUser = message.role === 'user'
   const parts = message.parts
@@ -730,7 +819,7 @@ export const MessageView = ({
   if (isAlertOnly) {
     return (
       <div className="group flex flex-col gap-2 px-1 py-2" data-message-role={message.role}>
-        {parts.map((p, i) => renderPart(p, i, onRetry))}
+        {parts.map((p, i) => renderPart(p, i, onRetry, terms, false))}
         {!isUser && (
           <FeedbackControls
             messageId={message.id}
@@ -754,7 +843,7 @@ export const MessageView = ({
           variant={isUser ? 'contained' : 'flat'}
           className={!isUser ? 'border border-primary/20 bg-card px-3 py-2' : undefined}
         >
-          {parts.map((p, i) => renderPart(p, i, onRetry))}
+          {parts.map((p, i) => renderPart(p, i, onRetry, terms, isUser))}
           {!isUser && (
             <FeedbackControls
               messageId={message.id}
@@ -921,7 +1010,7 @@ export const ThinkingIndicator = () => (
  *
  * A blinking cursor is appended at the bottom while the buffer is not yet done.
  */
-export const LiveAssistantBubble = ({ buffer }: { buffer: LiveBuffer }): ReactNode => (
+export const LiveAssistantBubble = ({ buffer, terms = [] }: { buffer: LiveBuffer; terms?: GlossaryTerm[] }): ReactNode => (
   <Message from="assistant" data-message-role="assistant">
     <MessageContent variant="flat" className="border border-primary/20 bg-card px-3 py-2">
       {buffer.segments.length === 0 && !buffer.done ? (
@@ -930,7 +1019,7 @@ export const LiveAssistantBubble = ({ buffer }: { buffer: LiveBuffer }): ReactNo
       ) : (
         buffer.segments.map((seg, i) => {
           if (seg.type === 'text') {
-            return <Response key={i}>{linkifyTaskIds(seg.text)}</Response>
+            return <HighlightedResponse key={i} text={seg.text} terms={terms} />
           }
           if (seg.type === 'thinking') {
             return <ThinkingBlock key={i} text={seg.text} isStreaming={!buffer.done} />
@@ -979,6 +1068,7 @@ interface ChatConversationProps {
   /** Called whenever the live buffer for this thread changes. Used to lift
    * the buffer up to ChatPage so ContextRail can render the activity panel. */
   onLiveBufferChange?: (buf: LiveBuffer | null) => void
+  glossaryTerms: GlossaryTerm[]
 }
 
 /**
@@ -995,6 +1085,7 @@ const ChatConversation = ({
   onPrefillConsumed,
   onInsertPrompt,
   onLiveBufferChange,
+  glossaryTerms,
 }: ChatConversationProps) => {
   const qc = useQueryClient()
 
@@ -1197,13 +1288,14 @@ const ChatConversation = ({
             <>
               {messages.map((m) =>
                 m.id === liveMessageId && liveBuffer != null ? (
-                  <LiveAssistantBubble key={m.id} buffer={liveBuffer} />
+                  <LiveAssistantBubble key={m.id} buffer={liveBuffer} terms={glossaryTerms} />
                 ) : (
                   <MessageView
                     key={m.id}
                     message={m}
                     onRetry={handleRetry}
                     onFeedbackChange={handleFeedbackChange}
+                    terms={glossaryTerms}
                   />
                 )
               )}
@@ -2375,6 +2467,7 @@ export const ChatPage = () => {
   const rawProjectId = useFocusedProjectId()
   const projectId = rawProjectId ?? undefined
   const { projects, setFocusedProjectId } = useFocusedProject()
+  const { data: glossary } = useQuery({ queryKey: ['glossary'], queryFn: fetchGlossary })
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => readAqStateFromUrl().thread)
   // Projection-Thread selection (an action-queue item id) plus the sidebar
   // filter state — all three restore from the chat URL hash on F5.
@@ -2904,6 +2997,7 @@ export const ChatPage = () => {
                     onPrefillConsumed={() => setPrefill(undefined)}
                     onInsertPrompt={handleInsertPrompt}
                     onLiveBufferChange={setActiveLiveBuffer}
+                    glossaryTerms={glossary ?? []}
                   />
                 </div>
               )}
