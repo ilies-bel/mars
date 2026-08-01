@@ -568,16 +568,12 @@ const ChatResponseError = ({ onTryAgain, message }: { onTryAgain: () => void; me
 )
 
 /** Subtle usage footer: duration · tokens · cost, from message metadata. */
-const ResultFooter = ({ usage }: { usage: NonNullable<MarsUIMessage['metadata']>['usage'] }) => {
-  if (!usage) return null
-  const { durationMs, inputTokens, outputTokens, cost } = usage
+const ResultFooter = ({ usage, turnTokens }: { usage: NonNullable<MarsUIMessage['metadata']>['usage']; turnTokens: number }) => {
+  const { durationMs, cost } = usage ?? {}
   const parts: string[] = []
   if (durationMs != null) parts.push(formatDuration(durationMs))
-  if (inputTokens != null || outputTokens != null) {
-    parts.push(`${(inputTokens ?? 0) + (outputTokens ?? 0)} tokens`)
-  }
+  parts.push(`${turnTokens} tokens`)
   if (cost != null && cost > 0) parts.push(`$${cost.toFixed(4)}`)
-  if (parts.length === 0) return null
   return <div className="mt-2 font-mono text-[10px] text-muted-foreground">{parts.join(' · ')}</div>
 }
 
@@ -807,6 +803,7 @@ export const MessageView = ({
   const parts = message.parts
   const feedback = message.metadata?.feedback ?? null
   const usage = message.metadata?.usage
+  const turnTokens = message.metadata?.turnTokens ?? 0
   const handleFeedbackChange = useCallback(() => {
     onFeedbackChange?.()
   }, [onFeedbackChange])
@@ -827,6 +824,7 @@ export const MessageView = ({
             onFeedbackChange={handleFeedbackChange}
           />
         )}
+        <ResultFooter usage={usage} turnTokens={turnTokens} />
       </div>
     )
   }
@@ -852,7 +850,7 @@ export const MessageView = ({
             />
           )}
         </MessageContent>
-        <ResultFooter usage={usage} />
+        <ResultFooter usage={usage} turnTokens={turnTokens} />
       </div>
     </Message>
   )

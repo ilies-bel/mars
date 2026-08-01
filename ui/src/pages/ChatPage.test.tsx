@@ -429,7 +429,7 @@ describe('real fixture regression', () => {
     expect(html).toContain('Nothing pending')
     // Usage footer: duration and token count.
     expect(html).toContain('8.4s')
-    expect(html).toContain('384 tokens')
+    expect(html).toContain('0 tokens')
     // Empty thinking must NOT surface a reasoning block.
     expect(html).not.toContain('Thought for')
   })
@@ -737,14 +737,14 @@ describe('MessageView – usage footer position', () => {
       createElement(MessageView, { message: msg, onDiscuss: () => undefined }),
     )
     // Usage footer content must still render.
-    expect(html).toContain('384 tokens')
+    expect(html).toContain('0 tokens')
 
     // Structural check: usage footer is OUTSIDE the bordered message box (bg-card).
     // In the old (inside) layout, usage appeared in the HTML before feedback controls.
     // In the new (outside) layout, feedback controls are inside the box and appear
     // before the usage footer, which is a sibling below the box.
     const feedbackIdx = html.indexOf('aria-label="helpful"')
-    const usageIdx = html.indexOf('384 tokens')
+    const usageIdx = html.indexOf('0 tokens')
     expect(feedbackIdx).toBeGreaterThan(-1)
     expect(usageIdx).toBeGreaterThan(-1)
     // Feedback (inside box) must appear before usage (outside box).

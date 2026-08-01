@@ -78,17 +78,25 @@ describe('ChunkMapper.push', () => {
     expect(out[1]).toEqual({
       type: 'finish',
       finishReason: 'stop',
-      messageMetadata: { usage: { durationMs: 12, inputTokens: 5, outputTokens: 3, cacheReadTokens: 1, cost: 0.01 } },
+      messageMetadata: { turnTokens: 8, usage: { durationMs: 12, inputTokens: 5, outputTokens: 3, cacheReadTokens: 1, cost: 0.01 } },
     })
     expect(m.isTerminated()).toBe(true)
     // Nothing streams after termination.
     expect(m.push({ type: 'text', text: 'late' })).toEqual([])
   })
 
+  it('includes the provider turn total in terminal metadata', () => {
+    const out = new ChunkMapper().push({
+      type: 'result', durationMs: null, inputTokens: 12, outputTokens: 8, cacheReadTokens: null, cost: null,
+    })
+
+    expect(out[1]).toMatchObject({ type: 'finish', messageMetadata: { turnTokens: 20 } })
+  })
+
   it('maps error to an error chunk + finish(error) and terminates', () => {
     const m = new ChunkMapper()
     const out = m.push({ type: 'error', message: 'nope' })
-    expect(out).toEqual([{ type: 'error', errorText: 'nope' }, { type: 'finish', finishReason: 'error' }])
+    expect(out).toEqual([{ type: 'error', errorText: 'nope' }, { type: 'finish', finishReason: 'error', messageMetadata: { turnTokens: 0 } }])
     expect(m.isTerminated()).toBe(true)
   })
 
@@ -104,7 +112,7 @@ describe('ChunkMapper.close', () => {
     m.push({ type: 'text', text: 'partial' })
     const out = m.close()
     expect(types(out)).toEqual(['text-end', 'finish'])
-    expect(out[1]).toEqual({ type: 'finish', finishReason: 'stop' })
+    expect(out[1]).toEqual({ type: 'finish', finishReason: 'stop', messageMetadata: { turnTokens: 0 } })
   })
 
   it('is a no-op once a result already terminated the run', () => {

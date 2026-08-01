@@ -27,6 +27,8 @@ import type { ChatFeedback, ChatSegmentAlert, ChatSegmentAttachment } from './sc
 
 /** Usage stats carried on the terminal `finish` chunk's metadata. */
 export interface MarsMessageMetadata {
+  /** Provider input + output tokens spent to produce this turn. */
+  turnTokens: number
   usage?: {
     durationMs: number | null
     inputTokens: number | null

@@ -20,7 +20,9 @@ import type { ChatSegment } from './chat-runner'
 
 /** Usage stats carried on the terminal `finish` chunk's `messageMetadata`. */
 export interface UiMessageMetadata {
-  usage: {
+  /** Provider input + output tokens spent to produce this message. */
+  turnTokens: number
+  usage?: {
     durationMs: number | null
     inputTokens: number | null
     outputTokens: number | null
@@ -139,6 +141,7 @@ export class ChunkMapper {
           type: 'finish',
           finishReason: 'stop',
           messageMetadata: {
+            turnTokens: Math.max(0, seg.inputTokens ?? 0) + Math.max(0, seg.outputTokens ?? 0),
             usage: {
               durationMs: seg.durationMs,
               inputTokens: seg.inputTokens,
@@ -154,7 +157,7 @@ export class ChunkMapper {
       case 'error': {
         this.closeText(out)
         out.push({ type: 'error', errorText: seg.message })
-        out.push({ type: 'finish', finishReason: 'error' })
+        out.push({ type: 'finish', finishReason: 'error', messageMetadata: { turnTokens: 0 } })
         this.terminated = true
         break
       }
@@ -174,7 +177,7 @@ export class ChunkMapper {
     if (this.terminated) return []
     const out: UiMessageChunk[] = []
     this.closeText(out)
-    out.push({ type: 'finish', finishReason: reason })
+    out.push({ type: 'finish', finishReason: reason, messageMetadata: { turnTokens: 0 } })
     this.terminated = true
     return out
   }

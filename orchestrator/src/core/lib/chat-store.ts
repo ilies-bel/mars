@@ -142,6 +142,8 @@ export interface ChatMessageApiView {
   threadId: string
   role: MessageRole
   segments: unknown[]
+  /** Provider input + output tokens spent to produce this message. */
+  turnTokens: number
   createdAt: string
   feedback: { rating: FeedbackRating; note: string | null } | null
 }
@@ -247,11 +249,18 @@ export const toMessageApiView = (
     }
     return s
   })
+  const lastResult = [...raw].reverse().find((seg): seg is Record<string, unknown> =>
+    typeof seg === 'object' && seg !== null && !Array.isArray(seg) && (seg as Record<string, unknown>)['type'] === 'result',
+  )
   return {
     id: m.id,
     threadId: m.thread_id,
     role: m.role,
     segments,
+    turnTokens: lastResult
+      ? Math.max(0, typeof lastResult['inputTokens'] === 'number' ? lastResult['inputTokens'] : 0)
+        + Math.max(0, typeof lastResult['outputTokens'] === 'number' ? lastResult['outputTokens'] : 0)
+      : 0,
     createdAt: new Date(m.created_at).toISOString(),
     feedback: feedback ?? null,
   }

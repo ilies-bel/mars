@@ -122,7 +122,7 @@ export function chatMessageToUIMessage(msg: ChatMessage): MarsUIMessage {
     id: msg.id,
     role: msg.role,
     parts,
-    metadata: { usage, feedback: msg.feedback ?? null },
+    metadata: { turnTokens: msg.turnTokens, usage, feedback: msg.feedback ?? null },
   }
 }
 

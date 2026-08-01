@@ -401,6 +401,29 @@ describe('toMessageApiView — segment shape contract', () => {
     expect(view.segments).toEqual([runnerSeg])
   })
 
+  it('exposes the provider input and output total for each message', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const assistant = await m.appendMessage(thread.id, 'assistant', '', [
+      { type: 'result', durationMs: null, inputTokens: 12, outputTokens: 8, cacheReadTokens: null, cost: null },
+    ])
+    const legacy = await m.appendMessage(thread.id, 'user', 'older message')
+
+    expect(m.toMessageApiView(assistant).turnTokens).toBe(20)
+    expect(m.toMessageApiView(legacy).turnTokens).toBe(0)
+  })
+
+  it('uses the final result segment and never returns negative turn tokens', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const message = await m.appendMessage(thread.id, 'assistant', '', [
+      { type: 'result', durationMs: null, inputTokens: 80, outputTokens: 20, cacheReadTokens: null, cost: null },
+      { type: 'result', durationMs: null, inputTokens: -5, outputTokens: 3, cacheReadTokens: null, cost: null },
+    ])
+
+    expect(m.toMessageApiView(message).turnTokens).toBe(3)
+  })
+
   it('returns user message with text segment so content appears in transcript', async () => {
     const m = await loadModule(repo)
     const thread = await m.createThread()

@@ -1079,6 +1079,8 @@ export const chatMessageSchema = z.object({
       })
     ),
   createdAt: z.string(),
+  /** Provider input + output tokens spent to produce this turn. */
+  turnTokens: z.number().default(0),
   /** Thumbs-up / thumbs-down feedback for assistant messages; null when not rated. */
   feedback: chatFeedbackSchema.nullable().optional().default(null),
 })
