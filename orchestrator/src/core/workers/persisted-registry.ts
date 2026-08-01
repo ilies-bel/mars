@@ -18,7 +18,7 @@ import {
   type Worker,
   type WorkerRuntime,
 } from './index'
-import type { ProviderName } from './providers'
+import type { ProviderName } from './provider-types'
 import { PROVIDERS } from './providers'
 
 // A Worker declaration as stored in the registry file. Same shape as

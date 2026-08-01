@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { PROVIDERS, PROVIDER_MODELS } from '../providers'
+import { PROVIDERS } from '../providers'
+import { PROVIDER_MODELS } from '../provider-types'
 import { ASK_USER_DENIED_TOOL, WORKER_CONFIGS, READ_ONLY_DENIED_TOOLS, FIXER_BACKLOG_DENIED_TOOLS } from '../index'
 
 describe('PROVIDERS registry', () => {

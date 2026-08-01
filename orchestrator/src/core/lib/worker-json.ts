@@ -1,5 +1,6 @@
 import { extractLastStreamText } from './claude-stream'
-import { PROVIDERS, type ProviderName } from '../workers/providers'
+import { PROVIDERS } from '../workers/providers'
+import type { ProviderName } from '../workers/provider-types'
 
 const extractJsonObject = (raw: string): string | null => {
   const start = raw.indexOf('{')

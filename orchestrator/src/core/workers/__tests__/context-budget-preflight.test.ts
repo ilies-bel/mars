@@ -23,10 +23,9 @@ import {
 } from '..'
 import {
   PROVIDERS,
-  PROVIDER_MODELS,
   reportsContextOccupancy,
-  type HeadlessRunOpts,
 } from '../providers'
+import { PROVIDER_MODELS, type HeadlessRunOpts } from '../provider-types'
 import type { RunClaudeResult } from '../../lib/git/claude'
 
 const workerNames = Object.keys(WORKER_CONFIGS) as WorkerName[]

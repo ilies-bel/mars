@@ -23,8 +23,8 @@ import { loadDaemonConfig } from '../../core/daemon/config'
 import { resolveCodexAuthFilePath } from '../../core/daemon/codex-api'
 import {
   resolveProviderName,
-  type ProviderName,
 } from '../../core/workers/providers'
+import type { ProviderName } from '../../core/workers/provider-types'
 
 // ---------------------------------------------------------------------------
 // Public types (exported for tests)

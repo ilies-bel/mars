@@ -27,7 +27,7 @@
 
 import { isAbsolute, join } from 'node:path'
 import { FALLBACK_CLAUDE_PATH_DIRS, isExecutableFile } from '../lib/git/internal'
-import type { ProviderName } from './providers'
+import type { ProviderName } from './provider-types'
 
 /** Env var that pins each provider's binary path. */
 export const PROVIDER_BIN_ENV: Readonly<Record<ProviderName, string>> = {

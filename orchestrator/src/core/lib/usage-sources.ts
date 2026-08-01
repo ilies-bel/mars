@@ -17,7 +17,7 @@ import { join } from 'node:path'
 import type { ClaudeEvent } from './claude-stream'
 import { emptyUsageTotals, summarizeUsage, summarizeUsageForSemantics } from './claude-usage'
 import type { UsageTotals, ProviderUsageSemantics } from './claude-usage'
-import type { ProviderName } from '../workers/providers'
+import type { ProviderName } from '../workers/provider-types'
 
 export interface UsageSourceContext {
   /** In-memory conversation events. Non-empty for any headless run. */

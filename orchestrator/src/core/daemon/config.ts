@@ -2,7 +2,7 @@ import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, wr
 import { dirname, resolve } from 'node:path'
 import { z } from 'zod'
 import { resolveContext } from '../context'
-import type { ProviderName } from '../workers/providers'
+import type { ProviderName } from '../workers/provider-types'
 
 /** Three-position autonomy axis for each operator lever. */
 export const AUTONOMY_LEVELS = ['off', 'ask', 'tell'] as const

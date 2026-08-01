@@ -57,7 +57,8 @@ import {
   readMainMemoryWindow,
   selectMemoryCut,
 } from './chat-memory-window'
-import { PROVIDERS, resolveProviderName, type ConversationMemoryFacts } from '../workers/providers'
+import { PROVIDERS, resolveProviderName } from '../workers/providers'
+import type { ConversationMemoryFacts } from '../workers/provider-types'
 import {
   CodexApiError,
   loadCodexAuth,

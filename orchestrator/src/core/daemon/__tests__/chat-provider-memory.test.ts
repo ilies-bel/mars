@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ConversationMemoryFacts } from '../../workers/providers'
+import type { ConversationMemoryFacts } from '../../workers/provider-types'
 import { ChatRunner } from '../chat-runner'
 
 vi.mock('../chat-system-prompt', () => ({

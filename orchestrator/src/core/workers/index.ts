@@ -25,10 +25,9 @@ import {
   type RunClaudeResult,
 } from '../lib/git/claude'
 import type { ClaudeEvent } from '../lib/claude-stream'
-import type { ProviderModelTier, ProviderName } from './providers'
+import { PROVIDER_MODELS, type ProviderModelTier, type ProviderName } from './provider-types'
 import {
   PROVIDERS,
-  PROVIDER_MODELS,
   resolveProviderName,
   reportsContextOccupancy,
 } from './providers'

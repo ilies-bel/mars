@@ -17,7 +17,7 @@ import {
   type RunClaudeResult,
 } from '../../lib/git/claude'
 import type { ClaudeEvent } from '../../lib/claude-stream'
-import type { HeadlessAdapter, HeadlessRunOpts } from '../providers'
+import type { HeadlessAdapter, HeadlessRunOpts } from '../provider-types'
 import { providerBinPath } from '../provider-bin'
 
 const isObject = (v: unknown): v is Record<string, unknown> =>

@@ -8,7 +8,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawnPty } from '../lib/pty/spawn'
-import type { Provider } from './providers'
+import type { Provider } from './provider-types'
 import { buildWorkerEnv } from '../lib/git/claude'
 import type { ClaudeEffort, ClaudePermissionMode, RunClaudeResult } from '../lib/git/claude'
 import type { ClaudeEvent } from '../lib/claude-stream'

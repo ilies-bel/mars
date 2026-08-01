@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import pathMod from 'node:path'
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 import type { PtyHandle } from '../../lib/pty/spawn'
-import type { Provider } from '../providers'
+import type { Provider } from '../provider-types'
 
 // ---------------------------------------------------------------------------
 // Module-level stubs. vi.mock is hoisted; the factories must be self-contained.

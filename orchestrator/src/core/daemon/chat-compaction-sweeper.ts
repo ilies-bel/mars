@@ -24,7 +24,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { openDb } from '../lib/db.js'
-import { PROVIDER_MODELS } from '../workers/providers.js'
+import { PROVIDER_MODELS } from '../workers/provider-types.js'
 import {
   collectStructuredChatRefs,
   type ChatMessage,
