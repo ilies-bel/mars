@@ -22,7 +22,7 @@ import type { InProcessOptions } from '../test-adapter'
 import type { DomainTaskStore } from '../../core/store/task-store'
 import type { OrchestratorContext } from '../../core/context'
 import { rpcRegistry, dispatchRpc } from '../../core/daemon/rpc/registry'
-import { makeSem } from '../../core/daemon/server'
+import { makeSem } from '../../core/daemon/semaphore'
 import type { DaemonDeps } from '../../core/daemon/rpc/types'
 import type { TaskFlightTracker } from '../../core/daemon/task-flight-tracker'
 

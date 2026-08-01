@@ -7,7 +7,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import { acquire, makeSem, release } from '../server'
+import { acquire, makeSem, release } from '../semaphore'
 
 const execFileAsync = promisify(execFile)
 

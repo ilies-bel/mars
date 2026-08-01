@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
-import { makeSem } from '../../core/daemon/server.js'
+import { makeSem } from '../../core/daemon/semaphore.js'
 import {
   startStewardRuntimeTune,
   decideCapHold,

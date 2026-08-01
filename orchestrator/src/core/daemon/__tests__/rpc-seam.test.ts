@@ -16,7 +16,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { rpcRegistry, dispatchRpc, buildRpcRegistry } from '../rpc/registry'
 import { allRpcHandlers } from '../rpc/handlers'
-import { makeSem } from '../server'
+import { makeSem } from '../semaphore'
 import { createPauseController } from '../pause-state'
 import type { PauseController } from '../pause-state'
 import type { DaemonDeps } from '../rpc/types'

@@ -17,7 +17,7 @@
 import { existsSync, unlinkSync } from 'node:fs'
 import { DAEMON_KILLED_SIGNATURE } from '../../lib/retry-budget'
 import { applyControlLevers, loadDaemonConfig } from '../config'
-import { setSemLimit } from '../server'
+import { setSemLimit } from '../semaphore'
 import { setInstallSemCap } from '../../lib/worktree-install'
 import { updateTask, getTask, listBlockers } from '../../queue'
 import { Arc } from '../../arc'

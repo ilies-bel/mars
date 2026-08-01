@@ -13,7 +13,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { rpcRegistry, dispatchRpc } from '../rpc/registry'
-import { makeSem } from '../server'
+import { makeSem } from '../semaphore'
 import type { DaemonDeps } from '../rpc/types'
 import type { TaskFlightTracker } from '../task-flight-tracker'
 

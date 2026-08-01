@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { acquire, makeSem, release, setSemLimit } from '../server'
+import { acquire, makeSem, release, setSemLimit } from '../semaphore'
 
 describe('setSemLimit', () => {
   it('re-drives queued dispatch when a cap increase creates capacity without semaphore waiters', async () => {

@@ -3,8 +3,7 @@ import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { platform } from 'node:os'
 import { promisify } from 'node:util'
-import type { Semaphore } from '../../core/daemon/server.js'
-import { setSemLimit } from '../../core/daemon/server.js'
+import { setSemLimit, type Semaphore } from '../../core/daemon/semaphore.js'
 import {
   postConversationNotice,
   type ConversationNoticeInput,

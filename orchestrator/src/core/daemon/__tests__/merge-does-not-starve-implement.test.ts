@@ -17,7 +17,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { makeSem, acquire, release } from '../server'
+import { makeSem, acquire, release } from '../semaphore'
 import { createTaskFlightTracker } from '../task-flight-tracker'
 
 const IMPLEMENT_CAP = 3

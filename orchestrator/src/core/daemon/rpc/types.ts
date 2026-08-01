@@ -35,7 +35,7 @@ import type { RunInitOptions, RunInitResult } from '../../../workflows/init-work
 import type { DaemonRequest, DaemonResponse, DaemonStatusPayload } from '../protocol'
 import type { TaskFlightTracker } from '../task-flight-tracker'
 import type { DispatchPauseState, PauseReason } from '../pause-state'
-import type { Semaphore } from '../server'
+import type { Semaphore } from '../semaphore'
 import type { ContinueResult } from '../continue-task'
 import type {
   DropTaskResult,
