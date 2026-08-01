@@ -11,14 +11,26 @@ import type { ClaudeEvent } from '../../lib/claude-stream'
 // implementation. Both resolveClaudeBin and runSubprocessStreaming are
 // included so the spy can confirm claude's resolver is never touched by
 // the codex adapter.
-vi.mock('../../lib/git/claude', () => ({
+// Spread importOriginal rather than listing exports by hand: the adapter also
+// pulls pure helpers (isBlankPrompt, emptyPromptResult) from this module, and
+// a hand-written export list silently turns any newly-imported helper into
+// `undefined` at call time.
+vi.mock('../../lib/git/claude', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/git/claude')>()),
   runSubprocessStreaming: vi.fn(),
   buildWorkerEnv: vi.fn(() => ({})),
   resolveClaudeBin: vi.fn(),
 }))
 
-import { parseCodexEventLine, readCodexOutput, codexHeadless } from '../providers/codex-headless'
+import {
+  parseCodexEventLine,
+  readCodexOutput,
+  codexHeadless,
+  stripBenignCodexStderr,
+} from '../providers/codex-headless'
 import { runSubprocessStreaming, resolveClaudeBin } from '../../lib/git/claude'
+import { computeFailureSignature } from '../../lib/failure-signature'
+import { extractLastStreamText } from '../../lib/claude-stream'
 
 // ---------------------------------------------------------------------------
 // parseCodexEventLine — pure normalisation helper
@@ -346,13 +358,195 @@ describe('codexHeadless.run — (d) null signals', () => {
 // ---------------------------------------------------------------------------
 
 describe('codexHeadless capabilities', () => {
-  it("exposes usageSemantics: 'cumulative' and no quota-rejection or session-id signals", () => {
+  it("exposes usageSemantics: 'cumulative', a quota-rejection signal, and no session id", () => {
     const { capabilities } = codexHeadless
     // Codex reports usage ONCE, on turn.completed, as total spend for the
     // turn. Declaring it 'cumulative' is what stops the orchestrator reading
     // that number as context occupancy.
     expect(capabilities.usageSemantics).toBe('cumulative')
-    expect(capabilities.quotaRejected).toBe(false)
+    // Codex DOES report rate/spend rejections — as an error/turn.failed pair
+    // on stdout. The adapter recovers them into RunClaudeResult.quotaRejected.
+    expect(capabilities.quotaRejected).toBe(true)
     expect(capabilities.sessionId).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Regression: provider refusal must not vanish.
+//
+// Incident: codex hit its ChatGPT usage limit and emitted
+//   {"type":"error","message":"You've hit your usage limit. … try again at …"}
+//   {"type":"turn.failed","error":{"message":"…"}}
+// on STDOUT, exiting 1 with nothing on stderr but the benign
+// "Reading additional input from stdin..." notice it prints on every run whose
+// stdin is not a TTY. The adapter dropped both lines, so `conversation` was
+// empty and `quotaRejected` was hardcoded null — the task failed as
+// `code/unclassified` with the stdin notice as its only evidence and churned
+// in a 30-second requeue loop.
+// ---------------------------------------------------------------------------
+
+describe('parseCodexEventLine — provider refusal events', () => {
+  it('maps a top-level error event to an error result carrying the message', () => {
+    const ev = parseCodexEventLine(
+      JSON.stringify({ type: 'error', message: "You've hit your usage limit." }),
+    )
+    expect(ev?.type).toBe('result')
+    expect((ev as unknown as { is_error: boolean }).is_error).toBe(true)
+    expect((ev as unknown as { result: string }).result).toBe("You've hit your usage limit.")
+  })
+
+  it('maps turn.failed to an error result, unwrapping the nested error.message', () => {
+    const ev = parseCodexEventLine(
+      JSON.stringify({ type: 'turn.failed', error: { message: 'model refused the request' } }),
+    )
+    expect(ev?.type).toBe('result')
+    expect((ev as unknown as { is_error: boolean }).is_error).toBe(true)
+    expect((ev as unknown as { result: string }).result).toBe('model refused the request')
+  })
+
+  it('drops a refusal envelope that carries no message text', () => {
+    expect(parseCodexEventLine(JSON.stringify({ type: 'turn.failed' }))).toBeNull()
+  })
+})
+
+describe('codexHeadless.run — quota rejection is surfaced, not swallowed', () => {
+  const QUOTA_MESSAGE =
+    "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 6th, 2026 11:58 PM."
+
+  const mockQuotaRun = (): void => {
+    vi.mocked(runSubprocessStreaming).mockImplementation(
+      async (
+        _cmd: string,
+        _args: readonly string[],
+        _cwd: string,
+        onLine?: (event: { stream: 'stdout' | 'stderr'; line: string }) => void | Promise<void>,
+      ) => {
+        if (onLine) {
+          await onLine({ stream: 'stdout', line: JSON.stringify({ type: 'thread.started', thread_id: 't' }) })
+          await onLine({ stream: 'stdout', line: JSON.stringify({ type: 'turn.started' }) })
+          await onLine({ stream: 'stdout', line: JSON.stringify({ type: 'error', message: QUOTA_MESSAGE }) })
+          await onLine({ stream: 'stdout', line: JSON.stringify({ type: 'turn.failed', error: { message: QUOTA_MESSAGE } }) })
+        }
+        return {
+          exitCode: 1,
+          stdout: '',
+          // Exactly what codex leaves on stderr for this failure.
+          stderr: 'Reading additional input from stdin...\n',
+        }
+      },
+    )
+  }
+
+  it('returns a non-null quotaRejected sentinel so the code step re-queues instead of failing', async () => {
+    mockQuotaRun()
+    const result = await codexHeadless.run('task', { cwd: '/tmp', model: 'gpt-5.6-sol' })
+
+    expect(result.exitCode).toBe(1)
+    expect(result.quotaRejected).not.toBeNull()
+  })
+
+  it('parses the reset point out of codex prose into a Unix-second timestamp', async () => {
+    mockQuotaRun()
+    const result = await codexHeadless.run('task', { cwd: '/tmp', model: 'gpt-5.6-sol' })
+
+    const resetsAt = result.quotaRejected?.resetsAt ?? 0
+    expect(resetsAt).toBeGreaterThan(0)
+    expect(new Date(resetsAt * 1000).getUTCFullYear()).toBe(2026)
+  })
+
+  it('keeps the refusal text in the conversation so the failure is diagnosable', async () => {
+    mockQuotaRun()
+    const result = await codexHeadless.run('task', { cwd: '/tmp', model: 'gpt-5.6-sol' })
+
+    const texts = result.conversation
+      .filter((e) => e.type === 'result')
+      .map((e) => (e as unknown as { result?: string }).result)
+    expect(texts.some((t) => typeof t === 'string' && t.includes('usage limit'))).toBe(true)
+  })
+
+  it("strips codex's benign stdin notice so it cannot masquerade as the failure diagnostic", async () => {
+    mockQuotaRun()
+    const result = await codexHeadless.run('task', { cwd: '/tmp', model: 'gpt-5.6-sol' })
+
+    // The code step picks "stderr tail if non-empty, else last stream text".
+    // Leaving the notice in stderr is what made the real cause invisible.
+    expect(result.stderr.trim()).toBe('')
+
+    const stderrTail = result.stderr.trim().slice(-1000)
+    const diagText =
+      stderrTail.length > 0
+        ? `stderr tail:\n${stderrTail}`
+        : `stderr empty; last stream text:\n${extractLastStreamText(result.conversation)}`
+    expect(diagText).toContain('usage limit')
+    expect(diagText).not.toContain('Reading additional input from stdin')
+  })
+
+  it('classifies the composed coder-exit output as provider-quota, not unclassified', async () => {
+    mockQuotaRun()
+    const result = await codexHeadless.run('task', { cwd: '/tmp', model: 'gpt-5.6-sol' })
+
+    // Mirrors coderExitOutput in workflows/primitives/index.ts.
+    const coderExitOutput = `coder process exited 1. worktree was clean at exit (no uncommitted work found). stderr empty; last stream text:\n${extractLastStreamText(result.conversation)}`
+    expect(computeFailureSignature('code:coder-exit-nonzero', coderExitOutput)).toBe(
+      'code:coder-exit-nonzero/provider-quota',
+    )
+  })
+
+  it('preserves genuine stderr content while dropping only the notice', () => {
+    expect(
+      stripBenignCodexStderr('Reading additional input from stdin...\nreal explosion here\n'),
+    ).toContain('real explosion here')
+    expect(
+      stripBenignCodexStderr('Reading additional input from stdin...\nreal explosion here\n'),
+    ).not.toContain('Reading additional input')
+    expect(stripBenignCodexStderr('Reading additional input from stdin...\n')).toBe('')
+  })
+
+  it('leaves quotaRejected null when the run failed for a non-quota reason', async () => {
+    vi.mocked(runSubprocessStreaming).mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'some other explosion',
+    })
+    const result = await codexHeadless.run('task', { cwd: '/tmp', model: 'gpt-5.6-sol' })
+    expect(result.quotaRejected).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Regression: an empty prompt must never reach the CLI.
+//
+// `codex exec` with no prompt argument reads the prompt from stdin. Dispatched
+// workers get stdin=/dev/null, so it reads EOF and exits 1 with no usable
+// diagnostic — the same contentless failure shape as the quota incident above.
+// ---------------------------------------------------------------------------
+
+describe('codexHeadless.run — empty prompt fails fast without spawning', () => {
+  it.each([
+    ['empty string', ''],
+    ['whitespace only', '   \n\t  '],
+  ])('refuses to spawn for a %s prompt', async (_label, prompt) => {
+    const result = await codexHeadless.run(prompt, { cwd: '/tmp', model: 'gpt-5.6-sol' })
+
+    expect(runSubprocessStreaming).not.toHaveBeenCalled()
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toMatch(/refusing to spawn codex with an empty prompt/i)
+    expect(result.conversation).toEqual([])
+  })
+
+  it('classifies the refusal as empty-prompt rather than unclassified', async () => {
+    const result = await codexHeadless.run('', { cwd: '/tmp', model: 'gpt-5.6-sol' })
+    expect(computeFailureSignature('code:coder-exit-nonzero', result.stderr)).toBe(
+      'code:coder-exit-nonzero/empty-prompt',
+    )
+  })
+
+  it('still spawns when only the systemPrompt is blank but the prompt is real', async () => {
+    await codexHeadless.run('do the thing', {
+      cwd: '/tmp',
+      model: 'gpt-5.6-sol',
+      systemPrompt: '   ',
+    })
+    expect(runSubprocessStreaming).toHaveBeenCalled()
   })
 })

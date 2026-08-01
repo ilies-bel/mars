@@ -5,7 +5,13 @@
 // because the gemini CLI does not expose those signals — usage semantics are
 // therefore 'none' and no token signal is reported for a gemini run.
 
-import { runSubprocessStreaming, buildWorkerEnv, type RunClaudeResult } from '../../lib/git/claude'
+import {
+  runSubprocessStreaming,
+  buildWorkerEnv,
+  emptyPromptResult,
+  isBlankPrompt,
+  type RunClaudeResult,
+} from '../../lib/git/claude'
 import type { ClaudeEvent } from '../../lib/claude-stream'
 import type { HeadlessAdapter, HeadlessRunOpts } from '../providers'
 import { providerBinPath } from '../provider-bin'
@@ -48,6 +54,11 @@ export const geminiHeadless: HeadlessAdapter = {
   readOutput: readGeminiOutput,
 
   run: async (prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult> => {
+    // Refuse before spawning: `gemini -p ''` falls back to reading the prompt
+    // from stdin, which is /dev/null for dispatched workers. See
+    // EMPTY_PROMPT_REFUSAL.
+    if (isBlankPrompt(prompt)) return emptyPromptResult('gemini')
+
     const conversation: ClaudeEvent[] = []
     const abort = new AbortController()
 

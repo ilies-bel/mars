@@ -267,6 +267,50 @@ export interface RunClaudeResult extends RunSubprocessResult {
   quotaRejected: { resetsAt: number } | null
 }
 
+/**
+ * First line of the synthetic stderr every headless adapter emits when it is
+ * asked to spawn its provider CLI with a blank prompt. Load-bearing text:
+ * `errorClassRules` in ../failure-signature.ts matches this phrase to mint the
+ * `empty-prompt` error class, so the failure arrives named instead of as
+ * `.../unclassified`.
+ *
+ * Why a guard exists at all: EVERY provider CLI here takes the prompt as an
+ * argv value (`claude -p <prompt>`, `gemini -p <prompt>`, `codex exec
+ * <prompt>`), and all three fall back to reading the prompt from stdin when
+ * that value is absent or empty. Dispatched workers are spawned with
+ * `stdio: ['ignore', …]`, so stdin is /dev/null: the CLI reads EOF, gets
+ * nothing, and dies with a contentless non-zero exit. That symptom is
+ * indistinguishable from a real coder failure, which is exactly the kind of
+ * baffling exit this guard converts into a diagnosis.
+ */
+export const EMPTY_PROMPT_REFUSAL = (provider: string): string =>
+  `refusing to spawn ${provider} with an empty prompt (the composed prompt was blank; ` +
+  `the CLI would have fallen back to reading stdin, which is /dev/null for dispatched workers, ` +
+  `and exited non-zero with no diagnostic)`
+
+/**
+ * Synthetic "we never spawned anything" result.
+ *
+ * Deliberately a returned non-zero {@link RunClaudeResult} rather than a
+ * thrown error: the code step already owns a tested non-zero-exit path that
+ * stamps the row, computes a failure signature from the stderr text, and
+ * spawns exactly one recovery task. Throwing would bypass all of it and land
+ * as an unclassified step crash. exitCode 1 keeps the failure inside the
+ * machinery that names it.
+ */
+export const emptyPromptResult = (provider: string): RunClaudeResult => ({
+  exitCode: 1,
+  stdout: '',
+  stderr: EMPTY_PROMPT_REFUSAL(provider),
+  sessionId: null,
+  conversation: [],
+  quotaRejected: null,
+})
+
+/** True when a prompt carries no content the provider CLI could act on. */
+export const isBlankPrompt = (prompt: string | undefined): boolean =>
+  prompt === undefined || prompt.trim().length === 0
+
 export const extractSessionIdFromConversation = (
   conversation: ClaudeEvent[],
 ): string | null => {
@@ -690,6 +734,10 @@ export const runClaudeCode = async ({
   onPid,
   taskId,
 }: RunClaudeArgs): Promise<RunClaudeResult> => {
+  // Refuse before spawning: `claude -p ''` reads the prompt from stdin, which
+  // is /dev/null for dispatched workers. See EMPTY_PROMPT_REFUSAL.
+  if (isBlankPrompt(prompt)) return emptyPromptResult('claude')
+
   const conversation: ClaudeEvent[] = []
   const budget = resolveContextTokenBudget(maxContextTokens)
   const budgetEnabled = budget > 0

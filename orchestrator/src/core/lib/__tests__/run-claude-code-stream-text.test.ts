@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { runClaudeCode } from '../git/claude'
 import { extractLastStreamText } from '../claude-stream'
+import { computeFailureSignature } from '../failure-signature'
 
 // Stub that mimics an API-level rejection:
 // • emits a system/init event (session established)
@@ -98,4 +99,21 @@ describe('runClaudeCode — empty stderr with result event (API-rejection path)'
     expect(diagText).toContain('stderr empty; last stream text:')
     expect(diagText).toContain(errorMsg)
   }, 15_000)
+
+  // Regression: `claude -p ''` reads the prompt from stdin, which is
+  // /dev/null for dispatched workers — the CLI reads EOF and exits non-zero
+  // with no diagnostic. Refuse before spawning so the failure arrives named.
+  it.each([
+    ['empty string', ''],
+    ['whitespace only', '  \n\t '],
+  ])('refuses to spawn claude for a %s prompt', async (_label, prompt) => {
+    const r = await runClaudeCode({ cwd: process.cwd(), prompt })
+
+    expect(r.exitCode).toBe(1)
+    expect(r.stderr).toMatch(/refusing to spawn claude with an empty prompt/i)
+    expect(r.conversation).toEqual([])
+    expect(computeFailureSignature('code:coder-exit-nonzero', r.stderr)).toBe(
+      'code:coder-exit-nonzero/empty-prompt',
+    )
+  })
 })

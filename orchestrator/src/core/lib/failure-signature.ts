@@ -113,6 +113,30 @@ export interface ErrorClassRule {
  */
 export const errorClassRules: readonly ErrorClassRule[] = [
   {
+    // A headless provider adapter refused to spawn its CLI because the
+    // composed prompt was blank. Every provider CLI here takes the prompt as
+    // an argv value and silently falls back to reading stdin when it is
+    // missing; dispatched workers get stdin=/dev/null, so the CLI exits
+    // non-zero having produced no diagnostic at all. The adapters short-
+    // circuit that (see EMPTY_PROMPT_REFUSAL in lib/git/claude.ts) and this
+    // rule keeps the resulting signature named rather than `unclassified`.
+    // Operator condition, not a code defect: the prompt-composition path
+    // upstream of dispatch is what needs fixing.
+    errorClass: 'empty-prompt',
+    match: /refusing to spawn \S+ with an empty prompt/i,
+    matchFull: /refusing to spawn \S+ with an empty prompt/i,
+  },
+  {
+    // A provider rejected the run on rate/spend limits. The code step
+    // normally intercepts this earlier via RunClaudeResult.quotaRejected and
+    // re-queues without ever failing the task, so reaching classification at
+    // all means the sentinel was missed — name it anyway so the gap is
+    // visible instead of being buried in `unclassified`.
+    errorClass: 'provider-quota',
+    match: /hit your usage limit|usage limit reached|rate\/usage limit/i,
+    matchFull: /hit your usage limit|usage limit reached|rate\/usage limit/i,
+  },
+  {
     // Behaviour verification (the behaviour-verify step) reached the live
     // surface and found at least one Definition-of-Done criterion observably
     // contradicted, with screenshot evidence. The step emits this exact
