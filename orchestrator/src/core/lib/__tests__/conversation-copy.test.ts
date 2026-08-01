@@ -20,6 +20,10 @@ describe('renderConversationNotice', () => {
       failureKind: 'verify-failed',
       targetTaskId: 'task-1',
     },
+    'failure.batch': {
+      taskCount: 2,
+      cause: 'task branch has no commits ahead of integration',
+    },
   } as const
 
   it('renders every registered autonomous Notice as one first-person action with a reason', () => {
@@ -27,7 +31,7 @@ describe('renderConversationNotice', () => {
       const body = renderConversationNotice(kind, payloads[kind])
 
       expect(body).toMatch(/^I\s/)
-      expect(body).toMatch(/^I (increased|reduced|restored|applied) /)
+      expect(body).toMatch(/^I (am flagging|increased|reduced|restored|applied) /)
       expect(body).toContain(' because ')
       expect(body).toMatch(/\.$/)
       expect(body.split(/[.!?]+/).filter(Boolean)).toHaveLength(1)

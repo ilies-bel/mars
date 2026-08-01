@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0019'
+export const SCHEMA_VERSION = '0020'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -916,6 +916,18 @@ const DDL: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_conversation_pending_messages_pending
      ON conversation_pending_messages(priority, created_at) WHERE delivered_at IS NULL`,
+  `CREATE TABLE IF NOT EXISTS conversation_notice_batches (
+    id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    cause_key       text NOT NULL,
+    opened_at       bigint NOT NULL,
+    event_count     bigint NOT NULL,
+    entity_ids_json text NOT NULL,
+    flushed_at      bigint
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_notice_batches_open_cause
+     ON conversation_notice_batches(cause_key) WHERE flushed_at IS NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_conversation_notice_batches_due
+     ON conversation_notice_batches(opened_at) WHERE flushed_at IS NULL`,
 
   // ── settings / preferences ────────────────────────────────────────────────
   `CREATE TABLE IF NOT EXISTS app_settings (
@@ -1494,6 +1506,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'app_settings',
   'preferences',
   'conversation_pending_messages',
+  'conversation_notice_batches',
   'diagnoses_root_cause',
   'diagnoses_inconclusive',
   'diagnosis_involved_files',

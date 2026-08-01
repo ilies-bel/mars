@@ -65,6 +65,12 @@ import {
   ensureRecipeConversationNoticeSubscriber,
 } from '../../outbox/subscribers/recipe-conversation-notice'
 import {
+  clearFailureConversationNoticeFlush,
+  drainFailureConversationNotices,
+  ensureFailureConversationNoticeSubscriber,
+  scheduleFailureConversationNoticeFlush,
+} from '../../outbox/subscribers/failure-conversation-notices'
+import {
   isArcVerifyDisabled,
   runArcVerification,
   triggerArcVerification,
@@ -4682,6 +4688,24 @@ export const startDaemon = async (
     }
   })()
 
+  // Blocked tasks with the same canonical failure are narrated together. The
+  // per-batch timer is armed from the persisted opened_at value, so the Notice
+  // appears after its full coalescing window rather than on this poll cadence.
+  void (async () => {
+    try {
+      await ensureFailureConversationNoticeSubscriber(getCompositionRootClient())
+      const { processed } = await drainFailureConversationNotices(
+        getCompositionRootClient(),
+        Date.now,
+        log,
+      )
+      await scheduleFailureConversationNoticeFlush(getCompositionRootClient(), log)
+      if (processed > 0) log(`[failure-conversation-notices] batched ${processed} blocked task(s) on boot`)
+    } catch (err) {
+      log(`[failure-conversation-notices] boot drain failed: ${(err as Error).message}`)
+    }
+  })()
+
   // Recipe autoruns are operational changes, not a new Subject: replay their
   // durable events into the shared conversation as zero-token Notices.
   void (async () => {
@@ -5703,6 +5727,25 @@ export const startDaemon = async (
   )
   recipeConversationNoticeDrain.unref()
 
+  // ── Failure conversation Notice drain ───────────────────────────────────
+  // Polling picks up durable outbox events written by another process; the
+  // scheduler above still flushes each batch at its exact opened_at deadline.
+  const FAILURE_CONVERSATION_NOTICE_DRAIN_MS = Number(
+    process.env.MARS_FAILURE_CONVERSATION_NOTICE_DRAIN_MS ?? 1_000,
+  )
+  const failureConversationNoticeDrain = setInterval(
+    singleFlight(async () => {
+      try {
+        await drainFailureConversationNotices(getCompositionRootClient(), Date.now, log)
+        await scheduleFailureConversationNoticeFlush(getCompositionRootClient(), log)
+      } catch (err) {
+        log(`[failure-conversation-notices] drain errored: ${(err as Error).message}`)
+      }
+    }),
+    FAILURE_CONVERSATION_NOTICE_DRAIN_MS,
+  )
+  failureConversationNoticeDrain.unref()
+
   // ── Arc-verifier drain ───────────────────────────────────────────────────
   // Polls the outbox for task.terminal { reason: 'done' } events and triggers
   // arc-outcome verification for any arc that has fully completed with merged
@@ -5758,6 +5801,8 @@ export const startDaemon = async (
     clearInterval(recoverySpawnerDrain)
     clearInterval(closeSubjectOnTerminalEventDrain)
     clearInterval(recipeConversationNoticeDrain)
+    clearInterval(failureConversationNoticeDrain)
+    clearFailureConversationNoticeFlush(getCompositionRootClient())
     clearInterval(arcVerifierDrain)
     clearInterval(usageSamplerInterval)
     deferralWakeSweeper.stop()

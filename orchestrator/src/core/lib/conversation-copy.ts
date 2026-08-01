@@ -6,6 +6,7 @@ export const AutonomousNoticeKindSchema = z.enum([
   'steward.worker-reduced',
   'steward.worker-restored',
   'recipe.auto-applied',
+  'failure.batch',
 ])
 
 export type AutonomousNoticeKind = z.infer<typeof AutonomousNoticeKindSchema>
@@ -21,6 +22,7 @@ export interface AutonomousNoticePayloads {
   'steward.worker-reduced': { from: number; to: number; pagingPps: number }
   'steward.worker-restored': { from: number; to: number }
   'recipe.auto-applied': { recipeId: string; failureKind: string; targetTaskId: string }
+  'failure.batch': { taskCount: number; cause: string }
 }
 
 export type AutonomousNoticePayload = AutonomousNoticePayloads[AutonomousNoticeKind]
@@ -58,6 +60,11 @@ export const renderConversationNotice = <Kind extends AutonomousNoticeKind>(
     case 'recipe.auto-applied': {
       const p = payload as AutonomousNoticePayloads['recipe.auto-applied']
       return `I applied recipe ${sentenceValue(p.recipeId)} to task ${sentenceValue(p.targetTaskId)} because it matched ${sentenceValue(p.failureKind)}.`
+    }
+    case 'failure.batch': {
+      const p = payload as AutonomousNoticePayloads['failure.batch']
+      const tasks = p.taskCount === 1 ? '1 blocked task' : `${p.taskCount} blocked tasks`
+      return `I am flagging ${tasks} because they share the same failure: ${sentenceValue(p.cause)}.`
     }
   }
 }
