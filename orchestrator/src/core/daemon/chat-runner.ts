@@ -1038,10 +1038,10 @@ export class ChatRunner {
       const memoryWindow = await readMainMemoryWindow()
       const mainSessionMessages = await listMainSessionMessages(memoryWindow.startsAfterSeq)
       const mainPrefix = buildApiInput(buildMainSessionPrefix(mainSessionMessages))
-      const subjectInput = buildApiInput(
+      const subthreadInput = buildApiInput(
         transcript.filter((message) => message.context_scope !== 'main' && message.kind !== 'situation'),
       )
-      const input: ResponseInputItem[] = [...mainPrefix, ...subjectInput]
+      const input: ResponseInputItem[] = [...mainPrefix, ...subthreadInput]
       if (content.length > 0) {
         input.push({ type: 'message', role: 'user', content: [{ type: 'input_text', text: promptContent }] })
       }

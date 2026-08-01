@@ -650,7 +650,7 @@ export interface ContextRailProps {
   /** Live streaming buffer for the active thread. Passed from ChatConversation
    * so the activity panel can render in-flight tool calls. */
   liveBuffer?: LiveBuffer | null
-  /** Opens an operational alert's Subject in the chat pane. */
+  /** Opens an operational alert's Subthread in the chat pane. */
   onOpenAlert?: (item: ActionQueueItem) => void
   /** When true the rail collapses to a narrow icon strip. */
   collapsed?: boolean

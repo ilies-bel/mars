@@ -160,7 +160,7 @@ describe('ChatRunner integration — task-blocked "can you retry?"', () => {
     mcpMock.getTools.mockResolvedValue([])
     vi.mocked(chatStore.appendMessage).mockResolvedValue({
       id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: 0,
-      context_scope: 'subject', kind: 'acknowledgment', backing_entity_id: null,
+      context_scope: 'subthread', kind: 'acknowledgment', backing_entity_id: null,
     })
   })
 

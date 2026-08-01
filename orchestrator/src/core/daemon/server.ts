@@ -53,9 +53,9 @@ import {
   ensureRecoverySpawner,
 } from '../../outbox/subscribers/recovery-spawn'
 import {
-  drainSubjectCloser,
-  ensureSubjectCloser,
-} from '../../outbox/subscribers/subject-closer'
+  drainSubthreadCloser,
+  ensureSubthreadCloser,
+} from '../../outbox/subscribers/subthread-closer'
 import {
   drainArcVerifier,
   ensureArcVerifierSubscriber,
@@ -4706,7 +4706,7 @@ export const startDaemon = async (
     }
   })()
 
-  // Recipe autoruns are operational changes, not a new Subject: replay their
+  // Recipe autoruns are operational changes, not a new Subthread: replay their
   // durable events into the shared conversation as zero-token Notices.
   void (async () => {
     try {
@@ -4780,19 +4780,19 @@ export const startDaemon = async (
     }
   })()
 
-  // A Subject's terminal event is a durable domain boundary. Register and
+  // A Subthread's terminal event is a durable domain boundary. Register and
   // drain on boot so events published while the daemon was down still close
-  // their matching Subject after restart.
+  // their matching Subthread after restart.
   void (async () => {
     try {
-      await ensureSubjectCloser(getCompositionRootClient())
-      const { processed } = await drainSubjectCloser(getCompositionRootClient(), log)
+      await ensureSubthreadCloser(getCompositionRootClient())
+      const { processed } = await drainSubthreadCloser(getCompositionRootClient(), log)
       if (processed > 0) {
         viewStreamHub.broadcast('chat')
-        log(`[subject-closer] closed ${processed} Subject(s) on boot`)
+        log(`[subthread-closer] closed ${processed} Subthread(s) on boot`)
       }
     } catch (err) {
-      log(`[subject-closer] boot drain failed: ${(err as Error).message}`)
+      log(`[subthread-closer] boot drain failed: ${(err as Error).message}`)
     }
   })()
 
@@ -5694,22 +5694,22 @@ export const startDaemon = async (
   )
   recoverySpawnerDrain.unref()
 
-  // ── Subject terminal-event drain ────────────────────────────────────────
-  const CLOSE_SUBJECT_ON_TERMINAL_EVENT_DRAIN_MS = Number(
-    process.env.MARS_CLOSE_SUBJECT_ON_TERMINAL_EVENT_DRAIN_MS ?? 30_000,
+  // ── Subthread terminal-event drain ────────────────────────────────────────
+  const CLOSE_SUBTHREAD_ON_TERMINAL_EVENT_DRAIN_MS = Number(
+    process.env.MARS_CLOSE_SUBTHREAD_ON_TERMINAL_EVENT_DRAIN_MS ?? 30_000,
   )
-  const closeSubjectOnTerminalEventDrain = setInterval(
+  const closeSubthreadOnTerminalEventDrain = setInterval(
     singleFlight(async () => {
       try {
-        const { processed } = await drainSubjectCloser(getCompositionRootClient(), log)
+        const { processed } = await drainSubthreadCloser(getCompositionRootClient(), log)
         if (processed > 0) viewStreamHub.broadcast('chat')
       } catch (err) {
-        log(`[subject-closer] drain errored: ${(err as Error).message}`)
+        log(`[subthread-closer] drain errored: ${(err as Error).message}`)
       }
     }),
-    CLOSE_SUBJECT_ON_TERMINAL_EVENT_DRAIN_MS,
+    CLOSE_SUBTHREAD_ON_TERMINAL_EVENT_DRAIN_MS,
   )
-  closeSubjectOnTerminalEventDrain.unref()
+  closeSubthreadOnTerminalEventDrain.unref()
 
   // ── Recipe conversation Notice drain ────────────────────────────────────
   const RECIPE_CONVERSATION_NOTICE_DRAIN_MS = Number(
@@ -5799,7 +5799,7 @@ export const startDaemon = async (
     clearInterval(actionQueueRepopulatorDrain)
     clearInterval(blockerResolutionDrain)
     clearInterval(recoverySpawnerDrain)
-    clearInterval(closeSubjectOnTerminalEventDrain)
+    clearInterval(closeSubthreadOnTerminalEventDrain)
     clearInterval(recipeConversationNoticeDrain)
     clearInterval(failureConversationNoticeDrain)
     clearFailureConversationNoticeFlush(getCompositionRootClient())

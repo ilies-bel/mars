@@ -70,7 +70,7 @@ export const SseInvalidator = () => {
     })
 
     // 'chat' events fire when a thread is created, updated, or a new message
-    // lands. Invalidate active threads, archived Subjects, and any open detail.
+    // lands. Invalidate active threads, archived Subthreads, and any open detail.
     let chatDebounce: ReturnType<typeof setTimeout> | null = null
     es.addEventListener('chat', () => {
       if (chatDebounce !== null) clearTimeout(chatDebounce)

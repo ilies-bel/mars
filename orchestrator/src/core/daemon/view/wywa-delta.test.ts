@@ -40,7 +40,7 @@ const baseInput = {
   recoveryEvents: [],
   autoRuns: [],
   throttledThreads: [],
-  closedSubjects: [],
+  closedSubthreads: [],
   stewardLedger: [],
   since: null,
   limit: DEFAULT_WYWA_LIMIT,
@@ -155,15 +155,15 @@ describe('assembleDelta — throttle events', () => {
   })
 })
 
-describe('assembleDelta — closed Subject events', () => {
-  it('formats a closed Subject event', () => {
+describe('assembleDelta — closed Subthread events', () => {
+  it('formats a closed Subthread event', () => {
     const result = assembleDelta({
       ...baseInput,
-      closedSubjects: [{ id: 'thread-2', closedAt: '2026-07-20T07:00:00.000Z' }],
+      closedSubthreads: [{ id: 'thread-2', closedAt: '2026-07-20T07:00:00.000Z' }],
     })
     expect(result.events[0]).toMatchObject({
-      kind: 'closed-subject',
-      summary: 'Subject thread-2 closed',
+      kind: 'closed-subthread',
+      summary: 'Subthread thread-2 closed',
     })
   })
 })

@@ -670,7 +670,7 @@ export const fetchChatThreads = async (
   return json.threads
 }
 
-/** List every persisted message in the global Subject conversation order. */
+/** List every persisted message in the global Subthread conversation order. */
 export const fetchChatConversation = async (projectId?: string): Promise<ChatConversationResponse> => {
   return fetchJson(
     appendProject('/api/chat/conversation', projectId),
@@ -724,15 +724,15 @@ export const createChatThread = async (projectId?: string): Promise<ChatThread> 
 }
 
 /**
- * Start a fresh inline Subject with its situation report and first message in
+ * Start a fresh inline Subthread with its situation report and first message in
  * one request. The daemon only returns after it has accepted the chat run.
  */
-export const createSubjectAndSend = async (
+export const createSubthreadAndSend = async (
   message: string,
   projectId?: string,
   attachments?: AttachmentInfo[],
 ): Promise<ChatThread> => {
-  const path = appendProject('/api/chat/subjects', projectId)
+  const path = appendProject('/api/chat/subthreads', projectId)
   const r = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -856,8 +856,8 @@ export const stopChatThread = async (
   if (!r.ok) await throwMutationError(path, r)
 }
 
-/** Explicitly close an open-ended Subject without invoking the chat provider. */
-export const endChatSubject = async (
+/** Explicitly close an open-ended Subthread without invoking the chat provider. */
+export const endChatSubthread = async (
   threadId: string,
   projectId?: string,
 ): Promise<void> => {

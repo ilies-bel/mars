@@ -9,13 +9,13 @@ interface ChatStoreModule {
   initChatStore: typeof import('./chat-store').initChatStore
   createThread: typeof import('./chat-store').createThread
   listThreads: typeof import('./chat-store').listThreads
-  listClosedSubjects: typeof import('./chat-store').listClosedSubjects
+  listClosedSubthreads: typeof import('./chat-store').listClosedSubthreads
   listConversationEntries: typeof import('./chat-store').listConversationEntries
   getThread: typeof import('./chat-store').getThread
   appendMessage: typeof import('./chat-store').appendMessage
   updateThreadTitle: typeof import('./chat-store').updateThreadTitle
   setThreadStatus: typeof import('./chat-store').setThreadStatus
-  closeSubject: typeof import('./chat-store').closeSubject
+  closeSubthread: typeof import('./chat-store').closeSubthread
   toMessageApiView: typeof import('./chat-store').toMessageApiView
   toThreadApiView: typeof import('./chat-store').toThreadApiView
   computeAttentionStatus: typeof import('./chat-store').computeAttentionStatus
@@ -216,12 +216,12 @@ describe('chat-store', () => {
 
   it('keeps messages queryable after renaming a thread', async () => {
     const m = await loadModule(repo)
-    const thread = await m.createThread('original subject')
+    const thread = await m.createThread('original subthread')
     await m.appendMessage(thread.id, 'user', 'keep this message')
-    await m.updateThreadTitle(thread.id, 'renamed subject')
+    await m.updateThreadTitle(thread.id, 'renamed subthread')
 
     const result = await m.getThread(thread.id)
-    expect(result?.thread.title).toBe('renamed subject')
+    expect(result?.thread.title).toBe('renamed subthread')
     expect(result?.messages.map((message) => message.content)).toEqual(['keep this message'])
   })
 
@@ -244,62 +244,62 @@ describe('chat-store', () => {
     expect(result!.thread.status).toBe('idle')
   })
 
-  it('keeps a closed Subject and its messages in conversation history', async () => {
+  it('keeps a closed Subthread and its messages in conversation history', async () => {
     const m = await loadModule(repo)
-    const subject = await m.createThread('preserve this Subject')
-    await m.appendMessage(subject.id, 'user', 'keep every word')
-    await m.appendMessage(subject.id, 'assistant', 'and this reply')
+    const subthread = await m.createThread('preserve this Subthread')
+    await m.appendMessage(subthread.id, 'user', 'keep every word')
+    await m.appendMessage(subthread.id, 'assistant', 'and this reply')
 
-    await m.closeSubject(subject.id)
+    await m.closeSubthread(subthread.id)
 
-    expect((await m.getThread(subject.id))?.messages.map((message) => message.content)).toEqual([
+    expect((await m.getThread(subthread.id))?.messages.map((message) => message.content)).toEqual([
       'keep every word',
       'and this reply',
     ])
-    expect((await m.listClosedSubjects()).map((thread) => thread.id)).toContain(subject.id)
-    expect((await m.listConversationEntries()).filter((entry) => entry.subjectId === subject.id)).toHaveLength(2)
+    expect((await m.listClosedSubthreads()).map((thread) => thread.id)).toContain(subthread.id)
+    expect((await m.listConversationEntries()).filter((entry) => entry.subthreadId === subthread.id)).toHaveLength(2)
   })
 
-  it('returns a Subject closed beyond the former archive window', async () => {
+  it('returns a Subthread closed beyond the former archive window', async () => {
     const m = await loadModule(repo)
-    const subject = await m.createThread('long-lived history')
-    await m.appendMessage(subject.id, 'assistant', 'this stays available')
+    const subthread = await m.createThread('long-lived history')
+    await m.appendMessage(subthread.id, 'assistant', 'this stays available')
     const thirtyOneDaysAgo = Date.now() - 31 * 24 * 60 * 60 * 1000
     const clock = vi.spyOn(Date, 'now').mockReturnValue(thirtyOneDaysAgo)
-    await m.closeSubject(subject.id)
+    await m.closeSubthread(subthread.id)
     clock.mockRestore()
 
-    expect((await m.listClosedSubjects()).map((thread) => thread.id)).toContain(subject.id)
-    expect((await m.getThread(subject.id))?.messages.map((message) => message.content)).toEqual([
+    expect((await m.listClosedSubthreads()).map((thread) => thread.id)).toContain(subthread.id)
+    expect((await m.getThread(subthread.id))?.messages.map((message) => message.content)).toEqual([
       'this stays available',
     ])
   })
 
-  // ── closeSubject ────────────────────────────────────────────────────────────
+  // ── closeSubthread ────────────────────────────────────────────────────────────
 
-  it('freshly created Subject has closed_at === null', async () => {
+  it('freshly created Subthread has closed_at === null', async () => {
     const m = await loadModule(repo)
-    const thread = await m.createThread('new Subject')
+    const thread = await m.createThread('new Subthread')
     expect(thread.closed_at).toBeNull()
   })
 
-  it('closeSubject stamps closed_at with epoch milliseconds', async () => {
+  it('closeSubthread stamps closed_at with epoch milliseconds', async () => {
     const m = await loadModule(repo)
     const thread = await m.createThread('to close')
-    await m.closeSubject(thread.id)
+    await m.closeSubthread(thread.id)
     const result = await m.getThread(thread.id)
     expect(result!.thread.closed_at).not.toBeNull()
     expect(result!.thread.closed_at).toBeTypeOf('number')
   })
 
-  it('second closeSubject call does not overwrite the original timestamp', async () => {
+  it('second closeSubthread call does not overwrite the original timestamp', async () => {
     const m = await loadModule(repo)
     const thread = await m.createThread('idempotent close')
-    await m.closeSubject(thread.id)
+    await m.closeSubthread(thread.id)
     const first = (await m.getThread(thread.id))!.thread.closed_at
 
     await new Promise((r) => setTimeout(r, 2))
-    await m.closeSubject(thread.id)
+    await m.closeSubthread(thread.id)
     const second = (await m.getThread(thread.id))!.thread.closed_at
 
     expect(second).toBe(first)
@@ -551,9 +551,9 @@ describe('computeAttentionStatus', () => {
   })
 })
 
-// ── listThreads — closed Subject filter + attentionStatus ────────────────────
+// ── listThreads — closed Subthread filter + attentionStatus ────────────────────
 
-describe('listThreads — closed Subject filter + attentionStatus', () => {
+describe('listThreads — closed Subthread filter + attentionStatus', () => {
   let repo2: string
   beforeEach(() => { repo2 = setupRepo() })
   afterEach(() => {
@@ -561,21 +561,21 @@ describe('listThreads — closed Subject filter + attentionStatus', () => {
     rmSync(repo2, { recursive: true, force: true })
   })
 
-  it('excludes closed Subjects from listThreads', async () => {
+  it('excludes closed Subthreads from listThreads', async () => {
     const m = await loadModule(repo2)
     const active = await m.createThread('active')
     const closed = await m.createThread('closed')
-    await m.closeSubject(closed.id)
+    await m.closeSubthread(closed.id)
     const threads = await m.listThreads()
     expect(threads.map((t) => t.id)).toContain(active.id)
     expect(threads.map((t) => t.id)).not.toContain(closed.id)
   })
 
-  it('includes closed Subjects in listClosedSubjects', async () => {
+  it('includes closed Subthreads in listClosedSubthreads', async () => {
     const m = await loadModule(repo2)
     const closed = await m.createThread('closed')
-    await m.closeSubject(closed.id)
-    const history = await m.listClosedSubjects()
+    await m.closeSubthread(closed.id)
+    const history = await m.listClosedSubthreads()
     expect(history.map((t) => t.id)).toContain(closed.id)
   })
 

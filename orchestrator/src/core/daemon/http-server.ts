@@ -39,7 +39,7 @@ import {
   clearMessageFeedback,
   getThread,
   getPreloadedResponse,
-  closeSubject,
+  closeSubthread,
   setThreadStatus,
   appendMessage,
 } from '../lib/chat-store'
@@ -1504,7 +1504,7 @@ export const startHttpServer = async (
           m.listAutoRecipeRuns({ since: since ?? undefined, limit: 200 }),
         ),
         import('../lib/chat-store.js').then((m) =>
-          Promise.all([m.listClosedSubjects(), m.listThreads()]),
+          Promise.all([m.listClosedSubthreads(), m.listThreads()]),
         ),
         listStewardLedgerSince(since ?? '0001-01-01T00:00:00.000Z'),
       ])
@@ -1513,7 +1513,7 @@ export const startHttpServer = async (
             .filter((t) => t.status === 'throttled')
             .map((t) => ({ id: t.id, updatedAt: new Date(t.updated_at).toISOString() }))
 
-          const closedSubjects = closedRaw
+          const closedSubthreads = closedRaw
             .filter((t): t is typeof t & { closed_at: number } => t.closed_at !== null)
             .map((t) => ({ id: t.id, closedAt: new Date(t.closed_at).toISOString() }))
 
@@ -1526,7 +1526,7 @@ export const startHttpServer = async (
             })),
             autoRuns,
             throttledThreads,
-            closedSubjects,
+            closedSubthreads,
             stewardLedger,
             since,
             limit,
@@ -1719,10 +1719,10 @@ export const startHttpServer = async (
     //   created_at ASC, or 404 when the thread does not exist.
     // GET /chat/threads/:id/tasks — list task IDs linked to one chat thread.
     // POST /chat/threads — create a new thread. Body: { title?: string }.
-    // POST /chat/subjects — atomically create and seed a Subject, then start
+    // POST /chat/subthreads — atomically create and seed a Subthread, then start
     //   its first chat run. Body: { message: string, attachments?: AttachmentInfo[] }.
     // POST /chat/threads/:id/title — rename a thread. Body: { title: string }.
-    // POST /chat/threads/:id/end — explicitly close an open-ended Subject.
+    // POST /chat/threads/:id/end — explicitly close an open-ended Subthread.
     // All chat routes bypass the draining gate (lightweight user-data writes,
     // not task work). SSE channel 'chat' is broadcast after every write.
     const chatThreadsUrl = req.method === 'GET' && req.url
@@ -1809,12 +1809,12 @@ export const startHttpServer = async (
       }
     }
     {
-      const endSubjectMatch =
+      const endSubthreadMatch =
         req.method === 'POST' && req.url
           ? req.url.match(/^\/chat\/threads\/([^/?]+)\/end$/)
           : null
-      if (endSubjectMatch && endSubjectMatch[1]) {
-        const id = decodeURIComponent(endSubjectMatch[1])
+      if (endSubthreadMatch && endSubthreadMatch[1]) {
+        const id = decodeURIComponent(endSubthreadMatch[1])
         getThread(id)
           .then(async (detail) => {
             if (detail === null) {
@@ -1822,10 +1822,10 @@ export const startHttpServer = async (
               return
             }
             if (detail.thread.terminal_event_type != null) {
-              sendJson(res, 409, { ok: false, error: 'Subject closes when its declared terminal event arrives', errorCode: 'TERMINAL_EVENT_DECLARED' })
+              sendJson(res, 409, { ok: false, error: 'Subthread closes when its declared terminal event arrives', errorCode: 'TERMINAL_EVENT_DECLARED' })
               return
             }
-            await closeSubject(id)
+            await closeSubthread(id)
             deps.viewStreamHub?.broadcast('chat')
             sendJson(res, 200, { ok: true })
           })
@@ -1946,7 +1946,7 @@ export const startHttpServer = async (
       }
     }
 
-    if (req.method === 'POST' && req.url === '/chat/subjects') {
+    if (req.method === 'POST' && req.url === '/chat/subthreads') {
       let rawBody = ''
       req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
       req.on('end', () => {
@@ -1993,7 +1993,7 @@ export const startHttpServer = async (
               result.data.attachments,
               { userMessagePersisted: true },
             )
-            if (run.alreadyRunning) throw new Error('new Subject unexpectedly has an active run')
+            if (run.alreadyRunning) throw new Error('new Subthread unexpectedly has an active run')
             deps.viewStreamHub?.broadcast('chat')
             sendJson(res, 202, toThreadApiView(thread))
           })
@@ -2369,12 +2369,12 @@ export const startHttpServer = async (
               sendJson(res, 200, { ok: true })
               return
             }
-            const subject = await deps.appServices.openSubject({
+            const subthread = await deps.appServices.openSubthread({
               title: response.target.title,
               acknowledgment: response.label,
             })
             deps.viewStreamHub?.broadcast('chat')
-            sendJson(res, 200, { ok: true, threadId: subject.threadId })
+            sendJson(res, 200, { ok: true, threadId: subthread.threadId })
           })
           .catch((err: unknown) => sendError(res, err))
         return

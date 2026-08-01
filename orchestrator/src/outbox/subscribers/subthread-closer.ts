@@ -4,28 +4,28 @@ import { registerSubscriber } from '../../bus/subscribers.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
 import { registerSubscriberName } from '../registry.js'
 
-/** Durable cursor that observes domain events which end Subjects. */
-export const SUBJECT_CLOSER_SUBSCRIBER = 'subject-closer'
-registerSubscriberName(SUBJECT_CLOSER_SUBSCRIBER)
+/** Durable cursor that observes domain events which end Subthreads. */
+export const SUBTHREAD_CLOSER_SUBSCRIBER = 'subthread-closer'
+registerSubscriberName(SUBTHREAD_CLOSER_SUBSCRIBER)
 
 /** Register the durable cursor before terminal events are published. */
-export async function ensureSubjectCloser(client: DbClient): Promise<void> {
-  await registerSubscriber(client, SUBJECT_CLOSER_SUBSCRIBER, { replay: false })
+export async function ensureSubthreadCloser(client: DbClient): Promise<void> {
+  await registerSubscriber(client, SUBTHREAD_CLOSER_SUBSCRIBER, { replay: false })
 }
 
 /**
- * Close every open Subject whose declared event type and entity match one
+ * Close every open Subthread whose declared event type and entity match one
  * durable Outbox event. The UPDATE condition makes re-delivery harmless: a
- * closed Subject retains its original boundary timestamp and no new record is
+ * closed Subthread retains its original boundary timestamp and no new record is
  * written.
  */
-export async function drainSubjectCloser(
+export async function drainSubthreadCloser(
   client: DbClient,
   log?: (message: string) => void,
 ): Promise<{ processed: number }> {
   return drainWithStall({
     client,
-    subscriberId: SUBJECT_CLOSER_SUBSCRIBER,
+    subscriberId: SUBTHREAD_CLOSER_SUBSCRIBER,
     log,
     handle: async (event: BusEvent<EventName>) => {
       const payload = event.payload as Record<string, unknown>

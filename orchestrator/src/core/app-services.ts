@@ -175,10 +175,10 @@ export interface AppServices {
     cursor?: string | null
     limit?: number
   }) => Promise<{ rows: ActionQueueRow[]; nextCursor: string | null }>
-  /** Render deterministic stored state before the first paid Subject turn. */
+  /** Render deterministic stored state before the first paid Subthread turn. */
   buildSituationReport: () => Promise<string>
-  /** Create a fresh inline Subject with its zero-token situation and acknowledgment. */
-  openSubject: (input: { title: string; acknowledgment: string }) => Promise<{ threadId: string }>
+  /** Create a fresh inline Subthread with its zero-token situation and acknowledgment. */
+  openSubthread: (input: { title: string; acknowledgment: string }) => Promise<{ threadId: string }>
   // ── alerts (arc-rooted read aggregate, ADR-0054) ───────────────────────────
   viewAlerts: () => Promise<Alert[]>
   viewAlert: (arcId: string) => Promise<Alert | null>
@@ -246,7 +246,7 @@ export interface AppServices {
   viewChatHistory: () => Promise<{ threads: import('./lib/chat-store').ChatThreadApiView[] }>
   viewChatConversation: () => Promise<{
     entries: import('./lib/chat-store').ChatConversationEntryApiView[]
-    boundaries: import('./lib/chat-store').SubjectBoundaryApiView[]
+    boundaries: import('./lib/chat-store').SubthreadBoundaryApiView[]
     memoryStartsAfterSeq: number
     memoryCutAt: number | null
     memoryCutReason: import('./daemon/chat-memory-window').MemoryCutReason | null
@@ -337,16 +337,16 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       .listTasks()
       .then((tasks) => ({ tasks }))
 
-  const buildSubjectSituationReport: AppServices['buildSituationReport'] = () =>
+  const buildSubthreadSituationReport: AppServices['buildSituationReport'] = () =>
     buildSituationReport({
       listTasks: () => getDefaultDomainTaskStore().listTasks(),
       getSemaphoreSnapshot: deps.getSituationSemaphoreSnapshot ?? (() => ({ inUse: 0, limit: 0 })),
       listActionQueue: () => viewActionQueue('open'),
     })
 
-  const openSubject: AppServices['openSubject'] = async ({ title, acknowledgment }) => {
+  const openSubthread: AppServices['openSubthread'] = async ({ title, acknowledgment }) => {
     const { appendMessage, createThread } = await import('./lib/chat-store')
-    const situation = await buildSubjectSituationReport()
+    const situation = await buildSubthreadSituationReport()
     const thread = await createThread(title, undefined, undefined, situation)
     await appendMessage(
       thread.id,
@@ -904,7 +904,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       originTaskId: alert.arcId,
     }
     const segment = buildAlertSegment(item, alert.arcId)
-    const situation = await buildSubjectSituationReport()
+    const situation = await buildSubthreadSituationReport()
     const thread = await storeStartThreadFromAlert(
       alert.arcId,
       alert.goal || alert.reason,
@@ -1278,17 +1278,17 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   }
 
   const viewChatHistory: AppServices['viewChatHistory'] = async () => {
-    const { listClosedSubjects, toThreadApiView } = await import('./lib/chat-store')
-    const threads = await listClosedSubjects()
+    const { listClosedSubthreads, toThreadApiView } = await import('./lib/chat-store')
+    const threads = await listClosedSubthreads()
     return { threads: threads.map((t) => toThreadApiView(t, t.last_message_role)) }
   }
 
   const viewChatConversation: AppServices['viewChatConversation'] = async () => {
-    const { listConversationEntries, listSubjectBoundaries } = await import('./lib/chat-store')
+    const { listConversationEntries, listSubthreadBoundaries } = await import('./lib/chat-store')
     const { readMainMemoryWindow } = await import('./daemon/chat-memory-window')
     const [entries, boundaries, memoryWindow] = await Promise.all([
       listConversationEntries(),
-      listSubjectBoundaries(),
+      listSubthreadBoundaries(),
       readMainMemoryWindow(),
     ])
     return {
@@ -1469,8 +1469,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   return {
     viewActionQueue,
     viewActionQueueHistory,
-    buildSituationReport: buildSubjectSituationReport,
-    openSubject,
+    buildSituationReport: buildSubthreadSituationReport,
+    openSubthread,
     viewAlerts,
     viewAlert,
     startThreadFromAlert,

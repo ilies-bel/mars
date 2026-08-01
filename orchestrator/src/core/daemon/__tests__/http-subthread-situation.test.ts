@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 const setupRepo = (): string => {
-  const repo = mkdtempSync(resolve(tmpdir(), 'mars-subject-situation-'))
+  const repo = mkdtempSync(resolve(tmpdir(), 'mars-subthread-situation-'))
   execFileSync('git', ['init', '-q'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   return repo
@@ -13,7 +13,7 @@ const setupRepo = (): string => {
 
 const situation = 'Situation: 2 queued tasks, 1 running task, 1 blocked task, and 1 failed task. Workers: 1 of 4 active. 3 items need attention.'
 
-describe('Subject Situation report', () => {
+describe('Subthread Situation report', () => {
   let repo: string
 
   beforeEach(() => { repo = setupRepo() })
@@ -23,7 +23,7 @@ describe('Subject Situation report', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('stores a zero-token situation as the first message of human and alert Subjects', async () => {
+  it('stores a zero-token situation as the first message of human and alert Subthreads', async () => {
     vi.resetModules()
     process.env.MARS_REPO = repo
     const chatStore = await import('../../lib/chat-store')
@@ -34,13 +34,13 @@ describe('Subject Situation report', () => {
       title: 'Deploy failed', whyNow: 'verification failed', actions: [], resolved: false,
     }, situation)
 
-    for (const subjectId of [human.id, alert.id]) {
-      const subject = await chatStore.getThread(subjectId)
-      expect(subject?.messages[0]).toMatchObject({
+    for (const subthreadId of [human.id, alert.id]) {
+      const subthread = await chatStore.getThread(subthreadId)
+      expect(subthread?.messages[0]).toMatchObject({
         role: 'assistant', kind: 'situation', content: situation,
       })
-      expect(subject?.messages[0]?.segments).toEqual([{ type: 'text', text: situation }])
-      expect(chatStore.toMessageApiView(subject!.messages[0]).turnTokens).toBe(0)
+      expect(subthread?.messages[0]?.segments).toEqual([{ type: 'text', text: situation }])
+      expect(chatStore.toMessageApiView(subthread!.messages[0]).turnTokens).toBe(0)
     }
     expect((await chatStore.getThread(alert.id))?.messages).toHaveLength(2)
 

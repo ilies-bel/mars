@@ -50,7 +50,7 @@ export type PreloadedResponse = {
   label: string
   target:
     | { type: 'verb'; op: string; entityId: string }
-    | { type: 'subject'; title: string }
+    | { type: 'subthread'; title: string }
 }
 
 /** Context object passed to recipe functions. */

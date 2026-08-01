@@ -16,9 +16,9 @@ interface ChatStoreModule {
   getThread: typeof import('../../core/lib/chat-store').getThread
 }
 
-interface SubjectCloserModule {
-  ensureSubjectCloser: typeof import('./subject-closer').ensureSubjectCloser
-  drainSubjectCloser: typeof import('./subject-closer').drainSubjectCloser
+interface SubthreadCloserModule {
+  ensureSubthreadCloser: typeof import('./subthread-closer').ensureSubthreadCloser
+  drainSubthreadCloser: typeof import('./subthread-closer').drainSubthreadCloser
 }
 
 interface PublisherModule {
@@ -26,7 +26,7 @@ interface PublisherModule {
 }
 
 const setupRepo = (): string => {
-  const repo = mkdtempSync(resolve(tmpdir(), 'mars-subject-closer-test-'))
+  const repo = mkdtempSync(resolve(tmpdir(), 'mars-subthread-closer-test-'))
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   return repo
@@ -35,7 +35,7 @@ const setupRepo = (): string => {
 const loadModules = async (repo: string): Promise<{
   client: DbClient
   chat: ChatStoreModule
-  closer: SubjectCloserModule
+  closer: SubthreadCloserModule
   publisher: PublisherModule
 }> => {
   vi.resetModules()
@@ -45,7 +45,7 @@ const loadModules = async (repo: string): Promise<{
   return {
     client: queue.resolveQueueClient(),
     chat: (await import('../../core/lib/chat-store')) as unknown as ChatStoreModule,
-    closer: (await import('./subject-closer')) as unknown as SubjectCloserModule,
+    closer: (await import('./subthread-closer')) as unknown as SubthreadCloserModule,
     publisher: (await import('../../bus/publisher')) as unknown as PublisherModule,
   }
 }
@@ -59,7 +59,7 @@ const publish = async <T extends EventName>(
   await publisher.publishWithRetry(client, event, payload)
 }
 
-describe('subject closer outbox subscriber', () => {
+describe('subthread closer outbox subscriber', () => {
   let repo: string
 
   afterEach(() => {
@@ -67,16 +67,16 @@ describe('subject closer outbox subscriber', () => {
     if (repo) rmSync(repo, { recursive: true, force: true })
   })
 
-  it('closes every matching Subject once when its declared terminal event arrives', async () => {
+  it('closes every matching Subthread once when its declared terminal event arrives', async () => {
     repo = setupRepo()
     const { client, chat, closer, publisher } = await loadModules(repo)
     const first = await chat.createThread('First proposal', 'proposal.promoted', 'proposal-1')
     const second = await chat.createThread('Second proposal', 'proposal.promoted', 'proposal-1')
     const openEnded = await chat.createThread('Open question')
 
-    await closer.ensureSubjectCloser(client)
+    await closer.ensureSubthreadCloser(client)
     await publish(publisher, client, 'proposal.promoted', { proposalId: 'proposal-1' })
-    await closer.drainSubjectCloser(client)
+    await closer.drainSubthreadCloser(client)
 
     const firstClosedAt = (await chat.getThread(first.id))!.thread.closed_at
     expect((await chat.getThread(first.id))!.thread.terminal_event_type).toBe('proposal.promoted')
@@ -85,7 +85,7 @@ describe('subject closer outbox subscriber', () => {
     expect((await chat.getThread(second.id))!.thread.closed_at).not.toBeNull()
     expect((await chat.getThread(openEnded.id))!.thread.closed_at).toBeNull()
 
-    await closer.drainSubjectCloser(client)
+    await closer.drainSubthreadCloser(client)
     expect((await chat.getThread(first.id))!.thread.closed_at).toBe(firstClosedAt)
   })
 })

@@ -30,8 +30,8 @@ import {
   fetchChatConversation,
   fetchChatThread,
   createChatThread,
-  createSubjectAndSend,
-  endChatSubject,
+  createSubthreadAndSend,
+  endChatSubthread,
   uploadAttachment,
   renameChatThread,
   setMessageFeedback,
@@ -45,7 +45,7 @@ import {
   type AttachmentInfo,
 } from '@/shared/api'
 import { useFocusedProjectId, useFocusedProject } from '@/shared/useFocusedProject'
-import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail, GlossaryTerm, SubjectBoundary } from '@/shared/schemas'
+import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail, GlossaryTerm, SubthreadBoundary } from '@/shared/schemas'
 import type { MarsUIMessage } from '@/shared/marsChatTransport'
 import { useMarsChat } from '@/shared/useMarsChat'
 import { chatMessageToUIMessage, transcriptSignature } from '@/shared/chatMessageMapping'
@@ -95,7 +95,7 @@ import { formatDuration } from '@/shared/time'
 import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle } from './chatPageUtils'
 import { OpeningNextMoves } from '@/widgets/chat/OpeningNextMoves'
 import { ConversationTimeline } from '@/widgets/chat/ConversationTimeline'
-import { SubjectBoundaryLine } from '@/widgets/chat/SubjectBoundaryLine'
+import { SubthreadBoundaryLine } from '@/widgets/chat/SubthreadBoundaryLine'
 import type { DisplayRow } from '@/widgets/chat/OpeningNextMoves'
 import { useTasks } from '@/hooks/useTasks'
 import { SkeletonList } from '@/components/Skeleton'
@@ -1050,7 +1050,7 @@ export const LiveAssistantBubble = ({ buffer, terms = [] }: { buffer: LiveBuffer
 
 interface ChatConversationProps {
   threadId: string
-  boundary?: SubjectBoundary
+  boundary?: SubthreadBoundary
   projectId?: string
   /** Prefill flowing into the composer (chip / slash / discuss). */
   prefill?: string
@@ -1060,8 +1060,8 @@ interface ChatConversationProps {
   /** Called whenever the live buffer for this thread changes. Used to lift
    * the buffer up to ChatPage so ContextRail can render the activity panel. */
   onLiveBufferChange?: (buf: LiveBuffer | null) => void
-  /** Return the page to the Subject boundary once this Subject closes. */
-  onSubjectClosed: (threadId: string) => void
+  /** Return the page to the Subthread boundary once this Subthread closes. */
+  onSubthreadClosed: (threadId: string) => void
   glossaryTerms: GlossaryTerm[]
 }
 
@@ -1080,7 +1080,7 @@ const ChatConversation = ({
   onPrefillConsumed,
   onInsertPrompt,
   onLiveBufferChange,
-  onSubjectClosed,
+  onSubthreadClosed,
   glossaryTerms,
 }: ChatConversationProps) => {
   const qc = useQueryClient()
@@ -1190,22 +1190,22 @@ const ChatConversation = ({
     void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
   }, [stop, qc, threadId])
 
-  const { mutate: endSubject, isPending: isEndingSubject } = useMutation({
-    mutationFn: () => endChatSubject(threadId, projectId),
+  const { mutate: endSubthread, isPending: isEndingSubthread } = useMutation({
+    mutationFn: () => endChatSubthread(threadId, projectId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
       void qc.invalidateQueries({ queryKey: ['chat-history'] })
       void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
-      onSubjectClosed(threadId)
+      onSubthreadClosed(threadId)
     },
   })
 
   useEffect(() => {
     if (threadDetail?.thread.closedAt !== null && threadDetail?.thread.closedAt !== undefined) {
-      onSubjectClosed(threadId)
+      onSubthreadClosed(threadId)
     }
-  }, [threadDetail?.thread.closedAt, threadId, onSubjectClosed])
+  }, [threadDetail?.thread.closedAt, threadId, onSubthreadClosed])
 
   // Direct retry: resubmit the last real user message without touching the
   // composer or inserting any synthetic "Please retry…" prompt into the transcript.
@@ -1282,7 +1282,7 @@ const ChatConversation = ({
 
   return (
     <>
-      {boundary && <SubjectBoundaryLine boundary={boundary} position="start" />}
+      {boundary && <SubthreadBoundaryLine boundary={boundary} position="start" />}
       <Conversation className="flex-1">
         <ConversationContent>
           {showWelcome ? (
@@ -1328,12 +1328,12 @@ const ChatConversation = ({
         <div className="flex justify-end px-3 pt-2">
           <button
             type="button"
-            data-testid="end-subject"
+            data-testid="end-subthread"
             className="font-mono text-[10px] text-muted-foreground hover:text-foreground"
-            disabled={isEndingSubject || isBusy || serverRunning}
-            onClick={() => endSubject()}
+            disabled={isEndingSubthread || isBusy || serverRunning}
+            onClick={() => endSubthread()}
           >
-            {isEndingSubject ? 'Ending…' : 'End Subject'}
+            {isEndingSubthread ? 'Ending…' : 'End Subthread'}
           </button>
         </div>
       )}
@@ -2346,7 +2346,7 @@ export const ThreadSidebar = ({
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['chat-threads'] }),
   })
 
-  // Open Subjects are sorted by urgency → age → id. Closed transcripts remain
+  // Open Subthreads are sorted by urgency → age → id. Closed transcripts remain
   // expanded in the chronological conversation rather than an archive panel.
   const threads = sortByUrgencyThenAge(filterSidebarThreads(data ?? [], filters, forkFilter))
 
@@ -2641,23 +2641,23 @@ export const ChatPage = () => {
     }
   }, [selectedQueueItemId, threadsData])
 
-  // Start a fresh inline Subject in one gesture. The daemon commits the
+  // Start a fresh inline Subthread in one gesture. The daemon commits the
   // situation report and first user message together before starting the run,
-  // so a failed request cannot leave a blank Subject behind.
+  // so a failed request cannot leave a blank Subthread behind.
   const [sendError, setSendError] = useState<string | null>(null)
   const { mutate: createAndSend, isPending: isCreatingThread } = useMutation({
     mutationFn: async ({ message, files }: { message: string; files: File[] }) => {
       if (files.length > 0) {
-        throw new Error('Add attachments after starting a Subject.')
+        throw new Error('Add attachments after starting a Subthread.')
       }
-      return createSubjectAndSend(message, projectId)
+      return createSubthreadAndSend(message, projectId)
     },
     onMutate: () => setSendError(null),
     onSuccess: (thread) => {
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
       void qc.invalidateQueries({ queryKey: ['chat-thread', thread.id] })
       void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
-      setActiveSubjectThreadId(thread.id)
+      setActiveSubthreadId(thread.id)
       setSelectedThreadId(null)
       setSelectedQueueItemId(null)
     },
@@ -2715,21 +2715,21 @@ export const ChatPage = () => {
   // Tracks the thread opened inline beneath the opening block when the user
   // clicks a next-move chip. Kept separate from selectedThreadId so the
   // opening block is never unmounted.
-  const [activeSubjectThreadId, setActiveSubjectThreadId] = useState<string | null>(null)
-  const activeConversationThreadId = selectedThreadId ?? activeSubjectThreadId
+  const [activeSubthreadId, setActiveSubthreadId] = useState<string | null>(null)
+  const activeConversationThreadId = selectedThreadId ?? activeSubthreadId
 
-  const handleSubjectClosed = useCallback((threadId: string) => {
-    if (activeSubjectThreadId === threadId) setActiveSubjectThreadId(null)
+  const handleSubthreadClosed = useCallback((threadId: string) => {
+    if (activeSubthreadId === threadId) setActiveSubthreadId(null)
     if (selectedThreadId === threadId) setSelectedThreadId(null)
     void qc.invalidateQueries({ queryKey: ['chat-threads'] })
     void qc.invalidateQueries({ queryKey: ['chat-history'] })
     void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
-  }, [activeSubjectThreadId, selectedThreadId, qc])
+  }, [activeSubthreadId, selectedThreadId, qc])
 
-  // Opens a Subject inline when a chip is picked. Arc-failed rows (alerts)
+  // Opens a Subthread inline when a chip is picked. Arc-failed rows (alerts)
   // reuse the daemon-deduped thread via startThreadFromAlert; other rows get
   // a fresh generic thread.
-  const handleOpenSubject = useCallback(async (row: ActionQueueItem) => {
+  const handleOpenSubthread = useCallback(async (row: ActionQueueItem) => {
     let threadId: string
     if (row.kind === 'arc-failed') {
       const result = await startThreadFromAlert(row.entityId)
@@ -2739,7 +2739,7 @@ export const ChatPage = () => {
       threadId = thread.id
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
     }
-    setActiveSubjectThreadId(threadId)
+    setActiveSubthreadId(threadId)
   }, [projectId, qc])
 
   // Seeded opening message: when actionable items exist show a compact,
@@ -2923,10 +2923,10 @@ export const ChatPage = () => {
                         window.location.hash = taskHash(row.id, 'chat')
                         return
                       }
-                      // Real queue rows open their Subject inline, in the same
+                      // Real queue rows open their Subthread inline, in the same
                       // scroll, so the opening block is never unmounted.
                       const item = queueItems.find((q) => q.id === row.id)
-                      if (item) void handleOpenSubject(item)
+                      if (item) void handleOpenSubthread(item)
                     }}
                   />
                 ) : (
@@ -2948,27 +2948,27 @@ export const ChatPage = () => {
                     void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
                     if (threadId) {
                       setSelectedThreadId(null)
-                      setActiveSubjectThreadId(threadId)
+                      setActiveSubthreadId(threadId)
                     }
                   }}
                 />
               </div>
               {activeConversationThreadId && (
                 <div
-                  data-testid="active-subject"
+                  data-testid="active-subthread"
                   data-thread-id={activeConversationThreadId}
                   className="mt-4 flex flex-col"
                 >
                   <ChatConversation
                     key={activeConversationThreadId}
                     threadId={activeConversationThreadId}
-                    boundary={conversation.boundaries.find((boundary) => boundary.subjectId === activeConversationThreadId)}
+                    boundary={conversation.boundaries.find((boundary) => boundary.subthreadId === activeConversationThreadId)}
                     projectId={projectId}
                     prefill={prefill}
                     onPrefillConsumed={() => setPrefill(undefined)}
                     onInsertPrompt={handleInsertPrompt}
                     onLiveBufferChange={setActiveLiveBuffer}
-                    onSubjectClosed={handleSubjectClosed}
+                    onSubthreadClosed={handleSubthreadClosed}
                     glossaryTerms={glossary ?? []}
                   />
                 </div>
@@ -3008,7 +3008,7 @@ export const ChatPage = () => {
         threadDetail={activeThreadDetail}
         isStreaming={activeIsStreaming}
         liveBuffer={activeLiveBuffer}
-        onOpenAlert={handleOpenSubject}
+        onOpenAlert={handleOpenSubthread}
         collapsed={railCollapsed}
         onToggleCollapse={() => setRailCollapsed((v) => !v)}
       />

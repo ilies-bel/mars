@@ -10,7 +10,7 @@ import { nullTraceStore } from '../../lib/run-tool'
 import { stubAppServices } from './app-services-stub'
 
 const setupRepo = (): string => {
-  const repo = mkdtempSync(resolve(tmpdir(), 'mars-chat-subject-create-'))
+  const repo = mkdtempSync(resolve(tmpdir(), 'mars-chat-subthread-create-'))
   execFileSync('git', ['init', '-q'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   return repo
@@ -18,7 +18,7 @@ const setupRepo = (): string => {
 
 const nullRecipeCatalog: RecipeCatalog = { get: () => null, list: () => [] }
 
-describe('POST /chat/subjects', () => {
+describe('POST /chat/subthreads', () => {
   let repo: string
   let server: HttpServerHandle | null = null
 
@@ -31,7 +31,7 @@ describe('POST /chat/subjects', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('creates an inline Subject with the situation report before the Operator message and starts its run', async () => {
+  it('creates an inline Subthread with the situation report before the Operator message and starts its run', async () => {
     vi.resetModules()
     process.env.MARS_REPO = repo
     const chatStore = await import('../../lib/chat-store')
@@ -52,21 +52,21 @@ describe('POST /chat/subjects', () => {
       appServices: stubAppServices({ buildSituationReport: async () => 'Situation: one task needs attention.' }),
     })
 
-    const response = await fetch(`http://127.0.0.1:${server.port}/chat/subjects`, {
+    const response = await fetch(`http://127.0.0.1:${server.port}/chat/subthreads`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ message: 'Please inspect the task.' }),
     })
 
     expect(response.status).toBe(202)
-    const subject = await response.json() as { id: string }
-    const stored = await chatStore.getThread(subject.id)
+    const subthread = await response.json() as { id: string }
+    const stored = await chatStore.getThread(subthread.id)
     expect(stored?.messages.map(({ role, kind, content }) => ({ role, kind, content }))).toEqual([
       { role: 'assistant', kind: 'situation', content: 'Situation: one task needs attention.' },
       { role: 'user', kind: 'acknowledgment', content: 'Please inspect the task.' },
     ])
     expect(sendMessage).toHaveBeenCalledWith(
-      subject.id,
+      subthread.id,
       'Please inspect the task.',
       expect.any(String),
       undefined,
@@ -75,7 +75,7 @@ describe('POST /chat/subjects', () => {
     )
   })
 
-  it('does not create a Subject when its situation report cannot be built', async () => {
+  it('does not create a Subthread when its situation report cannot be built', async () => {
     vi.resetModules()
     process.env.MARS_REPO = repo
     const chatStore = await import('../../lib/chat-store')
@@ -96,7 +96,7 @@ describe('POST /chat/subjects', () => {
       appServices: stubAppServices({ buildSituationReport: async () => { throw new Error('unavailable') } }),
     })
 
-    const response = await fetch(`http://127.0.0.1:${server.port}/chat/subjects`, {
+    const response = await fetch(`http://127.0.0.1:${server.port}/chat/subthreads`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'Keep my draft' }),
     })
 

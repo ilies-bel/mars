@@ -13,12 +13,12 @@ const freshKey = (): string => `chat-memory-window-${process.pid}-${(counter += 
 
 const memory = { retentionMs: 1_000, minimumReusablePrefixTokens: 1, contextWindowTokens: 16 }
 
-const insertSubject = async (
+const insertSubthread = async (
   client: DbClient,
   id: string,
   closedAt: number | null,
   content: string,
-  contextScope: 'main' | 'subject' = 'main',
+  contextScope: 'main' | 'subthread' = 'main',
 ): Promise<void> => {
   await client.execute({
     sql: `INSERT INTO chat_threads (id, title, status, closed_at, created_at, updated_at)
@@ -47,7 +47,7 @@ describe('Main-session memory window', () => {
   })
 
   it('keeps a warm prefix within the context window and creates the durable Main record', async () => {
-    await insertSubject(client, 'finished', 10, 'x'.repeat(60))
+    await insertSubthread(client, 'finished', 10, 'x'.repeat(60))
 
     expect(await selectMemoryCut(client, memory, 100)).toBeNull()
     expect(await readMainMemoryWindow(client)).toEqual({
@@ -58,10 +58,10 @@ describe('Main-session memory window', () => {
     })
   })
 
-  it('drops only the oldest finished Subjects needed for an over-capacity prefix without deleting history', async () => {
-    await insertSubject(client, 'first', 10, 'x'.repeat(32))
-    await insertSubject(client, 'second', 20, 'y'.repeat(32))
-    await insertSubject(client, 'third', 30, 'z'.repeat(32))
+  it('drops only the oldest finished Subthreads needed for an over-capacity prefix without deleting history', async () => {
+    await insertSubthread(client, 'first', 10, 'x'.repeat(32))
+    await insertSubthread(client, 'second', 20, 'y'.repeat(32))
+    await insertSubthread(client, 'third', 30, 'z'.repeat(32))
 
     const cut = await selectMemoryCut(client, memory, 100)
     expect(cut).toEqual({ startsAfterSeq: 1, reason: 'capacity' })
@@ -72,9 +72,9 @@ describe('Main-session memory window', () => {
     expect((await client.execute('SELECT id FROM chat_messages ORDER BY seq')).rows).toHaveLength(3)
   })
 
-  it('cuts one oldest finished Subject synchronously after provider retention lapses', async () => {
-    await insertSubject(client, 'first', 10, 'x'.repeat(8))
-    await insertSubject(client, 'second', 20, 'y'.repeat(8))
+  it('cuts one oldest finished Subthread synchronously after provider retention lapses', async () => {
+    await insertSubthread(client, 'first', 10, 'x'.repeat(8))
+    await insertSubthread(client, 'second', 20, 'y'.repeat(8))
     await markMainMemoryWindowUsed(client, 0)
 
     const cut = await selectMemoryCut(client, memory, 1_000)
@@ -89,9 +89,9 @@ describe('Main-session memory window', () => {
     })
   })
 
-  it('never crosses an active Subject when selecting a cut', async () => {
-    await insertSubject(client, 'active', null, 'a'.repeat(8))
-    await insertSubject(client, 'finished', 10, 'b'.repeat(80))
+  it('never crosses an active Subthread when selecting a cut', async () => {
+    await insertSubthread(client, 'active', null, 'a'.repeat(8))
+    await insertSubthread(client, 'finished', 10, 'b'.repeat(80))
 
     expect(await selectMemoryCut(client, memory, 100)).toBeNull()
   })

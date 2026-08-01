@@ -67,7 +67,7 @@ export const sweepChatCompaction = async (
       const stored = await client.execute({
         sql: `SELECT id, thread_id, role, content, segments, created_at, context_scope, kind, backing_entity_id
                 FROM chat_messages
-               WHERE thread_id = ? AND context_scope = 'subject'
+               WHERE thread_id = ? AND context_scope = 'subthread'
                ORDER BY created_at ASC, seq ASC`,
         args: [candidate.id],
       })
@@ -87,7 +87,7 @@ export const sweepChatCompaction = async (
           content: row.content as string,
           segments,
           created_at: row.created_at as number,
-          context_scope: 'subject',
+          context_scope: 'subthread',
           kind: row.kind === 'validation' ? 'validation' : 'acknowledgment',
           backing_entity_id: typeof row.backing_entity_id === 'string' ? row.backing_entity_id : null,
         }

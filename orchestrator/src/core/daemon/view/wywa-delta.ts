@@ -8,7 +8,7 @@
  *  2. Failed & recovered  – `recovery_spawned` trace events
  *  3. Auto-recipe runs    – rows from `auto_recipe_runs`
  *  4. Throttle events     – chat threads currently in `status='throttled'`
- *  5. Closed Subjects     – chat threads whose `closed_at` falls after `since`
+ *  5. Closed Subthreads     – chat threads whose `closed_at` falls after `since`
  *  6. Steward interventions – immutable entries from the Steward ledger
  *
  * This module is a **pure assembler**: it receives pre-fetched data from the
@@ -23,7 +23,7 @@ export type WywaEventKind =
   | 'failure-recovered'
   | 'auto-recipe'
   | 'throttle'
-  | 'closed-subject'
+  | 'closed-subthread'
   | 'steward'
 
 /** A single activity item returned by GET /view/wywa-delta. */
@@ -53,7 +53,7 @@ export interface WywaDeltaInput {
     ranAt: string
   }>
   throttledThreads: ReadonlyArray<{ id: string; updatedAt: string }>
-  closedSubjects: ReadonlyArray<{ id: string; closedAt: string }>
+  closedSubthreads: ReadonlyArray<{ id: string; closedAt: string }>
   stewardLedger: ReadonlyArray<StewardLedgerRow>
   /** ISO-8601 lower bound (exclusive). Null means no lower bound. */
   since: string | null
@@ -126,12 +126,12 @@ export const assembleDelta = (
     })
   }
 
-  // 5. Closed Subjects remain part of the durable conversation.
-  for (const t of input.closedSubjects) {
+  // 5. Closed Subthreads remain part of the durable conversation.
+  for (const t of input.closedSubthreads) {
     if (!after(t.closedAt, since)) continue
     events.push({
-      kind: 'closed-subject',
-      summary: `Subject ${t.id} closed`,
+      kind: 'closed-subthread',
+      summary: `Subthread ${t.id} closed`,
       at: t.closedAt,
     })
   }

@@ -35,9 +35,9 @@ describe('POST /chat/messages/:messageId/responses/:responseId', () => {
     process.env.MARS_REPO = repo
     const chatStore = await import('../../lib/chat-store')
     await chatStore.initChatStore()
-    const subject = await chatStore.createThread('Queue maintenance')
+    const subthread = await chatStore.createThread('Queue maintenance')
     const notice = await chatStore.appendMessage(
-      subject.id,
+      subthread.id,
       'assistant',
       'A task is ready to restart.',
       [{
@@ -75,7 +75,7 @@ describe('POST /chat/messages/:messageId/responses/:responseId', () => {
     expect(response.status).toBe(200)
     expect(restartTask).toHaveBeenCalledWith('task-42')
     expect(sendMessage).not.toHaveBeenCalled()
-    const stored = await chatStore.getThread(subject.id)
+    const stored = await chatStore.getThread(subthread.id)
     expect(stored?.messages.map(({ role, kind, content, context_scope }) => ({ role, kind, content, context_scope }))).toEqual([
       { role: 'assistant', kind: 'notice', content: 'A task is ready to restart.', context_scope: 'main' },
       { role: 'user', kind: 'acknowledgment', content: 'Restart it', context_scope: 'main' },
@@ -83,20 +83,20 @@ describe('POST /chat/messages/:messageId/responses/:responseId', () => {
     expect(chatStore.toMessageApiView(stored!.messages[1]!).turnTokens).toBe(0)
   })
 
-  it('opens a Subject through the situation service without starting ChatRunner', async () => {
+  it('opens a Subthread through the situation service without starting ChatRunner', async () => {
     process.env.MARS_REPO = repo
     const chatStore = await import('../../lib/chat-store')
     await chatStore.initChatStore()
-    const subject = await chatStore.createThread('Queue maintenance')
-    const notice = await chatStore.appendMessage(subject.id, 'assistant', 'Review this task?', [{
+    const subthread = await chatStore.createThread('Queue maintenance')
+    const notice = await chatStore.appendMessage(subthread.id, 'assistant', 'Review this task?', [{
       type: 'preloaded_responses',
       responses: [{
         id: 'review-task',
         label: 'Review task',
-        target: { type: 'subject', title: 'Review task-42' },
+        target: { type: 'subthread', title: 'Review task-42' },
       }],
     }], { kind: 'notice', contextScope: 'main' })
-    const openSubject = vi.fn().mockResolvedValue({ threadId: 'subject-review' })
+    const openSubthread = vi.fn().mockResolvedValue({ threadId: 'subthread-review' })
     const sendMessage = vi.fn()
     const { startHttpServer } = await import('../http-server')
     server = await startHttpServer({
@@ -110,7 +110,7 @@ describe('POST /chat/messages/:messageId/responses/:responseId', () => {
       selfUpdate: async () => {}, runReflect: async () => ({ proposalsRaised: 0 }),
       enableAutoReflect: async () => {}, stepDone: async () => ({ next: null as string | null }),
       snoozeItem: async () => {}, recipeCatalog: nullRecipeCatalog, traceStore: nullTraceStore,
-      appServices: stubAppServices({ openSubject }),
+      appServices: stubAppServices({ openSubthread }),
     })
 
     const response = await fetch(
@@ -119,8 +119,8 @@ describe('POST /chat/messages/:messageId/responses/:responseId', () => {
     )
 
     expect(response.status).toBe(200)
-    expect(await response.json()).toMatchObject({ threadId: 'subject-review' })
-    expect(openSubject).toHaveBeenCalledWith({ title: 'Review task-42', acknowledgment: 'Review task' })
+    expect(await response.json()).toMatchObject({ threadId: 'subthread-review' })
+    expect(openSubthread).toHaveBeenCalledWith({ title: 'Review task-42', acknowledgment: 'Review task' })
     expect(sendMessage).not.toHaveBeenCalled()
   })
 })

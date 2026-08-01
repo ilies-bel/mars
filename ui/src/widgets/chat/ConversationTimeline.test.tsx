@@ -8,17 +8,17 @@ describe('ConversationTimeline', () => {
       <ConversationTimeline
         entries={[
           {
-            id: 'before-cut', seq: 41, threadId: 'subject-earlier', subjectId: 'subject-earlier', subjectTitle: 'Earlier subject', subjectClosed: true,
+            id: 'before-cut', seq: 41, threadId: 'subthread-earlier', subthreadId: 'subthread-earlier', subthreadTitle: 'Earlier subthread', subthreadClosed: true,
             role: 'assistant', content: 'Mars no longer reads this.', segments: [],
             createdAt: '2026-01-01T00:00:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
           },
           {
-            id: 'at-cut', seq: 42, threadId: 'subject-earlier', subjectId: 'subject-earlier', subjectTitle: 'Earlier subject', subjectClosed: true,
+            id: 'at-cut', seq: 42, threadId: 'subthread-earlier', subthreadId: 'subthread-earlier', subthreadTitle: 'Earlier subthread', subthreadClosed: true,
             role: 'assistant', content: 'This is the final unreadable message.', segments: [],
             createdAt: '2026-01-01T00:01:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
           },
           {
-            id: 'after-cut', seq: 43, threadId: 'subject-current', subjectId: 'subject-current', subjectTitle: 'Current subject', subjectClosed: false,
+            id: 'after-cut', seq: 43, threadId: 'subthread-current', subthreadId: 'subthread-current', subthreadTitle: 'Current subthread', subthreadClosed: false,
             role: 'user', content: 'Mars reads from here onward.', segments: [],
             createdAt: '2026-01-01T00:02:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
           },
@@ -39,7 +39,7 @@ describe('ConversationTimeline', () => {
     const html = renderToStaticMarkup(
       <ConversationTimeline
         entries={[{
-          id: 'only-message', seq: 1, threadId: 'subject', subjectId: 'subject', subjectTitle: 'Subject', subjectClosed: false,
+          id: 'only-message', seq: 1, threadId: 'subthread', subthreadId: 'subthread', subthreadTitle: 'Subthread', subthreadClosed: false,
           role: 'assistant', content: 'Everything is readable.', segments: [],
           createdAt: '2026-01-01T00:00:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
         }]}
@@ -50,22 +50,22 @@ describe('ConversationTimeline', () => {
     expect(html).not.toContain('Mars can read from here')
   })
 
-  it('keeps the server-selected marker in the same place when the active Subject layout changes', () => {
+  it('keeps the server-selected marker in the same place when the active Subthread layout changes', () => {
     const entries = [
       {
-        id: 'before-cut', seq: 9, threadId: 'closed-subject', subjectId: 'closed-subject', subjectTitle: 'Closed subject', subjectClosed: true,
+        id: 'before-cut', seq: 9, threadId: 'closed-subthread', subthreadId: 'closed-subthread', subthreadTitle: 'Closed subthread', subthreadClosed: true,
         role: 'assistant' as const, content: 'Older message.', segments: [],
         createdAt: '2026-01-01T00:00:00.000Z', kind: 'acknowledgment' as const, backingEntityId: null, resolution: null,
       },
       {
-        id: 'after-cut', seq: 10, threadId: 'active-subject', subjectId: 'active-subject', subjectTitle: 'Active subject', subjectClosed: false,
+        id: 'after-cut', seq: 10, threadId: 'active-subthread', subthreadId: 'active-subthread', subthreadTitle: 'Active subthread', subthreadClosed: false,
         role: 'user' as const, content: 'Current message.', segments: [],
         createdAt: '2026-01-01T00:01:00.000Z', kind: 'acknowledgment' as const, backingEntityId: null, resolution: null,
       },
     ]
 
     const withActiveTail = renderToStaticMarkup(
-      <ConversationTimeline entries={entries} memoryStartsAfterSeq={9} activeThreadId="active-subject" />,
+      <ConversationTimeline entries={entries} memoryStartsAfterSeq={9} activeThreadId="active-subthread" />,
     )
     const withoutActiveTail = renderToStaticMarkup(
       <ConversationTimeline entries={entries} memoryStartsAfterSeq={9} />,
@@ -77,67 +77,67 @@ describe('ConversationTimeline', () => {
     }
   })
 
-  it('keeps earlier Subject messages visible with their persisted context when the active Subject changes', () => {
+  it('keeps earlier Subthread messages visible with their persisted context when the active Subthread changes', () => {
     const html = renderToStaticMarkup(
       <ConversationTimeline
         entries={[
           {
-            id: 'earlier', seq: 1, threadId: 'subject-earlier', subjectId: 'subject-earlier', subjectTitle: 'Earlier subject', subjectClosed: true,
-            role: 'assistant', content: 'This was persisted before opening another subject.', segments: [],
+            id: 'earlier', seq: 1, threadId: 'subthread-earlier', subthreadId: 'subthread-earlier', subthreadTitle: 'Earlier subthread', subthreadClosed: true,
+            role: 'assistant', content: 'This was persisted before opening another subthread.', segments: [],
             createdAt: '2026-01-01T00:00:00.000Z', kind: 'validation', backingEntityId: 'task-42', resolution: null,
           },
           {
-            id: 'active', seq: 2, threadId: 'subject-active', subjectId: 'subject-active', subjectTitle: 'Active subject', subjectClosed: false,
+            id: 'active', seq: 2, threadId: 'subthread-active', subthreadId: 'subthread-active', subthreadTitle: 'Active subthread', subthreadClosed: false,
             role: 'user', content: 'Handled by the live tail.', segments: [],
             createdAt: '2026-01-01T00:01:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
           },
         ]}
-        activeThreadId="subject-active"
+        activeThreadId="subthread-active"
       />,
     )
 
-    expect(html).toContain('Earlier subject')
+    expect(html).toContain('Earlier subthread')
     expect(html).toContain('closed')
     expect(html).toContain('assistant · validation')
     expect(html).toContain('task-42')
-    expect(html).toContain('This was persisted before opening another subject.')
+    expect(html).toContain('This was persisted before opening another subthread.')
     expect(html).not.toContain('Handled by the live tail.')
   })
 
-  it('places Subject seams around closed messages while leaving an open Subject without an end aggregate', () => {
+  it('places Subthread seams around closed messages while leaving an open Subthread without an end aggregate', () => {
     const html = renderToStaticMarkup(
       <ConversationTimeline
         entries={[
           {
-            id: 'situation', seq: 1, threadId: 'closed-subject', subjectId: 'closed-subject', subjectTitle: 'Completed subject', subjectClosed: true,
-            role: 'assistant', content: 'Situation: this Subject starts here.', segments: [],
+            id: 'situation', seq: 1, threadId: 'closed-subthread', subthreadId: 'closed-subthread', subthreadTitle: 'Completed subthread', subthreadClosed: true,
+            role: 'assistant', content: 'Situation: this Subthread starts here.', segments: [],
             createdAt: '2026-01-01T00:00:00.000Z', kind: 'situation', backingEntityId: null, resolution: null,
           },
           {
-            id: 'final', seq: 2, threadId: 'closed-subject', subjectId: 'closed-subject', subjectTitle: 'Completed subject', subjectClosed: true,
+            id: 'final', seq: 2, threadId: 'closed-subthread', subthreadId: 'closed-subthread', subthreadTitle: 'Completed subthread', subthreadClosed: true,
             role: 'assistant', content: 'The last completed message.', segments: [],
             createdAt: '2026-01-01T00:01:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
           },
           {
-            id: 'open-situation', seq: 3, threadId: 'open-subject', subjectId: 'open-subject', subjectTitle: 'Open subject', subjectClosed: false,
+            id: 'open-situation', seq: 3, threadId: 'open-subthread', subthreadId: 'open-subthread', subthreadTitle: 'Open subthread', subthreadClosed: false,
             role: 'assistant', content: 'Situation: this one remains open.', segments: [],
             createdAt: '2026-01-01T00:02:00.000Z', kind: 'situation', backingEntityId: null, resolution: null,
           },
         ]}
         boundaries={[
-          { subjectId: 'closed-subject', startedAt: '2026-01-01T00:00:00.000Z', closedAt: '2026-01-01T00:02:00.000Z', producedTokens: 350, carriedTokens: 180 },
-          { subjectId: 'open-subject', startedAt: '2026-01-01T00:02:00.000Z', closedAt: null, producedTokens: 100, carriedTokens: 90 },
+          { subthreadId: 'closed-subthread', startedAt: '2026-01-01T00:00:00.000Z', closedAt: '2026-01-01T00:02:00.000Z', producedTokens: 350, carriedTokens: 180 },
+          { subthreadId: 'open-subthread', startedAt: '2026-01-01T00:02:00.000Z', closedAt: null, producedTokens: 100, carriedTokens: 90 },
         ]}
         memoryStartsAfterSeq={2}
       />,
     )
 
-    expect(html.match(/data-testid="subject-boundary-start"/g)).toHaveLength(2)
-    expect(html.match(/data-testid="subject-boundary-end"/g)).toHaveLength(1)
+    expect(html.match(/data-testid="subthread-boundary-start"/g)).toHaveLength(2)
+    expect(html.match(/data-testid="subthread-boundary-end"/g)).toHaveLength(1)
     expect(html).toContain('350 produced')
     expect(html).toContain('180 carried')
-    expect(html.indexOf('Subject started')).toBeLessThan(html.indexOf('Situation: this Subject starts here.'))
-    expect(html.indexOf('The last completed message.')).toBeLessThan(html.indexOf('Subject complete'))
+    expect(html.indexOf('Subthread started')).toBeLessThan(html.indexOf('Situation: this Subthread starts here.'))
+    expect(html.indexOf('The last completed message.')).toBeLessThan(html.indexOf('Subthread complete'))
     expect(html).toContain('data-testid="memory-boundary-line"')
   })
 })

@@ -6,7 +6,7 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { PastSubjectsColumn, type ThreadSummary } from './PastSubjectsColumn'
+import { PastSubthreadsColumn, type ThreadSummary } from './PastSubthreadsColumn'
 
 const mockFetchChatThread = vi.hoisted(() => vi.fn())
 
@@ -14,26 +14,26 @@ vi.mock('@/shared/api', () => ({
   fetchChatThread: (...args: unknown[]) => mockFetchChatThread(...args),
 }))
 
-describe('PastSubjectsColumn', () => {
-  it('renders past Subjects oldest-first', () => {
+describe('PastSubthreadsColumn', () => {
+  it('renders past Subthreads oldest-first', () => {
     const pastThreads: ThreadSummary[] = [
-      { id: 'subject-early', title: 'Earlier subject', createdAt: '2026-07-31T08:00:00.000Z' },
-      { id: 'subject-late', title: 'Later subject', createdAt: '2026-07-31T09:00:00.000Z' },
+      { id: 'subthread-early', title: 'Earlier subthread', createdAt: '2026-07-31T08:00:00.000Z' },
+      { id: 'subthread-late', title: 'Later subthread', createdAt: '2026-07-31T09:00:00.000Z' },
     ]
 
-    const html = renderToStaticMarkup(<PastSubjectsColumn pastThreads={pastThreads} />)
+    const html = renderToStaticMarkup(<PastSubthreadsColumn pastThreads={pastThreads} />)
 
-    expect(html).toContain('Earlier subject')
-    expect(html).toContain('Later subject')
-    expect(html.indexOf('Earlier subject')).toBeLessThan(html.indexOf('Later subject'))
+    expect(html).toContain('Earlier subthread')
+    expect(html).toContain('Later subthread')
+    expect(html.indexOf('Earlier subthread')).toBeLessThan(html.indexOf('Later subthread'))
   })
 
-  it('loads a past Subject’s messages only after it is expanded', async () => {
+  it('loads a past Subthread’s messages only after it is expanded', async () => {
     mockFetchChatThread.mockResolvedValue({
-      thread: { id: 'subject-early' },
+      thread: { id: 'subthread-early' },
       messages: [{
         id: 'message-1',
-        threadId: 'subject-early',
+        threadId: 'subthread-early',
         role: 'assistant',
         createdAt: '2026-07-31T08:01:00.000Z',
         feedback: null,
@@ -48,8 +48,8 @@ describe('PastSubjectsColumn', () => {
       root.render(createElement(
         QueryClientProvider,
         { client },
-        createElement(PastSubjectsColumn, {
-          pastThreads: [{ id: 'subject-early', title: 'Earlier subject', createdAt: '2026-07-31T08:00:00.000Z' }],
+        createElement(PastSubthreadsColumn, {
+          pastThreads: [{ id: 'subthread-early', title: 'Earlier subthread', createdAt: '2026-07-31T08:00:00.000Z' }],
         }),
       ))
     })
@@ -66,7 +66,7 @@ describe('PastSubjectsColumn', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
-    expect(mockFetchChatThread).toHaveBeenCalledWith('subject-early', undefined)
+    expect(mockFetchChatThread).toHaveBeenCalledWith('subthread-early', undefined)
     expect(container.textContent).toContain('Mars kept this context.')
     await act(async () => root.unmount())
   })

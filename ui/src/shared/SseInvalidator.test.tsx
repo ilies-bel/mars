@@ -41,7 +41,7 @@ import { SseInvalidator } from './SseInvalidator'
 // ---------------------------------------------------------------------------
 
 describe('SseInvalidator – React Query invalidation mechanism', () => {
-  it('refreshes past Subjects after a chat update', async () => {
+  it('refreshes past Subthreads after a chat update', async () => {
     vi.useFakeTimers()
     const listeners = new Map<string, EventListener[]>()
 

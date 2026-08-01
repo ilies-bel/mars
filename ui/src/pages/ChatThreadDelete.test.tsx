@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-/** The thread list preserves every Subject once it has entered the conversation. */
+/** The thread list preserves every Subthread once it has entered the conversation. */
 
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { act } from 'react'
@@ -10,7 +10,7 @@ import { ThreadSidebar } from './ChatPage'
 vi.mock('@/shared/api', () => ({
   fetchActionQueue: vi.fn().mockResolvedValue([]),
   fetchChatThreads: vi.fn().mockResolvedValue([{
-    id: 't1', title: 'First subject', status: 'idle',
+    id: 't1', title: 'First subthread', status: 'idle',
     createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
     origin: null, alertItemId: null, alertResolved: false,
   }]),
@@ -38,7 +38,7 @@ describe('thread list', () => {
     container.remove()
   })
 
-  it('does not offer a way to delete a Subject', async () => {
+  it('does not offer a way to delete a Subthread', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     await act(async () => {
       root.render(
@@ -57,12 +57,12 @@ describe('thread list', () => {
       await Promise.resolve()
     })
 
-    for (let i = 0; i < 20 && !container.textContent?.includes('First subject'); i++) {
+    for (let i = 0; i < 20 && !container.textContent?.includes('First subthread'); i++) {
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
     }
 
-    expect(container.textContent).toContain('First subject')
+    expect(container.textContent).toContain('First subthread')
     expect(container.querySelector('[aria-label="Delete thread"]')).toBeNull()
-    expect(container.textContent).not.toMatch(/delete subject|delete thread/i)
+    expect(container.textContent).not.toMatch(/delete subthread|delete thread/i)
   })
 })
