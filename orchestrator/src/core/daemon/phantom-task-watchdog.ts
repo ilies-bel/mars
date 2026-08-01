@@ -222,11 +222,29 @@ export const sweepPhantomTasks = async (
         if (!Number.isFinite(updatedMs) || now - updatedMs <= ceiling) continue
         // Attempt the re-queue. If the DB write fails, leave the task as-is;
         // the next sweep will retry.
+        //
+        // The pointers CANNOT be nulled without also discarding the run
+        // journal: a task orphaned mid-run has `setup` recorded 'completed', so
+        // the next dispatch short-circuits it, finds no worktree (we just
+        // nulled the pointers), and throws "no worktree available" — the exact
+        // shape of the mars-c11be862 overnight loop. resetForSetupReplay is the
+        // one seam that does both halves; `mars restart` uses the same one.
+        const { resetForSetupReplay } = await import('./restart-task')
+        const { createQueueWorkflowStore } = await import(
+          '../../workflows/queue-workflow-store'
+        )
+        const replayPatch = await resetForSetupReplay(
+          task.id,
+          createQueueWorkflowStore(),
+        ).catch(() => null)
+        if (replayPatch === null) {
+          // Journal delete failed — re-queueing now would resume into the
+          // skipped-setup loop. Leave the row alone; the next sweep retries.
+          continue
+        }
         await updateTask(task.id, {
           status: 'queued',
-          branch: null,
-          worktreePath: null,
-          claudeSessionId: null,
+          ...replayPatch,
           error: null,
           failedPhase: null,
           failureSignature: null,

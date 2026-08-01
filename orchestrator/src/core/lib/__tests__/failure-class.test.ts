@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   classifyFailure,
   isNonCodeFailure,
+  requiresWorktreeRebuild,
   type FailureCategory,
 } from '../failure-class'
 
@@ -137,5 +138,38 @@ describe('isNonCodeFailure', () => {
   it('returns false for code signatures', () => {
     expect(isNonCodeFailure('verify:typecheck/unclassified')).toBe(false)
     expect(isNonCodeFailure('verify:test/test-assertion-error')).toBe(false)
+  })
+})
+
+describe('requiresWorktreeRebuild', () => {
+  // The question is narrower than "is this orchestration?": it is "would a bare
+  // re-queue help?". A re-queue resumes the durable run, so a completed setup
+  // step short-circuits and no worktree is rebuilt — these signatures must be
+  // paired with a restart-from-setup reset or the retry loops on itself.
+  it('returns true for the resume-preflight signatures (directory and branch both gone)', () => {
+    expect(requiresWorktreeRebuild('verify:worktree-missing/unclassified')).toBe(true)
+    expect(requiresWorktreeRebuild('code:worktree-missing/unclassified')).toBe(true)
+  })
+
+  it('returns true for the /worktree-missing error class on any step', () => {
+    expect(requiresWorktreeRebuild('verify:worktree-hygiene/worktree-missing')).toBe(true)
+    expect(requiresWorktreeRebuild('verify:has-diff/worktree-missing')).toBe(true)
+  })
+
+  it('returns false for environmental failures that leave the worktree intact', () => {
+    // These hold the coder's committed work — discarding it would destroy the
+    // very thing the retry exists to resume.
+    expect(requiresWorktreeRebuild('code:coder-exit-nonzero/api-unreachable')).toBe(false)
+    expect(requiresWorktreeRebuild('setup:install-failed/install-timeout')).toBe(false)
+    expect(requiresWorktreeRebuild('merge:preflight/index-lock-contention')).toBe(false)
+    // Deliberately excluded: the worktree still exists, so discarding it is a
+    // heavier remedy than the condition warrants.
+    expect(requiresWorktreeRebuild('verify:worktree-hygiene/branch-drift')).toBe(false)
+    expect(requiresWorktreeRebuild('verify:worktree-hygiene/stale-rebase-state')).toBe(false)
+  })
+
+  it('returns false for ordinary code failures', () => {
+    expect(requiresWorktreeRebuild('verify:typecheck/unclassified')).toBe(false)
+    expect(requiresWorktreeRebuild('verify:test/test-assertion-error')).toBe(false)
   })
 })

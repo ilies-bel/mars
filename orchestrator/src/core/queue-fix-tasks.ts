@@ -41,7 +41,7 @@ import {
   stripRecoveryFailedPrefixes,
 } from './lib/failure-signature'
 import { isEnvironmentalSignature } from './lib/failure-kinds'
-import { classifyFailure } from './lib/failure-class'
+import { classifyFailure, requiresWorktreeRebuild } from './lib/failure-class'
 import { maybeSpawnRescueOperator } from './rescue-operator-spawn'
 import { recordStewardIntervention } from './steward-ledger'
 import { raiseStewardRepeatActionQueueItem, shouldStewardFire } from './steward-guard'
@@ -121,6 +121,44 @@ const requeueOrigin = async (
     },
     s,
   )
+}
+
+/**
+ * Extra `updateTask` fields a re-queue needs so the NEXT dispatch can actually
+ * rebuild what the failure destroyed. Returns `{}` when a bare re-queue is the
+ * right remedy.
+ *
+ * WHY THIS EXISTS. Every re-queue in this handler resumes the task's durable
+ * run. Resume short-circuits every step already recorded `'completed'` — and
+ * for a task that got as far as verify, that includes `setup`, the only step
+ * that creates a worktree. So for a worktree-missing signature a bare re-queue
+ * is a remedy that structurally cannot work: skip setup, fail verify on the
+ * same absent directory, re-queue, forever. Task mars-6cf9774f rode that loop
+ * to verify attempt 37.
+ *
+ * The reset itself is `mars restart`'s own seam ({@link resetForSetupReplay}),
+ * not a second implementation of it — a parallel "restart from setup" would
+ * drift from the operator verb the first time either side changed.
+ *
+ * Only worktree-missing signatures get this. Every other environmental or
+ * non-code condition (provider quota, API transient, watchdog kill, index-lock
+ * contention) leaves the worktree intact and holding the coder's committed
+ * work; discarding it there would destroy the very thing the retry is meant to
+ * resume.
+ *
+ * @throws whatever the journal delete throws — the caller must escalate rather
+ *   than fall back to the bare re-queue this exists to prevent.
+ */
+const setupReplayPatchFor = async (
+  taskId: string,
+  failureSignature: string,
+): Promise<Parameters<typeof updateTask>[1]> => {
+  if (!requiresWorktreeRebuild(failureSignature)) return {}
+  const [{ resetForSetupReplay }, { createQueueWorkflowStore }] = await Promise.all([
+    import('./daemon/restart-task'),
+    import('../workflows/queue-workflow-store'),
+  ])
+  return await resetForSetupReplay(taskId, createQueueWorkflowStore())
 }
 
 /**
@@ -795,19 +833,41 @@ export const handleTaskFailureWithFixTask = async (
   if (isEnvironmentalSignature(failureSignature)) {
     if (task.envRestartCount < MAX_ENV_RESTART_ATTEMPTS) {
       const nextEnvRestartCount = task.envRestartCount + 1
-      await requeueOrigin(
-        input.taskId,
-        `environmental restart #${nextEnvRestartCount} (${failureSignature})`,
-        { envRestartCount: nextEnvRestartCount },
-        s,
-      )
-      // eslint-disable-next-line no-console
-      console.log(
-        `[failure-handler] task ${input.taskId}: environmental restart #${nextEnvRestartCount}/${MAX_ENV_RESTART_ATTEMPTS} (${failureSignature})`,
-      )
-      return { outcome: 'requeued', retryCount: task.retryCount, failureSignature }
+      // An auto-restart must restore the precondition it is retrying FOR — see
+      // setupReplayPatchFor. The reset IS the remedy for a worktree-missing
+      // signature, so failing to perform it must NOT degrade into the bare
+      // re-queue that produced the original hot loop: skip the requeue and let
+      // the terminal path below hand the row to the operator instead.
+      let resetFailed = false
+      let replayPatch: Parameters<typeof updateTask>[1] = {}
+      try {
+        replayPatch = await setupReplayPatchFor(input.taskId, failureSignature)
+      } catch (resetErr) {
+        resetFailed = true
+        // eslint-disable-next-line no-console
+        console.error(
+          `[failure-handler] task ${input.taskId}: setup-replay reset failed for ` +
+            `${failureSignature}; escalating instead of re-queueing:`,
+          resetErr,
+        )
+      }
+
+      if (!resetFailed) {
+        await requeueOrigin(
+          input.taskId,
+          `environmental restart #${nextEnvRestartCount} (${failureSignature})`,
+          { envRestartCount: nextEnvRestartCount, ...replayPatch },
+          s,
+        )
+        // eslint-disable-next-line no-console
+        console.log(
+          `[failure-handler] task ${input.taskId}: environmental restart #${nextEnvRestartCount}/${MAX_ENV_RESTART_ATTEMPTS} (${failureSignature})`,
+        )
+        return { outcome: 'requeued', retryCount: task.retryCount, failureSignature }
+      }
     }
-    // Cap reached: fall through to the normal terminal path so the operator
+    // Cap reached (or the setup-replay reset failed): fall through to the
+    // normal terminal path so the operator
     // gets an action-queue item. The storm circuit breaker is still skipped
     // below — N tasks each cycling through their env-restart cap is one
     // infrastructure incident, not N gate failures. A low-priority notice is
@@ -1108,10 +1168,32 @@ export const handleTaskFailureWithFixTask = async (
       })
       return { outcome: 'non-code-retry-exhausted', failureSignature, retryCount: task.retryCount }
     }
+    // Same precondition rule as the environmental restart above, and the same
+    // reason it matters here: a worktree-missing origin that has burned its
+    // env-restart cap arrives on THIS path next, so a bare re-queue would just
+    // continue the hot loop under a different counter for another nonCodeCap
+    // rounds. A reset failure escalates rather than re-queueing.
+    let nonCodeReplayPatch: Parameters<typeof updateTask>[1]
+    try {
+      nonCodeReplayPatch = await setupReplayPatchFor(input.taskId, failureSignature)
+    } catch (resetErr) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[failure-handler] task ${input.taskId}: setup-replay reset failed for ` +
+          `${failureSignature}; failing instead of re-queueing:`,
+        resetErr,
+      )
+      const failureReason = `${NON_CODE_RETRY_EXHAUSTED_PREFIX}${failureSignature}`
+      await markTaskFailed(input.taskId, failureReason, undefined, {
+        error: truncatedError,
+        failureSignature,
+      })
+      return { outcome: 'non-code-retry-exhausted', failureSignature, retryCount: task.retryCount }
+    }
     await requeueOrigin(
       input.taskId,
       `non-code re-queue #${nonCodeCount}/${nonCodeCap} (${failureCategory}:${failureSignature})`,
-      {},
+      nonCodeReplayPatch,
       s,
     )
     // eslint-disable-next-line no-console

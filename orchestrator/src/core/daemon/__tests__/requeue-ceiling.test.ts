@@ -6,9 +6,15 @@
  * wall-clock time, the task is escalated to 'failed' and an operator
  * action-queue item is raised instead of being re-seeded.
  *
- * A task at any number of attempts is NOT escalated while it is within the
- * time bound — including tasks whose attempt count exceeded the old hard
- * ceiling of 5. A fresh task with no step records is never escalated.
+ * A task is NOT escalated while it is within BOTH bounds — including tasks
+ * whose attempt count exceeded the old hard ceiling of 5. A fresh task with no
+ * step records is never escalated.
+ *
+ * The attempt bound (MARS_REQUEUE_MAX_ATTEMPTS, default 12) is the second,
+ * peer bound: time alone cannot catch a hot loop, which burns attempts far
+ * faster than dispatch uptime (mars-6cf9774f reached verify attempt 37 in 35
+ * minutes, under a third of the 2 h time bound). It is deliberately set well
+ * above the old hard ceiling of 5 so a slow-but-progressing task is unaffected.
  *
  * Root cause of the 2026-07-02 overnight loop: tasks reached 1,014 step
  * attempts at ~2/min because the poll-fallback had no safety net to detect
@@ -50,6 +56,7 @@ interface CeilingModule {
     dispatchUptimeMs?: number,
   ) => Promise<boolean>
   REQUEUE_MAX_RETRY_MS: number
+  REQUEUE_MAX_ATTEMPTS: number
 }
 
 const setupRepo = (): string => {
@@ -60,7 +67,7 @@ const setupRepo = (): string => {
 
 const loadModules = async (
   repo: string,
-  { maxRetryMs }: { maxRetryMs?: number } = {},
+  { maxRetryMs, maxAttempts }: { maxRetryMs?: number; maxAttempts?: number } = {},
 ): Promise<{
   q: QueueModule
   ws: WorkflowStoreModule
@@ -73,6 +80,11 @@ const loadModules = async (
     process.env.MARS_REQUEUE_MAX_RETRY_MS = String(maxRetryMs)
   } else {
     delete process.env.MARS_REQUEUE_MAX_RETRY_MS
+  }
+  if (maxAttempts !== undefined) {
+    process.env.MARS_REQUEUE_MAX_ATTEMPTS = String(maxAttempts)
+  } else {
+    delete process.env.MARS_REQUEUE_MAX_ATTEMPTS
   }
   const q = (await import('../../queue')) as unknown as QueueModule
   await q.migrateQueueSchema()
@@ -145,14 +157,80 @@ describe('checkAndEscalateRequeueCeiling', () => {
   afterEach(() => {
     delete process.env.MARS_REPO
     delete process.env.MARS_REQUEUE_MAX_RETRY_MS
+    delete process.env.MARS_REQUEUE_MAX_ATTEMPTS
     rmSync(repo, { recursive: true, force: true })
+  })
+
+  // ── Attempt bound: the backstop for a HOT loop ─────────────────────────────
+
+  it('escalates a task whose attempt count reaches the attempt bound even when it is nowhere near the time bound', async () => {
+    // mars-6cf9774f reached verify attempt 37 in 35 minutes — under a third of
+    // the 2 h dispatch-uptime bound — so the time bound never fired. A re-queue
+    // cycle that has re-run the same step this many times is not making
+    // progress, whatever the clock says.
+    const { q, ws, ceiling } = await loadModules(repo, { maxAttempts: 6 })
+    const t = await q.enqueueTask('hot-looping task', undefined, { skipTriage: true })
+    const store: WorkflowStore = ws.createQueueWorkflowStore()
+
+    await store.createRun({
+      id: t.id,
+      workflowId: 'implement',
+      inputJson: '{}',
+      status: 'running',
+      createdAt: 0,
+      updatedAt: 0,
+    })
+    await store.putStep(makeStepRecord(t.id, 'setup', 1, 'completed'))
+    await store.putStep(makeStepRecord(t.id, 'verify', 6, 'failed'))
+
+    const escalated = await ceiling.checkAndEscalateRequeueCeiling(
+      t,
+      store,
+      makeSilentLog(),
+      Date.now(), // elapsed ≈ 0 ms — far inside the default 2 h time bound
+    )
+
+    expect(escalated).toBe(true)
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('failed')
+    // The identity field stays the stable step id so both bounds share one
+    // signature; the attempt/time distinction lives in the prose only.
+    expect(reloaded?.failureReason).toBe('requeue:time-bound-exceeded')
+    expect(reloaded?.error).toContain('attempt bound')
+  })
+
+  it('does not escalate on attempts alone while below the attempt bound', async () => {
+    const { q, ws, ceiling } = await loadModules(repo, { maxAttempts: 6 })
+    const t = await q.enqueueTask('slow but progressing', undefined, { skipTriage: true })
+    const store: WorkflowStore = ws.createQueueWorkflowStore()
+
+    await store.createRun({
+      id: t.id,
+      workflowId: 'implement',
+      inputJson: '{}',
+      status: 'running',
+      createdAt: 0,
+      updatedAt: 0,
+    })
+    await store.putStep(makeStepRecord(t.id, 'verify', 5, 'failed'))
+
+    const escalated = await ceiling.checkAndEscalateRequeueCeiling(
+      t,
+      store,
+      makeSilentLog(),
+      Date.now(),
+    )
+
+    expect(escalated).toBe(false)
+    expect((await q.getTask(t.id))?.status).toBe('queued')
   })
 
   // ── (a) Tasks beyond old attempt ceiling are re-seeded, not failed ─────────
 
   it('does NOT escalate a task whose attempt count exceeds the old ceiling of 5 while within the time bound', async () => {
-    // This directly proves acceptance criterion (a): attempt count alone must
-    // never cause a task to fail — only elapsed wall-clock time matters.
+    // This directly proves acceptance criterion (a): the old hard ceiling of 5
+    // attempts must not fail a task. The attempt bound that DOES exist is
+    // MARS_REQUEUE_MAX_ATTEMPTS (default 12), comfortably above attempt 10.
     const { q, ws, ceiling } = await loadModules(repo)
     // Default REQUEUE_MAX_RETRY_MS is 2 h; task just created → elapsed ≈ 0 ms.
     const t = await q.enqueueTask('high-attempt task', undefined, { skipTriage: true })

@@ -91,3 +91,35 @@ export function classifyFailure(failureSignature: string): FailureCategory {
 export function isNonCodeFailure(failureSignature: string): boolean {
   return classifyFailure(failureSignature) !== 'code'
 }
+
+/**
+ * Returns `true` when the broken precondition IS the worktree — the directory
+ * is gone (and, for the resume signatures, its branch with it).
+ *
+ * This is the "does re-queueing alone help?" question, and it is deliberately
+ * NARROWER than {@link classifyFailure}`() === 'orchestration'`. A re-queue
+ * resumes the durable run, so a `setup` step already recorded as `'completed'`
+ * short-circuits and no worktree is ever rebuilt. For these signatures the
+ * re-queue must therefore be paired with a restart-from-setup reset
+ * (`resetForSetupReplay`); for every other environmental signature — provider
+ * quota, API transient, watchdog kill — the worktree is intact and MUST be
+ * preserved, because it holds the coder's committed work.
+ *
+ * Excluded on purpose: `verify:worktree-hygiene/branch-drift` and
+ * `/stale-rebase-state`. Those worktrees still exist on disk; discarding them
+ * is a heavier remedy than the condition warrants and would drop uncommitted
+ * state the operator may want to inspect.
+ */
+export function requiresWorktreeRebuild(failureSignature: string): boolean {
+  return (
+    // `verify:worktree-missing` / `code:worktree-missing` — the resume
+    // preflight found directory AND branch both absent (the error class is
+    // `unclassified` because ResumeWorktreeUnrecoverable's message matches no
+    // errorClassRule, so the step half is what identifies these).
+    failureSignature.startsWith('verify:worktree-missing') ||
+    failureSignature.startsWith('code:worktree-missing') ||
+    // `<step>/worktree-missing` — the errorClass rule for "worktree path … no
+    // longer exists", e.g. `verify:worktree-hygiene/worktree-missing`.
+    failureSignature.endsWith('/worktree-missing')
+  )
+}
