@@ -72,7 +72,7 @@ and `orchestrator/src/cli/commands/index.ts` (96).
 | Grouping computed, not an object | **LANDED** | `groupByTopLevel`, `cli/registry.ts:66-75` |
 | Transport injected (`deps.daemon`) | **LANDED** | `DaemonClient` in `cli/command.ts:33-49` |
 | Store injected (ADR-0021) | **LANDED** | `CommandDeps.store`, `cli/command.ts:60` |
-| No `process.exit` in commands | **LANDED, one exception** | Only `cli/commands/shared.ts` contains `process.exit` (1 occurrence). Every other non-test file in `cli/commands/` has zero. |
+| No `process.exit` in commands | **FULLY LANDED** | Zero occurrences in any non-test file under `cli/commands/`. The single grep hit in `shared.ts` is inside its own doc comment (*"no `console`, no `process.exit`"*) — verified by reading the file. The one real `process.exit` in the CLI is `cli.ts:1651`, which is ADR-0023's mandated single mapping site. |
 | **One file per leaf** | **NOT LANDED** | 190 leaves live in 42 group-named files. This is the entire remaining gap. |
 
 So the seam is real and the contract is honoured. The gap is purely **file
@@ -355,7 +355,7 @@ list.
 | `worker.ts` | 112 | 3 | 18,38,99 | `worker/` |
 | `skill-forge.ts` | 110 | 3 | 76,86 (+group) | `skill-forge/` |
 | `chat-feedback.ts` | 103 | 2 | 16,28 | `chat-feedback/` |
-| `preview-validation.ts` | 100 | ? | — | **NOT VERIFIED — needs a pass** (no `path:` grep hit; check how it registers) |
+| `preview-validation.ts` | 100 | 2 | factory | **special — see below** |
 | `notifications.ts` | 89 | 4 | 16,32,48,64 | `notifications/` |
 | `steward.ts` | 88 | 4 | 7,17,38,61 | `steward/` |
 | `deploy.ts` | 83 | 2 | 18,74 | `deploy/` |
@@ -376,15 +376,43 @@ mechanically checkable, and a rule with exceptions is not enforceable. The cost
 is ~25 tiny files; the benefit is that the next 190-leaf drift is caught by CI
 instead of by a human reading a 928-line file.
 
-#### `shared.ts` — 49 lines, the one `process.exit`
+#### `preview-validation.ts` — a Command *factory*, and the one exception the rule must name
 
-The only `process.exit` left under `cli/commands/`. Read it before splitting: if
-it is on a genuinely-unrecoverable path it still violates ADR-0023's "never
-calls `process.exit`". Target: convert to a thrown error the adapter maps, or a
-`CommandResult{code}`. **NOT VERIFIED — needs a pass** on which helper holds it.
-This is a 10-line fix and should land as step 0 of Section D so the "zero
-`process.exit` under `cli/commands/`" arch rule can be written at the same time
-as the one-Command-per-file rule.
+Verified by reading it: this file has no literal `path:` string. It defines
+`previewValidationCommand(verdict: PreviewVerdict): Command` at line 15, sets
+`path: verdict` at line 23, and exports two generated leaves at lines 97–99:
+
+```ts
+export const previewValidationCommands: readonly Command[] = [
+  previewValidationCommand('validate'),
+  previewValidationCommand('reject'),
+]
+```
+
+So the leaves `validate` and `reject` are **parameterised instances of one
+implementation**. Splitting them into `_root/validate.ts` and `_root/reject.ts`
+would duplicate ~80 lines to satisfy a filename rule — strictly worse.
+
+**Decision needed (see §6).** Recommended target:
+`preview-validation/factory.ts` (the factory) + `preview-validation/index.ts`
+(the two instantiations). The arch rule from step 9 must then be phrased as
+*"each file under `cli/commands/**` exports either exactly one `Command` or
+exactly one `Command` factory"*, and this is the only file that uses the second
+clause today. Name the exception in the rule rather than allow-listing the path,
+or the next factory silently repeats the pattern uninspected.
+
+#### `shared.ts` — 49 lines, no `process.exit` after all
+
+Verified by reading it end to end. It holds `errorMessage`,
+`isDaemonDownError`, `spawnNoticeOut`, `spawnNoticeErr`, `readDaemonPort` —
+all pure or IO-light, none touching `console` or `process`. The earlier grep hit
+was its own doc comment. **No fix needed**; ADR-0023's no-exit clause is fully
+satisfied under `cli/commands/`. Section D step 1 is therefore a no-op on code
+and reduces to *writing the arch rule that keeps it true*.
+
+`shared.ts` stays as-is at the `cli/commands/` root — it is genuinely
+cross-group (daemon-spawn notices are used by nearly every mutation leaf), not
+a `misc`-style bucket.
 
 ### 1.6 What remains in `cli.ts` (1,651 lines) and where it goes
 
@@ -728,16 +756,64 @@ hope:**
    `removeBlocker`, `clearBlockers`, `unblockTask`, or `reopenTerminalTask`
    from `core/queue.ts`.
 
-Rule 3 is the one that actually matters and **it is very likely violated
-today** — `core/queue.ts` exports all of those as free functions
+Rule 3 is the one that actually matters, and **it is violated today. Verified.**
+
+`core/queue.ts` exports the task write functions as free functions
 (`queue.ts:1080, 1117, 1568, 1720, 1760, 1782, 1802, 1814, 1821, 1988`), and
-`arc.ts:290` itself calls `enqueueTask`'s underlying path. **NOT VERIFIED —
-needs a pass:** enumerate current importers of those symbols before writing the
-rule; the rule must be written as a failing test first, then the violations
-fixed, then the arc split proceeds. If the sole-writer invariant is already
-broken, splitting `arc.ts` neither helps nor hurts it — but the split is the
-right moment to close it, and doing the split without closing it bakes the
-violation into ten files instead of one.
+**20 non-test modules import them directly, bypassing `Arc` entirely:**
+
+| Module | layer |
+| --- | --- |
+| `outbox/subscribers/recovery-spawn.ts` | outbox |
+| `core/queue-fix-tasks.ts` | core |
+| `core/queue-retry.ts` | core |
+| `core/land-task.ts` | core |
+| `core/daemon/requeue-ceiling.ts` | daemon |
+| `core/daemon/restart-task.ts` | daemon |
+| `core/daemon/main-dirty-action-queue.ts` | daemon |
+| `core/daemon/remerge-task.ts` | daemon |
+| `core/daemon/continue-task.ts` | daemon |
+| `core/daemon/validate-task.ts` | daemon |
+| `core/daemon/awaiting-validation-watchdog.ts` | daemon |
+| `core/daemon/phantom-task-watchdog.ts` | daemon |
+| `core/daemon/reconcile-blocker-drift.ts` | daemon |
+| `core/daemon/rpc/handlers.ts` | daemon |
+| `core/daemon/arc-purge.ts` | daemon |
+| `core/daemon/chat-runner.ts` | daemon |
+| `core/daemon/phase-recovery.ts` | daemon |
+| `core/lib/reflector.ts` | core/lib |
+| `workflows/primitives/index.ts` | workflows |
+| `workflows/slice-workflow.ts` | workflows |
+
+(Search: modules importing any of `updateTask`, `enqueueTask`, `dropTask`,
+`setTaskPriority`, `addBlockers`, `clearBlockers`, `unblockTask`,
+`reopenTerminalTask`, excluding test files. 49 non-test modules import
+`core/queue` in total; 20 of them import a **write**.)
+
+**This is the most consequential finding in this document, and it is not a
+code-splitting problem.** ADR-0052's sole-writer invariant is documented,
+`Arc` exists and implements it, and 20 modules route around it. Notably
+`core/daemon/arc-purge.ts` and `outbox/subscribers/recovery-spawn.ts` — the
+recovery-spawn path and the arc-purge path — are exactly the two places
+CLAUDE.md warns produce `setup:origin-worktree-missing` cascades and stranded
+`blocked` dependents when writes go wrong.
+
+Consequences for this plan:
+
+- **Step 20 is mandatory and blocking, not a precaution.** Splitting `arc.ts`
+  into ten files while 20 modules write around it bakes the violation into ten
+  files instead of one, and makes the eventual fix twenty diffs harder.
+- The rule-3 arch test must be authored **as a currently-failing test with an
+  explicit 20-entry allow-list that only shrinks**, exactly like the other arch
+  rules in step 9. Do not write it as a green test by scoping it narrowly.
+- Each of the 20 needs an individual decision: route through an `Arc` method,
+  or gain a new `Arc` method. Some (the watchdogs, `reconcile-blocker-drift`)
+  may be legitimate infrastructure-level repair paths that ADR-0052 never
+  contemplated — in which case **the ADR needs an amendment, not a workaround.**
+  That is a decision for the human, not for the splitting work.
+
+This is scoped as its own workstream. It is a prerequisite of step 21 and it is
+otherwise independent of every other item here.
 
 **Move 3 — `drop` (958 lines) is a file of its own and still too big.** It is
 the drop cascade: worktree removal, branch removal, blocker-edge cleanup,
@@ -884,7 +960,7 @@ Every step below depends only on steps above it. No step requires a later one.
 | # | Step | Depends on | Blocked by a cycle? | Effort |
 | ---: | --- | --- | --- | --- |
 | 0 | Choose the LOC convention (§0.1) and pick a measurement command; record it. | — | no | minutes |
-| 1 | Remove the last `process.exit` from `cli/commands/shared.ts`. | — | no | S |
+| 1 | ~~Remove the last `process.exit`~~ — **verified already clean** (§1.3). Reduces to: write the "no `process.exit` under `cli/commands/**`" arch rule as part of step 9. | — | no | none |
 | 2 | **Delete `cli.ts`'s `usage` + `COMMAND_HELP` (1,431 lines); generate help from the registry.** `cli.ts` → ~220 lines. | — | no | M — highest value/effort ratio in the document |
 | 3 | Extract pure constants from `core/queue.ts` → `core/task/{status,tags,priority,errors}.ts`; update every importer. | — | **breaks** the 34-file cycle | M |
 | 4 | Extract pure module-level helpers from `daemon/server.ts` → `semaphore.ts`, `dispatch-policy.ts`, `logging.ts`. | — | no | S |
@@ -903,7 +979,7 @@ Every step below depends only on steps above it. No step requires a later one.
 | 17 | Introduce `http/router.ts` route table; move `/view/*` to a table (§3.4). | 16 | no | M |
 | 18 | Split the rest of `http-server.ts` into route files. | 17 | no | M |
 | 19 | Split `core/queue.ts`'s remaining concerns (writes/reads/transcript/rows/proposal-blockers) (§3.5). | 3 | no | M |
-| 20 | **Audit the sole-writer invariant**: enumerate importers of `updateTask`/`enqueueTask`/`dropTask`/… outside `core/arc.ts`. Write the arch rule as a failing test, fix violations. | 19 | no | M — **must precede 21** |
+| 20 | **Close the sole-writer violations.** The audit is done (§3.2 — 20 modules confirmed). Write the rule-3 arch test with a shrinking 20-entry allow-list, then route each module through `Arc` or amend ADR-0052. Independent of every other step; can start immediately, in parallel with 1–19. | — (audit complete) | no | L — **blocking for 21** |
 | 21 | Split `core/arc.ts` (§3.2): pure policy first, then `ops/`, then `ops/drop/`. | 3, 19, 20, 9 | yes — needs step 3's cycle fix landed | L |
 | 22 | Build `core/daemon/runtime-context.ts` (`DaemonRuntime`). | 4, 5 | no | L — the hard one |
 | 23 | Extract dispatch, handlers, storm, self-heal, schedulers, drain from `daemon/server.ts`. | 22 | no | L, parallel after 22 |
@@ -1002,21 +1078,31 @@ no existing counterpart and is the load-bearing deliverable of this whole plan.
    recommends applying it, on enforceability grounds, and notes the cost.
 3. **`/view/*` HTTP routes** (§3.4) — 27 route files, or one table? This plan
    recommends the table and is the only place it argues for fewer files.
-4. **Sole-writer audit before or after the arc split** (§3.2 rule 3, step 20) —
-   this plan sequences the audit first and will not split `arc.ts` until it
-   passes.
-5. **ADR-0056 folders last** (step 24) — confirm this does not read as
+4. **ADR-0052 sole-writer is broken in 20 places (§3.2 rule 3) — CONFIRMED, and
+   it needs a decision this plan cannot make.** For each of the 20 modules:
+   route the write through `Arc`, or amend ADR-0052 to carve out
+   infrastructure-level repair paths (the watchdogs, `reconcile-blocker-drift`)?
+   This plan treats the audit as blocking for step 21 and does not presume the
+   answer.
+5. **Command factories** (§1.3 `preview-validation.ts`) — allow "one `Command`
+   *or* one `Command` factory per file" in the arch rule, or force the two
+   generated leaves into two files at the cost of ~80 duplicated lines? This
+   plan recommends the former and recommends naming it in the rule rather than
+   allow-listing the path.
+6. **ADR-0056 folders last** (step 24) — confirm this does not read as
    contradicting the ADR. The layers are accepted; only their creation order is
    being argued.
 
-## 7. Sections marked NOT VERIFIED
+## 7. Sections still marked NOT VERIFIED
 
 | Where | What |
 | --- | --- |
-| §1.3 `doctor.ts` | the exact check list inside lines 1–335 |
-| §1.3 `preview-validation.ts` | no `path:` grep hit — how does it register a Command? |
-| §1.3 `shared.ts` | which helper holds the one `process.exit` |
-| §1.3 `lifecycle.ts` | per-leaf attribution of the 8 dynamic imports |
-| §3.1 `daemon/server.ts` 4970–5972 | ~1,000 lines not inspected line-by-line (drain loop + shutdown) |
+| §3.1 `daemon/server.ts` 4970–5972 | ~1,000 lines not inspected line-by-line (drain loop + shutdown). The largest remaining gap; the targets named for that range are inferred from the outline, not read. |
 | §3.4 `http-server.ts` 2460–2683 | trailing POST handlers not enumerated |
-| §3.2 rule 3 | current importers of `core/queue.ts` write functions — the sole-writer invariant may already be broken |
+| §1.3 `doctor.ts` | the exact check list inside lines 1–335 |
+| §1.3 `lifecycle.ts` | per-leaf attribution of the 8 dynamic imports |
+| §1.3 (all groups) | leaf spans are stated start-of-`path:` to start-of-next; true declaration boundaries (jsdoc start) are 3–8 lines earlier and were not individually read |
+
+Closed since the first draft: `preview-validation.ts` (§1.3 — it is a factory),
+`shared.ts` (§1.3 — no `process.exit`, grep hit was a comment), and the
+sole-writer audit (§3.2 — confirmed broken, 20 modules listed).
