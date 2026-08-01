@@ -51,8 +51,13 @@ Ground rules this plan obeys:
   `npm --prefix orchestrator run <x>` / `npm --prefix ui run <x>`. There is
   no workspace root that runs both.
 - **There is no linter in this repo.** No ESLint, no Biome, no oxlint.
-  The only enforcement surfaces available are `tsc --noEmit`, `vitest`,
-  and a dependency-cruiser config we have to add ourselves (Step 0).
+  What does exist (verified in `package.json`): `knip --no-exit-code` in
+  both roots (unused-export detection, non-blocking) and
+  `ui: lint:tokens` (a bespoke design-token check,
+  `ui/scripts/lint-tokens.mjs`). Neither can express an import rule. The
+  only enforcement surfaces available for layering are `tsc --noEmit`,
+  `vitest`, and a dependency-cruiser config we have to add ourselves
+  (Step 0).
 
 ### The one structural diagnosis
 
@@ -376,10 +381,10 @@ Every back-edge is `import type`. Three types are the whole problem:
 
 - **New leaf** `orchestrator/src/core/workers/provider-types.ts` —
   `ProviderName`, `HeadlessRunOpts`, `HeadlessAdapter`, plus
-  `ProviderUsageSemantics` if it too is shared. Imports at most
-  `type ClaudeEvent` from `../lib/claude-stream` (verify that
-  `claude-stream` does not import back; if it does, move the event type
-  too).
+  `ProviderUsageSemantics` if it too is shared. It may import
+  `type ClaudeEvent` from `../lib/claude-stream` safely —
+  **verified: `core/lib/claude-stream.ts` has zero imports of its own and
+  is already a leaf.** `ClaudeEvent` does not need to move.
 - `providers.ts`, `provider-bin.ts`, `providers/codex-headless.ts`,
   `providers/gemini-headless.ts` all import the leaf.
 - The eager registry import (`providers.ts` → the two adapters) stays.
@@ -587,10 +592,18 @@ shrinks** at every step and never grows. No step depends on a later step.
 Shared verification, run after every step (all three must pass):
 
 ```
-npm --prefix orchestrator run typecheck
-npm --prefix orchestrator test
-npm --prefix ui run build     # confirm the exact script name first
+npm --prefix orchestrator run typecheck    # tsc --noEmit
+npm --prefix orchestrator test             # vitest run
+npm --prefix ui run typecheck              # tsc --noEmit && tsc -p tsconfig.server.json --noEmit
+npm --prefix ui test                       # lint:tokens + vitest run + bun test (server/)
 ```
+
+Script names verified against `orchestrator/package.json` and
+`ui/package.json` on `69d4b45d`. Note `ui test` shells out to **bun** for
+`test:server` (13 named `server/*.test.ts` files) — a machine without bun
+will fail that leg even when the change is orchestrator-only. There is
+also a fourth source tree, `ui/server/`, that the folder census above does
+not cover; treat any edge into it as out of scope for this plan.
 
 Plus the step-specific cycle assertion given below.
 
@@ -837,11 +850,6 @@ the kind (value vs type-only) was read, not inferred.
   after each of Steps 1–8 and confirm the count actually falls.
 - The per-symbol caller counts for the 12 `queue.ts` wrapper deletions
   (Step 8). Only the wrapper list itself is verified.
-- Whether `core/lib/claude-stream.ts` imports back into
-  `core/workers/providers.ts` — this determines whether `ClaudeEvent`
-  must also move in Step 2.
-- The exact `ui` package.json script names. `npm --prefix ui run build`
-  is assumed; confirm before writing it into a commit's verification.
 - Whether `hooks/` has any test-file upward imports. Non-test imports
   were verified to be `@/shared`-only; the test files in `hooks/` were
   not read.
