@@ -70,9 +70,13 @@ mars.lock
 .claude/worktrees/
 **/templates/claude/worktrees/
 
-# Package manager lock files (pnpm-lock.yaml is tracked; bun/npm are not)
+# Package manager lock files (pnpm-lock.yaml is tracked; bun/npm are not).
+# Only ui/ was listed, so a plain `npm install` in orchestrator/ or either
+# packages/* left an untracked-but-not-ignored package-lock.json that is easy
+# to commit by accident. Ignore them everywhere.
 ui/bun.lock
-ui/package-lock.json
+package-lock.json
+**/package-lock.json
 
 # Test runner artifacts
 test-results/
