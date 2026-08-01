@@ -1087,6 +1087,28 @@ export const chatSegmentAttachmentSchema = z.object({
   kindHint: z.enum(['image', 'audio', 'video']).optional(),
 })
 
+const preloadedVerbTargetSchema = z.object({
+  type: z.literal('verb'),
+  op: z.string(),
+  entityId: z.string().optional(),
+})
+
+const preloadedSubjectTargetSchema = z.object({
+  type: z.literal('subject'),
+  title: z.string(),
+})
+
+export const preloadedResponseSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  target: z.discriminatedUnion('type', [preloadedVerbTargetSchema, preloadedSubjectTargetSchema]),
+})
+
+export const preloadedResponsesSegmentSchema = z.object({
+  type: z.literal('preloaded_responses'),
+  responses: z.array(preloadedResponseSchema),
+})
+
 export const chatSegmentSchema = z.discriminatedUnion('type', [
   chatSegmentTextSchema,
   chatSegmentThinkingSchema,
@@ -1096,6 +1118,7 @@ export const chatSegmentSchema = z.discriminatedUnion('type', [
   chatSegmentErrorSchema,
   chatSegmentToolResultSchema,
   chatSegmentAttachmentSchema,
+  preloadedResponsesSegmentSchema,
 ])
 
 export const chatFeedbackSchema = z.object({
@@ -1208,6 +1231,8 @@ export type ChatSegmentToolResult = z.infer<typeof chatSegmentToolResultSchema>
 export type ChatSegmentAttachment = z.infer<typeof chatSegmentAttachmentSchema>
 export type ChatSegmentResult = z.infer<typeof chatSegmentResultSchema>
 export type ChatSegmentError = z.infer<typeof chatSegmentErrorSchema>
+export type PreloadedResponse = z.infer<typeof preloadedResponseSchema>
+export type PreloadedResponsesSegment = z.infer<typeof preloadedResponsesSegmentSchema>
 export type ChatFeedback = z.infer<typeof chatFeedbackSchema>
 export type ChatMessage = z.infer<typeof chatMessageSchema>
 export type ChatThread = z.infer<typeof chatThreadSchema>

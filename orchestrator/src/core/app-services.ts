@@ -177,6 +177,8 @@ export interface AppServices {
   }) => Promise<{ rows: ActionQueueRow[]; nextCursor: string | null }>
   /** Render deterministic stored state before the first paid Subject turn. */
   buildSituationReport: () => Promise<string>
+  /** Create a fresh inline Subject with its zero-token situation and acknowledgment. */
+  openSubject: (input: { title: string; acknowledgment: string }) => Promise<{ threadId: string }>
   // ── alerts (arc-rooted read aggregate, ADR-0054) ───────────────────────────
   viewAlerts: () => Promise<Alert[]>
   viewAlert: (arcId: string) => Promise<Alert | null>
@@ -340,6 +342,20 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       getSemaphoreSnapshot: deps.getSituationSemaphoreSnapshot ?? (() => ({ inUse: 0, limit: 0 })),
       listActionQueue: () => viewActionQueue('open'),
     })
+
+  const openSubject: AppServices['openSubject'] = async ({ title, acknowledgment }) => {
+    const { appendMessage, createThread } = await import('./lib/chat-store')
+    const situation = await buildSubjectSituationReport()
+    const thread = await createThread(title, undefined, undefined, situation)
+    await appendMessage(
+      thread.id,
+      'user',
+      acknowledgment,
+      [{ type: 'text', text: acknowledgment }],
+      { kind: 'acknowledgment', contextScope: 'main' },
+    )
+    return { threadId: thread.id }
+  }
 
   const viewTask: AppServices['viewTask'] = (id) =>
     getDefaultDomainTaskStore()
@@ -1451,6 +1467,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewActionQueue,
     viewActionQueueHistory,
     buildSituationReport: buildSubjectSituationReport,
+    openSubject,
     viewAlerts,
     viewAlert,
     startThreadFromAlert,

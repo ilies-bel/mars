@@ -27,6 +27,7 @@ export const stubAppServices = (
   viewActionQueue: async () => [],
   viewActionQueueHistory: async () => ({ rows: [], nextCursor: null }),
   buildSituationReport: async () => 'Situation: 0 queued tasks, 0 running tasks, 0 blocked tasks, and 0 failed tasks. Workers: 0 of 0 active. 0 items need attention.',
+  openSubject: async () => ({ threadId: 'subject-1' }),
   viewAlerts: async () => [],
   viewAlert: async () => null,
   startThreadFromAlert: async () => null,

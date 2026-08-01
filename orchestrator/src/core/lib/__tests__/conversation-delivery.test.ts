@@ -55,6 +55,40 @@ describe('conversation notice delivery', () => {
     expect(chat.toMessageApiView(detail!.messages[0]!).turnTokens).toBe(0)
   })
 
+  it('preserves ordered preloaded responses on the delivered Notice', async () => {
+    const { chat, delivery } = await loadStores(repo)
+    const subject = await chat.createThread('Current subject')
+
+    await delivery.postConversationNotice({
+      body: 'A worker needs attention.',
+      priority: 'urgent',
+      segments: [
+        { type: 'text', text: 'A worker needs attention.' },
+        {
+          type: 'preloaded_responses',
+          responses: [
+            { id: 'restart', label: 'Restart', target: { type: 'verb', op: 'restart', entityId: 'task-1' } },
+            { id: 'review', label: 'Review', target: { type: 'subject', title: 'Review task-1' } },
+          ],
+        },
+      ],
+      backingEntityId: 'task-1',
+      hasActiveRuns: () => false,
+    })
+
+    const detail = await chat.getThread(subject.id)
+    expect(detail?.messages[0]?.segments).toEqual([
+      { type: 'text', text: 'A worker needs attention.' },
+      expect.objectContaining({
+        type: 'preloaded_responses',
+        responses: [
+          expect.objectContaining({ id: 'restart', label: 'Restart' }),
+          expect.objectContaining({ id: 'review', label: 'Review' }),
+        ],
+      }),
+    ])
+  })
+
   it('holds routine Notices until the active run reaches a natural pause', async () => {
     const { chat, delivery } = await loadStores(repo)
     const subject = await chat.createThread('Current subject')

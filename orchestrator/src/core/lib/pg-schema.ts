@@ -910,10 +910,14 @@ const DDL: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS conversation_pending_messages (
     id           text PRIMARY KEY,
     body         text NOT NULL,
+    segments     text,
+    backing_entity_id text,
     priority     text NOT NULL CHECK (priority IN ('urgent', 'routine')),
     created_at   bigint NOT NULL,
     delivered_at bigint
   )`,
+  `ALTER TABLE conversation_pending_messages ADD COLUMN IF NOT EXISTS segments text`,
+  `ALTER TABLE conversation_pending_messages ADD COLUMN IF NOT EXISTS backing_entity_id text`,
   `CREATE INDEX IF NOT EXISTS idx_conversation_pending_messages_pending
      ON conversation_pending_messages(priority, created_at) WHERE delivered_at IS NULL`,
   `CREATE TABLE IF NOT EXISTS conversation_notice_batches (

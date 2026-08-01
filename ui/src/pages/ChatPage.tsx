@@ -3009,6 +3009,15 @@ export const ChatPage = () => {
                   entries={conversation.entries}
                   memoryStartsAfterSeq={conversation.memoryStartsAfterSeq}
                   activeThreadId={activeConversationThreadId}
+                  projectId={projectId}
+                  onResponseComplete={(threadId) => {
+                    void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+                    void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
+                    if (threadId) {
+                      setSelectedThreadId(null)
+                      setActiveSubjectThreadId(threadId)
+                    }
+                  }}
                 />
               </div>
               {activeConversationThreadId && (

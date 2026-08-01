@@ -902,6 +902,26 @@ export const clearMessageFeedback = async (messageId: string): Promise<void> => 
   if (!r.ok) await throwMutationError(path, r)
 }
 
+/** Execute a Notice's stored zero-token response without sending a chat turn. */
+export const postPreloadedResponse = async (
+  messageId: string,
+  responseId: string,
+  projectId?: string,
+): Promise<{ threadId?: string }> => {
+  const path = appendProject(
+    `/api/chat/messages/${encodeURIComponent(messageId)}/responses/${encodeURIComponent(responseId)}`,
+    projectId,
+  )
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  if (!r.ok) await throwMutationError(path, r)
+  const result = await r.json() as { threadId?: unknown }
+  return typeof result.threadId === 'string' ? { threadId: result.threadId } : {}
+}
+
 /**
  * Fetch the evaporated (history) chat threads.
  */

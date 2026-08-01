@@ -12,6 +12,7 @@
  */
 
 import type { ActionQueueKind } from './action-queue'
+import { classifyMarsVerb } from './chat-mars-verbs'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,8 +46,11 @@ export type RecipeVerb = {
 
 /** A labelled daemon operation that Mars can preload as a Notice response chip. */
 export type PreloadedResponse = {
-  op: string
+  id: string
   label: string
+  target:
+    | { type: 'verb'; op: string; entityId: string }
+    | { type: 'subject'; title: string }
 }
 
 /** Context object passed to recipe functions. */
@@ -860,7 +864,14 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = Object.fromEntries(
     kind,
     {
       ...recipe,
-      preloadedResponses: recipe.verbs.map(({ op, label }) => ({ op, label })),
+      preloadedResponses: (ctx) =>
+        recipe.verbs
+          .filter(({ op }) => classifyMarsVerb(op) === 'safe')
+          .map(({ op, label }) => ({
+            id: op,
+            label,
+            target: { type: 'verb' as const, op, entityId: ctx.entityId },
+          })),
     },
   ]),
 ) as Record<ActionQueueKind, Recipe>

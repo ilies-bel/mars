@@ -38,9 +38,12 @@ import {
   setMessageFeedback,
   clearMessageFeedback,
   getThread,
+  getPreloadedResponse,
   closeSubject,
   setThreadStatus,
+  appendMessage,
 } from '../lib/chat-store'
+import { classifyMarsVerb } from '../lib/chat-mars-verbs'
 import {
   assembleDelta,
   clampWywaDeltaLimit,
@@ -2311,6 +2314,68 @@ export const startHttpServer = async (
         }
         reconcileStale()
           .then(() => sendJson(res, 200, { ok: true, stopped }))
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
+    // POST /chat/messages/:id/feedback — upsert thumbs-up / thumbs-down for an
+    // assistant message. Body: { rating: 'up'|'down', note?: string }.
+    // 400 on missing/invalid rating; 404 when the message does not exist.
+    // Bypasses the draining gate (user-data write, not orchestrator work).
+    {
+      const preloadedResponseMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/chat\/messages\/([^/?]+)\/responses\/([^/?]+)$/)
+          : null
+      if (preloadedResponseMatch?.[1] && preloadedResponseMatch[2]) {
+        const messageId = decodeURIComponent(preloadedResponseMatch[1])
+        const responseId = decodeURIComponent(preloadedResponseMatch[2])
+        getPreloadedResponse(messageId, responseId)
+          .then(async (selected) => {
+            if (selected === null) {
+              sendJson(res, 404, { ok: false, error: 'preloaded response not found', errorCode: 'NOT_FOUND' })
+              return
+            }
+            const { message, response } = selected
+            if (response.target.type === 'verb') {
+              if (classifyMarsVerb(response.target.op) !== 'safe') {
+                sendJson(res, 400, { ok: false, error: `response verb is not safe: ${response.target.op}` })
+                return
+              }
+              if (response.target.op === 'run-reflect') {
+                await deps.runReflect()
+              } else if (response.target.op === 'enable-auto-reflect') {
+                await deps.enableAutoReflect()
+              } else if (response.target.op === 'diagnose') {
+                if (!response.target.entityId) throw new Error('diagnose response requires an entityId')
+                await deps.diagnoseFailure(response.target.entityId)
+              } else {
+                const handler = entityHandlers[response.target.op as EntityOp]
+                if (!handler || !response.target.entityId) {
+                  sendJson(res, 400, { ok: false, error: `unsupported preloaded verb: ${response.target.op}` })
+                  return
+                }
+                await handler(response.target.entityId)
+              }
+              await appendMessage(
+                message.thread_id,
+                'user',
+                response.label,
+                [{ type: 'text', text: response.label }],
+                { kind: 'acknowledgment', contextScope: 'main' },
+              )
+              deps.viewStreamHub?.broadcast('chat')
+              sendJson(res, 200, { ok: true })
+              return
+            }
+            const subject = await deps.appServices.openSubject({
+              title: response.target.title,
+              acknowledgment: response.label,
+            })
+            deps.viewStreamHub?.broadcast('chat')
+            sendJson(res, 200, { ok: true, threadId: subject.threadId })
+          })
           .catch((err: unknown) => sendError(res, err))
         return
       }

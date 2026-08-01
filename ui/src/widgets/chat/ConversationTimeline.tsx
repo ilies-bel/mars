@@ -1,6 +1,7 @@
 import { Fragment } from 'react'
 import type { ChatConversationEntry } from '@/shared/schemas'
 import { MemoryBoundaryLine } from './MemoryBoundaryLine'
+import { PreloadedResponses } from './PreloadedResponses'
 
 export interface ConversationTimelineProps {
   entries: ChatConversationEntry[]
@@ -8,10 +9,18 @@ export interface ConversationTimelineProps {
   memoryStartsAfterSeq?: number
   /** The active Subject is rendered by ChatConversation so streamed state has one owner. */
   activeThreadId?: string | null
+  projectId?: string
+  onResponseComplete?: (threadId?: string) => void
 }
 
 /** Persisted portion of Mars's one chronological conversation. */
-export const ConversationTimeline = ({ entries, memoryStartsAfterSeq = 0, activeThreadId }: ConversationTimelineProps) => (
+export const ConversationTimeline = ({
+  entries,
+  memoryStartsAfterSeq = 0,
+  activeThreadId,
+  projectId,
+  onResponseComplete,
+}: ConversationTimelineProps) => (
   <section aria-label="Conversation timeline" data-testid="conversation-timeline" className="space-y-4">
     {entries
       .filter((entry) => entry.threadId !== activeThreadId)
@@ -39,6 +48,22 @@ export const ConversationTimeline = ({ entries, memoryStartsAfterSeq = 0, active
               <p className="whitespace-pre-wrap font-mono text-[13px] text-foreground">
                 {segmentText || entry.content}
               </p>
+              {entry.segments
+                .filter((segment): segment is { type: 'preloaded_responses'; responses: import('@/shared/schemas').PreloadedResponse[] } =>
+                  typeof segment === 'object' && segment !== null &&
+                  (segment as { type?: unknown }).type === 'preloaded_responses' &&
+                  Array.isArray((segment as { responses?: unknown }).responses),
+                )
+                .map((segment) => (
+                  <PreloadedResponses
+                    key={`${entry.id}-preloaded-responses`}
+                    messageId={entry.id}
+                    responses={segment.responses}
+                    resolved={entry.resolution === 'resolved'}
+                    projectId={projectId}
+                    onComplete={onResponseComplete}
+                  />
+                ))}
             </article>
             {memoryStartsAfterSeq > 0 && entry.seq === memoryStartsAfterSeq && <MemoryBoundaryLine />}
           </Fragment>

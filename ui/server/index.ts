@@ -967,6 +967,24 @@ export const startServer = async (
         // /feedback because the longer suffix also contains '/feedback'.
         if (
           path.startsWith('/api/chat/messages/') &&
+          path.includes('/responses/') &&
+          req.method === 'POST'
+        ) {
+          const rest = path.slice('/api/chat/messages/'.length)
+          const [messageId, marker, responseId] = rest.split('/')
+          if (!messageId || marker !== 'responses' || !responseId) {
+            return jsonResponse(400, { error: 'message id and response id are required' })
+          }
+          const result = await proxyPost(
+            ctx.stateDir,
+            `/chat/messages/${encodeURIComponent(decodeURIComponent(messageId))}/responses/${encodeURIComponent(decodeURIComponent(responseId))}`,
+            {},
+          )
+          return jsonResponse(result.status, result.body)
+        }
+
+        if (
+          path.startsWith('/api/chat/messages/') &&
           path.endsWith('/feedback/clear') &&
           req.method === 'POST'
         ) {

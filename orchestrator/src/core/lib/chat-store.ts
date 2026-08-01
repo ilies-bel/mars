@@ -296,6 +296,37 @@ export interface AlertSegment {
   goal?: string
 }
 
+/** A one-tap target that invokes one of Mars's allowlisted operations. */
+const PreloadedVerbTargetSchema = z.object({
+  type: z.literal('verb'),
+  op: z.string().trim().min(1),
+  entityId: z.string().trim().min(1).optional(),
+})
+
+/** A one-tap target that opens a fresh Subject without a provider turn. */
+const PreloadedSubjectTargetSchema = z.object({
+  type: z.literal('subject'),
+  title: z.string().trim().min(1),
+})
+
+/** A stable, template-authored response offered below a Notice. */
+export const PreloadedResponseSchema = z.object({
+  id: z.string().trim().min(1),
+  label: z.string().trim().min(1),
+  target: z.discriminatedUnion('type', [
+    PreloadedVerbTargetSchema,
+    PreloadedSubjectTargetSchema,
+  ]),
+})
+export type PreloadedResponse = z.infer<typeof PreloadedResponseSchema>
+
+/** Ordered one-tap responses embedded in a Notice's stored segment list. */
+export const PreloadedResponsesSegmentSchema = z.object({
+  type: z.literal('preloaded_responses'),
+  responses: z.array(PreloadedResponseSchema),
+})
+export type PreloadedResponsesSegment = z.infer<typeof PreloadedResponsesSegmentSchema>
+
 // ── Fork-seed segment types ───────────────────────────────────────────────────
 
 /** Segment type referencing a task created during a thread. */
@@ -821,6 +852,32 @@ export const appendMessage = async (
     kind,
     backing_entity_id: backingEntityId,
   }
+}
+
+/**
+ * Resolve one stable response from a persisted Notice. The stored array is
+ * searched in template order, so callers never need to reconstruct a response
+ * from mutable recipe state.
+ */
+export const getPreloadedResponse = async (
+  messageId: string,
+  responseId: string,
+): Promise<{ message: ChatMessage; response: PreloadedResponse } | null> => {
+  const c = stateClient()
+  const result = await c.execute({
+    sql: 'SELECT * FROM chat_messages WHERE id = ?',
+    args: [messageId],
+  })
+  if (result.rows.length === 0) return null
+  const message = rowToMessage(result.rows[0] as Record<string, unknown>)
+  if (!Array.isArray(message.segments)) return null
+  for (const raw of message.segments) {
+    const segment = PreloadedResponsesSegmentSchema.safeParse(raw)
+    if (!segment.success) continue
+    const response = segment.data.responses.find((candidate) => candidate.id === responseId)
+    if (response) return { message, response }
+  }
+  return null
 }
 
 /** Return Main-session entries and compact Subject boundaries in conversation order. */
