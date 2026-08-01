@@ -28,7 +28,7 @@ const pressure = (idlePercent: number, marsSharePercent = 5): MachinePressure =>
   sampleMs: 1_000,
 })
 
-type Ack = ReturnType<typeof vi.fn> & ((text: string) => Promise<void>)
+type Ack = ReturnType<typeof vi.fn> & ((input: unknown) => Promise<void>)
 const ackSpy = (): Ack => vi.fn().mockResolvedValue(undefined) as Ack
 
 describe('steward-runtime-tune', () => {
@@ -85,7 +85,7 @@ describe('steward-runtime-tune', () => {
       repoRoot: '/repo',
       getInFlightTaskIds: () => new Set<string>(),
       recordCapDecision,
-      writeChatAck,
+      postConversationNotice: writeChatAck,
       runOrphanSweep,
       readPressure,
       readPagingCounter,
@@ -95,6 +95,7 @@ describe('steward-runtime-tune', () => {
       bus,
       implementSem,
       log,
+      postConversationNotice: writeChatAck,
       writeChatAck,
       recordCapDecision,
       runOrphanSweep,
@@ -121,8 +122,10 @@ describe('steward-runtime-tune', () => {
     await vi.waitFor(() => expect(writeChatAck).toHaveBeenCalledTimes(1))
 
     expect(implementSem.limit).toBe(16) // ceil(12 * 1.33) = 16
-    expect(writeChatAck.mock.calls[0]![0]).toContain('12')
-    expect(writeChatAck.mock.calls[0]![0]).toContain('16')
+    expect(writeChatAck.mock.calls[0]![0]).toMatchObject({
+      kind: 'steward.worker-bumped',
+      payload: { from: 12, to: 16 },
+    })
   })
 
   it('caps at 2× baseline', async () => {
@@ -147,15 +150,17 @@ describe('steward-runtime-tune', () => {
     expect(writeChatAck).not.toHaveBeenCalled()
   })
 
-  it('writes exactly one acknowledgment chat message', async () => {
+  it('posts exactly one typed conversation Notice', async () => {
     const { bus, writeChatAck } = setup(12)
 
     bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 60_000 })
     await vi.waitFor(() => expect(writeChatAck).toHaveBeenCalledTimes(1))
 
-    const text = writeChatAck.mock.calls[0]![0]
-    expect(text).toMatch(/bumped implement workers/)
-    expect(text).toMatch(/backlog held above/)
+    expect(writeChatAck).toHaveBeenCalledWith({
+      kind: 'steward.worker-bumped',
+      payload: { from: 12, to: 16, pending: 15, threshold: 9, sustainedSeconds: 60 },
+      priority: 'routine',
+    })
   })
 
   it('does not raise a validation action-queue item', async () => {
@@ -280,7 +285,7 @@ describe('steward-runtime-tune', () => {
       log,
       repoRoot: '/repo',
       getInFlightTaskIds: () => new Set<string>(),
-      writeChatAck,
+      postConversationNotice: writeChatAck,
       runOrphanSweep: () => Promise.reject(new Error('pgrep exploded')),
       readPressure: () => Promise.resolve(pressure(1, 40)),
       readPagingCounter: async () => 0,
@@ -321,9 +326,10 @@ describe('steward-runtime-tune', () => {
 
     await primePaging()
 
-    const text = writeChatAck.mock.calls[0]![0]
-    expect(text).toMatch(/swapping at 5000 pages\/s/)
-    expect(text).not.toMatch(/per core/)
+    expect(writeChatAck.mock.calls[0]![0]).toMatchObject({
+      kind: 'steward.worker-reduced',
+      payload: { from: 12, to: 8, pagingPps: 5000 },
+    })
   })
 
   it('sheds repeatedly while paging continues, never below 1', async () => {
@@ -377,7 +383,7 @@ describe('steward-runtime-tune', () => {
       log: vi.fn(),
       repoRoot: '/repo',
       getInFlightTaskIds: () => new Set<string>(),
-      writeChatAck: ackSpy(),
+      postConversationNotice: ackSpy(),
       readPressure: () => Promise.resolve(pressure(60)),
       readPagingCounter: async () => null,
     })
@@ -432,7 +438,7 @@ describe('steward-runtime-tune', () => {
       log: vi.fn(),
       repoRoot: '/repo',
       getInFlightTaskIds: () => new Set<string>(),
-      writeChatAck: ackSpy(),
+      postConversationNotice: ackSpy(),
       readPressure: () => Promise.resolve(pressure(60)),
       readPagingCounter,
     })
@@ -507,7 +513,7 @@ describe('steward-runtime-tune', () => {
       log: vi.fn(),
       repoRoot: '/repo',
       getInFlightTaskIds: () => new Set<string>(),
-      writeChatAck: ackSpy(),
+      postConversationNotice: ackSpy(),
       readPressure: () => Promise.resolve(pressure(60)),
       readPagingCounter: async () => {
         const now = Date.now()

@@ -88,6 +88,20 @@ describe('conversation notice delivery', () => {
     ])
   })
 
+  it('keeps an autonomous Notice pending instead of creating a Subject', async () => {
+    const { chat, delivery } = await loadStores(repo)
+
+    const result = await delivery.postConversationNotice({
+      kind: 'steward.worker-restored',
+      payload: { from: 1, to: 2 },
+      priority: 'routine',
+      hasActiveRuns: () => false,
+    })
+
+    expect(result.delivered).toBe(false)
+    expect(await chat.listThreads()).toEqual([])
+  })
+
   it('flushes a waiting routine Notice when its Subject closes', async () => {
     const { chat, delivery } = await loadStores(repo)
     const subject = await chat.createThread('Closing subject')

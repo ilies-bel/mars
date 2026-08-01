@@ -9,18 +9,26 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { resolveStateClient } from '../store/state-client'
 import { appendMessage } from './chat-store'
+import {
+  renderConversationNotice,
+  type AutonomousConversationNoticeInput,
+} from './conversation-copy'
 
 const stateClient = resolveStateClient
 
 export const ConversationPrioritySchema = z.enum(['urgent', 'routine'])
 export type ConversationPriority = z.infer<typeof ConversationPrioritySchema>
 
-export interface ConversationNoticeInput {
+export type ConversationNoticeInput = {
   body: string
   priority: ConversationPriority
   /** Supplied by the daemon when it has an in-memory ChatRunner. */
   hasActiveRuns?: () => boolean
-}
+} | (AutonomousConversationNoticeInput & {
+  priority: ConversationPriority
+  /** Supplied by the daemon when it has an in-memory ChatRunner. */
+  hasActiveRuns?: () => boolean
+})
 
 interface PendingConversationNotice {
   id: string
@@ -62,19 +70,22 @@ export const postConversationNotice = async (
   input: ConversationNoticeInput,
 ): Promise<{ id: string; delivered: boolean }> => {
   const priority = ConversationPrioritySchema.parse(input.priority)
+  const body = 'body' in input
+    ? input.body
+    : renderConversationNotice(input.kind, input.payload)
   const c = stateClient()
   const id = randomUUID()
   await c.execute({
     sql: `INSERT INTO conversation_pending_messages (id, body, priority, created_at)
           VALUES (?, ?, ?, ?)`,
-    args: [id, input.body, priority, Date.now()],
+    args: [id, body, priority, Date.now()],
   })
 
   const hasActiveRuns = input.hasActiveRuns?.() ?? (
     await c.execute(`SELECT 1 FROM chat_threads WHERE status IN ('running', 'throttled') LIMIT 1`)
   ).rows.length > 0
   if (priority === 'routine' && hasActiveRuns) return { id, delivered: false }
-  return { id, delivered: await deliverPendingNotice({ id, body: input.body }) }
+  return { id, delivered: await deliverPendingNotice({ id, body }) }
 }
 
 /** Deliver every routine Notice once the current conversation is paused. */

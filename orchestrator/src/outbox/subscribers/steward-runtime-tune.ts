@@ -5,7 +5,10 @@ import { platform } from 'node:os'
 import { promisify } from 'node:util'
 import type { Semaphore } from '../../core/daemon/server.js'
 import { setSemLimit } from '../../core/daemon/server.js'
-import { createThread, appendMessage } from '../../core/lib/chat-store.js'
+import {
+  postConversationNotice,
+  type ConversationNoticeInput,
+} from '../../core/lib/conversation-delivery.js'
 import {
   sweepOrphans,
   formatSweepSummary,
@@ -133,8 +136,8 @@ export interface StewardRuntimeTuneDeps {
    * `mars daemon status` as the effective-cap explanation.
    */
   recordCapDecision?: (reason: string | null) => void
-  /** Override for testing — defaults to real chat-store writes. */
-  writeChatAck?: (text: string) => Promise<void>
+  /** Override for testing — defaults to durable conversation Notice delivery. */
+  postConversationNotice?: (input: ConversationNoticeInput) => Promise<unknown>
   /** Override for testing — defaults to the real orphan sweep. */
   runOrphanSweep?: () => Promise<OrphanSweepSummary>
   /** Override for testing — defaults to the real machine-pressure sample. */
@@ -273,20 +276,13 @@ const defaultReadPagingCounter = async (): Promise<number | null> => {
   return null
 }
 
-async function defaultWriteChatAck(text: string): Promise<void> {
-  const thread = await createThread('Steward: runtime tuning')
-  await appendMessage(thread.id, 'assistant', text, undefined, {
-    kind: 'acknowledgment',
-  })
-}
-
 /**
  * Wire all three tuning lanes. Returns a disposer that stops the sampling
  * timer; callers that run for the lifetime of the daemon may ignore it.
  */
 export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => void {
   const { bus, implementSem, baselineCap, log } = deps
-  const writeChatAck = deps.writeChatAck ?? defaultWriteChatAck
+  const postNotice = deps.postConversationNotice ?? postConversationNotice
   const readPressure = deps.readPressure ?? ((): Promise<MachinePressure> => samplePressure())
   const readPagingCounter = deps.readPagingCounter ?? defaultReadPagingCounter
   const recordCapDecision = deps.recordCapDecision ?? ((): void => {})
@@ -330,11 +326,11 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
     prev = { counter, atMs }
   }
 
-  const ack = async (text: string): Promise<void> => {
+  const ack = async (input: Extract<ConversationNoticeInput, { kind: string }>): Promise<void> => {
     try {
-      await writeChatAck(text)
+      await postNotice(input)
     } catch (err) {
-      log(`[steward-tune] chat ack failed: ${(err as Error).message}`)
+      log(`[steward-tune] conversation Notice failed: ${(err as Error).message}`)
     }
   }
 
@@ -410,9 +406,17 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
         `steward autotune raised implement ${oldCap} → ${newCap} on sustained backlog (${decision.explanation})`,
       )
 
-      await ack(
-        `I bumped implement workers from ${oldCap} to ${newCap} because backlog held above ${Math.round(payload.cap * 0.75)} for ${Math.round(payload.sustainedMs / 1000)}s.`,
-      )
+      await ack({
+        kind: 'steward.worker-bumped',
+        payload: {
+          from: oldCap,
+          to: newCap,
+          pending: payload.pending,
+          threshold: Math.round(payload.cap * 0.75),
+          sustainedSeconds: Math.round(payload.sustainedMs / 1000),
+        },
+        priority: 'routine',
+      })
     })()
   })
 
@@ -434,9 +438,11 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
 
       // Name the resource that actually tripped, so the operator does not go
       // looking at CPU when the machine is out of memory.
-      await ack(
-        `I reduced implement workers from ${oldCap} to ${newCap} because the host was swapping at ${Math.round(pagingPps)} pages/s.`,
-      )
+      await ack({
+        kind: 'steward.worker-reduced',
+        payload: { from: oldCap, to: newCap, pagingPps: Math.round(pagingPps) },
+        priority: 'routine',
+      })
       return
     }
 
@@ -458,9 +464,11 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
         ? null
         : `steward autotune restored implement ${oldCap} → ${newCap} after paging cleared`,
     )
-    await ack(
-      `I restored implement workers from ${oldCap} to ${newCap} because host pressure cleared.`,
-    )
+    await ack({
+      kind: 'steward.worker-restored',
+      payload: { from: oldCap, to: newCap },
+      priority: 'routine',
+    })
   }
 
   // Sample once immediately rather than waiting a full interval. Paging is a

@@ -3,8 +3,8 @@
  *
  * When the recipe dispatcher auto-applies a taught recipe to a fresh failure
  * occurrence, it calls {@link emitRecipeAutoRun} to publish a `recipe-autorun`
- * bus event. The UI hero-delta builder picks up these events and surfaces them
- * as 🤖-prefixed one-liners in the "What happened today?" view.
+ * bus event. The conversation Notice subscriber narrates them immediately;
+ * the UI hero-delta also keeps them in its historical activity view.
  */
 
 import { publishWithRetry } from '../lib/outbox.js';

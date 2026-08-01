@@ -61,6 +61,10 @@ import {
   ensureArcVerifierSubscriber,
 } from '../../outbox/subscribers/arc-verifier-subscriber'
 import {
+  drainRecipeConversationNotices,
+  ensureRecipeConversationNoticeSubscriber,
+} from '../../outbox/subscribers/recipe-conversation-notice'
+import {
   isArcVerifyDisabled,
   runArcVerification,
   triggerArcVerification,
@@ -4678,6 +4682,21 @@ export const startDaemon = async (
     }
   })()
 
+  // Recipe autoruns are operational changes, not a new Subject: replay their
+  // durable events into the shared conversation as zero-token Notices.
+  void (async () => {
+    try {
+      await ensureRecipeConversationNoticeSubscriber(getCompositionRootClient())
+      const { processed } = await drainRecipeConversationNotices(
+        getCompositionRootClient(),
+        log,
+      )
+      if (processed > 0) log(`[recipe-conversation-notice] posted ${processed} Notice(s) on boot`)
+    } catch (err) {
+      log(`[recipe-conversation-notice] boot drain failed: ${(err as Error).message}`)
+    }
+  })()
+
   // Boot drain for the action-queue-repopulator outbox subscriber: register it and
   // apply any actionQueue mutations for events published while the daemon was down.
   void (async () => {
@@ -5668,6 +5687,22 @@ export const startDaemon = async (
   )
   closeSubjectOnTerminalEventDrain.unref()
 
+  // ── Recipe conversation Notice drain ────────────────────────────────────
+  const RECIPE_CONVERSATION_NOTICE_DRAIN_MS = Number(
+    process.env.MARS_RECIPE_CONVERSATION_NOTICE_DRAIN_MS ?? 30_000,
+  )
+  const recipeConversationNoticeDrain = setInterval(
+    singleFlight(async () => {
+      try {
+        await drainRecipeConversationNotices(getCompositionRootClient(), log)
+      } catch (err) {
+        log(`[recipe-conversation-notice] drain errored: ${(err as Error).message}`)
+      }
+    }),
+    RECIPE_CONVERSATION_NOTICE_DRAIN_MS,
+  )
+  recipeConversationNoticeDrain.unref()
+
   // ── Arc-verifier drain ───────────────────────────────────────────────────
   // Polls the outbox for task.terminal { reason: 'done' } events and triggers
   // arc-outcome verification for any arc that has fully completed with merged
@@ -5722,6 +5757,7 @@ export const startDaemon = async (
     clearInterval(blockerResolutionDrain)
     clearInterval(recoverySpawnerDrain)
     clearInterval(closeSubjectOnTerminalEventDrain)
+    clearInterval(recipeConversationNoticeDrain)
     clearInterval(arcVerifierDrain)
     clearInterval(usageSamplerInterval)
     deferralWakeSweeper.stop()

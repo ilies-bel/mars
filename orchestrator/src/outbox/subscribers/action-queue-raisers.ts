@@ -185,8 +185,9 @@ function taskBlockedActionQueueRaiser(client: DbClient): Subscriber {
 
       // Learned-recipe auto-run: if the operator has taught a recovery op for
       // this failure signature, execute it automatically instead of raising a
-      // card. On success, log the auto-run for the WYWA delta. On error, fall
-      // through and raise the card as normal so the operator can intervene.
+      // card. On success, log and publish the auto-run so the continuous
+      // conversation can narrate it and WYWA retains it historically. On error,
+      // fall through and raise the card as normal so the operator can intervene.
       if (p.failureSignature) {
         const { getLearnedRecipe, executeLearnedOp, logAutoRecipeRun } =
           await import('../../core/lib/learned-recipes.js');
@@ -198,6 +199,13 @@ function taskBlockedActionQueueRaiser(client: DbClient): Subscriber {
               signature: p.failureSignature,
               actionOp: learned.actionOp,
               taskId: p.taskId,
+            });
+            const { emitRecipeAutoRun } = await import('../../core/recipes/teach.js');
+            await emitRecipeAutoRun(client, {
+              recipeId: learned.failureSignature,
+              failureKind: p.failureSignature,
+              targetTaskId: p.taskId,
+              at: new Date().toISOString(),
             });
             // Auto-run succeeded — do NOT raise a card.
             return;
