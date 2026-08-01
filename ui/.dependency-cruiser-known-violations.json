@@ -1,0 +1,29 @@
+[
+  {
+    "type": "module",
+    "from": "server/__testing__/bun-vitest-setup.ts",
+    "to": "server/__testing__/bun-vitest-setup.ts",
+    "rule": {
+      "severity": "warn",
+      "name": "no-orphans"
+    }
+  },
+  {
+    "type": "module",
+    "from": "src/bun-test-compat.ts",
+    "to": "src/bun-test-compat.ts",
+    "rule": {
+      "severity": "warn",
+      "name": "no-orphans"
+    }
+  },
+  {
+    "type": "module",
+    "from": "src/components/ui/sonner.tsx",
+    "to": "src/components/ui/sonner.tsx",
+    "rule": {
+      "severity": "warn",
+      "name": "no-orphans"
+    }
+  }
+]

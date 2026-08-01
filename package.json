@@ -3,12 +3,42 @@
 	"scripts": {
 		"validate-manifest": "node scripts/check-manifest.mjs",
 		"test-scripts": "node scripts/check-manifest.test.mjs && node scripts/is-prerelease.test.mjs && node scripts/compute-next-tag.test.mjs && node scripts/inject-plugin-version.test.mjs",
-		"knip": "knip --no-progress --no-exit-code"
+		"knip": "knip --no-progress --no-exit-code",
+		"arch": "node scripts/arch-guard.mjs",
+		"arch:baseline": "node scripts/arch-guard.mjs --baseline",
+		"arch:graph": "node scripts/arch-guard.mjs --graph"
 	},
+	"//arch": [
+		"`arch` is the static architecture guard: import cycles are an ERROR, orphan modules a WARN.",
+		"It cruises two trees (orchestrator+packages from here, ui/ with its own @/* alias config)",
+		"and fails on any violation NOT already recorded in the known-violations baselines.",
+		"",
+		"THE BASELINES ARE A RATCHET AND MAY ONLY EVER SHRINK.",
+		".dependency-cruiser-known-violations.json and ui/.dependency-cruiser-known-violations.json",
+		"freeze the cycles that already existed when the guard landed, so that the rule could be set",
+		"to `error` on day one without breaking a tree that is already 28-of-49 folders cyclic.",
+		"",
+		"DO NOT run `arch:baseline` to make a failure go away. If `npm run arch` fails, you added a",
+		"cycle: break it. Regenerating to ADD entries is forbidden and defeats the entire mechanism.",
+		"The only legitimate regenerations are (a) you fixed cycles and want the stale entries",
+		"dropped, or (b) you switched on a brand-new rule and said so in the commit message.",
+		"A PR whose diff GROWS a baseline file should not be approved without an explicit reason."
+	],
 	"devDependencies": {
-		"knip": "^6.14.0"
+		"dependency-cruiser": "^18.1.0",
+		"knip": "^6.14.0",
+		"typescript": "^6.0.3"
 	},
 	"dependencies": {
 		"mars": "link:./orchestrator"
+	},
+	"pnpm": {
+		"packageExtensions": {
+			"dependency-cruiser": {
+				"peerDependencies": {
+					"typescript": "*"
+				}
+			}
+		}
 	}
 }
