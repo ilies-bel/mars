@@ -469,13 +469,6 @@ export const classifyError = (errorOutput: string): string => {
 }
 
 /**
- * Pattern that matches the recovery-prefix variants prepended by
- * `queue-fix-tasks.ts` when a task or recovery task fails.
- * Used by `computeFailureSignature` to short-circuit re-classification.
- */
-const RECOVERY_REASON_PREFIX_RE = /^recovery_(?:exhausted|failed):/
-
-/**
  * The one prefix a recovery-task escalation stamps onto `failure_reason` /
  * `error`. Composed form:
  *
@@ -487,13 +480,122 @@ const RECOVERY_REASON_PREFIX_RE = /^recovery_(?:exhausted|failed):/
  */
 export const RECOVERY_FAILED_PREFIX = 'recovery_failed:'
 
+/** `recovery_exhausted:<sig>` — the code-recovery budget gate in `queue-fix-tasks.ts`. */
+export const RECOVERY_EXHAUSTED_PREFIX = 'recovery_exhausted:'
+
+/** `recovery_disabled:<sig>: <err>` — the `MARS_RECOVERY_DISABLED=1` kill switch. */
+export const RECOVERY_DISABLED_PREFIX = 'recovery_disabled:'
+
+/** `non-code-retry-exhausted:<sig>` — the non-code re-queue cap. */
+export const NON_CODE_RETRY_EXHAUSTED_PREFIX = 'non-code-retry-exhausted:'
+
+/** `gate-suppressed:<sig>` — the verify-gate meta-monitor's suppression verdict. */
+export const GATE_SUPPRESSED_PREFIX = 'gate-suppressed:'
+
+/** `signature-storm:<sig>` — the signature-storm circuit breaker's first trip. */
+export const SIGNATURE_STORM_PREFIX = 'signature-storm:'
+
+/** `spend_control_suppressed:<reason>` — the dispatch spend controller's suppression. */
+export const SPEND_CONTROL_SUPPRESSED_PREFIX = 'spend_control_suppressed:'
+
+/**
+ * `origin_recovery_failed:<recoveryTaskId>` — an ORIGIN failed because its own
+ * (leaf, one-shot) recovery Chore died. ADR-0040 / CLAUDE.md § Blockers.
+ *
+ * Lives here rather than next to its composer in `blocker-resolution.ts` so the
+ * vocabulary below stays a single list; `blocker-resolution.ts` imports it.
+ */
+export const ORIGIN_RECOVERY_FAILED_PREFIX = 'origin_recovery_failed:'
+
+/**
+ * THE COMPLETE VOCABULARY of `failure_reason` prefixes the orchestrator writes
+ * for ITSELF — a terminal verdict it reached about a row, as opposed to
+ * captured evidence from the failing command.
+ *
+ * ## Why this list is one list
+ *
+ * Every entry marks a row on which the orchestrator's automated options are
+ * SPENT: the budget is gone, the cap is hit, the kill switch is on, the gate is
+ * suppressed, the recovery slot is consumed. Re-driving such a row through the
+ * failure handler deterministically reproduces the same verdict, which rewrites
+ * `status='failed'`, which emits a fresh `task.failed`, which the next
+ * recovery-spawner drain feeds straight back in — a self-feeding 30 s loop.
+ * That loop has now been observed TWICE in production, both times because a
+ * guard hardcoded a SUBSET of these prefixes and the writers grew a new one:
+ *
+ *  - a guard testing `startsWith('recovery_failed:')` against a variable that
+ *    never carried the prefix (inert guard, terminal rows re-driven forever);
+ *  - `isOriginRecoveryFailedReason` in `recovery-spawn.ts` recognising only
+ *    `origin_recovery_failed:` while the budget gate wrote `recovery_exhausted:`
+ *    (task mars-76fef59f: 314 action-queue rows in one hour).
+ *
+ * So: ONE list, and every consumer derives from it. Do not write a second
+ * literal prefix anywhere — add it here and the guards, the signature
+ * short-circuit and the Steward's status-echo scrubber all learn it at once.
+ *
+ * Invariant for new entries: a prefix belongs here **only** if a row carrying
+ * it must never be reopened automatically. A reason that merely describes a
+ * failure (a step id such as `requeue:time-bound-exceeded`, or prose) does NOT
+ * belong — those rows are still owed their one recovery attempt (ADR-0040).
+ */
+export const TERMINAL_VERDICT_PREFIXES = [
+  RECOVERY_FAILED_PREFIX,
+  RECOVERY_EXHAUSTED_PREFIX,
+  RECOVERY_DISABLED_PREFIX,
+  NON_CODE_RETRY_EXHAUSTED_PREFIX,
+  GATE_SUPPRESSED_PREFIX,
+  SIGNATURE_STORM_PREFIX,
+  SPEND_CONTROL_SUPPRESSED_PREFIX,
+  ORIGIN_RECOVERY_FAILED_PREFIX,
+] as const
+
+const escapeForRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')
+
+const TERMINAL_VERDICT_ALTERNATION = TERMINAL_VERDICT_PREFIXES.map((p) =>
+  escapeForRegex(p.slice(0, -1)),
+).join('|')
+
+/**
+ * Anchored pattern matching one leading terminal-verdict prefix. Used by
+ * {@link computeFailureSignature} to short-circuit re-classification of a
+ * reason string that already embeds a signature.
+ */
+const TERMINAL_VERDICT_PREFIX_RE = new RegExp(`^(?:${TERMINAL_VERDICT_ALTERNATION}):`)
+
+/**
+ * Global pattern matching every terminal-verdict token AND its argument, for
+ * scrubbing derived status text out of an excerpt before it is shown to a
+ * human or an agent. Consumed by the Steward's storm-excerpt assessor.
+ */
+export const terminalVerdictEchoPattern = (): RegExp =>
+  new RegExp(`(?:${TERMINAL_VERDICT_ALTERNATION}):[^\\s]*\\s*`, 'g')
+
+/**
+ * True when `reason` is a terminal verdict the orchestrator wrote about this
+ * row — i.e. its automated recovery options are already spent.
+ *
+ * This is THE terminality predicate. Anything that decides "may this row be
+ * re-driven / reopened automatically?" must call it rather than testing a
+ * prefix literal, because a literal is only ever correct until the next writer
+ * is added.
+ *
+ * It deliberately does NOT match a plain failing-step reason (`verify:test`,
+ * `code:commit-contract`) or prose, so a row's FIRST, legitimate recovery
+ * attempt still goes ahead — exactly one per origin failure, per ADR-0040.
+ */
+export const isTerminalVerdictReason = (
+  reason: string | null | undefined,
+): reason is string =>
+  typeof reason === 'string' &&
+  TERMINAL_VERDICT_PREFIXES.some((prefix) => reason.startsWith(prefix))
+
 /**
  * True when `reason` is already a composed recovery-failure reason.
  *
- * Callers use this as the terminality test for a recovery task: a recovery
- * Chore is a leaf (ADR-0040) whose failure is escalated exactly once, so a row
- * that is `failed` AND carries this prefix has already been through the
- * escalation and must not be re-driven.
+ * NARROWER than {@link isTerminalVerdictReason} and deliberately so: this one
+ * answers "was this string produced by {@link composeRecoveryFailureReason}?",
+ * which is what the compose/strip pair needs. For "is this row spent?" use
+ * {@link isTerminalVerdictReason}.
  */
 export const isRecoveryFailedReason = (
   reason: string | null | undefined,
@@ -572,7 +674,7 @@ export const computeFailureSignature = (
   // Detect this by stripping the known prefix and checking whether what
   // remains starts with `<failingStep>/` — if so, extract the embedded class.
   const firstLine = firstNonBlankLine(errorOutput)
-  const withoutPrefix = firstLine.replace(RECOVERY_REASON_PREFIX_RE, '')
+  const withoutPrefix = firstLine.replace(TERMINAL_VERDICT_PREFIX_RE, '')
   const signaturePrefix = `${failingStep}/`
   if (withoutPrefix.startsWith(signaturePrefix)) {
     const tail = withoutPrefix.slice(signaturePrefix.length)

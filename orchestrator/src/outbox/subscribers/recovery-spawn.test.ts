@@ -411,6 +411,132 @@ describe('recovery-spawn outbox subscriber', () => {
     cleanup()
   })
 
+  // ── The anti-loop gate, and its inverse ──────────────────────────────────
+  //
+  // These two run as a pair on purpose. The first pins that a row already
+  // holding a terminal verdict is never re-driven; the second pins that the
+  // guard doing so has not swallowed the ONE recovery attempt ADR-0040 owes an
+  // ordinary first failure. A fix that passes only the first is a regression.
+
+  it('never reopens an ORIGIN already terminal with a recovery_exhausted: verdict', async () => {
+    // Live regression (mars-76fef59f, 2026-07-31): 314 action-queue rows in
+    // just over an hour, cycling
+    //   task.queued → task.failed(recovery_exhausted:verify/unclassified) → …
+    // every 30 s. The guard above the reopen recognised only the
+    // `origin_recovery_failed:` prefix, while the code-recovery budget gate in
+    // queue-fix-tasks.ts writes `recovery_exhausted:`. So the spawner reopened
+    // the row, the exhausted branch immediately re-failed it, that write
+    // emitted a fresh task.failed, and the next drain fed it straight back in.
+    //
+    // The fix makes the guard consult the whole `TERMINAL_VERDICT_PREFIXES`
+    // vocabulary. Before it, this test fails on the reopen count (1, not 0).
+    process.env.MARS_FIX_RETRY_BUDGET = '0'
+    const { q, rs, pub, client } = await loadModules(repo)
+
+    const t = await q.enqueueTask('work that already exhausted recovery', undefined, {
+      skipTriage: true,
+    })
+    await q.updateTask(t.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+      error: 'FAIL src/thing.test.ts > expected 2 to be 3',
+      failureReason: 'recovery_exhausted:verify/unclassified',
+      failureSignature: 'verify/unclassified',
+      branch: `task/${t.id}`,
+      worktreePath: repo,
+      retryCount: 2,
+    })
+
+    await rs.ensureRecoverySpawner(client)
+    await publish(pub, client, 'task.failed', {
+      taskId: t.id,
+      error: 'recovery_exhausted:verify/unclassified',
+    })
+
+    await rs.drainRecoverySpawner(client)
+
+    // The row was never handed to the audited reopen seam.
+    const reopens = await client.execute({
+      sql: `SELECT COUNT(*) AS n FROM task_terminal_reopens WHERE task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((reopens.rows[0] as unknown as { n: number }).n)).toBe(0)
+
+    // It stayed terminal, keeping the verdict AND the captured evidence — the
+    // reopen is what used to NULL `error` and decay the reason to a status echo.
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failureReason).toBe('recovery_exhausted:verify/unclassified')
+    expect(reloaded?.error).toContain('expected 2 to be 3')
+
+    // No second recovery was spawned on top of the spent slot.
+    const recoveries = await client.execute({
+      sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t.id],
+    })
+    expect(recoveries.rows).toHaveLength(0)
+
+    // And — the actual loop condition — the pass emitted no NEW task.failed,
+    // so there is nothing for the next 30 s drain to consume. Only the event
+    // published above exists.
+    const failedEvents = await client.execute({
+      sql: `SELECT COUNT(*) AS n FROM events
+             WHERE type = 'task.failed' AND payload LIKE ?`,
+      args: [`%${t.id}%`],
+    })
+    expect(Number((failedEvents.rows[0] as unknown as { n: number }).n)).toBe(1)
+    expect((await rs.drainRecoverySpawner(client)).processed).toBe(0)
+  })
+
+  it('still spawns the one legitimate recovery for a first failure carrying a plain step reason', async () => {
+    // The inverse failure the guard above must not cause. `verify:has-diff` is
+    // an ordinary failing-step reason, not a terminal verdict, so this origin is
+    // owed exactly one recovery attempt (ADR-0040). A guard broad enough to
+    // match it would silently disable self-heal for every first failure — the
+    // regression that is much worse than the loop, because it is invisible.
+    const { q, rc, rs, pub, client } = await loadModules(repo)
+
+    const t = await q.enqueueTask('ordinary first failure', undefined, {
+      skipTriage: true,
+    })
+    await q.updateTask(t.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+      failureReason: 'verify:has-diff',
+      error: 'no commits ahead of integration branch',
+      branch: `task/${t.id}`,
+      worktreePath: repo,
+    })
+
+    const cleanup = registerTestRecipe(rc, 'verify:has-diff/no-commits-ahead')
+
+    await rs.ensureRecoverySpawner(client)
+    await publish(pub, client, 'task.failed', {
+      taskId: t.id,
+      error: 'no commits ahead of integration branch',
+    })
+
+    const { processed } = await rs.drainRecoverySpawner(client)
+    expect(processed).toBe(1)
+
+    // The reopen DID happen — the guard let this one through …
+    const reopens = await client.execute({
+      sql: `SELECT COUNT(*) AS n FROM task_terminal_reopens WHERE task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((reopens.rows[0] as unknown as { n: number }).n)).toBe(1)
+
+    // … and produced exactly one recovery, with the origin parked behind it.
+    const recoveries = await client.execute({
+      sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t.id],
+    })
+    expect(recoveries.rows).toHaveLength(1)
+    expect((await q.getTask(t.id))?.status).toBe('blocked')
+
+    cleanup()
+  })
+
   it('spawns zero additional recovery tasks when the same event is replayed (cursor already advanced)', async () => {
     const { q, ft, rc, rs, pub, client } = await loadModules(repo)
 

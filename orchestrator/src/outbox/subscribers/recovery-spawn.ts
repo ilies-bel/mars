@@ -7,9 +7,13 @@ import {
   hasUsableWorktree,
 } from '../../core/queue-fix-tasks.js'
 import { getTask, reopenTerminalTask, updateTask } from '../../core/queue.js'
-import { isOriginRecoveryFailedReason } from '../../core/blocker-resolution.js'
 import { apiCircuitBreaker } from '../../core/lib/api-circuit-breaker.js'
-import { asStepId, UNKNOWN_STEP_ID } from '../../core/lib/failure-signature.js'
+import {
+  asStepId,
+  isTerminalVerdictReason,
+  SPEND_CONTROL_SUPPRESSED_PREFIX,
+  UNKNOWN_STEP_ID,
+} from '../../core/lib/failure-signature.js'
 import { assessStormExcerpt } from '../../core/agents/steward.js'
 import { registerSubscriberName } from '../registry.js'
 import { raiseActionQueueItem } from '../../core/lib/action-queue.js'
@@ -183,18 +187,40 @@ export async function drainRecoverySpawner(
         return true
       }
 
-      // ── An origin failed BY its dead recovery is terminal too ────────────────
-      // `Arc.failStrandedOriginOnRecoveryFailure` fails the origin when its
-      // one-shot recovery Chore dies (ADR-0040). That write emits a `task.failed`
-      // for the ORIGIN, which lands right back here — and by then the origin's
-      // recovery is terminal, so the outstanding-fix dedup inside
-      // `handleTaskFailureWithFixTask` no longer suppresses a spawn. Without this
-      // gate the repair would reopen the origin and hand it a SECOND recovery,
-      // violating the exactly-one-recovery-per-origin-failure rule and starting
-      // the strand cycle over. The recovery slot is spent; the operator owns it
-      // now (the escalation row is already raised).
-      if (isOriginRecoveryFailedReason(task.failureReason)) {
-        log?.(`origin ${taskId} failed by dead recovery — recovery slot spent, no respawn`)
+      // ── A row the orchestrator has already given a terminal verdict is done ──
+      //
+      // THE ANTI-LOOP GATE. It must sit above `reopenTerminalTask` below,
+      // because that call NULLs `failure_reason` — after it runs the verdict is
+      // unreadable and this decision can no longer be made.
+      //
+      // `isTerminalVerdictReason` covers the WHOLE self-written vocabulary
+      // (`TERMINAL_VERDICT_PREFIXES` in lib/failure-signature.ts), not one
+      // prefix. Recognising a subset is what produced this bug twice over: the
+      // predicate here used to be `isOriginRecoveryFailedReason`, which knew
+      // only `origin_recovery_failed:`, while the code-recovery budget gate in
+      // `queue-fix-tasks.ts` writes `recovery_exhausted:`. So the gate reopened
+      // the row, the exhausted branch immediately re-failed it, that write
+      // emitted a fresh `task.failed`, and the next 30 s drain fed it straight
+      // back in. Task mars-76fef59f rode that loop for over an hour and minted
+      // 314 action-queue rows.
+      //
+      // Every prefix in the vocabulary means the same thing: the orchestrator's
+      // automated options on this row are SPENT (budget gone, cap hit, kill
+      // switch on, gate suppressed, recovery slot consumed), and the
+      // action-queue row was already raised by whoever wrote the verdict. The
+      // operator owns it now — `mars restart` / `mars continue` reopen it
+      // through their own audited seams, which this gate does not touch.
+      //
+      // The inverse failure — suppressing a legitimate FIRST recovery — cannot
+      // happen here: a first failure carries a failing-step reason
+      // (`verify:test`, `code:commit-contract`) or prose, none of which match
+      // any prefix. Exactly one recovery per origin failure (ADR-0040) is
+      // preserved.
+      if (isTerminalVerdictReason(task.failureReason)) {
+        log?.(
+          `task ${taskId} already holds a terminal verdict (${task.failureReason.split(':')[0]}:) ` +
+            `— automated options spent, no reopen`,
+        )
         return false
       }
 
@@ -249,7 +275,12 @@ export async function drainRecoverySpawner(
       })
 
       if (decision.suppressRecovery) {
-        const suppressionReason = `spend-control suppression: ${decision.reason}`
+        // Prefixed from the shared vocabulary, not free prose. This branch
+        // leaves the row `failed` for the operator, so the next `task.failed`
+        // must be recognisable to the anti-loop gate above — as prose it was
+        // not, and this path re-drove itself every 30 s for as long as spend
+        // pressure held.
+        const suppressionReason = `${SPEND_CONTROL_SUPPRESSED_PREFIX}${decision.reason}`
         await updateTask(taskId, {
           status: 'failed',
           failureReason: suppressionReason,

@@ -28,7 +28,8 @@ import {
 } from './arc'
 import {
   composeRecoveryFailureReason,
-  isRecoveryFailedReason,
+  isTerminalVerdictReason,
+  RECOVERY_EXHAUSTED_PREFIX,
   stripRecoveryFailedPrefixes,
 } from './lib/failure-signature'
 import { isEnvironmentalSignature } from './lib/failure-kinds'
@@ -613,9 +614,12 @@ export const handleTaskFailureWithFixTask = async (
     // `task.failed` carrying the composed reason, which the next drain feeds
     // straight back in). Without this gate every pass re-prefixed the reason,
     // re-raised the escalation row, re-recorded a storm verdict and re-spawned
-    // the rescue operator. `failed` + an already-stamped `recovery_failed:`
-    // reason IS the "already escalated" fact, so no counter is needed.
-    if (task.status === 'failed' && isRecoveryFailedReason(task.failureReason)) {
+    // the rescue operator. `failed` + an already-stamped terminal verdict IS
+    // the "already escalated" fact, so no counter is needed.
+    //
+    // Tested against the WHOLE vocabulary rather than `recovery_failed:` alone:
+    // a subset test is precisely the drift that let mars-76fef59f loop.
+    if (task.status === 'failed' && isTerminalVerdictReason(task.failureReason)) {
       return {
         outcome: 'escalated',
         failureSignature,
@@ -731,6 +735,31 @@ export const handleTaskFailureWithFixTask = async (
       failureSignature,
       retryCount: task.retryCount,
       actionQueueItemId,
+    }
+  }
+
+  // ── Origin-side twin of the escalate-once gate above ─────────────────────
+  // Defence in depth for the loop the recovery-spawner gate primarily stops.
+  //
+  // The loop is not powered by the reopen; it is powered by the RE-EMISSION.
+  // Every branch below that lands a terminal verdict writes `status='failed'`,
+  // and that write emits a fresh `task.failed` — which is the event the next
+  // 30 s drain consumes. So a row that ALREADY carries a terminal verdict must
+  // leave this handler without writing status at all: no write, no event, no
+  // next drain, loop mathematically impossible regardless of who called us.
+  //
+  // The recovery-spawner reaches us with the row already reopened (queued,
+  // `failure_reason` NULLed), so this gate does not fire on that path — it
+  // covers the OTHER callers, chiefly the inline verify-primitive dispatch,
+  // which hands us the row exactly as it found it.
+  //
+  // `status === 'failed'` is required: a legitimately requeued row that later
+  // fails again is owed its recovery, and its stale reason must not veto that.
+  if (task.status === 'failed' && isTerminalVerdictReason(task.failureReason)) {
+    return {
+      outcome: 'failed',
+      failureSignature,
+      retryCount: task.retryCount,
     }
   }
 
@@ -1093,9 +1122,9 @@ export const handleTaskFailureWithFixTask = async (
     // the prefix (defence-in-depth; the primary fix is in computeFailureSignature).
     await markTaskFailed(
       input.taskId,
-      failureSignature.startsWith('recovery_exhausted:')
+      failureSignature.startsWith(RECOVERY_EXHAUSTED_PREFIX)
         ? failureSignature
-        : `recovery_exhausted:${failureSignature}`,
+        : `${RECOVERY_EXHAUSTED_PREFIX}${failureSignature}`,
       undefined,
       // The reason is a status echo; the evidence is the captured output the
       // handler was called with. Both are recorded, in their own columns.
