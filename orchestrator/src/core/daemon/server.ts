@@ -53,9 +53,9 @@ import {
   ensureRecoverySpawner,
 } from '../../outbox/subscribers/recovery-spawn'
 import {
-  drainCloseSubjectOnTerminalEvent,
-  ensureCloseSubjectOnTerminalEventSubscriber,
-} from '../../outbox/subscribers/close-subject-on-terminal-event'
+  drainSubjectCloser,
+  ensureSubjectCloser,
+} from '../../outbox/subscribers/subject-closer'
 import {
   drainArcVerifier,
   ensureArcVerifierSubscriber,
@@ -4742,11 +4742,14 @@ export const startDaemon = async (
   // their matching Subject after restart.
   void (async () => {
     try {
-      await ensureCloseSubjectOnTerminalEventSubscriber(getCompositionRootClient())
-      const { processed } = await drainCloseSubjectOnTerminalEvent(getCompositionRootClient(), log)
-      if (processed > 0) log(`[close-subject-on-terminal-event] closed ${processed} Subject(s) on boot`)
+      await ensureSubjectCloser(getCompositionRootClient())
+      const { processed } = await drainSubjectCloser(getCompositionRootClient(), log)
+      if (processed > 0) {
+        viewStreamHub.broadcast('chat')
+        log(`[subject-closer] closed ${processed} Subject(s) on boot`)
+      }
     } catch (err) {
-      log(`[close-subject-on-terminal-event] boot drain failed: ${(err as Error).message}`)
+      log(`[subject-closer] boot drain failed: ${(err as Error).message}`)
     }
   })()
 
@@ -5676,9 +5679,10 @@ export const startDaemon = async (
   const closeSubjectOnTerminalEventDrain = setInterval(
     singleFlight(async () => {
       try {
-        await drainCloseSubjectOnTerminalEvent(getCompositionRootClient(), log)
+        const { processed } = await drainSubjectCloser(getCompositionRootClient(), log)
+        if (processed > 0) viewStreamHub.broadcast('chat')
       } catch (err) {
-        log(`[close-subject-on-terminal-event] drain errored: ${(err as Error).message}`)
+        log(`[subject-closer] drain errored: ${(err as Error).message}`)
       }
     }),
     CLOSE_SUBJECT_ON_TERMINAL_EVENT_DRAIN_MS,
@@ -5739,6 +5743,7 @@ export const startDaemon = async (
     clearInterval(actionQueueRepopulatorDrain)
     clearInterval(blockerResolutionDrain)
     clearInterval(recoverySpawnerDrain)
+    clearInterval(closeSubjectOnTerminalEventDrain)
     clearInterval(arcVerifierDrain)
     clearInterval(usageSamplerInterval)
     deferralWakeSweeper.stop()

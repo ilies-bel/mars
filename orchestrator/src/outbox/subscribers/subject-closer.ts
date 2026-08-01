@@ -4,28 +4,28 @@ import { registerSubscriber } from '../../bus/subscribers.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
 import { registerSubscriberName } from '../registry.js'
 
-/** Durable subscriber id for Subject closure on declared domain events. */
-export const CLOSE_SUBJECT_ON_TERMINAL_EVENT_SUBSCRIBER = 'close-subject-on-terminal-event'
-registerSubscriberName(CLOSE_SUBJECT_ON_TERMINAL_EVENT_SUBSCRIBER)
+/** Durable cursor that observes domain events which end Subjects. */
+export const SUBJECT_CLOSER_SUBSCRIBER = 'subject-closer'
+registerSubscriberName(SUBJECT_CLOSER_SUBSCRIBER)
 
-/** Register the cursor before terminal events are published. Idempotent. */
-export async function ensureCloseSubjectOnTerminalEventSubscriber(client: DbClient): Promise<void> {
-  await registerSubscriber(client, CLOSE_SUBJECT_ON_TERMINAL_EVENT_SUBSCRIBER, { replay: false })
+/** Register the durable cursor before terminal events are published. */
+export async function ensureSubjectCloser(client: DbClient): Promise<void> {
+  await registerSubscriber(client, SUBJECT_CLOSER_SUBSCRIBER, { replay: false })
 }
 
 /**
- * Close a Subject only when its declared event kind and entity id match an
- * outbox event. Entity ids are named consistently across Mars domain events,
- * so this supports proposal, task, action-queue, and scorer Subjects without
- * coupling the subscriber to one lifecycle.
+ * Close every open Subject whose declared event type and entity match one
+ * durable Outbox event. The UPDATE condition makes re-delivery harmless: a
+ * closed Subject retains its original boundary timestamp and no new record is
+ * written.
  */
-export async function drainCloseSubjectOnTerminalEvent(
+export async function drainSubjectCloser(
   client: DbClient,
   log?: (message: string) => void,
 ): Promise<{ processed: number }> {
   return drainWithStall({
     client,
-    subscriberId: CLOSE_SUBJECT_ON_TERMINAL_EVENT_SUBSCRIBER,
+    subscriberId: SUBJECT_CLOSER_SUBSCRIBER,
     log,
     handle: async (event: BusEvent<EventName>) => {
       const payload = event.payload as Record<string, unknown>
@@ -36,16 +36,13 @@ export async function drainCloseSubjectOnTerminalEvent(
         (typeof payload.scorerId === 'string' && payload.scorerId)
       if (!entityId) return false
 
-      // chat_threads timestamps are bigint epoch milliseconds, not timestamptz:
-      // bind the value rather than using SQL now().
-      const ts = Date.now()
       const result = await client.execute({
         sql: `UPDATE chat_threads
                 SET closed_at = ?
-              WHERE terminal_event = ?
+              WHERE terminal_event_type = ?
                 AND terminal_entity_id = ?
                 AND closed_at IS NULL`,
-        args: [ts, event.type, entityId],
+        args: [Date.now(), event.type, entityId],
       })
       return ((result as unknown as { rowsAffected?: number }).rowsAffected ?? 0) > 0
     },

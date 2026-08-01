@@ -38,6 +38,7 @@ import {
   setMessageFeedback,
   clearMessageFeedback,
   getThread,
+  closeSubject,
   setThreadStatus,
 } from '../lib/chat-store'
 import {
@@ -1730,6 +1731,7 @@ export const startHttpServer = async (
     // POST /chat/subjects — atomically create and seed a Subject, then start
     //   its first chat run. Body: { message: string, attachments?: AttachmentInfo[] }.
     // POST /chat/threads/:id/title — rename a thread. Body: { title: string }.
+    // POST /chat/threads/:id/end — explicitly close an open-ended Subject.
     // All chat routes bypass the draining gate (lightweight user-data writes,
     // not task work). SSE channel 'chat' is broadcast after every write.
     const chatThreadsUrl = req.method === 'GET' && req.url
@@ -1811,6 +1813,31 @@ export const startHttpServer = async (
         const threadId = decodeURIComponent(threadTasksMatch[1])
         listTasksForThread(threadId)
           .then((links) => sendJson(res, 200, { tasks: links.map((link) => link.taskId) }))
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+    {
+      const endSubjectMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/chat\/threads\/([^/?]+)\/end$/)
+          : null
+      if (endSubjectMatch && endSubjectMatch[1]) {
+        const id = decodeURIComponent(endSubjectMatch[1])
+        getThread(id)
+          .then(async (detail) => {
+            if (detail === null) {
+              sendJson(res, 404, { ok: false, error: `thread ${id} not found`, errorCode: 'NOT_FOUND' })
+              return
+            }
+            if (detail.thread.terminal_event_type != null) {
+              sendJson(res, 409, { ok: false, error: 'Subject closes when its declared terminal event arrives', errorCode: 'TERMINAL_EVENT_DECLARED' })
+              return
+            }
+            await closeSubject(id)
+            deps.viewStreamHub?.broadcast('chat')
+            sendJson(res, 200, { ok: true })
+          })
           .catch((err: unknown) => sendError(res, err))
         return
       }

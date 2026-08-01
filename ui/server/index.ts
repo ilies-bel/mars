@@ -764,6 +764,7 @@ export const startServer = async (
         // POST /api/chat/threads/:id/message → daemon /chat/threads/:id/message
         // POST /api/chat/threads/:id/stop    → daemon /chat/threads/:id/stop
         // POST /api/chat/threads/:id/title   → daemon /chat/threads/:id/title
+        // POST /api/chat/threads/:id/end     → daemon /chat/threads/:id/end
         // ---------------------------------------------------------------------------
 
         if (path === '/api/chat/threads' && req.method === 'GET') {
@@ -948,7 +949,7 @@ export const startServer = async (
           if (!threadId) {
             return jsonResponse(400, { error: 'threadId is required' })
           }
-          const allowed = ['message', 'stop', 'title']
+          const allowed = ['message', 'stop', 'title', 'end']
           if (!allowed.includes(action)) {
             return jsonResponse(404, { error: 'not found' })
           }

@@ -642,7 +642,7 @@ const DDL: readonly string[] = [
     alert_item_id  text,
     alert_resolved bigint NOT NULL DEFAULT 0,
     closed_at      bigint,
-    terminal_event text,
+    terminal_event_type text,
     terminal_entity_id text,
     created_at     bigint NOT NULL,
     updated_at     bigint NOT NULL
@@ -756,8 +756,22 @@ const DDL: readonly string[] = [
    END
    $$`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS closed_at bigint`,
-  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS terminal_event text`,
+  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS terminal_event_type text`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS terminal_entity_id text`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'chat_threads'
+          AND column_name = 'terminal_event'
+     ) THEN
+       UPDATE chat_threads
+          SET terminal_event_type = terminal_event
+        WHERE terminal_event_type IS NULL;
+       ALTER TABLE chat_threads DROP COLUMN terminal_event;
+     END IF;
+   END
+   $$`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS posture text NOT NULL DEFAULT 'triage'`,
   `ALTER TABLE IF EXISTS chat_threads DROP COLUMN IF EXISTS context_seeded`,
   `ALTER TABLE IF EXISTS chat_threads DROP COLUMN IF EXISTS session_id`,
@@ -797,8 +811,9 @@ const DDL: readonly string[] = [
   `DROP INDEX IF EXISTS idx_chat_threads_evaporated_at`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_closed_at
      ON chat_threads(closed_at)`,
-  `CREATE INDEX IF NOT EXISTS idx_chat_threads_terminal_event_entity
-     ON chat_threads(terminal_event, terminal_entity_id)
+  `DROP INDEX IF EXISTS idx_chat_threads_terminal_event_entity`,
+  `CREATE INDEX IF NOT EXISTS idx_chat_threads_terminal_event_type_entity
+     ON chat_threads(terminal_event_type, terminal_entity_id)
      WHERE closed_at IS NULL`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS parent_thread_id text`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS fork_idempotency_key text`,

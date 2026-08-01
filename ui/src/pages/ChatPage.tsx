@@ -31,6 +31,7 @@ import {
   fetchChatThread,
   createChatThread,
   createSubjectAndSend,
+  endChatSubject,
   uploadAttachment,
   renameChatThread,
   setMessageFeedback,
@@ -1063,6 +1064,8 @@ interface ChatConversationProps {
   /** Called whenever the live buffer for this thread changes. Used to lift
    * the buffer up to ChatPage so ContextRail can render the activity panel. */
   onLiveBufferChange?: (buf: LiveBuffer | null) => void
+  /** Return the page to the Subject boundary once this Subject closes. */
+  onSubjectClosed: (threadId: string) => void
   glossaryTerms: GlossaryTerm[]
 }
 
@@ -1080,6 +1083,7 @@ const ChatConversation = ({
   onPrefillConsumed,
   onInsertPrompt,
   onLiveBufferChange,
+  onSubjectClosed,
   glossaryTerms,
 }: ChatConversationProps) => {
   const qc = useQueryClient()
@@ -1188,6 +1192,23 @@ const ChatConversation = ({
     void qc.invalidateQueries({ queryKey: ['chat-threads'] })
     void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
   }, [stop, qc, threadId])
+
+  const { mutate: endSubject, isPending: isEndingSubject } = useMutation({
+    mutationFn: () => endChatSubject(threadId, projectId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
+      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+      void qc.invalidateQueries({ queryKey: ['chat-history'] })
+      void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
+      onSubjectClosed(threadId)
+    },
+  })
+
+  useEffect(() => {
+    if (threadDetail?.thread.closedAt !== null && threadDetail?.thread.closedAt !== undefined) {
+      onSubjectClosed(threadId)
+    }
+  }, [threadDetail?.thread.closedAt, threadId, onSubjectClosed])
 
   // Direct retry: resubmit the last real user message without touching the
   // composer or inserting any synthetic "Please retry…" prompt into the transcript.
@@ -1305,6 +1326,19 @@ const ChatConversation = ({
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
+      {threadDetail?.thread.terminalEventType == null && (
+        <div className="flex justify-end px-3 pt-2">
+          <button
+            type="button"
+            data-testid="end-subject"
+            className="font-mono text-[10px] text-muted-foreground hover:text-foreground"
+            disabled={isEndingSubject || isBusy || serverRunning}
+            onClick={() => endSubject()}
+          >
+            {isEndingSubject ? 'Ending…' : 'End Subject'}
+          </button>
+        </div>
+      )}
       <Composer
         threadId={threadId}
         projectId={projectId}
@@ -2749,6 +2783,14 @@ export const ChatPage = () => {
   const [activeSubjectThreadId, setActiveSubjectThreadId] = useState<string | null>(null)
   const activeConversationThreadId = selectedThreadId ?? activeSubjectThreadId
 
+  const handleSubjectClosed = useCallback((threadId: string) => {
+    if (activeSubjectThreadId === threadId) setActiveSubjectThreadId(null)
+    if (selectedThreadId === threadId) setSelectedThreadId(null)
+    void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+    void qc.invalidateQueries({ queryKey: ['chat-history'] })
+    void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
+  }, [activeSubjectThreadId, selectedThreadId, qc])
+
   // Opens a Subject inline when a chip is picked. Arc-failed rows (alerts)
   // reuse the daemon-deduped thread via startThreadFromAlert; other rows get
   // a fresh generic thread.
@@ -2985,6 +3027,7 @@ export const ChatPage = () => {
                     onPrefillConsumed={() => setPrefill(undefined)}
                     onInsertPrompt={handleInsertPrompt}
                     onLiveBufferChange={setActiveLiveBuffer}
+                    onSubjectClosed={handleSubjectClosed}
                     glossaryTerms={glossary ?? []}
                   />
                 </div>

@@ -74,6 +74,22 @@ describe('POST /chat/threads/:id/delete', () => {
   })
 })
 
+describe('POST /chat/threads/:id/end', () => {
+  it('closes an open-ended Subject without sending a provider message', async () => {
+    server = await startFeedbackServer()
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/chat/threads/t1/end`,
+      { method: 'POST' },
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ ok: true })
+    expect(mockCloseSubject).toHaveBeenCalledWith('t1')
+    expect(mockStream).not.toHaveBeenCalled()
+  })
+})
+
 // Mock skill discovery so the run reaches the API layer without real fs I/O
 // (the assertions below only wait a single setImmediate turn).
 vi.mock('../chat-skills', async (importOriginal) => {
@@ -126,6 +142,7 @@ vi.mock('../../lib/chat-store', () => ({
     feedbacks: new Map(),
   }),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
+  closeSubject: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
   setMessageFeedback: vi.fn().mockResolvedValue({
     message_id: 'msg-1',
@@ -149,8 +166,11 @@ const messageEvent = (text: string): unknown => ({
   item: { type: 'message', content: [{ type: 'output_text', text }] },
 })
 
-const { setMessageFeedback: mockSetMessageFeedback, clearMessageFeedback: mockClearMessageFeedback } =
-  await import('../../lib/chat-store')
+const {
+  setMessageFeedback: mockSetMessageFeedback,
+  clearMessageFeedback: mockClearMessageFeedback,
+  closeSubject: mockCloseSubject,
+} = await import('../../lib/chat-store')
 
 const nullRecipeCatalog: RecipeCatalog = {
   get: () => null,

@@ -41,6 +41,12 @@ export type AttentionStatus = 'generating' | 'ready' | 'drafting' | 'idle'
 export type MessageRole = 'user' | 'assistant'
 export type FeedbackRating = 'up' | 'down'
 
+/** The durable domain event that ends a Subject, when one is known at opening. */
+export interface SubjectTerminalCondition {
+  eventType: string
+  entityId: string
+}
+
 /**
  * A deterministic Mars-authored feed entry. The persistence adapter currently
  * stores this as an assistant message, preserving the chat transport's
@@ -80,7 +86,7 @@ export interface ChatThread {
    */
   closed_at: number | null
   /** Domain event that closes this Subject, or null when it needs an explicit close. */
-  terminal_event?: string | null
+  terminal_event_type?: string | null
   /** Entity id in the terminal event payload that must match before closure. */
   terminal_entity_id?: string | null
   parent_thread_id: string | null
@@ -134,6 +140,10 @@ export interface ChatThreadApiView {
   alertItemId: string | null
   /** True when the underlying action-queue item has been resolved. */
   alertResolved: boolean
+  /** Set once the Subject ends; null while it remains active. */
+  closedAt: string | null
+  /** Declared automatic terminal event, if this Subject has one. */
+  terminalEventType: string | null
   parentThreadId: string | null
 }
 
@@ -213,6 +223,8 @@ export const toThreadApiView = (
   origin: t.origin,
   alertItemId: t.alert_item_id,
   alertResolved: t.alert_resolved,
+  closedAt: t.closed_at === null ? null : new Date(t.closed_at).toISOString(),
+  terminalEventType: t.terminal_event_type ?? null,
   parentThreadId: t.parent_thread_id,
 })
 
@@ -437,7 +449,7 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   alert_item_id: (row.alert_item_id as string | null) ?? null,
   alert_resolved: Boolean(row.alert_resolved),
   closed_at: (row.closed_at as number | null) ?? null,
-  terminal_event: (row.terminal_event as string | null) ?? null,
+  terminal_event_type: (row.terminal_event_type as string | null) ?? null,
   terminal_entity_id: (row.terminal_entity_id as string | null) ?? null,
   parent_thread_id: (row.parent_thread_id as string | null) ?? null,
   fork_idempotency_key: (row.fork_idempotency_key as string | null) ?? null,
@@ -481,7 +493,7 @@ export const createThread = async (
   await withTransaction(c, async (tx) => {
     await tx.execute({
       sql: `INSERT INTO chat_threads
-              (id, title, status, terminal_event, terminal_entity_id, created_at, updated_at)
+              (id, title, status, terminal_event_type, terminal_entity_id, created_at, updated_at)
             VALUES (?, ?, 'idle', ?, ?, ?, ?)`,
       args: [id, threadTitle, terminalEvent ?? null, terminalEntityId ?? null, ts, ts],
     })
@@ -517,7 +529,7 @@ export const createThread = async (
     alert_item_id: null,
     alert_resolved: false,
     closed_at: null,
-    terminal_event: terminalEvent ?? null,
+    terminal_event_type: terminalEvent ?? null,
     terminal_entity_id: terminalEntityId ?? null,
     parent_thread_id: null,
     fork_idempotency_key: null,
@@ -628,7 +640,7 @@ export const forkThread = async (opts: {
       alert_item_id: null,
     alert_resolved: false,
     closed_at: null,
-    terminal_event: null,
+    terminal_event_type: null,
     terminal_entity_id: null,
     parent_thread_id: opts.sourceThreadId,
       fork_idempotency_key: opts.idempotencyKey,
@@ -1040,6 +1052,7 @@ export const startThreadFromAlert = async (
   title: string,
   segment: AlertSegment,
   situationReport?: string,
+  terminal?: SubjectTerminalCondition,
 ): Promise<ChatThread> => {
   const existing = await findThreadByArc(arcId)
   if (existing) return existing
@@ -1050,9 +1063,10 @@ export const startThreadFromAlert = async (
   const ts = now()
   await c.execute({
     sql: `INSERT INTO chat_threads
-            (id, title, status, created_at, updated_at, origin, alert_item_id, alert_resolved)
-          VALUES (?, ?, 'idle', ?, ?, 'alert', ?, 0)`,
-    args: [threadId, title, ts, ts, arcId],
+            (id, title, status, created_at, updated_at, origin, alert_item_id, alert_resolved,
+             terminal_event_type, terminal_entity_id)
+          VALUES (?, ?, 'idle', ?, ?, 'alert', ?, 0, ?, ?)`,
+    args: [threadId, title, ts, ts, arcId, terminal?.eventType ?? null, terminal?.entityId ?? null],
   })
   if (situationReport !== undefined) {
     await c.execute({
@@ -1084,8 +1098,8 @@ export const startThreadFromAlert = async (
     alert_item_id: arcId,
     alert_resolved: false,
     closed_at: null,
-    terminal_event: null,
-    terminal_entity_id: null,
+    terminal_event_type: terminal?.eventType ?? null,
+    terminal_entity_id: terminal?.entityId ?? null,
     parent_thread_id: null,
     fork_idempotency_key: null,
   }

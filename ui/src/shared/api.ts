@@ -857,6 +857,20 @@ export const stopChatThread = async (
   if (!r.ok) await throwMutationError(path, r)
 }
 
+/** Explicitly close an open-ended Subject without invoking the chat provider. */
+export const endChatSubject = async (
+  threadId: string,
+  projectId?: string,
+): Promise<void> => {
+  const path = appendProject(`/api/chat/threads/${encodeURIComponent(threadId)}/end`, projectId)
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  if (!r.ok) await throwMutationError(path, r)
+}
+
 /**
  * Upsert thumbs-up / thumbs-down feedback for an assistant message.
  * Passing the same rating that's already active clears it (call `clearMessageFeedback`
