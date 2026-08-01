@@ -86,8 +86,12 @@ describe('daemon-killed failure signature', () => {
     expect(row!.error).toBe('killed by `mars daemon kill`')
   })
 
-  it('a task failed without a failureSignature has failureSignature === null', async () => {
+  it('a task failed for another reason never picks up the daemon-killed signature', async () => {
     process.env.MARS_REPO = repo
+
+    const { DAEMON_KILLED_SIGNATURE } = (await import(
+      '../../lib/retry-budget'
+    )) as RetryBudgetModule
 
     const q = (await import('../../queue')) as unknown as QueueModule
     await q.migrateQueueSchema()
@@ -100,7 +104,14 @@ describe('daemon-killed failure signature', () => {
 
     const row = await q.getTask(task.id)
     expect(row).not.toBeNull()
-    expect(row!.failureSignature).toBeNull()
+    // The discriminant the daemon-killed sweep needs is "not the kill
+    // signature", not "no signature at all". `updateTask`'s signature floor
+    // now derives a `<step>/<class>` value for every failure write that omits
+    // one, because a NULL signature is invisible to the whole self-heal chain
+    // (recipe match, storm streak, Steward brief). This row must therefore
+    // carry a signature — just never the daemon-killed one.
+    expect(row!.failureSignature).toBeTruthy()
+    expect(row!.failureSignature).not.toBe(DAEMON_KILLED_SIGNATURE)
   })
 
   it('detectAndRaiseDaemonKilled does not raise a row for a task that was requeued (status no longer failed)', async () => {
