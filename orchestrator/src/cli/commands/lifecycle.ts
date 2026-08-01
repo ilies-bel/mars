@@ -111,6 +111,23 @@ const makeContinueRestart = (verb: 'continue' | 'restart'): Command => ({
     verb === 'continue'
       ? `usage: mars ${verb} <id> [<id> ...]`
       : `usage: mars ${verb} <id> [<id> ...] [--force]`,
+  helpBody:
+    verb === 'continue'
+      ? `mars continue <id> [<id> ...]
+
+Resume failed task(s) on their existing worktree and branch, preserving
+commits already made by the worker. In short: resume failed tasks from their last checkpoint.
+There are no flags in v1.
+
+Code-phase failure resumes from a salvage checkpoint. Pre-setup failures,
+missing worktrees, and legacy rows are Degraded-to-restart and report
+degradedToRestart: true.
+
+Refuses (non-zero exit) when the task is not failed or has an in-flight recovery.`
+      : `mars restart <id> [<id> ...] [--force]
+
+Use it to wipe and re-run failed tasks from setup on a fresh worktree and
+branch. Use --force to restart despite a live recovery.`,
   run: async (args, deps) => {
     const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
     const ids = args.positional.filter((a) => !a.startsWith('--'))

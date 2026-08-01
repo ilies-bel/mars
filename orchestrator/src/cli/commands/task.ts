@@ -118,6 +118,15 @@ export const taskAdd: Command = {
   path: 'task add',
   summary: 'enqueue a runnable task directly (skips triage)',
   usage: TASK_ADD_USAGE,
+  flags: [
+    { syntax: '--intent <text>', description: 'one-line task summary; derived from the prompt when omitted' },
+    { syntax: '--files <path>', description: 'focus files for the worker (repeatable)' },
+    { syntax: '--verify <cmd>', description: 'verification command run by the orchestrator' },
+    { syntax: '--done <criterion>', description: 'acceptance criterion (repeatable)' },
+    { syntax: '--type auto|checkpoint', description: 'merge automatically or pause for review' },
+    { syntax: '--blocked-by <id>', description: 'wait for a task to finish (repeatable)' },
+    { syntax: '--workflow <name>', description: 'select the dispatch pipeline' },
+  ],
   run: async (args, deps) => {
     // `--live` is valueless, so the parser leaves it in positional; strip it
     // before prompt resolution or it would be joined into a literal prompt.

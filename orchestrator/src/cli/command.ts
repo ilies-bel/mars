@@ -93,10 +93,20 @@ export interface Command {
   summary: string
   /** Usage string (the `usage: …` line emitted on bad input). */
   usage: string
+  /** Optional longer explanation for commands whose summary is insufficient. */
+  helpBody?: string
+  /** Human-readable descriptions of the command's flags. */
+  flags?: readonly CommandFlag[]
   run(
     args: ParsedArgs,
     deps: CommandDeps,
   ): Promise<CommandResult> | CommandResult
+}
+
+/** One documented command-line flag. */
+export interface CommandFlag {
+  syntax: string
+  description: string
 }
 
 /** Convenience constructor for the common `{ code }` result. */
