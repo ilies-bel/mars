@@ -34,16 +34,9 @@ export default defineConfig({
           setupFiles: ['server/__testing__/bun-vitest-setup.ts'],
           // Every src/ test EXCEPT *.composer.test.* (those need DOM) and the
           // ChatPage suites (moved to the dom project for slash-palette
-          // keyboard tests), plus EVERY server/ test.
-          //
-          // Both entries are globs on purpose. This list used to name nine
-          // server files one by one; ui/server/ grew to 21 and the list was
-          // never updated, so ui/server/chatRoutes.test.ts executed under no
-          // runner at all. A glob cannot go stale.
-          //
-          // Server tests written against `bun:test` run here too — the
-          // `bun:test` alias above points at src/bun-test-compat.ts.
-          include: ['src/**/*.test.{ts,tsx}', 'server/**/*.test.ts'],
+          // keyboard tests). Pure unit tests — they keep vitest's tight 5 s
+          // default timeout so a hang shows up as a failure, not a stall.
+          include: ['src/**/*.test.{ts,tsx}'],
           exclude: [
             'src/**/*.composer.test.tsx',
             'src/pages/ChatPage.test.tsx',
@@ -51,6 +44,32 @@ export default defineConfig({
             'src/pages/ChatPage.run-control.test.tsx',
             'src/pages/ChatComposerAttachments.test.tsx',
           ],
+        },
+      },
+      {
+        plugins: [react()],
+        resolve: { alias: sharedAlias },
+        test: {
+          name: 'server',
+          environment: 'node',
+          setupFiles: ['server/__testing__/bun-vitest-setup.ts'],
+          // EVERY server test, by glob. This used to be nine filenames listed
+          // one by one inside the 'node' project while ui/server/ grew to 21,
+          // so ui/server/chatRoutes.test.ts executed under no runner at all.
+          // A glob cannot go stale.
+          //
+          // Server tests written against `bun:test` run here too — the
+          // `bun:test` alias above points at src/bun-test-compat.ts.
+          include: ['server/**/*.test.ts'],
+          // Separate project purely for the timeout. These boot a real HTTP
+          // server and a PGlite database per test; a PGlite cold start alone
+          // can take 5-25 s under load (same reason orchestrator/vitest.config.ts
+          // runs at 30 s). Under the 5 s default, stepSpans.test.ts failed
+          // intermittently with "Test timed out in 5000ms". Keeping this out of
+          // the 'node' project means the ~113 src unit-test files are not given
+          // a 30 s licence to hang.
+          testTimeout: 30_000,
+          hookTimeout: 30_000,
         },
       },
       {
