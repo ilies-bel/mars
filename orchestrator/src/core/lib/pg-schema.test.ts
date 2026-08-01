@@ -219,6 +219,102 @@ describe('ensureSchema', () => {
     }
   })
 
+  // Regression: the `evaporated_at` -> `closed_at` rename used to guard only on
+  // the SOURCE column existing. On a database carrying BOTH columns (one that
+  // had already been migrated and then had `evaporated_at` re-added by an older
+  // daemon binary) the RENAME raised `column "closed_at" ... already exists`,
+  // aborting the whole one-transaction DDL batch and hard-blocking every
+  // subsequent daemon boot.
+  it('folds a re-added evaporated_at into closed_at instead of colliding on the rename', async () => {
+    const c = openDb(freshKey())
+    try {
+      await ensureSchema(c)
+      // Reproduce the broken shape: closed_at already canonical, evaporated_at
+      // resurrected alongside it.
+      await __execSchemaBatch(c, [
+        `ALTER TABLE chat_threads ADD COLUMN evaporated_at bigint`,
+        {
+          sql: `INSERT INTO chat_threads (id, title, status, posture, alert_resolved, closed_at, evaporated_at, created_at, updated_at)
+                VALUES ('both-populated', 'both', 'idle', 'triage', 0, 111, 222, 1, 1),
+                       ('legacy-only',    'legacy', 'idle', 'triage', 0, NULL, 333, 1, 1),
+                       ('neither',        'open',  'idle', 'triage', 0, NULL, NULL, 1, 1)`,
+        },
+      ])
+
+      await expect(ensureSchema(c)).resolves.toBeUndefined()
+
+      const columns = await columnsOf(c, 'chat_threads')
+      expect(columns.has('evaporated_at')).toBe(false)
+      expect(columns.get('closed_at')).toBe('bigint')
+      // closed_at wins where both are set; the legacy value fills in only the
+      // NULL holes. No timestamp is discarded.
+      const rows = await c.execute(
+        `SELECT id, closed_at FROM chat_threads WHERE id IN ('both-populated','legacy-only','neither') ORDER BY id`,
+      )
+      expect(rows.rows).toEqual([
+        { id: 'both-populated', closed_at: 111 },
+        { id: 'legacy-only', closed_at: 333 },
+        { id: 'neither', closed_at: null },
+      ])
+
+      // And the batch stays replayable now that the stale column is gone.
+      await expect(ensureSchema(c)).resolves.toBeUndefined()
+    } finally {
+      await c.close()
+    }
+  })
+
+  it('merges a legacy TEXT evaporated_at alongside an existing closed_at', async () => {
+    const c = openDb(freshKey())
+    try {
+      await __execSchemaBatch(c, [
+        `CREATE TABLE chat_threads (
+          id text PRIMARY KEY,
+          title text NOT NULL,
+          status text NOT NULL,
+          posture text NOT NULL,
+          origin text,
+          alert_item_id text,
+          alert_resolved bigint NOT NULL,
+          closed_at text,
+          evaporated_at text,
+          created_at text NOT NULL,
+          updated_at text NOT NULL
+        )`,
+        {
+          sql: `INSERT INTO chat_threads (id, title, status, posture, alert_resolved, closed_at, evaporated_at, created_at, updated_at)
+                VALUES ('legacy-only', 'legacy', 'idle', 'triage', 0, NULL, '1970-01-01T00:00:01.234Z', '1970-01-01T00:00:00.001Z', '1970-01-01T00:00:00.002Z')`,
+        },
+      ])
+
+      await expect(ensureSchema(c)).resolves.toBeUndefined()
+
+      const columns = await columnsOf(c, 'chat_threads')
+      expect(columns.has('evaporated_at')).toBe(false)
+      expect(columns.get('closed_at')).toBe('bigint')
+      expect((await c.execute(`SELECT closed_at FROM chat_threads WHERE id = 'legacy-only'`)).rows)
+        .toEqual([{ closed_at: 1234 }])
+    } finally {
+      await c.close()
+    }
+  })
+
+  // The general guard for the whole class: every statement in the batch replays
+  // on every daemon boot, so the batch must survive back-to-back runs on both a
+  // fresh and a legacy-shaped database.
+  it('replays the whole DDL batch cleanly three times in a row', async () => {
+    const c = openDb(freshKey())
+    try {
+      await expect(ensureSchema(c)).resolves.toBeUndefined()
+      await expect(ensureSchema(c)).resolves.toBeUndefined()
+      await expect(ensureSchema(c)).resolves.toBeUndefined()
+      expect((await c.execute('SELECT version FROM schema_migrations')).rows)
+        .toEqual([{ version: SCHEMA_VERSION }])
+    } finally {
+      await c.close()
+    }
+  })
+
   it('creates the worker MCP audit table with durable mutation evidence fields', async () => {
     const c = await freshSchemaClient()
     const cols = await columnsOf(c, 'mcp_worker_audit')

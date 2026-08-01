@@ -677,15 +677,63 @@ const DDL: readonly string[] = [
   // `deferrable` is a 0/1 flag (queue.ts reads it as Number(row.deferrable) === 1).
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS stall_diagnostics text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS "deferrable" bigint NOT NULL DEFAULT 0`,
+  // `evaporated_at` -> `closed_at`. This block must stay idempotent: the whole
+  // DDL batch replays on EVERY daemon boot inside one transaction, so a single
+  // failing statement aborts the batch and the daemon can never start again.
+  //
+  // Three shapes reach this point:
+  //   1. Neither column      — impossible after the CREATE TABLE above; no-op.
+  //   2. Only `evaporated_at` — legacy database; a plain RENAME preserves the
+  //      data, and the type-normalisation block below coerces it to bigint.
+  //   3. BOTH columns        — a database that was migrated to `closed_at` and
+  //      then had `evaporated_at` re-added by an older daemon binary booting
+  //      against it. A bare RENAME raises 42701 `column "closed_at" ...
+  //      already exists` here, which is exactly the boot-loop this guard ends.
+  //
+  // In case 3 the legacy column is folded into `closed_at` before it is
+  // dropped, so no timestamp is ever discarded: `closed_at` wins where both are
+  // populated (it is the column every reader uses), and `evaporated_at` fills
+  // in only where `closed_at` is NULL. Both columns are normalised to bigint
+  // epoch-ms first so the merge cannot fail on a text/bigint mismatch. Nothing
+  // in the repo reads `evaporated_at` any more, so dropping it after the merge
+  // is a clean cut rather than a data loss.
   `DO $$
+   DECLARE
+     evap_type   text;
+     closed_type text;
    BEGIN
-     IF EXISTS (
-       SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'chat_threads'
-          AND column_name = 'evaporated_at'
-     ) THEN
-       ALTER TABLE chat_threads RENAME COLUMN evaporated_at TO closed_at;
+     SELECT data_type INTO evap_type
+       FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'chat_threads'
+        AND column_name = 'evaporated_at';
+     IF evap_type IS NULL THEN
+       RETURN;
      END IF;
+
+     SELECT data_type INTO closed_type
+       FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'chat_threads'
+        AND column_name = 'closed_at';
+
+     IF closed_type IS NULL THEN
+       ALTER TABLE chat_threads RENAME COLUMN evaporated_at TO closed_at;
+       RETURN;
+     END IF;
+
+     IF evap_type <> 'bigint' THEN
+       ALTER TABLE chat_threads
+         ALTER COLUMN evaporated_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM evaporated_at::timestamptz) * 1000)::bigint;
+     END IF;
+     IF closed_type <> 'bigint' THEN
+       ALTER TABLE chat_threads
+         ALTER COLUMN closed_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM closed_at::timestamptz) * 1000)::bigint;
+     END IF;
+
+     EXECUTE 'UPDATE chat_threads SET closed_at = evaporated_at
+               WHERE closed_at IS NULL AND evaporated_at IS NOT NULL';
+     ALTER TABLE chat_threads DROP COLUMN evaporated_at;
    END
    $$`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS closed_at bigint`,
