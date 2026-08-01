@@ -1105,6 +1105,8 @@ export const chatThreadSchema = z.object({
   alertItemId: z.string().nullable().optional(),
   /** True when the underlying action-queue item has been resolved. */
   alertResolved: z.boolean().optional().default(false),
+  /** Source thread for a fork, or null for a root conversation. */
+  parentThreadId: z.string().nullable().optional().default(null),
 })
 
 export const chatThreadsResponseSchema = z.object({

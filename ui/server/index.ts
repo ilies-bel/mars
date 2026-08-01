@@ -767,7 +767,7 @@ export const startServer = async (
         // ---------------------------------------------------------------------------
 
         if (path === '/api/chat/threads' && req.method === 'GET') {
-          const r = await proxyGet(ctx.stateDir, '/view/chat/threads')
+          const r = await proxyGet(ctx.stateDir, `/view/chat/threads${url.search}`)
           return jsonResponse(r.status, r.body)
         }
 

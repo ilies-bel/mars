@@ -64,6 +64,11 @@ export interface ThreadListFilters {
   origin: 'all' | 'alerts' | 'operator'
 }
 
+export interface ForkFilter {
+  parentThreadId?: string
+  hasParent?: boolean
+}
+
 /** Operational action-queue rows, excluding draft proposals. */
 export function isAlertQueueItem(item: { kind: string }): boolean {
   return item.kind !== 'draft-proposal'
@@ -100,9 +105,22 @@ export function filterThreadsByTitle(threads: ChatThread[], query: string): Chat
   return filterByQuery(threads, query, (thread) => `${thread.title || 'New thread'}\n${thread.alertItemId ?? ''}`)
 }
 
+/** Applies the archive's fork-tree scope to a thread list. */
+export function filterThreadsByFork(threads: ChatThread[], forkFilter: ForkFilter): ChatThread[] {
+  if (forkFilter.parentThreadId) {
+    return threads.filter((thread) => thread.parentThreadId === forkFilter.parentThreadId)
+  }
+  if (forkFilter.hasParent) return threads.filter((thread) => typeof thread.parentThreadId === 'string')
+  return threads
+}
+
 /** Applies the chat sidebar's open, query, failure-kind, and origin scopes. */
-export function filterSidebarThreads(threads: ChatThread[], filters: ThreadListFilters): ChatThread[] {
-  return filterThreadsByTitle(filterOpen(threads), filters.query).filter((thread) => {
+export function filterSidebarThreads(
+  threads: ChatThread[],
+  filters: ThreadListFilters,
+  forkFilter: ForkFilter = {},
+): ChatThread[] {
+  return filterThreadsByFork(filterThreadsByTitle(filterOpen(threads), filters.query), forkFilter).filter((thread) => {
     const kind = thread.alertItemId?.split(':')[0] ?? null
     const matchesKind = filters.kind === 'all' || kind === filters.kind
     const matchesOrigin =

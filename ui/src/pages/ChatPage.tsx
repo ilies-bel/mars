@@ -78,8 +78,11 @@ import { PROCESS_LEVEL_OPS, QueueThreadDetail } from '@/widgets/chat/QueueThread
 import { SidebarFilters, type SidebarFiltersValue } from '@/widgets/chat/SidebarFilters'
 import {
   filterSidebarThreads,
+  filterThreadsByFork,
+  filterThreadsByTitle,
   isResolvedSelection,
   sortByUrgencyThenAge,
+  type ForkFilter,
   type ThreadListFilters,
 } from '@/widgets/chat/queueThreads'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
@@ -2195,6 +2198,8 @@ interface ThreadSidebarProps {
   onSelect: (id: string) => void
   filters: ThreadListFilters
   onFiltersChange: (filters: ThreadListFilters) => void
+  forkFilter?: ForkFilter
+  onForkFilterChange?: (filter: ForkFilter) => void
   selectedItem: ActionQueueItem | null
   onFastAction: (action: 'restart') => void
 }
@@ -2224,14 +2229,17 @@ export const ThreadSidebar = ({
   onSelect,
   filters,
   onFiltersChange,
+  forkFilter = {},
+  onForkFilterChange = () => {},
   selectedItem,
   onFastAction,
 }: ThreadSidebarProps) => {
   const qc = useQueryClient()
+  const hasForkFilter = Boolean(forkFilter.parentThreadId || forkFilter.hasParent)
 
   const { data, isPending } = useQuery({
-    queryKey: ['chat-threads', projectId],
-    queryFn: () => fetchChatThreads(projectId),
+    queryKey: hasForkFilter ? ['chat-threads', projectId, forkFilter] : ['chat-threads', projectId],
+    queryFn: () => hasForkFilter ? fetchChatThreads(projectId, forkFilter) : fetchChatThreads(projectId),
   })
 
   const { mutate: create } = useMutation({
@@ -2299,7 +2307,7 @@ export const ThreadSidebar = ({
   // Computed above startDelete so the delete handler can advance the selection
   // to the next thread in this exact sorted order.
   const visibleThreads = (data ?? []).filter((t) => !hiddenIds.includes(t.id))
-  const threads = sortByUrgencyThenAge(filterSidebarThreads(visibleThreads, filters))
+  const threads = sortByUrgencyThenAge(filterSidebarThreads(visibleThreads, filters, forkFilter))
 
   const startDelete = useCallback(
     (thread: ChatThread) => {
@@ -2361,7 +2369,18 @@ export const ThreadSidebar = ({
     queryFn: () => fetchChatHistory(projectId),
   })
 
-  const historyThreads = historyData ?? []
+  const allHistoryThreads = historyData ?? []
+  const historyThreads = filterThreadsByFork(
+    filterThreadsByTitle(allHistoryThreads, filters.query),
+    forkFilter,
+  )
+  const historyForksByParent = new Map<string, ChatThread[]>()
+  for (const thread of allHistoryThreads) {
+    if (thread.parentThreadId === null) continue
+    const forks = historyForksByParent.get(thread.parentThreadId) ?? []
+    forks.push(thread)
+    historyForksByParent.set(thread.parentThreadId, forks)
+  }
 
   return (
     <aside className="flex w-64 flex-shrink-0 flex-col border-r border-primary/30 bg-background">
@@ -2405,22 +2424,70 @@ export const ThreadSidebar = ({
           />
         ))}
 
+        <div className="mt-2 border-t border-primary/15 px-2 pt-2" aria-label="Archive fork filters">
+          <button
+            type="button"
+            data-testid="forks-of-thread-filter"
+            aria-pressed={forkFilter.parentThreadId === selectedId}
+            disabled={selectedId === null}
+            className="mr-1 rounded-full border border-primary/25 px-2 py-1 font-mono text-[9px] text-primary disabled:cursor-not-allowed disabled:opacity-40 hover:bg-primary/10"
+            onClick={() => onForkFilterChange(
+              forkFilter.parentThreadId === selectedId ? {} : { parentThreadId: selectedId ?? undefined },
+            )}
+          >
+            Forks of this thread
+          </button>
+          <button
+            type="button"
+            data-testid="forked-only-filter"
+            aria-pressed={forkFilter.hasParent === true}
+            className="rounded-full border border-primary/25 px-2 py-1 font-mono text-[9px] text-primary hover:bg-primary/10"
+            onClick={() => onForkFilterChange(forkFilter.hasParent ? {} : { hasParent: true })}
+          >
+            Forked only
+          </button>
+        </div>
+
         {historyThreads.length > 0 && (
           <details data-testid="chat-history-section" className="mt-2">
             <summary className="cursor-pointer px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-primary/40 hover:text-primary/60">
               History
             </summary>
             <div className="space-y-0.5 pt-0.5">
-              {historyThreads.map((t) => (
-                <ThreadItem
-                  key={t.id}
-                  thread={t}
-                  isSelected={t.id === selectedId}
-                  onSelect={() => onSelect(t.id)}
-                  onRename={(title) => rename({ id: t.id, title })}
-                  onDelete={() => startDelete(t)}
-                />
-              ))}
+              {historyThreads.map((t) => {
+                const forks = historyForksByParent.get(t.id) ?? []
+                return (
+                  <div key={t.id}>
+                    <ThreadItem
+                      thread={t}
+                      isSelected={t.id === selectedId}
+                      onSelect={() => {
+                        onSelect(t.id)
+                        onForkFilterChange({ parentThreadId: t.id })
+                      }}
+                      onRename={(title) => rename({ id: t.id, title })}
+                      onDelete={() => startDelete(t)}
+                    />
+                    {filters.query.trim() !== '' && forks.length > 0 && !forkFilter.parentThreadId && !forkFilter.hasParent && (
+                      <details data-testid={`history-forks-${t.id}`} className="ml-3">
+                        <summary className="cursor-pointer px-2 py-1 font-mono text-[10px] text-primary/50">
+                          {forks.length} forks
+                        </summary>
+                        {forks.map((fork) => (
+                          <ThreadItem
+                            key={fork.id}
+                            thread={fork}
+                            isSelected={fork.id === selectedId}
+                            onSelect={() => onSelect(fork.id)}
+                            onRename={(title) => rename({ id: fork.id, title })}
+                            onDelete={() => startDelete(fork)}
+                          />
+                        ))}
+                      </details>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </details>
         )}
@@ -2550,6 +2617,8 @@ export const ChatPage = () => {
 
   // Mobile sidebar sheet
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [forkFilter, setForkFilter] = useState<ForkFilter>({})
+  const hasForkFilter = Boolean(forkFilter.parentThreadId || forkFilter.hasParent)
   // Auto-close the overlay when the viewport expands to md+
   useEffect(() => {
     if (isMdScreen) setSidebarOpen(false)
@@ -2571,8 +2640,8 @@ export const ChatPage = () => {
   // alert-origin conversation. React Query dedupes this against the sidebar's
   // identical query — no extra request.
   const { data: threadsData } = useQuery({
-    queryKey: ['chat-threads', projectId],
-    queryFn: () => fetchChatThreads(projectId),
+    queryKey: hasForkFilter ? ['chat-threads', projectId, forkFilter] : ['chat-threads', projectId],
+    queryFn: () => hasForkFilter ? fetchChatThreads(projectId, forkFilter) : fetchChatThreads(projectId),
   })
 
   // The history endpoint is the daemon's evaporated-thread projection for the
@@ -2831,6 +2900,8 @@ export const ChatPage = () => {
           onSelect={handleSelectThread}
           filters={sidebarFilters}
           onFiltersChange={setSidebarFilters}
+          forkFilter={forkFilter}
+          onForkFilterChange={setForkFilter}
           selectedItem={selectedSidebarItem}
           onFastAction={restartSelectedThread}
         />
@@ -2856,6 +2927,8 @@ export const ChatPage = () => {
               }}
               filters={sidebarFilters}
               onFiltersChange={setSidebarFilters}
+              forkFilter={forkFilter}
+              onForkFilterChange={setForkFilter}
               selectedItem={selectedSidebarItem}
               onFastAction={restartSelectedThread}
             />

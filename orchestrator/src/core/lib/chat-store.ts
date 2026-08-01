@@ -582,13 +582,30 @@ export const forkThread = async (opts: {
   }
 }
 
+export interface ThreadListOptions {
+  /** Return only the direct children of this source thread. */
+  parentThreadId?: string
+  /** Return only threads that were forked from another thread. */
+  hasParent?: boolean
+}
+
 /**
  * List all active (non-evaporated) threads newest-first. Each thread is
  * augmented with the text and role of its most recent message.
  */
-export const listThreads = async (): Promise<ThreadPreview[]> => {
+export const listThreads = async (options: ThreadListOptions = {}): Promise<ThreadPreview[]> => {
   const c = stateClient()
-  const result = await c.execute(`
+  const where = ['t.evaporated_at IS NULL']
+  const args: string[] = []
+
+  if (options.parentThreadId) {
+    where.push('t.parent_thread_id = ?')
+    args.push(options.parentThreadId)
+  } else if (options.hasParent) {
+    where.push('t.parent_thread_id IS NOT NULL')
+  }
+
+  const result = await c.execute({ sql: `
     SELECT t.*,
            (SELECT content
               FROM chat_messages m
@@ -601,9 +618,9 @@ export const listThreads = async (): Promise<ThreadPreview[]> => {
              ORDER BY m.created_at DESC, m.seq DESC
              LIMIT 1) AS last_message_role
       FROM chat_threads t
-     WHERE t.evaporated_at IS NULL
+     WHERE ${where.join(' AND ')}
      ORDER BY t.created_at DESC, t.id DESC
-  `)
+  `, args })
   return (result.rows as unknown as Record<string, unknown>[]).map((row) => ({
     ...rowToThread(row),
     last_message: (row.last_message as string | null) ?? null,

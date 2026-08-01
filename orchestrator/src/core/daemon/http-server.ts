@@ -90,6 +90,11 @@ const MIME_TO_EXT = new Map<string, string>([
   ['video/webm', '.webm'],
 ])
 
+const ChatThreadsQuerySchema = z.object({
+  parentThreadId: z.string().trim().min(1).optional(),
+  hasParent: z.enum(['true', 'false']).optional().transform((value) => value === 'true'),
+})
+
 /** Wire shape for a single step span, returned by GET /view/step-spans. */
 export interface StepSpan {
   stepName: string
@@ -1727,9 +1732,20 @@ export const startHttpServer = async (
     // POST /chat/threads/:id/delete — delete a thread and cascade its messages.
     // All chat routes bypass the draining gate (lightweight user-data writes,
     // not task work). SSE channel 'chat' is broadcast after every write.
-    if (req.method === 'GET' && req.url === '/view/chat/threads') {
+    const chatThreadsUrl = req.method === 'GET' && req.url
+      ? new URL(req.url, 'http://localhost')
+      : null
+    if (chatThreadsUrl?.pathname === '/view/chat/threads') {
+      const query = ChatThreadsQuerySchema.safeParse({
+        parentThreadId: chatThreadsUrl.searchParams.get('parentThreadId') ?? undefined,
+        hasParent: chatThreadsUrl.searchParams.get('hasParent') ?? undefined,
+      })
+      if (!query.success) {
+        sendJson(res, 400, { ok: false, error: 'Invalid chat thread filters', errorCode: 'VALIDATION_ERROR' })
+        return
+      }
       deps.appServices
-        .viewChatThreads()
+        .viewChatThreads(query.data)
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return

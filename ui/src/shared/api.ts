@@ -650,8 +650,23 @@ export const dismissTodoItem = async (
 /**
  * List all chat threads for the focused project, newest-first.
  */
-export const fetchChatThreads = async (projectId?: string): Promise<ChatThread[]> => {
-  const json = await fetchJson(appendProject('/api/chat/threads', projectId), chatThreadsResponseSchema)
+export interface ChatThreadForkFilter {
+  parentThreadId?: string
+  hasParent?: boolean
+}
+
+export const fetchChatThreads = async (
+  projectId?: string,
+  forkFilter: ChatThreadForkFilter = {},
+): Promise<ChatThread[]> => {
+  const params = new URLSearchParams()
+  if (forkFilter.parentThreadId) params.set('parentThreadId', forkFilter.parentThreadId)
+  if (forkFilter.hasParent) params.set('hasParent', 'true')
+  const path = appendProject('/api/chat/threads', projectId)
+  const json = await fetchJson(
+    params.size > 0 ? `${path}${path.includes('?') ? '&' : '?'}${params}` : path,
+    chatThreadsResponseSchema,
+  )
   return json.threads
 }
 
