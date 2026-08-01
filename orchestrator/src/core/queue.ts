@@ -1362,8 +1362,8 @@ export const updateTask = async (
     // counter, the Steward's evidence brief, `isEnvironmentalSignature`
     // auto-restart — and every one of them skips a NULL, so a failure write
     // that omits the column is invisible to all of it. Several failure writers
-    // (the coder-exit / coder-uncommitted / context-exhausted code paths, the
-    // phantom-task watchdog) only ever wrote `failure_reason_code`.
+    // (the phantom-task watchdog, the requeue ceiling, the operator-reject and
+    // awaiting-validation paths) only ever wrote `failure_reason_code`.
     //
     // COALESCE, not an unconditional write: a caller-supplied signature always
     // wins (handled above), and a precise signature already on the row must
