@@ -236,8 +236,10 @@ When a task fails, the orchestrator spawns exactly **one** recovery task
 per origin failure to finish or fix the work. A recovery task is itself
 non-recoverable: if it fails for any reason — the same failure, a
 different one, or a watchdog kill — the origin goes to `failed` with one
-actionable action queue item and the operator resolves it explicitly (e.g.
-`mars restart`). There is no retry budget, retry count, or tunable knob —
+actionable action queue item and the operator resolves it explicitly
+(`mars continue` to resume on the existing worktree — the default — or
+`mars restart` to wipe it and start over). There is no retry budget,
+retry count, or tunable knob —
 exactly one recovery attempt per origin failure, full stop.
 
 Recovery tasks are **leaf nodes** in the task graph (ADR-0040): they
@@ -253,7 +255,7 @@ recovery-spawn path itself.
 - `mars unblock <id> <blocker-id> ...` removes specific edges (status
   unchanged). `mars unblock <id>` with no blocker ids is phantom-recovery:
   it clears all edges and flips the task to `failed` so it can be
-  `mars purge`d or `mars restart`ed.
+  `mars continue`d, `mars purge`d or `mars restart`ed.
 - A blocker that ends in `failed` leaves its dependents waiting in
   `blocked`; resolve the chain via the action queue item on the failed blocker
   (the failure does not cascade down the chain — behaviour unchanged).
@@ -309,6 +311,25 @@ recovery-spawn path itself.
   `orchestrator/docs/implement-pipeline.md`; the `mastra` skill no longer
   applies to this repo.
 - Never commit `.env`, `.mars/`, or `node_modules`.
+- **Recovering a failed task: `continue` before `restart`.** `mars continue
+  <id> [<id> ...]` is the **default** recovery verb. It resumes the task on
+  its *existing worktree and branch*, reusing every commit the worker already
+  landed. A code-phase failure auto-commits any dangling changes as a salvage
+  checkpoint, then resumes the coder with a banner explaining that prior work
+  is preserved. A pre-setup failure, a missing branch/worktree, or a legacy
+  row with no recorded `failed_phase` silently degrades to a restart and
+  reports `degradedToRestart: true`. It refuses (non-zero) only for a
+  non-`failed` task, or one with an in-flight recovery.
+  `mars restart <id>` is the **destructive** sibling: it wipes the worktree
+  and branch and re-runs the full pipeline from `setup`, discarding the
+  worker's commits. Reach for it only when the existing work is genuinely
+  unwanted. Both accept many ids and stop on the first error.
+  **A verify failure caused by a poisoned baseline is the textbook
+  `continue` case.** When several tasks fail at once with an *identical*
+  `verify:*` signature, suspect the shared baseline before the tasks: check
+  whether `main` was broken at the moment they branched (typecheck/test it at
+  that commit). If so, fix `main`, then `continue` them — never `restart` N
+  good worktrees to work around one bad baseline commit.
 - **Deleting tasks: `purge` vs `drop`.** `mars purge <id>` only accepts
   terminal tasks (`failed`/`done`/`dropped`) — it refuses anything it
   considers in-flight, and `queued` counts as in-flight. `mars drop <id>

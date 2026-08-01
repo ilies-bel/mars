@@ -176,8 +176,9 @@ resolution via the action queue.
 When a task fails, the orchestrator spawns exactly **one** recovery
 task per origin failure. A recovery task is itself non-recoverable: if
 it fails for any reason, the origin goes to `failed` with one
-actionable action queue item and the operator resolves it explicitly (e.g.
-`mars restart`).
+actionable action queue item and the operator resolves it explicitly
+(`mars continue` to resume on the existing worktree — the default — or
+`mars restart` to wipe it and start over).
 
 - Create edges at enqueue with `mars task add ... --blocked-by <id>`
   (repeatable; each id must already exist) or after the fact with
@@ -185,7 +186,7 @@ actionable action queue item and the operator resolves it explicitly (e.g.
 - `mars unblock <id> <blocker-id> ...` removes specific edges (status
   unchanged). `mars unblock <id>` with no blocker ids is
   phantom-recovery: it clears all edges and flips the task to `failed`
-  so it can be `mars purge`d or `mars restart`ed.
+  so it can be `mars continue`d, `mars purge`d or `mars restart`ed.
 - A blocker that ends in `failed` leaves its dependents waiting in
   `blocked`; resolve the chain via the action queue item on the failed
   blocker.
@@ -208,6 +209,20 @@ Each task prompt must stand alone. Include:
 ## Conventions
 
 - Never commit `.env` or `.mars/`.
+- **Recovering a failed task: `continue` before `restart`.** `mars continue
+  <id> [<id> ...]` is the **default** recovery verb — it resumes the task on
+  its *existing worktree and branch*, reusing every commit the worker already
+  landed (a code-phase failure auto-commits dangling changes as a salvage
+  checkpoint first). A pre-setup failure or a missing worktree degrades
+  safely to a restart and reports `degradedToRestart: true`.
+  `mars restart <id>` is the **destructive** sibling: it wipes the worktree
+  and branch and re-runs from `setup`, discarding the worker's commits — use
+  it only when that work is genuinely unwanted.
+  **A verify failure caused by a poisoned baseline is the textbook
+  `continue` case.** When several tasks fail at once with an *identical*
+  `verify:*` signature, suspect the shared baseline before the tasks: check
+  whether `main` was broken when they branched. If so, fix `main`, then
+  `continue` them — never `restart` N good worktrees over one bad commit.
 - **Never `git stash`.** `refs/stash` lives in the common git dir, so every
   Mars worktree shares one stack addressed by shifting positions
   (`stash@{0}`, `stash@{1}`) — a `pop` in one worktree can restore an entry
