@@ -1799,7 +1799,7 @@ export class Arc {
    * Cascade fix tasks receive the same pre-delete event pair so their own
    * Action-queue rows are invalidated atomically (ADR-0049).
    */
-  async drop(): Promise<DropTaskResult> {
+  async drop(opts?: { releaseOrphanedDependents?: boolean }): Promise<DropTaskResult> {
     await ensureQueueSchema()
     const id = this.arcId
 
@@ -1914,7 +1914,12 @@ export class Arc {
         if (depRow.rows.length === 0) continue
         const originId = (depRow.rows[0] as unknown as { origin_id: string | null }).origin_id
         // Not orphaned: NULL origin (treat as self), self-origin, or origin ≠ purged task.
-        if (!originId || originId === depId || originId !== id) continue
+        if (
+          opts?.releaseOrphanedDependents ||
+          !originId ||
+          originId === depId ||
+          originId !== id
+        ) continue
         // Orphaned: remove the blocker edge, mark failed, emit terminal events,
         // and clear remaining outbound edges (mirrors markTaskFailed/clearBlockers).
         await scope.execute({

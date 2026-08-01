@@ -1486,8 +1486,12 @@ const DDL: readonly string[] = [
     compensation_task_id   text,
     purged_at              timestamptz NOT NULL DEFAULT now(),
     purged_by              text,
-    force_flag             boolean     NOT NULL
+    force_flag             boolean     NOT NULL,
+    superseded_by          text,
+    supersede_note         text
   )`,
+  `ALTER TABLE IF EXISTS purged_tasks_archive ADD COLUMN IF NOT EXISTS superseded_by text`,
+  `ALTER TABLE IF EXISTS purged_tasks_archive ADD COLUMN IF NOT EXISTS supersede_note text`,
   `CREATE INDEX IF NOT EXISTS idx_purged_tasks_archive_origin
      ON purged_tasks_archive(origin_id)`,
   `CREATE INDEX IF NOT EXISTS idx_purged_tasks_archive_purged_at

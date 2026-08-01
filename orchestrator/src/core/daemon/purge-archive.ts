@@ -20,8 +20,10 @@ export interface PurgeArchiveRow {
   intent: string
   integratedCommitsJson: string
   compensationTaskId: string | null
-  purgedBy: 'purge' | 'arc-purge'
+  purgedBy: 'purge' | 'arc-purge' | 'supersede'
   forceFlag: boolean
+  supersededBy?: string | null
+  supersedeNote?: string | null
 }
 
 /**
@@ -33,8 +35,9 @@ export async function insertPurgeArchiveRow(row: PurgeArchiveRow): Promise<void>
   await client.execute({
     sql: `INSERT INTO purged_tasks_archive
             (id, origin_id, branch, worktree_path, terminal_status, kind, prompt, intent,
-             integrated_commits_json, compensation_task_id, purged_by, force_flag)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             integrated_commits_json, compensation_task_id, purged_by, force_flag,
+             superseded_by, supersede_note)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       row.id,
       row.originId,
@@ -48,6 +51,8 @@ export async function insertPurgeArchiveRow(row: PurgeArchiveRow): Promise<void>
       row.compensationTaskId,
       row.purgedBy,
       row.forceFlag,
+      row.supersededBy ?? null,
+      row.supersedeNote ?? null,
     ],
   })
 }

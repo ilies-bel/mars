@@ -7,6 +7,7 @@ import {
   enqueueTask,
   type DropTaskResult,
 } from '../queue'
+import { Arc } from '../arc'
 import { teardownDeploymentsForTask } from '../lib/deployment/teardown'
 import { getDefaultDomainTaskStore } from '../store/task-store'
 import { getDefaultMergeJobStore } from '../store/merge-job-store'
@@ -71,6 +72,18 @@ export interface CorePurgeTaskOptions {
    * duplicate rows.
    */
   archiveWritten?: boolean
+  /** Internal lifecycle variants can widen the terminal status allow-list. */
+  acceptedStatuses?: readonly ('failed' | 'done' | 'dropped' | 'blocked')[]
+  /** Supersession has independently validated integration evidence. */
+  skipCommitAheadGuard?: boolean
+  /** A supersede must release its former dependents even when they share its origin. */
+  releaseOrphanedDependents?: boolean
+  /** Overrides the archive status while preserving the task's original status in memory. */
+  archiveTerminalStatus?: string
+  /** Evidence persisted for a superseded task. */
+  supersededBy?: string | null
+  supersedeNote?: string | null
+  purgedBy?: 'purge' | 'supersede'
 }
 
 /**
@@ -105,9 +118,10 @@ export const corePurgeTask = async (
       mergeJobsDeleted: 0,
     }
   }
-  if (task.status !== 'failed' && task.status !== 'done' && task.status !== 'dropped') {
+  const acceptedStatuses = opts?.acceptedStatuses ?? ['failed', 'done', 'dropped']
+  if (!acceptedStatuses.includes(task.status)) {
     throw new Error(
-      `task ${id} is ${task.status}; 'purge' only accepts failed/done/dropped tasks. Use 'mars drop ${id} --force' to delete a task in any status.`,
+      `task ${id} is ${task.status}; '${opts?.purgedBy === 'supersede' ? 'supersede' : 'purge'}' only accepts ${acceptedStatuses.join('/')} tasks. Use 'mars drop ${id} --force' to delete a task in any status.`,
     )
   }
 
@@ -126,7 +140,7 @@ export const corePurgeTask = async (
   const branch = task.branch ?? `task/${task.id}`
 
   // Commit-ahead guard: refuse unless the caller explicitly bypasses with force.
-  if (!force) {
+  if (!force && !opts?.skipCommitAheadGuard) {
     const commits = await listUniqueCommitsAhead(branch, integrationBranch, repoRoot)
     if (commits.length > 0) {
       throw new PurgeAheadError(id, branch, commits)
@@ -182,7 +196,9 @@ export const corePurgeTask = async (
   await resolveAllRowsForTask(id)
   await supersedeActionQueueItemsForOrigin(id, 'origin-purged', 'purge:pre-delete')
 
-  const dropResult = await dropTask(id)
+  const dropResult = opts?.releaseOrphanedDependents
+    ? await Arc.load(id).drop({ releaseOrphanedDependents: true })
+    : await dropTask(id)
 
   // Compensation task: when force=true and the purged task had integrated work
   // (status='done') and is not a recovery leaf (kind!='fix'), create exactly one
@@ -233,14 +249,16 @@ export const corePurgeTask = async (
         originId: capturedOriginId ?? null,
         branch,
         worktreePath: task.worktreePath ?? null,
-        terminalStatus: capturedStatus,
+        terminalStatus: opts?.archiveTerminalStatus ?? capturedStatus,
         kind: capturedKind,
         prompt: task.prompt,
         intent: capturedIntent,
         integratedCommitsJson: JSON.stringify(evidence.commits),
         compensationTaskId: compensationTaskId ?? null,
-        purgedBy: 'purge',
+        purgedBy: opts?.purgedBy ?? 'purge',
         forceFlag: force,
+        supersededBy: opts?.supersededBy,
+        supersedeNote: opts?.supersedeNote,
       })
     } catch (e) {
       console.error('[purge-archive] insert failed:', e)
@@ -251,4 +269,55 @@ export const corePurgeTask = async (
     return { ...dropResult, compensationTaskId }
   }
   return dropResult
+}
+
+/**
+ * Resolve a stale task whose intended work has already landed. The evidence is
+ * checked before any branch, worktree, blocker, or queue mutation happens.
+ */
+export const coreSupersedeTask = async (
+  id: string,
+  by: string,
+  note: string | undefined,
+  integrationBranch: string,
+  repoRoot: string,
+): Promise<PurgeTaskResult> => {
+  if (!by) throw new Error("'--by' is required and must name a landed commit or done task")
+
+  const task = await getTask(id)
+  if (!task) throw new Error(`task ${id} not found`)
+  if (task.status !== 'failed' && task.status !== 'blocked' && task.status !== 'dropped') {
+    throw new Error(
+      `task ${id} is ${task.status}; 'supersede' only accepts failed/blocked/dropped tasks`,
+    )
+  }
+
+  const evidenceTask = await getTask(by)
+  if (evidenceTask) {
+    if (evidenceTask.status !== 'done') {
+      throw new Error(`task ${by} is ${evidenceTask.status}; --by task evidence must be done`)
+    }
+  } else {
+    if (!/^[0-9a-fA-F]{7,64}$/.test(by)) {
+      throw new Error(`--by '${by}' is neither a task id nor a commit sha`)
+    }
+    try {
+      await exec('git', ['rev-parse', '--verify', `${by}^{commit}`], { cwd: repoRoot })
+      await exec('git', ['merge-base', '--is-ancestor', by, integrationBranch], {
+        cwd: repoRoot,
+      })
+    } catch {
+      throw new Error(`commit ${by} is not reachable from integration branch ${integrationBranch}`)
+    }
+  }
+
+  return corePurgeTask(id, false, integrationBranch, repoRoot, {
+    acceptedStatuses: ['failed', 'blocked', 'dropped'],
+    skipCommitAheadGuard: true,
+    releaseOrphanedDependents: true,
+    archiveTerminalStatus: 'superseded',
+    supersededBy: by,
+    supersedeNote: note ?? null,
+    purgedBy: 'supersede',
+  })
 }
