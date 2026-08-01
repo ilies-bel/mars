@@ -190,6 +190,11 @@ module.exports = {
         '(^|/)\\.mars/',
         '(^|/)\\.worktrees/',
         '(^|/)\\.claude/worktrees/',
+        // Gitignored build output from the removed Mastra engine. Absent in a
+        // fresh checkout (so CI never saw it) but ~329MB of bundled .mjs sits
+        // in a working tree that ever ran the old build, and its generated
+        // cycles are not this repo's architecture.
+        '(^|/)\\.mastra/',
         // Consumer-facing template tree: copied verbatim by `mars init`, never
         // part of this repo's own runtime graph.
         '^orchestrator/src/init/templates/',
