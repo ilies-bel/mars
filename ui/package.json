@@ -17,7 +17,7 @@
     "test": "npm run lint:tokens && npm run test:src && npm run test:server",
     "lint:tokens": "node scripts/lint-tokens.mjs",
     "test:src": "vitest run",
-    "test:server": "bun test server/actionQueue.test.ts server/chatMessages.test.ts server/events.test.ts server/preferences.test.ts server/progress.test.ts server/releaseNotes.test.ts server/sessions.test.ts server/sseStream.test.ts server/stepSpans.test.ts server/taskDetail.test.ts server/tasks.test.ts server/tasksBlockedBy.test.ts server/todo.test.ts",
+    "test:server": "bun test server/",
     "lint": "knip --no-exit-code",
     "start": "node bin/mars-ui.mjs",
     "knip": "knip --no-exit-code"
