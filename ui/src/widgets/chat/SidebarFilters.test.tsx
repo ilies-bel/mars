@@ -1,10 +1,12 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SidebarFilters, type SidebarFiltersValue } from './SidebarFilters'
-import { filterSidebarThreads } from './queueThreads'
+import { filterSidebarThreads, type ThreadListFilters } from './queueThreads'
 import type { ChatThread } from '@/shared/schemas'
+import { ThreadSidebar } from '@/pages/ChatPage'
 
 const filters: SidebarFiltersValue = {
   query: '',
@@ -43,6 +45,57 @@ describe('SidebarFilters', () => {
     })
 
     expect(onChange).toHaveBeenCalledWith({ ...filters, query: 'deploy' })
+    root.unmount()
+  })
+
+  it('narrows the rendered open thread list as the operator types', () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    })
+    queryClient.setQueryData(['chat-threads', undefined], [
+      thread({ id: 'deploy', title: 'Restart failed deploy' }),
+      thread({ id: 'proposal', title: 'Review design proposal', origin: null, alertItemId: null }),
+      thread({ id: 'resolved', title: 'Old deploy', alertResolved: true }),
+    ])
+    queryClient.setQueryData(['chat-history', undefined], [])
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    const SidebarHarness = () => {
+      const [value, setValue] = useState<ThreadListFilters>({ query: '', kind: 'all', origin: 'all' })
+      return (
+        <ThreadSidebar
+          selectedId={null}
+          onSelect={() => {}}
+          filters={value}
+          onFiltersChange={setValue}
+          selectedItem={null}
+          onFastAction={() => {}}
+        />
+      )
+    }
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <SidebarHarness />
+        </QueryClientProvider>,
+      )
+    })
+
+    expect(container.textContent).toContain('Restart failed deploy')
+    expect(container.textContent).toContain('Review design proposal')
+    expect(container.textContent).not.toContain('Old deploy')
+
+    const input = container.querySelector<HTMLInputElement>('[data-testid="thread-search"]')!
+    act(() => {
+      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      nativeSetter?.call(input, 'deploy')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    expect(container.textContent).toContain('Restart failed deploy')
+    expect(container.textContent).not.toContain('Review design proposal')
     root.unmount()
   })
 
