@@ -559,6 +559,8 @@ export const handleTaskFailureWithFixTask = async (
     await markTaskFailed(
       input.taskId,
       `diagnose_chore_failed:${failureSignature}`,
+      undefined,
+      { error: input.errorOutput, failureSignature },
     )
     return {
       outcome: 'failed',
@@ -587,6 +589,8 @@ export const handleTaskFailureWithFixTask = async (
     await markTaskFailed(
       input.taskId,
       `recovery_disabled:${failureSignature}: ${truncatedError.slice(0, 500)}`,
+      undefined,
+      { error: truncatedError, failureSignature },
     )
     return {
       outcome: 'failed',
@@ -1002,7 +1006,10 @@ export const handleTaskFailureWithFixTask = async (
     const nonCodeCap = getMaxNonCodeRetries()
     if (nonCodeCount > nonCodeCap) {
       const failureReason = `non-code-retry-exhausted:${failureSignature}`
-      await markTaskFailed(input.taskId, failureReason)
+      await markTaskFailed(input.taskId, failureReason, undefined, {
+        error: truncatedError,
+        failureSignature,
+      })
       await raiseActionQueueItem({
         kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
         category: 'orchestrator',
@@ -1045,7 +1052,10 @@ export const handleTaskFailureWithFixTask = async (
     const nonCodeCap = getMaxNonCodeRetries()
     if (nonCodeCount > nonCodeCap) {
       const failureReason = `non-code-retry-exhausted:${failureSignature}`
-      await markTaskFailed(input.taskId, failureReason)
+      await markTaskFailed(input.taskId, failureReason, undefined, {
+        error: truncatedError,
+        failureSignature,
+      })
       await raiseActionQueueItem({
         kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
         category: 'orchestrator',
@@ -1086,6 +1096,10 @@ export const handleTaskFailureWithFixTask = async (
       failureSignature.startsWith('recovery_exhausted:')
         ? failureSignature
         : `recovery_exhausted:${failureSignature}`,
+      undefined,
+      // The reason is a status echo; the evidence is the captured output the
+      // handler was called with. Both are recorded, in their own columns.
+      { error: truncatedError, failureSignature },
     )
     await raiseRecoveryExhaustedActionQueue({
       taskId: input.taskId,

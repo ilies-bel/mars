@@ -1303,6 +1303,13 @@ export const runAgent = async (
         failedPhase: 'code',
         failureReason: 'context-exhausted',
         failureReasonCode: 'context-exhausted',
+        // Self-heal keys off `failure_signature`, not `failure_reason_code`:
+        // a NULL here hides the failure from recipe matching, the storm streak
+        // counter and the Steward brief.
+        failureSignature: computeFailureSignature(
+          'code:context-exhausted',
+          'context budget exhausted (maxContextTokens) mid-code',
+        ),
       },
       store,
     )
@@ -1430,6 +1437,11 @@ export const runAgent = async (
         ? `worktree had ${checkpointFiles.length} uncommitted path(s); preserved as wip(checkpoint) commit on branch ${branch}`
         : 'worktree was clean at exit (no uncommitted work found)'
 
+    // One string, two consumers: the row's `error` column and the signature the
+    // failure handler computes. Deriving both from the same text keeps the
+    // stamped signature identical to the one the handler mints, so
+    // `upsertFixTask`'s (taskId, signature) dedup agrees across the two paths.
+    const coderExitOutput = `coder process exited ${r.exitCode}. ${worktreeNote}. ${diagText}`
     await updateTask(
       taskId,
       {
@@ -1438,13 +1450,20 @@ export const runAgent = async (
         failedPhase: 'code',
         failureReason: 'coder-exit-nonzero',
         failureReasonCode: 'coder-exit-nonzero',
+        // Without this the row lands with a NULL signature and is invisible to
+        // recipe matching (`code:coder-exit-nonzero/api-unreachable` and
+        // friends), the storm streak counter and the Steward brief.
+        failureSignature: computeFailureSignature(
+          'code:coder-exit-nonzero',
+          coderExitOutput,
+        ),
       },
       store,
     )
     await handleTaskFailureWithFixTask({
       taskId,
       failingStep: 'code:coder-exit-nonzero',
-      errorOutput: `coder process exited ${r.exitCode}. ${worktreeNote}. ${diagText}`,
+      errorOutput: coderExitOutput,
       branch,
       store,
       recipeContext: {

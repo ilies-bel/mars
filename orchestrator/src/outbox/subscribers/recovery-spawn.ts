@@ -10,6 +10,7 @@ import { getTask, reopenTerminalTask, updateTask } from '../../core/queue.js'
 import { isOriginRecoveryFailedReason } from '../../core/blocker-resolution.js'
 import { apiCircuitBreaker } from '../../core/lib/api-circuit-breaker.js'
 import { asStepId, UNKNOWN_STEP_ID } from '../../core/lib/failure-signature.js'
+import { assessStormExcerpt } from '../../core/agents/steward.js'
 import { registerSubscriberName } from '../registry.js'
 import { raiseActionQueueItem } from '../../core/lib/action-queue.js'
 import { loadSpendControl } from '../../core/daemon/spend-control/store.js'
@@ -119,6 +120,24 @@ export async function drainRecoverySpawner(
       const failingStep =
         asStepId(task.failureReason) ?? asStepId(task.failedPhase) ?? UNKNOWN_STEP_ID
 
+      // Evidence preservation across the reopen.
+      //
+      // `reopenTerminalTask` (below) NULLs `error` and `failure_signature` in
+      // the same transaction that re-queues the row, so the captured output is
+      // gone by the time the handler decides the task is terminal. On the
+      // second and later passes of a re-failure loop the `task.failed` payload
+      // carries only derived status text (`recovery_exhausted:<sig>`), which
+      // classifies as `unclassified` and tells the Steward nothing. Snapshot
+      // the row's captured output BEFORE the reopen and prefer whichever of
+      // the two is real captured output, so the original failure evidence
+      // survives every subsequent pass instead of decaying to a status echo.
+      const eventError = error ?? ''
+      const resolvedErrorOutput = assessStormExcerpt(eventError).usable
+        ? eventError
+        : assessStormExcerpt(task.error).usable
+          ? (task.error ?? eventError)
+          : eventError
+
       /**
        * Run the shared failure handler and, when the signature-storm circuit
        * breaker FIRST trips, signal the daemon so it pauses dispatch and wakes
@@ -136,7 +155,7 @@ export async function drainRecoverySpawner(
         const result = await handleTaskFailureWithFixTask({
           taskId,
           failingStep,
-          errorOutput: error,
+          errorOutput: resolvedErrorOutput,
           // Carry the optional QA note from the `task.failed` event through to
           // the fix-task prompt so the recovery agent sees the operator feedback.
           qaNote: note,

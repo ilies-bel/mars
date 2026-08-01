@@ -8,6 +8,7 @@ import type { Author, AuthorKind } from './author'
 import { openDb, type DbClient, type DbInValue, type DbStatement } from './lib/db'
 import { ensureSchema } from './lib/pg-schema'
 import { buildEventInsert, withWriteTx } from './lib/outbox'
+import { asStepId, computeFailureSignature } from './lib/failure-signature'
 import { Arc } from './arc'
 import type { DomainTaskStore as TaskStore } from './store/task-store'
 import { raiseActionQueueItem } from './lib/action-queue'
@@ -1082,6 +1083,27 @@ export const enqueueTask = async (
  * `Arc.setTaskStatus(taskId, newStatus, extras?, store?)`.
  */
 
+/**
+ * Best-effort `<step>/<error-class>` signature for a failure patch that did not
+ * carry one. Used by {@link updateTask}'s signature floor.
+ *
+ * Preference order: a `failure_reason_code` that is already a full signature
+ * (it contains a `/`) is authoritative; otherwise the step half comes from the
+ * reason code, then the failed phase, then a generic `terminal`, and the error
+ * class is classified from whatever text the patch carries.
+ */
+const deriveFailureSignature = (patch: {
+  error?: string | null
+  failedPhase?: FailedPhase | null
+  failureReason?: string | null
+  failureReasonCode?: string | null
+}): string => {
+  const code = patch.failureReasonCode ?? null
+  if (code !== null && code.includes('/')) return code
+  const step = asStepId(code) ?? asStepId(patch.failedPhase) ?? 'terminal'
+  return computeFailureSignature(step, patch.error ?? patch.failureReason ?? '')
+}
+
 export const updateTask = async (
   id: string,
   patch: Partial<
@@ -1334,6 +1356,20 @@ export const updateTask = async (
   if (patch.failureSignature !== undefined) {
     fields.push('failure_signature = ?')
     args.push(patch.failureSignature)
+  } else if (patch.status === 'failed') {
+    // Signature floor. Everything in the self-heal chain keys off
+    // `failure_signature` — fix-recipe matching, the signature-storm streak
+    // counter, the Steward's evidence brief, `isEnvironmentalSignature`
+    // auto-restart — and every one of them skips a NULL, so a failure write
+    // that omits the column is invisible to all of it. Several failure writers
+    // (the coder-exit / coder-uncommitted / context-exhausted code paths, the
+    // phantom-task watchdog) only ever wrote `failure_reason_code`.
+    //
+    // COALESCE, not an unconditional write: a caller-supplied signature always
+    // wins (handled above), and a precise signature already on the row must
+    // never be downgraded to one derived from a coarse phase.
+    fields.push('failure_signature = COALESCE(failure_signature, ?)')
+    args.push(deriveFailureSignature(patch))
   }
   if (patch.failureReasonCode !== undefined) {
     fields.push('failure_reason_code = ?')
