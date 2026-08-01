@@ -237,6 +237,48 @@ describe('recovery-spawn outbox subscriber', () => {
     cleanup()
   })
 
+  it('preserves the row-recorded failure output across the reopen when the event payload is a status echo', async () => {
+    // Live regression (mars-76fef59f): the subscriber reopens the origin —
+    // `reopenTerminalTask` NULLs `error` AND `failure_signature` — and the
+    // recovery-exhausted branch then lands the row terminal again. On the
+    // second and later passes of the 30 s re-failure loop the event payload
+    // carries nothing but the previous reason, so the real captured output has
+    // to come off the row, snapshotted before the reopen.
+    process.env.MARS_FIX_RETRY_BUDGET = '0'
+    const { q, rs, pub, client } = await loadModules(repo)
+
+    const captured =
+      'typecheck:\n\n> @mars/ui@0.1.0 typecheck\n> tsc --noEmit\n\n' +
+      "server/actionQueue.test.ts(712,24): error TS2339: Property 'staleQueued' does not exist on type 'ActionQueueRow'."
+    const t = await q.enqueueTask('make the UI compile', undefined, {
+      skipTriage: true,
+    })
+    await q.updateTask(t.id, {
+      status: 'failed',
+      error: captured,
+      failedPhase: 'verify',
+      failureReason: 'verify:typecheck',
+      failureSignature: 'verify:typecheck/typecheck-property-missing',
+      branch: `task/${t.id}`,
+      worktreePath: repo,
+      retryCount: 1,
+    })
+
+    await rs.ensureRecoverySpawner(client)
+    await publish(pub, client, 'task.failed', {
+      taskId: t.id,
+      error: 'recovery_exhausted:verify/unclassified',
+    })
+
+    const { processed } = await rs.drainRecoverySpawner(client)
+    expect(processed).toBe(1)
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.error).toContain('TS2339')
+    expect(reloaded?.failureSignature).toBeTruthy()
+  })
+
   it('does not block a task continued before its pending failure event drains', async () => {
     const { q, rs, continueTask, client } = await loadModules(repo)
     const task = await q.enqueueTask('resume without stale recovery', undefined, {
