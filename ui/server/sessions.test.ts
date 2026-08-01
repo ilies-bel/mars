@@ -7,6 +7,8 @@
  * running session; a step_ended is a finished session.
  */
 
+import './__testing__/pgliteEnv.ts'
+
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'

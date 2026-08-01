@@ -4,6 +4,8 @@
  * The endpoint pairs step_started + step_ended trace events for a given
  * originId and returns them in chronological (workflow) order.
  */
+import './__testing__/pgliteEnv.ts'
+
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
