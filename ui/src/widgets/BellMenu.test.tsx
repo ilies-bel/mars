@@ -3,9 +3,8 @@
  * BellMenu badge tests.
  *
  * Slice 2 (ADR-0054) re-sources the Alerts half of the bell from the arc-rooted
- * `useAlerts()` aggregate. The badge count is `alerts.length + notices.length`,
- * so this locks in that the two sources are summed (not one or the other) and
- * that each Alert renders its goal + reason. Provider-free: both data hooks are
+ * `useAlerts()` aggregate. Conversation Notices stay out of the badge, while
+ * each Alert still renders its goal + reason. Provider-free: the alert hook is
  * mocked, so the component renders under `renderToStaticMarkup`.
  */
 
@@ -22,23 +21,14 @@ mock.module('@/entities/alerts', () => ({
   useStartThreadFromAlert: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
-mock.module('@/entities/notices', () => ({
-  useNotices: () => ({
-    notices: [{ id: 'n1', body: 'Release notes are ready' }],
-    error: null,
-    ack: vi.fn(),
-    isPending: false,
-  }),
-}))
-
 const { renderToStaticMarkup } = await import('react-dom/server')
 const { BellMenu } = await import('./BellMenu')
 
 describe('BellMenu – badge count', () => {
-  it('sums alerts + notices into the badge and aria-label', () => {
-    // 2 alerts + 1 notice → badge "3"
+  it('counts alerts without adding conversation Notices to the badge', () => {
     const html = renderToStaticMarkup(<BellMenu />)
-    expect(html).toContain('aria-label="Bell, 3 items"')
-    expect(html).toContain('>3<')
+    expect(html).toContain('aria-label="Bell, 2 items"')
+    expect(html).toContain('>2<')
+    expect(html).not.toContain('Notices')
   })
 })

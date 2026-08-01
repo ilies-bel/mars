@@ -31,8 +31,6 @@ export const stubAppServices = (
   viewAlert: async () => null,
   startThreadFromAlert: async () => null,
   nextActionAlert: async () => null,
-  listNotices: async () => [],
-  ackNotice: async () => false,
   listKpis: async () => [],
   listKpisSeries: async () => ({
     failure_rate: [],

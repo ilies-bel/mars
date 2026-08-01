@@ -22,7 +22,6 @@ vi.mock('@/entities/actionQueue/useActionQueue', () => ({
 vi.mock('@/entities/actionQueue/useActionQueueHistory', () => ({
   useActionQueueHistory: () => ({ items: [], nextCursor: null, isLoadingMore: false, loadMore: vi.fn(), error: null, projectsError: null, projectsEmpty: false }),
 }))
-vi.mock('@/entities/notices', () => ({ useNotices: () => ({ notices: [], error: null, ack: vi.fn(), isPending: false }) }))
 vi.mock('@/shared/useFocusedProject', () => ({
   useFocusedProjectId: () => null,
   useFocusedProject: () => ({ focusedProjectId: null, projectsSettled: true, projectsError: null, projects: [], setFocusedProjectId: vi.fn() }),

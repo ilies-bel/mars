@@ -1648,18 +1648,6 @@ export const startHttpServer = async (
       return
     }
 
-    // GET /notices — the open (unacknowledged) Notice list (ADR-0079). A Notice
-    // is entity-less, so unlike an Alert it clears only on operator ack. Pure
-    // read; no draining gate. Exact-path match so the `:id/ack` POST below is
-    // reached on its own route.
-    if (req.method === 'GET' && req.url && req.url.match(/^\/notices(?:\?.*)?$/)) {
-      deps.appServices
-        .listNotices()
-        .then((notices) => sendJson(res, 200, { notices }))
-        .catch((err: unknown) => sendError(res, err))
-      return
-    }
-
     // GET /view/release-notes-cursor — returns the last-viewed-release-notes
     // timestamp stored in app_settings, or null when never viewed.
     // POST /view/release-notes-cursor — stamps "now" as the last-viewed
@@ -2392,26 +2380,6 @@ export const startHttpServer = async (
             deps.viewStreamHub?.broadcast('chat')
             sendJson(res, 200, { ok: true, cleared })
           })
-          .catch((err: unknown) => sendError(res, err))
-        return
-      }
-    }
-
-    // POST /notices/:id/ack — acknowledge (clear) a Notice (ADR-0079). The
-    // daemon is the sole writer (ADR-0035); the ack is idempotent, returning
-    // { acknowledged: false } when the notice is missing or already acked.
-    // Bypasses the draining gate — an operator gesture on informational state,
-    // not orchestrator work.
-    {
-      const noticeAckMatch =
-        req.method === 'POST' && req.url
-          ? req.url.match(/^\/notices\/([^/?]+)\/ack(?:\?.*)?$/)
-          : null
-      if (noticeAckMatch && noticeAckMatch[1]) {
-        const id = decodeURIComponent(noticeAckMatch[1])
-        deps.appServices
-          .ackNotice(id)
-          .then((acknowledged) => sendJson(res, 200, { acknowledged }))
           .catch((err: unknown) => sendError(res, err))
         return
       }

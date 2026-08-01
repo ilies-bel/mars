@@ -13,8 +13,6 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { withTransaction } from './db'
 import { resolveStateClient } from '../store/state-client'
-import { humanSummary } from './action-queue-recipes'
-import type { NoticeRow } from './notice-store'
 import type { ChatContextScope } from '../daemon/chat-context'
 
 const stateClient = resolveStateClient
@@ -33,7 +31,7 @@ export const initChatStore = async (): Promise<void> => {
  *                     state when that task completes.
  * - 'acknowledgment' — plain first-person history; always visible.
  */
-export const ChatMessageKindSchema = z.enum(['validation', 'acknowledgment', 'situation'])
+export const ChatMessageKindSchema = z.enum(['validation', 'acknowledgment', 'situation', 'notice'])
 export type ChatMessageKind = z.infer<typeof ChatMessageKindSchema>
 
 export type ThreadStatus = 'idle' | 'running' | 'throttled'
@@ -46,17 +44,6 @@ export type FeedbackRating = 'up' | 'down'
 export interface SubjectTerminalCondition {
   eventType: string
   entityId: string
-}
-
-/**
- * A deterministic Mars-authored feed entry. The persistence adapter currently
- * stores this as an assistant message, preserving the chat transport's
- * user/assistant transcript contract.
- */
-export interface ChatMessageDraft {
-  author: 'mars'
-  role: 'notice'
-  body: string
 }
 
 export interface ChatFeedback {
@@ -111,8 +98,6 @@ export interface ChatMessage {
    * specific backing entity.
    */
   backing_entity_id: string | null
-  /** Notice whose deterministic chat mirror this is, if any. */
-  notice_id?: string | null
 }
 
 export interface ThreadPreview extends ChatThread {
@@ -203,15 +188,6 @@ export const computeAttentionStatus = (
   if (status === 'idle' && lastMessageRole === 'assistant') return 'ready'
   if (status === 'idle' && lastMessageRole === 'user') return 'drafting'
   return 'idle'
-}
-
-/** Render a Notice into the Mars voice used by the continuous chat feed. */
-export function noticeToChatMessage(notice: NoticeRow): ChatMessageDraft {
-  return {
-    author: 'mars',
-    role: 'notice',
-    body: humanSummary(notice.kind, { ...notice.payload, count: notice.count }),
-  }
 }
 
 /** Convert a stored thread to its API view shape. */
@@ -471,9 +447,8 @@ const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
     segments: rawSegments != null ? (JSON.parse(rawSegments) as unknown) : null,
     created_at: row.created_at as number,
     context_scope: row.context_scope === 'main' ? 'main' : 'subject',
-    kind: (rawKind === 'validation' || rawKind === 'situation' ? rawKind : 'acknowledgment') as ChatMessageKind,
+    kind: (rawKind === 'validation' || rawKind === 'situation' || rawKind === 'notice' ? rawKind : 'acknowledgment') as ChatMessageKind,
     backing_entity_id: (row.backing_entity_id as string | null) ?? null,
-    notice_id: (row.notice_id as string | null) ?? null,
   }
 }
 
@@ -505,15 +480,15 @@ export const createThread = async (
     })
     if (situationReport !== undefined) {
       await tx.execute({
-        sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind, backing_entity_id, notice_id)
-              VALUES (?, ?, 'assistant', ?, ?, ?, 'main', 'situation', NULL, NULL)`,
+        sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind, backing_entity_id)
+              VALUES (?, ?, 'assistant', ?, ?, ?, 'main', 'situation', NULL)`,
         args: [randomUUID(), id, situationReport, JSON.stringify([{ type: 'text', text: situationReport }]), ts],
       })
     }
     if (firstUserMessage !== undefined) {
       await tx.execute({
-        sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind, backing_entity_id, notice_id)
-              VALUES (?, ?, 'user', ?, ?, ?, 'subject', 'acknowledgment', NULL, NULL)`,
+        sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind, backing_entity_id)
+              VALUES (?, ?, 'user', ?, ?, ?, 'subject', 'acknowledgment', NULL)`,
         args: [
           randomUUID(),
           id,
@@ -817,7 +792,7 @@ export const appendMessage = async (
   role: MessageRole,
   content: string,
   segments?: unknown,
-  opts?: { kind?: ChatMessageKind; backingEntityId?: string; noticeId?: string; contextScope?: ChatContextScope },
+  opts?: { kind?: ChatMessageKind; backingEntityId?: string; contextScope?: ChatContextScope },
 ): Promise<ChatMessage> => {
   const c = stateClient()
   const id = randomUUID()
@@ -825,12 +800,11 @@ export const appendMessage = async (
   const segmentsJson = segments !== undefined ? JSON.stringify(segments) : null
   const kind: ChatMessageKind = opts?.kind ?? 'acknowledgment'
   const backingEntityId = opts?.backingEntityId ?? null
-  const noticeId = opts?.noticeId ?? null
-  const contextScope = opts?.contextScope ?? (kind === 'situation' || noticeId !== null ? 'main' : 'subject')
+  const contextScope = opts?.contextScope ?? (kind === 'situation' || kind === 'notice' ? 'main' : 'subject')
   await c.execute({
-    sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind, backing_entity_id, notice_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [id, threadId, role, content, segmentsJson, ts, contextScope, kind, backingEntityId, noticeId],
+    sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind, backing_entity_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [id, threadId, role, content, segmentsJson, ts, contextScope, kind, backingEntityId],
   })
   await c.execute({
     sql: `UPDATE chat_threads SET updated_at = ? WHERE id = ?`,
@@ -846,7 +820,6 @@ export const appendMessage = async (
     context_scope: contextScope,
     kind,
     backing_entity_id: backingEntityId,
-    notice_id: noticeId,
   }
 }
 
@@ -862,44 +835,6 @@ export const listMainSessionMessages = async (startsAfterSeq = 0): Promise<ChatM
   return (result.rows as unknown as Record<string, unknown>[]).map(rowToMessage)
 }
 
-/**
- * Write the Notice's deterministic chat mirror once, then refresh that same
- * entry whenever the Notice is coalesced. Returns null when no active chat
- * feed exists yet.
- */
-export const upsertNoticeChatMessage = async (
-  noticeId: string,
-  body: string,
-): Promise<ChatMessage | null> => {
-  const c = stateClient()
-  const ts = now()
-  const existing = await c.execute({
-    sql: `UPDATE chat_messages
-            SET content = ?, context_scope = 'main'
-          WHERE notice_id = ?
-          RETURNING *`,
-    args: [body, noticeId],
-  })
-  if (existing.rows.length > 0) {
-    const message = rowToMessage(existing.rows[0] as Record<string, unknown>)
-    await c.execute({
-      sql: `UPDATE chat_threads SET updated_at = ? WHERE id = ?`,
-      args: [ts, message.thread_id],
-    })
-    return message
-  }
-
-  const currentFeed = await c.execute(`
-    SELECT id FROM chat_threads
-     WHERE closed_at IS NULL
-     ORDER BY updated_at DESC, created_at DESC, id DESC
-     LIMIT 1
-  `)
-  const threadId = (currentFeed.rows[0] as { id?: unknown } | undefined)?.id
-  return typeof threadId === 'string'
-    ? appendMessage(threadId, 'assistant', body, undefined, { noticeId })
-    : null
-}
 
 /** Rename a thread. No-op when the thread does not exist. */
 export const updateThreadTitle = async (id: string, title: string): Promise<void> => {
@@ -960,6 +895,8 @@ export const setThreadPosture = async (id: string, posture: ChatPosture): Promis
  * timestamp. Idempotent: the original closure timestamp is preserved.
  */
 export const closeSubject = async (id: string): Promise<void> => {
+  const { flushRoutineConversationNotices } = await import('./conversation-delivery.js')
+  await flushRoutineConversationNotices(() => false)
   const c = stateClient()
   const ts = now()
   await c.execute({

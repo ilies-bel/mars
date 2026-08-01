@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BellIcon } from 'lucide-react'
 import { useAlerts, useStartThreadFromAlert } from '@/entities/alerts'
-import { useNotices } from '@/entities/notices'
 
 /**
  * Navigate to a chat thread by writing the `#/chat?thread=<id>` hash. Setting
@@ -17,21 +16,16 @@ const navigateToThread = (threadId: string): void => {
 /**
  * Top-bar Bell surface (ADR-0080 foundation).
  *
- * A single bell that folds together two kinds of "needs a look" state:
- *  - Alerts — the arc-rooted read aggregate (ADR-0054): each shows its goal
+ * A single bell for Alerts — the arc-rooted read aggregate (ADR-0054): each shows its goal
  *    (what the arc was trying to do) over the plain-English reason it failed.
  *    Read-only — an Alert clears only when the underlying entity mutates
  *    (ADR-0048), so there is no ack.
- *  - Notices — entity-less bell messages (ADR-0079) the operator clears by
- *    acknowledging.
- *
- * The badge count is Alerts + open Notices, capped at "9+". Clicking toggles a
+ * The badge count is open Alerts, capped at "9+". Clicking toggles a
  * minimal popover; outside-click and Escape close it. Styling reuses NavBar's
  * tokens (bg-background / border-primary/30 / text-foreground / text-primary).
  */
 export const BellMenu = () => {
   const { alerts } = useAlerts()
-  const { notices, ack } = useNotices()
   const { mutate: startThread, isPending } = useStartThreadFromAlert()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -51,7 +45,7 @@ export const BellMenu = () => {
     [startThread],
   )
 
-  const total = alerts.length + notices.length
+  const total = alerts.length
   const badge = total === 0 ? null : total > 9 ? '9+' : String(total)
 
   // Close on outside-click and Escape while open.
@@ -112,35 +106,6 @@ export const BellMenu = () => {
                     >
                       <p className="text-foreground">{alert.goal}</p>
                       <p className="text-primary">{alert.reason}</p>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <div className="my-2 h-px bg-primary/30" aria-hidden="true" />
-
-          <section>
-            <h2 className="px-1 pb-1 font-mono text-[9px] uppercase tracking-wide text-primary">
-              Notices
-            </h2>
-            {notices.length === 0 ? (
-              <p className="px-1 py-1 text-primary">No notices</p>
-            ) : (
-              <ul>
-                {notices.map((notice) => (
-                  <li
-                    key={notice.id}
-                    className="flex items-start justify-between gap-2 px-1 py-1"
-                  >
-                    <span className="text-foreground">{notice.body}</span>
-                    <button
-                      type="button"
-                      onClick={() => ack(notice.id)}
-                      className="shrink-0 rounded border border-primary/30 px-1.5 py-0.5 text-[10px] text-primary hover:text-foreground"
-                    >
-                      Ok, got it
                     </button>
                   </li>
                 ))}

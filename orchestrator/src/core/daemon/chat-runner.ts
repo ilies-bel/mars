@@ -654,6 +654,11 @@ export class ChatRunner {
     return this.codexAuthFailed
   }
 
+  /** Whether any chat turn is actively generating or waiting to retry. */
+  hasActiveRuns(): boolean {
+    return this.activeRuns.size > 0 || this.throttledRetries.size > 0
+  }
+
   /**
    * Describe the agent's effective configuration for `GET /view/chat/config`:
    * the model, the resolved system prompt (and whether it is the built-in or
@@ -949,6 +954,8 @@ export class ChatRunner {
         })
       }
       await setThreadStatus(threadId, 'idle')
+      const { flushRoutineConversationNotices } = await import('../lib/conversation-delivery.js')
+      await flushRoutineConversationNotices(() => this.hasActiveRuns())
       // Invalidation ping so the sidebar re-fetches the thread list.
       hub?.broadcast('chat')
     }

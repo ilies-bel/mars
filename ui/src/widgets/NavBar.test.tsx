@@ -66,9 +66,6 @@ mock.module('@/entities/alerts', () => ({
   useStartThreadFromAlert: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
-mock.module('@/entities/notices', () => ({
-  useNotices: () => ({ notices: [], error: null, ack: vi.fn(), isPending: false }),
-}))
 
 // Dynamic imports run after all mocks are registered.
 const { NavBar } = await import('./NavBar')
