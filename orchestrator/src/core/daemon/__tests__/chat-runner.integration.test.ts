@@ -76,6 +76,7 @@ vi.mock('../chat-shell', () => ({
 vi.mock('../../lib/chat-store', () => ({
   appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: 0, kind: 'acknowledgment', backing_entity_id: null }),
   getThread: vi.fn(),
+  listMainSessionMessages: vi.fn().mockResolvedValue([]),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
 }))
@@ -159,7 +160,7 @@ describe('ChatRunner integration — task-blocked "can you retry?"', () => {
     mcpMock.getTools.mockResolvedValue([])
     vi.mocked(chatStore.appendMessage).mockResolvedValue({
       id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: 0,
-      kind: 'acknowledgment', backing_entity_id: null,
+      context_scope: 'subject', kind: 'acknowledgment', backing_entity_id: null,
     })
   })
 

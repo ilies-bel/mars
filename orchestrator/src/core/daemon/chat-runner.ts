@@ -38,6 +38,7 @@ import { corePurgeTask } from './purge-task'
 import {
   appendMessage,
   getThread,
+  listMainSessionMessages,
   setThreadPosture,
   setThreadStatus,
   updateThreadTitle,
@@ -49,6 +50,7 @@ import {
 import type { ViewStreamHub } from './view/stream-hub'
 import type { ChatStreamHub } from './chat-stream-hub'
 import { resolveChatSystemPrompt } from './chat-system-prompt'
+import { buildMainSessionPrefix, MAIN_SESSION_PROVIDER_REQUEST_IDENTITY } from './chat-context'
 import { PROVIDERS, resolveProviderName, type ConversationMemoryFacts } from '../workers/providers'
 import {
   CodexApiError,
@@ -1015,7 +1017,12 @@ export class ChatRunner {
         const last = transcript.at(-1)
         if (last && last.role === 'user') transcript = transcript.slice(0, -1)
       }
-      const input: ResponseInputItem[] = buildApiInput(transcript)
+      const mainSessionMessages = await listMainSessionMessages()
+      const mainPrefix = buildApiInput(buildMainSessionPrefix(mainSessionMessages))
+      const subjectInput = buildApiInput(
+        transcript.filter((message) => message.context_scope !== 'main' && message.kind !== 'situation'),
+      )
+      const input: ResponseInputItem[] = [...mainPrefix, ...subjectInput]
       if (content.length > 0) {
         input.push({ type: 'message', role: 'user', content: [{ type: 'input_text', text: promptContent }] })
       }
@@ -1061,6 +1068,7 @@ export class ChatRunner {
                 instructions: instructionsForPosture(),
                 input,
                 tools: toolsForPosture(),
+                requestIdentity: MAIN_SESSION_PROVIDER_REQUEST_IDENTITY,
                 signal: abort.signal,
                 onEvent: (event) => {
                   for (const seg of parseEventToSegments(event)) {

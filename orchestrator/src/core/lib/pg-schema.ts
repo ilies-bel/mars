@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0016'
+export const SCHEMA_VERSION = '0017'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -827,12 +827,15 @@ const DDL: readonly string[] = [
     content    text NOT NULL,
     segments   text,
     created_at bigint NOT NULL,
+    context_scope text NOT NULL DEFAULT 'subject' CHECK (context_scope IN ('main', 'subject')),
     seq        bigint GENERATED ALWAYS AS IDENTITY
   )`,
   // Backfill `seq` for databases created before this column was added.
   // IF NOT EXISTS makes this idempotent on fresh databases (where seq already
   // exists from the CREATE TABLE above).
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS seq bigint GENERATED ALWAYS AS IDENTITY`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS context_scope text NOT NULL DEFAULT 'subject'
+     CHECK (context_scope IN ('main', 'subject'))`,
   // Chat message envelope: kind ('validation' | 'acknowledgment' | 'situation') and optional
   // backing entity link for auto-clear projection (slice 1 of PRD cdf6a60a).
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'acknowledgment'`,
@@ -926,6 +929,7 @@ const DDL: readonly string[] = [
   // remains valid for fresh databases as well as upgrades.
   `ALTER TABLE IF EXISTS chat_messages
      ADD COLUMN IF NOT EXISTS notice_id text REFERENCES notices(id) ON DELETE CASCADE`,
+  `UPDATE chat_messages SET context_scope = 'main' WHERE notice_id IS NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_messages_notice_id
      ON chat_messages(notice_id) WHERE notice_id IS NOT NULL`,
 

@@ -15,6 +15,7 @@ import { withTransaction } from './db'
 import { resolveStateClient } from '../store/state-client'
 import { humanSummary } from './action-queue-recipes'
 import type { NoticeRow } from './notice-store'
+import type { ChatContextScope } from '../daemon/chat-context'
 
 const stateClient = resolveStateClient
 
@@ -100,6 +101,8 @@ export interface ChatMessage {
   content: string
   segments: unknown | null
   created_at: number
+  /** Reusable Main-session context or local Subject transcript. */
+  context_scope: ChatContextScope
   /** Envelope kind for UI presentation. */
   kind: ChatMessageKind
   /**
@@ -465,6 +468,7 @@ const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
     content: row.content as string,
     segments: rawSegments != null ? (JSON.parse(rawSegments) as unknown) : null,
     created_at: row.created_at as number,
+    context_scope: row.context_scope === 'main' ? 'main' : 'subject',
     kind: (rawKind === 'validation' || rawKind === 'situation' ? rawKind : 'acknowledgment') as ChatMessageKind,
     backing_entity_id: (row.backing_entity_id as string | null) ?? null,
     notice_id: (row.notice_id as string | null) ?? null,
@@ -499,15 +503,15 @@ export const createThread = async (
     })
     if (situationReport !== undefined) {
       await tx.execute({
-        sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, kind, backing_entity_id, notice_id)
-              VALUES (?, ?, 'assistant', ?, ?, ?, 'situation', NULL, NULL)`,
+        sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind, backing_entity_id, notice_id)
+              VALUES (?, ?, 'assistant', ?, ?, ?, 'main', 'situation', NULL, NULL)`,
         args: [randomUUID(), id, situationReport, JSON.stringify([{ type: 'text', text: situationReport }]), ts],
       })
     }
     if (firstUserMessage !== undefined) {
       await tx.execute({
-        sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, kind, backing_entity_id, notice_id)
-              VALUES (?, ?, 'user', ?, ?, ?, 'acknowledgment', NULL, NULL)`,
+        sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind, backing_entity_id, notice_id)
+              VALUES (?, ?, 'user', ?, ?, ?, 'subject', 'acknowledgment', NULL, NULL)`,
         args: [
           randomUUID(),
           id,
@@ -810,7 +814,7 @@ export const appendMessage = async (
   role: MessageRole,
   content: string,
   segments?: unknown,
-  opts?: { kind?: ChatMessageKind; backingEntityId?: string; noticeId?: string },
+  opts?: { kind?: ChatMessageKind; backingEntityId?: string; noticeId?: string; contextScope?: ChatContextScope },
 ): Promise<ChatMessage> => {
   const c = stateClient()
   const id = randomUUID()
@@ -819,10 +823,11 @@ export const appendMessage = async (
   const kind: ChatMessageKind = opts?.kind ?? 'acknowledgment'
   const backingEntityId = opts?.backingEntityId ?? null
   const noticeId = opts?.noticeId ?? null
+  const contextScope = opts?.contextScope ?? (kind === 'situation' || noticeId !== null ? 'main' : 'subject')
   await c.execute({
-    sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, kind, backing_entity_id, notice_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [id, threadId, role, content, segmentsJson, ts, kind, backingEntityId, noticeId],
+    sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind, backing_entity_id, notice_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [id, threadId, role, content, segmentsJson, ts, contextScope, kind, backingEntityId, noticeId],
   })
   await c.execute({
     sql: `UPDATE chat_threads SET updated_at = ? WHERE id = ?`,
@@ -835,10 +840,23 @@ export const appendMessage = async (
     content,
     segments: segments !== undefined ? segments : null,
     created_at: ts,
+    context_scope: contextScope,
     kind,
     backing_entity_id: backingEntityId,
     notice_id: noticeId,
   }
+}
+
+/** Return Main-session entries and compact Subject boundaries in conversation order. */
+export const listMainSessionMessages = async (): Promise<ChatMessage[]> => {
+  const c = stateClient()
+  const result = await c.execute({
+    sql: `SELECT * FROM chat_messages
+          WHERE context_scope = 'main' OR kind = 'situation'
+          ORDER BY seq ASC`,
+    args: [],
+  })
+  return (result.rows as unknown as Record<string, unknown>[]).map(rowToMessage)
 }
 
 /**
@@ -854,7 +872,7 @@ export const upsertNoticeChatMessage = async (
   const ts = now()
   const existing = await c.execute({
     sql: `UPDATE chat_messages
-            SET content = ?
+            SET content = ?, context_scope = 'main'
           WHERE notice_id = ?
           RETURNING *`,
     args: [body, noticeId],
@@ -1070,8 +1088,8 @@ export const startThreadFromAlert = async (
   })
   if (situationReport !== undefined) {
     await c.execute({
-      sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, kind)
-            VALUES (?, ?, 'assistant', ?, ?, ?, 'situation')`,
+      sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind)
+            VALUES (?, ?, 'assistant', ?, ?, ?, 'main', 'situation')`,
       args: [
         randomUUID(),
         threadId,

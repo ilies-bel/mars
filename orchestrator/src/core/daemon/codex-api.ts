@@ -116,6 +116,8 @@ export interface StreamCodexResponseOpts {
   instructions: string
   input: readonly ResponseInputItem[]
   tools: readonly FunctionToolDef[]
+  /** Stable request identity lets the provider reuse the Main-session prefix. */
+  requestIdentity?: string
   signal: AbortSignal
   /** Invoked once per parsed SSE event, in stream order. */
   onEvent: (event: unknown) => void
@@ -294,7 +296,7 @@ export const streamCodexResponse = async (opts: StreamCodexResponseOpts): Promis
         'chatgpt-account-id': opts.auth.accountId,
         'OpenAI-Beta': 'responses=experimental',
         originator: 'codex_cli_rs',
-        session_id: randomUUID(),
+        session_id: opts.requestIdentity ?? randomUUID(),
         'Content-Type': 'application/json',
         Accept: 'text/event-stream',
       },
