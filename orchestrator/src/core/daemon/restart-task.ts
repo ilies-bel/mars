@@ -69,6 +69,56 @@ const FORCE_ELIGIBLE_STATUSES = new Set([
 ])
 
 /**
+ * The row columns that must be cleared for a task to replay from `setup`.
+ * Returned by {@link resetForSetupReplay} so the caller can fold them into its
+ * own single `updateTask` alongside the status write.
+ */
+export interface SetupReplayPatch {
+  branch: null
+  worktreePath: null
+  claudeSessionId: null
+  requeueAnchorMs: null
+  requeueDispatchUptimeMs: null
+}
+
+/**
+ * Restart-from-setup mechanics, shared by `mars restart` ({@link coreRestartTask})
+ * and the environmental auto-restart path in `queue-fix-tasks.ts`.
+ *
+ * Two halves, and BOTH are required for the next dispatch to actually rebuild a
+ * worktree:
+ *
+ *  1. `deleteRun` discards the durable run journal. Without it the engine
+ *     resumes: a `setup` step recorded as `'completed'` short-circuits, so the
+ *     only step that can create a worktree never runs again.
+ *  2. The returned patch nulls the stale pointers. `branch`/`worktreePath` name
+ *     a tree that no longer exists; `requeueAnchorMs`/`requeueDispatchUptimeMs`
+ *     anchor the requeue ceiling to a previous episode.
+ *
+ * This exists as one function precisely because the two halves drifted apart
+ * once already: the environmental re-queue cleared the failure markers and set
+ * `status='queued'` but did neither of these, so "the worktree is missing" was
+ * retried by a dispatch that structurally could not rebuild a worktree —
+ * skip setup, fail verify on the same absent directory, repeat.
+ *
+ * Note `claudeSessionId` is nulled but the `task_claude_sessions` history rows
+ * are not: the replay is a fresh coder run, while the history is an audit trail.
+ */
+export const resetForSetupReplay = async (
+  id: string,
+  workflowStore: WorkflowStore,
+): Promise<SetupReplayPatch> => {
+  await workflowStore.deleteRun(id)
+  return {
+    branch: null,
+    worktreePath: null,
+    claudeSessionId: null,
+    requeueAnchorMs: null,
+    requeueDispatchUptimeMs: null,
+  }
+}
+
+/**
  * Core restart mechanics shared by both the UDS RPC handler (`mars restart`)
  * and the HTTP endpoint. Validates the task exists and is in an allowed
  * status, then wipes the worktree/branch, clears the workflow run journal,
@@ -242,11 +292,11 @@ export const coreRestartTask = async (
     await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})
   }
 
-  // Discard the prior workflow run journal so the next dispatch starts from
-  // step 0 instead of resuming stale 'completed' step records. Without this,
-  // the engine skips setup-worktree and run-claude-code, then fails verify
-  // because the worktree no longer exists.
-  await workflowStore.deleteRun(id)
+  // Discard the prior workflow run journal and collect the pointer-clearing
+  // patch so the next dispatch starts from step 0 instead of resuming stale
+  // 'completed' step records. Without this, the engine skips setup-worktree and
+  // run-claude-code, then fails verify because the worktree no longer exists.
+  const setupReplayPatch = await resetForSetupReplay(id, workflowStore)
 
   // Clear blocker edges that point at failed recovery tasks — these are
   // permanently unsatisfiable. Recovery tasks (kind='fix', fix_for_task_id IS
@@ -289,20 +339,17 @@ export const coreRestartTask = async (
   // daemon start if this stale value were left behind.
   await updateTask(id, {
     status: resultStatus,
-    branch: null,
-    worktreePath: null,
-    claudeSessionId: null,
+    // branch / worktreePath / claudeSessionId / requeueAnchorMs /
+    // requeueDispatchUptimeMs all come from resetForSetupReplay. Clearing the
+    // continue-set anchor makes the ceiling fall back to MIN(step.startedAt)
+    // from the fresh journal entries created by this restart's first dispatch;
+    // without it a stale requeueAnchorMs from a previous `mars continue` would
+    // anchor the ceiling to the operator's continue time, not the run's start.
+    ...setupReplayPatch,
     error: null,
     failedPhase: null,
     failureSignature: null,
     failureReasonCode: null,
-    // Clear the continue-set anchor so the ceiling falls back to
-    // MIN(step.startedAt) from the fresh journal entries created by this
-    // restart's first dispatch.  Without this, a stale requeueAnchorMs from
-    // a previous `mars continue` call would anchor the ceiling to the
-    // operator's continue time rather than the current run's start.
-    requeueAnchorMs: null,
-    requeueDispatchUptimeMs: null,
     // When remerge set workflow to 'remerge' for routing purposes, a
     // subsequent restart must clear it so the next dispatch runs the full
     // pipeline (setup → code → verify → merge) rather than the remerge

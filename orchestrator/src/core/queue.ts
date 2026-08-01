@@ -785,7 +785,8 @@ SELECT
   t.branch, t.worktree_path, t.claude_session_id,
   (SELECT COALESCE(json_agg(session_id ORDER BY position)::text, '[]')
      FROM task_claude_sessions WHERE task_id = t.id) AS claude_session_ids,
-  t.error, t.drop_reason, t.retry_count, t.author_kind, t.author_name,
+  t.error, t.drop_reason, t.retry_count, t.env_restart_count,
+  t.author_kind, t.author_name,
   t.failure_reason, t.failure_reason_code, t.stall_diagnostics, t.recovery_payload,
   t.fix_for_task_id, t.failure_signature, t.kind, t.priority, t.tag,
   t.tags_json, t.origin_id, t.parent_proposal_id, t.slice_index,
@@ -857,6 +858,15 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     failureReasonCode: (row.failure_reason_code as string | null) ?? null,
     stallDiagnostics: (row.stall_diagnostics as string | null) ?? null,
     retryCount: Number(row.retry_count ?? 0),
+    // MUST be present in TASK_SEL. This column is a WRITE-ONLY-looking field:
+    // the only writer is updateTask and the only reader is the environmental
+    // auto-restart cap in queue-fix-tasks.ts. When TASK_SEL omitted it,
+    // `row.env_restart_count` was `undefined` on every read, so the counter
+    // resolved to 0 forever, `envRestartCount < MAX_ENV_RESTART_ATTEMPTS` was
+    // permanently true, and the cap never fired: task mars-6cf9774f rode 35
+    // consecutive "environmental restart #1" re-queues (verify step attempt 37)
+    // while the persisted column sat at 1. A missing column here silently
+    // disables a loop bound — it does not fail a type check.
     envRestartCount: Number(row.env_restart_count ?? 0),
     fixForTaskId,
     failureSignature: (row.failure_signature as string | null) ?? null,

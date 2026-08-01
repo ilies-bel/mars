@@ -8,9 +8,13 @@
  * reached 1,014 step attempts overnight.
  *
  * Fix 2 of 2: the poll-fallback calls {@link checkAndEscalateRequeueCeiling}
- * before re-seeding each queued task. If the task has been retrying beyond
- * {@link REQUEUE_MAX_RETRY_MS} of dispatch-enabled daemon uptime without completing, the task is
- * moved to `failed` and an operator action-queue item is raised.
+ * before re-seeding each queued task. TWO independent bounds escalate it to
+ * `failed` with an operator action-queue item — whichever trips first:
+ *
+ *  - {@link REQUEUE_MAX_RETRY_MS} — dispatch-enabled daemon uptime spent in the
+ *    re-queue cycle without completing. Catches the slow strand.
+ *  - {@link REQUEUE_MAX_ATTEMPTS} — step attempts accumulated. Catches the hot
+ *    loop, which can rack up dozens of attempts well inside the time bound.
  *
  * A task with fewer than 1 step attempts is never escalated — it has not
  * entered the re-queue cycle yet.
@@ -56,6 +60,26 @@ export const REQUEUE_MAX_RETRY_MS: number = Number(
  */
 export const REQUEUE_WARN_RATIO: number = Number(
   process.env.MARS_REQUEUE_WARN_RATIO ?? 0.8,
+)
+
+/**
+ * Maximum step attempts a task may accumulate before the poll-fallback
+ * escalates it, independent of the clock. Configurable via
+ * `MARS_REQUEUE_MAX_ATTEMPTS`; defaults to 12.
+ *
+ * {@link REQUEUE_MAX_RETRY_MS} alone does not bound a HOT loop. A task that
+ * re-queues on a ~60 s cycle burns attempts far faster than dispatch uptime:
+ * mars-6cf9774f reached verify attempt 37 in 35 minutes — under a third of the
+ * 2 h bound — and the 2026-07-02 post-mortem recorded eight tasks at 1,014
+ * attempts overnight. Time answers "has this been stuck too long?"; attempts
+ * answer "is this making progress at all?", and a re-queue cycle that has
+ * re-run the same step a dozen times has answered no.
+ *
+ * Set to `Infinity` (via the env var) to disable the attempt bound and rely on
+ * the time bound alone.
+ */
+export const REQUEUE_MAX_ATTEMPTS: number = Number(
+  process.env.MARS_REQUEUE_MAX_ATTEMPTS ?? 12,
 )
 
 /**
@@ -143,7 +167,11 @@ export const checkAndEscalateRequeueCeiling = async (
     `[dispatch] task ${t.id} still retrying: attempt ${maxAttempt}, ${effectiveElapsedMins}m dispatch uptime elapsed`,
   )
 
-  if (effectiveElapsedMs < REQUEUE_MAX_RETRY_MS) {
+  // Either bound trips the escalation. `attemptsExceeded` is checked as a peer
+  // of the time bound rather than nested inside it so a hot loop escalates on
+  // its attempt count even while it is nowhere near the dispatch-uptime bound.
+  const attemptsExceeded = maxAttempt >= REQUEUE_MAX_ATTEMPTS
+  if (effectiveElapsedMs < REQUEUE_MAX_RETRY_MS && !attemptsExceeded) {
     // ── Early warning ───────────────────────────────────────────────────────
     if (
       REQUEUE_MAX_RETRY_MS > 0 &&
@@ -200,10 +228,15 @@ export const checkAndEscalateRequeueCeiling = async (
           : 'requeue-long-running'
 
   const boundMins = Math.round(REQUEUE_MAX_RETRY_MS / 60_000)
+  // Which bound tripped. `failureReason` stays the stable step id either way
+  // (see below) so both shapes share one signature; the distinction belongs in
+  // the operator-facing prose only.
+  const breachedBound = attemptsExceeded
+    ? `attempt bound (${maxAttempt} attempt(s), bound ${REQUEUE_MAX_ATTEMPTS})`
+    : `retry time bound (${effectiveElapsedMins}m dispatch uptime, bound ${boundMins}m, ${maxAttempt} attempt(s))`
   log(
-    `[dispatch] poll-fallback: task ${t.id} exceeded retry time bound ` +
-      `(${effectiveElapsedMins}m dispatch uptime, bound ${boundMins}m, ${maxAttempt} attempt(s), ` +
-      `class ${breachClass.kind}); escalating to failed`,
+    `[dispatch] poll-fallback: task ${t.id} exceeded ${breachedBound}, ` +
+      `class ${breachClass.kind}; escalating to failed`,
   )
 
   // ── Stall diagnostics ───────────────────────────────────────────────────────
@@ -249,9 +282,9 @@ export const checkAndEscalateRequeueCeiling = async (
     status: 'failed',
     stallDiagnostics: stallDiagnosticsJson,
     error:
-      `Re-queue time bound exceeded: task retried ${maxAttempt} time(s) ` +
+      `Re-queue ceiling exceeded — ${breachedBound}: task retried ${maxAttempt} time(s) ` +
       `over ${effectiveElapsedMins} dispatch-uptime minutes without completing ` +
-      `(bound ${boundMins}m, class ${breachClass.kind}). ` +
+      `(class ${breachClass.kind}). ` +
       `Run \`mars restart ${t.id}\` to reset.`,
     failureReason: 'requeue:time-bound-exceeded',
     failureReasonCode,
@@ -264,7 +297,7 @@ export const checkAndEscalateRequeueCeiling = async (
     title: `Task ${t.id}: re-queue ceiling exceeded (${breachClass.kind})`,
     body:
       `Task was re-dispatched ${maxAttempt} time(s) over ${effectiveElapsedMins} dispatch-uptime minutes ` +
-      `without completing (bound ${boundMins}m, class ${breachClass.kind}). ` +
+      `without completing — exceeded the ${breachedBound} (class ${breachClass.kind}). ` +
       `${breachClass.reason} ` +
       `Run \`mars restart ${t.id}\` to reset.`,
     payload: {
@@ -272,6 +305,8 @@ export const checkAndEscalateRequeueCeiling = async (
       maxAttempt,
       elapsedMs: effectiveElapsedMs,
       boundMs: REQUEUE_MAX_RETRY_MS,
+      attemptBound: REQUEUE_MAX_ATTEMPTS,
+      breachedBound: attemptsExceeded ? 'attempts' : 'time',
       diagnostics: {
         class: breachClass.kind,
         attemptDensityPerMin,
