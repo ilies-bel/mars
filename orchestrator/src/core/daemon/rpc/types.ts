@@ -34,6 +34,7 @@ import type { EventEmitter } from 'node:events'
 import type { RunInitOptions, RunInitResult } from '../../../workflows/init-workflow'
 import type { DaemonRequest, DaemonResponse, DaemonStatusPayload } from '../protocol'
 import type { TaskFlightTracker } from '../task-flight-tracker'
+import type { DispatchPauseState, PauseReason } from '../pause-state'
 import type { Semaphore } from '../server'
 import type { ContinueResult } from '../continue-task'
 import type {
@@ -95,6 +96,25 @@ export interface DaemonDeps {
   getAcceptingWork(): boolean
   /** Flip the LIVE `acceptingWork` flag (drain / shutdown / kill toggle it). */
   setAcceptingWork(value: boolean): void
+  /** Read the LIVE dispatch-pause state, including WHY dispatch is paused. */
+  getPauseState(): DispatchPauseState
+  /**
+   * Suspend dispatch for `reason`. Returns false when a pause was already in
+   * effect (first cause wins; the existing reason is preserved).
+   */
+  pauseDispatch(reason: PauseReason, detail?: string): boolean
+  /**
+   * Resume dispatch, clearing every half of the current pause — a `storm`
+   * pause also clears the durable signature-storm breaker flag.
+   */
+  resumeDispatch(): void
+  /**
+   * Clear the persisted signature-storm `tripped` flag and streak on operator
+   * resume. Idempotent: a no-op when no storm row exists or `tripped` is
+   * already `false`. Wired so a subsequent daemon restart does NOT re-pause
+   * a queue the operator deliberately resumed.
+   */
+  resetSignatureStorm(): Promise<void>
   /** Kick the drain loop (reload-config raises caps then re-drains). */
   drain(): Promise<void>
   /** The daemon's graceful-exit routine (shutdown delegates to it). */

@@ -75,6 +75,17 @@ export type DaemonRequest =
   | { op: 'init'; opts: RunInitOptions }
   | { op: 'status' }
   | { op: 'reload-config' }
+  /**
+   * Apply the `dispatch` control lever to the RUNNING daemon.
+   *
+   * `off` suspends dispatch with reason 'operator'; `on` resumes, clearing
+   * whichever cause held the pause (operator / storm / quota) plus the durable
+   * signature-storm `tripped` flag, so a later restart does not re-pause a
+   * queue the operator deliberately resumed. Durability is the CLI's job:
+   * `mars operator set dispatch` writes `paused` to daemon.json BEFORE sending
+   * this, mirroring `operator set <lever>` → `apply-lever`.
+   */
+  | { op: 'set-dispatch'; value: 'on' | 'off' }
   | { op: 'sync' }
   | { op: 'shutdown'; force?: boolean; drain?: boolean }
   | { op: 'kill' }
@@ -182,8 +193,8 @@ export interface DaemonStatusPayload {
    * The daemon's ONE dispatch-pause state, carrying the reason dispatch is
    * suspended ('operator' | 'storm' | 'quota') so status can say WHY rather
    * than just that it is paused. In-flight tasks continue; no new work is
-   * dispatched. Cleared by the operator control surface — which also clears the
-   * signature-storm breaker when that is what paused dispatch. A `storm`
+   * dispatched. Cleared by `mars operator set dispatch on` — which also clears
+   * the signature-storm breaker when that is what paused dispatch. A `storm`
    * pause is restored at startup from the durable breaker flag.
    */
   pause: DispatchPauseState

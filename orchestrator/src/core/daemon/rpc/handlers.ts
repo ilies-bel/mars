@@ -232,6 +232,57 @@ const pingHandler = handler('ping', async (_req, _deps) => {
   return { ok: true, data: { pid: process.pid } }
 })
 
+/**
+ * Apply the `dispatch` lever to the running daemon.
+ *
+ * This leaf owns only the LIVE half of the lever. Durability belongs to the
+ * CLI (`mars operator set dispatch` writes daemon.json first, then sends this),
+ * exactly as `operator set recovery` writes the lever then sends `apply-lever`
+ * — one writer for the file, one for the process.
+ */
+const setDispatchHandler = handler('set-dispatch', async (req, deps) => {
+  if (req.value !== 'on' && req.value !== 'off') {
+    return {
+      ok: false,
+      error: `set-dispatch: value must be 'on' or 'off'; got '${req.value}'`,
+    }
+  }
+  if (req.value === 'off') {
+    // First cause wins: when the storm breaker or a quota rejection already
+    // paused dispatch, an operator pause does not overwrite that reason —
+    // status keeps naming the real cause, and one resume clears it.
+    deps.pauseDispatch('operator', 'operator set dispatch off')
+    const state = deps.getPauseState()
+    deps.log(
+      `set-dispatch: off; dispatch suspended (reason=${state.reason}, inFlight=${deps.tracker.inFlightCount()})`,
+    )
+    return {
+      ok: true,
+      data: {
+        paused: true,
+        reason: state.reason,
+        inFlight: deps.tracker.inFlightCount(),
+      },
+    }
+  }
+  const previous = deps.getPauseState()
+  deps.resumeDispatch()
+  // Clear the persisted signature-storm tripped flag so a subsequent daemon
+  // restart does not re-pause a queue the operator deliberately resumed.
+  // `resumeDispatch` already clears it for a pause whose reason IS 'storm';
+  // this covers the case where an earlier cause (operator, quota) won the
+  // pause slot while the breaker tripped underneath it, leaving the durable
+  // flag armed with nothing in memory pointing at it. Idempotent when no
+  // storm was active: the UPDATE is a no-op when the row has tripped=false
+  // or does not exist.
+  await deps.resetSignatureStorm()
+  void deps.drain()
+  deps.log(
+    `set-dispatch: on; dispatch re-enabled (cleared reason=${previous.reason ?? 'none'})`,
+  )
+  return { ok: true, data: { paused: false, clearedReason: previous.reason } }
+})
+
 const KNOWN_LEVERS = new Set(['recovery', 'scoring'])
 
 const applyLeverHandler = handler('apply-lever', async (req, deps) => {
@@ -561,6 +612,7 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   initHandler,
   statusHandler,
   reloadConfigHandler,
+  setDispatchHandler,
   pingHandler,
   investigateHandler,
   diagnoseFailureHandler,

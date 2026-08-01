@@ -235,7 +235,7 @@ describe('daemon start and restart safety', () => {
 
       replacement = await startDaemon({ log: (line) => logs.push(line) })
       expect(logs).toContain(
-        '[pause] restored persisted paused state from daemon.json — dispatch suspended. Inspect `mars operator` before re-enabling dispatch.',
+        '[pause] restored persisted paused state from daemon.json — dispatch suspended. Run `mars operator set dispatch on` to re-enable dispatch.',
       )
     } finally {
       await replacement?.stop(true)
