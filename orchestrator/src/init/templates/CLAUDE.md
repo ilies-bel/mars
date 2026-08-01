@@ -154,13 +154,16 @@ free-prose still works and degrades to prompt-only.
 ## Blockers
 
 Blocker edges live in the `task_blockers` junction table (`task_id`
-waits on `blocker_task_id`). When a task is enqueued with
-`--blocked-by <id>`, if any named blocker is not yet `done`, the task
-lands in `status='blocked'` immediately; if all named blockers are
-already `done`, it lands in `'queued'`. A `blocked` task only flips
-to `queued` once **every** one of its blockers reaches `done` — and a
-successful recovery counts as its origin reaching `done`, so a
-recovered blocker unblocks the whole chain.
+waits on `blocker_task_id`). A blocker stops gating its dependents
+once it **settles** — reaches `done` or `dropped`. When a task is
+enqueued with `--blocked-by <id>`, if any named blocker has not
+settled, the task lands in `status='blocked'` immediately; if all
+named blockers have settled, it lands in `'queued'`. A `blocked` task
+only flips to `queued` once **every** one of its blockers has settled
+— and a successful recovery counts as its origin reaching `done`, so a
+recovered blocker unblocks the whole chain. `failed` does NOT settle:
+a failed blocker leaves its dependents waiting for explicit operator
+resolution via the action queue.
 
 When a task fails, the orchestrator spawns exactly **one** recovery
 task per origin failure. A recovery task is itself non-recoverable: if
