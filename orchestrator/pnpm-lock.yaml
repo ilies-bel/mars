@@ -32,15 +32,9 @@ importers:
       react:
         specifier: ^19.2.0
         version: 19.2.6
-      smol-toml:
-        specifier: ^1.6.1
-        version: 1.6.1
       tsx:
         specifier: ^4.22.5
         version: 4.22.5
-      ws:
-        specifier: ^8.20.0
-        version: 8.20.0
       zod:
         specifier: 4.3.6
         version: 4.3.6
@@ -60,9 +54,6 @@ importers:
       '@types/react':
         specifier: ^19.2.0
         version: 19.2.14
-      '@types/ws':
-        specifier: ^8.5.13
-        version: 8.18.1
       knip:
         specifier: ^6.14.0
         version: 6.14.0(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
@@ -846,9 +837,6 @@ packages:
 
   '@types/react@19.2.14':
     resolution: {integrity: sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==}
-
-  '@types/ws@8.18.1':
-    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   '@vitest/expect@2.1.9':
     resolution: {integrity: sha512-UJCIkTBenHeKT1TTlKMJWy1laZewsRIzYighyYiJKZreqtdxSos/S1t+ktRMQWu2CKqaarrkeszJx1cgC5tGZw==}
@@ -1857,10 +1845,6 @@ snapshots:
   '@types/react@19.2.14':
     dependencies:
       csstype: 3.2.3
-
-  '@types/ws@8.18.1':
-    dependencies:
-      '@types/node': 25.6.2
 
   '@vitest/expect@2.1.9':
     dependencies:
