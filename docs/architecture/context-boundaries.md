@@ -306,8 +306,11 @@ Plus `core/daemon/{action-queue-repopulator,alert-dismisser,deferral-wake-sweepe
 **Public surface:** `actionQueue: { view() }`, `alerts: { list, show }`,
 `notices: { list, raise }`, `deferrals: { list, defer, wake }`.
 
-**Constraint:** read-only over Execution and Recovery. `alert-dismisser.ts` is
-suspicious against ADR-0048 — see Q9.
+**Constraint:** read-only over Execution and Recovery — with one deliberate
+exception: `alert-dismisser.ts` (the ADR-0027 "Invalidator") *writes* queue
+rows, but only by consuming task lifecycle events off the durable outbox. That
+is the correct realisation of ADR-0048, not a violation. It should be renamed;
+see Q9.
 
 ---
 
@@ -566,7 +569,7 @@ Six files resisted a clean assignment. Each is an Open Question below.
 | `core/lib/git/**` (4,718 LOC) | Mechanics are `runtime`; merge/verify *policy* is `execution`. → Q6 |
 | `claude-{stream,transcript,usage}` | Parsing an agent's output is `runtime`; attributing it to a task is `execution`/`observability`. → Q5 |
 | `retry-budget` | High fan-in (4 folders) but is a Recovery *decision* (one attempt, ADR-0040). → Q7 |
-| `primitive-catalog.ts` | Catalogues step primitives; sits in the `app-services ↔ http-server ↔ primitive-catalog` 3-cycle. → Q8 |
+| `primitive-catalog.ts` | A read model over primitives that imports the Worker registry *and* a type from `http-server` — the cause of the `app-services ↔ http-server ↔ primitive-catalog` 3-cycle. → Q8 (resolved) |
 
 ---
 
@@ -901,35 +904,61 @@ exactly the "never duplicate a decision" rule violated.
 
 ---
 
-**Q8 — Is `primitive-catalog.ts` Planning or `workflow-api`?**
+**Q8 — Where does `primitive-catalog.ts` go, and how does its cycle break?**
 
-It is in the 3-file cycle `app-services ↔ http-server ↔ primitive-catalog`.
+**(verified — I read the file.)** It is a pure, read-only projection source for
+the daemon's `GET /view/primitives` routes: it names each primitive, its trace
+phase, who executes it (`agent | shell | human`), and — for agent primitives —
+the Workers it resolves to with their Authorization profiles. Its own doc
+comment says it deliberately does *not* import `workflows/primitives/index.ts`,
+to keep workflow-engine deps out of every `AppServices` consumer. It imports
+`../workers` (→ `execution`), `./trace-events-store` (→ `observability`), and —
+this is the whole cycle — the **type** `PrimitiveWorkerProfile` from
+`../daemon/http-server`.
 
-*Recommendation:* **`apps/workflow-api`** (the published barrel, per §5.3) — it
-describes the published primitives, so it belongs with them. That also breaks
-the cycle, since a slice may not import an app.
+*Recommendation:* **It is a view, so it belongs in `apps/` (the daemon's view
+layer or `apps/workflow-api`), not in a slice.** The 3-cycle
+`app-services ↔ http-server ↔ primitive-catalog` breaks with a one-line
+inversion: move `PrimitiveWorkerProfile` out of `http-server.ts` and into the
+catalog (or into `kernel`), so the read model stops importing the transport.
+That is worth doing on its own merits, independent of this restructure.
 
-*Trade-off:* The UI's `entities/primitive` then reads it through the daemon
-rather than importing it, which is one more hop. **NOT VERIFIED** — I did not
-read `primitive-catalog.ts`; if it turns out to catalogue *domain* primitives
-rather than *step* primitives, this answer is wrong.
+*Trade-off:* Putting it in `apps/` means the catalog may import two slices
+(`execution` for the Worker registry, `observability` for trace phases), which
+is legal for an app but makes it a fan-in point. The alternative — split it into
+per-slice fragments — loses the single `/view/primitives` payload for no gain.
+
+*Bonus finding:* the catalog's doc comment lists the six primitives as
+`setupWorktree, runAgent, verify, behaviourVerify, merge, awaitHuman`, but
+`workflows/primitives/index.ts` actually exports `setupWorktree, runAgent,
+review, merge, awaitHuman, finalizeReport` **(measured)**. The catalog's prose
+has drifted from the published surface. Worth reconciling before anything is
+built on either name set.
 
 ---
 
 **Q9 — Does `core/daemon/alert-dismisser.ts` survive?**
 
-ADR-0048 says the action queue is a pure projection with no dismiss/ack/resolve
-verb, and `aggregate-catalog.md` §10 lists `/view/todo/dismiss` as **cut**. A
-file named `alert-dismisser.ts` is still on disk at `69d4b45d`.
+**(verified — I read the file; my prior suspicion was wrong.)** Despite the
+name, it is not a dismiss verb. Its header calls it *"The Invalidator
+(ADR-0027): the sole closer of Action-queue rows for a task"* — a durable outbox
+Subscriber (ADR-0030/0031) that consumes task lifecycle events by durable cursor
+and clears the corresponding queue rows. That is precisely the "a row clears iff
+its entity transitions" rule of ADR-0048, implemented correctly. No status
+writer clears rows inline; doing it off the outbox is what makes the clear
+survive a daemon-down window.
 
-*Recommendation:* **Treat as a boundary violation and delete during the
-`attention` move** — but confirm first; it may be a *sweeper* that clears
-projection rows when the underlying entity transitions, which is legal and
-merely badly named.
+*Recommendation:* **Keep the behaviour, rename the file.** It moves to
+`slices/attention/daemon/` as the Invalidator (e.g. `invalidator.ts`), keeping
+the exported subscriber name if that name is persisted in the outbox registry —
+check `ALERT_DISMISSER_SUBSCRIBER` before renaming the constant, since a durable
+cursor is likely keyed on it.
 
-*Trade-off:* None if it is dead. If it is live behaviour someone relies on,
-deleting it is a UX regression that ADR-0048 nonetheless demands.
-**NOT VERIFIED** — I did not read the file.
+*Trade-off:* Renaming a subscriber whose id is stored in a durable cursor table
+risks re-draining or stranding the cursor. If the id is persisted, rename the
+file and leave the constant, and accept the mismatch — or write a one-shot
+cursor migration. This is the one place where CLAUDE.md's "hard cut, no
+compat" runs into persisted state and loses.
 
 ---
 
@@ -1008,6 +1037,8 @@ moved or fully out of scope — pick which.
 - The depcruise rule sketch (§4.4) has not been run. Its regex back-reference
   (`$1`) in `no-deep-cross-slice-import` is the part most likely to be wrong.
   **NOT VERIFIED.**
-- `alert-dismisser.ts` (Q9) and `primitive-catalog.ts` (Q8) were not read.
+- `alert-dismisser.ts` (Q9) and `primitive-catalog.ts` (Q8) **were** read and
+  those two questions are now verified. Both changed my answer, which is a
+  reason to distrust the remaining unread assignments above.
 - Whether `packages/workflow` and `packages/claude-session` should physically
   move under `runtime/` or stay path-consumed as they are today. Not addressed.
