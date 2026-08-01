@@ -250,8 +250,27 @@ describe('action-queue list', () => {
     const r = await runCommandInProcess(['action-queue', 'list', 'open'], opts)
 
     expect(r.code).toBe(1)
-    expect(r.err.join('\n')).toContain('daemon did not answer within 15s')
+    expect(r.err.join('\n')).toContain('daemon did not answer within 2s')
     expect(r.err.join('\n')).not.toContain('daemon not running')
+  })
+
+  it('returns promptly when a stale port accepts but never answers', async () => {
+    const mockFetch = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>(
+      (_resolve, reject) => {
+        const signal = init?.signal
+        if (!signal) throw new Error('fetch request did not include an abort signal')
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      },
+    ))
+    vi.stubGlobal('fetch', mockFetch)
+    const { fetchActionQueueView } = await import('../commands/action-queue')
+    const startedAt = Date.now()
+
+    await expect(fetchActionQueueView(FAKE_PORT, 'open')).rejects.toMatchObject({
+      name: 'TimeoutError',
+    })
+
+    expect(Date.now() - startedAt).toBeLessThan(3_500)
   })
 
   it('reports an HTTP failure from the daemon view', async () => {
@@ -548,7 +567,7 @@ describe('action-queue show', () => {
     const r = await runCommandInProcess(['action-queue', 'show', 'aq-any'], opts)
 
     expect(r.code).toBe(1)
-    expect(r.err.join('\n')).toContain('daemon did not answer within 15s')
+    expect(r.err.join('\n')).toContain('daemon did not answer within 2s')
     expect(r.err.join('\n')).not.toContain('daemon not running')
     // A stale port must not hang forever: the request carries a timeout signal.
     expect(mockFetch.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal)

@@ -30,7 +30,7 @@ const LEAN_PREVIEW = 3
 const NO_DAEMON_MSG =
   'action queue: daemon not running — run `mars daemon start` (the action queue view is served by the daemon)'
 
-const DAEMON_VIEW_TIMEOUT_MS = 15_000
+const DAEMON_VIEW_TIMEOUT_MS = 2_000
 
 const actionQueueViewErrorMessage = (err: unknown): string => {
   if (
