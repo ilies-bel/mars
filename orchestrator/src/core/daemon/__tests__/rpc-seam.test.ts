@@ -17,6 +17,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { rpcRegistry, dispatchRpc, buildRpcRegistry } from '../rpc/registry'
 import { allRpcHandlers } from '../rpc/handlers'
 import { makeSem } from '../server'
+import { createPauseController } from '../pause-state'
+import type { PauseController } from '../pause-state'
 import type { DaemonDeps } from '../rpc/types'
 import type { DaemonRequest } from '../protocol'
 import type { TaskFlightTracker } from '../task-flight-tracker'
@@ -46,12 +48,18 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     accepting: boolean
     drained: number
     shutdownCalls: boolean[]
+    pause: PauseController
+    stormResets: number
   }
 } => {
   const state = {
     accepting: true,
     drained: 0,
     shutdownCalls: [] as boolean[],
+    // A REAL pause controller: `set-dispatch` is only meaningful against the
+    // first-cause-wins semantics, which a boolean stub would not reproduce.
+    pause: createPauseController(),
+    stormResets: 0,
   }
   const notImpl = (name: string) => () => {
     throw new Error(`unexpected call to ${name}`)
@@ -70,6 +78,14 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     getAcceptingWork: () => state.accepting,
     setAcceptingWork: (v) => {
       state.accepting = v
+    },
+    getPauseState: () => state.pause.get(),
+    pauseDispatch: (reason, detail) => state.pause.pause(reason, detail),
+    resumeDispatch: () => {
+      state.pause.resume()
+    },
+    resetSignatureStorm: async () => {
+      state.stormResets += 1
     },
     drain: async () => {
       state.drained += 1
@@ -124,11 +140,11 @@ describe('RPC registry', () => {
   it('registers exactly one leaf per protocol op, no duplicates', () => {
     // Every handler op is unique (buildRpcRegistry throws on dup).
     expect(() => buildRpcRegistry(allRpcHandlers)).not.toThrow()
-    // Spot-check the count matches the 44-op protocol surface
+    // Spot-check the count matches the 45-op protocol surface
     // (35 + preview.spawn + preview.status + preview.teardown + merge.cancel
     //  + spend-control.show + spend-control.set + apply-lever + task.contextForWorker
-    //  + mcp.audit.append).
-    expect(rpcRegistry.size).toBe(44)
+    //  + mcp.audit.append + set-dispatch).
+    expect(rpcRegistry.size).toBe(45)
   })
 
   it('rejects duplicate ops', () => {
@@ -279,6 +295,65 @@ describe('status pause state', () => {
     const data = (res as { ok: true; data: typeof payload }).data
     expect(data.pause.paused).toBe(true)
     expect(data.pause.reason).toBe('storm')
+  })
+})
+
+describe('set-dispatch', () => {
+  it('off pauses dispatch with reason operator', async () => {
+    const { deps, state } = makeDeps()
+    const res = await dispatchRpc(rpcRegistry, { op: 'set-dispatch', value: 'off' }, deps)
+    expect(res.ok).toBe(true)
+    expect((res as { ok: true; data: { paused: boolean; reason: string } }).data).toMatchObject({
+      paused: true,
+      reason: 'operator',
+    })
+    expect(state.pause.isPaused()).toBe(true)
+  })
+
+  it('on clears a storm pause and reports the cleared reason', async () => {
+    const { deps, state } = makeDeps()
+    state.pause.pause('storm', 'signature storm: code/api-unreachable x3')
+
+    const res = await dispatchRpc(rpcRegistry, { op: 'set-dispatch', value: 'on' }, deps)
+
+    expect(res.ok).toBe(true)
+    expect((res as { ok: true; data: { clearedReason: string } }).data).toMatchObject({
+      paused: false,
+      clearedReason: 'storm',
+    })
+    expect(state.pause.isPaused()).toBe(false)
+    // The durable breaker flag must be cleared too, or the next daemon start
+    // re-pauses the queue the operator just resumed.
+    expect(state.stormResets).toBe(1)
+    expect(state.drained).toBe(1)
+  })
+
+  it('off does not overwrite an existing storm pause (first cause wins)', async () => {
+    const { deps, state } = makeDeps()
+    state.pause.pause('storm', 'signature storm: verify/x3')
+    await dispatchRpc(rpcRegistry, { op: 'set-dispatch', value: 'off' }, deps)
+    expect(state.pause.get().reason).toBe('storm')
+  })
+
+  it('on is a safe no-op when dispatch was never paused', async () => {
+    const { deps, state } = makeDeps()
+    const res = await dispatchRpc(rpcRegistry, { op: 'set-dispatch', value: 'on' }, deps)
+    expect(res.ok).toBe(true)
+    expect((res as { ok: true; data: { clearedReason: string | null } }).data.clearedReason).toBe(
+      null,
+    )
+    expect(state.pause.isPaused()).toBe(false)
+  })
+
+  it('rejects a value that is neither on nor off', async () => {
+    const { deps } = makeDeps()
+    const res = await dispatchRpc(
+      rpcRegistry,
+      { op: 'set-dispatch', value: 'maybe' } as unknown as DaemonRequest,
+      deps,
+    )
+    expect(res.ok).toBe(false)
+    expect((res as { ok: false; error: string }).error).toMatch(/must be 'on' or 'off'/)
   })
 })
 

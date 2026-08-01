@@ -279,8 +279,25 @@ recovery-spawn path itself.
   fix-task / Investigator spawns (persisted across daemon
   restarts). Toggle off during failure storms (e.g. quota cascades) to stop
   the self-heal cycle while you diagnose.
-- **Dispatch state:** use `mars operator` to inspect the active control levers
-  and persisted daemon configuration during incident response.
+- **Pause / resume dispatch:** `dispatch` is a control lever like any other.
+  `mars operator set dispatch off` suspends dispatch (in-flight tasks run to
+  completion; no new work is dispatched); `mars operator set dispatch on`
+  resumes. There is **no `mars daemon pause` / `mars daemon resume`** — the
+  `daemon` group is `start|stop|restart|kill|status|reload` only.
+  - The pause is **persisted** to `.mars/daemon.json` as a top-level
+    `"paused": true`, so it survives a daemon auto-respawn (a restarted daemon
+    comes up paused and logs `[pause] restored persisted paused state`).
+  - Dispatch can also be paused **without an operator gesture**: the
+    signature-storm circuit breaker (`reason: storm`) and a provider
+    rate/spend rejection (`reason: quota`) both pause it. First cause wins —
+    a second pause never overwrites the reason.
+  - `mars operator set dispatch on` is the single way out of **any** of the
+    three. It clears whichever cause holds the pause plus the durable
+    signature-storm `tripped` flag, so a later restart does not re-pause the
+    queue. Do not wait out the storm breaker's crash/hang fallback timer.
+  - Both `mars daemon status` and `mars operator status` render the same
+    `DispatchPauseState`, so they always agree on whether dispatch is running
+    and why it is not.
 
 ## Conventions
 

@@ -114,7 +114,6 @@ import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket, waitForPr
 import {
   applyControlLevers,
   loadDaemonConfig,
-  persistPaused,
   readPersistedPaused,
 } from './config'
 import { createPauseController } from './pause-state'
@@ -1059,7 +1058,7 @@ export const startDaemon = async (
   )
   if (restoredOperatorPause) {
     log(
-      '[pause] restored persisted paused state from daemon.json — dispatch suspended. Inspect `mars operator` before re-enabling dispatch.',
+      '[pause] restored persisted paused state from daemon.json — dispatch suspended. Run `mars operator set dispatch on` to re-enable dispatch.',
     )
   }
 
@@ -4018,6 +4017,21 @@ export const startDaemon = async (
       acceptingWork = value
       heartbeatHandle?.setDispatchEnabled(acceptingWork && !pause.isPaused())
     },
+    getPauseState: () => pause.get(),
+    pauseDispatch: (reason, detail) => pause.pause(reason, detail),
+    // Operator resume clears BOTH halves of a storm pause (in-memory pause and
+    // the durable breaker flag); every other reason is a plain clear.
+    resumeDispatch: () => {
+      if (pause.get().reason === 'storm') {
+        void stormBreaker.resume('operator resume')
+        return
+      }
+      pause.resume()
+    },
+    resetSignatureStorm: async () => {
+      const { resetFailureSignatureStreak } = await import('../lib/signature-storm-monitor')
+      await resetFailureSignatureStreak(getCompositionRootClient())
+    },
     drain: () => drain(),
     shutdown: (force?: boolean) => shutdown(force),
     paths: { socketPath, pidFile, httpPortFile },
@@ -4575,7 +4589,7 @@ export const startDaemon = async (
   // above already holds the first-cause slot when both are set — one resume
   // then clears the pause and this flag together.
   //
-  // The operator control surface clears `tripped` and zeroes the streak,
+  // `mars operator set dispatch on` clears `tripped` and zeroes the streak,
   // so the NEXT restart does NOT re-pause a queue the operator unblocked.
   try {
     const { readSignatureStormState } = await import('../lib/signature-storm-monitor')

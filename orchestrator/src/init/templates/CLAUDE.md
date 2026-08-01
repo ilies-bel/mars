@@ -82,6 +82,14 @@ re-confirmed, even within the same session.
   fix-task / Investigator spawns (persisted across daemon
   restarts). Toggle off during failure storms to stop the self-heal cascade
   while you diagnose.
+- **Pause / resume dispatch:** `mars operator set dispatch off` suspends
+  dispatch (in-flight tasks finish; no new work starts);
+  `mars operator set dispatch on` resumes. The pause persists to
+  `.mars/daemon.json` and survives a daemon restart. Dispatch can also pause
+  itself — `reason: storm` (signature-storm breaker) or `reason: quota`
+  (provider rate/spend limit); `mars operator set dispatch on` is the way out
+  of all three. `mars daemon status` and `mars operator status` both name the
+  reason. There is no `mars daemon pause` / `mars daemon resume`.
 
 ## The action queue
 

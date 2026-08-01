@@ -212,7 +212,7 @@ const daemonStatus: Command = {
     const pauseLine = describePauseState(data.pause)
     if (pauseLine !== null) {
       deps.out(
-        `⏸ PAUSED (${pauseLine}) — dispatch suspended; use \`mars operator\` to inspect control levers`,
+        `⏸ PAUSED (${pauseLine}) — dispatch suspended; run \`mars operator set dispatch on\` to resume`,
       )
     }
     deps.out(`pid:        ${data.pid}`)
