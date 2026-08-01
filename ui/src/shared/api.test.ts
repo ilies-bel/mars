@@ -10,6 +10,7 @@ import type { Mock } from 'bun:test'
 import {
   ApiError,
   ackActionQueueItem,
+  createChatThread,
   dismissActionQueueItem,
   fetchActionQueue,
   fetchChatConversation,
@@ -86,6 +87,49 @@ const minConversationEntry = (overrides: Record<string, unknown> = {}) => ({
   backingEntityId: null,
   resolution: null,
   ...overrides,
+})
+
+// ---------------------------------------------------------------------------
+// createChatThread
+// ---------------------------------------------------------------------------
+
+describe('createChatThread', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('creates a proposal-scoped thread with its title and grilling objective', async () => {
+    fetchSpy.mockResolvedValue(json({
+      id: 'thread-1', title: 'Grill: Improve onboarding', status: 'idle',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    }))
+
+    await createChatThread({
+      projectId: 'project-1',
+      title: 'Grill: Improve onboarding',
+      objective: 'Grill proposal proposal-1',
+      origin: 'proposal',
+    })
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/chat/threads?project=project-1',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          title: 'Grill: Improve onboarding',
+          objective: 'Grill proposal proposal-1',
+          origin: 'proposal',
+        }),
+      }),
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------

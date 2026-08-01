@@ -704,15 +704,27 @@ export const fetchTasksForThread = async (threadId: string): Promise<string[]> =
   return json.tasks
 }
 
+export interface CreateChatThreadOptions {
+  projectId?: string
+  title?: string
+  objective?: string
+  origin?: string
+}
+
 /**
  * Create a new chat thread. Returns the created thread (id, title, status, …).
  */
-export const createChatThread = async (projectId?: string): Promise<ChatThread> => {
+export const createChatThread = async ({
+  projectId,
+  title,
+  objective,
+  origin,
+}: CreateChatThreadOptions): Promise<ChatThread> => {
   const path = appendProject('/api/chat/threads', projectId)
   const r = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ title, objective, origin }),
   })
   if (!r.ok) await throwMutationError(path, r)
   const raw = await r.json()

@@ -45,7 +45,7 @@ import {
   type AttachmentInfo,
 } from '@/shared/api'
 import { useFocusedProjectId, useFocusedProject } from '@/shared/useFocusedProject'
-import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail, GlossaryTerm, SubthreadBoundary } from '@/shared/schemas'
+import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail, GlossaryTerm, SubthreadBoundary, DraftFeature } from '@/shared/schemas'
 import type { MarsUIMessage } from '@/shared/marsChatTransport'
 import { useMarsChat } from '@/shared/useMarsChat'
 import { chatMessageToUIMessage, transcriptSignature } from '@/shared/chatMessageMapping'
@@ -88,6 +88,7 @@ import {
 } from '@/widgets/chat/queueThreads'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
+import { useProposals } from '@/entities/proposals/useProposals'
 import { startThreadFromAlert } from '@/entities/alerts/api'
 import { useAlerts } from '@/entities/alerts'
 import { MainThreadAlerts } from '@/widgets/chat/MainThreadAlerts'
@@ -2369,7 +2370,7 @@ export const ThreadSidebar = ({
   })
 
   const { mutate: create } = useMutation({
-    mutationFn: () => createChatThread(projectId),
+    mutationFn: () => createChatThread({ projectId }),
     onSuccess: (thread) => {
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
       onSelect(thread.id)
@@ -2572,6 +2573,7 @@ export const ChatPage = () => {
   // longer surfaces the action queue.
   const { items: queueItems } = useActionQueue()
   const { items: historyItems } = useActionQueueHistory()
+  const { proposals } = useProposals()
 
   // Task snapshot used to surface blocked tasks that are not yet projected into
   // the action queue (e.g. tasks waiting on a blocker that hasn't failed yet).
@@ -2803,7 +2805,7 @@ export const ChatPage = () => {
       const result = await startThreadFromAlert(row.entityId)
       threadId = result.threadId
     } else {
-      const thread = await createChatThread(projectId)
+      const thread = await createChatThread({ projectId })
       threadId = thread.id
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
     }
@@ -2817,6 +2819,20 @@ export const ChatPage = () => {
     }
     void handleOpenSubthread(item.item)
   }, [handleOpenSubthread])
+
+  const openProposalSubject = useCallback(async (proposal: DraftFeature) => {
+    const thread = await createChatThread({
+      projectId,
+      title: `Grill: ${proposal.title}`,
+      objective: `Grill proposal ${proposal.id}`,
+      origin: 'proposal',
+    })
+    void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+    setActiveSubthreadId(thread.id)
+    setSelectedThreadId(null)
+    setSelectedQueueItemId(null)
+    setWhatHappenedActive(false)
+  }, [projectId, qc])
 
   // Alerts rendered in the main thread spawn their subthread the same way the
   // Bell does — through the daemon-deduped startThreadFromAlert — so the two
@@ -3122,6 +3138,8 @@ export const ChatPage = () => {
         liveBuffer={activeLiveBuffer}
         openWork={openWork}
         onOpenWork={handleOpenWork}
+        proposals={proposals}
+        onOpenProposal={openProposalSubject}
         collapsed={railCollapsed}
         onToggleCollapse={() => setRailCollapsed((v) => !v)}
       />

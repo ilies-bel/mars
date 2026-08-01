@@ -4,7 +4,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ContextRail } from './ContextRail'
 import { buildRankedOpenWork } from './openWork'
-import type { ActionQueueItem } from '@/shared/schemas'
+import type { ActionQueueItem, DraftFeature } from '@/shared/schemas'
 import type { UITask } from '@/shared/types'
 
 const state = vi.hoisted(() => ({
@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   queueError: null as Error | null,
   adrsError: null as Error | null,
   blockedTasks: [] as UITask[],
+  proposals: [] as DraftFeature[],
 }))
 
 vi.mock('@tanstack/react-query', () => ({
@@ -75,14 +76,102 @@ const blockedTask = (id: string): UITask => ({
   updatedAt: `2026-01-0${id}T00:00:00.000Z`,
 })
 
-const rail = (onOpenWork?: (item: ReturnType<typeof buildRankedOpenWork>[number]) => void) => (
+const proposal = (id: string, updatedAt: number): DraftFeature => ({
+  id,
+  title: `Proposal ${id}`,
+  problem: '',
+  solution: '',
+  status: 'draft',
+  source: 'human',
+  createdAt: updatedAt,
+  updatedAt,
+  acceptanceCount: 0,
+  userStories: [],
+})
+
+const rail = (
+  onOpenWork?: (item: ReturnType<typeof buildRankedOpenWork>[number]) => void,
+  onOpenProposal?: (proposal: DraftFeature) => void,
+) => (
   <ContextRail
     openWork={buildRankedOpenWork(state.items, state.blockedTasks)}
     onOpenWork={onOpenWork}
+    proposals={state.proposals}
+    onOpenProposal={onOpenProposal}
   />
 )
 
 describe('ContextRail piles', () => {
+  it('shows the three most recently updated draft proposals', async () => {
+    state.proposals = [
+      proposal('old', 1),
+      proposal('newest', 4),
+      proposal('middle', 2),
+      proposal('newer', 3),
+    ]
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(rail())
+    })
+
+    const rows = [...container.querySelectorAll('[data-testid="context-rail-proposal-row"]')]
+    expect(rows.map((row) => row.textContent)).toEqual([
+      'Proposal newest',
+      'Proposal newer',
+      'Proposal middle',
+    ])
+    await act(async () => root.unmount())
+    state.proposals = []
+  })
+
+  it('shows only drafts and expands every proposal before showing less again', async () => {
+    state.proposals = [
+      proposal('one', 1), proposal('two', 2), proposal('three', 3), proposal('four', 4),
+      { ...proposal('published', 5), status: 'accepted' },
+    ]
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(rail())
+    })
+
+    const section = container.querySelector('section[aria-label="Proposals"]') as HTMLElement
+    const toggle = section.querySelector('button[aria-expanded="false"]') as HTMLButtonElement
+    expect(section.querySelectorAll('[data-testid="context-rail-proposal-row"]')).toHaveLength(3)
+    expect(section.textContent).not.toContain('Proposal published')
+    await act(async () => toggle.click())
+    expect(section.querySelectorAll('[data-testid="context-rail-proposal-row"]')).toHaveLength(4)
+    expect(toggle.textContent).toContain('Show less')
+    await act(async () => toggle.click())
+    expect(section.querySelectorAll('[data-testid="context-rail-proposal-row"]')).toHaveLength(3)
+    await act(async () => root.unmount())
+    state.proposals = []
+  })
+
+  it('renders an empty proposal state and forwards the selected draft', async () => {
+    const onOpenProposal = vi.fn()
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(rail(undefined, onOpenProposal))
+    })
+    expect(container.textContent).toContain('No proposals')
+
+    const selected = proposal('open', 1)
+    state.proposals = [selected]
+    await act(async () => {
+      root.render(rail(undefined, onOpenProposal))
+    })
+    await act(async () => (container.querySelector('[data-testid="context-rail-proposal-row"]') as HTMLButtonElement).click())
+    expect(onOpenProposal).toHaveBeenCalledWith(selected)
+    await act(async () => root.unmount())
+    state.proposals = []
+  })
+
   it('shows exactly three open alert rows by default', async () => {
     state.items = ['1', '2', '3', '4'].map(alert)
     const container = document.createElement('div')

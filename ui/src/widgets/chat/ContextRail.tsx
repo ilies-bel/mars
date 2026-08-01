@@ -23,7 +23,7 @@ import { dispatchAlertVerb, verbButtonClass } from './alertVerbs'
 import { priorityBadgeClass } from './QueueThreadRow'
 import type { OpenWorkItem } from './openWork'
 
-import type { GlossaryTerm, ChatSegmentAttachment, ChatThreadDetail, ProgressTask, ActionQueueItem, AdrEntry } from '@/shared/schemas'
+import type { GlossaryTerm, ChatSegmentAttachment, ChatThreadDetail, ProgressTask, ActionQueueItem, AdrEntry, DraftFeature } from '@/shared/schemas'
 import type { ThreadFocusResult } from './useThreadFocus'
 import type { LiveBuffer } from '@/shared/chatBuffer'
 import type { ActivityEntry } from './activityFeed'
@@ -431,6 +431,43 @@ const AlertsPile = ({ items, onOpenWork }: AlertsPileProps) => (
   </RailPile>
 )
 
+interface ProposalsPileProps {
+  proposals: DraftFeature[]
+  onOpenProposal?: (proposal: DraftFeature) => void
+}
+
+const ProposalsPile = ({ proposals, onOpenProposal }: ProposalsPileProps) => {
+  const drafts = useMemo(
+    () => proposals.filter((proposal) => proposal.status === 'draft').sort((a, b) => b.updatedAt - a.updatedAt),
+    [proposals],
+  )
+
+  return (
+    <RailPile title="Proposals" count={drafts.length}>
+      {(visibleCount) =>
+        drafts.length === 0 ? (
+          emptyArtifacts('No proposals')
+        ) : (
+          <ul className="flex flex-col gap-0.5">
+            {drafts.slice(0, visibleCount).map((proposal) => (
+              <li key={proposal.id}>
+                <button
+                  type="button"
+                  className="block w-full truncate text-left font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
+                  onClick={() => onOpenProposal?.(proposal)}
+                  data-testid="context-rail-proposal-row"
+                >
+                  {proposal.title}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    </RailPile>
+  )
+}
+
 interface AdrsPileProps {
   adrs: AdrEntry[]
   projectId?: string
@@ -664,6 +701,10 @@ export interface ContextRailProps {
   openWork?: OpenWorkItem[]
   /** Opens an alert conversation or a blocked task detail based on its source. */
   onOpenWork?: (item: OpenWorkItem) => void
+  /** Draft proposals to surface beneath alerts. */
+  proposals?: DraftFeature[]
+  /** Opens a proposal-scoped Subject. */
+  onOpenProposal?: (proposal: DraftFeature) => void
   /** When true the rail collapses to a narrow icon strip. */
   collapsed?: boolean
   /** Callback to toggle the collapsed state from outside. */
@@ -681,6 +722,8 @@ export const ContextRail = ({
   liveBuffer,
   openWork = [],
   onOpenWork,
+  proposals = [],
+  onOpenProposal,
   collapsed = false,
   onToggleCollapse,
 }: ContextRailProps) => {
@@ -759,6 +802,8 @@ export const ContextRail = ({
       )}
 
       <AlertsPile items={openWork} onOpenWork={onOpenWork} />
+
+      <ProposalsPile proposals={proposals} onOpenProposal={onOpenProposal} />
 
       <ArtifactsRail
         tasks={tasks}
