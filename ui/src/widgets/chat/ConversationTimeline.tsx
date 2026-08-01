@@ -25,6 +25,7 @@ export const ConversationTimeline = ({ entries, activeThreadId }: ConversationTi
             <header className="mb-1 flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
               <span>{entry.subjectTitle || 'Untitled subject'}</span>
               <span>{entry.subjectClosed ? 'closed' : 'open'}</span>
+              <span>{entry.role} · {entry.kind}</span>
               {entry.backingEntityId && <span>{entry.backingEntityId}</span>}
             </header>
             <p className="whitespace-pre-wrap font-mono text-[13px] text-foreground">

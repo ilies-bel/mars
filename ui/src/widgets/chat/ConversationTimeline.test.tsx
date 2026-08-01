@@ -3,14 +3,14 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { ConversationTimeline } from './ConversationTimeline'
 
 describe('ConversationTimeline', () => {
-  it('keeps earlier Subject messages visible and falls back to persisted content without segments', () => {
+  it('keeps earlier Subject messages visible with their persisted context when the active Subject changes', () => {
     const html = renderToStaticMarkup(
       <ConversationTimeline
         entries={[
           {
             id: 'earlier', threadId: 'subject-earlier', subjectId: 'subject-earlier', subjectTitle: 'Earlier subject', subjectClosed: true,
             role: 'assistant', content: 'This was persisted before opening another subject.', segments: [],
-            createdAt: '2026-01-01T00:00:00.000Z', kind: 'acknowledgment', backingEntityId: null,
+            createdAt: '2026-01-01T00:00:00.000Z', kind: 'validation', backingEntityId: 'task-42',
           },
           {
             id: 'active', threadId: 'subject-active', subjectId: 'subject-active', subjectTitle: 'Active subject', subjectClosed: false,
@@ -24,6 +24,8 @@ describe('ConversationTimeline', () => {
 
     expect(html).toContain('Earlier subject')
     expect(html).toContain('closed')
+    expect(html).toContain('assistant · validation')
+    expect(html).toContain('task-42')
     expect(html).toContain('This was persisted before opening another subject.')
     expect(html).not.toContain('Handled by the live tail.')
   })
