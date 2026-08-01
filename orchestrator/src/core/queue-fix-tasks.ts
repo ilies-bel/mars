@@ -26,10 +26,18 @@ import {
   type UpsertFixTaskResult,
   type AttachToExistingFixTaskInput,
 } from './arc'
+// Every terminal-verdict prefix this file writes comes from the shared
+// vocabulary, never from an inline literal — a literal here is invisible to the
+// guards that read `TERMINAL_VERDICT_PREFIXES`, which is how a self-written
+// reason ended up unrecognised and looping (mars-76fef59f).
 import {
   composeRecoveryFailureReason,
+  GATE_SUPPRESSED_PREFIX,
   isTerminalVerdictReason,
+  NON_CODE_RETRY_EXHAUSTED_PREFIX,
+  RECOVERY_DISABLED_PREFIX,
   RECOVERY_EXHAUSTED_PREFIX,
+  SIGNATURE_STORM_PREFIX,
   stripRecoveryFailedPrefixes,
 } from './lib/failure-signature'
 import { isEnvironmentalSignature } from './lib/failure-kinds'
@@ -589,7 +597,7 @@ export const handleTaskFailureWithFixTask = async (
   if (process.env.MARS_RECOVERY_DISABLED === '1' && task.fixForTaskId === null) {
     await markTaskFailed(
       input.taskId,
-      `recovery_disabled:${failureSignature}: ${truncatedError.slice(0, 500)}`,
+      `${RECOVERY_DISABLED_PREFIX}${failureSignature}: ${truncatedError.slice(0, 500)}`,
       undefined,
       { error: truncatedError, failureSignature },
     )
@@ -833,7 +841,7 @@ export const handleTaskFailureWithFixTask = async (
             status: 'failed',
             error: truncatedError,
             failedPhase: 'verify',
-            failureReason: `gate-suppressed:${failureSignature}`,
+            failureReason: `${GATE_SUPPRESSED_PREFIX}${failureSignature}`,
             failureSignature,
             failureReasonCode: failureSignature,
           },
@@ -961,7 +969,7 @@ export const handleTaskFailureWithFixTask = async (
             status: 'failed',
             error: truncatedError,
             failedPhase,
-            failureReason: `signature-storm:${failureSignature}`,
+            failureReason: `${SIGNATURE_STORM_PREFIX}${failureSignature}`,
             failureSignature,
             failureReasonCode: failureSignature,
           },
@@ -1034,7 +1042,7 @@ export const handleTaskFailureWithFixTask = async (
     const nonCodeCount = await countNonCodeRetries(input.taskId, failureSignature, s)
     const nonCodeCap = getMaxNonCodeRetries()
     if (nonCodeCount > nonCodeCap) {
-      const failureReason = `non-code-retry-exhausted:${failureSignature}`
+      const failureReason = `${NON_CODE_RETRY_EXHAUSTED_PREFIX}${failureSignature}`
       await markTaskFailed(input.taskId, failureReason, undefined, {
         error: truncatedError,
         failureSignature,
@@ -1080,7 +1088,7 @@ export const handleTaskFailureWithFixTask = async (
     const nonCodeCount = await countNonCodeRetries(input.taskId, failureSignature, s)
     const nonCodeCap = getMaxNonCodeRetries()
     if (nonCodeCount > nonCodeCap) {
-      const failureReason = `non-code-retry-exhausted:${failureSignature}`
+      const failureReason = `${NON_CODE_RETRY_EXHAUSTED_PREFIX}${failureSignature}`
       await markTaskFailed(input.taskId, failureReason, undefined, {
         error: truncatedError,
         failureSignature,
