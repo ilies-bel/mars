@@ -27,8 +27,8 @@ export const initChatStore = async (): Promise<void> => {
 
 /**
  * Envelope kind for chat messages.
- * - 'validation'    — cleared from the projection when its backing entity
- *                     mutates out of 'awaiting-human' state (ADR-0048).
+ * - 'validation'    — may be anchored to a task and gains a derived resolved
+ *                     state when that task completes.
  * - 'acknowledgment' — plain first-person history; always visible.
  */
 export const ChatMessageKindSchema = z.enum(['validation', 'acknowledgment'])
@@ -93,7 +93,7 @@ export interface ChatMessage {
   content: string
   segments: unknown | null
   created_at: number
-  /** Envelope kind — controls projection visibility (ADR-0048). */
+  /** Envelope kind for UI presentation. */
   kind: ChatMessageKind
   /**
    * ID of the task (or proposal) this validation message is anchored to.
@@ -164,6 +164,8 @@ export interface ChatConversationEntryApiView {
   createdAt: string
   kind: ChatMessageKind
   backingEntityId: string | null
+  /** Derived state; persistence keeps the original message unchanged. */
+  resolution: 'resolved' | null
 }
 
 /**
@@ -655,9 +657,11 @@ export const listThreads = async (options: ThreadListOptions = {}): Promise<Thre
 export const listConversationEntries = async (): Promise<ChatConversationEntryApiView[]> => {
   const c = stateClient()
   const result = await c.execute(`
-    SELECT m.*, t.title AS subject_title, t.closed_at AS subject_closed_at
+    SELECT m.*, t.title AS subject_title, t.closed_at AS subject_closed_at,
+           t.alert_resolved, backing_task.status AS backing_task_status
       FROM chat_messages m
       JOIN chat_threads t ON t.id = m.thread_id
+ LEFT JOIN tasks backing_task ON backing_task.id = m.backing_entity_id
      ORDER BY m.seq ASC
   `)
   return (result.rows as unknown as Record<string, unknown>[]).map((row) => {
@@ -674,6 +678,9 @@ export const listConversationEntries = async (): Promise<ChatConversationEntryAp
       createdAt: new Date(message.created_at).toISOString(),
       kind: message.kind,
       backingEntityId: message.backing_entity_id,
+      resolution: row.backing_task_status === 'done' || Boolean(row.alert_resolved)
+        ? 'resolved'
+        : null,
     }
   })
 }
@@ -825,38 +832,6 @@ export const upsertNoticeChatMessage = async (
   return typeof threadId === 'string'
     ? appendMessage(threadId, 'assistant', body, undefined, { noticeId })
     : null
-}
-
-/**
- * Return the visible messages for a thread, applying the ADR-0048 projection
- * rule: 'acknowledgment' messages are always visible; 'validation' messages are
- * visible only while their backing entity (task) is still in 'awaiting-human'
- * state. A validation message with no backing_entity_id is always visible.
- *
- * Messages are returned in chronological order (created_at ASC, seq ASC).
- */
-export const listVisibleChatMessages = async (threadId: string): Promise<ChatMessage[]> => {
-  const c = stateClient()
-  const result = await c.execute({
-    sql: `SELECT m.*
-          FROM chat_messages m
-          WHERE m.thread_id = ?
-            AND (
-              m.kind = 'acknowledgment'
-              OR (m.kind = 'validation' AND m.backing_entity_id IS NULL)
-              OR (
-                m.kind = 'validation'
-                AND m.backing_entity_id IS NOT NULL
-                AND EXISTS (
-                  SELECT 1 FROM tasks t
-                  WHERE t.id = m.backing_entity_id AND t.status = 'awaiting-human'
-                )
-              )
-            )
-          ORDER BY m.created_at ASC, m.seq ASC`,
-    args: [threadId],
-  })
-  return (result.rows as unknown as Record<string, unknown>[]).map(rowToMessage)
 }
 
 /** Rename a thread. No-op when the thread does not exist. */

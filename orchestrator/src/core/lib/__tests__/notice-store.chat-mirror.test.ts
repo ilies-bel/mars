@@ -23,7 +23,7 @@ interface NoticeStoreModule {
 
 interface ChatStoreModule {
   createThread: typeof import('../chat-store').createThread
-  listVisibleChatMessages: typeof import('../chat-store').listVisibleChatMessages
+  getThread: typeof import('../chat-store').getThread
 }
 
 const setupRepo = (): string => {
@@ -66,7 +66,7 @@ describe('notice-store chat mirror', () => {
       'spend-control',
     )
 
-    const messages = await chat.listVisibleChatMessages(currentThread.id)
+    const messages = (await chat.getThread(currentThread.id))!.messages
     expect(messages).toHaveLength(1)
     expect(messages).toMatchObject([
       {

@@ -18,7 +18,7 @@ interface NoticeStoreModule {
 
 interface ChatStoreModule {
   createThread: typeof import('../chat-store').createThread
-  listVisibleChatMessages: typeof import('../chat-store').listVisibleChatMessages
+  getThread: typeof import('../chat-store').getThread
 }
 
 const setupRepo = (): string => {
@@ -57,12 +57,12 @@ describe('notice-store failure coalescing', () => {
     const payload = { signature: 'verify:test/unclassified' }
 
     const first = await notices.createNotice('signature-storm', payload, 'monitor')
-    const firstMessage = await chat.listVisibleChatMessages(thread.id)
+    const firstMessage = (await chat.getThread(thread.id))!.messages
     const third = await notices.createNotice('signature-storm', payload, 'monitor')
     await notices.createNotice('signature-storm', payload, 'monitor')
 
     const open = await notices.listOpenNotices()
-    const messages = await chat.listVisibleChatMessages(thread.id)
+    const messages = (await chat.getThread(thread.id))!.messages
 
     expect(third.id).toBe(first.id)
     expect(open).toHaveLength(1)

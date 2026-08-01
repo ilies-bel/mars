@@ -9,6 +9,7 @@ interface ChatStoreModule {
   createThread: typeof import('../chat-store').createThread
   appendMessage: typeof import('../chat-store').appendMessage
   listConversationEntries: typeof import('../chat-store').listConversationEntries
+  startThreadFromAlert: typeof import('../chat-store').startThreadFromAlert
   resolveAlertThread: typeof import('../chat-store').resolveAlertThread
 }
 
@@ -64,6 +65,7 @@ describe('listConversationEntries', () => {
         segments: [],
         kind: 'acknowledgment',
         backingEntityId: null,
+        resolution: null,
       }),
       expect.objectContaining({
         id: secondMessage.id,
@@ -76,6 +78,71 @@ describe('listConversationEntries', () => {
         segments: [],
         kind: 'validation',
         backingEntityId: 'task-42',
+        resolution: 'resolved',
+      }),
+    ])
+  })
+
+  it('keeps a validation message in place and marks it resolved when its task completes', async () => {
+    const chat = await loadModule(repo)
+    await chat.initChatStore()
+    const { resolveStateClient } = await import('../../store/state-client')
+    const timestamp = new Date().toISOString()
+    await resolveStateClient().execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES (?, ?, 'awaiting-human', ?, ?)`,
+      args: ['task-awaiting-approval', 'approve this task', timestamp, timestamp],
+    })
+    const subject = await chat.createThread('Approval needed')
+    const message = await chat.appendMessage(
+      subject.id,
+      'assistant',
+      'Please approve the implementation.',
+      [{ type: 'text', text: 'Please approve the implementation.' }],
+      { kind: 'validation', backingEntityId: 'task-awaiting-approval' },
+    )
+
+    expect(await chat.listConversationEntries()).toEqual([
+      expect.objectContaining({ id: message.id, resolution: null }),
+    ])
+
+    await resolveStateClient().execute({
+      sql: `UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`,
+      args: [new Date().toISOString(), 'task-awaiting-approval'],
+    })
+
+    expect(await chat.listConversationEntries()).toEqual([
+      expect.objectContaining({
+        id: message.id,
+        content: 'Please approve the implementation.',
+        segments: [{ type: 'text', text: 'Please approve the implementation.' }],
+        resolution: 'resolved',
+      }),
+    ])
+  })
+
+  it('keeps an alert-origin message in place and marks it resolved when its alert resolves', async () => {
+    const chat = await loadModule(repo)
+    await chat.initChatStore()
+    const alert = await chat.startThreadFromAlert('arc-42', 'A task needs attention', {
+      type: 'alert',
+      kind: 'failed',
+      entityId: 'task-42',
+      priority: 'high',
+      title: 'A task needs attention',
+      whyNow: 'its verify step failed',
+      actions: [],
+      resolved: false,
+    })
+    const [before] = await chat.listConversationEntries()
+
+    await chat.resolveAlertThread(alert.id)
+
+    expect(await chat.listConversationEntries()).toEqual([
+      expect.objectContaining({
+        id: before.id,
+        content: 'A task needs attention',
+        resolution: 'resolved',
       }),
     ])
   })

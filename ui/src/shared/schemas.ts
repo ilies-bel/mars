@@ -1132,6 +1132,7 @@ export const chatConversationEntrySchema = z.object({
   createdAt: z.string(),
   kind: z.enum(['validation', 'acknowledgment']),
   backingEntityId: z.string().nullable(),
+  resolution: z.enum(['resolved']).nullable(),
 })
 
 export const chatConversationResponseSchema = z.object({

@@ -47,7 +47,7 @@ describe('GET /view/chat/conversation', () => {
         viewChatConversation: async () => ({ entries: [{
           id: 'message-1', threadId: 'subject-1', subjectId: 'subject-1', subjectTitle: 'A subject', subjectClosed: false,
           role: 'assistant', content: 'Persisted narration', segments: [], createdAt: '2026-01-01T00:00:00.000Z',
-          kind: 'acknowledgment', backingEntityId: null,
+          kind: 'acknowledgment', backingEntityId: null, resolution: null,
         }] }),
       }),
     })

@@ -27,6 +27,9 @@ export const ConversationTimeline = ({ entries, activeThreadId }: ConversationTi
               <span>{entry.subjectClosed ? 'closed' : 'open'}</span>
               <span>{entry.role} · {entry.kind}</span>
               {entry.backingEntityId && <span>{entry.backingEntityId}</span>}
+              {entry.resolution === 'resolved' && (
+                <span data-testid="conversation-message-resolved">Resolved</span>
+              )}
             </header>
             <p className="whitespace-pre-wrap font-mono text-[13px] text-foreground">
               {segmentText || entry.content}

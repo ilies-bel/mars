@@ -10,12 +10,12 @@ describe('ConversationTimeline', () => {
           {
             id: 'earlier', threadId: 'subject-earlier', subjectId: 'subject-earlier', subjectTitle: 'Earlier subject', subjectClosed: true,
             role: 'assistant', content: 'This was persisted before opening another subject.', segments: [],
-            createdAt: '2026-01-01T00:00:00.000Z', kind: 'validation', backingEntityId: 'task-42',
+            createdAt: '2026-01-01T00:00:00.000Z', kind: 'validation', backingEntityId: 'task-42', resolution: null,
           },
           {
             id: 'active', threadId: 'subject-active', subjectId: 'subject-active', subjectTitle: 'Active subject', subjectClosed: false,
             role: 'user', content: 'Handled by the live tail.', segments: [],
-            createdAt: '2026-01-01T00:01:00.000Z', kind: 'acknowledgment', backingEntityId: null,
+            createdAt: '2026-01-01T00:01:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
           },
         ]}
         activeThreadId="subject-active"
