@@ -12,6 +12,7 @@ import { Arc } from './arc'
 import type { DomainTaskStore as TaskStore } from './store/task-store'
 import { raiseActionQueueItem } from './lib/action-queue'
 import { teardownDeploymentsForTask } from './lib/deployment/teardown'
+import type { SliceSpec } from '../workflows/slice-workflow'
 
 const execFileP = promisify(execFile)
 const gzipAsyncQ = promisify(gzip)
@@ -260,6 +261,10 @@ export interface TaskSpec {
    * Absent on coder slices and ad-hoc rows.
    */
   subDeliverable?: SubDeliverableSpec
+  /** A coordinator task owns the whole parsed slicing plan. */
+  executionMode?: 'coordinated'
+  /** Slices delegated internally by a coordinator task. */
+  slicePlan?: SliceSpec[]
   /**
    * Shell command that boots the app for a `reviewType: 'manual'` review step.
    * The review primitive prefers this over `package.json` `scripts.dev` when

@@ -834,6 +834,67 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     expect(result.status).toBe('sliced')
   })
 
+  it('coordinated proposal enqueues one coordinator task', async () => {
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope({
+            slices: [
+              validSlicerOutput.slices[0],
+              {
+                ...validSlicerOutput.slices[0],
+                title: 'dependent slice',
+                blockedBy: [1],
+              },
+            ],
+          }),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const queue = await import('../../core/queue')
+    const enqueueTask = vi.spyOn(queue, 'enqueueTask')
+    const proposalId = await seedPrdReadyProposal()
+    const proposals = await import('../../core/proposals')
+    await proposals.setProposalCoordinated(proposalId, true)
+
+    const slice = await import('../slice-workflow')
+    const result = await slice.runSlice(proposalId)
+
+    expect(result.taskIds).toHaveLength(1)
+    expect(enqueueTask).toHaveBeenCalledTimes(1)
+    expect(enqueueTask).toHaveBeenCalledWith(
+      `Coordinator for PRD ${proposalId}: t`,
+      undefined,
+      expect.objectContaining({
+        originId: proposalId,
+        parentProposalId: proposalId,
+        intent: 'Coordinator: t',
+        spec: expect.objectContaining({
+          executionMode: 'coordinated',
+          slicePlan: expect.arrayContaining([
+            expect.objectContaining({ title: 't' }),
+            expect.objectContaining({ title: 'dependent slice', blockedBy: [1] }),
+          ]),
+        }),
+      }),
+    )
+
+    const rows = await queue.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
+      args: [result.taskIds[0]],
+    })
+    expect(Number((rows.rows[0] as { n: number | bigint }).n)).toBe(0)
+  })
+
   it('cleans up orphaned tasks from a previous crash before re-slicing', async () => {
     // Crash-recovery deduplication: a process crash between Phase 1
     // (task inserts) and Phase 4 (status flip) leaves the proposal prd-ready

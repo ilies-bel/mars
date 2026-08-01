@@ -47,6 +47,7 @@ export interface Proposal {
   notes: string
   status: ProposalStatus
   source: ProposalSource
+  coordinated: boolean
   author: Author | null
   createdAt: number
   updatedAt: number
@@ -176,6 +177,7 @@ const rowToProposal = (
     notes: (row.notes as string | null) ?? '',
     status: assertValidProposalStatus((row.status as string | null) ?? 'draft'),
     source: normaliseSource(row.source),
+    coordinated: row.coordinated === true,
     author,
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
@@ -267,6 +269,7 @@ export const createProposal = async (
     notes,
     status: 'draft',
     source,
+    coordinated: false,
     author: opts?.author ?? null,
     createdAt: now,
     updatedAt: now,
@@ -539,6 +542,31 @@ export const setProposalField = async (
   const updated = await getProposal(id)
   if (!updated) {
     throw new Error(`proposal ${id} disappeared after update`)
+  }
+  return updated
+}
+
+export const setProposalCoordinated = async (
+  idOrPrefix: string,
+  value: boolean,
+): Promise<Proposal> => {
+  await initProposals()
+  const resolved = await resolveProposalId(idOrPrefix)
+  if (resolved.kind === 'ambiguous') {
+    throw new Error(
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} proposals`,
+    )
+  }
+  if (resolved.kind === 'none') {
+    throw new Error(`proposal ${idOrPrefix} not found`)
+  }
+  await stateClient().execute({
+    sql: `UPDATE proposals SET coordinated = ?, updated_at = ? WHERE id = ?`,
+    args: [value, Date.now(), resolved.id],
+  })
+  const updated = await getProposal(resolved.id)
+  if (!updated) {
+    throw new Error(`proposal ${resolved.id} disappeared after update`)
   }
   return updated
 }

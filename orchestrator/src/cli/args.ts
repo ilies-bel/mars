@@ -146,6 +146,7 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   // "unknown flag" or being joined into the literal prompt text.
   '--live',
   '--deferrable',
+  '--coordinated',
   '--help',
   '-h',
   '--version',

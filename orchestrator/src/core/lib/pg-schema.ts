@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0009'
+export const SCHEMA_VERSION = '0010'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -69,6 +69,7 @@ const DDL: readonly string[] = [
     kpi_tag           text,
     fingerprint       text,
     origin_session_id text,
+    coordinated       boolean NOT NULL DEFAULT false,
     created_at        bigint NOT NULL,
     updated_at        bigint NOT NULL
   )`,
@@ -76,6 +77,7 @@ const DDL: readonly string[] = [
   // short-lived, incompatible `rejected` value before proposal readers apply
   // the closed lifecycle type.
   `UPDATE proposals SET status = 'dismissed' WHERE status = 'rejected'`,
+  `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS coordinated boolean NOT NULL DEFAULT false`,
   `CREATE INDEX IF NOT EXISTS idx_proposals_fingerprint
      ON proposals(fingerprint) WHERE fingerprint IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS proposal_user_stories (

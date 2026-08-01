@@ -1393,108 +1393,136 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
     // re-throwing — so a failed slice is fully undone and the proposal is
     // re-sliceable.
     try {
-      // Phase 1: insert each slice as a 'draft' task carrying parent_proposal_id
-      // and slice_index. We transition status in Phase 3.
-      for (let i = 0; i < total; i += 1) {
-        const slice = parsed.slices[i]
-        const prompt = composeTaskPrompt(proposal, slice, i + 1, total)
-        const verifyCmd =
-          slice.verifyCmd !== null && slice.verifyCmd.trim().length > 0
-            ? slice.verifyCmd
-            : null
-        const files = sliceFilesForPersistence(slice)
-        const task = await enqueueTask(prompt, undefined, {
-          author: proposal.author ?? undefined,
-          originId: proposal.id,
-          parentProposalId: proposal.id,
-          sliceIndex: i + 1,
-          intent: (slice.title.trim() || slice.whatToBuild.split(/[.!?\n]/)[0].trim()).slice(0, 200),
-          ...(input.priority !== undefined && { priority: input.priority }),
-          spec: {
-            files,
-            verifyCmd,
-            doneCriteria: slice.acceptanceCriteria,
-            taskType: slice.taskType,
-            sliceKind: slice.kind,
-            subDeliverable: slice.subDeliverable,
-          },
-        })
-        taskIds.push(task.id)
-
-        // HITL routing: for hitl slices, enqueue a Coder sub-task built
-        // from the slice's subDeliverable spec, then raise an operator
-        // actionQueue item so the human knows what to act on. The hitl slice
-        // task itself is never dispatched to a Coder (Phase 3 always
-        // marks it 'blocked'; Phase 2b wires it to wait on the sub-task).
-        if (slice.kind === 'hitl' && slice.subDeliverable !== undefined) {
-          const sub = slice.subDeliverable
-          const subCriteria = sub.acceptanceCriteria.map((c) => `- [ ] ${c}`).join('\n')
-          const subFilesSection =
-            sub.files && sub.files.length > 0
-              ? `\n## Files\n\n${sub.files.map((f) => `- ${f}`).join('\n')}\n`
-              : ''
-          const subPrompt =
-            `# ${sub.title}\n\n` +
-            `Sub-task for HITL slice "${slice.title}" (PRD ${proposal.id}: ${proposal.title}).\n\n` +
-            `## What to build\n\n${sub.whatToBuild}\n\n` +
-            `## Acceptance criteria\n\n${subCriteria}\n` +
-            subFilesSection
-
-          const subTask = await enqueueTask(subPrompt, undefined, {
+      // Phase 1: coordinated proposals get one owner task; sibling proposals
+      // insert each slice as a draft task carrying parent_proposal_id and
+      // slice_index. We transition status in Phase 3.
+      if (proposal.coordinated) {
+        const task = await enqueueTask(
+          `Coordinator for PRD ${proposal.id}: ${proposal.title}`,
+          undefined,
+          {
             author: proposal.author ?? undefined,
             originId: proposal.id,
             parentProposalId: proposal.id,
-            intent: sub.title.slice(0, 200),
+            intent: `Coordinator: ${proposal.title}`.slice(0, 200),
             ...(input.priority !== undefined && { priority: input.priority }),
             spec: {
-              files: sub.files ?? [],
+              files: [],
               verifyCmd: null,
-              doneCriteria: sub.acceptanceCriteria,
+              previewCmd: null,
+              doneCriteria: [],
               taskType: 'auto',
-              sliceKind: 'coder',
+              executionMode: 'coordinated',
+              slicePlan: parsed.slices,
+            },
+          },
+        )
+        taskIds.push(task.id)
+      } else {
+        for (let i = 0; i < total; i += 1) {
+          const slice = parsed.slices[i]
+          const prompt = composeTaskPrompt(proposal, slice, i + 1, total)
+          const verifyCmd =
+            slice.verifyCmd !== null && slice.verifyCmd.trim().length > 0
+              ? slice.verifyCmd
+              : null
+          const files = sliceFilesForPersistence(slice)
+          const task = await enqueueTask(prompt, undefined, {
+            author: proposal.author ?? undefined,
+            originId: proposal.id,
+            parentProposalId: proposal.id,
+            sliceIndex: i + 1,
+            intent: (slice.title.trim() || slice.whatToBuild.split(/[.!?\n]/)[0].trim()).slice(0, 200),
+            ...(input.priority !== undefined && { priority: input.priority }),
+            spec: {
+              files,
+              verifyCmd,
+              doneCriteria: slice.acceptanceCriteria,
+              taskType: slice.taskType,
+              sliceKind: slice.kind,
+              subDeliverable: slice.subDeliverable,
             },
           })
-          subTaskIds.push(subTask.id)
-          hitlSliceIndices.push(i)
+          taskIds.push(task.id)
 
-          const checklist = slice.acceptanceCriteria.map((c) => `- [ ] ${c}`).join('\n')
-          await raiseActionQueueItem({
-            kind: 'hitl-slice-needs-operator',
-            category: 'orchestrator',
-            priority: 'normal',
-            title: `HITL: ${slice.title}`,
-            body:
-              `**HITL slice:** ${slice.title}\n\n` +
-              `## Manual checklist\n\n${checklist}\n\n` +
-              `## Operator tooling\n\n` +
-              `Sub-task \`${subTask.id}\` will deliver the artifact for this HITL step. ` +
-              `Once it completes, run the artifact to confirm the step.\n`,
-            payload: {
-              proposalId: proposal.id,
-              sliceIndex: i + 1,
-              subTaskId: subTask.id,
-            },
-            context: {},
-            raisedBy: 'slicer',
-            signature: `${proposal.id}:hitl:${i + 1}`,
-          })
+          // HITL routing: for hitl slices, enqueue a Coder sub-task built
+          // from the slice's subDeliverable spec, then raise an operator
+          // actionQueue item so the human knows what to act on. The hitl slice
+          // task itself is never dispatched to a Coder (Phase 3 always
+          // marks it 'blocked'; Phase 2b wires it to wait on the sub-task).
+          if (slice.kind === 'hitl' && slice.subDeliverable !== undefined) {
+            const sub = slice.subDeliverable
+            const subCriteria = sub.acceptanceCriteria.map((c) => `- [ ] ${c}`).join('\n')
+            const subFilesSection =
+              sub.files && sub.files.length > 0
+                ? `\n## Files\n\n${sub.files.map((f) => `- ${f}`).join('\n')}\n`
+                : ''
+            const subPrompt =
+              `# ${sub.title}\n\n` +
+              `Sub-task for HITL slice "${slice.title}" (PRD ${proposal.id}: ${proposal.title}).\n\n` +
+              `## What to build\n\n${sub.whatToBuild}\n\n` +
+              `## Acceptance criteria\n\n${subCriteria}\n` +
+              subFilesSection
+
+            const subTask = await enqueueTask(subPrompt, undefined, {
+              author: proposal.author ?? undefined,
+              originId: proposal.id,
+              parentProposalId: proposal.id,
+              intent: sub.title.slice(0, 200),
+              ...(input.priority !== undefined && { priority: input.priority }),
+              spec: {
+                files: sub.files ?? [],
+                verifyCmd: null,
+                doneCriteria: sub.acceptanceCriteria,
+                taskType: 'auto',
+                sliceKind: 'coder',
+              },
+            })
+            subTaskIds.push(subTask.id)
+            hitlSliceIndices.push(i)
+
+            const checklist = slice.acceptanceCriteria.map((c) => `- [ ] ${c}`).join('\n')
+            await raiseActionQueueItem({
+              kind: 'hitl-slice-needs-operator',
+              category: 'orchestrator',
+              priority: 'normal',
+              title: `HITL: ${slice.title}`,
+              body:
+                `**HITL slice:** ${slice.title}\n\n` +
+                `## Manual checklist\n\n${checklist}\n\n` +
+                `## Operator tooling\n\n` +
+                `Sub-task \`${subTask.id}\` will deliver the artifact for this HITL step. ` +
+                `Once it completes, run the artifact to confirm the step.\n`,
+              payload: {
+                proposalId: proposal.id,
+                sliceIndex: i + 1,
+                subTaskId: subTask.id,
+              },
+              context: {},
+              raisedBy: 'slicer',
+              signature: `${proposal.id}:hitl:${i + 1}`,
+            })
+          }
         }
       }
-      // Phase 2: wire blockers using the resolved task ids. Routes through the
+      // Phase 2: a coordinator owns dependency sequencing internally. Sibling
+      // proposals wire blockers using the resolved task ids. Routes through the
       // Arc aggregate (ADR-0052 sole-writer for task_blockers); Arc.addBlocker
       // carries the ADR-0040 leaf-node guard internally. The provenance map
       // from the auto-linker determines whether each edge is 'file-overlap'
       // (mechanical, forced by shared declared files) or 'inferred' (from
       // the slicer LLM or the auto-linker direction judge).
-      for (let i = 0; i < total; i += 1) {
-        const deps = parsed.slices[i].blockedBy
-        for (const dep of deps) {
-          const provenance = edgeProvenanceMap.get(`${i}:${dep}`) ?? 'inferred'
-          await Arc.load(taskIds[i], taskStore).addBlocker(
-            taskIds[i],
-            [taskIds[dep - 1]],
-            { provenance },
-          )
+      if (!proposal.coordinated) {
+        for (let i = 0; i < total; i += 1) {
+          const deps = parsed.slices[i].blockedBy
+          for (const dep of deps) {
+            const provenance = edgeProvenanceMap.get(`${i}:${dep}`) ?? 'inferred'
+            await Arc.load(taskIds[i], taskStore).addBlocker(
+              taskIds[i],
+              [taskIds[dep - 1]],
+              { provenance },
+            )
+          }
         }
       }
       // Phase 2b: wire each hitl slice task to block on its Coder sub-task.
@@ -1516,10 +1544,12 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
         // 'blocked' (has blockers or kind='hitl'). hitl slices are ALWAYS blocked —
         // they are never dispatched to a Coder; the operator completes them manually.
         // The daemon picks up 'queued' tasks.
-        for (let i = 0; i < total; i += 1) {
-          const isHitl = parsed.slices[i].kind === 'hitl'
+        for (let i = 0; i < taskIds.length; i += 1) {
+          const isHitl = !proposal.coordinated && parsed.slices[i].kind === 'hitl'
           const status =
-            isHitl || parsed.slices[i].blockedBy.length > 0 ? 'blocked' : 'queued'
+            isHitl || (!proposal.coordinated && parsed.slices[i].blockedBy.length > 0)
+              ? 'blocked'
+              : 'queued'
           // Route through updateTask so the lifecycle gate (IllegalTransitionError)
           // catches any illegal transition before the status write lands (ADR-0030).
           await updateTask(taskIds[i], { status })

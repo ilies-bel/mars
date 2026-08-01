@@ -21,6 +21,7 @@ import {
   removeProposalDependency,
   listProposalDependencies,
   validateProposalShaped,
+  setProposalCoordinated,
   VALID_SOURCES,
   isProposalSource,
   type ProposalSource,
@@ -349,11 +350,11 @@ const proposalPromote: Command = {
 const proposalSlice: Command = {
   path: 'proposal slice',
   summary: 'decompose a prd-ready proposal into vertical-slice tasks',
-  usage: 'usage: mars proposal slice <id> [--priority 0..3]',
+  usage: 'usage: mars proposal slice <id> [--priority 0..3] [--coordinated]',
   run: async (args, deps) => {
     const id = args.positional[0]
     if (!id) {
-      deps.err('usage: mars proposal slice <id> [--priority 0..3]')
+      deps.err('usage: mars proposal slice <id> [--priority 0..3] [--coordinated]')
       return { code: 2 }
     }
     const priorityRaw = args.flags['--priority']
@@ -367,6 +368,9 @@ const proposalSlice: Command = {
       priority = parsed.value
     }
     try {
+      if (args.flags['--coordinated'] !== undefined) {
+        await setProposalCoordinated(id, true)
+      }
       const r = (await deps.daemon.sendRequest(
         { op: 'proposal.slice', proposalId: id, ...(priority !== undefined && { priority }) },
         { onSpawnNotice: spawnNoticeErr(deps.err) },
@@ -764,14 +768,17 @@ const proposalShipSummary: Command = {
 const proposalApprove: Command = {
   path: 'proposal approve',
   summary: 'approve a sliced plan and enqueue all slice tasks',
-  usage: 'usage: mars proposal approve <id>',
+  usage: 'usage: mars proposal approve <id> [--coordinated]',
   run: async (args, deps) => {
     const id = args.positional[0]
     if (!id) {
-      deps.err('usage: mars proposal approve <id>')
+      deps.err('usage: mars proposal approve <id> [--coordinated]')
       return { code: 1 }
     }
     try {
+      if (args.flags['--coordinated'] !== undefined) {
+        await setProposalCoordinated(id, true)
+      }
       const r = (await deps.daemon.sendRequest(
         { op: 'proposal.approve', proposalId: id },
         { onSpawnNotice: spawnNoticeErr(deps.err) },
