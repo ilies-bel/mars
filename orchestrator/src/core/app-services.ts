@@ -115,6 +115,7 @@ import {
   recoverPromptFromDiskTranscript,
 } from './lib/step-prompt-recovery'
 import { extractAgentToolCalls, type AgentToolCall } from './lib/claude-stream'
+import { buildSituationReport, type SituationSemaphoreSnapshot } from './lib/situation-report'
 
 export type { AgentToolCall }
 
@@ -157,6 +158,8 @@ export interface AppServicesDeps {
    * inject a fixed list so assertions never depend on the host repo's DB.
    */
   listAwaitingHumanParks?: () => Promise<PrimitivePark[]>
+  /** Current worker-pool state, supplied by the daemon's semaphore owner. */
+  getSituationSemaphoreSnapshot?: () => SituationSemaphoreSnapshot
 }
 
 /**
@@ -172,6 +175,8 @@ export interface AppServices {
     cursor?: string | null
     limit?: number
   }) => Promise<{ rows: ActionQueueRow[]; nextCursor: string | null }>
+  /** Render deterministic stored state before the first paid Subject turn. */
+  buildSituationReport: () => Promise<string>
   // ── alerts (arc-rooted read aggregate, ADR-0054) ───────────────────────────
   viewAlerts: () => Promise<Alert[]>
   viewAlert: (arcId: string) => Promise<Alert | null>
@@ -326,6 +331,13 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     getDefaultDomainTaskStore()
       .listTasks()
       .then((tasks) => ({ tasks }))
+
+  const buildSubjectSituationReport: AppServices['buildSituationReport'] = () =>
+    buildSituationReport({
+      listTasks: () => getDefaultDomainTaskStore().listTasks(),
+      getSemaphoreSnapshot: deps.getSituationSemaphoreSnapshot ?? (() => ({ inUse: 0, limit: 0 })),
+      listActionQueue: () => viewActionQueue('open'),
+    })
 
   const viewTask: AppServices['viewTask'] = (id) =>
     getDefaultDomainTaskStore()
@@ -873,10 +885,12 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       originTaskId: alert.arcId,
     }
     const segment = buildAlertSegment(item, alert.arcId)
+    const situation = await buildSubjectSituationReport()
     const thread = await storeStartThreadFromAlert(
       alert.arcId,
       alert.goal || alert.reason,
       segment,
+      situation,
     )
     return { threadId: thread.id }
   }
@@ -1434,6 +1448,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   return {
     viewActionQueue,
     viewActionQueueHistory,
+    buildSituationReport: buildSubjectSituationReport,
     viewAlerts,
     viewAlert,
     startThreadFromAlert,

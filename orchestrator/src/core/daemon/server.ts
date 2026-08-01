@@ -4311,6 +4311,13 @@ export const startDaemon = async (
   const appServices = createAppServices({
     traceStore,
     buildAlertSources,
+    getSituationSemaphoreSnapshot: () => {
+      const workerSems = [...new Set([...Object.values(sems), verifySem])]
+      return {
+        inUse: workerSems.reduce((total, sem) => total + sem.inUse, 0),
+        limit: workerSems.reduce((total, sem) => total + sem.limit, 0),
+      }
+    },
     getStepResultsForRun: async (runId: string) => {
       const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
       const wfStore = createQueueWorkflowStore()

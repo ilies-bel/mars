@@ -31,7 +31,7 @@ export const initChatStore = async (): Promise<void> => {
  *                     state when that task completes.
  * - 'acknowledgment' — plain first-person history; always visible.
  */
-export const ChatMessageKindSchema = z.enum(['validation', 'acknowledgment'])
+export const ChatMessageKindSchema = z.enum(['validation', 'acknowledgment', 'situation'])
 export type ChatMessageKind = z.infer<typeof ChatMessageKindSchema>
 
 export type ThreadStatus = 'idle' | 'running' | 'throttled'
@@ -452,7 +452,7 @@ const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
     content: row.content as string,
     segments: rawSegments != null ? (JSON.parse(rawSegments) as unknown) : null,
     created_at: row.created_at as number,
-    kind: (rawKind === 'validation' ? 'validation' : 'acknowledgment') as ChatMessageKind,
+    kind: (rawKind === 'validation' || rawKind === 'situation' ? rawKind : 'acknowledgment') as ChatMessageKind,
     backing_entity_id: (row.backing_entity_id as string | null) ?? null,
     notice_id: (row.notice_id as string | null) ?? null,
   }
@@ -470,6 +470,7 @@ export const createThread = async (
   title?: string,
   terminalEvent?: string,
   terminalEntityId?: string,
+  situationReport?: string,
 ): Promise<ChatThread> => {
   const c = stateClient()
   const id = randomUUID()
@@ -481,6 +482,15 @@ export const createThread = async (
           VALUES (?, ?, 'idle', ?, ?, ?, ?)`,
     args: [id, threadTitle, terminalEvent ?? null, terminalEntityId ?? null, ts, ts],
   })
+  if (situationReport !== undefined) {
+    await appendMessage(
+      id,
+      'assistant',
+      situationReport,
+      [{ type: 'text', text: situationReport }],
+      { kind: 'situation' },
+    )
+  }
   return {
     id,
     title: threadTitle,
@@ -1014,6 +1024,7 @@ export const startThreadFromAlert = async (
   arcId: string,
   title: string,
   segment: AlertSegment,
+  situationReport?: string,
 ): Promise<ChatThread> => {
   const existing = await findThreadByArc(arcId)
   if (existing) return existing
@@ -1028,6 +1039,19 @@ export const startThreadFromAlert = async (
           VALUES (?, ?, 'idle', ?, ?, 'alert', ?, 0)`,
     args: [threadId, title, ts, ts, arcId],
   })
+  if (situationReport !== undefined) {
+    await c.execute({
+      sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, kind)
+            VALUES (?, ?, 'assistant', ?, ?, ?, 'situation')`,
+      args: [
+        randomUUID(),
+        threadId,
+        situationReport,
+        JSON.stringify([{ type: 'text', text: situationReport }]),
+        ts,
+      ],
+    })
+  }
   // Persist one assistant message with the alert segment (the seed card).
   await c.execute({
     sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at)

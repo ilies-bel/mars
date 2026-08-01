@@ -1945,7 +1945,8 @@ export const startHttpServer = async (
           sendJson(res, 400, { ok: false, error: 'body must be { title?: string }' })
           return
         }
-        createThread(result.data.title)
+        deps.appServices.buildSituationReport()
+          .then((situation) => createThread(result.data.title, undefined, undefined, situation))
           .then((thread) => {
             deps.viewStreamHub?.broadcast('chat')
             sendJson(res, 200, toThreadApiView(thread))
