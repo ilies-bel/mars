@@ -848,13 +848,13 @@ export const appendMessage = async (
 }
 
 /** Return Main-session entries and compact Subject boundaries in conversation order. */
-export const listMainSessionMessages = async (): Promise<ChatMessage[]> => {
+export const listMainSessionMessages = async (startsAfterSeq = 0): Promise<ChatMessage[]> => {
   const c = stateClient()
   const result = await c.execute({
     sql: `SELECT * FROM chat_messages
-          WHERE context_scope = 'main' OR kind = 'situation'
+          WHERE (context_scope = 'main' OR kind = 'situation') AND seq > ?
           ORDER BY seq ASC`,
-    args: [],
+    args: [startsAfterSeq],
   })
   return (result.rows as unknown as Record<string, unknown>[]).map(rowToMessage)
 }

@@ -5539,27 +5539,6 @@ export const startDaemon = async (
   const kpiSnapshotSweep = setInterval(runKpiSnapshot, KPI_SNAPSHOT_MS)
   kpiSnapshotSweep.unref()
 
-  // ── Chat compaction sweeper ───────────────────────────────────────────────
-  // Idle long-running threads receive a non-destructive checkpoint so future
-  // chat turns replay the checkpoint plus their recent tail instead of silently
-  // dropping the oldest transcript messages. Override the one-minute cadence
-  // with MARS_CHAT_COMPACTION_SWEEP_MS. .unref() keeps shutdown prompt.
-  const CHAT_COMPACTION_SWEEP_MS = Number(process.env.MARS_CHAT_COMPACTION_SWEEP_MS ?? 60_000)
-  const { sweepChatCompaction } = await import('./chat-compaction-sweeper')
-  const chatCompactionSweep = setInterval(() => {
-    void (async () => {
-      try {
-        const { compactedThreads } = await sweepChatCompaction(resolveDbTarget(), log)
-        if (compactedThreads > 0) {
-          log(`[chat-compaction-sweep] compacted ${compactedThreads} inactive thread(s)`)
-        }
-      } catch (err) {
-        log(`[chat-compaction-sweep] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, CHAT_COMPACTION_SWEEP_MS)
-  chatCompactionSweep.unref()
-
   // ── Subscriber drain single-flight gate ───────────────────────────────────
   // Every subscriber drain below runs on a setInterval whose body can outlast
   // its own period (a drain awaits provider calls and verify commands, each of
@@ -5738,7 +5717,6 @@ export const startDaemon = async (
     clearInterval(phantomWatchdog)
     clearInterval(observabilitySweep)
     clearInterval(kpiSnapshotSweep)
-    clearInterval(chatCompactionSweep)
     clearInterval(alertDrain)
     clearInterval(actionQueueRepopulatorDrain)
     clearInterval(blockerResolutionDrain)

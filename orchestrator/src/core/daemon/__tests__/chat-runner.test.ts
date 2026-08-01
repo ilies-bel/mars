@@ -433,6 +433,13 @@ vi.mock('../chat-shell', () => ({
   runShellCommand: vi.fn(),
 }))
 
+vi.mock('../chat-memory-window', () => ({
+  readMainMemoryWindow: vi.fn(),
+  selectMemoryCut: vi.fn(),
+  advanceMainMemoryWindow: vi.fn(),
+  markMainMemoryWindowUsed: vi.fn(),
+}))
+
 vi.mock('../../lib/chat-store', () => ({
   appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: 0 }),
   getThread: vi.fn(),
@@ -447,6 +454,7 @@ const codexApi = await import('../codex-api')
 const chatSkills = await import('../chat-skills')
 const { runShellCommand } = await import('../chat-shell')
 const chatStore = await import('../../lib/chat-store')
+const chatMemoryWindow = await import('../chat-memory-window')
 
 const mockStream = codexApi.streamCodexResponse as unknown as MockInstance<
   (opts: StreamCodexResponseOpts) => Promise<void>
@@ -518,6 +526,10 @@ describe('ChatRunner UIMessage-chunk streaming', () => {
       feedbacks: new Map(),
     })
     vi.mocked(chatStore.listMainSessionMessages).mockResolvedValue([])
+    vi.mocked(chatMemoryWindow.selectMemoryCut).mockResolvedValue(null)
+    vi.mocked(chatMemoryWindow.readMainMemoryWindow).mockResolvedValue({ startsAfterSeq: 0, lastUsedAt: null, cutAt: null, reason: null })
+    vi.mocked(chatMemoryWindow.advanceMainMemoryWindow).mockResolvedValue(undefined)
+    vi.mocked(chatMemoryWindow.markMainMemoryWindowUsed).mockResolvedValue(undefined)
   })
 
   it('streams each assistant message item as a text-delta chunk', async () => {
@@ -574,6 +586,10 @@ describe('ChatRunner state machine', () => {
       feedbacks: new Map(),
     })
     vi.mocked(chatStore.listMainSessionMessages).mockResolvedValue([])
+    vi.mocked(chatMemoryWindow.selectMemoryCut).mockResolvedValue(null)
+    vi.mocked(chatMemoryWindow.readMainMemoryWindow).mockResolvedValue({ startsAfterSeq: 0, lastUsedAt: null, cutAt: null, reason: null })
+    vi.mocked(chatMemoryWindow.advanceMainMemoryWindow).mockResolvedValue(undefined)
+    vi.mocked(chatMemoryWindow.markMainMemoryWindowUsed).mockResolvedValue(undefined)
   })
 
   afterEach(() => {
@@ -764,6 +780,27 @@ describe('ChatRunner state machine', () => {
       { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'The active Subject has one file.' }] },
       { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Continue this Subject.' }] },
     ])
+  })
+
+  it('applies a selected Main window before sending the next provider request', async () => {
+    vi.mocked(chatMemoryWindow.selectMemoryCut).mockResolvedValue({ startsAfterSeq: 9, reason: 'retention-lapse' })
+    vi.mocked(chatMemoryWindow.readMainMemoryWindow).mockResolvedValue({
+      startsAfterSeq: 9, lastUsedAt: 0, cutAt: 1, reason: 'retention-lapse',
+    })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'continue', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(chatMemoryWindow.advanceMainMemoryWindow).toHaveBeenCalledWith(
+      undefined,
+      { startsAfterSeq: 9, reason: 'retention-lapse' },
+    )
+    expect(chatStore.listMainSessionMessages).toHaveBeenCalledWith(9)
+    expect(chatMemoryWindow.markMainMemoryWindowUsed).toHaveBeenCalledWith(undefined)
+    expect(vi.mocked(mockStream).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(chatMemoryWindow.markMainMemoryWindowUsed).mock.invocationCallOrder[0]!,
+    )
   })
 
   // ── Tool loop ─────────────────────────────────────────────────────────────

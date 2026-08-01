@@ -51,6 +51,12 @@ import type { ViewStreamHub } from './view/stream-hub'
 import type { ChatStreamHub } from './chat-stream-hub'
 import { resolveChatSystemPrompt } from './chat-system-prompt'
 import { buildMainSessionPrefix, MAIN_SESSION_PROVIDER_REQUEST_IDENTITY } from './chat-context'
+import {
+  advanceMainMemoryWindow,
+  markMainMemoryWindowUsed,
+  readMainMemoryWindow,
+  selectMemoryCut,
+} from './chat-memory-window'
 import { PROVIDERS, resolveProviderName, type ConversationMemoryFacts } from '../workers/providers'
 import {
   CodexApiError,
@@ -1017,7 +1023,13 @@ export class ChatRunner {
         const last = transcript.at(-1)
         if (last && last.role === 'user') transcript = transcript.slice(0, -1)
       }
-      const mainSessionMessages = await listMainSessionMessages()
+      // Main-session cuts happen only while assembling the next Operator
+      // request. They never run from an idle timer and never ask a provider to
+      // summarize or maintain the prefix.
+      const memoryCut = await selectMemoryCut(undefined, this.conversationMemory)
+      if (memoryCut) await advanceMainMemoryWindow(undefined, memoryCut)
+      const memoryWindow = await readMainMemoryWindow()
+      const mainSessionMessages = await listMainSessionMessages(memoryWindow.startsAfterSeq)
       const mainPrefix = buildApiInput(buildMainSessionPrefix(mainSessionMessages))
       const subjectInput = buildApiInput(
         transcript.filter((message) => message.context_scope !== 'main' && message.kind !== 'situation'),
@@ -1062,7 +1074,7 @@ export class ChatRunner {
           for (;;) {
             pendingCalls.length = 0
             try {
-              await streamCodexResponse({
+              const providerRequest = streamCodexResponse({
                 auth,
                 model: cfg.model,
                 instructions: instructionsForPosture(),
@@ -1089,6 +1101,10 @@ export class ChatRunner {
                   }
                 },
               })
+              // The provider request has been started. Updating this after
+              // construction keeps idle time entirely side-effect free.
+              await markMainMemoryWindowUsed(undefined)
+              await providerRequest
               break
             } catch (err) {
               // One silent token refresh per run before surfacing the auth banner.

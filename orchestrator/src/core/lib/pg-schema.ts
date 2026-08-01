@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0017'
+export const SCHEMA_VERSION = '0018'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -855,6 +855,13 @@ const DDL: readonly string[] = [
    $$`,
   `CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_id
      ON chat_messages(thread_id)`,
+  `CREATE TABLE IF NOT EXISTS chat_memory_windows (
+    session_key      text PRIMARY KEY CHECK (session_key = 'main'),
+    starts_after_seq bigint NOT NULL DEFAULT 0 CHECK (starts_after_seq >= 0),
+    last_used_at     bigint,
+    cut_at           bigint,
+    reason           text CHECK (reason IN ('capacity','retention-lapse'))
+  )`,
   `CREATE TABLE IF NOT EXISTS chat_thread_tasks (
     thread_id  text        NOT NULL,
     task_id    text        NOT NULL,
@@ -1504,6 +1511,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'chat_threads',
   'arc_rescue_attempts',
   'chat_messages',
+  'chat_memory_windows',
   'chat_thread_tasks',
   'chat_feedback',
   'app_settings',
