@@ -5123,31 +5123,6 @@ export const startDaemon = async (
   }, REFLECT_DETECTOR_MS)
   reflectDetectorSweep.unref()
 
-  // ── Evaporated thread purge sweep ───────────────────────────────────────
-  // Periodically hard-deletes threads whose evaporated_at timestamp is past
-  // the retention window. Default cadence is hourly. .unref() so the
-  // interval never prevents a clean shutdown.
-  const THREAD_PURGE_SWEEP_MS = Number(
-    process.env.MARS_THREAD_PURGE_SWEEP_MS ?? 60 * 60_000,
-  )
-  const { purgeEvaporatedThreads } = await import('../lib/chat-store')
-  const threadPurgeSweep = setInterval(() => {
-    void (async () => {
-      try {
-        const { purgedThreadIds } = await purgeEvaporatedThreads()
-        if (purgedThreadIds.length > 0) {
-          log(
-            `[thread-purge] deleted ${purgedThreadIds.length} evaporated thread(s)`,
-          )
-          viewStreamHub.broadcast('chat')
-        }
-      } catch (err) {
-        log(`[thread-purge] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, THREAD_PURGE_SWEEP_MS)
-  threadPurgeSweep.unref()
-
   // ── Orphan-subprocess sweep ──────────────────────────────────────────────
   // Verify/test runners that outlive their task (abort, timeout, or a daemon
   // that died before it could kill the group) get reparented to init and burn
@@ -5540,40 +5515,6 @@ export const startDaemon = async (
   const kpiSnapshotSweep = setInterval(runKpiSnapshot, KPI_SNAPSHOT_MS)
   kpiSnapshotSweep.unref()
 
-  // ── Chat archive sweeper ──────────────────────────────────────────────────
-  // Periodically purges evaporated chat threads (and their messages and upload
-  // directories) that are older than the retention window (default 30 days,
-  // override via MARS_CHAT_RETENTION_DAYS). Active threads and threads within
-  // the window remain in the History accordion for the user to review. The
-  // sole permanent artifact of a session is its release-note / hero summary.
-  // .unref() so the timer never holds the process alive after shutdown.
-  const CHAT_ARCHIVE_SWEEP_MS = Number(
-    process.env.MARS_CHAT_ARCHIVE_SWEEP_MS ?? 60 * 60_000,
-  )
-  const { sweepChatArchive } = await import('./chat-archive-sweeper')
-  const chatArchiveSweep = setInterval(() => {
-    void (async () => {
-      try {
-        const { join: joinPath } = await import('node:path')
-        const { getRepoRoot } = await import('../context')
-        const uploadsRoot = joinPath(getRepoRoot(), '.mars', 'chat-uploads')
-        const { deletedThreads, deletedUploadDirs } = await sweepChatArchive(
-          resolveDbTarget(),
-          uploadsRoot,
-        )
-        if (deletedThreads > 0) {
-          log(
-            `[chat-archive-sweep] deleted ${deletedThreads} archived thread(s)` +
-              ` and ${deletedUploadDirs} upload dir(s) past retention window`,
-          )
-        }
-      } catch (err) {
-        log(`[chat-archive-sweep] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, CHAT_ARCHIVE_SWEEP_MS)
-  chatArchiveSweep.unref()
-
   // ── Chat compaction sweeper ───────────────────────────────────────────────
   // Idle long-running threads receive a non-destructive checkpoint so future
   // chat turns replay the checkpoint plus their recent tail instead of silently
@@ -5772,7 +5713,6 @@ export const startDaemon = async (
     clearInterval(phantomWatchdog)
     clearInterval(observabilitySweep)
     clearInterval(kpiSnapshotSweep)
-    clearInterval(chatArchiveSweep)
     clearInterval(chatCompactionSweep)
     clearInterval(alertDrain)
     clearInterval(actionQueueRepopulatorDrain)

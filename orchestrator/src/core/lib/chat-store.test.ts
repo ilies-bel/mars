@@ -9,22 +9,20 @@ interface ChatStoreModule {
   initChatStore: typeof import('./chat-store').initChatStore
   createThread: typeof import('./chat-store').createThread
   listThreads: typeof import('./chat-store').listThreads
-  listEvaporatedThreads: typeof import('./chat-store').listEvaporatedThreads
+  listClosedSubjects: typeof import('./chat-store').listClosedSubjects
+  listConversationEntries: typeof import('./chat-store').listConversationEntries
   getThread: typeof import('./chat-store').getThread
   appendMessage: typeof import('./chat-store').appendMessage
   listVisibleChatMessages: typeof import('./chat-store').listVisibleChatMessages
   updateThreadTitle: typeof import('./chat-store').updateThreadTitle
   setThreadStatus: typeof import('./chat-store').setThreadStatus
-  markThreadEvaporated: typeof import('./chat-store').markThreadEvaporated
-  evaporateUnengagedThreads: typeof import('./chat-store').evaporateUnengagedThreads
+  closeSubject: typeof import('./chat-store').closeSubject
   toMessageApiView: typeof import('./chat-store').toMessageApiView
   toThreadApiView: typeof import('./chat-store').toThreadApiView
   computeAttentionStatus: typeof import('./chat-store').computeAttentionStatus
   setMessageFeedback: typeof import('./chat-store').setMessageFeedback
   clearMessageFeedback: typeof import('./chat-store').clearMessageFeedback
   startThreadFromAlert: typeof import('./chat-store').startThreadFromAlert
-  purgeEvaporatedThreads: typeof import('./chat-store').purgeEvaporatedThreads
-  TWO_DAYS_MS: typeof import('./chat-store').TWO_DAYS_MS
 }
 
 const makeSegment = (title: string): import('./chat-store').AlertSegment => ({
@@ -247,33 +245,63 @@ describe('chat-store', () => {
     expect(result!.thread.status).toBe('idle')
   })
 
-  // ── markThreadEvaporated ────────────────────────────────────────────────────
-
-  it('freshly created thread has evaporated_at === null', async () => {
+  it('keeps a closed Subject and its messages in conversation history', async () => {
     const m = await loadModule(repo)
-    const thread = await m.createThread('evaporation test')
-    expect(thread.evaporated_at).toBeNull()
+    const subject = await m.createThread('preserve this Subject')
+    await m.appendMessage(subject.id, 'user', 'keep every word')
+    await m.appendMessage(subject.id, 'assistant', 'and this reply')
+
+    await m.closeSubject(subject.id)
+
+    expect((await m.getThread(subject.id))?.messages.map((message) => message.content)).toEqual([
+      'keep every word',
+      'and this reply',
+    ])
+    expect((await m.listClosedSubjects()).map((thread) => thread.id)).toContain(subject.id)
+    expect((await m.listConversationEntries()).filter((entry) => entry.subjectId === subject.id)).toHaveLength(2)
   })
 
-  it('markThreadEvaporated stamps evaporated_at with epoch milliseconds', async () => {
+  it('returns a Subject closed beyond the former archive window', async () => {
     const m = await loadModule(repo)
-    const thread = await m.createThread('to evaporate')
-    await m.markThreadEvaporated(thread.id)
+    const subject = await m.createThread('long-lived history')
+    await m.appendMessage(subject.id, 'assistant', 'this stays available')
+    const thirtyOneDaysAgo = Date.now() - 31 * 24 * 60 * 60 * 1000
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(thirtyOneDaysAgo)
+    await m.closeSubject(subject.id)
+    clock.mockRestore()
+
+    expect((await m.listClosedSubjects()).map((thread) => thread.id)).toContain(subject.id)
+    expect((await m.getThread(subject.id))?.messages.map((message) => message.content)).toEqual([
+      'this stays available',
+    ])
+  })
+
+  // ── closeSubject ────────────────────────────────────────────────────────────
+
+  it('freshly created Subject has closed_at === null', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread('new Subject')
+    expect(thread.closed_at).toBeNull()
+  })
+
+  it('closeSubject stamps closed_at with epoch milliseconds', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread('to close')
+    await m.closeSubject(thread.id)
     const result = await m.getThread(thread.id)
-    expect(result!.thread.evaporated_at).not.toBeNull()
-    expect(result!.thread.evaporated_at).toBeTypeOf('number')
+    expect(result!.thread.closed_at).not.toBeNull()
+    expect(result!.thread.closed_at).toBeTypeOf('number')
   })
 
-  it('second call to markThreadEvaporated does not overwrite the original timestamp', async () => {
+  it('second closeSubject call does not overwrite the original timestamp', async () => {
     const m = await loadModule(repo)
-    const thread = await m.createThread('idempotent evaporate')
-    await m.markThreadEvaporated(thread.id)
-    const first = (await m.getThread(thread.id))!.thread.evaporated_at
+    const thread = await m.createThread('idempotent close')
+    await m.closeSubject(thread.id)
+    const first = (await m.getThread(thread.id))!.thread.closed_at
 
-    // Ensure at least 1ms passes so a second stamp would differ
     await new Promise((r) => setTimeout(r, 2))
-    await m.markThreadEvaporated(thread.id)
-    const second = (await m.getThread(thread.id))!.thread.evaporated_at
+    await m.closeSubject(thread.id)
+    const second = (await m.getThread(thread.id))!.thread.closed_at
 
     expect(second).toBe(first)
   })
@@ -501,9 +529,9 @@ describe('computeAttentionStatus', () => {
   })
 })
 
-// ── listThreads — evaporated filter + attentionStatus ────────────────────────
+// ── listThreads — closed Subject filter + attentionStatus ────────────────────
 
-describe('listThreads — evaporated filter + attentionStatus', () => {
+describe('listThreads — closed Subject filter + attentionStatus', () => {
   let repo2: string
   beforeEach(() => { repo2 = setupRepo() })
   afterEach(() => {
@@ -511,22 +539,22 @@ describe('listThreads — evaporated filter + attentionStatus', () => {
     rmSync(repo2, { recursive: true, force: true })
   })
 
-  it('excludes evaporated threads from listThreads', async () => {
+  it('excludes closed Subjects from listThreads', async () => {
     const m = await loadModule(repo2)
     const active = await m.createThread('active')
-    const dead = await m.createThread('dead')
-    await m.markThreadEvaporated(dead.id)
+    const closed = await m.createThread('closed')
+    await m.closeSubject(closed.id)
     const threads = await m.listThreads()
     expect(threads.map((t) => t.id)).toContain(active.id)
-    expect(threads.map((t) => t.id)).not.toContain(dead.id)
+    expect(threads.map((t) => t.id)).not.toContain(closed.id)
   })
 
-  it('includes evaporated threads in listEvaporatedThreads', async () => {
+  it('includes closed Subjects in listClosedSubjects', async () => {
     const m = await loadModule(repo2)
-    const dead = await m.createThread('dead')
-    await m.markThreadEvaporated(dead.id)
-    const history = await m.listEvaporatedThreads()
-    expect(history.map((t) => t.id)).toContain(dead.id)
+    const closed = await m.createThread('closed')
+    await m.closeSubject(closed.id)
+    const history = await m.listClosedSubjects()
+    expect(history.map((t) => t.id)).toContain(closed.id)
   })
 
   it('toThreadApiView includes attentionStatus computed from lastMessageRole', async () => {
@@ -547,120 +575,6 @@ describe('listThreads — evaporated filter + attentionStatus', () => {
     const t = threads.find((x) => x.id === thread.id)
     expect(t).toBeDefined()
     expect(t!.last_message_role).toBe('user')
-  })
-})
-
-// ── evaporateUnengagedThreads ─────────────────────────────────────────────────
-
-describe('evaporateUnengagedThreads', () => {
-  let repo4: string
-  beforeEach(() => { repo4 = setupRepo() })
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo4, { recursive: true, force: true })
-  })
-
-  it('evaporates idle threads with no user messages', async () => {
-    const m = await loadModule(repo4)
-    const unused = await m.createThread('unused')
-    const count = await m.evaporateUnengagedThreads()
-    expect(count).toBe(1)
-    const result = await m.getThread(unused.id)
-    expect(result!.thread.evaporated_at).not.toBeNull()
-  })
-
-  it('does NOT evaporate threads that have a user message', async () => {
-    const m = await loadModule(repo4)
-    const engaged = await m.createThread('engaged')
-    await m.appendMessage(engaged.id, 'user', 'hello')
-    const count = await m.evaporateUnengagedThreads()
-    expect(count).toBe(0)
-    const result = await m.getThread(engaged.id)
-    expect(result!.thread.evaporated_at).toBeNull()
-  })
-
-  it('does NOT evaporate threads that are already evaporated', async () => {
-    const m = await loadModule(repo4)
-    const already = await m.createThread('already')
-    await m.markThreadEvaporated(already.id)
-    const count = await m.evaporateUnengagedThreads()
-    expect(count).toBe(0)
-  })
-})
-
-// ── purgeEvaporatedThreads ────────────────────────────────────────────────────
-
-describe('purgeEvaporatedThreads', () => {
-  let repo5: string
-  beforeEach(() => { repo5 = setupRepo() })
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo5, { recursive: true, force: true })
-  })
-
-  it('does not touch a thread whose evaporated_at is NULL', async () => {
-    const m = await loadModule(repo5)
-    const active = await m.createThread('active')
-    const { purgedThreadIds } = await m.purgeEvaporatedThreads({ retentionMs: 0, nowMs: Date.now() })
-    expect(purgedThreadIds).toHaveLength(0)
-    expect(await m.getThread(active.id)).not.toBeNull()
-  })
-
-  it('does not touch a freshly evaporated thread still within the retention window', async () => {
-    const m = await loadModule(repo5)
-    const thread = await m.createThread('fresh evaporation')
-    await m.markThreadEvaporated(thread.id)
-    // nowMs is now, retentionMs is 1 hour — evaporated just now is NOT past the cutoff
-    const { purgedThreadIds } = await m.purgeEvaporatedThreads({
-      retentionMs: 60 * 60 * 1000,
-      nowMs: Date.now(),
-    })
-    expect(purgedThreadIds).toHaveLength(0)
-    expect(await m.getThread(thread.id)).not.toBeNull()
-  })
-
-  it('hard-deletes a thread, its messages, and cascade-removes its feedback when past retention', async () => {
-    const m = await loadModule(repo5)
-    const thread = await m.createThread('over-retention')
-    const msg = await m.appendMessage(thread.id, 'assistant', 'answer')
-    await m.setMessageFeedback(msg.id, 'up', 'great')
-
-    // Evaporate the thread two hours ago by using a nowMs 2h in the future
-    await m.markThreadEvaporated(thread.id)
-    const twoHoursMs = 2 * 60 * 60 * 1000
-    const futureNow = Date.now() + twoHoursMs
-
-    const { purgedThreadIds } = await m.purgeEvaporatedThreads({
-      retentionMs: 60 * 60 * 1000, // 1 hour retention
-      nowMs: futureNow,
-    })
-
-    expect(purgedThreadIds).toContain(thread.id)
-    expect(purgedThreadIds).toHaveLength(1)
-    // Thread is gone
-    expect(await m.getThread(thread.id)).toBeNull()
-    // Thread no longer appears in evaporated list
-    const history = await m.listEvaporatedThreads()
-    expect(history.map((t) => t.id)).not.toContain(thread.id)
-  })
-
-  it('return count matches number of deleted threads', async () => {
-    const m = await loadModule(repo5)
-    const a = await m.createThread('a')
-    const b = await m.createThread('b')
-    const c = await m.createThread('c')
-    await m.markThreadEvaporated(a.id)
-    await m.markThreadEvaporated(b.id)
-    await m.markThreadEvaporated(c.id)
-
-    const twoHoursMs = 2 * 60 * 60 * 1000
-    const { purgedThreadIds } = await m.purgeEvaporatedThreads({
-      retentionMs: 60 * 60 * 1000,
-      nowMs: Date.now() + twoHoursMs,
-    })
-
-    expect(purgedThreadIds).toHaveLength(3)
-    expect(new Set(purgedThreadIds)).toEqual(new Set([a.id, b.id, c.id]))
   })
 })
 

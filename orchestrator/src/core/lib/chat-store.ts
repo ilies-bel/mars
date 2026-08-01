@@ -13,7 +13,6 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { resolveStateClient } from '../store/state-client'
 import { humanSummary } from './action-queue-recipes'
-import type { DbInValue } from './db.js'
 import type { NoticeRow } from './notice-store'
 
 const stateClient = resolveStateClient
@@ -75,11 +74,10 @@ export interface ChatThread {
   /** True when the underlying action-queue item has been resolved. */
   alert_resolved: boolean
   /**
-   * Epoch-millisecond timestamp set when the thread is marked as evaporated (i.e. its
-   * purpose has been fulfilled and it is eligible for retention-window purge).
-   * Null for active threads.
+   * Epoch-millisecond timestamp set when the Subject is closed.
+   * Null while the Subject is active.
    */
-  evaporated_at: number | null
+  closed_at: number | null
   /** Domain event that closes this Subject, or null when it needs an explicit close. */
   terminal_event?: string | null
   /** Entity id in the terminal event payload that must match before closure. */
@@ -426,7 +424,7 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   origin: (row.origin as string | null) ?? null,
   alert_item_id: (row.alert_item_id as string | null) ?? null,
   alert_resolved: Boolean(row.alert_resolved),
-  evaporated_at: (row.evaporated_at as number | null) ?? null,
+  closed_at: (row.closed_at as number | null) ?? null,
   terminal_event: (row.terminal_event as string | null) ?? null,
   terminal_entity_id: (row.terminal_entity_id as string | null) ?? null,
   parent_thread_id: (row.parent_thread_id as string | null) ?? null,
@@ -482,7 +480,7 @@ export const createThread = async (
     origin: null,
     alert_item_id: null,
     alert_resolved: false,
-    evaporated_at: null,
+    closed_at: null,
     terminal_event: terminalEvent ?? null,
     terminal_entity_id: terminalEntityId ?? null,
     parent_thread_id: null,
@@ -593,7 +591,7 @@ export const forkThread = async (opts: {
       origin: null,
       alert_item_id: null,
     alert_resolved: false,
-    evaporated_at: null,
+    closed_at: null,
     terminal_event: null,
     terminal_entity_id: null,
     parent_thread_id: opts.sourceThreadId,
@@ -611,12 +609,12 @@ export interface ThreadListOptions {
 }
 
 /**
- * List all active (non-evaporated) threads newest-first. Each thread is
+ * List all active (open) Subjects newest-first. Each thread is
  * augmented with the text and role of its most recent message.
  */
 export const listThreads = async (options: ThreadListOptions = {}): Promise<ThreadPreview[]> => {
   const c = stateClient()
-  const where = ['t.evaporated_at IS NULL']
+  const where = ['t.closed_at IS NULL']
   const args: string[] = []
 
   if (options.parentThreadId) {
@@ -657,7 +655,7 @@ export const listThreads = async (options: ThreadListOptions = {}): Promise<Thre
 export const listConversationEntries = async (): Promise<ChatConversationEntryApiView[]> => {
   const c = stateClient()
   const result = await c.execute(`
-    SELECT m.*, t.title AS subject_title, t.evaporated_at AS subject_evaporated_at
+    SELECT m.*, t.title AS subject_title, t.closed_at AS subject_closed_at
       FROM chat_messages m
       JOIN chat_threads t ON t.id = m.thread_id
      ORDER BY m.seq ASC
@@ -669,7 +667,7 @@ export const listConversationEntries = async (): Promise<ChatConversationEntryAp
       threadId: message.thread_id,
       subjectId: message.thread_id,
       subjectTitle: row.subject_title as string,
-      subjectClosed: row.subject_evaporated_at != null,
+      subjectClosed: row.subject_closed_at != null,
       role: message.role,
       content: message.content,
       segments: Array.isArray(message.segments) ? message.segments : [],
@@ -681,10 +679,10 @@ export const listConversationEntries = async (): Promise<ChatConversationEntryAp
 }
 
 /**
- * List all evaporated threads newest-first. Used to populate the History
+ * List all closed Subjects newest-first. Used to populate the History
  * section in the chat sidebar.
  */
-export const listEvaporatedThreads = async (): Promise<ThreadPreview[]> => {
+export const listClosedSubjects = async (): Promise<ThreadPreview[]> => {
   const c = stateClient()
   const result = await c.execute(`
     SELECT t.*,
@@ -699,8 +697,8 @@ export const listEvaporatedThreads = async (): Promise<ThreadPreview[]> => {
              ORDER BY m.created_at DESC, m.seq DESC
              LIMIT 1) AS last_message_role
       FROM chat_threads t
-     WHERE t.evaporated_at IS NOT NULL
-     ORDER BY t.evaporated_at DESC, t.id DESC
+     WHERE t.closed_at IS NOT NULL
+     ORDER BY t.closed_at DESC, t.id DESC
   `)
   return (result.rows as unknown as Record<string, unknown>[]).map((row) => ({
     ...rowToThread(row),
@@ -819,7 +817,7 @@ export const upsertNoticeChatMessage = async (
 
   const currentFeed = await c.execute(`
     SELECT id FROM chat_threads
-     WHERE evaporated_at IS NULL
+     WHERE closed_at IS NULL
      ORDER BY updated_at DESC, created_at DESC, id DESC
      LIMIT 1
   `)
@@ -916,42 +914,16 @@ export const setThreadPosture = async (id: string, posture: ChatPosture): Promis
 }
 
 /**
- * Mark a thread as evaporated by stamping `evaporated_at` with the current
- * epoch-millisecond timestamp. Idempotent: if the thread is already evaporated, the
- * existing timestamp is preserved (the WHERE clause guards against overwrite).
+ * Close a Subject by stamping `closed_at` with the current epoch-millisecond
+ * timestamp. Idempotent: the original closure timestamp is preserved.
  */
-export const markThreadEvaporated = async (id: string): Promise<void> => {
+export const closeSubject = async (id: string): Promise<void> => {
   const c = stateClient()
   const ts = now()
   await c.execute({
-    sql: `UPDATE chat_threads SET evaporated_at = ?, updated_at = ? WHERE id = ? AND evaporated_at IS NULL`,
-    args: [ts, ts, id],
+    sql: `UPDATE chat_threads SET closed_at = ? WHERE id = ? AND closed_at IS NULL`,
+    args: [ts, id],
   })
-}
-
-/**
- * Evaporate idle threads that have never received a user message (i.e. they
- * were created but never used). Returns the number of threads evaporated.
- */
-export const evaporateUnengagedThreads = async (): Promise<number> => {
-  const c = stateClient()
-  const result = await c.execute(`
-    SELECT id FROM chat_threads
-     WHERE status = 'idle'
-       AND evaporated_at IS NULL
-       AND id NOT IN (
-         SELECT DISTINCT thread_id FROM chat_messages WHERE role = 'user'
-       )
-  `)
-  const threadIds = (result.rows as unknown as Array<{ id: string }>).map((r) => r.id)
-  const ts = now()
-  for (const id of threadIds) {
-    await c.execute({
-      sql: `UPDATE chat_threads SET evaporated_at = ?, updated_at = ? WHERE id = ? AND evaporated_at IS NULL`,
-      args: [ts, ts, id],
-    })
-  }
-  return threadIds.length
 }
 
 // ── Feedback API ──────────────────────────────────────────────────────────────
@@ -1088,7 +1060,7 @@ export const startThreadFromAlert = async (
     origin: 'alert',
     alert_item_id: arcId,
     alert_resolved: false,
-    evaporated_at: null,
+    closed_at: null,
     terminal_event: null,
     terminal_entity_id: null,
     parent_thread_id: null,
@@ -1097,62 +1069,19 @@ export const startThreadFromAlert = async (
 }
 
 /**
- * Resolve an alert-origin thread: flip `alert_resolved = 1` and stamp
- * `evaporated_at` with the current timestamp in the same UPDATE, starting the
- * retention clock. COALESCE guards the evaporated_at column so a pre-existing
- * value is never overwritten (idempotent at the column level).
+ * Resolve an alert-origin thread and close its Subject.
  *
  * @returns `true` on the first resolution, `false` when the thread was already
  *   resolved (second call is a no-op).
  */
 export const resolveAlertThread = async (threadId: string): Promise<boolean> => {
   const c = stateClient()
-  const ts = now()
   const result = await c.execute({
     sql: `UPDATE chat_threads
-          SET alert_resolved = 1, updated_at = ?, evaporated_at = COALESCE(evaporated_at, ?)
+          SET alert_resolved = 1, updated_at = ?
           WHERE id = ? AND alert_resolved = 0`,
-    args: [ts, ts, threadId],
+    args: [now(), threadId],
   })
+  await closeSubject(threadId)
   return ((result as unknown as { rowsAffected?: number }).rowsAffected ?? 0) > 0
-}
-
-// ── Retention purge ───────────────────────────────────────────────────────────
-
-/** Default retention window: 2 days in milliseconds. */
-export const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000
-
-/**
- * Hard-delete every evaporated thread whose `evaporated_at` is older than
- * `now - retentionMs`, together with its `chat_messages` rows (and, via
- * ON DELETE CASCADE, any `chat_feedback` rows on those messages).
- *
- * Deletion order inside each transaction: messages first, then the thread,
- * so a mid-purge crash cannot leave orphaned messages.
- *
- * @param opts.retentionMs - Retention window in ms (default: TWO_DAYS_MS).
- * @param opts.nowMs       - Injectable clock for tests (default: Date.now()).
- * @returns The ids of every thread that was deleted.
- */
-export const purgeEvaporatedThreads = async (opts?: {
-  retentionMs?: number
-  nowMs?: number
-}): Promise<{ purgedThreadIds: string[] }> => {
-  const cutoff = (opts?.nowMs ?? Date.now()) - (opts?.retentionMs ?? TWO_DAYS_MS)
-  const c = stateClient()
-  const result = await c.execute({
-    sql: `SELECT id FROM chat_threads WHERE evaporated_at IS NOT NULL AND evaporated_at < ?`,
-    args: [cutoff],
-  })
-  const threadIds = (result.rows as unknown as Array<{ id: string }>).map((r) => r.id)
-  if (threadIds.length === 0) return { purgedThreadIds: [] }
-  // Build one batch so messages + thread deletions are atomic per thread and
-  // across all threads in a single transaction.
-  const stmts: Array<{ sql: string; args: readonly DbInValue[] }> = []
-  for (const id of threadIds) {
-    stmts.push({ sql: `DELETE FROM chat_messages WHERE thread_id = ?`, args: [id] })
-    stmts.push({ sql: `DELETE FROM chat_threads WHERE id = ?`, args: [id] })
-  }
-  await c.batch(stmts, 'write')
-  return { purgedThreadIds: threadIds }
 }

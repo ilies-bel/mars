@@ -14,7 +14,7 @@ export async function ensureCloseSubjectOnTerminalEventSubscriber(client: DbClie
 }
 
 /**
- * Evaporate a Subject only when its declared event kind and entity id match an
+ * Close a Subject only when its declared event kind and entity id match an
  * outbox event. Entity ids are named consistently across Mars domain events,
  * so this supports proposal, task, action-queue, and scorer Subjects without
  * coupling the subscriber to one lifecycle.
@@ -41,11 +41,11 @@ export async function drainCloseSubjectOnTerminalEvent(
       const ts = Date.now()
       const result = await client.execute({
         sql: `UPDATE chat_threads
-                SET evaporated_at = ?, updated_at = ?
+                SET closed_at = ?
               WHERE terminal_event = ?
                 AND terminal_entity_id = ?
-                AND evaporated_at IS NULL`,
-        args: [ts, ts, event.type, entityId],
+                AND closed_at IS NULL`,
+        args: [ts, event.type, entityId],
       })
       return ((result as unknown as { rowsAffected?: number }).rowsAffected ?? 0) > 0
     },

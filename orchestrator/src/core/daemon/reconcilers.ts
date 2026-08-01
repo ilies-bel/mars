@@ -101,27 +101,6 @@ const orphanedChatRunSweep: Reconciler = {
 }
 
 /**
- * Dead-thread eviction — evaporate idle chat threads that were never engaged
- * (no user messages). Keeps the sidebar clean after short-lived UI sessions.
- */
-const deadThreadEviction: Reconciler = {
-  name: 'dead-thread-eviction',
-  async run({ log }) {
-    try {
-      const { evaporateUnengagedThreads } = await import('../lib/chat-store')
-      const evaporated = await evaporateUnengagedThreads()
-      if (evaporated > 0) {
-        log(`[reconcile] evaporated ${evaporated} unengaged chat thread(s)`)
-      }
-      return { deadThreadsEvaporated: evaporated }
-    } catch (err) {
-      log(`[reconcile] dead-thread-eviction failed: ${(err as Error).message}`)
-      return {}
-    }
-  },
-}
-
-/**
  * 3. Blocker-drift repair — demote any `queued` task that still has incomplete
  *    blockers back to `blocked` BEFORE we re-seed the dispatch queue.
  */
@@ -888,7 +867,6 @@ export const RECONCILERS: readonly Reconciler[] = [
   daemonKilledSweep,
   daemonDiedSweep,
   orphanedChatRunSweep,
-  deadThreadEviction,
   blockerDriftRepair,
   strandedOriginRecoveryRepair,
   terminalOriginChoreRepair,

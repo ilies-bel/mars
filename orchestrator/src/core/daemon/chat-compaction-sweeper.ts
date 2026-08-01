@@ -54,7 +54,7 @@ export const sweepChatCompaction = async (
     const candidates = await client.execute({
       sql: `SELECT id, title, updated_at
               FROM chat_threads
-             WHERE status = 'idle' AND evaporated_at IS NULL AND updated_at < ?`,
+             WHERE status = 'idle' AND closed_at IS NULL AND updated_at < ?`,
       args: [cutoff],
     })
     let compactedThreads = 0

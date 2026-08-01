@@ -1500,18 +1500,18 @@ export const startHttpServer = async (
           m.listAutoRecipeRuns({ since: since ?? undefined, limit: 200 }),
         ),
         import('../lib/chat-store.js').then((m) =>
-          Promise.all([m.listEvaporatedThreads(), m.listThreads()]),
+          Promise.all([m.listClosedSubjects(), m.listThreads()]),
         ),
         listStewardLedgerSince(since ?? '0001-01-01T00:00:00.000Z'),
       ])
-        .then(([releaseNotes, recoveryEvents, autoRuns, [evaporatedRaw, allThreads], stewardLedger]) => {
+        .then(([releaseNotes, recoveryEvents, autoRuns, [closedRaw, allThreads], stewardLedger]) => {
           const throttledThreads = allThreads
             .filter((t) => t.status === 'throttled')
             .map((t) => ({ id: t.id, updatedAt: new Date(t.updated_at).toISOString() }))
 
-          const evaporatedThreads = evaporatedRaw
-            .filter((t): t is typeof t & { evaporated_at: number } => t.evaporated_at !== null)
-            .map((t) => ({ id: t.id, evaporatedAt: new Date(t.evaporated_at).toISOString() }))
+          const closedSubjects = closedRaw
+            .filter((t): t is typeof t & { closed_at: number } => t.closed_at !== null)
+            .map((t) => ({ id: t.id, closedAt: new Date(t.closed_at).toISOString() }))
 
           const delta = assembleDelta({
             releaseNotes: releaseNotes.entries,
@@ -1522,7 +1522,7 @@ export const startHttpServer = async (
             })),
             autoRuns,
             throttledThreads,
-            evaporatedThreads,
+            closedSubjects,
             stewardLedger,
             since,
             limit,

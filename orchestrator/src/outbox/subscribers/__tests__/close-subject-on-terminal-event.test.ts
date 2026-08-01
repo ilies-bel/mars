@@ -85,8 +85,8 @@ describe('close-subject-on-terminal-event outbox subscriber', () => {
     await publish(publisher, client, 'proposal.promoted', { proposalId: 'proposal-matching' })
     await subscriber.drainCloseSubjectOnTerminalEvent(client)
 
-    expect((await chat.getThread(matching.id))?.thread.evaporated_at).not.toBeNull()
-    expect((await chat.getThread(other.id))?.thread.evaporated_at).toBeNull()
+    expect((await chat.getThread(matching.id))?.thread.closed_at).not.toBeNull()
+    expect((await chat.getThread(other.id))?.thread.closed_at).toBeNull()
   })
 
   it('leaves a Subject open when a different terminal event arrives', async () => {
@@ -102,6 +102,6 @@ describe('close-subject-on-terminal-event outbox subscriber', () => {
     await publish(publisher, client, 'proposal.dismissed', { proposalId: 'proposal-unchanged' })
     await subscriber.drainCloseSubjectOnTerminalEvent(client)
 
-    expect((await chat.getThread(subject.id))?.thread.evaporated_at).toBeNull()
+    expect((await chat.getThread(subject.id))?.thread.closed_at).toBeNull()
   })
 })

@@ -40,7 +40,7 @@ const baseInput = {
   recoveryEvents: [],
   autoRuns: [],
   throttledThreads: [],
-  evaporatedThreads: [],
+  closedSubjects: [],
   stewardLedger: [],
   since: null,
   limit: DEFAULT_WYWA_LIMIT,
@@ -155,15 +155,15 @@ describe('assembleDelta — throttle events', () => {
   })
 })
 
-describe('assembleDelta — evaporated-thread events', () => {
-  it('formats an evaporated thread event', () => {
+describe('assembleDelta — closed Subject events', () => {
+  it('formats a closed Subject event', () => {
     const result = assembleDelta({
       ...baseInput,
-      evaporatedThreads: [{ id: 'thread-2', evaporatedAt: '2026-07-20T07:00:00.000Z' }],
+      closedSubjects: [{ id: 'thread-2', closedAt: '2026-07-20T07:00:00.000Z' }],
     })
     expect(result.events[0]).toMatchObject({
-      kind: 'evaporated-thread',
-      summary: 'Idle thread thread-2 evaporated',
+      kind: 'closed-subject',
+      summary: 'Subject thread-2 closed',
     })
   })
 })

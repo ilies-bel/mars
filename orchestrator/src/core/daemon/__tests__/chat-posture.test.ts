@@ -95,7 +95,7 @@ describe('ChatRunner posture', () => {
     store.getThread.mockImplementation(async (id: string) => ({
       thread: {
         id, title: '', status: 'idle', posture: store.posture, created_at: '', updated_at: '',
-        origin: null, alert_item_id: null, alert_resolved: false, evaporated_at: null,
+        origin: null, alert_item_id: null, alert_resolved: false, closed_at: null,
         parent_thread_id: null, fork_idempotency_key: null, session_id: null,
       },
       messages: [],

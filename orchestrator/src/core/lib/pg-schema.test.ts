@@ -68,7 +68,7 @@ describe('ensureSchema', () => {
     const c = await freshSchemaClient()
 
     expect(Object.fromEntries(await columnsOf(c, 'chat_threads'))).toMatchObject({
-      evaporated_at: 'bigint',
+      closed_at: 'bigint',
       created_at: 'bigint',
       updated_at: 'bigint',
     })
@@ -134,13 +134,13 @@ describe('ensureSchema', () => {
       expect(columns.has('session_id')).toBe(false)
       expect(columns.has('context_seeded')).toBe(false)
       expect(Object.fromEntries(columns)).toMatchObject({
-        evaporated_at: 'bigint',
+        closed_at: 'bigint',
         created_at: 'bigint',
         updated_at: 'bigint',
       })
-      const row = await c.execute(`SELECT id, title, evaporated_at, created_at, updated_at FROM chat_threads WHERE id = 'legacy-thread'`)
+      const row = await c.execute(`SELECT id, title, closed_at, created_at, updated_at FROM chat_threads WHERE id = 'legacy-thread'`)
       expect(row.rows).toEqual([{
-        id: 'legacy-thread', title: 'Keep me', evaporated_at: 1234, created_at: 2345, updated_at: 3456,
+        id: 'legacy-thread', title: 'Keep me', closed_at: 1234, created_at: 2345, updated_at: 3456,
       }])
       expect((await c.execute(`SELECT created_at FROM chat_messages WHERE id = 'legacy-message'`)).rows)
         .toEqual([{ created_at: 4567 }])

@@ -268,7 +268,7 @@ describe('GET /view/wywa-delta — auto-recipe runs', () => {
   })
 })
 
-// ── throttled and evaporated threads ─────────────────────────────────────────
+// ── throttled threads and closed Subjects ────────────────────────────────────
 
 describe('GET /view/wywa-delta — chat thread events', () => {
   let repo: string
@@ -300,18 +300,18 @@ describe('GET /view/wywa-delta — chat thread events', () => {
     }
   })
 
-  it('surfaces evaporated threads as evaporated-thread items', async () => {
+  it('surfaces closed Subjects as closed-subject items', async () => {
     const { httpServer, chatStore } = await loadModules(repo)
     const thread = await chatStore.createThread('idle-thread')
-    await chatStore.markThreadEvaporated(thread.id)
+    await chatStore.closeSubject(thread.id)
     const { port, close } = await httpServer.startHttpServer(makeDeps())
     try {
       const res = await fetch(`http://127.0.0.1:${port}/view/wywa-delta`)
       expect(res.status).toBe(200)
       const body = (await res.json()) as { events: Array<{ kind: string; summary: string }> }
-      const evap = body.events.find((e) => e.kind === 'evaporated-thread')
-      expect(evap).toBeDefined()
-      expect(evap?.summary).toContain(thread.id)
+      const closed = body.events.find((e) => e.kind === 'closed-subject')
+      expect(closed).toBeDefined()
+      expect(closed?.summary).toContain(thread.id)
     } finally {
       await close()
     }

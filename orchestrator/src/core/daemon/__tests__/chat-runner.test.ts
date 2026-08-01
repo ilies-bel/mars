@@ -462,7 +462,7 @@ const AUTH = { accessToken: 'tok', accountId: 'acc', refreshToken: 'ref' }
 const threadFixture = {
   id: 't1', title: '', status: 'idle' as const, created_at: 0, updated_at: 0,
   posture: 'triage' as const,
-  origin: null, alert_item_id: null, alert_resolved: false, evaporated_at: null,
+  origin: null, alert_item_id: null, alert_resolved: false, closed_at: null,
   parent_thread_id: null, fork_idempotency_key: null,
 }
 

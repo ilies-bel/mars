@@ -50,17 +50,17 @@ describe('resolveAlertThread', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('sets evaporated_at to a valid ISO string on first resolution', async () => {
+  it('sets closed_at when the alert resolves', async () => {
     const m = await loadModule(repo)
     const thread = await m.startThreadFromAlert('arc-1', 'task broke', makeSegment('task broke'))
     const resolved = await m.resolveAlertThread(thread.id)
     expect(resolved).toBe(true)
     const result = await m.getThread(thread.id)
     expect(result).not.toBeNull()
-    const { evaporated_at } = result!.thread
-    expect(evaporated_at).not.toBeNull()
+    const { closed_at } = result!.thread
+    expect(closed_at).not.toBeNull()
     // Must be parseable as a valid date
-    expect(Number.isFinite(new Date(evaporated_at!).getTime())).toBe(true)
+    expect(Number.isFinite(new Date(closed_at!).getTime())).toBe(true)
   })
 
   it('also flips alert_resolved to true on first resolution', async () => {
@@ -71,12 +71,12 @@ describe('resolveAlertThread', () => {
     expect(result!.thread.alert_resolved).toBe(true)
   })
 
-  it('returns false on second resolution and leaves evaporated_at unchanged', async () => {
+  it('returns false on second resolution and leaves closed_at unchanged', async () => {
     const m = await loadModule(repo)
     const thread = await m.startThreadFromAlert('arc-3', 'third task', makeSegment('third task'))
 
     await m.resolveAlertThread(thread.id)
-    const firstTimestamp = (await m.getThread(thread.id))!.thread.evaporated_at
+    const firstTimestamp = (await m.getThread(thread.id))!.thread.closed_at
 
     // Ensure at least 1ms elapses so a fresh stamp would differ
     await new Promise((r) => setTimeout(r, 2))
@@ -84,7 +84,7 @@ describe('resolveAlertThread', () => {
     const secondResult = await m.resolveAlertThread(thread.id)
     expect(secondResult).toBe(false)
 
-    const secondTimestamp = (await m.getThread(thread.id))!.thread.evaporated_at
+    const secondTimestamp = (await m.getThread(thread.id))!.thread.closed_at
     expect(secondTimestamp).toBe(firstTimestamp)
   })
 })

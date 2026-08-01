@@ -1255,8 +1255,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   }
 
   const viewChatHistory: AppServices['viewChatHistory'] = async () => {
-    const { listEvaporatedThreads, toThreadApiView } = await import('./lib/chat-store')
-    const threads = await listEvaporatedThreads()
+    const { listClosedSubjects, toThreadApiView } = await import('./lib/chat-store')
+    const threads = await listClosedSubjects()
     return { threads: threads.map((t) => toThreadApiView(t, t.last_message_role)) }
   }
 
