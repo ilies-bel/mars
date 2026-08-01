@@ -40,6 +40,8 @@ import {
   getThread,
   getPreloadedResponse,
   closeSubthread,
+  archiveSubthread,
+  unarchiveSubthread,
   setThreadStatus,
   appendMessage,
 } from '../lib/chat-store'
@@ -567,6 +569,8 @@ type EntityOp =
   | 'validate'
   | 'reject'
   | 'land-work'
+  | 'archive-subthread'
+  | 'unarchive-subthread'
 
 const TRACE_EVENT_KIND_SET = new Set<TraceEventKind>(TRACE_EVENT_KINDS)
 const TRACE_EVENT_SEVERITIES: readonly TraceEventSeverity[] = [
@@ -696,6 +700,10 @@ export const startHttpServer = async (
     validate: deps.validateTask,
     reject: deps.rejectTask,
     'land-work': deps.landWork,
+    // The entityId here is the Subthread's own thread id, not a task or
+    // proposal — these two verbs are how the archive prompt's chips act.
+    'archive-subthread': archiveSubthread,
+    'unarchive-subthread': unarchiveSubthread,
   }
 
   // Track live sockets so close() can force-end long-lived connections (e.g.
@@ -1833,6 +1841,34 @@ export const startHttpServer = async (
         return
       }
     }
+    // POST /chat/threads/:id/archive   — file an ended Subthread away.
+    // POST /chat/threads/:id/unarchive — put it back in the list.
+    //
+    // Unlike `/end`, archiving accepts a Subthread with a declared terminal
+    // event: the operator is filing it, not overriding how it closes, and
+    // `archiveSubthread` stamps `closed_at` only when it is still null.
+    {
+      const archiveMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/chat\/threads\/([^/?]+)\/(archive|unarchive)$/)
+          : null
+      if (archiveMatch && archiveMatch[1] && archiveMatch[2]) {
+        const id = decodeURIComponent(archiveMatch[1])
+        const restoring = archiveMatch[2] === 'unarchive'
+        getThread(id)
+          .then(async (detail) => {
+            if (detail === null) {
+              sendJson(res, 404, { ok: false, error: `thread ${id} not found`, errorCode: 'NOT_FOUND' })
+              return
+            }
+            await (restoring ? unarchiveSubthread(id) : archiveSubthread(id))
+            deps.viewStreamHub?.broadcast('chat')
+            sendJson(res, 200, { ok: true })
+          })
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
     // GET /chat/threads/:id/ui-stream — resumable UIMessage-chunk stream for one
     // thread's active run. This is the daemon-native replacement for the old
     // client-side `chat-delta` → `UIMessageChunk` mapping: the daemon maps and
@@ -1980,9 +2016,9 @@ export const startHttpServer = async (
           })),
         ]
         deps.appServices.buildSituationReport()
-          .then((situation) => createThread(undefined, undefined, undefined, situation, {
-            content: result.data.message,
-            segments: userSegments,
+          .then((situation) => createThread(undefined, {
+            situationReport: situation,
+            firstUserMessage: { content: result.data.message, segments: userSegments },
           }))
           .then(async (thread) => {
             const run = await deps.chatRunner.sendMessage(
@@ -2023,7 +2059,7 @@ export const startHttpServer = async (
           return
         }
         deps.appServices.buildSituationReport()
-          .then((situation) => createThread(result.data.title, undefined, undefined, situation))
+          .then((situation) => createThread(result.data.title, { situationReport: situation }))
           .then((thread) => {
             deps.viewStreamHub?.broadcast('chat')
             sendJson(res, 200, toThreadApiView(thread))

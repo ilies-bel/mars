@@ -57,6 +57,10 @@ import {
   ensureSubthreadCloser,
 } from '../../outbox/subscribers/subthread-closer'
 import {
+  drainArchivePrompter,
+  ensureArchivePrompter,
+} from '../../outbox/subscribers/archive-prompter'
+import {
   drainArcVerifier,
   ensureArcVerifierSubscriber,
 } from '../../outbox/subscribers/arc-verifier-subscriber'
@@ -4796,6 +4800,22 @@ export const startDaemon = async (
     }
   })()
 
+  // An alert mutating is grounds to ask whether its Subthread can be filed
+  // away. Boot-drain alongside the closer so mutations published while the
+  // daemon was down still raise their prompt after restart.
+  void (async () => {
+    try {
+      await ensureArchivePrompter(getCompositionRootClient())
+      const { processed } = await drainArchivePrompter(getCompositionRootClient(), log)
+      if (processed > 0) {
+        viewStreamHub.broadcast('chat')
+        log(`[archive-prompter] raised ${processed} archive prompt(s) on boot`)
+      }
+    } catch (err) {
+      log(`[archive-prompter] boot drain failed: ${(err as Error).message}`)
+    }
+  })()
+
   // Boot drain for the arc-verifier outbox subscriber: register it and trigger
   // any pending arc verifications for task.terminal { reason: 'done' } events
   // that were published while the daemon was down.
@@ -5710,6 +5730,23 @@ export const startDaemon = async (
     CLOSE_SUBTHREAD_ON_TERMINAL_EVENT_DRAIN_MS,
   )
   closeSubthreadOnTerminalEventDrain.unref()
+
+  // ── Subthread archive-prompt drain ────────────────────────────────────────
+  const ARCHIVE_PROMPT_DRAIN_MS = Number(
+    process.env.MARS_ARCHIVE_PROMPT_DRAIN_MS ?? 30_000,
+  )
+  const archivePromptDrain = setInterval(
+    singleFlight(async () => {
+      try {
+        const { processed } = await drainArchivePrompter(getCompositionRootClient(), log)
+        if (processed > 0) viewStreamHub.broadcast('chat')
+      } catch (err) {
+        log(`[archive-prompter] drain errored: ${(err as Error).message}`)
+      }
+    }),
+    ARCHIVE_PROMPT_DRAIN_MS,
+  )
+  archivePromptDrain.unref()
 
   // ── Recipe conversation Notice drain ────────────────────────────────────
   const RECIPE_CONVERSATION_NOTICE_DRAIN_MS = Number(

@@ -31,7 +31,7 @@ import { ChatStreamHub } from '../chat-stream-hub'
 import type { UiMessageChunk } from '../ui-message-chunks'
 import { CodexApiError, type StreamCodexResponseOpts } from '../codex-api'
 import type { ChatMessage } from '../../lib/chat-store'
-import { MAIN_SESSION_PROVIDER_REQUEST_IDENTITY } from '../chat-context'
+import { MAIN_THREAD_PROVIDER_REQUEST_IDENTITY } from '../chat-context'
 import { PROVIDERS } from '../../workers/providers'
 
 // ── SSE event fixtures ────────────────────────────────────────────────────────
@@ -443,7 +443,7 @@ vi.mock('../chat-memory-window', () => ({
 vi.mock('../../lib/chat-store', () => ({
   appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: 0 }),
   getThread: vi.fn(),
-  listMainSessionMessages: vi.fn().mockResolvedValue([]),
+  listMainThreadMessages: vi.fn().mockResolvedValue([]),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
 }))
@@ -474,7 +474,8 @@ const AUTH = { accessToken: 'tok', accountId: 'acc', refreshToken: 'ref' }
 const threadFixture = {
   id: 't1', title: '', status: 'idle' as const, created_at: 0, updated_at: 0,
   posture: 'triage' as const,
-  origin: null, alert_item_id: null, alert_resolved: false, closed_at: null,
+  origin: null, alert_item_id: null, alert_resolved: false,
+  objective: null, archived_at: null, closed_at: null,
   parent_thread_id: null, fork_idempotency_key: null,
 }
 
@@ -525,7 +526,7 @@ describe('ChatRunner UIMessage-chunk streaming', () => {
       messages: [],
       feedbacks: new Map(),
     })
-    vi.mocked(chatStore.listMainSessionMessages).mockResolvedValue([])
+    vi.mocked(chatStore.listMainThreadMessages).mockResolvedValue([])
     vi.mocked(chatMemoryWindow.selectMemoryCut).mockResolvedValue(null)
     vi.mocked(chatMemoryWindow.readMainMemoryWindow).mockResolvedValue({ startsAfterSeq: 0, lastUsedAt: null, cutAt: null, reason: null })
     vi.mocked(chatMemoryWindow.advanceMainMemoryWindow).mockResolvedValue(undefined)
@@ -585,7 +586,7 @@ describe('ChatRunner state machine', () => {
       messages: [],
       feedbacks: new Map(),
     })
-    vi.mocked(chatStore.listMainSessionMessages).mockResolvedValue([])
+    vi.mocked(chatStore.listMainThreadMessages).mockResolvedValue([])
     vi.mocked(chatMemoryWindow.selectMemoryCut).mockResolvedValue(null)
     vi.mocked(chatMemoryWindow.readMainMemoryWindow).mockResolvedValue({ startsAfterSeq: 0, lastUsedAt: null, cutAt: null, reason: null })
     vi.mocked(chatMemoryWindow.advanceMainMemoryWindow).mockResolvedValue(undefined)
@@ -751,7 +752,7 @@ describe('ChatRunner state machine', () => {
       }],
       feedbacks: new Map(),
     })
-    vi.mocked(chatStore.listMainSessionMessages).mockResolvedValue([
+    vi.mocked(chatStore.listMainThreadMessages).mockResolvedValue([
       {
         id: 'main-notice', thread_id: 'closed-subthread', role: 'assistant', content: 'Mars lowered workers to two.',
         segments: null, created_at: 0, context_scope: 'main', kind: 'acknowledgment', backing_entity_id: null,
@@ -771,7 +772,7 @@ describe('ChatRunner state machine', () => {
     await new Promise((r) => setTimeout(r, 20))
 
     const input = mockStream.mock.calls[0]![0].input
-    expect(mockStream.mock.calls[0]![0].requestIdentity).toBe(MAIN_SESSION_PROVIDER_REQUEST_IDENTITY)
+    expect(mockStream.mock.calls[0]![0].requestIdentity).toBe(MAIN_THREAD_PROVIDER_REQUEST_IDENTITY)
     expect(input).toEqual([
       { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Mars lowered workers to two.' }] },
       { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Situation: 1 running task.' }] },
@@ -796,7 +797,7 @@ describe('ChatRunner state machine', () => {
       undefined,
       { startsAfterSeq: 9, reason: 'retention-lapse' },
     )
-    expect(chatStore.listMainSessionMessages).toHaveBeenCalledWith(9)
+    expect(chatStore.listMainThreadMessages).toHaveBeenCalledWith(9)
     expect(chatMemoryWindow.markMainMemoryWindowUsed).toHaveBeenCalledWith(undefined)
     expect(vi.mocked(mockStream).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(chatMemoryWindow.markMainMemoryWindowUsed).mock.invocationCallOrder[0]!,

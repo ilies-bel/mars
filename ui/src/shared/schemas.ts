@@ -1174,6 +1174,14 @@ export const chatThreadSchema = z.object({
   alertItemId: z.string().nullable().optional(),
   /** True when the underlying action-queue item has been resolved. */
   alertResolved: z.boolean().optional().default(false),
+  /**
+   * Why this Subthread exists, in one sentence, recorded when it was created.
+   * Null for Subthreads that predate the objective field — they are never
+   * proposed for archival, because there is no stated goal to judge as met.
+   */
+  objective: z.string().nullable().optional().default(null),
+  /** Set once the operator archives the Subthread; null while it stays listed. */
+  archivedAt: z.string().nullable().optional().default(null),
   /** Set once the Subthread closes; null while it remains active. */
   closedAt: z.string().nullable().optional().default(null),
   /** Domain event that closes the Subthread automatically, if declared. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildMainSessionPrefix } from '../chat-context'
+import { buildMainThreadPrefix } from '../chat-context'
 import type { ChatMessage } from '../../lib/chat-store'
 
 const message = (
@@ -19,9 +19,9 @@ const message = (
   backing_entity_id: null,
 })
 
-describe('buildMainSessionPrefix', () => {
+describe('buildMainThreadPrefix', () => {
   it('keeps only reusable Main entries and compact Subthread boundaries', () => {
-    const prefix = buildMainSessionPrefix([
+    const prefix = buildMainThreadPrefix([
       message('notice', 'Mars lowered workers to two.', 'main'),
       message('closed-investigation', 'x'.repeat(200_000), 'subthread'),
       message('subthread-boundary', 'Situation: 1 running task.', 'subthread', 'situation'),

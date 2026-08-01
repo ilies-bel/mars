@@ -347,7 +347,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   const openSubthread: AppServices['openSubthread'] = async ({ title, acknowledgment }) => {
     const { appendMessage, createThread } = await import('./lib/chat-store')
     const situation = await buildSubthreadSituationReport()
-    const thread = await createThread(title, undefined, undefined, situation)
+    const thread = await createThread(title, { situationReport: situation })
     await appendMessage(
       thread.id,
       'user',

@@ -16,7 +16,7 @@ export interface MemoryCut {
   reason: MemoryCutReason
 }
 
-const mainSessionKey = 'main'
+const mainThreadKey = 'main'
 
 const clientFor = (client: DbClient | undefined): DbClient => client ?? resolveStateClient()
 
@@ -26,12 +26,12 @@ export const readMainMemoryWindow = async (client?: DbClient): Promise<MainMemor
   await db.execute({
     sql: `INSERT INTO chat_memory_windows (session_key, starts_after_seq)
           VALUES (?, 0) ON CONFLICT (session_key) DO NOTHING`,
-    args: [mainSessionKey],
+    args: [mainThreadKey],
   })
   const result = await db.execute({
     sql: `SELECT starts_after_seq, last_used_at, cut_at, reason
             FROM chat_memory_windows WHERE session_key = ?`,
-    args: [mainSessionKey],
+    args: [mainThreadKey],
   })
   const row = result.rows[0] as Record<string, unknown> | undefined
   if (!row) throw new Error('Main memory window was not created')
@@ -122,7 +122,7 @@ export const advanceMainMemoryWindow = async (
     sql: `UPDATE chat_memory_windows
             SET starts_after_seq = ?, cut_at = ?, reason = ?
           WHERE session_key = ? AND starts_after_seq < ?`,
-    args: [cut.startsAfterSeq, now, cut.reason, mainSessionKey, cut.startsAfterSeq],
+    args: [cut.startsAfterSeq, now, cut.reason, mainThreadKey, cut.startsAfterSeq],
   })
 }
 
@@ -135,6 +135,6 @@ export const markMainMemoryWindowUsed = async (
   await readMainMemoryWindow(db)
   await db.execute({
     sql: `UPDATE chat_memory_windows SET last_used_at = ? WHERE session_key = ?`,
-    args: [now, mainSessionKey],
+    args: [now, mainThreadKey],
   })
 }

@@ -641,6 +641,8 @@ const DDL: readonly string[] = [
     origin         text,
     alert_item_id  text,
     alert_resolved bigint NOT NULL DEFAULT 0,
+    objective      text,
+    archived_at    bigint,
     closed_at      bigint,
     terminal_event_type text,
     terminal_entity_id text,
@@ -755,6 +757,15 @@ const DDL: readonly string[] = [
      ALTER TABLE chat_threads DROP COLUMN evaporated_at;
    END
    $$`,
+  // A Subthread states why it exists. `objective` is the sentence the operator
+  // (or the alert that spawned it) put on the record at creation; `archived_at`
+  // is stamped when the operator accepts the archive prompt. Archiving is
+  // distinct from closing: `closed_at` means the work ended, `archived_at`
+  // means the operator has filed it away and no longer wants it in the list.
+  // A Subthread can be closed but not archived (waiting on the prompt), and
+  // never the reverse.
+  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS objective text`,
+  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS archived_at bigint`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS closed_at bigint`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS terminal_event_type text`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS terminal_entity_id text`,

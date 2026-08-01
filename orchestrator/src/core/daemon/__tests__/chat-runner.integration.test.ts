@@ -76,7 +76,7 @@ vi.mock('../chat-shell', () => ({
 vi.mock('../../lib/chat-store', () => ({
   appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: 0, kind: 'acknowledgment', backing_entity_id: null }),
   getThread: vi.fn(),
-  listMainSessionMessages: vi.fn().mockResolvedValue([]),
+  listMainThreadMessages: vi.fn().mockResolvedValue([]),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
 }))
@@ -112,6 +112,8 @@ const makeThreadFixture = (id: string) => ({
     origin: null,
     alert_item_id: null,
     alert_resolved: false,
+    objective: null,
+    archived_at: null,
     closed_at: null,
     parent_thread_id: null,
     fork_idempotency_key: null,
