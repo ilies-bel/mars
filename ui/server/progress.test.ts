@@ -354,16 +354,57 @@ describe('GET /api/progress — proposal nodes for DAG view', () => {
     expect(body.proposals.length).toBe(0)
   })
 
-  it('excludes proposals whose only sliced tasks are out of scope (done/draft/dropped)', async () => {
-    const qc = createClient({ url: `file:${queueDbPath}` })
-    // Insert a done task that references a proposal — done tasks are out of scope
-    await qc.execute({
+  /** Insert a task carrying a parent_proposal_id, at an arbitrary status. */
+  const insertSlicedTask = async (
+    client: Client,
+    id: string,
+    status: string,
+    proposalId: string,
+  ): Promise<void> => {
+    const now = new Date().toISOString()
+    await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, retry_count, created_at, updated_at, parent_proposal_id)
             VALUES (?, ?, ?, 0, ?, ?, ?)`,
-      args: ['t-done', 'prompt', 'done', new Date().toISOString(), new Date().toISOString(), 'p-done'],
+      args: [id, 'prompt', status, now, now, proposalId],
     })
+  }
+
+  it('excludes proposals whose only sliced tasks are out of scope (draft/dropped)', async () => {
+    const qc = createClient({ url: `file:${queueDbPath}` })
+    await insertSlicedTask(qc, 't-draft', 'draft', 'p-draft')
+    await insertSlicedTask(qc, 't-dropped', 'dropped', 'p-dropped')
     // Also insert an in-scope task with no proposal
     await insertTask(qc, 't-running', 'running')
+    qc.close()
+
+    const sc = createClient({ url: `file:${stateDbPath}` })
+    await insertProposal(sc, 'p-draft')
+    await insertProposal(sc, 'p-dropped')
+    sc.close()
+
+    const res = await fetch(`${baseUrl}/api/progress`)
+    const body = (await res.json()) as ProgressBodyWithProposals
+
+    const proposalIds = body.proposals.map((p) => p.id)
+    expect(proposalIds).not.toContain('p-draft')
+    expect(proposalIds).not.toContain('p-dropped')
+  })
+
+  it('includes a proposal whose only sliced task is done — Done is an in-scope cluster', async () => {
+    // Regression guard for 8f2a5a12 "done origin no longer triggers false
+    // 'Abandoned arc / origin force-purged'". Before that commit clusterFor
+    // ('done') returned null and a done task was dropped from the progress
+    // projection entirely, which made buildArcsByCluster read the missing
+    // origin row as force-purged. Done now travels through with
+    // cluster='Done', so its proposal must travel with it.
+    //
+    // The sibling running task matters: pruneCompletedArcs() strips Done rows
+    // whose arc has no on-screen task, so a lone done row would be pruned from
+    // `tasks` (though its proposal is collected before the prune). Sharing the
+    // proposal makes the arc active and keeps the Done row addressable.
+    const qc = createClient({ url: `file:${queueDbPath}` })
+    await insertSlicedTask(qc, 't-done', 'done', 'p-done')
+    await insertSlicedTask(qc, 't-running', 'running', 'p-done')
     qc.close()
 
     const sc = createClient({ url: `file:${stateDbPath}` })
@@ -373,8 +414,29 @@ describe('GET /api/progress — proposal nodes for DAG view', () => {
     const res = await fetch(`${baseUrl}/api/progress`)
     const body = (await res.json()) as ProgressBodyWithProposals
 
-    const proposalIds = body.proposals.map((p) => p.id)
-    expect(proposalIds).not.toContain('p-done')
+    expect(body.proposals.map((p) => p.id)).toContain('p-done')
+    expect(body.tasks.find((t) => t.id === 't-done')?.cluster).toBe('Done')
+  })
+
+  it('prunes a done task whose arc has no on-screen sibling, but still emits its proposal', async () => {
+    // pruneCompletedArcs() in orchestrator/src/core/daemon/view/progress.ts:
+    // Done rows are arc METADATA only, so a fully-completed arc ships no task
+    // rows at all (the repo it was written against shipped 2015/2086 rows and
+    // ~10 MB per poll without this). The proposal id set is built before the
+    // prune, so the proposal node survives.
+    const qc = createClient({ url: `file:${queueDbPath}` })
+    await insertSlicedTask(qc, 't-done-alone', 'done', 'p-done-alone')
+    qc.close()
+
+    const sc = createClient({ url: `file:${stateDbPath}` })
+    await insertProposal(sc, 'p-done-alone')
+    sc.close()
+
+    const res = await fetch(`${baseUrl}/api/progress`)
+    const body = (await res.json()) as ProgressBodyWithProposals
+
+    expect(body.tasks.find((t) => t.id === 't-done-alone')).toBeUndefined()
+    expect(body.proposals.map((p) => p.id)).toContain('p-done-alone')
   })
 })
 
