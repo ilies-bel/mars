@@ -131,7 +131,9 @@ const SLASH_COMMANDS = [
 // ---------------------------------------------------------------------------
 
 const KIND_ICON: Record<string, string> = {
-  'failed-task': '⚠️',
+  failed: '⚠️',
+  'daemon-killed': '⛔',
+  'stale-queued': '⏳',
   'stale-worktree': '🗑️',
   'draft-proposal': '💡',
   'awaiting-validation': '🔍',
@@ -891,15 +893,10 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename }: ThreadItemProps)
 
   const title = smartTitle(thread.title)
 
-  // Derive the alert kind from the alertItemId prefix (e.g. 'failed-task:mars-123' → 'failed-task')
-  const alertKind = thread.alertItemId
-    ? thread.alertItemId.split(':')[0] ?? null
-    : null
-
-  // Type-specific icon: alert threads get a category icon; user threads get a chat bubble.
-  const typeIcon = thread.origin === 'alert'
-    ? (KIND_ICON[alertKind ?? ''] ?? '🔔')
-    : '💬'
+  // Action-queue ids are opaque persisted ids, not `kind:entity` strings. A
+  // thread therefore cannot infer a kind from alertItemId; alert threads use a
+  // neutral bell and queue rows render their own real-kind icon and badge.
+  const typeIcon = thread.origin === 'alert' ? '🔔' : '💬'
   const iconDimmed = thread.origin === 'alert' && thread.alertResolved
 
   return (
@@ -938,10 +935,10 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename }: ThreadItemProps)
               thread.origin === 'alert'
                 ? thread.alertResolved
                   ? 'Alert resolved'
-                  : `Alert: ${alertKind ?? 'unknown'}`
+                  : 'Alert'
                 : 'Conversation'
             }
-            aria-label={thread.origin === 'alert' ? (alertKind ?? 'alert') : 'conversation'}
+            aria-label={thread.origin === 'alert' ? 'alert' : 'conversation'}
           >
             {typeIcon}
           </span>
@@ -2474,7 +2471,6 @@ export const ChatPage = () => {
   )
   const [sidebarFilters, setSidebarFilters] = useState<ThreadListFilters>(() => ({
     query: readAqStateFromUrl().q,
-    kind: 'all',
     origin: 'all',
   }))
   const [prefill, setPrefill] = useState<string | undefined>(undefined)

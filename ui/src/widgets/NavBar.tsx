@@ -28,7 +28,7 @@ const CountBadge = ({ count }: CountBadgeProps) =>
 
 /**
  * Toggle for native desktop notifications sent by the daemon on new
- * failed-task / stale-worktree alerts.  The preference is persisted by the
+ * task-failure / stale-worktree alerts. The preference is persisted by the
  * daemon so it survives restarts and is shared across every connected client.
  */
 const NotificationsToggle = () => {

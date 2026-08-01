@@ -555,6 +555,7 @@ describe('GET /api/action-queue (persisted view)', () => {
     const body = await fetchQueue()
     const batchRow = body.find((r) => r.entityId === '__daemon-killed-batch__')
     expect(batchRow).toBeDefined()
+    expect(batchRow?.kind).toBe('daemon-killed')
     expect(batchRow?.errorKind).toBe('daemon-killed-batch')
   })
 
@@ -681,15 +682,19 @@ describe('actionQueueResponseSchema resilience', () => {
     expect(() => actionQueueResponseSchema.parse(raw)).not.toThrow()
   })
 
-  it('coerces an unknown kind to failed-task', () => {
-    const raw = [{ ...minimalRow, kind: 'daemon-killed' }]
+  it('parses a persisted failed kind without the malformed-row fallback', () => {
+    const raw = [{ ...minimalRow, kind: 'failed' }]
     const parsed = actionQueueResponseSchema.parse(raw)
-    expect(parsed[0].kind).toBe('failed-task')
+    expect(parsed[0]).toMatchObject({
+      kind: 'failed',
+      id: 'test-id',
+      at: minimalRow.at,
+    })
   })
 
-  it('preserves failed-task kind unchanged', () => {
+  it('normalizes the retired failed-task display kind to failed only in the malformed-row path', () => {
     const parsed = actionQueueResponseSchema.parse([{ ...minimalRow, kind: 'failed-task' }])
-    expect(parsed[0].kind).toBe('failed-task')
+    expect(parsed[0].kind).toBe('failed')
   })
 
   it('preserves draft-proposal kind unchanged', () => {
@@ -713,34 +718,34 @@ describe('actionQueueResponseSchema resilience', () => {
     }
   })
 
-  it('a failed-task row WITHOUT staleWorktreeDetail parses correctly', () => {
-    const parsed = actionQueueResponseSchema.parse([{ ...minimalRow, kind: 'failed-task' }])
-    expect(parsed[0].kind).toBe('failed-task')
-    // staleWorktreeDetail is absent on the failed-task variant
+  it('a failed row WITHOUT staleWorktreeDetail parses correctly', () => {
+    const parsed = actionQueueResponseSchema.parse([{ ...minimalRow, kind: 'failed' }])
+    expect(parsed[0].kind).toBe('failed')
+    // staleWorktreeDetail is absent on task-failure rows
     expect((parsed[0] as Record<string, unknown>)['staleWorktreeDetail']).toBeUndefined()
   })
 
-  it('a row with an unknown kind coerces to the failed-task variant — does NOT throw, does NOT drop the array', () => {
+  it('uses the malformed-row fallback for an unknown kind without dropping other rows', () => {
     const raw = [
       { ...minimalRow, id: 'row-unknown', kind: 'some-future-kind' },
-      { ...minimalRow, id: 'row-known', kind: 'failed-task' },
+      { ...minimalRow, id: 'row-known', kind: 'failed' },
     ]
     let parsed: ReturnType<typeof actionQueueResponseSchema.parse> | undefined
     expect(() => { parsed = actionQueueResponseSchema.parse(raw) }).not.toThrow()
     expect(parsed).toHaveLength(2)
-    expect(parsed![0].kind).toBe('failed-task')
-    expect(parsed![1].kind).toBe('failed-task')
+    expect(parsed![0].kind).toBe('failed')
+    expect(parsed![1].kind).toBe('failed')
   })
 
   it('does not discard other rows when one row has an unknown kind', () => {
     const raw = [
       { ...minimalRow, id: 'row-1', kind: 'daemon-killed' },
-      { ...minimalRow, id: 'row-2', kind: 'failed-task' },
+      { ...minimalRow, id: 'row-2', kind: 'failed' },
     ]
     const parsed = actionQueueResponseSchema.parse(raw)
     expect(parsed).toHaveLength(2)
-    expect(parsed[0].kind).toBe('failed-task')
-    expect(parsed[1].kind).toBe('failed-task')
+    expect(parsed[0].kind).toBe('daemon-killed')
+    expect(parsed[1].kind).toBe('failed')
   })
 })
 

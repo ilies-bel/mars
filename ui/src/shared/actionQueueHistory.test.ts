@@ -66,7 +66,7 @@ describe('actionQueueResolutionSchema', () => {
 
 const makeHistoryRow = (overrides: Record<string, unknown> = {}) => ({
   id: 'row-1',
-  kind: 'failed-task',
+  kind: 'failed',
   entityId: 'task-1',
   priority: 'high',
   title: 'Task failed',
@@ -154,7 +154,7 @@ describe('actionQueueHistoryResponseSchema', () => {
     expect(row.resolution!.resolvedBy).toBe('user:dismiss')
   })
 
-  it('coerces an unknown kind to failed-task without dropping the row', () => {
+  it('coerces an unknown kind to failed without dropping the row', () => {
     const raw = {
       rows: [
         makeHistoryRow({ kind: 'some-unknown-kind' }),
@@ -166,20 +166,20 @@ describe('actionQueueHistoryResponseSchema', () => {
       result = actionQueueHistoryResponseSchema.parse(raw)
     }).not.toThrow()
     expect(result!.rows).toHaveLength(1)
-    expect(result!.rows[0]!.kind).toBe('failed-task')
+    expect(result!.rows[0]!.kind).toBe('failed')
   })
 
   it('does not discard other rows when one row has an unknown kind', () => {
     const raw = {
       rows: [
         makeHistoryRow({ id: 'row-1', kind: 'weird-future-kind' }),
-        makeHistoryRow({ id: 'row-2', kind: 'failed-task' }),
+        makeHistoryRow({ id: 'row-2', kind: 'failed' }),
       ],
       nextCursor: null,
     }
     const result = actionQueueHistoryResponseSchema.parse(raw)
     expect(result.rows).toHaveLength(2)
-    expect(result.rows[0]!.kind).toBe('failed-task')
-    expect(result.rows[1]!.kind).toBe('failed-task')
+    expect(result.rows[0]!.kind).toBe('failed')
+    expect(result.rows[1]!.kind).toBe('failed')
   })
 })

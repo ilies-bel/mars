@@ -30,9 +30,9 @@ const VERBS: AlertVerb[] = [
 ]
 
 const BASE_PROPS: AlertCardProps = {
-  itemId: 'failed-task:t-1',
+  itemId: 't-1',
   entityId: 't-1',
-  kind: 'failed-task',
+  kind: 'failed',
   summary: 'The task ran out of retries and gave up',
   verbs: VERBS,
 }
@@ -58,8 +58,8 @@ describe('AlertCard – recipe rendering', () => {
     expect(html).toContain('data-testid="alert-card-entity-id"')
   })
 
-  it('renders the kind icon for failed-task', () => {
-    const html = render({ kind: 'failed-task' })
+  it('renders the kind icon for failed', () => {
+    const html = render({ kind: 'failed' })
     expect(html).toContain('⚠️')
   })
 

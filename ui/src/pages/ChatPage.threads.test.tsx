@@ -285,26 +285,26 @@ describe('ThreadSidebar – row scanability', () => {
     expect(html).toContain('💬')
   })
 
-  it('shows a warning icon (⚠️) for failed-task alert threads', () => {
+  it('shows a neutral alert icon for alert threads with opaque row ids', () => {
     const html = renderSidebar([
       makeThread({
         origin: 'alert',
-        alertItemId: 'failed-task:mars-123',
+        alertItemId: 'mars-123',
         alertResolved: false,
       }),
     ])
-    expect(html).toContain('⚠️')
+    expect(html).toContain('🔔')
   })
 
-  it('shows a proposal icon (💡) for draft-proposal alert threads', () => {
+  it('does not infer a proposal icon from an opaque alert row id', () => {
     const html = renderSidebar([
       makeThread({
         origin: 'alert',
-        alertItemId: 'draft-proposal:mars-456',
+        alertItemId: 'mars-456',
         alertResolved: false,
       }),
     ])
-    expect(html).toContain('💡')
+    expect(html).toContain('🔔')
   })
 
   it('smart-truncates "Phantom task auto-" prefix in thread titles', () => {

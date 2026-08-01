@@ -23,8 +23,8 @@ import type { RunTimeline } from '@/widgets/TaskDetailDrawer'
 const EMPTY_EVENTS: EventsResponse = { events: [], nextCursor: null }
 
 const BASE_ITEM: ActionQueueItem = {
-  id: 'failed-task:t-1',
-  kind: 'failed-task',
+  id: 't-1',
+  kind: 'failed',
   entityId: 't-1',
   priority: 'normal',
   title: 'Some failed task',

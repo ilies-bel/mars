@@ -9,7 +9,7 @@
  *   kind   'all' (default, omitted) | 'alerts' | 'drafts'
  *   q      search text (omitted when empty)
  *
- * Example: `#/chat?item=failed-task%3At-1&kind=alerts`
+ * Example: `#/chat?item=action-queue-row-id&kind=alerts`
  *
  * Default values are omitted to keep URLs clean. Absent parameters decode as
  * defaults, so a bare `#/chat` hash produces the full-default state.

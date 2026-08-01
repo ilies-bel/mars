@@ -25,6 +25,7 @@ import {
   summarizeTraceEvent,
   marsToolTextClass,
 } from '@/shared/actionQueueDetail'
+import { isTaskFailureActionQueueKind } from '@/shared/schemas'
 import type {
   ActionDescriptor,
   ActionQueueItem,
@@ -648,7 +649,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
   // close the drawer. The `from=chat` tag keeps the chat page mounted behind
   // the drawer and returns here on close.
   const isRealFailedTask =
-    item.kind === 'failed-task' &&
+    isTaskFailureActionQueueKind(item.kind) &&
     item.entityId !== '__daemon-killed-batch__' &&
     item.entityId !== '' &&
     item.dag !== null
@@ -702,7 +703,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
             <h2 className="mt-2 break-all font-mono text-[15px] text-foreground">
               {item.title || '(no title)'}
             </h2>
-            {(item.kind === 'failed-task' || item.kind === 'awaiting-validation') &&
+            {(isTaskFailureActionQueueKind(item.kind) || item.kind === 'awaiting-validation') &&
             item.body ? (
               <p className="mt-2 whitespace-pre-wrap font-mono text-[12px] text-foreground/80">
                 {item.body}
@@ -734,7 +735,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           )}
           {/* Un-teach affordance: shown for failed-task rows with a failure signature
               that has a learned recipe. Lets the operator remove the auto-run rule. */}
-          {item.kind === 'failed-task' && item.failureReasonCode ? (
+          {isTaskFailureActionQueueKind(item.kind) && item.failureReasonCode ? (
             <LearnedRecipeSection failureSignature={item.failureReasonCode} />
           ) : null}
           {item.kind === 'stale-worktree' && (

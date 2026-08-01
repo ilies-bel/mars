@@ -30,7 +30,7 @@ export const verbButtonClass = (style: AlertVerb['style']): string => {
 /**
  * Dispatch a single alert verb to the API.
  *
- * `itemId`   — the action-queue row id (e.g. "failed-task:abc123")
+ * `itemId`   — the opaque action-queue row id (e.g. "abc123")
  * `entityId` — the entity the item refers to (e.g. a task id)
  * `op`       — the verb op code (e.g. "restart", "purge")
  *

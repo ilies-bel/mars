@@ -82,7 +82,7 @@ describe('actionQueueResponseSchema — known kinds parse correctly', () => {
       { ...base, id: 'r1', kind: 'awaiting-human', leaseState: null },
       { ...base, id: 'r2', kind: 'reflect-recommended' },
       { ...base, id: 'r3', kind: 'scorer-suggested' },
-      { ...base, id: 'r4', kind: 'failed-task' },
+      { ...base, id: 'r4', kind: 'failed' },
     ]
     const result = actionQueueResponseSchema.parse(input)
     expect(result).toHaveLength(4)
@@ -94,7 +94,7 @@ describe('actionQueueResponseSchema — known kinds parse correctly', () => {
     expect(kinds).toContain('awaiting-human')
     expect(kinds).toContain('reflect-recommended')
     expect(kinds).toContain('scorer-suggested')
-    expect(kinds).toContain('failed-task')
+    expect(kinds).toContain('failed')
   })
 })
 

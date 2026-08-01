@@ -441,7 +441,7 @@ describe('real fixture regression', () => {
 
 const makeAlert = (overrides: Partial<ActionQueueItem> = {}): ActionQueueItem => ({
   id: 'alert-1',
-  kind: 'failed-task',
+  kind: 'failed',
   entityId: 'task-1',
   priority: 'normal',
   title: 'Some task failed',
@@ -518,8 +518,8 @@ describe('HeroSuggestions – with alert', () => {
     expect(alertPos).toBeLessThan(chipPos)
   })
 
-  it('shows the kind icon for a failed-task alert', () => {
-    const alert = makeAlert({ kind: 'failed-task' })
+  it('shows the kind icon for a failed alert', () => {
+    const alert = makeAlert({ kind: 'failed' })
     const html = renderToStaticMarkup(
       createElement(HeroSuggestions, { alerts: [alert], onAlertClick: () => {}, onChipClick: () => {}, onWhatHappened: () => {} }),
     )
@@ -675,7 +675,7 @@ describe('FeedbackControls – structure', () => {
 /** Minimal unresolved alert segment. */
 const makeAlertSeg = (): ChatSegmentAlert => ({
   type: 'alert',
-  kind: 'failed-task',
+  kind: 'failed',
   entityId: 'task-1',
   priority: 'normal',
   title: 'Task failed',

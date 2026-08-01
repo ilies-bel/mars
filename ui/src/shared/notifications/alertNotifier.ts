@@ -1,24 +1,28 @@
 import { useEffect, useRef } from 'react'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import type { ActionQueueItem } from '@/shared/schemas'
+import {
+  isTaskFailureActionQueueKind,
+  type ActionQueueItem,
+} from '@/shared/schemas'
 import { getNotificationsEnabled, notificationsSupported } from './notificationPrefs'
 
 /**
  * Action-queue kinds that raise a desktop notification. The user opted into
- * "failed tasks + stale worktrees" — in the UI's projected taxonomy
- * (`ui/src/shared/schemas.ts`) that is `failed-task`/`arc-failed` (a failed
- * arc) and `stale-worktree`. `draft-proposal` and `awaiting-validation` are
- * intentionally excluded. Add a kind here to start notifying on it.
+ * "failed tasks + stale worktrees". Task failures retain their persisted kinds,
+ * so they are classified with the same rule as the daemon rather than a stale
+ * `failed-task` display bucket. `draft-proposal` and `awaiting-validation` are
+ * intentionally excluded.
  */
-export const NOTIFY_KINDS: ReadonlySet<ActionQueueItem['kind']> = new Set([
-  'failed-task',
+export const NOTIFY_KINDS: ReadonlySet<string> = new Set([
   'arc-failed',
   'stale-worktree',
 ])
 
 /** Human-readable notification heading per notifiable kind. */
 const KIND_TITLE: Record<string, string> = {
-  'failed-task': 'Task failed',
+  failed: 'Task failed',
+  'daemon-killed': 'Task interrupted by daemon',
+  'stale-queued': 'Task stalled in queue',
   'arc-failed': 'Task failed',
   'stale-worktree': 'Stale worktree',
 }
@@ -53,7 +57,10 @@ export const diffNotifiable = (
   for (const item of items) {
     nextSeen.add(item.id)
     if (seed) continue
-    if (!prevSeen.has(item.id) && NOTIFY_KINDS.has(item.kind)) {
+    if (
+      !prevSeen.has(item.id) &&
+      (isTaskFailureActionQueueKind(item.kind) || NOTIFY_KINDS.has(item.kind))
+    ) {
       toNotify.push(item)
     }
   }
@@ -80,7 +87,7 @@ const fireNotification = (item: ActionQueueItem): void => {
 
 /**
  * Watches the action queue and raises a browser notification when a new
- * failed-task / stale-worktree alert appears, while the tab is open. Gated on
+ * task-failure / stale-worktree alert appears, while the tab is open. Gated on
  * the user's opt-in flag AND live `Notification.permission === 'granted'`.
  *
  * Render exactly once near the app root, inside the FocusedProjectProvider (so

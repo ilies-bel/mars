@@ -42,24 +42,6 @@ export const SidebarFilters = ({ value, onChange, onFastAction }: SidebarFilters
         data-testid="thread-search"
         className="w-full border border-primary/30 bg-background px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
       />
-      <div className="flex flex-wrap gap-1" aria-label="Filter by failure kind">
-        {([
-          ['all', 'All'],
-          ['failed-task', 'Failures'],
-          ['draft-proposal', 'Drafts'],
-        ] as const).map(([kind, label]) => (
-          <button
-            key={kind}
-            type="button"
-            data-testid={`sidebar-filter-${kind}`}
-            aria-pressed={value.kind === kind}
-            className={`border px-1.5 py-0.5 font-mono text-[10px] uppercase ${value.kind === kind ? 'border-primary/70 bg-primary/15 text-foreground' : 'border-primary/25 text-primary hover:bg-primary/10'}`}
-            onClick={() => onChange({ ...value, kind })}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
       <div className="flex flex-wrap items-center gap-1" aria-label="Filter by thread origin">
         {([
           ['all', 'Any origin'],

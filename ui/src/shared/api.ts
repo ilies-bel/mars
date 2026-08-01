@@ -352,7 +352,7 @@ export type SnoozePreset = '1h' | '4h' | 'tomorrow-morning' | 'next-week'
  * Routes to POST /api/actions/snooze/:id on the UI server, which proxies to
  * the daemon's /actions/snooze/:id endpoint.
  *
- * @param id  The action-queue row id (e.g. "failed-task:abc123").
+ * @param id  The opaque action-queue row id (e.g. "abc123").
  * @param preset  How long to snooze.
  */
 export const snoozeActionQueueItem = async (

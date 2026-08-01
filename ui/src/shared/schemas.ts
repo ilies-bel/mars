@@ -410,8 +410,54 @@ const staleWorktreeDetailSchema = z.object({
   investigation: z.string().nullable(),
 })
 
-const failedTaskItemSchema = actionQueueBaseSchema.extend({
-  kind: z.literal('failed-task'),
+// The daemon classifies every ActionQueueKind outside NON_TASK_FAILURE_KINDS as
+// a task failure. This is that finite complement, copied from the daemon's
+// ActionQueueKind vocabulary so task-failure rows retain their raw wire kind.
+const taskFailureKinds = [
+  'failed',
+  'steward-repeat',
+  'cancelled-blocker-cascade',
+  'diagnose-inconclusive',
+  'daemon-killed',
+  'coder-question',
+  'daemon-died',
+  'worktree-ahead',
+  'prerequisite-failed',
+  'slices-dropped',
+  'behaviour-unverified',
+  'subscriber-stalled',
+  'observability-store-oversize',
+  'orphaned-origin',
+  'phantom-task',
+  'outbox-lag',
+  'plan-approval',
+  'done-with-unmerged-commits',
+  'api-outage',
+  'daemon-code-drift',
+  'workflow-install-drift',
+  'provider-rate-limited',
+  'gate-broken',
+  'gate-enrichment',
+  'budget-window',
+  'budget-arc',
+  'promotion-decision',
+  'arc-verification-failed',
+  'signature-storm',
+  'gate-enrichment-stale',
+  'env-incident',
+  'stale-queued',
+  'stale-queued-summary',
+  'spend-control-notice',
+  'scheduling-decision',
+  'requeue-warning',
+] as const
+
+/** Mirrors the daemon's task-failure classification for persisted kinds. */
+export const isTaskFailureActionQueueKind = (kind: string): boolean =>
+  (taskFailureKinds as readonly string[]).includes(kind)
+
+const taskFailureItemSchema = actionQueueBaseSchema.extend({
+  kind: z.enum(taskFailureKinds),
 })
 
 const staleWorktreeItemSchema = actionQueueBaseSchema.extend({
@@ -503,8 +549,7 @@ const scorerSuggestedItemSchema = actionQueueBaseSchema.extend({
   kind: z.literal('scorer-suggested'),
 })
 
-export const actionQueueItemSchema = z.discriminatedUnion('kind', [
-  failedTaskItemSchema,
+export const actionQueueItemSchema = z.union([
   staleWorktreeItemSchema,
   draftProposalItemSchema,
   awaitingValidationItemSchema,
@@ -512,27 +557,26 @@ export const actionQueueItemSchema = z.discriminatedUnion('kind', [
   awaitingHumanItemSchema,
   reflectRecommendedItemSchema,
   scorerSuggestedItemSchema,
+  taskFailureItemSchema,
 ])
 
-// Element-level catch: when a row has an unrecognised 'kind' value (e.g. a stale
-// persisted row) or is otherwise malformed, coerce it to the failed-task variant
-// rather than rejecting the whole array. This preserves the safety net that the
-// old flat-enum '.catch("failed-task")' gave on the discriminator — one bad row
-// must not fail a 300-row response.
+// Element-level catch: malformed rows must not reject an entire queue response.
+// Valid daemon task-failure kinds parse above with their persisted kind intact;
+// this fallback is only for invalid payloads and legacy failed-task rows.
 export const actionQueueResponseSchema = z.array(
   actionQueueItemSchema.catch((ctx) => {
     const raw =
       typeof ctx.input === 'object' && ctx.input !== null
         ? (ctx.input as Record<string, unknown>)
         : {}
-    // Re-parse with kind overridden to 'failed-task'; preserves all other base
-    // fields the failed-task variant accepts. Falls back to a minimal sentinel
+    // Re-parse as the generic failed condition; preserves all other base fields
+    // a task-failure row accepts. Falls back to a minimal sentinel
     // when even the failed-task variant rejects the row.
-    const attempt = failedTaskItemSchema.safeParse({ ...raw, kind: 'failed-task' })
+    const attempt = taskFailureItemSchema.safeParse({ ...raw, kind: 'failed' })
     if (attempt.success) return attempt.data
     return {
       id: typeof raw.id === 'string' ? raw.id : 'unknown',
-      kind: 'failed-task' as const,
+      kind: 'failed',
       entityId: typeof raw.entityId === 'string' ? raw.entityId : '',
       priority: 'high' as const,
       title: typeof raw.title === 'string' ? raw.title : '',
@@ -803,11 +847,11 @@ export const actionQueueHistoryResponseSchema = z.object({
         typeof ctx.input === 'object' && ctx.input !== null
           ? (ctx.input as Record<string, unknown>)
           : {}
-      const attempt = failedTaskItemSchema.safeParse({ ...raw, kind: 'failed-task' })
+      const attempt = taskFailureItemSchema.safeParse({ ...raw, kind: 'failed' })
       if (attempt.success) return attempt.data
       return {
         id: typeof raw.id === 'string' ? raw.id : 'unknown',
-        kind: 'failed-task' as const,
+        kind: 'failed',
         entityId: typeof raw.entityId === 'string' ? raw.entityId : '',
         priority: 'high' as const,
         title: typeof raw.title === 'string' ? raw.title : '',

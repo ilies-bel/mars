@@ -8,7 +8,7 @@
  */
 
 import { memo } from 'react'
-import type { ActionDescriptor, ActionQueueItem } from '@/shared/schemas'
+import { isTaskFailureActionQueueKind, type ActionDescriptor, type ActionQueueItem } from '@/shared/schemas'
 import { kindBadgeLabel, whyNowText } from '@/shared/actionQueueDetail'
 import { relativeTime } from '@/shared/time'
 import { draftRowHeadline } from './queueThreads'
@@ -28,8 +28,10 @@ export const priorityBadgeClass = (priority: string): string => {
   return 'rounded px-1.5 py-0.5 text-muted-foreground'
 }
 
-const KIND_ICON: Record<ActionQueueItem['kind'], string> = {
-  'failed-task': '⚠',
+const KIND_ICON: Record<string, string> = {
+  failed: '⚠',
+  'daemon-killed': '⛔',
+  'stale-queued': '⏳',
   'arc-failed': '⛓',
   'stale-worktree': '◌',
   'awaiting-validation': '⌁',
@@ -226,7 +228,7 @@ export const QueueThreadRow = memo(({
         )}
 
         {/* Kind-specific detail blocks — active only */}
-        {active && item.kind === 'failed-task' && item.diagnosis?.text && (
+        {active && isTaskFailureActionQueueKind(item.kind) && item.diagnosis?.text && (
           <div className="mt-1 line-clamp-2 font-mono text-[10px] text-muted-foreground">
             {item.diagnosis.text}
           </div>

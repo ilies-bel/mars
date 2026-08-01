@@ -60,7 +60,6 @@ export type KindFilter = 'all' | 'alerts' | 'drafts'
 
 export interface ThreadListFilters {
   query: string
-  kind: 'all' | 'failed-task' | 'draft-proposal'
   origin: 'all' | 'alerts' | 'operator'
 }
 
@@ -114,19 +113,17 @@ export function filterThreadsByFork(threads: ChatThread[], forkFilter: ForkFilte
   return threads
 }
 
-/** Applies the chat sidebar's open, query, failure-kind, and origin scopes. */
+/** Applies the chat sidebar's open, query, and origin scopes. */
 export function filterSidebarThreads(
   threads: ChatThread[],
   filters: ThreadListFilters,
   forkFilter: ForkFilter = {},
 ): ChatThread[] {
   return filterThreadsByFork(filterThreadsByTitle(filterOpen(threads), filters.query), forkFilter).filter((thread) => {
-    const kind = thread.alertItemId?.split(':')[0] ?? null
-    const matchesKind = filters.kind === 'all' || kind === filters.kind
     const matchesOrigin =
       filters.origin === 'all' ||
       (filters.origin === 'alerts' ? thread.origin === 'alert' : thread.origin !== 'alert')
-    return matchesKind && matchesOrigin
+    return matchesOrigin
   })
 }
 

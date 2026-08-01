@@ -325,7 +325,7 @@ describe('ContextRail – FocusPanel linked entity', () => {
     const alertItem: ActionQueueItem = {
       id: 'alert-item-2',
       entityId: 'task-xyz',
-      kind: 'failed-task',
+      kind: 'failed',
       title: 'Task failed',
       body: 'Verification did not pass',
       at: '2024-01-01T00:00:00.000Z',
@@ -397,7 +397,7 @@ describe('ContextRail – FocusPanel linked entity', () => {
     const alertItem: ActionQueueItem = {
       id: 'alert-criteria-1',
       entityId: 'task-criteria-1',
-      kind: 'failed-task',
+      kind: 'failed',
       title: 'Task with criteria',
       body: '',
       at: '2024-01-01T00:00:00.000Z',
@@ -518,7 +518,7 @@ describe('ContextRail – FocusPanel linked entity', () => {
     const alertItem: ActionQueueItem = {
       id: 'alert-empty-1',
       entityId: 'task-empty-1',
-      kind: 'failed-task',
+      kind: 'failed',
       title: 'Task without criteria',
       body: '',
       at: '2024-01-01T00:00:00.000Z',
@@ -679,7 +679,7 @@ describe('ContextRail – FocusPanel verbs row', () => {
     const alertItem: ActionQueueItem = {
       id: 'alert-task-only',
       entityId: 'task-xyz',
-      kind: 'failed-task',
+      kind: 'failed',
       title: 'Task failed',
       body: '',
       at: '2024-01-01T00:00:00.000Z',

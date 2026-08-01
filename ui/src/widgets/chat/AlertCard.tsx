@@ -25,7 +25,9 @@ import { taskHash, proposalHash } from '@/shared/routing'
 // ---------------------------------------------------------------------------
 
 const KIND_ICON: Record<string, string> = {
-  'failed-task': '⚠️',
+  failed: '⚠️',
+  'daemon-killed': '⛔',
+  'stale-queued': '⏳',
   'stale-worktree': '🗑️',
   'draft-proposal': '💡',
   'awaiting-validation': '🔍',
@@ -34,7 +36,9 @@ const KIND_ICON: Record<string, string> = {
 
 /** Left accent-bar + border tint per kind. */
 const KIND_ACCENT: Record<string, string> = {
-  'failed-task': 'border-l-error',
+  failed: 'border-l-error',
+  'daemon-killed': 'border-l-error',
+  'stale-queued': 'border-l-warn',
   'arc-failed': 'border-l-error',
   'stale-worktree': 'border-l-warn',
   'awaiting-validation': 'border-l-trace-mars',
@@ -74,7 +78,7 @@ const reappearsIn = (snoozeUntilIso: string): string => {
 
 export interface AlertCardProps {
   /**
-   * Action-queue row id used for snooze API calls (e.g. "failed-task:abc123").
+   * Opaque action-queue row id used for snooze API calls (e.g. "abc123").
    * Pass the chat segment's entityId when the row id is unavailable — the server
    * will infer it.
    */

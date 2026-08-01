@@ -1105,8 +1105,8 @@ export const buildActionQueueView = async ({
       raisedAt: newest.at,
     }
     filtered.unshift({
-      id: 'failed-task:__daemon-killed-batch__',
-      kind: 'failed-task',
+      id: 'daemon-killed:__daemon-killed-batch__',
+      kind: 'daemon-killed',
       entityId: '__daemon-killed-batch__',
       priority: 'high',
       title: batchTitle,

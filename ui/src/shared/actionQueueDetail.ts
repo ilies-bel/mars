@@ -5,7 +5,7 @@
  *
  * The former failure-reason catalog helpers (lookup, action-op binding,
  * CLI-hint rendering) were removed with the code-keyed catalog (ADR-0042):
- * failed-task rows now render their reason and recovery menu directly from the
+ * task-failure rows now render their reason and recovery menu directly from the
  * row's `body` and `actions` fields, derived daemon-side from the single
  * signature-keyed Failure kind record.
  */
@@ -327,7 +327,7 @@ export const humanizePhase = (phase: string | null): string | null => {
 
 /**
  * One-line "why now" subtitle — the most actionable reason an operator should
- * act on a failed-task card. Priority: diagnosis text → errorKind (when
+ * act on a task-failure card. Priority: diagnosis text → errorKind (when
  * distinct from kind) → failureReasonCode → arc reason → body first line
  * (when non-generic).
  */
@@ -367,11 +367,11 @@ export const originKindLabel = (kind: string): string => {
 /**
  * Short display label for an action-queue row kind. Used in both the sidebar
  * row kind badge and the detail panel header badge so the label is authoritative
- * in one place for all four kinds (including `arc-failed`).
+ * in one place for raw daemon kinds.
  */
 export const kindBadgeLabel = (kind: string): string => {
   if (kind === 'arc-failed') return 'arc failed'
-  if (kind === 'failed-task') return 'failed'
+  if (kind === 'failed') return 'failed'
   if (kind === 'stale-worktree') return 'stale wt'
   if (kind === 'draft-proposal') return 'draft'
   if (kind === 'awaiting-validation') return 'validate'

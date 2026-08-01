@@ -10,7 +10,6 @@ import { ThreadSidebar } from '@/pages/ChatPage'
 
 const filters: SidebarFiltersValue = {
   query: '',
-  kind: 'all',
   origin: 'all',
   selectedItem: null,
 }
@@ -20,7 +19,7 @@ const thread = (overrides: Partial<ChatThread>): ChatThread => ({
   title: 'Restart the failed deploy',
   status: 'idle',
   origin: 'alert',
-  alertItemId: 'failed-task:mars-123',
+  alertItemId: 'mars-123',
   alertResolved: false,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
@@ -62,7 +61,7 @@ describe('SidebarFilters', () => {
     const root = createRoot(container)
 
     const SidebarHarness = () => {
-      const [value, setValue] = useState<ThreadListFilters>({ query: '', kind: 'all', origin: 'all' })
+      const [value, setValue] = useState<ThreadListFilters>({ query: '', origin: 'all' })
       return (
         <ThreadSidebar
           selectedId={null}
@@ -99,7 +98,7 @@ describe('SidebarFilters', () => {
     root.unmount()
   })
 
-  it('lets operators scope the list by failure kind and thread origin', () => {
+  it('lets operators scope the list by thread origin', () => {
     const onChange = vi.fn()
     const container = document.createElement('div')
     const root = createRoot(container)
@@ -109,12 +108,10 @@ describe('SidebarFilters', () => {
     })
 
     act(() => {
-      container.querySelector<HTMLButtonElement>('[data-testid="sidebar-filter-failed-task"]')!.click()
       container.querySelector<HTMLButtonElement>('[data-testid="sidebar-filter-alerts"]')!.click()
     })
 
-    expect(onChange).toHaveBeenNthCalledWith(1, { ...filters, kind: 'failed-task' })
-    expect(onChange).toHaveBeenNthCalledWith(2, { ...filters, origin: 'alerts' })
+    expect(onChange).toHaveBeenCalledWith({ ...filters, origin: 'alerts' })
     root.unmount()
   })
 
@@ -130,8 +127,8 @@ describe('SidebarFilters', () => {
             ...filters,
             query: 'unrelated search',
             selectedItem: {
-              id: 'failed-task:mars-123',
-              kind: 'failed-task',
+              id: 'mars-123',
+              kind: 'failed',
               entityId: 'mars-123',
               priority: 'high',
               title: 'Deploy failed',
@@ -157,16 +154,16 @@ describe('SidebarFilters', () => {
     root.unmount()
   })
 
-  it('filters open threads by query, kind, and origin together', () => {
+  it('filters open threads by query and origin together', () => {
     const threads = [
-      thread({ id: 'failed', title: 'Restart deploy', alertItemId: 'failed-task:mars-1' }),
-      thread({ id: 'draft', title: 'Review proposal', alertItemId: 'draft-proposal:proposal-1' }),
+      thread({ id: 'failed', title: 'Restart deploy', alertItemId: 'mars-1' }),
+      thread({ id: 'draft', title: 'Review proposal', alertItemId: 'proposal-1' }),
       thread({ id: 'operator', title: 'Discuss deploy', origin: null, alertItemId: null }),
       thread({ id: 'resolved', title: 'Restart deploy', alertResolved: true }),
     ]
 
     expect(
-      filterSidebarThreads(threads, { query: 'deploy', kind: 'failed-task', origin: 'alerts' })
+      filterSidebarThreads(threads, { query: 'deploy', origin: 'alerts' })
         .map((item) => item.id),
     ).toEqual(['failed'])
   })
