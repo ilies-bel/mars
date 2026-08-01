@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0010'
+export const SCHEMA_VERSION = '0011'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -227,9 +227,22 @@ const DDL: readonly string[] = [
     state           text NOT NULL DEFAULT 'confirmed'
                          CHECK (state IN ('confirmed','pending-review','rejected')),
     provenance      text NOT NULL DEFAULT 'inferred',
-    created_at      text NOT NULL,
+    created_at      bigint NOT NULL,
     PRIMARY KEY (task_id, blocker_task_id)
   )`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'task_blockers'
+          AND column_name = 'created_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE task_blockers
+         ALTER COLUMN created_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM created_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
   `CREATE INDEX IF NOT EXISTS idx_task_blockers_task ON task_blockers(task_id)`,
   `CREATE INDEX IF NOT EXISTS idx_task_blockers_blocker
      ON task_blockers(blocker_task_id)`,
@@ -238,9 +251,22 @@ const DDL: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS task_proposal_blockers (
     task_id     text NOT NULL REFERENCES tasks(id),
     proposal_id text NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
-    created_at  text NOT NULL,
+    created_at  bigint NOT NULL,
     PRIMARY KEY (task_id, proposal_id)
   )`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'task_proposal_blockers'
+          AND column_name = 'created_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE task_proposal_blockers
+         ALTER COLUMN created_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM created_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
   `CREATE INDEX IF NOT EXISTS idx_task_proposal_blockers_task
      ON task_proposal_blockers(task_id)`,
   `CREATE INDEX IF NOT EXISTS idx_task_proposal_blockers_proposal
@@ -252,17 +278,43 @@ const DDL: readonly string[] = [
     text       text   NOT NULL,
     status     text   NOT NULL DEFAULT 'pending',
     note       text,
-    updated_at text   NOT NULL,
+    updated_at bigint NOT NULL,
     UNIQUE (task_id, position)
   )`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'task_acceptance'
+          AND column_name = 'updated_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE task_acceptance
+         ALTER COLUMN updated_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM updated_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
   `CREATE INDEX IF NOT EXISTS idx_task_acceptance_task ON task_acceptance(task_id)`,
   `CREATE TABLE IF NOT EXISTS self_heal_attempts (
     id                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     parent_task_id    text NOT NULL,
     failure_signature text NOT NULL,
     fix_task_id       text NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    created_at        text NOT NULL
+    created_at        bigint NOT NULL
   )`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'self_heal_attempts'
+          AND column_name = 'created_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE self_heal_attempts
+         ALTER COLUMN created_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM created_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
   `CREATE INDEX IF NOT EXISTS idx_self_heal_attempts_parent_signature
      ON self_heal_attempts(parent_task_id, failure_signature)`,
   `CREATE INDEX IF NOT EXISTS idx_self_heal_attempts_fix_task
@@ -311,8 +363,21 @@ const DDL: readonly string[] = [
     category   text,
     answer     text,
     status     text NOT NULL DEFAULT 'open',
-    created_at text NOT NULL
+    created_at bigint NOT NULL
   )`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'questions'
+          AND column_name = 'created_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE questions
+         ALTER COLUMN created_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM created_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
   `CREATE INDEX IF NOT EXISTS idx_questions_task ON questions(task_id)`,
   `CREATE TABLE IF NOT EXISTS task_progress (
     id              text   PRIMARY KEY,

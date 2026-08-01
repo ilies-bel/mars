@@ -318,7 +318,8 @@ describe('ensureSchema', () => {
     const c = await freshSchemaClient()
     const cols = await columnsOf(c, 'task_blockers')
     expect(cols.get('provenance')).toBe('text')
-    const now = new Date().toISOString()
+    expect(cols.get('created_at')).toBe('bigint')
+    const now = Date.now()
     await c.execute(
       `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
        VALUES ('t1', 'p', 'queued', ?, ?), ('t2', 'p', 'queued', ?, ?)`,
@@ -347,6 +348,86 @@ describe('ensureSchema', () => {
         [now],
       ),
     ).rejects.toThrow()
+  })
+
+  it('converts task-adjacent operational timestamps to epoch milliseconds', async () => {
+    const c = openDb(freshKey())
+    try {
+      await __execSchemaBatch(c, [
+        `CREATE TABLE task_blockers (
+          task_id text NOT NULL,
+          blocker_task_id text NOT NULL,
+          state text NOT NULL DEFAULT 'confirmed',
+          provenance text NOT NULL DEFAULT 'inferred',
+          created_at text NOT NULL,
+          PRIMARY KEY (task_id, blocker_task_id)
+        )`,
+        `CREATE TABLE task_proposal_blockers (
+          task_id text NOT NULL,
+          proposal_id text NOT NULL,
+          created_at text NOT NULL,
+          PRIMARY KEY (task_id, proposal_id)
+        )`,
+        `CREATE TABLE task_acceptance (
+          id text PRIMARY KEY,
+          task_id text NOT NULL,
+          position bigint NOT NULL,
+          text text NOT NULL,
+          status text NOT NULL DEFAULT 'pending',
+          note text,
+          updated_at text NOT NULL
+        )`,
+        `CREATE TABLE self_heal_attempts (
+          id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+          parent_task_id text NOT NULL,
+          failure_signature text NOT NULL,
+          fix_task_id text NOT NULL,
+          created_at text NOT NULL
+        )`,
+        `CREATE TABLE questions (
+          id text PRIMARY KEY,
+          task_id text NOT NULL,
+          question text NOT NULL,
+          rationale text,
+          category text,
+          answer text,
+          status text NOT NULL DEFAULT 'open',
+          created_at text NOT NULL
+        )`,
+        {
+          sql: `INSERT INTO task_blockers VALUES ('task', 'blocker', 'confirmed', 'inferred', '1970-01-01T00:00:01.234Z')`,
+        },
+        {
+          sql: `INSERT INTO task_proposal_blockers VALUES ('task', 'proposal', '1970-01-01T00:00:02.345Z')`,
+        },
+        {
+          sql: `INSERT INTO task_acceptance VALUES ('acceptance', 'task', 1, 'works', 'pending', NULL, '1970-01-01T00:00:03.456Z')`,
+        },
+        {
+          sql: `INSERT INTO self_heal_attempts (parent_task_id, failure_signature, fix_task_id, created_at)
+                VALUES ('task', 'signature', 'fix', '1970-01-01T00:00:04.567Z')`,
+        },
+        {
+          sql: `INSERT INTO questions (id, task_id, question, created_at)
+                VALUES ('question', 'task', 'What now?', '1970-01-01T00:00:05.678Z')`,
+        },
+      ])
+
+      await ensureSchema(c)
+
+      expect((await columnsOf(c, 'task_blockers')).get('created_at')).toBe('bigint')
+      expect((await columnsOf(c, 'task_proposal_blockers')).get('created_at')).toBe('bigint')
+      expect((await columnsOf(c, 'task_acceptance')).get('updated_at')).toBe('bigint')
+      expect((await columnsOf(c, 'self_heal_attempts')).get('created_at')).toBe('bigint')
+      expect((await columnsOf(c, 'questions')).get('created_at')).toBe('bigint')
+      expect((await c.execute(`SELECT created_at FROM task_blockers`)).rows[0].created_at).toBe(1234)
+      expect((await c.execute(`SELECT created_at FROM task_proposal_blockers`)).rows[0].created_at).toBe(2345)
+      expect((await c.execute(`SELECT updated_at FROM task_acceptance`)).rows[0].updated_at).toBe(3456)
+      expect((await c.execute(`SELECT created_at FROM self_heal_attempts`)).rows[0].created_at).toBe(4567)
+      expect((await c.execute(`SELECT created_at FROM questions`)).rows[0].created_at).toBe(5678)
+    } finally {
+      await c.close()
+    }
   })
 
   it('tasks.status CHECK rejects unknown statuses', async () => {
@@ -455,7 +536,7 @@ describe('ensureSchema', () => {
     await c.execute(
       `INSERT INTO task_proposal_blockers (task_id, proposal_id, created_at)
        VALUES ('t1', 'p1', ?)`,
-      [now],
+      [Date.now()],
     )
     await c.execute(`DELETE FROM proposals WHERE id = 'p1'`)
     const r = await c.execute(`SELECT count(*) AS n FROM task_proposal_blockers`)

@@ -49,7 +49,7 @@ function questionRaiseSubscriber(client: DbClient): Subscriber {
         taskId: string;
         question: string;
       };
-      const now = new Date().toISOString();
+      const now = Date.now();
       const raisedBy = 'outbox:question-raiser:task.question';
 
       await processedOnce({

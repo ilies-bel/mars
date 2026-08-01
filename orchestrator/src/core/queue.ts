@@ -145,7 +145,7 @@ export interface Blocker {
   causeKind: BlockerCauseKind
   causeId: string
   state: BlockerState
-  createdAt: string
+  createdAt: number
 }
 
 /**
@@ -1779,7 +1779,7 @@ export const addProposalBlockers = async (
     unique.push(id)
   }
   if (unique.length === 0) return
-  const now = new Date().toISOString()
+  const now = Date.now()
   const stmts = unique.map((proposalId) => ({
     sql: `INSERT INTO task_proposal_blockers (task_id, proposal_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
     args: [taskId, proposalId, now],
@@ -2019,7 +2019,7 @@ export const listAllBlockers = async (taskId: string): Promise<Blocker[]> => {
       const r = row as unknown as {
         cause_id: string
         state: string
-        created_at: string
+        created_at: number
       }
       return {
         taskId,
@@ -2030,7 +2030,7 @@ export const listAllBlockers = async (taskId: string): Promise<Blocker[]> => {
       }
     }),
     ...ideaRows.rows.map((row) => {
-      const r = row as unknown as { cause_id: string; created_at: string }
+      const r = row as unknown as { cause_id: string; created_at: number }
       // Proposal blockers are always treated as confirmed gates — the
       // ADR-0015 cross-graph edge has no per-row state column yet (a future
       // slice may add one alongside the Linker for ideas).
@@ -2049,7 +2049,7 @@ export const listAllBlockers = async (taskId: string): Promise<Blocker[]> => {
     const sa = stateRank(a.state)
     const sb = stateRank(b.state)
     if (sa !== sb) return sa - sb
-    return a.createdAt.localeCompare(b.createdAt)
+    return a.createdAt - b.createdAt
   })
   return blockers
 }

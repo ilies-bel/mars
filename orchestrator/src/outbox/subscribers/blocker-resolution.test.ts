@@ -8,6 +8,7 @@ interface QueueModule {
   ensureQueueSchema: typeof import('../../core/queue').ensureQueueSchema
   enqueueTask: typeof import('../../core/queue').enqueueTask
   addBlockers: typeof import('../../core/queue').addBlockers
+  listAllBlockers: typeof import('../../core/queue').listAllBlockers
   getTask: typeof import('../../core/queue').getTask
   resolveQueueClient: typeof import('../../core/queue').resolveQueueClient
 }
@@ -107,6 +108,22 @@ describe('blocker-resolution outbox subscriber', () => {
 
     expect(processed).toBeGreaterThan(0)
     expect((await q.getTask(dep.id))?.status).toBe('queued')
+  })
+
+  it('records blocker ordering timestamps as epoch milliseconds', async () => {
+    const { q } = await loadModules(repo)
+    const dependent = await q.enqueueTask('dependent', undefined, { skipTriage: true })
+    const blocker = await q.enqueueTask('blocker', undefined, { skipTriage: true })
+
+    await q.addBlockers(dependent.id, [blocker.id])
+
+    const [edge] = await q.listAllBlockers(dependent.id)
+    expect(edge).toMatchObject({
+      causeKind: 'task',
+      causeId: blocker.id,
+    })
+    expect(edge.createdAt).toEqual(expect.any(Number))
+    expect(edge.createdAt).toBeGreaterThan(1_700_000_000_000)
   })
 
   it('replays missed task.terminal events after a restart (cursor-based recovery)', async () => {
@@ -308,7 +325,7 @@ describe('blocker-resolution: main-committer done must re-queue parked tasks, no
       // Park src behind C2 (raw SQL — ADR-0040 guard exemption for main-committers)
       await qc.execute({
         sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-        args: [src.id, c2Id, new Date().toISOString()],
+        args: [src.id, c2Id, Date.now()],
       })
       await qc.execute({ sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`, args: [src.id] })
 
@@ -415,6 +432,7 @@ describe('blocker-resolution: a failed recovery must fail its origin, not strand
     const origin = await q.enqueueTask(originPrompt, undefined, { skipTriage: true })
     const recoveryId = `fix-${origin.id.slice(0, 8)}`
     const now = new Date().toISOString()
+    const blockerCreatedAt = Date.now()
     await qc.execute({
       sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, failure_reason, failure_signature, created_at, updated_at)
             VALUES (?, 'fix the code', 'failed', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, ?, ?, ?, ?)`,
@@ -431,7 +449,7 @@ describe('blocker-resolution: a failed recovery must fail its origin, not strand
     await qc.execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
             VALUES (?, ?, 'confirmed', ?)`,
-      args: [origin.id, recoveryId, now],
+      args: [origin.id, recoveryId, blockerCreatedAt],
     })
     await qc.execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
@@ -540,6 +558,7 @@ describe('blocker-resolution: a failed recovery must fail its origin, not strand
     })
     const committerId = `fix-mc-${src.id.slice(0, 6)}`
     const now = new Date().toISOString()
+    const blockerCreatedAt = Date.now()
     await qc.execute({
       sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, recovery_payload, created_at, updated_at)
             VALUES (?, 'clean main', 'failed', 'fix', 'agent', 'main-commiter-spawn', ?, 0, ?, 3, ?, ?, ?)`,
@@ -555,7 +574,7 @@ describe('blocker-resolution: a failed recovery must fail its origin, not strand
     await qc.execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
             VALUES (?, ?, 'confirmed', ?)`,
-      args: [src.id, committerId, now],
+      args: [src.id, committerId, blockerCreatedAt],
     })
     await qc.execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
@@ -667,7 +686,7 @@ describe('blocker-resolution: late recovery success must resurrect failed origin
       await qc.execute({
         sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
               VALUES (?, ?, 'confirmed', ?)`,
-        args: [dep.id, origin.id, new Date().toISOString()],
+        args: [dep.id, origin.id, Date.now()],
       })
       await qc.execute({
         sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,

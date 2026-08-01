@@ -31,6 +31,7 @@ import {
   assertTaskKindInvariant,
   ensureQueueSchema,
   getTask,
+  reopenTerminalTask,
   updateTask,
   resolveQueueClient,
   MAX_PRIORITY,
@@ -1186,6 +1187,7 @@ export class Arc {
       1000,
     )
     const now = new Date().toISOString()
+    const blockerCreatedAt = Date.now()
 
     if (existingId) {
       // Attach this source to the existing fix-task and park it.
@@ -1194,7 +1196,7 @@ export class Arc {
           {
             sql: `INSERT INTO task_blockers (task_id, blocker_task_id, created_at)
                 VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
-            args: [input.sourceTaskId, existingId, now],
+            args: [input.sourceTaskId, existingId, blockerCreatedAt],
           },
           {
             // updated_at first — exempt from STATUS_WRITE arch guard. Events are
@@ -1297,7 +1299,7 @@ export class Arc {
           // writer; see the method-level note above.
           sql: `INSERT INTO task_blockers (task_id, blocker_task_id, created_at)
               VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
-          args: [input.sourceTaskId, fixTaskId, now],
+          args: [input.sourceTaskId, fixTaskId, blockerCreatedAt],
         },
         {
           // updated_at first — exempt from STATUS_WRITE arch guard. Events are
@@ -1317,7 +1319,12 @@ export class Arc {
           sql: `INSERT INTO self_heal_attempts (
                 parent_task_id, failure_signature, fix_task_id, created_at
               ) VALUES (?, ?, ?, ?)`,
-          args: [input.sourceTaskId, input.failureSignature, fixTaskId, now],
+          args: [
+            input.sourceTaskId,
+            input.failureSignature,
+            fixTaskId,
+            blockerCreatedAt,
+          ],
         },
         // Durable task.blocked in the same atomic batch (ADR-0030).
         buildEventInsert('task.blocked', {
@@ -1373,6 +1380,7 @@ export class Arc {
       throw new Error(`source task ${input.sourceTaskId} not found`)
     }
     const now = new Date().toISOString()
+    const blockerCreatedAt = Date.now()
     const truncatedError = truncate(input.errorSummary, 1000)
     await s.batch(
       [
@@ -1384,7 +1392,7 @@ export class Arc {
           // edge is the canonical attach mechanism.
           sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
                 VALUES (?, ?, 'confirmed', ?) ON CONFLICT DO NOTHING`,
-          args: [input.sourceTaskId, input.fixTaskId, now],
+          args: [input.sourceTaskId, input.fixTaskId, blockerCreatedAt],
         },
         {
           // updated_at first — exempt from STATUS_WRITE arch guard. Events are
@@ -1470,6 +1478,7 @@ export class Arc {
     const s = this.store
     const fixTaskId = `fix-${randomUUID().slice(0, 8)}`
     const now = new Date().toISOString()
+    const blockerCreatedAt = Date.now()
     const payload: MainCommiterPayload = {
       recipe: MAIN_COMMITER_RECIPE,
       integrationBranch: input.integrationBranch,
@@ -1510,7 +1519,7 @@ export class Arc {
           // `handleTaskFailureWithFixTask`), so the leaf invariant holds.
           sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
               VALUES (?, ?, 'confirmed', ?) ON CONFLICT DO NOTHING`,
-          args: [input.sourceTaskId, fixTaskId, now],
+          args: [input.sourceTaskId, fixTaskId, blockerCreatedAt],
         },
         {
           // updated_at first — exempt from STATUS_WRITE arch guard. Events are
@@ -1626,7 +1635,7 @@ export class Arc {
     for (const blockerId of unique) {
       await assertNotRecoveryEdge(taskId, blockerId, { client: s })
     }
-    const now = new Date().toISOString()
+    const now = Date.now()
     const provenance = options?.provenance ?? 'inferred'
     // Causal writers default to 'confirmed' state. The Linker writes
     // 'pending-review' rows via a separate entry point. provenance tags
@@ -1716,7 +1725,7 @@ export class Arc {
     for (const blockerId of unique) {
       await assertNotRecoveryEdge(taskId, blockerId, { client: s })
     }
-    const now = new Date().toISOString()
+    const now = Date.now()
     const stmts = unique.map((blockerId) => ({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'pending-review', ?) ON CONFLICT DO NOTHING`,
       args: [taskId, blockerId, now],
@@ -1750,7 +1759,7 @@ export class Arc {
       if (taskId === newBlockerTaskId) continue
       await assertNotRecoveryEdge(taskId, newBlockerTaskId, { client: store })
     }
-    const now = new Date().toISOString()
+    const now = Date.now()
     const stmts: DbStatement[] = []
     for (const taskId of dependents) {
       // Insert the task_blockers row BEFORE deleting the task_proposal_blockers
@@ -2968,7 +2977,7 @@ export class Arc {
     integrationBranch: string,
   ): Promise<{ reparented: number }> {
     const s = await getDefaultTaskStore()
-    const now = new Date().toISOString()
+    const now = Date.now()
 
     // Find all (stranded_task_id, failed_committer_id) pairs where the task is
     // still `blocked` on a prior FAILED main-committer for this integration branch.
@@ -3062,9 +3071,10 @@ export class Arc {
         actionQueueItemsClosed,
       }
     }
-    if (origin.status === 'done' || origin.status === 'failed' || origin.status === 'dropped') {
-      // Terminal origin rows are absorbing.  The Chore contributes to the
-      // stateless Arc rollup; it must not resurrect or overwrite the origin.
+    if (origin.status === 'done') {
+      // A completed origin is the only true idempotent case. A successful
+      // recovery remains authoritative for origins previously marked failed
+      // or dropped, so those statuses are reconciled to done below.
       return {
         originTaskId,
         originFlipped: false,
@@ -3077,11 +3087,13 @@ export class Arc {
     // reconcile 'failed' and 'dropped' origins to 'done' here — a successful
     // recovery shipping the work is the authoritative signal that the origin
     // reached done, regardless of what the retry-budget guard or any other
-    // upstream writer previously stamped. The TOCTOU window is acceptable in
-    // the single-process orchestrator. Arc.setTaskStatus does NOT enforce
-    // terminal immutability — the early-return above (for 'done' only) is
-    // the sole guard (ADR-0052 preserves the caller-side defense).
+    // upstream writer previously stamped. Failed and dropped rows must first
+    // cross the audited reopen seam so the database trigger permits the
+    // terminal transition.
     const store = await getDefaultTaskStore()
+    if (origin.status === 'failed' || origin.status === 'dropped') {
+      await reopenTerminalTask(originTaskId, 'successful recovery', store)
+    }
     await Arc.setTaskStatus(originTaskId, 'done', { result: { via: 'recovery' } }, store)
     // Clear the error field and emit the terminal event in a second transaction.
     const now = new Date().toISOString()
