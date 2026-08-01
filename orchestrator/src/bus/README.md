@@ -1,27 +1,32 @@
 # bus
 
 Local-first event bus for the Mars orchestrator. Library code publishes events
-atomically with the state writes they describe via a shared `mars.db` (libsql).
-One daemon tails an `events` outbox table and fans events out over WebSocket.
+atomically with the state writes they describe, into an `events` outbox table.
+Consumers are in-process subscribers that poll that table and advance their own
+cursor.
 
 ## Architecture
 
 ```
 Writers (queue.ts, action queue.ts, …)
-       │ libsql write transaction
+       │ write transaction
        ▼
-mars.db → events table  ──►  Bus Daemon (single poller)  ──►  WebSocket clients
-                                                               (UI, agents, browser)
+events table  ──►  subscribers.ts (per-subscriber cursor)  ──►  handlers
+                   processed-once.ts (at-most-once side effects)
 ```
 
-- Writers call `publish(tx, type, payload)` **inside an open libsql write
+- Writers call `publish(tx, type, payload)` **inside an open write
   transaction** so the event commits atomically with the state row it describes.
-- The `events` table lives in `mars.db` — same file, same driver — so
-  transactional atomicity is guaranteed.
-- The daemon (`startDaemon()`) uses the shared `getClient()` singleton from
-  `queue.ts` — no second connection.
-- The daemon fans events out over WebSocket with per-client topic filtering and
-  cursor-based replay.
+- Storage is the orchestrator's Postgres database, reached through the
+  `DbClient` abstraction in `src/core/lib/db.ts` — the same connection the rest
+  of the orchestrator uses, so transactional atomicity is guaranteed.
+- `subscribers.ts` fans events out to registered handlers, tracking a cursor per
+  subscriber; `processed-once.ts` guards side effects that must not run twice.
+
+There is no WebSocket transport. A `daemon.ts` / `client.ts` pair once fanned
+events out over WebSocket to external clients; both were orphaned (zero
+importers) and have been removed. The UI gets its invalidation pings from the
+daemon's own `GET /view/stream` SSE channel, not from this module.
 
 ## How to add a new event type
 
@@ -32,34 +37,24 @@ mars.db → events table  ──►  Bus Daemon (single poller)  ──►  WebS
      'task.dropped': z.object({ taskId: z.string(), dropReason: z.string() }),
    } as const;
    ```
-2. Publish it from a writer, inside a libsql transaction:
+2. Publish it from a writer, inside the same write transaction as the state
+   change it describes:
    ```ts
-   import { publish } from '../bus/publisher.js';
-   import { getClient } from './queue.js';
+   import { buildEventInsert, withWriteTx } from '../bus/publisher.js';
 
-   const tx = await getClient().transaction('write');
-   try {
-     await tx.execute({ sql: 'UPDATE tasks SET status = ? WHERE id = ?', args: ['dropped', taskId] });
-     await publish(tx, 'task.dropped', { taskId, dropReason });
-     await tx.commit();
-   } catch (err) {
-     tx.close();
-     throw err;
-   }
+   await withWriteTx(client, async (tx) => {
+     await tx.execute({ sql: 'UPDATE tasks SET status = $1 WHERE id = $2', args: ['dropped', taskId] });
+     await tx.execute(buildEventInsert('task.dropped', { taskId, dropReason }));
+   });
    ```
-3. Subscribe from any client:
-   ```ts
-   bus.on('task.dropped', ({ taskId, dropReason }) => { ... });
-   ```
+3. Register a subscriber (see `subscribers.ts`) to react to it.
 
-The publisher, daemon, and client are all generic over `EventMap` — no other
-file needs to change when a new event type is added.
+The publisher and the subscriber registry are both generic over `EventMap` — no
+other file needs to change when a new event type is added.
 
 ## Non-goals (deliberately omitted)
 
-- Authentication / TLS (local-only for now; see `daemon.ts` TODO).
 - Event pruning / retention (rows grow unbounded; a future pass should cap by
   age or per-subscriber cursor; see `queue.ts` TODO comment).
 - Distributed deployment across machines.
-- Replacing `setInterval` polling with a change notification hook (future
-  optimization, see `daemon.ts` TODO).
+- Push-based delivery. Subscribers poll; there is no change-notification hook.
