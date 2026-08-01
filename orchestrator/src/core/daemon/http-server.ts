@@ -1999,6 +1999,10 @@ export const startHttpServer = async (
         const result = z.object({
           message: z.string(),
           attachments: z.array(attachmentSchema).optional(),
+          /** Why this Subthread exists. Drives the archive prompt. */
+          objective: z.string().optional(),
+          /** Where it was spawned from: 'alert', 'reflection', 'operator', ... */
+          origin: z.string().optional(),
         }).refine(
           (data) => data.message.length > 0 || (data.attachments?.length ?? 0) > 0,
           { message: 'message or at least one attachment is required', path: ['message'] },
@@ -2018,6 +2022,10 @@ export const startHttpServer = async (
         deps.appServices.buildSituationReport()
           .then((situation) => createThread(undefined, {
             situationReport: situation,
+            // Absent an explicit objective, the opening message is the closest
+            // honest statement of why the operator opened this Subthread.
+            objective: result.data.objective ?? result.data.message,
+            ...(result.data.origin !== undefined ? { origin: result.data.origin } : {}),
             firstUserMessage: { content: result.data.message, segments: userSegments },
           }))
           .then(async (thread) => {
@@ -2052,14 +2060,26 @@ export const startHttpServer = async (
             return
           }
         }
-        const schema = z.object({ title: z.string().optional() })
+        const schema = z.object({
+          title: z.string().optional(),
+          objective: z.string().optional(),
+          origin: z.string().optional(),
+        })
         const result = schema.safeParse(parsed)
         if (!result.success) {
-          sendJson(res, 400, { ok: false, error: 'body must be { title?: string }' })
+          sendJson(res, 400, { ok: false, error: 'body must be { title?: string, objective?: string, origin?: string }' })
           return
         }
         deps.appServices.buildSituationReport()
-          .then((situation) => createThread(result.data.title, { situationReport: situation }))
+          .then((situation) => createThread(result.data.title, {
+            situationReport: situation,
+            // Fall back to the title: a Subthread named "Fix the slicer" has
+            // stated its objective, even if nobody filled a separate field.
+            ...(result.data.objective ?? result.data.title
+              ? { objective: result.data.objective ?? result.data.title! }
+              : {}),
+            ...(result.data.origin !== undefined ? { origin: result.data.origin } : {}),
+          }))
           .then((thread) => {
             deps.viewStreamHub?.broadcast('chat')
             sendJson(res, 200, toThreadApiView(thread))

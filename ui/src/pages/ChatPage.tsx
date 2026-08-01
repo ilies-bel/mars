@@ -904,10 +904,16 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false }
   const typeIcon = thread.origin === 'alert' ? '🔔' : '💬'
   const iconDimmed = thread.origin === 'alert' && thread.alertResolved
 
+  // Show the objective only when it says something the title does not. Creation
+  // falls back to the title/opening message when no explicit objective is given,
+  // so without this check most rows would print the same sentence twice.
+  const objective = thread.objective?.trim()
+  const showObjective = Boolean(objective) && objective !== thread.title?.trim() && objective !== title
+
   return (
     <div
       className={[
-        'group flex items-center gap-1 rounded py-1.5 cursor-pointer border-b border-primary/10',
+        'group flex flex-col rounded py-1.5 cursor-pointer border-b border-primary/10',
         // The inset plus a rule is the structural half of the hierarchy; the
         // main-thread row carries the weight half.
         indented ? 'ml-3 border-l border-primary/15 pl-2 pr-2' : 'px-2',
@@ -919,6 +925,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false }
       onDoubleClick={startEdit}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect() } }}
     >
+      <div className="flex items-center gap-1">
       {editing ? (
         <input
           ref={inputRef}
@@ -970,6 +977,16 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false }
             />
           )}
         </>
+      )}
+      </div>
+      {showObjective && !editing && (
+        <p
+          data-testid="subthread-objective"
+          title={objective}
+          className="mt-0.5 truncate pl-[18px] font-mono text-[9px] text-muted-foreground"
+        >
+          {objective}
+        </p>
       )}
     </div>
   )
