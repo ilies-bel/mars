@@ -119,6 +119,64 @@ jobs:
           command -v mars
           mars --help || mars help || true
 
+  arch:
+    # Static architecture guard: import cycles are an ERROR, orphan modules a
+    # WARN, across orchestrator/ + packages/ and (with its own `@/*` alias
+    # config) ui/.
+    #
+    # This tree is already 28-of-49 folders cyclic, so `no-circular` could not
+    # simply be switched on. Today's cycles are frozen in the committed
+    # known-violations baselines and this job fails only on violations that are
+    # NOT in them — i.e. on cycles the PR itself introduced. The baselines are a
+    # ratchet: they may only ever shrink. A PR that GROWS one is regenerating to
+    # silence itself and should be rejected.
+    #
+    # Runs off the ROOT install alone — deliberately. It needs no orchestrator/
+    # or ui/ node_modules: every first-party import in this repo resolves by
+    # relative path or through the tsconfig alias, so nothing external needs to
+    # be present for the cycle graph to be complete. Keeps the job to one small
+    # install.
+    name: Architecture (import cycles)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Assert the baselines were not grown to silence a new cycle
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then
+            echo "not a pull request — skipping the ratchet-direction check"
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$base"
+          fail=0
+          for f in .dependency-cruiser-known-violations.json ui/.dependency-cruiser-known-violations.json; do
+            before=$(git show "$base:$f" 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(s.trim()?JSON.parse(s).length:0))' || echo 0)
+            after=$(node -e 'console.log(require("./'"$f"'").length)')
+            echo "$f: $before -> $after accepted violations"
+            if [ "$after" -gt "$before" ]; then
+              echo "::error file=$f::Architecture baseline GREW ($before -> $after). The baseline is a ratchet and may only shrink. Fix the cycle instead of recording it. If you deliberately enabled a NEW rule, say so in the PR description and a maintainer can override."
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Cycle guard
+        run: pnpm run arch
+
   scripts:
     # Verify the root-level scripts/ Node.js helpers and their inline tests.
     # These scripts are used by release workflows and are not covered by the
