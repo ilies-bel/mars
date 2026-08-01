@@ -19,9 +19,10 @@ export default defineConfig({
   plugins: [react()],
   resolve: { alias: sharedAlias },
   test: {
-    // Two inline projects so each runs with its own environment:
-    //   node    — all existing src/ tests + server tests (no DOM needed)
-    //   happy-dom — Composer interactive tests (chip add/remove, send flow)
+    // Three inline projects so each runs with its own environment and timeout:
+    //   node   — src/ unit tests (no DOM), 5 s default timeout
+    //   server — every server/**/*.test.ts, 30 s (real HTTP server + PGlite)
+    //   dom    — happy-dom: Composer + ChatPage interactive tests
     projects: [
       {
         plugins: [react()],
