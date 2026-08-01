@@ -2520,3 +2520,67 @@ describe('TaskDetailDrawer – agent tool calls in step cards', () => {
     expect(html).not.toContain('data-testid="agent-tool-row"')
   })
 })
+
+// ── Slice-3 regression coverage (moved from components) ─────────────────────
+
+const renderSlice3 = (element: React.ReactElement): string => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  return renderToStaticMarkup(<QueryClientProvider client={qc}>{element}</QueryClientProvider>)
+}
+
+const slice3Task = (overrides: Partial<ProgressTask> & { id: string; cluster: ProgressTask['cluster'] }): ProgressTask => ({
+  id: overrides.id, prompt: overrides.prompt ?? `Task ${overrides.id}`, status: overrides.status ?? 'queued', plan: null, branch: null, worktreePath: null, error: null, dropReason: null, retryCount: 0, blockerTaskId: null, blockedBy: overrides.blockedBy ?? [], spec: null, createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z', cluster: overrides.cluster, parentProposalId: overrides.parentProposalId ?? null, ...overrides,
+})
+const slice3Proposal = (id: string, title = `Goal ${id}`): ProgressProposalNode => ({ id, title, source: 'human', status: 'prd-ready' })
+const slice3Span = (overrides: Partial<StepSpan> & { stepName: string }): StepSpan => ({
+  stepName: overrides.stepName, phase: null, workflowInstanceId: overrides.workflowInstanceId ?? 'wf-test', workerName: null, outcome: overrides.outcome ?? 'completed', startedAt: '2026-01-01T10:00:00.000Z', endedAt: '2026-01-01T10:00:01.000Z', durationMs: 1000, taskId: overrides.taskId ?? 'task-a', originId: overrides.originId ?? 'task-a', ...overrides,
+})
+
+describe('TaskDetailDrawer – task mode (slice-3 regression)', () => {
+  it('renders the dialog shell when showing a plain task with sibling tasks present', () => {
+    const tasks = [slice3Task({ id: 'slice-1', cluster: 'In progress' }), slice3Task({ id: 'slice-2', cluster: 'Queued' }), slice3Task({ id: 'slice-3', cluster: 'Queued' })]
+    const html = renderSlice3(<TaskDetailDrawer taskId="slice-1" onClose={() => {}} tasks={tasks} proposals={[]} />)
+    expect(html).toContain('data-testid="task-detail-drawer"')
+    expect(html).toContain('slice-1')
+  })
+  it('step timeline renders its spans when stepSpans prop is provided (task mode)', () => {
+    const spans = [slice3Span({ stepName: 'setup', workflowInstanceId: 'wf-1', taskId: 'slice-1' }), slice3Span({ stepName: 'code', workflowInstanceId: 'wf-1', taskId: 'slice-1' }), slice3Span({ stepName: 'verify', workflowInstanceId: 'wf-1', taskId: 'slice-1' }), slice3Span({ stepName: 'merge', workflowInstanceId: 'wf-1', taskId: 'slice-1' })]
+    const html = renderSlice3(<TaskDetailDrawer taskId="slice-1" onClose={() => {}} tasks={[slice3Task({ id: 'slice-1', cluster: 'Done' })]} proposals={[]} stepSpans={spans} />)
+    const rowCount = (html.match(/data-testid="step-card"/g) ?? []).length
+    expect(rowCount).toBe(4)
+    expect(html).toContain('setup')
+    expect(html).toContain('merge')
+  })
+  it('activeStepName still highlights the matching step in task mode', () => {
+    const spans = [slice3Span({ stepName: 'setup', workflowInstanceId: 'wf-1', taskId: 'slice-1' }), slice3Span({ stepName: 'code', workflowInstanceId: 'wf-1', taskId: 'slice-1', outcome: 'running', endedAt: null, durationMs: null })]
+    const html = renderSlice3(<TaskDetailDrawer taskId="slice-1" onClose={() => {}} tasks={[slice3Task({ id: 'slice-1', cluster: 'In progress' })]} proposals={[]} stepSpans={spans} activeStepName="code" />)
+    const activeMatches = (html.match(/data-active="true"/g) ?? []).length
+    expect(activeMatches).toBe(1)
+    expect(html).toContain('ring-warn')
+  })
+  it('sibling spans are absent when step timeline is scoped to one task via stepSpans', () => {
+    const spans = [slice3Span({ stepName: 'setup', workflowInstanceId: 'wf-1', taskId: 'slice-1', originId: 'slice-1' }), slice3Span({ stepName: 'code', workflowInstanceId: 'wf-1', taskId: 'slice-1', originId: 'slice-1' })]
+    const html = renderSlice3(<TaskDetailDrawer taskId="slice-1" onClose={() => {}} tasks={[slice3Task({ id: 'slice-1', cluster: 'Done' }), slice3Task({ id: 'slice-2', cluster: 'Queued' }), slice3Task({ id: 'slice-3', cluster: 'Queued' })]} proposals={[]} stepSpans={spans} />)
+    const rowCount = (html.match(/data-testid="step-card"/g) ?? []).length
+    expect(rowCount).toBe(2)
+  })
+})
+
+describe('TaskDetailDrawer – proposal mode (slice-3 no-regression)', () => {
+  it('renders the dialog shell when the taskId is a proposal node id', () => {
+    const html = renderSlice3(<TaskDetailDrawer taskId="prop-x" onClose={() => {}} tasks={[slice3Task({ id: 'task-a', cluster: 'Done', parentProposalId: 'prop-x' })]} proposals={[slice3Proposal('prop-x', 'Feature Goal')]} />)
+    expect(html).toContain('data-testid="task-detail-drawer"')
+    expect(html).toContain('prop-x')
+  })
+  it('step timeline renders arc spans when proposal-mode stepSpans prop is provided', () => {
+    const spans = [slice3Span({ stepName: 'setup', workflowInstanceId: 'wf-1', taskId: 'task-a', originId: 'task-a' }), slice3Span({ stepName: 'code', workflowInstanceId: 'wf-1', taskId: 'task-a', originId: 'task-a' }), slice3Span({ stepName: 'setup', workflowInstanceId: 'wf-2', taskId: 'task-b', originId: 'task-a' }), slice3Span({ stepName: 'code', workflowInstanceId: 'wf-2', taskId: 'task-b', originId: 'task-a' })]
+    const html = renderSlice3(<TaskDetailDrawer taskId="prop-x" onClose={() => {}} tasks={[slice3Task({ id: 'task-a', cluster: 'Done', parentProposalId: 'prop-x' }), slice3Task({ id: 'task-b', cluster: 'Done', parentProposalId: 'prop-x' })]} proposals={[slice3Proposal('prop-x')]} stepSpans={spans} />)
+    const rowCount = (html.match(/data-testid="step-timeline-row"/g) ?? []).length
+    expect(rowCount).toBe(4)
+  })
+  it('proposal-mode renders the grouped step-group-proposal section (not the flat task-step-timeline)', () => {
+    const html = renderSlice3(<TaskDetailDrawer taskId="prop-x" onClose={() => {}} tasks={[slice3Task({ id: 'task-a', cluster: 'Done', parentProposalId: 'prop-x' })]} proposals={[slice3Proposal('prop-x')]} stepSpans={[]} />)
+    expect(html).toContain('data-testid="step-group-proposal"')
+    expect(html).not.toContain('data-testid="task-step-timeline"')
+  })
+})

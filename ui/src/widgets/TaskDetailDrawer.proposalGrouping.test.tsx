@@ -18,8 +18,8 @@ import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
-import type { StepSpan } from '../widgets/TaskDetailDrawer'
-import { TaskDetailDrawer } from '../widgets/TaskDetailDrawer'
+import type { StepSpan } from './TaskDetailDrawer'
+import { TaskDetailDrawer } from './TaskDetailDrawer'
 
 // ── Test helper ──────────────────────────────────────────────────────────────
 
