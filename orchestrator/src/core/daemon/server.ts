@@ -53,6 +53,10 @@ import {
   ensureRecoverySpawner,
 } from '../../outbox/subscribers/recovery-spawn'
 import {
+  drainCloseSubjectOnTerminalEvent,
+  ensureCloseSubjectOnTerminalEventSubscriber,
+} from '../../outbox/subscribers/close-subject-on-terminal-event'
+import {
   drainArcVerifier,
   ensureArcVerifierSubscriber,
 } from '../../outbox/subscribers/arc-verifier-subscriber'
@@ -4712,6 +4716,19 @@ export const startDaemon = async (
     }
   })()
 
+  // A Subject's terminal event is a durable domain boundary. Register and
+  // drain on boot so events published while the daemon was down still close
+  // their matching Subject after restart.
+  void (async () => {
+    try {
+      await ensureCloseSubjectOnTerminalEventSubscriber(getCompositionRootClient())
+      const { processed } = await drainCloseSubjectOnTerminalEvent(getCompositionRootClient(), log)
+      if (processed > 0) log(`[close-subject-on-terminal-event] closed ${processed} Subject(s) on boot`)
+    } catch (err) {
+      log(`[close-subject-on-terminal-event] boot drain failed: ${(err as Error).message}`)
+    }
+  })()
+
   // Boot drain for the arc-verifier outbox subscriber: register it and trigger
   // any pending arc verifications for task.terminal { reason: 'done' } events
   // that were published while the daemon was down.
@@ -5689,6 +5706,22 @@ export const startDaemon = async (
     RECOVERY_SPAWNER_DRAIN_MS,
   )
   recoverySpawnerDrain.unref()
+
+  // ── Subject terminal-event drain ────────────────────────────────────────
+  const CLOSE_SUBJECT_ON_TERMINAL_EVENT_DRAIN_MS = Number(
+    process.env.MARS_CLOSE_SUBJECT_ON_TERMINAL_EVENT_DRAIN_MS ?? 30_000,
+  )
+  const closeSubjectOnTerminalEventDrain = setInterval(
+    singleFlight(async () => {
+      try {
+        await drainCloseSubjectOnTerminalEvent(getCompositionRootClient(), log)
+      } catch (err) {
+        log(`[close-subject-on-terminal-event] drain errored: ${(err as Error).message}`)
+      }
+    }),
+    CLOSE_SUBJECT_ON_TERMINAL_EVENT_DRAIN_MS,
+  )
+  closeSubjectOnTerminalEventDrain.unref()
 
   // ── Arc-verifier drain ───────────────────────────────────────────────────
   // Polls the outbox for task.terminal { reason: 'done' } events and triggers

@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0013'
+export const SCHEMA_VERSION = '0014'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -642,6 +642,8 @@ const DDL: readonly string[] = [
     alert_item_id  text,
     alert_resolved bigint NOT NULL DEFAULT 0,
     evaporated_at  text,
+    terminal_event text,
+    terminal_entity_id text,
     created_at     text   NOT NULL,
     updated_at     text   NOT NULL
   )`,
@@ -676,6 +678,8 @@ const DDL: readonly string[] = [
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS stall_diagnostics text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS "deferrable" bigint NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS evaporated_at text`,
+  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS terminal_event text`,
+  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS terminal_entity_id text`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS posture text NOT NULL DEFAULT 'triage'`,
   `ALTER TABLE IF EXISTS chat_threads DROP COLUMN IF EXISTS context_seeded`,
   `ALTER TABLE IF EXISTS chat_threads DROP COLUMN IF EXISTS session_id`,
@@ -683,6 +687,9 @@ const DDL: readonly string[] = [
      ON chat_threads(alert_item_id)`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_evaporated_at
      ON chat_threads(evaporated_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_chat_threads_terminal_event_entity
+     ON chat_threads(terminal_event, terminal_entity_id)
+     WHERE evaporated_at IS NULL`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS parent_thread_id text`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS fork_idempotency_key text`,
   `CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_threads_fork_idem

@@ -79,6 +79,10 @@ export interface ChatThread {
    * Null for active threads.
    */
   evaporated_at: string | null
+  /** Domain event that closes this Subject, or null when it needs an explicit close. */
+  terminal_event?: string | null
+  /** Entity id in the terminal event payload that must match before closure. */
+  terminal_entity_id?: string | null
   parent_thread_id: string | null
   fork_idempotency_key: string | null
 }
@@ -422,6 +426,8 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   alert_item_id: (row.alert_item_id as string | null) ?? null,
   alert_resolved: Boolean(row.alert_resolved),
   evaporated_at: (row.evaporated_at as string | null) ?? null,
+  terminal_event: (row.terminal_event as string | null) ?? null,
+  terminal_entity_id: (row.terminal_entity_id as string | null) ?? null,
   parent_thread_id: (row.parent_thread_id as string | null) ?? null,
   fork_idempotency_key: (row.fork_idempotency_key as string | null) ?? null,
 })
@@ -446,17 +452,24 @@ const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
 
 /**
  * Create a new chat thread. `title` defaults to an empty string when omitted —
- * callers can update it later via {@link updateThreadTitle}.
+ * callers can update it later via {@link updateThreadTitle}. A Subject may
+ * declare the domain event and entity that close it when that event reaches
+ * the outbox.
  */
-export const createThread = async (title?: string): Promise<ChatThread> => {
+export const createThread = async (
+  title?: string,
+  terminalEvent?: string,
+  terminalEntityId?: string,
+): Promise<ChatThread> => {
   const c = stateClient()
   const id = randomUUID()
   const ts = now()
   const threadTitle = title ?? ''
   await c.execute({
-    sql: `INSERT INTO chat_threads (id, title, status, created_at, updated_at)
-          VALUES (?, ?, 'idle', ?, ?)`,
-    args: [id, threadTitle, ts, ts],
+    sql: `INSERT INTO chat_threads
+            (id, title, status, terminal_event, terminal_entity_id, created_at, updated_at)
+          VALUES (?, ?, 'idle', ?, ?, ?, ?)`,
+    args: [id, threadTitle, terminalEvent ?? null, terminalEntityId ?? null, ts, ts],
   })
   return {
     id,
@@ -469,6 +482,8 @@ export const createThread = async (title?: string): Promise<ChatThread> => {
     alert_item_id: null,
     alert_resolved: false,
     evaporated_at: null,
+    terminal_event: terminalEvent ?? null,
+    terminal_entity_id: terminalEntityId ?? null,
     parent_thread_id: null,
     fork_idempotency_key: null,
   }
@@ -576,9 +591,11 @@ export const forkThread = async (opts: {
       updated_at: ts,
       origin: null,
       alert_item_id: null,
-      alert_resolved: false,
-      evaporated_at: null,
-      parent_thread_id: opts.sourceThreadId,
+    alert_resolved: false,
+    evaporated_at: null,
+    terminal_event: null,
+    terminal_entity_id: null,
+    parent_thread_id: opts.sourceThreadId,
       fork_idempotency_key: opts.idempotencyKey,
     },
     deduped: false,
@@ -1071,6 +1088,8 @@ export const startThreadFromAlert = async (
     alert_item_id: arcId,
     alert_resolved: false,
     evaporated_at: null,
+    terminal_event: null,
+    terminal_entity_id: null,
     parent_thread_id: null,
     fork_idempotency_key: null,
   }
