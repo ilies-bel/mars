@@ -1,8 +1,8 @@
 /**
  * ChatPage — default landing screen for mars.
  *
- * Layout: narrow threads sidebar (create, rename on double-click, delete with
- * confirm) + main area (`ConversationView` transcript + composer).
+ * Layout: narrow threads sidebar (create, rename on double-click) + main area
+ * (`ConversationView` transcript + composer).
  *
  * Rendering runs on the Vercel AI SDK: `useChat` (via `useMarsChat`) is the
  * single source of the on-screen transcript. Persisted history is mapped in
@@ -33,7 +33,6 @@ import {
   postChatMessage,
   uploadAttachment,
   renameChatThread,
-  deleteChatThread,
   setMessageFeedback,
   clearMessageFeedback,
   fetchChatHistory,
@@ -779,10 +778,9 @@ interface ThreadItemProps {
   isSelected: boolean
   onSelect: () => void
   onRename: (title: string) => void
-  onDelete: () => void
 }
 
-const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: ThreadItemProps) => {
+const ThreadItem = ({ thread, isSelected, onSelect, onRename }: ThreadItemProps) => {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -879,14 +877,6 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
               title={thread.status === 'throttled' ? 'Retrying…' : undefined}
             />
           )}
-          <button
-            type="button"
-            className="flex-none rounded px-1 py-0.5 text-[10px] text-primary/50 opacity-0 transition-opacity hover:bg-red-900/20 hover:text-red-400 focus-visible:opacity-100 group-hover:opacity-100"
-            onClick={(e) => { e.stopPropagation(); onDelete() }}
-            aria-label="Delete thread"
-          >
-            ✕
-          </button>
         </>
       )}
     </div>
@@ -2204,25 +2194,6 @@ interface ThreadSidebarProps {
   onFastAction: (action: 'restart') => void
 }
 
-/** How long a deleted thread stays undoable before the delete is sent. */
-const DELETE_UNDO_WINDOW_MS = 5000
-
-/** A delete that has been made on screen but not yet sent to the server. */
-interface PendingThreadDelete {
-  id: string
-  title: string
-  /** True when this thread was the open one, so Undo can re-open it. */
-  wasSelected: boolean
-}
-
-/**
- * Toast state for the delete flow. `pending` counts down the undo window;
- * `error` reports a delete the server rejected (the row is already back).
- */
-type DeleteToast =
-  | { kind: 'pending'; title: string }
-  | { kind: 'error'; message: string }
-
 export const ThreadSidebar = ({
   selectedId,
   projectId,
@@ -2256,113 +2227,9 @@ export const ThreadSidebar = ({
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['chat-threads'] }),
   })
 
-  // Threads hidden on screen because a delete is pending. Filtering at render
-  // time rather than editing the query cache keeps the row hidden even if an
-  // unrelated SSE invalidation refetches the list mid-undo-window.
-  const [hiddenIds, setHiddenIds] = useState<string[]>([])
-  const [toast, setToast] = useState<DeleteToast | null>(null)
-  const pendingRef = useRef<PendingThreadDelete | null>(null)
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const unhide = useCallback((id: string) => {
-    setHiddenIds((prev) => prev.filter((x) => x !== id))
-  }, [])
-
-  /** Send the delete for real. The row is already hidden; reveal it again on failure. */
-  const commitDelete = useCallback(
-    (p: PendingThreadDelete) => {
-      deleteChatThread(p.id, projectId)
-        .then(() => {
-          unhide(p.id)
-          void qc.invalidateQueries({ queryKey: ['chat-threads'] })
-        })
-        .catch((err: unknown) => {
-          unhide(p.id)
-          if (p.wasSelected) onSelect(p.id)
-          setToast({
-            kind: 'error',
-            message: `Could not delete “${p.title}”: ${
-              err instanceof Error ? err.message : 'unknown error'
-            }`,
-          })
-        })
-    },
-    [projectId, qc, unhide, onSelect],
-  )
-
-  /** Fire any pending delete immediately, so a second delete never drops the first. */
-  const flushPending = useCallback(() => {
-    if (timerRef.current !== null) {
-      clearTimeout(timerRef.current)
-      timerRef.current = null
-    }
-    const p = pendingRef.current
-    pendingRef.current = null
-    if (p !== null) commitDelete(p)
-  }, [commitDelete])
-
-  // Visible chat threads (delete-pending rows stay hidden), filtered to open
-  // threads only (resolved projections evaporate), title-searched, then sorted
-  // by urgency → age → id. Alerts live on the top-bar Bell, not here.
-  // Computed above startDelete so the delete handler can advance the selection
-  // to the next thread in this exact sorted order.
-  const visibleThreads = (data ?? []).filter((t) => !hiddenIds.includes(t.id))
-  const threads = sortByUrgencyThenAge(filterSidebarThreads(visibleThreads, filters, forkFilter))
-
-  const startDelete = useCallback(
-    (thread: ChatThread) => {
-      flushPending()
-      const p: PendingThreadDelete = {
-        id: thread.id,
-        title: thread.title || 'New thread',
-        wasSelected: selectedId === thread.id,
-      }
-      setHiddenIds((prev) => [...prev, p.id])
-      if (p.wasSelected) {
-        const idx = threads.findIndex((t) => t.id === thread.id)
-        const next = threads[idx + 1] ?? threads[idx - 1]
-        onSelect(next?.id ?? '')
-      }
-      pendingRef.current = p
-      setToast({ kind: 'pending', title: p.title })
-      timerRef.current = setTimeout(() => {
-        timerRef.current = null
-        const current = pendingRef.current
-        pendingRef.current = null
-        setToast(null)
-        if (current !== null) commitDelete(current)
-      }, DELETE_UNDO_WINDOW_MS)
-    },
-    [flushPending, selectedId, onSelect, commitDelete, threads],
-  )
-
-  const undoDelete = useCallback(() => {
-    if (timerRef.current !== null) {
-      clearTimeout(timerRef.current)
-      timerRef.current = null
-    }
-    const p = pendingRef.current
-    pendingRef.current = null
-    setToast(null)
-    if (p === null) return
-    unhide(p.id)
-    if (p.wasSelected) onSelect(p.id)
-  }, [unhide, onSelect])
-
-  // Commit anything still pending on unmount — navigating away is not an undo.
-  // The ref reads are deliberate: this must run exactly once, at teardown.
-  useEffect(() => {
-    return () => {
-      if (timerRef.current !== null) {
-        clearTimeout(timerRef.current)
-        timerRef.current = null
-      }
-      const p = pendingRef.current
-      pendingRef.current = null
-      if (p !== null) void deleteChatThread(p.id, projectId)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // Open Subjects are sorted by urgency → age → id. Resolved projections live
+  // in History; their transcripts remain available there.
+  const threads = sortByUrgencyThenAge(filterSidebarThreads(data ?? [], filters, forkFilter))
 
   const { data: historyData } = useQuery({
     queryKey: ['chat-history', projectId],
@@ -2420,7 +2287,6 @@ export const ThreadSidebar = ({
             isSelected={t.id === selectedId}
             onSelect={() => onSelect(t.id)}
             onRename={(title) => rename({ id: t.id, title })}
-            onDelete={() => startDelete(t)}
           />
         ))}
 
@@ -2466,7 +2332,6 @@ export const ThreadSidebar = ({
                         onForkFilterChange({ parentThreadId: t.id })
                       }}
                       onRename={(title) => rename({ id: t.id, title })}
-                      onDelete={() => startDelete(t)}
                     />
                     {filters.query.trim() !== '' && forks.length > 0 && !forkFilter.parentThreadId && !forkFilter.hasParent && (
                       <details data-testid={`history-forks-${t.id}`} className="ml-3">
@@ -2480,7 +2345,6 @@ export const ThreadSidebar = ({
                             isSelected={fork.id === selectedId}
                             onSelect={() => onSelect(fork.id)}
                             onRename={(title) => rename({ id: fork.id, title })}
-                            onDelete={() => startDelete(fork)}
                           />
                         ))}
                       </details>
@@ -2499,41 +2363,6 @@ export const ThreadSidebar = ({
         <AgentConfigPanel projectId={projectId} />
       </div>
 
-      {/* Delete toast — the row is already gone on screen; the request is not sent
-          until the undo window closes. Fixed so it never shifts the sidebar. */}
-      {toast !== null && (
-        <div
-          data-testid="thread-delete-undo-toast"
-          role="status"
-          aria-live="polite"
-          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 border border-primary/40 bg-background px-4 py-2 font-mono text-[11px] text-foreground shadow-lg"
-        >
-          {toast.kind === 'pending' ? (
-            <>
-              <span className="max-w-[280px] truncate">Deleted “{toast.title}”</span>
-              <button
-                type="button"
-                onClick={undoDelete}
-                className="border border-primary/40 px-2 py-0.5 font-mono text-[10px] uppercase text-primary transition hover:bg-primary/10 active:scale-[0.97]"
-              >
-                Undo
-              </button>
-            </>
-          ) : (
-            <>
-              <span className="max-w-[360px] text-red-400">{toast.message}</span>
-              <button
-                type="button"
-                onClick={() => setToast(null)}
-                aria-label="Dismiss"
-                className="border border-primary/40 px-2 py-0.5 font-mono text-[10px] uppercase text-primary transition hover:bg-primary/10 active:scale-[0.97]"
-              >
-                Dismiss
-              </button>
-            </>
-          )}
-        </div>
-      )}
     </aside>
   )
 }

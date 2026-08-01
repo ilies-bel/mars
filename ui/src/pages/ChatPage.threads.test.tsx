@@ -117,7 +117,6 @@ vi.mock('@/shared/api', () => ({
     name: 'f.png',
   }),
   renameChatThread: vi.fn().mockResolvedValue(undefined),
-  deleteChatThread: vi.fn().mockResolvedValue(undefined),
   stopChatThread: vi.fn().mockResolvedValue(undefined),
   setMessageFeedback: vi.fn().mockResolvedValue(undefined),
   clearMessageFeedback: vi.fn().mockResolvedValue(undefined),

@@ -853,16 +853,6 @@ export const updateThreadTitle = async (id: string, title: string): Promise<void
 }
 
 /**
- * Delete a thread and cascade-delete all its messages. No-op when the thread
- * does not exist.
- */
-export const deleteThread = async (id: string): Promise<void> => {
-  const c = stateClient()
-  await c.execute({ sql: `DELETE FROM chat_messages WHERE thread_id = ?`, args: [id] })
-  await c.execute({ sql: `DELETE FROM chat_threads WHERE id = ?`, args: [id] })
-}
-
-/**
  * Startup sweep: find every thread whose status is still `'running'` (orphaned
  * by a daemon crash/restart, since the in-memory run map starts empty), flip
  * each to `'idle'`, and append a short assistant message so the user sees why

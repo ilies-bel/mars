@@ -48,7 +48,6 @@ vi.mock('@/shared/api', () => ({
   postChatMessage: vi.fn().mockResolvedValue({}),
   uploadAttachment: vi.fn().mockResolvedValue({ id: 'u1', path: '/tmp/u1', mimeType: 'image/png', name: 'f.png', size: 1 }),
   renameChatThread: vi.fn().mockResolvedValue({}),
-  deleteChatThread: vi.fn().mockResolvedValue({}),
   stopChatThread: vi.fn().mockResolvedValue({}),
   invokeAction: vi.fn().mockResolvedValue({}),
   setMessageFeedback: vi.fn().mockResolvedValue({}),

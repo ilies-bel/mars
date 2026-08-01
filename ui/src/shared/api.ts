@@ -818,22 +818,6 @@ export const renameChatThread = async (
 }
 
 /**
- * Delete a thread and all its messages. Irreversible.
- */
-export const deleteChatThread = async (
-  threadId: string,
-  projectId?: string,
-): Promise<void> => {
-  const path = appendProject(`/api/chat/threads/${encodeURIComponent(threadId)}/delete`, projectId)
-  const r = await fetch(`${BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
-  })
-  if (!r.ok) await throwMutationError(path, r)
-}
-
-/**
  * Stop a running thread response early.
  */
 export const stopChatThread = async (

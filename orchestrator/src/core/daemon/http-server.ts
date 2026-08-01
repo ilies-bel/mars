@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http'
-import { mkdir, writeFile, rm, readdir, readFile } from 'node:fs/promises'
+import { mkdir, writeFile, readdir, readFile } from 'node:fs/promises'
 import { join, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { FAILURE_KINDS } from '../lib/failure-kinds'
@@ -35,7 +35,6 @@ import {
   forkThread,
   toThreadApiView,
   updateThreadTitle,
-  deleteThread,
   setMessageFeedback,
   clearMessageFeedback,
   getThread,
@@ -1729,7 +1728,6 @@ export const startHttpServer = async (
     // GET /chat/threads/:id/tasks — list task IDs linked to one chat thread.
     // POST /chat/threads — create a new thread. Body: { title?: string }.
     // POST /chat/threads/:id/title — rename a thread. Body: { title: string }.
-    // POST /chat/threads/:id/delete — delete a thread and cascade its messages.
     // All chat routes bypass the draining gate (lightweight user-data writes,
     // not task work). SSE channel 'chat' is broadcast after every write.
     const chatThreadsUrl = req.method === 'GET' && req.url
@@ -2029,25 +2027,6 @@ export const startHttpServer = async (
         return
       }
     }
-    {
-      const chatDeleteMatch =
-        req.method === 'POST' && req.url
-          ? req.url.match(/^\/chat\/threads\/([^/?]+)\/delete$/)
-          : null
-      if (chatDeleteMatch && chatDeleteMatch[1]) {
-        const id = decodeURIComponent(chatDeleteMatch[1])
-        const uploadDir = join(getRepoRoot(), '.mars', 'chat-uploads', id)
-        deleteThread(id)
-          .then(() => rm(uploadDir, { recursive: true, force: true }))
-          .then(() => {
-            deps.viewStreamHub?.broadcast('chat')
-            sendJson(res, 200, { ok: true })
-          })
-          .catch((err: unknown) => sendError(res, err))
-        return
-      }
-    }
-
     // POST /chat/threads/:id/attachments — upload a file (multipart/form-data).
     // Stores the file under .mars/chat-uploads/<threadId>/<uuid>.<ext>.
     // Allowed types: png/jpg/gif/webp, mp3/m4a/wav/webm (audio), mp4/mov/webm (video).

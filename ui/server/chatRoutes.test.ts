@@ -88,3 +88,29 @@ describe('POST /api/chat/messages/:id/feedback/clear — proxy route registratio
     expect(res.status).not.toBe(404)
   })
 })
+
+describe('POST /api/chat/threads/:id/delete', () => {
+  let repo: string
+  let server: ReturnType<typeof Bun.serve> | null = null
+  let baseUrl: string
+
+  beforeEach(async () => {
+    repo = setupRepo()
+    server = await startServer({ repo, port: 0, host: '127.0.0.1' })
+    baseUrl = `http://${server.hostname}:${server.port}`
+  })
+
+  afterEach(() => {
+    if (server) server.stop(true)
+    server = null
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns 404 because the proxy route no longer exists', async () => {
+    const res = await fetch(`${baseUrl}/api/chat/threads/subject-1/delete`, {
+      method: 'POST',
+    })
+
+    expect(res.status).toBe(404)
+  })
+})

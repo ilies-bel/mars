@@ -39,7 +39,6 @@ vi.mock('@/shared/api', () => ({
     size: 1024,
   }),
   renameChatThread: vi.fn().mockResolvedValue({}),
-  deleteChatThread: vi.fn().mockResolvedValue({}),
   stopChatThread: vi.fn().mockResolvedValue({}),
   invokeAction: vi.fn().mockResolvedValue({}),
   setMessageFeedback: vi.fn().mockResolvedValue({}),

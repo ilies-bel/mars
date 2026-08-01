@@ -61,6 +61,19 @@ describe('GET /view/chat/conversation', () => {
   })
 })
 
+describe('POST /chat/threads/:id/delete', () => {
+  it('returns 404 because conversation deletion is unavailable', async () => {
+    server = await startFeedbackServer()
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/chat/threads/subject-1/delete`,
+      { method: 'POST' },
+    )
+
+    expect(response.status).toBe(404)
+  })
+})
+
 // Mock skill discovery so the run reaches the API layer without real fs I/O
 // (the assertions below only wait a single setImmediate turn).
 vi.mock('../chat-skills', async (importOriginal) => {

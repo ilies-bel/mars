@@ -14,7 +14,6 @@ interface ChatStoreModule {
   appendMessage: typeof import('./chat-store').appendMessage
   listVisibleChatMessages: typeof import('./chat-store').listVisibleChatMessages
   updateThreadTitle: typeof import('./chat-store').updateThreadTitle
-  deleteThread: typeof import('./chat-store').deleteThread
   setThreadStatus: typeof import('./chat-store').setThreadStatus
   markThreadEvaporated: typeof import('./chat-store').markThreadEvaporated
   evaporateUnengagedThreads: typeof import('./chat-store').evaporateUnengagedThreads
@@ -218,22 +217,15 @@ describe('chat-store', () => {
     await expect(m.updateThreadTitle('ghost', 'irrelevant')).resolves.toBeUndefined()
   })
 
-  // ── deleteThread ────────────────────────────────────────────────────────────
-
-  it('deletes a thread and its messages', async () => {
+  it('keeps messages queryable after renaming a thread', async () => {
     const m = await loadModule(repo)
-    const thread = await m.createThread('to-delete')
-    await m.appendMessage(thread.id, 'user', 'orphan')
-    await m.deleteThread(thread.id)
-    expect(await m.getThread(thread.id)).toBeNull()
-    // The orphan message should also be gone (cascade)
-    const threads = await m.listThreads()
-    expect(threads.find((t) => t.id === thread.id)).toBeUndefined()
-  })
+    const thread = await m.createThread('original subject')
+    await m.appendMessage(thread.id, 'user', 'keep this message')
+    await m.updateThreadTitle(thread.id, 'renamed subject')
 
-  it('is a no-op when thread does not exist', async () => {
-    const m = await loadModule(repo)
-    await expect(m.deleteThread('ghost')).resolves.toBeUndefined()
+    const result = await m.getThread(thread.id)
+    expect(result?.thread.title).toBe('renamed subject')
+    expect(result?.messages.map((message) => message.content)).toEqual(['keep this message'])
   })
 
   // ── setThreadStatus ─────────────────────────────────────────────────────────
