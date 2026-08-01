@@ -78,7 +78,12 @@ const TREES = [
     minModules: 900,
     // Folder granularity for the graph: orchestrator/src/<area>/<subarea>,
     // packages/<pkg>/src, scripts.
-    collapse: '^(orchestrator/src/[^/]+/[^/]+/|orchestrator/src/[^/]+/|packages/[^/]+/src/|scripts/)',
+    // Alternation is ordered most-specific-first: two levels under
+    // orchestrator/src (so core/lib and core/daemon stay distinct — that is
+    // where the interesting structure is), then one level, then the
+    // non-src orchestrator dirs, then packages, then root scripts.
+    collapse:
+      '^(orchestrator/src/[^/]+/[^/]+/|orchestrator/src/[^/]+/|orchestrator/[^/]+/|packages/[^/]+/src/[^/]+/|packages/[^/]+/[^/]+/|scripts/)',
     graphOut: 'docs/architecture/dependency-graph-orchestrator.md',
   },
   {
