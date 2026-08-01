@@ -22,7 +22,10 @@ import {
   spawnOrAttachMainCommitter,
   type IntegrationBranchDirtyResult,
 } from '../lib/main-dirty'
-import { raiseUnrelatedDirtActionQueue } from './main-dirty-action-queue'
+import {
+  clearUnrelatedDirtActionQueue,
+  raiseUnrelatedDirtActionQueue,
+} from './main-dirty-action-queue'
 import { resolveOriginIdForTask } from '../lib/origin'
 import type { RecipeCatalog } from '../lib/recipes'
 import type { TraceEventStore } from '../lib/trace-events-store'
@@ -79,7 +82,10 @@ export const runMainDirtyDispatchCheck = async (
     },
   })
 
-  if (classifyResult.kind === 'clean') return { parked: false }
+  if (classifyResult.kind === 'clean') {
+    await clearUnrelatedDirtActionQueue(integrationBranch)
+    return { parked: false }
+  }
 
   if (classifyResult.kind === 'unrelated') {
     const actionQueueItemId = await raiseUnrelatedDirtActionQueue(

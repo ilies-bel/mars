@@ -16,7 +16,12 @@
  *    specific recovery so the operator sees the affected cohort at a glance.
  */
 import { execFileSync } from 'node:child_process'
-import { raiseActionQueueItem, supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
+import {
+  findOpenActionQueueItemIdBySignature,
+  raiseActionQueueItem,
+  supersedeActionQueueItemsBySignature,
+  supersedeActionQueueItemsForOrigin,
+} from '../lib/action-queue'
 import { getDefaultTaskStore } from '../store/task-store'
 import type { DomainTaskStore as TaskStore } from '../store/task-store'
 import { MAIN_COMMITER_RECIPE } from '../lib/main-dirty'
@@ -250,6 +255,9 @@ export const raiseAggregatedMainCommiterFailureRow = async (
  * the same branch bump `seen_count` on the existing open row rather than
  * inserting a new one.
  */
+export const unrelatedDirtActionQueueSignature = (integrationBranch: string): string =>
+  `main-dirty:unrelated:${integrationBranch}`
+
 export const raiseUnrelatedDirtActionQueue = async (
   integrationBranch: string,
   contaminatedPaths: string[],
@@ -286,12 +294,32 @@ export const raiseUnrelatedDirtActionQueue = async (
     payload: { integrationBranch, contaminatedPaths },
     context: { repoRoot: process.env.MARS_REPO ?? null },
     raisedBy: 'daemon:main-dirty-preflight',
-    signature: `main-dirty:unrelated:${integrationBranch}`,
+    signature: unrelatedDirtActionQueueSignature(integrationBranch),
   })
   log(
     `[main-dirty] unrelated dirt on ${integrationBranch}: raised actionQueue ${actionQueueItemId} (contaminated: ${contaminatedPaths.join(', ')})`,
   )
   return actionQueueItemId
+}
+
+/**
+ * Resolve the unrelated-dirt alert after the integration branch is clean.
+ *
+ * The row is a level-triggered projection of current branch state, so it must
+ * disappear on the falling edge just as it appears on the rising edge. The
+ * lookup keeps ordinary clean dispatches silent and avoids a write when no
+ * matching alert is open.
+ */
+export const clearUnrelatedDirtActionQueue = async (integrationBranch: string): Promise<void> => {
+  const signature = unrelatedDirtActionQueueSignature(integrationBranch)
+  const openItemId = await findOpenActionQueueItemIdBySignature('failed', signature)
+  if (openItemId === null) return
+  await supersedeActionQueueItemsBySignature(
+    'failed',
+    signature,
+    'condition-cleared',
+    'daemon:main-dirty-condition-cleared',
+  )
 }
 
 /**

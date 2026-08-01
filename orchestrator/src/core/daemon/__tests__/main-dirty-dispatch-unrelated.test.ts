@@ -31,7 +31,8 @@ const setupRepoWithIgnoredDirt = (): string => {
   execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
   writeFileSync(resolve(repo, 'README.md'), 'hi\n')
   writeFileSync(resolve(repo, 'conflict.txt'), 'base\n')
-  execFileSync('git', ['add', 'README.md', 'conflict.txt'], { cwd: repo })
+  writeFileSync(resolve(repo, '.gitignore'), '.mars/\n.mars.pglite/\n')
+  execFileSync('git', ['add', 'README.md', 'conflict.txt', '.gitignore'], { cwd: repo })
   execFileSync('git', ['commit', '-q', '-m', 'init', '--allow-empty'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   // Diverge branch-b and main on conflict.txt, then merge to leave a UU entry.
@@ -217,6 +218,76 @@ describe('runMainDirtyDispatchCheck — unrelated dirt path', () => {
         )
       ).rows[0] as unknown as { n: number }
       expect(Number(fixTaskCount.n)).toBe(0)
+    },
+    30_000,
+  )
+
+  it(
+    'resolves the unrelated-dirt alert once main is clean, then leaves it unchanged',
+    async () => {
+      const queue = await import('../../queue')
+      await queue.migrateQueueSchema()
+
+      const { MAIN_COMMITER_RECIPE } = await import('../../lib/main-dirty')
+      const { nullTraceStore } = await import('../../lib/run-tool')
+      const mockCatalog = {
+        get: (name: string) =>
+          name === MAIN_COMMITER_RECIPE
+            ? {
+                name: MAIN_COMMITER_RECIPE,
+                description: 'test',
+                prompt: 'fake prompt',
+                tools: [] as const,
+                source: 'built-in' as const,
+              }
+            : null,
+        list: () => [],
+      }
+      const sourceTask = await queue.enqueueTask('source task', undefined, { skipTriage: true })
+      const { runMainDirtyDispatchCheck } = await import('../main-dirty-dispatch')
+
+      await runMainDirtyDispatchCheck({
+        task: sourceTask,
+        integrationBranch: 'main',
+        traceStore: nullTraceStore,
+        recipeCatalog: mockCatalog as import('../../lib/recipes').RecipeCatalog,
+        log: () => {},
+      })
+
+      writeFileSync(resolve(repo, 'conflict.txt'), 'resolved\n')
+      execFileSync('git', ['add', 'conflict.txt'], { cwd: repo })
+      execFileSync('git', ['commit', '-q', '-m', 'resolve conflict'], { cwd: repo })
+      expect(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' })).toBe('')
+
+      const cleanResult = await runMainDirtyDispatchCheck({
+        task: sourceTask,
+        integrationBranch: 'main',
+        traceStore: nullTraceStore,
+        recipeCatalog: mockCatalog as import('../../lib/recipes').RecipeCatalog,
+        log: () => {},
+      })
+      expect(cleanResult).toEqual({ parked: false })
+
+      const resolvedRows = await queue.resolveQueueClient().execute({
+        sql: `SELECT id, state FROM action_queue_items WHERE signature = ?`,
+        args: ['main-dirty:unrelated:main'],
+      })
+      expect(resolvedRows.rows).toHaveLength(1)
+      expect((resolvedRows.rows[0] as { state: string }).state).toBe('resolved')
+
+      await runMainDirtyDispatchCheck({
+        task: sourceTask,
+        integrationBranch: 'main',
+        traceStore: nullTraceStore,
+        recipeCatalog: mockCatalog as import('../../lib/recipes').RecipeCatalog,
+        log: () => {},
+      })
+
+      const rowsAfterSecondCleanPass = await queue.resolveQueueClient().execute({
+        sql: `SELECT id, state FROM action_queue_items WHERE signature = ?`,
+        args: ['main-dirty:unrelated:main'],
+      })
+      expect(rowsAfterSecondCleanPass.rows).toEqual(resolvedRows.rows)
     },
     30_000,
   )

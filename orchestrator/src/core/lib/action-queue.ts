@@ -1148,6 +1148,8 @@ export type SupersedeReason =
   | 'tool-promotion-decided'
   /** awaiting-human row cleared because the operator signalled mars step done, advancing the task past the manual step. */
   | 'step-done'
+  /** level-triggered condition that raised the row is no longer present. */
+  | 'condition-cleared'
 
 /**
  * Auto-close every open actionQueue item keyed to the given origin task. Called
