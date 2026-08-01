@@ -57,8 +57,12 @@ const codexErrorMessage = (parsed: Record<string, unknown>): string | null => {
  * action-queue row) instead of burning the task's single recovery slot on a
  * rejection that would reproduce instantly.
  */
+// Deliberately NOT matching a bare "429": these strings are scanned against
+// arbitrary provider error prose, and a three-digit number is far too easy to
+// hit incidentally. Misreading an ordinary failure as a quota rejection would
+// pause the whole queue, which is worse than missing one.
 const CODEX_QUOTA_REJECTION_RE =
-  /usage limit|rate limit|quota exceeded|too many requests|429/i
+  /usage limit|rate limit|rate\/usage limit|quota exceeded|too many requests/i
 
 /**
  * Codex reports the reset point as English prose inside the same sentence
@@ -195,6 +199,28 @@ export const parseCodexEventLine = (line: string): ClaudeEvent | null => {
   return null
 }
 
+/**
+ * Informational notices codex writes to stderr that are NOT errors.
+ *
+ * `codex exec` prints "Reading additional input from stdin..." on every run
+ * whose stdin is not a TTY — which is every dispatched worker, since they are
+ * spawned with `stdio: ['ignore', …]`. Left in place it is actively harmful:
+ * the code step picks its failure diagnostic as "stderr tail if non-empty,
+ * otherwise last stream text", so this one noise line outranks the real cause
+ * sitting on stdout. That is precisely how a codex usage-limit rejection
+ * reached an operator as `code/unclassified` with a stdin notice as its only
+ * evidence. Strip the notice so an empty stderr genuinely means empty.
+ */
+const CODEX_BENIGN_STDERR_RE = /^\s*Reading additional input from stdin\.\.\.\s*$/
+
+/** Drop codex's informational stderr notices, preserving everything else. */
+export const stripBenignCodexStderr = (stderr: string): string => {
+  const kept = stderr.split(/\r?\n/).filter((line) => !CODEX_BENIGN_STDERR_RE.test(line))
+  // Collapse to '' when nothing but notices and blank lines remain, so the
+  // caller's `stderr.trim().length > 0` test resolves the way it reads.
+  return kept.join('\n').trim().length === 0 ? '' : kept.join('\n')
+}
+
 /** Read Codex's NDJSON stdout, ignoring blank and incomplete trailing lines. */
 export const readCodexOutput = (stdout: string): ClaudeEvent[] =>
   stdout
@@ -278,6 +304,9 @@ export const codexHeadless: HeadlessAdapter = {
 
     return {
       ...result,
+      // See CODEX_BENIGN_STDERR_RE: an unstripped notice line masquerades as a
+      // failure diagnostic and hides the real cause on stdout.
+      stderr: stripBenignCodexStderr(result.stderr),
       sessionId: null,
       conversation,
       quotaRejected: extractCodexQuotaRejected(conversation),

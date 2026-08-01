@@ -22,9 +22,15 @@ vi.mock('../../lib/git/claude', async (importOriginal) => ({
   resolveClaudeBin: vi.fn(),
 }))
 
-import { parseCodexEventLine, readCodexOutput, codexHeadless } from '../providers/codex-headless'
+import {
+  parseCodexEventLine,
+  readCodexOutput,
+  codexHeadless,
+  stripBenignCodexStderr,
+} from '../providers/codex-headless'
 import { runSubprocessStreaming, resolveClaudeBin } from '../../lib/git/claude'
 import { computeFailureSignature } from '../../lib/failure-signature'
+import { extractLastStreamText } from '../../lib/claude-stream'
 
 // ---------------------------------------------------------------------------
 // parseCodexEventLine — pure normalisation helper
@@ -456,6 +462,44 @@ describe('codexHeadless.run — quota rejection is surfaced, not swallowed', () 
       .filter((e) => e.type === 'result')
       .map((e) => (e as unknown as { result?: string }).result)
     expect(texts.some((t) => typeof t === 'string' && t.includes('usage limit'))).toBe(true)
+  })
+
+  it("strips codex's benign stdin notice so it cannot masquerade as the failure diagnostic", async () => {
+    mockQuotaRun()
+    const result = await codexHeadless.run('task', { cwd: '/tmp', model: 'gpt-5.6-sol' })
+
+    // The code step picks "stderr tail if non-empty, else last stream text".
+    // Leaving the notice in stderr is what made the real cause invisible.
+    expect(result.stderr.trim()).toBe('')
+
+    const stderrTail = result.stderr.trim().slice(-1000)
+    const diagText =
+      stderrTail.length > 0
+        ? `stderr tail:\n${stderrTail}`
+        : `stderr empty; last stream text:\n${extractLastStreamText(result.conversation)}`
+    expect(diagText).toContain('usage limit')
+    expect(diagText).not.toContain('Reading additional input from stdin')
+  })
+
+  it('classifies the composed coder-exit output as provider-quota, not unclassified', async () => {
+    mockQuotaRun()
+    const result = await codexHeadless.run('task', { cwd: '/tmp', model: 'gpt-5.6-sol' })
+
+    // Mirrors coderExitOutput in workflows/primitives/index.ts.
+    const coderExitOutput = `coder process exited 1. worktree was clean at exit (no uncommitted work found). stderr empty; last stream text:\n${extractLastStreamText(result.conversation)}`
+    expect(computeFailureSignature('code:coder-exit-nonzero', coderExitOutput)).toBe(
+      'code:coder-exit-nonzero/provider-quota',
+    )
+  })
+
+  it('preserves genuine stderr content while dropping only the notice', () => {
+    expect(
+      stripBenignCodexStderr('Reading additional input from stdin...\nreal explosion here\n'),
+    ).toContain('real explosion here')
+    expect(
+      stripBenignCodexStderr('Reading additional input from stdin...\nreal explosion here\n'),
+    ).not.toContain('Reading additional input')
+    expect(stripBenignCodexStderr('Reading additional input from stdin...\n')).toBe('')
   })
 
   it('leaves quotaRejected null when the run failed for a non-quota reason', async () => {
