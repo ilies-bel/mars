@@ -95,6 +95,28 @@ describe('sweepPhantomTasks — wall-clock ceiling', () => {
     expect(items).toHaveLength(0)
   })
 
+  it('leaves a queued task without a worker PID queued after the ceiling elapses', async () => {
+    // Queue time is not worker time: an undispatched task has no subprocess
+    // to be phantom, even when concurrency caps leave it waiting for hours.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('wait for an implement slot', undefined, { skipTriage: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
+      args: [OLD_UPDATED_AT(nowMs), task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    const { failed, requeued } = await watchdog.sweepPhantomTasks([], reclaimSlot, undefined, nowMs)
+
+    expect(failed).not.toContain(task.id)
+    expect(requeued).not.toContain(task.id)
+    expect((await q.getTask(task.id))?.status).toBe('queued')
+    expect(reclaimSlot).not.toHaveBeenCalled()
+    expect(await actionQueue.listActionQueueItems('open')).toHaveLength(0)
+  })
+
   it('still fails a running task that has an in-flight entry but no PID and exceeds the ceiling', async () => {
     // A task WITH an in-flight entry (this daemon dispatched it) but no PID
     // recorded should still be phantom-failed after the ceiling.
