@@ -5,7 +5,12 @@ import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { openLibsql } from '../../lib/libsql.js'
 import { createTaskStore, type DomainTaskStore as TaskStore } from '../../store/task-store.js'
-import { listKpis } from '../kpi-store.js'
+import {
+  getRescueCounters,
+  incrementRescueAttempts,
+  incrementRescueSuccess,
+  listKpis,
+} from '../kpi-store.js'
 
 // ---------------------------------------------------------------------------
 // Test DB helpers (mirrors pattern in kpi-snapshots.test.ts)
@@ -420,5 +425,33 @@ describe('listKpis — per-KPI independent confidence flags', () => {
     expect(byKey['failure_rate'].currentValue).toBeCloseTo(0.2)
     expect(byKey['failure_rate'].priorValue).toBeCloseTo(0.4)
     expect(byKey['failure_rate'].delta).toBeCloseTo(0.2 - 0.4)
+  })
+})
+
+describe('co-located rescue KPI counter coverage', () => {
+  it('getRescueCounters returns zeros when no counter rows exist', async () => {
+    const store = await makeStore()
+    const counters = await getRescueCounters(store)
+    expect(counters.rescue_attempts_total).toBe(0)
+    expect(counters.rescue_success_total).toBe(0)
+  })
+
+  it('incrementRescueAttempts advances rescue_attempts_total, leaving rescue_success_total unchanged', async () => {
+    const store = await makeStore()
+    await incrementRescueAttempts(store)
+    await incrementRescueAttempts(store)
+    const counters = await getRescueCounters(store)
+    expect(counters.rescue_attempts_total).toBe(2)
+    expect(counters.rescue_success_total).toBe(0)
+  })
+
+  it('incrementRescueSuccess advances rescue_success_total independently of rescue_attempts_total', async () => {
+    const store = await makeStore()
+    await incrementRescueAttempts(store)
+    await incrementRescueAttempts(store)
+    await incrementRescueSuccess(store)
+    const counters = await getRescueCounters(store)
+    expect(counters.rescue_attempts_total).toBe(2)
+    expect(counters.rescue_success_total).toBe(1)
   })
 })
