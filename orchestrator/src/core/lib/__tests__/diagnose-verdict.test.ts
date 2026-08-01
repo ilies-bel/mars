@@ -60,7 +60,8 @@ describe('diagnose-verdict set/show', () => {
     expect(got.involvedFiles).toEqual(['src/foo.ts', 'src/bar.ts'])
     expect(got.fixDirection).toContain('optional-chain')
     expect(got.taskId).toBe('mars-aaaaaaaa')
-    expect(got.recordedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    expect(typeof got.recordedAt).toBe('number')
+    expect(got.recordedAt).toBeGreaterThan(0)
   })
 
   // Acceptance: set with inconclusive verdict stores what-was-checked, why-unscoped
@@ -77,7 +78,8 @@ describe('diagnose-verdict set/show', () => {
     expect(got.whatChecked).toContain('src/foo.ts')
     expect(got.whyUnscoped).toContain('does not exist')
     expect(got.taskId).toBe('mars-bbbbbbbb')
-    expect(got.recordedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    expect(typeof got.recordedAt).toBe('number')
+    expect(got.recordedAt).toBeGreaterThan(0)
   })
 
   // Acceptance: show for task with no recorded verdict returns explicit no-verdict state

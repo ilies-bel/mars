@@ -28,7 +28,7 @@ export type DiagnosisVerdict =
 
 /** Discriminator returned to callers that read a verdict that may not exist. */
 export type StoredDiagnosis =
-  | (DiagnosisVerdict & { taskId: string; recordedAt: string })
+  | (DiagnosisVerdict & { taskId: string; recordedAt: number })
   | { kind: 'no-verdict'; taskId: string }
 
 export type DiagnosisKind = DiagnosisVerdict['kind']
@@ -101,7 +101,7 @@ export const setDiagnosis = async (
   }
 
   const store = await getDefaultTaskStore()
-  const now = new Date().toISOString()
+  const now = Date.now()
 
   // Delete from all child tables first so an overwrite across verdict kinds
   // leaves no stale rows (e.g. switching from root-cause to inconclusive).
@@ -161,7 +161,7 @@ export const getDiagnosis = async (taskId: string): Promise<StoredDiagnosis> => 
     const r = rcResult.rows[0] as unknown as {
       evidence: string
       fix_direction: string
-      recorded_at: string
+      recorded_at: number
     }
     const filesResult = await store.query({
       sql: `SELECT path
@@ -193,7 +193,7 @@ export const getDiagnosis = async (taskId: string): Promise<StoredDiagnosis> => 
     const r = incResult.rows[0] as unknown as {
       what_checked: string
       why_unscoped: string
-      recorded_at: string
+      recorded_at: number
     }
     return {
       kind: 'inconclusive',

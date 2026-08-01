@@ -79,6 +79,69 @@ describe('ensureSchema', () => {
     })
   })
 
+  it('migrates gate and diagnosis timestamps to epoch milliseconds', async () => {
+    const c = openDb(freshKey())
+    try {
+      await __execSchemaBatch(c, [
+        `CREATE TABLE diagnoses_root_cause (
+          task_id text PRIMARY KEY, evidence text NOT NULL, fix_direction text NOT NULL, recorded_at text NOT NULL
+        )`,
+        `CREATE TABLE diagnoses_inconclusive (
+          task_id text PRIMARY KEY, what_checked text NOT NULL, why_unscoped text NOT NULL, recorded_at text NOT NULL
+        )`,
+        `CREATE TABLE gate_enrichment (
+          signature text PRIMARY KEY, status text NOT NULL, encodable_family text, non_encodable_reason text,
+          step_spec text, origin_task_id text NOT NULL, seen_count bigint NOT NULL DEFAULT 1,
+          created_at text NOT NULL, updated_at text NOT NULL, approved_by text, approved_at text, retired_at text
+        )`,
+        `CREATE TABLE gate_burn_in (gate_name text PRIMARY KEY, parse_count bigint NOT NULL DEFAULT 0, promoted_at text)`,
+        `CREATE TABLE gate_verdict_monitor (
+          id bigint PRIMARY KEY, current_verdict text, streak_count bigint NOT NULL DEFAULT 0, last_task_id text, updated_at text NOT NULL
+        )`,
+        `CREATE TABLE gate_suppressed_verdicts (verdict text PRIMARY KEY, tripped_at text NOT NULL)`,
+        `CREATE TABLE verify_gates (
+          id text PRIMARY KEY, scope text NOT NULL DEFAULT '.', name text NOT NULL, cmd text NOT NULL,
+          args_json text NOT NULL DEFAULT '[]', required integer NOT NULL DEFAULT 1, tier text NOT NULL DEFAULT 'task',
+          source text NOT NULL DEFAULT 'human', created_at text NOT NULL, UNIQUE(scope, name)
+        )`,
+        { sql: `INSERT INTO diagnoses_root_cause VALUES ('root', 'evidence', 'fix', '1970-01-01T00:00:01.001Z')` },
+        { sql: `INSERT INTO diagnoses_inconclusive VALUES ('inc', 'checked', 'unscoped', '1970-01-01T00:00:01.002Z')` },
+        {
+          sql: `INSERT INTO gate_enrichment (signature, status, origin_task_id, created_at, updated_at, approved_at, retired_at)
+                VALUES ('sig', 'retired', 'task', '1970-01-01T00:00:01.003Z', '1970-01-01T00:00:01.004Z', '1970-01-01T00:00:01.005Z', '1970-01-01T00:00:01.006Z')`,
+        },
+        { sql: `INSERT INTO gate_burn_in VALUES ('gate', 1, '1970-01-01T00:00:01.007Z')` },
+        { sql: `INSERT INTO gate_verdict_monitor VALUES (1, 'pass', 1, 'task', '1970-01-01T00:00:01.008Z')` },
+        { sql: `INSERT INTO gate_suppressed_verdicts VALUES ('fail', '1970-01-01T00:00:01.009Z')` },
+        { sql: `INSERT INTO verify_gates VALUES ('verify', '.', 'test', 'true', '[]', 1, 'task', 'test', '1970-01-01T00:00:01.010Z')` },
+      ])
+
+      await ensureSchema(c)
+
+      expect(Object.fromEntries(await columnsOf(c, 'diagnoses_root_cause'))).toMatchObject({ recorded_at: 'bigint' })
+      expect(Object.fromEntries(await columnsOf(c, 'diagnoses_inconclusive'))).toMatchObject({ recorded_at: 'bigint' })
+      expect(Object.fromEntries(await columnsOf(c, 'gate_enrichment'))).toMatchObject({
+        created_at: 'bigint', updated_at: 'bigint', approved_at: 'bigint', retired_at: 'bigint',
+      })
+      expect((await columnsOf(c, 'gate_burn_in')).get('promoted_at')).toBe('bigint')
+      expect((await columnsOf(c, 'gate_verdict_monitor')).get('updated_at')).toBe('bigint')
+      expect((await columnsOf(c, 'gate_suppressed_verdicts')).get('tripped_at')).toBe('bigint')
+      expect((await columnsOf(c, 'verify_gates')).get('created_at')).toBe('bigint')
+      expect((await c.execute(`SELECT recorded_at FROM diagnoses_root_cause`)).rows).toEqual([{ recorded_at: 1001 }])
+      expect((await c.execute(`SELECT recorded_at FROM diagnoses_inconclusive`)).rows).toEqual([{ recorded_at: 1002 }])
+      expect((await c.execute(`SELECT created_at, updated_at, approved_at, retired_at FROM gate_enrichment`)).rows)
+        .toEqual([{ created_at: 1003, updated_at: 1004, approved_at: 1005, retired_at: 1006 }])
+      expect((await c.execute(`SELECT promoted_at FROM gate_burn_in`)).rows).toEqual([{ promoted_at: 1007 }])
+      expect((await c.execute(`SELECT updated_at FROM gate_verdict_monitor`)).rows).toEqual([{ updated_at: 1008 }])
+      expect((await c.execute(`SELECT tripped_at FROM gate_suppressed_verdicts`)).rows).toEqual([{ tripped_at: 1009 }])
+      expect((await c.execute(`SELECT created_at FROM verify_gates`)).rows).toEqual([{ created_at: 1010 }])
+
+      await expect(ensureSchema(c)).resolves.toBeUndefined()
+    } finally {
+      await c.close()
+    }
+  })
+
   it('migrates legacy chat timestamps to epoch milliseconds without losing rows', async () => {
     const c = openDb(freshKey())
     try {

@@ -110,7 +110,7 @@ const writeMonitorRow = async (
       row.current_verdict,
       row.streak_count,
       row.last_task_id,
-      new Date().toISOString(),
+      Date.now(),
     ],
   })
 }
@@ -212,7 +212,7 @@ const markVerdictSuppressed = async (
     sql: `INSERT INTO gate_suppressed_verdicts (verdict, tripped_at)
           VALUES (?, ?)
           ON CONFLICT (verdict) DO NOTHING`,
-    args: [verdict, new Date().toISOString()],
+    args: [verdict, Date.now()],
   })
 }
 

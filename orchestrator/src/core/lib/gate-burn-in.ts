@@ -89,7 +89,7 @@ export const getGateBurnInStatus = async (
   }
   const row = r.rows[0] as unknown as {
     parse_count: number
-    promoted_at: string | null
+    promoted_at: number | null
   }
   return {
     inShadow: row.promoted_at === null,
@@ -143,7 +143,7 @@ export const recordGateParse = async (
   })
   const row = r.rows[0] as unknown as {
     parse_count: number
-    promoted_at: string | null
+    promoted_at: number | null
   }
   const parseCount = row.parse_count
 
@@ -151,7 +151,7 @@ export const recordGateParse = async (
   if (row.promoted_at === null && parseCount >= SHADOW_BURN_IN_COUNT) {
     await client.execute({
       sql: `UPDATE gate_burn_in SET promoted_at = ? WHERE gate_name = ?`,
-      args: [new Date().toISOString(), gateName],
+      args: [Date.now(), gateName],
     })
     return { parseCount, promoted: true }
   }

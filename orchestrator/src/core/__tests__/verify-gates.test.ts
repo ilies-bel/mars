@@ -79,8 +79,8 @@ describe('addVerifyGate', () => {
       source: 'human',
       scope: '.',
     })
-    expect(typeof gates[0].createdAt).toBe('string')
-    expect(gates[0].createdAt.length).toBeGreaterThan(0)
+    expect(typeof gates[0].createdAt).toBe('number')
+    expect(gates[0].createdAt).toBeGreaterThan(0)
   })
 
   it('respects all optional fields when provided', async () => {

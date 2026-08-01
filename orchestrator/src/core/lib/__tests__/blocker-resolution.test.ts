@@ -1348,7 +1348,7 @@ describe('blocker-resolution (task_blockers)', () => {
       await q.resolveQueueClient().execute({
         sql: `INSERT INTO verify_gates (id, scope, name, cmd, args_json, required, tier, source, created_at)
               VALUES (?, '.', 'always-fail', 'node', ?, 1, 'task', 'test', ?)`,
-        args: ['gate-always-fail', JSON.stringify(['-e', 'process.exit(1)']), new Date().toISOString()],
+        args: ['gate-always-fail', JSON.stringify(['-e', 'process.exit(1)']), Date.now()],
       })
 
       const branchAheadBefore = Number(

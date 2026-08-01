@@ -15,7 +15,7 @@
  *   columns stay integers — retyping to boolean is out of scope.
  * - `REAL` → `double precision`, `BLOB` → `bytea`.
  * - `DEFAULT (unixepoch())` → `DEFAULT floor(extract(epoch from now()))::bigint`.
- * - JSON-in-TEXT columns stay `text`; operational timestamps use `timestamptz`.
+ * - JSON-in-TEXT columns stay `text`; epoch-millisecond operational timestamps use `bigint`.
  *
  * Conflicts resolved here, once:
  * - `tool_promotion_attempts` uses the store version
@@ -863,13 +863,13 @@ const DDL: readonly string[] = [
     task_id       text PRIMARY KEY,
     evidence      text NOT NULL,
     fix_direction text NOT NULL,
-    recorded_at   text NOT NULL
+    recorded_at   bigint NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS diagnoses_inconclusive (
     task_id      text PRIMARY KEY,
     what_checked text NOT NULL,
     why_unscoped text NOT NULL,
-    recorded_at  text NOT NULL
+    recorded_at  bigint NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS diagnosis_involved_files (
     task_id  text   NOT NULL,
@@ -887,27 +887,27 @@ const DDL: readonly string[] = [
     step_spec            text,
     origin_task_id       text   NOT NULL,
     seen_count           bigint NOT NULL DEFAULT 1,
-    created_at           text   NOT NULL,
-    updated_at           text   NOT NULL,
+    created_at           bigint NOT NULL,
+    updated_at           bigint NOT NULL,
     approved_by          text,
-    approved_at          text,
-    retired_at           text
+    approved_at          bigint,
+    retired_at           bigint
   )`,
   `CREATE TABLE IF NOT EXISTS gate_burn_in (
     gate_name   text   PRIMARY KEY,
     parse_count bigint NOT NULL DEFAULT 0,
-    promoted_at text
+    promoted_at bigint
   )`,
   `CREATE TABLE IF NOT EXISTS gate_verdict_monitor (
     id              bigint PRIMARY KEY CHECK (id = 1),
     current_verdict text,
     streak_count    bigint NOT NULL DEFAULT 0,
     last_task_id    text,
-    updated_at      text   NOT NULL
+    updated_at      bigint NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS gate_suppressed_verdicts (
     verdict    text PRIMARY KEY,
-    tripped_at text NOT NULL
+    tripped_at bigint NOT NULL
   )`,
   // Signature-storm circuit breaker: singleton streak row that counts
   // consecutive identical failure signatures across DIFFERENT origin tasks.
@@ -933,9 +933,117 @@ const DDL: readonly string[] = [
     required   INTEGER NOT NULL DEFAULT 1,
     tier       text NOT NULL DEFAULT 'task',
     source     text NOT NULL DEFAULT 'human',
-    created_at text NOT NULL,
+    created_at bigint NOT NULL,
     UNIQUE(scope, name)
   )`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'diagnoses_root_cause'
+          AND column_name = 'recorded_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE diagnoses_root_cause ALTER COLUMN recorded_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM recorded_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'diagnoses_inconclusive'
+          AND column_name = 'recorded_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE diagnoses_inconclusive ALTER COLUMN recorded_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM recorded_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'gate_enrichment'
+          AND column_name = 'created_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE gate_enrichment ALTER COLUMN created_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM created_at::timestamptz) * 1000)::bigint;
+     END IF;
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'gate_enrichment'
+          AND column_name = 'updated_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE gate_enrichment ALTER COLUMN updated_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM updated_at::timestamptz) * 1000)::bigint;
+     END IF;
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'gate_enrichment'
+          AND column_name = 'approved_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE gate_enrichment ALTER COLUMN approved_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM approved_at::timestamptz) * 1000)::bigint;
+     END IF;
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'gate_enrichment'
+          AND column_name = 'retired_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE gate_enrichment ALTER COLUMN retired_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM retired_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'gate_burn_in'
+          AND column_name = 'promoted_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE gate_burn_in ALTER COLUMN promoted_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM promoted_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'gate_verdict_monitor'
+          AND column_name = 'updated_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE gate_verdict_monitor ALTER COLUMN updated_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM updated_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'gate_suppressed_verdicts'
+          AND column_name = 'tripped_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE gate_suppressed_verdicts ALTER COLUMN tripped_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM tripped_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'verify_gates'
+          AND column_name = 'created_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE verify_gates ALTER COLUMN created_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM created_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
 
   // ── KPIs / scoring / promotion ────────────────────────────────────────────
   `CREATE TABLE IF NOT EXISTS kpi_snapshots (

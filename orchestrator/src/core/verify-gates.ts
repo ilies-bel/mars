@@ -24,7 +24,7 @@ const VERIFY_GATES_DDL = `CREATE TABLE IF NOT EXISTS verify_gates (
   required   INTEGER NOT NULL DEFAULT 1,
   tier       text NOT NULL DEFAULT 'task',
   source     text NOT NULL DEFAULT 'human',
-  created_at text NOT NULL,
+  created_at bigint NOT NULL,
   UNIQUE(scope, name)
 )`
 
@@ -61,7 +61,7 @@ export interface VerifyGate {
   required: boolean
   tier: 'task' | 'integration'
   source: string
-  createdAt: string
+  createdAt: number
 }
 
 interface VerifyGateRow {
@@ -73,7 +73,7 @@ interface VerifyGateRow {
   required: number
   tier: string
   source: string
-  created_at: string
+  created_at: number
 }
 
 const rowToGate = (row: VerifyGateRow): VerifyGate => ({
@@ -106,7 +106,7 @@ export const addVerifyGate = async (input: VerifyGateInput): Promise<string> => 
     tier = 'task',
     source = 'human',
   } = input
-  const createdAt = new Date().toISOString()
+  const createdAt = Date.now()
   await c.execute(
     `INSERT INTO verify_gates (id, scope, name, cmd, args_json, required, tier, source, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,

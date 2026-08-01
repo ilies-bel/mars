@@ -127,11 +127,11 @@ export interface EnrichmentRecord {
   originTaskId: string
   /** How many failures carrying this signature have been observed. */
   seenCount: number
-  createdAt: string
-  updatedAt: string
+  createdAt: number
+  updatedAt: number
   approvedBy: string | null
-  approvedAt: string | null
-  retiredAt: string | null
+  approvedAt: number | null
+  retiredAt: number | null
 }
 
 /**
@@ -161,11 +161,11 @@ interface EnrichmentRow {
   step_spec: string | null
   origin_task_id: string
   seen_count: number
-  created_at: string
-  updated_at: string
+  created_at: number
+  updated_at: number
   approved_by: string | null
-  approved_at: string | null
-  retired_at: string | null
+  approved_at: number | null
+  retired_at: number | null
 }
 
 const parseStepSpec = (raw: string | null): VerifyStepSpec | null => {
@@ -339,7 +339,7 @@ export const observeFailureSignature = async (
   input: ObserveFailureSignatureInput,
 ): Promise<ObserveFailureSignatureOutcome> => {
   await ensureGateEnrichmentSchema(client)
-  const now = new Date().toISOString()
+  const now = Date.now()
   const encodability = classifyEncodability(input.signature)
 
   const status: EnrichmentStatus = encodability.encodable
@@ -399,11 +399,11 @@ const setStatus = async (
   patch: {
     status: EnrichmentStatus
     approvedBy?: string | null
-    approvedAt?: string | null
-    retiredAt?: string | null
+    approvedAt?: number | null
+    retiredAt?: number | null
   },
 ): Promise<EnrichmentRecord> => {
-  const now = new Date().toISOString()
+  const now = Date.now()
   await client.execute({
     sql: `UPDATE gate_enrichment SET
             status = ?,
@@ -451,7 +451,7 @@ export const setEnrichmentDraftStep = async (
   if (typeof spec.cmd !== 'string' || spec.cmd.trim().length === 0) {
     throw new Error('draft step requires a non-empty cmd')
   }
-  const now = new Date().toISOString()
+  const now = Date.now()
   const stored: VerifyStepSpec = {
     name: enrichStepName(signature),
     cmd: spec.cmd,
@@ -500,7 +500,7 @@ export const approveEnrichment = async (
   return setStatus(client, signature, {
     status: 'shadow',
     approvedBy,
-    approvedAt: new Date().toISOString(),
+    approvedAt: Date.now(),
   })
 }
 
@@ -524,7 +524,7 @@ export const retireEnrichment = async (
   }
   return setStatus(client, signature, {
     status: 'retired',
-    retiredAt: new Date().toISOString(),
+    retiredAt: Date.now(),
   })
 }
 
@@ -696,7 +696,7 @@ const enforcingStaleKey = (signature: string): string =>
  * occurring and the staleness clock starts over.
  *
  * Counter persistence: `gate_burn_in` rows keyed `enforcing-stale:<signature>`.
- * `parse_count` = consecutive passing runs. `promoted_at` = ISO timestamp
+ * `parse_count` = consecutive passing runs. `promoted_at` = epoch milliseconds
  * written when the stale row was first raised (prevents re-raising within the
  * same consecutive-pass window).
  */
@@ -744,7 +744,7 @@ const trackEnforcingStaleness = async (
   if (r.rows.length === 0) return
   const row = r.rows[0] as unknown as {
     parse_count: number
-    promoted_at: string | null
+    promoted_at: number | null
   }
   // Already raised in this window; raiseActionQueueItem's seen_count bump handles it.
   if (row.promoted_at !== null) return
@@ -755,7 +755,7 @@ const trackEnforcingStaleness = async (
     // double-raising.
     await client.execute({
       sql: `UPDATE gate_burn_in SET promoted_at = ? WHERE gate_name = ?`,
-      args: [new Date().toISOString(), key],
+      args: [Date.now(), key],
     })
     await raiseStaleRow(signature, row.parse_count)
   }
