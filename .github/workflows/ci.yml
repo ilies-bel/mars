@@ -37,7 +37,7 @@ jobs:
       - run: pnpm test
 
   ui:
-    name: UI (typecheck + build)
+    name: UI (typecheck + build + test)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -64,6 +64,39 @@ jobs:
       - run: pnpm run typecheck
 
       - run: pnpm run build
+
+      # The job set up Bun but never ran a test, so ui/'s 2,187 tests
+      # (vitest src+server, plus the Bun-native server suite) gated nothing.
+      # That is how ui/server/chatRoutes.test.ts stayed unexecuted and how
+      # progress.test.ts sat red on main. `pnpm test` covers all three:
+      # lint:tokens, test:src, test:server.
+      - run: pnpm test
+
+  packages:
+    name: Packages (@mars/workflow, @mars/claude-session)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [workflow, claude-session]
+    defaults:
+      run:
+        working-directory: packages/${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Both packages declare a `test` script and together carry 20 test
+      # files, but no job ran them — they are consumed by path from
+      # orchestrator/ and ui/, which never invoke their suites.
+      - run: npm install --no-audit --no-fund
+
+      - run: npm run typecheck
+
+      - run: npm test
 
   repo-hygiene:
     name: Repo hygiene
