@@ -104,6 +104,7 @@ import { CompactionNotice } from '@/widgets/chat/CompactionNotice'
 import { SubthreadBoundaryLine } from '@/widgets/chat/SubthreadBoundaryLine'
 import type { DisplayRow } from '@/widgets/chat/OpeningNextMoves'
 import { useTasks } from '@/hooks/useTasks'
+import { useChatLayoutPreference } from '@/entities/chat-layout/api'
 import { SkeletonList } from '@/components/Skeleton'
 import { GlossaryHighlighter } from '@/components/glossary/GlossaryHighlighter'
 import { highlightGlossary } from '@/shared/highlightGlossary'
@@ -2567,6 +2568,7 @@ export const ChatPage = () => {
   }, [isMdScreen])
 
   const qc = useQueryClient()
+  const { layout: chatLayout, setLayout: setChatLayout, isPending: isUpdatingChatLayout } = useChatLayoutPreference()
 
   // Live queue rows + resolved-rows archive back the main-pane detail / resolved
   // views (still reachable from the hero's alert preview). The chat sidebar no
@@ -2888,8 +2890,8 @@ export const ChatPage = () => {
         </div>
       )}
       <div className="flex min-h-0 flex-1 overflow-hidden">
-      {/* Thread sidebar — in-flow on md+, hidden on mobile with overlay sheet */}
-      {isMdScreen && (
+      {/* Threads keeps the older Subject rail; Focus is one continuous scroll. */}
+      {chatLayout === 'threads' && isMdScreen && (
         <ThreadSidebar
           selectedId={selectedThreadId}
           projectId={projectId}
@@ -2906,7 +2908,7 @@ export const ChatPage = () => {
       )}
 
       {/* Mobile sidebar overlay — backdrop + sliding sheet */}
-      {!isMdScreen && sidebarOpen && (
+      {chatLayout === 'threads' && !isMdScreen && sidebarOpen && (
         <>
           {/* Backdrop */}
           <div
@@ -2940,8 +2942,27 @@ export const ChatPage = () => {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="flex items-center justify-end border-b border-primary/20 px-3 py-1.5">
+          <div role="group" aria-label="Chat layout" className="flex rounded border border-primary/25 p-0.5">
+            {(['focus', 'threads'] as const).map((layout) => (
+              <button
+                key={layout}
+                type="button"
+                data-testid={`chat-layout-${layout}`}
+                aria-pressed={chatLayout === layout}
+                disabled={isUpdatingChatLayout}
+                className={`px-2 py-0.5 font-mono text-[10px] capitalize transition-colors ${
+                  chatLayout === layout ? 'bg-primary/15 text-foreground' : 'text-primary hover:bg-primary/10'
+                }`}
+                onClick={() => setChatLayout(layout)}
+              >
+                {layout}
+              </button>
+            ))}
+          </div>
+        </div>
         {/* Mobile top bar — hamburger button */}
-        {!isMdScreen && (
+        {chatLayout === 'threads' && !isMdScreen && (
           <div className="flex items-center border-b border-primary/30 px-3 py-2">
             <button
               type="button"
@@ -3019,59 +3040,72 @@ export const ChatPage = () => {
         ) : whatHappenedActive ? (
           <ChatHero delta={heroDelta} onBack={() => setWhatHappenedActive(false)} />
         ) : (
-          // Seeded feed: Mars speaks first. No hero screen — the feed is
-          // already populated on first paint.
+          // Both layouts use the same selected Subject and composer routing.
+          // Focus adds the chronological timeline; Threads presents only the
+          // selected Subject alongside the existing rail.
           <div className="flex h-full flex-col" data-testid="seeded-feed">
             <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
-              <div
-                data-testid="mars-opening-message"
-                className="flex flex-col gap-1"
-              >
-                <span className="font-mono text-[11px] text-primary">mars</span>
-                {!selectedThreadId && hasActionableItems ? (
-                  <OpeningNextMoves
-                    rows={openingRows}
-                    onPick={(row) => {
-                      if (row.kind === 'blocked') {
-                        // Blocked tasks are not in the action queue; navigate to
-                        // the task detail page so the operator can inspect the
-                        // blocker chain and decide what to do next.
-                        window.location.hash = taskHash(row.id, 'chat')
-                        return
-                      }
-                      // Real queue rows open their Subthread inline, in the same
-                      // scroll, so the opening block is never unmounted.
-                      const item = queueItems.find((q) => q.id === row.id)
-                      if (item) void handleOpenSubthread(item)
-                    }}
-                  />
-                ) : (
-                  <p className="font-mono text-[14px] text-foreground">
-                    Nothing&apos;s pressing right now — what would you like to
-                    work on?
-                  </p>
-                )}
-              </div>
-              <div className="mt-6">
-                <ConversationTimeline
-                  entries={conversation.entries}
-                  boundaries={conversation.boundaries}
-                  memoryStartsAfterSeq={conversation.memoryStartsAfterSeq}
-                  activeThreadId={activeConversationThreadId}
-                  projectId={projectId}
-                  onResponseComplete={(threadId) => {
-                    void qc.invalidateQueries({ queryKey: ['chat-threads'] })
-                    void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
-                    if (threadId) {
-                      setSelectedThreadId(null)
-                      setActiveSubthreadId(threadId)
-                    }
-                  }}
-                />
-              </div>
+              {/* Focus is one continuous scroll: the opening block plus the
+                  chronological timeline. Threads hands that job to the rail. */}
+              {chatLayout === 'focus' && (
+                <>
+                  <div
+                    data-testid="mars-opening-message"
+                    className="flex flex-col gap-1"
+                  >
+                    <span className="font-mono text-[11px] text-primary">mars</span>
+                    {!selectedThreadId && hasActionableItems ? (
+                      <OpeningNextMoves
+                        rows={openingRows}
+                        onPick={(row) => {
+                          if (row.kind === 'blocked') {
+                            // Blocked tasks are not in the action queue; navigate to
+                            // the task detail page so the operator can inspect the
+                            // blocker chain and decide what to do next.
+                            window.location.hash = taskHash(row.id, 'chat')
+                            return
+                          }
+                          // Real queue rows open their Subthread inline, in the same
+                          // scroll, so the opening block is never unmounted.
+                          const item = queueItems.find((q) => q.id === row.id)
+                          if (item) void handleOpenSubthread(item)
+                        }}
+                      />
+                    ) : (
+                      <p className="font-mono text-[14px] text-foreground">
+                        Nothing&apos;s pressing right now — what would you like to
+                        work on?
+                      </p>
+                    )}
+                  </div>
+                  <div className="mt-6">
+                    <ConversationTimeline
+                      entries={conversation.entries}
+                      boundaries={conversation.boundaries}
+                      memoryStartsAfterSeq={conversation.memoryStartsAfterSeq}
+                      activeThreadId={activeConversationThreadId}
+                      projectId={projectId}
+                      onResponseComplete={(threadId) => {
+                        void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+                        void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
+                        if (threadId) {
+                          setSelectedThreadId(null)
+                          setActiveSubthreadId(threadId)
+                        }
+                      }}
+                    />
+                  </div>
+                </>
+              )}
+              {chatLayout === 'threads' && !activeConversationThreadId && (
+                <p data-testid="threads-empty-state" className="font-mono text-[12px] text-muted-foreground">
+                  Select a Subject from the list, or start a new one.
+                </p>
+              )}
               {/* Alert notifications live in the main thread, at its live end.
                   Two or more merge into one event timeline so an operator
-                  returning from away reads one artifact, not a wall of cards. */}
+                  returning from away reads one artifact, not a wall of cards.
+                  Outside the layout gate: alerts must surface in both layouts. */}
               {openAlerts.length > 0 && (
                 <div className="mt-4">
                   <MainThreadAlerts
@@ -3102,7 +3136,7 @@ export const ChatPage = () => {
                 </div>
               )}
             </div>
-            {!activeConversationThreadId && (
+            {chatLayout === 'focus' && !activeConversationThreadId && (
               <div className="flex justify-center px-6 pb-6">
                 <HeroComposer
                   onSend={(msg, files, clearState) =>

@@ -644,6 +644,33 @@ export const dismissTodoItem = async (
 }
 
 // ---------------------------------------------------------------------------
+// Chat presentation preference
+// ---------------------------------------------------------------------------
+
+const chatLayoutPreferenceSchema = z.object({
+  layout: z.enum(['focus', 'threads']),
+})
+
+export type ChatLayout = z.infer<typeof chatLayoutPreferenceSchema>['layout']
+
+export const fetchChatLayoutPreference = async (): Promise<{ layout: ChatLayout }> => {
+  return fetchJson('/api/preferences/chat-layout', chatLayoutPreferenceSchema)
+}
+
+export const putChatLayoutPreference = async (
+  layout: ChatLayout,
+): Promise<{ layout: ChatLayout }> => {
+  const path = '/api/preferences/chat-layout'
+  const response = await fetch(`${BASE}${path}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ layout }),
+  })
+  if (!response.ok) await throwMutationError(path, response)
+  return chatLayoutPreferenceSchema.parse(await response.json())
+}
+
+// ---------------------------------------------------------------------------
 // Chat API — threads, messages, mutations
 // ---------------------------------------------------------------------------
 

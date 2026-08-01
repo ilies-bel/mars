@@ -152,7 +152,7 @@ export const startServer = async (
           status: 204,
           headers: {
             'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type',
           },
         })
@@ -1040,6 +1040,18 @@ export const startServer = async (
           let body: unknown = {}
           try { body = await req.json() } catch { /* empty body is fine */ }
           const result = await proxyPost(ctx.stateDir, '/preferences/notifications', body, 'PUT')
+          return jsonResponse(result.status, result.body)
+        }
+
+        if (path === '/api/preferences/chat-layout' && req.method === 'GET') {
+          const result = await proxyGet(ctx.stateDir, '/preferences/chat-layout')
+          return jsonResponse(result.status, result.body)
+        }
+
+        if (path === '/api/preferences/chat-layout' && req.method === 'PUT') {
+          let body: unknown = {}
+          try { body = await req.json() } catch { /* daemon validates malformed input */ }
+          const result = await proxyPost(ctx.stateDir, '/preferences/chat-layout', body, 'PUT')
           return jsonResponse(result.status, result.body)
         }
 
