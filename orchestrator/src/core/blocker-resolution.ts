@@ -13,6 +13,7 @@ import {
   type WorktreeAheadPayload,
 } from './lib/worktree-ahead-payload'
 import { type OrphanCommit, listUniqueCommitsAhead } from './lib/sweep'
+import { ORIGIN_RECOVERY_FAILED_PREFIX } from './lib/failure-signature'
 
 const execFileP = promisify(execFile)
 
@@ -265,27 +266,27 @@ export interface FailStrandedOriginResult {
  *
  * Composed form: `origin_recovery_failed:<recoveryTaskId>`.
  *
- * The prefix is load-bearing, not cosmetic: the recovery-spawner subscriber uses
- * it to recognise that this origin's single recovery slot is already spent and
- * must NOT be re-driven into a second recovery (which would violate the
- * exactly-one-recovery rule and re-open the strand loop from the other side).
+ * The prefix is load-bearing, not cosmetic: it is one entry in
+ * `TERMINAL_VERDICT_PREFIXES`, the vocabulary the recovery-spawner consults to
+ * recognise that a row's automated options are already spent and it must NOT be
+ * re-driven into a second recovery (which would violate the exactly-one-recovery
+ * rule and re-open the strand loop from the other side).
+ *
+ * The constant itself lives in `lib/failure-signature.ts` alongside its sibling
+ * prefixes, so there is exactly one place to look for the full vocabulary; it is
+ * re-exported here for the callers that reason about this specific verdict.
  */
-export const ORIGIN_RECOVERY_FAILED_PREFIX = 'origin_recovery_failed:'
+export { ORIGIN_RECOVERY_FAILED_PREFIX } from './lib/failure-signature'
 
 /** Compose the origin's failure reason for a dead recovery. */
 export const composeOriginRecoveryFailedReason = (recoveryTaskId: string): string =>
   `${ORIGIN_RECOVERY_FAILED_PREFIX}${recoveryTaskId}`
 
-/**
- * True when `reason` is an origin-failed-by-dead-recovery reason. Used as the
- * "this origin's recovery slot is spent" discriminant.
- */
-export const isOriginRecoveryFailedReason = (
-  reason: string | null | undefined,
-): reason is string =>
-  typeof reason === 'string' && reason.startsWith(ORIGIN_RECOVERY_FAILED_PREFIX)
-
-export const RECOVERY_EXHAUSTED_FAILURE_REASON = 'recovery_exhausted_at_unblock'
+// `RECOVERY_EXHAUSTED_FAILURE_REASON = 'recovery_exhausted_at_unblock'` was
+// deleted here. The gate that wrote it was removed in mars-3d63fe52, leaving an
+// exported constant nothing wrote — a name one letter away from the live
+// `recovery_exhausted:` prefix, sitting in the file the vocabulary guards read.
+// Exactly the kind of near-miss that makes a maintainer add a second literal.
 
 export const ORPHANED_ORIGIN_FAILURE_REASON = 'orphaned_origin_at_unblock'
 export const ORPHANED_ORIGIN_ACTION_QUEUE_KIND: ActionQueueKind = 'orphaned-origin'

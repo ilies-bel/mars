@@ -16,6 +16,7 @@
  */
 
 import { z } from 'zod'
+import { terminalVerdictEchoPattern } from '../lib/failure-signature.js'
 
 /** One task's failure context, handed to the Steward so it can diagnose. */
 export const StormFailureExcerptSchema = z.object({
@@ -134,7 +135,13 @@ const EXCERPT_MAX_CHARS = 1_500
 // (signatures embed colons and slashes: `code:coder-exit-nonzero/unclassified`),
 // so a `recovery_failed:<sig>: recovery_failed:<sig>: …` chain strips to
 // nothing while a real error merely PREFIXED with one keeps its body.
-const STATUS_ECHO_TOKEN = /(?:recovery_failed|recovery_exhausted|requeue_ceiling):[^\s]*\s*/g
+//
+// The token list is DERIVED from `TERMINAL_VERDICT_PREFIXES`, never re-spelled
+// here. This regex used to carry its own literal alternation, which drifted out
+// of sync with the writers (it listed `requeue_ceiling:`, which nothing writes,
+// and missed `gate-suppressed:` / `signature-storm:`, which several paths do).
+// Built per call because a /g regex carries mutable `lastIndex`.
+const statusEchoToken = (): RegExp => terminalVerdictEchoPattern()
 
 /** Shortest remainder that could plausibly be real captured output. */
 const MIN_DIAGNOSTIC_CHARS = 40
@@ -163,7 +170,7 @@ export const assessStormExcerpt = (raw: string | null | undefined): StormEvidenc
   if (text.length === 0) {
     return { usable: false, verdict: 'empty', excerpt: '(no error output was recorded for this task)' }
   }
-  const stripped = text.replace(STATUS_ECHO_TOKEN, '').trim()
+  const stripped = text.replace(statusEchoToken(), '').trim()
   if (stripped.length < MIN_DIAGNOSTIC_CHARS || stripped.length < text.length * 0.25) {
     return {
       usable: false,

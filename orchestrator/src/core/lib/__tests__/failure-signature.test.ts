@@ -8,9 +8,12 @@ import {
   errorClassRules,
   firstNonBlankLine,
   isRecoveryFailedReason,
+  isTerminalVerdictReason,
   isUnclassifiedSignature,
   STEP_ID_RE,
   stripRecoveryFailedPrefixes,
+  TERMINAL_VERDICT_PREFIXES,
+  terminalVerdictEchoPattern,
   UNCLASSIFIED_ERROR_CLASS,
   UNKNOWN_STEP_ID,
 } from '../failure-signature'
@@ -52,6 +55,75 @@ describe('recovery-failure reason composition', () => {
     expect(isRecoveryFailedReason('recovery_exhausted:merge/x')).toBe(false)
     expect(isRecoveryFailedReason(null)).toBe(false)
     expect(isRecoveryFailedReason(undefined)).toBe(false)
+  })
+})
+
+describe('terminal-verdict vocabulary', () => {
+  // This suite is the anti-drift gate. The loop bug (mars-76fef59f) happened
+  // because a guard hardcoded a SUBSET of the prefixes the orchestrator writes.
+  // Any new self-written `failure_reason` prefix must be added to
+  // TERMINAL_VERDICT_PREFIXES, and this list is what says so out loud.
+  const WRITTEN_BY_THE_ORCHESTRATOR = [
+    // queue-fix-tasks.ts, recovery-task escalation
+    'recovery_failed:',
+    // queue-fix-tasks.ts, code-recovery budget gate — the one that looped
+    'recovery_exhausted:',
+    // queue-fix-tasks.ts, MARS_RECOVERY_DISABLED kill switch
+    'recovery_disabled:',
+    // queue-fix-tasks.ts, non-code re-queue cap (two call sites)
+    'non-code-retry-exhausted:',
+    // queue-fix-tasks.ts, verify-gate meta-monitor suppression
+    'gate-suppressed:',
+    // queue-fix-tasks.ts, signature-storm circuit breaker first trip
+    'signature-storm:',
+    // recovery-spawn.ts, dispatch spend-controller suppression
+    'spend_control_suppressed:',
+    // blocker-resolution.ts, origin failed by its dead one-shot recovery
+    'origin_recovery_failed:',
+  ]
+
+  it('covers every prefix the orchestrator writes for itself, and nothing else', () => {
+    expect([...TERMINAL_VERDICT_PREFIXES].sort()).toEqual(
+      [...WRITTEN_BY_THE_ORCHESTRATOR].sort(),
+    )
+  })
+
+  it('recognises every one of them as a spent verdict', () => {
+    for (const prefix of TERMINAL_VERDICT_PREFIXES) {
+      expect(isTerminalVerdictReason(`${prefix}verify/unclassified`)).toBe(true)
+    }
+  })
+
+  it('does NOT match an ordinary first-failure reason, so one recovery still runs', () => {
+    // ADR-0040: exactly one recovery attempt per origin failure. Everything
+    // here is what a row looks like BEFORE that attempt is spent.
+    for (const reason of [
+      'verify:has-diff',
+      'verify:typecheck',
+      'code:commit-contract',
+      'triage',
+      'requeue:time-bound-exceeded',
+      'cancelled',
+      'Re-queue time bound exceeded: 1 attempt(s) over 270m',
+      '',
+      null,
+      undefined,
+    ]) {
+      expect(isTerminalVerdictReason(reason)).toBe(false)
+    }
+  })
+
+  it('derives a status-echo scrubber that strips a chain of any of them', () => {
+    const chain = TERMINAL_VERDICT_PREFIXES.map(
+      (p) => `${p}code:coder-exit-nonzero/unclassified: `,
+    ).join('')
+    expect(chain.replace(terminalVerdictEchoPattern(), '').trim()).toBe('')
+    // A real error merely PREFIXED with one keeps its body.
+    expect(
+      `recovery_exhausted:verify/x: AssertionError: expected 2 to be 3`
+        .replace(terminalVerdictEchoPattern(), '')
+        .trim(),
+    ).toBe('AssertionError: expected 2 to be 3')
   })
 })
 
