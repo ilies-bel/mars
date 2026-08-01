@@ -235,9 +235,9 @@ describe('ensureSchema', () => {
         `ALTER TABLE chat_threads ADD COLUMN evaporated_at bigint`,
         {
           sql: `INSERT INTO chat_threads (id, title, status, posture, alert_resolved, closed_at, evaporated_at, created_at, updated_at)
-                VALUES ('both-populated', 'both', 'idle', 'triage', 0, 111, 222, 1, 1),
-                       ('legacy-only',    'legacy', 'idle', 'triage', 0, NULL, 333, 1, 1),
-                       ('neither',        'open',  'idle', 'triage', 0, NULL, NULL, 1, 1)`,
+                VALUES ('agreeing',    'agree',  'idle', 'triage', 0, 111, 111, 1, 1),
+                       ('legacy-only', 'legacy', 'idle', 'triage', 0, NULL, 333, 1, 1),
+                       ('neither',     'open',   'idle', 'triage', 0, NULL, NULL, 1, 1)`,
         },
       ])
 
@@ -246,19 +246,44 @@ describe('ensureSchema', () => {
       const columns = await columnsOf(c, 'chat_threads')
       expect(columns.has('evaporated_at')).toBe(false)
       expect(columns.get('closed_at')).toBe('bigint')
-      // closed_at wins where both are set; the legacy value fills in only the
-      // NULL holes. No timestamp is discarded.
+      // The legacy value fills in the NULL holes; agreeing rows are untouched.
+      // No timestamp is discarded.
       const rows = await c.execute(
-        `SELECT id, closed_at FROM chat_threads WHERE id IN ('both-populated','legacy-only','neither') ORDER BY id`,
+        `SELECT id, closed_at FROM chat_threads WHERE id IN ('agreeing','legacy-only','neither') ORDER BY id`,
       )
       expect(rows.rows).toEqual([
-        { id: 'both-populated', closed_at: 111 },
+        { id: 'agreeing', closed_at: 111 },
         { id: 'legacy-only', closed_at: 333 },
         { id: 'neither', closed_at: null },
       ])
 
       // And the batch stays replayable now that the stale column is gone.
       await expect(ensureSchema(c)).resolves.toBeUndefined()
+    } finally {
+      await c.close()
+    }
+  })
+
+  // The migration must never pick a winner between two disagreeing timestamps.
+  // Refusing to boot is recoverable by hand; a silently discarded column is not.
+  it('refuses to migrate when evaporated_at and closed_at disagree on a row', async () => {
+    const c = openDb(freshKey())
+    try {
+      await ensureSchema(c)
+      await __execSchemaBatch(c, [
+        `ALTER TABLE chat_threads ADD COLUMN evaporated_at bigint`,
+        {
+          sql: `INSERT INTO chat_threads (id, title, status, posture, alert_resolved, closed_at, evaporated_at, created_at, updated_at)
+                VALUES ('conflict', 'conflict', 'idle', 'triage', 0, 111, 222, 1, 1)`,
+        },
+      ])
+
+      // The refusal is loud and names the ambiguity rather than picking a
+      // winner. The DDL batch is one transaction, so nothing is half-applied:
+      // the operator reconciles the two columns by hand and boots again.
+      await expect(ensureSchema(c)).rejects.toThrow(/different timestamps/)
+      // And it stays a refusal on every retry rather than eroding into a drop.
+      await expect(ensureSchema(c)).rejects.toThrow(/different timestamps/)
     } finally {
       await c.close()
     }

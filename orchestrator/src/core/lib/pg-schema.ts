@@ -690,17 +690,25 @@ const DDL: readonly string[] = [
   //      against it. A bare RENAME raises 42701 `column "closed_at" ...
   //      already exists` here, which is exactly the boot-loop this guard ends.
   //
-  // In case 3 the legacy column is folded into `closed_at` before it is
-  // dropped, so no timestamp is ever discarded: `closed_at` wins where both are
-  // populated (it is the column every reader uses), and `evaporated_at` fills
-  // in only where `closed_at` is NULL. Both columns are normalised to bigint
-  // epoch-ms first so the merge cannot fail on a text/bigint mismatch. Nothing
-  // in the repo reads `evaporated_at` any more, so dropping it after the merge
-  // is a clean cut rather than a data loss.
+  // Case 3 heals only where healing is unambiguous, and refuses otherwise:
+  //   - `evaporated_at` NULL, or equal to `closed_at`  -> nothing to lose, drop.
+  //   - `closed_at` NULL, `evaporated_at` set          -> fold the legacy value
+  //     into `closed_at`. Strictly non-destructive.
+  //   - both set and DIFFERENT                         -> a genuine conflict.
+  //     RAISE, because picking a winner would irreversibly destroy the other
+  //     timestamp. On this repo's database that count is 0 (94 rows,
+  //     `evaporated_at` entirely NULL), but this DDL also ships to consumer
+  //     repos through `mars init` / `mars update`, and a migration that cannot
+  //     decide must stop rather than guess. Refusing to boot is recoverable;
+  //     a silently discarded column is not.
+  // Both columns are normalised to bigint epoch-ms before the comparison so it
+  // cannot false-positive on a text/bigint representation mismatch. Nothing in
+  // the repo reads `evaporated_at` any more, so the drop is a clean cut.
   `DO $$
    DECLARE
      evap_type   text;
      closed_type text;
+     conflicts   bigint;
    BEGIN
      SELECT data_type INTO evap_type
        FROM information_schema.columns
@@ -729,6 +737,17 @@ const DDL: readonly string[] = [
        ALTER TABLE chat_threads
          ALTER COLUMN closed_at TYPE bigint
          USING (EXTRACT(EPOCH FROM closed_at::timestamptz) * 1000)::bigint;
+     END IF;
+
+     EXECUTE 'SELECT count(*) FROM chat_threads
+               WHERE evaporated_at IS NOT NULL AND closed_at IS NOT NULL
+                 AND evaporated_at <> closed_at'
+       INTO conflicts;
+     IF conflicts > 0 THEN
+       RAISE EXCEPTION
+         'chat_threads has % row(s) where the legacy evaporated_at and the canonical closed_at hold different timestamps; refusing to guess which one to keep',
+         conflicts
+         USING HINT = 'Reconcile the two columns by hand (closed_at is the column every reader uses), then DROP COLUMN evaporated_at, then start the daemon again.';
      END IF;
 
      EXECUTE 'UPDATE chat_threads SET closed_at = evaporated_at
