@@ -282,7 +282,11 @@ export { ORIGIN_RECOVERY_FAILED_PREFIX } from './lib/failure-signature'
 export const composeOriginRecoveryFailedReason = (recoveryTaskId: string): string =>
   `${ORIGIN_RECOVERY_FAILED_PREFIX}${recoveryTaskId}`
 
-export const RECOVERY_EXHAUSTED_FAILURE_REASON = 'recovery_exhausted_at_unblock'
+// `RECOVERY_EXHAUSTED_FAILURE_REASON = 'recovery_exhausted_at_unblock'` was
+// deleted here. The gate that wrote it was removed in mars-3d63fe52, leaving an
+// exported constant nothing wrote — a name one letter away from the live
+// `recovery_exhausted:` prefix, sitting in the file the vocabulary guards read.
+// Exactly the kind of near-miss that makes a maintainer add a second literal.
 
 export const ORPHANED_ORIGIN_FAILURE_REASON = 'orphaned_origin_at_unblock'
 export const ORPHANED_ORIGIN_ACTION_QUEUE_KIND: ActionQueueKind = 'orphaned-origin'

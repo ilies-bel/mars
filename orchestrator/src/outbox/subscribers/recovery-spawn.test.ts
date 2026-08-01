@@ -453,6 +453,16 @@ describe('recovery-spawn outbox subscriber', () => {
       error: 'recovery_exhausted:verify/unclassified',
     })
 
+    const countFailedEvents = async (): Promise<number> => {
+      const r = await client.execute({
+        sql: `SELECT COUNT(*) AS n FROM events
+               WHERE type = 'task.failed' AND payload LIKE ?`,
+        args: [`%${t.id}%`],
+      })
+      return Number((r.rows[0] as unknown as { n: number }).n)
+    }
+    const failedEventsBefore = await countFailedEvents()
+
     await rs.drainRecoverySpawner(client)
 
     // The row was never handed to the audited reopen seam.
@@ -476,15 +486,12 @@ describe('recovery-spawn outbox subscriber', () => {
     })
     expect(recoveries.rows).toHaveLength(0)
 
-    // And — the actual loop condition — the pass emitted no NEW task.failed,
-    // so there is nothing for the next 30 s drain to consume. Only the event
-    // published above exists.
-    const failedEvents = await client.execute({
-      sql: `SELECT COUNT(*) AS n FROM events
-             WHERE type = 'task.failed' AND payload LIKE ?`,
-      args: [`%${t.id}%`],
-    })
-    expect(Number((failedEvents.rows[0] as unknown as { n: number }).n)).toBe(1)
+    // And — THE actual loop condition — the pass emitted no NEW task.failed.
+    // That, not the reopen, is what fed the loop: each re-failure wrote
+    // `status='failed'` again, which emitted the event the next 30 s drain
+    // consumed. No new event means nothing left to drain: the loop is broken,
+    // not throttled.
+    expect(await countFailedEvents()).toBe(failedEventsBefore)
     expect((await rs.drainRecoverySpawner(client)).processed).toBe(0)
   })
 
