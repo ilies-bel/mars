@@ -23,7 +23,7 @@
 import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai'
 import { ApiError, chatUiStreamUrl, postChatMessage, stopChatThread } from './api'
 import type { AttachmentInfo } from './api'
-import type { ChatFeedback, ChatSegmentAlert, ChatSegmentAttachment } from './schemas'
+import type { ChatFeedback, ChatSegmentAlert, ChatSegmentAttachment, ChatSegmentCompaction } from './schemas'
 
 /** Usage stats carried on the terminal `finish` chunk's metadata. */
 export interface MarsMessageMetadata {
@@ -52,6 +52,8 @@ export interface MarsMessageMetadata {
  */
 export type MarsDataParts = {
   alert: ChatSegmentAlert
+  /** Marks where the idle sweeper folded a span of history into a checkpoint. */
+  compaction: ChatSegmentCompaction
   attachment: ChatSegmentAttachment
   chatError: { message: string }
   /** A tool call proposed by the agent but awaiting operator confirmation. Never gets a result folded in. */

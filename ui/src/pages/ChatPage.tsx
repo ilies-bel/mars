@@ -95,6 +95,7 @@ import { formatDuration } from '@/shared/time'
 import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle } from './chatPageUtils'
 import { OpeningNextMoves } from '@/widgets/chat/OpeningNextMoves'
 import { ConversationTimeline } from '@/widgets/chat/ConversationTimeline'
+import { CompactionNotice } from '@/widgets/chat/CompactionNotice'
 import { SubthreadBoundaryLine } from '@/widgets/chat/SubthreadBoundaryLine'
 import type { DisplayRow } from '@/widgets/chat/OpeningNextMoves'
 import { useTasks } from '@/hooks/useTasks'
@@ -766,6 +767,9 @@ const renderPart = (
   }
   if (part.type === 'data-alert') {
     return <AlertCardFromSegment key={key} alert={part.data} />
+  }
+  if (part.type === 'data-compaction') {
+    return <CompactionNotice key={key} segment={part.data} />
   }
   if (part.type === 'data-attachment') {
     return <AttachmentDisplay key={key} attachment={part.data} />

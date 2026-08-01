@@ -97,6 +97,10 @@ export function chatMessageToUIMessage(msg: ChatMessage): MarsUIMessage {
         parts.push({ type: 'data-alert', data: seg })
         break
       }
+      case 'compaction': {
+        parts.push({ type: 'data-compaction', data: seg })
+        break
+      }
       case 'attachment': {
         parts.push({ type: 'data-attachment', data: seg })
         break

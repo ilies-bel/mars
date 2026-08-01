@@ -1109,8 +1109,28 @@ export const preloadedResponsesSegmentSchema = z.object({
   responses: z.array(preloadedResponseSchema),
 })
 
+/**
+ * A compaction checkpoint written by the idle sweeper. The daemon has produced
+ * these since compaction existed, but nothing on this side described them, so
+ * the UI dropped them as an unknown segment type and a compacted thread looked
+ * identical to one that had simply said less.
+ */
+export const chatSegmentCompactionSchema = z.object({
+  type: z.literal('compaction'),
+  summary: z.string(),
+  /** Id of the last message this checkpoint covers. */
+  coveredThrough: z.string(),
+  /** How many messages the checkpoint stands in for, cumulative across checkpoints. */
+  messageCount: z.number(),
+  taskIds: z.array(z.string()).default([]),
+  adrRefs: z.array(z.string()).default([]),
+  glossaryRefs: z.array(z.string()).default([]),
+  artifactRefs: z.array(z.string()).default([]),
+})
+
 export const chatSegmentSchema = z.discriminatedUnion('type', [
   chatSegmentTextSchema,
+  chatSegmentCompactionSchema,
   chatSegmentThinkingSchema,
   chatSegmentToolUseSchema,
   chatSegmentAlertSchema,
@@ -1247,6 +1267,7 @@ export type ChatSegmentThinking = z.infer<typeof chatSegmentThinkingSchema>
 export type ChatSegmentToolUse = z.infer<typeof chatSegmentToolUseSchema>
 export type ChatSegmentToolResult = z.infer<typeof chatSegmentToolResultSchema>
 export type ChatSegmentAttachment = z.infer<typeof chatSegmentAttachmentSchema>
+export type ChatSegmentCompaction = z.infer<typeof chatSegmentCompactionSchema>
 export type ChatSegmentResult = z.infer<typeof chatSegmentResultSchema>
 export type ChatSegmentError = z.infer<typeof chatSegmentErrorSchema>
 export type PreloadedResponse = z.infer<typeof preloadedResponseSchema>
