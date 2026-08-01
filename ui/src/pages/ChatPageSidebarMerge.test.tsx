@@ -64,7 +64,7 @@ describe('ChatPage sidebar – conversation threads only', () => {
 
     expect(html).toContain('data-testid="codex-auth-banner"')
     expect(html).toContain('run codex login')
-    expect(html).toMatch(/retry/i)
+    expect(html).toContain('After completing the terminal login, retry.')
     expect(html).toContain('>Retry<')
     expect(html).not.toContain('Re-authenticate')
   })
