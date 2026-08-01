@@ -77,6 +77,7 @@ import { ChatHero, type HeroDelta } from '@/widgets/chat/ChatHero'
 import { priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
 import { PROCESS_LEVEL_OPS, QueueThreadDetail } from '@/widgets/chat/QueueThreadDetail'
 import { SidebarFilters, type SidebarFiltersValue } from '@/widgets/chat/SidebarFilters'
+import { MainThreadRow } from '@/widgets/chat/MainThreadRow'
 import {
   filterSidebarThreads,
   isResolvedSelection,
@@ -869,9 +870,11 @@ interface ThreadItemProps {
   isSelected: boolean
   onSelect: () => void
   onRename: (title: string) => void
+  /** Inset the row so subthreads read as subordinate to the main thread above. */
+  indented?: boolean
 }
 
-const ThreadItem = ({ thread, isSelected, onSelect, onRename }: ThreadItemProps) => {
+const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false }: ThreadItemProps) => {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -904,7 +907,10 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename }: ThreadItemProps)
   return (
     <div
       className={[
-        'group flex items-center gap-1 rounded px-2 py-1.5 cursor-pointer border-b border-primary/10',
+        'group flex items-center gap-1 rounded py-1.5 cursor-pointer border-b border-primary/10',
+        // The inset plus a rule is the structural half of the hierarchy; the
+        // main-thread row carries the weight half.
+        indented ? 'ml-3 border-l border-primary/15 pl-2 pr-2' : 'px-2',
         isSelected ? 'bg-primary/20 text-foreground' : 'text-primary hover:bg-primary/10 hover:text-foreground',
       ].join(' ')}
       role="button"
@@ -2317,6 +2323,10 @@ interface ThreadSidebarProps {
   onForkFilterChange?: (filter: ForkFilter) => void
   selectedItem: ActionQueueItem | null
   onFastAction: (action: 'restart') => void
+  /** Return the reading pane to the main thread. */
+  onSelectMainThread: () => void
+  /** Open alerts, badged on the main-thread row. */
+  alertCount?: number
 }
 
 export const ThreadSidebar = ({
@@ -2329,6 +2339,8 @@ export const ThreadSidebar = ({
   onForkFilterChange = () => {},
   selectedItem,
   onFastAction,
+  onSelectMainThread,
+  alertCount = 0,
 }: ThreadSidebarProps) => {
   const qc = useQueryClient()
   const hasForkFilter = Boolean(forkFilter.parentThreadId || forkFilter.hasParent)
@@ -2367,12 +2379,27 @@ export const ThreadSidebar = ({
           + New thread
         </button>
       </div>
+      {/* Pinned OUTSIDE the scroll region: the main thread must stay visible
+          however many subthreads pile up below it. */}
+      <div className="px-2 pt-2">
+        <MainThreadRow
+          isSelected={selectedId === null}
+          onSelect={onSelectMainThread}
+          subthreadCount={threads.length}
+          alertCount={alertCount}
+        />
+      </div>
       <SidebarFilters
         value={{ ...filters, selectedItem } satisfies SidebarFiltersValue}
         onChange={({ selectedItem: _selectedItem, ...nextFilters }) => onFiltersChange(nextFilters)}
         onFastAction={onFastAction}
       />
       <div className="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-0.5">
+        {threads.length > 0 && (
+          <p className="px-2 pb-1 font-mono text-[9px] uppercase tracking-wide text-primary/50">
+            Subthreads
+          </p>
+        )}
         {isPending ? (
           <SkeletonList
             rows={3}
@@ -2390,6 +2417,7 @@ export const ThreadSidebar = ({
         {threads.map((t) => (
           <ThreadItem
             key={t.id}
+            indented
             thread={t}
             isSelected={t.id === selectedId}
             onSelect={() => onSelect(t.id)}
@@ -2737,6 +2765,16 @@ export const ChatPage = () => {
   // a fresh generic thread.
   const { alerts: openAlerts } = useAlerts()
 
+  // Returning to the main thread clears every pinned selection — the seeded
+  // feed is what renders when nothing else is claiming the reading pane.
+  const handleSelectMainThread = useCallback(() => {
+    setSelectedThreadId(null)
+    setActiveSubthreadId(null)
+    setSelectedQueueItemId(null)
+    setWhatHappenedActive(false)
+  }, [])
+
+
   const handleOpenSubthread = useCallback(async (row: ActionQueueItem) => {
     let threadId: string
     if (row.kind === 'arc-failed') {
@@ -2816,6 +2854,8 @@ export const ChatPage = () => {
           onForkFilterChange={setForkFilter}
           selectedItem={selectedSidebarItem}
           onFastAction={restartSelectedThread}
+          onSelectMainThread={handleSelectMainThread}
+          alertCount={openAlerts.length}
         />
       )}
 
@@ -2843,6 +2883,11 @@ export const ChatPage = () => {
               onForkFilterChange={setForkFilter}
               selectedItem={selectedSidebarItem}
               onFastAction={restartSelectedThread}
+              onSelectMainThread={() => {
+                handleSelectMainThread()
+                setSidebarOpen(false)
+              }}
+              alertCount={openAlerts.length}
             />
           </div>
         </>
