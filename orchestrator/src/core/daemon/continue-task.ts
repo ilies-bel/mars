@@ -2,6 +2,8 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { getTask, updateTask } from '../queue'
 import { getDefaultTaskStore } from '../store/task-store'
+import { raiseActionQueueItem } from '../lib/action-queue'
+import { computeFailureSignature } from '../lib/failure-signature'
 import { coreRestartTask } from './restart-task'
 import { createQueueWorkflowStore } from '../../workflows/queue-workflow-store'
 
@@ -162,6 +164,82 @@ export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
       console.error(`[continue] auto-commit failed for ${id}:`, salvageErr)
     }
 
+    // Fall through to the common base refresh below before re-queuing. A
+    // salvage commit is committed work and must be preserved in that merge.
+  }
+
+  // A checkpoint-resume skips setup, so it would otherwise run the failed
+  // phase against the exact stale branch that failed before main advanced.
+  // Merge rather than rebase: worker commits retain their object ids and a
+  // conflict leaves no rewritten history for an operator to untangle.
+  const integrationBranch = process.env.INTEGRATION_BRANCH ?? 'main'
+  try {
+    execFileSync('git', ['merge', '--no-edit', integrationBranch], {
+      cwd: task.worktreePath as string,
+      encoding: 'utf-8',
+    })
+  } catch (mergeErr) {
+    const gitError = mergeErr as Error & { stdout?: string; stderr?: string }
+    const output = [gitError.message, gitError.stdout, gitError.stderr]
+      .filter((part): part is string => typeof part === 'string' && part.length > 0)
+      .join('\n')
+
+    if (!/\bCONFLICT\b|Automatic merge failed/i.test(output)) {
+      throw new Error(
+        `mars continue could not refresh ${task.branch} from ${integrationBranch}: ${output}`,
+      )
+    }
+
+    // Do not leave a parked task with an in-progress merge. Its commits stay
+    // untouched on the task branch, and the named failure/action queue item
+    // tells the operator why continuing cannot reach the failed phase yet.
+    try {
+      execFileSync('git', ['merge', '--abort'], {
+        cwd: task.worktreePath as string,
+        encoding: 'utf-8',
+      })
+    } catch {
+      // The original merge error and durable task state below are the useful
+      // diagnostic even when git reports there was nothing left to abort.
+    }
+
+    const failureReason = 'continue:base-refresh-conflict'
+    const summary =
+      `Cannot continue task ${id}: merging ${integrationBranch} into ${task.branch} ` +
+      `conflicted in ${task.worktreePath}. The merge was aborted; worker commits remain intact.\n${output}`
+    await updateTask(id, {
+      status: 'failed',
+      error: summary,
+      failedPhase: task.failedPhase,
+      failureReason,
+      failureReasonCode: failureReason,
+      failureSignature: computeFailureSignature(failureReason, summary),
+    }, store)
+    await raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'high',
+      title: `Task ${id}: base refresh conflicts with ${integrationBranch}`,
+      body:
+        `mars continue could not merge ${integrationBranch} into ${task.branch}. ` +
+        `The merge was aborted, preserving the worker's commits in ${task.worktreePath}. ` +
+        `Resolve the conflict in that worktree, then run mars continue again.`,
+      payload: {
+        taskId: id,
+        branch: task.branch,
+        worktreePath: task.worktreePath,
+        integrationBranch,
+        failureReason,
+      },
+      context: {},
+      raisedBy: 'continue-task',
+      signature: failureReason,
+      originTaskId: id,
+    })
+    throw new Error(summary)
+  }
+
+  if (task.failedPhase === 'code') {
     // Set requeueAnchorMs to now so the poll-fallback ceiling measures elapsed
     // time from this operator-initiated resume, not from the original run's
     // first step (which may be hours or days old — the journal is preserved

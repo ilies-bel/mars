@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-continue-pre-setup-'))
-  execFileSync('git', ['init', '-q'], { cwd: repo })
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+  execFileSync('git', ['config', 'user.email', 'test@mars'], { cwd: repo })
+  execFileSync('git', ['config', 'user.name', 'Mars Test'], { cwd: repo })
+  writeFileSync(resolve(repo, 'baseline.ts'), 'export const fixed = false\n')
+  execFileSync('git', ['add', 'baseline.ts'], { cwd: repo })
+  execFileSync('git', ['commit', '-qm', 'initial'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   return repo
 }
@@ -192,6 +197,75 @@ describe('continue degrades to restart for pre-setup failures', () => {
   })
 
   // ── Normal resume path is unaffected ──────────────────────────────────────
+
+  it('refreshes a failed task branch with a fix that landed on main before resuming', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+    const task = await queue.enqueueTask('test work', undefined, { skipTriage: true })
+    const worktreePath = resolve(repo, '.mars', 'worktrees', task.id)
+    const branch = `task/${task.id}`
+
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    writeFileSync(resolve(worktreePath, 'feature.ts'), 'export const feature = true\n')
+    execFileSync('git', ['add', 'feature.ts'], { cwd: worktreePath })
+    execFileSync('git', ['commit', '-qm', 'task work'], { cwd: worktreePath })
+
+    writeFileSync(resolve(repo, 'baseline.ts'), 'export const fixed = true\n')
+    execFileSync('git', ['add', 'baseline.ts'], { cwd: repo })
+    execFileSync('git', ['commit', '-qm', 'fix failing baseline'], { cwd: repo })
+
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'verify failed against stale baseline',
+      failedPhase: 'verify',
+      branch,
+      worktreePath,
+    })
+
+    const result = await continueTask.coreContinueTask(task.id)
+
+    expect(result.degradedToRestart).toBe(false)
+    expect(readFileSync(resolve(worktreePath, 'baseline.ts'), 'utf-8')).toBe(
+      'export const fixed = true\n',
+    )
+    expect(() =>
+      execFileSync('git', ['merge-base', '--is-ancestor', 'main', 'HEAD'], { cwd: worktreePath }),
+    ).not.toThrow()
+  })
+
+  it('reports a base refresh conflict instead of re-running the failed phase', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+    const task = await queue.enqueueTask('test work', undefined, { skipTriage: true })
+    const worktreePath = resolve(repo, '.mars', 'worktrees', task.id)
+    const branch = `task/${task.id}`
+
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    writeFileSync(resolve(worktreePath, 'baseline.ts'), 'export const fixed = taskVersion\n')
+    execFileSync('git', ['add', 'baseline.ts'], { cwd: worktreePath })
+    execFileSync('git', ['commit', '-qm', 'task baseline edit'], { cwd: worktreePath })
+
+    writeFileSync(resolve(repo, 'baseline.ts'), 'export const fixed = mainVersion\n')
+    execFileSync('git', ['add', 'baseline.ts'], { cwd: repo })
+    execFileSync('git', ['commit', '-qm', 'main baseline fix'], { cwd: repo })
+
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'verify failed against stale baseline',
+      failedPhase: 'verify',
+      branch,
+      worktreePath,
+    })
+
+    await expect(continueTask.coreContinueTask(task.id)).rejects.toThrow(/merging main.*conflicted/)
+
+    const after = await queue.getTask(task.id)
+    expect(after?.status).toBe('failed')
+    expect(after?.failureReasonCode).toBe('continue:base-refresh-conflict')
+    expect(execFileSync('git', ['status', '--porcelain'], { cwd: worktreePath, encoding: 'utf-8' })).toBe('')
+
+    const { listActionQueueItems } = await import('../../lib/action-queue')
+    const actions = await listActionQueueItems('open', { kind: 'failed' })
+    expect(actions.some((action) => action.signature === 'continue:base-refresh-conflict')).toBe(true)
+  })
 
   it('resumes from failed phase without degrading when worktree exists', async () => {
     const { queue, continueTask } = await loadModules(repo)
