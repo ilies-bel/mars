@@ -221,7 +221,7 @@ export interface CreateOriginSpec {
 export interface ProgressEntry {
   id: string
   taskId: string
-  createdAt: string
+  createdAt: number
   author: string
   kind: 'note' | 'check' | 'uncheck'
   body: string
@@ -3248,7 +3248,7 @@ export class Arc {
       }
     }
     const id = `prog-${randomUUID().slice(0, 8)}`
-    const now = new Date().toISOString()
+    const now = Date.now()
     const body = params.body ?? ''
     const criterionIndex =
       params.kind === 'note' ? null : (params.criterionIndex ?? null)
@@ -3293,7 +3293,7 @@ export class Arc {
       const rec = row as unknown as {
         id: string
         task_id: string
-        created_at: string
+        created_at: number
         author: string
         kind: string
         body: string
@@ -3326,7 +3326,7 @@ export class Arc {
     doneCriteria: readonly string[],
   ): Array<{ criterion: string; checked: boolean }> {
     // Map from 1-based index → most recent entry timestamp
-    const stateMap = new Map<number, { checked: boolean; createdAt: string }>()
+    const stateMap = new Map<number, { checked: boolean; createdAt: number }>()
     for (const entry of entries) {
       if (entry.kind !== 'check' && entry.kind !== 'uncheck') continue
       if (entry.criterionIndex === null) continue

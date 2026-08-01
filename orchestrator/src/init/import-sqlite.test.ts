@@ -158,6 +158,10 @@ describe('importLegacySqlite', () => {
     expect(Array.from(transcript.rows[0].transcript as Uint8Array)).toEqual(
       Array.from(TRANSCRIPT_BLOB),
     )
+    const transcriptTimestamp = await client.execute(
+      `SELECT created_at FROM task_durable_transcripts WHERE task_id = 't1'`,
+    )
+    expect(transcriptTimestamp.rows[0].created_at).toBe(Date.parse(NOW))
 
     // Import marker recorded.
     const marker = await client.execute(

@@ -627,7 +627,7 @@ export const upsertTranscript = async (
   input: UpsertTranscriptInput,
   store?: TaskStore,
 ): Promise<void> => {
-  const now = new Date().toISOString()
+  const now = Date.now()
   const execute = async (stmt: { sql: string; args: DbInValue[] }) => {
     if (store) {
       await store.execute(stmt)

@@ -264,7 +264,7 @@ describe('Arc.deriveChecklist — fold semantics', () => {
   it('reflects a single check', async () => {
     const { Arc } = await import('../../core/arc')
     const entries = [
-      { id: 'p1', taskId: 't1', createdAt: '2024-01-01T00:00:00Z', author: 'x', kind: 'check' as const, body: '', criterionIndex: 1 },
+      { id: 'p1', taskId: 't1', createdAt: 1_704_067_200_000, author: 'x', kind: 'check' as const, body: '', criterionIndex: 1 },
     ]
     const checklist = Arc.deriveChecklist(entries, ['do A', 'do B'])
     expect(checklist).toEqual([
@@ -276,8 +276,8 @@ describe('Arc.deriveChecklist — fold semantics', () => {
   it('latest entry wins: check then uncheck → unchecked', async () => {
     const { Arc } = await import('../../core/arc')
     const entries = [
-      { id: 'p1', taskId: 't1', createdAt: '2024-01-01T00:00:00Z', author: 'x', kind: 'check' as const, body: '', criterionIndex: 1 },
-      { id: 'p2', taskId: 't1', createdAt: '2024-01-01T00:01:00Z', author: 'x', kind: 'uncheck' as const, body: '', criterionIndex: 1 },
+      { id: 'p1', taskId: 't1', createdAt: 1_704_067_200_000, author: 'x', kind: 'check' as const, body: '', criterionIndex: 1 },
+      { id: 'p2', taskId: 't1', createdAt: 1_704_067_260_000, author: 'x', kind: 'uncheck' as const, body: '', criterionIndex: 1 },
     ]
     const checklist = Arc.deriveChecklist(entries, ['do A', 'do B'])
     expect(checklist[0]).toEqual({ criterion: 'do A', checked: false })
@@ -286,8 +286,8 @@ describe('Arc.deriveChecklist — fold semantics', () => {
   it('latest entry wins: uncheck then check → checked', async () => {
     const { Arc } = await import('../../core/arc')
     const entries = [
-      { id: 'p1', taskId: 't1', createdAt: '2024-01-01T00:00:00Z', author: 'x', kind: 'uncheck' as const, body: '', criterionIndex: 2 },
-      { id: 'p2', taskId: 't1', createdAt: '2024-01-01T00:01:00Z', author: 'x', kind: 'check' as const, body: '', criterionIndex: 2 },
+      { id: 'p1', taskId: 't1', createdAt: 1_704_067_200_000, author: 'x', kind: 'uncheck' as const, body: '', criterionIndex: 2 },
+      { id: 'p2', taskId: 't1', createdAt: 1_704_067_260_000, author: 'x', kind: 'check' as const, body: '', criterionIndex: 2 },
     ]
     const checklist = Arc.deriveChecklist(entries, ['do A', 'do B'])
     expect(checklist[1]).toEqual({ criterion: 'do B', checked: true })
@@ -296,7 +296,7 @@ describe('Arc.deriveChecklist — fold semantics', () => {
   it('note entries are ignored in fold', async () => {
     const { Arc } = await import('../../core/arc')
     const entries = [
-      { id: 'p1', taskId: 't1', createdAt: '2024-01-01T00:00:00Z', author: 'x', kind: 'note' as const, body: 'hello', criterionIndex: null },
+      { id: 'p1', taskId: 't1', createdAt: 1_704_067_200_000, author: 'x', kind: 'note' as const, body: 'hello', criterionIndex: null },
     ]
     const checklist = Arc.deriveChecklist(entries, ['do A'])
     expect(checklist[0]).toEqual({ criterion: 'do A', checked: false })
@@ -312,10 +312,11 @@ describe('mars task show — journal and checklist', () => {
     const { store, ctx } = await loadStoreAndCtx()
     const task = await createTask(store, { doneCriteria: ['implement', 'test'] })
     const { Arc } = await import('../../core/arc')
-    await Arc.appendProgress(
+    const entry = await Arc.appendProgress(
       { taskId: task.id, author: 'session-abc', kind: 'note', body: 'started work' },
       store,
     )
+    expect(typeof entry.createdAt).toBe('number')
     const fake = makeFakeDaemon()
     const result = await runCommandInProcess(
       ['task', 'show', task.id],

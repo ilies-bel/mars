@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0011'
+export const SCHEMA_VERSION = '0012'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -382,14 +382,25 @@ const DDL: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS task_progress (
     id              text   PRIMARY KEY,
     task_id         text   NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    created_at      timestamptz NOT NULL,
+    created_at      bigint NOT NULL,
     author          text   NOT NULL,
     kind            text   NOT NULL CHECK (kind IN ('note','check','uncheck')),
     body            text   NOT NULL,
     criterion_index bigint
   )`,
-  `ALTER TABLE task_progress
-     ALTER COLUMN created_at TYPE timestamptz USING created_at::timestamptz`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'task_progress'
+          AND column_name = 'created_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE task_progress
+         ALTER COLUMN created_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM created_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
   `CREATE INDEX IF NOT EXISTS idx_task_progress_task_time
      ON task_progress(task_id, created_at)`,
 
@@ -436,19 +447,45 @@ const DDL: readonly string[] = [
     session_id text   NOT NULL,
     seq        bigint NOT NULL,
     chunk      text   NOT NULL,
-    ts         text   NOT NULL,
+    ts         bigint NOT NULL,
     PRIMARY KEY (task_id, session_id, seq)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_task_transcripts_task
      ON task_transcripts (task_id, ts)`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'task_transcripts'
+          AND column_name = 'ts' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE task_transcripts
+         ALTER COLUMN ts TYPE bigint
+         USING (EXTRACT(EPOCH FROM ts::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
   `CREATE TABLE IF NOT EXISTS task_durable_transcripts (
     task_id    text   PRIMARY KEY,
     session_id text   NOT NULL DEFAULT '',
     step_name  text   NOT NULL DEFAULT '',
-    created_at text   NOT NULL,
+    created_at bigint NOT NULL,
     transcript bytea  NOT NULL,
     byte_len   bigint NOT NULL
   )`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'task_durable_transcripts'
+          AND column_name = 'created_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE task_durable_transcripts
+         ALTER COLUMN created_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM created_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
 
   // ── outbox / wire bus ─────────────────────────────────────────────────────
   `CREATE TABLE IF NOT EXISTS events (
@@ -1171,6 +1208,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'action_queue_items',
   'action_queue_history',
   'chat_threads',
+  'arc_rescue_attempts',
   'chat_messages',
   'chat_thread_tasks',
   'chat_feedback',

@@ -67,8 +67,19 @@ export type ImportResult =
 
 const quoteIdent = (name: string): string => `"${name.replaceAll('"', '""')}"`
 
-const toDbValue = (value: unknown): DbInValue => {
+const EPOCH_MILLIS_COLUMNS = new Set([
+  'task_blockers.created_at',
+  'task_progress.created_at',
+  'task_transcripts.ts',
+  'task_durable_transcripts.created_at',
+])
+
+const toDbValue = (value: unknown, table: string, column: string): DbInValue => {
   if (value === null || value === undefined) return null
+  if (EPOCH_MILLIS_COLUMNS.has(`${table}.${column}`) && typeof value === 'string') {
+    const millis = Date.parse(value)
+    if (!Number.isNaN(millis)) return millis
+  }
   if (
     typeof value === 'string' ||
     typeof value === 'number' ||
@@ -132,7 +143,9 @@ async function copyTable(
     if (rows.length === 0) break
     const rowTuple = `(${columns.map(() => '?').join(', ')})`
     const values = rows.map(() => rowTuple).join(', ')
-    const args = rows.flatMap((row) => columns.map((c) => toDbValue(row[c])))
+    const args = rows.flatMap((row) =>
+      columns.map((column) => toDbValue(row[column], table, column)),
+    )
     await tx.execute(
       `INSERT INTO ${quoteIdent(table)} (${columnList})${overriding} VALUES ${values}`,
       args,

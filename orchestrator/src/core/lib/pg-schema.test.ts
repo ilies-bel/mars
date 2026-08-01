@@ -474,12 +474,16 @@ describe('ensureSchema', () => {
     const c = await freshSchemaClient()
 
     const taskProgress = await columnsOf(c, 'task_progress')
+    const taskTranscripts = await columnsOf(c, 'task_transcripts')
+    const durableTranscripts = await columnsOf(c, 'task_durable_transcripts')
     const actionQueue = await columnsOf(c, 'action_queue_items')
     const actionQueueHistory = await columnsOf(c, 'action_queue_history')
     const failureStreak = await columnsOf(c, 'failure_signature_streak')
     const mergeJobs = await columnsOf(c, 'merge_jobs')
 
-    expect(taskProgress.get('created_at')).toBe('timestamp with time zone')
+    expect(taskProgress.get('created_at')).toBe('bigint')
+    expect(taskTranscripts.get('ts')).toBe('bigint')
+    expect(durableTranscripts.get('created_at')).toBe('bigint')
     for (const column of ['raised_at', 'resolved_at', 'last_seen_at', 'snoozed_until']) {
       expect(actionQueue.get(column), `action_queue_items.${column}`).toBe('bigint')
     }
@@ -549,7 +553,7 @@ describe('ensureSchema', () => {
     await c.execute(
       `INSERT INTO task_durable_transcripts (task_id, created_at, transcript, byte_len)
        VALUES ('t1', ?, ?, ?)`,
-      [new Date().toISOString(), blob, blob.byteLength],
+      [Date.now(), blob, blob.byteLength],
     )
     const r = await c.execute(
       `SELECT transcript, byte_len FROM task_durable_transcripts WHERE task_id = 't1'`,
@@ -557,6 +561,43 @@ describe('ensureSchema', () => {
     const out = r.rows[0].transcript as Uint8Array
     expect(Array.from(out)).toEqual(Array.from(blob))
     expect(r.rows[0].byte_len).toBe(5)
+    expect((await columnsOf(c, 'task_durable_transcripts')).get('created_at')).toBe('bigint')
+  })
+
+  it('converts legacy progress and transcript timestamps to epoch milliseconds', async () => {
+    const c = await freshSchemaClient()
+    try {
+      await c.execute(
+        `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+         VALUES ('timestamp-task', 'p', 'queued', now(), now())`,
+      )
+      await __execSchemaBatch(c, [
+        `ALTER TABLE task_progress ALTER COLUMN created_at TYPE text USING created_at::text`,
+        `ALTER TABLE task_transcripts ALTER COLUMN ts TYPE text USING ts::text`,
+        `ALTER TABLE task_durable_transcripts ALTER COLUMN created_at TYPE text USING created_at::text`,
+        {
+          sql: `INSERT INTO task_progress (id, task_id, created_at, author, kind, body)
+                VALUES ('legacy-progress', 'timestamp-task', '1970-01-01T00:00:01.234Z', 'agent', 'note', 'legacy')`,
+        },
+        {
+          sql: `INSERT INTO task_transcripts (task_id, session_id, seq, chunk, ts)
+                VALUES ('timestamp-task', 'session', 0, '[]', '1970-01-01T00:00:02.345Z')`,
+        },
+        {
+          sql: `INSERT INTO task_durable_transcripts (task_id, created_at, transcript, byte_len)
+                VALUES ('timestamp-task', '1970-01-01T00:00:03.456Z', ?, 1)`,
+          args: [new Uint8Array([0])],
+        },
+      ])
+
+      await ensureSchema(c)
+
+      expect((await c.execute(`SELECT created_at FROM task_progress WHERE id = 'legacy-progress'`)).rows[0].created_at).toBe(1234)
+      expect((await c.execute(`SELECT ts FROM task_transcripts WHERE task_id = 'timestamp-task'`)).rows[0].ts).toBe(2345)
+      expect((await c.execute(`SELECT created_at FROM task_durable_transcripts WHERE task_id = 'timestamp-task'`)).rows[0].created_at).toBe(3456)
+    } finally {
+      await c.close()
+    }
   })
 
   it('IDENTITY_COLUMNS matches the identity columns in the live schema', async () => {

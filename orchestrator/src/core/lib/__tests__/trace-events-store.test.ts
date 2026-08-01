@@ -543,7 +543,7 @@ describe('openTraceEventStore — pruneTranscripts', () => {
       await store.appendTranscriptChunk!('task-p', 'sess-p', 0, [{ type: 'assistant' }])
 
       // A cutoff in the future covers all currently-written rows
-      const futureCutoff = new Date(Date.now() + 60_000).toISOString()
+      const futureCutoff = Date.now() + 60_000
       const deleted = await store.pruneTranscripts!(futureCutoff)
       expect(deleted).toBe(1)
 
@@ -560,7 +560,7 @@ describe('openTraceEventStore — pruneTranscripts', () => {
     try {
       await store.appendTranscriptChunk!('task-q', 'sess-q', 0, [{ type: 'assistant' }])
       // A cutoff in the past does not match any row written now
-      const pastCutoff = new Date(Date.now() - 60_000).toISOString()
+      const pastCutoff = Date.now() - 60_000
       const deleted = await store.pruneTranscripts!(pastCutoff)
       expect(deleted).toBe(0)
 

@@ -101,6 +101,11 @@ describe('transcript-append:task.completed subscriber', () => {
     await subscriber.handler(completedEvent(1, 'task-alpha'));
 
     expect(await durableTranscriptCount(client, 'task-alpha')).toBe(1);
+    const row = await client.execute({
+      sql: `SELECT created_at FROM task_durable_transcripts WHERE task_id = ?`,
+      args: ['task-alpha'],
+    });
+    expect(typeof row.rows[0].created_at).toBe('number');
   });
 
   it('stores the conversation JSON as a gzip-compressed BLOB in task_durable_transcripts', async () => {

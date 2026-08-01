@@ -56,7 +56,7 @@ const addProgressNote = async (
   suffix: string,
 ): Promise<void> => {
   const c = q.resolveQueueClient()
-  const now = new Date().toISOString()
+  const now = Date.now()
   await c.execute({
     sql: `INSERT INTO task_progress (id, task_id, created_at, author, kind, body)
           VALUES (?, ?, ?, 'coder', 'note', 'progress note')`,

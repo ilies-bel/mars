@@ -69,7 +69,7 @@ export function buildTranscriptAppendSubscriber(
       // event is not replayed and does not hold up the subscriber.
       if (conversationJson === null) return;
 
-      const now = new Date().toISOString();
+      const now = Date.now();
       const byteLen = conversationJson.length;
       // Compress before the transaction: gzip is CPU-bound and must not block
       // the DB transaction body.

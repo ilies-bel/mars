@@ -138,12 +138,12 @@ export interface TraceEventStore {
 
   /**
    * Delete transcript chunk rows whose write timestamp is older than
-   * `beforeIso` (ISO-8601). Returns the count of deleted rows.
+   * `beforeMs` (epoch milliseconds). Returns the count of deleted rows.
    *
    * Intended for the same periodic-prune job that trims `trace_events`.
    * Retention constant: {@link TRANSCRIPT_RETENTION_DAYS}.
    */
-  pruneTranscripts?: (beforeIso: string) => Promise<number>
+  pruneTranscripts?: (beforeMs: number) => Promise<number>
 
   /**
    * Store the full conversation transcript for a task as a gzip-compressed
@@ -466,7 +466,7 @@ export const openTraceEventStore = async (
           sessionId,
           seq,
           JSON.stringify(events),
-          new Date().toISOString(),
+          Date.now(),
         ],
       })
     },
@@ -500,10 +500,10 @@ export const openTraceEventStore = async (
       return events
     },
 
-    pruneTranscripts: async (beforeIso: string): Promise<number> => {
+    pruneTranscripts: async (beforeMs: number): Promise<number> => {
       const result = await client.execute({
         sql: `DELETE FROM task_transcripts WHERE ts < ?`,
-        args: [beforeIso],
+        args: [beforeMs],
       })
       return result.rowsAffected ?? 0
     },
@@ -529,7 +529,7 @@ export const openTraceEventStore = async (
           taskId,
           sessionId,
           stepName,
-          new Date().toISOString(),
+          Date.now(),
           compressed,
           transcriptJson.length,
         ],
@@ -582,7 +582,7 @@ export const openTraceEventStore = async (
                 (task_id, session_id, step_name, created_at, transcript, byte_len)
                 VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT (task_id) DO NOTHING`,
-          args: [r.task_id, sessionId, stepName, new Date().toISOString(), compressed, byteLen],
+          args: [r.task_id, sessionId, stepName, Date.now(), compressed, byteLen],
         })
         // Rewrite the payload without the inline transcript; add a lightweight
         // transcriptRef marker so the row is self-describing.
