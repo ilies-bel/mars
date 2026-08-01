@@ -13,7 +13,7 @@ import { Arc } from './arc'
 import type { DomainTaskStore as TaskStore } from './store/task-store'
 import { raiseActionQueueItem } from './lib/action-queue'
 import { teardownDeploymentsForTask } from './lib/deployment/teardown'
-import type { SliceSpec } from '../workflows/slice-workflow'
+import type { SliceSpec, SubDeliverableSpec } from './slice-spec'
 
 const execFileP = promisify(execFile)
 const gzipAsyncQ = promisify(gzip)
@@ -254,18 +254,6 @@ export const TASK_TYPES: readonly TaskType[] = ['auto', 'checkpoint'] as const
 
 export const isTaskType = (value: unknown): value is TaskType =>
   value === 'auto' || value === 'checkpoint'
-
-/**
- * Coder-dispatchable artifact spec attached to an HITL slice. The slicer
- * emits this to describe a verify script (or similar artifact) a Coder can
- * build so the human operator has a runnable tool for the HITL step.
- */
-export interface SubDeliverableSpec {
-  title: string
-  whatToBuild: string
-  acceptanceCriteria: readonly string[]
-  files?: readonly string[]
-}
 
 export interface TaskSpec {
   files: readonly string[]

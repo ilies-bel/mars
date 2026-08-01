@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import type { SliceSpec } from './slice-workflow'
+import type { SliceSpec } from '../core/slice-spec'
 
 export type SliceReferenceValidationResult = {
   missingSymbols: string[]

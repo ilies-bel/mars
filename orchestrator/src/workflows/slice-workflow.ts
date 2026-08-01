@@ -18,6 +18,7 @@ import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
 import { diagnoseClaudeFailure } from '../core/lib/claude-stream'
 import { loadDaemonConfig } from '../core/daemon/config'
 import { validateSliceReferences } from './slice-reference-validator'
+import type { SliceSpec } from '../core/slice-spec'
 
 const sliceInputSchema = z.object({
   proposalId: z.string(),
@@ -120,8 +121,6 @@ export const slicerOutputSchema = z.object({
     .min(1)
     .max(20),
 })
-
-export type SliceSpec = z.infer<typeof slicerOutputSchema>['slices'][number]
 
 /**
  * Concatenate a slice's `modifies` + `creates` into the single flat
