@@ -4,8 +4,6 @@ export interface MainThreadRowProps {
   onSelect: () => void
   /** Open subthreads, shown as a subordinate count. */
   subthreadCount: number
-  /** Open alerts currently surfaced in the main thread. */
-  alertCount?: number
 }
 
 /**
@@ -30,7 +28,6 @@ export const MainThreadRow = ({
   isSelected,
   onSelect,
   subthreadCount,
-  alertCount = 0,
 }: MainThreadRowProps) => (
   <button
     type="button"
@@ -49,14 +46,6 @@ export const MainThreadRow = ({
     <span className="flex items-center gap-1.5">
       <span aria-hidden="true" className="text-[12px]">◆</span>
       <span className="font-mono text-[12px] font-semibold tracking-wide">Main thread</span>
-      {alertCount > 0 && (
-        <span
-          data-testid="main-thread-alert-count"
-          className="ml-auto rounded-full bg-error/20 px-1.5 py-0.5 font-mono text-[9px] text-error"
-        >
-          {alertCount}
-        </span>
-      )}
     </span>
     <span className="mt-0.5 block font-mono text-[9px] text-muted-foreground">
       {subthreadCount === 0

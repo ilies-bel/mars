@@ -26,6 +26,7 @@ const mockUseActionQueue = vi.hoisted(() => vi.fn())
 const mockUseTasks = vi.hoisted(() => vi.fn())
 const mockUseProposals = vi.hoisted(() => vi.fn())
 const createChatThread = vi.hoisted(() => vi.fn())
+const startThreadFromAlert = vi.hoisted(() => vi.fn())
 
 vi.mock('@/entities/actionQueue/useActionQueue', () => ({
   useActionQueue: () => mockUseActionQueue(),
@@ -67,8 +68,7 @@ vi.mock('@/shared/api', () => ({
   ApiError: class ApiError extends Error { kind = 'unknown' },
 }))
 
-vi.mock('@/entities/alerts/api', () => ({ startThreadFromAlert: vi.fn() }))
-vi.mock('@/entities/alerts', () => ({ useAlerts: () => ({ alerts: [] }) }))
+vi.mock('@/entities/alerts/api', () => ({ startThreadFromAlert }))
 vi.mock('@/hooks/useTasks', () => ({ useTasks: () => mockUseTasks() }))
 
 const makeQc = () => new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
@@ -134,6 +134,7 @@ beforeEach(() => {
   mockUseActionQueue.mockReturnValue({ items: [], error: null, projectsError: null, projectsEmpty: false })
   mockUseTasks.mockReturnValue({ snapshot: null, error: null, connected: true })
   mockUseProposals.mockReturnValue({ proposals: [], isPending: false, error: null, connected: true })
+  startThreadFromAlert.mockResolvedValue({ threadId: 'alert-subject-1' })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -193,6 +194,39 @@ describe('ChatPage opening greeting', () => {
     expect(opening?.querySelector('[data-testid="opening-next-moves"]')).toBeNull()
     expect(opening?.querySelector('[data-testid="queue-group-header"]')).toBeNull()
     expect(opening?.querySelectorAll('button')).toHaveLength(2)
+  })
+
+  it('keeps open alerts out of the seeded feed', async () => {
+    mockUseActionQueue.mockReturnValue({
+      items: [{ ...alert('alert-1', 'Repair deployment', 'high'), kind: 'arc-failed' }],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+    await renderPage()
+
+    const feed = container.querySelector('[data-testid="seeded-feed"]')
+    expect(feed?.querySelector('[data-testid="main-thread-alerts"]')).toBeNull()
+    expect(feed?.querySelector('[data-testid="main-thread-alert"]')).toBeNull()
+    expect(feed?.querySelector('[data-testid="alert-event-timeline"]')).toBeNull()
+  })
+
+  it('opens an alert Subject from its context-rail row', async () => {
+    mockUseActionQueue.mockReturnValue({
+      items: [{ ...alert('alert-1', 'Repair deployment', 'high'), kind: 'arc-failed' }],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+    await renderPage()
+
+    await act(async () => {
+      (container.querySelector('[data-testid="context-rail-alert-row"]') as HTMLButtonElement).click()
+    })
+
+    expect(startThreadFromAlert).toHaveBeenCalledWith('alert-1')
+    expect(container.querySelector('[data-testid="active-subthread"]')?.getAttribute('data-thread-id'))
+      .toBe('alert-subject-1')
   })
 
   it('opens the named alert through the existing Subject handler', async () => {

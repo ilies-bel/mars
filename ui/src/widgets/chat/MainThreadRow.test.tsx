@@ -40,11 +40,7 @@ describe('MainThreadRow', () => {
     expect(render({ isSelected: false })).toContain('data-selected="false"')
   })
 
-  it('badges open alerts', () => {
-    expect(render({ alertCount: 2 })).toContain('data-testid="main-thread-alert-count"')
-  })
-
-  it('shows no alert badge at zero rather than a "0"', () => {
-    expect(render({ alertCount: 0 })).not.toContain('data-testid="main-thread-alert-count"')
+  it('keeps alert counts out of the main-thread row', () => {
+    expect(render()).not.toContain('main-thread-alert-count')
   })
 })
