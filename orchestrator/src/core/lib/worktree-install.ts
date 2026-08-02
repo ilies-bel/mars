@@ -610,6 +610,22 @@ export class WorktreeInstallError extends Error {
   }
 }
 
+/**
+ * A package manager reported a successful install but did not leave a usable
+ * module tree for a package that setup must make runnable. This is a setup
+ * environment failure, never a later typecheck failure.
+ */
+export class WorktreeModulesMissingError extends Error {
+  readonly site: InstallSite
+  readonly failureStep = 'setup:modules-missing'
+
+  constructor(site: InstallSite) {
+    super(`${site.dir}/node_modules is missing after a successful install`)
+    this.name = 'WorktreeModulesMissingError'
+    this.site = site
+  }
+}
+
 export type InstallRunner = (
   cmd: string,
   args: readonly string[],
@@ -628,6 +644,12 @@ export interface InstallWorktreeDepsOptions {
    * When neither is configured, the whole worktree is scanned.
    */
   installRoots?: readonly string[]
+  /**
+   * Assert each discovered package manager site has a module tree once setup
+   * completes. Setup enables this so a package-manager no-op cannot surface
+   * later as a misleading verify:typecheck failure.
+   */
+  requireModuleTrees?: boolean
   /** Optional trace context. When supplied, the default runner emits a
    *  `tool_invoked` event per install via `runTool`. Custom runners are
    *  responsible for their own tracing. */
@@ -664,6 +686,7 @@ export const installWorktreeDeps = async ({
   log,
   timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS,
   installRoots = parseInstallRoots(process.env.MARS_INSTALL_ROOTS),
+  requireModuleTrees = false,
   traceCtx,
 }: InstallWorktreeDepsOptions): Promise<WorktreeInstallSummary> => {
   const effectiveRunner = runner ?? makeDefaultInstallRunner(traceCtx)
@@ -750,6 +773,13 @@ export const installWorktreeDeps = async ({
       }
     }),
   )
+  if (requireModuleTrees) {
+    for (const site of sites) {
+      if (!(await dirExists(resolve(site.dir, 'node_modules')))) {
+        throw new WorktreeModulesMissingError(site)
+      }
+    }
+  }
   return { sites: results, totalDurationMs: Date.now() - start }
 }
 

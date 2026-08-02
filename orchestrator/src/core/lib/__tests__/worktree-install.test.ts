@@ -239,6 +239,24 @@ describe('worktree-install', () => {
       }
     })
 
+    it('reports a missing package module tree as setup:modules-missing after a successful install', async () => {
+      const packageDir = resolve(workDir, 'orchestrator')
+      mkdirSync(packageDir)
+      writeFileSync(resolve(packageDir, 'package-lock.json'), '{}')
+
+      await expect(
+        installWorktreeDeps({
+          worktreeRoot: workDir,
+          requireModuleTrees: true,
+          runner: async () => ok(),
+        }),
+      ).rejects.toMatchObject({
+        name: 'WorktreeModulesMissingError',
+        failureStep: 'setup:modules-missing',
+        site: expect.objectContaining({ dir: packageDir }),
+      })
+    })
+
     it('installs then builds a local file: workspace dep BEFORE installing the site (so dist is packed)', async () => {
       // Site = orchestrator with a pnpm lockfile and a file: dep on a sibling
       // workspace package that has a build script. The dep's own deps install

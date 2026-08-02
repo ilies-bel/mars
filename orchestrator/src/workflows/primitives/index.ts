@@ -77,6 +77,7 @@ import {
   installWorktreeDeps,
   repairInstallInPlace,
   WorktreeInstallError,
+  WorktreeModulesMissingError,
 } from '../../core/lib/worktree-install'
 import { extractLastStreamText, type ClaudeEvent } from '../../core/lib/claude-stream'
 import { readWorkerOutputText } from '../../core/lib/worker-json'
@@ -902,6 +903,7 @@ export const setupWorktree = async (
       try {
         const summary = await installWorktreeDeps({
           worktreeRoot: ref.path,
+          requireModuleTrees: true,
           log: (line) => console.log(line),
           traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
         })
@@ -914,7 +916,11 @@ export const setupWorktree = async (
         }
       } catch (error: unknown) {
         const isInstallErr = error instanceof WorktreeInstallError
+        const isModulesMissingErr = error instanceof WorktreeModulesMissingError
         const errorOutput = isInstallErr ? error.message : String(error)
+        const failingStep = isModulesMissingErr
+          ? error.failureStep
+          : 'setup:install'
 
         // Repair-in-place FIRST: a frozen-install failure is an environment
         // failure, not a code defect. Reconcile the lockfile in the origin's
@@ -975,14 +981,14 @@ export const setupWorktree = async (
         }
 
         const failSummary = errorOutput.slice(0, 1000)
-        const setupSignature = computeFailureSignature('setup:install', errorOutput)
+        const setupSignature = computeFailureSignature(failingStep, errorOutput)
         await updateTask(
           taskId,
           {
             status: 'failed',
             error: failSummary,
             failedPhase: 'code',
-            failureReason: failSummary,
+            failureReason: isModulesMissingErr ? failingStep : failSummary,
             failureSignature: setupSignature,
             failureReasonCode: setupSignature,
           },
@@ -990,19 +996,21 @@ export const setupWorktree = async (
         )
         await handleTaskFailureWithFixTask({
           taskId,
-          failingStep: 'setup:install',
-          errorOutput: `frozen-lockfile install failed\n${errorOutput}`,
+          failingStep,
+          errorOutput: isModulesMissingErr
+            ? `dependency module tree missing\n${errorOutput}`
+            : `frozen-lockfile install failed\n${errorOutput}`,
           branch: ref.branch,
           store,
           recipeContext: {
-            targetPath: isInstallErr ? error.site.dir : ref.path,
+            targetPath: isInstallErr || isModulesMissingErr ? error.site.dir : ref.path,
             statusOutput: errorOutput,
             targetBranch: ref.branch,
             originalPrompt: '',
           },
         }).catch((err) => {
           console.error(
-            `[failure-handler] task ${taskId} setup:install handling errored:`,
+            `[failure-handler] task ${taskId} ${failingStep} handling errored:`,
             err,
           )
         })
