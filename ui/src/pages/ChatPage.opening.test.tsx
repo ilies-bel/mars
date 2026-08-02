@@ -151,13 +151,28 @@ const renderPage = async () => {
 }
 
 describe('ChatPage opening greeting', () => {
-  it('shows the seeded feed and its nothing-pressing fallback when no open work exists', async () => {
+  it('shows the seeded feed and terse all-clear fallback when no open work or drafts exist', async () => {
     await renderPage()
 
     expect(container.querySelector('[data-testid="seeded-feed"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="hero-headline"]')).toBeNull()
-    expect(container.querySelector('[data-testid="mars-opening-message"]')?.textContent).toContain("Nothing's pressing right now")
-    expect(container.querySelector('[data-testid="chat-greeting"]')).toBeNull()
+    expect(container.querySelector('[data-testid="mars-opening-message"]')?.textContent).toContain('All clear.')
+    expect(container.querySelector('[data-testid="chat-greeting"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="preloaded-responses"]')).toBeNull()
+  })
+
+  it('opens a Subject for one supplied draft from the all-clear Grill response', async () => {
+    const drafts = [proposal('1'), proposal('2')]
+    mockUseProposals.mockReturnValue({ proposals: drafts, isPending: false, error: null, connected: true })
+    await renderPage()
+
+    await act(async () => (container.querySelector('[data-testid^="preloaded-response-"]') as HTMLButtonElement).click())
+
+    expect(createChatThread).toHaveBeenCalledTimes(1)
+    const request = createChatThread.mock.calls[0]?.[0]
+    expect(drafts.map(({ title }) => `Grill: ${title}`)).toContain(request.title)
+    expect(drafts.map(({ id }) => `Grill proposal ${id}`)).toContain(request.objective)
+    expect(request.origin).toBe('proposal')
   })
 
   it('names only the first item from the rail ranking and keeps all inventories in the context rail', async () => {

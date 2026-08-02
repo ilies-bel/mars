@@ -1099,10 +1099,16 @@ const preloadedSubthreadTargetSchema = z.object({
   title: z.string(),
 })
 
+const preloadedClientTargetSchema = z.object({
+  type: z.literal('client'),
+  op: z.literal('open-proposal-subject'),
+  entityId: z.string(),
+})
+
 export const preloadedResponseSchema = z.object({
   id: z.string(),
   label: z.string(),
-  target: z.discriminatedUnion('type', [preloadedVerbTargetSchema, preloadedSubthreadTargetSchema]),
+  target: z.discriminatedUnion('type', [preloadedVerbTargetSchema, preloadedSubthreadTargetSchema, preloadedClientTargetSchema]),
 })
 
 export const preloadedResponsesSegmentSchema = z.object({

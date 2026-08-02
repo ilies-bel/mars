@@ -103,4 +103,69 @@ describe('ChatGreeting', () => {
 
     act(() => root.unmount())
   })
+
+  it('offers exactly one Grill response for a supplied draft and opens one of those drafts', () => {
+    const onOpenProposal = vi.fn()
+    const drafts = [proposal('1'), proposal('2')]
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    act(() => {
+      root.render(
+        <ChatGreeting
+          rankedOpenWork={[]}
+          proposals={drafts}
+          onOpenWork={() => {}}
+          onShowRail={() => {}}
+          onOpenProposal={onOpenProposal}
+        />,
+      )
+    })
+
+    expect(container.textContent).toContain('All clear.')
+    expect(container.querySelectorAll('[data-testid^="preloaded-response-"]')).toHaveLength(1)
+    expect(container.textContent).toContain('Grill:')
+    act(() => (container.querySelector('[data-testid^="preloaded-response-"]') as HTMLButtonElement).click())
+    expect(onOpenProposal).toHaveBeenCalledTimes(1)
+    expect(drafts).toContain(onOpenProposal.mock.calls[0]?.[0])
+
+    act(() => root.unmount())
+  })
+
+  it('recomputes the offered response from drafts that remain', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0)
+    const onOpenProposal = vi.fn()
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    act(() => {
+      root.render(
+        <ChatGreeting rankedOpenWork={[]} proposals={[proposal('1'), proposal('2')]} onOpenWork={() => {}} onShowRail={() => {}} onOpenProposal={onOpenProposal} />,
+      )
+    })
+    act(() => {
+      root.render(
+        <ChatGreeting rankedOpenWork={[]} proposals={[proposal('2')]} onOpenWork={() => {}} onShowRail={() => {}} onOpenProposal={onOpenProposal} />,
+      )
+    })
+
+    act(() => (container.querySelector('[data-testid^="preloaded-response-"]') as HTMLButtonElement).click())
+    expect(onOpenProposal).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
+
+    random.mockRestore()
+    act(() => root.unmount())
+  })
+
+  it('renders only the terse all-clear sentence when no work or drafts remain', () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    act(() => {
+      root.render(<ChatGreeting rankedOpenWork={[]} proposals={[]} onOpenWork={() => {}} onShowRail={() => {}} />)
+    })
+
+    expect(container.textContent).toBe('All clear.')
+    expect(container.querySelector('[data-testid="preloaded-responses"]')).toBeNull()
+    act(() => root.unmount())
+  })
 })

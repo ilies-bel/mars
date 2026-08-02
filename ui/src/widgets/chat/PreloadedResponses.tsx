@@ -3,11 +3,12 @@ import { postPreloadedResponse } from '@/shared/api'
 import type { PreloadedResponse } from '@/shared/schemas'
 
 export interface PreloadedResponsesProps {
-  messageId: string
+  messageId?: string
   responses: PreloadedResponse[]
   resolved: boolean
   projectId?: string
   onComplete?: (threadId?: string) => void
+  onClientResolve?: (response: PreloadedResponse) => void
 }
 
 /** Ordered, stored Notice responses that never enter the chat composer. */
@@ -17,6 +18,7 @@ export const PreloadedResponses = ({
   resolved,
   projectId,
   onComplete,
+  onClientResolve,
 }: PreloadedResponsesProps) => {
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -24,6 +26,16 @@ export const PreloadedResponses = ({
   if (responses.length === 0) return null
 
   const choose = async (response: PreloadedResponse) => {
+    if (response.target.type === 'client') {
+      onClientResolve?.(response)
+      return
+    }
+
+    if (!messageId) {
+      setError('Could not apply that response.')
+      return
+    }
+
     setPendingId(response.id)
     setError(null)
     try {

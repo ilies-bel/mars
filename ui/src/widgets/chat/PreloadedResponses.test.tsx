@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'bun:test'
+// @vitest-environment happy-dom
+import { describe, expect, it, vi } from 'vitest'
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
+
+const postPreloadedResponse = vi.hoisted(() => vi.fn())
+
+vi.mock('@/shared/api', () => ({ postPreloadedResponse }))
+
 import { PreloadedResponses } from './PreloadedResponses'
 import { ConversationTimeline } from './ConversationTimeline'
 
@@ -63,5 +71,25 @@ describe('PreloadedResponses', () => {
     expect(html).toContain('data-testid="preloaded-responses"')
     expect(html).toContain('Open it')
     expect((html.match(/data-testid="preloaded-responses"/g) ?? [])).toHaveLength(1)
+  })
+
+  it('resolves a client-only response without a stored message', () => {
+    const onClientResolve = vi.fn()
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const response = {
+      id: 'grill-draft-1',
+      label: 'Grill: Make queue clearer',
+      target: { type: 'client' as const, op: 'open-proposal-subject' as const, entityId: 'draft-1' },
+    }
+
+    act(() => {
+      root.render(<PreloadedResponses resolved={false} responses={[response]} onClientResolve={onClientResolve} />)
+    })
+    act(() => (container.querySelector('[data-testid="preloaded-response-grill-draft-1"]') as HTMLButtonElement).click())
+
+    expect(onClientResolve).toHaveBeenCalledWith(response)
+    expect(postPreloadedResponse).not.toHaveBeenCalled()
+    act(() => root.unmount())
   })
 })

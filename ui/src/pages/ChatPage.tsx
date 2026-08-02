@@ -3048,12 +3048,13 @@ export const ChatPage = () => {
                     className="flex flex-col gap-1"
                   >
                     <span className="font-mono text-[11px] text-primary">mars</span>
-                    {!selectedThreadId && openWork.length > 0 ? (
+                    {!selectedThreadId ? (
                       <ChatGreeting
                         rankedOpenWork={openWork}
                         proposals={proposals}
                         onOpenWork={handleOpenWork}
                         onShowRail={handleShowRail}
+                        onOpenProposal={(proposal) => { void openProposalSubject(proposal) }}
                       />
                     ) : (
                       <p className="font-mono text-[14px] text-foreground">

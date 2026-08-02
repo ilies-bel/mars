@@ -7,7 +7,7 @@
  * daemon's buildActionQueueView emits.
  */
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import { actionQueueResponseSchema, chatThreadSchema, type ChatThread } from './schemas'
+import { actionQueueResponseSchema, chatThreadSchema, preloadedResponseSchema, type ChatThread } from './schemas'
 
 // Minimal base fields shared across all item kinds.
 const base = {
@@ -117,5 +117,17 @@ describe('chatThreadSchema — session-free contract', () => {
   it('infers a chat thread without provider-session fields', () => {
     expectTypeOf<ChatThread>().not.toHaveProperty('sessionId')
     expectTypeOf<ChatThread>().not.toHaveProperty('contextSeeded')
+  })
+})
+
+describe('preloadedResponseSchema', () => {
+  it('accepts a client-only proposal Subject target', () => {
+    expect(preloadedResponseSchema.parse({
+      id: 'grill-draft-1',
+      label: 'Grill: Make queue clearer',
+      target: { type: 'client', op: 'open-proposal-subject', entityId: 'draft-1' },
+    })).toMatchObject({
+      target: { type: 'client', op: 'open-proposal-subject', entityId: 'draft-1' },
+    })
   })
 })
