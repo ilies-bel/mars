@@ -23,7 +23,7 @@ const fmtScore = (n: number | null): string => (n === null ? '–' : n.toFixed(2
  * loading — only <tbody> is gated behind isLoading / empty-state checks.
  */
 export const PromotionLedgerTable = ({ workflow }: Props) => {
-  const { entries, isLoading } = usePromotionLedger(workflow)
+  const { entries, isLoading, error } = usePromotionLedger(workflow)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   const toggle = (id: string) =>
@@ -51,6 +51,10 @@ export const PromotionLedgerTable = ({ workflow }: Props) => {
             <td colSpan={5}>
               <SkeletonList rows={3} rowClassName="h-5 w-full mb-1" label="Loading promotions" />
             </td>
+          </tr>
+        ) : error ? (
+          <tr>
+            <td colSpan={5} role="alert" className="py-1 text-error">Couldn't load promotions</td>
           </tr>
         ) : entries.length === 0 ? (
           <tr>

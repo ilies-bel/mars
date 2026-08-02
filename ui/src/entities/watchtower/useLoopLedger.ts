@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
+import { appendProject, fetchJson } from '@/shared/api'
+import { useFocusedProjectId } from '@/shared/useFocusedProject'
 
 // ---------------------------------------------------------------------------
 // Server response schema — matches GET /view/loop-ledger
@@ -35,24 +37,24 @@ interface LoopLedgerState {
 
 /**
  * Fetches the last `limit` per-run loop rows for the given workflow kind from
- * GET /view/loop-ledger?workflow=<kind>&limit=<n>.
+ * GET /api/loop-ledger?workflow=<kind>&limit=<n>.
  *
  * When `workflow` is null the query is skipped and an empty result is returned
  * immediately (no loading state) — this handles the initial render before the
  * workflow list has loaded.
  */
 export const useLoopLedger = (workflow: string | null, limit = 50): LoopLedgerState => {
+  const projectId = useFocusedProjectId()
   const query = useQuery({
-    queryKey: ['loop-ledger', workflow, limit],
+    queryKey: ['loop-ledger', projectId, workflow, limit],
     enabled: workflow !== null,
-    queryFn: async () => {
-      const res = await fetch(
-        `/view/loop-ledger?workflow=${encodeURIComponent(workflow!)}&limit=${limit}`,
-      )
-      if (!res.ok) throw new Error(`GET /view/loop-ledger → ${res.status}`)
-      const raw: unknown = await res.json()
-      return responseSchema.parse(raw)
-    },
+    queryFn: () => fetchJson(
+      appendProject(
+        `/api/loop-ledger?workflow=${encodeURIComponent(workflow!)}&limit=${limit}`,
+        projectId ?? undefined,
+      ),
+      responseSchema,
+    ),
   })
 
   return {

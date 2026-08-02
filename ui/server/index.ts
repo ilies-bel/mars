@@ -485,6 +485,24 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // Steward and Watchtower projections are daemon-owned. Expose them
+        // through /api so project selection and JSON error classification are
+        // identical in the Vite client and the production UI server.
+        if (path === '/api/steward' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/view/steward')
+          return jsonResponse(r.status, r.body)
+        }
+
+        if (path === '/api/loop-ledger' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, `/view/loop-ledger${url.search}`)
+          return jsonResponse(r.status, r.body)
+        }
+
+        if (path === '/api/promotion-ledger' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, `/view/promotion-ledger${url.search}`)
+          return jsonResponse(r.status, r.body)
+        }
+
         // GET /api/wywa-delta?since=<ISO>&limit=<n> — unified "while you were away"
         // delta (merges, recoveries, auto-recipes, throttle events, evaporated threads).
         if (path === '/api/wywa-delta' && req.method === 'GET') {

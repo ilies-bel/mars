@@ -94,7 +94,7 @@ const BASE = import.meta.env.VITE_API_BASE ?? ''
  * fetcher to scope the response to the focused project. No-op when projectId
  * is undefined.
  */
-const appendProject = (path: string, projectId: string | undefined): string => {
+export const appendProject = (path: string, projectId: string | undefined): string => {
   if (!projectId) return path
   const sep = path.includes('?') ? '&' : '?'
   return `${path}${sep}project=${encodeURIComponent(projectId)}`
@@ -107,7 +107,7 @@ const errorCodeToKind = (errorCode: unknown): ApiErrorKind => {
   return 'other'
 }
 
-const fetchJson = async <T>(path: string, schema: ZodType<T>, signal?: AbortSignal): Promise<T> => {
+export const fetchJson = async <T>(path: string, schema: ZodType<T>, signal?: AbortSignal): Promise<T> => {
   let r: Response
   try {
     r = await fetch(`${BASE}${path}`, signal ? { signal } : undefined)

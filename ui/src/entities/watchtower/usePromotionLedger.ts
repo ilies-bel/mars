@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
+import { appendProject, fetchJson } from '@/shared/api'
+import { useFocusedProjectId } from '@/shared/useFocusedProject'
 
 // ---------------------------------------------------------------------------
 // Server response schema — matches GET /view/promotion-ledger
@@ -39,17 +41,18 @@ interface PromotionLedgerState {
 
 /**
  * Fetches the promotion gate decision history, optionally filtered by workflow
- * kind, from GET /view/promotion-ledger. Entries are ordered newest first.
+ * kind, from GET /api/promotion-ledger. Entries are ordered newest first.
  */
 export const usePromotionLedger = (workflow?: string): PromotionLedgerState => {
+  const projectId = useFocusedProjectId()
   const query = useQuery({
-    queryKey: ['promotion-ledger', workflow],
-    queryFn: async () => {
+    queryKey: ['promotion-ledger', projectId, workflow],
+    queryFn: () => {
       const qs = workflow ? `?workflow=${encodeURIComponent(workflow)}` : ''
-      const res = await fetch(`/view/promotion-ledger${qs}`)
-      if (!res.ok) throw new Error(`GET /view/promotion-ledger → ${res.status}`)
-      const raw: unknown = await res.json()
-      return responseSchema.parse(raw)
+      return fetchJson(
+        appendProject(`/api/promotion-ledger${qs}`, projectId ?? undefined),
+        responseSchema,
+      )
     },
   })
 

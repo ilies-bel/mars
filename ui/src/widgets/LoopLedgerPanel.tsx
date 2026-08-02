@@ -26,7 +26,7 @@ export const LoopLedgerPanel = () => {
   const [selected, setSelected] = useState<string | null>(null)
   const workflow = selected ?? workflows?.[0] ?? null
 
-  const { entries, isLoading } = useLoopLedger(workflow)
+  const { entries, isLoading, error } = useLoopLedger(workflow)
 
   return (
     <div className="flex flex-col gap-2">
@@ -43,6 +43,8 @@ export const LoopLedgerPanel = () => {
       </select>
       {isLoading ? (
         <SkeletonList rows={3} rowClassName="h-5 w-full mb-1" label="Loading loop ledger" />
+      ) : error ? (
+        <p role="alert" className="text-error text-xs">Couldn't load loop ledger</p>
       ) : entries.length === 0 ? (
         <p className="text-primary text-xs">No loop runs yet</p>
       ) : (

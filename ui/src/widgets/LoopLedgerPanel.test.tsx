@@ -97,6 +97,20 @@ describe('LoopLedgerPanel', () => {
     expect(trCount).toBe(3)
   })
 
+  it('shows a fetch failure instead of claiming there are no loop runs', async () => {
+    vi.mocked(useLoopLedger).mockReturnValue({
+      entries: [],
+      isLoading: false,
+      error: new Error('daemon unreachable'),
+    })
+
+    const { LoopLedgerPanel } = await import('./LoopLedgerPanel')
+    const html = renderToStaticMarkup(<LoopLedgerPanel />)
+
+    expect(html).toContain('Couldn&#x27;t load loop ledger')
+    expect(html).not.toContain('No loop runs yet')
+  })
+
   it('renders entry values and — for missing suggestion/review', async () => {
     const { LoopLedgerPanel } = await import('./LoopLedgerPanel')
     const html = renderToStaticMarkup(<LoopLedgerPanel />)

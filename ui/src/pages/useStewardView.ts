@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
+import { appendProject, fetchJson } from '@/shared/api'
+import { useFocusedProjectId } from '@/shared/useFocusedProject'
 
 // ---------------------------------------------------------------------------
 // Schema — matches GET /view/steward
@@ -65,7 +67,7 @@ export interface StewardViewState {
 }
 
 /**
- * Fetches the Steward capability overview from GET /view/steward.
+ * Fetches the Steward capability overview from GET /api/steward.
  *
  * Returns four sections:
  *   - runtimeTuning  — the only lane that actually executes
@@ -74,14 +76,11 @@ export interface StewardViewState {
  *   - agentSpec      — declared, never dispatched
  */
 export const useStewardView = (): StewardViewState => {
+  const projectId = useFocusedProjectId()
   const query = useQuery({
-    queryKey: ['steward-view'],
-    queryFn: async () => {
-      const res = await fetch('/view/steward')
-      if (!res.ok) throw new Error(`GET /view/steward → ${res.status}`)
-      const raw: unknown = await res.json()
-      return StewardViewSchema.parse(raw)
-    },
+    queryKey: ['steward-view', projectId],
+    queryFn: () =>
+      fetchJson(appendProject('/api/steward', projectId ?? undefined), StewardViewSchema),
     // Refresh every 30s — signature storm state changes frequently.
     refetchInterval: 30_000,
   })

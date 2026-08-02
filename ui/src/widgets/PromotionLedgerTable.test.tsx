@@ -80,6 +80,20 @@ describe('PromotionLedgerTable', () => {
     expect(html).toContain('retired')
   })
 
+  it('shows a fetch failure instead of claiming there are no promotions', async () => {
+    vi.mocked(usePromotionLedger).mockReturnValue({
+      entries: [],
+      isLoading: false,
+      error: new Error('daemon unreachable'),
+    })
+
+    const { PromotionLedgerTable } = await import('./PromotionLedgerTable')
+    const html = renderToStaticMarkup(<PromotionLedgerTable />)
+
+    expect(html).toContain('Couldn&#x27;t load promotions')
+    expect(html).not.toContain('No promotions yet')
+  })
+
   it('clicking a row expands a sibling <tr> revealing the evidence JSON', async () => {
     const { PromotionLedgerTable } = await import('./PromotionLedgerTable')
 
