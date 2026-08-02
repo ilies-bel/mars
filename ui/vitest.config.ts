@@ -51,6 +51,21 @@ export default defineConfig({
         plugins: [react()],
         resolve: { alias: sharedAlias },
         test: {
+          name: 'contracts',
+          environment: 'node',
+          include: [],
+          typecheck: {
+            enabled: true,
+            include: ['src/shared/trace-events.contract.test.ts'],
+            exclude: [],
+            tsconfig: 'tsconfig.contract.json',
+          },
+        },
+      },
+      {
+        plugins: [react()],
+        resolve: { alias: sharedAlias },
+        test: {
           name: 'server',
           environment: 'node',
           setupFiles: ['server/__testing__/bun-vitest-setup.ts'],

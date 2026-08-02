@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/shared/trace-events.contract.test.ts"],
+  "exclude": []
+}
