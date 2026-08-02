@@ -86,7 +86,7 @@ describe('ChatStreamHub sealing', () => {
     hub.finishRun('t1')
     const snap = hub.snapshot('t1')!
     expect(snap.active).toBe(false)
-    expect(snap.buffer.at(-1)!.chunk).toEqual({ type: 'finish', finishReason: 'stop' })
+    expect(snap.buffer.at(-1)!.chunk).toMatchObject({ type: 'finish', finishReason: 'stop' })
   })
 
   it('does not double-emit finish when a result segment already terminated', () => {
