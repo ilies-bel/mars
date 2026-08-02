@@ -368,8 +368,12 @@ recovery-spawn path itself.
   guessed-port probe proves nothing.
 - A 404 on a daemon route that exists in source usually means the running
   daemon predates that route — restart with `mars daemon restart` rather
-  than scoping a code task. (Caveat: restart hard-stops in-flight tasks;
-  they re-queue.)
+  than scoping a code task. The same applies to a `mars ui` Bun-server 404
+  (default `:7777`, proxied from Vite on `:5173`) for a route in
+  `ui/server/index.ts`: restart `mars ui`. Vite hot-reloads the frontend,
+  while an already-running API server does not, so the two halves can
+  disagree. (Caveat: daemon restart hard-stops in-flight tasks; they
+  re-queue.)
 - Before enqueueing a task off a `tsc`/build error, confirm the error
   actually reproduces in the correct directory (use
   `(cd <abs-path> && npx tsc --noEmit)`, not a bare `cd`) and run it

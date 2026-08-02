@@ -33,7 +33,7 @@ const serverArgv = argv.filter((a) => a !== '--dev')
 if (isDev) {
   // Dev mode: spawn the API server + vite concurrently.
   // --dist is intentionally omitted; vite serves the frontend.
-  const server = spawn('bun', ['run', serverEntry, ...serverArgv], {
+  const server = spawn('bun', ['--watch', 'run', serverEntry, ...serverArgv], {
     stdio: 'inherit',
     env: process.env,
   })
