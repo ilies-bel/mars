@@ -204,7 +204,9 @@ slicer always emits structured tasks; free-prose still works and
 degrades to prompt-only. Other useful flags: `--priority 0..3 (0 = lowest, 3 = highest — NOT bug-tracker P-numbers)`,
 `--tag coder|writer`, `--blocked-by <id>` (repeatable). Always
 `mars task add --help` to confirm the current flag surface before
-invoking — this CLAUDE.md note may lag the CLI.
+invoking — this CLAUDE.md note may lag the CLI. The inline `"<prompt>"`
+form is for genuinely single-line prompts only; use `--prompt-file <path>`
+or `-` (stdin) for multi-line prompts.
 
 ## Blockers
 
@@ -453,6 +455,15 @@ Each task prompt must stand alone. Include:
 - a closing **"Save your work"** line — the orchestrator does not commit
   on the agent's behalf.
 
-The `mars task add "..."` outer call is a CLI invocation; any `git`/`rm`
-strings inside the heredoc'd prompt are passed verbatim to the dispatched
-agent and don't trip the outer shell's hooks.
+For a multi-line prompt, write it to a scratch file and pass that file to the
+CLI, for example:
+
+```
+mars task add --prompt-file /path/to/prompt.md --intent "..." \\
+  --files <path> --verify "<cmd>" --done "<criterion>"
+```
+
+Use `mars task add -` when the prompt is already in a pipeline. The inline
+`mars task add "..."` form remains available for genuinely single-line
+prompts. In every form, `git`/`rm` strings inside the prompt are passed
+verbatim to the dispatched agent and do not trip the outer shell's hooks.
