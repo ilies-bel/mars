@@ -39,18 +39,21 @@ const setupRepo = (): string => {
 
 const load = async (
   repo: string,
-): Promise<{ q: Queue; p: Proposals; br: BlockerResolution }> => {
+): Promise<{ q: Queue; p: Proposals }> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = await import('../../queue')
   const p = await import('../../proposals')
   await q.migrateQueueSchema()
   await p.initProposals()
+  return { q: q as unknown as Queue, p: p as unknown as Proposals }
+}
+
+const loadBlockerResolution = async (): Promise<BlockerResolution> => {
   const { Arc } = await import('../../arc')
-  const br: BlockerResolution = {
+  return {
     onBlockerTaskCompleted: (id) => Arc.unblockByCompletion(id),
   }
-  return { q: q as unknown as Queue, p: p as unknown as Proposals, br }
 }
 
 describe('task_proposal_blockers (ADR-0015 task->idea cross-graph edge)', () => {
@@ -133,7 +136,8 @@ describe('task_proposal_blockers (ADR-0015 task->idea cross-graph edge)', () => 
   })
 
   it('edge rewrite + downstream unblock: T stays blocked across rewrite and queues when A\' lands done', async () => {
-    const { q, p, br } = await load(repo)
+    const { q, p } = await load(repo)
+    const br = await loadBlockerResolution()
 
     // Create proposal A (needs all required fields to be promotable, but for
     // the edge-rewrite test we only need the id — we bypass promoteProposal
@@ -191,7 +195,8 @@ describe('task_proposal_blockers (ADR-0015 task->idea cross-graph edge)', () => 
   })
 
   it('multiple dependents all get their edges rewritten atomically', async () => {
-    const { q, p, br } = await load(repo)
+    const { q, p } = await load(repo)
+    const br = await loadBlockerResolution()
 
     const proposalA = await p.createProposal('Blocking Proposal Multi')
 
