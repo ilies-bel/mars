@@ -1,5 +1,5 @@
-export const relativeTime = (iso: string, now = Date.now()): string => {
-  const t = new Date(iso).getTime()
+export const relativeTime = (timestamp: string | number, now = Date.now()): string => {
+  const t = new Date(timestamp).getTime()
   if (Number.isNaN(t)) return ''
   const s = Math.max(0, Math.round((now - t) / 1000))
   if (s < 60) return `${s}s ago`

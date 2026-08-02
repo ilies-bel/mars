@@ -1326,7 +1326,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
 describe('TaskDetailDrawer – tool invocations in step cards', () => {
   const makeToolEvent = (overrides: Partial<TraceEvent> & { id: string }): TraceEvent => ({
     id: overrides.id,
-    timestamp: overrides.timestamp ?? '2026-01-01T10:00:00.500Z',
+    timestamp: overrides.timestamp ?? 1_767_261_600_500,
     kind: 'tool_invoked',
     severity: 'info',
     taskId: overrides.taskId ?? 'task-t1',
@@ -1356,7 +1356,7 @@ describe('TaskDetailDrawer – tool invocations in step cards', () => {
     const toolInvocations: TraceEvent[] = [
       makeToolEvent({
         id: 'ev-1',
-        timestamp: '2026-01-01T10:00:00.500Z',
+        timestamp: 1_767_261_600_500,
         payload: {
           tool: '/usr/local/bin/git',
           argv: ['commit', '-m', 'add feature'],
@@ -1413,7 +1413,7 @@ describe('TaskDetailDrawer – tool invocations in step cards', () => {
     const toolInvocations: TraceEvent[] = [
       makeToolEvent({
         id: 'ev-2',
-        timestamp: '2026-01-01T10:00:00.500Z',
+        timestamp: 1_767_261_600_500,
         payload: {
           tool: 'npm',
           argv: ['test'],
@@ -2489,7 +2489,7 @@ describe('TaskDetailDrawer – agent tool calls in step cards', () => {
     const toolInvocations: TraceEvent[] = [
       {
         id: 'ev-shell',
-        timestamp: '2026-01-01T10:00:00.500Z',
+        timestamp: 1_767_261_600_500,
         kind: 'tool_invoked',
         severity: 'info',
         taskId: 'task-t1',

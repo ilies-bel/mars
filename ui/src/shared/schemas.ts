@@ -651,7 +651,8 @@ export type WorkerSession = z.infer<typeof workerSessionSchema>
 
 export const traceEventSchema = z.object({
   id: z.string(),
-  timestamp: z.string(),
+  /** Epoch-millisecond timestamp emitted by the daemon. */
+  timestamp: z.number(),
   kind: z.string(),
   severity: z.enum(['info', 'warn', 'error']).catch('info'),
   taskId: z.string().nullable(),

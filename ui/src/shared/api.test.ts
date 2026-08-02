@@ -7,6 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import type { Mock } from 'bun:test'
+import { traceEventSchema } from './schemas'
 import {
   ApiError,
   ackActionQueueItem,
@@ -449,7 +450,7 @@ describe('fetchEvents', () => {
         events: [
           {
             id: 'e1',
-            timestamp: new Date().toISOString(),
+            timestamp: Date.now(),
             kind: 'task_failed',
             severity: 'error',
             taskId: 't1',
@@ -468,6 +469,19 @@ describe('fetchEvents', () => {
     const url = fetchSpy.mock.calls[0]![0] as string
     expect(url).toContain('taskId=t1')
     expect(url).toContain('limit=50')
+  })
+
+  it('accepts daemon trace events with epoch-millisecond timestamps', () => {
+    expect(traceEventSchema.safeParse({
+      id: 'e1',
+      timestamp: 1_785_675_704_026,
+      kind: 'task_failed',
+      severity: 'error',
+      taskId: 't1',
+      originId: null,
+      phase: 'verify',
+      payload: { failureReasonCode: 'verify:typecheck' },
+    }).success).toBe(true)
   })
 })
 

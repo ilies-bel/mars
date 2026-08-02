@@ -24,7 +24,7 @@ describe('summarizeTraceEvent', () => {
     phase: string | null = 'code',
   ): TraceEvent => ({
     id: 'e1',
-    timestamp: '2026-01-01T00:00:00Z',
+    timestamp: 1_767_225_600_000,
     kind,
     severity,
     taskId: 't1',
@@ -178,7 +178,7 @@ describe('isMarsToolEvent / marsToolTextClass', () => {
     payload: Record<string, unknown> = {},
   ): TraceEvent => ({
     id: 'e1',
-    timestamp: '2026-01-01T00:00:00Z',
+    timestamp: 1_767_225_600_000,
     kind,
     severity: 'info',
     taskId: 't1',
@@ -221,7 +221,7 @@ describe('isMarsToolEvent / marsToolTextClass', () => {
 describe('summarizeTraceEvent — log_line claude-event gist', () => {
   const makeClaudeLogLine = (fields: Record<string, unknown>): TraceEvent => ({
     id: 'e-ce',
-    timestamp: '2026-01-01T00:00:00Z',
+    timestamp: 1_767_225_600_000,
     kind: 'log_line',
     severity: 'info',
     taskId: 't1',
@@ -376,7 +376,7 @@ describe('summarizeTraceEvent — log_line claude-event gist', () => {
     expect(
       summarizeTraceEvent({
         id: 'e2',
-        timestamp: '2026-01-01T00:00:00Z',
+        timestamp: 1_767_225_600_000,
         kind: 'log_line',
         severity: 'info',
         taskId: null,

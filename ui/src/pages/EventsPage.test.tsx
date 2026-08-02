@@ -42,7 +42,7 @@ const {
 
 const makeEvent = (overrides: Partial<TraceEvent> = {}): TraceEvent => ({
   id: 'ev-1',
-  timestamp: new Date().toISOString(),
+  timestamp: Date.now(),
   kind: 'task_failed',
   severity: 'error',
   taskId: 't-1',
@@ -407,7 +407,7 @@ describe('EventsPage render', () => {
     // relativeTime(timestamp, now) must produce "5m ago" — confirming that
     // the current `now` (≈ Date.now()) is passed into the timestamp computation
     // rather than some earlier frozen value.
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000
     const qc = makeClient(makeResponse([makeEvent({ id: 'ev-tick', timestamp: fiveMinutesAgo })]))
     const html = renderPage(qc)
     expect(html).toContain('5m ago')
@@ -995,12 +995,12 @@ describe('EventsPage — consecutive identical event grouping', () => {
       makeEvent({
         id: 'g-first',
         payload,
-        timestamp: new Date(now - 60 * 1000).toISOString(),
+        timestamp: now - 60 * 1000,
       }),
       makeEvent({
         id: 'g-last',
         payload,
-        timestamp: new Date(now - 1000).toISOString(),
+        timestamp: now - 1000,
       }),
     ]
     const qc = makeClient(makeResponse(events))

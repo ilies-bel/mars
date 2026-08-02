@@ -17,8 +17,8 @@ export interface ArcGroup {
   arcId: string
   taskGroups: TaskGroup[]
   severity: 'info' | 'warn' | 'error'
-  firstTimestamp: string
-  lastTimestamp: string
+  firstTimestamp: number
+  lastTimestamp: number
 }
 
 function worstSeverity(
@@ -52,11 +52,11 @@ function nestToolsUnderSteps(events: readonly TraceEvent[]): StepGroup[] {
     const stepName =
       typeof start.payload.stepName === 'string' ? start.payload.stepName : ''
     const end = stepEnds.get(stepName) ?? null
-    const startTs = new Date(start.timestamp).getTime()
-    const endTs = end ? new Date(end.timestamp).getTime() : Infinity
+    const startTs = start.timestamp
+    const endTs = end?.timestamp ?? Infinity
 
     const stepTools = tools.filter((t) => {
-      const ts = new Date(t.timestamp).getTime()
+      const ts = t.timestamp
       return ts >= startTs && ts <= endTs
     })
 
@@ -112,8 +112,8 @@ export function groupByArc(events: readonly TraceEvent[]): ArcGroup[] {
     }
 
     let severity: TraceEvent['severity'] = 'info'
-    let firstTs = arcEvents[0]?.timestamp ?? ''
-    let lastTs = arcEvents[0]?.timestamp ?? ''
+    let firstTs = Infinity
+    let lastTs = -Infinity
     for (const e of arcEvents) {
       severity = worstSeverity(severity, e.severity)
       if (e.timestamp < firstTs) firstTs = e.timestamp

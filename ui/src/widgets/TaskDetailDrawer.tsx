@@ -1198,10 +1198,12 @@ const StepCardList = ({
     ) : (
       <div className="flex flex-col">
         {cards.map((card, i) => {
+          const cardStartedAt = new Date(card.startedAt).getTime()
+          const cardEndedAt = card.endedAt == null ? null : new Date(card.endedAt).getTime()
           const cardTools = toolEvents.filter(
             (e) =>
-              e.timestamp >= card.startedAt &&
-              (card.endedAt == null || e.timestamp <= card.endedAt),
+              e.timestamp >= cardStartedAt &&
+              (cardEndedAt == null || e.timestamp <= cardEndedAt),
           )
           const cardAgentCalls =
             card.claudeSessionId != null

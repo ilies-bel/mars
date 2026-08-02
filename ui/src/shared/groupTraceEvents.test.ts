@@ -4,7 +4,7 @@ import type { TraceEvent } from './schemas'
 
 const makeEvent = (overrides: Partial<TraceEvent> & { id: string }): TraceEvent => ({
   id: overrides.id,
-  timestamp: overrides.timestamp ?? '2024-01-01T00:00:00Z',
+  timestamp: overrides.timestamp ?? 1_704_067_200_000,
   kind: overrides.kind ?? 'log_line',
   severity: overrides.severity ?? 'info',
   taskId: overrides.taskId ?? null,
@@ -62,7 +62,7 @@ describe('groupByArc', () => {
         originId: 'arc',
         taskId: 't',
         kind: 'step_started',
-        timestamp: '2024-01-01T00:00:00Z',
+        timestamp: 1_704_067_200_000,
         payload: { stepName: 'code' },
       }),
       makeEvent({
@@ -70,7 +70,7 @@ describe('groupByArc', () => {
         originId: 'arc',
         taskId: 't',
         kind: 'tool_invoked',
-        timestamp: '2024-01-01T00:01:00Z',
+        timestamp: 1_704_067_260_000,
         payload: { tool: 'git' },
       }),
       makeEvent({
@@ -78,7 +78,7 @@ describe('groupByArc', () => {
         originId: 'arc',
         taskId: 't',
         kind: 'step_ended',
-        timestamp: '2024-01-01T00:02:00Z',
+        timestamp: 1_704_067_320_000,
         payload: { stepName: 'code', outcome: 'completed' },
       }),
     ]
@@ -91,13 +91,13 @@ describe('groupByArc', () => {
 
   it('tracks first and last timestamps', () => {
     const events: TraceEvent[] = [
-      makeEvent({ id: '1', originId: 'arc', taskId: 't', timestamp: '2024-01-01T00:05:00Z' }),
-      makeEvent({ id: '2', originId: 'arc', taskId: 't', timestamp: '2024-01-01T00:01:00Z' }),
-      makeEvent({ id: '3', originId: 'arc', taskId: 't', timestamp: '2024-01-01T00:10:00Z' }),
+      makeEvent({ id: '1', originId: 'arc', taskId: 't', timestamp: 1_704_067_500_000 }),
+      makeEvent({ id: '2', originId: 'arc', taskId: 't', timestamp: 1_704_067_260_000 }),
+      makeEvent({ id: '3', originId: 'arc', taskId: 't', timestamp: 1_704_067_800_000 }),
     ]
     const groups = groupByArc(events)
-    expect(groups[0].firstTimestamp).toBe('2024-01-01T00:01:00Z')
-    expect(groups[0].lastTimestamp).toBe('2024-01-01T00:10:00Z')
+    expect(groups[0].firstTimestamp).toBe(1_704_067_260_000)
+    expect(groups[0].lastTimestamp).toBe(1_704_067_800_000)
   })
 
   it('returns empty array for empty input', () => {
