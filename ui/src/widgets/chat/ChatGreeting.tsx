@@ -13,7 +13,7 @@ export const ChatGreeting = ({ rankedOpenWork, proposals, onOpenWork, onShowRail
   if (!nextMove) return null
 
   const nextMoveTitle = nextMove.source === 'alert' ? nextMove.item.title : nextMove.task.title
-  const remainingCount = rankedOpenWork.length - 1 + proposals.length
+  const remainingCount = rankedOpenWork.length - 1 + proposals.filter((proposal) => proposal.status === 'draft').length
 
   return (
     <p className="font-mono text-[14px] leading-relaxed text-foreground" data-testid="chat-greeting">

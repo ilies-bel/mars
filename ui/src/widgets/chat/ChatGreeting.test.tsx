@@ -65,7 +65,12 @@ describe('ChatGreeting', () => {
 
     act(() => {
       root.render(
-        <ChatGreeting rankedOpenWork={openWork} proposals={[proposal('1'), proposal('2')]} onOpenWork={() => {}} onShowRail={() => {}} />,
+        <ChatGreeting
+          rankedOpenWork={openWork}
+          proposals={[proposal('1'), proposal('2'), { ...proposal('sliced'), status: 'sliced' }]}
+          onOpenWork={() => {}}
+          onShowRail={() => {}}
+        />,
       )
     })
 
