@@ -41,6 +41,8 @@ import type { MarsUIMessage } from '@/shared/marsChatTransport'
 import fixture from './__fixtures__/chat-thread-fixture.json'
 
 vi.mock('@/shared/api', () => ({
+  fetchChatLayoutPreference: vi.fn().mockResolvedValue({ layout: 'focus' }),
+  putChatLayoutPreference: vi.fn().mockResolvedValue({ layout: 'focus' }),
   fetchChatThreads: vi.fn().mockResolvedValue([]),
   fetchChatThread: vi.fn().mockResolvedValue(null),
   fetchActionQueue: vi.fn().mockResolvedValue([]),
