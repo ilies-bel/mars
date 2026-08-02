@@ -4,6 +4,7 @@ import {
   actionQueueHistoryResponseSchema,
   actionQueueResponseSchema,
   adrsResponseSchema,
+  agentToolCallsResponseSchema,
   autoRecipeRunsResponseSchema,
   stewardLedgerResponseSchema,
   wywaDeltaResponseSchema,
@@ -33,6 +34,7 @@ import {
   type ActionQueueHistoryResponse,
   type ActionQueueItem,
   type AdrEntry,
+  type AgentToolCall,
   type AutoRecipeRun,
   type StewardLedgerEntry,
   type WywaDeltaResponse,
@@ -107,10 +109,15 @@ const errorCodeToKind = (errorCode: unknown): ApiErrorKind => {
   return 'other'
 }
 
-export const fetchJson = async <T>(path: string, schema: ZodType<T>, signal?: AbortSignal): Promise<T> => {
+export const fetchJson = async <T>(
+  path: string,
+  schema: ZodType<T>,
+  signal?: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
+): Promise<T> => {
   let r: Response
   try {
-    r = await fetch(`${BASE}${path}`, signal ? { signal } : undefined)
+    r = await fetchImpl(`${BASE}${path}`, signal ? { signal } : undefined)
   } catch (err) {
     if (err instanceof TypeError) {
       // On some platforms an aborted fetch raises TypeError instead of
@@ -158,6 +165,130 @@ export const fetchJson = async <T>(path: string, schema: ZodType<T>, signal?: Ab
     )
   }
   return result.data
+}
+
+const stepSpanSchema = z.object({
+  stepName: z.string(),
+  phase: z.string().nullable(),
+  workflowInstanceId: z.string(),
+  workerName: z.string().nullable(),
+  outcome: z.enum(['running', 'completed', 'failed', 'killed']),
+  startedAt: z.string(),
+  endedAt: z.string().nullable(),
+  durationMs: z.number().nullable(),
+  taskId: z.string().nullable(),
+  originId: z.string().nullable(),
+  evalResults: z.array(z.object({
+    label: z.string(),
+    value: z.union([z.number(), z.string(), z.null()]),
+    warn: z.boolean(),
+  })).optional(),
+})
+
+const stepSpansResponseSchema = z.object({ spans: z.array(stepSpanSchema) })
+
+const runTimelineStepSchema = z.object({
+  stepName: z.string(),
+  phase: z.string().nullable(),
+  workerName: z.string().nullable(),
+  status: z.enum(['running', 'completed', 'failed', 'killed']),
+  startedAt: z.string(),
+  endedAt: z.string().nullable(),
+  durationMs: z.number().nullable(),
+  inputTokens: z.number().nullable(),
+  outputTokens: z.number().nullable(),
+  cacheReadTokens: z.number().nullable(),
+  claudeSessionId: z.string().nullable(),
+  failureReason: z.string().nullable(),
+  resultJson: z.string().nullable().optional(),
+  inputJson: z.string().nullable().optional(),
+  summary: z.string().nullable().optional(),
+})
+
+const runTimelineResponseSchema = z.object({
+  taskId: z.string(),
+  runs: z.array(z.object({
+    runId: z.string(),
+    startedAt: z.string(),
+    endedAt: z.string().nullable(),
+    steps: z.array(runTimelineStepSchema),
+  })),
+})
+
+const stepPromptResponseSchema = z.object({
+  workflowInstanceId: z.string(),
+  stepName: z.string(),
+  prompt: z.string().nullable(),
+  source: z.enum(['persisted', 'recovered']).nullable(),
+})
+
+export type StepSpanResponse = z.infer<typeof stepSpanSchema>
+export type RunTimelineResponse = z.infer<typeof runTimelineResponseSchema>
+export type StepPromptResponse = z.infer<typeof stepPromptResponseSchema>
+
+/** Read the recorded workflow runs for a task in the focused project. */
+export const fetchRunTimeline = async (
+  taskId: string,
+  projectId?: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<RunTimelineResponse> =>
+  fetchJson(
+    appendProject(`/api/runs/${encodeURIComponent(taskId)}`, projectId),
+    runTimelineResponseSchema,
+    undefined,
+    fetchImpl,
+  )
+
+/** Read step spans for exactly one task or arc origin in the focused project. */
+export const fetchStepSpans = async (
+  query: { taskId?: string; originId?: string },
+  projectId?: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<StepSpanResponse[]> => {
+  const params = new URLSearchParams()
+  if (query.taskId) params.set('taskId', query.taskId)
+  if (query.originId) params.set('originId', query.originId)
+  const path = `/api/step-spans${params.size > 0 ? `?${params}` : ''}`
+  const response = await fetchJson(
+    appendProject(path, projectId),
+    stepSpansResponseSchema,
+    undefined,
+    fetchImpl,
+  )
+  return response.spans
+}
+
+/** Read a persisted or recovered worker prompt in the focused project. */
+export const fetchStepPrompt = async (
+  workflowInstanceId: string,
+  stepName: string,
+  projectId?: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<StepPromptResponse> => {
+  const params = new URLSearchParams({ workflowInstanceId, stepName })
+  return fetchJson(
+    appendProject(`/api/step-prompt?${params}`, projectId),
+    stepPromptResponseSchema,
+    undefined,
+    fetchImpl,
+  )
+}
+
+/** Read one agent session's tool calls in the focused project. */
+export const fetchAgentToolCalls = async (
+  taskId: string,
+  sessionId: string,
+  projectId?: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<AgentToolCall[]> => {
+  const params = new URLSearchParams({ taskId, sessionId })
+  const response = await fetchJson(
+    appendProject(`/api/agent-tool-calls?${params}`, projectId),
+    agentToolCallsResponseSchema,
+    undefined,
+    fetchImpl,
+  )
+  return response.calls
 }
 
 export const fetchTasks = async (projectId?: string): Promise<Task[]> => {

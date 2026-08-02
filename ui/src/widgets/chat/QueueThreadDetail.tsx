@@ -16,7 +16,7 @@ import { CopyButton } from '@/components/CopyButton'
 import { OriginTree } from '@/widgets/OriginTree'
 import ArcChainRail from '@/widgets/ArcChainRail'
 import { ArcTree } from '@/widgets/ArcTree'
-import { fetchEvents, fetchLearnedRecipes, fetchProposalDetail, invokeAction, teachRecipe, unlearnRecipe } from '@/shared/api'
+import { fetchEvents, fetchLearnedRecipes, fetchProposalDetail, fetchRunTimeline, invokeAction, teachRecipe, unlearnRecipe } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import {
   kindBadgeLabel,
@@ -401,13 +401,11 @@ const LearnedRecipeSection = ({ failureSignature }: { failureSignature: string }
  * Returns null while data is loading or absent so it doesn't reserve space.
  */
 const TaskWorkflowStepSection = ({ taskId }: { taskId: string }) => {
+  const projectId = useFocusedProjectId()
   const { data } = useQuery<import('@/widgets/TaskDetailDrawer').RunTimeline>({
-    queryKey: ['task', taskId, 'runs'],
-    queryFn: async () => {
-      const res = await fetch(`/api/runs/${encodeURIComponent(taskId)}`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      return (await res.json()) as import('@/widgets/TaskDetailDrawer').RunTimeline
-    },
+    queryKey: ['task', taskId, projectId, 'runs'],
+    queryFn: () => fetchRunTimeline(taskId, projectId ?? undefined),
+    enabled: projectId !== null,
     retry: false,
   })
 

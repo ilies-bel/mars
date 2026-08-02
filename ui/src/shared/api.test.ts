@@ -16,6 +16,10 @@ import {
   fetchActionQueue,
   fetchChatConversation,
   fetchEvents,
+  fetchAgentToolCalls,
+  fetchRunTimeline,
+  fetchStepPrompt,
+  fetchStepSpans,
   fetchOrigins,
   fetchProgress,
   fetchProjects,
@@ -657,6 +661,82 @@ describe('fetchTasks – ?project= appended', () => {
     await fetchTasks()
     const calledUrl: string = (fetchSpy.mock.calls[0] as string[])[0]!
     expect(calledUrl).not.toContain('project=')
+  })
+})
+
+describe('fetchRunTimeline – project-scoped run history', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('requests the focused project and returns its recorded workflow steps', async () => {
+    fetchSpy.mockResolvedValue(json({
+      taskId: 'mars-3e1d06b5',
+      runs: [{
+        runId: 'run-1',
+        startedAt: '2026-08-02T10:00:00.000Z',
+        endedAt: '2026-08-02T10:01:00.000Z',
+        steps: [{
+          stepName: 'setup', phase: 'setup', workerName: null, status: 'completed',
+          startedAt: '2026-08-02T10:00:00.000Z', endedAt: '2026-08-02T10:01:00.000Z',
+          durationMs: 60_000, inputTokens: null, outputTokens: null, cacheReadTokens: null,
+          claudeSessionId: null, failureReason: null,
+        }],
+      }],
+    }))
+
+    const result = await fetchRunTimeline('mars-3e1d06b5', 'p_e8cc6f16a0de')
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/runs/mars-3e1d06b5?project=p_e8cc6f16a0de',
+      undefined,
+    )
+    expect(result.runs[0]?.steps[0]?.stepName).toBe('setup')
+  })
+
+  it('throws when the run history cannot be loaded instead of treating it as empty', async () => {
+    fetchSpy.mockResolvedValue(json({ error: 'unavailable' }, 503))
+
+    await expect(fetchRunTimeline('mars-3e1d06b5', 'p_e8cc6f16a0de')).rejects.toThrow('503')
+  })
+})
+
+describe('workflow trace fetchers – project-scoped URLs', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+  })
+
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  it('scopes step spans, step prompts, and agent tool calls to the focused project', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(json({ spans: [] }))
+      .mockResolvedValueOnce(json({
+        workflowInstanceId: 'run-1', stepName: 'code', prompt: null, source: null,
+      }))
+      .mockResolvedValueOnce(json({ calls: [] }))
+
+    await fetchStepSpans({ taskId: 'task-1' }, 'project-1')
+    await fetchStepPrompt('run-1', 'code', 'project-1')
+    await fetchAgentToolCalls('task-1', 'session-1', 'project-1')
+
+    expect(fetchSpy.mock.calls.map(([url]) => url)).toEqual([
+      '/api/step-spans?taskId=task-1&project=project-1',
+      '/api/step-prompt?workflowInstanceId=run-1&stepName=code&project=project-1',
+      '/api/agent-tool-calls?taskId=task-1&sessionId=session-1&project=project-1',
+    ])
   })
 })
 

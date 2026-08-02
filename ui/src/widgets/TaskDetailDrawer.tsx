@@ -22,6 +22,8 @@ import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { AgentToolCall, ProgressProposalNode, ProgressTask, Task, TraceEvent } from '@/shared/schemas'
 import { taskSchema } from '@/shared/schemas'
+import { fetchAgentToolCalls, fetchRunTimeline, fetchStepSpans } from '@/shared/api'
+import { useFocusedProject } from '@/shared/useFocusedProject'
 import { focusSubgraph } from '@/shared/focusSubgraph'
 import { dagClusterStyle } from '@/shared/dagColors'
 import { relativeTime, formatDuration } from '@/shared/time'
@@ -1387,6 +1389,7 @@ export const TaskDetailDrawer = ({
   toolInvocations,
   agentToolCallsBySession: agentToolCallsBySessionProp,
 }: TaskDetailDrawerProps) => {
+  const { focusedProjectId: projectId } = useFocusedProject()
   const drawerRef = useRef<HTMLElement>(null)
   const [closing, setClosing] = useState(false)
   // Synchronous guard — prevents double-scheduling the close timer.
@@ -1567,33 +1570,31 @@ export const TaskDetailDrawer = ({
   // so the same SseInvalidator invalidation also retargets this query.
   const readyTask = taskQuery.data?.kind === 'found' ? taskQuery.data.task : null
   const spansQuery = useQuery<StepSpan[]>({
-    queryKey: ['task', currentId, 'spans'],
+    queryKey: ['task', currentId, projectId, 'spans'],
     queryFn: async () => {
       const f = fetchImpl ?? fetch
-      const spansUrl = isProposal
-        ? `/api/step-spans?originId=${encodeURIComponent(readyTask?.originId ?? currentId)}`
-        : `/api/step-spans?taskId=${encodeURIComponent(currentId)}`
-      const res = await f(spansUrl)
-      if (!res.ok) return []
-      const data = (await res.json()) as { spans: StepSpan[] }
-      return data.spans
+      return fetchStepSpans(
+        isProposal
+          ? { originId: readyTask?.originId ?? currentId }
+          : { taskId: currentId },
+        projectId ?? undefined,
+        f,
+      )
     },
     // For proposals, wait until the task is loaded so we have the originId.
-    enabled: stepSpans === undefined && (!isProposal || readyTask !== null),
+    enabled: projectId !== null && stepSpans === undefined && (!isProposal || readyTask !== null),
     retry: false,
   })
 
   // Run timeline — optional display data; a failed fetch leaves the section
   // absent rather than erroring the drawer.
   const runsQuery = useQuery<RunTimeline>({
-    queryKey: ['task', currentId, 'runs'],
+    queryKey: ['task', currentId, projectId, 'runs'],
     queryFn: async () => {
       const f = fetchImpl ?? fetch
-      const res = await f(`/api/runs/${encodeURIComponent(currentId)}`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      return (await res.json()) as RunTimeline
+      return fetchRunTimeline(currentId, projectId ?? undefined, f)
     },
-    enabled: runTimeline === undefined,
+    enabled: projectId !== null && runTimeline === undefined,
     retry: false,
   })
 
@@ -1660,23 +1661,21 @@ export const TaskDetailDrawer = ({
   // own session's calls. The prop path (agentToolCallsBySessionProp) skips the
   // fetch for tests and static rendering.
   const agentToolCallsQuery = useQuery<Map<string, AgentToolCall[]>>({
-    queryKey: ['task', currentId, 'agent-tool-calls', sessionIds.join(',')],
+    queryKey: ['task', currentId, projectId, 'agent-tool-calls', sessionIds.join(',')],
     queryFn: async () => {
       const f = fetchImpl ?? fetch
       const results = new Map<string, AgentToolCall[]>()
       await Promise.all(
         sessionIds.map(async (sid) => {
-          const res = await f(
-            `/api/agent-tool-calls?taskId=${encodeURIComponent(currentId)}&sessionId=${encodeURIComponent(sid)}`,
+          results.set(
+            sid,
+            await fetchAgentToolCalls(currentId, sid, projectId ?? undefined, f),
           )
-          if (!res.ok) return
-          const data = (await res.json()) as { calls: AgentToolCall[] }
-          results.set(sid, data.calls ?? [])
         }),
       )
       return results
     },
-    enabled: sessionIds.length > 0 && agentToolCallsBySessionProp === undefined,
+    enabled: projectId !== null && sessionIds.length > 0 && agentToolCallsBySessionProp === undefined,
     retry: false,
   })
 

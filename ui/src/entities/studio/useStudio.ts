@@ -4,7 +4,7 @@
  * Query keys deliberately live under the `['task', taskId, …]` prefix (the
  * same family the task drawer uses):
  *
- * - `['task', taskId, 'runs']` is the EXACT key the drawer's run-timeline
+ * - `['task', taskId, projectId, 'runs']` is the EXACT key the drawer's run-timeline
  *   query uses, so React Query deduplicates the fetch when both surfaces are
  *   mounted, and the existing SseInvalidator pattern — `invalidateQueries({
  *   queryKey: ['task', openId] })` on every SSE 'tasks' event — refreshes
@@ -16,6 +16,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import type { RunTimeline } from '@/widgets/TaskDetailDrawer'
+import { useFocusedProject } from '@/shared/useFocusedProject'
 import { fetchRunTimeline, fetchStepPrompt } from './api'
 import type { StepPrompt } from './types'
 
@@ -27,9 +28,11 @@ interface StudioState {
 
 /** Live run timeline for one task — Studio's node/edge data source. */
 export const useStudio = (taskId: string, fetchImpl?: typeof fetch): StudioState => {
+  const { focusedProjectId: projectId } = useFocusedProject()
   const query = useQuery<RunTimeline>({
-    queryKey: ['task', taskId, 'runs'],
-    queryFn: () => fetchRunTimeline(taskId, fetchImpl ?? fetch),
+    queryKey: ['task', taskId, projectId, 'runs'],
+    queryFn: () => fetchRunTimeline(taskId, projectId ?? undefined, fetchImpl ?? fetch),
+    enabled: projectId !== null,
     retry: false,
   })
   return {
@@ -57,15 +60,16 @@ export const useStepPrompt = (
   enabled: boolean,
   fetchImpl?: typeof fetch,
 ): StepPromptState => {
+  const { focusedProjectId: projectId } = useFocusedProject()
   const query = useQuery<StepPrompt>({
-    queryKey: ['task', taskId, 'step-prompt', runId, stepName],
-    queryFn: () => fetchStepPrompt(runId, stepName, fetchImpl ?? fetch),
-    enabled,
+    queryKey: ['task', taskId, projectId, 'step-prompt', runId, stepName],
+    queryFn: () => fetchStepPrompt(runId, stepName, projectId ?? undefined, fetchImpl ?? fetch),
+    enabled: enabled && projectId !== null,
     retry: false,
   })
   return {
     data: query.data,
-    isLoading: enabled && query.isPending,
+    isLoading: enabled && projectId !== null && query.isPending,
     error: query.error as Error | null,
   }
 }

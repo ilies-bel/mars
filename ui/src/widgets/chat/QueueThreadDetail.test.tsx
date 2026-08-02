@@ -54,7 +54,8 @@ const renderDetail = (
   })
   qc.setQueryData(['learned-recipes'], learnedRecipes)
   if (runsData != null) {
-    qc.setQueryData(['task', item.entityId, 'runs'], runsData)
+    // null is the focused-project slot outside FocusedProjectProvider.
+    qc.setQueryData(['task', item.entityId, null, 'runs'], runsData)
   }
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>

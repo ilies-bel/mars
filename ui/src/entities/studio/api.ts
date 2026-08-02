@@ -13,31 +13,6 @@
  * Show-trace panel opens (never inlined into timeline lists).
  */
 
-import type { RunTimeline } from '@/widgets/TaskDetailDrawer'
-import type { StepPrompt } from './types'
-
-/** Fetches the full run timeline for a task. Throws on non-2xx. */
-export const fetchRunTimeline = async (
-  taskId: string,
-  fetchImpl: typeof fetch = fetch,
-): Promise<RunTimeline> => {
-  const res = await fetchImpl(`/api/runs/${encodeURIComponent(taskId)}`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return (await res.json()) as RunTimeline
-}
-
-/**
- * Fetches the composed prompt for one step of one workflow run.
- * Throws on non-2xx; a 200 with `prompt: null` means nothing is queryable
- * (the caller renders an explicit empty state, never invented data).
- */
-export const fetchStepPrompt = async (
-  workflowInstanceId: string,
-  stepName: string,
-  fetchImpl: typeof fetch = fetch,
-): Promise<StepPrompt> => {
-  const qs = `workflowInstanceId=${encodeURIComponent(workflowInstanceId)}&stepName=${encodeURIComponent(stepName)}`
-  const res = await fetchImpl(`/api/step-prompt?${qs}`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return (await res.json()) as StepPrompt
-}
+// Studio retains this import surface while sharing the validated, project-aware
+// fetchers used by the task drawer and action queue detail.
+export { fetchRunTimeline, fetchStepPrompt } from '@/shared/api'
