@@ -123,7 +123,7 @@ export const taskAdd: Command = {
     { syntax: '--files <path>', description: 'focus files for the worker (repeatable)' },
     { syntax: '--verify <cmd>', description: 'verification command run by the orchestrator' },
     { syntax: '--done <criterion>', description: 'acceptance criterion (repeatable)' },
-    { syntax: '--type auto|checkpoint', description: 'merge automatically or pause for review' },
+    { syntax: '--merge auto|gated', description: 'merge automatically or pause for review' },
     { syntax: '--blocked-by <id>', description: 'wait for a task to finish (repeatable)' },
     { syntax: '--workflow <name>', description: 'select the dispatch pipeline' },
   ],
