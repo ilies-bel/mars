@@ -13,6 +13,8 @@ export function useChatLayoutPreference(): {
   layout: ChatLayout
   setLayout: (layout: ChatLayout) => void
   isPending: boolean
+  isLoading: boolean
+  error: Error | null
 } {
   const queryClient = useQueryClient()
   const query = useQuery({
@@ -30,5 +32,7 @@ export function useChatLayoutPreference(): {
     layout: query.data?.layout ?? 'focus',
     setLayout: (layout) => mutation.mutate(layout),
     isPending: mutation.isPending,
+    isLoading: query.isPending,
+    error: query.error ?? mutation.error,
   }
 }

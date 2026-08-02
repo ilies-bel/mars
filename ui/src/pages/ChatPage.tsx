@@ -2569,7 +2569,13 @@ export const ChatPage = () => {
   }, [isMdScreen])
 
   const qc = useQueryClient()
-  const { layout: chatLayout, setLayout: setChatLayout, isPending: isUpdatingChatLayout } = useChatLayoutPreference()
+  const {
+    layout: chatLayout,
+    setLayout: setChatLayout,
+    isPending: isUpdatingChatLayout,
+    isLoading: isLoadingChatLayout,
+    error: chatLayoutError,
+  } = useChatLayoutPreference()
 
   // Live queue rows + resolved-rows archive back the main-pane detail / resolved
   // views (still reachable from the hero's alert preview). The chat sidebar no
@@ -2906,15 +2912,31 @@ export const ChatPage = () => {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex items-center justify-end border-b border-primary/20 px-3 py-1.5">
-          <div role="group" aria-label="Chat layout" className="flex rounded border border-primary/25 p-0.5">
+        <div className="flex items-center justify-end gap-2 border-b border-primary/20 px-3 py-1.5">
+          {chatLayoutError && (
+            <span
+              id="chat-layout-error"
+              role="status"
+              title={chatLayoutError.message}
+              className="font-mono text-[10px] text-destructive"
+            >
+              layout unavailable
+            </span>
+          )}
+          <div
+            role="group"
+            aria-label="Chat layout"
+            aria-describedby={chatLayoutError ? 'chat-layout-error' : undefined}
+            className="flex rounded border border-primary/25 p-0.5"
+          >
             {(['focus', 'threads'] as const).map((layout) => (
               <button
                 key={layout}
                 type="button"
                 data-testid={`chat-layout-${layout}`}
-                aria-pressed={chatLayout === layout}
+                aria-pressed={!isLoadingChatLayout && chatLayout === layout}
                 disabled={isUpdatingChatLayout}
+                title={chatLayoutError?.message}
                 className={`px-2 py-0.5 font-mono text-[10px] capitalize transition-colors ${
                   chatLayout === layout ? 'bg-primary/15 text-foreground' : 'text-primary hover:bg-primary/10'
                 }`}
