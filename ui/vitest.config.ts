@@ -21,7 +21,7 @@ export default defineConfig({
   test: {
     // Three inline projects so each runs with its own environment and timeout:
     //   node   — src/ unit tests (no DOM), 5 s default timeout
-    //   server — every server/**/*.test.ts, 30 s (real HTTP server + PGlite)
+    //   server — every server/**/*.test.ts, 60 s (real HTTP server + PGlite)
     //   dom    — happy-dom: Composer + ChatPage interactive tests
     projects: [
       {
@@ -65,12 +65,17 @@ export default defineConfig({
           // Separate project purely for the timeout. These boot a real HTTP
           // server and a PGlite database per test; a PGlite cold start alone
           // can take 5-25 s under load (same reason orchestrator/vitest.config.ts
-          // runs at 30 s). Under the 5 s default, stepSpans.test.ts failed
+          // runs at 60 s). Under the 5 s default, stepSpans.test.ts failed
           // intermittently with "Test timed out in 5000ms". Keeping this out of
           // the 'node' project means the ~113 src unit-test files are not given
-          // a 30 s licence to hang.
-          testTimeout: 30_000,
-          hookTimeout: 30_000,
+          // a 60 s licence to hang.
+          //
+          // PGlite startup is occasionally slower than the observed 36 s
+          // worst-case test runtime under load. Keep enough headroom for a
+          // loaded machine while individual suites share their real fixture
+          // where isolation permits.
+          testTimeout: 60_000,
+          hookTimeout: 60_000,
         },
       },
       {

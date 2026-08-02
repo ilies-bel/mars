@@ -6,7 +6,7 @@
  */
 import './__testing__/pgliteEnv.ts'
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -77,7 +77,11 @@ describe('GET /api/step-spans', () => {
   let server: ReturnType<typeof Bun.serve> | null = null
   let baseUrl: string
 
-  beforeEach(async () => {
+  // Each case uses distinct task and origin IDs, so one real repo, database,
+  // and HTTP server can safely cover the suite. Starting PGlite and the
+  // server per assertion made this focused endpoint suite slow enough to hit
+  // the server-test timeout under load.
+  beforeAll(async () => {
     repo = setupRepo()
     dbPath = resolve(repo, '.mars/mars.db')
     await bootstrapDb(dbPath)
@@ -89,7 +93,7 @@ describe('GET /api/step-spans', () => {
     baseUrl = `http://${server.hostname}:${server.port}`
   })
 
-  afterEach(() => {
+  afterAll(() => {
     if (server) server.stop(true)
     server = null
     rmSync(repo, { recursive: true, force: true })
