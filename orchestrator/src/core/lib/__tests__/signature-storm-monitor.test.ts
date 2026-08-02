@@ -334,6 +334,20 @@ describe('signature-storm-monitor — unit', () => {
     expect(await countStormRows(aq)).toBe(0)
   })
 
+  it('does not pause dispatch when several main-committers report the same dirty integration branch', async () => {
+    const { sm, aq, client } = await loadModules(repo)
+    const signature = 'orchestration:main-committer-still-dirty/unclassified'
+
+    for (let i = 0; i < sm.SIGNATURE_STORM_TRIP_THRESHOLD + 2; i++) {
+      const result = await sm.recordFailureSignature(client, `committer-${i}`, signature)
+      expect(result.tripped).toBe(false)
+      expect(result.streak).toBe(0)
+    }
+
+    expect(await countStormRows(aq)).toBe(0)
+    expect((await sm.readSignatureStormState(client)).tripped).toBe(false)
+  })
+
   it('readSignatureStormState exposes the durable breaker state for pause reconcile', async () => {
     const { sm, client } = await loadModules(repo)
     const sig = 'setup:install-failed/unclassified'

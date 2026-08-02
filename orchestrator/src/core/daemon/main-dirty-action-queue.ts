@@ -428,7 +428,7 @@ export const handleCommitterStillDirty = async (
     kind: 'failed',
     category: 'orchestrator',
     priority: 'high',
-    title: 'main-committer left integration branch dirty',
+    title: `main is dirty: ${contaminatedPaths.join(', ') || 'unknown path'}`,
     body: [
       `The main-committer task \`${taskId}\` completed but left the integration branch \`${integrationBranch}\` still dirty.`,
       '',

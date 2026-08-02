@@ -1,6 +1,7 @@
 import type { DbResultSet, DbStatement } from './db.js'
 import { raiseActionQueueItem } from './action-queue'
 import { isSameFailureFamily } from './failure-signature.js'
+import { isSignatureStormExempt } from './failure-kinds.js'
 
 /**
  * Minimal write/read seam the monitor needs. Satisfied structurally by both a
@@ -245,6 +246,12 @@ export const recordFailureSignature = async (
   taskId: string,
   signature: string,
 ): Promise<RecordFailureSignatureResult> => {
+  // A dirty integration branch is an operator-owned condition with its own
+  // action-queue row. Several committers encountering it are not a systemic
+  // task failure, so never let it pause dispatch globally.
+  if (isSignatureStormExempt(signature)) {
+    return { streak: 0, tripped: false, alreadyTripped: false }
+  }
   // A placeholder signature groups unrelated failures; never streak on it.
   if (!isDiagnosticSignature(signature)) {
     return { streak: 0, tripped: false, alreadyTripped: false }

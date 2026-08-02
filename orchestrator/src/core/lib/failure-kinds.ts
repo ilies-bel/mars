@@ -761,6 +761,18 @@ export const isEnvironmentalSignature = (signature: string): boolean => {
 }
 
 /**
+ * Returns true for operator-owned conditions that already raise their own
+ * actionable alert and therefore must not pause all dispatch as a storm.
+ *
+ * `main-committer-still-dirty` is one dirty integration checkout observed by
+ * several recovery tasks, not several independent task failures. The optional
+ * error-class suffix is included because the failure-signature classifier
+ * records this condition as `.../unclassified`.
+ */
+export const isSignatureStormExempt = (signature: string): boolean =>
+  signature.split('/', 1)[0] === 'orchestration:main-committer-still-dirty'
+
+/**
  * Extract the failing step from a `<failingStep>/<error-class>` signature.
  * Returns `'unknown'` when `sig` is null.
  *

@@ -144,7 +144,13 @@ beforeEach(() => {
   mockHandleTaskFailureWithFixTask
     .mockClear()
     .mockResolvedValue({ outcome: 'fix-task-spawned' })
-  mockRunTool.mockReset()
+  mockRunTool.mockReset().mockResolvedValue({
+    exitCode: 0,
+    stdout: '',
+    stderr: '',
+    durationMs: 1,
+    traceEventId: 'x',
+  })
   mockCheckIntegrationBranchDirty.mockClear().mockResolvedValue({ dirty: false, statusOutput: '' })
   mockParseMainCommiterPayload.mockClear().mockReturnValue(null)
   mockRaiseActionQueueItem.mockClear().mockResolvedValue('aq-item-1')
@@ -275,6 +281,7 @@ describe('main-committer-still-dirty — verify primitive', () => {
     expect(aqOpts.signature).toBe(`main-committer-still-dirty:${taskId}`)
     expect(aqOpts.kind).toBe('failed')
     expect(aqOpts.priority).toBe('high')
+    expect(aqOpts.title).toBe('main is dirty: src/dirty.ts')
   })
 
   it('throws a terminal error so the pipeline aborts (does not return verified:true)', async () => {

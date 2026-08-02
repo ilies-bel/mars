@@ -6,6 +6,7 @@ import {
   failedTaskTitle,
   isGenericFailureLabel,
   isEnvironmentalSignature,
+  isSignatureStormExempt,
   lookupFailureKind,
   unknownFailureKind,
 } from '../failure-kinds'
@@ -100,6 +101,12 @@ describe('FAILURE_KINDS registry', () => {
       'restart',
       'purge',
     ])
+  })
+
+  it('exempts main-committer dirty-main failures from the global storm breaker', () => {
+    expect(isSignatureStormExempt('orchestration:main-committer-still-dirty')).toBe(true)
+    expect(isSignatureStormExempt('orchestration:main-committer-still-dirty/unclassified')).toBe(true)
+    expect(isSignatureStormExempt('merge:preflight/uncommitted-changes')).toBe(false)
   })
 })
 

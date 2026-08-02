@@ -45,8 +45,8 @@ export interface CheckMergeTargetArgs {
 //   - 'needs-rebase' : integrationBranch is NOT an ancestor of taskBranch
 //                      (diverged or behind). Recoverable — mergeBranch
 //                      Step 1 rebases before the ff. Preflight proceeds.
-//   - 'dirty'        : a tracked, uncommitted change in the merge target
-//                      sits on a path the ff would update. Blocking.
+//   - 'dirty'        : the integration checkout has tracked, uncommitted work.
+//                      Blocking: an orchestrator merge must never reset it.
 //   - 'clean'        : ff is feasible and the target is pristine.
 // Untracked files are deliberately ignored: an untracked .idea/ or editor
 // scratch file in the merge target cannot block `git merge --ff-only`.
@@ -99,26 +99,9 @@ export const checkMergeTargetStatus = async (
       }
     }
 
-    const diff = await exec(
-      resolveGitBin(),
-      ['diff', '--name-only', `${integrationBranch}..${taskBranch}`],
-      { cwd: targetPath },
-      mergeCtx,
-    )
-    const changedPaths = diff.stdout.split('\n').filter((p) => p.length > 0)
-    if (changedPaths.length === 0) return { kind: 'clean' }
-
-    // Cap pathspec argv to avoid blowing past ARG_MAX on huge diffs; if we
-    // exceed it, fall back to a tracked-only global status. Untracked files
-    // are still ignored — they cannot block an ff.
-    const PATH_CAP = 500
-    const statusArgs = ['status', '--porcelain', '--untracked-files=no']
-    if (changedPaths.length <= PATH_CAP) {
-      statusArgs.push('--', ...changedPaths)
-    }
     const status = await exec(
       resolveGitBin(),
-      statusArgs,
+      ['status', '--porcelain', '--untracked-files=no'],
       { cwd: targetPath },
       mergeCtx,
     )
@@ -126,7 +109,7 @@ export const checkMergeTargetStatus = async (
     return {
       kind: 'dirty',
       targetPath,
-      statusOutput: `tracked changes on paths the fast-forward would update:\n${status.stdout}`,
+      statusOutput: `tracked operator changes in the integration checkout:\n${status.stdout}`,
     }
     // TODO(merge_target_missing): also surface a 'missing' kind when the
     // merge target branch has been deleted/renamed; for now any unexpected

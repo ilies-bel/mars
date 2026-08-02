@@ -615,11 +615,14 @@ describe('checkMergeTargetStatus', () => {
     expect(status.kind).toBe('clean')
   })
 
-  it('ignores tracked uncommitted changes on paths the ff would not touch', async () => {
+  it('reports every tracked operator edit as dirty even when the fast-forward would not touch it', async () => {
     writeFileSync(resolve(repo, 'B'), 'b-mutated\n')
     const { checkMergeTargetStatus } = await import('../git/merge')
     const status = await checkMergeTargetStatus(args)
-    expect(status.kind).toBe('clean')
+    expect(status.kind).toBe('dirty')
+    if (status.kind === 'dirty') {
+      expect(status.statusOutput).toContain('B')
+    }
   })
 
   it('reports dirty when a tracked uncommitted change overlaps the ff path set', async () => {
@@ -630,9 +633,7 @@ describe('checkMergeTargetStatus', () => {
     if (status.kind === 'dirty') {
       expect(status.targetPath).toBe(repo)
       expect(status.statusOutput).toContain('A')
-      expect(status.statusOutput).toMatch(
-        /tracked changes on paths the fast-forward would update/i,
-      )
+      expect(status.statusOutput).toMatch(/tracked operator changes in the integration checkout/i)
     }
   })
 
@@ -1559,7 +1560,7 @@ describe('co-located git coverage', () => {
 
       expect(result.kind).toBe('dirty')
       if (result.kind === 'dirty') {
-        expect(result.statusOutput).toContain('tracked changes on paths')
+        expect(result.statusOutput).toContain('tracked operator changes in the integration checkout')
       }
     })
 
