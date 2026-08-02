@@ -303,7 +303,10 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
           {hasFields ? (
             <button
               type="button"
-              onClick={toggleFields}
+              onClick={(e) => {
+                e.stopPropagation()
+                toggleFields()
+              }}
               className="-my-1 inline-flex min-h-[24px] shrink-0 items-center px-2 py-1 font-mono text-[9px] text-muted-foreground underline hover:text-primary"
               data-testid={`event-row-fields-toggle-${event.id}`}
             >
@@ -333,14 +336,21 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
     )
   }
   return (
-    <div>
-      <a
-        href={href}
-        className={`block rounded border ${severityRowClass(event.severity)} px-3 py-1.5 font-mono text-[12px] text-foreground hover:bg-primary/15`}
-        data-testid={`event-row-${event.id}`}
-      >
-        {body}
-      </a>
+    <div
+      role="link"
+      tabIndex={0}
+      onClick={() => {
+        window.location.hash = href
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' || e.target !== e.currentTarget) return
+        e.preventDefault()
+        window.location.hash = href
+      }}
+      className={`block cursor-pointer rounded border ${severityRowClass(event.severity)} px-3 py-1.5 font-mono text-[12px] text-foreground hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary`}
+      data-testid={`event-row-${event.id}`}
+    >
+      {body}
     </div>
   )
 })

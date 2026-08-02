@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * Tests for the Events tab — the unified trace-event stream page.
  *
@@ -12,12 +13,28 @@
  * The legacy topology tests (depth layering, blocker chains, layered
  * rendering) are deliberately removed — that surface no longer exists.
  */
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn, vi } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test'
 import type { Mock } from 'bun:test'
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { vi } from 'vitest'
 import type { EventsResponse, TraceEvent } from '@/shared/schemas'
 import { logFallbackError } from '@/shared/uiFallback'
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getTotalSize: () => count * 45,
+    getVirtualItems: () => Array.from({ length: count }, (_, index) => ({
+      key: index,
+      index,
+      start: index * 45,
+    })),
+  }),
+}))
 
 // ---------------------------------------------------------------------------
 // Module under test
@@ -247,43 +264,74 @@ describe('EventsPage render', () => {
     expect(html).toContain('Failed')
     // summarizeTraceEvent humanises the raw code: 'verify:typecheck' → 'typecheck (verify step)'
     expect(html).toContain('typecheck (verify step)')
-    // Click affordance — row is wrapped in an anchor to the task drawer, tagged
-    // with from=events so closing the drawer returns to the Events page.
+    // The task-id chip links to the task drawer, tagged with from=events so
+    // closing the drawer returns to the Events page.
     expect(html).toContain('href="#/task/t-abc?from=events"')
   })
 
-  it('includes step= in the href for a step_started event', () => {
+  it('routes rows and task chips to their separate destinations without nested links', () => {
     const qc = makeClient(
       makeResponse([
         makeEvent({
-          id: 'ev-step',
-          taskId: 't-step',
+          id: 'ev-separate-targets',
+          taskId: 't-separate',
           kind: 'step_started',
           phase: 'code',
           payload: { stepName: 'code' },
         }),
-      ]),
-    )
-    const html = renderPage(qc)
-    // The href must encode both the origin page and the active step so the
-    // drawer can highlight the matching step row.
-    expect(html).toContain('href="#/task/t-step?from=events&amp;step=code"')
-  })
-
-  it('includes step= in the href for a step_ended event', () => {
-    const qc = makeClient(
-      makeResponse([
         makeEvent({
-          id: 'ev-step-end',
-          taskId: 't-step2',
+          id: 'ev-step-ended',
+          taskId: 't-ended',
           kind: 'step_ended',
           phase: 'verify',
           payload: { stepName: 'verify' },
         }),
       ]),
     )
-    const html = renderPage(qc)
-    expect(html).toContain('href="#/task/t-step2?from=events&amp;step=verify"')
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    document.body.appendChild(container)
+    act(() => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <EventsPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const codeRow = container.querySelector<HTMLElement>('[data-testid="event-row-ev-separate-targets"]')!
+    const verifyRow = container.querySelector<HTMLElement>('[data-testid="event-row-ev-step-ended"]')!
+    const taskChip = codeRow.querySelector<HTMLAnchorElement>('a')!
+
+    expect(codeRow.getAttribute('role')).toBe('link')
+    expect(codeRow.tabIndex).toBe(0)
+    expect(codeRow.querySelectorAll('a')).toHaveLength(1)
+    expect(taskChip.getAttribute('href')).toBe('#/task/t-separate?from=events')
+
+    act(() => {
+      codeRow.click()
+    })
+    expect(window.location.hash).toBe('#/task/t-separate?from=events&step=code')
+
+    act(() => {
+      verifyRow.click()
+    })
+    expect(window.location.hash).toBe('#/task/t-ended?from=events&step=verify')
+
+    act(() => {
+      taskChip.click()
+    })
+    expect(window.location.hash).toBe('#/task/t-separate?from=events')
+
+    act(() => {
+      codeRow.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+    expect(window.location.hash).toBe('#/task/t-separate?from=events&step=code')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
   })
 
   it('does not include step= for non-step events (only from= is present)', () => {
