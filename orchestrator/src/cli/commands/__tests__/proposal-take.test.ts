@@ -550,7 +550,7 @@ describe('mars proposal take — command coverage', () => {
           files: [],
           verifyCmd: null,
           doneCriteria: ['As a user I can do the live feature'],
-          taskType: 'auto',
+          mergeMode: 'auto',
         },
       })
 

@@ -23,6 +23,6 @@ export interface SliceSpec {
   modifies: string[]
   creates: string[]
   verifyCmd: string | null
-  taskType: 'auto' | 'checkpoint'
+  mergeMode: 'auto' | 'gated'
   subDeliverable?: SubDeliverableSpec
 }
