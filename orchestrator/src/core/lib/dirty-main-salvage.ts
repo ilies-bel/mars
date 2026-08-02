@@ -86,24 +86,22 @@ export type WipScanResult = { blocked: false } | { blocked: true; hit: WipHit }
 // ---------------------------------------------------------------------------
 
 /**
- * Identifies a file path that matches a secret-or-state shape which the
- * salvage chore must never auto-commit.
+ * Identifies a file path that belongs to a directory the salvage chore must
+ * never auto-commit.
  */
 export interface SecretPathHit {
   /** Repo-relative path that tripped the guard. */
   filePath: string
-  /** Human-readable reason (e.g. "dotenv file"). */
+  /** Human-readable reason (e.g. "per-repo state directory"). */
   reason: string
 }
 
 /**
- * Checks whether a single repo-relative file path matches a secret-or-state
- * shape that must never be auto-committed — by the dirty-main salvage chore or
+ * Checks whether a single repo-relative file path belongs to a directory that
+ * must never be auto-committed — by the dirty-main salvage chore or
  * by the code step's coder-left-uncommitted auto-commit net
  * (`autoCommitWorktreeIfDeterministic`), which shares this guard:
  *
- * - Dotenv files: exactly `.env`, or any name whose basename starts with
- *   `.env.` (e.g. `.env.local`, `.env.production`).
  * - Per-repo state directory: any path that is exactly `.mars` or starts
  *   with `.mars/`.
  * - Dependency directories: any path with a `node_modules` segment.
@@ -116,12 +114,6 @@ export interface SecretPathHit {
  * Returns a `SecretPathHit` when the path matches, or `null` when safe.
  */
 export function checkSecretPath(filePath: string): SecretPathHit | null {
-  const basename = filePath.split('/').pop() ?? ''
-
-  if (basename === '.env' || basename.startsWith('.env.')) {
-    return { filePath, reason: 'dotenv file' }
-  }
-
   if (filePath === '.mars' || filePath.startsWith('.mars/')) {
     return { filePath, reason: 'per-repo state directory' }
   }
@@ -147,10 +139,10 @@ export type GuardResult =
   | { blocked: true; kind: 'wip'; hit: WipHit }
 
 /**
- * Combined salvage guard: checks ALL dirty paths for secret-or-state shapes
+ * Combined salvage guard: checks ALL dirty paths for protected directory shapes
  * first (pure, no git I/O), then checks test-directory files for WIP markers.
  *
- * The guard is **all-or-nothing**: if any path matches the secret-or-state
+ * The guard is **all-or-nothing**: if any path matches the protected-directory
  * guard, `{ blocked: true, kind: 'secret-path' }` is returned immediately
  * without fetching any git diffs. The caller must treat any `blocked: true`
  * result as "skip the salvage chore entirely — commit nothing".

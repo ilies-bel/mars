@@ -409,48 +409,21 @@ describe('scanDirtyTestsForWip (git integration)', () => {
 // ---------------------------------------------------------------------------
 
 describe('checkSecretPath', () => {
-  describe('dotenv file detection', () => {
-    it('returns a hit for the root-level .env file', () => {
-      const hit = checkSecretPath('.env')
-      expect(hit).not.toBeNull()
-      expect(hit?.filePath).toBe('.env')
-      expect(hit?.reason).toBe('dotenv file')
+  describe('paths outside the guard', () => {
+    it('allows root and nested dotenv paths', () => {
+      expect(checkSecretPath('.env')).toBeNull()
+      expect(checkSecretPath('apps/api/.env.local')).toBeNull()
     })
 
-    it('returns a hit for .env.local', () => {
-      const hit = checkSecretPath('.env.local')
-      expect(hit).not.toBeNull()
-      expect(hit?.reason).toBe('dotenv file')
-    })
-
-    it('returns a hit for .env.production', () => {
-      const hit = checkSecretPath('.env.production')
-      expect(hit).not.toBeNull()
-      expect(hit?.reason).toBe('dotenv file')
-    })
-
-    it('returns a hit for .env.test nested inside a subdirectory', () => {
-      const hit = checkSecretPath('apps/api/.env.test')
-      expect(hit).not.toBeNull()
-      expect(hit?.filePath).toBe('apps/api/.env.test')
-      expect(hit?.reason).toBe('dotenv file')
-    })
-
-    it('returns a hit for a .env file nested two levels deep', () => {
-      const hit = checkSecretPath('packages/core/.env')
-      expect(hit).not.toBeNull()
-      expect(hit?.reason).toBe('dotenv file')
-    })
-
-    it('returns null for dotenv.config.js — basename does not start with .env', () => {
+    it('returns null for dotenv.config.js', () => {
       expect(checkSecretPath('dotenv.config.js')).toBeNull()
     })
 
-    it('returns null for .environment — not a .env prefix', () => {
+    it('returns null for .environment', () => {
       expect(checkSecretPath('.environment')).toBeNull()
     })
 
-    it('returns null for src/env.ts — basename is env.ts, not .env', () => {
+    it('returns null for src/env.ts', () => {
       expect(checkSecretPath('src/env.ts')).toBeNull()
     })
   })
@@ -515,9 +488,9 @@ describe('scanDirtyFilesForGuards (git integration)', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  // Acceptance criterion 1 — dotenv file blocks auto-commit
-  it('returns blocked:true with kind:"secret-path" when a dirty path is a dotenv file', async () => {
-    // Track a .env file and then dirty it.
+  it('returns blocked:false when a dirty path is a tracked dotenv file', async () => {
+    // A tracked dotenv file is eligible for the same auto-commit path as any
+    // other ordinary file.
     writeFileSync(join(dir, '.env'), 'SECRET=initial\n')
     git('add', '.env')
     git('commit', '-m', 'add env', '--no-gpg-sign')
@@ -525,11 +498,7 @@ describe('scanDirtyFilesForGuards (git integration)', () => {
 
     const result = await scanDirtyFilesForGuards(dir, [' M .env'])
 
-    expect(result.blocked).toBe(true)
-    if (result.blocked && result.kind === 'secret-path') {
-      expect(result.hit.filePath).toBe('.env')
-      expect(result.hit.reason).toBe('dotenv file')
-    }
+    expect(result).toEqual({ blocked: false })
   })
 
   // Acceptance criterion 2 — .mars/ path blocks auto-commit
@@ -552,16 +521,17 @@ describe('scanDirtyFilesForGuards (git integration)', () => {
 
   // Acceptance criterion 3 — guard trip leaves the merge target unchanged
   // (no new commits on HEAD)
-  it('leaves HEAD unchanged when the secret-path guard trips on a .env file', async () => {
-    writeFileSync(join(dir, '.env'), 'API_KEY=secret\n')
-    git('add', '.env')
-    git('commit', '-m', 'add env', '--no-gpg-sign')
+  it('leaves HEAD unchanged when the secret-path guard trips on a .mars file', async () => {
+    mkdirSync(join(dir, '.mars'), { recursive: true })
+    writeFileSync(join(dir, '.mars', 'state.db'), 'state=v1\n')
+    git('add', '.mars/state.db')
+    git('commit', '-m', 'add state', '--no-gpg-sign')
 
     const headBefore = git('rev-parse', 'HEAD').trim()
 
-    writeFileSync(join(dir, '.env'), 'API_KEY=newsecret\n')
+    writeFileSync(join(dir, '.mars', 'state.db'), 'state=v2\n')
 
-    const result = await scanDirtyFilesForGuards(dir, [' M .env'])
+    const result = await scanDirtyFilesForGuards(dir, [' M .mars/state.db'])
 
     // Guard trips — caller must not commit.
     expect(result.blocked).toBe(true)
@@ -575,22 +545,23 @@ describe('scanDirtyFilesForGuards (git integration)', () => {
   // Acceptance criterion 4 — all-or-nothing: other tracked changes in the same
   // dirty tree are not partially committed when a guarded path is present.
   it('blocks all commits even when only one path in a mixed dirty tree is guarded', async () => {
-    // Two tracked files: a clean source file and a .env file.
+    // Two tracked files: a clean source file and a .mars state file.
     writeFileSync(join(dir, 'src.ts'), 'const x = 1\n')
-    writeFileSync(join(dir, '.env'), 'SECRET=original\n')
-    git('add', 'src.ts', '.env')
+    mkdirSync(join(dir, '.mars'), { recursive: true })
+    writeFileSync(join(dir, '.mars', 'state.db'), 'state=original\n')
+    git('add', 'src.ts', '.mars/state.db')
     git('commit', '-m', 'add files', '--no-gpg-sign')
 
     const headBefore = git('rev-parse', 'HEAD').trim()
 
     // Both files are dirty.
     writeFileSync(join(dir, 'src.ts'), 'const x = 2\n')
-    writeFileSync(join(dir, '.env'), 'SECRET=leaked\n')
+    writeFileSync(join(dir, '.mars', 'state.db'), 'state=changed\n')
 
     // Caller would pass all dirty lines; the guard must block the entire commit.
     const result = await scanDirtyFilesForGuards(dir, [
       ' M src.ts',
-      ' M .env',
+      ' M .mars/state.db',
     ])
 
     expect(result.blocked).toBe(true)

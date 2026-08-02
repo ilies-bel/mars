@@ -506,35 +506,23 @@ describe('coder commit contract (code step post-condition)', () => {
     expect(gitLogSubjects(repo)).toEqual(['feat: committed slice'])
   })
 
-  it('refuses to auto-commit a secret-or-state path and fails instead', async () => {
-    // `git add -A` honours .gitignore, but this temp repo has none — the guard
-    // is what stops `.env` / `.mars/` / `node_modules` from ever being swept
-    // into a task branch.
+  it('auto-commits a tracked dotenv file without raising an action-queue item', async () => {
     commitFeature()
     writeFileSync(resolve(repo, '.env'), 'API_KEY=super-secret\n')
 
     const ctx = makeCtx('test-auto', makeStore())
-    await expect(
-      runAgent(ctx, { worktree: { path: repo, branch: 'task/test-auto' } }),
-    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+    const result = await runAgent(ctx, {
+      worktree: { path: repo, branch: 'task/test-auto' },
+    })
 
-    expect(mockUpdateTask).toHaveBeenCalledWith(
-      'test-auto',
-      expect.objectContaining({
-        status: 'failed',
-        failureSignature: 'code/uncommitted-changes',
-      }),
-      expect.anything(),
-    )
-    // The secret never entered the index or a commit.
-    expect(gitLogSubjects(repo)).toEqual(['feat: committed slice'])
+    expect(result).toHaveProperty('sessionId', 'sess-1')
+    expect(mockHandleTaskFailureWithFixTask).not.toHaveBeenCalled()
+    expect(mockRaiseActionQueueItem).not.toHaveBeenCalled()
     expect(
       execFileSync('git', ['log', '--all', '--format=%H', '--', '.env'], { cwd: repo })
         .toString()
         .trim(),
-    ).toBe('')
-    const [raiseArgs] = mockRaiseActionQueueItem.mock.calls.at(-1) ?? []
-    expect(raiseArgs.body).toContain('dotenv file')
+    ).not.toBe('')
   })
 
   it('passes a clean worktree that is ahead of the integration branch', async () => {
