@@ -662,7 +662,27 @@ export const traceEventSchema = z.object({
 })
 
 export const eventsResponseSchema = z.object({
-  events: z.array(traceEventSchema),
+  // Render malformed events as sentinels instead of dropping them: an explicit
+  // degraded row makes daemon schema drift visible without losing the stream.
+  events: z.array(
+    traceEventSchema.catch((ctx) => {
+      const raw =
+        typeof ctx.input === 'object' && ctx.input !== null
+          ? (ctx.input as Record<string, unknown>)
+          : {}
+      const payload = z.record(z.string(), z.unknown()).safeParse(raw.payload)
+      return {
+        id: typeof raw.id === 'string' ? raw.id : 'unknown',
+        timestamp: typeof raw.timestamp === 'number' ? raw.timestamp : 0,
+        kind: typeof raw.kind === 'string' ? raw.kind : 'unknown',
+        severity: raw.severity === 'warn' || raw.severity === 'error' ? raw.severity : 'info',
+        taskId: typeof raw.taskId === 'string' ? raw.taskId : null,
+        originId: typeof raw.originId === 'string' ? raw.originId : null,
+        phase: typeof raw.phase === 'string' ? raw.phase : null,
+        payload: payload.success ? payload.data : {},
+      }
+    }),
+  ),
   nextCursor: z.string().nullable(),
 })
 

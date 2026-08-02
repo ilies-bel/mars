@@ -7,7 +7,13 @@
  * daemon's buildActionQueueView emits.
  */
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import { actionQueueResponseSchema, chatThreadSchema, preloadedResponseSchema, type ChatThread } from './schemas'
+import {
+  actionQueueResponseSchema,
+  chatThreadSchema,
+  eventsResponseSchema,
+  preloadedResponseSchema,
+  type ChatThread,
+} from './schemas'
 
 // Minimal base fields shared across all item kinds.
 const base = {
@@ -23,6 +29,52 @@ const base = {
   humanSummary: '',
   verbs: [],
 }
+
+describe('eventsResponseSchema', () => {
+  it('keeps valid events when one daemon event is malformed', () => {
+    const result = eventsResponseSchema.parse({
+      events: [
+        {
+          id: 'event-valid-before',
+          timestamp: 1_700_000_000_000,
+          kind: 'task_started',
+          severity: 'info',
+          taskId: 'task-1',
+          originId: null,
+          phase: 'setup',
+          payload: {},
+        },
+        {
+          id: 'event-malformed',
+          timestamp: 'not-an-epoch',
+          kind: 'timestamp-drift',
+        },
+        {
+          id: 'event-valid-after',
+          timestamp: 1_700_000_000_001,
+          kind: 'task_completed',
+          severity: 'info',
+          taskId: 'task-1',
+          originId: null,
+          phase: 'merge',
+          payload: {},
+        },
+      ],
+      nextCursor: null,
+    })
+
+    expect(result.events.map((event) => event.id)).toEqual([
+      'event-valid-before',
+      'event-malformed',
+      'event-valid-after',
+    ])
+    expect(result.events[1]).toMatchObject({
+      id: 'event-malformed',
+      kind: 'timestamp-drift',
+      timestamp: 0,
+    })
+  })
+})
 
 describe('actionQueueResponseSchema — known kinds parse correctly', () => {
   it('parses awaiting-human without falling to epoch-0 sentinel', () => {
