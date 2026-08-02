@@ -98,11 +98,10 @@ import { taskHash } from '@/shared/routing'
 import { linkifyTaskIds } from '@/shared/linkifyTaskIds'
 import { formatDuration } from '@/shared/time'
 import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle } from './chatPageUtils'
-import { OpeningNextMoves } from '@/widgets/chat/OpeningNextMoves'
+import { ChatGreeting } from '@/widgets/chat/ChatGreeting'
 import { ConversationTimeline } from '@/widgets/chat/ConversationTimeline'
 import { CompactionNotice } from '@/widgets/chat/CompactionNotice'
 import { SubthreadBoundaryLine } from '@/widgets/chat/SubthreadBoundaryLine'
-import type { DisplayRow } from '@/widgets/chat/OpeningNextMoves'
 import { useTasks } from '@/hooks/useTasks'
 import { useChatLayoutPreference } from '@/entities/chat-layout/api'
 import { SkeletonList } from '@/components/Skeleton'
@@ -2554,9 +2553,17 @@ export const ChatPage = () => {
   // Rail collapse: viewport drives the default; the toggle provides a per-
   // session override that resets whenever the viewport crosses the xl boundary.
   const [railCollapsed, setRailCollapsed] = useState(!isXlScreen)
+  const openWorkRegionRef = useRef<HTMLDivElement>(null)
+  const [focusRailOpenWork, setFocusRailOpenWork] = useState(false)
   useEffect(() => {
     setRailCollapsed(!isXlScreen)
   }, [isXlScreen])
+  useEffect(() => {
+    if (focusRailOpenWork && !railCollapsed) {
+      openWorkRegionRef.current?.focus()
+      setFocusRailOpenWork(false)
+    }
+  }, [focusRailOpenWork, railCollapsed])
 
   // Mobile sidebar sheet
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -2822,6 +2829,11 @@ export const ChatPage = () => {
     void handleOpenSubthread(item.item)
   }, [handleOpenSubthread])
 
+  const handleShowRail = useCallback(() => {
+    setRailCollapsed(false)
+    setFocusRailOpenWork(true)
+  }, [])
+
   const openProposalSubject = useCallback(async (proposal: DraftFeature) => {
     const thread = await createChatThread({
       projectId,
@@ -2852,24 +2864,6 @@ export const ChatPage = () => {
       setAlertSpawnPending(false)
     }
   }, [qc])
-
-  // Seeded opening message: when actionable items exist show a compact,
-  // grouped queue summary so the operator sees real pending work at a glance.
-  // Supplement action-queue rows with tasks that have status 'blocked' and are
-  // not already represented by a queue item (matched by entityId). This ensures
-  // the opening never falsely claims "nothing's pressing" when blocked tasks
-  // are waiting for attention.
-  const blockedTaskRows: DisplayRow[] = (taskSnapshot?.columns.in_progress ?? [])
-    .filter((t) => t.status === 'blocked')
-    .filter((t) => !queueItems.some((q) => q.entityId === t.id))
-    .map((t) => ({
-      id: t.id,
-      kind: 'blocked',
-      title: t.title,
-      humanSummary: 'Waiting on a blocker task.',
-    }))
-  const openingRows: DisplayRow[] = [...queueItems, ...blockedTaskRows]
-  const hasActionableItems = openingRows.length > 0
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -3054,22 +3048,12 @@ export const ChatPage = () => {
                     className="flex flex-col gap-1"
                   >
                     <span className="font-mono text-[11px] text-primary">mars</span>
-                    {!selectedThreadId && hasActionableItems ? (
-                      <OpeningNextMoves
-                        rows={openingRows}
-                        onPick={(row) => {
-                          if (row.kind === 'blocked') {
-                            // Blocked tasks are not in the action queue; navigate to
-                            // the task detail page so the operator can inspect the
-                            // blocker chain and decide what to do next.
-                            window.location.hash = taskHash(row.id, 'chat')
-                            return
-                          }
-                          // Real queue rows open their Subthread inline, in the same
-                          // scroll, so the opening block is never unmounted.
-                          const item = queueItems.find((q) => q.id === row.id)
-                          if (item) void handleOpenSubthread(item)
-                        }}
+                    {!selectedThreadId && openWork.length > 0 ? (
+                      <ChatGreeting
+                        rankedOpenWork={openWork}
+                        proposals={proposals}
+                        onOpenWork={handleOpenWork}
+                        onShowRail={handleShowRail}
                       />
                     ) : (
                       <p className="font-mono text-[14px] text-foreground">
@@ -3174,6 +3158,7 @@ export const ChatPage = () => {
         onOpenWork={handleOpenWork}
         proposals={proposals}
         onOpenProposal={openProposalSubject}
+        openWorkRegionRef={openWorkRegionRef}
         collapsed={railCollapsed}
         onToggleCollapse={() => setRailCollapsed((v) => !v)}
       />

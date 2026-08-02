@@ -399,8 +399,8 @@ describe('ChatPage – handleOpenSubthread: chip opens Subthread inline', () => 
       )
     })
 
-    // Chip should be visible in the opening next-moves
-    const chip = container.querySelector('[data-testid="next-move-chip"]')
+    // The greeting's one named next move should be visible in the opening.
+    const chip = container.querySelector('[data-testid="chat-greeting-next-move"]')
     expect(chip).not.toBeNull()
 
     // Click the chip — triggers handleOpenSubthread
@@ -443,7 +443,7 @@ describe('ChatPage – handleOpenSubthread: chip opens Subthread inline', () => 
       )
     })
 
-    const chip = container.querySelector('[data-testid="next-move-chip"]')
+    const chip = container.querySelector('[data-testid="chat-greeting-next-move"]')
     expect(chip).not.toBeNull()
 
     // First click
@@ -512,7 +512,7 @@ describe('ChatPage – handleOpenSubthread: chip opens Subthread inline', () => 
     )
 
     await act(async () => {
-      container.querySelector('[data-testid="next-move-chip"]')!
+      container.querySelector('[data-testid="chat-greeting-next-move"]')!
         .dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await Promise.resolve()
       await Promise.resolve()

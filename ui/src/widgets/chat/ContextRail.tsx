@@ -13,7 +13,7 @@
  * Panels lazy-load and degrade gracefully when the daemon is unreachable.
  */
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, type RefObject } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchAdrs, fetchGlossary, fetchTasksForThread } from '@/shared/api'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
@@ -705,6 +705,8 @@ export interface ContextRailProps {
   proposals?: DraftFeature[]
   /** Opens a proposal-scoped Subject. */
   onOpenProposal?: (proposal: DraftFeature) => void
+  /** Receives focus when the opening greeting sends the operator to open work. */
+  openWorkRegionRef?: RefObject<HTMLDivElement | null>
   /** When true the rail collapses to a narrow icon strip. */
   collapsed?: boolean
   /** Callback to toggle the collapsed state from outside. */
@@ -724,6 +726,7 @@ export const ContextRail = ({
   onOpenWork,
   proposals = [],
   onOpenProposal,
+  openWorkRegionRef,
   collapsed = false,
   onToggleCollapse,
 }: ContextRailProps) => {
@@ -801,9 +804,11 @@ export const ContextRail = ({
         </PanelSection>
       )}
 
-      <AlertsPile items={openWork} onOpenWork={onOpenWork} />
+      <div ref={openWorkRegionRef} tabIndex={-1} aria-label="Open work" data-testid="context-rail-open-work">
+        <AlertsPile items={openWork} onOpenWork={onOpenWork} />
 
-      <ProposalsPile proposals={proposals} onOpenProposal={onOpenProposal} />
+        <ProposalsPile proposals={proposals} onOpenProposal={onOpenProposal} />
+      </div>
 
       <ArtifactsRail
         tasks={tasks}
