@@ -20,7 +20,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
@@ -35,6 +35,12 @@ const makeRepo = (): string => {
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
   execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
   execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
+  // `mars continue` refreshes a parked branch by merging `main`. Seed the
+  // fixture with a real commit so that is a valid no-op merge instead of git's
+  // "not something we can merge" error from an unborn branch.
+  writeFileSync(resolve(repo, 'README.md'), 'fixture\n')
+  execFileSync('git', ['add', 'README.md'], { cwd: repo })
+  execFileSync('git', ['commit', '-q', '-m', 'initial fixture'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   return repo
 }
@@ -88,7 +94,7 @@ describe('merge:preflight/uncommitted-changes — recovery budget preserved', ()
         kind: 'failed',
         category: 'orchestrator',
         priority: 'high',
-        title: `Merge blocked: main has uncommitted changes — clean and continue ${task.id}`,
+        title: `Merge blocked: main is dirty: orchestrator/src/core/workers/index.ts`,
         body: [
           `Task \`${task.id}\` reached the merge step with committed work on branch \`task/${task.id}\`,`,
           `but the merge target (\`main\`) has uncommitted tracked changes on paths that the fast-forward would update.`,
@@ -136,6 +142,9 @@ describe('merge:preflight/uncommitted-changes — recovery budget preserved', ()
       expect(dirtyItem!.raisedBy).toBe('merge:preflight:dirty-target')
       expect(dirtyItem!.priority).toBe('high')
       expect(dirtyItem!.kind).toBe('failed')
+      expect(dirtyItem!.title).toBe(
+        'Merge blocked: main is dirty: orchestrator/src/core/workers/index.ts',
+      )
       expect(dirtyItem!.body).toMatch(/mars continue/i)
 
       // ASSERT: task is in a continue-able state (failed with failedPhase='merge').
@@ -296,11 +305,12 @@ describe('mars continue on merge-failed task', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Suite 3 — checkMergeTargetStatus correctly classifies overlapping dirty paths
-//           (lower-level confirmation that the input to the workflow path is right)
+// Suite 3 — checkMergeTargetStatus correctly classifies a dirty integration
+//           root without modifying it (the workflow turns this result into the
+//           action-queue row above before mergeBranch can run).
 // ---------------------------------------------------------------------------
 
-describe('checkMergeTargetStatus — dirty classification for workflow input', () => {
+describe('checkMergeTargetStatus — dirty integration root', () => {
   let repo: string
 
   beforeEach(() => {
@@ -323,10 +333,10 @@ describe('checkMergeTargetStatus — dirty classification for workflow input', (
   })
 
   it(
-    'returns dirty when merge target has uncommitted tracked change on an overlapping path',
+    'reports the dirty path without resetting away uncommitted operator changes',
     async () => {
-      // This is the exact scenario from the incident: an uncommitted edit on a
-      // path (A) that the fast-forward would update.
+      // This is the exact scenario from the incident: an uncommitted edit in
+      // the integration checkout while a task branch is ready to merge.
       writeFileSync(resolve(repo, 'A'), 'a-dirty\n')
 
       const { checkMergeTargetStatus } = await import('../../lib/git/merge')
@@ -337,11 +347,18 @@ describe('checkMergeTargetStatus — dirty classification for workflow input', (
 
       expect(status.kind).toBe('dirty')
       if (status.kind === 'dirty') {
-        // statusOutput text matches the actual string from checkMergeTargetStatus.
-        expect(status.statusOutput).toMatch(
-          /tracked changes on paths the fast-forward would update/i,
-        )
+        expect(status.statusOutput).toContain(' M A')
       }
+      // The preflight is read-only: it must never use reset/checkout to make
+      // its answer convenient. The merge primitive stops on this result and
+      // raises the actionable row asserted above.
+      expect(readFileSync(resolve(repo, 'A'), 'utf8')).toBe('a-dirty\n')
+      expect(
+        execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], {
+          cwd: repo,
+          encoding: 'utf8',
+        }),
+      ).toContain(' M A')
     },
     15_000,
   )
