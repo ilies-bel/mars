@@ -2954,7 +2954,7 @@ export const merge = async (
             },
           })
           throw new WorkflowTerminalError(
-            'merge-target-dirty',
+            'main-dirty-merge',
             `task ${taskId} merge:preflight detected dirty target ${integrationBranch}`,
           )
         }
