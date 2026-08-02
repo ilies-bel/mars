@@ -119,7 +119,11 @@ export const corePurgeTask = async (
     }
   }
   const acceptedStatuses = opts?.acceptedStatuses ?? ['failed', 'done', 'dropped']
-  if (!acceptedStatuses.includes(task.status)) {
+  // acceptedStatuses stays narrow so call sites can only name statuses purge
+  // actually accepts; task.status is the full TaskStatus union, and Array
+  // .includes() will not take a wider value than its element type. Widening
+  // only at the membership test keeps the call-site guarantee intact.
+  if (!(acceptedStatuses as readonly string[]).includes(task.status)) {
     throw new Error(
       `task ${id} is ${task.status}; '${opts?.purgedBy === 'supersede' ? 'supersede' : 'purge'}' only accepts ${acceptedStatuses.join('/')} tasks. Use 'mars drop ${id} --force' to delete a task in any status.`,
     )
