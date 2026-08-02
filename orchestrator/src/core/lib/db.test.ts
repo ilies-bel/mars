@@ -265,6 +265,15 @@ describe('batch', () => {
 })
 
 describe('registry', () => {
+  it('closes an unused client without starting a database', async () => {
+    const key = freshKey()
+    const client = openDb(key)
+
+    await client.close()
+
+    expect(openDb(key)).not.toBe(client)
+  })
+
   it('returns the same client object for the same target', async () => {
     const key = freshKey()
     const a = openDb(key)

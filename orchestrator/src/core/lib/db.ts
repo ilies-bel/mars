@@ -480,21 +480,28 @@ function makePgliteBackend(target: string): BackendOps {
   // Opaque keys remain in-memory for the fast unit tests that only need an
   // isolated connection identity.
   const dataDir = target.startsWith('/') ? `${target}.pglite` : undefined
-  const db = new PGlite(dataDir, {
-    parsers: {
-      20: (v: string) => Number(v), // int8 — match the pg parser above
-      1700: (v: string) => Number(v), // numeric
-    },
-  })
+  // PGlite starts booting as soon as it is constructed. Closing an instance
+  // before that asynchronous boot has completed can then wait indefinitely,
+  // even though no database operation was requested. Keep `openDb` cheap and
+  // make an unused client immediately closable by constructing PGlite on its
+  // first query or transaction instead.
+  let db: PGlite | undefined
   const mutex = new Mutex()
-  const rawQuery: QueryFn = async (sql, params) =>
-    toResultSetPglite(await db.query<DbRow>(sql, params as unknown[]), sql)
+  const rawQuery: QueryFn = async (sql, params) => {
+    db ??= new PGlite(dataDir, {
+      parsers: {
+        20: (v: string) => Number(v), // int8 — match the pg parser above
+        1700: (v: string) => Number(v), // numeric
+      },
+    })
+    return toResultSetPglite(await db.query<DbRow>(sql, params as unknown[]), sql)
+  }
   return {
     // Single session: EVERY operation takes the mutex so a plain execute can
     // never land inside another caller's open BEGIN..COMMIT window.
     query: (sql, params) => mutex.run(() => rawQuery(sql, params)),
     transaction: (fn) => mutex.run(() => runInTx(rawQuery, fn)),
-    end: () => mutex.run(() => db.close()),
+    end: () => (db === undefined ? Promise.resolve() : mutex.run(() => db!.close())),
   }
 }
 
