@@ -12,7 +12,10 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { createClient } from '@libsql/client'
-import { openTraceEventStore } from '../../orchestrator/src/core/lib/trace-events-store.ts'
+import {
+  openTraceEventStore,
+  type TraceEventStore,
+} from '../../orchestrator/src/core/lib/trace-events-store.ts'
 import { startServer } from './index.ts'
 import { makeDaemonStub } from './testDaemonStub.ts'
 
@@ -76,6 +79,11 @@ describe('GET /api/step-spans', () => {
   let dbPath: string
   let server: ReturnType<typeof Bun.serve> | null = null
   let baseUrl: string
+  let traceStore: TraceEventStore
+
+  const seedTraceEvents = async (
+    seed: (store: TraceEventStore) => Promise<void>,
+  ): Promise<void> => seed(traceStore)
 
   // Each case uses distinct task and origin IDs, so one real repo, database,
   // and HTTP server can safely cover the suite. Starting PGlite and the
@@ -85,6 +93,7 @@ describe('GET /api/step-spans', () => {
     repo = setupRepo()
     dbPath = resolve(repo, '.mars/mars.db')
     await bootstrapDb(dbPath)
+    traceStore = await openTraceEventStore(dbPath)
 
     server = await startServer(
       { repo, port: 0, host: '127.0.0.1' },
@@ -96,7 +105,9 @@ describe('GET /api/step-spans', () => {
   afterAll(() => {
     if (server) server.stop(true)
     server = null
-    rmSync(repo, { recursive: true, force: true })
+    return traceStore.close().finally(() => {
+      rmSync(repo, { recursive: true, force: true })
+    })
   })
 
   it('returns 400 when neither taskId nor originId is given', async () => {
@@ -109,8 +120,7 @@ describe('GET /api/step-spans', () => {
   it('scopes by taskId when the drawer shows a single task', async () => {
     // The task drawer fetches ?taskId=<id> for a single task; the proxy must
     // forward it (it previously demanded originId and 400'd every such open).
-    const store = await openTraceEventStore(dbPath)
-    try {
+    await seedTraceEvents(async (store) => {
       // Two tasks in the same arc — taskId scoping must return only the asked one.
       await store.record({
         kind: 'step_started',
@@ -126,9 +136,7 @@ describe('GET /api/step-spans', () => {
         phase: 'code',
         payload: { stepName: 'recover', workflowInstanceId: 'wf-y', workerName: 'Fixer' },
       })
-    } finally {
-      await store.close()
-    }
+    })
 
     const res = await fetch(`${baseUrl}/api/step-spans?taskId=task-x`)
     expect(res.status).toBe(200)
@@ -148,8 +156,7 @@ describe('GET /api/step-spans', () => {
   })
 
   it('returns spans in chronological (workflow) order: setup first, then code, verify, merge', async () => {
-    const store = await openTraceEventStore(dbPath)
-    try {
+    await seedTraceEvents(async (store) => {
       // Insert events with deliberate timestamps to verify ordering
       const t0 = '2026-01-01T10:00:00.000Z'
       const t1 = '2026-01-01T10:00:01.000Z'
@@ -217,9 +224,7 @@ describe('GET /api/step-spans', () => {
         phase: 'merge',
         payload: { stepName: 'merge', workflowInstanceId: 'wf-1', outcome: 'completed', durationMs: 100 },
       })
-    } finally {
-      await store.close()
-    }
+    })
 
     const res = await fetch(`${baseUrl}/api/step-spans?originId=task-1`)
     expect(res.status).toBe(200)
@@ -237,8 +242,7 @@ describe('GET /api/step-spans', () => {
   })
 
   it('marks a step as running when there is no matching step_ended event', async () => {
-    const store = await openTraceEventStore(dbPath)
-    try {
+    await seedTraceEvents(async (store) => {
       await store.record({
         kind: 'step_started',
         taskId: 'task-live',
@@ -247,9 +251,7 @@ describe('GET /api/step-spans', () => {
         payload: { stepName: 'code', workflowInstanceId: 'wf-live', workerName: 'Coder' },
       })
       // No step_ended for this — it is still running
-    } finally {
-      await store.close()
-    }
+    })
 
     const res = await fetch(`${baseUrl}/api/step-spans?originId=task-live`)
     expect(res.status).toBe(200)
@@ -263,8 +265,7 @@ describe('GET /api/step-spans', () => {
   })
 
   it('shows each recover step as its own row, separate from the code step', async () => {
-    const store = await openTraceEventStore(dbPath)
-    try {
+    await seedTraceEvents(async (store) => {
       // wf-1: original run — code step (Coder)
       await store.record({
         kind: 'step_started',
@@ -295,9 +296,7 @@ describe('GET /api/step-spans', () => {
         phase: 'code',
         payload: { stepName: 'recover', workflowInstanceId: 'wf-2', outcome: 'completed', durationMs: 15000, workerName: 'Fixer' },
       })
-    } finally {
-      await store.close()
-    }
+    })
 
     const res = await fetch(`${baseUrl}/api/step-spans?originId=task-arc`)
     expect(res.status).toBe(200)
@@ -312,8 +311,7 @@ describe('GET /api/step-spans', () => {
   })
 
   it('excludes spans from other origins', async () => {
-    const store = await openTraceEventStore(dbPath)
-    try {
+    await seedTraceEvents(async (store) => {
       await store.record({
         kind: 'step_started',
         taskId: 'task-a',
@@ -328,9 +326,7 @@ describe('GET /api/step-spans', () => {
         phase: 'setup',
         payload: { stepName: 'setup', workflowInstanceId: 'wf-b' },
       })
-    } finally {
-      await store.close()
-    }
+    })
 
     const res = await fetch(`${baseUrl}/api/step-spans?originId=task-a`)
     expect(res.status).toBe(200)
@@ -340,8 +336,7 @@ describe('GET /api/step-spans', () => {
   })
 
   it('includes non-LLM steps (setup, verify, merge) alongside worker steps', async () => {
-    const store = await openTraceEventStore(dbPath)
-    try {
+    await seedTraceEvents(async (store) => {
       // setup — no workerName (non-LLM)
       await store.record({
         kind: 'step_started',
@@ -402,9 +397,7 @@ describe('GET /api/step-spans', () => {
         phase: 'merge',
         payload: { stepName: 'merge', workflowInstanceId: 'wf-full', outcome: 'completed', durationMs: 50 },
       })
-    } finally {
-      await store.close()
-    }
+    })
 
     const res = await fetch(`${baseUrl}/api/step-spans?originId=task-full`)
     expect(res.status).toBe(200)
@@ -431,8 +424,7 @@ describe('GET /api/step-spans', () => {
   })
 
   it('returns durationMs from the step_ended event', async () => {
-    const store = await openTraceEventStore(dbPath)
-    try {
+    await seedTraceEvents(async (store) => {
       await store.record({
         kind: 'step_started',
         taskId: 'task-dur',
@@ -447,9 +439,7 @@ describe('GET /api/step-spans', () => {
         phase: 'setup',
         payload: { stepName: 'setup', workflowInstanceId: 'wf-dur', outcome: 'completed', durationMs: 1234 },
       })
-    } finally {
-      await store.close()
-    }
+    })
 
     const res = await fetch(`${baseUrl}/api/step-spans?originId=task-dur`)
     expect(res.status).toBe(200)
