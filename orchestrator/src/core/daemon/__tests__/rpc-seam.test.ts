@@ -110,7 +110,6 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     runSync: notImpl('runSync') as DaemonDeps['runSync'],
     handleProposalPromote: notImpl('handleProposalPromote') as DaemonDeps['handleProposalPromote'],
     handleProposalSlice: notImpl('handleProposalSlice') as DaemonDeps['handleProposalSlice'],
-    handleProposalApprove: notImpl('handleProposalApprove') as DaemonDeps['handleProposalApprove'],
     handleProposalReslice: notImpl('handleProposalReslice') as DaemonDeps['handleProposalReslice'],
     handleProposalTake: notImpl('handleProposalTake') as DaemonDeps['handleProposalTake'],
     handleRefine: notImpl('handleRefine') as DaemonDeps['handleRefine'],

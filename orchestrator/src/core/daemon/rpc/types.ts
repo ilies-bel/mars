@@ -166,7 +166,6 @@ export interface DaemonDeps {
   handleProposalPromote(
     proposalId: string,
     priority?: number,
-    autoApprove?: boolean,
     coordinated?: boolean,
   ): Promise<{ proposalId: string; status: string }>
   handleProposalSlice(
@@ -174,9 +173,6 @@ export interface DaemonDeps {
     resliceFeedback?: string,
     priority?: number,
   ): Promise<{ proposalId: string; status: string; taskIds: string[] }>
-  handleProposalApprove(
-    proposalId: string,
-  ): Promise<{ proposalId: string; queuedCount: number; blockedCount: number }>
   handleProposalReslice(
     proposalId: string,
     feedback: string,

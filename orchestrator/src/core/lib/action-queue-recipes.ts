@@ -329,21 +329,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
-  'plan-approval': {
-    humanSummary: () =>
-      "A plan has been sliced into tasks and is waiting for your go-ahead before work starts — review and approve or reslice.",
-    humanDetail: (ctx) => ({
-      raisedAt: ctx.raisedAt,
-      entityId: ctx.entityId,
-      proposalId: str(ctx.payload['proposalId']),
-      sliceCount: ctx.payload['sliceCount'],
-    }),
-    verbs: [
-      { op: 'approve-plan', label: 'Approve & enqueue', style: 'primary' },
-      { op: 'reslice', label: 'Reslice with feedback', style: 'default' },
-    ],
-  },
-
   // ── Human-in-the-loop ──────────────────────────────────────────────────────
 
   'awaiting-validation': {

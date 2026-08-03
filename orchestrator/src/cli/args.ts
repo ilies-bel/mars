@@ -147,7 +147,6 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--live',
   '--deferrable',
   '--coordinated',
-  '--hold',
   '--help',
   '-h',
   '--version',

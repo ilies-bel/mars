@@ -138,6 +138,10 @@ export interface ReconcileSummary {
    * assistant message so the user sees why their turn produced no reply.
    */
   orphanedChatRunsRecovered: number
+  /** Retired planning-gate rows closed at startup. */
+  retiredPlanGateRowsCleared: number
+  /** Legacy proposal children released from draft status at startup. */
+  legacySlicedDraftsReleased: number
   /**
    * Idle chat threads with no user messages that were evaporated by the
    * dead-thread eviction sweep at daemon start.
@@ -207,6 +211,8 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   workflowInstallAlertsReconciled: 0,
   ghostSubscribersSwept: 0,
   orphanedChatRunsRecovered: 0,
+  retiredPlanGateRowsCleared: 0,
+  legacySlicedDraftsReleased: 0,
   deadThreadsEvaporated: 0,
   queuedCommittersReseeded: 0,
   mergeJobsReset: 0,

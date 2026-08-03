@@ -48,7 +48,6 @@ export interface Proposal {
   status: ProposalStatus
   source: ProposalSource
   coordinated: boolean
-  autoApprove: boolean
   author: Author | null
   createdAt: number
   updatedAt: number
@@ -179,7 +178,6 @@ const rowToProposal = (
     status: assertValidProposalStatus((row.status as string | null) ?? 'draft'),
     source: normaliseSource(row.source),
     coordinated: row.coordinated === true,
-    autoApprove: row.auto_approve === true,
     author,
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
@@ -272,7 +270,6 @@ export const createProposal = async (
     status: 'draft',
     source,
     coordinated: false,
-    autoApprove: false,
     author: opts?.author ?? null,
     createdAt: now,
     updatedAt: now,
@@ -682,7 +679,7 @@ export const validateProposalShaped = (proposal: Proposal): string[] => {
  */
 export const promoteProposal = async (
   idOrPrefix: string,
-  options: { autoApprove?: boolean; coordinated?: boolean } = {},
+  options: { coordinated?: boolean } = {},
 ): Promise<Proposal> => {
   await initProposals()
   const resolved = await resolveProposalId(idOrPrefix)
@@ -714,11 +711,10 @@ export const promoteProposal = async (
   await c.execute({
     sql: `UPDATE proposals
           SET status = 'prd-ready',
-              auto_approve = ?,
               coordinated = CASE WHEN ? THEN true ELSE coordinated END,
               updated_at = ?
           WHERE id = ?`,
-    args: [options.autoApprove === true, options.coordinated === true, now, proposal.id],
+    args: [options.coordinated === true, now, proposal.id],
   })
   await emitProposalBusEvent('proposal.promoted', { proposalId: proposal.id })
   const updated = await getProposal(proposal.id)
@@ -776,20 +772,6 @@ export const deleteProposal = async (idOrPrefix: string): Promise<string> => {
   })
   if (r.rowsAffected === 0) {
     throw new Error(`proposal ${id} not found`)
-  }
-  // Clear any open plan-approval row for this proposal (raised by the slice
-  // workflow when the proposal was sliced). The row is signature-keyed so
-  // it is not caught by the origin-keyed eviction path in the repopulator.
-  try {
-    const { supersedeActionQueueItemsBySignature } = await import('./lib/action-queue')
-    await supersedeActionQueueItemsBySignature(
-      'plan-approval',
-      id,
-      'origin-purged',
-      'proposal.delete',
-    )
-  } catch {
-    // Best-effort — deletion succeeds regardless of row-cleanup failure.
   }
   await emitProposalBusEvent('proposal.deleted', { proposalId: id })
   return id
@@ -1000,94 +982,6 @@ export const claimProposalForSlicing = async (
  * Emitting the event here — in proposals.ts, alongside the other
  * lifecycle transitions — keeps proposal state management centralised.
  */
-/**
- * Approve a 'sliced' proposal's plan: transition all draft slice tasks and
- * sub-tasks to their dispatch-ready statuses (queued or blocked), then emit
- * proposal.approved on the event bus.
- *
- * Tasks are classified by their DB state:
- *   - HITL slice tasks (slice_kind='hitl') → 'blocked' (never dispatched directly)
- *   - Coder tasks with task_blocker edges (inter-slice deps) → 'blocked'
- *   - All other draft tasks (coder slices with no blockers, sub-tasks) → 'queued'
- *
- * Returns the ids split by the status they were transitioned to so callers can
- * emit bus events and/or report progress.
- */
-export const approveProposalPlan = async (
-  proposalId: string,
-): Promise<{ queuedTaskIds: string[]; blockedTaskIds: string[] }> => {
-  await initProposals()
-  const c = stateClient()
-
-  // Validate proposal is in 'sliced' state.
-  const proposalResult = await c.execute({
-    sql: `SELECT status FROM proposals WHERE id = ?`,
-    args: [proposalId],
-  })
-  if (proposalResult.rows.length === 0) {
-    throw new Error(`proposal ${proposalId} not found`)
-  }
-  const currentStatus = (proposalResult.rows[0] as unknown as { status: string }).status
-  if (currentStatus !== 'sliced') {
-    throw new Error(
-      `proposal ${proposalId} is '${currentStatus}'; only 'sliced' proposals can be approved`,
-    )
-  }
-
-  // Load all tasks for this proposal still in 'draft' status.
-  const { getDefaultTaskStore } = await import('./store/task-store')
-  const { updateTask } = await import('./queue')
-  const taskStore = await getDefaultTaskStore()
-
-  const tasksResult = await taskStore.query({
-    sql: `SELECT id, slice_kind FROM tasks WHERE parent_proposal_id = ? AND status = 'draft'`,
-    args: [proposalId],
-  })
-
-  const queuedTaskIds: string[] = []
-  const blockedTaskIds: string[] = []
-
-  for (const row of tasksResult.rows) {
-    const task = row as unknown as { id: string; slice_kind: string | null }
-    const isHitl = task.slice_kind === 'hitl'
-
-    const blockersResult = await taskStore.query({
-      sql: `SELECT 1 FROM task_blockers WHERE task_id = ? LIMIT 1`,
-      args: [task.id],
-    })
-    const hasBlockers = blockersResult.rows.length > 0
-
-    const newStatus = (isHitl || hasBlockers) ? 'blocked' : 'queued'
-    await updateTask(task.id, { status: newStatus })
-
-    if (newStatus === 'queued') {
-      queuedTaskIds.push(task.id)
-    } else {
-      blockedTaskIds.push(task.id)
-    }
-  }
-
-  // Clear the plan-approval action-queue row for this proposal.
-  try {
-    const { supersedeActionQueueItemsBySignature } = await import('./lib/action-queue')
-    await supersedeActionQueueItemsBySignature(
-      'plan-approval',
-      proposalId,
-      'origin-done',
-      'proposal.approve',
-    )
-  } catch {
-    // Best-effort — approval succeeds regardless of row-cleanup failure.
-  }
-
-  await emitProposalBusEvent('proposal.approved', {
-    proposalId,
-    queuedCount: queuedTaskIds.length,
-  })
-
-  return { queuedTaskIds, blockedTaskIds }
-}
-
 /**
  * Revert a 'sliced' proposal back to 'prd-ready' so it can be re-sliced.
  * The caller is responsible for dropping the existing slice tasks before

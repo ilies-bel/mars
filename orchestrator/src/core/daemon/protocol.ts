@@ -61,11 +61,9 @@ export type DaemonRequest =
       op: 'proposal.promote'
       proposalId: string
       priority?: number
-      autoApprove: boolean
       coordinated?: boolean
     }
   | { op: 'proposal.slice'; proposalId: string; priority?: number }
-  | { op: 'proposal.approve'; proposalId: string }
   | { op: 'proposal.reslice'; proposalId: string; feedback: string; priority?: number }
   | { op: 'proposal.take'; proposalId: string; workflow?: string }
   | { op: 'refine'; id: string; refresh?: boolean }

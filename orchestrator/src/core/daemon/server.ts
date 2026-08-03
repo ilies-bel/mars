@@ -2576,7 +2576,6 @@ export const startDaemon = async (
   bus.on('proposal.dismissed', () => { viewStreamHub.broadcast('progress') })
   bus.on('proposal.promoted',  () => { viewStreamHub.broadcast('progress') })
   bus.on('proposal.sliced',    () => { viewStreamHub.broadcast('progress') })
-  bus.on('proposal.approved',  () => { viewStreamHub.broadcast('progress') })
   bus.on('proposal.deleted',   () => { viewStreamHub.broadcast('progress') })
 
   // Durable transcript append (deep-reflect durability). On every
@@ -3304,11 +3303,10 @@ export const startDaemon = async (
   const handleProposalPromote = async (
     proposalId: string,
     priority?: number,
-    autoApprove = false,
     coordinated = false,
   ): Promise<{ proposalId: string; status: string }> => {
     assertProposalsSourceFresh(proposalsStamp)
-    const proposal = await promoteProposal(proposalId, { autoApprove, coordinated })
+    const proposal = await promoteProposal(proposalId, { coordinated })
     // Auto-slice: chain slicing fire-and-forget so the RPC stays fast and a
     // slicer failure (e.g. malformed PRD) leaves the proposal in prd-ready for
     // the operator to inspect and re-promote without aborting the promote itself.
@@ -3333,31 +3331,12 @@ export const startDaemon = async (
       traceStore,
       ...(priority !== undefined && { priority }),
     })
-    if (result.autoApproval) {
-      for (const taskId of result.autoApproval.queuedTaskIds) {
-        bus.emit('task.queued', { taskId })
-      }
-      log(
-        `[auto-approve] proposal ${result.proposalId}: ${result.autoApproval.queuedTaskIds.length} task(s) queued, ${result.autoApproval.blockedTaskIds.length} blocked`,
-      )
-    }
-    return result
-  }
-
-  const handleProposalApprove = async (
-    proposalId: string,
-  ): Promise<{ proposalId: string; queuedCount: number; blockedCount: number }> => {
-    const { approveProposalPlan } = await import('../proposals')
-    const { queuedTaskIds, blockedTaskIds } = await approveProposalPlan(proposalId)
-    // Notify the dispatch loop that new tasks are ready to run.
-    for (const taskId of queuedTaskIds) {
+    // Slicing always makes dispatchable work live immediately; notify the
+    // in-memory dispatcher about each queued task after its lifecycle write.
+    for (const taskId of result.queuedTaskIds) {
       bus.emit('task.queued', { taskId })
     }
-    return {
-      proposalId,
-      queuedCount: queuedTaskIds.length,
-      blockedCount: blockedTaskIds.length,
-    }
+    return result
   }
 
   const handleProposalReslice = async (
@@ -3376,18 +3355,20 @@ export const startDaemon = async (
       )
     }
 
-    // Clear the pending plan-approval row before dropping the old slices.
-    const { supersedeActionQueueItemsBySignature } = await import('../lib/action-queue')
-    await supersedeActionQueueItemsBySignature(
-      'plan-approval',
-      proposalId,
-      'origin-done',
-      'proposal.reslice',
-    ).catch(() => {})
-
-    // Drop old slice tasks and sub-tasks so the slicer starts with a clean slate.
     const taskStore = await getDefaultTaskStore()
-    await Arc.dropProposalSlices(taskStore, proposalId, 'reslice').catch(() => {})
+    const slices = await taskStore.listTasksForProposal(proposalId)
+    const activeSliceIds = slices
+      .filter((task) => task.status !== 'queued' && task.status !== 'blocked')
+      .map((task) => task.id)
+    if (activeSliceIds.length > 0) {
+      throw new Error(
+        `proposal ${proposalId} cannot be resliced: slice task(s) already left the queue: ${activeSliceIds.join(', ')}`,
+      )
+    }
+
+    // Every old slice is still inert, so clean it up through the same Arc
+    // lifecycle path as `mars drop` before cutting replacement work.
+    await Arc.dropProposalSlices(taskStore, proposalId, 'reslice')
 
     // Revert the proposal to 'prd-ready' so the slice workflow can claim it.
     await revertSlicedProposalToReady(proposalId)
@@ -3423,12 +3404,6 @@ export const startDaemon = async (
 
     const proposal = await getProposal(resolved.id)
     if (!proposal) throw new Error(`proposal ${resolved.id} not found`)
-
-    if (proposal.autoApprove) {
-      throw new Error(
-        `proposal ${proposal.id} is configured to auto-approve slices; promote it with --hold before using proposal take`,
-      )
-    }
 
     // Validate PRD body before attempting status transitions.
     const missing = validateProposalShaped(proposal)
@@ -4079,7 +4054,6 @@ export const startDaemon = async (
     runSync,
     handleProposalPromote,
     handleProposalSlice,
-    handleProposalApprove,
     handleProposalReslice,
     handleProposalTake,
     handleRefine,

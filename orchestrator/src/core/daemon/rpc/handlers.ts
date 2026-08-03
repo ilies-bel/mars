@@ -132,7 +132,6 @@ const proposalPromoteHandler = handler('proposal.promote', async (req, deps) => 
   const r = await deps.handleProposalPromote(
     req.proposalId,
     req.priority,
-    req.autoApprove,
     req.coordinated,
   )
   return { ok: true, data: r }
@@ -140,11 +139,6 @@ const proposalPromoteHandler = handler('proposal.promote', async (req, deps) => 
 
 const proposalSliceHandler = handler('proposal.slice', async (req, deps) => {
   const r = await deps.handleProposalSlice(req.proposalId, undefined, req.priority)
-  return { ok: true, data: r }
-})
-
-const proposalApproveHandler = handler('proposal.approve', async (req, deps) => {
-  const r = await deps.handleProposalApprove(req.proposalId)
   return { ok: true, data: r }
 })
 
@@ -608,7 +602,6 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   syncHandler,
   proposalPromoteHandler,
   proposalSliceHandler,
-  proposalApproveHandler,
   proposalResliceHandler,
   proposalTakeHandler,
   refineHandler,

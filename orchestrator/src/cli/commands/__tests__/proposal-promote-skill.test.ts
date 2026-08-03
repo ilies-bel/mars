@@ -181,7 +181,7 @@ describe('proposal promote — non-skill-forge routes to daemon', () => {
     // Daemon must have been called with proposal.promote.
     expect(fake.calls).toHaveLength(1)
     expect((fake.calls[0] as { op: string }).op).toBe('proposal.promote')
-    expect(fake.calls[0]).toMatchObject({ autoApprove: true, coordinated: false })
+    expect(fake.calls[0]).toMatchObject({ coordinated: false })
     expect(r.out.join('\n')).toContain('tasks will be enqueued automatically when slicing completes')
 
     // No skill file should have been written.
@@ -189,23 +189,23 @@ describe('proposal promote — non-skill-forge routes to daemon', () => {
     expect(existsSync(skillsDir)).toBe(false)
   })
 
-  it('holds slices for review and carries coordination when requested', async () => {
+  it('carries coordination when requested', async () => {
     const { store, ctx } = await loadStoreAndCtx()
     const fake = await makeFake((req) => ({
       proposalId: (req as { proposalId: string }).proposalId,
       status: 'prd-ready',
     }))
     const { createProposal } = await import('../../../core/proposals')
-    const p = await createProposal('Review this plan', { source: 'human' })
+    const p = await createProposal('Coordinate this plan', { source: 'human' })
 
-    const r = await run(['proposal', 'promote', p.id, '--hold', '--coordinated'], {
+    const r = await run(['proposal', 'promote', p.id, '--coordinated'], {
       store,
       ctx,
       daemon: fake,
     })
 
     expect(r.code).toBe(0)
-    expect(fake.calls[0]).toMatchObject({ autoApprove: false, coordinated: true })
-    expect(r.out.join('\n')).toContain('slicing will pause for plan review')
+    expect(fake.calls[0]).toMatchObject({ coordinated: true })
+    expect(r.out.join('\n')).toContain('tasks will be enqueued automatically')
   })
 })

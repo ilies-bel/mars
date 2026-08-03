@@ -4,7 +4,6 @@ import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
 import { createQueueWorkflowStore } from './queue-workflow-store'
 import {
-  approveProposalPlan,
   claimProposalForSlicing,
   getProposal,
   markProposalSliced,
@@ -38,12 +37,8 @@ const sliceOutputSchema = z.object({
   proposalId: z.string(),
   status: z.string(),
   taskIds: z.array(z.string()),
-  autoApproval: z
-    .object({
-      queuedTaskIds: z.array(z.string()),
-      blockedTaskIds: z.array(z.string()),
-    })
-    .optional(),
+  queuedTaskIds: z.array(z.string()),
+  blockedTaskIds: z.array(z.string()),
 })
 
 /**
@@ -1085,60 +1080,6 @@ Save your work: stage and commit when verify passes.
 type SliceInput = z.infer<typeof sliceInputSchema>
 type SliceOutput = z.infer<typeof sliceOutputSchema>
 
-/**
- * Build a human-readable slice graph summary for the plan-approval action-queue
- * body. Renders slice titles, kinds, declared files, done-criteria counts, and
- * the inter-slice edges with provenance tags so the operator can make an
- * informed approve / reslice decision without running extra queries.
- */
-function buildPlanApprovalBody(
-  proposal: { id: string; title: string },
-  slices: Array<{
-    title: string
-    kind: string
-    type: string
-    acceptanceCriteria: readonly string[]
-    modifies: readonly string[]
-    creates: readonly string[]
-    blockedBy: readonly number[]
-  }>,
-  edgeProvenanceMap: Map<string, string>,
-): string {
-  const lines: string[] = [
-    `Plan ready for review — ${slices.length} slice${slices.length === 1 ? '' : 's'} (PRD ${proposal.id}: ${proposal.title})`,
-    '',
-    'Slices:',
-  ]
-  slices.forEach((s, i) => {
-    const files = [...s.modifies, ...s.creates]
-    const fileStr = files.length > 0 ? `${files.length} file${files.length === 1 ? '' : 's'}` : 'no files'
-    const critStr = `${s.acceptanceCriteria.length} criteri${s.acceptanceCriteria.length === 1 ? 'on' : 'a'}`
-    lines.push(`  [${i + 1}] ${s.title} (${s.kind}, ${s.type}, ${fileStr}, ${critStr})`)
-  })
-
-  // Collect inter-slice edges
-  const edges: Array<{ blocker: number; depender: number; provenance: string }> = []
-  for (let i = 0; i < slices.length; i += 1) {
-    for (const dep of slices[i].blockedBy) {
-      const provenance = edgeProvenanceMap.get(`${i}:${dep}`) ?? 'inferred'
-      edges.push({ blocker: dep, depender: i + 1, provenance })
-    }
-  }
-  if (edges.length > 0) {
-    lines.push('', 'Edges (slice graph):')
-    for (const e of edges) {
-      lines.push(`  Slice ${e.blocker} → Slice ${e.depender} [${e.provenance}]`)
-    }
-  }
-
-  lines.push(
-    '',
-    `To proceed: mars proposal approve ${proposal.id}`,
-    `To revise:  mars proposal reslice ${proposal.id} --feedback "<text>"`,
-  )
-  return lines.join('\n')
-}
-
 // The slice workflow talks to proposals/queue via injected services; the
 // daemon wires the DomainTaskStore and TraceEventStore from the composition
 // root, read inside as `ctx.services.store` and `ctx.services.traceStore`.
@@ -1376,9 +1317,8 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
     // separately so markProposalSliced receives the true slice count and
     // the catch block can clean them up alongside the slice tasks.
     const subTaskIds: string[] = []
-    let autoApproval:
-      | { queuedTaskIds: string[]; blockedTaskIds: string[] }
-      | undefined
+    const queuedTaskIds: string[] = []
+    const blockedTaskIds: string[] = []
     // Parallel arrays that map hitl slice positions to their sub-tasks.
     // hitlSliceIndices[j] is the 0-based index in parsed.slices/taskIds;
     // subTaskIds[j] is the id of the Coder sub-task for that slice.
@@ -1545,6 +1485,24 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
           [subTaskIds[j]],
         )
       }
+      // Phase 3: sliced work dispatches immediately. Keep the lifecycle gate
+      // in updateTask: HITL slices and slices with unresolved blockers remain
+      // blocked; every other slice (including Coder sub-tasks) is queued.
+      const draftTasks = await taskStore.query({
+        sql: `SELECT id, slice_kind FROM tasks WHERE parent_proposal_id = ? AND status = 'draft'`,
+        args: [proposal.id],
+      })
+      for (const row of draftTasks.rows) {
+        const task = row as unknown as { id: string; slice_kind: string | null }
+        const blockers = await taskStore.query({
+          sql: `SELECT 1 FROM task_blockers WHERE task_id = ? LIMIT 1`,
+          args: [task.id],
+        })
+        const status = task.slice_kind === 'hitl' || blockers.rows.length > 0 ? 'blocked' : 'queued'
+        await updateTask(task.id, { status }, taskStore)
+        if (status === 'queued') queuedTaskIds.push(task.id)
+        else blockedTaskIds.push(task.id)
+      }
       // Defensive: never mark a proposal 'sliced' with zero tasks. The
       // slicerOutputSchema already enforces `slices.min(1)` and Phase 1
       // pushes every successfully-enqueued task into `taskIds`, so this
@@ -1585,45 +1543,6 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
         const { transferProposalBlockerToTask } = await import('../core/queue')
         await transferProposalBlockerToTask(proposal.id, taskIds[0])
       }
-      // Phase 6 (plan approval): promotion stores its decision on the proposal
-      // row before the asynchronous slicer begins. Re-read it after the status
-      // transition so a daemon restart cannot lose that decision. The automatic
-      // route deliberately calls the same approval function as the RPC handler.
-      const slicedProposal = await getProposal(proposal.id)
-      if (!slicedProposal) {
-        throw new Error(`proposal ${proposal.id} disappeared after slicing`)
-      }
-      if (slicedProposal.autoApprove) {
-        autoApproval = await approveProposalPlan(proposal.id)
-      } else {
-        // The held path raises the existing review item. The operator can call
-        // `mars proposal approve` to use the identical approval implementation.
-        const approvalBody = buildPlanApprovalBody(proposal, parsed.slices, edgeProvenanceMap)
-        await raiseActionQueueItem({
-          kind: 'plan-approval',
-          category: 'orchestrator',
-          priority: 'high',
-          title: `Plan review: ${parsed.slices.length} slice${parsed.slices.length === 1 ? '' : 's'} for PRD ${proposal.id}`,
-          body: approvalBody,
-          payload: {
-            proposalId: proposal.id,
-            sliceCount: parsed.slices.length,
-            taskIds,
-            sliceSummary: parsed.slices.map((s, i) => ({
-              index: i + 1,
-              title: s.title,
-              kind: s.kind,
-              type: s.type,
-              criteriaCount: s.acceptanceCriteria.length,
-              fileCount: s.modifies.length + s.creates.length,
-              blockedBy: s.blockedBy,
-            })),
-          },
-          context: {},
-          raisedBy: 'slicer',
-          signature: proposal.id,
-        }).catch(() => {})
-      }
     } catch (error: unknown) {
       // Clean up slice tasks AND any Coder sub-tasks created for hitl slices.
       // Each row-removal emits task.dropped + task.terminal{purged} into the
@@ -1661,7 +1580,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
       throw error
     }
 
-    return { proposalId: proposal.id, status: 'sliced', taskIds, autoApproval }
+    return { proposalId: proposal.id, status: 'sliced', taskIds, queuedTaskIds, blockedTaskIds }
     } catch (error: unknown) {
       // Compensating revert for the atomic claim. Covers every failure
       // path between the claim above and a successful return — including
@@ -1757,10 +1676,8 @@ export interface RunSliceResult {
   proposalId: string
   status: string
   taskIds: string[]
-  autoApproval?: {
-    queuedTaskIds: string[]
-    blockedTaskIds: string[]
-  }
+  queuedTaskIds: string[]
+  blockedTaskIds: string[]
 }
 
 /** Bound on the synthesized failure message so it stays log-friendly even

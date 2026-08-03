@@ -617,7 +617,7 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
   // Seed a fresh proposal in 'prd-ready' status (the precondition `generateStep`
   // checks) and return its id.
   const seedPrdReadyProposal = async (
-    { autoApprove = false, coordinated = false }: { autoApprove?: boolean; coordinated?: boolean } = {},
+    { coordinated = false }: { coordinated?: boolean } = {},
   ): Promise<string> => {
     const proposals = await import('../../core/proposals')
     await proposals.initProposals()
@@ -626,7 +626,7 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
       solution: 's',
     })
     await proposals.addProposalUserStory(proposal.id, 'as a user, I want X')
-    const promoted = await proposals.promoteProposal(proposal.id, { autoApprove, coordinated })
+    const promoted = await proposals.promoteProposal(proposal.id, { coordinated })
     expect(promoted.status).toBe('prd-ready')
     return proposal.id
   }
@@ -866,13 +866,13 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     vi.resetModules()
     const queue = await import('../../core/queue')
     const enqueueTask = vi.spyOn(queue, 'enqueueTask')
-    const proposalId = await seedPrdReadyProposal({ autoApprove: true, coordinated: true })
+    const proposalId = await seedPrdReadyProposal({ coordinated: true })
 
     const slice = await import('../slice-workflow')
     const result = await slice.runSlice(proposalId)
 
     expect(result.taskIds).toHaveLength(1)
-    expect(result.autoApproval?.queuedTaskIds).toEqual(result.taskIds)
+    expect(result.queuedTaskIds).toEqual(result.taskIds)
     expect(enqueueTask).toHaveBeenCalledTimes(1)
     expect(enqueueTask).toHaveBeenCalledWith(
       `Coordinator for PRD ${proposalId}: t`,
@@ -922,7 +922,7 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
       }
     })
     vi.resetModules()
-    const proposalId = await seedPrdReadyProposal({ autoApprove: true })
+    const proposalId = await seedPrdReadyProposal()
 
     // Simulate the crash: manually insert an orphaned task that claims
     // this proposal as its parent (as if Phase 1 ran but the process died
@@ -968,8 +968,8 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     const proposals = await import('../../core/proposals')
     const after = await proposals.getProposal(proposalId)
     expect(after?.status).toBe('sliced')
-    expect(result.autoApproval?.queuedTaskIds).toEqual(result.taskIds)
-    expect(result.autoApproval?.blockedTaskIds).toEqual([])
+    expect(result.queuedTaskIds).toEqual(result.taskIds)
+    expect(result.blockedTaskIds).toEqual([])
     const restartedQueue = await import('../../core/queue')
     expect((await restartedQueue.getTask(result.taskIds[0]))?.status).toBe('queued')
   })
@@ -1540,7 +1540,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
       solution: 's',
     })
     await proposals.addProposalUserStory(proposal.id, 'as a user, I want X')
-    const promoted = await proposals.promoteProposal(proposal.id, { autoApprove: true })
+    const promoted = await proposals.promoteProposal(proposal.id)
     expect(promoted.status).toBe('prd-ready')
     return proposal.id
   }
@@ -2027,7 +2027,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
       solution: 's',
     })
     await proposals.addProposalUserStory(proposal.id, 'as a user, I want X')
-    const promoted = await proposals.promoteProposal(proposal.id, { autoApprove: true })
+    const promoted = await proposals.promoteProposal(proposal.id)
     expect(promoted.status).toBe('prd-ready')
     return proposal.id
   }
@@ -3070,7 +3070,7 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
       solution: 'route hitl slices to operator actionQueue',
     })
     await proposals.addProposalUserStory(proposal.id, 'as an operator, I see what to do')
-    const promoted = await proposals.promoteProposal(proposal.id, { autoApprove: true })
+    const promoted = await proposals.promoteProposal(proposal.id)
     expect(promoted.status).toBe('prd-ready')
     return proposal.id
   }
@@ -3372,7 +3372,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
       solution: 'route hitl slices to operator and complete when both conditions met',
     })
     await proposals.addProposalUserStory(proposal.id, 'as an operator, I confirm the step')
-    const promoted = await proposals.promoteProposal(proposal.id, { autoApprove: true })
+    const promoted = await proposals.promoteProposal(proposal.id)
     expect(promoted.status).toBe('prd-ready')
     return proposal.id
   }

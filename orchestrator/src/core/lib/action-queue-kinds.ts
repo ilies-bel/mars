@@ -23,7 +23,6 @@ export const ACTION_QUEUE_KINDS = [
   'phantom-task',
   'outbox-lag',
   'reflect-recommended',
-  'plan-approval',
   'done-with-unmerged-commits',
   'api-outage',
   'daemon-code-drift',

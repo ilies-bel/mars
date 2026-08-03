@@ -138,7 +138,6 @@ file total is high).
 | `proposal unblock-task` | 597 | `proposal/unblock-task.ts` | `proposalUnblockTaskCommand` |
 | `proposal task-blockers` | 631 | `proposal/task-blockers.ts` | `proposalTaskBlockersCommand` |
 | `proposal ship-summary` | 656 | `proposal/ship-summary.ts` | `proposalShipSummaryCommand` |
-| `proposal approve` | 769 | `proposal/approve.ts` | `proposalApproveCommand` |
 | `proposal take` | 798 | `proposal/take.ts` | `proposalTakeCommand` |
 | `proposal reslice` | 851 | `proposal/reslice.ts` | `proposalResliceCommand` |
 | `proposal` (usage) | 897 | `proposal/usage.ts` | `proposalUsageCommand` |

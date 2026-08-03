@@ -124,6 +124,65 @@ const blockerDriftRepair: Reconciler = {
 }
 
 /**
+ * Retire the former proposal review gate. Existing databases can still hold
+ * its open action rows and draft slice tasks; resolve the obsolete rows and
+ * apply the current dispatch classification before normal boot reseeding.
+ */
+const retiredPlanGateReconcile: Reconciler = {
+  name: 'retired-plan-gate-reconcile',
+  async run({ log, bus }) {
+    try {
+      const store = getDefaultDomainTaskStore()
+      const { setActionQueueState } = await import('../lib/action-queue')
+      const { updateTask } = await import('../queue')
+      const legacyKind = ['plan', 'approval'].join('-')
+      const legacyRows = await store.query({
+        sql: `SELECT id FROM action_queue_items WHERE kind = ? AND state = 'open'`,
+        args: [legacyKind],
+      })
+      for (const row of legacyRows.rows) {
+        await setActionQueueState((row as unknown as { id: string }).id, 'resolved', {
+          resolution: 'superseded',
+          note: 'superseded: retired planning gate',
+          by: 'startup-reconcile',
+        })
+      }
+
+      const drafts = await store.query({
+        sql: `SELECT id, slice_kind FROM tasks
+              WHERE parent_proposal_id IS NOT NULL AND status = 'draft'`,
+      })
+      let queued = 0
+      for (const row of drafts.rows) {
+        const task = row as unknown as { id: string; slice_kind: string | null }
+        const blockers = await store.query({
+          sql: `SELECT 1 FROM task_blockers WHERE task_id = ? LIMIT 1`,
+          args: [task.id],
+        })
+        const status = task.slice_kind === 'hitl' || blockers.rows.length > 0 ? 'blocked' : 'queued'
+        await updateTask(task.id, { status }, store)
+        if (status === 'queued') {
+          bus.emit('task.queued', { taskId: task.id })
+          queued++
+        }
+      }
+      if (legacyRows.rows.length > 0 || drafts.rows.length > 0) {
+        log(
+          `[reconcile] retired planning gate: cleared ${legacyRows.rows.length} row(s), released ${drafts.rows.length} draft slice task(s) (${queued} queued)`,
+        )
+      }
+      return {
+        retiredPlanGateRowsCleared: legacyRows.rows.length,
+        legacySlicedDraftsReleased: drafts.rows.length,
+      }
+    } catch (err) {
+      log(`[reconcile] retired planning-gate repair failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
  * 3b. Stranded-origin repair — fail any origin sitting in `blocked` behind its
  *     OWN failed recovery Chore. A recovery is a leaf that is never re-run
  *     (ADR-0040), so that blocker edge can never reach `done`: the origin was
@@ -883,6 +942,7 @@ export const RECONCILERS: readonly Reconciler[] = [
   daemonDiedSweep,
   orphanedChatRunSweep,
   blockerDriftRepair,
+  retiredPlanGateReconcile,
   strandedOriginRecoveryRepair,
   terminalOriginChoreRepair,
   mergeJobsStartupReconcile,

@@ -27,6 +27,10 @@ interface ReconcileModule {
   runStartupReconcile: typeof import('../startup-reconcile').runStartupReconcile
 }
 
+interface ProposalsModule {
+  createProposal: typeof import('../../proposals').createProposal
+}
+
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-startup-reconcile-test-'))
   execFileSync('git', ['init', '-q'], { cwd: repo })
@@ -261,6 +265,74 @@ describe('runStartupReconcile — orphaned-blocked scan', () => {
     const updated = await q.getTask(dependent.id)
     expect(updated?.status).toBe('queued')
     expect(summary.orphanedBlockedRequeued).toBe(1)
+  })
+})
+
+describe('runStartupReconcile — retired planning gate', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('closes legacy gate rows and releases legacy draft slices exactly once', async () => {
+    const { q, reconcile } = await loadModules(repo)
+    const proposals = (await import('../../proposals')) as unknown as ProposalsModule
+    const proposal = await proposals.createProposal('Legacy slice', { source: 'human' })
+    const queued = await q.enqueueTask('independent legacy slice', undefined, {
+      parentProposalId: proposal.id,
+      spec: { files: [], verifyCmd: null, doneCriteria: [], mergeMode: 'auto', sliceKind: 'coder' },
+    })
+    const blocker = await q.enqueueTask('legacy prerequisite', undefined, {
+      parentProposalId: proposal.id,
+      spec: { files: [], verifyCmd: null, doneCriteria: [], mergeMode: 'auto', sliceKind: 'coder' },
+    })
+    const blocked = await q.enqueueTask('dependent legacy slice', undefined, {
+      parentProposalId: proposal.id,
+      spec: { files: [], verifyCmd: null, doneCriteria: [], mergeMode: 'auto', sliceKind: 'coder' },
+    })
+    await q.addBlockers(blocked.id, [blocker.id])
+    const client = q.resolveQueueClient()
+    await client.execute({
+      sql: `UPDATE tasks SET status = 'draft' WHERE id IN (?, ?, ?)`,
+      args: [queued.id, blocker.id, blocked.id],
+    })
+    const legacyKind = ['plan', 'approval'].join('-')
+    await client.execute({
+      sql: `INSERT INTO action_queue_items
+              (id, kind, category, priority, state, title, body, payload, context, raised_by)
+            VALUES (?, ?, 'orchestrator', 'high', 'open', 'Legacy planning gate', '', '{}', '{}', 'test')`,
+      args: ['legacy-gate-row', legacyKind],
+    })
+    const bus = new EventEmitter()
+    const queuedEvents: string[] = []
+    bus.on('task.queued', ({ taskId }) => queuedEvents.push(taskId))
+
+    const first = await reconcile.runStartupReconcile({ ...makeDeps(), bus })
+
+    expect((await q.getTask(queued.id))?.status).toBe('queued')
+    expect((await q.getTask(blocker.id))?.status).toBe('queued')
+    expect((await q.getTask(blocked.id))?.status).toBe('blocked')
+    expect(queuedEvents).toEqual(expect.arrayContaining([queued.id, blocker.id]))
+    expect(first.retiredPlanGateRowsCleared).toBe(1)
+    expect(first.legacySlicedDraftsReleased).toBe(3)
+    const closed = await client.execute({
+      sql: `SELECT state, resolution_note FROM action_queue_items WHERE id = ?`,
+      args: ['legacy-gate-row'],
+    })
+    expect(closed.rows[0]).toMatchObject({
+      state: 'resolved',
+      resolution_note: 'superseded: retired planning gate',
+    })
+
+    const second = await reconcile.runStartupReconcile({ ...makeDeps(), bus: new EventEmitter() })
+    expect(second.retiredPlanGateRowsCleared).toBe(0)
+    expect(second.legacySlicedDraftsReleased).toBe(0)
   })
 })
 

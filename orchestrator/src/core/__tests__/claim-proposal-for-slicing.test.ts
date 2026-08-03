@@ -89,25 +89,24 @@ describe('claimProposalForSlicing — atomic CAS on prd-ready', () => {
     expect(after?.status).toBe('draft')
   })
 
-  it('keeps promotion approval intent after a daemon restart', async () => {
+  it('keeps promotion coordination after a daemon restart', async () => {
     const p = await loadMods(repo)
     const proposal = await p.createProposal('Start work after slicing', {
       source: 'human',
-      problem: 'Operators must issue a second command after promotion',
+      problem: 'Operators need coordinated slices after promotion',
       solution: 'Queue slices automatically after they finish',
     })
     await p.addProposalUserStory(proposal.id, 'As an operator I can promote work once')
 
-    await p.promoteProposal(proposal.id, { autoApprove: true, coordinated: true })
+    await p.promoteProposal(proposal.id, { coordinated: true })
 
     // Re-importing the proposal API models a daemon restart: only row state
-    // should carry the decision from promotion through eventual slicing.
+    // should carry the coordination choice through eventual slicing.
     const restarted = await loadMods(repo)
     const afterRestart = await restarted.getProposal(proposal.id)
 
     expect(afterRestart).toMatchObject({
       status: 'prd-ready',
-      autoApprove: true,
       coordinated: true,
     })
   })

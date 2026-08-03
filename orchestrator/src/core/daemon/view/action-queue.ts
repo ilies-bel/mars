@@ -311,7 +311,6 @@ const OPERATIONAL_ALERT_COPY: Record<
   },
   'outbox-lag': null,
   'reflect-recommended': null,
-  'plan-approval': null,
   'done-with-unmerged-commits': null,
   'api-outage': null,
   'daemon-code-drift': null,
@@ -515,8 +514,8 @@ export const getActionQueueEntityId = (row: PersistedActionQueueRow): string => 
 /**
  * Append ` [task <id8>]` to a purpose-built title when the row is backed by a
  * task and does not already name it, so two rows of the same kind stay
- * distinguishable. Non-task-backed rows (daemon-code-drift, plan-approval,
- * signature-storm) are returned untouched — their entity id is not a task id.
+ * distinguishable. Non-task-backed rows (daemon-code-drift, signature-storm)
+ * are returned untouched — their entity id is not a task id.
  */
 /**
  * The persisted kinds that ARE a task's structured failure row, and whose
@@ -551,7 +550,7 @@ const tagWithTask = (title: string, taskId: string | null): string => {
  *    has `recipe: null` and must still render it. When such a row's task
  *    carries no signature at all, a persisted title the raiser wrote on
  *    purpose beats the generic label and is kept.
- *  - **every other kind** (daemon-code-drift, plan-approval, signature-storm,
+ *  - **every other kind** (daemon-code-drift, signature-storm,
  *    requeue-ceiling, hitl-slice-needs-operator, …) — purpose-built alerts
  *    whose raiser already wrote specific operator copy ("Daemon running stale
  *    code — a1b2c3d → e4f5g6h"). Derived failure copy must never overwrite

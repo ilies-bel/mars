@@ -43,7 +43,6 @@ Column legend:
 | `draft-proposal` | "A new proposal is waiting for your review: \"<title>\"." | [Shape into PRD] [Promote & enqueue] | title from payload |
 | `slices-dropped` | "Some tasks were removed from the plan because they were out of scope or redundant — check what was dropped." | (none) | Dismiss / Snooze only |
 | `hitl-slice-needs-operator` | "A task in the plan requires a human to take over — attach to it and do the work manually." | [Attach & work] | |
-| `plan-approval` | "A plan has been sliced into tasks and is waiting for your go-ahead before work starts — review and approve or reslice." | [Approve & enqueue] [Reslice with feedback] | |
 
 ## Human-in-the-loop
 
