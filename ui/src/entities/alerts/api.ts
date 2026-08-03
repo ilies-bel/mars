@@ -38,7 +38,9 @@ const alertSchema = z.object({
   goal: z.string(),
   reason: z.string(),
   technical: z.string().optional(),
-  kind: z.enum(['arc-failed', 'stale-worktree']).optional(),
+  kind: z.enum(['arc-failed', 'stale-worktree', 'verify-uncovered']).optional(),
+  fingerprint: z.string().optional(),
+  recipe: z.string().nullable().optional(),
   chain: z.array(alertChainNodeSchema).optional(),
 })
 

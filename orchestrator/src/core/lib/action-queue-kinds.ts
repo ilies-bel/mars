@@ -30,6 +30,7 @@ export const ACTION_QUEUE_KINDS = [
   'workflow-install-drift',
   'provider-rate-limited',
   'gate-broken',
+  'verify-uncovered',
   'workflow-draft-pending',
   'gate-enrichment',
   'budget-window',

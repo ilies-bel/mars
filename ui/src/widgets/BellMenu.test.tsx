@@ -13,7 +13,12 @@ import { describe, expect, it, mock, vi } from 'bun:test'
 mock.module('@/entities/alerts', () => ({
   useAlerts: () => ({
     alerts: [
-      { arcId: 'a1', goal: 'Ship the widget', reason: 'The build never went green' },
+      {
+        arcId: 'coverage:widgets',
+        kind: 'verify-uncovered',
+        goal: 'src/widgets',
+        reason: "CAN'T-VERIFY: no task-tier verify gate covers the changed files",
+      },
       { arcId: 'a2', goal: 'Tidy the worktree', reason: 'A leftover worktree is taking up space' },
     ],
     error: null,

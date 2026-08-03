@@ -114,6 +114,41 @@ describe('addVerifyGate', () => {
     const gates = await listVerifyGates()
     expect(gates[0].args).toEqual([])
   })
+
+  it('resolves an open coverage-gap alert when the new gate covers its scope', async () => {
+    const { ensureSchema } = await import('../lib/pg-schema.js')
+    await ensureSchema(client)
+    await client.execute({
+      sql: `INSERT INTO action_queue_items (
+              id, kind, category, priority, state, title, body, payload,
+              context, raised_by, raised_at, fingerprint
+            ) VALUES (?, 'verify-uncovered', 'orchestrator', 'normal', 'open', ?, ?, ?, '{}', 'test', ?, ?)`,
+      args: [
+        'coverage-row',
+        'No gate covers apps/web',
+        "CAN'T-VERIFY",
+        JSON.stringify({
+          scope: 'apps/web',
+          changedPaths: ['apps/web/src/App.tsx'],
+          recipe: 'add-verify-gate',
+        }),
+        Date.now(),
+        'coverage:apps/web',
+      ],
+    })
+
+    const { addVerifyGate } = await import('../verify-gates.js')
+    await addVerifyGate({ scope: 'apps/web', name: 'test', cmd: 'npm' })
+
+    const row = await client.execute({
+      sql: `SELECT state, resolution_note FROM action_queue_items WHERE id = ?`,
+      args: ['coverage-row'],
+    })
+    expect(row.rows[0]).toMatchObject({
+      state: 'resolved',
+      resolution_note: 'covered by verify gate for apps/web',
+    })
+  })
 })
 
 describe('removeVerifyGate', () => {

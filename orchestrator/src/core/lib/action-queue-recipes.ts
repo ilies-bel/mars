@@ -573,6 +573,21 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  'verify-uncovered': {
+    humanSummary: (ctx) => {
+      const scope = str(ctx.payload['scope']) || ctx.entityId
+      return `No task-tier verify gate covers changes in ${scope}; the task merged as CAN'T-VERIFY.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      scope: str(ctx.payload['scope']),
+      changedPaths: ctx.payload['changedPaths'],
+      recipe: str(ctx.payload['recipe']),
+    }),
+    verbs: [],
+  },
+
   'signature-storm': {
     humanSummary: (ctx) => {
       const signature = str(ctx.payload['signature'])

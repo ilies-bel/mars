@@ -102,6 +102,7 @@ describe('listConversationEntries', () => {
       buildAlertSources: async () => ({
         listFailedArcs: async () => [],
         listStaleWorktrees: async () => [],
+        listVerifyUncovered: async () => [],
       }),
     })
 
@@ -140,6 +141,7 @@ describe('listConversationEntries', () => {
       buildAlertSources: async () => ({
         listFailedArcs: async () => [],
         listStaleWorktrees: async () => [],
+        listVerifyUncovered: async () => [],
       }),
     })
 

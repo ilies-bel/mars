@@ -89,6 +89,58 @@ const rowToGate = (row: VerifyGateRow): VerifyGate => ({
 })
 
 /**
+ * Resolve open CAN'T-VERIFY coverage gaps that a gate at `scope` now covers.
+ *
+ * A root gate covers every changed path. A nested gate only resolves a gap
+ * when every path recorded on that gap falls beneath the gate's scope, so a
+ * mixed-scope change remains visible until all of its missing coverage exists.
+ * The action queue is intentionally read and updated directly here: this is
+ * the entity mutation that makes the Alert projection disappear.
+ */
+export const resolveCoveredVerifyAlerts = async (scope: string): Promise<void> => {
+  const c = resolveStateClient()
+  try {
+    const open = await c.execute({
+      sql: `SELECT id, payload
+              FROM action_queue_items
+             WHERE kind = 'verify-uncovered' AND state = 'open'`,
+      args: [],
+    })
+    for (const row of open.rows) {
+      const record = row as unknown as { id: string; payload: string | null }
+      let payload: Record<string, unknown> = {}
+      try {
+        const parsed: unknown = JSON.parse(record.payload ?? '{}')
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          payload = parsed as Record<string, unknown>
+        }
+      } catch {
+        continue
+      }
+      const changedPaths = Array.isArray(payload.changedPaths)
+        ? payload.changedPaths.filter((path): path is string => typeof path === 'string')
+        : []
+      const uncoveredScope = typeof payload.scope === 'string' ? payload.scope : null
+      const covered =
+        scope === '.' ||
+        (changedPaths.length > 0
+          ? changedPaths.every((path) => path === scope || path.startsWith(`${scope}/`))
+          : uncoveredScope === scope || uncoveredScope?.startsWith(`${scope}/`) === true)
+      if (!covered) continue
+      await c.execute({
+        sql: `UPDATE action_queue_items
+                 SET state = 'resolved', resolved_at = ?, resolution_note = ?
+               WHERE id = ? AND state = 'open'`,
+        args: [Date.now(), `covered by verify gate for ${scope}`, record.id],
+      })
+    }
+  } catch {
+    // A freshly initialized repository can register its first gate before the
+    // action-queue schema exists; there is no alert projection to resolve yet.
+  }
+}
+
+/**
  * Insert a new verify gate. Returns the generated id.
  *
  * Throws if a gate with the same (scope, name) already exists (UNIQUE
@@ -112,6 +164,7 @@ export const addVerifyGate = async (input: VerifyGateInput): Promise<string> => 
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [id, scope, name, cmd, JSON.stringify(args), required ? 1 : 0, tier, source, createdAt],
   )
+  await resolveCoveredVerifyAlerts(scope)
   return id
 }
 

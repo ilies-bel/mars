@@ -334,6 +334,7 @@ const OPERATIONAL_ALERT_COPY: Record<
         `Inspect \`.mars/watch.log\`, fix or disable the gate, then restart the affected tasks.`,
     }
   },
+  'verify-uncovered': null,
   'workflow-draft-pending': null,
   'gate-enrichment': null,
   'budget-window': null,

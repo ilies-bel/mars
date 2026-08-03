@@ -4300,6 +4300,51 @@ export const startDaemon = async (
         }
         return records
       },
+      listVerifyUncovered: async () => {
+        const client = getCompositionRootClient()
+        const records: {
+          fingerprint: string
+          recipe: string | null
+          scope: string
+          changedPaths: string[]
+        }[] = []
+        const seenFingerprints = new Set<string>()
+        try {
+          const r = await client.execute(
+            `SELECT fingerprint, payload
+               FROM action_queue_items
+              WHERE kind = 'verify-uncovered' AND state = 'open'
+              ORDER BY raised_at DESC`,
+          )
+          for (const row of r.rows) {
+            const r0 = row as unknown as Record<string, unknown>
+            const fingerprint = typeof r0.fingerprint === 'string' ? r0.fingerprint : null
+            if (!fingerprint || seenFingerprints.has(fingerprint)) continue
+            seenFingerprints.add(fingerprint)
+            let payload: Record<string, unknown> = {}
+            try {
+              const parsed = JSON.parse(r0.payload as string)
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                payload = parsed as Record<string, unknown>
+              }
+            } catch {
+              /* ignore malformed historical payloads */
+            }
+            const changedPaths = Array.isArray(payload.changedPaths)
+              ? payload.changedPaths.filter((path): path is string => typeof path === 'string')
+              : []
+            records.push({
+              fingerprint,
+              recipe: typeof payload.recipe === 'string' ? payload.recipe : null,
+              scope: typeof payload.scope === 'string' ? payload.scope : '.',
+              changedPaths,
+            })
+          }
+        } catch {
+          /* action_queue_items table may not exist on a fresh repo */
+        }
+        return records
+      },
     }
   }
 

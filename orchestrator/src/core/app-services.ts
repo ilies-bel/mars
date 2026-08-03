@@ -888,16 +888,33 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
 
     // Reconstruct the raise-item shape `buildAlertSegment` consumes from the
     // Alert so the seed card reuses the same recipe-driven copy and verbs the
-    // Bell/alert path uses. `arc-failed` maps to the registered `failed` kind;
-    // `stale-worktree` passes through. The arc id is the entity/origin id, and
-    // the arc's intent rides in `payload.goal`.
+    // Bell/alert path uses. Coverage-gap alerts remain `verify-uncovered` so
+    // their thread is not mistaken for an arc failure. The arc id is the
+    // entity/origin id (or coverage fingerprint), and the alert goal rides in
+    // `payload.goal`.
     const item: RaiseActionQueueItem = {
-      kind: alert.kind === 'stale-worktree' ? 'stale-worktree' : 'failed',
+      kind:
+        alert.kind === 'arc-failed'
+          ? 'failed'
+          : alert.kind,
       category: 'orchestrator',
       priority: 'high',
       title: alert.reason,
       body: alert.technical || alert.reason,
-      payload: { taskId: alert.arcId, goal: alert.goal },
+      payload: {
+        taskId: alert.arcId,
+        goal: alert.goal,
+        ...(alert.kind === 'verify-uncovered'
+          ? {
+              scope: alert.goal,
+              changedPaths: alert.technical
+                .split('\n')
+                .filter((line) => line.startsWith('- '))
+                .map((line) => line.slice(2)),
+              recipe: alert.recipe,
+            }
+          : {}),
+      },
       context: {},
       raisedBy: 'operator',
       signature: alert.arcId,

@@ -180,6 +180,7 @@ describe('GET /view/steward', () => {
       buildAlertSources: async () => ({
         listFailedArcs: async () => [],
         listStaleWorktrees: async () => [],
+        listVerifyUncovered: async () => [],
       }),
     })
 
