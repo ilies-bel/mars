@@ -177,8 +177,9 @@ here — it runs dispatch-side (daemon) and verify-side (below).
    `{ verified: true }` immediately (no committable artefact).
 2. **Verify-time dirty-main check (non-fix only):** if the integration
    branch is dirty, park behind a `main-commiter` recovery
-   (`spawnOrAttachMainCommitter`) and **throw** the `verify:main-dirty`
-   sentinel.
+   (`spawnOrAttachMainCommitter`), recording a readable source error while
+   clearing its failure reason, code, and signature, then **throw** the
+   `verify:main-dirty` sentinel.
 3. `updateTask({ status:'verifying', failedPhase:null })`.
 4. Scope-aware verify: `loadVerifyScopes` → `getChangedFiles` →
    `selectVerifySteps` → `verifyChanges` (a main-commiter recovery skips

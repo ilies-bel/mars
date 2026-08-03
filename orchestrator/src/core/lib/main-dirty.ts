@@ -758,8 +758,6 @@ export const spawnOrAttachMainCommitter = async (
     await attachToExistingFixTask({
       sourceTaskId: input.sourceTaskId,
       fixTaskId: existing.id,
-      failureReasonCode: VERIFY_MAIN_DIRTY_CODE,
-      failureReason: VERIFY_MAIN_DIRTY_CODE,
       errorSummary: SOURCE_ERROR_SUMMARY(
         input.integrationBranch,
         input.dispatchPhase,

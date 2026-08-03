@@ -192,13 +192,6 @@ export interface AttachToExistingFixTaskInput {
   sourceTaskId: string
   /** The recovery task to attach the source to. Must already exist as a kind='fix' row. */
   fixTaskId: string
-  /** Catalog code recorded on the source's `failure_reason_code` column. */
-  failureReasonCode: string | null
-  /**
-   * Loose-string archive of the failure for forensic continuity (mirrors
-   * `tasks.failure_reason`). Kept in step with the catalog-driven code.
-   */
-  failureReason: string | null
   /** Short error summary written to `tasks.error` (truncated to 1000 chars). */
   errorSummary: string
   store?: DomainTaskStore
@@ -1402,14 +1395,13 @@ export class Arc {
                    SET updated_at = ?,
                        status = 'blocked',
                        error = ?,
-                       failure_reason = COALESCE(?, failure_reason),
-                       failure_reason_code = COALESCE(?, failure_reason_code)
+                       failure_reason = NULL,
+                       failure_reason_code = NULL,
+                       failure_signature = NULL
                  WHERE id = ?`,
           args: [
             now,
             truncatedError,
-            input.failureReason,
-            input.failureReasonCode,
             input.sourceTaskId,
           ],
         },
@@ -1417,7 +1409,7 @@ export class Arc {
         buildEventInsert('task.blocked', {
           taskId: input.sourceTaskId,
           fixTaskId: input.fixTaskId,
-          failureSignature: input.failureReasonCode ?? 'verify:main-dirty',
+          failureSignature: VERIFY_MAIN_DIRTY_CODE,
           failingStep: 'dispatch:main-dirty',
           originId: source.originId,
         }),
@@ -1427,7 +1419,7 @@ export class Arc {
     internalBus().emit('task.blocked', {
       taskId: input.sourceTaskId,
       fixTaskId: input.fixTaskId,
-      failureSignature: input.failureReasonCode ?? 'verify:main-dirty',
+      failureSignature: VERIFY_MAIN_DIRTY_CODE,
       failingStep: 'dispatch:main-dirty',
       originId: source.originId,
     })
@@ -1447,8 +1439,8 @@ export class Arc {
    *      {@link MainCommiterPayload});
    *   2. Insert (ON CONFLICT DO NOTHING) the origin → recovery `task_blockers` edge
    *      (`state='confirmed'`) — the F.1 ADR-0040 leaf-node exemption mirror;
-   *   3. UPDATE the source to `status='blocked'`, overwriting
-   *      `error`/`failure_reason`/`failure_reason_code = VERIFY_MAIN_DIRTY_CODE`
+   *   3. UPDATE the source to `status='blocked'`, writing its readable
+   *      `error` and clearing all failure metadata
    *      (updated_at first — exempt from the STATUS_WRITE arch guard);
    *   4. the durable `task.blocked` outbox event.
    *
@@ -1529,14 +1521,13 @@ export class Arc {
                  SET updated_at = ?,
                      status = 'blocked',
                      error = ?,
-                     failure_reason = ?,
-                     failure_reason_code = ?
+                     failure_reason = NULL,
+                     failure_reason_code = NULL,
+                     failure_signature = NULL
                WHERE id = ?`,
           args: [
             now,
             SOURCE_ERROR_SUMMARY(input.integrationBranch, input.dispatchPhase),
-            VERIFY_MAIN_DIRTY_CODE,
-            VERIFY_MAIN_DIRTY_CODE,
             input.sourceTaskId,
           ],
         },
