@@ -153,6 +153,23 @@ describe('daemon start and restart safety', () => {
     expect(spawnM).not.toHaveBeenCalled()
   })
 
+  it('refuses a marked child that reaches the detach branch without spawning again', async () => {
+    const previousMarker = process.env.MARS_DAEMON_CHILD
+    process.env.MARS_DAEMON_CHILD = '1'
+    isDaemonAliveM.mockResolvedValue({ alive: false, reason: 'no-pid' } satisfies DaemonLiveness)
+
+    try {
+      const result = await runCommandInProcess(['daemon', 'start'], makeOpts())
+
+      expect(result.code).toBe(1)
+      expect(result.err.join('\n')).toContain('daemon child reached the detach branch')
+      expect(spawnM).not.toHaveBeenCalled()
+    } finally {
+      if (previousMarker === undefined) delete process.env.MARS_DAEMON_CHILD
+      else process.env.MARS_DAEMON_CHILD = previousMarker
+    }
+  })
+
   // Core fix: daemon start waits for the socket to become alive after spawn.
   it('polls until socket is alive and returns code 0 with pid message', async () => {
     // First call (pre-spawn guard): not alive.
@@ -169,6 +186,7 @@ describe('daemon start and restart safety', () => {
     expect(spawnM).toHaveBeenCalledTimes(1)
     const spawnOptions = spawnM.mock.calls[0]?.[2]
     expect(spawnOptions?.env?.['MARS_WORKER_PROVIDER']).toBe('codex')
+    expect(spawnOptions?.env?.['MARS_DAEMON_CHILD']).toBe('1')
     // isDaemonAlive was called at least twice (initial check + at least one poll).
     expect(isDaemonAliveM).toHaveBeenCalledTimes(2)
   })

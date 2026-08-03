@@ -31,6 +31,16 @@ import { hasFlag } from '../args'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, isDaemonDownError } from './shared'
 
+const writeBootLog = (msg: string): void => {
+  const { logFile } = daemonPaths()
+  try {
+    mkdirSync(dirname(logFile), { recursive: true })
+    appendFileSync(logFile, `${new Date().toISOString()} ${msg}\n`)
+  } catch {
+    // ignore — still surface the error through the CLI
+  }
+}
+
 const spawnDetached = (deps: CommandDeps): void => {
   const { command, baseArgs } = resolveLaunchCommand()
   const workerProvider =
@@ -43,6 +53,7 @@ const spawnDetached = (deps: CommandDeps): void => {
       stdio: 'ignore',
       env: {
         ...process.env,
+        MARS_DAEMON_CHILD: '1',
         MARS_REPO: deps.ctx.repoRoot,
         MARS_WORKER_PROVIDER: workerProvider,
       },
@@ -273,15 +284,6 @@ const daemonStart: Command = {
     const foreground = args.flags['--foreground'] !== undefined
     if (foreground) {
       process.env.MARS_WORKER_PROVIDER ??= loadDaemonConfig().defaultProvider
-      const { logFile } = daemonPaths()
-      const writeBootLog = (msg: string): void => {
-        try {
-          mkdirSync(dirname(logFile), { recursive: true })
-          appendFileSync(logFile, `${new Date().toISOString()} ${msg}\n`)
-        } catch {
-          // ignore — still surface the error below
-        }
-      }
       try {
         const { startDaemon } = await import('../../core/daemon/server')
         await startDaemon({ log: (line) => deps.out(line) })
@@ -306,6 +308,12 @@ const daemonStart: Command = {
       const { logFile } = daemonPaths()
       deps.out(`[mars] daemon detached (pid ${liveness.pid}, log: ${logFile})`)
       return { code: 0 }
+    }
+    if (process.env.MARS_DAEMON_CHILD === '1') {
+      const msg = '[mars] daemon child reached the detach branch — refusing to respawn (bootstrap bug)'
+      writeBootLog(msg)
+      deps.err(msg)
+      return { code: 1 }
     }
     spawnDetached(deps)
     // Block until the daemon's socket is connectable. This closes the TOCTOU
