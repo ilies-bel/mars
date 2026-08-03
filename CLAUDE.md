@@ -370,6 +370,14 @@ recovery-spawn path itself.
   port. A 200 from a guessed port is usually an unrelated server (the
   UI/Vite catch-all returns index.html for any path), so a
   guessed-port probe proves nothing.
+- **Inspect daemon/UI HTTP payloads with node's `fetch`, not `curl`.** `curl`
+  output is truncated by the shell hook and gets a `(N bytes total)` footer
+  appended, which lands inside the JSON and yields a bogus `SyntaxError: Bad
+  control character in string literal` — indistinguishable from a genuinely
+  corrupt response. Use
+  `node -e "fetch('http://127.0.0.1:'+require('fs').readFileSync('.mars/http.port','utf8').trim()+'/view/<route>').then(r=>r.json()).then(d=>console.log(JSON.stringify(d).slice(0,2000)))"`.
+  `curl -o /dev/null -w '%{http_code}'` is still fine for a bare status probe,
+  since it emits no body.
 - A 404 on a daemon route that exists in source usually means the running
   daemon predates that route — restart with `mars daemon restart` rather
   than scoping a code task. The same applies to a `mars ui` Bun-server 404
