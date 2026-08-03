@@ -4539,6 +4539,11 @@ export const startDaemon = async (
     traceStore,
     viewStreamHub,
     appServices,
+    getStewardRuntimeState: () => ({
+      liveCap: sems.implement.limit,
+      baselineCap: initialCaps.implement,
+      isPaused: pause.get().paused,
+    }),
     getLiveAgentsRoster: () =>
       buildLiveAgentsRoster({
         flights: tracker.inFlightSnapshot().map((e) => ({

@@ -1370,12 +1370,12 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
           ORDER BY m.created_at DESC`,
       )
       acks = acksResult.rows.map((row) => {
-        const r = row as unknown as { content: string; created_at: string }
+        const r = row as { content: string; created_at: number | string | bigint }
         const text = r.content
         // Parse "from N to M" pattern defensively — free text; null on mismatch.
         const m = /from (\d+) to (\d+)/.exec(text)
         const pair = m ? { from: Number(m[1]), to: Number(m[2]) } : null
-        return { text, timestamp: r.created_at, pair }
+        return { text, timestamp: new Date(Number(r.created_at)).toISOString(), pair }
       })
     } catch {
       // Degrade gracefully on fresh repos without chat tables.

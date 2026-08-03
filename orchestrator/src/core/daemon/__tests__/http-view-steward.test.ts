@@ -145,6 +145,56 @@ describe('GET /view/steward', () => {
     }
   })
 
+  it('normalizes persisted runtime-tuning acknowledgment timestamps for the steward view', async () => {
+    process.env.MARS_REPO = repo
+    const { __resetContextCacheForTests } = await import('../../context')
+    const { __resetDbRegistryForTests } = await import('../../lib/db')
+    const { createAppServices } = await import('../../app-services')
+    const { nullTraceStore: realNullTraceStore } = await import('../../lib/run-tool')
+    const { getCompositionRootClient, runCompositionRootMigrations } = await import('../../store/task-store')
+    const { StewardViewSchema } = await import('../../../../../ui/src/pages/steward-view-schema')
+
+    __resetContextCacheForTests()
+    await __resetDbRegistryForTests()
+    await runCompositionRootMigrations()
+
+    const db = getCompositionRootClient()
+    await db.execute({
+      sql: `INSERT INTO chat_threads (id, title, created_at, updated_at)
+            VALUES (?, 'Steward: runtime tuning', ?, ?)`,
+      args: ['steward-thread', 1_785_578_614_014, 1_785_578_614_014],
+    })
+    await db.execute({
+      sql: `INSERT INTO chat_messages (id, thread_id, role, content, created_at, kind)
+            VALUES (?, ?, 'assistant', ?, ?, 'acknowledgment')`,
+      args: [
+        'steward-ack',
+        'steward-thread',
+        'I restored implement workers from 11 to 12 after the backlog cleared.',
+        1_785_578_614_014,
+      ],
+    })
+
+    const services = createAppServices({
+      traceStore: realNullTraceStore,
+      buildAlertSources: async () => ({
+        listFailedArcs: async () => [],
+        listStaleWorktrees: async () => [],
+      }),
+    })
+
+    const view = await services.viewSteward({ liveCap: 12, baselineCap: 8, isPaused: false })
+
+    expect(view.runtimeTuning.acks).toEqual([
+      {
+        text: 'I restored implement workers from 11 to 12 after the backlog cleared.',
+        timestamp: '2026-08-01T10:03:34.014Z',
+        pair: { from: 11, to: 12 },
+      },
+    ])
+    expect(StewardViewSchema.safeParse(view).success).toBe(true)
+  })
+
   it('uses the getStewardRuntimeState dep when provided', async () => {
     const { httpServer } = await loadModules(repo)
 
