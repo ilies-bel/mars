@@ -627,13 +627,12 @@ export const COMMITTER_WORKER_VANISHED_CODE = 'main-commiter:worker-vanished'
  * knows how to resolve —
  *
  *  - the daemon's on-failure handler raises the aggregated committer
- *    action-queue row and runs `releaseMainCommitterDependents` (which keeps
- *    dependents blocked while the branch is still dirty, as it must be here);
+ *    action-queue row while keeping every dependent parked on its edge;
  *  - `reparentStrandedDependentsOntoNewCommitter`, which the fresh-spawn path
  *    below always calls, then moves every dependent still blocked on this
  *    now-`failed` committer onto the replacement;
- *  - the `failed-committer-dependent-release` startup reconciler is the
- *    backstop if the daemon dies between the two.
+ *  - the failed-committer startup reconciler restores the same aggregated
+ *    operator alert if the daemon dies between the two.
  *
  * `running` is not a terminal status, so this transition does not touch the
  * `reject_terminal_task_transition` trigger.

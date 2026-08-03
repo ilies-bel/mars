@@ -36,7 +36,7 @@ describe('RECONCILERS registry', () => {
       'merge-jobs-startup-reconcile',
       'orphaned-blocked-scan',
       'recovery-done-propagation',
-      'failed-committer-dependent-release',
+      'failed-committer-action-queue',
       'queued-committer-reseed',
       'requeue-stale-running',
       'reseed-dispatch',

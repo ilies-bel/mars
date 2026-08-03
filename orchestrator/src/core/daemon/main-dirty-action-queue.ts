@@ -15,7 +15,6 @@
  *    committer. Overrides the generic `action-queue-repopulator` row for this
  *    specific recovery so the operator sees the affected cohort at a glance.
  */
-import { execFileSync } from 'node:child_process'
 import {
   findOpenActionQueueItemIdBySignature,
   raiseActionQueueItem,
@@ -25,7 +24,6 @@ import {
 import { getDefaultTaskStore } from '../store/task-store'
 import type { DomainTaskStore as TaskStore } from '../store/task-store'
 import { MAIN_COMMITER_RECIPE } from '../lib/main-dirty'
-import { Arc } from '../arc'
 import { updateTask } from '../queue'
 
 /**
@@ -320,72 +318,6 @@ export const clearUnrelatedDirtActionQueue = async (integrationBranch: string): 
     'condition-cleared',
     'daemon:main-dirty-condition-cleared',
   )
-}
-
-/**
- * On committer FAILURE, release every task that is currently blocked solely
- * because of this committer — BUT only when main is actually clean.
- *
- * Precondition check: runs `git status --porcelain` in `repoRoot`. If main is
- * still dirty, releasing dependents would immediately re-park them behind a
- * NEW committer (they re-detect dirty main at dispatch → spawn fresh committer →
- * block → new committer fails → loop). Instead, keep dependents blocked and
- * rely on the operator action-queue item already raised by
- * `raiseAggregatedMainCommiterFailureRow` to surface the problem.
- *
- * When main IS clean (the committer failure raced with a concurrent merge that
- * happened to clean the branch), release proceeds as before: each dependent's
- * `task_blockers` edge to `committerTaskId` is deleted; tasks with no remaining
- * active blockers are flipped from `blocked` back to `queued`.
- *
- * Tasks with other active blockers (besides the failed committer) have their
- * committer edge removed but remain in `blocked` state, waiting for those
- * other prerequisites.
- *
- * Idempotent: a second call finds no edges or no blocked rows and is a no-op.
- */
-export const releaseMainCommitterDependents = async (
-  committerTaskId: string,
-  log: (msg: string) => void,
-  repoRoot: string,
-): Promise<void> => {
-  // Guard: verify main is clean before releasing dependents. A failed committer
-  // over a still-dirty main must NOT re-queue dependents — they would re-detect
-  // dirty main, park behind a new committer, and repeat until retry budgets
-  // are exhausted. Keep them blocked; the operator action-queue item already
-  // raised by raiseAggregatedMainCommiterFailureRow tells the human what happened.
-  if (!repoRoot) {
-    log(
-      `[main-dirty] committer ${committerTaskId}: repoRoot not set; keeping dependents blocked for safety`,
-    )
-    return
-  }
-  let mainIsDirty: boolean
-  try {
-    const statusOutput = execFileSync('git', ['status', '--porcelain'], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-    })
-    mainIsDirty = statusOutput.trim().length > 0
-  } catch (err) {
-    // Cannot check git status — err on the side of caution.
-    log(
-      `[main-dirty] committer ${committerTaskId}: could not check git status at ${repoRoot}: ${(err as Error).message}; keeping dependents blocked`,
-    )
-    return
-  }
-
-  if (mainIsDirty) {
-    log(
-      `[main-dirty] committer ${committerTaskId} failed and main is still dirty; dependents kept blocked — operator must resolve`,
-    )
-    return
-  }
-
-  // Main is clean. ADR-0052 sole-writer: the status write (blocked -> queued),
-  // the edge delete, and the task.unblocked emit all live in the Arc aggregate.
-  // This is a thin delegating wrapper with no task-table write of its own.
-  await Arc.releaseMainCommitterDependents(committerTaskId, log)
 }
 
 /**

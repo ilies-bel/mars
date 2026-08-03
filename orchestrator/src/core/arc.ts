@@ -2584,12 +2584,9 @@ export class Arc {
    *    `blocked` is existing intended behaviour.
    *
    * Excluded — `main-commiter` recoveries. A main-committer does NOT carry the
-   * origin's work; it cleans the integration branch. Its failure is owned by the
-   * dedicated dead-committer path (`raiseAggregatedMainCommiterFailureRow` +
-   * `releaseMainCommitterDependents`, replayed by the
-   * `failed-committer-dependent-release` reconciler), which RE-QUEUES the source
-   * task once main is clean. Failing the source here would kill work that path
-   * intends to resume.
+   * origin's work; it cleans the integration branch. Its failure keeps the
+   * source parked behind its failed committer and raises an aggregated operator
+   * alert; a later dirty episode reparents the cohort onto a fresh committer.
    *
    * Escalation is NOT raised here: `handleTaskFailureWithFixTask` already
    * raises the origin-keyed `Fix and retry <recovery>, or abandon <origin>` row
@@ -2862,25 +2859,23 @@ export class Arc {
   }
 
   /**
-   * Failed-committer dependent release write funnel (ADR-0052 sole-writer).
-   * Relocated bit-for-bit from `main-dirty-action-queue.ts:releaseMainCommitterDependents`.
+   * Missed-success main-committer completion repair (ADR-0052 sole-writer).
    *
-   * On committer FAILURE, release every task currently `blocked` solely because
+   * After a committer reaches SUCCESS, release every task currently `blocked` solely because
    * of `committerTaskId`: per dependent, in ONE atomic transaction, delete the
-   * dead committer's `task_blockers` edge then flip the dependent `blocked` ->
+   * completed committer's `task_blockers` edge then flip the dependent `blocked` ->
    * `queued` only when no other non-terminal blocker remains, emitting
    * `task.unblocked` in the same commit (ADR-0030). The driving SELECT, the
    * `internalBus().emit` wake-hints, and the per-row logging stay OUTSIDE the
    * atomic (best-effort), exactly as the historic helper structured them.
    *
-   * This is the only place this status write lives now; the daemon helper
-   * `releaseMainCommitterDependents` is a thin delegating wrapper with no
-   * task-table write of its own (ADR-0052 sole-writer).
+   * This method is deliberately a reconciliation seam only. Failed committers
+   * retain their blocker edges so a fresh dirty-main episode can reparent them.
    *
    * Returns `{ released }` (count of dependents re-queued) so the caller can
    * log the same `released/total` summary it logged before.
    */
-  static async releaseMainCommitterDependents(
+  static async releaseMainCommitterDependentsAfterSuccess(
     committerTaskId: string,
     log: (msg: string) => void,
   ): Promise<{ released: number; total: number }> {
@@ -2951,17 +2946,17 @@ export class Arc {
         })
         released++
         log(
-          `[main-dirty] re-queued task ${row.id} released from failed committer ${committerTaskId}`,
+          `[main-dirty] re-queued task ${row.id} released after successful committer ${committerTaskId}`,
         )
       } else {
         log(
-          `[main-dirty] task ${row.id}: committer edge removed but other active blockers remain; left in blocked`,
+          `[main-dirty] task ${row.id}: successful committer edge removed but other active blockers remain; left blocked`,
         )
       }
     }
 
     log(
-      `[main-dirty] released ${released}/${dependents.length} dependent(s) from failed committer ${committerTaskId}`,
+      `[main-dirty] released ${released}/${dependents.length} dependent(s) after successful committer ${committerTaskId}`,
     )
     return { released, total: dependents.length }
   }
@@ -2970,10 +2965,9 @@ export class Arc {
    * Re-parent stranded dependents from prior failed main-committers onto a
    * freshly-spawned committer (ADR-0040 leaf-node exemption, slice F.3).
    *
-   * When a main-committer fails and the daemon has not yet called
-   * `releaseMainCommitterDependents` (e.g. after a crash-restart), some tasks
-   * may still be `blocked` on a dead committer. When a new committer is
-   * spawned, this method collects every such stranded task and:
+   * When a main-committer fails, its tasks remain parked on its blocker edge.
+   * When a new dirty episode spawns a replacement, this method collects every
+   * task still `blocked` on the failed committer and:
    *
    * 1. Inserts `task_blockers(task_id=stranded, blocker_task_id=newCommitterId,
    *    state='confirmed')` — ON CONFLICT DO NOTHING so it's idempotent.

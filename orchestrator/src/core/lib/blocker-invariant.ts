@@ -240,8 +240,8 @@ export interface RecoveryEdgeViolation {
  *     (via `attachToExistingFixTask`, the documented ADR-0040 exemption), so
  *     `blocker_fix_for` only points at ONE of them. Flagging the rest as
  *     violations is a false positive — they are correct while the committer is
- *     active, and are cleaned up by `releaseMainCommitterDependents` /
- *     `reparentStrandedDependentsOntoNewCommitter` when it terminates.
+ *     active; after success they are released by the missed-success repair,
+ *     while a failure leaves them for `reparentStrandedDependentsOntoNewCommitter`.
  *
  * Returns the remaining offending edges so the daemon startup hook can log a
  * one-shot warning for the operator. Never mutates the DB — cleanup is

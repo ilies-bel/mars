@@ -3,7 +3,7 @@
  *  - aggregated actionQueue row on committer failure lists every blocked dependent.
  *  - on committer success, stale failed-committer actionQueue rows (at a DIFFERENT
  *    hash) get superseded.
- *  - releaseMainCommitterDependents re-queues tasks blocked on a dead committer.
+ *  - missed successful-committer completion re-queues its source cohort.
  *  - Regression (mars-4d66145d): main-committer done must NOT mark origin done
  *    or cascade-unblock dependents; source task must be re-queued instead.
  *
@@ -275,13 +275,7 @@ describe('failed main-committer source cohort', () => {
     repo = mkdtempSync(resolve(tmpdir(), 'mc-'))
     execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
     mkdirSync(resolve(repo, '.mars'), { recursive: true })
-    // Create an initial commit with a .gitignore so `git status --porcelain`
-    // returns clean output by default. The releaseMainCommitterDependents guard
-    // checks git status before deciding whether to release dependents; tests
-    // that want a "clean" main rely on this baseline. Ignore every `.mars*`
-    // path — the PGlite test backend materialises a `.mars.pglite/` data dir
-    // beside `.mars/`, and a bare `.mars/` pattern would leave it untracked,
-    // making the guard read main as dirty and skip the release.
+    // Create an initial commit so this exercises a normal integration checkout.
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
     execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
     writeFileSync(resolve(repo, '.gitignore'), '.mars*\n')
@@ -473,15 +467,16 @@ describe('failed main-committer source cohort', () => {
     const c = queue.resolveQueueClient()
     await c.execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
-            VALUES (?, ?, 'confirmed', datetime('now'))`,
-      args: [src.id, prereq.id],
+            VALUES (?, ?, 'confirmed', ?)`,
+      args: [src.id, prereq.id, Date.now()],
     })
 
-    // Fail the committer and release. Main is clean, so the git-status guard
-    // passes and Arc processes the edge removal (committer edge removed, prereq edge kept).
-    await queue.updateTask(res.fixTaskId, { status: 'failed', error: 'oops' })
-    const { releaseMainCommitterDependents } = await import('../main-dirty-action-queue')
-    await releaseMainCommitterDependents(res.fixTaskId, noopLog, repo)
+    // A completed committer gets the missed-success repair. Arc removes the
+    // committer edge but keeps the independent prerequisite edge.
+    await queue.updateTask(res.fixTaskId, { status: 'done' })
+    const { RECONCILERS } = await import('../reconcilers')
+    const recoveryDone = RECONCILERS.find((r) => r.name === 'recovery-done-propagation')!
+    await recoveryDone.run({ log: noopLog, bus: new EventEmitter(), traceStore: null, handleProposalSlice: null })
 
     // Task still blocked because the independent prereq is alive.
     expect((await queue.getTask(src.id))?.status).toBe('blocked')
@@ -552,13 +547,10 @@ describe('failed main-committer source cohort', () => {
   })
 
   // -------------------------------------------------------------------------
-  // Core invariant: dependents released ONLY when main is clean
+  // Core invariant: failed committers keep their parked source cohort
   // -------------------------------------------------------------------------
 
-  it('keeps dependents blocked when main is still dirty after committer failure', async () => {
-    // Simulates the re-park loop scenario: committer fails, main is still dirty.
-    // Releasing dependents now would re-dispatch them into the same dirty state
-    // and spawn another committer, burning retry budgets until hard failure.
+  it('keeps dependents blocked after committer failure regardless of checkout dirt', async () => {
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
     const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
@@ -584,16 +576,15 @@ describe('failed main-committer source cohort', () => {
     // Fail the committer.
     await queue.updateTask(res.fixTaskId, { status: 'failed', error: 'install frozen-lockfile failed' })
 
-    // Make main dirty: stage a file but don't commit (simulates leftover from a
-    // previous failed worktree merge).
+    // Make main dirty: startup must not change failure handling based on this.
     writeFileSync(resolve(repo, 'leftover.ts'), 'uncommitted changes from prior run')
     execFileSync('git', ['add', 'leftover.ts'], { cwd: repo })
 
-    // Attempt to release — the guard must detect dirty main and abort.
-    const { releaseMainCommitterDependents } = await import('../main-dirty-action-queue')
-    await releaseMainCommitterDependents(res.fixTaskId, noopLog, repo)
+    const { RECONCILERS } = await import('../reconcilers')
+    const failedCommitter = RECONCILERS.find((r) => r.name === 'failed-committer-action-queue')!
+    await failedCommitter.run({ log: noopLog, bus: new EventEmitter(), traceStore: null, handleProposalSlice: null })
 
-    // Dependent MUST remain blocked — releasing it would trigger the re-park loop.
+    // Dependent and edge remain parked for a fresh dirty episode to reparent.
     expect((await queue.getTask(src.id))?.status).toBe('blocked')
 
     // Blocker edge to the failed committer must still exist (not removed).
@@ -613,8 +604,7 @@ describe('failed main-committer source cohort', () => {
 // When a main-committer (recipe='main-commiter') completes as 'done', the
 // recovery-done-propagation reconciler previously called propagateRecoveryDone()
 // which falsely flipped the source task to 'done' and cascade-unblocked its
-// dependents. The fix skips propagation for main-committers and instead calls
-// releaseMainCommitterDependents so the source task is re-queued to retry.
+// dependents. The missed-success repair re-queues the source task instead.
 // ---------------------------------------------------------------------------
 
 describe('main-committer done: source task re-queued, not marked done (mars-4d66145d)', () => {
@@ -687,8 +677,8 @@ describe('main-committer done: source task re-queued, not marked done (mars-4d66
     const qc = queue.resolveQueueClient()
     await qc.execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
-            VALUES (?, ?, 'confirmed', datetime('now'))`,
-      args: [downstream.id, src.id],
+            VALUES (?, ?, 'confirmed', ?)`,
+      args: [downstream.id, src.id, Date.now()],
     })
     await qc.execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,

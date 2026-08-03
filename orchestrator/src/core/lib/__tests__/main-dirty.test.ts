@@ -470,8 +470,7 @@ describe('spawnOrAttachMainCommitter', () => {
   })
 
   it('reparents stranded dependents from prior failed committer onto fresh committer', async () => {
-    // Scenario: committer-1 has 3 blocked dependents (daemon crash prevented
-    // releaseMainCommitterDependents from running). src2 arrives → committer-2
+    // Scenario: committer-1 has 3 blocked dependents after failure. src2 arrives → committer-2
     // spawns → reparenting re-parents all 3 stranded deps. When committer-2
     // completes, unblockByCompletion re-queues all 3.
     const queue = await import('../../queue')
