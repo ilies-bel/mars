@@ -10,7 +10,7 @@
  * Pattern follows the existing F.1 blocker-invariant tests: a temp repo and
  * a per-test reset of the queue/actionQueue singletons via `vi.resetModules()`.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -263,14 +263,16 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
 })
 
 // ---------------------------------------------------------------------------
-// releaseMainCommitterDependents: blocked dependents are re-queued on failure
+// A failed main-committer parks its attached source cohort
 // ---------------------------------------------------------------------------
 
-describe('releaseMainCommitterDependents', () => {
+describe('failed main-committer source cohort', () => {
   let repo: string
+  let exitSpy: { mockRestore: () => void } | undefined
 
   beforeEach(() => {
-    repo = mkdtempSync(resolve(tmpdir(), 'mars-release-committer-test-'))
+    // Keep the Unix-domain daemon socket below the platform path-length cap.
+    repo = mkdtempSync(resolve(tmpdir(), 'mc-'))
     execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
     mkdirSync(resolve(repo, '.mars'), { recursive: true })
     // Create an initial commit with a .gitignore so `git status --porcelain`
@@ -294,7 +296,11 @@ describe('releaseMainCommitterDependents', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('re-queues tasks blocked on the failed committer', async () => {
+  afterAll(() => {
+    exitSpy?.mockRestore()
+  })
+
+  it('keeps every source blocked and raises one deduplicated cohort action when a running committer fails on clean main', async () => {
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
     const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
@@ -329,26 +335,116 @@ describe('releaseMainCommitterDependents', () => {
     // Both tasks are now blocked on the committer.
     expect((await queue.getTask(src1.id))?.status).toBe('blocked')
     expect((await queue.getTask(src2.id))?.status).toBe('blocked')
+    for (const sourceId of [src1.id, src2.id]) {
+      await queue.updateTask(sourceId, {
+        error: null,
+        failureReason: null,
+        failureReasonCode: null,
+        failureSignature: null,
+      })
+    }
 
-    // Fail the committer.
-    await queue.updateTask(res.fixTaskId, { status: 'failed', error: 'verify failed' })
+    // Exercise the daemon's public update interface. The integration checkout
+    // is clean, so the old failure path would re-queue both sources here.
+    await queue.updateTask(res.fixTaskId, { status: 'running' })
+    const previousDisableDuckDb = process.env.MARS_DISABLE_DUCKDB
+    const previousUsageSampleSec = process.env.MARS_USAGE_SAMPLE_SEC
+    const previousWorkerProvider = process.env.MARS_WORKER_PROVIDER
+    const previousCodexBin = process.env.MARS_CODEX_BIN
+    process.env.MARS_DISABLE_DUCKDB = '1'
+    process.env.MARS_USAGE_SAMPLE_SEC = '3600'
+    process.env.MARS_WORKER_PROVIDER = 'codex'
+    process.env.MARS_CODEX_BIN = '/usr/bin/true'
+    let acceptClient: ((socket: unknown) => void) | undefined
+    vi.doMock('node:net', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:net')>()
+      class StubServer extends EventEmitter {
+        listen(_path: string, callback: () => void): this {
+          callback()
+          return this
+        }
 
-    // Release dependents. Main is clean (no uncommitted changes after initial
-    // commit), so the git-status guard passes and dependents are re-queued.
-    const { releaseMainCommitterDependents } = await import('../main-dirty-action-queue')
-    await releaseMainCommitterDependents(res.fixTaskId, noopLog, repo)
+        close(callback: () => void): this {
+          callback()
+          return this
+        }
+      }
+      return {
+        ...actual,
+        createServer: (listener: (socket: unknown) => void) => {
+          acceptClient = listener
+          return new StubServer()
+        },
+      }
+    })
+    vi.doMock('../http-server', () => ({
+      startHttpServer: async () => ({ port: 0, close: async () => {} }),
+    }))
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+    const server = await import('../server')
+    const daemon = await server.startDaemon()
+    try {
+      const response = new Promise<unknown>((resolveResponse) => {
+        const socket = Object.assign(new EventEmitter(), {
+          destroy: () => {},
+          end: () => {},
+          write: (line: string) => {
+            resolveResponse(JSON.parse(line))
+            return true
+          },
+        })
+        acceptClient!(socket)
+        socket.emit('data', Buffer.from(JSON.stringify({
+          op: 'update',
+          id: res.fixTaskId,
+          patch: { status: 'failed', error: 'verify failed' },
+        }) + '\n'))
+      })
+      await expect(response).resolves.toEqual({ ok: true })
+    } finally {
+      await daemon.stop(true)
+      vi.doUnmock('node:net')
+      vi.doUnmock('../http-server')
+      if (previousDisableDuckDb === undefined) delete process.env.MARS_DISABLE_DUCKDB
+      else process.env.MARS_DISABLE_DUCKDB = previousDisableDuckDb
+      if (previousUsageSampleSec === undefined) delete process.env.MARS_USAGE_SAMPLE_SEC
+      else process.env.MARS_USAGE_SAMPLE_SEC = previousUsageSampleSec
+      if (previousWorkerProvider === undefined) delete process.env.MARS_WORKER_PROVIDER
+      else process.env.MARS_WORKER_PROVIDER = previousWorkerProvider
+      if (previousCodexBin === undefined) delete process.env.MARS_CODEX_BIN
+      else process.env.MARS_CODEX_BIN = previousCodexBin
+    }
 
-    // Both tasks must now be queued.
-    expect((await queue.getTask(src1.id))?.status).toBe('queued')
-    expect((await queue.getTask(src2.id))?.status).toBe('queued')
+    // A failed committer does not release or fail any attached source.
+    for (const sourceId of [src1.id, src2.id]) {
+      const source = await queue.getTask(sourceId)
+      expect(source?.status).toBe('blocked')
+      expect(source?.failureReason).toBeNull()
+      expect(source?.failureReasonCode).toBeNull()
+      expect(source?.failureSignature).toBeNull()
+    }
 
-    // Blocker edges for the failed committer must be gone.
+    // Confirmed source edges remain attached to the failed committer.
     const c = queue.resolveQueueClient()
     const edges = await c.execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE blocker_task_id = ?`,
       args: [res.fixTaskId],
     })
-    expect(Number((edges.rows[0] as unknown as { n: number }).n)).toBe(0)
+    expect(Number((edges.rows[0] as unknown as { n: number }).n)).toBe(2)
+
+    // Repeated aggregation for the same failure refreshes one signature-keyed
+    // operator row instead of creating a cascade of source failures.
+    const { raiseAggregatedMainCommiterFailureRow } = await import('../main-dirty-action-queue')
+    const firstActionQueueId = await raiseAggregatedMainCommiterFailureRow(res.fixTaskId, noopLog)
+    const secondActionQueueId = await raiseAggregatedMainCommiterFailureRow(res.fixTaskId, noopLog)
+    expect(secondActionQueueId).toBe(firstActionQueueId)
+    const actionQueue = await import('../../lib/action-queue')
+    const rows = (await actionQueue.listActionQueueItems('open', { kind: 'failed' })).filter(
+      (item) => item.signature === `main-commiter:${res.fixTaskId}`,
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.body).toContain(src1.id)
+    expect(rows[0]!.body).toContain(src2.id)
   })
 
   it('leaves a task blocked when other active blockers remain', async () => {
@@ -509,50 +605,6 @@ describe('releaseMainCommitterDependents', () => {
     expect(Number((edges.rows[0] as unknown as { n: number }).n)).toBe(1)
   })
 
-  it('releases dependents when main is clean at the time of committer failure', async () => {
-    // Simulates the case where a concurrent merge cleaned main before
-    // releaseMainCommitterDependents runs: the guard finds main clean and
-    // proceeds with the normal release path.
-    const queue = await import('../../queue')
-    await queue.migrateQueueSchema()
-    const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
-      const m = await import('../../lib/main-dirty')
-      const r = await import('../../lib/run-tool')
-      return { ...m, nullTraceStore: r.nullTraceStore }
-    })()
-
-    const src = await queue.enqueueTask('task-clean-main', undefined, { skipTriage: true })
-    const detection = { dirty: true as const, statusOutput: '' }
-    const res = await spawnOrAttachMainCommitter({
-      sourceTaskId: src.id,
-      detection,
-      integrationBranch: 'main',
-      dispatchPhase: 'dispatch',
-      recipePrompt: 'commit the mess',
-      sourceOriginId: src.id,
-      traceStore: nullTraceStore,
-    })
-
-    expect((await queue.getTask(src.id))?.status).toBe('blocked')
-
-    // Fail the committer; main is clean (no uncommitted files in repo).
-    await queue.updateTask(res.fixTaskId, { status: 'failed', error: 'session-id collision' })
-
-    // Verify main is actually clean before calling release.
-    const { releaseMainCommitterDependents } = await import('../main-dirty-action-queue')
-    await releaseMainCommitterDependents(res.fixTaskId, noopLog, repo)
-
-    // Dependent must be re-queued: main is clean, release proceeds normally.
-    expect((await queue.getTask(src.id))?.status).toBe('queued')
-
-    // Blocker edge must be gone.
-    const c = queue.resolveQueueClient()
-    const edges = await c.execute({
-      sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE blocker_task_id = ?`,
-      args: [res.fixTaskId],
-    })
-    expect(Number((edges.rows[0] as unknown as { n: number }).n)).toBe(0)
-  })
 })
 
 // ---------------------------------------------------------------------------
