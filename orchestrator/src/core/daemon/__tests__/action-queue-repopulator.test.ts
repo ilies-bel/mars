@@ -693,6 +693,58 @@ describe('action-queue-repopulator outbox subscriber', () => {
     expect(openAfter.filter((i) => i.payload['proposalId'] === proposalId)).toHaveLength(0)
   })
 
+  it('auto-closes slice-failed row when the proposal is dismissed', async () => {
+    const { q, actionQueue, rep, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const proposalId = 'prop-slice-failed-dismissed'
+
+    await rep.ensureActionQueueRepopulator(client)
+    await actionQueue.raiseActionQueueItem({
+      kind: 'slice-failed',
+      category: 'orchestrator',
+      priority: 'high',
+      title: `Slicer failed for PRD ${proposalId}`,
+      body: 'The slicer rejected the PRD.',
+      payload: { proposalId, error: 'invalid slice references' },
+      context: {},
+      raisedBy: 'slicer',
+      signature: proposalId,
+      originTaskId: proposalId,
+    })
+
+    await publish(pub, client, 'proposal.dismissed', { proposalId })
+    await rep.drainActionQueueRepopulations(client)
+
+    const openAfter = await actionQueue.listActionQueueItems('open', { kind: 'slice-failed' })
+    expect(openAfter.filter((i) => i.payload['proposalId'] === proposalId)).toHaveLength(0)
+  })
+
+  it('auto-closes slice-failed row when the proposal is sliced after an explicit retry', async () => {
+    const { q, actionQueue, rep, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const proposalId = 'prop-slice-failed-retried'
+
+    await rep.ensureActionQueueRepopulator(client)
+    await actionQueue.raiseActionQueueItem({
+      kind: 'slice-failed',
+      category: 'orchestrator',
+      priority: 'high',
+      title: `Slicer failed for PRD ${proposalId}`,
+      body: 'The slicer rejected the PRD.',
+      payload: { proposalId, error: 'invalid slice references' },
+      context: {},
+      raisedBy: 'slicer',
+      signature: proposalId,
+      originTaskId: proposalId,
+    })
+
+    await publish(pub, client, 'proposal.sliced', { proposalId, taskCount: 1 })
+    await rep.drainActionQueueRepopulations(client)
+
+    const openAfter = await actionQueue.listActionQueueItems('open', { kind: 'slice-failed' })
+    expect(openAfter.filter((i) => i.payload['proposalId'] === proposalId)).toHaveLength(0)
+  })
+
   // ── Failure kind registry acceptance criteria ─────────────────────────────
 
   it("task with signature 'setup:install/install-frozen-lockfile' produces title 'The coding environment could not be set up'", async () => {

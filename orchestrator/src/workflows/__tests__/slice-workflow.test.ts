@@ -777,6 +777,51 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     const after = await proposals.getProposal(proposalId)
     expect(after?.status).toBe('prd-ready')
     expect(await countTasksForProposal(proposalId)).toBe(0)
+
+    const actionQueue = await import('../../core/lib/action-queue')
+    const failures = await actionQueue.listActionQueueItems('open', { kind: 'slice-failed' })
+    expect(failures.filter((item) => item.payload['proposalId'] === proposalId)).toHaveLength(1)
+    expect(failures[0].body).toContain('slicer agent crashed')
+  })
+
+  it('lets an explicit re-slice clear a recorded failure and create tasks', async () => {
+    const failedRun = {
+      exitCode: 1,
+      stdout: '',
+      stderr: 'invalid slicer output',
+      sessionId: 'stub-session',
+      conversation: [],
+    }
+    const successfulRun = {
+      exitCode: 0,
+      stdout: envelope(validSlicerOutput),
+      stderr: '',
+      sessionId: 'stub-session',
+      conversation: [],
+    }
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn()
+          .mockResolvedValueOnce(failedRun)
+          .mockResolvedValueOnce(successfulRun),
+      }
+    })
+    vi.resetModules()
+    const proposalId = await seedPrdReadyProposal()
+    const slice = await import('../slice-workflow')
+
+    await expect(slice.runSlice(proposalId)).rejects.toThrow(/invalid slicer output/)
+    const proposals = await import('../../core/proposals')
+    expect((await proposals.getProposal(proposalId))?.lastSliceError).toContain('invalid slicer output')
+
+    await expect(slice.runSlice(proposalId)).resolves.toMatchObject({ proposalId, status: 'sliced' })
+    const after = await proposals.getProposal(proposalId)
+    expect(after?.lastSliceError).toBeNull()
+    expect(after?.lastSliceFailedAt).toBeNull()
   })
 
   it('leaves the proposal at prd-ready when generate-slices times out (exit 124)', async () => {

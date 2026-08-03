@@ -709,9 +709,17 @@ const stalledProposalSlice: Reconciler = {
   async run({ log, handleProposalSlice }) {
     try {
       const stalled = await listProposals({ status: 'prd-ready' })
+      let dispatched = 0
       for (const proposal of stalled) {
+        if (proposal.lastSliceError !== null) {
+          log(
+            `[reconcile-slice] proposal ${proposal.id} skipped after failed slice: ${proposal.lastSliceError}`,
+          )
+          continue
+        }
         if (handleProposalSlice !== null) {
           log(`[reconcile-slice] proposal ${proposal.id} prd-ready on startup; slicing`)
+          dispatched++
           void handleProposalSlice(proposal.id).catch((err) =>
             log(`[reconcile-slice] proposal ${proposal.id} failed: ${(err as Error).message}`),
           )
@@ -721,7 +729,7 @@ const stalledProposalSlice: Reconciler = {
           )
         }
       }
-      return { stalledProposalsSliced: stalled.length }
+      return { stalledProposalsSliced: dispatched }
     } catch (err) {
       log(`[reconcile-slice] failed: ${(err as Error).message}`)
       return {}

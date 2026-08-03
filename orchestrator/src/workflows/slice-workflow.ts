@@ -1586,17 +1586,33 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
       // failures that fire BEFORE the inner Phase 1-5 catch (slicer process
       // failure, parse failure, validation failure) and would otherwise
       // strand the proposal at 'slicing' with no surviving tasks. The WHERE
-      // matches both 'slicing' and 'sliced' so the same revert handles
-      // post-Phase-4 failures too; if the inner catch already reverted to
-      // 'prd-ready', the UPDATE matches zero rows and is a harmless no-op.
+      // runs for every failure after this workflow owns the claim, including
+      // post-Phase-4 failures whose inner cleanup already restored
+      // 'prd-ready'. Recording the failure beside that reset prevents the
+      // boot reconciler from blindly repeating a deterministic attempt.
       // Best-effort — a revert failure must not mask the original cause.
       const revertStore = await getDefaultStateStore()
+      const failure = describeSliceFailure({ status: 'failed', error })
       await revertStore
         .execute({
-          sql: `UPDATE proposals SET status = 'prd-ready', updated_at = ? WHERE id = ? AND status IN ('slicing', 'sliced')`,
-          args: [Date.now(), proposal.id],
+          sql: `UPDATE proposals
+                SET status = 'prd-ready', last_slice_error = ?, last_slice_failed_at = ?, updated_at = ?
+                WHERE id = ?`,
+          args: [failure, Date.now(), Date.now(), proposal.id],
         })
         .catch(() => {})
+      await raiseActionQueueItem({
+        kind: 'slice-failed',
+        category: 'orchestrator',
+        priority: 'high',
+        title: `Slicer failed for PRD ${proposal.id}`,
+        body: `PRD ${proposal.id} (${proposal.title}) could not be sliced: ${failure}. Inspect the PRD and run \`mars proposal slice ${proposal.id}\` to retry explicitly.`,
+        payload: { proposalId: proposal.id, error: failure },
+        context: {},
+        raisedBy: 'slicer',
+        signature: proposal.id,
+        originTaskId: proposal.id,
+      }).catch(() => {})
       throw error
     }
     }),

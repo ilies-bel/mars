@@ -23,8 +23,8 @@ import { registerSubscriberName } from '../../outbox/registry.js'
  * - task.queued / task.completed / task.unblocked → evict open origin rows
  *   so they disappear once the task leaves the stuck state.
  * - proposal.added → insert a draft-proposal actionQueue row keyed on proposal id.
- * - proposal.promoted / proposal.dismissed / proposal.deleted → evict the
- *   proposal's draft-proposal row.
+ * - proposal.promoted / proposal.sliced / proposal.dismissed / proposal.deleted
+ *   → evict proposal-keyed action rows.
  * - scorer.suggested → insert a scorer-suggested actionQueue row keyed on
  *   scorer id (pure projection of scorers.status='suggested', ADR-0048).
  * - scorer.accepted / scorer.dismissed → evict the scorer's row.
@@ -69,6 +69,7 @@ const TASK_EVICT_REASONS: Partial<Record<EventName, SupersedeReason>> = {
  */
 const PROPOSAL_EVICT_REASONS: Partial<Record<EventName, SupersedeReason>> = {
   'proposal.promoted': 'origin-done',
+  'proposal.sliced': 'origin-done',
   'proposal.dismissed': 'origin-dropped',
   'proposal.deleted': 'origin-purged',
 }
@@ -266,7 +267,8 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
       `action-queue-repopulator:${event.type}`,
     )
   } else {
-    // PROPOSAL_EVICT_REASONS: proposal.promoted / proposal.dismissed / proposal.deleted
+    // PROPOSAL_EVICT_REASONS: proposal.promoted / proposal.sliced /
+    // proposal.dismissed / proposal.deleted
     const reason = PROPOSAL_EVICT_REASONS[event.type]!
     const { proposalId } = event.payload as { proposalId: string }
     await supersedeActionQueueItemsForOrigin(

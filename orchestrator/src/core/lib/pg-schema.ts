@@ -70,6 +70,8 @@ const DDL: readonly string[] = [
     fingerprint       text,
     origin_session_id text,
     coordinated       boolean NOT NULL DEFAULT false,
+    last_slice_error  text,
+    last_slice_failed_at bigint,
     created_at        bigint NOT NULL,
     updated_at        bigint NOT NULL
   )`,
@@ -78,6 +80,8 @@ const DDL: readonly string[] = [
   // the closed lifecycle type.
   `UPDATE proposals SET status = 'dismissed' WHERE status = 'rejected'`,
   `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS coordinated boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_slice_error text`,
+  `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_slice_failed_at bigint`,
   `ALTER TABLE proposals DROP COLUMN IF EXISTS auto_approve`,
   `CREATE INDEX IF NOT EXISTS idx_proposals_fingerprint
      ON proposals(fingerprint) WHERE fingerprint IS NOT NULL`,

@@ -52,6 +52,8 @@ export interface Proposal {
   createdAt: number
   updatedAt: number
   userStories: string[]
+  lastSliceError: string | null
+  lastSliceFailedAt: number | null
 }
 
 /**
@@ -182,6 +184,9 @@ const rowToProposal = (
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
     userStories,
+    lastSliceError: (row.last_slice_error as string | null) ?? null,
+    lastSliceFailedAt:
+      row.last_slice_failed_at == null ? null : Number(row.last_slice_failed_at),
   }
 }
 
@@ -274,6 +279,8 @@ export const createProposal = async (
     createdAt: now,
     updatedAt: now,
     userStories: [],
+    lastSliceError: null,
+    lastSliceFailedAt: null,
   }
   await emitProposalBusEvent('proposal.added', { proposalId: id, source, title })
   return proposal
@@ -965,7 +972,9 @@ export const claimProposalForSlicing = async (
   const id = resolved.id
   const c = stateClient()
   const r = await c.execute({
-    sql: `UPDATE proposals SET status = 'slicing', updated_at = ? WHERE id = ? AND status = 'prd-ready'`,
+    sql: `UPDATE proposals
+          SET status = 'slicing', last_slice_error = NULL, last_slice_failed_at = NULL, updated_at = ?
+          WHERE id = ? AND status = 'prd-ready'`,
     args: [Date.now(), id],
   })
   return r.rowsAffected === 1
@@ -1023,7 +1032,9 @@ export const markProposalSliced = async (
   const id = resolved.id
   const c = stateClient()
   const r = await c.execute({
-    sql: `UPDATE proposals SET status = 'sliced', updated_at = ? WHERE id = ? AND status = 'slicing'`,
+    sql: `UPDATE proposals
+          SET status = 'sliced', last_slice_error = NULL, last_slice_failed_at = NULL, updated_at = ?
+          WHERE id = ? AND status = 'slicing'`,
     args: [Date.now(), id],
   })
   if (r.rowsAffected !== 1) {

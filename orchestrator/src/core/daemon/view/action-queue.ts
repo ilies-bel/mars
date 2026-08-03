@@ -266,6 +266,7 @@ const OPERATIONAL_ALERT_COPY: Record<
   'prerequisite-failed': null,
   'draft-proposal': null,
   'slices-dropped': null,
+  'slice-failed': null,
   'hitl-slice-needs-operator': null,
   'awaiting-validation': null,
   'awaiting-validation-preview-gone': null,
@@ -499,6 +500,9 @@ export const getActionQueueEntityId = (row: PersistedActionQueueRow): string => 
     if (typeof row.payload.scorerId === 'string') return row.payload.scorerId
   }
   if (row.kind === 'slices-dropped') {
+    if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
+  }
+  if (row.kind === 'slice-failed') {
     if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
   }
   if (row.kind === 'reflect-recommended') return row.signature ?? row.id

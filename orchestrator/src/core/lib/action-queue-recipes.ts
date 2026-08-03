@@ -317,6 +317,17 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  'slice-failed': {
+    humanSummary: () =>
+      'Mars could not turn this PRD into tasks — inspect the failure, then explicitly slice it again when ready.',
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      errorExcerpt: str(ctx.payload['error']),
+    }),
+    verbs: [],
+  },
+
   'hitl-slice-needs-operator': {
     humanSummary: () =>
       'A task in the plan requires a human to take over — attach to it and do the work manually.',

@@ -12,6 +12,7 @@ export const ACTION_QUEUE_KINDS = [
   'prerequisite-failed',
   'draft-proposal',
   'slices-dropped',
+  'slice-failed',
   'hitl-slice-needs-operator',
   'awaiting-validation',
   'awaiting-validation-preview-gone',

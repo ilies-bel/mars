@@ -268,6 +268,60 @@ describe('runStartupReconcile — orphaned-blocked scan', () => {
   })
 })
 
+describe('runStartupReconcile — stalled proposal slicing', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('skips a ready proposal whose previous slice attempt failed', async () => {
+    const { q, reconcile } = await loadModules(repo)
+    const proposals = (await import('../../proposals')) as unknown as ProposalsModule
+    const proposal = await proposals.createProposal('Failed slice', { source: 'human' })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE proposals
+            SET status = 'prd-ready', last_slice_error = 'invalid slice references', last_slice_failed_at = ?
+            WHERE id = ?`,
+      args: [Date.now(), proposal.id],
+    })
+    const slice = vi.fn(async () => ({}))
+    const logs: string[] = []
+
+    const summary = await reconcile.runStartupReconcile({
+      ...makeDeps(),
+      log: (line) => logs.push(line),
+      handleProposalSlice: slice,
+    })
+
+    expect(slice).not.toHaveBeenCalled()
+    expect(summary.stalledProposalsSliced).toBe(0)
+    expect(logs.join('\n')).toContain('invalid slice references')
+  })
+
+  it('dispatches a ready proposal that has no recorded slice failure', async () => {
+    const { reconcile } = await loadModules(repo)
+    const proposals = (await import('../../proposals')) as unknown as ProposalsModule
+    const proposal = await proposals.createProposal('Ready slice', { source: 'human' })
+    const client = (await import('../../queue')).resolveQueueClient()
+    await client.execute({
+      sql: `UPDATE proposals SET status = 'prd-ready' WHERE id = ?`,
+      args: [proposal.id],
+    })
+    const slice = vi.fn(async () => ({}))
+
+    const summary = await reconcile.runStartupReconcile({ ...makeDeps(), handleProposalSlice: slice })
+
+    expect(slice).toHaveBeenCalledWith(proposal.id)
+    expect(summary.stalledProposalsSliced).toBe(1)
+  })
+})
+
 describe('runStartupReconcile — retired planning gate', () => {
   let repo: string
 
