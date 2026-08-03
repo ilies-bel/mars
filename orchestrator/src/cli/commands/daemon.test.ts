@@ -48,7 +48,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()
   return {
     ...actual,
-    spawn: vi.fn(() => ({ unref: vi.fn(), pid: 99999 })),
+    spawn: vi.fn(() => ({ unref: vi.fn(), once: vi.fn(), pid: 99999 })),
   }
 })
 
@@ -189,6 +189,21 @@ describe('daemon start and restart safety', () => {
     expect(spawnOptions?.env?.['MARS_DAEMON_CHILD']).toBe('1')
     // isDaemonAlive was called at least twice (initial check + at least one poll).
     expect(isDaemonAliveM).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports an early child exit code instead of waiting for the readiness deadline', async () => {
+    const { EventEmitter } = await import('node:events')
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn(), pid: 12345 })
+    spawnM.mockImplementationOnce(() => {
+      queueMicrotask(() => child.emit('exit', 17, null))
+      return child as never
+    })
+    isDaemonAliveM.mockResolvedValue({ alive: false, reason: 'no-pid' } satisfies DaemonLiveness)
+
+    const result = await runCommandInProcess(['daemon', 'start'], makeOpts())
+
+    expect(result.code).toBe(1)
+    expect(result.err.join('\n')).toContain('daemon child exited early (code=17 signal=null)')
   })
 
   // Idempotency: a second daemon start finds the pid from the first's poll.

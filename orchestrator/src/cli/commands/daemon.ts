@@ -8,7 +8,7 @@
  * auto-spawn it. This is the global default; see client.ts sendRequest().
  */
 
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
@@ -41,7 +41,7 @@ const writeBootLog = (msg: string): void => {
   }
 }
 
-const spawnDetached = (deps: CommandDeps): void => {
+const spawnDetached = (deps: CommandDeps): ChildProcess => {
   const { command, baseArgs } = resolveLaunchCommand()
   const workerProvider =
     process.env.MARS_WORKER_PROVIDER ?? loadDaemonConfig().defaultProvider
@@ -50,7 +50,7 @@ const spawnDetached = (deps: CommandDeps): void => {
     [...baseArgs, '--repo', deps.ctx.repoRoot, 'daemon', 'start', '--foreground'],
     {
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', 'pipe'],
       env: {
         ...process.env,
         MARS_DAEMON_CHILD: '1',
@@ -59,7 +59,19 @@ const spawnDetached = (deps: CommandDeps): void => {
       },
     },
   )
+  const { logFile } = daemonPaths()
+  child.stderr?.on('data', (chunk: Buffer) => {
+    try {
+      mkdirSync(dirname(logFile), { recursive: true })
+      appendFileSync(logFile, chunk)
+    } catch {
+      // Best effort only: the child will still report its failure through its
+      // exit status if the boot log cannot be written.
+    }
+  })
+  child.stderr?.on('error', () => {})
   child.unref()
+  return child
 }
 
 /**
@@ -67,26 +79,68 @@ const spawnDetached = (deps: CommandDeps): void => {
  * connectable or the 10s deadline is exceeded.
  *
  * On success: prints the canonical `[mars] daemon detached (pid …)` message
- * and returns `{ code: 0 }`.  On timeout: prints an error pointing at the
- * watch.log boot log and returns `{ code: 1 }`.
+ * and returns `{ code: 0 }`. On failure: reports whether the child exited or
+ * was still running, and points at the watch.log boot log.
  *
  * Called by both `daemonStart` (after the first spawn) and `daemonRestart`
  * (after stop + respawn), so the poll loop lives here rather than inlined.
  */
-const waitForDaemonReady = async (deps: CommandDeps): Promise<{ code: number }> => {
+const waitForDaemonReady = async (
+  deps: CommandDeps,
+  child: ChildProcess,
+): Promise<{ code: number }> => {
   const { logFile } = daemonPaths()
   const POLL_INTERVAL_MS = 100
   const deadline = Date.now() + 10_000
+  let childExit: { code: number | null; signal: NodeJS.Signals | null } | null = null
+  let childSpawnError: string | null = null
+  let resolveChildStop: () => void = () => {}
+  const childStopped = new Promise<void>((resolve) => {
+    resolveChildStop = resolve
+  })
+  child.once('exit', (code, signal) => {
+    childExit = { code, signal }
+    resolveChildStop()
+  })
+  child.once('error', (err) => {
+    childSpawnError = errorMessage(err)
+    resolveChildStop()
+  })
+
   while (Date.now() < deadline) {
-    await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS))
+    const remaining = Math.min(POLL_INTERVAL_MS, deadline - Date.now())
+    await Promise.race([
+      childStopped,
+      new Promise<void>((resolve) => setTimeout(resolve, remaining)),
+    ])
+    if (childExit !== null || childSpawnError !== null) break
     const check = await isDaemonAlive()
     if (check.alive) {
+      // The daemon switches to its own watch.log logger after boot. Closing
+      // this one-purpose pipe lets the detached CLI return normally.
+      child.stderr?.destroy()
       deps.out(`[mars] daemon detached (pid ${check.pid}, log: ${logFile})`)
       return { code: 0 }
     }
   }
+  // Exit callbacks run outside TypeScript's synchronous control-flow model.
+  // Widen the observed value here after the poll loop has yielded to them.
+  const observedChildExit = childExit as {
+    code: number | null
+    signal: NodeJS.Signals | null
+  } | null
+  if (observedChildExit !== null) {
+    deps.err(
+      `[mars] daemon child exited early (code=${observedChildExit.code} signal=${observedChildExit.signal}); check ${logFile}`,
+    )
+    return { code: 1 }
+  }
+  if (childSpawnError !== null) {
+    deps.err(`[mars] daemon child failed to start (${childSpawnError}); check ${logFile}`)
+    return { code: 1 }
+  }
   deps.err(
-    `[mars] daemon did not become ready within 10s; check ${logFile}`,
+    `[mars] daemon did not become ready within 10s; child still running (pid ${child.pid ?? 'unknown'}); check ${logFile}`,
   )
   return { code: 1 }
 }
@@ -315,12 +369,12 @@ const daemonStart: Command = {
       deps.err(msg)
       return { code: 1 }
     }
-    spawnDetached(deps)
+    const child = spawnDetached(deps)
     // Block until the daemon's socket is connectable. This closes the TOCTOU
     // race: a second `daemon start` racing within the boot window will call
     // isDaemonAlive(), find a live socket, and take the idempotent branch
     // above instead of spawning a second child.
-    return waitForDaemonReady(deps)
+    return waitForDaemonReady(deps, child)
   },
 }
 
@@ -346,8 +400,8 @@ const daemonRestart: Command = {
         if (!check.alive) break
       }
     }
-    spawnDetached(deps)
-    return waitForDaemonReady(deps)
+    const child = spawnDetached(deps)
+    return waitForDaemonReady(deps, child)
   },
 }
 
