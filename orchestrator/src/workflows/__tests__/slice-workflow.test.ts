@@ -52,6 +52,26 @@ describe('slicerOutputSchema: readFirst + prescriptiveAction', () => {
     expect(parsed.slices[0].prescriptiveAction).toContain('readFirst')
   })
 
+  it('accepts more than twenty valid slices', () => {
+    const parsed = slicerOutputSchema.parse({
+      slices: Array.from({ length: 25 }, (_, index) => ({
+        title: `slice ${index + 1}`,
+        type: 'AFK',
+        whatToBuild: 'Implement one thin vertical slice.',
+        acceptanceCriteria: ['the slice is complete'],
+        blockedBy: [],
+        readFirst: ['orchestrator/src/workflows/slice-workflow.ts'],
+        prescriptiveAction: 'Update the named behaviour and verify it.',
+      })),
+    })
+
+    expect(parsed.slices).toHaveLength(25)
+  })
+
+  it('rejects an empty slices array', () => {
+    expect(() => slicerOutputSchema.parse({ slices: [] })).toThrow()
+  })
+
   it('rejects a slice with an empty readFirst array', () => {
     expect(() =>
       slicerOutputSchema.parse({

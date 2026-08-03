@@ -123,8 +123,7 @@ export const slicerOutputSchema = z.object({
           }
         }),
     )
-    .min(1)
-    .max(20),
+    .min(1),
 })
 
 /**
