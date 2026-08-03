@@ -27,6 +27,7 @@ import {
   resolveLaunchCommand,
 } from '../../core/daemon/paths'
 import { warnWhenRepoRootDiffersFromIntegration } from '../../core/lib/repo-root-branch-warning'
+import { hasFlag } from '../args'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, isDaemonDownError } from './shared'
 
@@ -84,7 +85,7 @@ const daemonStop: Command = {
   summary: 'drain-stop the daemon (--force to abandon in-flight)',
   usage: 'usage: mars daemon stop [--force]',
   run: async (args, deps) => {
-    const force = args.positional.includes('--force')
+    const force = hasFlag(args, '--force')
     try {
       if (force) {
         await deps.daemon.sendRequest(

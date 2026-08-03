@@ -16,6 +16,7 @@ import {
   parseTaskSpec,
   parseBlockedBy,
   parseTags,
+  hasFlag,
   resolvePlanText,
   resolvePromptSource,
   type TaskSpec,
@@ -128,11 +129,9 @@ export const taskAdd: Command = {
     { syntax: '--workflow <name>', description: 'select the dispatch pipeline' },
   ],
   run: async (args, deps) => {
-    // `--live` is valueless, so the parser leaves it in positional; strip it
-    // before prompt resolution or it would be joined into a literal prompt.
-    const live = args.positional.includes('--live')
-    const deferrableFlag = args.positional.includes('--deferrable')
-    const positional = args.positional.filter((a) => a !== '--live' && a !== '--deferrable')
+    const live = hasFlag(args, '--live')
+    const deferrableFlag = hasFlag(args, '--deferrable')
+    const positional = args.positional
     const unknownFlag = positional.find((arg) => arg.startsWith('--'))
     if (unknownFlag !== undefined) {
       deps.err(`[mars] error: unknown flag ${unknownFlag}; use --merge auto|gated`)
@@ -213,9 +212,7 @@ export const taskAdd: Command = {
       qa = qaRaw
     }
 
-    const deferrable = args.positional.includes('--deferrable') || positional.includes('--deferrable')
-      ? true
-      : undefined
+    const deferrable = hasFlag(args, '--deferrable') ? true : undefined
 
     return enqueueViaDaemon(deps, args.flags, {
       prompt,
@@ -347,8 +344,8 @@ export const taskShow: Command = {
   summary: 'show a single task',
   usage: 'usage: mars task show <id> [--json]',
   run: async (args, deps) => {
-    const emitJson = args.positional.includes('--json')
-    const id = args.positional.filter((a) => a !== '--json')[0]
+    const emitJson = hasFlag(args, '--json')
+    const id = args.positional[0]
     if (!id) {
       deps.err('usage: mars task show <id> [--json]')
       return { code: 2 }

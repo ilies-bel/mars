@@ -9,6 +9,7 @@
  * ceremony).
  */
 
+import { hasFlag } from '../args'
 import type { Command } from '../command'
 
 const where: Command = {
@@ -72,7 +73,7 @@ const uiLaunch: Command = {
       repo: args.repo,
       port: args.flags['--port'],
       host: args.flags['--host'],
-      dev: args.positional.includes('--dev'),
+      dev: hasFlag(args, '--dev'),
     })
     return { code: 0 }
   },
@@ -130,7 +131,7 @@ const worktreePrune: Command = {
   summary: 'prune git worktree administrative refs',
   usage: 'usage: mars worktree prune [--dry-run]',
   run: async (args, deps) => {
-    const dryRun = args.positional.includes('--dry-run')
+    const dryRun = hasFlag(args, '--dry-run')
     const { runWorktreePrune } = await import('../../core/lib/worktree-prune')
     const summary = await runWorktreePrune({
       dryRun,
@@ -154,8 +155,8 @@ const worktreeClean: Command = {
   summary: 'remove orphaned task worktrees',
   usage: 'usage: mars worktree clean [--dry-run] [--force-orphans]',
   run: async (args, deps) => {
-    const dryRun = args.positional.includes('--dry-run')
-    const forceOrphans = args.positional.includes('--force-orphans')
+    const dryRun = hasFlag(args, '--dry-run')
+    const forceOrphans = hasFlag(args, '--force-orphans')
     const { runWorktreeClean } = await import('../../core/lib/worktree-clean')
     const summary = await runWorktreeClean({
       dryRun,

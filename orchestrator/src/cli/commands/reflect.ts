@@ -7,6 +7,7 @@
  */
 
 import type { Command, CommandDeps } from '../command'
+import { hasFlag } from '../args'
 import { errorMessage } from './shared'
 
 const REFLECT_DISABLED_MSG = 'reflection disabled via MARS_REFLECT_DISABLED=1'
@@ -143,8 +144,8 @@ const arcList: Command = {
     const { listDeepReflectArcCandidates } = await import(
       '../../core/lib/deep-reflect-query'
     )
-    const emitJson = args.positional.includes('--json')
-    const withTranscriptOnly = args.positional.includes('--with-transcript-only')
+    const emitJson = hasFlag(args, '--json')
+    const withTranscriptOnly = hasFlag(args, '--with-transcript-only')
 
     let limit = 10
     const limitRaw = args.flags['--limit']
@@ -602,7 +603,7 @@ const reflectWorkflowFit: Command = {
       return { code: 0 }
     }
 
-    const dryRun = args.positional.includes('--dry-run')
+    const dryRun = hasFlag(args, '--dry-run')
     const inputArg = args.positional.find((a) => !a.startsWith('--')) ?? null
     const envSessionId = process.env.CLAUDE_CODE_SESSION_ID?.trim() ?? ''
 

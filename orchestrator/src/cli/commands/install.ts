@@ -9,6 +9,7 @@
 
 import { join } from 'node:path'
 import { MARS_VERSION } from '../../version'
+import { hasFlag } from '../args'
 import type { Command } from '../command'
 import { errorMessage } from './shared'
 import {
@@ -440,7 +441,7 @@ const uninstall: Command = {
     )
     const userSettingsPath = pathJoin(homedir(), '.claude', 'settings.json')
 
-    const yes = args.positional.includes('--yes') || args.positional.includes('-y')
+    const yes = hasFlag(args, '--yes')
     const isTty = Boolean(process.stdin.isTTY)
 
     const cliEntryPath = fileURLToPath(import.meta.url)

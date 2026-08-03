@@ -9,7 +9,7 @@
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { resolveProposalId, getProposal } from '../../core/proposals'
-import { readMaybeFile } from '../args'
+import { hasFlag, readMaybeFile } from '../args'
 import type { TaskStatus } from '../../core/queue'
 import type { ReconcileSummary } from '../../core/daemon/startup-reconcile'
 import type { Command, CommandDeps } from '../command'
@@ -620,14 +620,10 @@ const update: Command = {
   usage: 'usage: mars update [--force] [--yes | --accept-all] [--verbose]',
   run: async (args, deps) => {
     const { existsSync } = await import('node:fs')
-    const boolFlags = new Set(args.positional.filter((a) => a.startsWith('--')))
-    const force = boolFlags.has('--force')
-    const yes =
-      boolFlags.has('--yes') ||
-      args.positional.includes('-y') ||
-      boolFlags.has('--no-edit')
-    const acceptAll = boolFlags.has('--accept-all')
-    const verbose = boolFlags.has('--verbose')
+    const force = hasFlag(args, '--force')
+    const yes = hasFlag(args, '--yes') || hasFlag(args, '--no-edit')
+    const acceptAll = hasFlag(args, '--accept-all')
+    const verbose = hasFlag(args, '--verbose')
 
     if (yes && acceptAll) {
       deps.err(

@@ -34,7 +34,7 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
-import { parsePriority } from '../args'
+import { hasFlag, parsePriority } from '../args'
 
 const execFileAsync = promisify(execFile)
 
@@ -665,7 +665,7 @@ const proposalShipSummary: Command = {
   usage: 'usage: mars proposal ship-summary <id> [--json]',
   run: async (args, deps) => {
     const id = args.positional[0]
-    const emitJson = args.positional.includes('--json')
+    const emitJson = hasFlag(args, '--json')
     if (!id) {
       deps.err('usage: mars proposal ship-summary <id> [--json]')
       return { code: 2 }

@@ -10,6 +10,8 @@
  * flag is caught here rather than silently swallowed at runtime.
  */
 
+import { readdirSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { registry, allCommands } from '../commands'
 import { route, groupByTopLevel } from '../registry'
@@ -118,5 +120,25 @@ describe('ADR-0023 §5 — declared flag surface covers every leaf', () => {
       }
     }
     expect([...undeclared]).toEqual([])
+  })
+})
+
+describe('boolean flags are never treated as positional arguments', () => {
+  it('keeps every declared boolean flag out of command positional checks', () => {
+    const commandsDirectory = fileURLToPath(new URL('../commands/', import.meta.url))
+    const sourceFiles = readdirSync(commandsDirectory, { recursive: true })
+      .filter(
+        (entry): entry is string =>
+          typeof entry === 'string' && entry.endsWith('.ts') && !entry.includes('__tests__/'),
+      )
+
+    const positionalBooleanReads = sourceFiles.flatMap((entry) => {
+      const source = readFileSync(`${commandsDirectory}/${entry}`, 'utf8')
+      return [...BOOLEAN_FLAGS]
+        .filter((flag) => source.includes(`positional.includes('${flag}')`))
+        .map((flag) => `${entry}: ${flag}`)
+    })
+
+    expect(positionalBooleanReads).toEqual([])
   })
 })

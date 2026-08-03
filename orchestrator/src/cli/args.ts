@@ -161,9 +161,10 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--mark-viewed',
 ])
 
-// Short aliases for value-bearing flags, normalised to their long form before
-// the FLAGS_WITH_VALUES lookup.
-export const SHORT_FLAG_ALIASES: Readonly<Record<string, string>> = {}
+// Short aliases are normalised to their long form before flag lookup.
+export const SHORT_FLAG_ALIASES: Readonly<Record<string, string>> = {
+  '-y': '--yes',
+}
 
 export const REPEATABLE_FLAGS: ReadonlySet<string> = new Set([
   '--blocked-by',
@@ -226,6 +227,9 @@ export const parseArgs = (argv: readonly string[]): ParsedArgs => {
   }
   return { repo, flags, multiFlags, positional }
 }
+
+/** True when a boolean flag was supplied. Flag keys retain their `--` prefix. */
+export const hasFlag = (args: ParsedArgs, flag: string): boolean => args.flags[flag] !== undefined
 
 /**
  * Resolve a `@path` reference to its file contents, else return the literal.

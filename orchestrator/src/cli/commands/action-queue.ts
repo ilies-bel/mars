@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs'
 import { raiseActionQueueItem } from '../../core/lib/action-queue'
 import { ACTION_QUEUE_KINDS, isActionQueueKind } from '../../core/lib/action-queue-kinds'
 import { actionQueueRaiseSchema } from '../action-queue-raise-schema'
+import { hasFlag } from '../args'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, readDaemonPort } from './shared'
 import type { ActionQueueRow } from '../../core/daemon/view/action-queue'
@@ -123,8 +124,8 @@ const actionQueueList: Command = {
   summary: 'list action queue items [open|all] [--lean] [--kind <csv>]',
   usage: 'usage: mars action-queue list [open|all] [--lean] [--kind <csv>]',
   run: async (args, deps) => {
-    const lean = args.positional.includes('--lean')
-    const rest = args.positional.filter((a) => a !== '--lean')
+    const lean = hasFlag(args, '--lean')
+    const rest = args.positional
     const filter = rest[0] ?? 'open'
     const allowed = new Set(['open', 'all'])
     if (!allowed.has(filter)) {

@@ -191,6 +191,19 @@ describe('daemon start and restart safety', () => {
     expect(spawnM).not.toHaveBeenCalled()
   })
 
+  it('force-stops the daemon when --force is supplied', async () => {
+    const daemon = makeFakeDaemon()
+
+    const result = await runCommandInProcess(['daemon', 'stop', '--force'], {
+      ...makeOpts(),
+      daemon,
+    })
+
+    expect(result.code).toBe(0)
+    expect(result.out).toContain('daemon stopping (force; in-flight tasks abandoned)')
+    expect(daemon.calls).toEqual([{ op: 'shutdown', force: true }])
+  })
+
   it('restores a persisted pause after the daemon is killed and restarted', async () => {
     const repo = mkdtempSync('/tmp/mars-daemon-pause-respawn-')
     const originalEnv = {

@@ -22,6 +22,7 @@ import { randomUUID } from 'node:crypto'
 import { basename, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
+import { hasFlag } from '../args'
 import type { Command } from '../command'
 import { PRIMITIVE_DESCRIPTORS } from '../../workflows/primitives/opts-descriptors'
 import { planWorkflowCopies } from '../../init/scaffold-workflows'
@@ -406,8 +407,8 @@ const workflowRender: Command = {
   summary: 'print the workflow runbook — steps in order with mode and guide (local read)',
   usage: 'usage: mars workflow render <kind>  [--json]',
   run: async (args, deps) => {
-    const jsonFlag = args.positional.includes('--json')
-    const kind = args.positional.filter((a) => a !== '--json')[0]
+    const jsonFlag = hasFlag(args, '--json')
+    const kind = args.positional[0]
 
     if (!kind) {
       deps.err('usage: mars workflow render <kind>  [--json]')

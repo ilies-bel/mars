@@ -14,6 +14,7 @@ import {
   listVerifyGates,
   removeVerifyGate,
 } from '../../core/verify-gates'
+import { hasFlag } from '../args'
 import type { Command } from '../command'
 
 /** UUID v4 pattern used to distinguish gate ids from gate names. */
@@ -104,7 +105,7 @@ const verifyAdd: Command = {
     const tier = tierRaw as 'task' | 'integration'
 
     const gateArgs = args.multiFlags['--args'] ?? []
-    const required = !args.positional.includes('--optional')
+    const required = !hasFlag(args, '--optional')
 
     try {
       const id = await addVerifyGate({
