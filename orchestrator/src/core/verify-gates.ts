@@ -25,12 +25,28 @@ const VERIFY_GATES_DDL = `CREATE TABLE IF NOT EXISTS verify_gates (
   tier       text NOT NULL DEFAULT 'task',
   source     text NOT NULL DEFAULT 'human',
   created_at bigint NOT NULL,
+  state      text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'quarantined')),
+  quarantined_at bigint,
+  quarantine_signature text,
+  last_failure_signature text,
+  last_failure_at bigint,
+  last_failure_origin_id text,
   UNIQUE(scope, name)
 )`
 
 /** Idempotent CREATE TABLE for the verify_gates table. */
 export const ensureVerifyGatesSchema = async (client: DbTx): Promise<void> => {
   await client.execute(VERIFY_GATES_DDL)
+  await client.execute(
+    `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'active'
+       CHECK (state IN ('active', 'quarantined'))`,
+  )
+  await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS quarantined_at bigint`)
+  await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS quarantine_signature text`)
+  await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_signature text`)
+  await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_at bigint`)
+  await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_origin_id text`)
+  await client.execute(`UPDATE verify_gates SET state = 'active' WHERE state IS NULL`)
 }
 
 /** Input accepted by {@link addVerifyGate}. */
@@ -62,6 +78,12 @@ export interface VerifyGate {
   tier: 'task' | 'integration'
   source: string
   createdAt: number
+  state: 'active' | 'quarantined'
+  quarantinedAt: number | null
+  quarantineSignature: string | null
+  lastFailureSignature: string | null
+  lastFailureAt: number | null
+  lastFailureOriginId: string | null
 }
 
 interface VerifyGateRow {
@@ -74,6 +96,12 @@ interface VerifyGateRow {
   tier: string
   source: string
   created_at: number
+  state: string
+  quarantined_at: number | null
+  quarantine_signature: string | null
+  last_failure_signature: string | null
+  last_failure_at: number | null
+  last_failure_origin_id: string | null
 }
 
 const rowToGate = (row: VerifyGateRow): VerifyGate => ({
@@ -86,6 +114,12 @@ const rowToGate = (row: VerifyGateRow): VerifyGate => ({
   tier: row.tier as 'task' | 'integration',
   source: row.source,
   createdAt: row.created_at,
+  state: row.state as 'active' | 'quarantined',
+  quarantinedAt: row.quarantined_at,
+  quarantineSignature: row.quarantine_signature,
+  lastFailureSignature: row.last_failure_signature,
+  lastFailureAt: row.last_failure_at,
+  lastFailureOriginId: row.last_failure_origin_id,
 })
 
 /**
@@ -190,12 +224,51 @@ export const removeVerifyGate = async (
 }
 
 /**
+ * Quarantine a gate after a systemic failure, retaining the first quarantine
+ * evidence and updating the gate's latest observed failure on every call.
+ */
+export const quarantineVerifyGate = async (
+  id: string,
+  signature: string,
+  originId: string,
+): Promise<void> => {
+  const c = resolveStateClient()
+  const now = Date.now()
+  await c.execute(
+    `UPDATE verify_gates
+        SET state = 'quarantined',
+            quarantined_at = CASE WHEN state = 'active' THEN ? ELSE quarantined_at END,
+            quarantine_signature = CASE WHEN state = 'active' THEN ? ELSE quarantine_signature END,
+            last_failure_signature = ?,
+            last_failure_at = ?,
+            last_failure_origin_id = ?
+      WHERE id = ?`,
+    [now, signature, signature, now, originId, id],
+  )
+}
+
+/**
+ * Return a quarantined gate to execution without erasing its latest failure.
+ */
+export const activateVerifyGate = async (id: string): Promise<void> => {
+  const c = resolveStateClient()
+  await c.execute(
+    `UPDATE verify_gates
+        SET state = 'active', quarantined_at = NULL, quarantine_signature = NULL
+      WHERE id = ?`,
+    [id],
+  )
+}
+
+/**
  * Return all verify gates ordered by scope then creation time.
  */
 export const listVerifyGates = async (): Promise<VerifyGate[]> => {
   const c = resolveStateClient()
   const r = await c.execute(
-    `SELECT id, scope, name, cmd, args_json, required, tier, source, created_at
+    `SELECT id, scope, name, cmd, args_json, required, tier, source, created_at,
+            state, quarantined_at, quarantine_signature, last_failure_signature,
+            last_failure_at, last_failure_origin_id
      FROM verify_gates ORDER BY scope, created_at`,
   )
   return (r.rows as unknown as VerifyGateRow[]).map(rowToGate)
@@ -211,8 +284,12 @@ export const listVerifyGates = async (): Promise<VerifyGate[]> => {
  */
 export const loadVerifyGates = async (client: DbTx): Promise<VerifyScope[]> => {
   const r = await client.execute(
-    `SELECT id, scope, name, cmd, args_json, required, tier, source, created_at
-     FROM verify_gates ORDER BY scope, created_at`,
+    `SELECT id, scope, name, cmd, args_json, required, tier, source, created_at,
+            state, quarantined_at, quarantine_signature, last_failure_signature,
+            last_failure_at, last_failure_origin_id
+       FROM verify_gates
+      WHERE state = 'active'
+      ORDER BY scope, created_at`,
   )
   const rows = r.rows as unknown as VerifyGateRow[]
 

@@ -5,8 +5,8 @@
  * - ensureVerifyGatesSchema: creates the table idempotently
  * - addVerifyGate: inserts a gate, returns a usable id, applies defaults
  * - removeVerifyGate: deletes by id and by {scope, name}
- * - listVerifyGates: returns all gates in scope+created_at order
- * - loadVerifyGates: returns VerifyScope[] matching the selectVerifySteps shape
+ * - listVerifyGates: returns all gates and their health in scope+created_at order
+ * - loadVerifyGates: returns active VerifyScope[] matching the selectVerifySteps shape
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -203,6 +203,25 @@ describe('listVerifyGates', () => {
     const { listVerifyGates } = await import('../verify-gates.js')
     await expect(listVerifyGates()).resolves.toEqual([])
   })
+
+  it('keeps quarantined gates visible with their latest failure evidence', async () => {
+    const { addVerifyGate, quarantineVerifyGate, listVerifyGates } = await import('../verify-gates.js')
+    const id = await addVerifyGate({ name: 'typecheck', cmd: 'npx' })
+
+    await quarantineVerifyGate(id, 'verify:typecheck:exit-1', 'origin-123')
+
+    await expect(listVerifyGates()).resolves.toEqual([
+      expect.objectContaining({
+        id,
+        state: 'quarantined',
+        quarantineSignature: 'verify:typecheck:exit-1',
+        lastFailureSignature: 'verify:typecheck:exit-1',
+        lastFailureOriginId: 'origin-123',
+        quarantinedAt: expect.any(Number),
+        lastFailureAt: expect.any(Number),
+      }),
+    ])
+  })
 })
 
 describe('loadVerifyGates', () => {
@@ -281,5 +300,39 @@ describe('loadVerifyGates', () => {
 
     const scopes = await loadVerifyGates(client)
     expect(scopes[0].steps[0].tier).toBe('integration')
+  })
+
+  it('excludes quarantined gates until activation while retaining their latest failure', async () => {
+    const { addVerifyGate, activateVerifyGate, loadVerifyGates, listVerifyGates, quarantineVerifyGate } =
+      await import('../verify-gates.js')
+    const quarantined = await addVerifyGate({ scope: '.', name: 'typecheck', cmd: 'npx' })
+    await addVerifyGate({ scope: '.', name: 'lint', cmd: 'eslint' })
+
+    await quarantineVerifyGate(quarantined, 'verify:typecheck:exit-1', 'origin-123')
+    await quarantineVerifyGate(quarantined, 'verify:typecheck:exit-1', 'origin-123')
+
+    await expect(loadVerifyGates(client)).resolves.toEqual([
+      expect.objectContaining({
+        scope: '.',
+        steps: [expect.objectContaining({ name: 'lint' })],
+      }),
+    ])
+
+    await activateVerifyGate(quarantined)
+    await activateVerifyGate(quarantined)
+
+    const scopes = await loadVerifyGates(client)
+    expect(scopes[0].steps.map((step) => step.name)).toEqual(['typecheck', 'lint'])
+    await expect(listVerifyGates()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: quarantined,
+        state: 'active',
+        quarantinedAt: null,
+        quarantineSignature: null,
+        lastFailureSignature: 'verify:typecheck:exit-1',
+        lastFailureOriginId: 'origin-123',
+        lastFailureAt: expect.any(Number),
+      }),
+    ]))
   })
 })

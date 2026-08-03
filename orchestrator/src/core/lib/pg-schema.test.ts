@@ -103,7 +103,7 @@ describe('ensureSchema', () => {
     })
   })
 
-  it('migrates gate and diagnosis timestamps to epoch milliseconds', async () => {
+  it('migrates legacy gates into the quarantinable registry', async () => {
     const c = openDb(freshKey())
     try {
       await __execSchemaBatch(c, [
@@ -148,17 +148,41 @@ describe('ensureSchema', () => {
         created_at: 'bigint', updated_at: 'bigint', approved_at: 'bigint', retired_at: 'bigint',
       })
       expect((await columnsOf(c, 'gate_burn_in')).get('promoted_at')).toBe('bigint')
-      expect((await columnsOf(c, 'gate_verdict_monitor')).get('updated_at')).toBe('bigint')
-      expect((await columnsOf(c, 'gate_suppressed_verdicts')).get('tripped_at')).toBe('bigint')
       expect((await columnsOf(c, 'verify_gates')).get('created_at')).toBe('bigint')
+      expect(Object.fromEntries(await columnsOf(c, 'verify_gates'))).toMatchObject({
+        state: 'text',
+        quarantined_at: 'bigint',
+        quarantine_signature: 'text',
+        last_failure_signature: 'text',
+        last_failure_at: 'bigint',
+        last_failure_origin_id: 'text',
+      })
+      expect(Object.fromEntries(await columnsOf(c, 'verify_gate_failure_streaks'))).toMatchObject({
+        gate_id: 'text',
+        current_signature: 'text',
+        streak_count: 'integer',
+        last_origin_id: 'text',
+        updated_at: 'bigint',
+      })
+      expect((await c.execute(`SELECT table_name FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name IN ('gate_verdict_monitor', 'gate_suppressed_verdicts')`)).rows)
+        .toEqual([])
       expect((await c.execute(`SELECT recorded_at FROM diagnoses_root_cause`)).rows).toEqual([{ recorded_at: 1001 }])
       expect((await c.execute(`SELECT recorded_at FROM diagnoses_inconclusive`)).rows).toEqual([{ recorded_at: 1002 }])
       expect((await c.execute(`SELECT created_at, updated_at, approved_at, retired_at FROM gate_enrichment`)).rows)
         .toEqual([{ created_at: 1003, updated_at: 1004, approved_at: 1005, retired_at: 1006 }])
       expect((await c.execute(`SELECT promoted_at FROM gate_burn_in`)).rows).toEqual([{ promoted_at: 1007 }])
-      expect((await c.execute(`SELECT updated_at FROM gate_verdict_monitor`)).rows).toEqual([{ updated_at: 1008 }])
-      expect((await c.execute(`SELECT tripped_at FROM gate_suppressed_verdicts`)).rows).toEqual([{ tripped_at: 1009 }])
-      expect((await c.execute(`SELECT created_at FROM verify_gates`)).rows).toEqual([{ created_at: 1010 }])
+      expect((await c.execute(`SELECT created_at, state, quarantined_at, quarantine_signature,
+          last_failure_signature, last_failure_at, last_failure_origin_id FROM verify_gates`)).rows)
+        .toEqual([{
+          created_at: 1010,
+          state: 'active',
+          quarantined_at: null,
+          quarantine_signature: null,
+          last_failure_signature: null,
+          last_failure_at: null,
+          last_failure_origin_id: null,
+        }])
 
       await expect(ensureSchema(c)).resolves.toBeUndefined()
     } finally {

@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0022'
+export const SCHEMA_VERSION = '0023'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -1064,17 +1064,8 @@ const DDL: readonly string[] = [
     parse_count bigint NOT NULL DEFAULT 0,
     promoted_at bigint
   )`,
-  `CREATE TABLE IF NOT EXISTS gate_verdict_monitor (
-    id              bigint PRIMARY KEY CHECK (id = 1),
-    current_verdict text,
-    streak_count    bigint NOT NULL DEFAULT 0,
-    last_task_id    text,
-    updated_at      bigint NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS gate_suppressed_verdicts (
-    verdict    text PRIMARY KEY,
-    tripped_at bigint NOT NULL
-  )`,
+  `DROP TABLE IF EXISTS gate_suppressed_verdicts`,
+  `DROP TABLE IF EXISTS gate_verdict_monitor`,
   // Signature-storm circuit breaker: singleton streak row that counts
   // consecutive identical failure signatures across DIFFERENT origin tasks.
   // When the streak reaches the threshold, `tripped` is set to true and
@@ -1100,7 +1091,28 @@ const DDL: readonly string[] = [
     tier       text NOT NULL DEFAULT 'task',
     source     text NOT NULL DEFAULT 'human',
     created_at bigint NOT NULL,
+    state      text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'quarantined')),
+    quarantined_at bigint,
+    quarantine_signature text,
+    last_failure_signature text,
+    last_failure_at bigint,
+    last_failure_origin_id text,
     UNIQUE(scope, name)
+  )`,
+  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'active'
+     CHECK (state IN ('active', 'quarantined'))`,
+  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS quarantined_at bigint`,
+  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS quarantine_signature text`,
+  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_signature text`,
+  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_at bigint`,
+  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_origin_id text`,
+  `UPDATE verify_gates SET state = 'active' WHERE state IS NULL`,
+  `CREATE TABLE IF NOT EXISTS verify_gate_failure_streaks (
+    gate_id           text PRIMARY KEY REFERENCES verify_gates(id) ON DELETE CASCADE,
+    current_signature text NOT NULL,
+    streak_count      integer NOT NULL,
+    last_origin_id    text NOT NULL,
+    updated_at        bigint NOT NULL
   )`,
   `DO $$
    BEGIN
@@ -1171,30 +1183,6 @@ const DDL: readonly string[] = [
      ) THEN
        ALTER TABLE gate_burn_in ALTER COLUMN promoted_at TYPE bigint
          USING (EXTRACT(EPOCH FROM promoted_at::timestamptz) * 1000)::bigint;
-     END IF;
-   END
-   $$`,
-  `DO $$
-   BEGIN
-     IF EXISTS (
-       SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'gate_verdict_monitor'
-          AND column_name = 'updated_at' AND data_type <> 'bigint'
-     ) THEN
-       ALTER TABLE gate_verdict_monitor ALTER COLUMN updated_at TYPE bigint
-         USING (EXTRACT(EPOCH FROM updated_at::timestamptz) * 1000)::bigint;
-     END IF;
-   END
-   $$`,
-  `DO $$
-   BEGIN
-     IF EXISTS (
-       SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'gate_suppressed_verdicts'
-          AND column_name = 'tripped_at' AND data_type <> 'bigint'
-     ) THEN
-       ALTER TABLE gate_suppressed_verdicts ALTER COLUMN tripped_at TYPE bigint
-         USING (EXTRACT(EPOCH FROM tripped_at::timestamptz) * 1000)::bigint;
      END IF;
    END
    $$`,
@@ -1602,10 +1590,9 @@ export const SCHEMA_TABLES: readonly string[] = [
   'diagnosis_involved_files',
   'gate_enrichment',
   'gate_burn_in',
-  'gate_verdict_monitor',
-  'gate_suppressed_verdicts',
   'failure_signature_streak',
   'verify_gates',
+  'verify_gate_failure_streaks',
   'kpi_snapshots',
   'kpi_counters',
   'promotion_ledger',
