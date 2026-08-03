@@ -527,10 +527,6 @@ _Avoid_: brand token, raw color
 The append-only record of every Steward intervention, keyed by target kind, target id, and target version (or content hash), that both enforces the one-fix-per-version rule and feeds every display of Steward activity.
 _Avoid_: intervention log, steward history, steward audit
 
-**Focus mode**:
-The chat rendering in which every Subject appears in one continuous append-only timeline the operator never navigates away from.
-_Avoid_: continuous mode, feed mode, sms mode, single-conversation mode
-
 **Subject**:
 One topic under discussion in chat, backed one-to-one by a chat thread carrying its own freshly-loaded agent context.
 _Avoid_: topic, segment, conversation, thread segment
