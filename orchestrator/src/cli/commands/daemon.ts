@@ -265,7 +265,11 @@ const daemonStart: Command = {
   summary: 'start the daemon (detached, or --foreground)',
   usage: 'usage: mars daemon start [--foreground]',
   run: async (args, deps) => {
-    const foreground = args.positional.includes('--foreground')
+    // `--foreground` is a BOOLEAN_FLAG, so parseArgs puts it in `flags`, never
+    // in `positional`. Reading it from `positional` made this always false, so
+    // the spawned child re-took the detached branch and spawned another child —
+    // an unbounded respawn chain in which the daemon never booted.
+    const foreground = args.flags['--foreground'] !== undefined
     if (foreground) {
       process.env.MARS_WORKER_PROVIDER ??= loadDaemonConfig().defaultProvider
       const { logFile } = daemonPaths()
