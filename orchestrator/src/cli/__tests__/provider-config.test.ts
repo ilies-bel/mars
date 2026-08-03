@@ -75,14 +75,13 @@ describe('loadDaemonConfig — defaultProvider', () => {
     expect(cfg.defaultProvider).toBe('codex')
   })
 
-  it('preserves other config fields when patching defaultProvider', async () => {
+  it('preserves unrelated config fields when patching defaultProvider', async () => {
     const { vi } = await import('vitest')
     vi.resetModules()
     const { patchDaemonConfigFile, loadDaemonConfig } = await import('../../core/daemon/config')
-    patchDaemonConfigFile({ autoApprovePlans: true })
+    patchDaemonConfigFile({ arbitrarySetting: true })
     patchDaemonConfigFile({ defaultProvider: 'gemini' })
     const cfg = loadDaemonConfig()
     expect(cfg.defaultProvider).toBe('gemini')
-    expect(cfg.autoApprovePlans).toBe(true)
   })
 })

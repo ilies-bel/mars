@@ -147,6 +147,7 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--live',
   '--deferrable',
   '--coordinated',
+  '--hold',
   '--help',
   '-h',
   '--version',
@@ -191,6 +192,10 @@ export const parseArgs = (argv: readonly string[]): ParsedArgs => {
 
     if (key === '--repo') {
       repo = inlineValue ?? argv[++i]
+      continue
+    }
+    if (BOOLEAN_FLAGS.has(key)) {
+      flags[key] = inlineValue ?? 'true'
       continue
     }
     if (FLAGS_WITH_VALUES.has(key)) {

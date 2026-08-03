@@ -291,12 +291,12 @@ function landSkillProposal(
 
 const proposalPromote: Command = {
   path: 'proposal promote',
-  summary: 'mark a shaped draft proposal as PRD-ready',
-  usage: 'usage: mars proposal promote <id> [--priority 0..3]',
+  summary: 'mark a shaped draft proposal as PRD-ready and start its slices',
+  usage: 'usage: mars proposal promote <id> [--priority 0..3] [--coordinated] [--hold]',
   run: async (args, deps) => {
     const id = args.positional[0]
     if (!id) {
-      deps.err('usage: mars proposal promote <id> [--priority 0..3]')
+      deps.err('usage: mars proposal promote <id> [--priority 0..3] [--coordinated] [--hold]')
       return { code: 2 }
     }
     const priorityRaw = args.flags['--priority']
@@ -330,10 +330,22 @@ const proposalPromote: Command = {
     }
     try {
       const r = (await deps.daemon.sendRequest(
-        { op: 'proposal.promote', proposalId: resolved.id, ...(priority !== undefined && { priority }) },
+        {
+          op: 'proposal.promote',
+          proposalId: resolved.id,
+          autoApprove: args.flags['--hold'] === undefined,
+          coordinated: args.flags['--coordinated'] !== undefined,
+          ...(priority !== undefined && { priority }),
+        },
         { onSpawnNotice: spawnNoticeErr(deps.err) },
       )) as { proposalId: string; status: string }
-      deps.out(`proposal ${r.proposalId} marked ${r.status}`)
+      if (args.flags['--hold'] === undefined) {
+        deps.out(
+          `proposal ${r.proposalId} marked ${r.status}; tasks will be enqueued automatically when slicing completes`,
+        )
+      } else {
+        deps.out(`proposal ${r.proposalId} marked ${r.status}; slicing will pause for plan review`)
+      }
       if (!(await isDaemonReachable(deps.ctx.stateDir))) {
         deps.err(
           `proposal ${r.proposalId} promoted; the action-queue row will clear when the daemon next runs (daemon not running — run \`mars daemon start\`).`,

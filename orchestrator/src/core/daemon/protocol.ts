@@ -57,7 +57,13 @@ export type DaemonRequest =
   | { op: 'block'; id: string; blockerIds: readonly string[] }
   | { op: 'remove-blockers'; id: string; blockerIds: readonly string[] }
   | { op: 'recover'; id?: string }
-  | { op: 'proposal.promote'; proposalId: string; priority?: number }
+  | {
+      op: 'proposal.promote'
+      proposalId: string
+      priority?: number
+      autoApprove: boolean
+      coordinated?: boolean
+    }
   | { op: 'proposal.slice'; proposalId: string; priority?: number }
   | { op: 'proposal.approve'; proposalId: string }
   | { op: 'proposal.reslice'; proposalId: string; feedback: string; priority?: number }

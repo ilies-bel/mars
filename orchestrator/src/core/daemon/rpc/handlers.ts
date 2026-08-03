@@ -129,7 +129,12 @@ const syncHandler = handler('sync', async (_req, deps) => {
 })
 
 const proposalPromoteHandler = handler('proposal.promote', async (req, deps) => {
-  const r = await deps.handleProposalPromote(req.proposalId, req.priority)
+  const r = await deps.handleProposalPromote(
+    req.proposalId,
+    req.priority,
+    req.autoApprove,
+    req.coordinated,
+  )
   return { ok: true, data: r }
 })
 

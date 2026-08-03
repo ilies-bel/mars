@@ -166,6 +166,8 @@ export interface DaemonDeps {
   handleProposalPromote(
     proposalId: string,
     priority?: number,
+    autoApprove?: boolean,
+    coordinated?: boolean,
   ): Promise<{ proposalId: string; status: string }>
   handleProposalSlice(
     proposalId: string,

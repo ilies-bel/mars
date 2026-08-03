@@ -3256,9 +3256,11 @@ export const startDaemon = async (
   const handleProposalPromote = async (
     proposalId: string,
     priority?: number,
+    autoApprove = false,
+    coordinated = false,
   ): Promise<{ proposalId: string; status: string }> => {
     assertProposalsSourceFresh(proposalsStamp)
-    const proposal = await promoteProposal(proposalId)
+    const proposal = await promoteProposal(proposalId, { autoApprove, coordinated })
     // Auto-slice: chain slicing fire-and-forget so the RPC stays fast and a
     // slicer failure (e.g. malformed PRD) leaves the proposal in prd-ready for
     // the operator to inspect and re-promote without aborting the promote itself.
@@ -3283,16 +3285,13 @@ export const startDaemon = async (
       traceStore,
       ...(priority !== undefined && { priority }),
     })
-    // When autoApprovePlans=true, slice tasks are transitioned to 'queued'
-    // immediately; emit 'task.queued' for each so the daemon's dispatch
-    // loop picks them up under the implement semaphore. When
-    // autoApprovePlans=false, tasks remain 'draft' until the operator calls
-    // `mars proposal approve`, so no events are emitted here.
-    for (const taskId of result.taskIds) {
-      const t = await getTask(taskId)
-      if (t?.status === 'queued') {
+    if (result.autoApproval) {
+      for (const taskId of result.autoApproval.queuedTaskIds) {
         bus.emit('task.queued', { taskId })
       }
+      log(
+        `[auto-approve] proposal ${result.proposalId}: ${result.autoApproval.queuedTaskIds.length} task(s) queued, ${result.autoApproval.blockedTaskIds.length} blocked`,
+      )
     }
     return result
   }
@@ -3376,6 +3375,12 @@ export const startDaemon = async (
 
     const proposal = await getProposal(resolved.id)
     if (!proposal) throw new Error(`proposal ${resolved.id} not found`)
+
+    if (proposal.autoApprove) {
+      throw new Error(
+        `proposal ${proposal.id} is configured to auto-approve slices; promote it with --hold before using proposal take`,
+      )
+    }
 
     // Validate PRD body before attempting status transitions.
     const missing = validateProposalShaped(proposal)

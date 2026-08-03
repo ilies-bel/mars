@@ -582,6 +582,7 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
+    process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
   afterEach(() => {
@@ -589,6 +590,7 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     vi.doUnmock('../../core/lib/git/claude')
     vi.doUnmock('../../core/queue')
     delete process.env.MARS_REPO
+    delete process.env.MARS_WORKER_PROVIDER
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -614,7 +616,9 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
 
   // Seed a fresh proposal in 'prd-ready' status (the precondition `generateStep`
   // checks) and return its id.
-  const seedPrdReadyProposal = async (): Promise<string> => {
+  const seedPrdReadyProposal = async (
+    { autoApprove = false, coordinated = false }: { autoApprove?: boolean; coordinated?: boolean } = {},
+  ): Promise<string> => {
     const proposals = await import('../../core/proposals')
     await proposals.initProposals()
     const proposal = await proposals.createProposal('t', {
@@ -622,7 +626,7 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
       solution: 's',
     })
     await proposals.addProposalUserStory(proposal.id, 'as a user, I want X')
-    const promoted = await proposals.promoteProposal(proposal.id)
+    const promoted = await proposals.promoteProposal(proposal.id, { autoApprove, coordinated })
     expect(promoted.status).toBe('prd-ready')
     return proposal.id
   }
@@ -862,14 +866,13 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     vi.resetModules()
     const queue = await import('../../core/queue')
     const enqueueTask = vi.spyOn(queue, 'enqueueTask')
-    const proposalId = await seedPrdReadyProposal()
-    const proposals = await import('../../core/proposals')
-    await proposals.setProposalCoordinated(proposalId, true)
+    const proposalId = await seedPrdReadyProposal({ autoApprove: true, coordinated: true })
 
     const slice = await import('../slice-workflow')
     const result = await slice.runSlice(proposalId)
 
     expect(result.taskIds).toHaveLength(1)
+    expect(result.autoApproval?.queuedTaskIds).toEqual(result.taskIds)
     expect(enqueueTask).toHaveBeenCalledTimes(1)
     expect(enqueueTask).toHaveBeenCalledWith(
       `Coordinator for PRD ${proposalId}: t`,
@@ -895,7 +898,7 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     expect(Number((rows.rows[0] as { n: number | bigint }).n)).toBe(0)
   })
 
-  it('cleans up orphaned tasks from a previous crash before re-slicing', async () => {
+  it('restarts a promoted slice once and auto-approves the recovered tasks', async () => {
     // Crash-recovery deduplication: a process crash between Phase 1
     // (task inserts) and Phase 4 (status flip) leaves the proposal prd-ready
     // with orphaned tasks from the crashed run. Without a pre-flight
@@ -919,7 +922,7 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
       }
     })
     vi.resetModules()
-    const proposalId = await seedPrdReadyProposal()
+    const proposalId = await seedPrdReadyProposal({ autoApprove: true })
 
     // Simulate the crash: manually insert an orphaned task that claims
     // this proposal as its parent (as if Phase 1 ran but the process died
@@ -934,6 +937,24 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     })
     expect(await countTasksForProposal(proposalId)).toBe(1) // orphan is there
 
+    // Reloading modules models a daemon restart before it retries the slice.
+    vi.resetModules()
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(validSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+
     // Now re-run the slice — this is the retry after the crash.
     const slice = await import('../slice-workflow')
     const result = await slice.runSlice(proposalId)
@@ -947,6 +968,10 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     const proposals = await import('../../core/proposals')
     const after = await proposals.getProposal(proposalId)
     expect(after?.status).toBe('sliced')
+    expect(result.autoApproval?.queuedTaskIds).toEqual(result.taskIds)
+    expect(result.autoApproval?.blockedTaskIds).toEqual([])
+    const restartedQueue = await import('../../core/queue')
+    expect((await restartedQueue.getTask(result.taskIds[0]))?.status).toBe('queued')
   })
 
   it('slice tasks inherit the priority passed to runSlice', async () => {
@@ -1495,17 +1520,12 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
-    // Tests in this block exercise the old auto-enqueue path (Phase 3) and
-    // assert task statuses immediately after slicing. Opt into auto-approve
-    // so tasks land in 'queued'/'blocked' rather than staying in 'draft'.
-    process.env.MARS_AUTO_APPROVE_PLANS = '1'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
-    delete process.env.MARS_AUTO_APPROVE_PLANS
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -1520,7 +1540,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
       solution: 's',
     })
     await proposals.addProposalUserStory(proposal.id, 'as a user, I want X')
-    const promoted = await proposals.promoteProposal(proposal.id)
+    const promoted = await proposals.promoteProposal(proposal.id, { autoApprove: true })
     expect(promoted.status).toBe('prd-ready')
     return proposal.id
   }
@@ -1987,17 +2007,12 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
-    // Tests in this block assert task statuses immediately after slicing.
-    // Opt into auto-approve so tasks land in 'queued'/'blocked' rather
-    // than staying in 'draft'.
-    process.env.MARS_AUTO_APPROVE_PLANS = '1'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
-    delete process.env.MARS_AUTO_APPROVE_PLANS
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -2012,7 +2027,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
       solution: 's',
     })
     await proposals.addProposalUserStory(proposal.id, 'as a user, I want X')
-    const promoted = await proposals.promoteProposal(proposal.id)
+    const promoted = await proposals.promoteProposal(proposal.id, { autoApprove: true })
     expect(promoted.status).toBe('prd-ready')
     return proposal.id
   }
@@ -3035,17 +3050,12 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
-    // Tests in this block assert task statuses immediately after slicing.
-    // Opt into auto-approve so tasks land in 'queued'/'blocked' rather
-    // than staying in 'draft'.
-    process.env.MARS_AUTO_APPROVE_PLANS = '1'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
-    delete process.env.MARS_AUTO_APPROVE_PLANS
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -3060,7 +3070,7 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
       solution: 'route hitl slices to operator actionQueue',
     })
     await proposals.addProposalUserStory(proposal.id, 'as an operator, I see what to do')
-    const promoted = await proposals.promoteProposal(proposal.id)
+    const promoted = await proposals.promoteProposal(proposal.id, { autoApprove: true })
     expect(promoted.status).toBe('prd-ready')
     return proposal.id
   }
@@ -3342,17 +3352,12 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
-    // Tests in this block assert task statuses immediately after slicing
-    // and rely on HITL tasks landing in 'blocked' rather than 'draft'.
-    // Opt into auto-approve to restore that behaviour.
-    process.env.MARS_AUTO_APPROVE_PLANS = '1'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
-    delete process.env.MARS_AUTO_APPROVE_PLANS
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -3367,7 +3372,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
       solution: 'route hitl slices to operator and complete when both conditions met',
     })
     await proposals.addProposalUserStory(proposal.id, 'as an operator, I confirm the step')
-    const promoted = await proposals.promoteProposal(proposal.id)
+    const promoted = await proposals.promoteProposal(proposal.id, { autoApprove: true })
     expect(promoted.status).toBe('prd-ready')
     return proposal.id
   }

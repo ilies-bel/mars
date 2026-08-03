@@ -48,6 +48,7 @@ export interface Proposal {
   status: ProposalStatus
   source: ProposalSource
   coordinated: boolean
+  autoApprove: boolean
   author: Author | null
   createdAt: number
   updatedAt: number
@@ -178,6 +179,7 @@ const rowToProposal = (
     status: assertValidProposalStatus((row.status as string | null) ?? 'draft'),
     source: normaliseSource(row.source),
     coordinated: row.coordinated === true,
+    autoApprove: row.auto_approve === true,
     author,
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
@@ -270,6 +272,7 @@ export const createProposal = async (
     status: 'draft',
     source,
     coordinated: false,
+    autoApprove: false,
     author: opts?.author ?? null,
     createdAt: now,
     updatedAt: now,
@@ -679,6 +682,7 @@ export const validateProposalShaped = (proposal: Proposal): string[] => {
  */
 export const promoteProposal = async (
   idOrPrefix: string,
+  options: { autoApprove?: boolean; coordinated?: boolean } = {},
 ): Promise<Proposal> => {
   await initProposals()
   const resolved = await resolveProposalId(idOrPrefix)
@@ -708,8 +712,13 @@ export const promoteProposal = async (
   const c = stateClient()
   const now = Date.now()
   await c.execute({
-    sql: `UPDATE proposals SET status = 'prd-ready', updated_at = ? WHERE id = ?`,
-    args: [now, proposal.id],
+    sql: `UPDATE proposals
+          SET status = 'prd-ready',
+              auto_approve = ?,
+              coordinated = CASE WHEN ? THEN true ELSE coordinated END,
+              updated_at = ?
+          WHERE id = ?`,
+    args: [options.autoApprove === true, options.coordinated === true, now, proposal.id],
   })
   await emitProposalBusEvent('proposal.promoted', { proposalId: proposal.id })
   const updated = await getProposal(proposal.id)

@@ -3,7 +3,12 @@ import { resolve } from 'node:path'
 import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
 import { createQueueWorkflowStore } from './queue-workflow-store'
-import { claimProposalForSlicing, getProposal, markProposalSliced } from '../core/proposals'
+import {
+  approveProposalPlan,
+  claimProposalForSlicing,
+  getProposal,
+  markProposalSliced,
+} from '../core/proposals'
 import { getDefaultStateStore } from '../core/store/state-store'
 import { enqueueTask, updateTask } from '../core/queue'
 import { Arc } from '../core/arc'
@@ -16,7 +21,6 @@ import { type TraceEventStore } from '../core/lib/trace-events-store'
 import { nullTraceStore } from '../core/lib/run-tool'
 import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
 import { diagnoseClaudeFailure } from '../core/lib/claude-stream'
-import { loadDaemonConfig } from '../core/daemon/config'
 import { validateSliceReferences } from './slice-reference-validator'
 import type { SliceSpec } from '../core/slice-spec'
 
@@ -34,6 +38,12 @@ const sliceOutputSchema = z.object({
   proposalId: z.string(),
   status: z.string(),
   taskIds: z.array(z.string()),
+  autoApproval: z
+    .object({
+      queuedTaskIds: z.array(z.string()),
+      blockedTaskIds: z.array(z.string()),
+    })
+    .optional(),
 })
 
 /**
@@ -1169,8 +1179,6 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
     // window specifically.
     try {
       const traceStore = ctx.services.traceStore
-    const daemonConfig = loadDaemonConfig()
-    const autoApprovePlans = daemonConfig.autoApprovePlans
     let slicedTaskCount = 0
     const r = await runWorkerWithSpan({
       worker: Workers.Slicer,
@@ -1368,6 +1376,9 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
     // separately so markProposalSliced receives the true slice count and
     // the catch block can clean them up alongside the slice tasks.
     const subTaskIds: string[] = []
+    let autoApproval:
+      | { queuedTaskIds: string[]; blockedTaskIds: string[] }
+      | undefined
     // Parallel arrays that map hitl slice positions to their sub-tasks.
     // hitlSliceIndices[j] is the 0-based index in parsed.slices/taskIds;
     // subTaskIds[j] is the id of the Coder sub-task for that slice.
@@ -1534,34 +1545,6 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
           [subTaskIds[j]],
         )
       }
-      // Phase 3 (conditional): transition each slice to 'queued' or 'blocked'.
-      // Skipped when autoApprovePlans=false — tasks stay 'draft' until the
-      // operator approves the plan via `mars proposal approve`. When
-      // autoApprovePlans=true (escape hatch), runs immediately as before.
-      if (autoApprovePlans) {
-        // Phase 3: transition each slice to 'queued' (no blockers and kind='coder') or
-        // 'blocked' (has blockers or kind='hitl'). hitl slices are ALWAYS blocked —
-        // they are never dispatched to a Coder; the operator completes them manually.
-        // The daemon picks up 'queued' tasks.
-        for (let i = 0; i < taskIds.length; i += 1) {
-          const isHitl = !proposal.coordinated && parsed.slices[i].kind === 'hitl'
-          const status =
-            isHitl || (!proposal.coordinated && parsed.slices[i].blockedBy.length > 0)
-              ? 'blocked'
-              : 'queued'
-          // Route through updateTask so the lifecycle gate (IllegalTransitionError)
-          // catches any illegal transition before the status write lands (ADR-0030).
-          await updateTask(taskIds[i], { status })
-        }
-        // Phase 3b: Coder sub-tasks enqueued for hitl slices have no blockers
-        // and must be dispatched immediately — transition them to 'queued'.
-        // Routes through updateTask (not raw SQL) so the lifecycle gate
-        // (IllegalTransitionError) catches any attempted re-transition from a
-        // terminal status before the write lands (ADR-0030).
-        for (const subTaskId of subTaskIds) {
-          await updateTask(subTaskId, { status: 'queued' })
-        }
-      }
       // Defensive: never mark a proposal 'sliced' with zero tasks. The
       // slicerOutputSchema already enforces `slices.min(1)` and Phase 1
       // pushes every successfully-enqueued task into `taskIds`, so this
@@ -1602,14 +1585,19 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
         const { transferProposalBlockerToTask } = await import('../core/queue')
         await transferProposalBlockerToTask(proposal.id, taskIds[0])
       }
-      // Phase 6 (plan-approval gate): when autoApprovePlans=false, raise a
-      // level-triggered plan-approval action-queue row showing the full slice
-      // graph. The operator must call `mars proposal approve <id>` to enqueue
-      // the slices, or `mars proposal reslice <id> --feedback "..."` to discard
-      // and re-cut. When autoApprovePlans=true the row is not raised (the tasks
-      // were already enqueued in Phase 3/3b above). Best-effort — a row-raise
-      // failure must not prevent the proposal from reaching 'sliced'.
-      if (!autoApprovePlans) {
+      // Phase 6 (plan approval): promotion stores its decision on the proposal
+      // row before the asynchronous slicer begins. Re-read it after the status
+      // transition so a daemon restart cannot lose that decision. The automatic
+      // route deliberately calls the same approval function as the RPC handler.
+      const slicedProposal = await getProposal(proposal.id)
+      if (!slicedProposal) {
+        throw new Error(`proposal ${proposal.id} disappeared after slicing`)
+      }
+      if (slicedProposal.autoApprove) {
+        autoApproval = await approveProposalPlan(proposal.id)
+      } else {
+        // The held path raises the existing review item. The operator can call
+        // `mars proposal approve` to use the identical approval implementation.
         const approvalBody = buildPlanApprovalBody(proposal, parsed.slices, edgeProvenanceMap)
         await raiseActionQueueItem({
           kind: 'plan-approval',
@@ -1673,7 +1661,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
       throw error
     }
 
-    return { proposalId: proposal.id, status: 'sliced', taskIds }
+    return { proposalId: proposal.id, status: 'sliced', taskIds, autoApproval }
     } catch (error: unknown) {
       // Compensating revert for the atomic claim. Covers every failure
       // path between the claim above and a successful return — including
@@ -1769,6 +1757,10 @@ export interface RunSliceResult {
   proposalId: string
   status: string
   taskIds: string[]
+  autoApproval?: {
+    queuedTaskIds: string[]
+    blockedTaskIds: string[]
+  }
 }
 
 /** Bound on the synthesized failure message so it stays log-friendly even
