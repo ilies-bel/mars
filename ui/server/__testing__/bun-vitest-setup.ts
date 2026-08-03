@@ -90,6 +90,15 @@ const nodeBunServe = (options: BunServeOptions): Promise<BunServer> => {
     })
   })
 
+  // `startServer` explicitly sets Bun's idleTimeout to zero so a long-running
+  // daemon proxy request cannot make the next request reuse a socket that the
+  // server has already retired. Node defaults to a five-second keep-alive
+  // timeout, so honour the Bun option instead of silently changing that
+  // lifecycle contract in Vitest.
+  if (options.idleTimeout === 0) {
+    server.keepAliveTimeout = 0
+  }
+
   return new Promise<BunServer>((resolve, reject) => {
     const port = options.port ?? 0
     const hostname = options.hostname ?? '127.0.0.1'
