@@ -72,8 +72,6 @@ describe('terminal-verdict vocabulary', () => {
     'recovery_disabled:',
     // queue-fix-tasks.ts, non-code re-queue cap (two call sites)
     'non-code-retry-exhausted:',
-    // queue-fix-tasks.ts, verify-gate meta-monitor suppression
-    'gate-suppressed:',
     // queue-fix-tasks.ts, signature-storm circuit breaker first trip
     'signature-storm:',
     // recovery-spawn.ts, dispatch spend-controller suppression

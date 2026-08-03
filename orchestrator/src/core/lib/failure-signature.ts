@@ -513,9 +513,6 @@ export const RECOVERY_DISABLED_PREFIX = 'recovery_disabled:'
 /** `non-code-retry-exhausted:<sig>` — the non-code re-queue cap. */
 export const NON_CODE_RETRY_EXHAUSTED_PREFIX = 'non-code-retry-exhausted:'
 
-/** `gate-suppressed:<sig>` — the verify-gate meta-monitor's suppression verdict. */
-export const GATE_SUPPRESSED_PREFIX = 'gate-suppressed:'
-
 /** `signature-storm:<sig>` — the signature-storm circuit breaker's first trip. */
 export const SIGNATURE_STORM_PREFIX = 'signature-storm:'
 
@@ -540,7 +537,7 @@ export const ORIGIN_RECOVERY_FAILED_PREFIX = 'origin_recovery_failed:'
  *
  * Every entry marks a row on which the orchestrator's automated options are
  * SPENT: the budget is gone, the cap is hit, the kill switch is on, the gate is
- * suppressed, the recovery slot is consumed. Re-driving such a row through the
+ * recovery slot is consumed. Re-driving such a row through the
  * failure handler deterministically reproduces the same verdict, which rewrites
  * `status='failed'`, which emits a fresh `task.failed`, which the next
  * recovery-spawner drain feeds straight back in — a self-feeding 30 s loop.
@@ -567,7 +564,6 @@ export const TERMINAL_VERDICT_PREFIXES = [
   RECOVERY_EXHAUSTED_PREFIX,
   RECOVERY_DISABLED_PREFIX,
   NON_CODE_RETRY_EXHAUSTED_PREFIX,
-  GATE_SUPPRESSED_PREFIX,
   SIGNATURE_STORM_PREFIX,
   SPEND_CONTROL_SUPPRESSED_PREFIX,
   ORIGIN_RECOVERY_FAILED_PREFIX,

@@ -208,7 +208,7 @@ describe('listVerifyGates', () => {
     const { addVerifyGate, quarantineVerifyGate, listVerifyGates } = await import('../verify-gates.js')
     const id = await addVerifyGate({ name: 'typecheck', cmd: 'npx' })
 
-    await quarantineVerifyGate(id, 'verify:typecheck:exit-1', 'origin-123')
+    await quarantineVerifyGate(client, id, 'verify:typecheck:exit-1', 'origin-123')
 
     await expect(listVerifyGates()).resolves.toEqual([
       expect.objectContaining({
@@ -308,8 +308,8 @@ describe('loadVerifyGates', () => {
     const quarantined = await addVerifyGate({ scope: '.', name: 'typecheck', cmd: 'npx' })
     await addVerifyGate({ scope: '.', name: 'lint', cmd: 'eslint' })
 
-    await quarantineVerifyGate(quarantined, 'verify:typecheck:exit-1', 'origin-123')
-    await quarantineVerifyGate(quarantined, 'verify:typecheck:exit-1', 'origin-123')
+    await quarantineVerifyGate(client, quarantined, 'verify:typecheck:exit-1', 'origin-123')
+    await quarantineVerifyGate(client, quarantined, 'verify:typecheck:exit-1', 'origin-123')
 
     await expect(loadVerifyGates(client)).resolves.toEqual([
       expect.objectContaining({

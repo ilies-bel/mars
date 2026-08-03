@@ -26,6 +26,11 @@ export const EventMap = {
      */
     note: z.string().optional(),
   }),
+  'verify-gate.quarantined': z.object({
+    gateId: z.string(),
+    originId: z.string(),
+    failureSignature: z.string(),
+  }),
   'task.blocked': z.object({
     taskId: z.string(),
     fixTaskId: z.string().nullable(),

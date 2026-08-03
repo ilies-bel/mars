@@ -69,15 +69,15 @@ beforeEach(() => {
   mockLoadVerifyGates.mockReset().mockResolvedValue([
     {
       scope: '.',
-      steps: [{ name: 'root-lint', cmd: 'node', args: ['-e', ''], required: true }],
+      steps: [{ gateId: 'root-gate', name: 'root-lint', cmd: 'node', args: ['-e', ''], required: true }],
     },
     {
       scope: 'apps/web',
-      steps: [{ name: 'web-test', cmd: 'node', args: ['-e', ''], required: true }],
+      steps: [{ gateId: 'web-gate', name: 'web-test', cmd: 'node', args: ['-e', ''], required: true }],
     },
     {
       scope: 'services/api',
-      steps: [{ name: 'api-test', cmd: 'node', args: ['-e', ''], required: true }],
+      steps: [{ gateId: 'api-gate', name: 'api-test', cmd: 'node', args: ['-e', ''], required: true }],
     },
   ])
   mockAppendEnrichmentScopes
@@ -128,8 +128,8 @@ describe('review verify coverage', () => {
       expect.objectContaining({
         changedFiles: ['apps/web/App.tsx'],
         steps: [
-          expect.objectContaining({ name: 'root-lint', dir: '.' }),
-          expect.objectContaining({ name: 'web-test', dir: 'apps/web' }),
+          expect.objectContaining({ gateId: 'root-gate', name: 'root-lint', dir: '.' }),
+          expect.objectContaining({ gateId: 'web-gate', name: 'web-test', dir: 'apps/web' }),
         ],
       }),
     )

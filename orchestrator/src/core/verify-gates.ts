@@ -228,13 +228,13 @@ export const removeVerifyGate = async (
  * evidence and updating the gate's latest observed failure on every call.
  */
 export const quarantineVerifyGate = async (
+  client: DbTx,
   id: string,
   signature: string,
   originId: string,
-): Promise<void> => {
-  const c = resolveStateClient()
+): Promise<boolean> => {
   const now = Date.now()
-  await c.execute(
+  const result = await client.execute(
     `UPDATE verify_gates
         SET state = 'quarantined',
             quarantined_at = CASE WHEN state = 'active' THEN ? ELSE quarantined_at END,
@@ -242,9 +242,10 @@ export const quarantineVerifyGate = async (
             last_failure_signature = ?,
             last_failure_at = ?,
             last_failure_origin_id = ?
-      WHERE id = ?`,
+      WHERE id = ? AND state = 'active'`,
     [now, signature, signature, now, originId, id],
   )
+  return result.rowsAffected > 0
 }
 
 /**
@@ -306,6 +307,7 @@ export const loadVerifyGates = async (client: DbTx): Promise<VerifyScope[]> => {
       row.tier === 'task' || row.tier === 'integration' ? row.tier : undefined
     const step: VerifyStepSpec = {
       name: row.name,
+      gateId: row.id,
       cmd: row.cmd,
       args: JSON.parse(row.args_json) as string[],
       required: row.required !== 0,

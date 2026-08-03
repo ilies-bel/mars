@@ -86,8 +86,11 @@ import { getTask, hasIncompleteBlockers, TERMINAL_TASK_STATUSES, updateTask } fr
 import { Arc } from '../../core/arc'
 import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks'
 import { computeFailureSignature } from '../../core/lib/failure-signature'
+import { observeVerifyGateFailure } from '../../core/lib/gate-meta-monitor'
 import { resolveOriginIdForTask } from '../../core/lib/origin'
 import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
+import { quarantineVerifyGate } from '../../core/verify-gates'
+import { buildEventInsert } from '../../bus/publisher'
 import { raiseActionQueueItem } from '../../core/lib/action-queue'
 import { findLiveWorktreeDependents } from '../../core/lib/worktree-dependents'
 import { AWAIT_HUMAN_SENTINEL } from '../../core/lib/sentinels'
@@ -2491,6 +2494,65 @@ export const review = async (
         verifyOutput +
         '\n\n=== gate outcomes ===\n' +
         gateOutcomesBlock
+
+      // Registry-backed task gates are observed before ordinary failure
+      // handling. A systemic threshold crossing quarantines only that gate,
+      // turning its result into a passing CAN'T-VERIFY diagnostic; any other
+      // active gate failure remains a normal task failure.
+      if (!r.passed) {
+        for (const step of r.steps) {
+          if (step.passed || step.tier !== 'task' || step.gateId === undefined) continue
+          const failureSignature = computeFailureSignature(
+            `verify:${step.name}`,
+            step.output,
+          )
+          try {
+            const quarantined = await store.atomic(async (tx) => {
+              const observed = await observeVerifyGateFailure(tx, {
+                gateId: step.gateId!,
+                originId: trace.originId,
+                failureSignature,
+                failedAt: Date.now(),
+              })
+              if (!observed.thresholdCrossed) return false
+              const transitioned = await quarantineVerifyGate(
+                tx,
+                step.gateId!,
+                failureSignature,
+                trace.originId,
+              )
+              if (transitioned) {
+                await tx.execute(
+                  buildEventInsert('verify-gate.quarantined', {
+                    gateId: step.gateId!,
+                    originId: trace.originId,
+                    failureSignature,
+                  }),
+                )
+              }
+              return transitioned
+            })
+            if (quarantined) {
+              step.passed = true
+              step.output = `CAN'T-VERIFY: registry gate ${step.name} was quarantined after systemic failures\n${step.output}`
+            }
+          } catch (error) {
+            console.error(
+              `[verify] task ${taskId}: could not observe registry gate ${step.gateId}:`,
+              error,
+            )
+          }
+        }
+        const stillHasRequiredFailure = r.steps.some((step) => {
+          if (step.passed) return false
+          if (step.gateId === undefined) return true
+          return steps.find((spec) => spec.gateId === step.gateId)?.required ?? true
+        })
+        if (!stillHasRequiredFailure) {
+          r.passed = true
+          r.verdict = "CAN'T-VERIFY"
+        }
+      }
 
       if (!r.passed) {
         const failed = r.steps.filter((s) => !s.passed)

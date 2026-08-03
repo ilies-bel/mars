@@ -18,10 +18,6 @@ import {
 } from './queue-retry'
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/task-store'
 import {
-  isVerdictSuppressed,
-  recordGateVerdict,
-} from './lib/gate-meta-monitor'
-import {
   Arc,
   type UpsertFixTaskInput,
   type UpsertFixTaskResult,
@@ -33,7 +29,6 @@ import {
 // reason ended up unrecognised and looping (mars-76fef59f).
 import {
   composeRecoveryFailureReason,
-  GATE_SUPPRESSED_PREFIX,
   isTerminalVerdictReason,
   NON_CODE_RETRY_EXHAUSTED_PREFIX,
   RECOVERY_DISABLED_PREFIX,
@@ -198,9 +193,6 @@ const stepFamilyLabel = (failingStep: string): string => {
  * kills are per-task, never gate-wide, so a fleet-wide identical verdict there
  * is not the "starved gate" signature the monitor guards against.
  */
-const isVerifyGateFailingStep = (failingStep: string): boolean =>
-  failingStep.startsWith('verify:')
-
 const DEFAULT_MAX_FIX_ATTEMPTS = 2
 
 /**
@@ -452,7 +444,6 @@ export interface HandleTaskFailureViaTaskResult {
     | 'failed'
     | 'escalated'
     | 'fix-fail-loop'
-    | 'gate-suppressed'
     | 'noop'
     | 'non-code-retry-exhausted'
     | 'requeued'
@@ -875,57 +866,9 @@ export const handleTaskFailureWithFixTask = async (
     // raised in place of a storm trip.
   }
 
-  // Verify-gate meta-monitor (draft proposal acd01d23). Reached only for a
-  // NON-recovery origin task (the recovery branch above returned). A verify-gate
-  // failure is one whose failing step begins with `verify:` — the shape the
-  // verify primitive stamps. Feed its verdict (the computed failureSignature) to
-  // the monitor, then suppress recovery when the same verdict has failed K
-  // consecutive DIFFERENT tasks.
-  //
-  // Suppression short-circuits BEFORE any fix-task insertion, so a suppressed
-  // failure consumes ZERO of the origin's one recovery slot: the origin is
-  // marked `failed` (restartable — an operator `mars restart`s it once the gate
-  // is fixed) rather than `blocked` behind a spawned-and-doomed recovery. The
-  // one-recovery-per-origin invariant (ADR-0040/0061) is untouched: this is
-  // failure classification, not a retry knob. Recording is best-effort — a
-  // monitor DB hiccup must never break the real recovery path.
-  //
-  // Environmental verify-gate failures are excluded: worktree-missing and
-  // similar conditions are infrastructure incidents, not broken-gate evidence.
-  if (isVerifyGateFailingStep(input.failingStep) && !isEnvironmentalSignature(failureSignature)) {
-    try {
-      await recordGateVerdict(s, input.taskId, failureSignature)
-      if (await isVerdictSuppressed(s, failureSignature)) {
-        await updateTask(
-          input.taskId,
-          {
-            status: 'failed',
-            error: truncatedError,
-            failedPhase: 'verify',
-            failureReason: `${GATE_SUPPRESSED_PREFIX}${failureSignature}`,
-            failureSignature,
-            failureReasonCode: failureSignature,
-          },
-          s,
-        )
-        return {
-          outcome: 'gate-suppressed',
-          failureSignature,
-          retryCount: task.retryCount,
-        }
-      }
-    } catch (monitorErr) {
-      // eslint-disable-next-line no-console
-      console.error(
-        `[gate-meta-monitor] task ${input.taskId} verdict tracking errored (non-fatal):`,
-        monitorErr,
-      )
-    }
-  }
-
   // Gate-enrichment observation (PRD 745f33e0). Reached only for a NON-recovery
-  // origin failure that is not gate-suppressed (both branches return above), so
-  // a broken-gate storm never mints candidates. Signature-keyed idempotency:
+  // origin failure. Registry-gate quarantine happens before this handler, so
+  // quarantined gates never mint candidates. Signature-keyed idempotency:
   // a claimed signature (any status) only bumps seen_count; a new ENCODABLE
   // signature claims a candidate row, spawns ONE detached Writer-tagged draft
   // task, and raises ONE approval action-queue row; a new NON-encodable

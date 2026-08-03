@@ -74,6 +74,8 @@ const isNpxTscStep = (spec: VerifyStepSpec): boolean =>
 
 export interface VerifyStep {
   name: string
+  /** Stable verify_gates.id for a registry-backed step. */
+  gateId?: string
   passed: boolean
   output: string
   /**
@@ -116,6 +118,8 @@ export interface VerifyStep {
 
 export interface VerifyStepSpec {
   name: string
+  /** Stable verify_gates.id for a registry-backed step. */
+  gateId?: string
   cmd: string
   args: readonly string[]
   required: boolean
@@ -199,6 +203,7 @@ export interface VerifyResult {
 
 const runVerifyStep = async (
   name: string,
+  gateId: string | undefined,
   cmd: string,
   args: readonly string[],
   cwd: string,
@@ -212,6 +217,7 @@ const runVerifyStep = async (
   if (r.exitCode === 0) {
     return {
       name,
+      ...(gateId !== undefined ? { gateId } : {}),
       passed: true,
       output: r.stdout + r.stderr,
       exitCode: r.exitCode,
@@ -237,6 +243,7 @@ const runVerifyStep = async (
           : rawOutput
   return {
     name,
+    ...(gateId !== undefined ? { gateId } : {}),
     passed: false,
     output,
     exitCode: signal?.aborted ? null : r.exitCode,
@@ -561,6 +568,7 @@ export const verifyChanges = async (
     if (spec.tier === 'integration') {
       results.push({
         name: spec.name,
+        ...(spec.gateId !== undefined ? { gateId: spec.gateId } : {}),
         tier: 'integration',
         passed: true,
         output: 'deferred to integration — runs at integration boundary',
@@ -581,6 +589,7 @@ export const verifyChanges = async (
     if (args.signal?.aborted) {
       results.push({
         name: spec.name,
+        ...(spec.gateId !== undefined ? { gateId: spec.gateId } : {}),
         tier: 'task',
         passed: false,
         output: 'step not started: abort signal already fired',
@@ -609,6 +618,7 @@ export const verifyChanges = async (
       if (!hasTsconfig || !hasBin) {
         results.push({
           name: spec.name,
+          ...(spec.gateId !== undefined ? { gateId: spec.gateId } : {}),
           tier: 'task',
           passed: true,
           output: `typecheck skipped: no real TypeScript toolchain detected in ${stepCwd} (tsconfig.json present: ${hasTsconfig}, local tsc binary found: ${hasBin})`,
@@ -623,6 +633,7 @@ export const verifyChanges = async (
     const stepStart = performance.now()
     const result = await runVerifyStep(
       spec.name,
+      spec.gateId,
       spec.cmd,
       spec.args,
       stepCwd,
