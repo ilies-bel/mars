@@ -157,6 +157,7 @@ describe('GET /view/progress', () => {
         prompt: 'do the thing',
         intent: null,
         status: 'queued',
+        priority: 0,
         cluster: 'Queued',
         plan: null,
         branch: null,
@@ -200,6 +201,7 @@ describe('GET /view/progress', () => {
       }
       expect(body.tasks).toHaveLength(1)
       expect(body.tasks[0]!.id).toBe('task-1')
+      expect(body.tasks[0]!.priority).toBe(0)
       expect(body.tasks[0]!.cluster).toBe('Queued')
       expect(body.tasks[0]!.parentProposalId).toBe('prop-1')
       expect(body.proposals).toHaveLength(1)

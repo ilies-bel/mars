@@ -17,6 +17,20 @@ import {
   type ProposalReader,
 } from '../progress.js'
 
+describe('buildProgressView task priority', () => {
+  it('includes the numeric priority of a queued task in its non-empty payload', async () => {
+    const { tasks } = await buildProgressView(
+      makeStore([makeRow({ id: 'queued-high', priority: 3 })]),
+      noProposals,
+      zeroAggregates,
+    )
+
+    expect(tasks).toEqual([
+      expect.objectContaining({ id: 'queued-high', priority: 3 }),
+    ])
+  })
+})
+
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
 const noProposals: ProposalReader = {
@@ -32,6 +46,7 @@ const makeRow = (overrides: Partial<ProgressTaskRow> = {}): ProgressTaskRow => (
   prompt: 'Do something',
   intent: null,
   status: 'queued',
+  priority: 0,
   planFunctional: null,
   planTechnical: null,
   branch: null,

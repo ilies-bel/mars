@@ -62,6 +62,7 @@ export interface ProgressTask {
    */
   intent: string | null
   status: string
+  priority: number
   cluster: Cluster
   plan: { functional: string; technical: string } | null
   branch: string | null
@@ -98,6 +99,7 @@ export interface ProgressTaskRow {
   prompt: string
   intent: string | null
   status: string
+  priority: number
   planFunctional: string | null
   planTechnical: string | null
   branch: string | null
@@ -226,6 +228,7 @@ export const buildProgressView = async (
       prompt: row.prompt,
       intent: row.intent,
       status: row.status,
+      priority: row.priority,
       cluster,
       plan:
         f !== null || t !== null
@@ -317,6 +320,8 @@ export const createProgressTaskStore = (client: DbClient): ProgressTaskStore => 
   async listProgressTasks() {
     const r = await client.execute(`
       SELECT t.id, t.prompt, t.intent, t.status,
+             -- Legacy task rows may have a NULL priority; 0 is the lowest priority.
+             COALESCE(t.priority, 0) AS priority,
              t.plan_functional, t.plan_technical,
              t.branch, t.worktree_path, t.error,
              t.failure_signature, t.drop_reason,
@@ -346,6 +351,7 @@ export const createProgressTaskStore = (client: DbClient): ProgressTaskStore => 
         prompt: ro.prompt as string,
         intent: (ro.intent as string | null) ?? null,
         status: ro.status as string,
+        priority: Number(ro.priority ?? 0),
         planFunctional: (ro.plan_functional as string | null) ?? null,
         planTechnical: (ro.plan_technical as string | null) ?? null,
         branch: (ro.branch as string | null) ?? null,
