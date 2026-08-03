@@ -848,7 +848,7 @@ describe('checkAndEscalateRequeueCeiling', () => {
     const { q, ws, ceiling } = await loadModules(repo)
     // Import continue-task in the same module-reset context so it shares the DB.
     const { coreContinueTask } = (await import('../continue-task')) as {
-      coreContinueTask: (id: string) => Promise<{ degradedToRestart: boolean; codePhaseResume?: boolean; note?: string }>
+      coreContinueTask: (id: string) => Promise<{ degradedToRestart: boolean; coderResume?: boolean; note?: string }>
     }
 
     const t = await q.enqueueTask('48h-old failed task', undefined, { skipTriage: true })

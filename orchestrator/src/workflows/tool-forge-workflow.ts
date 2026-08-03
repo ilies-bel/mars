@@ -35,7 +35,8 @@ const toolForgeInputSchema = z.object({
   kind: kindSchema,
   integrationBranch: z.string().default('main'),
   spec: specSchema,
-  resumeFromCodePhase: z.boolean().default(false),
+  resumeFromPriorAttempt: z.boolean().default(false),
+  verifyFailureOutput: z.string().nullable().default(null),
   recoveryPayload: z.string().nullable().default(null),
   fixForTaskId: z.string().nullable().default(null),
 })

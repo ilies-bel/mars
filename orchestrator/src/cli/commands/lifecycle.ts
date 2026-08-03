@@ -119,7 +119,9 @@ Resume failed task(s) on their existing worktree and branch, preserving
 commits already made by the worker. In short: resume failed tasks from their last checkpoint.
 There are no flags in v1.
 
-Code-phase failure resumes from a salvage checkpoint. Pre-setup failures,
+Code- and verify-phase failures re-enter the coder on the preserved worktree;
+code failures first salvage dangling changes and verify failures include the
+recorded verify output. Pre-setup failures,
 missing worktrees, and legacy rows are Degraded-to-restart and report
 degradedToRestart: true.
 
@@ -167,9 +169,9 @@ branch. Use --force to restart despite a live recovery.`,
         verb === 'continue' &&
         res !== null &&
         typeof res === 'object' &&
-        (res as { codePhaseResume?: boolean }).codePhaseResume === true
+        (res as { coderResume?: boolean }).coderResume === true
       ) {
-        note = `queued ${id} to continue from code phase — prior work in worktree preserved (run 'git log' in the worktree to review)`
+        note = `queued ${id} to continue from code — prior work in worktree preserved (run 'git log' in the worktree to review)`
       } else if (
         verb === 'restart' &&
         res !== null &&

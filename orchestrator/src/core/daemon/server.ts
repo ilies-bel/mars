@@ -1356,13 +1356,28 @@ export const startDaemon = async (
         if (evt.event === 'vcs-supervisor-event') return
         log(`[implement] ${task.id} ${evt.step ?? 'run'}:${evt.event}`)
       }
-      // Detect a code-phase resume: the task was continued (not restarted)
-      // after a code-phase failure, so its worktree is preserved on disk.
-      // The workflow injects a resume banner into the coder prompt so the
-      // agent reads prior progress before continuing. failedPhase stays on
-      // the row across the re-queue (coreContinueTask does not clear it),
-      // which is how we distinguish a resume from a first-time dispatch.
-      const resumeFromCodePhase = task.failedPhase === 'code' && !!task.worktreePath
+      // Detect a resume that must re-enter the coder. A verify failure has
+      // completed code checkpoints, but continue clears them so the worker can
+      // repair its own diff instead of re-running an unchanged verify step.
+      // failedPhase stays on the row across re-queue, which distinguishes this
+      // from a first-time dispatch.
+      const resumeFromPriorAttempt =
+        (task.failedPhase === 'code' || task.failedPhase === 'verify') && !!task.worktreePath
+      const verifyResumeEvent =
+        task.failedPhase === 'verify'
+          ? (await traceStore.query({
+              taskId: task.id,
+              phase: ['verify'],
+              kind: ['step_ended'],
+              limit: 1,
+            }))[0]
+          : undefined
+      const verifyFailureOutput =
+        typeof verifyResumeEvent?.payload.commandOutput === 'string'
+          ? verifyResumeEvent.payload.commandOutput
+          : task.failedPhase === 'verify'
+            ? task.error
+            : null
       const result = await runWorkflow(
         workflowToRun,
         workflowKind === 'coordinator'
@@ -1384,7 +1399,8 @@ export const startDaemon = async (
                   prescriptiveAction: task.spec.prescriptiveAction ?? null,
                 }
               : null,
-            resumeFromCodePhase,
+            resumeFromPriorAttempt,
+            verifyFailureOutput,
             recoveryPayload: task.recoveryPayload ?? null,
             fixForTaskId: task.fixForTaskId ?? null,
             qa: task.qa ?? 'auto',

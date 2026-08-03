@@ -110,7 +110,7 @@ describe('continue degrades to restart for pre-setup failures', () => {
     const result = await continueTask.coreContinueTask(task.id)
 
     expect(result.degradedToRestart).toBe(false)
-    expect(result.codePhaseResume).toBe(true)
+    expect(result.coderResume).toBe(true)
 
     const after = await queue.getTask(task.id)
     expect(after?.status).toBe('queued')
@@ -295,6 +295,91 @@ describe('continue degrades to restart for pre-setup failures', () => {
     expect(after?.branch).toBe(`task/${task.id}`) // preserved
   })
 
+  it('rewinds a verify failure to the coder without discarding its committed work', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+    const task = await queue.enqueueTask('add the missing task field', undefined, { skipTriage: true })
+    const worktreePath = resolve(repo, '.mars', 'worktrees', task.id)
+    const branch = `task/${task.id}`
+
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    writeFileSync(resolve(worktreePath, 'feature.ts'), 'export const priority = 1\n')
+    execFileSync('git', ['add', 'feature.ts'], { cwd: worktreePath })
+    execFileSync('git', ['commit', '-qm', 'add task priority'], { cwd: worktreePath })
+    const committedHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: worktreePath,
+      encoding: 'utf-8',
+    }).trim()
+
+    const { createQueueWorkflowStore } = await import('../../../workflows/queue-workflow-store')
+    const workflowStore = createQueueWorkflowStore(queue.resolveQueueClient())
+    const now = Date.now()
+    await workflowStore.createRun({
+      id: task.id,
+      workflowId: 'implement',
+      inputJson: '{}',
+      status: 'failed',
+      createdAt: now,
+      updatedAt: now,
+    })
+    await workflowStore.putStep({
+      runId: task.id,
+      name: 'setup-worktree',
+      status: 'completed',
+      sha: null,
+      startedAt: now,
+      finishedAt: now,
+      attempt: 1,
+      summary: null,
+      errorSummary: null,
+      transcriptKey: null,
+      resultJson: null,
+    })
+    await workflowStore.putStep({
+      runId: task.id,
+      name: 'run-claude-code',
+      status: 'completed',
+      sha: null,
+      startedAt: now,
+      finishedAt: now,
+      attempt: 1,
+      summary: null,
+      errorSummary: null,
+      transcriptKey: null,
+      resultJson: null,
+    })
+    await workflowStore.putStep({
+      runId: task.id,
+      name: 'review',
+      status: 'failed',
+      sha: null,
+      startedAt: now,
+      finishedAt: now,
+      attempt: 1,
+      summary: null,
+      errorSummary: 'typecheck failed: priority is missing',
+      transcriptKey: null,
+      resultJson: null,
+    })
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'typecheck failed: priority is missing',
+      failedPhase: 'verify',
+      branch,
+      worktreePath,
+    })
+
+    const result = await continueTask.coreContinueTask(task.id)
+
+    expect(result).toEqual({ degradedToRestart: false, coderResume: true })
+    expect(execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: worktreePath,
+      encoding: 'utf-8',
+    }).trim()).toBe(committedHead)
+    expect((await workflowStore.listSteps(task.id)).map((step) => step.name)).toEqual([
+      'setup-worktree',
+    ])
+  })
+
   // ── Auto-commit dirty worktree before code-phase resume ───────────────────
 
   it('auto-commits dirty worktree before code-phase resume', async () => {
@@ -321,7 +406,7 @@ describe('continue degrades to restart for pre-setup failures', () => {
       const result = await continueTask.coreContinueTask(task.id)
 
       expect(result.degradedToRestart).toBe(false)
-      expect(result.codePhaseResume).toBe(true)
+      expect(result.coderResume).toBe(true)
 
       // Verify a wip commit was created.
       const log = execFileSync('git', ['log', '--oneline'], {

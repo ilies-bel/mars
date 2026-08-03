@@ -213,7 +213,9 @@ Each task prompt must stand alone. Include:
   <id> [<id> ...]` is the **default** recovery verb — it resumes the task on
   its *existing worktree and branch*, reusing every commit the worker already
   landed (a code-phase failure auto-commits dangling changes as a salvage
-  checkpoint first). A pre-setup failure or a missing worktree degrades
+  checkpoint first). A verify-phase failure rewinds to the coder on that same
+  worktree and includes the recorded verify output so it can repair the diff.
+  A pre-setup failure or a missing worktree degrades
   safely to a restart and reports `degradedToRestart: true`.
   `mars restart <id>` is the **destructive** sibling: it wipes the worktree
   and branch and re-runs from `setup`, discarding the worker's commits — use

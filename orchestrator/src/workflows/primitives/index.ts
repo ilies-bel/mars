@@ -274,7 +274,8 @@ export interface MarsWorkflowInput {
   kind?: 'task' | 'fix' | 'diagnose'
   integrationBranch?: string
   spec?: TaskSpec | null
-  resumeFromCodePhase?: boolean
+  resumeFromPriorAttempt?: boolean
+  verifyFailureOutput?: string | null
   recoveryPayload?: string | null
   fixForTaskId?: string | null
 }
@@ -1045,8 +1046,10 @@ export interface RunAgentOpts {
   spec?: TaskSpec | null
   /** Merge target. Default `'main'`. */
   integrationBranch?: string
-  /** True when re-dispatched after a code-phase failure (prepends a resume banner). Default false. */
-  resumeFromCodePhase?: boolean
+  /** True when re-dispatched to repair a prior attempt (prepends a resume banner). Default false. */
+  resumeFromPriorAttempt?: boolean
+  /** Recorded output from the failed verify, when the resumed coder should repair it. */
+  verifyFailureOutput?: string | null
   /** Override the task id (defaults to `ctx.runId`). */
   taskId?: string
   /** Override the worktree (defaults to the one stashed by setupWorktree). */
@@ -1113,8 +1116,10 @@ export const runAgent = async (
   const spec = opts.spec ?? input(ctx).spec ?? null
   const integrationBranch =
     opts.integrationBranch ?? input(ctx).integrationBranch ?? 'main'
-  const resumeFromCodePhase =
-    opts.resumeFromCodePhase ?? input(ctx).resumeFromCodePhase ?? false
+  const resumeFromPriorAttempt =
+    opts.resumeFromPriorAttempt ?? input(ctx).resumeFromPriorAttempt ?? false
+  const verifyFailureOutput =
+    opts.verifyFailureOutput ?? input(ctx).verifyFailureOutput ?? null
   const model = opts.model
   const store: TaskStore = ctx.services.store
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
@@ -1174,7 +1179,7 @@ export const runAgent = async (
   // already synced and the integration branch has not advanced since.
   //
   // `reconcile`, never `recreate`: by the time the code step runs, the branch's
-  // commits are the run's own prior progress — `resumeFromCodePhase` literally
+  // commits are the run's own prior progress — `resumeFromPriorAttempt` literally
   // tells the coder "prior progress is already in this worktree, review
   // `git log -p` and continue". Resetting it here would silently gut that, so
   // a conflict goes to the vcs-supervisor and only escalates if it cannot be
@@ -1213,8 +1218,8 @@ export const runAgent = async (
 
   const originId = await resolveOriginIdForTask(taskId)
   const primaryTag: TaskTag = tags.find(isTaskTag) ?? 'coder'
-  const basePrompt = resumeFromCodePhase
-    ? `## Code-phase resume\n\nPrior progress is already in this worktree. Run \`git log -p\` first to review what was already completed, then continue from where the last coder stopped. Do NOT restart from scratch.\n\n${prompt}`
+  const basePrompt = resumeFromPriorAttempt
+    ? `## Resume prior work\n\nPrior progress is already in this worktree. Run \`git log -p\` first to review what was already completed, then continue from where the last coder stopped. Do NOT restart from scratch.${verifyFailureOutput === null ? '' : `\n\nThe previous verification failed. Fix the task diff using this recorded output:\n\n\`\`\`text\n${verifyFailureOutput}\n\`\`\``}\n\n${prompt}`
     : prompt
   const fullTask = await store.getTask(taskId).catch(() => null)
   const domains = resolveTaskDomains({

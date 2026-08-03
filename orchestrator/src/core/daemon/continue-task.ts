@@ -15,11 +15,11 @@ export interface ContinueResult {
    */
   degradedToRestart: boolean
   /**
-   * True when the task failed in the code phase and its worktree was
-   * preserved on disk. The workflow re-enters at the code step — the
-   * resuming coder picks up where the previous one stopped.
+   * True when continue rewound the workflow to its coder step while keeping
+   * the existing worktree and branch. This covers both an interrupted coder
+   * and a verify failure whose fix belongs in the task's own diff.
    */
-  codePhaseResume?: boolean
+  coderResume?: boolean
   /**
    * Human-readable explanation when `degradedToRestart` is true. The CLI
    * surfaces this so the operator understands why their `mars continue`
@@ -31,18 +31,13 @@ export interface ContinueResult {
 /**
  * Core continue mechanics shared by the UDS RPC handler.
  *
- * Happy path — resumable phase ('verify' or 'merge'): the task failed in a
- * resumable phase and its worktree still exists on disk. We re-queue it
- * as-is (`status:'queued'`, `error:null`) — WITHOUT any `resumeFrom` hint.
- * Resume is engine-driven: the daemon dispatches
- * `runWorkflow(..., { runId: task.id })`, so the re-dispatch re-enters the
- * implement workflow with the same runId and the @mars/workflow engine
- * short-circuits every step whose checkpoint record is already `'completed'`,
- * picking up exactly where the prior run failed. `failedPhase` stays on the
- * row: it still records which phase failed and drives the
- * degraded-vs-resume decision below and the operator display.
+ * Verify-phase resume path: the worktree and branch already contain the
+ * worker's commits, but the code checkpoint is completed. Continue clears
+ * that checkpoint (and its downstream checkpoints), so the same runId
+ * re-enters at the coder rather than deterministically retrying verify. The
+ * daemon supplies the prior verify output in the coder prompt.
  *
- * Code-phase resume path (NEW): the task failed in the code phase
+ * Code-phase resume path: the task failed in the code phase
  * (`failedPhase === 'code'`) but its worktree exists on disk. This happens
  * when the coder was killed mid-implementation (context-exhausted, watchdog,
  * crash) with uncommitted work sitting in the worktree. Before re-queuing,
@@ -239,7 +234,17 @@ export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
     throw new Error(summary)
   }
 
-  if (task.failedPhase === 'code') {
+  if (task.failedPhase === 'verify') {
+    // A verify failure normally has a completed coder checkpoint, so merely
+    // re-queuing would skip code and repeat the same verify inputs forever.
+    // Rewind from the standard coder step while preserving setup and every git
+    // commit in the worktree. A missing checkpoint is harmless: the engine
+    // will execute a step it cannot find on the next dispatch.
+    const { clearStepsFromCheckpoint } = await import('../../workflows/queue-workflow-store')
+    await clearStepsFromCheckpoint(id, 'run-claude-code')
+  }
+
+  if (task.failedPhase === 'code' || task.failedPhase === 'verify') {
     // Set requeueAnchorMs to now so the poll-fallback ceiling measures elapsed
     // time from this operator-initiated resume, not from the original run's
     // first step (which may be hours or days old — the journal is preserved
@@ -250,7 +255,7 @@ export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
       requeueAnchorMs: Date.now(),
       requeueDispatchUptimeMs: null,
     }, store)
-    return { degradedToRestart: false, codePhaseResume: true }
+    return { degradedToRestart: false, coderResume: true }
   }
 
   // Re-queue as-is. No `resumeFrom`: engine checkpoint-resume (runId=task.id)

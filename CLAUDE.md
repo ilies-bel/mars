@@ -318,7 +318,9 @@ recovery-spawn path itself.
   its *existing worktree and branch*, reusing every commit the worker already
   landed. A code-phase failure auto-commits any dangling changes as a salvage
   checkpoint, then resumes the coder with a banner explaining that prior work
-  is preserved. A pre-setup failure, a missing branch/worktree, or a legacy
+  is preserved. A verify-phase failure rewinds to the coder on that same
+  worktree and supplies the recorded verify output, so the worker can repair
+  its diff without losing its commits. A pre-setup failure, a missing branch/worktree, or a legacy
   row with no recorded `failed_phase` silently degrades to a restart and
   reports `degradedToRestart: true`. It refuses (non-zero) only for a
   non-`failed` task, or one with an in-flight recovery.

@@ -274,6 +274,29 @@ describe('auto-commit fast path for coder-left-uncommitted', () => {
     expect(subjects[0]).toBe('feat: done')
   })
 
+  it('gives a resumed coder the verify failure that needs fixing', async () => {
+    mockRunWorkerWithSpan.mockResolvedValue(cleanCoderResult())
+    const ctx = makeCtx('test-auto', makeStore()) as {
+      input: Record<string, unknown>
+    }
+    ctx.input = {
+      ...ctx.input,
+      resumeFromPriorAttempt: true,
+      verifyFailureOutput: 'typecheck: Property priority is missing',
+    }
+
+    await runAgent(ctx as never, {
+      worktree: { path: repo, branch: 'task/test-auto' },
+    })
+
+    expect(mockRunWorkerWithSpan).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining('Property priority is missing'),
+    }))
+    expect(mockRunWorkerWithSpan).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining('Resume prior work'),
+    }))
+  })
+
   it('records provider, commit source, and metered context for the task', async () => {
     writeFileSync(resolve(repo, 'done.ts'), 'export const done = true\n')
     execFileSync('git', ['add', 'done.ts'], { cwd: repo })

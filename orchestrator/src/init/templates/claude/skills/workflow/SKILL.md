@@ -92,7 +92,7 @@ import {
   defineWorkflow,
   setupWorktree,   // opts: kind, integrationBranch, recoveryPayload, fixForTaskId, taskId
   runAgent,        // opts: prompt, plan, tags, kind, spec, integrationBranch,
-                   //       resumeFromCodePhase, taskId, worktree, model,
+                   //       resumeFromPriorAttempt, verifyFailureOutput, taskId, worktree, model,
                    //       mode ('auto'|'manual'), guide
   verify,          // opts: kind, integrationBranch, recoveryPayload, taskId,
                    //       worktree, mode ('auto'|'manual'), guide

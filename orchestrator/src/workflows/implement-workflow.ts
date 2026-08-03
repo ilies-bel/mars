@@ -52,11 +52,13 @@ export const implementInputSchema = z.object({
   integrationBranch: z.string().default('main'),
   spec: specSchema,
   /**
-   * True when the task is being re-dispatched after a code-phase failure with
+   * True when the task is being re-dispatched after a failed attempt with
    * an existing worktree. The code step prepends a resume banner to the coder
    * prompt so the agent reads prior progress before continuing.
    */
-  resumeFromCodePhase: z.boolean().default(false),
+  resumeFromPriorAttempt: z.boolean().default(false),
+  /** Recorded verify output for a coder that is re-entering after verify failed. */
+  verifyFailureOutput: z.string().nullable().default(null),
   /**
    * JSON-serialised recovery payload from `tasks.recovery_payload`. Present
    * only on `kind='fix'` tasks.
