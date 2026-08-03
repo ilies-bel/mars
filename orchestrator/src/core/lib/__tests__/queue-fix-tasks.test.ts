@@ -21,6 +21,7 @@ import { execFileSync } from 'node:child_process'
 
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
+  listTasks: typeof import('../../queue').listTasks
   updateTask: typeof import('../../queue').updateTask
   getTask: typeof import('../../queue').getTask
   resolveQueueClient: typeof import('../../queue').resolveQueueClient
@@ -278,6 +279,48 @@ describe('queue-fix-tasks', () => {
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('blocked')
     expect(reloaded?.retryCount).toBe(1)
+    cleanup()
+  })
+
+  it('dispatches exactly one recovery when an origin has already failed verification', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft, rc } = await loadModules(repo)
+    const sig = 'verify:typecheck/typecheck-cannot-find-name'
+    const cleanup = registerTestRecipe(rc, sig)
+    const origin = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+    const worktreePath = resolve(repo, '.mars', 'worktrees', origin.id)
+    mkdirSync(worktreePath, { recursive: true })
+
+    await q.updateTask(origin.id, {
+      status: 'failed',
+      branch: 'task/failed-origin',
+      worktreePath,
+      failedPhase: 'verify',
+      failureReason: 'verify:typecheck',
+      failureSignature: sig,
+      failureReasonCode: sig,
+      error: 'TS2304: cannot find name foo',
+    })
+
+    const first = await ft.handleTaskFailureWithFixTask({
+      taskId: origin.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+      branch: 'task/failed-origin',
+    })
+    const second = await ft.handleTaskFailureWithFixTask({
+      taskId: origin.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+      branch: 'task/failed-origin',
+    })
+
+    expect(first.outcome).toBe('blocked')
+    expect(second.outcome).toBe('noop')
+    expect((await q.getTask(origin.id))?.status).toBe('blocked')
+    expect(
+      (await q.listTasks()).filter((task) => task.fixForTaskId === origin.id),
+    ).toHaveLength(1)
     cleanup()
   })
 

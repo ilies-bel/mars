@@ -1445,6 +1445,16 @@ export const handleTaskFailureWithFixTask = async (
     }
   }
 
+  // Workflow primitives record the failed terminal state before their inline
+  // recovery-dispatch span. `spawnRecovery` correctly parks an origin behind
+  // its fix task as `blocked`, but the terminal-state trigger deliberately
+  // rejects that transition until this audited reopen has happened. The durable
+  // recovery-spawner already performs the same reopen; keeping it beside the
+  // common spawn call makes the inline and durable dispatch paths equivalent.
+  if (task.status === 'failed') {
+    await reopenTerminalTask(input.taskId, 'recovery dispatch', s)
+  }
+
   const result = await upsertFixTask({
     sourceTaskId: input.taskId,
     failureSignature,
