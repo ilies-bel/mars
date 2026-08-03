@@ -26,8 +26,6 @@ import type { AttachmentInfo } from '@/shared/api'
 // ---------------------------------------------------------------------------
 
 vi.mock('@/shared/api', () => ({
-  fetchChatLayoutPreference: vi.fn().mockResolvedValue({ layout: 'focus' }),
-  putChatLayoutPreference: vi.fn().mockResolvedValue({ layout: 'focus' }),
   fetchChatThreads: vi.fn().mockResolvedValue([]),
   fetchChatThread: vi.fn().mockResolvedValue(null),
   fetchActionQueue: vi.fn().mockResolvedValue([]),

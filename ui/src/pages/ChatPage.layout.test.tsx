@@ -3,16 +3,6 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
-const layout = vi.hoisted(() => ({ value: 'focus' as 'focus' | 'threads' }))
-
-vi.mock('@/entities/chat-layout/api', () => ({
-  useChatLayoutPreference: () => ({
-    layout: layout.value,
-    setLayout: vi.fn(),
-    isPending: false,
-  }),
-}))
-
 vi.mock('@/entities/actionQueue/useActionQueue', () => ({
   useActionQueue: () => ({ items: [] }),
 }))
@@ -60,22 +50,21 @@ const renderPage = (): string => {
   )
 }
 
-describe('ChatPage layout preference', () => {
-  it('shows the continuous conversation timeline by default', () => {
-    layout.value = 'focus'
+describe('ChatPage main thread', () => {
+  it('opens on the main thread: Mars briefing plus the conversation timeline', () => {
     const html = renderPage()
 
-    expect(html).toContain('aria-pressed="true"')
+    expect(html).toContain('data-testid="mars-opening-message"')
+    expect(html).toContain('data-testid="chat-greeting"')
     expect(html).toContain('aria-label="Conversation timeline"')
-    expect(html).not.toContain('Select a Subject from the list')
   })
 
-  it('shows the thread rail presentation without rendering the continuous timeline', () => {
-    layout.value = 'threads'
+  it('offers no layout switch — the Subject rail presentation is the only one', () => {
     const html = renderPage()
 
-    expect(html).toContain('data-testid="threads-empty-state"')
-    expect(html).toContain('data-testid="empty-rail"')
-    expect(html).not.toContain('aria-label="Conversation timeline"')
+    expect(html).not.toContain('aria-label="Chat layout"')
+    expect(html).not.toContain('data-testid="chat-layout-focus"')
+    expect(html).not.toContain('data-testid="chat-layout-threads"')
+    expect(html).not.toContain('Select a Subject from the list')
   })
 })

@@ -25,7 +25,6 @@
 import type { DbClient, DbStatement, DbInValue, DbResultSet } from '../lib/db.js'
 import { withTransaction } from '../lib/db.js'
 import { ensureSchema } from '../lib/pg-schema.js'
-import { z } from 'zod'
 import type { Scope } from './task-store'
 import {
   resolveStateClient,
@@ -235,31 +234,6 @@ export const createStateStore = (client: DbClient | null): DomainStateStore => {
 }
 
 // ── Preferences helpers ───────────────────────────────────────────────────────
-
-/** The two presentations of the same persisted chat conversation. */
-export const ChatLayoutSchema = z.enum(['focus', 'threads'])
-export type ChatLayout = z.infer<typeof ChatLayoutSchema>
-
-/** Return the persisted chat presentation, defaulting to the continuous Focus view. */
-export const getChatLayoutPreference = async (db: DbClient): Promise<ChatLayout> => {
-  const result = await db.execute(
-    "SELECT value FROM preferences WHERE name='chat_layout'",
-  )
-  if (result.rows.length === 0) return 'focus'
-  return ChatLayoutSchema.catch('focus').parse(result.rows[0].value)
-}
-
-/** Persist the presentation choice without touching chat rows or delivery state. */
-export const setChatLayoutPreference = async (
-  db: DbClient,
-  layout: ChatLayout,
-): Promise<void> => {
-  await db.execute({
-    sql: `INSERT INTO preferences (name, value) VALUES ('chat_layout', ?)
-          ON CONFLICT(name) DO UPDATE SET value=excluded.value`,
-    args: [layout],
-  })
-}
 
 /**
  * Return whether desktop notifications are enabled.

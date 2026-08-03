@@ -31,10 +31,7 @@ import {
 } from '../lib/settings'
 import { resolveStateClient } from '../store/state-client'
 import {
-  ChatLayoutSchema,
-  getChatLayoutPreference,
   getNotificationsEnabled,
-  setChatLayoutPreference,
   setNotificationsEnabled,
   readDaemonHeartbeat,
 } from '../store/state-store'
@@ -1707,44 +1704,6 @@ export const startHttpServer = async (
           const { enabled } = result.data
           setNotificationsEnabled(resolveStateClient(), enabled)
             .then(() => sendJson(res, 200, { enabled }))
-            .catch((err: unknown) => sendError(res, err))
-        })
-        req.on('error', (err: unknown) => sendError(res, err))
-        return
-      }
-    }
-
-    // GET /preferences/chat-layout — returns the persisted presentation choice,
-    // defaulting to the continuous Focus conversation. PUT accepts only the two
-    // presentation values; it never reads or mutates chat delivery data.
-    if (req.url === '/preferences/chat-layout') {
-      if (req.method === 'GET') {
-        getChatLayoutPreference(resolveStateClient())
-          .then((layout) => sendJson(res, 200, { layout }))
-          .catch((err: unknown) => sendError(res, err))
-        return
-      }
-      if (req.method === 'PUT') {
-        let rawBody = ''
-        req.on('data', (chunk: Buffer) => {
-          rawBody += chunk.toString()
-        })
-        req.on('end', () => {
-          let parsed: unknown
-          try {
-            parsed = JSON.parse(rawBody)
-          } catch {
-            sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
-            return
-          }
-          const result = z.object({ layout: ChatLayoutSchema }).safeParse(parsed)
-          if (!result.success) {
-            sendJson(res, 400, { ok: false, error: 'body must be { layout: focus | threads }' })
-            return
-          }
-          const { layout } = result.data
-          setChatLayoutPreference(resolveStateClient(), layout)
-            .then(() => sendJson(res, 200, { layout }))
             .catch((err: unknown) => sendError(res, err))
         })
         req.on('error', (err: unknown) => sendError(res, err))

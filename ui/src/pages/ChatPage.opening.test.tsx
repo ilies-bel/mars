@@ -46,8 +46,6 @@ vi.mock('@/shared/useFocusedProject', () => ({
 }))
 
 vi.mock('@/shared/api', () => ({
-  fetchChatLayoutPreference: vi.fn().mockResolvedValue({ layout: 'focus' }),
-  putChatLayoutPreference: vi.fn().mockResolvedValue({ layout: 'focus' }),
   fetchChatThreads: vi.fn().mockResolvedValue([]),
   fetchChatConversation: vi.fn().mockResolvedValue({ entries: [], boundaries: [], memoryStartsAfterSeq: 0, memoryCutAt: null, memoryCutReason: null }),
   fetchChatThread: vi.fn().mockResolvedValue(null),
@@ -157,7 +155,7 @@ describe('ChatPage opening greeting', () => {
 
     expect(container.querySelector('[data-testid="seeded-feed"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="hero-headline"]')).toBeNull()
-    expect(container.querySelector('[data-testid="mars-opening-message"]')?.textContent).toContain('All clear.')
+    expect(container.querySelector('[data-testid="mars-opening-message"]')?.textContent).toContain('All clear \u2014 nothing needs you right now.')
     expect(container.querySelector('[data-testid="chat-greeting"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="preloaded-responses"]')).toBeNull()
   })
@@ -176,7 +174,7 @@ describe('ChatPage opening greeting', () => {
     expect(request.origin).toBe('proposal')
   })
 
-  it('names only the first item from the rail ranking and keeps all inventories in the context rail', async () => {
+  it('briefs on the ranked subjects and summarises drafts without inlining any inventory', async () => {
     mockUseActionQueue.mockReturnValue({
       items: [alert('normal', 'Later alert', 'normal'), alert('urgent', 'Repair deployment', 'high')],
       error: null,
@@ -188,12 +186,14 @@ describe('ChatPage opening greeting', () => {
     await renderPage()
 
     const opening = container.querySelector('[data-testid="mars-opening-message"]')
-    expect(opening?.textContent).toContain('Repair deployment')
-    expect(opening?.textContent).not.toContain('Later alert')
-    expect(opening?.textContent).toContain('2 more open items')
+    expect(opening?.textContent).toContain('2 subjects need you.')
+    expect(opening?.textContent).toContain('Start with Repair deployment')
+    expect(opening?.textContent).toContain('After that, Later alert.')
+    expect(opening?.textContent).toContain('1 draft is also waiting to be shaped.')
     expect(opening?.querySelector('[data-testid="opening-next-moves"]')).toBeNull()
     expect(opening?.querySelector('[data-testid="queue-group-header"]')).toBeNull()
-    expect(opening?.querySelectorAll('button')).toHaveLength(2)
+    // next move + one follow-up + the drafts link — no inventory rows.
+    expect(opening?.querySelectorAll('button')).toHaveLength(3)
   })
 
   it('keeps open alerts out of the seeded feed', async () => {
@@ -247,7 +247,17 @@ describe('ChatPage opening greeting', () => {
 
   it('expands and focuses the context rail when the remaining count is activated', async () => {
     largeScreen = false
-    mockUseActionQueue.mockReturnValue({ items: [alert('urgent', 'Repair deployment', 'high'), alert('normal', 'Later alert', 'normal')], error: null, projectsError: null, projectsEmpty: false })
+    mockUseActionQueue.mockReturnValue({
+      items: [
+        alert('urgent', 'Repair deployment', 'high'),
+        alert('normal', 'Later alert', 'normal'),
+        alert('third', 'Rebuild index', 'normal'),
+        alert('fourth', 'Rotate credentials', 'low'),
+      ],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
     await renderPage()
 
     expect(container.querySelector('[aria-label="Context rail (collapsed)"]')).not.toBeNull()

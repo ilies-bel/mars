@@ -101,7 +101,6 @@ import { ConversationTimeline } from '@/widgets/chat/ConversationTimeline'
 import { CompactionNotice } from '@/widgets/chat/CompactionNotice'
 import { SubthreadBoundaryLine } from '@/widgets/chat/SubthreadBoundaryLine'
 import { useTasks } from '@/hooks/useTasks'
-import { useChatLayoutPreference } from '@/entities/chat-layout/api'
 import { SkeletonList } from '@/components/Skeleton'
 import { GlossaryHighlighter } from '@/components/glossary/GlossaryHighlighter'
 import { highlightGlossary } from '@/shared/highlightGlossary'
@@ -2569,13 +2568,6 @@ export const ChatPage = () => {
   }, [isMdScreen])
 
   const qc = useQueryClient()
-  const {
-    layout: chatLayout,
-    setLayout: setChatLayout,
-    isPending: isUpdatingChatLayout,
-    isLoading: isLoadingChatLayout,
-    error: chatLayoutError,
-  } = useChatLayoutPreference()
 
   // Live queue rows + resolved-rows archive back the main-pane detail / resolved
   // views (still reachable from the hero's alert preview). The chat sidebar no
@@ -2862,8 +2854,8 @@ export const ChatPage = () => {
         </div>
       )}
       <div className="flex min-h-0 flex-1 overflow-hidden">
-      {/* Threads keeps the older Subject rail; Focus is one continuous scroll. */}
-      {chatLayout === 'threads' && isMdScreen && (
+      {/* The Subject rail is the primary navigation surface at md+. */}
+      {isMdScreen && (
         <ThreadSidebar
           selectedId={selectedThreadId}
           projectId={projectId}
@@ -2879,7 +2871,7 @@ export const ChatPage = () => {
       )}
 
       {/* Mobile sidebar overlay — backdrop + sliding sheet */}
-      {chatLayout === 'threads' && !isMdScreen && sidebarOpen && (
+      {!isMdScreen && sidebarOpen && (
         <>
           {/* Backdrop */}
           <div
@@ -2912,43 +2904,8 @@ export const ChatPage = () => {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex items-center justify-end gap-2 border-b border-primary/20 px-3 py-1.5">
-          {chatLayoutError && (
-            <span
-              id="chat-layout-error"
-              role="status"
-              title={chatLayoutError.message}
-              className="font-mono text-[10px] text-destructive"
-            >
-              layout unavailable
-            </span>
-          )}
-          <div
-            role="group"
-            aria-label="Chat layout"
-            aria-describedby={chatLayoutError ? 'chat-layout-error' : undefined}
-            className="flex rounded border border-primary/25 p-0.5"
-          >
-            {(['focus', 'threads'] as const).map((layout) => (
-              <button
-                key={layout}
-                type="button"
-                data-testid={`chat-layout-${layout}`}
-                aria-pressed={!isLoadingChatLayout && chatLayout === layout}
-                disabled={isUpdatingChatLayout}
-                title={chatLayoutError?.message}
-                className={`px-2 py-0.5 font-mono text-[10px] capitalize transition-colors ${
-                  chatLayout === layout ? 'bg-primary/15 text-foreground' : 'text-primary hover:bg-primary/10'
-                }`}
-                onClick={() => setChatLayout(layout)}
-              >
-                {layout}
-              </button>
-            ))}
-          </div>
-        </div>
         {/* Mobile top bar — hamburger button */}
-        {chatLayout === 'threads' && !isMdScreen && (
+        {!isMdScreen && (
           <div className="flex items-center border-b border-primary/30 px-3 py-2">
             <button
               type="button"
@@ -3026,59 +2983,48 @@ export const ChatPage = () => {
         ) : whatHappenedActive ? (
           <ChatHero delta={heroDelta} onBack={() => setWhatHappenedActive(false)} />
         ) : (
-          // Both layouts use the same selected Subject and composer routing.
-          // Focus adds the chronological timeline; Threads presents only the
-          // selected Subject alongside the existing rail.
+          // The main thread is what the reading pane shows when no Subject is
+          // pinned: Mars's opening briefing, then the chronological
+          // conversation. Selecting a Subject renders it inline below.
           <div className="flex h-full flex-col" data-testid="seeded-feed">
             <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
-              {/* Focus is one continuous scroll: the opening block plus the
-                  chronological timeline. Threads hands that job to the rail. */}
-              {chatLayout === 'focus' && (
-                <>
-                  <div
-                    data-testid="mars-opening-message"
-                    className="flex flex-col gap-1"
-                  >
-                    <span className="font-mono text-[11px] text-primary">mars</span>
-                    {!selectedThreadId ? (
-                      <ChatGreeting
-                        rankedOpenWork={openWork}
-                        proposals={proposals}
-                        onOpenWork={handleOpenWork}
-                        onShowRail={handleShowRail}
-                        onOpenProposal={(proposal) => { void openProposalSubject(proposal) }}
-                      />
-                    ) : (
-                      <p className="font-mono text-[14px] text-foreground">
-                        Nothing&apos;s pressing right now — what would you like to
-                        work on?
-                      </p>
-                    )}
-                  </div>
-                  <div className="mt-6">
-                    <ConversationTimeline
-                      entries={conversation.entries}
-                      boundaries={conversation.boundaries}
-                      memoryStartsAfterSeq={conversation.memoryStartsAfterSeq}
-                      activeThreadId={activeConversationThreadId}
-                      projectId={projectId}
-                      onResponseComplete={(threadId) => {
-                        void qc.invalidateQueries({ queryKey: ['chat-threads'] })
-                        void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
-                        if (threadId) {
-                          setSelectedThreadId(null)
-                          setActiveSubthreadId(threadId)
-                        }
-                      }}
-                    />
-                  </div>
-                </>
-              )}
-              {chatLayout === 'threads' && !activeConversationThreadId && (
-                <p data-testid="threads-empty-state" className="font-mono text-[12px] text-muted-foreground">
-                  Select a Subject from the list, or start a new one.
-                </p>
-              )}
+              <div
+                data-testid="mars-opening-message"
+                className="flex flex-col gap-1"
+              >
+                <span className="font-mono text-[11px] text-primary">mars</span>
+                {!selectedThreadId ? (
+                  <ChatGreeting
+                    rankedOpenWork={openWork}
+                    proposals={proposals}
+                    onOpenWork={handleOpenWork}
+                    onShowRail={handleShowRail}
+                    onOpenProposal={(proposal) => { void openProposalSubject(proposal) }}
+                  />
+                ) : (
+                  <p className="font-mono text-[14px] text-foreground">
+                    Nothing&apos;s pressing right now — what would you like to
+                    work on?
+                  </p>
+                )}
+              </div>
+              <div className="mt-6">
+                <ConversationTimeline
+                  entries={conversation.entries}
+                  boundaries={conversation.boundaries}
+                  memoryStartsAfterSeq={conversation.memoryStartsAfterSeq}
+                  activeThreadId={activeConversationThreadId}
+                  projectId={projectId}
+                  onResponseComplete={(threadId) => {
+                    void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+                    void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
+                    if (threadId) {
+                      setSelectedThreadId(null)
+                      setActiveSubthreadId(threadId)
+                    }
+                  }}
+                />
+              </div>
               {activeConversationThreadId && (
                 <div
                   data-testid="active-subthread"
@@ -3100,7 +3046,7 @@ export const ChatPage = () => {
                 </div>
               )}
             </div>
-            {chatLayout === 'focus' && !activeConversationThreadId && (
+            {!activeConversationThreadId && (
               <div className="flex justify-center px-6 pb-6">
                 <HeroComposer
                   onSend={(msg, files, clearState) =>

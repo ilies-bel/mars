@@ -27,7 +27,6 @@ import type { ChatThread, ActionQueueItem } from '@/shared/schemas'
 
 const mockFetchChatHistory = vi.hoisted(() => vi.fn())
 const mockFetchChatConversation = vi.hoisted(() => vi.fn())
-const mockFetchChatLayoutPreference = vi.hoisted(() => vi.fn())
 
 // ---------------------------------------------------------------------------
 // window.matchMedia stub (happy-dom doesn't implement it)
@@ -90,8 +89,6 @@ vi.mock('@/shared/useFocusedProject', () => ({
 }))
 
 vi.mock('@/shared/api', () => ({
-  fetchChatLayoutPreference: (...args: unknown[]) => mockFetchChatLayoutPreference(...args),
-  putChatLayoutPreference: vi.fn().mockResolvedValue({ layout: 'focus' }),
   fetchChatThreads: vi.fn().mockResolvedValue([]),
   fetchChatThread: vi.fn().mockResolvedValue(null),
   fetchChatHistory: (...args: unknown[]) => mockFetchChatHistory(...args),
@@ -359,7 +356,6 @@ describe('ChatPage – handleOpenSubthread: chip opens Subthread inline', () => 
   let root: ReturnType<typeof createRoot>
 
   beforeEach(() => {
-    mockFetchChatLayoutPreference.mockResolvedValue({ layout: 'focus' })
     mockFetchChatHistory.mockResolvedValue([])
     mockFetchChatConversation.mockResolvedValue({
       entries: [], boundaries: [], memoryStartsAfterSeq: 0, memoryCutAt: null, memoryCutReason: null,
@@ -382,18 +378,6 @@ describe('ChatPage – handleOpenSubthread: chip opens Subthread inline', () => 
     })
     container.remove()
     vi.clearAllMocks()
-  })
-
-  it('shows that the layout is unavailable when its saved preference cannot be loaded', async () => {
-    mockFetchChatLayoutPreference.mockRejectedValueOnce(new Error('route unavailable'))
-
-    await act(async () => {
-      root.render(
-        createElement(QueryClientProvider, { client: makeQc() }, createElement(ChatPage)),
-      )
-    })
-
-    await vi.waitFor(() => expect(container.textContent).toContain('layout unavailable'))
   })
 
   it('clicking an arc-failed chip calls startThreadFromAlert and sets the active subthread thread', async () => {

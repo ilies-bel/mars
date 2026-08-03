@@ -34,8 +34,6 @@ const mockUploadAttachment = vi.fn().mockResolvedValue({
 const mockStopThread = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@/shared/api', () => ({
-  fetchChatLayoutPreference: vi.fn().mockResolvedValue({ layout: 'focus' }),
-  putChatLayoutPreference: vi.fn().mockResolvedValue({ layout: 'focus' }),
   uploadAttachment: (...args: unknown[]) => mockUploadAttachment(...args),
   postChatMessage: vi.fn().mockResolvedValue(undefined),
   stopChatThread: (...args: unknown[]) => mockStopThread(...args),
