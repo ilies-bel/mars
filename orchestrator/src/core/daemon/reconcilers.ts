@@ -17,7 +17,7 @@
 
 import { listTasks } from '../queue'
 import { getDefaultDomainTaskStore } from '../store/task-store'
-import { listProposals } from '../proposals'
+import { listProposals, revertSlicingProposalToReady } from '../proposals'
 import { sweepOrphanRunningSpans } from '../lib/trace-events-store'
 import { Arc } from '../arc'
 import { existsSync } from 'node:fs'
@@ -700,7 +700,35 @@ const vegaReconcilingRecovery: Reconciler = {
 }
 
 /**
- * 10. Stalled-proposal slice — pick up prd-ready proposals promoted while the
+ * 10. Stranded-slicing proposal recovery — return claims held by a prior
+ * daemon to prd-ready. A live daemon may run this through `mars sync`, so
+ * preserve a claim while that same daemon has the proposal's slice workflow
+ * in flight.
+ */
+const strandedSlicingProposalReconcile: Reconciler = {
+  name: 'stranded-slicing-proposal-reconcile',
+  async run({ log, isProposalSliceInFlight }) {
+    try {
+      const slicing = await listProposals({ status: 'slicing' })
+      let strandedSlicingReverted = 0
+      for (const proposal of slicing) {
+        if (isProposalSliceInFlight?.(proposal.id)) continue
+        await revertSlicingProposalToReady(proposal.id)
+        log(
+          `[reconcile-slicing] proposal ${proposal.id} stranded in slicing; reverted to prd-ready`,
+        )
+        strandedSlicingReverted++
+      }
+      return { strandedSlicingReverted }
+    } catch (err) {
+      log(`[reconcile-slicing] failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
+ * 11. Stalled-proposal slice — pick up prd-ready proposals promoted while the
  *    daemon was offline. With a `handleProposalSlice` callback (daemon path),
  *    slice them; when null (standalone path), just report them.
  */
@@ -964,6 +992,7 @@ export const RECONCILERS: readonly Reconciler[] = [
   verifyingRecovery,
   mergingRecovery,
   vegaReconcilingRecovery,
+  strandedSlicingProposalReconcile,
   stalledProposalSlice,
   staleActionQueueSweep,
   codeDriftClearSweep,

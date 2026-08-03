@@ -57,6 +57,12 @@ export interface ReconcileDeps {
    * but not sliced.
    */
   handleProposalSlice: ((proposalId: string) => Promise<unknown>) | null
+  /**
+   * Reports whether this daemon is actively running the slice workflow for a
+   * proposal. Startup has no in-flight runs, while a later `mars sync` must
+   * not release a claim held by this process.
+   */
+  isProposalSliceInFlight?: (proposalId: string) => boolean
 }
 
 /**
@@ -97,6 +103,8 @@ export interface ReconcileSummary {
    * before the daemon died; finalized to `done` at startup.
    */
   vegaReconcilingFinalized: number
+  /** Proposals returned to prd-ready after a prior daemon died mid-slice. */
+  strandedSlicingReverted: number
   stalledProposalsSliced: number
   /**
    * Origins flipped to 'done' by replaying a completed recovery's propagation
@@ -203,6 +211,7 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   mergingRequeued: 0,
   vegaReconcilingRequeued: 0,
   vegaReconcilingFinalized: 0,
+  strandedSlicingReverted: 0,
   stalledProposalsSliced: 0,
   recoveryPropagated: 0,
   recoveryDependentsRequeued: 0,

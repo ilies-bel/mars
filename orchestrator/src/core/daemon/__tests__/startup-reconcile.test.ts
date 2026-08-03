@@ -29,6 +29,8 @@ interface ReconcileModule {
 
 interface ProposalsModule {
   createProposal: typeof import('../../proposals').createProposal
+  getProposal: typeof import('../../proposals').getProposal
+  setProposalField: typeof import('../../proposals').setProposalField
 }
 
 const setupRepo = (): string => {
@@ -57,6 +59,46 @@ const makeDeps = () => ({
   bus: new EventEmitter(),
   traceStore: null,
   handleProposalSlice: null,
+})
+
+describe('runStartupReconcile — stranded slicing proposals', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns a proposal left slicing by a prior daemon to prd-ready', async () => {
+    const { reconcile } = await loadModules(repo)
+    const proposals = (await import('../../proposals')) as unknown as ProposalsModule
+    const proposal = await proposals.createProposal('Interrupted slice', { source: 'human' })
+    await proposals.setProposalField(proposal.id, 'status', 'slicing')
+
+    const summary = await reconcile.runStartupReconcile(makeDeps())
+
+    expect((await proposals.getProposal(proposal.id))?.status).toBe('prd-ready')
+    expect(summary.strandedSlicingReverted).toBe(1)
+  })
+
+  it('leaves a proposal alone while this daemon is slicing it', async () => {
+    const { reconcile } = await loadModules(repo)
+    const proposals = (await import('../../proposals')) as unknown as ProposalsModule
+    const proposal = await proposals.createProposal('Active slice', { source: 'human' })
+    await proposals.setProposalField(proposal.id, 'status', 'slicing')
+
+    const summary = await reconcile.runStartupReconcile({
+      ...makeDeps(),
+      isProposalSliceInFlight: (proposalId: string) => proposalId === proposal.id,
+    })
+
+    expect((await proposals.getProposal(proposal.id))?.status).toBe('slicing')
+    expect(summary.strandedSlicingReverted).toBe(0)
+  })
 })
 
 describe('runStartupReconcile — orphaned-blocked scan', () => {

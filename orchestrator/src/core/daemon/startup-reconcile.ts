@@ -152,7 +152,9 @@ export const reconcileMergeJobs = async (deps: {
  *     was running. Vega's subprocess died with the daemon; the worktree may
  *     be in a partial rebase state. Always discard it and requeue from setup
  *     (or finalize to done if the branch already landed).
- * 10. Stalled-proposal slice — pick up prd-ready proposals that were
+ * 10. Stranded-slicing proposal recovery — return a slice claim left by a
+ *     prior daemon to prd-ready before any stalled proposal is dispatched.
+ * 11. Stalled-proposal slice — pick up prd-ready proposals that were
  *     promoted while the daemon was offline.
  * 11. Workflow-install drift — raise one operator alert for every bundled
  *     Workflow missing from `.mars/workflows`, or resolve it once restored.

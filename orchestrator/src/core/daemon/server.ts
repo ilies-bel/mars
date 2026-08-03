@@ -3318,25 +3318,34 @@ export const startDaemon = async (
     return { proposalId: proposal.id, status: proposal.status }
   }
 
+  const proposalSliceRuns = new Map<string, number>()
+
   const handleProposalSlice = async (
     proposalId: string,
     resliceFeedback?: string,
     priority?: number,
   ): Promise<{ proposalId: string; status: string; taskIds: string[] }> => {
-    assertProposalsSourceFresh(proposalsStamp)
-    const { runSlice } = await import('../../workflows/slice-workflow')
-    const sliceTaskStore = await getDefaultTaskStore()
-    const result = await runSlice(proposalId, resliceFeedback, {
-      store: sliceTaskStore,
-      traceStore,
-      ...(priority !== undefined && { priority }),
-    })
-    // Slicing always makes dispatchable work live immediately; notify the
-    // in-memory dispatcher about each queued task after its lifecycle write.
-    for (const taskId of result.queuedTaskIds) {
-      bus.emit('task.queued', { taskId })
+    proposalSliceRuns.set(proposalId, (proposalSliceRuns.get(proposalId) ?? 0) + 1)
+    try {
+      assertProposalsSourceFresh(proposalsStamp)
+      const { runSlice } = await import('../../workflows/slice-workflow')
+      const sliceTaskStore = await getDefaultTaskStore()
+      const result = await runSlice(proposalId, resliceFeedback, {
+        store: sliceTaskStore,
+        traceStore,
+        ...(priority !== undefined && { priority }),
+      })
+      // Slicing always makes dispatchable work live immediately; notify the
+      // in-memory dispatcher about each queued task after its lifecycle write.
+      for (const taskId of result.queuedTaskIds) {
+        bus.emit('task.queued', { taskId })
+      }
+      return result
+    } finally {
+      const remaining = (proposalSliceRuns.get(proposalId) ?? 1) - 1
+      if (remaining === 0) proposalSliceRuns.delete(proposalId)
+      else proposalSliceRuns.set(proposalId, remaining)
     }
-    return result
   }
 
   const handleProposalReslice = async (
@@ -3545,14 +3554,26 @@ export const startDaemon = async (
 
   const reconcile = async (): Promise<void> => {
     const { runStartupReconcile } = await import('./startup-reconcile')
-    await runStartupReconcile({ log, bus, traceStore, handleProposalSlice })
+    await runStartupReconcile({
+      log,
+      bus,
+      traceStore,
+      handleProposalSlice,
+      isProposalSliceInFlight: (proposalId) => proposalSliceRuns.has(proposalId),
+    })
   }
 
   // The 'sync' RPC op: same reconcile as startup, but the summary is returned
   // to the caller rather than discarded.
   const runSync = async (): Promise<unknown> => {
     const { runStartupReconcile } = await import('./startup-reconcile')
-    return runStartupReconcile({ log, bus, traceStore, handleProposalSlice })
+    return runStartupReconcile({
+      log,
+      bus,
+      traceStore,
+      handleProposalSlice,
+      isProposalSliceInFlight: (proposalId) => proposalSliceRuns.has(proposalId),
+    })
   }
 
   // ── Investigate / diagnose-failure handlers (shared by HTTP and RPC) ────────
