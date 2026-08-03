@@ -28,6 +28,7 @@ import { getRepoRoot, getStateDir } from './context'
 import { acquireLock } from './lib/git/lock'
 import { resolveAllRowsForTask } from './lib/action-queue'
 import {
+  getChangedFiles,
   selectVerifySteps,
   verifyChanges,
 } from './lib/git/verify'
@@ -125,13 +126,15 @@ export const landTask = async (
   // ── 4. Run verify gate ────────────────────────────────────────────────────
   const client = resolveQueueClient()
   const scopes = await loadVerifyGates(client)
-  const steps = selectVerifySteps(scopes)
+  const changedFiles = await getChangedFiles(worktreePath, integrationBranch, branch)
+  const steps = selectVerifySteps(scopes, changedFiles)
 
   const verifyResult = await verifyChanges({
     cwd: worktreePath,
     steps,
     branch,
     integrationBranch,
+    changedFiles,
   })
 
   if (!verifyResult.passed) {

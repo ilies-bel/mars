@@ -205,7 +205,7 @@ describe('gate-enrichment e2e: full promotion lifecycle', () => {
       // Use a real temp directory as the verify cwd (no git repo needed —
       // branch/integrationBranch are omitted so the has-diff gate is skipped).
       const cwd = mkdtempSync(join(tmpdir(), 'gate-enrichment-e2e-'))
-      const steps = selectVerifySteps(enforcingScopes)
+      const steps = selectVerifySteps(enforcingScopes, ['changed.ts'])
       expect(steps).toHaveLength(1)
 
       const result = await verifyChanges({ cwd, steps })

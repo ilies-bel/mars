@@ -330,7 +330,7 @@ describe('gate-enrichment: approval and shadow burn-in', () => {
     // Run it through unchanged ADR-0018 selection + verifyChanges: the check
     // RUNS, its verdict fails, and verify still passes.
     const cwd = mkdtempSync(join(tmpdir(), 'gate-enrichment-'))
-    const steps = selectVerifySteps(scopes)
+    const steps = selectVerifySteps(scopes, ['changed.ts'])
     const r = await verifyChanges({ cwd, steps })
     expect(r.passed).toBe(true)
     const enriched = r.steps.find(
@@ -376,7 +376,7 @@ describe('gate-enrichment: approval and shadow burn-in', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'gate-enrichment-'))
     const r = await verifyChanges({
       cwd,
-      steps: selectVerifySteps(scopes),
+      steps: selectVerifySteps(scopes, ['changed.ts']),
     })
     expect(r.passed).toBe(false)
   })

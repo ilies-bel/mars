@@ -165,9 +165,9 @@ export interface VerifyArgs {
    *  flagging every failing verify run as warn. */
   traceCtx?: TraceCtx
   /**
-   * Repo-relative paths of files the task branch changed, retained for callers
-   * that record diff metadata alongside verification. They never determine
-   * which gates run: every configured scope is always selected.
+   * Repo-relative paths the task branch changed. The review primitive uses
+   * them to choose root and path-covered verify scopes; verifyChanges uses
+   * them to make a missing task-tier gate explicit as CAN'T-VERIFY.
    */
   changedFiles?: ReadonlyArray<string>
   /**
@@ -182,6 +182,19 @@ export interface VerifyArgs {
    * fast instead of occupying `.merge.lock` for the full 300s merge watchdog.
    */
   signal?: AbortSignal
+}
+
+export type VerifyVerdict = 'PASS' | 'FAIL' | "CAN'T-VERIFY"
+
+/**
+ * The task-level verification decision. A CAN'T-VERIFY verdict still permits
+ * merge: it makes missing task-gate coverage observable without treating a
+ * broken or incomplete gate registry as a pipeline-stopping failure.
+ */
+export interface VerifyResult {
+  passed: boolean
+  verdict: VerifyVerdict
+  steps: VerifyStep[]
 }
 
 const runVerifyStep = async (
@@ -479,7 +492,7 @@ export const cleanWorktreeIfNoCommitsAhead = async (
 
 export const verifyChanges = async (
   args: VerifyArgs,
-): Promise<{ passed: boolean; steps: VerifyStep[] }> => {
+): Promise<VerifyResult> => {
   const verifyCtx: TraceCtx | undefined = args.traceCtx
     ? { ...args.traceCtx, phase: args.traceCtx.phase ?? 'verify' }
     : undefined
@@ -500,6 +513,7 @@ export const verifyChanges = async (
       // turned a log read into a forensics exercise more than once.
       return {
         passed: false,
+        verdict: 'FAIL',
         steps: [{ name: WORKTREE_HYGIENE_STEP, passed: false, output: msg }],
       }
     }
@@ -517,17 +531,27 @@ export const verifyChanges = async (
       verifyCtx,
     )
     if (!diffStep.passed) {
-      return { passed: false, steps: [diffStep] }
+      return { passed: false, verdict: 'FAIL', steps: [diffStep] }
     }
     // Include the passing has-diff gate in results so gate-outcomes correctly
     // reflects what ran rather than silently dropping built-in gates that pass.
     results.push(diffStep)
   }
 
-  // Verify gates are opt-in. A task with zero configured task-tier steps passes
-  // the verify phase (running only the built-in gates such as has-diff), whether
-  // or not it changed files. There is intentionally no "you must configure gates"
-  // guard — callers that want to enforce gate presence check it themselves.
+  // A non-empty task diff without a selected task-tier gate must be visible,
+  // but must not wedge the pipeline. Integration gates are intentionally
+  // deferred and do not count as task-tier coverage.
+  const hasTaskTierGate = args.steps.some((spec) => spec.tier !== 'integration')
+  const lacksTaskTierCoverage =
+    (args.changedFiles?.length ?? 0) > 0 && !hasTaskTierGate
+  if (lacksTaskTierCoverage) {
+    results.push({
+      name: 'cant-verify:no-gate-coverage',
+      tier: 'task',
+      passed: true,
+      output: "CAN'T-VERIFY: no task-tier verify gate covers the changed files",
+    })
+  }
 
   let stoppedOnRequired = false
   for (const spec of args.steps) {
@@ -635,7 +659,12 @@ export const verifyChanges = async (
     const r = results[i]
     return spec.required && r && !r.passed
   })
-  return { passed: !requiredFailed && !stoppedOnRequired, steps: results }
+  const passed = !requiredFailed && !stoppedOnRequired
+  return {
+    passed,
+    verdict: !passed ? 'FAIL' : lacksTaskTierCoverage ? "CAN'T-VERIFY" : 'PASS',
+    steps: results,
+  }
 }
 
 interface ManifestSupervisorEntry {
@@ -729,17 +758,24 @@ export const loadVerifyScopes = async (
 }
 
 /**
- * Select every configured task verify step. A producer can change a contract
- * consumed from any other scope, so path-scoped selection cannot safely
- * determine which suites may observe the change. Root steps run first; the
- * remaining scopes retain their declared order. Each returned step carries
- * the `dir` of its scope so {@link verifyChanges} runs it where it belongs.
+ * Select task verify steps for changed paths. Root scope remains the always-on
+ * floor; a narrower scope is selected only when at least one changed path is
+ * inside that scope. Root steps run first and the remaining selected scopes
+ * retain their declared order. Each returned step carries the `dir` of its
+ * scope so {@link verifyChanges} runs it where it belongs.
  */
 export const selectVerifySteps = (
   scopes: ReadonlyArray<VerifyScope>,
+  changedFiles: ReadonlyArray<string>,
 ): VerifyStepSpec[] => {
   const roots = scopes.filter((s) => s.scope === '.')
-  const rest = scopes.filter((s) => s.scope !== '.')
+  const rest = scopes.filter(
+    (s) =>
+      s.scope !== '.' &&
+      changedFiles.some(
+        (path) => path === s.scope || path.startsWith(`${s.scope}/`),
+      ),
+  )
   const selected: VerifyStepSpec[] = []
   for (const sc of [...roots, ...rest]) {
     for (const step of sc.steps) {
@@ -764,11 +800,10 @@ export const selectVerifySteps = (
  * never touched. Measured on this repo, a branch 1 commit ahead / 88 behind
  * reported 218 files under two-dot vs the 23 it actually changed.
  *
- * This information is retained for traceability and callers that need to
- * describe the task diff. It does not control test-suite selection: every
- * configured scope is verified to protect cross-package contracts. The same
- * two-dot trap has also produced misleading `--stat` output during merges,
- * where `main`'s newer commits show up as deletions.
+ * Callers use this information to choose only the verify gates whose scopes
+ * contain paths changed by the task. The same two-dot trap has also produced
+ * misleading `--stat` output during merges, where `main`'s newer commits show
+ * up as deletions.
  *
  * Two-dot is still correct for "how far ahead is B" (`rev-list --count A..B`)
  * and for ranges on a single linear history — do not blanket-convert those.
