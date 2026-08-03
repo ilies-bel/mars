@@ -217,6 +217,37 @@ export interface DaemonOptions {
 }
 
 /**
+ * Persist a structured-write failure for the operator. Structured writes run
+ * fire-and-forget, so their dispatchers must catch failures rather than let an
+ * unhandled rejection terminate the daemon; this action-queue row is the
+ * durable counterpart to that catch.
+ */
+export const raiseStructuredWriteFailureAction = async (args: {
+  kind: 'adr' | 'glossary'
+  target: string
+  error: unknown
+}): Promise<void> => {
+  const message = args.error instanceof Error ? args.error.message : String(args.error)
+  await raiseActionQueueItem({
+    kind: 'failed',
+    category: 'orchestrator',
+    priority: 'high',
+    title: `Structured ${args.kind} write failed: ${args.target}`,
+    body: [
+      `The structured ${args.kind} write for \`${args.target}\` did not complete.`,
+      '',
+      `Error: ${message}`,
+      '',
+      'The daemon is still running. Review the failure and retry the original command after resolving it.',
+    ].join('\n'),
+    payload: { kind: args.kind, target: args.target, error: message },
+    context: { repoRoot: process.env.MARS_REPO ?? null },
+    raisedBy: 'structured-write:dispatch',
+    signature: `structured-write:failed:${args.kind}:${args.target}`,
+  })
+}
+
+/**
  * A pending implement candidate captured during the first phase of
  * {@link pickNextImplement}. Exported so the pure comparator can be unit-tested
  * without mounting a live daemon.
@@ -1831,15 +1862,24 @@ export const startDaemon = async (
       // One bad structured-write must NEVER crash the daemon. This dispatcher
       // is invoked fire-and-forget (`void dispatchGlossaryWrite(...)`), so an
       // escaping rejection becomes an unhandledRejection that kills the
-      // process. Log-only is correct here: a glossary write operates on a
-      // synthetic id (there is no queued task row to fail), so there is
-      // nothing to mark `failed` — we just record the failure and release the
-      // slot in finally. String() fallback keeps the catch body throw-proof.
+      // process. The action-queue raise makes this otherwise detached failure
+      // visible without compromising that containment.
       log(
         `[glossary-write] ${req.kind} "${req.term}" failed: ${
           err instanceof Error ? err.message : String(err)
         }`,
       )
+      await raiseStructuredWriteFailureAction({
+        kind: 'glossary',
+        target: req.term,
+        error: err,
+      }).catch((raiseErr: unknown) => {
+        log(
+          `[glossary-write] ${req.kind} "${req.term}" failed to raise action-queue item: ${
+            raiseErr instanceof Error ? raiseErr.message : String(raiseErr)
+          }`,
+        )
+      })
     } finally {
       releaseTracking()
       release(sems['glossary-write'])
@@ -1884,16 +1924,24 @@ export const startDaemon = async (
     } catch (err) {
       // One bad structured-write must NEVER crash the daemon. This dispatcher
       // is invoked fire-and-forget (`void dispatchAdrAdd(...)`), so an escaping
-      // rejection becomes an unhandledRejection that kills the process.
-      // Log-only is correct: an ADR add operates on a synthetic id (no queued
-      // task row to fail), so there is nothing to mark `failed` — record the
-      // failure and release the slot in finally. String() fallback keeps the
-      // catch body throw-proof on a non-Error rejection value.
+      // rejection becomes an unhandledRejection that kills the process. Raise
+      // an action-queue item as well, then release the slot in finally.
       log(
         `[adr-add] "${req.title}" failed: ${
           err instanceof Error ? err.message : String(err)
         }`,
       )
+      await raiseStructuredWriteFailureAction({
+        kind: 'adr',
+        target: req.title,
+        error: err,
+      }).catch((raiseErr: unknown) => {
+        log(
+          `[adr-add] "${req.title}" failed to raise action-queue item: ${
+            raiseErr instanceof Error ? raiseErr.message : String(raiseErr)
+          }`,
+        )
+      })
     } finally {
       releaseTracking()
       release(sems['adr-add'])

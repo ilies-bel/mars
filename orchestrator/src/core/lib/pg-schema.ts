@@ -1353,7 +1353,9 @@ const DDL: readonly string[] = [
 
   // ── merge queue ───────────────────────────────────────────────────────────
   // Durable single-consumer merge queue (PRD 92af89ce). Each row represents
-  // one pending, in-flight, or terminal merge attempt for a task branch.
+  // one pending, in-flight, or terminal merge attempt for a task branch,
+  // including terminal structured-write bookkeeping tasks. Keep task_id as a
+  // foreign key so every merge job has one uniform task identity.
   // The partial unique index below ensures at most one active job per task.
   `CREATE TABLE IF NOT EXISTS merge_jobs (
     id                 uuid        PRIMARY KEY,

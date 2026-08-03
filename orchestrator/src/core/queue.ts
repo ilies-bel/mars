@@ -800,6 +800,12 @@ SELECT
   t.created_at, t.updated_at
 FROM tasks t`
 
+/**
+ * Structured writes retain a terminal task row solely to satisfy merge-job
+ * foreign keys. They are bookkeeping, never operator-visible work.
+ */
+export const ORDINARY_TASK_SQL = `COALESCE(t.kind, 'task') <> 'structured-write'`
+
 export const rowToTask = (row: Record<string, unknown>): Task => {
   const functional = (row.plan_functional as string | null) ?? null
   const technical = (row.plan_technical as string | null) ?? null
@@ -1610,11 +1616,11 @@ export const listTasks = async (status?: TaskStatus): Promise<Task[]> => {
   await ensureQueueSchema()
   const r = status
     ? await resolveQueueClient().execute({
-        sql: `${TASK_SEL} WHERE t.status = ? ORDER BY t.priority DESC, t.created_at ASC`,
+        sql: `${TASK_SEL} WHERE ${ORDINARY_TASK_SQL} AND t.status = ? ORDER BY t.priority DESC, t.created_at ASC`,
         args: [status],
       })
     : await resolveQueueClient().execute(
-        `${TASK_SEL} ORDER BY t.priority DESC, t.created_at ASC`,
+        `${TASK_SEL} WHERE ${ORDINARY_TASK_SQL} ORDER BY t.priority DESC, t.created_at ASC`,
       )
   return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
 }
@@ -1630,7 +1636,7 @@ export const listNonDoneTasks = async (
 ): Promise<Task[]> => {
   await ensureQueueSchema()
   const r = await resolveQueueClient().execute({
-    sql: `${TASK_SEL} WHERE t.status <> 'done' AND t.id <> ? ORDER BY t.created_at DESC LIMIT ?`,
+    sql: `${TASK_SEL} WHERE ${ORDINARY_TASK_SQL} AND t.status <> 'done' AND t.id <> ? ORDER BY t.created_at DESC LIMIT ?`,
     args: [excludeId, limit],
   })
   return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
@@ -1664,9 +1670,9 @@ export const listTasksPaged = async (
   const client = resolveQueueClient()
 
   const countArgs: DbInValue[] = []
-  let countSql = 'SELECT COUNT(*) AS n FROM tasks t'
+  let countSql = `SELECT COUNT(*) AS n FROM tasks t WHERE ${ORDINARY_TASK_SQL}`
   if (status !== undefined) {
-    countSql += ' WHERE t.status = ?'
+    countSql += ' AND t.status = ?'
     countArgs.push(status)
   }
   const countResult = await client.execute(
@@ -1677,9 +1683,9 @@ export const listTasksPaged = async (
   )
 
   const taskArgs: DbInValue[] = []
-  let taskSql = `${TASK_SEL}`
+  let taskSql = `${TASK_SEL} WHERE ${ORDINARY_TASK_SQL}`
   if (status !== undefined) {
-    taskSql += ' WHERE t.status = ?'
+    taskSql += ' AND t.status = ?'
     taskArgs.push(status)
   }
   taskSql += ' ORDER BY t.priority DESC, t.created_at ASC'
