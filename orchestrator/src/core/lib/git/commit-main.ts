@@ -41,12 +41,19 @@ export const commitMain = async (args: CommitMainArgs): Promise<CommitMainResult
 }
 
 // ---------------------------------------------------------------------------
-// Auto-commit helper for coder-left-uncommitted worktrees
+// Auto-commit helper for deterministic worktree salvage
 // ---------------------------------------------------------------------------
 
 export interface AutoCommitArgs {
-  /** Task whose code step left the worktree dirty — named in the commit. */
+  /** Task whose dirty worktree is being committed — named in the commit. */
   taskId: string
+  /**
+   * Where the dirty content came from. Drives the commit message; callers must
+   * state what they know rather than inheriting a possibly false default.
+   */
+  provenance: 'coder-left-dirty' | 'committer-salvage'
+  /** Integration branch where the content originated when it was salvaged. */
+  integrationBranch: string
   worktreePath: string
   dirtyFiles: string[]
   traceCtx?: TraceCtx
@@ -64,7 +71,7 @@ export type AutoCommitResult =
 
 /**
  * Attempt a deterministic `git add -A && git commit` inside the worktree, on
- * behalf of a coder that ended its run with work still uncommitted.
+ * behalf of the orchestrator when a worktree has deterministic dirty content.
  *
  * Guarded: every dirty path is checked against {@link checkSecretPath} FIRST,
  * and a single match aborts the whole commit (all-or-nothing) before anything
@@ -82,7 +89,7 @@ export const autoCommitWorktreeIfDeterministic = async (
   args: AutoCommitArgs,
 ): Promise<AutoCommitResult> => {
   const git = resolveGitBin()
-  const { taskId, worktreePath, dirtyFiles, traceCtx } = args
+  const { taskId, provenance, integrationBranch, worktreePath, dirtyFiles, traceCtx } = args
   const count = dirtyFiles.length
 
   for (const filePath of dirtyFiles) {
@@ -96,15 +103,29 @@ export const autoCommitWorktreeIfDeterministic = async (
     }
   }
 
-  const subject = `chore(auto-commit): task ${taskId} — coder finished but did not commit — ${count} path(s)`
-  const body = [
-    `The coder for task ${taskId} ended the code step with ${count} path(s) still`,
-    'uncommitted. The orchestrator committed them on the agent\'s behalf so the',
-    'work reaches verify and the merge rebase. The agent did NOT author this',
-    'commit and did not choose its contents.',
-    '',
-    ...dirtyFiles.map((f) => `  ${f}`),
-  ].join('\n')
+  const [subject, body] = provenance === 'coder-left-dirty'
+    ? [
+        `chore(auto-commit): task ${taskId} — coder finished but did not commit — ${count} path(s)`,
+        [
+          `The coder for task ${taskId} ended the code step with ${count} path(s) still`,
+          'uncommitted. The orchestrator committed them on the agent\'s behalf so the',
+          'work reaches verify and the merge rebase. The agent did NOT author this',
+          'commit and did not choose its contents.',
+          '',
+          ...dirtyFiles.map((f) => `  ${f}`),
+        ].join('\n'),
+      ]
+    : [
+        `chore(auto-commit): task ${taskId} — salvaged uncommitted ${integrationBranch} state — ${count} path(s)`,
+        [
+          `These ${count} path(s) were found uncommitted on ${integrationBranch}.`,
+          'The committer agent could not commit them itself, so the orchestrator',
+          `landed them to unblock ${integrationBranch}. Authorship is unknown and may`,
+          'belong to a human operator.',
+          '',
+          ...dirtyFiles.map((f) => `  ${f}`),
+        ].join('\n'),
+      ]
 
   const addResult = await execProbe(
     git,

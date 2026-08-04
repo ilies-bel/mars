@@ -1639,8 +1639,17 @@ export const runAgent = async (
     const dirtyList = postState.dirtyFiles.join('\n  ')
     const commitsAhead =
       postState.kind === 'dirty-with-commits' ? postState.commitsAhead : 0
+    const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
+      '../../core/lib/main-dirty'
+    )
+    const provenance =
+      parseMainCommiterPayload(fullTask?.recoveryPayload ?? null)?.recipe === MAIN_COMMITER_RECIPE
+        ? 'committer-salvage'
+        : 'coder-left-dirty'
     const autoResult = await autoCommitWorktreeIfDeterministic({
       taskId,
+      provenance,
+      integrationBranch,
       worktreePath,
       dirtyFiles: postState.dirtyFiles,
       traceCtx: buildPhaseCtx(trace, taskId, 'code'),

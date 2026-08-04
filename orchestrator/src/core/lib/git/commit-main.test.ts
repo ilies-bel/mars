@@ -11,7 +11,7 @@ import { execFileSync, execSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { commitMain } from './commit-main'
+import { autoCommitWorktreeIfDeterministic, commitMain } from './commit-main'
 
 /** Create a temp git repo on `main` with a single tracked file and initial commit. */
 const setupRepo = (): string => {
@@ -96,5 +96,53 @@ describe('commitMain', () => {
     expect(tree).toContain('.gitignore')
     expect(tree).toContain('legit.ts')
     expect(tree).not.toContain('secret.env')
+  })
+})
+
+describe('autoCommitWorktreeIfDeterministic', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('records coder-left-dirty and committer-salvage provenance accurately', async () => {
+    writeFileSync(resolve(repo, 'coder-work.ts'), 'export const coderWork = true\n')
+
+    await autoCommitWorktreeIfDeterministic({
+      taskId: 'coder-task',
+      provenance: 'coder-left-dirty',
+      integrationBranch: 'main',
+      worktreePath: repo,
+      dirtyFiles: ['coder-work.ts'],
+    })
+
+    const coderMessage = execSync('git log -1 --format=%B', { cwd: repo }).toString()
+    expect(coderMessage).toContain(
+      'chore(auto-commit): task coder-task — coder finished but did not commit — 1 path(s)',
+    )
+    expect(coderMessage).toContain(
+      'The coder for task coder-task ended the code step with 1 path(s) still',
+    )
+
+    writeFileSync(resolve(repo, 'salvaged-work.ts'), 'export const salvagedWork = true\n')
+
+    await autoCommitWorktreeIfDeterministic({
+      taskId: 'committer-task',
+      provenance: 'committer-salvage',
+      integrationBranch: 'release/2026-08',
+      worktreePath: repo,
+      dirtyFiles: ['salvaged-work.ts'],
+    })
+
+    const salvageMessage = execSync('git log -1 --format=%B', { cwd: repo }).toString()
+    expect(salvageMessage).toContain('release/2026-08')
+    expect(salvageMessage.toLowerCase()).not.toContain('coder')
+    expect(salvageMessage).not.toContain('code step')
+    expect(salvageMessage).toContain('Authorship is unknown')
   })
 })
