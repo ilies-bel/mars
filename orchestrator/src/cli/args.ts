@@ -157,6 +157,12 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--optional',
   // mars list --all: bypass the default 10-row limit and return every matching task.
   '--all',
+  // mars task check --uncheck: clear a done-criterion instead of setting it.
+  '--uncheck',
+  // mars worktree reclaim --no-dry-run: rejected today (deletion mode is not
+  // implemented), but declared so the leaf reads it off `args.flags` like every
+  // other boolean rather than fishing it out of the positionals.
+  '--no-dry-run',
   // mars release-notes list — cursor-based feed filtering
   '--unseen',
   '--mark-viewed',

@@ -141,4 +141,29 @@ describe('boolean flags are never treated as positional arguments', () => {
 
     expect(positionalBooleanReads).toEqual([])
   })
+
+  // The check above only catches the literal `positional.includes('--flag')`
+  // spelling. Four leaves (`restart`, `purge`, `drop`, `arc purge`) instead
+  // built a Set from the positionals and queried THAT, which reads as a
+  // different expression while having exactly the same defect: `parseArgs`
+  // routes every declared boolean flag into `args.flags`, so the Set is always
+  // empty of them and `--force` silently did nothing.
+  it('never derives a flag set from the positionals', () => {
+    const commandsDirectory = fileURLToPath(new URL('../commands/', import.meta.url))
+    const sourceFiles = readdirSync(commandsDirectory, { recursive: true }).filter(
+      (entry): entry is string =>
+        typeof entry === 'string' && entry.endsWith('.ts') && !entry.includes('__tests__/'),
+    )
+
+    // Matches `new Set(args.positional.filter(... startsWith('--') ...))` in
+    // any formatting: the point is that no leaf may reconstruct a flag set
+    // from positionals, because the shared parser has already removed them.
+    const derivedFlagSets = sourceFiles.filter((entry) =>
+      /new Set\(\s*\w*\.?positional\s*\.filter\([^)]*startsWith\(\s*'--'/.test(
+        readFileSync(`${commandsDirectory}/${entry}`, 'utf8'),
+      ),
+    )
+
+    expect(derivedFlagSets).toEqual([])
+  })
 })

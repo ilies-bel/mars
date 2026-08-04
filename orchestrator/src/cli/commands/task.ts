@@ -455,7 +455,6 @@ export const taskCheck: Command = {
   summary: 'toggle a done-criterion check state (1-based index)',
   usage: 'usage: mars task check <id> <n> [--uncheck]',
   run: async (args, deps) => {
-    const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
     const positionals = args.positional.filter((a) => !a.startsWith('--'))
     const id = positionals[0]
     const indexRaw = positionals[1]
@@ -468,7 +467,7 @@ export const taskCheck: Command = {
       deps.err(`criterion index must be a positive integer; got ${indexRaw}`)
       return { code: 1 }
     }
-    const uncheck = flagSet.has('--uncheck')
+    const uncheck = hasFlag(args, '--uncheck')
     const author = detectOriginSession() ?? 'cli'
     try {
       await deps.daemon.sendRequest({
