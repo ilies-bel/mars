@@ -147,6 +147,20 @@ export async function enqueueMergeJobAndAwait(args: {
  * promise via `resolveMergeJob` before returning. Does NOT throw — all error
  * paths are caught, logged, and delivered as `{status:'failed'}` outcomes.
  */
+/** Resolve `branch` to a full SHA from inside the task's worktree. */
+async function readIntegrationTip(
+  worktreePath: string,
+  branch: string,
+): Promise<string | null> {
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
+  const { stdout } = await promisify(execFile)('git', ['rev-parse', branch], {
+    cwd: worktreePath,
+  })
+  const sha = stdout.trim()
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null
+}
+
 async function runMergeJob(
   job: MergeJob,
   store: MergeJobStore,
@@ -174,9 +188,14 @@ async function runMergeJob(
       signal,
     })
     result = { status: 'done', result: mergeResult }
+    // Where the integration branch now points. Recorded here rather than
+    // inside the merge itself so the merge logic stays untouched: this is
+    // bookkeeping, and a failure to read it must never fail a landed merge.
+    const mergedSha = await readIntegrationTip(job.worktreePath, job.integrationBranch)
+      .catch(() => null)
     // Best-effort: failure here is non-fatal — the job status in the DB is
     // cosmetic at this point; the promise is what drives the primitive.
-    await store.markDone(job.id).catch((e: unknown) => {
+    await store.markDone(job.id, mergedSha).catch((e: unknown) => {
       log(
         `[merge-worker] job ${job.id} markDone failed (non-fatal): ${(e as Error).message}`,
       )

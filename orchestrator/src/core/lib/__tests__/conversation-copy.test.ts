@@ -35,9 +35,9 @@ const payloads: { [K in AutonomousNoticeKind]: AutonomousNoticePayloads[K] } = {
     cause: 'task branch has no commits ahead of integration',
   },
   'session.idle-proposal': { proposalId: 'prop-1', title: 'Rework the merge gate' },
-  'suggestion.codegraph': { readCalls: 412, windowDays: 7 },
+  'suggestion.codegraph': { tasksRun: 41, windowDays: 7 },
   'observation.manual-push': { commits: 6, windowDays: 14, branch: 'main' },
-  'trend.token-spend': { changePct: 38, windowDays: 14, reportTaskId: 'mars-abc123' },
+  'trend.token-spend': { changePct: 38, windowDays: 14 },
   'gate.main-broken': { failingCheck: 'npm test', blockedTasks: 4 },
 }
 

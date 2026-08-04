@@ -76,6 +76,7 @@ const makeFakeStore = (
       taskId: partial.taskId ?? `task-${id}`,
       status: 'queued',
       attempts: 0,
+      mergedSha: null,
       claimedAt: null,
       startedAt: null,
       finishedAt: null,

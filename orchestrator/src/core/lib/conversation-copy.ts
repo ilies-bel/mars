@@ -59,12 +59,20 @@ export interface AutonomousNoticePayloads {
   'failure.batch': { taskCount: number; cause: string }
   /** Nothing is in flight and a draft proposal is waiting to be shaped. */
   'session.idle-proposal': { proposalId: string; title: string }
-  /** No graph traversal in use; an index would cut token spend. */
-  'suggestion.codegraph': { readCalls: number; windowDays: number }
+  /**
+   * No graph traversal configured. `tasksRun` is the honest cost proxy: Mars
+   * cannot count a Worker's file reads, but it knows how many Workers it sent
+   * into the codebase to find their own way around.
+   */
+  'suggestion.codegraph': { tasksRun: number; windowDays: number }
   /** Commits reaching the integration branch outside the pipeline. */
   'observation.manual-push': { commits: number; windowDays: number; branch: string }
-  /** Token spend rose and the shape of the codebase looks like the cause. */
-  'trend.token-spend': { changePct: number; windowDays: number; reportTaskId: string }
+  /**
+   * Token spend rose measurably against the operator's own baseline. Mars
+   * reports the trend it measured and offers to go find the cause — it does
+   * not claim to have written a report it has not written.
+   */
+  'trend.token-spend': { changePct: number; windowDays: number }
   /** The integration branch is failing, so incoming work cannot verify. */
   'gate.main-broken': { failingCheck: string; blockedTasks: number }
 }
@@ -189,7 +197,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
   'suggestion.codegraph': {
     act: 'offer',
     render: (p) =>
-      `You have no graph traversal installed, so I read ${p.readCalls} files one by one over the last ${p.windowDays} days — codegraph would answer the same questions for a fraction of the tokens.`,
+      `You have no graph traversal installed, so each of the ${p.tasksRun} tasks I ran over the last ${p.windowDays} days found its own way around by reading files — codegraph would answer the same questions for a fraction of the tokens.`,
     lever: CODEGRAPH_SUGGESTION_LEVER,
     offers: () => [
       {
@@ -222,13 +230,13 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
   'trend.token-spend': {
     act: 'announcement',
     render: (p) =>
-      `I wrote up how to untangle the architecture because token spend rose ${p.changePct}% over the last ${p.windowDays} days and the tangle looks like the cause.`,
+      `I am flagging token spend because it rose ${p.changePct}% over the last ${p.windowDays} days against your own baseline.`,
     lever: ARCHITECTURE_REPORT_LEVER,
-    offers: (p) => [
+    offers: () => [
       {
-        id: 'read',
-        label: 'Read the report',
-        target: { type: 'subthread', title: `Architecture report ${sentenceValue(p.reportTaskId)}` },
+        id: 'report',
+        label: 'Write me a report',
+        target: { type: 'subthread', title: 'Why token spend rose' },
       },
       ack('later'),
       silence(ARCHITECTURE_REPORT_LEVER, "Don't do that again", 'never'),

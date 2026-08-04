@@ -977,6 +977,27 @@ export const startDaemon = async (
   // writer, so the heartbeat can never disagree with the pause state — that
   // side-effect used to live in a hand-rolled `setDaemonPaused` next to the
   // old `isPaused` boolean and is now owned by the controller.
+  /**
+   * Say out loud that the gate is shut, and how much work is stuck behind it.
+   * Urgent by design: this is the one Notice that must interrupt.
+   */
+  const announceBrokenGate = async (detail: string | null): Promise<void> => {
+    const { postConversationNotice } = await import('../lib/conversation-delivery.js')
+    const { resolveStateClient } = await import('../store/state-client.js')
+    const blocked = await resolveStateClient().execute(
+      `SELECT count(*) AS n FROM tasks WHERE status IN ('queued', 'blocked')`,
+    )
+    await postConversationNotice({
+      kind: 'gate.main-broken',
+      payload: {
+        failingCheck: detail ?? 'the same check',
+        blockedTasks: Number((blocked.rows[0] as { n?: unknown } | undefined)?.n ?? 0),
+      },
+      priority: 'urgent',
+      viewStreamHub,
+    })
+  }
+
   const pause = createPauseController({
     onChange: (state) => {
       heartbeatHandle?.setDispatchEnabled(acceptingWork && !state.paused)
@@ -987,6 +1008,16 @@ export const startDaemon = async (
             })`
           : '[pause] dispatch resumed',
       )
+      // A storm pause means every incoming task is failing the same way, which
+      // in practice means the integration branch is broken. That is the one
+      // pause the operator must hear about the moment it happens, wherever
+      // they are — including mid-grill — because until it clears nothing they
+      // queue can land. An operator pause needs no announcement: they did it.
+      if (state.paused && state.reason === 'storm') {
+        void announceBrokenGate(state.detail).catch((err: unknown) => {
+          log(`[pause] could not announce the broken gate: ${(err as Error).message}`)
+        })
+      }
     },
   })
   // An OPERATOR pause is persisted to daemon.json so the intent survives a
@@ -5308,6 +5339,51 @@ export const startDaemon = async (
   }, REFLECT_DETECTOR_MS)
   reflectDetectorSweep.unref()
 
+  // ── Observational Notice sweep ───────────────────────────────────────────
+  // The proactive half of the main thread: nothing here reacts to an event,
+  // so nothing else would ever run it. Deliberately infrequent — every Notice
+  // it can produce describes a *trend* or a *habit*, and neither changes
+  // between one hour and the next. Delivery still waits for a pause, so a
+  // sweep landing mid-grill queues rather than interrupts.
+  const NOTICE_SWEEP_MS = Number(process.env.MARS_NOTICE_SWEEP_MS ?? 60 * 60_000)
+  const runObservationalNotices = async (): Promise<void> => {
+    const { runNoticeSweep } = await import('../lib/notices/sweep.js')
+    const { resolveStateClient: stateClient } = await import('../store/state-client.js')
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const repoRoot = resolveContext().repoRoot
+    const integrationBranch = process.env.INTEGRATION_BRANCH ?? 'main'
+    const result = await runNoticeSweep({
+      client: stateClient(),
+      repoRoot,
+      integrationBranch,
+      log,
+      listCommits: async (branch, sinceMs) => {
+        const { stdout } = await promisify(execFile)(
+          'git',
+          ['log', branch, '--format=%H', `--since=${new Date(sinceMs).toISOString()}`],
+          { cwd: repoRoot },
+        )
+        return stdout.split('\n').map((line) => line.trim()).filter(Boolean)
+      },
+    })
+    if (result.posted > 0) {
+      log(`[notice-sweep] spoke ${result.posted} Notice(s)`)
+      viewStreamHub.broadcast('chat')
+    }
+  }
+  const noticeSweep = setInterval(() => {
+    void runObservationalNotices().catch((err: unknown) => {
+      log(`[notice-sweep] errored: ${(err as Error).message}`)
+    })
+  }, NOTICE_SWEEP_MS)
+  noticeSweep.unref()
+  // Run once at startup so a fresh session opens on something to do rather
+  // than on an empty feed that fills an hour later.
+  void runObservationalNotices().catch((err: unknown) => {
+    log(`[notice-sweep] startup sweep errored: ${(err as Error).message}`)
+  })
+
   // ── Orphan-subprocess sweep ──────────────────────────────────────────────
   // Verify/test runners that outlive their task (abort, timeout, or a daemon
   // that died before it could kill the group) get reparented to init and burn
@@ -5940,6 +6016,7 @@ export const startDaemon = async (
     clearInterval(staleSweep)
     clearInterval(staleMergingSweep)
     clearInterval(observabilityWatchdog)
+    clearInterval(noticeSweep)
     clearInterval(orphanSweep)
     clearInterval(dbBusyWatchdog)
     clearInterval(phantomWatchdog)

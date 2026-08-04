@@ -1454,9 +1454,13 @@ const DDL: readonly string[] = [
     integration_branch text        NOT NULL,
     worktree_path      text        NOT NULL,
     branch             text        NOT NULL,
+    -- Integration-branch tip after this job landed. The only durable record of
+    -- which commits on the integration branch Mars itself put there.
+    merged_sha         text        NULL,
     created_at         timestamptz NOT NULL DEFAULT now(),
     updated_at         timestamptz NOT NULL DEFAULT now()
   )`,
+  `ALTER TABLE merge_jobs ADD COLUMN IF NOT EXISTS merged_sha text`,
   // At most one active (queued/claimed/running) merge job per task_id.
   `CREATE UNIQUE INDEX IF NOT EXISTS merge_jobs_active_task_uidx
      ON merge_jobs(task_id)

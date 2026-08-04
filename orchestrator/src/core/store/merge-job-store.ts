@@ -50,6 +50,13 @@ export interface MergeJob {
   integrationBranch: string
   worktreePath: string
   branch: string
+  /**
+   * The integration-branch tip after this job landed, or null for a job that
+   * has not finished (or one from before Mars recorded it). This is the only
+   * durable record of which commits on the integration branch are Mars's own
+   * work — everything else there arrived by hand.
+   */
+  mergedSha: string | null
   createdAt: string
   updatedAt: string
 }
@@ -89,6 +96,7 @@ const MergeJobRowSchema = z.object({
   integration_branch: z.string(),
   worktree_path: z.string(),
   branch: z.string(),
+  merged_sha: z.string().nullable().default(null),
   created_at: z.preprocess((v) => {
     if (v instanceof Date) return v.toISOString()
     return v
@@ -114,6 +122,7 @@ function rowToMergeJob(raw: unknown): MergeJob {
     integrationBranch: row.integration_branch,
     worktreePath: row.worktree_path,
     branch: row.branch,
+    mergedSha: row.merged_sha,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -146,7 +155,7 @@ export interface MergeJobStore {
    * Mark a job as 'done'. Stamps `finished_at`.
    * Returns the updated row, or `null` if not found.
    */
-  markDone(id: string): Promise<MergeJob | null>
+  markDone(id: string, mergedSha?: string | null): Promise<MergeJob | null>
 
   /**
    * Mark a job as 'failed'. Records `error` and optional `errorCode`. Stamps
@@ -246,15 +255,16 @@ export const createMergeJobStore = (client: DbClient): MergeJobStore => {
       return rowToMergeJob(rs.rows[0])
     },
 
-    async markDone(id) {
+    async markDone(id, mergedSha) {
       const rs = await client.execute({
         sql: `UPDATE merge_jobs
               SET status      = 'done',
                   finished_at = NOW(),
+                  merged_sha  = COALESCE(?, merged_sha),
                   updated_at  = NOW()
               WHERE id = ?
               RETURNING *`,
-        args: [id],
+        args: [mergedSha ?? null, id],
       })
       if (rs.rows.length === 0) return null
       return rowToMergeJob(rs.rows[0])
