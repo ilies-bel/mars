@@ -5117,6 +5117,35 @@ export const startDaemon = async (
   }, POLL_FALLBACK_MS)
   pollFallback.unref()
 
+  // ── Queued-dispatch sweep ─────────────────────────────────────────────────
+  // Writers inside the daemon normally call the dispatch-hint seam immediately
+  // after their transaction commits. This periodic DB re-read is the durable
+  // backstop for a missed hint: unlike pollFallback it also runs while other
+  // workers are active, so one forgotten handoff cannot strand a queued row
+  // until the daemon goes idle or restarts. Re-emitting task.queued intentionally
+  // takes the normal bus path, which feeds pendingImplement and invokes drain();
+  // drain then re-reads the row and validates its status and blockers before it
+  // can claim a worker slot.
+  const QUEUED_DISPATCH_SWEEP_MS = Number(
+    process.env.MARS_QUEUED_DISPATCH_SWEEP_MS ?? 30_000,
+  )
+  const queuedDispatchSweep = setInterval(() => {
+    if (!acceptingWork || pause.isPaused()) return
+    void (async () => {
+      try {
+        const queued = await listTasks('queued')
+        for (const task of queued) {
+          if (!tracker.isInFlight(task.id)) {
+            bus.emit('task.queued', { taskId: task.id })
+          }
+        }
+      } catch (err) {
+        log(`[queued-dispatch-sweep] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, QUEUED_DISPATCH_SWEEP_MS)
+  queuedDispatchSweep.unref()
+
   // ── Stale-worktree sweep ──────────────────────────────────────────────────
   // Periodically raises `stale-worktree` actionQueue items for tasks whose worktree
   // has not been updated within MARS_STALE_WORKTREE_HOURS (default 24h). The
@@ -5935,6 +5964,7 @@ export const startDaemon = async (
     if (shuttingDown) return
     shuttingDown = true
     clearInterval(pollFallback)
+    clearInterval(queuedDispatchSweep)
     clearInterval(githubUpdatePoll)
     clearInterval(devStalenessCheck)
     clearInterval(staleSweep)

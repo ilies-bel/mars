@@ -66,6 +66,7 @@ import {
 } from './lib/main-dirty'
 import type { TraceEventStore } from './lib/trace-events-store'
 import { internalBus } from '../internal-bus'
+import { hintDispatch } from './daemon/dispatch-hint'
 import { getProposal } from './proposals'
 import { markTaskFailed } from './queue-retry'
 import { computeFailureSignature } from './lib/failure-signature'
@@ -1339,6 +1340,7 @@ export class Arc {
       failingStep: input.failingStep,
       originId: source.originId,
     })
+    hintDispatch(fixTaskId, 'implement')
 
     await Arc.maybeAssertArcInvariant(input.sourceTaskId, s)
     return { fixTaskId, created: true }
@@ -1571,6 +1573,7 @@ export class Arc {
       failingStep: `${input.dispatchPhase}:main-dirty`,
       originId: input.sourceOriginId,
     })
+    hintDispatch(fixTaskId, 'implement')
 
     await Arc.maybeAssertArcInvariant(input.sourceTaskId, s)
     return { fixTaskId }
