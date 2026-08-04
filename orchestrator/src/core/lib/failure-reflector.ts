@@ -163,14 +163,17 @@ const parseSuggestions = (text: string): FailureReflectorSuggestion[] => {
   return results
 }
 
+const failureReflectorFingerprint = (opts: SpawnFailureReflectorOpts): string =>
+  createHash('sha256')
+    .update(`failure-reflector:${opts.lastStep}:${opts.lastErrorSignature}:`)
+    .digest('hex')
+    .slice(0, 32)
+
 const persistSuggestion = async (
   opts: SpawnFailureReflectorOpts,
   s: FailureReflectorSuggestion,
 ): Promise<void> => {
-  const fingerprint = createHash('sha256')
-    .update(`failure-reflector:${opts.lastStep}:${opts.lastErrorSignature}:`)
-    .digest('hex')
-    .slice(0, 32)
+  const fingerprint = failureReflectorFingerprint(opts)
 
   const existing = await findOpenReflectionDraftByFingerprint(fingerprint, 'failure-reflector')
   if (existing) {
@@ -206,20 +209,26 @@ const persistSuggestion = async (
  * new proposal row created), regardless of model-written title wording.
  *
  * Admission control (see {@link MAX_CONCURRENT}): the call is suppressed when
- * self-heal is disabled or when {@link MAX_CONCURRENT} runs are already in
- * flight. Suppression is silent and non-fatal — the caller never awaits this.
+ * self-heal is disabled, an open draft already represents this failure
+ * signature, or {@link MAX_CONCURRENT} runs are already in flight. Suppression
+ * is silent and non-fatal — the caller never awaits this.
  *
- * Note the gate is on concurrency only, never on the failure signature:
- * collapsing repeat analyses is the proposal layer's job (`persistSuggestion`
- * appends to the existing open draft), and doing it here as well would
- * silently skip runs that carry genuinely new arc context.
+ * The signature gate comes before the global concurrency gate. An open draft
+ * records that this failure arc has already been analysed, so recurring
+ * failures with unchanged classification do not consume another provider run.
+ * A changed failing step or signature receives its own analysis and draft.
  */
 export const spawnFailureReflector = async (
   opts: SpawnFailureReflectorOpts,
 ): Promise<void> => {
   // ── Admission control ────────────────────────────────────────────────────
-  // Checked before any work so a storm costs nothing but two comparisons.
+  // Checked before any provider work so recurring failures do not saturate it.
   if (isRecoveryDisabled()) return
+  const existing = await findOpenReflectionDraftByFingerprint(
+    failureReflectorFingerprint(opts),
+    'failure-reflector',
+  )
+  if (existing) return
   if (inFlight >= MAX_CONCURRENT) return
 
   inFlight += 1
