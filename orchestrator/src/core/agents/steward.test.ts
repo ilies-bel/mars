@@ -5,6 +5,8 @@ import {
   stewardAgent,
   StewardEventSchema,
   renderStewardStormBrief,
+  renderGateFixStewardBrief,
+  STEWARD_GATE_FIX_TOOLS,
   STEWARD_STORM_TIMEOUT_MS,
   STEWARD_STORM_TOOLS,
   type StewardStormEvent,
@@ -82,6 +84,22 @@ describe('StewardEventSchema — parse behaviour', () => {
     expect(result.kind).toBe('signature-storm')
   })
 
+  it('accepts a quarantined gate failure with its definition and evidence', () => {
+    const result = StewardEventSchema.parse({
+      kind: 'gate-systemic-failure',
+      gate: { id: 'gate-1', scope: 'orchestrator', name: 'typecheck' },
+      currentDefinition: {
+        cmd: 'npx',
+        args: ['tsc', '--noEmit'],
+        required: true,
+        tier: 'task',
+      },
+      quarantineSignature: 'verify:typecheck/exit-1',
+      failureEvidence: 'error TS2322: Type string is not assignable to number',
+    })
+    expect(result.kind).toBe('gate-systemic-failure')
+  })
+
   it('defaults failureExcerpts to an empty list', () => {
     const result = StewardEventSchema.parse({
       kind: 'signature-storm',
@@ -108,6 +126,27 @@ describe('StewardEventSchema — parse behaviour', () => {
     expect(() =>
       StewardEventSchema.parse({ kind: 'kpi-degraded' }),
     ).toThrow()
+  })
+})
+
+describe('gate-systemic-failure dispatch', () => {
+  const event = StewardEventSchema.parse({
+    kind: 'gate-systemic-failure',
+    gate: { id: 'gate-1', scope: 'orchestrator', name: 'typecheck' },
+    currentDefinition: { cmd: 'npx', args: ['tsc', '--noEmit'], required: true, tier: 'task' },
+    quarantineSignature: 'verify:typecheck/exit-1',
+    failureEvidence: 'TypeScript reported an option that is no longer supported.',
+  })
+
+  it('uses repository-read tools and requires one structured proposal only', () => {
+    expect(STEWARD_GATE_FIX_TOOLS).toEqual(['Read', 'Bash', 'Grep', 'Glob'])
+    const rendered = renderGateFixStewardBrief(event as Extract<typeof event, { kind: 'gate-systemic-failure' }>)
+    expect(rendered).toContain('"cmd"')
+    expect(rendered).toContain('"args"')
+    expect(rendered).toContain('"required"')
+    expect(rendered).toContain('"tier"')
+    expect(rendered).toContain('"rationale"')
+    expect(rendered).toMatch(/do not apply|do not reactivate/i)
   })
 })
 

@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0023'
+export const SCHEMA_VERSION = '0024'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -1106,6 +1106,32 @@ const DDL: readonly string[] = [
   `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_signature text`,
   `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_at bigint`,
   `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_origin_id text`,
+
+  // ── quarantined verify-gate repair proposals ─────────────────────────────
+  // The unique quarantine episode key is the durable idempotency boundary for
+  // the gate-fix Steward. A replay may re-run diagnosis, but it can never
+  // create a second operator decision for the same gate/signature pair.
+  `CREATE TABLE IF NOT EXISTS gate_fix_proposals (
+    id                    text PRIMARY KEY,
+    gate_id               text NOT NULL,
+    gate_scope            text NOT NULL,
+    gate_name             text NOT NULL,
+    quarantine_signature  text NOT NULL,
+    failure_evidence      text NOT NULL,
+    current_cmd           text NOT NULL,
+    current_args_json     text NOT NULL,
+    current_required      boolean NOT NULL,
+    current_tier          text NOT NULL CHECK (current_tier IN ('task', 'integration')),
+    proposed_cmd          text NOT NULL,
+    proposed_args_json    text NOT NULL,
+    proposed_required     boolean NOT NULL,
+    proposed_tier         text NOT NULL CHECK (proposed_tier IN ('task', 'integration')),
+    rationale             text NOT NULL,
+    status                text NOT NULL DEFAULT 'awaiting-human'
+                           CHECK (status IN ('awaiting-human', 'approved', 'rejected')),
+    created_at            bigint NOT NULL,
+    UNIQUE (gate_id, quarantine_signature)
+  )`,
   `UPDATE verify_gates SET state = 'active' WHERE state IS NULL`,
   `CREATE TABLE IF NOT EXISTS verify_gate_failure_streaks (
     gate_id           text PRIMARY KEY REFERENCES verify_gates(id) ON DELETE CASCADE,
@@ -1593,6 +1619,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'failure_signature_streak',
   'verify_gates',
   'verify_gate_failure_streaks',
+  'gate_fix_proposals',
   'kpi_snapshots',
   'kpi_counters',
   'promotion_ledger',

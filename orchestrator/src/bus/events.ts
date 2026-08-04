@@ -30,6 +30,8 @@ export const EventMap = {
     gateId: z.string(),
     originId: z.string(),
     failureSignature: z.string(),
+    /** Captured output from the failing gate invocation, not a derived verdict. */
+    failureEvidence: z.string().default('No captured gate output was available.'),
   }),
   'task.blocked': z.object({
     taskId: z.string(),

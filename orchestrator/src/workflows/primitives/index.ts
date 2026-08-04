@@ -2527,6 +2527,7 @@ export const review = async (
                     gateId: step.gateId!,
                     originId: trace.originId,
                     failureSignature,
+                    failureEvidence: step.output,
                   }),
                 )
               }

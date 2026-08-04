@@ -66,6 +66,10 @@ import {
   ensureArcVerifierSubscriber,
 } from '../../outbox/subscribers/arc-verifier-subscriber'
 import {
+  drainGateFixSteward,
+  ensureGateFixStewardSubscriber,
+} from '../../outbox/subscribers/gate-fix-steward'
+import {
   drainRecipeConversationNotices,
   ensureRecipeConversationNoticeSubscriber,
 } from '../../outbox/subscribers/recipe-conversation-notice'
@@ -2501,6 +2505,53 @@ export const startDaemon = async (
     viewStreamHub.broadcast('tasks')
   }
 
+  // A quarantined registry gate is advisory-only: this Steward can inspect the
+  // repository and submit a candidate definition, but has no registry mutation
+  // or proposal-approval authority. The durable subscriber below owns when it
+  // is called; this callback owns only one provider invocation.
+  const runGateFixStewardDispatch = async (event: import('../agents/steward').GateSystemicFailureEvent) => {
+    const [{ runGateFixSteward }, { stewardAgent, STEWARD_GATE_FIX_TOOLS }, { runClaudeCode }] = await Promise.all([
+      import('../gate-fix-steward'),
+      import('../agents/steward'),
+      import('../lib/git/claude'),
+    ])
+    const outcome = await runGateFixSteward(event, {
+      worker: async (prompt) => {
+        const result = await runClaudeCode({
+          cwd: resolveContext().repoRoot,
+          prompt,
+          systemPrompt: stewardAgent.systemPrompt,
+          model: stewardAgent.model,
+          permissionMode: 'bypassPermissions',
+          // `runClaudeCode` exposes denials rather than an allow-list. Keep
+          // the useful repository-read tools while closing every repair/apply
+          // route; the prompt independently names the same boundary.
+          disallowedTools: [
+            'Edit',
+            'Write',
+            'NotebookEdit',
+            'Bash(mars verify-gate*)',
+            'Bash(mars proposal*)',
+            'Bash(mars gate-fix*)',
+          ],
+        })
+        let output = result.stdout
+        for (const message of result.conversation) {
+          if (message.type === 'result' && typeof message.result === 'string') output = message.result
+        }
+        if (result.exitCode !== 0 || result.quotaRejected !== null) {
+          log(`[gate-fix-steward] ${event.gate.id} diagnosis did not complete cleanly (exit=${result.exitCode})`)
+          return ''
+        }
+        log(`[gate-fix-steward] ${event.gate.id} inspected with ${STEWARD_GATE_FIX_TOOLS.join(', ')}`)
+        return output
+      },
+    })
+    viewStreamHub.broadcast('chat')
+    viewStreamHub.broadcast('action-queue')
+    return outcome
+  }
+
   bus.on('task.added', (e: { taskId: string }) => {
     if (!acceptingWork) return
     if (tracker.isInFlight(e.taskId)) return
@@ -4732,6 +4783,24 @@ export const startDaemon = async (
     }
   })()
 
+  // A verify-gate.quarantined event is durable evidence of a new quarantine
+  // episode. Register before the periodic drain so an event emitted while the
+  // daemon was down is diagnosed exactly once when it returns.
+  void (async () => {
+    try {
+      await ensureGateFixStewardSubscriber(getCompositionRootClient())
+      const { processed } = await drainGateFixSteward(
+        getCompositionRootClient(),
+        runGateFixStewardDispatch,
+        undefined,
+        log,
+      )
+      if (processed > 0) log(`[gate-fix-steward] dispatched ${processed} quarantined gate diagnosis(es) on boot`)
+    } catch (err) {
+      log(`[gate-fix-steward] boot drain failed: ${(err as Error).message}`)
+    }
+  })()
+
   // Blocked tasks with the same canonical failure are narrated together. The
   // per-batch timer is armed from the persisted opened_at value, so the Notice
   // appears after its full coalescing window rather than on this poll cadence.
@@ -5847,6 +5916,21 @@ export const startDaemon = async (
   )
   arcVerifierDrain.unref()
 
+  const GATE_FIX_STEWARD_DRAIN_MS = Number(
+    process.env.MARS_GATE_FIX_STEWARD_DRAIN_MS ?? 30_000,
+  )
+  const gateFixStewardDrain = setInterval(
+    singleFlight(async () => {
+      try {
+        await drainGateFixSteward(getCompositionRootClient(), runGateFixStewardDispatch, undefined, log)
+      } catch (err) {
+        log(`[gate-fix-steward] drain errored: ${(err as Error).message}`)
+      }
+    }),
+    GATE_FIX_STEWARD_DRAIN_MS,
+  )
+  gateFixStewardDrain.unref()
+
   // ── Usage snapshot sampler ────────────────────────────────────────────────
   const { startUsageSampler } = await import('./usage-sampler')
   const usageSamplerInterval = startUsageSampler(
@@ -5881,6 +5965,7 @@ export const startDaemon = async (
     clearInterval(failureConversationNoticeDrain)
     clearFailureConversationNoticeFlush(getCompositionRootClient())
     clearInterval(arcVerifierDrain)
+    clearInterval(gateFixStewardDrain)
     clearInterval(usageSamplerInterval)
     deferralWakeSweeper.stop()
     // Drop the dispatch hint before the tracker is torn down, so a writer that
