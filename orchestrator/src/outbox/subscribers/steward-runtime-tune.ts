@@ -18,6 +18,12 @@ import {
   samplePressure,
   type MachinePressure,
 } from '../../core/lib/machine-pressure.js'
+import { readLeverAutonomyLevel, type AutonomyLevel } from '../../core/daemon/config.js'
+import { STEWARD_RUNTIME_TUNE_LEVER } from '../../core/lib/conversation-copy.js'
+import {
+  recordStewardIntervention,
+  type StewardLedgerEntry,
+} from '../../core/steward-ledger.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -141,6 +147,13 @@ export interface StewardRuntimeTuneDeps {
   runOrphanSweep?: () => Promise<OrphanSweepSummary>
   /** Override for testing — defaults to the real machine-pressure sample. */
   readPressure?: () => Promise<MachinePressure>
+  /**
+   * Override for testing — defaults to reading
+   * {@link STEWARD_RUNTIME_TUNE_LEVER} from daemon.json.
+   */
+  readAutonomyLevel?: () => AutonomyLevel
+  /** Override for testing — defaults to the durable Steward ledger. */
+  recordLedger?: (entry: StewardLedgerEntry) => Promise<unknown>
   /**
    * Override for testing — returns the host's *cumulative* count of pages
    * swapped in plus out since boot. The subscriber differences consecutive
@@ -285,6 +298,9 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
   const readPressure = deps.readPressure ?? ((): Promise<MachinePressure> => samplePressure())
   const readPagingCounter = deps.readPagingCounter ?? defaultReadPagingCounter
   const recordCapDecision = deps.recordCapDecision ?? ((): void => {})
+  const readAutonomyLevel =
+    deps.readAutonomyLevel ?? ((): AutonomyLevel => readLeverAutonomyLevel(STEWARD_RUNTIME_TUNE_LEVER))
+  const recordLedger = deps.recordLedger ?? recordStewardIntervention
   const runOrphanSweep =
     deps.runOrphanSweep ??
     ((): Promise<OrphanSweepSummary> =>
@@ -325,11 +341,59 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
     prev = { counter, atMs }
   }
 
+  /**
+   * The operator's standing answer on whether Mars may move this knob.
+   *
+   * Read per decision rather than captured at startup, so tapping "Stop doing
+   * this automatically" on the Notice takes effect on the next lane without a
+   * daemon restart — the message and the off-switch have to be the same
+   * object for that chip to mean anything.
+   *
+   * Only `off` is meaningful here. A runtime knob has nowhere to ask: there is
+   * no operator in the loop at 3am when the host starts swapping, so `ask`
+   * behaves as `tell` rather than silently pinning the cap forever.
+   */
+  const mayTune = (): boolean => {
+    try {
+      return readAutonomyLevel() !== 'off'
+    } catch (err) {
+      // A malformed lever must not disable host protection. Shedding on a
+      // thrashing machine is the safe direction; refusing to would not be.
+      log(`[steward-tune] autonomy level unreadable, tuning on: ${(err as Error).message}`)
+      return true
+    }
+  }
+
   const ack = async (input: Extract<ConversationNoticeInput, { kind: string }>): Promise<void> => {
     try {
       await postNotice(input)
     } catch (err) {
       log(`[steward-tune] conversation Notice failed: ${(err as Error).message}`)
+    }
+  }
+
+  /**
+   * Record a cap change as durable evidence. The conversation Notice is what
+   * the operator reads now; the ledger is what answers "when did Mars start
+   * doing this, and how often?" weeks later.
+   */
+  const ledger = async (
+    lane: string,
+    from: number,
+    to: number,
+    rationale: string,
+  ): Promise<void> => {
+    try {
+      await recordLedger({
+        targetKind: 'daemon-cap',
+        targetId: 'implement',
+        targetVersion: String(from),
+        recipeId: `steward-runtime-tune/${lane}`,
+        rationale,
+        outcome: `implement cap ${from} → ${to}`,
+      })
+    } catch (err) {
+      log(`[steward-tune] ledger write failed: ${(err as Error).message}`)
     }
   }
 
@@ -356,6 +420,10 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
 
   bus.on('kpi.backlog.degraded', (payload: { pending: number; cap: number; sustainedMs: number }) => {
     void (async () => {
+      if (!mayTune()) {
+        log('[steward-tune] backlog degraded but autotuning is off; leaving the cap alone')
+        return
+      }
       const oldCap = implementSem.limit
       if (oldCap >= maxCap) {
         log(`[steward-tune] implement cap already at max (${maxCap}), skipping`)
@@ -404,6 +472,12 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
       recordCapDecision(
         `steward autotune raised implement ${oldCap} → ${newCap} on sustained backlog (${decision.explanation})`,
       )
+      await ledger(
+        'bump',
+        oldCap,
+        newCap,
+        `sustained backlog: ${payload.pending} pending for ${Math.round(payload.sustainedMs / 1000)}s (${decision.explanation}; ${evidence})`,
+      )
 
       await ack({
         kind: 'steward.worker-bumped',
@@ -421,6 +495,7 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
 
   const sample = async (): Promise<void> => {
     await samplePaging()
+    if (!mayTune()) return
     const oldCap = implementSem.limit
 
     // ── shed ──────────────────────────────────────────────────────────────
@@ -434,6 +509,7 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
       const detail = `paging ${Math.round(pagingPps)} pages/s >= ${PAGING_SHED_TRIGGER}`
       log(`[steward-tune] shed implement cap ${oldCap} → ${newCap} (${detail})`)
       recordCapDecision(`steward autotune shed implement ${oldCap} → ${newCap} (${detail})`)
+      await ledger('shed', oldCap, newCap, detail)
 
       // Name the resource that actually tripped, so the operator does not go
       // looking at CPU when the machine is out of memory.
@@ -462,6 +538,12 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
       newCap >= baselineCap
         ? null
         : `steward autotune restored implement ${oldCap} → ${newCap} after paging cleared`,
+    )
+    await ledger(
+      'recover',
+      oldCap,
+      newCap,
+      `paging ${Math.round(pagingPps)} pages/s < ${PAGING_ACTIVE_PPS}, baseline ${baselineCap}`,
     )
     await ack({
       kind: 'steward.worker-restored',

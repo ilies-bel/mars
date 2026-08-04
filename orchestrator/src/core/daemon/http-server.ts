@@ -54,6 +54,7 @@ import {
   appendMessage,
 } from '../lib/chat-store'
 import { classifyMarsVerb } from '../lib/chat-mars-verbs'
+import { persistLeverAutonomyLevel } from './config'
 import {
   assembleDelta,
   clampWywaDeltaLimit,
@@ -2425,6 +2426,31 @@ export const startHttpServer = async (
               return
             }
             const { message, response } = selected
+            // `client` and `reference` targets are resolved by the browser —
+            // navigation, not mutation. Reaching the daemon means the caller
+            // is confused, so say so rather than half-executing something.
+            if (response.target.type === 'client' || response.target.type === 'reference') {
+              sendJson(res, 400, {
+                ok: false,
+                error: `response target '${response.target.type}' is resolved client-side and must not be posted`,
+              })
+              return
+            }
+            if (response.target.type === 'lever' || response.target.type === 'ack') {
+              if (response.target.type === 'lever') {
+                persistLeverAutonomyLevel(response.target.name, response.target.level)
+              }
+              await appendMessage(
+                message.thread_id,
+                'user',
+                response.label,
+                [{ type: 'text', text: response.label }],
+                { kind: 'acknowledgment', contextScope: 'main' },
+              )
+              deps.viewStreamHub?.broadcast('chat')
+              sendJson(res, 200, { ok: true })
+              return
+            }
             if (response.target.type === 'verb') {
               if (classifyMarsVerb(response.target.op) !== 'safe') {
                 sendJson(res, 400, { ok: false, error: `response verb is not safe: ${response.target.op}` })

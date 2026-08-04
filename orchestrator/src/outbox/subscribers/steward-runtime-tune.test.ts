@@ -9,6 +9,7 @@ import {
 } from './steward-runtime-tune.js'
 import type { OrphanSweepSummary } from '../../core/lib/orphan-reaper.js'
 import type { MachinePressure } from '../../core/lib/machine-pressure.js'
+import type { AutonomyLevel } from '../../core/daemon/config.js'
 
 const summary = (reaped: number): OrphanSweepSummary => ({
   scanned: reaped,
@@ -57,6 +58,8 @@ describe('steward-runtime-tune', () => {
       sweepReaped?: number
       pagingPps?: number
       baselineCap?: number
+      autonomyLevel?: AutonomyLevel
+      readAutonomyLevel?: () => AutonomyLevel
     } = {},
   ) => {
     const bus = new EventEmitter()
@@ -77,6 +80,9 @@ describe('steward-runtime-tune', () => {
     const readPagingCounter = vi.fn(async () =>
       Math.round(((Date.now() - startMs) / 1000) * pagingPps),
     )
+    const recordLedger = vi.fn().mockResolvedValue('ledger-1')
+    const readAutonomyLevel =
+      overrides.readAutonomyLevel ?? vi.fn(() => overrides.autonomyLevel ?? 'tell')
     const stop = startStewardRuntimeTune({
       bus,
       implementSem,
@@ -89,6 +95,8 @@ describe('steward-runtime-tune', () => {
       runOrphanSweep,
       readPressure,
       readPagingCounter,
+      readAutonomyLevel,
+      recordLedger,
     })
     disposers.push(stop)
     return {
@@ -101,6 +109,8 @@ describe('steward-runtime-tune', () => {
       runOrphanSweep,
       readPressure,
       readPagingCounter,
+      readAutonomyLevel,
+      recordLedger,
     }
   }
 
@@ -113,6 +123,108 @@ describe('steward-runtime-tune', () => {
     await vi.advanceTimersByTimeAsync(0)
     await vi.advanceTimersByTimeAsync(15_000)
   }
+
+  describe('the autonomy lever', () => {
+    it('stops tuning entirely once the operator turns the lever off', async () => {
+      const { bus, implementSem, writeChatAck, recordLedger } = setup(12, {
+        autonomyLevel: 'off',
+      })
+
+      bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 65_000 })
+      await vi.waitFor(() => expect(implementSem.limit).toBe(12))
+
+      // Not merely silenced: the behaviour itself is off. A Notice the
+      // operator cannot act on would be worse than no Notice at all.
+      expect(writeChatAck).not.toHaveBeenCalled()
+      expect(recordLedger).not.toHaveBeenCalled()
+    })
+
+    it('stops shedding too, not just bumping', async () => {
+      vi.useFakeTimers()
+      const { implementSem, writeChatAck } = setup(12, {
+        pagingPps: 5_000,
+        autonomyLevel: 'off',
+      })
+
+      await primePaging()
+
+      expect(implementSem.limit).toBe(12)
+      expect(writeChatAck).not.toHaveBeenCalled()
+    })
+
+    it('treats ask as tell: a runtime knob has nobody to ask at 3am', async () => {
+      const { bus, implementSem } = setup(12, { autonomyLevel: 'ask' })
+
+      bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 65_000 })
+      await vi.waitFor(() => expect(implementSem.limit).toBe(16))
+    })
+
+    it('re-reads the lever per decision, so the chip takes effect without a restart', async () => {
+      let level: AutonomyLevel = 'tell'
+      const { bus, implementSem } = setup(12, { readAutonomyLevel: () => level })
+
+      bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 65_000 })
+      await vi.waitFor(() => expect(implementSem.limit).toBe(16))
+
+      level = 'off'
+      bus.emit('kpi.backlog.degraded', { pending: 20, cap: 16, sustainedMs: 65_000 })
+      await vi.waitFor(() => expect(implementSem.limit).toBe(16))
+    })
+
+    it('keeps protecting the host when the lever is unreadable', async () => {
+      const { bus, implementSem, log } = setup(12, {
+        readAutonomyLevel: () => {
+          throw new Error('daemon.json lever is invalid')
+        },
+      })
+
+      bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 65_000 })
+      await vi.waitFor(() => expect(implementSem.limit).toBe(16))
+      expect(log.mock.calls.flat().join('\n')).toContain('autonomy level unreadable')
+    })
+  })
+
+  describe('the intervention ledger', () => {
+    it('records a bump as durable evidence', async () => {
+      const { bus, recordLedger } = setup(12)
+
+      bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 65_000 })
+      await vi.waitFor(() => expect(recordLedger).toHaveBeenCalledTimes(1))
+
+      expect(recordLedger.mock.calls[0]![0]).toMatchObject({
+        targetKind: 'daemon-cap',
+        targetId: 'implement',
+        targetVersion: '12',
+        recipeId: 'steward-runtime-tune/bump',
+        outcome: 'implement cap 12 → 16',
+      })
+      expect(recordLedger.mock.calls[0]![0].rationale).toContain('15 pending')
+    })
+
+    it('records a shed under its own lane', async () => {
+      vi.useFakeTimers()
+      const { recordLedger } = setup(12, { pagingPps: 5_000 })
+
+      await primePaging()
+      await vi.waitFor(() => expect(recordLedger).toHaveBeenCalledTimes(1))
+
+      expect(recordLedger.mock.calls[0]![0]).toMatchObject({
+        recipeId: 'steward-runtime-tune/shed',
+        outcome: 'implement cap 12 → 8',
+      })
+    })
+
+    it('still announces the change when the ledger write fails', async () => {
+      const { bus, implementSem, writeChatAck, recordLedger, log } = setup(12)
+      recordLedger.mockRejectedValue(new Error('disk full'))
+
+      bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 65_000 })
+      await vi.waitFor(() => expect(writeChatAck).toHaveBeenCalledTimes(1))
+
+      expect(implementSem.limit).toBe(16)
+      expect(log.mock.calls.flat().join('\n')).toContain('ledger write failed')
+    })
+  })
 
   it('bumps implement cap on kpi.backlog.degraded', async () => {
     const { bus, implementSem, writeChatAck } = setup(12)

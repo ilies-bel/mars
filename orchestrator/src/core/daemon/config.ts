@@ -16,6 +16,22 @@ export const AUTONOMOUS_AUTONOMY_LEVEL: AutonomyLevel = AUTONOMY_LEVELS[2]
 
 export const STEWARD_PROMPT_OPTIMIZER_LEVER = 'steward_prompt_optimizer' as const
 
+/**
+ * Levers that are autonomous until the operator says otherwise.
+ *
+ * `'ask'` is the right default for a lever with somewhere to ask — a queue
+ * item, a chip. These have none: they govern behaviour that runs
+ * unsupervised and reports afterwards, so defaulting them to `'ask'` would
+ * silently disable them instead of prompting anyone.
+ */
+const AUTONOMOUS_BY_DEFAULT_LEVERS: ReadonlySet<string> = new Set([
+  STEWARD_PROMPT_OPTIMIZER_LEVER,
+  'steward_runtime_tune',
+])
+
+const defaultLevelFor = (name: string): AutonomyLevel =>
+  AUTONOMOUS_BY_DEFAULT_LEVERS.has(name) ? AUTONOMOUS_AUTONOMY_LEVEL : 'ask'
+
 export type WorkerPromptBlockId = 'Coder.system' | 'COMMIT_FOOTER'
 
 /**
@@ -292,11 +308,11 @@ export const readLeverAutonomyLevel = (name: string): AutonomyLevel => {
   const raw = readDaemonConfigFile()
   const levers = raw.levers
   if (levers === null || typeof levers !== 'object' || Array.isArray(levers)) {
-    return name === STEWARD_PROMPT_OPTIMIZER_LEVER ? AUTONOMOUS_AUTONOMY_LEVEL : 'ask'
+    return defaultLevelFor(name)
   }
   const leverData = (levers as Record<string, unknown>)[name]
   if (leverData === null || typeof leverData !== 'object' || Array.isArray(leverData)) {
-    return name === STEWARD_PROMPT_OPTIMIZER_LEVER ? AUTONOMOUS_AUTONOMY_LEVEL : 'ask'
+    return defaultLevelFor(name)
   }
   const autonomyLevel = (leverData as Record<string, unknown>).autonomy_level
   if (autonomyLevel !== undefined && !AUTONOMY_LEVELS.includes(autonomyLevel as AutonomyLevel)) {

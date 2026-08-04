@@ -341,6 +341,54 @@ const PreloadedSubthreadTargetSchema = z.object({
   title: z.string().trim().min(1),
 })
 
+/**
+ * A one-tap target the client resolves on its own — it navigates rather than
+ * mutating state, so the daemon only stores it and refuses to execute it.
+ */
+const PreloadedClientTargetSchema = z.object({
+  type: z.literal('client'),
+  op: z.literal('open-proposal-subject'),
+  entityId: z.string().trim().min(1),
+})
+
+/**
+ * A one-tap target that writes the Autonomy level of the lever that produced
+ * the Notice. This is what makes "stop doing this automatically" and "don't
+ * ask again" the same mechanism: the message announcing a behaviour carries
+ * that behaviour's own off-switch.
+ */
+const PreloadedLeverTargetSchema = z.object({
+  type: z.literal('lever'),
+  name: z.string().trim().min(1),
+  level: z.enum(['off', 'ask', 'tell']),
+})
+
+/**
+ * A one-tap target that opens supporting reading. Client-only and inert: the
+ * daemon never fetches it, and only `https:` is representable so a stored
+ * Notice can never smuggle `javascript:` or `file:` into the operator's
+ * browser.
+ */
+const PreloadedReferenceTargetSchema = z.object({
+  type: z.literal('reference'),
+  url: z
+    .string()
+    .trim()
+    .url()
+    .refine((value) => value.startsWith('https://'), {
+      message: 'reference url must be https',
+    }),
+})
+
+/**
+ * A one-tap target that changes nothing and only records that the operator
+ * read the Notice. "Noted" is a real answer to an announcement — without it
+ * the only way to close an FYI would be to silence the behaviour behind it.
+ */
+const PreloadedAckTargetSchema = z.object({
+  type: z.literal('ack'),
+})
+
 /** A stable, template-authored response offered below a Notice. */
 export const PreloadedResponseSchema = z.object({
   id: z.string().trim().min(1),
@@ -348,6 +396,10 @@ export const PreloadedResponseSchema = z.object({
   target: z.discriminatedUnion('type', [
     PreloadedVerbTargetSchema,
     PreloadedSubthreadTargetSchema,
+    PreloadedClientTargetSchema,
+    PreloadedLeverTargetSchema,
+    PreloadedReferenceTargetSchema,
+    PreloadedAckTargetSchema,
   ]),
 })
 export type PreloadedResponse = z.infer<typeof PreloadedResponseSchema>

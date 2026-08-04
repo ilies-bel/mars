@@ -17,6 +17,7 @@ import { appendMessage } from './chat-store'
 import { MAIN_THREAD_ID } from './pg-schema.js'
 import {
   renderConversationNotice,
+  offersForConversationNotice,
   type AutonomousConversationNoticeInput,
 } from './conversation-copy'
 
@@ -130,9 +131,18 @@ export const postConversationNotice = async (
     : renderConversationNotice(input.kind, input.payload)
   const c = stateClient()
   const id = randomUUID()
-  // Both authoring paths carry their Offer set through unchanged; only a
-  // Notice that supplies no segments at all degrades to plain text.
-  const segments = input.segments ?? [{ type: 'text', text: body }]
+  // An explicit Offer set always wins. Otherwise a registry-authored Notice
+  // carries the chips its kind stands behind, and only a free-form Notice
+  // with nothing to offer degrades to plain text.
+  const segments = input.segments ?? [
+    { type: 'text', text: body },
+    ...('kind' in input
+      ? [{
+          type: 'preloaded_responses',
+          responses: offersForConversationNotice(input.kind, input.payload),
+        }]
+      : []),
+  ]
   const backingEntityId = 'body' in input ? input.backingEntityId ?? null : null
   await c.execute({
     sql: `INSERT INTO conversation_pending_messages (id, body, segments, backing_entity_id, priority, created_at)

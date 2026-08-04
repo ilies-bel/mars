@@ -1125,10 +1125,44 @@ const preloadedClientTargetSchema = z.object({
   entityId: z.string(),
 })
 
+/**
+ * Writes the Autonomy level of the lever that produced the Notice — the
+ * off-switch travelling with the message that announces the behaviour.
+ */
+const preloadedLeverTargetSchema = z.object({
+  type: z.literal('lever'),
+  name: z.string(),
+  level: z.enum(['off', 'ask', 'tell']),
+})
+
+/**
+ * Opens supporting reading in a new tab. Resolved entirely client-side and
+ * restricted to `https:` at parse time, so a stored Notice can never hand the
+ * browser a `javascript:` or `file:` url.
+ */
+const preloadedReferenceTargetSchema = z.object({
+  type: z.literal('reference'),
+  url: z.string().url().refine((value) => value.startsWith('https://'), {
+    message: 'reference url must be https',
+  }),
+})
+
+/** Records that the operator read the Notice. Changes nothing else. */
+const preloadedAckTargetSchema = z.object({
+  type: z.literal('ack'),
+})
+
 export const preloadedResponseSchema = z.object({
   id: z.string(),
   label: z.string(),
-  target: z.discriminatedUnion('type', [preloadedVerbTargetSchema, preloadedSubthreadTargetSchema, preloadedClientTargetSchema]),
+  target: z.discriminatedUnion('type', [
+    preloadedVerbTargetSchema,
+    preloadedSubthreadTargetSchema,
+    preloadedClientTargetSchema,
+    preloadedLeverTargetSchema,
+    preloadedReferenceTargetSchema,
+    preloadedAckTargetSchema,
+  ]),
 })
 
 export const preloadedResponsesSegmentSchema = z.object({
