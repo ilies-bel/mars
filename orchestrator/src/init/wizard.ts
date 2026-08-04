@@ -33,7 +33,7 @@ export interface WizardPrompt {
   /** The non-interactive TOML config key. MUST be accepted by loadInitConfig. */
   configKey: string
   /** Answer shape. */
-  type: 'boolean' | 'string' | 'enum'
+  type: 'boolean' | 'string' | 'enum' | 'gate-list'
   /** Allowed values when `type === 'enum'`. */
   choices?: readonly string[]
   /** Fallback used non-interactively and on TTY when the user just hits enter. */
@@ -78,5 +78,13 @@ export const WIZARD_PROMPTS: readonly WizardPrompt[] = [
     configKey: 'registerProject',
     type: 'boolean',
     default: true,
+  },
+  {
+    id: 'verifyGates',
+    question: 'Detected verify gates:',
+    flag: '--verify-gates-json',
+    configKey: 'verifyGates',
+    type: 'gate-list',
+    default: [],
   },
 ]

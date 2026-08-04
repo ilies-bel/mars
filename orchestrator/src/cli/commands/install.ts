@@ -259,6 +259,7 @@ const init: Command = {
     }
 
     const { runInitWizard } = await import('../../init/wizard-controller')
+    const { detectVerifyGates } = await import('../../init/detect-verify-gates')
 
     // Surface the value-bearing wizard flags to the controller. Boolean wizard
     // prompts read their flag from `args.positional` (the shared parser routes
@@ -273,11 +274,8 @@ const init: Command = {
       isTTY: runWizardPath && isTTY,
       flags: wizardFlags,
       force,
+      detectedGates: detectVerifyGates(deps.ctx.repoRoot),
     })
-    if (yes || !isTTY) {
-      const { detectVerifyGates } = await import('../../init/detect-verify-gates')
-      wizardChoices.verifyGates = detectVerifyGates(deps.ctx.repoRoot)
-    }
 
     const result = (await deps.daemon.sendRequest(
       {

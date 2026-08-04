@@ -8,6 +8,7 @@ import { createQueueWorkflowStore } from './queue-workflow-store'
 import { resolveContext } from '../core/context'
 import { initDatabases } from '../init/databases'
 import { WIZARD_DEFAULTS, type WizardChoices } from '../init/wizard'
+import { VerifyGateInputSchema } from '../core/verify-gates'
 import { installOnboardingVerifyGates } from '../init/seed-verify-gates'
 import {
   applyGitignoreScaffold,
@@ -26,17 +27,7 @@ import { ensureProjectRegistered } from '../registry/projects.js'
 // workflow input without a structural-type mismatch.
 const wizardChoicesSchema = z.object({
   registerProject: z.boolean(),
-  verifyGates: z.array(
-    z.object({
-      scope: z.string().optional(),
-      name: z.string(),
-      cmd: z.string(),
-      args: z.array(z.string()).optional(),
-      required: z.boolean().optional(),
-      tier: z.enum(['task', 'integration']).optional(),
-      source: z.string().optional(),
-    }),
-  ),
+  verifyGates: z.array(VerifyGateInputSchema),
 })
 
 const initInputSchema = z.object({

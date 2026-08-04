@@ -9,6 +9,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { z } from 'zod'
 import { resolveStateClient } from './store/state-client.js'
 import type { DbTx } from './lib/db.js'
 import type { VerifyScope, VerifyStepSpec } from './lib/git/verify.js'
@@ -49,23 +50,26 @@ export const ensureVerifyGatesSchema = async (client: DbTx): Promise<void> => {
   await client.execute(`UPDATE verify_gates SET state = 'active' WHERE state IS NULL`)
 }
 
-/** Input accepted by {@link addVerifyGate}. */
-export interface VerifyGateInput {
+/** Runtime validation shared by gate creation, onboarding, and workflow input. */
+export const VerifyGateInputSchema = z.object({
   /** Repo-relative scope directory. '.' means the repo root. Defaults to '.'. */
-  scope?: string
+  scope: z.string().trim().min(1).optional(),
   /** Human-readable step name, unique within a scope. */
-  name: string
+  name: z.string().trim().min(1),
   /** Executable to run (e.g. 'npx', 'npm', 'bash'). */
-  cmd: string
+  cmd: z.string().trim().min(1),
   /** Positional arguments passed to `cmd`. */
-  args?: string[]
+  args: z.array(z.string()).optional(),
   /** Whether a non-zero exit fails the verify phase. Defaults to true. */
-  required?: boolean
+  required: z.boolean().optional(),
   /** 'task' (default): run per-task; 'integration': deferred to integration boundary. */
-  tier?: 'task' | 'integration'
+  tier: z.enum(['task', 'integration']).optional(),
   /** Who added this gate ('human', 'operator', …). Defaults to 'human'. */
-  source?: string
-}
+  source: z.string().trim().min(1).optional(),
+})
+
+/** Input accepted by {@link addVerifyGate}. */
+export type VerifyGateInput = z.infer<typeof VerifyGateInputSchema>
 
 /** A verify gate row as returned by {@link listVerifyGates}. */
 export interface VerifyGate {

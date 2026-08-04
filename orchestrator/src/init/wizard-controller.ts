@@ -20,6 +20,8 @@ import {
   type WizardChoices,
   type WizardPrompt,
 } from './wizard'
+import type { VerifyGateInput } from '../core/verify-gates'
+import { normalizeDetectedVerifyGates } from './detect-verify-gates'
 
 /** Async line reader; production wraps Node's readline, tests inject a fake. */
 export type LineReader = (question: string) => Promise<string>
@@ -36,6 +38,8 @@ export interface RunWizardOptions {
   config?: Partial<Record<string, unknown>>
   /** `--force`: present for parity with init; does not change prompt routing. */
   force: boolean
+  /** Verify gates proposed by repository detection before onboarding starts. */
+  detectedGates?: readonly VerifyGateInput[]
   /**
    * Line reader override. Defaults to a real readline-backed reader. Tests
    * pass a fake to drive (and bound) the prompts.
@@ -92,11 +96,20 @@ const coerce = (prompt: WizardPrompt, raw: unknown): unknown => {
       return parseStringList(raw)
     case 'enum':
       return parseEnum(raw, prompt.choices ?? [], prompt.default as string)
+    case 'gate-list': {
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+      if (!Array.isArray(parsed)) throw new Error('verify gates must be a JSON array')
+      return normalizeDetectedVerifyGates(parsed)
+    }
   }
 }
 
 /** Build the interactive question label, surfacing choices/defaults inline. */
-const promptLabel = (prompt: WizardPrompt): string => {
+const promptLabel = (
+  prompt: WizardPrompt,
+  gates: readonly VerifyGateInput[] = [],
+  validationError?: string,
+): string => {
   if (prompt.type === 'boolean') {
     const def = prompt.default ? 'Y/n' : 'y/N'
     return `${prompt.question} [${def}] `
@@ -104,6 +117,10 @@ const promptLabel = (prompt: WizardPrompt): string => {
   if (prompt.type === 'enum') {
     const choices = (prompt.choices ?? []).join('/')
     return `${prompt.question} (${choices}) [${String(prompt.default)}] `
+  }
+  if (prompt.type === 'gate-list') {
+    const error = validationError ? `Invalid verify gate list: ${validationError}\n` : ''
+    return `${error}${prompt.question}\n${JSON.stringify(gates, null, 2)}\n[Enter=accept, e=edit] `
   }
   return `${prompt.question} `
 }
@@ -173,6 +190,33 @@ export const runWizard = async (
       // 3) interactive (TTY only; interactiveOnly prompts still honour this
       //    path, but on a non-TTY they silently take their default below).
       if (reader && !(prompt.interactiveOnly && !opts.isTTY)) {
+        if (prompt.type === 'gate-list') {
+          let gates: VerifyGateInput[] = [...(opts.detectedGates ?? [])]
+          let validationError: string | undefined
+          while (true) {
+            try {
+              const answer = await reader.readLine(promptLabel(prompt, gates, validationError))
+              if (answer.trim() === '') {
+                resolved[prompt.id] = gates
+                break
+              }
+              if (answer.trim().toLowerCase() !== 'e') continue
+              const edited = await reader.readLine('Paste a complete JSON verify gate array: ')
+              try {
+                gates = coerce(prompt, edited) as Required<VerifyGateInput>[]
+                validationError = undefined
+              } catch (error) {
+                validationError = error instanceof Error ? error.message : 'invalid input'
+              }
+            } catch (error) {
+              reader.close()
+              reader = null
+              resolved[prompt.id] = coerce(prompt, prompt.default)
+              break
+            }
+          }
+          continue
+        }
         try {
           const answer = await reader.readLine(promptLabel(prompt))
           resolved[prompt.id] = coerce(
@@ -188,6 +232,12 @@ export const runWizard = async (
         }
       }
       // 4) default
+      if (prompt.type === 'gate-list') {
+        resolved[prompt.id] = opts.detectedGates
+          ? [...opts.detectedGates]
+          : normalizeDetectedVerifyGates(prompt.default as VerifyGateInput[])
+        continue
+      }
       resolved[prompt.id] = coerce(prompt, prompt.default)
     }
   } finally {
@@ -196,7 +246,7 @@ export const runWizard = async (
 
   return {
     registerProject: resolved.registerProject as boolean,
-    verifyGates: WIZARD_DEFAULTS.verifyGates,
+    verifyGates: resolved.verifyGates as VerifyGateInput[],
   }
 }
 

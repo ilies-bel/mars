@@ -1,11 +1,32 @@
 import { existsSync, readdirSync, readFileSync, statSync, type Dirent } from 'node:fs'
 import { delimiter, relative, resolve, sep } from 'node:path'
 import { load as loadYaml } from 'js-yaml'
-import type { VerifyGateInput } from '../core/verify-gates'
+import { VerifyGateInputSchema, type VerifyGateInput } from '../core/verify-gates'
 
 export interface DetectedVerifyGate extends Required<VerifyGateInput> {
   evidence: string
 }
+
+/**
+ * Turn a proposed gate set into the complete registry input shape used by
+ * onboarding. JSON edits pass through the same validation as all other gate
+ * input, and discovery metadata such as `evidence` is intentionally omitted.
+ */
+export const normalizeDetectedVerifyGates = (
+  gates: readonly VerifyGateInput[],
+): Required<VerifyGateInput>[] =>
+  gates.map((gate) => {
+    const parsed = VerifyGateInputSchema.parse(gate)
+    return {
+      scope: parsed.scope ?? '.',
+      name: parsed.name,
+      cmd: parsed.cmd,
+      args: parsed.args ?? [],
+      required: parsed.required ?? true,
+      tier: parsed.tier ?? 'task',
+      source: parsed.source ?? 'detected',
+    }
+  })
 
 const NODE_SCRIPTS = ['typecheck', 'lint', 'test', 'test:integration'] as const
 

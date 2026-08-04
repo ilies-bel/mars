@@ -74,6 +74,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // runs: codex (default), claude, or gemini. Persisted to .mars/daemon.json
   // as `defaultProvider` and applied on the next daemon start.
   '--provider',
+  '--verify-gates-json',
   '--feedback',
   // mars memory — domain-scoped memory packet management
   '--domain',
