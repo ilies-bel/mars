@@ -78,6 +78,11 @@ const continueHandler = handler('continue', async (req, deps) => {
   return { ok: true, data: continueResult }
 })
 
+const stopTaskHandler = handler('stop-task', async (req, deps) => {
+  await deps.handleStop(req.id)
+  return { ok: true }
+})
+
 const restartHandler = handler('restart', async (req, deps) => {
   const result = await deps.handleRestart(req.id, req.force)
   return { ok: true, data: result }
@@ -591,6 +596,7 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   taskPriorityHandler,
   updateHandler,
   continueHandler,
+  stopTaskHandler,
   restartHandler,
   remergeHandler,
   purgeHandler,

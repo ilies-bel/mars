@@ -1300,6 +1300,7 @@ export const runAgent = async (
       // alive-PID + heartbeat path (case b/c), preventing false ceiling kills
       // of legitimately long-running coders.
       onPid: ctx.services.onPid,
+      externalAbort: ctx.signal,
     },
     traceStore: spanStore(trace),
     stepName: 'run-claude-code',
@@ -1308,6 +1309,11 @@ export const runAgent = async (
     taskId,
     phase: 'code',
   })
+
+  // A task stop is an operator decision, not a coder failure. Bail out before
+  // the ordinary non-zero-exit recovery path can stamp or recover the task;
+  // the daemon already marked it failed with failureReason='cancelled'.
+  if (ctx.signal.aborted) throw new Error(`task ${taskId} stopped by operator`)
 
   // Context-budget hard abort: spawn a resume fix-task and throw the sentinel.
   if (r.exitCode === 138 && r.stderr.includes('context budget exhausted')) {
@@ -1599,6 +1605,7 @@ export const runAgent = async (
         systemPrompt: resolveWorkerSystemPrompt(primaryTag),
         onEvent: async (event) => emit?.(event),
         onPid: ctx.services.onPid,
+        externalAbort: ctx.signal,
       },
       traceStore: spanStore(trace),
       stepName: 'commit-correction',
@@ -1607,6 +1614,8 @@ export const runAgent = async (
       taskId,
       phase: 'code',
     })
+
+    if (ctx.signal.aborted) throw new Error(`task ${taskId} stopped by operator`)
 
     try {
       const correctedState = await detectPostCoderState({

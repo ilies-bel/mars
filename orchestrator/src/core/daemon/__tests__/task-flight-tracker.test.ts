@@ -67,6 +67,25 @@ describe('TaskFlightTracker — dispatch-storm invariant', () => {
     expect(tracker.inFlightCount()).toBe(0)
   })
 
+  it('aborts the controller owned by an in-flight task', () => {
+    const tracker = createTaskFlightTracker()
+    const controller = new AbortController()
+    tracker.commitInFlight('t1', 'implement', controller)
+
+    expect(tracker.abort('t1')).toBe(true)
+    expect(controller.signal.aborted).toBe(true)
+  })
+
+  it('drops the controller when an in-flight task completes normally', () => {
+    const tracker = createTaskFlightTracker()
+    const controller = new AbortController()
+    const release = tracker.commitInFlight('t1', 'implement', controller)
+
+    release()
+    expect(tracker.abort('t1')).toBe(false)
+    expect(controller.signal.aborted).toBe(false)
+  })
+
   it('a stale release does NOT evict a newer entry re-committed under the same id', () => {
     const tracker = createTaskFlightTracker()
     const firstRelease = tracker.commitInFlight('t1', 'implement')
