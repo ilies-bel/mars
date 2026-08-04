@@ -554,3 +554,7 @@ _Avoid_: main chat, root thread, home feed, hero, seeded feed
 **Context line**:
 The one-sentence outcome of a closed Subject, appended to the main thread so the conversation carries what was settled without carrying the transcript.
 _Avoid_: summary, recap, thread summary, closing note
+
+**Offer set**:
+The ops standing open in the chat feed at a given moment, rendered as Preloaded responses and matched against the operator's free text before it is treated as a new Subject.
+_Avoid_: pending actions, open ops, chip set, suggestions
