@@ -48,6 +48,7 @@ describe('grouping is computed routing, not a unit', () => {
     expect(groups.get('task')?.map((c) => c.path).sort()).toEqual([
       'task',
       'task add',
+      'task ask',
       'task check',
       'task note',
       'task priority',
@@ -108,7 +109,7 @@ describe('ADR-0023 §5 — declared flag surface covers every leaf', () => {
   const declaredFlags = new Set<string>([...FLAGS_WITH_VALUES, ...BOOLEAN_FLAGS])
 
   it('every flag named in any leaf usage string is a declared flag', () => {
-    const flagPattern = /(?:^|\s)(-{1,2}[a-z][a-z-]*)/g
+    const flagPattern = /(?:^|[\s([|])(-{1,2}[a-z][a-z-]*)/g
     const undeclared = new Set<string>()
     for (const cmd of registry.values()) {
       for (const match of cmd.usage.matchAll(flagPattern)) {

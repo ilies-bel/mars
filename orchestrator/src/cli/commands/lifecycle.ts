@@ -756,10 +756,9 @@ const release: Command = {
   summary: 'release the lease on an awaiting-human task and resume the pipeline',
   usage: 'usage: mars release <task-id> [--abort] [--note <text>]',
   run: async (args, deps) => {
-    // --note is in FLAGS_WITH_VALUES so the arg parser stores it in args.flags,
-    // not args.positional. --abort is a bare flag and appears in positional.
+    // The shared parser stores both --note and --abort in args.flags.
     const positionals = args.positional
-    const abort = positionals.includes('--abort')
+    const abort = hasFlag(args, '--abort')
     const note: string | undefined = args.flags['--note'] ?? undefined
     const id = positionals.filter((a) => !a.startsWith('--'))[0]
 

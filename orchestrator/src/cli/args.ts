@@ -34,11 +34,13 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--limit',
   '--out',
   '--author',
+  '--by',
   '--note',
   '--root-cause',
   '--avoid',
   '--blocked-by',
   '--source',
+  '--payload',
   '--status',
   '--from',
   '--kind',
@@ -84,6 +86,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // mars chat-feedback list — filter by rating ('up' or 'down')
   '--rating',
   '--origin-arc',
+  '--origin',
   // mars verify-gate / mars verify — verify gate registry management
   '--scope',
   '--cmd',
@@ -118,6 +121,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
  */
 export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--force',
+  '--abort',
   '--dry-run',
   '--verbose',
   '--dev',
@@ -141,6 +145,7 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--register-project',
   // `mars init --start`: print daemon URL non-interactively (useful with --yes).
   '--start',
+  '--skip-doctor',
   // `mars task add --live`: sugar for `--workflow live`. DISABLED — the live
   // pipeline is withheld while HITL is being refined; the flag still parses so
   // it can be rejected with a clear error rather than falling through to
