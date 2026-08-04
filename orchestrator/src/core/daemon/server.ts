@@ -1201,7 +1201,12 @@ export const startDaemon = async (
     await acquire(sems.implement)
     // commitInFlight records the inFlight entry AND clears the matching claim
     // in one step (claim-clears-after-commit); see dispatchTriage.
-    const releaseTracking = tracker.commitInFlight(task.id, 'implement')
+    const taskAbortController = new AbortController()
+    const releaseTracking = tracker.commitInFlight(
+      task.id,
+      'implement',
+      taskAbortController,
+    )
     // Merge-queue handoff bookkeeping.
     // `mergeHandedOff` flips to true when the workflow calls enqueueMergeJobAndAwait,
     // at which point the implement slot has been released and merge tracking started.
@@ -1565,8 +1570,13 @@ export const startDaemon = async (
           runId: task.id,
           logger: workflowLogger,
           onEvent,
+          signal: taskAbortController.signal,
         },
       )
+      if (taskAbortController.signal.aborted) {
+        log(`[implement] ${task.id} stopped by operator`)
+        return
+      }
       // Switch on the WorkflowTerminalError discriminant.  The workflow steps
       // throw WorkflowTerminalError (subclass of Error) with a `kind` field for
       // every self-handled terminal condition; the engine propagates it verbatim
@@ -1677,6 +1687,10 @@ export const startDaemon = async (
       // each individually guarded; whatever happens, control reaches the
       // `finally` and the function resolves.
       const message = err instanceof Error ? err.message : String(err)
+      if (taskAbortController.signal.aborted) {
+        log(`[implement] ${task.id} stopped by operator`)
+        return
+      }
       // The blockers-abort detector lives in the implement workflow module. A
       // dynamic import can itself reject (module-resolution / eval error), and
       // that rejection would escape this catch. Load it best-effort: if the
@@ -3187,6 +3201,22 @@ export const startDaemon = async (
     return result
   }
 
+  // `mars task stop <id>` aborts only a currently dispatched workflow. The
+  // task is left failed (not dropped), preserving its branch and worktree for
+  // an explicit `mars continue <id>`.
+  const handleStop = async (id: string): Promise<void> => {
+    if (!tracker.abort(id)) {
+      throw new Error(`task ${id} is not in flight`)
+    }
+    await handleUpdate(id, {
+      status: 'failed',
+      error: 'stopped by operator via `mars task stop`',
+      failureReason: CANCELLED_FAILURE_REASON,
+      failureReasonCode: 'task-stopped',
+    })
+    log(`[stop-task] ${id}: abort requested; worktree and branch preserved for continue`)
+  }
+
   const handlePurge = async (
     id: string,
     force: boolean,
@@ -4084,6 +4114,7 @@ export const startDaemon = async (
     setTaskPriority,
     handleUpdate,
     handleContinue,
+    handleStop,
     handleRestart,
     handleRemerge,
     handlePurge,

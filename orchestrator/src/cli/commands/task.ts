@@ -486,6 +486,35 @@ export const taskCheck: Command = {
   },
 }
 
+export const taskStop: Command = {
+  path: 'task stop',
+  summary: 'stop running tasks while preserving their worktrees',
+  usage: 'usage: mars task stop <id> [<id> ...]',
+  helpBody: `mars task stop <id> [<id> ...]
+
+Stops each currently in-flight task, terminating its provider subprocess while
+preserving its worktree, branch, and commits. Stopped tasks are marked failed
+with a cancellation reason and can be resumed with \`mars continue <id>\`.
+Stops at the first error.`,
+  run: async (args, deps) => {
+    const ids = args.positional.filter((arg) => !arg.startsWith('--'))
+    if (ids.length === 0) {
+      deps.err('usage: mars task stop <id> [<id> ...]')
+      return { code: 2 }
+    }
+    for (const id of ids) {
+      try {
+        await deps.daemon.sendRequest({ op: 'stop-task', id })
+      } catch (error: unknown) {
+        deps.err(`${id}: ${errorMessage(error)}`)
+        return { code: 1 }
+      }
+      deps.out(`stopped ${id}; worktree and branch preserved — run 'mars continue ${id}' to resume`)
+    }
+    return { code: 0 }
+  },
+}
+
 /**
  * `task ask` — raise a question to the operator from within a worker task run.
  *
@@ -526,9 +555,9 @@ export const taskAsk: Command = {
 export const taskGroup: Command = {
   path: 'task',
   summary: 'task subcommands',
-  usage: 'usage: mars task <add|ask|show|priority|note|check> ...',
+  usage: 'usage: mars task <add|ask|show|priority|note|check|stop> ...',
   run: (_args, deps) => {
-    deps.err('usage: mars task <add|ask|show|priority|note|check> ...')
+    deps.err('usage: mars task <add|ask|show|priority|note|check|stop> ...')
     return { code: 2 }
   },
 }
@@ -540,5 +569,6 @@ export const taskCommands: readonly Command[] = [
   taskPriority,
   taskNote,
   taskCheck,
+  taskStop,
   taskGroup,
 ]

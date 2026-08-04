@@ -85,6 +85,9 @@ export interface InFlightEntry {
   lastActivityMs?: number
 }
 
+/** Internal flight state; abort controllers never escape through snapshots. */
+type InFlightRecord = InFlightEntry & { abortController?: AbortController }
+
 /**
  * The release closure returned by `commitInFlight`. Calling it clears the
  * task's `inFlight` entry. Idempotent: calling it more than once is a no-op,
@@ -128,7 +131,17 @@ export interface TaskFlightTracker {
    * commit-before-release lifecycle. Re-committing the same id replaces the
    * entry and invalidates any earlier release closure for it.
    */
-  commitInFlight(taskId: string, kind: DispatchKind): ReleaseInFlight
+  commitInFlight(
+    taskId: string,
+    kind: DispatchKind,
+    abortController?: AbortController,
+  ): ReleaseInFlight
+
+  /**
+   * Abort the controller owned by an in-flight task. Returns false when the
+   * task is not currently dispatched or does not own an abort controller.
+   */
+  abort(taskId: string): boolean
 
   // ── pending sets ──────────────────────────────────────────────────────────
   /** Push a task into the pending set for its kind so `drainPending` can pick it. */
@@ -182,7 +195,7 @@ export interface TaskFlightTracker {
 }
 
 export const createTaskFlightTracker = (): TaskFlightTracker => {
-  const inFlight = new Map<string, InFlightEntry>()
+  const inFlight = new Map<string, InFlightRecord>()
   const pendingTriage = new Set<string>()
   const pendingImplement = new Set<string>()
   const claimedTriage = new Set<string>()
@@ -197,7 +210,8 @@ export const createTaskFlightTracker = (): TaskFlightTracker => {
     isInFlight: (taskId) => inFlight.has(taskId),
     inFlightKind: (taskId) => inFlight.get(taskId)?.kind,
     inFlightCount: () => inFlight.size,
-    inFlightSnapshot: () => Array.from(inFlight.values()),
+    inFlightSnapshot: () =>
+      Array.from(inFlight.values(), ({ abortController: _abortController, ...entry }) => entry),
 
     claim: (taskId, kind) => {
       // At-most-once: refuse if already claimed for this kind or already
@@ -211,8 +225,13 @@ export const createTaskFlightTracker = (): TaskFlightTracker => {
     unclaim: (taskId, kind) => {
       claimedSet(kind).delete(taskId)
     },
-    commitInFlight: (taskId, kind) => {
-      const entry: InFlightEntry = { taskId, kind, startedAt: Date.now() }
+    commitInFlight: (taskId, kind, abortController) => {
+      const entry: InFlightRecord = {
+        taskId,
+        kind,
+        startedAt: Date.now(),
+        abortController,
+      }
       inFlight.set(taskId, entry)
       // Claim clears only AFTER the inFlight entry is recorded, so the gap is
       // covered the whole time. Only triage/implement are ever claimed; the
@@ -228,6 +247,13 @@ export const createTaskFlightTracker = (): TaskFlightTracker => {
         // evicts the live one.
         if (inFlight.get(taskId) === entry) inFlight.delete(taskId)
       }
+    },
+
+    abort: (taskId) => {
+      const entry = inFlight.get(taskId)
+      if (!entry?.abortController) return false
+      entry.abortController.abort()
+      return true
     },
 
     enqueuePending: (taskId, kind) => {
