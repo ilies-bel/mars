@@ -100,6 +100,13 @@ describe('GET /api/step-spans', () => {
       { proxyGet: makeDaemonStub(repo) },
     )
     baseUrl = `http://${server.hostname}:${server.port}`
+
+    // `Bun.serve` returns its handle as soon as it has been scheduled. Probe
+    // the public health endpoint before the suite begins issuing API requests
+    // so a slow test host cannot race its first request against socket setup.
+    const readiness = await fetch(`${baseUrl}/healthz`)
+    expect(readiness.status).toBe(200)
+    await expect(readiness.json()).resolves.toMatchObject({ ok: true, repo })
   })
 
   afterAll(() => {
