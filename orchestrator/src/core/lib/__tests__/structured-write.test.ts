@@ -114,7 +114,7 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
   })
 
   it.each([
-    ['adr', 'docs/adr/0001-real-merge.md', 'ADR body'],
+    ['adr', 'docs/knowledge/decisions/0001-real-merge.md', 'ADR body'],
     ['glossary', 'CONTEXT.md', 'Glossary body'],
   ])('persists a real merge job for a %s write without exposing bookkeeping as work', async (kind, file, body) => {
     const { runStructuredWrite } = await import('../structured-write')
@@ -126,7 +126,7 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
       commitMessage: `test: ${kind} durable merge`,
       enqueueMerge: runThroughDurableMergeWorker,
       mutate: async (worktreePath) => {
-        if (kind === 'adr') mkdirSync(resolve(worktreePath, 'docs', 'adr'), { recursive: true })
+        if (kind === 'adr') mkdirSync(resolve(worktreePath, 'docs', 'knowledge', 'decisions'), { recursive: true })
         await writeFile(resolve(worktreePath, file), body, 'utf8')
       },
     })

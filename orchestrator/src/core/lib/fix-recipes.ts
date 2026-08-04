@@ -4,7 +4,7 @@
  * `merge:preflight/uncommitted-changes`). Each recipe owns the prompt the
  * orchestrator hands to the recovery agent for that exact signature.
  *
- * See docs/adr/0002-recipe-per-failure-signature.md for the contract:
+ * See docs/knowledge/decisions/0002-recipe-per-failure-signature.md for the contract:
  * a signature without a registered recipe does NOT fall back to a generic
  * prompt — it raises a `no-recipe` actionQueue item and dispatches the
  * Investigator agent.

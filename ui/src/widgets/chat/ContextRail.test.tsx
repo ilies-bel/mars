@@ -257,6 +257,29 @@ describe('ContextRail – artifact rail', () => {
     })
   })
 
+  describe('ADRs section', () => {
+    it('constructs ADR links using docs/knowledge/decisions/ path', () => {
+      mockState.queryOverride = (opts: { queryKey: unknown[] }) => {
+        if (opts.queryKey[0] === 'adrs') {
+          return {
+            data: [{ number: 42, title: 'Keep the rail focused', slug: 'keep-the-rail-focused' }],
+            isLoading: false,
+            isError: false,
+          }
+        }
+        return { data: undefined, isLoading: true, isError: false }
+      }
+      const html = renderToStaticMarkup(
+        <ArtifactsRail tasks={[]} files={[]} meta={{ vision: null, theme: null }} />,
+      )
+      mockState.queryOverride = null
+      // The path is URL-encoded in the href attribute
+      const expectedEncodedPath = encodeURIComponent('docs/knowledge/decisions/0042-keep-the-rail-focused.md')
+      expect(html).toContain(expectedEncodedPath)
+      expect(html).not.toContain('docs%2Fadr%2F')
+    })
+  })
+
 })
 
 // ---------------------------------------------------------------------------

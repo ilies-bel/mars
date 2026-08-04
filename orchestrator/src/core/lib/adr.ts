@@ -1,7 +1,7 @@
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-const ADR_DIR = 'docs/adr'
+const ADR_DIR = 'docs/knowledge/decisions'
 
 export const slugify = (title: string): string => {
   const ascii = title

@@ -121,15 +121,77 @@ describe('readProjectAdr', () => {
   it('reads an ADR at the path derived from its number and slug', () => {
     const repo = makeRepo()
     try {
-      mkdirSync(resolve(repo, 'docs', 'adr'), { recursive: true })
-      writeFileSync(resolve(repo, 'docs', 'adr', '0042-keep-the-rail-focused.md'), '# Keep the rail focused')
+      mkdirSync(resolve(repo, 'docs', 'knowledge', 'decisions'), { recursive: true })
+      writeFileSync(resolve(repo, 'docs', 'knowledge', 'decisions', '0042-keep-the-rail-focused.md'), '# Keep the rail focused')
+
+      expect(
+        readProjectAdr(
+          { repoRoot: repo } as Parameters<typeof readProjectAdr>[0],
+          'docs/knowledge/decisions/0042-keep-the-rail-focused.md',
+        ),
+      ).toBe('# Keep the rail focused')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a path that uses the old docs/adr/ location', () => {
+    const repo = makeRepo()
+    try {
+      mkdirSync(resolve(repo, 'docs', 'knowledge', 'decisions'), { recursive: true })
+      writeFileSync(resolve(repo, 'docs', 'knowledge', 'decisions', '0042-keep-the-rail-focused.md'), '# Keep the rail focused')
 
       expect(
         readProjectAdr(
           { repoRoot: repo } as Parameters<typeof readProjectAdr>[0],
           'docs/adr/0042-keep-the-rail-focused.md',
         ),
-      ).toBe('# Keep the rail focused')
+      ).toBeNull()
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects traversal paths', () => {
+    const repo = makeRepo()
+    try {
+      expect(
+        readProjectAdr(
+          { repoRoot: repo } as Parameters<typeof readProjectAdr>[0],
+          'docs/knowledge/decisions/../../../etc/passwd',
+        ),
+      ).toBeNull()
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects non-Markdown files', () => {
+    const repo = makeRepo()
+    try {
+      expect(
+        readProjectAdr(
+          { repoRoot: repo } as Parameters<typeof readProjectAdr>[0],
+          'docs/knowledge/decisions/0042-keep-the-rail-focused.sh',
+        ),
+      ).toBeNull()
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects sibling knowledge paths', () => {
+    const repo = makeRepo()
+    try {
+      mkdirSync(resolve(repo, 'docs', 'knowledge', 'glossary'), { recursive: true })
+      writeFileSync(resolve(repo, 'docs', 'knowledge', 'glossary', 'order.md'), '# Order term')
+
+      expect(
+        readProjectAdr(
+          { repoRoot: repo } as Parameters<typeof readProjectAdr>[0],
+          'docs/knowledge/glossary/order.md',
+        ),
+      ).toBeNull()
     } finally {
       rmSync(repo, { recursive: true, force: true })
     }

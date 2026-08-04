@@ -451,7 +451,7 @@ const workflowRender: Command = {
 // ---------------------------------------------------------------------------
 // Self-authored workflows (ADR-0068): author → lint → dry-run → agent-draft →
 // operator approve. The trust boundary is write-time approval, not a runtime
-// sandbox — see docs/adr/0068.
+// sandbox — see docs/knowledge/decisions/0068-self-authored-workflows-are-approval-gated-at-write-time-not.md.
 // ---------------------------------------------------------------------------
 
 const readStdin = async (): Promise<string> => {

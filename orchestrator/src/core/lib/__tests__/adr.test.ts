@@ -56,7 +56,7 @@ describe('adr nextAdrNumber', () => {
 })
 
 describe('adr writeAdrInWorktree', () => {
-  it('creates docs/adr/ lazily and writes a numbered file', async () => {
+  it('creates docs/knowledge/decisions/ lazily and writes a numbered file', async () => {
     const result = await writeAdrInWorktree({
       worktreePath: workRoot,
       title: 'Use Postgres for the Write Model',

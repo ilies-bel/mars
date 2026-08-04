@@ -29,11 +29,11 @@ export const readProjectMeta = (ctx: RepoContext): ProjectMeta => {
   return { vision: readOptional('VISION.md'), theme: readOptional('THEME.md') }
 }
 
-/** Returns a project-owned ADR only when its requested path stays in docs/adr. */
+/** Returns a project-owned ADR only when its requested path stays in docs/knowledge/decisions. */
 export const readProjectAdr = (ctx: RepoContext, path: string): string | null => {
   const filename = basename(path)
-  if (path !== `docs/adr/${filename}` || !filename.endsWith('.md')) return null
-  const adrPath = join(ctx.repoRoot, 'docs', 'adr', filename)
+  if (path !== `docs/knowledge/decisions/${filename}` || !filename.endsWith('.md')) return null
+  const adrPath = join(ctx.repoRoot, 'docs', 'knowledge', 'decisions', filename)
   return existsSync(adrPath) ? readFileSync(adrPath, 'utf8') : null
 }
 
