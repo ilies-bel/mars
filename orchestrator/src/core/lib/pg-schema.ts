@@ -34,7 +34,7 @@
  *   (flagged as a real gap by the migration inventory).
  */
 
-import type { DbClient } from './db.js'
+import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
@@ -1712,6 +1712,30 @@ export const IDENTITY_COLUMNS: Readonly<Record<string, string>> = {
 export const SCHEMA_ADVISORY_LOCK_KEY = 20260726
 
 /**
+ * Rows that belong to an empty, usable schema rather than to application
+ * activity. Keep these separate from DDL so the test database harness can
+ * restore them after TRUNCATE without replaying every migration.
+ */
+const schemaSeedStatements = (appliedAt: string): DbStatement[] => [
+  {
+    sql: `INSERT INTO chat_threads
+            (id, title, status, posture, created_at, updated_at)
+          VALUES ('main', '', 'idle', 'triage', 0, 0)
+          ON CONFLICT (id) DO NOTHING`,
+  },
+  {
+    sql: `INSERT INTO schema_migrations (version, applied_at)
+          VALUES (?, ?) ON CONFLICT (version) DO NOTHING`,
+    args: [SCHEMA_VERSION, appliedAt],
+  },
+]
+
+/** Restore rows that `ensureSchema` creates in a new database after a test reset. */
+export async function __reseedSchemaForTests(client: DbClient): Promise<void> {
+  await __execSchemaBatch(client, schemaSeedStatements(new Date().toISOString()))
+}
+
+/**
  * Applies the complete canonical schema (idempotent) and records
  * SCHEMA_VERSION in schema_migrations. Safe to run at every startup;
  * everything executes in one transaction (PostgreSQL DDL is transactional).
@@ -1741,10 +1765,6 @@ export async function ensureSchema(client: DbClient): Promise<void> {
     // pg_advisory_xact_lock auto-releases on COMMIT/ROLLBACK.
     { sql: 'SELECT pg_advisory_xact_lock(?)', args: [SCHEMA_ADVISORY_LOCK_KEY] },
     ...DDL,
-    {
-      sql: `INSERT INTO schema_migrations (version, applied_at)
-            VALUES (?, ?) ON CONFLICT (version) DO NOTHING`,
-      args: [SCHEMA_VERSION, new Date().toISOString()],
-    },
+    ...schemaSeedStatements(new Date().toISOString()),
   ])
 }

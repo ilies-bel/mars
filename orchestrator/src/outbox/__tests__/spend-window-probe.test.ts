@@ -1,26 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { openDb, type DbClient } from '../../core/lib/db.js'
-import { ensureSchema } from '../../core/lib/pg-schema.js'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { type DbClient } from '../../core/lib/db.js'
+import { getTestDb } from '../../../test/db-fixture.js'
 import { insertUsageSnapshot } from '../../core/lib/usage-snapshot-store.js'
 import { probeSpendWindow } from '../spend-control-inputs.js'
-
-let dbSeq = 0
-
-async function makeClient(): Promise<DbClient> {
-  const client = openDb(`test:spend-window-probe:${process.pid}:${dbSeq++}`)
-  await ensureSchema(client)
-  return client
-}
 
 describe('probeSpendWindow', () => {
   let client: DbClient
 
   beforeEach(async () => {
-    client = await makeClient()
-  })
-
-  afterEach(async () => {
-    await client.close()
+    client = await getTestDb()
   })
 
   it('returns zero pressure when no windowTokens is configured', async () => {

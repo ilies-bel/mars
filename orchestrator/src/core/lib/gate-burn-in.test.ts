@@ -15,8 +15,8 @@
  * exported test helper.
  */
 import { describe, it, expect, beforeEach } from 'vitest'
-import { openDb, type DbClient } from './db.js'
-import { ensureSchema } from './pg-schema.js'
+import { type DbClient } from './db.js'
+import { getTestDb } from '../../../test/db-fixture.js'
 import {
   SHADOW_BURN_IN_COUNT,
   getGateBurnInStatus,
@@ -28,13 +28,8 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Create a fresh in-memory PGlite client satisfying the MonitorDb seam. */
-let dbSeq = 0
-const makeDb = async (): Promise<DbClient> => {
-  const client = openDb(`gate-burn-in-test-${process.pid}-${++dbSeq}`)
-  await ensureSchema(client)
-  return client
-}
+/** Return the fork-local clean database satisfying the MonitorDb seam. */
+const makeDb = (): Promise<DbClient> => getTestDb()
 
 beforeEach(() => {
   resetGateBurnInSchemaLatchForTests()

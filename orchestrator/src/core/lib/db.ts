@@ -749,6 +749,32 @@ export async function __resetDbRegistryForTests(): Promise<void> {
 }
 
 /**
+ * Test-only: empty a live canonical database while retaining its PGlite
+ * instance. This is substantially cheaper than resetting the module registry
+ * and cold-booting WASM for every test.
+ */
+export async function __truncateAllForTests(client: DbClient): Promise<void> {
+  const result = await client.execute(
+    "SELECT tablename FROM pg_tables WHERE schemaname = 'public'",
+  )
+  const tables = result.rows
+    .map((row) => row.tablename)
+    .filter((table): table is string => typeof table === 'string')
+
+  if (tables.length > 0) {
+    const identifiers = tables
+      .map((table) => `\"${table.replaceAll('\"', '\"\"')}\"`)
+      .join(', ')
+    await client.execute(`TRUNCATE ${identifiers} RESTART IDENTITY CASCADE`)
+  }
+
+  // pg-schema owns the list of rows needed by an otherwise empty schema.
+  // Load it lazily to preserve db.ts <-> pg-schema.ts's existing cycle break.
+  const { __reseedSchemaForTests } = await import('./pg-schema.js')
+  await __reseedSchemaForTests(client)
+}
+
+/**
  * Test-only: creates a fresh DbClient that is NOT added to the shared
  * registry. Every call returns a distinct object with its own connection pool
  * / PGlite instance, even when `target` is the same as a registered client.

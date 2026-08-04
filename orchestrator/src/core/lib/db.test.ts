@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import {
   __resetDbRegistryForTests,
+  __truncateAllForTests,
   openDb,
   translatePlaceholders,
   withTransaction,
@@ -314,6 +315,24 @@ describe('registry', () => {
     const b = openDb(key)
     expect(b).not.toBe(a)
     await expect(b.execute('SELECT * FROM persists_maybe')).rejects.toThrow()
+  })
+
+  it('__truncateAllForTests clears application rows and restores schema-owned rows', async () => {
+    const c = openDb(freshKey())
+    await c.execute({
+      sql: `INSERT INTO chat_threads (id, title, created_at, updated_at)
+            VALUES ('test-thread', 'Temporary', 1, 1)`,
+    })
+    await c.execute("INSERT INTO events (type, payload) VALUES ('test', '{}')")
+
+    await __truncateAllForTests(c)
+
+    expect((await c.execute('SELECT id FROM chat_threads ORDER BY id')).rows)
+      .toEqual([{ id: 'main' }])
+    expect((await c.execute('SELECT version FROM schema_migrations')).rows)
+      .toHaveLength(1)
+    await c.execute("INSERT INTO events (type, payload) VALUES ('test', '{}')")
+    expect((await c.execute('SELECT id FROM events')).rows).toEqual([{ id: 1 }])
   })
 })
 

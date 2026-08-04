@@ -17,8 +17,8 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it, expect, beforeEach } from 'vitest'
-import { openDb, type DbClient } from './db.js'
-import { ensureSchema } from './pg-schema.js'
+import { type DbClient } from './db.js'
+import { getTestDb } from '../../../test/db-fixture.js'
 import {
   approveEnrichment,
   appendEnrichmentScopes,
@@ -41,12 +41,7 @@ import { selectVerifySteps, verifyChanges } from './git/verify'
 // Test DB factory
 // ---------------------------------------------------------------------------
 
-let dbSeq = 0
-const makeDb = async (): Promise<DbClient> => {
-  const client = openDb(`gate-enrichment-e2e-${process.pid}-${++dbSeq}`)
-  await ensureSchema(client)
-  return client
-}
+const makeDb = (): Promise<DbClient> => getTestDb()
 
 // ---------------------------------------------------------------------------
 // Fixtures
