@@ -52,7 +52,12 @@ const verifyGateList: Command = {
         'required'.padEnd(8),
         'tier'.padEnd(12),
         'source'.padEnd(10),
-        'created_at',
+        'created_at'.padEnd(13),
+        'state'.padEnd(12),
+        'quarantined_at'.padEnd(16),
+        'last_failure'.padEnd(28),
+        'last_origin'.padEnd(20),
+        'last_failure_at',
       ].join('  '),
     )
     deps.out(
@@ -65,7 +70,12 @@ const verifyGateList: Command = {
         '--------'.padEnd(8),
         '----'.padEnd(12),
         '------'.padEnd(10),
-        '----------',
+        '----------'.padEnd(13),
+        '-----'.padEnd(12),
+        '--------------'.padEnd(16),
+        '------------'.padEnd(28),
+        '-----------'.padEnd(20),
+        '---------------',
       ].join('  '),
     )
     for (const g of gates) {
@@ -79,7 +89,12 @@ const verifyGateList: Command = {
           String(g.required).padEnd(8),
           g.tier.padEnd(12),
           g.source.slice(0, 10).padEnd(10),
-          g.createdAt,
+          String(g.createdAt).padEnd(13),
+          g.state.padEnd(12),
+          (g.quarantinedAt === null ? '—' : String(g.quarantinedAt)).padEnd(16),
+          (g.lastFailureSignature ?? 'healthy').slice(0, 28).padEnd(28),
+          (g.lastFailureOriginId ?? '—').slice(0, 20).padEnd(20),
+          g.lastFailureAt === null ? '—' : String(g.lastFailureAt),
         ].join('  '),
       )
     }

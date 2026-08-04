@@ -134,6 +134,7 @@ export const stubAppServices = (
       eventVariants: ['kpi-degraded', 'resource-load', 'onboarding', 'workflow-suggestion'],
       dispatchSites: 0,
     },
+    gateHealth: { scopes: [] },
   }),
   ...overrides,
 })

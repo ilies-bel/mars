@@ -1291,9 +1291,10 @@ export const startHttpServer = async (
       return
     }
 
-    // GET /view/steward — four-lane capability summary for the Steward page:
+    // GET /view/steward — capability summary for the Steward page:
     // runtimeTuning (executing), workflowPatches (built/never invoked),
-    // signatureStorm (live, currently tripped), agentSpec (declared/unbuilt).
+    // signatureStorm (live, currently tripped), agentSpec (declared/unbuilt),
+    // and gateHealth (the read-only verify-gate registry projection).
     // Live semaphore state is injected by the daemon via getStewardRuntimeState.
     // Pure read; no draining gate.
     if (req.method === 'GET' && req.url === '/view/steward') {
