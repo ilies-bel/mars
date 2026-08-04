@@ -58,7 +58,7 @@ import {
   selectMemoryCut,
 } from './chat-memory-window'
 import { PROVIDERS, resolveProviderName } from '../workers/providers'
-import type { ConversationMemoryFacts } from '../workers/provider-types'
+import { PROVIDER_MODELS, type ConversationMemoryFacts } from '../workers/provider-types'
 import {
   CodexApiError,
   loadCodexAuth,
@@ -574,6 +574,25 @@ const THROTTLE_BACKOFF_MS = [30_000, 60_000, 120_000]
 export const CHAT_TIMEOUT_MS = 10 * 60 * 1000
 
 /**
+ * Conversation-memory facts for the chat model of the *active* provider.
+ *
+ * The chat model is provider-specific. Codex carries its own OAuth-configured
+ * model (which the operator can override), so it keeps reading that. Every
+ * other provider has no such config and must resolve through the shared
+ * `PROVIDER_MODELS` tier map — reading the Codex config for them yields a
+ * Codex model id, which `conversationMemory` rejects and which crashed the
+ * daemon at boot whenever `defaultProvider` was set to `claude` or `gemini`.
+ */
+const resolveChatConversationMemory = (): ConversationMemoryFacts => {
+  const provider = resolveProviderName()
+  const model =
+    provider === 'codex'
+      ? resolveCodexOAuthConfig().model
+      : PROVIDER_MODELS[provider].balanced
+  return PROVIDERS[provider].conversationMemory(model)
+}
+
+/**
  * ChatRunner manages in-flight Codex API runs for chat threads.
  *
  * Call `sendMessage` to start a run. The run is fire-and-forget from the
@@ -627,7 +646,7 @@ export class ChatRunner {
   constructor(
     private readonly chatStreamHub?: ChatStreamHub,
     private readonly conversationMemory: ConversationMemoryFacts =
-      PROVIDERS[resolveProviderName()].conversationMemory(resolveCodexOAuthConfig().model),
+      resolveChatConversationMemory(),
   ) {}
 
   /** Returns true when all threads are stalled due to a Codex auth failure. */
