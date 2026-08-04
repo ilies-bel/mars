@@ -17,7 +17,6 @@ import { dirname, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { findExistingMarsDb, resolveContext, resolveDbTarget } from '../context'
 import { openDb, recycleDbPool, type DbClient } from '../lib/db'
-import { ensureSchema } from '../lib/pg-schema'
 import { startEmbeddedPg, type EmbeddedPgHandle } from '../lib/pg-server'
 import { importLegacySqlite } from '../../init/import-sqlite'
 import { reconcileVerifyGatesOnStartup } from '../verify-gates-reconcile'
@@ -104,6 +103,7 @@ import {
   getDefaultTaskStore,
   getDefaultDomainTaskStore,
   getCompositionRootClient,
+  runCompositionRootMigrations,
 } from '../store/task-store'
 import { promoteProposal } from '../proposals'
 import {
@@ -628,13 +628,17 @@ export const startDaemon = async (
     }
   }
 
-  // Guarantee the canonical schema (single DDL source: pg-schema.ts), then
-  // fold any legacy SQLite `.mars/mars.db` in exactly once. The importer is
+  // Guarantee the canonical schema through the composition-root runner before
+  // any boot sweep or subscriber obtains a database client. The runner shares
+  // its readiness promise with ordinary client operations, preventing a late
+  // reader from starting a second DDL batch while boot reconciliation reads.
+  // Then fold any legacy SQLite `.mars/mars.db` in exactly once. The importer is
   // idempotent (schema_migrations marker + pg-has-data guard) and renames the
   // SQLite file to `mars.db.bak-<ts>` on success; a failed import is logged
   // and retried on the next boot rather than blocking startup.
   const dbClient: DbClient = openDb(resolveDbTarget())
-  await ensureSchema(dbClient)
+  await runCompositionRootMigrations()
+  log('[schema] migrations complete')
   // Backfill verify_gates from the supervisors manifest if the table is empty.
   // ensureSchema already created the table (it's in the canonical DDL), so this
   // only needs to seed rows — not create the table. Safe to call on every start:
