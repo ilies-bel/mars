@@ -2,13 +2,13 @@
  * Behaviour tests for StewardPage (#/steward).
  *
  * The page must:
- *   - render all four capability lanes with their lane titles
+ *   - render the capability lanes, including standing verify-gate health
  *   - show the misnomer callout (server.ts misnomer note)
  *   - display storm breach state correctly (tripped / clear)
  *   - show a disagreement banner when tripped ≠ isPaused
  *   - render runtime tuning acks
  *   - show inert-not-waiting empty state for workflow patches
- *   - show quarantine as decided-not-built
+ *   - show active and quarantined verify gates with their evidence
  *   - show a loading skeleton while data is loading
  *   - show a fallback alert when the fetch errors
  */
@@ -23,6 +23,7 @@ vi.mock('./useStewardView', () => ({
 }))
 
 import { useStewardView } from './useStewardView'
+import { StewardViewSchema } from './steward-view-schema'
 
 const makeStewardView = (overrides: Partial<StewardView> = {}): StewardView => ({
   runtimeTuning: {
@@ -72,6 +73,50 @@ const makeStewardView = (overrides: Partial<StewardView> = {}): StewardView => (
     eventVariants: ['kpi-degraded', 'resource-load', 'onboarding', 'workflow-suggestion'],
     dispatchSites: 0,
   },
+  gateHealth: {
+    scopes: [
+      {
+        scope: '.',
+        gates: [
+          {
+            id: 'gate-typecheck',
+            scope: '.',
+            name: 'typecheck',
+            tier: 'task',
+            required: true,
+            state: 'quarantined',
+            source: 'human',
+            command: { cmd: 'npx', args: ['tsc', '--noEmit'] },
+            quarantinedAt: 1767225600000,
+            quarantineSignature: 'verify:typecheck:exit-1',
+            lastFailureSignature: 'verify:typecheck:exit-1',
+            lastFailureOriginId: 'origin-123',
+            lastFailureAt: 1767225600000,
+          },
+        ],
+      },
+      {
+        scope: 'ui',
+        gates: [
+          {
+            id: 'gate-test',
+            scope: 'ui',
+            name: 'test',
+            tier: 'task',
+            required: true,
+            state: 'active',
+            source: 'human',
+            command: { cmd: 'npx', args: ['vitest', 'run'] },
+            quarantinedAt: null,
+            quarantineSignature: null,
+            lastFailureSignature: null,
+            lastFailureOriginId: null,
+            lastFailureAt: null,
+          },
+        ],
+      },
+    ],
+  },
   ...overrides,
 })
 
@@ -85,15 +130,69 @@ describe('StewardPage', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // Verify gate health
+  // ---------------------------------------------------------------------------
+
+  it('rejects unknown verify gate states from the daemon response', () => {
+    const invalidResponse = {
+      ...makeStewardView(),
+      gateHealth: {
+        scopes: [{
+          scope: '.',
+          gates: [{
+            ...makeStewardView().gateHealth.scopes[0]!.gates[0]!,
+            state: 'repairing',
+          }],
+        }],
+      },
+    }
+
+    expect(StewardViewSchema.safeParse(invalidResponse).success).toBe(false)
+  })
+
+  it('renders one verify-gate section per scope with active and quarantined labels', () => {
+    const html = renderToStaticMarkup(<StewardPage />)
+
+    expect(html).toContain('Verify gates')
+    expect(html).toContain('Scope: .')
+    expect(html).toContain('Scope: ui')
+    expect(html).toContain('typecheck')
+    expect(html).toContain('test')
+    expect(html).toContain('Quarantined')
+    expect(html).toContain('Active')
+    expect(html).toContain('npx tsc --noEmit')
+  })
+
+  it('shows quarantine and latest failure evidence for quarantined gates', () => {
+    const html = renderToStaticMarkup(<StewardPage />)
+    const timestamp = new Date(1767225600000).toLocaleString()
+
+    expect(html).toContain('verify:typecheck:exit-1')
+    expect(html).toContain('origin-123')
+    expect(html).toContain(timestamp)
+  })
+
+  it('shows an explicit empty state when no verify gates are registered', () => {
+    vi.mocked(useStewardView).mockReturnValue({
+      data: makeStewardView({ gateHealth: { scopes: [] } }),
+      isLoading: false,
+      error: null,
+    })
+
+    const html = renderToStaticMarkup(<StewardPage />)
+    expect(html).toContain('No verify gates are registered.')
+  })
+
+  // ---------------------------------------------------------------------------
   // Basic structure
   // ---------------------------------------------------------------------------
 
-  it('renders all four lane titles', () => {
+  it('renders all capability lane titles', () => {
     const html = renderToStaticMarkup(<StewardPage />)
     expect(html).toContain('Runtime tuning')
     expect(html).toContain('Signature storm')
     expect(html).toContain('Workflow patches')
-    expect(html).toContain('Gate quarantine')
+    expect(html).toContain('Verify gates')
   })
 
   it('renders the misnomer callout about server.ts', () => {
@@ -210,13 +309,13 @@ describe('StewardPage', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Gate quarantine lane
+  // Verify gate health lane
   // ---------------------------------------------------------------------------
 
-  it('renders gate quarantine as decided-not-built', () => {
+  it('renders the standing verify-gate registry rather than an unbuilt placeholder', () => {
     const html = renderToStaticMarkup(<StewardPage />)
-    expect(html).toContain('decided — not built')
-    expect(html).toContain('Implementation not started')
+    expect(html).toContain('standing registry')
+    expect(html).not.toContain('Implementation not started')
   })
 
   // ---------------------------------------------------------------------------
@@ -233,6 +332,7 @@ describe('StewardPage', () => {
     // Should not render any lane content while loading
     expect(html).not.toContain('Runtime tuning')
     expect(html).not.toContain('Signature storm')
+    expect(html).toContain('Loading verify gates')
   })
 
   it('renders a fallback alert when the fetch errors', () => {
@@ -243,6 +343,7 @@ describe('StewardPage', () => {
     })
     const html = renderToStaticMarkup(<StewardPage />)
     expect(html).toContain('role="alert"')
+    expect(html).toContain('Daemon error while loading verify gates')
   })
 
   // ---------------------------------------------------------------------------

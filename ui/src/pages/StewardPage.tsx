@@ -399,32 +399,94 @@ const WorkflowPatchesLane = ({ data }: { data: StewardView['workflowPatches'] })
 }
 
 // ---------------------------------------------------------------------------
-// Gate quarantine lane — declared in ADR-0081, not implemented
+// Verify gate health lane
 // ---------------------------------------------------------------------------
 
-const GateQuarantineLane = () => (
-  <article className={laneCardClass(false)} data-testid="lane-gate-quarantine">
+const GateHealthLane = ({
+  data,
+  isLoading = false,
+  error = null,
+}: {
+  data: StewardView['gateHealth'] | undefined
+  isLoading?: boolean
+  error?: Error | null
+}) => (
+  <article className={laneCardClass(true)} data-testid="lane-gate-health">
     <header className="mb-4">
-      <div className={laneHeaderClass(false)}>
-        <StatusDot active={false} />
-        <span>Gate quarantine</span>
-        <span className="ml-auto rounded bg-muted/30 px-1.5 py-0.5 text-[9px] text-muted-foreground">
-          decided — not built
+      <div className={laneHeaderClass(true)}>
+        <StatusDot active={true} />
+        <span>Verify gates</span>
+        <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-[9px] text-success">
+          standing registry
         </span>
       </div>
       <p className="mt-1 font-mono text-[10px] text-muted-foreground">
-        Declared in ADR-0081. No implementation exists — zero <code>quarantin*</code> matches in
-        non-test source.
+        Read-only health of the registered verification gates. Repair approval remains in chat or the CLI.
       </p>
     </header>
-    <div
-      className="rounded border border-dashed border-border/40 px-4 py-3 text-center"
-      data-testid="quarantine-unbuilt"
-    >
-      <p className="font-mono text-[10px] text-muted-foreground/70">
-        Architecture decided. Implementation not started.
+
+    {isLoading ? (
+      <p className="font-mono text-[10px] text-muted-foreground" role="status">
+        Loading verify gates…
       </p>
-    </div>
+    ) : error !== null ? (
+      <div role="alert">
+        <p className="font-mono text-[10px] text-error">Daemon error while loading verify gates.</p>
+        <FallbackSurface error={error} of="verify gates" variant="pane" />
+      </div>
+    ) : data === undefined || data.scopes.length === 0 ? (
+      <p className="font-mono text-[10px] text-muted-foreground" data-testid="gate-health-empty-state">
+        No verify gates are registered.
+      </p>
+    ) : (
+      <div className="space-y-4">
+        {data.scopes.map((scope) => (
+          <section key={scope.scope} aria-label={`Verify gates for ${scope.scope}`}>
+            <h2 className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Scope: {scope.scope}
+            </h2>
+            <ul className="space-y-2">
+              {scope.gates.map((gate) => (
+                <li key={gate.id} className="rounded border border-border/40 bg-muted/10 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className="font-mono text-[11px] font-semibold text-foreground">{gate.name}</span>
+                    <span
+                      className={`rounded px-1.5 py-0.5 font-mono text-[9px] ${gate.state === 'active' ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}
+                      aria-label={`Gate status: ${gate.state === 'active' ? 'Active' : 'Quarantined'}`}
+                    >
+                      {gate.state === 'active' ? 'Active' : 'Quarantined'}
+                    </span>
+                    <span className="font-mono text-[9px] text-muted-foreground">
+                      {gate.tier} · {gate.required ? 'required' : 'optional'}
+                    </span>
+                  </div>
+                  <code className="mt-1 block break-all font-mono text-[10px] text-foreground">
+                    {gate.command.cmd}{gate.command.args.length > 0 ? ` ${gate.command.args.join(' ')}` : ''}
+                  </code>
+                  {gate.state === 'quarantined' && (
+                    <div className="mt-2 space-y-1 font-mono text-[9px] text-error">
+                      <p>Quarantine signature: {gate.quarantineSignature ?? 'Unavailable'}</p>
+                      <p>
+                        Quarantined at:{' '}
+                        {gate.quarantinedAt === null ? 'Unavailable' : new Date(gate.quarantinedAt).toLocaleString()}
+                      </p>
+                    </div>
+                  )}
+                  {(gate.lastFailureSignature !== null || gate.lastFailureOriginId !== null || gate.lastFailureAt !== null) && (
+                    <div className="mt-2 space-y-1 border-t border-border/30 pt-2 font-mono text-[9px] text-muted-foreground">
+                      <p className="uppercase tracking-wide">Latest failure</p>
+                      {gate.lastFailureSignature !== null && <p>Signature: {gate.lastFailureSignature}</p>}
+                      {gate.lastFailureOriginId !== null && <p>Origin: {gate.lastFailureOriginId}</p>}
+                      {gate.lastFailureAt !== null && <p>At: {new Date(gate.lastFailureAt).toLocaleString()}</p>}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </div>
+    )}
   </article>
 )
 
@@ -456,7 +518,8 @@ const StewardSkeleton = () => (
     <header>
       <h1 className="font-mono text-[13px] uppercase tracking-wider text-primary">Steward</h1>
     </header>
-    {[0, 1, 2, 3].map((i) => (
+    <GateHealthLane data={undefined} isLoading />
+    {[0, 1, 2].map((i) => (
       <div
         key={i}
         className="h-32 w-full animate-pulse rounded-lg border border-border/50 bg-muted/10"
@@ -473,8 +536,8 @@ export const StewardPage = () => {
 
   if (error !== null && data === undefined) {
     return (
-      <main className="flex min-h-0 flex-1 overflow-hidden bg-background">
-        <FallbackSurface error={error} of="steward" variant="pane" />
+      <main className="flex min-h-0 flex-1 overflow-hidden bg-background p-6">
+        <GateHealthLane data={undefined} error={error} />
       </main>
     )
   }
@@ -526,8 +589,8 @@ export const StewardPage = () => {
 
         <LaneConnector active={false} />
 
-        {/* Lane 4: Gate quarantine — decided, not built */}
-        <GateQuarantineLane />
+        {/* Lane 4: Verify gate registry health */}
+        <GateHealthLane data={data.gateHealth} />
       </div>
 
       {/* Agent spec footer */}
