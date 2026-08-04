@@ -12,8 +12,15 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { withTransaction } from './db'
+import { MAIN_THREAD_ID } from './pg-schema.js'
 import { resolveStateClient } from '../store/state-client'
 import type { ChatContextScope } from '../daemon/chat-context'
+
+/**
+ * Re-exported from the schema module, which owns the sentinel row's DDL seed.
+ * Chat readers exclude it: it is the main thread, not a Subject.
+ */
+export { MAIN_THREAD_ID }
 
 const stateClient = resolveStateClient
 
@@ -726,11 +733,14 @@ export interface ThreadListOptions {
 /**
  * List all active (open) Subthreads newest-first. Each thread is
  * augmented with the text and role of its most recent message.
+ *
+ * The main thread sentinel is never open work, so it is excluded: it would
+ * otherwise sit permanently at the top of the sidebar.
  */
 export const listThreads = async (options: ThreadListOptions = {}): Promise<ThreadPreview[]> => {
   const c = stateClient()
-  const where = ['t.closed_at IS NULL']
-  const args: string[] = []
+  const where = ['t.closed_at IS NULL', 't.id <> ?']
+  const args: string[] = [MAIN_THREAD_ID]
 
   if (options.parentThreadId) {
     where.push('t.parent_thread_id = ?')
@@ -804,15 +814,22 @@ export const listConversationEntries = async (): Promise<ChatConversationEntryAp
  * result segments are intentionally read from durable messages rather than
  * the UI projection: produced tokens are additive, while carried context is
  * the final non-null provider input measurement for that Subthread.
+ *
+ * The main thread sentinel is excluded: it is the feed itself, not a seam in
+ * it, so it must not draw a boundary line.
  */
 export const listSubthreadBoundaries = async (): Promise<SubthreadBoundaryApiView[]> => {
   const c = stateClient()
-  const result = await c.execute(`
+  const result = await c.execute({
+    sql: `
     SELECT t.id, t.created_at, t.closed_at, m.segments, m.seq
       FROM chat_threads t
  LEFT JOIN chat_messages m ON m.thread_id = t.id
+     WHERE t.id <> ?
      ORDER BY t.created_at ASC, t.id ASC, m.seq ASC
-  `)
+  `,
+    args: [MAIN_THREAD_ID],
+  })
   const boundaries = new Map<string, SubthreadBoundaryApiView>()
   for (const row of result.rows as unknown as Record<string, unknown>[]) {
     const subthreadId = row.id as string

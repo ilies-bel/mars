@@ -40,6 +40,16 @@ import { __execSchemaBatch } from './db.js'
 /** Bumped when the canonical DDL changes shape. */
 export const SCHEMA_VERSION = '0025'
 
+/**
+ * The well-known `chat_threads` row that backs the main thread.
+ *
+ * It is not a Subject: it carries no worker, never closes, and never appears
+ * in the sidebar. It exists so a Notice always has a row to hang on — the
+ * delivery target of last resort — and is seeded idempotently by the DDL
+ * below, on every boot.
+ */
+export const MAIN_THREAD_ID = 'main'
+
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
 
@@ -895,6 +905,19 @@ const DDL: readonly string[] = [
   `CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_threads_fork_idem
      ON chat_threads(parent_thread_id, fork_idempotency_key)
      WHERE fork_idempotency_key IS NOT NULL`,
+  // The main thread sentinel. Seeded here (after every chat_threads column
+  // migration above, so the epoch-millisecond columns are already bigint) and
+  // replayed on every boot: ON CONFLICT DO NOTHING keeps an existing row —
+  // and its message history — untouched.
+  `INSERT INTO chat_threads
+     (id, title, status, posture, origin, alert_resolved, closed_at, created_at, updated_at)
+   VALUES ('${MAIN_THREAD_ID}', 'Main thread', 'idle', 'triage', 'main', 0, NULL, ${EPOCH_NOW}, ${EPOCH_NOW})
+   ON CONFLICT (id) DO NOTHING`,
+  // `closed_at` on the sentinel is NULL permanently: it is the delivery target
+  // of last resort, and a closed row would surface it in the History sidebar.
+  // A stray close (an operator gesture, a legacy sweep) heals on the next boot.
+  `UPDATE chat_threads SET closed_at = NULL
+    WHERE id = '${MAIN_THREAD_ID}' AND closed_at IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS chat_messages (
     id         text PRIMARY KEY,
     thread_id  text NOT NULL REFERENCES chat_threads(id),

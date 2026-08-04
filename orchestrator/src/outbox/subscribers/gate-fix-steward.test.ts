@@ -31,7 +31,7 @@ describe('gate-fix-steward outbox subscriber', () => {
     const client = resolveQueueClient()
     const { addVerifyGate, quarantineVerifyGate } = await import('../../core/verify-gates.js')
     const { publishWithRetry } = await import('../../bus/publisher.js')
-    const { createThread, getThread } = await import('../../core/lib/chat-store.js')
+    const { createThread, getThread, MAIN_THREAD_ID } = await import('../../core/lib/chat-store.js')
     const subscriber = await import('./gate-fix-steward.js')
     const gateId = await addVerifyGate({
       scope: 'orchestrator', name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'],
@@ -53,9 +53,12 @@ describe('gate-fix-steward outbox subscriber', () => {
       gate: { id: gateId, scope: 'orchestrator', name: 'typecheck' },
       failureEvidence: 'error TS5023: Unknown compiler option.',
     }))
-    expect((await getThread(operatorThread.id))?.messages).toEqual(expect.arrayContaining([
+    // No run is active, so the quarantine Notice lands on the main thread
+    // rather than on the idle Subject the operator happens to have open.
+    expect((await getThread(MAIN_THREAD_ID))?.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'notice', content: expect.stringContaining('remains quarantined') }),
     ]))
+    expect((await getThread(operatorThread.id))?.messages).toEqual([])
 
     expect((await subscriber.drainGateFixSteward(client, dispatch)).processed).toBe(0)
     expect(dispatch).toHaveBeenCalledTimes(1)
