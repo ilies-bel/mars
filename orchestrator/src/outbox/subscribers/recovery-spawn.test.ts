@@ -183,7 +183,6 @@ describe('recovery-spawn outbox subscriber', () => {
   afterEach(() => {
     delete process.env.MARS_REPO
     delete process.env.MARS_FIX_RETRY_BUDGET
-    delete process.env.MARS_MAX_FIX_ATTEMPTS
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -883,7 +882,6 @@ describe.skip('legacy verify-gate verdict suppression', () => {
   afterEach(() => {
     delete process.env.MARS_REPO
     delete process.env.MARS_FIX_RETRY_BUDGET
-    delete process.env.MARS_MAX_FIX_ATTEMPTS
     rmSync(repo, { recursive: true, force: true })
   })
 

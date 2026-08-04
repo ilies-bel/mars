@@ -166,7 +166,6 @@ describe('queue-fix-tasks', () => {
   afterEach(() => {
     delete process.env.MARS_REPO
     delete process.env.MARS_FIX_RETRY_BUDGET
-    delete process.env.MARS_MAX_FIX_ATTEMPTS
     delete process.env.MARS_SIGNATURE_STORM_THRESHOLD
     rmSync(repo, { recursive: true, force: true })
   })
@@ -1212,18 +1211,13 @@ describe('queue-fix-tasks', () => {
   })
 
   // The Steward guard (core/steward-guard.ts) allows exactly ONE intervention
-  // per (target, version) — here (task, failureSignature). It is checked after
-  // the MARS_MAX_FIX_ATTEMPTS cap but fires long before the default cap of 2
-  // is reachable, so at default settings the SECOND dispatch for a signature
-  // is refused with 'steward-repeat' and the 'fix-fail-loop' branch is dead.
-  // That is the documented contract: exactly one recovery attempt per origin
-  // failure, no retry budget and no tunable knob. These tests assert the
-  // properties the old cap tests covered — no second fix task, source stays
-  // blocked with its original error, repeats dedupe onto one action-queue row
-  // — against the outcome the orchestrator actually produces.
+  // per (target, version) — here (task, failureSignature). That is the
+  // documented contract: exactly one recovery attempt per origin failure, no
+  // retry budget and no tunable knob. These tests assert no second fix task,
+  // source stays blocked with its original error, and repeats dedupe onto one
+  // action-queue row.
   it('steward guard: allows exactly one fix task per (sourceTaskId, failureSignature) and refuses the second dispatch', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '10'
-    delete process.env.MARS_MAX_FIX_ATTEMPTS
     const { q, ft, rc } = await loadModules(repo)
     const sig = 'verify:typecheck/typecheck-cannot-find-name'
     const cleanup = registerTestRecipe(rc, sig)
@@ -1291,7 +1285,6 @@ describe('queue-fix-tasks', () => {
 
   it('steward guard: source task remains blocked with its prior error summary on a refused repeat; not flipped back to queued', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '10'
-    delete process.env.MARS_MAX_FIX_ATTEMPTS
     const { q, ft, rc } = await loadModules(repo)
     const sig = 'verify:typecheck/typecheck-cannot-find-name'
     const cleanup = registerTestRecipe(rc, sig)
@@ -1331,7 +1324,6 @@ describe('queue-fix-tasks', () => {
 
   it('steward guard: 3rd and subsequent dispatches dedupe onto the same actionQueue row and bump seenCount, no new task or actionQueue row', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '10'
-    delete process.env.MARS_MAX_FIX_ATTEMPTS
     const { q, ft, rc } = await loadModules(repo)
     const sig = 'verify:typecheck/typecheck-cannot-find-name'
     const cleanup = registerTestRecipe(rc, sig)
@@ -1393,53 +1385,6 @@ describe('queue-fix-tasks', () => {
     expect(loopItems).toHaveLength(1)
     expect(loopItems[0].id).toBe(r2.actionQueueItemId)
     expect(loopItems[0].seenCount).toBe(3)
-    cleanup()
-  })
-
-  it('fix-fail loop: MARS_MAX_FIX_ATTEMPTS overrides the default cap and the helper counts attempts across all task statuses', async () => {
-    process.env.MARS_FIX_RETRY_BUDGET = '10'
-    process.env.MARS_MAX_FIX_ATTEMPTS = '1'
-    const { q, ft, rc } = await loadModules(repo)
-    const sig = 'verify:typecheck/typecheck-cannot-find-name'
-    const cleanup = registerTestRecipe(rc, sig)
-    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
-
-    const r1 = await ft.handleTaskFailureWithFixTask({
-      taskId: t.id,
-      failingStep: 'verify:typecheck',
-      errorOutput: 'TS2304: cannot find name foo',
-    })
-    expect(r1.outcome).toBe('blocked')
-    expect(r1.fixTaskId).toBeTruthy()
-
-    // Drive the fix-task into a terminal-but-non-open status. The cap
-    // counter MUST still see it — it counts every historical row
-    // regardless of status, not just open ones.
-    await q.updateTask(r1.fixTaskId!, { status: 'failed' })
-
-    // Helper-level check: counts across all statuses without a schema
-    // change.
-    const ftMod = (await import(
-      '../../queue-fix-tasks'
-    )) as unknown as {
-      countFixTaskAttempts: typeof import('../../queue-fix-tasks').countFixTaskAttempts
-      getMaxFixAttempts: typeof import('../../queue-fix-tasks').getMaxFixAttempts
-    }
-    expect(await ftMod.countFixTaskAttempts(t.id, sig)).toBe(1)
-    expect(ftMod.getMaxFixAttempts()).toBe(1)
-
-    const r2 = await ft.handleTaskFailureWithFixTask({
-      taskId: t.id,
-      failingStep: 'verify:typecheck',
-      errorOutput: 'TS2304: cannot find name foo',
-    })
-    expect(r2.outcome).toBe('fix-fail-loop')
-    expect(r2.fixTaskId).toBeUndefined()
-    expect(r2.actionQueueItemId).toBeTruthy()
-
-    // The override took effect: cap=1 means the 2nd dispatch already
-    // escalates, even though only one fix-task was ever inserted.
-    delete process.env.MARS_MAX_FIX_ATTEMPTS
     cleanup()
   })
 
