@@ -25,7 +25,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
 import type { InProcessOptions } from '../test-adapter'
 import { __resetContextCacheForTests, type OrchestratorContext } from '../../core/context'
 import type { DaemonLiveness } from '../../core/daemon/paths'
@@ -80,6 +80,7 @@ vi.mock('../../core/daemon/http-server', () => ({
 import { isDaemonAlive } from '../../core/daemon/paths'
 import { spawn } from 'node:child_process'
 import { runCommandInProcess, makeFakeDaemon } from '../test-adapter'
+import { spawnReplacementDaemon } from '../../core/daemon/server'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -127,17 +128,24 @@ const createGitRepo = (branch: string): string => {
 
 const isDaemonAliveM = vi.mocked(isDaemonAlive)
 const spawnM = vi.mocked(spawn)
+const inheritedDaemonChild = process.env.MARS_DAEMON_CHILD
 
 // ── Test suite ────────────────────────────────────────────────────────────────
 
 describe('daemon start and restart safety', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    delete process.env.MARS_DAEMON_CHILD
   })
 
   afterEach(() => {
     vi.useRealTimers()
     delete process.env.INTEGRATION_BRANCH
+  })
+
+  afterAll(() => {
+    if (inheritedDaemonChild === undefined) delete process.env.MARS_DAEMON_CHILD
+    else process.env.MARS_DAEMON_CHILD = inheritedDaemonChild
   })
 
   // Tracer bullet: the most basic observable outcome — daemon already alive.
@@ -167,6 +175,30 @@ describe('daemon start and restart safety', () => {
     } finally {
       if (previousMarker === undefined) delete process.env.MARS_DAEMON_CHILD
       else process.env.MARS_DAEMON_CHILD = previousMarker
+    }
+  })
+
+  it('launches a replacement without passing its daemon-child marker to the launcher', async () => {
+    const previousMarker = process.env.MARS_DAEMON_CHILD
+    const previousRepo = process.env.MARS_REPO
+    const repo = mkdtempSync(join(tmpdir(), 'mars-replacement-daemon-'))
+    process.env.MARS_DAEMON_CHILD = '1'
+    process.env.MARS_REPO = repo
+    __resetContextCacheForTests()
+
+    try {
+      await spawnReplacementDaemon()
+
+      expect(spawnM).toHaveBeenCalledTimes(1)
+      const spawnOptions = spawnM.mock.calls[0]?.[2]
+      expect(spawnOptions?.env).not.toHaveProperty('MARS_DAEMON_CHILD')
+    } finally {
+      if (previousMarker === undefined) delete process.env.MARS_DAEMON_CHILD
+      else process.env.MARS_DAEMON_CHILD = previousMarker
+      if (previousRepo === undefined) delete process.env.MARS_REPO
+      else process.env.MARS_REPO = previousRepo
+      __resetContextCacheForTests()
+      rmSync(repo, { recursive: true, force: true })
     }
   })
 
