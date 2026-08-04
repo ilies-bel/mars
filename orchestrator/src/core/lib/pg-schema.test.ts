@@ -7,6 +7,7 @@ import {
   SCHEMA_TABLES,
   SCHEMA_VERSION,
 } from './pg-schema.js'
+import { FIXTURE_TIMESTAMP_ENCODINGS } from './timestamp-encodings.js'
 
 let keyCounter = 0
 const freshKey = (): string => `pg-schema-test-${process.pid}-${(keyCounter += 1)}`
@@ -35,6 +36,19 @@ const columnsOf = async (c: DbClient, table: string): Promise<Map<string, string
 }
 
 describe('ensureSchema', () => {
+  it('keeps every directly seeded fixture timestamp column classified by its storage encoding', async () => {
+    const c = await freshSchemaClient()
+
+    for (const [table, columns] of Object.entries(FIXTURE_TIMESTAMP_ENCODINGS)) {
+      const schemaColumns = await columnsOf(c, table)
+      for (const [column, encoding] of Object.entries(columns)) {
+        expect(schemaColumns.get(column), `${table}.${column}`).toBe(
+          encoding === 'epoch-millis' ? 'bigint' : 'timestamp with time zone',
+        )
+      }
+    }
+  })
+
   it('creates every canonical table', async () => {
     const c = await freshSchemaClient()
     const r = await c.execute(
@@ -606,7 +620,8 @@ describe('ensureSchema', () => {
     const cols = await columnsOf(c, 'task_blockers')
     expect(cols.get('provenance')).toBe('text')
     expect(cols.get('created_at')).toBe('bigint')
-    const now = Date.now()
+    const now = new Date().toISOString()
+    const nowMs = Date.now()
     await c.execute(
       `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
        VALUES ('t1', 'p', 'queued', ?, ?), ('t2', 'p', 'queued', ?, ?)`,
@@ -614,7 +629,7 @@ describe('ensureSchema', () => {
     )
     await c.execute(
       `INSERT INTO task_blockers (task_id, blocker_task_id, created_at) VALUES ('t1', 't2', ?)`,
-      [now],
+      [nowMs],
     )
     const row = await c.execute(
       `SELECT state, provenance FROM task_blockers WHERE task_id = 't1'`,

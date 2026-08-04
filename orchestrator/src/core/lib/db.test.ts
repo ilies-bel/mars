@@ -75,6 +75,41 @@ const makeTestTasksTable = async (c: DbClient): Promise<void> => {
 }
 
 describe('execute (pglite backend)', () => {
+  it('names the timestamp column when a fixture uses an ISO string for epoch milliseconds', async () => {
+    const c = openDb(freshKey())
+    const createdAt = new Date().toISOString()
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES (?, ?, 'queued', ?, ?), (?, ?, 'queued', ?, ?)`,
+      args: ['dependent', 'dependent task', createdAt, createdAt, 'blocker', 'blocker task', createdAt, createdAt],
+    })
+
+    await expect(c.execute({
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, created_at)
+            VALUES (?, ?, ?)`,
+      args: ['dependent', 'blocker', createdAt],
+    })).rejects.toThrow('task_blockers.created_at expects epoch milliseconds')
+  })
+
+  it('names the timestamp column when a fixture leaves a native timestamp blank', async () => {
+    const c = openDb(freshKey())
+
+    await expect(c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES (?, ?, 'queued', ?, ?)`,
+      args: ['blank-time', 'task with an invalid time', '', new Date().toISOString()],
+    })).rejects.toThrow('tasks.created_at expects an ISO-8601 timestamp')
+  })
+
+  it('attaches SQL and arguments to PGlite errors', async () => {
+    const c = openDb(freshKey())
+
+    await expect(c.execute(
+      'SELECT * FROM missing_fixture_table WHERE id = ?',
+      ['missing-fixture'],
+    )).rejects.toThrow(/SQL: SELECT \* FROM missing_fixture_table WHERE id = \$1\nargs: \["missing-fixture"\]/)
+  })
+
   it('returns rows as objects keyed by column name', async () => {
     const c = openDb(freshKey())
     await makeTestTasksTable(c)

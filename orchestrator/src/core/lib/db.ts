@@ -38,6 +38,7 @@
 import pg from 'pg'
 import { PGlite } from '@electric-sql/pglite'
 import { recordDbBusyError } from './db-busy-watchdog.js'
+import { FIXTURE_TIMESTAMP_ENCODINGS, type FixtureTimestampEncoding } from './timestamp-encodings.js'
 
 // ── Public types ────────────────────────────────────────────────────────────
 
@@ -209,21 +210,119 @@ function rewriteLegacyFixtureSql(sql: string): string {
   return rewritten
 }
 
+/** Splits a comma-separated SQL list while preserving quoted strings and calls. */
+function splitSqlList(sql: string): string[] {
+  const values: string[] = []
+  let start = 0
+  let depth = 0
+  let quote: "'" | '"' | null = null
+  for (let i = 0; i < sql.length; i += 1) {
+    const char = sql[i]
+    if (quote) {
+      if (char === quote) {
+        if (sql[i + 1] === quote) i += 1
+        else quote = null
+      }
+      continue
+    }
+    if (char === "'" || char === '"') {
+      quote = char
+    } else if (char === '(') {
+      depth += 1
+    } else if (char === ')') {
+      depth -= 1
+    } else if (char === ',' && depth === 0) {
+      values.push(sql.slice(start, i).trim())
+      start = i + 1
+    }
+  }
+  values.push(sql.slice(start).trim())
+  return values
+}
+
+/**
+ * Rejects the two timestamp encodings that PostgreSQL will otherwise report
+ * as a generic cast error. This is deliberately limited to parameterized
+ * direct inserts, the fixture shape that caused the failures.
+ */
+function assertFixtureTimestampEncodings(sql: string, args: readonly DbInValue[]): void {
+  const insert = /^\s*INSERT\s+INTO\s+(?:"?public"?\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s*\(([^)]*)\)\s*VALUES\s*/i.exec(sql)
+  if (!insert) return
+
+  const table = insert[1]!.toLowerCase() as keyof typeof FIXTURE_TIMESTAMP_ENCODINGS
+  const encodings = FIXTURE_TIMESTAMP_ENCODINGS[table]
+  if (!encodings) return
+  const columns = splitSqlList(insert[2]!).map((column) => column.replaceAll('"', '').toLowerCase())
+  let cursor = insert[0].length
+  let argIndex = 0
+
+  while (sql[cursor] === '(') {
+    let depth = 0
+    let quote: "'" | '"' | null = null
+    let end = cursor
+    for (; end < sql.length; end += 1) {
+      const char = sql[end]
+      if (quote) {
+        if (char === quote) {
+          if (sql[end + 1] === quote) end += 1
+          else quote = null
+        }
+        continue
+      }
+      if (char === "'" || char === '"') quote = char
+      else if (char === '(') depth += 1
+      else if (char === ')' && --depth === 0) break
+    }
+    if (depth !== 0) return
+
+    const values = splitSqlList(sql.slice(cursor + 1, end))
+    for (let index = 0; index < Math.min(columns.length, values.length); index += 1) {
+      const column = columns[index]!
+      const valueSql = values[index]!
+      const encoding = encodings[column as keyof typeof encodings] as FixtureTimestampEncoding | undefined
+      const placeholders = (valueSql.match(/\?/g) ?? []).length
+      if (encoding && valueSql.trim() === '?') {
+        const value = args[argIndex]
+        const valid = encoding === 'epoch-millis'
+          ? (typeof value === 'number' && Number.isSafeInteger(value)) || typeof value === 'bigint'
+          : typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value) && !Number.isNaN(Date.parse(value))
+        if (!valid) {
+          const expected = encoding === 'epoch-millis' ? 'epoch milliseconds' : 'an ISO-8601 timestamp'
+          throw new Error(
+            `db: ${table}.${column} expects ${expected}; received ${JSON.stringify(value)}`,
+          )
+        }
+      }
+      argIndex += placeholders
+    }
+
+    cursor = end + 1
+    while (/\s/.test(sql[cursor] ?? '')) cursor += 1
+    if (sql[cursor] !== ',') break
+    cursor += 1
+    while (/\s/.test(sql[cursor] ?? '')) cursor += 1
+  }
+}
+
 function normalizeStatement(
   stmt: DbStatement,
   args?: readonly DbInValue[],
 ): { sql: string; params: unknown[] } {
   if (typeof stmt === 'string') {
-    return { sql: translatePlaceholders(rewriteLegacyFixtureSql(stmt)), params: (args ?? []).map(toParam) }
+    const inputArgs = args ?? []
+    assertFixtureTimestampEncodings(stmt, inputArgs)
+    return { sql: translatePlaceholders(rewriteLegacyFixtureSql(stmt)), params: inputArgs.map(toParam) }
   }
   if (args !== undefined) {
     throw new Error(
       'db: pass args either inside the statement object or as the second argument, not both',
     )
   }
+  const inputArgs = stmt.args ?? []
+  assertFixtureTimestampEncodings(stmt.sql, inputArgs)
   return {
     sql: translatePlaceholders(rewriteLegacyFixtureSql(stmt.sql)),
-    params: (stmt.args ?? []).map(toParam),
+    params: inputArgs.map(toParam),
   }
 }
 
@@ -494,7 +593,15 @@ function makePgliteBackend(target: string): BackendOps {
         1700: (v: string) => Number(v), // numeric
       },
     })
-    return toResultSetPglite(await db.query<DbRow>(sql, params as unknown[]), sql)
+    try {
+      return toResultSetPglite(await db.query<DbRow>(sql, params as unknown[]), sql)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(
+        `db: PGlite query failed: ${message}\nSQL: ${sql}\nargs: ${JSON.stringify(params)}`,
+        { cause: error },
+      )
+    }
   }
   return {
     // Single session: EVERY operation takes the mutex so a plain execute can
