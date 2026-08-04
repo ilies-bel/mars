@@ -1,5 +1,0 @@
-# TaskFlightTracker
-
-The deep module that owns the dispatch-storm-prevention invariant inside daemon/server.ts. Hides the four bookkeeping collections (inFlight: Map<taskId,{taskId,kind}>, pendingTriage/pendingImplement: Set<taskId>, claimedTriage/claimedImplement: Set<taskId>) and the predicates over them (isInFlight, isClaimed, trackInFlight, enqueuePending, drainPending). The named invariant: for every taskId, at most one Slot in inFlight ∪ claimed{Triage,Implement} holds it at any instant; claim runs BEFORE await acquire(sem) and clears AFTER trackInFlight commits, covering the await-acquire gap that caused the dispatch-storm bug (server.ts:230-236). Deliberately NARROWER than a SlotPool: leaves sems, drain, dispatchers, and bus glue in startDaemon. A full SlotPool seam was considered and rejected because semaphore primitives are already top-level, the dispatch-storm invariant is flight-tracker-shaped not pool-shaped, and the two-adapter rule fails today (one real adapter, fake-for-test does not count).
-
-_Avoid_: slot pool, worker pool, dispatch pool, daemon pool

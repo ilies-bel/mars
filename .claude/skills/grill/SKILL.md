@@ -92,8 +92,8 @@ problem?" on top of it.
 
 ### Challenge against the glossary
 
-When the user uses a term that conflicts with the existing language in the
-knowledge surface (`docs/knowledge/glossary/`), call it out immediately. *"Your glossary defines
+When the user uses a term that conflicts with the existing language in
+`CONTEXT.md`, call it out immediately. *"Your glossary defines
 'cancellation' as X, but you seem to mean Y — which is it?"*
 
 ### Sharpen fuzzy language
@@ -138,7 +138,7 @@ mars glossary remove "<term>"
 ```
 
 Definitions: one sentence; describe what the term **is**, not what it
-does. Don't couple the glossary to implementation details — only include
+does. Don't couple `CONTEXT.md` to implementation details — only include
 terms meaningful to domain experts. Skip generic programming concepts
 (timeout, retry, error).
 
@@ -176,7 +176,7 @@ and *why* — not filling out sections.
 
 ## Architectural vocabulary (your reasoning, not the conversation)
 
-The knowledge-surface glossary covers **domain** terms. When the conversation drifts into
+`CONTEXT.md` covers **domain** terms. When the conversation drifts into
 architecture ("should this be a service?", "where's the boundary?"), use
 the fixed vocabulary below in your own reasoning instead of inventing
 words. This vocabulary never reaches the glossary and never reaches the
@@ -250,10 +250,10 @@ Those are `to-prd`'s job. The only writes you may issue here are
   answer, and wait for the user's reply before moving on.
 - Do not ask the user for facts the codebase already encodes — explore
   it instead.
-- Do not edit `docs/knowledge/glossary/*.md` or `docs/adr/*.md` directly. Both surfaces are
+- Do not edit `CONTEXT.md` or `docs/adr/*.md` directly. Both files are
   written through the daemon-routed structured-write path. Always go
   through `mars glossary` / `mars adr`.
-- Do not couple the knowledge-surface glossary to implementation details. The glossary
+- Do not couple `CONTEXT.md` to implementation details. The glossary
   carries terms meaningful to domain experts — not function names,
   config keys, or library types.
 - Do not invent details the user did not provide. If a branch can't be

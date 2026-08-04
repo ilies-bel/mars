@@ -177,7 +177,6 @@ const glossaryWriteHandler = handler('glossary-write', async (req, deps) => {
     term: req.term,
     definition: req.definition,
     aliases: req.aliases,
-    surfaceForms: req.surfaceForms,
   })
   return { ok: true, data: { enqueued: true } }
 })

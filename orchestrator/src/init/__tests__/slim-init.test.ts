@@ -14,6 +14,8 @@ import { writeSlimInit } from '../writer'
 
 const slimInputFor = (root: string) => ({
   repoRoot: root,
+  contextPath: resolve(root, 'CONTEXT.md'),
+  adrDir: resolve(root, 'docs', 'adr'),
 })
 
 describe('writeSlimInit', () => {
@@ -27,31 +29,32 @@ describe('writeSlimInit', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
-  it('creates the sharded knowledge surface when one is not already present', () => {
+  it('creates a CONTEXT.md skeleton when one is not already present', () => {
     writeSlimInit(slimInputFor(root))
 
-    expect(existsSync(resolve(root, 'docs/knowledge/glossary'))).toBe(true)
-    const content = readFileSync(resolve(root, 'docs/knowledge/README.md'), 'utf8')
-    expect(content).toContain('glossary/')
-    expect(content).toContain('decisions/')
-    expect(content).toContain('vision.md')
+    const contextPath = resolve(root, 'CONTEXT.md')
+    expect(existsSync(contextPath)).toBe(true)
+    const content = readFileSync(contextPath, 'utf8')
+    expect(content).toContain('# Project Context')
+    expect(content).toContain('## Language')
   })
 
-  it('does not overwrite an existing knowledge README', () => {
-    const readme = resolve(root, 'docs/knowledge/README.md')
-    const existing = '# Existing knowledge\n'
-    mkdirSync(resolve(root, 'docs/knowledge'), { recursive: true })
-    writeFileSync(readme, existing, 'utf8')
+  it('does not overwrite an existing CONTEXT.md', () => {
+    const contextPath = resolve(root, 'CONTEXT.md')
+    const existing = '# Project Context\n\n## Language\n\n**Foo**:\nbar.\n'
+    mkdirSync(root, { recursive: true })
+    writeFileSync(contextPath, existing, 'utf8')
 
     writeSlimInit(slimInputFor(root))
 
-    expect(readFileSync(readme, 'utf8')).toBe(existing)
+    expect(readFileSync(contextPath, 'utf8')).toBe(existing)
   })
 
-  it('creates the decisions scaffold directory', () => {
+  it('creates the docs/adr/ scaffold directory', () => {
     writeSlimInit(slimInputFor(root))
 
-    expect(existsSync(resolve(root, 'docs/knowledge/decisions'))).toBe(true)
+    const adrDir = resolve(root, 'docs', 'adr')
+    expect(existsSync(adrDir)).toBe(true)
   })
 
   it('does not produce .mars/supervisors/<name>.md briefing files', () => {

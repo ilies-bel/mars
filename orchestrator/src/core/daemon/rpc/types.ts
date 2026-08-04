@@ -189,7 +189,6 @@ export interface DaemonDeps {
     term: string
     definition?: string
     aliases?: readonly string[]
-    surfaceForms?: readonly string[]
   }): Promise<void>
   dispatchAdrAdd(req: { title: string; body: string }): Promise<void>
   handleInit(opts: RunInitOptions): Promise<RunInitResult>

@@ -516,36 +516,6 @@ describe('glossary (transport varies per-subcommand)', () => {
     expect(fake.calls).toHaveLength(0)
     expect(r.out.join('\n')).toContain('(no glossary terms')
   })
-
-  it('lists avoid aliases and shows one sharded term without using the daemon', async () => {
-    const { store, ctx } = await loadStoreAndCtx()
-    const { writeGlossaryTerm } = await import('../../core/lib/glossary')
-    await writeGlossaryTerm(repo, {
-      term: 'Arc',
-      definition: 'An origin tree.',
-      aliases: ['Chain'],
-      surfaceForms: ['arc', 'arcs'],
-    })
-    const daemon = makeFakeDaemon()
-
-    const list = await runCommandInProcess(['glossary', 'list'], { store, ctx, daemon })
-    const show = await runCommandInProcess(['glossary', 'show', 'arc'], { store, ctx, daemon })
-
-    expect(list.out).toContain('Arc  (avoid: Chain)')
-    expect(show.out).toContain('term:        Arc')
-    expect(show.out).toContain('surface forms: arc, arcs')
-    expect(daemon.calls).toHaveLength(0)
-  })
-
-  it('forwards explicitly supplied surface forms to the daemon-routed writer', async () => {
-    const { store, ctx } = await loadStoreAndCtx()
-    const daemon = makeFakeDaemon()
-    await runCommandInProcess(
-      ['glossary', 'set', 'Arc', 'An origin tree.', '--surface-form', 'arc', '--surface-form', 'arcs', '--surface-form', 'arcing'],
-      { store, ctx, daemon },
-    )
-    expect(daemon.calls[0]).toMatchObject({ surfaceForms: ['arc', 'arcs', 'arcing'] })
-  })
 })
 
 describe('worker (store-dir-backed)', () => {

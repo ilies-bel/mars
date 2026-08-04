@@ -38,7 +38,7 @@ npm run typecheck
 | `src/core/daemon` | The long-lived daemon: dispatch loop, per-kind semaphores, socket protocol.  |
 | `src/core/lib`    | Non-AI side-effect helpers (git, verify, claude-stream, task-store).         |
 | `src/core/store`  | Domain task store.                                                           |
-| `src/init`          | `mars init`: scaffolding (docs/knowledge/, .claude/, workflows), DB init.   |
+| `src/init`          | `mars init`: scaffolding (CONTEXT.md, .claude/, workflows), DB init.         |
 
 ### Top-level files
 

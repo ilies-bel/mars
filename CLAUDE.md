@@ -177,14 +177,13 @@ worktree without the user's say-so.
 
 ## Glossary and ADRs
 
-- `docs/knowledge/glossary/` — one Markdown file per domain term. Edit only
-  via `mars glossary set/remove`; read through `mars glossary list/show` or
-  the knowledge surface.
+- `CONTEXT.md` — domain glossary. Edit only via `mars glossary
+  set/remove`; read via `mars glossary list/show`.
 - `docs/adr/NNNN-<slug>.md` — ADRs. Add via `mars adr add`; read via
   `mars adr list/show`. ADR only when hard-to-reverse, surprising, and
   embodying a real trade-off.
 
-Never edit `docs/knowledge/glossary/**` or `docs/adr/**` directly. Reads are fine.
+Never edit `CONTEXT.md` or `docs/adr/**` directly. Reads are fine.
 
 The `/mars:chat` slash command is the conversational entry point.
 It classifies the user's input (an id, free text, or empty) and
