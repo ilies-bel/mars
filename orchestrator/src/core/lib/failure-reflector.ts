@@ -163,9 +163,12 @@ const parseSuggestions = (text: string): FailureReflectorSuggestion[] => {
   return results
 }
 
-const persistSuggestion = async (s: FailureReflectorSuggestion): Promise<void> => {
+const persistSuggestion = async (
+  opts: SpawnFailureReflectorOpts,
+  s: FailureReflectorSuggestion,
+): Promise<void> => {
   const fingerprint = createHash('sha256')
-    .update(`failure-reflector:${s.title}:`)
+    .update(`failure-reflector:${opts.lastStep}:${opts.lastErrorSignature}:`)
     .digest('hex')
     .slice(0, 32)
 
@@ -198,8 +201,9 @@ const persistSuggestion = async (s: FailureReflectorSuggestion): Promise<void> =
  * harness-improvement system prompt (NOT a code-fix prompt), then persists
  * each suggestion as a draft proposal with source='failure-reflector'.
  *
- * Deduplication: repeated suggestions for the same title are collapsed into
- * the existing open draft (notes appended, no new proposal row created).
+ * Deduplication: suggestions for the same failing step and classified failure
+ * signature are collapsed into the existing open draft (notes appended, no
+ * new proposal row created), regardless of model-written title wording.
  *
  * Admission control (see {@link MAX_CONCURRENT}): the call is suppressed when
  * self-heal is disabled or when {@link MAX_CONCURRENT} runs are already in
@@ -240,7 +244,7 @@ export const spawnFailureReflector = async (
     const suggestions = parseSuggestions(text)
 
     for (const s of suggestions) {
-      await persistSuggestion(s)
+      await persistSuggestion(opts, s)
     }
   } catch (err) {
     // eslint-disable-next-line no-console
