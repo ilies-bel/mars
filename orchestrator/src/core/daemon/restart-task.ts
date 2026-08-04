@@ -122,7 +122,8 @@ export const resetForSetupReplay = async (
  * Core restart mechanics shared by both the UDS RPC handler (`mars restart`)
  * and the HTTP endpoint. Validates the task exists and is in an allowed
  * status, then wipes the worktree/branch, clears the workflow run journal,
- * and re-queues the DB row.
+ * and re-queues the DB row. A branch with unique commits is a destructive
+ * restart and requires `force`, after reporting the exact commit/file scope.
  *
  * The `workflowStore` is used to delete the prior run's checkpoint records
  * so the next dispatch starts from step 0 rather than resuming a stale run.
@@ -222,18 +223,34 @@ export const coreRestartTask = async (
   const { getRepoRoot } = await import('../context')
   const { listUniqueCommitsAhead } = await import('../lib/sweep')
   const { integrationBranchName } = await import('../blocker-resolution')
-  const { raiseActionQueueItem } = await import('../lib/action-queue')
 
   const branch = task.branch ?? `task/${task.id}`
   const repoRoot = getRepoRoot()
 
-  // Worktree directory may be removed — it can be recreated. But the branch
-  // ref must survive if it carries unmerged committed work.
-  // keepBranch=true: do NOT let removeWorktree delete the branch — the guard
-  // below is the sole decision-maker on whether the ref is preserved or removed.
-  // Before this fix, keepBranch defaulted to false, so removeWorktree would run
-  // `git branch -D` unconditionally; by the time the commits-ahead guard ran the
-  // branch was already gone and the guard's preservation path was dead code.
+  // Inspect the branch before touching its worktree. `restart` resets setup
+  // state and removes the branch, so unique commits would otherwise be lost.
+  // This check must precede removeWorktree: the worktree helper deletes its
+  // branch unless told to keep it.
+  const integrationBranch = integrationBranchName()
+  const commitsAhead = await listUniqueCommitsAhead(branch, integrationBranch, repoRoot)
+  if (commitsAhead.length > 0 && !force) {
+    const { stdout } = await exec(
+      'git',
+      ['diff', '--name-only', `${integrationBranch}...${branch}`],
+      { cwd: repoRoot },
+    )
+    const filesAhead = stdout.split('\n').filter((path) => path.trim() !== '').length
+    throw new RestartTaskError(
+      `refusing to restart task ${id}: branch ${branch} has ${commitsAhead.length} commit(s) ` +
+        `and ${filesAhead} file(s) ahead of ${integrationBranch} that restart would discard. ` +
+        `Review or land the branch, or rerun with --force to discard it.`,
+      'WRONG_STATUS',
+    )
+  }
+
+  // Worktree directories can be recreated from setup. Keep the branch during
+  // removal so this function, rather than the helper, performs the authorized
+  // final deletion immediately below.
   if (task.worktreePath && exists(task.worktreePath)) {
     await removeWorktree({ path: task.worktreePath, branch }, true, true).catch(
       (err: unknown) => {
@@ -244,53 +261,7 @@ export const coreRestartTask = async (
     )
   }
 
-  // Guard: refuse to delete a branch whose tip is not an ancestor of the
-  // integration branch. Commits ahead = work product. Delete the worktree if
-  // needed (done above), but preserve the ref; log loudly and raise an
-  // action-queue row so the operator can decide what to do.
-  const integrationBranch = integrationBranchName()
-  const commitsAhead = await listUniqueCommitsAhead(branch, integrationBranch, repoRoot)
-  if (commitsAhead.length > 0) {
-    console.warn(
-      `[restart-cleanup] PRESERVING branch ${branch} for task ${id}: ` +
-        `${commitsAhead.length} unmerged commit(s) ahead of ${integrationBranch} — ` +
-        `branch NOT deleted. Use 'mars purge --force ${id}' to remove explicitly.`,
-    )
-    const { WorktreeAheadPayloadSchema, WORKTREE_AHEAD_FAILURE_REASON: WAF } = await import(
-      '../lib/worktree-ahead-payload'
-    )
-    const typedPayload = WorktreeAheadPayloadSchema.parse({
-      taskId: id,
-      branch,
-      worktreePath: task.worktreePath ?? null,
-      integrationBranch,
-      commitsAhead,
-      onMainLean: 'unknown',
-      leaseOwned: Boolean(task.leaseOwner),
-      failureReason: WAF,
-    })
-    await raiseActionQueueItem({
-      kind: 'worktree-ahead',
-      category: 'orchestrator',
-      priority: 'high',
-      title: `Branch ${branch} has ${commitsAhead.length} unmerged commit(s) — preserved by restart cleanup`,
-      body:
-        `Task ${id} was restarted and its branch ${branch} would have been deleted, ` +
-        `but it has ${commitsAhead.length} commit(s) ahead of ${integrationBranch}. ` +
-        `The branch has been preserved to avoid losing committed work.\n\n` +
-        `Resolve manually: inspect the commits and either cherry-pick them onto ` +
-        `${integrationBranch} or remove with 'mars purge --force ${id}'.\n\n` +
-        `Commits:\n` +
-        commitsAhead.map((c) => `  ${c.shortSha} ${c.subject}`).join('\n'),
-      payload: typedPayload,
-      context: { repoRoot },
-      raisedBy: 'restart-cleanup',
-      signature: `restart-ahead:${id}`,
-      originTaskId: id,
-    }).catch(() => {}) // best-effort: action-queue failure must not block the restart
-  } else {
-    await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})
-  }
+  await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})
 
   // Discard the prior workflow run journal and collect the pointer-clearing
   // patch so the next dispatch starts from step 0 instead of resuming stale

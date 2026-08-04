@@ -20,8 +20,8 @@
  */
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { resolve } from 'node:path'
-import { access, constants as fsConstants } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
+import { access, constants as fsConstants, mkdir } from 'node:fs/promises'
 import { integrationBranchName } from './blocker-resolution'
 import {
   getTask,
@@ -108,24 +108,27 @@ export const landTask = async (
     }
   }
 
-  // ── 3. Require worktree ───────────────────────────────────────────────────
-  const worktreePath = task.worktreePath
-  if (!worktreePath) {
-    return {
-      outcome: 'no-worktree',
-      message:
-        `task ${taskId} has no worktree path; ` +
-        `use 'mars restart ${taskId}' to re-set up the worktree before landing`,
-    }
-  }
+  // ── 3. Restore worktree from the preserved branch when needed ────────────
+  // A missing worktree is recoverable as long as the ahead branch still
+  // exists. Never send the operator to `restart` here: restart intentionally
+  // discards this branch's work in order to start a new implementation.
+  const worktreePath = task.worktreePath ?? resolve(getStateDir(), 'worktrees', taskId)
   try {
     await access(worktreePath, fsConstants.F_OK)
   } catch {
-    return {
-      outcome: 'no-worktree',
-      message:
-        `worktree at ${worktreePath} is missing; ` +
-        `use 'mars restart ${taskId}' to re-create it before landing`,
+    try {
+      await mkdir(dirname(worktreePath), { recursive: true })
+      await execFileP('git', ['worktree', 'add', '--force', worktreePath, branch], {
+        cwd: repoRoot,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return {
+        outcome: 'no-worktree',
+        message:
+          `could not recreate missing worktree at ${worktreePath} from ${branch}: ${msg}. ` +
+          `The branch was left intact; recreate it with \`git worktree add ${worktreePath} ${branch}\` and retry \`mars land ${taskId}\`.`,
+      }
     }
   }
 
