@@ -1,13 +1,14 @@
 /**
  * `verify-gate` command group — operator management of the verify_gates table.
  *
- * Four subcommands:
+ * Five subcommands:
  *   verify-gate list   — print all registered gates
  *   verify-gate add    — insert a new gate (--scope, --name, --cmd, [-- args...])
  *   verify-gate remove — delete a gate by id or by (--scope, --name) pair
  *   verify-gate check  — detect drift between supervisor manifest and verify_gates table
+ *   verify-gate detect — propose gates from repository tooling without writing the table
  *
- * All four call the core verify-gates functions directly (no daemon round-trip)
+ * All registry commands call the core verify-gates functions directly (no daemon round-trip)
  * because these are direct DB writes/reads that do not require the daemon's
  * serialised task lifecycle.
  */
@@ -19,6 +20,7 @@ import {
   removeVerifyGate,
 } from '../../core/verify-gates'
 import { loadVerifyScopes } from '../../core/lib/git/verify'
+import { detectVerifyGates } from '../../init/detect-verify-gates'
 import type { Command } from '../command'
 
 /** Detect a PostgreSQL UNIQUE-constraint violation (23505) or its message equivalent. */
@@ -114,11 +116,10 @@ const verifyGateAdd: Command = {
 
     // Gate args follow the '--' separator in positionals.
     const dashIdx = args.positional.indexOf('--')
-    const preDash = dashIdx === -1 ? args.positional : args.positional.slice(0, dashIdx)
     const gateArgs = dashIdx === -1 ? [] : args.positional.slice(dashIdx + 1)
 
-    // --optional anywhere before '--' makes required=false; --required is the default.
-    const required = !preDash.includes('--optional')
+    // --optional makes required=false; --required is the default.
+    const required = args.flags['--optional'] === undefined
 
     try {
       const id = await addVerifyGate({
@@ -225,12 +226,35 @@ const verifyGateCheck: Command = {
   },
 }
 
+const verifyGateDetect: Command = {
+  path: 'verify-gate detect',
+  summary: 'propose verify gates from repository tooling without registering them',
+  usage: 'usage: mars verify-gate detect [--json]',
+  run: (args, deps) => {
+    const gates = detectVerifyGates(deps.ctx.repoRoot)
+    if (args.flags['--json'] !== undefined) {
+      deps.out(JSON.stringify(gates))
+      return { code: 0 }
+    }
+    if (gates.length === 0) {
+      deps.out('no verify gates detected')
+      return { code: 0 }
+    }
+    for (const gate of gates) {
+      deps.out(
+        `${gate.scope}  ${gate.name}  ${[gate.cmd, ...gate.args].join(' ')}  ${gate.tier}  ${gate.evidence}`,
+      )
+    }
+    return { code: 0 }
+  },
+}
+
 const verifyGateGroup: Command = {
   path: 'verify-gate',
   summary: 'manage verify gate registrations',
-  usage: 'usage: mars verify-gate <list|add|remove|check>',
+  usage: 'usage: mars verify-gate <list|add|remove|check|detect>',
   run: (_args, deps) => {
-    deps.err('usage: mars verify-gate <list|add|remove|check>')
+    deps.err('usage: mars verify-gate <list|add|remove|check|detect>')
     return { code: 2 }
   },
 }
@@ -240,5 +264,6 @@ export const verifyGateCommands: readonly Command[] = [
   verifyGateAdd,
   verifyGateRemove,
   verifyGateCheck,
+  verifyGateDetect,
   verifyGateGroup,
 ]

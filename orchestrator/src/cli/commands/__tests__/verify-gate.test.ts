@@ -22,7 +22,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { InProcessOptions } from '../../test-adapter'
@@ -104,6 +104,38 @@ describe('mars verify-gate — group command', () => {
     expect(errText).toContain('list')
     expect(errText).toContain('add')
     expect(errText).toContain('remove')
+  })
+})
+
+describe('mars verify-gate detect', () => {
+  it('prints proposed gates without adding them to the registry', async () => {
+    writeFileSync(
+      resolve(repo, 'package.json'),
+      JSON.stringify({ scripts: { typecheck: 'tsc --noEmit', test: 'vitest run' } }),
+    )
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const detected = await run(['verify-gate', 'detect'], { store, ctx, daemon })
+    const listed = await run(['verify-gate', 'list'], { store, ctx, daemon })
+
+    expect(detected.code).toBe(0)
+    expect(detected.out.join('\n')).toContain('typecheck')
+    expect(detected.out.join('\n')).toContain('test')
+    expect(listed.out.join('\n')).toContain('no verify gates configured')
+  })
+
+  it('prints a stable JSON proposal array and explains when no gates are found', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const json = await run(['verify-gate', 'detect', '--json'], { store, ctx, daemon })
+    const text = await run(['verify-gate', 'detect'], { store, ctx, daemon })
+
+    expect(json.code).toBe(0)
+    expect(json.out).toEqual(['[]'])
+    expect(text.code).toBe(0)
+    expect(text.out).toEqual(['no verify gates detected'])
   })
 })
 
