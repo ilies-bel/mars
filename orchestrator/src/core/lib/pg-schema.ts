@@ -1660,6 +1660,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'gate_enrichment',
   'gate_burn_in',
   'failure_signature_streak',
+  'failure_reflection_signatures',
   'verify_gates',
   'verify_gate_failure_streaks',
   'gate_fix_proposals',
@@ -1700,6 +1701,7 @@ export const IDENTITY_COLUMNS: Readonly<Record<string, string>> = {
   chat_messages: 'seq',
   usage_snapshots: 'id',
   mcp_worker_audit: 'id',
+  conversation_notice_batches: 'id',
 }
 
 /**

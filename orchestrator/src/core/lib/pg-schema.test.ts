@@ -796,7 +796,7 @@ describe('ensureSchema', () => {
       'idx_task_blockers_blocker', 'idx_task_blockers_task_state',
       'idx_trace_events_task_time', 'idx_trace_events_time_desc',
       'idx_trace_events_origin_time', 'idx_trace_events_step_ended_time',
-      'idx_proposals_fingerprint', 'idx_scorer_results_scorer_task',
+      'idx_proposals_source_fingerprint', 'idx_scorer_results_scorer_task',
       'idx_promotion_ledger_workflow', 'idx_memory_packets_domain_salience',
       'idx_action_queue_fingerprint_state', 'idx_action_queue_state',
       'idx_action_queue_open_snoozed_until',
@@ -806,7 +806,8 @@ describe('ensureSchema', () => {
     ]) {
       expect(defs.has(name), `index ${name} missing`).toBe(true)
     }
-    expect(defs.get('idx_proposals_fingerprint')).toContain('IS NOT NULL')
+    expect(defs.get('idx_proposals_source_fingerprint')).toContain('UNIQUE')
+    expect(defs.get('idx_proposals_source_fingerprint')).toContain('IS NOT NULL')
     expect(defs.get('idx_trace_events_step_ended_time')).toContain('step_ended')
     expect(defs.get('idx_trace_events_time_desc')).toContain('DESC')
     expect(defs.get('idx_tasks_priority_created')).toContain('priority DESC')
