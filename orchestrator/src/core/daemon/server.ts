@@ -190,18 +190,10 @@ const LOG_ROTATE_BYTES = 10 * 1024 * 1024
  * replacement reading the same daemon.json, including an operator pause.
  */
 export const spawnReplacementDaemon = async (): Promise<void> => {
-  const [{ spawn }, { resolveLaunchCommand }] = await Promise.all([
-    import('node:child_process'),
-    import('./paths'),
-  ])
-  const { command, baseArgs } = resolveLaunchCommand()
+  const { captureDaemonBootStderr, daemonPaths, spawnDaemonProcess } = await import('./paths')
   const { repoRoot } = resolveContext()
-  const { MARS_DAEMON_CHILD: _drop, ...parentEnv } = process.env
-  const child = spawn(command, [...baseArgs, '--repo', repoRoot, 'daemon', 'start'], {
-    detached: true,
-    stdio: 'ignore',
-    env: { ...parentEnv, MARS_REPO: repoRoot },
-  })
+  const child = spawnDaemonProcess({ repoRoot })
+  captureDaemonBootStderr(child, daemonPaths(repoRoot).logFile)
   child.unref()
 }
 

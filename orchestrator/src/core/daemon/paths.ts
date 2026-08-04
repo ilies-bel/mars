@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, unlinkSync } from 'node:fs'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -60,6 +61,50 @@ export const resolveLaunchCommand = (): { command: string; baseArgs: string[] } 
   const entry = process.argv[1]
   if (!entry) throw new Error('cannot determine mars CLI entry for child spawn')
   return { command: process.execPath, baseArgs: [entry] }
+}
+
+/**
+ * Spawn a detached process that enters the daemon's foreground branch directly.
+ *
+ * Both interactive CLI starts and daemon self-restarts use this contract. The
+ * marker is deliberately replaced instead of inherited so every actual daemon
+ * carries it without allowing a launcher to re-enter the detach branch.
+ */
+export const spawnDaemonProcess = ({
+  repoRoot,
+  env = process.env,
+}: {
+  repoRoot: string
+  env?: NodeJS.ProcessEnv
+}): ChildProcess => {
+  const { command, baseArgs } = resolveLaunchCommand()
+  const { MARS_DAEMON_CHILD: _drop, ...parentEnv } = env
+  return spawn(
+    command,
+    [...baseArgs, '--repo', repoRoot, 'daemon', 'start', '--foreground'],
+    {
+      detached: true,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: {
+        ...parentEnv,
+        MARS_DAEMON_CHILD: '1',
+        MARS_REPO: repoRoot,
+      },
+    },
+  )
+}
+
+/** Write detached daemon bootstrap diagnostics to the supplied boot log. */
+export const captureDaemonBootStderr = (child: ChildProcess, logFile: string): void => {
+  child.stderr?.on('data', (chunk: Buffer) => {
+    try {
+      mkdirSync(dirname(logFile), { recursive: true })
+      appendFileSync(logFile, chunk)
+    } catch {
+      // Best effort only: the child still reports failure through its exit status.
+    }
+  })
+  child.stderr?.on('error', () => {})
 }
 
 export const isProcessAlive = (pid: number): boolean => {

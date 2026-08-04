@@ -22,7 +22,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
@@ -178,11 +178,11 @@ describe('daemon start and restart safety', () => {
     }
   })
 
-  it('launches a replacement without passing its daemon-child marker to the launcher', async () => {
+  it('launches a replacement directly in the foreground daemon branch', async () => {
     const previousMarker = process.env.MARS_DAEMON_CHILD
     const previousRepo = process.env.MARS_REPO
     const repo = mkdtempSync(join(tmpdir(), 'mars-replacement-daemon-'))
-    process.env.MARS_DAEMON_CHILD = '1'
+    process.env.MARS_DAEMON_CHILD = 'inherited-parent-marker'
     process.env.MARS_REPO = repo
     __resetContextCacheForTests()
 
@@ -190,11 +190,42 @@ describe('daemon start and restart safety', () => {
       await spawnReplacementDaemon()
 
       expect(spawnM).toHaveBeenCalledTimes(1)
+      const spawnArgs = spawnM.mock.calls[0]?.[1]
       const spawnOptions = spawnM.mock.calls[0]?.[2]
-      expect(spawnOptions?.env).not.toHaveProperty('MARS_DAEMON_CHILD')
+      expect(spawnArgs).toEqual(
+        expect.arrayContaining(['daemon', 'start', '--foreground']),
+      )
+      // The child gets the daemon marker deliberately; it does not inherit
+      // an arbitrary parent value that could alter a future launcher branch.
+      expect(spawnOptions?.env?.['MARS_DAEMON_CHILD']).toBe('1')
     } finally {
       if (previousMarker === undefined) delete process.env.MARS_DAEMON_CHILD
       else process.env.MARS_DAEMON_CHILD = previousMarker
+      if (previousRepo === undefined) delete process.env.MARS_REPO
+      else process.env.MARS_REPO = previousRepo
+      __resetContextCacheForTests()
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('records replacement bootstrap stderr in the repository boot log', async () => {
+    const previousRepo = process.env.MARS_REPO
+    const repo = mkdtempSync(join(tmpdir(), 'mars-replacement-daemon-log-'))
+    const { EventEmitter } = await import('node:events')
+    const stderr = new EventEmitter()
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn(), stderr })
+    spawnM.mockImplementationOnce(() => child as never)
+    process.env.MARS_REPO = repo
+    __resetContextCacheForTests()
+
+    try {
+      await spawnReplacementDaemon()
+      stderr.emit('data', Buffer.from('replacement boot failed\n'))
+
+      expect(readFileSync(join(repo, '.mars', 'watch.log'), 'utf8')).toContain(
+        'replacement boot failed',
+      )
+    } finally {
       if (previousRepo === undefined) delete process.env.MARS_REPO
       else process.env.MARS_REPO = previousRepo
       __resetContextCacheForTests()

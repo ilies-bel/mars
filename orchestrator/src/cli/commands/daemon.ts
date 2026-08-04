@@ -8,9 +8,9 @@
  * auto-spawn it. This is the global default; see client.ts sendRequest().
  */
 
-import { spawn, type ChildProcess } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { appendFileSync, mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import {
   loadDaemonConfig,
   AUTONOMY_LEVELS,
@@ -22,9 +22,10 @@ import type { AutonomyLevel } from '../../core/daemon/config'
 import { describePauseState } from '../../core/daemon/pause-state'
 import type { DispatchPauseState } from '../../core/daemon/pause-state'
 import {
+  captureDaemonBootStderr,
   daemonPaths,
   isDaemonAlive,
-  resolveLaunchCommand,
+  spawnDaemonProcess,
 } from '../../core/daemon/paths'
 import { warnWhenRepoRootDiffersFromIntegration } from '../../core/lib/repo-root-branch-warning'
 import { hasFlag } from '../args'
@@ -42,34 +43,13 @@ const writeBootLog = (msg: string): void => {
 }
 
 const spawnDetached = (deps: CommandDeps): ChildProcess => {
-  const { command, baseArgs } = resolveLaunchCommand()
   const workerProvider =
     process.env.MARS_WORKER_PROVIDER ?? loadDaemonConfig().defaultProvider
-  const child = spawn(
-    command,
-    [...baseArgs, '--repo', deps.ctx.repoRoot, 'daemon', 'start', '--foreground'],
-    {
-      detached: true,
-      stdio: ['ignore', 'ignore', 'pipe'],
-      env: {
-        ...process.env,
-        MARS_DAEMON_CHILD: '1',
-        MARS_REPO: deps.ctx.repoRoot,
-        MARS_WORKER_PROVIDER: workerProvider,
-      },
-    },
-  )
-  const { logFile } = daemonPaths()
-  child.stderr?.on('data', (chunk: Buffer) => {
-    try {
-      mkdirSync(dirname(logFile), { recursive: true })
-      appendFileSync(logFile, chunk)
-    } catch {
-      // Best effort only: the child will still report its failure through its
-      // exit status if the boot log cannot be written.
-    }
+  const child = spawnDaemonProcess({
+    repoRoot: deps.ctx.repoRoot,
+    env: { ...process.env, MARS_WORKER_PROVIDER: workerProvider },
   })
-  child.stderr?.on('error', () => {})
+  captureDaemonBootStderr(child, resolve(deps.ctx.stateDir, 'watch.log'))
   child.unref()
   return child
 }
