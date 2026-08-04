@@ -59,6 +59,7 @@ describe('adr writeAdrInWorktree', () => {
   it('creates docs/adr/ lazily and writes a numbered file', async () => {
     const result = await writeAdrInWorktree({
       worktreePath: workRoot,
+      number: 1,
       title: 'Use Postgres for the Write Model',
       body: 'We picked Postgres because of write throughput needs.',
     })
@@ -71,20 +72,30 @@ describe('adr writeAdrInWorktree', () => {
     expect(text).toContain('We picked Postgres')
   })
 
-  it('increments number across successive writes', async () => {
+  it('uses the number reserved before worktree creation', async () => {
+    const dir = adrDirIn(workRoot)
+    await mkdir(dir, { recursive: true })
+    await writeFile(resolve(dir, '0009-existing.md'), '# Existing\n')
+
     const a = await writeAdrInWorktree({
       worktreePath: workRoot,
+      number: 3,
       title: 'First',
       body: 'one',
     })
     const b = await writeAdrInWorktree({
       worktreePath: workRoot,
+      number: 4,
       title: 'Second',
       body: 'two',
     })
-    expect(a.number).toBe(1)
-    expect(b.number).toBe(2)
+    expect(a.number).toBe(3)
+    expect(b.number).toBe(4)
     const entries = await readdir(adrDirIn(workRoot))
-    expect(entries.sort()).toEqual(['0001-first.md', '0002-second.md'])
+    expect(entries.sort()).toEqual([
+      '0003-first.md',
+      '0004-second.md',
+      '0009-existing.md',
+    ])
   })
 })

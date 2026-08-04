@@ -1902,7 +1902,12 @@ export const startDaemon = async (
     log(`[adr-add] "${req.title}" dispatching`)
     try {
       const { runStructuredWrite } = await import('../lib/structured-write')
-      const { writeAdrInWorktree } = await import('../lib/adr')
+      const { adrDirIn, writeAdrInWorktree } = await import('../lib/adr')
+      const { reserveAdrNumber } = await import('../lib/adr-number-allocator')
+      const number = await reserveAdrNumber(
+        getCompositionRootClient(),
+        adrDirIn(resolveContext().repoRoot),
+      )
 
       const outcome = await runStructuredWrite({
         kind: 'adr',
@@ -1911,6 +1916,7 @@ export const startDaemon = async (
         mutate: async (worktreePath) => {
           await writeAdrInWorktree({
             worktreePath,
+            number,
             title: req.title,
             body: req.body,
           })

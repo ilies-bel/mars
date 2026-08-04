@@ -40,6 +40,8 @@ export const nextAdrNumber = async (dir: string): Promise<number> => {
 export interface AdrWriteArgs {
   /** Worktree root the ADR is being written into. */
   worktreePath: string
+  /** Number atomically reserved against the repository before worktree creation. */
+  number: number
   title: string
   body: string
 }
@@ -55,14 +57,13 @@ export const writeAdrInWorktree = async (
 ): Promise<AdrWriteResult> => {
   const dir = adrDirIn(args.worktreePath)
   await mkdir(dir, { recursive: true })
-  const number = await nextAdrNumber(dir)
   const slug = slugify(args.title)
-  const filename = `${padNumber(number)}-${slug}.md`
+  const filename = `${padNumber(args.number)}-${slug}.md`
   const filePath = resolve(dir, filename)
   const body = args.body.trim()
   const content = body.length > 0
     ? `# ${args.title}\n\n${body}\n`
     : `# ${args.title}\n`
   await writeFile(filePath, content, 'utf8')
-  return { filePath, number, slug }
+  return { filePath, number: args.number, slug }
 }

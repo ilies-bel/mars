@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -221,6 +221,49 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
     // Task branch was deleted on cleanup.
     const branches = gitOutput(repo, ['branch', '--list'])
     expect(branches).not.toMatch(/task\/glossary-/)
+  })
+
+  it('keeps ADR filenames distinct when writes branch from the same baseline', async () => {
+    const { runStructuredWrite } = await import('../structured-write')
+    const { adrDirIn, writeAdrInWorktree } = await import('../adr')
+    const { reserveAdrNumber } = await import('../adr-number-allocator')
+    const { openDb } = await import('../db')
+    const counter = openDb(`adr-number-counter:${repo}`)
+    const recordsDir = adrDirIn(repo)
+
+    try {
+      const [firstNumber, secondNumber] = await Promise.all([
+        reserveAdrNumber(counter, recordsDir),
+        reserveAdrNumber(counter, recordsDir),
+      ])
+
+      const writes = [
+        { title: 'First concurrent record', body: 'first', number: firstNumber },
+        { title: 'Second concurrent record', body: 'second', number: secondNumber },
+      ]
+      const outcomes = await Promise.all(writes.map(({ title, body, number }) => runStructuredWrite({
+        kind: 'adr',
+        commitMessage: `adr: add ${title}`,
+        enqueueMerge: realMergeShim,
+        mutate: async (worktreePath) => writeAdrInWorktree({
+          worktreePath,
+          number,
+          title,
+          body,
+        }),
+      })))
+
+      expect(outcomes).toEqual([
+        expect.objectContaining({ kind: 'merged' }),
+        expect.objectContaining({ kind: 'merged' }),
+      ])
+      expect(readdirSync(recordsDir).sort()).toEqual([
+        '0001-first-concurrent-record.md',
+        '0002-second-concurrent-record.md',
+      ])
+    } finally {
+      await counter.close()
+    }
   })
 
   it('is a no-op when mutate returns false (no commit, no merge, no leftover branch)', async () => {
