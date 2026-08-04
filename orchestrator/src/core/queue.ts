@@ -1577,7 +1577,7 @@ export const reopenTerminalTask = async (
       args: [id, reason, now],
     },
     {
-      sql: `UPDATE tasks SET status = 'queued', updated_at = ?, error = NULL,
+      sql: `UPDATE tasks SET updated_at = ?, status = 'queued', error = NULL,
               failure_reason = NULL, failure_signature = NULL, failure_reason_code = NULL
             WHERE id = ?`,
       args: [now, id],
