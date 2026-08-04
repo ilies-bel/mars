@@ -22,7 +22,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { WorkflowStore, StepRecord } from '@mars/workflow'
@@ -62,6 +63,19 @@ interface CeilingModule {
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-ceiling-'))
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
+  // `coreContinueTask` refreshes the task worktree from the integration branch
+  // (`git merge --no-edit main`), so a bare temp directory is no longer a
+  // sufficient fixture — it fails with "not a git repository". Initialise a
+  // real repo on `main` with one commit so the refresh is a no-op merge.
+  const git = (...args: string[]): void => {
+    execFileSync('git', ['-C', repo, ...args], { stdio: 'ignore' })
+  }
+  git('init', '--initial-branch=main')
+  git('config', 'user.email', 'test@mars.local')
+  git('config', 'user.name', 'Mars Test')
+  writeFileSync(resolve(repo, 'README.md'), 'ceiling fixture\n')
+  git('add', 'README.md')
+  git('commit', '-m', 'initial')
   return repo
 }
 

@@ -332,7 +332,7 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
     // Insert a task row: fix-task is a descendant of arc-root.
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at, origin_id)
-            VALUES ('fix-task-kilo', '', 'blocked', '', '', 'arc-root-kilo')`,
+            VALUES ('fix-task-kilo', '', 'blocked', now(), now(), 'arc-root-kilo')`,
     });
 
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
@@ -356,8 +356,8 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
     // Both fix tasks share the same arc root.
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at, origin_id)
-            VALUES ('fix-lima-1', '', 'blocked', '', '', 'arc-root-lima'),
-                   ('fix-lima-2', '', 'blocked', '', '', 'arc-root-lima')`,
+            VALUES ('fix-lima-1', '', 'blocked', now(), now(), 'arc-root-lima'),
+                   ('fix-lima-2', '', 'blocked', now(), now(), 'arc-root-lima')`,
     });
 
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
@@ -380,7 +380,7 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
   it('task.blocked with an outstanding fix task (queued) raises no action-queue row', async () => {
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
-            VALUES ('fix-outstanding-1', '', 'queued', '', '')`,
+            VALUES ('fix-outstanding-1', '', 'queued', now(), now())`,
     });
 
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
@@ -395,7 +395,7 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
   it('task.blocked with an outstanding fix task (running) raises no action-queue row', async () => {
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
-            VALUES ('fix-running-1', '', 'running', '', '')`,
+            VALUES ('fix-running-1', '', 'running', now(), now())`,
     });
 
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
@@ -409,7 +409,7 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
   it('task.blocked with a terminal-failed fix task still raises an action-queue row', async () => {
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
-            VALUES ('fix-failed-1', '', 'failed', '', '')`,
+            VALUES ('fix-failed-1', '', 'failed', now(), now())`,
     });
 
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
@@ -456,26 +456,26 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
     // Seed the failing task with stall_diagnostics.
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at, stall_diagnostics)
-            VALUES (?, '', 'failed', '', '', ?)`,
+            VALUES (?, '', 'failed', now(), now(), ?)`,
       args: [taskId, JSON.stringify(stallDiagData)],
     });
 
     // Seed tasks in different statuses to populate the pool snapshot.
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
-            VALUES ('pool-q1', '', 'queued', '', '')`,
+            VALUES ('pool-q1', '', 'queued', now(), now())`,
     });
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
-            VALUES ('pool-q2', '', 'queued', '', '')`,
+            VALUES ('pool-q2', '', 'queued', now(), now())`,
     });
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
-            VALUES ('pool-r1', '', 'running', '', '')`,
+            VALUES ('pool-r1', '', 'running', now(), now())`,
     });
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
-            VALUES ('pool-b1', '', 'blocked', '', '')`,
+            VALUES ('pool-b1', '', 'blocked', now(), now())`,
     });
 
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
@@ -514,7 +514,7 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
     // Seed task WITHOUT stall_diagnostics.
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
-            VALUES (?, '', 'failed', '', '')`,
+            VALUES (?, '', 'failed', now(), now())`,
       args: [taskId],
     });
 
@@ -575,7 +575,7 @@ describe('action-queue-raiser:fix-task-done subscriber', () => {
               (id, kind, category, priority, state, title, body, raised_by, raised_at, origin_task_id)
             VALUES (?, 'failed', 'orchestrator', 'high', 'open', 'pre-existing failure', '',
                     'test', ?, ?)`,
-      args: [id, new Date().toISOString(), originId],
+      args: [id, Date.now(), originId],
     });
   }
 
@@ -586,7 +586,7 @@ describe('action-queue-raiser:fix-task-done subscriber', () => {
     // Insert the fix task with origin_id pointing at the arc origin.
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at, origin_id)
-            VALUES (?, '', 'done', '', '', ?)`,
+            VALUES (?, '', 'done', now(), now(), ?)`,
       args: [fixTaskId, originId],
     });
 
@@ -614,7 +614,7 @@ describe('action-queue-raiser:fix-task-done subscriber', () => {
     // Normal task — no origin_id.
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
-            VALUES (?, '', 'done', '', '')`,
+            VALUES (?, '', 'done', now(), now())`,
       args: [normalTaskId],
     });
 
@@ -637,7 +637,7 @@ describe('action-queue-raiser:fix-task-done subscriber', () => {
 
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at, origin_id)
-            VALUES (?, '', 'done', '', '', ?)`,
+            VALUES (?, '', 'done', now(), now(), ?)`,
       args: [fixTaskId, originId],
     });
     await insertOpenFailedRow(client, 'aq-stale-2', originId);
@@ -662,7 +662,7 @@ describe('action-queue-raiser:fix-task-done subscriber', () => {
 
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at, origin_id)
-            VALUES (?, '', 'failed', '', '', ?)`,
+            VALUES (?, '', 'failed', now(), now(), ?)`,
       args: [fixTaskId, originId],
     });
     await insertOpenFailedRow(client, 'aq-stale-3', originId);
@@ -785,7 +785,7 @@ describe('api-outage coalescing — circuit-breaker-open failures', () => {
     // mid-flight when the breaker tripped.
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
-            VALUES ('task-drain-x', '', 'failed', '', ''), ('task-drain-y', '', 'failed', '', '')`,
+            VALUES ('task-drain-x', '', 'failed', now(), now()), ('task-drain-y', '', 'failed', now(), now())`,
     });
 
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
@@ -799,9 +799,23 @@ describe('api-outage coalescing — circuit-breaker-open failures', () => {
     await resolveOutageRowOnBreakerClose(openedAt);
     expect(await openRowCount(client)).toBe(1); // not yet resolved
 
-    // Simulate tasks being requeued after the outage clears.
+    // Simulate tasks being requeued after the outage clears. Terminal states
+    // are absorbing: the `tasks_reject_terminal_transition` trigger refuses a
+    // bare failed→queued UPDATE. Production reopens through a
+    // `task_terminal_reopens` grant (see `reopenTerminalTask` in
+    // core/queue.ts), so mirror that grant/consume pair here rather than
+    // writing a transition the real system can never perform.
+    await client.execute({
+      sql: `INSERT INTO task_terminal_reopens (task_id, reason, reopened_by)
+            VALUES ('task-drain-x', 'api outage cleared', 'test'),
+                   ('task-drain-y', 'api outage cleared', 'test')`,
+    });
     await client.execute({
       sql: `UPDATE tasks SET status = 'queued' WHERE id IN ('task-drain-x', 'task-drain-y')`,
+    });
+    await client.execute({
+      sql: `UPDATE task_terminal_reopens SET consumed_at = now()
+             WHERE task_id IN ('task-drain-x', 'task-drain-y') AND consumed_at IS NULL`,
     });
 
     // Now all tasks are drained — outage row should be resolved.
@@ -994,7 +1008,7 @@ describe('action-queue-raiser:task.dropped-via-supersede subscriber', () => {
               (id, kind, category, priority, state, title, body, raised_by, raised_at, origin_task_id)
             VALUES (?, 'failed', 'orchestrator', 'high', 'open', 'task blocked', '',
                     'test', ?, ?)`,
-      args: [id, new Date().toISOString(), originId],
+      args: [id, Date.now(), originId],
     });
   }
 

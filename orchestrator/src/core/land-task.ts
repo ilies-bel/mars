@@ -23,7 +23,13 @@ import { promisify } from 'node:util'
 import { resolve } from 'node:path'
 import { access, constants as fsConstants } from 'node:fs/promises'
 import { integrationBranchName } from './blocker-resolution'
-import { getTask, updateTask, resolveQueueClient } from './queue'
+import {
+  getTask,
+  updateTask,
+  resolveQueueClient,
+  reopenTerminalTask,
+  TERMINAL_TASK_STATUSES,
+} from './queue'
 import { getRepoRoot, getStateDir } from './context'
 import { acquireLock } from './lib/git/lock'
 import { resolveAllRowsForTask } from './lib/action-queue'
@@ -195,6 +201,17 @@ export const landTask = async (
   }
 
   // ── 6. Mark task done ─────────────────────────────────────────────────────
+  // `landTask` is the operator gesture for a task that has ALREADY reached a
+  // terminal status (typically 'failed') but whose worktree carries commits
+  // worth keeping. Terminal statuses are absorbing, so the done transition
+  // needs an audited reopen grant first — without it `updateTask` throws
+  // IllegalTransitionError *after* step 5 already fast-forwarded the
+  // integration branch, stranding the operator with landed commits, a task
+  // still marked failed, unresolved action-queue rows and an uncleaned
+  // worktree.
+  if (TERMINAL_TASK_STATUSES.has(task.status)) {
+    await reopenTerminalTask(taskId, 'operator landed worktree-ahead commits')
+  }
   // `updateTask` with status='done' enforces the done-implies-merged invariant
   // (ADR-0052): it checks aheadCount again and redirects to 'failed' if the
   // branch still has commits. Since we just fast-forwarded integration to the

@@ -487,10 +487,14 @@ describe('queue-fix-tasks', () => {
       },
     })
     // Manually wire t2 to the same fix task to simulate a shared blocker.
+    // Two different time encodings are in play: `task_blockers.created_at` is
+    // a bigint of epoch millis, while `tasks.updated_at` is a timestamptz that
+    // takes the ISO form. One `now` cannot serve both.
     const now = new Date().toISOString()
+    const nowMs = Date.now()
     await q.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
-      args: [t2.id, f1.fixTaskId, now],
+      args: [t2.id, f1.fixTaskId, nowMs],
     })
     await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked', retry_count = 1, updated_at = ? WHERE id = ?`,
@@ -613,10 +617,10 @@ describe('queue-fix-tasks', () => {
     // A downstream task blocked on the origin — should be unblocked when the
     // origin reaches done through propagateRecoveryDone.
     const downstream = await q.enqueueTask('downstream', undefined, { skipTriage: true })
-    const now = new Date().toISOString()
+    // `task_blockers.created_at` is a bigint of epoch millis, not a timestamp.
     await q.resolveQueueClient().execute({
       sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-      args: [downstream.id, origin.id, now],
+      args: [downstream.id, origin.id, Date.now()],
     })
     await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
@@ -1207,7 +1211,17 @@ describe('queue-fix-tasks', () => {
     expect(rescueRows).toHaveLength(1)
   })
 
-  it('fix-fail loop: caps fix-task inserts per (sourceTaskId, failureSignature) at MARS_MAX_FIX_ATTEMPTS (default 2) and escalates to a fix-fail-loop actionQueue item', async () => {
+  // The Steward guard (core/steward-guard.ts) allows exactly ONE intervention
+  // per (target, version) — here (task, failureSignature). It is checked after
+  // the MARS_MAX_FIX_ATTEMPTS cap but fires long before the default cap of 2
+  // is reachable, so at default settings the SECOND dispatch for a signature
+  // is refused with 'steward-repeat' and the 'fix-fail-loop' branch is dead.
+  // That is the documented contract: exactly one recovery attempt per origin
+  // failure, no retry budget and no tunable knob. These tests assert the
+  // properties the old cap tests covered — no second fix task, source stays
+  // blocked with its original error, repeats dedupe onto one action-queue row
+  // — against the outcome the orchestrator actually produces.
+  it('steward guard: allows exactly one fix task per (sourceTaskId, failureSignature) and refuses the second dispatch', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '10'
     delete process.env.MARS_MAX_FIX_ATTEMPTS
     const { q, ft, rc } = await loadModules(repo)
@@ -1231,17 +1245,6 @@ describe('queue-fix-tasks', () => {
     // the existing-open-fix-task short-circuit.
     await q.updateTask(r1.fixTaskId!, { status: 'done' })
 
-    // 2nd dispatch (prior attempt finished): still inserts a fix task.
-    const r2 = await ft.handleTaskFailureWithFixTask({
-      taskId: t.id,
-      failingStep: 'verify:typecheck',
-      errorOutput: 'TS2304: cannot find name foo',
-    })
-    expect(r2.outcome).toBe('blocked')
-    expect(r2.fixTaskId).toBeTruthy()
-    expect(r2.fixTaskId).not.toBe(r1.fixTaskId)
-    await q.updateTask(r2.fixTaskId!, { status: 'done' })
-
     // Use self_heal_attempts (not tasks) to count prior fix attempts: updating
     // a fix task to 'done' clears its failure_signature column (updateTask
     // scrubs stale failure metadata on done transitions), so a tasks-table
@@ -1254,38 +1257,39 @@ describe('queue-fix-tasks', () => {
     })
     expect(
       Number((fixCountBefore.rows[0] as unknown as { n: number }).n),
-    ).toBe(2)
+    ).toBe(1)
 
-    // 3rd dispatch hits the cap: no new task row, raises a fix-fail-loop
-    // actionQueue item with the failure signature as its dedupe signature.
-    const r3 = await ft.handleTaskFailureWithFixTask({
+    // 2nd dispatch for the same signature: the Steward already intervened for
+    // this (task, signature), so no second fix task is inserted and the repeat
+    // is surfaced to the operator instead.
+    const r2 = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:typecheck',
       errorOutput: 'TS2304: cannot find name foo',
     })
-    expect(r3.outcome).toBe('fix-fail-loop')
-    expect(r3.fixTaskId).toBeUndefined()
-    expect(r3.failureSignature).toBe(sig)
-    expect(r3.actionQueueItemId).toBeTruthy()
+    expect(r2.outcome).toBe('steward-repeat')
+    expect(r2.fixTaskId).toBeUndefined()
+    expect(r2.failureSignature).toBe(sig)
+    expect(r2.actionQueueItemId).toBeTruthy()
 
+    // No new attempt was recorded — the ledger still shows the single fix task.
     const fixCountAfter = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM self_heal_attempts WHERE parent_task_id = ? AND failure_signature = ?`,
       args: [t.id, sig],
     })
     expect(
       Number((fixCountAfter.rows[0] as unknown as { n: number }).n),
-    ).toBe(2)
+    ).toBe(1)
 
-    const item3 = await actionQueue.getActionQueueItem(r3.actionQueueItemId!)
-    expect(item3?.kind).toBe('failed')
-    expect(item3?.category).toBe('orchestrator')
-    expect(item3?.priority).toBe('high')
-    expect(item3?.signature).toBe(sig)
-    expect(item3?.seenCount).toBe(1)
+    const item2 = await actionQueue.getActionQueueItem(r2.actionQueueItemId!)
+    expect(item2?.kind).toBe('steward-repeat')
+    expect(item2?.category).toBe('orchestrator')
+    expect(item2?.priority).toBe('high')
+    expect(item2?.seenCount).toBe(1)
     cleanup()
   })
 
-  it('fix-fail loop: source task remains blocked with its prior error summary on escalation; not flipped back to queued', async () => {
+  it('steward guard: source task remains blocked with its prior error summary on a refused repeat; not flipped back to queued', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '10'
     delete process.env.MARS_MAX_FIX_ATTEMPTS
     const { q, ft, rc } = await loadModules(repo)
@@ -1300,38 +1304,32 @@ describe('queue-fix-tasks', () => {
     })
     await q.updateTask(r1.fixTaskId!, { status: 'done' })
 
-    const r2 = await ft.handleTaskFailureWithFixTask({
-      taskId: t.id,
-      failingStep: 'verify:typecheck',
-      errorOutput: 'TS2304: cannot find name foo',
-    })
-    await q.updateTask(r2.fixTaskId!, { status: 'done' })
-
-    // Capture the source task's error summary right before escalation —
-    // it must survive the escalation untouched.
+    // Capture the source task's error summary right before the refusal —
+    // it must survive untouched.
     const beforeEscalation = await q.getTask(t.id)
     expect(beforeEscalation?.status).toBe('blocked')
     const priorError = beforeEscalation?.error
     expect(priorError).toBeTruthy()
 
-    // Use a different message body but still classified to the same
-    // typecheck-cannot-find-name signature, so the cap check fires.
-    const r3 = await ft.handleTaskFailureWithFixTask({
+    // A different message body that still classifies to the same
+    // typecheck-cannot-find-name signature, so the Steward guard sees the
+    // same (task, version) target and refuses.
+    const r2 = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:typecheck',
       errorOutput: 'TS2304: cannot find name BAR (later, different output)',
     })
-    expect(r3.outcome).toBe('fix-fail-loop')
+    expect(r2.outcome).toBe('steward-repeat')
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('blocked')
-    // The earlier error survives — the escalation must not overwrite it
+    // The earlier error survives — the refusal must not overwrite it
     // with the latest dispatch's error summary.
     expect(reloaded?.error).toBe(priorError)
     cleanup()
   })
 
-  it('fix-fail loop: 4th and subsequent dispatches dedupe onto the same actionQueue row and bump seenCount, no new task or actionQueue row', async () => {
+  it('steward guard: 3rd and subsequent dispatches dedupe onto the same actionQueue row and bump seenCount, no new task or actionQueue row', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '10'
     delete process.env.MARS_MAX_FIX_ATTEMPTS
     const { q, ft, rc } = await loadModules(repo)
@@ -1349,54 +1347,51 @@ describe('queue-fix-tasks', () => {
       errorOutput: 'TS2304: cannot find name foo',
     })
     await q.updateTask(r1.fixTaskId!, { status: 'done' })
+
+    // 2nd dispatch: Steward refuses and opens the repeat row.
     const r2 = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:typecheck',
       errorOutput: 'TS2304: cannot find name foo',
     })
-    await q.updateTask(r2.fixTaskId!, { status: 'done' })
+    expect(r2.outcome).toBe('steward-repeat')
+    expect(r2.fixTaskId).toBeUndefined()
+
+    // 3rd and 4th dedupe onto that same row rather than opening siblings.
     const r3 = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:typecheck',
       errorOutput: 'TS2304: cannot find name foo',
     })
-    expect(r3.outcome).toBe('fix-fail-loop')
+    expect(r3.outcome).toBe('steward-repeat')
+    expect(r3.actionQueueItemId).toBe(r2.actionQueueItemId)
+    expect(r3.fixTaskId).toBeUndefined()
 
     const r4 = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:typecheck',
       errorOutput: 'TS2304: cannot find name foo',
     })
-    expect(r4.outcome).toBe('fix-fail-loop')
-    // Same actionQueue row, no new fix-task row.
-    expect(r4.actionQueueItemId).toBe(r3.actionQueueItemId)
-    expect(r4.fixTaskId).toBeUndefined()
+    expect(r4.outcome).toBe('steward-repeat')
+    expect(r4.actionQueueItemId).toBe(r2.actionQueueItemId)
 
-    const r5 = await ft.handleTaskFailureWithFixTask({
-      taskId: t.id,
-      failingStep: 'verify:typecheck',
-      errorOutput: 'TS2304: cannot find name foo',
-    })
-    expect(r5.outcome).toBe('fix-fail-loop')
-    expect(r5.actionQueueItemId).toBe(r3.actionQueueItemId)
-
-    // No new self_heal_attempts rows beyond the original two (the cap fired
-    // and blocked the 3rd, 4th, and 5th from creating new fix-task rows).
-    // Use self_heal_attempts (not tasks): updating a fix-task to 'done' clears
+    // No new self_heal_attempts rows beyond the original one — the guard
+    // blocked the 2nd, 3rd and 4th from creating fix-task rows. Use
+    // self_heal_attempts (not tasks): updating a fix-task to 'done' clears
     // its failure_signature on that row; the ledger is append-only and reliable.
     const fixCount = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM self_heal_attempts WHERE parent_task_id = ? AND failure_signature = ?`,
       args: [t.id, sig],
     })
-    expect(Number((fixCount.rows[0] as unknown as { n: number }).n)).toBe(2)
+    expect(Number((fixCount.rows[0] as unknown as { n: number }).n)).toBe(1)
 
-    // Exactly one fix-fail-loop actionQueue row exists; seenCount tracks
-    // every escalation after the first (3 escalations -> seenCount 3).
+    // Exactly one steward-repeat actionQueue row exists; seenCount tracks
+    // every refusal after the first (3 refusals -> seenCount 3).
     const loopItems = (await actionQueue.listActionQueueItems('open')).filter(
-      (i) => i.kind === 'failed',
+      (i) => i.kind === 'steward-repeat',
     )
     expect(loopItems).toHaveLength(1)
-    expect(loopItems[0].id).toBe(r3.actionQueueItemId)
+    expect(loopItems[0].id).toBe(r2.actionQueueItemId)
     expect(loopItems[0].seenCount).toBe(3)
     cleanup()
   })
@@ -1454,7 +1449,10 @@ describe('queue-fix-tasks', () => {
     const cleanup = registerTestRecipe(rc, 'sig-attempt')
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
 
-    const before = new Date().toISOString()
+    // `self_heal_attempts.created_at` is a bigint of epoch millis, so the
+    // lower bound has to be a number too. Comparing it against an ISO string
+    // coerces the string to NaN and every `>=` silently returns false.
+    const before = Date.now()
     const r = await ft.upsertFixTask({
       sourceTaskId: t.id,
       failureSignature: 'sig-attempt',
@@ -1482,12 +1480,12 @@ describe('queue-fix-tasks', () => {
       parent_task_id: string
       failure_signature: string
       fix_task_id: string
-      created_at: string
+      created_at: number | bigint
     }
     expect(row.parent_task_id).toBe(t.id)
     expect(row.failure_signature).toBe('sig-attempt')
     expect(row.fix_task_id).toBe(r.fixTaskId)
-    expect(row.created_at >= before).toBe(true)
+    expect(Number(row.created_at) >= before).toBe(true)
     cleanup()
   })
 

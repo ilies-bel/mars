@@ -1585,12 +1585,18 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
+    // These tests stub the CLAUDE provider entry point (runClaudeCode). The
+    // worker provider defaults to codex, so without this pin the stub is never
+    // consulted and the Slicer shells out to a real `codex exec` that hangs
+    // until the 30s test timeout.
+    process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
+    delete process.env.MARS_WORKER_PROVIDER
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -2072,12 +2078,18 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
+    // These tests stub the CLAUDE provider entry point (runClaudeCode). The
+    // worker provider defaults to codex, so without this pin the stub is never
+    // consulted and the Slicer shells out to a real `codex exec` that hangs
+    // until the 30s test timeout.
+    process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
+    delete process.env.MARS_WORKER_PROVIDER
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -2946,12 +2958,18 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
+    // These tests stub the CLAUDE provider entry point (runClaudeCode). The
+    // worker provider defaults to codex, so without this pin the stub is never
+    // consulted and the Slicer shells out to a real `codex exec` that hangs
+    // until the 30s test timeout.
+    process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
+    delete process.env.MARS_WORKER_PROVIDER
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -3115,12 +3133,18 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
+    // These tests stub the CLAUDE provider entry point (runClaudeCode). The
+    // worker provider defaults to codex, so without this pin the stub is never
+    // consulted and the Slicer shells out to a real `codex exec` that hangs
+    // until the 30s test timeout.
+    process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
+    delete process.env.MARS_WORKER_PROVIDER
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -3417,12 +3441,18 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
+    // These tests stub the CLAUDE provider entry point (runClaudeCode). The
+    // worker provider defaults to codex, so without this pin the stub is never
+    // consulted and the Slicer shells out to a real `codex exec` that hangs
+    // until the 30s test timeout.
+    process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
+    delete process.env.MARS_WORKER_PROVIDER
     rmSync(repo, { recursive: true, force: true })
   })
 

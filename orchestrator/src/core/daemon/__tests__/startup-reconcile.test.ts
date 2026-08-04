@@ -457,10 +457,13 @@ describe('runStartupReconcile — recovery-done propagation', () => {
 
     // Create a dependent blocked on the origin.
     const dependent = await q.enqueueTask('dependent task', undefined, { skipTriage: true })
+    // `task_blockers.created_at` is a bigint of epoch millis; `tasks`
+    // `.created_at`/`updated_at` are timestamptz and take the ISO form.
     const now = new Date().toISOString()
+    const nowMs = Date.now()
     await q.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-      args: [dependent.id, origin.id, now],
+      args: [dependent.id, origin.id, nowMs],
     })
     await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
@@ -527,7 +530,10 @@ describe('runStartupReconcile — recovery-done propagation', () => {
     const { q, reconcile } = await loadModules(repo)
 
     const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+    // See above: timestamptz columns take the ISO form, the bigint
+    // `task_blockers.created_at` takes epoch millis.
     const now = new Date().toISOString()
+    const nowMs = Date.now()
 
     // Fix task still running — should NOT trigger propagation.
     const fixId = 'fix-reconcile-test-003'
@@ -545,7 +551,7 @@ describe('runStartupReconcile — recovery-done propagation', () => {
     })
     await q.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-      args: [origin.id, fixId, now],
+      args: [origin.id, fixId, nowMs],
     })
 
     const summary = await reconcile.runStartupReconcile(makeDeps())

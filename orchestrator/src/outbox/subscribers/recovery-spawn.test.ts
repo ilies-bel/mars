@@ -7,7 +7,7 @@ import {
   vi,
 } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { DbClient } from '../../core/lib/db.js'
@@ -89,6 +89,15 @@ interface Loaded {
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-recovery-spawn-test-'))
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+  // `git init -b main` leaves `main` UNBORN — the ref does not exist until the
+  // first commit. `mars continue` refreshes a worktree with
+  // `git merge --no-edit main`, which then fails with "main - not something we
+  // can merge". One commit makes the branch real.
+  execFileSync('git', ['config', 'user.email', 'test@mars.local'], { cwd: repo })
+  execFileSync('git', ['config', 'user.name', 'Mars Test'], { cwd: repo })
+  writeFileSync(resolve(repo, 'README.md'), 'recovery-spawn fixture\n')
+  execFileSync('git', ['add', 'README.md'], { cwd: repo })
+  execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   return repo
 }

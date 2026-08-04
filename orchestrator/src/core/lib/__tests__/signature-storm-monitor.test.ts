@@ -612,7 +612,14 @@ describe('environmental-failure policy — no storm, no recovery-budget consumpt
   })
 
   // The error string that produces the 'worktree-missing' error class.
-  const ENV_FAILING_STEP = 'verify:has-diff'
+  // The failing step is `verify:worktree-hygiene`, NOT `verify:has-diff`: the
+  // hygiene probe stopped borrowing the has-diff label precisely because a
+  // missing worktree is not a diff verdict, and only the hygiene-qualified
+  // signature is registered as `environmental` in the failure-kinds registry.
+  // Feeding the old step here produced `verify:has-diff/worktree-missing`,
+  // which resolves to no registered kind, so isEnvironmentalSignature() was
+  // false and the storm breaker tripped — the exact thing this test denies.
+  const ENV_FAILING_STEP = 'verify:worktree-hygiene'
   const ENV_ERROR = 'worktree path /tmp/mars-abc123 no longer exists (daemon restarted mid-flight)'
   // This is the full signature computeFailureSignature produces for the above inputs.
   const ENV_SIGNATURE = 'verify:worktree-hygiene/worktree-missing'
