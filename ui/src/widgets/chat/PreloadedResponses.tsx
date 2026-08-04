@@ -31,6 +31,14 @@ export const PreloadedResponses = ({
       return
     }
 
+    // A reference is reading material, not an operation. It never touches the
+    // daemon, and the schema has already guaranteed https — `noopener` so the
+    // opened page cannot reach back into this one.
+    if (response.target.type === 'reference') {
+      window.open(response.target.url, '_blank', 'noopener,noreferrer')
+      return
+    }
+
     if (!messageId) {
       setError('Could not apply that response.')
       return
@@ -61,7 +69,11 @@ export const PreloadedResponses = ({
             className="rounded border border-primary/30 px-3 py-1 font-mono text-[11px] text-primary transition-colors hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-40"
             data-testid={`preloaded-response-${response.id}`}
           >
-            {resolved ? 'Resolved' : response.label}
+            {resolved
+              ? 'Resolved'
+              : response.target.type === 'reference'
+                ? `${response.label} ↗`
+                : response.label}
           </button>
         )
       })}

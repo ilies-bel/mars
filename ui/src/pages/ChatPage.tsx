@@ -3070,6 +3070,12 @@ export const ChatPage = () => {
                           setActiveSubthreadId(threadId)
                         }
                       }}
+                      onClientResolve={(response) => {
+                        if (response.target.type !== 'client') return
+                        const entityId = response.target.entityId
+                        const proposal = proposals?.find((candidate) => candidate.id === entityId)
+                        if (proposal) void openProposalSubject(proposal)
+                      }}
                     />
                   </div>
                 </>

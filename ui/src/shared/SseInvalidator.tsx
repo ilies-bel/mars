@@ -79,6 +79,10 @@ export const SseInvalidator = () => {
         void qc.invalidateQueries({ queryKey: ['chat-threads'] })
         void qc.invalidateQueries({ queryKey: ['chat-history'] })
         void qc.invalidateQueries({ queryKey: ['chat-thread'] })
+        // The main feed. Without this a Notice Mars speaks on its own is
+        // durable but invisible until something else forces a refetch —
+        // which is not a conversation, it is a log you have to go and read.
+        void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
       }, 150)
     })
 
