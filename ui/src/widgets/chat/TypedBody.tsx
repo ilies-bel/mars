@@ -55,8 +55,10 @@ export const TypedBody = ({ id, text, className }: TypedBodyProps) => {
 
   useLayoutEffect(() => {
     if (revealed.has(id)) return
-    revealed.add(id)
-    if (prefersReducedMotion()) return
+    if (prefersReducedMotion()) {
+      revealed.add(id)
+      return
+    }
 
     setShown('')
     let cursor = 0
@@ -64,6 +66,11 @@ export const TypedBody = ({ id, text, className }: TypedBodyProps) => {
       cursor += CHARS_PER_TICK
       if (cursor >= text.length) {
         setShown(text)
+        // Marked done only on completion. Marking on *start* looks equivalent
+        // but is not: React re-runs layout effects on mount in development,
+        // and a message already flagged as revealed would skip its own
+        // animation and appear pasted.
+        revealed.add(id)
         if (timerRef.current !== null) clearInterval(timerRef.current)
         timerRef.current = null
         return
@@ -74,9 +81,6 @@ export const TypedBody = ({ id, text, className }: TypedBodyProps) => {
     return () => {
       if (timerRef.current !== null) clearInterval(timerRef.current)
       timerRef.current = null
-      // Unmounting mid-reveal must not leave a half sentence behind if the
-      // component comes back.
-      setShown(text)
     }
   }, [id, text])
 

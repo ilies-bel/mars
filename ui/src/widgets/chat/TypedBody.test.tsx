@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act } from 'react'
+import { StrictMode, act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { TypedBody, markRevealed, resetRevealed } from './TypedBody'
@@ -84,6 +84,30 @@ describe('TypedBody', () => {
     act(() => { root.render(<TypedBody id="notice-1" text={NOTICE} />) })
 
     expect(host.textContent).toBe(NOTICE)
+    act(() => { root.unmount() })
+  })
+
+  it('still types under StrictMode, which runs every layout effect twice', () => {
+    // The app renders inside StrictMode. An earlier version marked a message
+    // revealed when the animation *started*, so the second effect pass saw it
+    // as already-seen and the operator got a pasted sentence.
+    vi.useFakeTimers()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+
+    act(() => {
+      root.render(<StrictMode><TypedBody id="notice-1" text={NOTICE} /></StrictMode>)
+    })
+
+    act(() => { vi.advanceTimersByTime(48) })
+    const partial = host.textContent ?? ''
+    expect(partial.length).toBeGreaterThan(0)
+    expect(partial.length).toBeLessThan(NOTICE.length)
+
+    act(() => { vi.advanceTimersByTime(5_000) })
+    expect(host.textContent).toBe(NOTICE)
+
     act(() => { root.unmount() })
   })
 
