@@ -1,6 +1,6 @@
 /**
  * TaskFlightTracker — the deep module that owns the dispatch-storm-prevention
- * invariant inside daemon/server.ts (ADR-0024, CONTEXT.md glossary).
+ * invariant inside daemon/server.ts (ADR-0024, knowledge-surface glossary).
  *
  * It hides the four bookkeeping collections the daemon's dispatch loop used to
  * mutate inline:

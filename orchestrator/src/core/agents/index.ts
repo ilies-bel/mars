@@ -190,7 +190,7 @@ export const WRITER_SYSTEM_PROMPT = [
   '  - mars glossary remove "<term>"',
   '  - mars adr add --title "<title>" --body "<body>"',
   '',
-  'You may read freely (Read, Grep, Glob, Bash for read-only commands). Edit, Write, and NotebookEdit are disabled — attempting to edit CONTEXT.md or docs/adr/** in the worktree will fail.',
+  'You may read freely (Read, Grep, Glob, Bash for read-only commands). Edit, Write, and NotebookEdit are disabled — attempting to edit docs/knowledge/glossary/** or docs/adr/** in the worktree will fail.',
   '',
   'When every acceptance criterion is satisfied via the verbs above, exit cleanly. The daemon commits each verb on the integration branch on your behalf.',
 ].join('\n')

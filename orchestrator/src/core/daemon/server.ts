@@ -1805,12 +1805,9 @@ export const startDaemon = async (
     try {
       const { runStructuredWrite } = await import('../lib/structured-write')
       const {
-        readGlossaryFile,
-        writeGlossaryFile,
-        upsertTerm,
-        removeTermByName,
+        writeGlossaryTerm,
+        removeGlossaryTerm,
       } = await import('../lib/glossary')
-      const { resolve: resolvePath } = await import('node:path')
 
       const outcome = await runStructuredWrite({
         kind: 'glossary',
@@ -1820,21 +1817,16 @@ export const startDaemon = async (
             : `glossary: remove "${req.term}"`,
         integrationBranch,
         mutate: async (worktreePath) => {
-          const path = resolvePath(worktreePath, 'CONTEXT.md')
-          const doc = await readGlossaryFile(path)
           if (req.kind === 'set') {
-            const next = upsertTerm(doc, {
+            await writeGlossaryTerm(worktreePath, {
               term: req.term,
               definition: req.definition ?? '',
               aliases: req.aliases ?? [],
               ...(req.surfaceForms ? { surfaceForms: req.surfaceForms } : {}),
             })
-            await writeGlossaryFile(path, next)
             return
           }
-          const { doc: nextDoc, removed } = removeTermByName(doc, req.term)
-          if (!removed) return false
-          await writeGlossaryFile(path, nextDoc)
+          return await removeGlossaryTerm(worktreePath, req.term)
         },
         enqueueMerge: async (mergeArgs) =>
           enqueueMergeJobAndAwait({

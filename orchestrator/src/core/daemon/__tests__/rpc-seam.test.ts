@@ -402,6 +402,18 @@ describe('drain gate and validation', () => {
     expect(dispatchGlossaryWrite).not.toHaveBeenCalled()
   })
 
+  it('forwards glossary surface forms to the write dispatcher', async () => {
+    const dispatchGlossaryWrite = vi.fn() as unknown as DaemonDeps['dispatchGlossaryWrite']
+    const { deps } = makeDeps({ dispatchGlossaryWrite })
+    const res = await dispatchRpc(
+      rpcRegistry,
+      { op: 'glossary-write', kind: 'set', term: 'Arc', definition: 'An origin tree.', surfaceForms: ['arc', 'arcs', 'arcing'] },
+      deps,
+    )
+    expect(res.ok).toBe(true)
+    expect(dispatchGlossaryWrite).toHaveBeenCalledWith(expect.objectContaining({ surfaceForms: ['arc', 'arcs', 'arcing'] }))
+  })
+
   it('maps a thrown handler error through mapDaemonError', async () => {
     const { deps } = makeDeps({
       handleRestart: vi

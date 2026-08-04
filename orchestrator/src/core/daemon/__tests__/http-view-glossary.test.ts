@@ -83,7 +83,7 @@ describe('GET /view/glossary', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('returns empty terms array when no CONTEXT.md exists', async () => {
+  it('returns empty terms array when no glossary directory exists', async () => {
     const { httpServer } = await loadModules(repo)
     const { port, close } = await httpServer.startHttpServer(makeDeps())
 
@@ -150,21 +150,11 @@ describe('GET /view/glossary', () => {
     }
   })
 
-  it('parses CONTEXT.md from disk via the real viewGlossary implementation', async () => {
-    // Write a fixture CONTEXT.md in the temp repo
-    const contextMd = [
-      '# Project Context',
-      '',
-      'Canonical domain terms.',
-      '',
-      '## Language',
-      '',
-      '**Worktree**: An isolated git working tree for a task.',
-      '_Avoid_: branch, sandbox',
-      '',
-      '**Task**: A unit of work managed by the orchestrator.',
-    ].join('\n')
-    writeFileSync(resolve(repo, 'CONTEXT.md'), contextMd, 'utf8')
+  it('aggregates sharded glossary terms from disk via the real viewGlossary implementation', async () => {
+    const glossaryDir = resolve(repo, 'docs/knowledge/glossary')
+    mkdirSync(glossaryDir, { recursive: true })
+    writeFileSync(resolve(glossaryDir, 'worktree-1.md'), '# Worktree\n\nAn isolated git working tree for a task.\n\n_Avoid_: branch, sandbox\n', 'utf8')
+    writeFileSync(resolve(glossaryDir, 'task-1.md'), '# Task\n\nA unit of work managed by the orchestrator.\n', 'utf8')
 
     // Import the real app-services with the temp repo as MARS_REPO
     vi.resetModules()
@@ -182,12 +172,12 @@ describe('GET /view/glossary', () => {
 
     const result = await appServices.viewGlossary()
     expect(result.terms).toHaveLength(2)
-    expect(result.terms[0]?.term).toBe('Worktree')
-    expect(result.terms[0]?.definition).toBe('An isolated git working tree for a task.')
-    expect(result.terms[0]?.avoid).toEqual(['branch', 'sandbox'])
-    expect(result.terms[0]?.surfaceForms).toContain('worktree')
-    expect(result.terms[1]?.term).toBe('Task')
-    expect(result.terms[1]?.avoid).toEqual([])
-    expect(result.terms[1]?.surfaceForms).toContain('task')
+    expect(result.terms[0]?.term).toBe('Task')
+    expect(result.terms[0]?.avoid).toEqual([])
+    expect(result.terms[0]?.surfaceForms).toContain('task')
+    expect(result.terms[1]?.term).toBe('Worktree')
+    expect(result.terms[1]?.definition).toBe('An isolated git working tree for a task.')
+    expect(result.terms[1]?.avoid).toEqual(['branch', 'sandbox'])
+    expect(result.terms[1]?.surfaceForms).toContain('worktree')
   })
 })

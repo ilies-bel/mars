@@ -947,10 +947,10 @@ export const startHttpServer = async (
       return
     }
 
-    // GET /view/glossary — the repo's domain glossary (CONTEXT.md), parsed and
+    // GET /view/glossary — the repo's sharded domain glossary, aggregated and
     // returned as a structured term list. Each term includes its definition and
     // any avoid-aliases. Returns { terms: [{ term, definition, avoid }] }. Empty
-    // terms array when CONTEXT.md does not exist. Pure read; no draining gate.
+    // terms array when its directory does not exist. Pure read; no draining gate.
     if (req.method === 'GET' && req.url === '/view/glossary') {
       deps.appServices
         .viewGlossary()

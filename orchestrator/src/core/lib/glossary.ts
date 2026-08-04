@@ -1,5 +1,7 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { createHash } from 'node:crypto'
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { basename, dirname, join, resolve } from 'node:path'
+import { GLOSSARY_DIR } from './knowledge'
 
 export interface GlossaryTerm {
   term: string
@@ -8,156 +10,119 @@ export interface GlossaryTerm {
   surfaceForms: readonly string[]
 }
 
-export interface GlossaryDoc {
-  preamble: string
-  terms: readonly GlossaryTerm[]
-  trailer: string
-}
-
-const HEADER = '# Project Context\n\nCanonical domain terms for this project. Edited via `mars glossary`.\n'
-const LANGUAGE_HEADING = '## Language'
-
 export const generateDefaultSurfaceForms = (term: string): string[] => {
   const lower = term.toLowerCase()
   let plural: string
-  if (/(?:s|x|z|ch|sh)$/.test(lower)) {
-    plural = lower + 'es'
-  } else if (/y$/.test(lower)) {
-    plural = lower.slice(0, -1) + 'ies'
-  } else {
-    plural = lower + 's'
-  }
+  if (/(?:s|x|z|ch|sh)$/.test(lower)) plural = `${lower}es`
+  else if (/y$/.test(lower)) plural = `${lower.slice(0, -1)}ies`
+  else plural = `${lower}s`
   return lower === plural ? [lower] : [lower, plural]
 }
 
-const stripAvoid = (
-  block: string,
-): { definition: string; aliases: string[]; surfaceForms: string[] | undefined } => {
-  const lines = block.split('\n')
+/** Normalises the identity of a term while retaining its stored display form. */
+export const canonicalizeTermKey = (term: string): string =>
+  term.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase()
+
+export const glossaryTermFilename = (term: string): string => {
+  const key = canonicalizeTermKey(term)
+  const slug = key
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'term'
+  const suffix = createHash('sha256').update(key).digest('hex').slice(0, 12)
+  return `${slug}-${suffix}.md`
+}
+
+const parseList = (line: string): string[] => line
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean)
+
+const parseGlossaryTerm = (text: string): GlossaryTerm | null => {
+  const lines = text.trim().split('\n')
+  const heading = lines.shift()?.match(/^#\s+(.+)\s*$/)
+  if (!heading) return null
   const aliases: string[] = []
-  let parsedSurfaceForms: string[] | undefined
-  const kept: string[] = []
+  let surfaceForms: string[] | undefined
+  const definitionLines: string[] = []
   for (const line of lines) {
-    const trimmed = line.trim()
-    const avoidMatch = trimmed.match(/^_Avoid_:\s*(.*)$/i)
-    if (avoidMatch) {
-      const list = avoidMatch[1] ?? ''
-      for (const a of list.split(',')) {
-        const cleaned = a.trim()
-        if (cleaned.length > 0) aliases.push(cleaned)
-      }
-      continue
-    }
-    const sfMatch = trimmed.match(/^_Surface forms_:\s*(.*)$/i)
-    if (sfMatch) {
-      const list = sfMatch[1] ?? ''
-      parsedSurfaceForms = list
-        .split(',')
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0)
-      continue
-    }
-    kept.push(line)
+    const avoid = line.trim().match(/^_Avoid_:\s*(.*)$/i)
+    if (avoid) { aliases.push(...parseList(avoid[1] ?? '')); continue }
+    const forms = line.trim().match(/^_Surface forms_:\s*(.*)$/i)
+    if (forms) { surfaceForms = parseList(forms[1] ?? ''); continue }
+    definitionLines.push(line)
   }
-  return { definition: kept.join('\n').trim(), aliases, surfaceForms: parsedSurfaceForms }
+  const term = heading[1].trim()
+  return {
+    term,
+    definition: definitionLines.join('\n').trim(),
+    aliases,
+    surfaceForms: surfaceForms ?? generateDefaultSurfaceForms(term),
+  }
 }
 
-export const parseGlossary = (text: string): GlossaryDoc => {
-  const idx = text.indexOf(`\n${LANGUAGE_HEADING}`)
-  if (idx === -1) {
-    return { preamble: text, terms: [], trailer: '' }
-  }
-  const preamble = text.slice(0, idx).replace(/\n+$/, '') + '\n'
-  const after = text.slice(idx + 1)
-  const nextHeadingMatch = after.slice(LANGUAGE_HEADING.length).match(/\n## /)
-  const languageEnd =
-    nextHeadingMatch && nextHeadingMatch.index !== undefined
-      ? LANGUAGE_HEADING.length + nextHeadingMatch.index
-      : after.length
-  const languageBody = after.slice(LANGUAGE_HEADING.length, languageEnd)
-  const trailer = after.slice(languageEnd)
-
-  const terms: GlossaryTerm[] = []
-  const blocks = languageBody.split(/\n(?=\*\*[^*]+\*\*\s*:)/)
-  for (const raw of blocks) {
-    const block = raw.trim()
-    if (block.length === 0) continue
-    const match = block.match(/^\*\*([^*]+)\*\*\s*:\s*([\s\S]*)$/)
-    if (!match) continue
-    const term = match[1].trim()
-    const rest = match[2] ?? ''
-    const { definition, aliases, surfaceForms } = stripAvoid(rest)
-    terms.push({
-      term,
-      definition,
-      aliases,
-      surfaceForms: surfaceForms ?? generateDefaultSurfaceForms(term),
-    })
-  }
-
-  return { preamble, terms, trailer }
+const renderGlossaryTerm = (term: GlossaryTerm): string => {
+  const defaults = generateDefaultSurfaceForms(term.term)
+  const surfaceForms = term.surfaceForms.length > 0 ? term.surfaceForms : defaults
+  const differs = surfaceForms.length !== defaults.length || surfaceForms.some((form, index) => form !== defaults[index])
+  return [
+    `# ${term.term.trim()}`,
+    '',
+    term.definition.trim(),
+    ...(term.aliases.length > 0 ? ['', `_Avoid_: ${term.aliases.join(', ')}`] : []),
+    ...(differs ? ['', `_Surface forms_: ${surfaceForms.join(', ')}`] : []),
+    '',
+  ].join('\n')
 }
 
-export const renderGlossary = (doc: GlossaryDoc): string => {
-  const preamble = doc.preamble.trim().length > 0 ? `${doc.preamble.trim()}\n\n` : `${HEADER}\n`
-  const termBlocks = doc.terms.map((t) => {
-    const aliases = t.aliases.length > 0 ? `\n_Avoid_: ${t.aliases.join(', ')}` : ''
-    const defaults = generateDefaultSurfaceForms(t.term)
-    const sfDiffers =
-      t.surfaceForms.length !== defaults.length ||
-      t.surfaceForms.some((f, i) => f !== defaults[i])
-    const surfaceFormsLine = sfDiffers ? `\n_Surface forms_: ${t.surfaceForms.join(', ')}` : ''
-    return `**${t.term}**:\n${t.definition.trim()}${aliases}${surfaceFormsLine}`
-  })
-  const language = `${LANGUAGE_HEADING}\n\n${termBlocks.join('\n\n')}\n`
-  const trailer = doc.trailer.trim().length > 0 ? `\n${doc.trailer.trim()}\n` : ''
-  return `${preamble}${language}${trailer}`
-}
+const pathFor = (repoRoot: string, term: string): string =>
+  resolve(repoRoot, GLOSSARY_DIR, glossaryTermFilename(term))
 
-export const upsertTerm = (
-  doc: GlossaryDoc,
-  next: Omit<GlossaryTerm, 'surfaceForms'> & { readonly surfaceForms?: readonly string[] },
-): GlossaryDoc => {
-  const term: GlossaryTerm = {
-    ...next,
-    surfaceForms: next.surfaceForms ?? generateDefaultSurfaceForms(next.term),
-  }
-  const lower = term.term.toLowerCase()
-  const found = doc.terms.findIndex((t) => t.term.toLowerCase() === lower)
-  if (found === -1) {
-    return { ...doc, terms: [...doc.terms, term] }
-  }
-  const terms = [...doc.terms]
-  terms[found] = term
-  return { ...doc, terms }
-}
-
-export const removeTermByName = (
-  doc: GlossaryDoc,
-  term: string,
-): { doc: GlossaryDoc; removed: boolean } => {
-  const lower = term.toLowerCase()
-  const next = doc.terms.filter((t) => t.term.toLowerCase() !== lower)
-  if (next.length === doc.terms.length) return { doc, removed: false }
-  return { doc: { ...doc, terms: next }, removed: true }
-}
-
-export const readGlossaryFile = async (path: string): Promise<GlossaryDoc> => {
+export const readGlossaryTerm = async (repoRoot: string, term: string): Promise<GlossaryTerm | null> => {
   try {
-    const text = await readFile(path, 'utf8')
-    return parseGlossary(text)
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { preamble: '', terms: [], trailer: '' }
-    }
-    throw err
+    return parseGlossaryTerm(await readFile(pathFor(repoRoot, term), 'utf8'))
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
   }
 }
 
-export const writeGlossaryFile = async (
-  path: string,
-  doc: GlossaryDoc,
+export const listGlossaryTerms = async (repoRoot: string): Promise<GlossaryTerm[]> => {
+  const dir = resolve(repoRoot, GLOSSARY_DIR)
+  try {
+    const entries = await readdir(dir, { withFileTypes: true })
+    const terms = await Promise.all(entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+      .map(async (entry) => parseGlossaryTerm(await readFile(join(dir, entry.name), 'utf8'))))
+    return terms.filter((term): term is GlossaryTerm => term !== null)
+      .sort((a, b) => a.term.localeCompare(b.term))
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+}
+
+/** Atomically replaces just the selected term's Markdown unit. */
+export const writeGlossaryTerm = async (
+  repoRoot: string,
+  next: Omit<GlossaryTerm, 'surfaceForms'> & { readonly surfaceForms?: readonly string[] },
 ): Promise<void> => {
-  await mkdir(dirname(resolve(path)), { recursive: true })
-  await writeFile(path, renderGlossary(doc), 'utf8')
+  const target = pathFor(repoRoot, next.term)
+  const term: GlossaryTerm = { ...next, term: next.term.trim(), surfaceForms: next.surfaceForms ?? generateDefaultSurfaceForms(next.term) }
+  await mkdir(dirname(target), { recursive: true })
+  const temporary = join(dirname(target), `.${basename(target)}.${process.pid}.${Date.now()}.tmp`)
+  await writeFile(temporary, renderGlossaryTerm(term), 'utf8')
+  await rename(temporary, target)
+}
+
+/** Deletes just the requested unit. Missing terms intentionally remain a no-op. */
+export const removeGlossaryTerm = async (repoRoot: string, term: string): Promise<boolean> => {
+  try {
+    await rm(pathFor(repoRoot, term))
+    return true
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
 }

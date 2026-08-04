@@ -5,7 +5,7 @@
 // SCAFFOLDED by `mars init` into `.mars/workflows/` and USER-OWNED (ADR-0057):
 // edit freely. `mars update` shows a diff instead of overwriting your edits.
 //
-// Structured writes are deterministic, no-LLM edits to CONTEXT.md / docs/adr/**
+// Structured writes are deterministic, no-LLM edits to docs/knowledge/glossary/** / docs/adr/**
 // merged back through the serialized merge lock. The steps below are
 // hand-written placeholders for you to flesh out. Dispatch facts come off
 // `ctx.input` (e.g. `ctx.input.target`), just like the primitive-based flows.

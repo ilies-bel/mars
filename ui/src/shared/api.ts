@@ -1141,7 +1141,7 @@ export const refreshCodexAuth = async (projectId?: string): Promise<void> => {
 /**
  * Fetch the project glossary from the daemon (via the UI server proxy).
  * Returns an empty terms list when the daemon is unreachable or the
- * CONTEXT.md file does not exist.
+ * glossary directory does not exist.
  */
 export const fetchGlossary = async (): Promise<GlossaryTerm[]> => {
   const json = await fetchJson('/api/glossary', glossaryResponseSchema)

@@ -175,7 +175,7 @@ one sentence and stop — do not retry silently.
 - Do not edit `features/<id>.md`, `proposals/<id>.md`, or any markdown
   scaffold. PRD lives in the DB.
 - Do not append to `.mars/action queue.jsonl`.
-- Do not edit `CONTEXT.md` or `docs/adr/*.md` directly. If grilling
+- Do not edit `docs/knowledge/glossary/*.md` or `docs/adr/*.md` directly. If grilling
   surfaced a missing term or ADR you forgot to capture, route through
   `mars glossary set` / `mars adr add` — but prefer to do this during
   `/mars:grill`, not here.

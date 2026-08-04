@@ -34,7 +34,7 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { resolve as resolvePath } from 'node:path'
 import { resolveContext, getRepoRoot } from './context'
-import { readGlossaryFile, generateDefaultSurfaceForms } from './lib/glossary'
+import { listGlossaryTerms, generateDefaultSurfaceForms } from './lib/glossary'
 import {
   getDefaultDomainTaskStore,
   getCompositionRootClient,
@@ -1348,9 +1348,9 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   const listKpiArcs: AppServices['listKpiArcs'] = (key) => defaultListKpiArcs(key)
 
   const viewGlossary: AppServices['viewGlossary'] = async () => {
-    const doc = await readGlossaryFile(resolvePath(getRepoRoot(), 'CONTEXT.md'))
+    const terms = await listGlossaryTerms(getRepoRoot())
     return {
-      terms: doc.terms.map((t) => ({
+      terms: terms.map((t) => ({
         term: t.term,
         definition: t.definition,
         avoid: [...t.aliases],

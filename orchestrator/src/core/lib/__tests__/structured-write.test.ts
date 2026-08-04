@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events'
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 
 const initRepo = (path: string): void => {
   execFileSync('git', ['init', '-q', '-b', 'integration'], { cwd: path })
@@ -100,9 +100,10 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
         return realMergeShim(args)
       },
       mutate: async (worktreePath) => {
+        mkdirSync(resolve(worktreePath, 'docs/knowledge/glossary'), { recursive: true })
         await writeFile(
-          resolve(worktreePath, 'CONTEXT.md'),
-          '# Project Context\n\n## Language\n\n**Order**:\nA request to buy something.\n',
+          resolve(worktreePath, 'docs/knowledge/glossary/order.md'),
+          '# Order\n\nA request to buy something.\n',
           'utf8',
         )
       },
@@ -115,7 +116,7 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
 
   it.each([
     ['adr', 'docs/adr/0001-real-merge.md', 'ADR body'],
-    ['glossary', 'CONTEXT.md', 'Glossary body'],
+    ['glossary', 'docs/knowledge/glossary/order.md', 'Glossary body'],
   ])('persists a real merge job for a %s write without exposing bookkeeping as work', async (kind, file, body) => {
     const { runStructuredWrite } = await import('../structured-write')
     const queue = await import('../../queue')
@@ -126,7 +127,7 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
       commitMessage: `test: ${kind} durable merge`,
       enqueueMerge: runThroughDurableMergeWorker,
       mutate: async (worktreePath) => {
-        if (kind === 'adr') mkdirSync(resolve(worktreePath, 'docs', 'adr'), { recursive: true })
+        mkdirSync(resolve(worktreePath, dirname(file)), { recursive: true })
         await writeFile(resolve(worktreePath, file), body, 'utf8')
       },
     })
@@ -179,9 +180,10 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
       commitMessage: 'docs(glossary): add Order term',
       enqueueMerge: realMergeShim,
       mutate: async (worktreePath) => {
+        mkdirSync(resolve(worktreePath, 'docs/knowledge/glossary'), { recursive: true })
         await writeFile(
-          resolve(worktreePath, 'CONTEXT.md'),
-          '# Project Context\n\n## Language\n\n**Order**:\nA request to buy something.\n',
+          resolve(worktreePath, 'docs/knowledge/glossary/order.md'),
+          '# Order\n\nA request to buy something.\n',
           'utf8',
         )
       },
@@ -192,16 +194,16 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
       expect(outcome.conflictResolved).toBe(false)
     }
 
-    // Integration HEAD now contains CONTEXT.md with the expected content.
+    // Integration HEAD now contains the expected glossary unit.
     const head = gitOutput(repo, ['rev-parse', 'integration'])
     expect(head).toMatch(/^[0-9a-f]{40}$/)
 
     const fileAtHead = execFileSync(
       'git',
-      ['show', 'integration:CONTEXT.md'],
+      ['show', 'integration:docs/knowledge/glossary/order.md'],
       { cwd: repo, encoding: 'utf8' },
     )
-    expect(fileAtHead).toContain('**Order**:')
+    expect(fileAtHead).toContain('# Order')
     expect(fileAtHead).toContain('A request to buy something.')
 
     // Latest commit message matches what we passed in.
@@ -266,8 +268,9 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
         return realMergeShim(args)
       },
       mutate: async (worktreePath) => {
+        mkdirSync(resolve(worktreePath, 'docs/knowledge/glossary'), { recursive: true })
         await writeFile(
-          resolve(worktreePath, 'CONTEXT.md'),
+          resolve(worktreePath, 'docs/knowledge/glossary/order.md'),
           '# Context\n',
           'utf8',
         )
