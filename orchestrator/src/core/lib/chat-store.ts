@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { withTransaction } from './db'
 import { MAIN_THREAD_ID } from './pg-schema.js'
+import { readClosedSubjectFacts, renderContextLine } from './context-line.js'
 import { resolveStateClient } from '../store/state-client'
 import type { ChatContextScope } from '../daemon/chat-context'
 
@@ -1130,9 +1131,30 @@ export const closeSubthread = async (id: string): Promise<void> => {
   await flushRoutineConversationNotices(() => false)
   const c = stateClient()
   const ts = now()
-  await c.execute({
+
+  // Read the facts before the row closes, and write the Context line only
+  // when this call is the one that closed it. `closed_at IS NULL` in the
+  // UPDATE already makes closure idempotent; gating on `rowsAffected` extends
+  // that to the line, so a double close cannot say goodbye twice.
+  const facts = id === MAIN_THREAD_ID ? null : await readClosedSubjectFacts(c, id)
+  const result = await c.execute({
     sql: `UPDATE chat_threads SET closed_at = ? WHERE id = ? AND closed_at IS NULL`,
     args: [ts, id],
+  })
+  const closedNow = ((result as unknown as { rowsAffected?: number }).rowsAffected ?? 0) > 0
+  if (!closedNow || facts === null) return
+
+  const line = renderContextLine(facts)
+  await c.execute({
+    sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind)
+          VALUES (?, ?, 'assistant', ?, ?, ?, 'main', 'notice')`,
+    args: [
+      randomUUID(),
+      MAIN_THREAD_ID,
+      line,
+      JSON.stringify([{ type: 'text', text: line }]),
+      now(),
+    ],
   })
 }
 

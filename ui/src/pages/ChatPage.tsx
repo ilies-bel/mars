@@ -41,9 +41,11 @@ import {
   fetchGlossary,
   refreshCodexAuth,
   invokeAction,
+  postPreloadedResponse,
   ApiError,
   type AttachmentInfo,
 } from '@/shared/api'
+import { collectOpenOffers, matchOffer } from '@/widgets/chat/offerMatch'
 import { useFocusedProjectId, useFocusedProject } from '@/shared/useFocusedProject'
 import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail, GlossaryTerm, SubthreadBoundary, DraftFeature } from '@/shared/schemas'
 import type { MarsUIMessage } from '@/shared/marsChatTransport'
@@ -2717,14 +2719,33 @@ export const ChatPage = () => {
       if (files.length > 0) {
         throw new Error('Add attachments after starting a Subthread.')
       }
-      return createSubthreadAndSend(message, projectId)
+      // "Stop doing that" typed into the composer answers the card above it.
+      // Only an unambiguous match short-circuits; anything else opens a
+      // Subject exactly as before.
+      const matched = files.length === 0
+        ? matchOffer(message, collectOpenOffers(conversation.entries))
+        : null
+      if (matched && matched.response.target.type !== 'reference') {
+        const result = await postPreloadedResponse(matched.messageId, matched.response.id, projectId)
+        return { answeredOffer: true as const, threadId: result.threadId }
+      }
+      const thread = await createSubthreadAndSend(message, projectId)
+      return { answeredOffer: false as const, thread }
     },
     onMutate: () => setSendError(null),
-    onSuccess: (thread) => {
+    onSuccess: (result) => {
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
-      void qc.invalidateQueries({ queryKey: ['chat-thread', thread.id] })
       void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
-      setActiveSubthreadId(thread.id)
+      if (result.answeredOffer) {
+        if (result.threadId) {
+          setActiveSubthreadId(result.threadId)
+          setSelectedThreadId(null)
+          setSelectedQueueItemId(null)
+        }
+        return
+      }
+      void qc.invalidateQueries({ queryKey: ['chat-thread', result.thread.id] })
+      setActiveSubthreadId(result.thread.id)
       setSelectedThreadId(null)
       setSelectedQueueItemId(null)
     },
