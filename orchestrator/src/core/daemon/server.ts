@@ -716,6 +716,7 @@ export const startDaemon = async (
   try {
     heartbeatHandle = await startHeartbeatWriter({
       db: dbClient,
+      log,
       prevGapMs: heartbeatPrevGapMs,
       dispatchUptimeMs: heartbeatDispatchUptimeMs,
     })
@@ -5982,10 +5983,13 @@ export const startDaemon = async (
     // dispatcher is mid-pick must not strand an extra worktree.
     acceptingWork = false
     heartbeatHandle?.setDispatchEnabled(false)
+    // Stop recurring writes before the final flush and database teardown. An
+    // already-running write remains best-effort and has its own rejection
+    // handler in the writer.
+    heartbeatHandle?.stop()
     await heartbeatHandle?.flush().catch((err) => {
       log(`[heartbeat] final flush failed (non-fatal): ${(err as Error).message}`)
     })
-    heartbeatHandle?.stop()
     tracker.clearPending()
     log(`shutting down (force=${force}, inFlight=${tracker.inFlightCount()})`)
 
