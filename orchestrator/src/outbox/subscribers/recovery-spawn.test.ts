@@ -276,7 +276,7 @@ describe('recovery-spawn outbox subscriber', () => {
     expect(reloaded?.failureSignature).toBeTruthy()
   })
 
-  it('does not block a task continued before its pending failure event drains', async () => {
+  it('does not consume recovery capacity when continue has not re-run a coder', async () => {
     const { q, rs, continueTask, client } = await loadModules(repo)
     const task = await q.enqueueTask('resume without stale recovery', undefined, {
       skipTriage: true,
@@ -302,6 +302,11 @@ describe('recovery-spawn outbox subscriber', () => {
       args: [task.id],
     })
     expect(recoveries.rows).toHaveLength(0)
+    const attempts = await client.execute({
+      sql: 'SELECT fix_task_id FROM self_heal_attempts WHERE parent_task_id = ?',
+      args: [task.id],
+    })
+    expect(attempts.rows).toHaveLength(0)
   })
 
   it('escalates a pre-setup failure without spawning a recovery task', async () => {

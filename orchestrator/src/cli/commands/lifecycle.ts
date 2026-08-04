@@ -129,7 +129,9 @@ Refuses (non-zero exit) when the task is not failed or has an in-flight recovery
       : `mars restart <id> [<id> ...] [--force]
 
 Use it to wipe and re-run failed tasks from setup on a fresh worktree and
-branch. Use --force to restart despite a live recovery.`,
+branch. Use --force to restart despite a live recovery or to discard a branch
+with commits ahead of integration; without it, Mars reports the commits and
+files at risk and leaves the task untouched.`,
   run: async (args, deps) => {
     const ids = args.positional.filter((a) => !a.startsWith('--'))
     if (ids.length === 0) {

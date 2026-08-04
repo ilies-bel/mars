@@ -9,7 +9,6 @@ import { type FixRecipeContext, hasRecipe } from './lib/fix-recipes'
 import { raiseActionQueueItem } from './lib/action-queue'
 import type { ActionQueueKind } from './lib/action-queue-kinds'
 import { truncateFailure } from './lib/truncate-failure'
-import { internalBus } from '../internal-bus'
 import { getTask, reopenTerminalTask, updateTask, type Task } from './queue'
 import {
   getRetryBudget,

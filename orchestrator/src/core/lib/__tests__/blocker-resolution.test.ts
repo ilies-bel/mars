@@ -1339,6 +1339,26 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(ahead).toBeUndefined()
     })
 
+    it('recreates a missing worktree from an ahead failed task branch before landing', async () => {
+      const { q, landTask } = await loadLandModules(repo)
+      const { taskId, worktreePath, commitSha } = await seedWorktreeAheadTask(q, repo)
+
+      // The task branch still contains the committed work, but the directory
+      // was reaped. This is the recovery state `mars land` must repair without
+      // directing the operator to destructive restart.
+      // Simulate the directory disappearing beneath Git, leaving the stale
+      // worktree registration that the incident exposed.
+      rmSync(worktreePath, { recursive: true, force: true })
+
+      const result = await landTask(taskId)
+
+      expect(result.outcome).toBe('landed')
+      expect(result.message).not.toContain('restart')
+      expect(
+        execFileSync('git', ['rev-parse', 'main'], { cwd: repo }).toString().trim(),
+      ).toBe(commitSha)
+    })
+
     it('verify failure: refuses non-destructively and leaves branch intact', async () => {
       const { q, landTask } = await loadLandModules(repo)
       const { taskId, worktreePath } = await seedWorktreeAheadTask(q, repo)
