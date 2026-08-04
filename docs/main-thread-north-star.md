@@ -48,12 +48,22 @@ must stay in lockstep.
 
 ```ts
 target =
-  | { type: 'verb';      op: string; entityId?: string }        // existing
-  | { type: 'subthread'; title: string }                        // existing
-  | { type: 'client';    op: 'open-proposal-subject'; entityId: string } // existing
-  | { type: 'lever';     name: string; level: 'off' | 'ask' | 'tell' }   // NEW
-  | { type: 'reference'; url: string }                          // NEW
+  | { type: 'verb';      op: string; entityId?: string }
+  | { type: 'subthread'; title: string }
+  | { type: 'client';    op: 'open-proposal-subject'; entityId: string }
+  | { type: 'lever';     name: string; level: 'off' | 'ask' | 'tell' }
+  | { type: 'reference'; url: string }
+  | { type: 'ack' }
 ```
+
+`ack` was not in the first draft of this contract and had to be added: use
+case 2 offers `[Noted]`, and without it the only way to close an FYI would
+have been to silence the behaviour behind it — which is the opposite of what
+"noted" means.
+
+The orchestrator's `client` branch was also missing before this work, so a
+stored `client` chip made `getPreloadedResponse` skip the whole segment and
+return 404. Both schemas now carry all six.
 
 - `lever` → server writes `persistLeverAutonomyLevel(name, level)` and echoes
   the chip label back as a `context_scope='main'` user message, exactly as the
@@ -129,3 +139,31 @@ already present on mount renders complete, with no animation. Respect
 Typing must never gate the chips: the Offer set renders once the body
 completes, and the whole message is already durable in the DB before the first
 character appears.
+
+## What each use case is built from
+
+Every Notice is only as honest as the evidence behind it. Where the faithful
+signal did not exist, this records what was measured instead.
+
+| | Detector | Evidence |
+|---|---|---|
+| 1 | `detectIdleProposal` | no task in `queued`/`running`/`blocked`, plus the oldest draft proposal never yet offered (checked against the feed itself) |
+| 2 | `steward-runtime-tune` | already existed; now gated on `steward_runtime_tune` and written to the Steward ledger |
+| 3 | `detectCodegraphSuggestion` | no traversal MCP server in `.mcp.json`/settings, no codegraph call in `mcp_worker_audit`, and ≥25 tasks completed in the window |
+| 4 | `detectManualPush` | commits on the integration branch that no `merge_jobs.merged_sha` accounts for |
+| 5 | `detectTokenSpendTrend` | `usage_snapshots` — recent window vs the window before it |
+| 6 | `announceBrokenGate` | the dispatch pause controller, `reason: 'storm'` |
+
+Two of these required new evidence rather than new copy:
+
+- **Use case 4** had no way to tell Mars's commits from the operator's — both
+  carry the operator's git identity. `merge_jobs.merged_sha` was added and is
+  written by the merge worker. Until a merge records one, the detector stays
+  silent: an empty ledger is not evidence that the operator did it all by hand.
+- **Use case 3** claims a token cost. Mars cannot count a Worker's file reads
+  — that happens inside the provider CLI — so the copy counts the Workers it
+  sent in without an index instead, which is what it can actually see.
+
+Use case 5's original wording ("here is a report") would have described a
+report nothing writes. The Notice reports the measured trend and offers to go
+find the cause.
