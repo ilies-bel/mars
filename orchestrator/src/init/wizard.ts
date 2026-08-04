@@ -20,6 +20,8 @@
  * fails the build.
  */
 
+import type { VerifyGateInput } from '../core/verify-gates'
+
 /** The shape of a single wizard prompt — the parity contract. */
 export interface WizardPrompt {
   /** Stable identifier; also the key under which the answer lands in WizardChoices. */
@@ -53,11 +55,14 @@ export interface WizardPrompt {
 export interface WizardChoices {
   /** Register this repo in the global project registry (~/.mars/projects.json). */
   registerProject: boolean
+  /** Verify gates detected before a non-interactive init reaches the daemon. */
+  verifyGates: VerifyGateInput[]
 }
 
 /** Resolved-everywhere defaults; also the non-TTY / error fallback. */
 export const WIZARD_DEFAULTS: WizardChoices = {
   registerProject: true,
+  verifyGates: [],
 }
 
 /**

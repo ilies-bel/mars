@@ -1,45 +1,42 @@
-import { loadVerifyScopes } from '../core/lib/git/verify.js'
-import { addVerifyGate, listVerifyGates } from '../core/verify-gates.js'
+import { randomUUID } from 'node:crypto'
+import { withTransaction } from '../core/lib/db.js'
+import { resolveStateClient } from '../core/store/state-client.js'
+import type { VerifyGateInput } from '../core/verify-gates.js'
 
 /**
- * Materialise verify gates declared in the supervisors manifest at
- * `manifestPath` into the verify_gates table. Each (scope, name) pair that is
- * not already present is inserted with `source='manifest'`; existing pairs are
- * left alone. Idempotent: safe to call on every `mars init` or `mars update`
- * run.
+ * Install the gate set discovered while onboarding a new repository.
  *
- * Returns the count of rows inserted and skipped so callers can log progress.
+ * The registry becomes operator-owned after this first write. A non-empty
+ * registry is consequently a complete no-op, including when the supplied
+ * gate set differs from the one originally detected.
  */
-export const seedVerifyGatesFromManifest = async (
-  manifestPath: string,
-): Promise<{ inserted: number; skipped: number }> => {
-  const scopes = await loadVerifyScopes(manifestPath)
+export const installOnboardingVerifyGates = async (
+  gates: readonly VerifyGateInput[],
+): Promise<{ inserted: number; skipped: boolean }> => {
+  const client = resolveStateClient()
+  return withTransaction(client, async (tx) => {
+    const existing = await tx.execute('SELECT COUNT(*) AS count FROM verify_gates')
+    const count = Number(existing.rows[0]?.count ?? 0)
+    if (count > 0) return { inserted: 0, skipped: true }
 
-  const existing = await listVerifyGates()
-  const existingKeys = new Set(existing.map((g) => `${g.scope}\x00${g.name}`))
-
-  let inserted = 0
-  let skipped = 0
-
-  for (const { scope, steps } of scopes) {
-    for (const step of steps) {
-      const key = `${scope}\x00${step.name}`
-      if (existingKeys.has(key)) {
-        skipped++
-        continue
-      }
-      await addVerifyGate({
-        scope,
-        name: step.name,
-        cmd: step.cmd,
-        args: [...step.args],
-        required: step.required,
-        ...(step.tier !== undefined ? { tier: step.tier } : {}),
-        source: 'manifest',
-      })
-      inserted++
+    for (const gate of gates) {
+      await tx.execute(
+        `INSERT INTO verify_gates
+          (id, scope, name, cmd, args_json, required, tier, source, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'onboarding', ?)`,
+        [
+          randomUUID(),
+          gate.scope ?? '.',
+          gate.name,
+          gate.cmd,
+          JSON.stringify(gate.args ?? []),
+          gate.required === false ? 0 : 1,
+          gate.tier ?? 'task',
+          Date.now(),
+        ],
+      )
     }
-  }
 
-  return { inserted, skipped }
+    return { inserted: gates.length, skipped: false }
+  })
 }

@@ -196,6 +196,7 @@ export const runWizard = async (
 
   return {
     registerProject: resolved.registerProject as boolean,
+    verifyGates: WIZARD_DEFAULTS.verifyGates,
   }
 }
 

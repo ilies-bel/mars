@@ -126,15 +126,14 @@ const init: Command = {
   run: async (args, deps) => {
     const { existsSync } = await import('node:fs')
 
-    const boolFlags = new Set(args.positional.filter((a) => a.startsWith('--')))
-    const force = boolFlags.has('--force')
-    const dryRun = boolFlags.has('--dry-run')
-    const verbose = boolFlags.has('--verbose')
-    const yes = boolFlags.has('--yes') || boolFlags.has('-y')
-    const start = boolFlags.has('--start')
-    const wizardForced = boolFlags.has('--wizard')
-    const wizardOff = boolFlags.has('--wizard-off')
-    const skipDoctor = boolFlags.has('--skip-doctor')
+    const force = hasFlag(args, '--force')
+    const dryRun = hasFlag(args, '--dry-run')
+    const verbose = hasFlag(args, '--verbose')
+    const yes = hasFlag(args, '--yes') || hasFlag(args, '-y')
+    const start = hasFlag(args, '--start')
+    const wizardForced = hasFlag(args, '--wizard')
+    const wizardOff = hasFlag(args, '--wizard-off')
+    const skipDoctor = hasFlag(args, '--skip-doctor')
 
     // ── Provider selection ────────────────────────────────────────────────
     // --provider <name> selects the default agent CLI for all Worker runs.
@@ -266,7 +265,7 @@ const init: Command = {
     // bare `--flag` there); `--register-project` present = true.
     const wizardFlags: Record<string, string | boolean> = {}
     for (const [k, v] of Object.entries(args.flags)) wizardFlags[k] = v
-    if (boolFlags.has('--register-project')) wizardFlags['--register-project'] = true
+    if (hasFlag(args, '--register-project')) wizardFlags['--register-project'] = true
 
     // In quickstart mode the confirm was already done above, so wizard runs
     // non-interactively (flags/config/defaults only, no stdin hang).
@@ -275,6 +274,10 @@ const init: Command = {
       flags: wizardFlags,
       force,
     })
+    if (yes || !isTTY) {
+      const { detectVerifyGates } = await import('../../init/detect-verify-gates')
+      wizardChoices.verifyGates = detectVerifyGates(deps.ctx.repoRoot)
+    }
 
     const result = (await deps.daemon.sendRequest(
       {

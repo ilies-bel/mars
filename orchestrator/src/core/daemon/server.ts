@@ -19,7 +19,6 @@ import { findExistingMarsDb, resolveContext, resolveDbTarget } from '../context'
 import { openDb, recycleDbPool, type DbClient } from '../lib/db'
 import { startEmbeddedPg, type EmbeddedPgHandle } from '../lib/pg-server'
 import { importLegacySqlite } from '../../init/import-sqlite'
-import { reconcileVerifyGatesOnStartup } from '../verify-gates-reconcile'
 import {
   addBlockers,
   dropTask,
@@ -639,14 +638,6 @@ export const startDaemon = async (
   const dbClient: DbClient = openDb(resolveDbTarget())
   await runCompositionRootMigrations()
   log('[schema] migrations complete')
-  // Backfill verify_gates from the supervisors manifest if the table is empty.
-  // ensureSchema already created the table (it's in the canonical DDL), so this
-  // only needs to seed rows — not create the table. Safe to call on every start:
-  // it inserts only (scope, name) pairs not already present.
-  await reconcileVerifyGatesOnStartup(
-    resolvePath(resolveContext().stateDir, 'supervisors', 'manifest.json'),
-    (msg) => log(`[verify-gates] ${msg}`),
-  )
   try {
     const legacySqlitePath = findExistingMarsDb()
     if (legacySqlitePath !== null) {
