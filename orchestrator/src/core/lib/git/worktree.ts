@@ -18,6 +18,7 @@ import {
   discardWorkingTreeChanges,
   restoreCheckpoint,
 } from './checkpoint'
+import { provisionWorktreeDeps } from '../worktree-deps'
 
 export interface CreateWorktreeArgs {
   taskId: string
@@ -82,6 +83,7 @@ export const createWorktree = async ({
     existingForBranch.path === existingForPath.path &&
     (await pathExists(path))
   ) {
+    await provisionWorktreeDeps({ worktreeRoot: path })
     return { path, branch }
   }
 
@@ -126,6 +128,7 @@ export const createWorktree = async ({
     ? ['worktree', 'add', path, branch]
     : ['worktree', 'add', '-b', branch, path, startPoint]
   await exec(resolveGitBin(), args, { cwd }, setupCtx)
+  await provisionWorktreeDeps({ worktreeRoot: path })
   return { path, branch }
 }
 
@@ -269,6 +272,7 @@ export const attachToOriginWorktree = async (
     })
   }
 
+  await provisionWorktreeDeps({ worktreeRoot: path })
   return { path, branch }
 }
 
@@ -442,7 +446,10 @@ export const restoreWorktreeIfMissing = async (args: {
   const { taskId, ref } = args
   const { path, branch } = ref
 
-  if (await pathExists(path)) return 'present'
+  if (await pathExists(path)) {
+    await provisionWorktreeDeps({ worktreeRoot: path })
+    return 'present'
+  }
 
   const ctx: TraceCtx | undefined = args.traceCtx
     ? { ...args.traceCtx, phase: args.traceCtx.phase ?? 'setup' }
@@ -472,6 +479,7 @@ export const restoreWorktreeIfMissing = async (args: {
     { cwd: repoRoot() },
     ctx,
   )
+  await provisionWorktreeDeps({ worktreeRoot: path })
   return 'rebuilt'
 }
 

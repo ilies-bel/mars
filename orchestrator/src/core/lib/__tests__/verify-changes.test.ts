@@ -30,6 +30,34 @@ const truthyCmd = { cmd: 'node', args: ['-e', 'process.exit(0)'] }
 const falsyCmd = { cmd: 'node', args: ['-e', 'process.stderr.write("boom"); process.exit(1)'] }
 
 describe('verifyChanges (data-driven)', () => {
+  it('reports unprovisioned workspace dependencies before a typecheck can emit TypeScript errors', async () => {
+    const worktree = mkdtempSync(resolve(tmpdir(), 'mars-unprovisioned-worktree-'))
+    try {
+      writeFileSync(resolve(worktree, 'tsconfig.json'), '{}')
+      writeFileSync(resolve(worktree, 'package.json'), '{}')
+
+      const result = await verifyChanges({
+        cwd: worktree,
+        steps: [
+          {
+            name: 'typecheck',
+            cmd: 'npx',
+            args: ['tsc', '--noEmit'],
+            required: true,
+          },
+        ],
+      })
+
+      expect(result.passed).toBe(false)
+      expect(result.steps).toHaveLength(1)
+      expect(result.steps[0].output).toContain('worktree deps not provisioned')
+      expect(result.steps[0].output).not.toContain('TS2688')
+      expect(result.steps[0].output).not.toContain('TS2307')
+    } finally {
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
   it('runs steps in declared order and stops on first required failure', async () => {
     const r = await verifyChanges({
       cwd: process.cwd(),

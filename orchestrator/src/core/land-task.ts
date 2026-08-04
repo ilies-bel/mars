@@ -40,6 +40,7 @@ import {
 } from './lib/git/verify'
 import { loadVerifyGates } from './verify-gates'
 import { removeWorktree } from './lib/git/worktree'
+import { provisionWorktreeDeps } from './lib/worktree-deps'
 
 const execFileP = promisify(execFile)
 
@@ -131,6 +132,7 @@ export const landTask = async (
       }
     }
   }
+  await provisionWorktreeDeps({ worktreeRoot: worktreePath, sourceRoot: repoRoot })
 
   // ── 4. Run verify gate ────────────────────────────────────────────────────
   const client = resolveQueueClient()
