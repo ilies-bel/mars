@@ -40,8 +40,8 @@ export const buildSeatbeltProfile = (cwd: string): string => {
     `(allow file-write* (subpath ${seatbeltStringLiteral(cwd)}))`,
     `(allow file-write* (subpath ${seatbeltStringLiteral(stateDir)}))`,
     // `deny default` keeps every non-loopback socket operation denied.
-    '(allow network-inbound (local ip "127.0.0.1:*"))',
-    '(allow network-outbound (remote ip "127.0.0.1:*"))',
+    '(allow network-inbound (local ip "localhost:*"))',
+    '(allow network-outbound (remote ip "localhost:*"))',
   ].join('\n')
 }
 

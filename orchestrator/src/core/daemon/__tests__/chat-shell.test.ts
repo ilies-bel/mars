@@ -20,7 +20,8 @@ describe('chat shell confinement', () => {
     expect(profile).toContain('(subpath "/tmp/repo with spaces/\\"quoted\\") (allow default) (\\"/.mars")')
     expect(profile).not.toContain('\n(allow default)\n')
     expect(profile).toContain('(allow file-read*)')
-    expect(profile).toContain('(allow network-outbound (remote ip "127.0.0.1:*"))')
+    expect(profile).toContain('(allow network-inbound (local ip "localhost:*"))')
+    expect(profile).toContain('(allow network-outbound (remote ip "localhost:*"))')
     expect(profile).toContain('(deny default)')
   })
 
@@ -96,6 +97,19 @@ describe('chat shell confinement', () => {
       if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
       warning.mockRestore()
     }
+  })
+
+  it.skipIf(!sandboxExecUsable)('produces a Seatbelt profile accepted by sandbox-exec', async () => {
+    const { mkdtemp } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const repo = await mkdtemp(join(tmpdir(), 'mars-chat-seatbelt-profile-'))
+
+    expect(() =>
+      execFileSync('/usr/bin/sandbox-exec', ['-p', buildSeatbeltProfile(repo), '/usr/bin/true'], {
+        stdio: 'ignore',
+      }),
+    ).not.toThrow()
   })
 
   it.skipIf(process.platform === 'darwin' && !sandboxExecUsable)(
