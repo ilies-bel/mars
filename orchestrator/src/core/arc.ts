@@ -53,6 +53,7 @@ import {
 } from './store/task-store'
 import { getStateDir, getRepoRoot } from './context'
 import { removeWorktree } from './lib/git/worktree'
+import { provisionWorktreeDeps } from './lib/worktree-deps'
 import { getRecipeOrGeneric, type FixRecipeContext } from './lib/fix-recipes'
 import { buildEventInsert, publish, withWriteTx } from './lib/outbox'
 import { assertNotRecoveryEdge } from './lib/blocker-invariant'
@@ -345,6 +346,7 @@ export class Arc {
             ['worktree', 'add', newWorktreePath, superseded.branch],
             { cwd: getRepoRoot() },
           )
+          await provisionWorktreeDeps({ worktreeRoot: newWorktreePath })
           inheritedBranch = superseded.branch
           inheritedWorktreePath = newWorktreePath
         } catch (cause) {

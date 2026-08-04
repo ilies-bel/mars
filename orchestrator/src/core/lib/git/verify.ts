@@ -611,10 +611,32 @@ export const verifyChanges = async (
     // step failure in Kotlin/Gradle or other non-TypeScript repos.
     if (isNpxTscStep(spec)) {
       const hasTsconfig = existsSync(resolve(stepCwd, 'tsconfig.json'))
+      const hasWorkspaceManifest = existsSync(resolve(stepCwd, 'package.json'))
+      const hasWorkspaceModules = existsSync(resolve(stepCwd, 'node_modules'))
       // Check both the step dir and one level up (workspace/monorepo hoist).
       const hasBin =
         existsSync(resolve(stepCwd, 'node_modules', '.bin', 'tsc')) ||
         existsSync(resolve(stepCwd, '..', 'node_modules', '.bin', 'tsc'))
+      // A TypeScript workspace without its own module tree is not a
+      // non-TypeScript project. It is a git-created/recreated worktree whose
+      // dependencies were never provisioned. Fail before invoking tsc so the
+      // operator sees the repair rather than TS2688 / TS2307 noise.
+      if (hasTsconfig && hasWorkspaceManifest && !hasWorkspaceModules) {
+        results.push({
+          name: spec.name,
+          ...(spec.gateId !== undefined ? { gateId: spec.gateId } : {}),
+          tier: 'task',
+          passed: false,
+          output:
+            `worktree deps not provisioned: ${stepCwd}/node_modules is missing — ` +
+            'run mars restart <task-id> to recreate the worktree with dependencies',
+          cmd: spec.cmd,
+          args: [...spec.args],
+          stepDir: stepCwd,
+        })
+        if (spec.required) stoppedOnRequired = true
+        continue
+      }
       if (!hasTsconfig || !hasBin) {
         results.push({
           name: spec.name,
