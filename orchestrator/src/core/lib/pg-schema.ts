@@ -38,7 +38,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0026'
+export const SCHEMA_VERSION = '0025'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -52,15 +52,6 @@ const DDL: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS schema_migrations (
     version    text PRIMARY KEY,
     applied_at text NOT NULL
-  )`,
-
-  // ── document numbering ───────────────────────────────────────────────────
-  // Content remains in Git; this small durable counter only reserves unique
-  // document numbers before concurrent writers branch from the same baseline.
-  `CREATE TABLE IF NOT EXISTS document_number_counters (
-    name       text PRIMARY KEY,
-    next_value integer NOT NULL,
-    updated_at timestamptz NOT NULL DEFAULT now()
   )`,
 
   // ── proposal domain (FK target of tasks) ──────────────────────────────────
