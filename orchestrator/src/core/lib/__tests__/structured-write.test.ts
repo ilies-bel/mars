@@ -245,12 +245,18 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
         kind: 'adr',
         commitMessage: `adr: add ${title}`,
         enqueueMerge: realMergeShim,
-        mutate: async (worktreePath) => writeAdrInWorktree({
-          worktreePath,
-          number,
-          title,
-          body,
-        }),
+        // `mutate` is typed `Promise<boolean | void>` — only an explicit
+        // `false` signals a noop. Discard the AdrWriteResult rather than
+        // widening the contract; this test asserts on runStructuredWrite's
+        // outcome, not on the ADR write.
+        mutate: async (worktreePath) => {
+          await writeAdrInWorktree({
+            worktreePath,
+            number,
+            title,
+            body,
+          })
+        },
       })))
 
       expect(outcomes).toEqual([
