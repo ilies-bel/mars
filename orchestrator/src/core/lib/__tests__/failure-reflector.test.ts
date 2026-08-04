@@ -72,6 +72,7 @@ describe('spawnFailureReflector', () => {
 
   afterEach(() => {
     delete process.env.MARS_REPO
+    delete process.env.MARS_FAILURE_REFLECTOR_MAX
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -159,6 +160,56 @@ describe('spawnFailureReflector', () => {
 
     const proposals = await listProposals({ source: 'failure-reflector' })
     expect(proposals).toHaveLength(1)
+    expect(runHeadlessProvider).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a dismissed analysis from being regenerated for the same failure', async () => {
+    const { runHeadlessProvider } = await import('../../workers/providers')
+    vi.mocked(runHeadlessProvider).mockResolvedValue(
+      makeClaudeResult([
+        {
+          recipe: 'add-typecheck',
+          title: 'Add TypeScript typecheck gate',
+          rationale: 'Would catch type errors before merging.',
+          action: 'mars verify add typecheck --cmd npx --args "tsc --noEmit"',
+        },
+      ]),
+    )
+
+    const { spawnFailureReflector } = await import('../failure-reflector')
+    const { dismissProposal, initProposals, listProposals } = await import('../../proposals')
+    await initProposals()
+
+    await spawnFailureReflector(opts)
+    const [created] = await listProposals({ source: 'failure-reflector' })
+    await dismissProposal(created.id)
+    await spawnFailureReflector(opts)
+
+    expect(await listProposals({ source: 'failure-reflector' })).toHaveLength(1)
+    expect(runHeadlessProvider).toHaveBeenCalledTimes(1)
+  })
+
+  it('creates one proposal when the same failure is reported concurrently', async () => {
+    process.env.MARS_FAILURE_REFLECTOR_MAX = '2'
+    const { runHeadlessProvider } = await import('../../workers/providers')
+    vi.mocked(runHeadlessProvider).mockResolvedValue(
+      makeClaudeResult([
+        {
+          recipe: 'add-typecheck',
+          title: 'Add TypeScript typecheck gate',
+          rationale: 'Would catch type errors before merging.',
+          action: 'mars verify add typecheck --cmd npx --args "tsc --noEmit"',
+        },
+      ]),
+    )
+
+    const { spawnFailureReflector } = await import('../failure-reflector')
+    const { initProposals, listProposals } = await import('../../proposals')
+    await initProposals()
+
+    await Promise.all([spawnFailureReflector(opts), spawnFailureReflector(opts)])
+
+    expect(await listProposals({ source: 'failure-reflector' })).toHaveLength(1)
     expect(runHeadlessProvider).toHaveBeenCalledTimes(1)
   })
 

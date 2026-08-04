@@ -3,8 +3,7 @@ import { getRepoRoot } from '../context'
 import { createHash } from 'node:crypto'
 import {
   createProposal,
-  findOpenReflectionDraftByFingerprint,
-  appendProposalNotes,
+  recordFailureReflectionOccurrence,
 } from '../proposals'
 import { getDefaultTaskStore } from '../store/task-store'
 import { loadImprovementRecipes, formatRecipeCatalog } from './improvement-recipes'
@@ -175,14 +174,6 @@ const persistSuggestion = async (
 ): Promise<void> => {
   const fingerprint = failureReflectorFingerprint(opts)
 
-  const existing = await findOpenReflectionDraftByFingerprint(fingerprint, 'failure-reflector')
-  if (existing) {
-    if (s.rationale) {
-      await appendProposalNotes(existing.id, s.rationale)
-    }
-    return
-  }
-
   const notes = [s.rationale, s.recipe ? `Recipe: ${s.recipe}` : null]
     .filter(Boolean)
     .join('\n')
@@ -204,18 +195,21 @@ const persistSuggestion = async (
  * harness-improvement system prompt (NOT a code-fix prompt), then persists
  * each suggestion as a draft proposal with source='failure-reflector'.
  *
- * Deduplication: suggestions for the same failing step and classified failure
- * signature are collapsed into the existing open draft (notes appended, no
- * new proposal row created), regardless of model-written title wording.
+ * Deduplication: signatures are claimed in a durable ledger before provider
+ * work begins. That ledger survives the proposal lifecycle, so dismissing or
+ * deleting a proposal cannot regenerate it. The proposal's unique
+ * source/fingerprint index remains a second line of defense and merges notes
+ * if a legacy or cross-process race reaches the insert path.
  *
  * Admission control (see {@link MAX_CONCURRENT}): the call is suppressed when
- * self-heal is disabled, an open draft already represents this failure
- * signature, or {@link MAX_CONCURRENT} runs are already in flight. Suppression
+ * self-heal is disabled, the signature was already analysed, or
+ * {@link MAX_CONCURRENT} runs are already in flight. Suppression
  * is silent and non-fatal — the caller never awaits this.
  *
- * The signature gate comes before the global concurrency gate. An open draft
- * records that this failure arc has already been analysed, so recurring
- * failures with unchanged classification do not consume another provider run.
+ * The concurrency slot is reserved before the durable signature claim, so
+ * overload shedding cannot accidentally mark an unanalysed signature as
+ * complete. The ledger then ensures recurring failures with unchanged
+ * classification do not consume another provider run.
  * A changed failing step or signature receives its own analysis and draft.
  */
 export const spawnFailureReflector = async (
@@ -224,16 +218,11 @@ export const spawnFailureReflector = async (
   // ── Admission control ────────────────────────────────────────────────────
   // Checked before any provider work so recurring failures do not saturate it.
   if (isRecoveryDisabled()) return
-  const existing = await findOpenReflectionDraftByFingerprint(
-    failureReflectorFingerprint(opts),
-    'failure-reflector',
-  )
-  if (existing) return
   if (inFlight >= MAX_CONCURRENT) return
-
   inFlight += 1
 
   try {
+    if (!(await recordFailureReflectionOccurrence(failureReflectorFingerprint(opts)))) return
     const recipes = loadImprovementRecipes()
     const catalog = formatRecipeCatalog(recipes)
     const arcContext = await buildArcContext(opts)

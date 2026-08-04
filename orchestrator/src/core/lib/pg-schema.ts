@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0024'
+export const SCHEMA_VERSION = '0025'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -75,6 +75,31 @@ const DDL: readonly string[] = [
     created_at        bigint NOT NULL,
     updated_at        bigint NOT NULL
   )`,
+  // This ledger records that a failure signature has already been analysed,
+  // independently of the proposal lifecycle. Dismissing or deleting a draft
+  // must never re-arm provider work for the same failure signature.
+  `CREATE TABLE IF NOT EXISTS failure_reflection_signatures (
+    source           text   NOT NULL,
+    fingerprint      text   NOT NULL,
+    first_seen_at    bigint NOT NULL,
+    last_seen_at     bigint NOT NULL,
+    occurrence_count bigint NOT NULL DEFAULT 1,
+    PRIMARY KEY (source, fingerprint)
+  )`,
+  // Backfill before normalising duplicate proposal fingerprints so historical
+  // occurrence counts remain intact during the upgrade.
+  `INSERT INTO failure_reflection_signatures
+       (source, fingerprint, first_seen_at, last_seen_at, occurrence_count)
+     SELECT source,
+            fingerprint,
+            MIN(created_at),
+            MAX(updated_at),
+            COUNT(*)
+       FROM proposals
+      WHERE source = 'failure-reflector'
+        AND fingerprint IS NOT NULL
+      GROUP BY source, fingerprint
+     ON CONFLICT (source, fingerprint) DO NOTHING`,
   // Proposal dismissal has always stored this terminal state. Normalize the
   // short-lived, incompatible `rejected` value before proposal readers apply
   // the closed lifecycle type.
@@ -83,8 +108,26 @@ const DDL: readonly string[] = [
   `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_slice_error text`,
   `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_slice_failed_at bigint`,
   `ALTER TABLE proposals DROP COLUMN IF EXISTS auto_approve`,
-  `CREATE INDEX IF NOT EXISTS idx_proposals_fingerprint
-     ON proposals(fingerprint) WHERE fingerprint IS NOT NULL`,
+  // Existing installs may contain duplicate fingerprints from concurrent
+  // reflector runs. Keep every historical proposal, but retain the fingerprint
+  // only on the first row so the source/fingerprint uniqueness boundary can be
+  // installed without discarding operator-visible history.
+  `UPDATE proposals AS duplicate
+      SET fingerprint = NULL
+    WHERE duplicate.fingerprint IS NOT NULL
+      AND EXISTS (
+        SELECT 1
+          FROM proposals AS original
+         WHERE original.source = duplicate.source
+           AND original.fingerprint = duplicate.fingerprint
+           AND (
+             original.created_at < duplicate.created_at
+             OR (original.created_at = duplicate.created_at AND original.id < duplicate.id)
+           )
+      )`,
+  `DROP INDEX IF EXISTS idx_proposals_fingerprint`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_source_fingerprint
+     ON proposals(source, fingerprint) WHERE fingerprint IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS proposal_user_stories (
     proposal_id text   NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
     position    bigint NOT NULL,

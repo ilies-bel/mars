@@ -242,12 +242,23 @@ export const createProposal = async (
   const kpiTag = opts?.kpiTag ?? null
   const fingerprint = opts?.fingerprint ?? null
   const originSessionId = opts?.originSessionId ?? null
-  await c.execute({
+  const result = await c.execute({
     sql: `INSERT INTO proposals
             (id, title, problem, solution, out_of_scope, notes,
              status, source, author_kind, author_name,
              kpi_tag, fingerprint, origin_session_id, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (source, fingerprint) WHERE fingerprint IS NOT NULL
+          DO UPDATE SET
+            notes = CASE
+              WHEN EXCLUDED.notes = '' THEN proposals.notes
+              WHEN proposals.notes = '' THEN EXCLUDED.notes
+              ELSE proposals.notes || chr(10) || EXCLUDED.notes
+            END,
+            updated_at = EXCLUDED.updated_at
+          RETURNING id, title, problem, solution, out_of_scope, notes, status,
+                    source, author_kind, author_name, coordinated, created_at,
+                    updated_at, last_slice_error, last_slice_failed_at`,
     args: [
       id,
       title,
@@ -265,25 +276,44 @@ export const createProposal = async (
       now,
     ],
   })
-  const proposal: Proposal = {
-    id,
-    title,
-    problem,
-    solution,
-    outOfScope,
-    notes,
-    status: 'draft',
-    source,
-    coordinated: false,
-    author: opts?.author ?? null,
-    createdAt: now,
-    updatedAt: now,
-    userStories: [],
-    lastSliceError: null,
-    lastSliceFailedAt: null,
+  const row = result.rows[0] as unknown as Record<string, unknown>
+  const proposal = rowToProposal(row, [])
+  if (proposal.id === id) {
+    await emitProposalBusEvent('proposal.added', { proposalId: id, source, title })
   }
-  await emitProposalBusEvent('proposal.added', { proposalId: id, source, title })
   return proposal
+}
+
+/**
+ * Record a failure-reflector occurrence and atomically claim the first
+ * analysis for its fingerprint. The ledger is intentionally independent from
+ * proposal rows so proposal cleanup cannot re-arm the reflector.
+ *
+ * Returns true only to the caller that should run the provider analysis.
+ */
+export const recordFailureReflectionOccurrence = async (
+  fingerprint: string,
+): Promise<boolean> => {
+  await initProposals()
+  const c = stateClient()
+  const now = Date.now()
+  const inserted = await c.execute({
+    sql: `INSERT INTO failure_reflection_signatures
+            (source, fingerprint, first_seen_at, last_seen_at, occurrence_count)
+          VALUES ('failure-reflector', ?, ?, ?, 1)
+          ON CONFLICT (source, fingerprint) DO NOTHING
+          RETURNING fingerprint`,
+    args: [fingerprint, now, now],
+  })
+  if (inserted.rows.length > 0) return true
+
+  await c.execute({
+    sql: `UPDATE failure_reflection_signatures
+             SET last_seen_at = ?, occurrence_count = occurrence_count + 1
+           WHERE source = 'failure-reflector' AND fingerprint = ?`,
+    args: [now, fingerprint],
+  })
+  return false
 }
 
 export interface ListProposalsFilter {
