@@ -1486,11 +1486,22 @@ export const runAgent = async (
         ? `worktree had ${checkpointFiles.length} uncommitted path(s); preserved as wip(checkpoint) commit on branch ${branch}`
         : 'worktree was clean at exit (no uncommitted work found)'
 
+    // When the coder exits by SIGTERM (143) or SIGKILL (137) — a process kill,
+    // not a code defect — prepend a sentinel line that mirrors the pattern
+    // `runVerifyStep` uses for verify:killed. `computeFailureSignature` detects
+    // this marker first and overrides the nominal `code:coder-exit-nonzero` gate
+    // with `code:killed/sigterm` or `code:killed/sigkill`, routing the failure
+    // to the environmental re-queue path instead of spawning a recovery Chore.
+    const signalName =
+      r.exitCode === 143 ? 'SIGTERM' : r.exitCode === 137 ? 'SIGKILL' : null
+    const signalMarker =
+      signalName !== null ? `code child killed by ${signalName} (exit ${r.exitCode})\n` : ''
+
     // One string, two consumers: the row's `error` column and the signature the
     // failure handler computes. Deriving both from the same text keeps the
     // stamped signature identical to the one the handler mints, so
     // `upsertFixTask`'s (taskId, signature) dedup agrees across the two paths.
-    const coderExitOutput = `coder process exited ${r.exitCode}. ${worktreeNote}. ${diagText}`
+    const coderExitOutput = `${signalMarker}coder process exited ${r.exitCode}. ${worktreeNote}. ${diagText}`
     await updateTask(
       taskId,
       {

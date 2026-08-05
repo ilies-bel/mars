@@ -691,6 +691,18 @@ export const computeFailureSignature = (
     return `verify:killed/sig${kill[1]!.toLowerCase()}`
   }
 
+  // The code step prepends this marker when the coder process exits by SIGTERM
+  // or SIGKILL (exit 143 / 137). A signal death is infrastructure, not a code
+  // defect — the coder was mid-sentence, not producing wrong output. Override
+  // the nominal `code:coder-exit-nonzero` gate name so the signature routes to
+  // the environmental re-queue path rather than spawning a recovery Chore.
+  const codeKill = firstNonBlankLine(errorOutput).match(
+    /^code child killed by SIG(TERM|KILL) \(exit 1(?:43|37)\)$/i,
+  )
+  if (codeKill !== null) {
+    return `code:killed/sig${codeKill[1]!.toLowerCase()}`
+  }
+
   // Normalise the step id. Prose values (e.g. "Re-queue time bound exceeded:
   // 1 attempt(s) over 270m …") fail the grammar and are replaced with
   // UNKNOWN_STEP_ID so no prose can reach the signature.

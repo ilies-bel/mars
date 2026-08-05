@@ -70,6 +70,11 @@ export function classifyFailure(failureSignature: string): FailureCategory {
   if (
     failureSignature.startsWith('phantom-task watchdog:') ||
     failureSignature.startsWith('verify:killed/') ||
+    // code:killed/sigterm and code:killed/sigkill — a signal-killed coder is
+    // infrastructure (the coder was mid-sentence, not producing wrong output).
+    // These auto-requeue through the environmental restart path instead of
+    // spawning a recovery Chore.
+    failureSignature.startsWith('code:killed/') ||
     failureSignature.endsWith('/install-timeout') ||
     // The daemon cannot write <repo>/.git/worktrees/<id>/ — a sandbox or
     // permission condition on the host. A recovery fixer would fail at the

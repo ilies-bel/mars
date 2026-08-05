@@ -565,6 +565,31 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: DEFAULT_ACTIONS,
       },
 
+      // ── code:killed ─────────────────────────────────────────────────────
+      // A coder exit of 128+signal (143 = SIGTERM, 137 = SIGKILL) is process
+      // death — the coder was mid-sentence, not producing wrong output. The
+      // code step prepends a "code child killed by …" marker (mirroring the
+      // verify step) so computeFailureSignature overrides the nominal
+      // `code:coder-exit-nonzero` gate with one of these signatures.
+      // These auto-requeue through the environmental restart path instead of
+      // spawning a recovery Chore that would have nothing to fix.
+      {
+        signature: 'code:killed/sigterm',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: 'The coder was killed before it could finish',
+        verboseReason:
+          'The coder process received SIGTERM before completing. This is a process kill, not a code defect — the task is re-queued so the coder can resume from the checkpointed work.',
+        actions: DEFAULT_ACTIONS,
+      },
+      {
+        signature: 'code:killed/sigkill',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: 'The coder was killed before it could finish',
+        verboseReason:
+          'The coder process received SIGKILL before completing. This commonly indicates host memory pressure or an over-tight step timeout; the task is re-queued so the coder can resume from the checkpointed work.',
+        actions: DEFAULT_ACTIONS,
+      },
+
       // ── verify:killed ───────────────────────────────────────────────────
       // A 128+signal exit is process death, not evidence that the command
       // which happened to be running failed. These signatures auto-requeue

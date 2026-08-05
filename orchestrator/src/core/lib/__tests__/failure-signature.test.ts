@@ -925,3 +925,45 @@ describe('git-metadata-denied classification', () => {
     )
   })
 })
+
+describe('code:killed — signal-death classification', () => {
+  // Exit 143 = 128 + SIGTERM (15); exit 137 = 128 + SIGKILL (9).
+  // The coder step prepends a "code child killed by …" marker (mirroring the
+  // verify step's "verify child killed by …" marker) so computeFailureSignature
+  // can override the nominal `code:coder-exit-nonzero` gate name.
+
+  it('classifies a coder exit 143 (SIGTERM) as code:killed/sigterm', () => {
+    const errorOutput = [
+      'code child killed by SIGTERM (exit 143)',
+      'coder process exited 143. worktree had 5 uncommitted path(s); preserved as wip(checkpoint) commit on branch task/mars-33fe7311',
+    ].join('\n')
+    expect(computeFailureSignature('code:coder-exit-nonzero', errorOutput)).toBe(
+      'code:killed/sigterm',
+    )
+  })
+
+  it('classifies a coder exit 137 (SIGKILL) as code:killed/sigkill', () => {
+    const errorOutput = [
+      'code child killed by SIGKILL (exit 137)',
+      'coder process exited 137. worktree was clean at exit (no uncommitted work found). stderr empty; no stream text captured',
+    ].join('\n')
+    expect(computeFailureSignature('code:coder-exit-nonzero', errorOutput)).toBe(
+      'code:killed/sigkill',
+    )
+  })
+
+  it('does not classify a regular non-zero exit (e.g. exit 1) as code:killed', () => {
+    const errorOutput =
+      'coder process exited 1. worktree was clean at exit (no uncommitted work found). stderr empty; no stream text captured'
+    const sig = computeFailureSignature('code:coder-exit-nonzero', errorOutput)
+    expect(sig.startsWith('code:killed/')).toBe(false)
+  })
+
+  it('is case-insensitive on the SIGTERM marker', () => {
+    // Mirror the case-insensitivity the verify:killed regex already uses.
+    const errorOutput = 'code child killed by sigterm (exit 143)\nextra output'
+    expect(computeFailureSignature('code:coder-exit-nonzero', errorOutput)).toBe(
+      'code:killed/sigterm',
+    )
+  })
+})

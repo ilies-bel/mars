@@ -1822,6 +1822,99 @@ describe('non-code failure re-queue routing', () => {
     expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
   })
 
+  it('code:killed/sigterm (coder exit 143) re-queues the origin and inserts no fix-task row', async () => {
+    // Reproduces the mars-33fe7311 incident: a SIGTERM-killed coder was treated
+    // as a code defect and spawned a recovery Chore. The correct behaviour is to
+    // re-queue the origin so the retried coder can resume from the checkpoint.
+    const { q, ft } = await loadModules(repo)
+    const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
+
+    // The coder step prepends a "code child killed by SIGTERM (exit 143)" marker
+    // when the exit code is 143; simulate the full coderExitOutput the code step
+    // produces for that case.
+    const errorOutput = [
+      'code child killed by SIGTERM (exit 143)',
+      'coder process exited 143. worktree had 5 uncommitted path(s); preserved as wip(checkpoint) commit on branch task/mars-33fe7311. stderr empty; last stream text: Now add the composer form ...',
+    ].join('\n')
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed',
+              failure_reason = 'coder-exit-nonzero',
+              failed_phase = 'code',
+              error = 'coder exited 143 before completing'
+            WHERE id = ?`,
+      args: [t.id],
+    })
+
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'code:coder-exit-nonzero',
+      errorOutput,
+    })
+
+    // Signature = code:killed/sigterm (overrides code:coder-exit-nonzero via marker)
+    // classifyFailure → 'infra' → not 'code' → re-queue
+    expect(r.outcome).toBe('requeued')
+    expect(r.failureSignature).toBe('code:killed/sigterm')
+    // retryCount must stay 0 — non-code re-queues never consume the code recovery slot
+    expect(r.retryCount).toBe(0)
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('queued')
+    expect(reloaded?.retryCount).toBe(0)
+    expect(reloaded?.failureSignature).toBeNull()
+    expect(reloaded?.failedPhase).toBeNull()
+
+    // No fix-task rows were inserted
+    const fixTasks = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+
+  it('code:killed/sigkill (coder exit 137) re-queues the origin and inserts no fix-task row', async () => {
+    const { q, ft } = await loadModules(repo)
+    const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
+
+    const errorOutput = [
+      'code child killed by SIGKILL (exit 137)',
+      'coder process exited 137. worktree was clean at exit (no uncommitted work found). stderr empty; no stream text captured',
+    ].join('\n')
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed',
+              failure_reason = 'coder-exit-nonzero',
+              failed_phase = 'code',
+              error = 'coder exited 137 before completing'
+            WHERE id = ?`,
+      args: [t.id],
+    })
+
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'code:coder-exit-nonzero',
+      errorOutput,
+    })
+
+    // Signature = code:killed/sigkill
+    // classifyFailure → 'infra' → not 'code' → re-queue
+    expect(r.outcome).toBe('requeued')
+    expect(r.failureSignature).toBe('code:killed/sigkill')
+    expect(r.retryCount).toBe(0)
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('queued')
+    expect(reloaded?.retryCount).toBe(0)
+
+    // No fix-task rows were inserted
+    const fixTasks = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+
   it('preflight:no-gates-configured marks task failed without spawning a fix-task', async () => {
     // A preflight failure is a configuration error — no verify gates are
     // registered for the changed files. The handler must NOT spawn a recovery

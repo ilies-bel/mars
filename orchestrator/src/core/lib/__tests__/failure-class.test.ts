@@ -85,6 +85,16 @@ describe('classifyFailure — infra', () => {
       classifyFailure('phantom-task watchdog: not-fast-forward'),
     ).toBe<FailureCategory>('infra')
   })
+
+  it('classifies code:killed/sigterm as infra', () => {
+    // A SIGTERM-killed coder is process death, not a code defect.
+    expect(classifyFailure('code:killed/sigterm')).toBe<FailureCategory>('infra')
+  })
+
+  it('classifies code:killed/sigkill as infra', () => {
+    // A SIGKILL-killed coder is process death (typically OOM), not a code defect.
+    expect(classifyFailure('code:killed/sigkill')).toBe<FailureCategory>('infra')
+  })
 })
 
 describe('classifyFailure — code (default)', () => {

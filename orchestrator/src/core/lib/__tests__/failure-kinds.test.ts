@@ -38,6 +38,20 @@ describe('FAILURE_KINDS registry', () => {
     expect(isEnvironmentalSignature('verify:killed/sigterm')).toBe(true)
   })
 
+  it('labels SIGTERM-killed coder (exit 143) as an environmental kill', () => {
+    const entry = lookupFailureKind('code:killed/sigterm')
+    expect(entry).not.toBeNull()
+    expect(entry!.warmTitle).toBeTruthy()
+    expect(isEnvironmentalSignature('code:killed/sigterm')).toBe(true)
+  })
+
+  it('labels SIGKILL-killed coder (exit 137) as an environmental kill', () => {
+    const entry = lookupFailureKind('code:killed/sigkill')
+    expect(entry).not.toBeNull()
+    expect(entry!.warmTitle).toBeTruthy()
+    expect(isEnvironmentalSignature('code:killed/sigkill')).toBe(true)
+  })
+
   it('contains an entry for verify:worktree-hygiene/worktree-missing', () => {
     expect(FAILURE_KINDS.map((k) => k.signature)).toContain(
       'verify:worktree-hygiene/worktree-missing',
