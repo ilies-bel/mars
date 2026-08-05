@@ -699,6 +699,164 @@ describe('blocker-resolution: a failed recovery must fail its origin, not strand
   })
 })
 
+// Regression: mars-f2034bb9 — recovery done must flip origin to done, never to queued.
+//
+// Incident (daniel-assistant): recovery fix-78cb1033 ran on origin's worktree,
+// merged the work, reached 'done', then origin mars-33fe7311 went to 'queued'
+// instead of 'done'. Operator had to `mars drop --force` to stop it re-running.
+//
+// Root cause: two independent paths react to a recovery reaching done:
+//   (1) inline daemon handler → calls propagateRecoveryDone() → flips origin done.
+//   (2) blocker-resolution subscriber → calls unblockByCompletion(fixId) → finds
+//       origin blocked on fix, re-queues it (generic unblock, no recovery awareness).
+// When the subscriber drained before the inline handler, (2) won the race and
+// origin landed in 'queued'. From there a new coder dispatch was imminent.
+//
+// Fix: make unblockByCompletion recovery-aware. When the completing task is a
+// non-main-committer fix whose fixForTaskId === dependent.id, route through
+// propagateRecoveryDone instead of plain re-queue. The two paths then converge
+// regardless of drain order (propagateRecoveryDone is idempotent on done).
+// ---------------------------------------------------------------------------
+describe('blocker-resolution: recovery done must flip origin to done (mars-f2034bb9)', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-recovery-done-test-'))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_FIX_RETRY_BUDGET
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  /**
+   * Build the incident shape: origin blocked on its own recovery.
+   * The recovery has kind='fix', fixForTaskId=origin.id (non-main-committer).
+   */
+  const buildOriginBlockedOnRecovery = async (
+    q: QueueModule,
+    qc: ReturnType<QueueModule['resolveQueueClient']>,
+    opts: { recoveryPayload?: string } = {},
+  ): Promise<{ originId: string; fixId: string }> => {
+    const origin = await q.enqueueTask('implement-feature', undefined, { skipTriage: true })
+    const fixId = `fix-${origin.id.slice(0, 8)}`
+    const now = new Date().toISOString()
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, recovery_payload, created_at, updated_at)
+            VALUES (?, 'fix the code', 'done', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, ?, ?, ?)`,
+      args: [fixId, origin.id, origin.id, opts.recoveryPayload ?? null, now, now],
+    })
+    await qc.execute({
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+      args: [origin.id, fixId, Date.now()],
+    })
+    await qc.execute({
+      sql: `UPDATE tasks SET status = 'blocked', retry_count = 1 WHERE id = ?`,
+      args: [origin.id],
+    })
+    return { originId: origin.id, fixId }
+  }
+
+  it('subscriber-first order: draining task.terminal{fixId, done} flips origin to done (not queued)', async () => {
+    // Reproduces the drain-first race: subscriber processes fix.terminal before
+    // the inline daemon handler's propagateRecoveryDone has run.
+    // Origin MUST end up 'done', never 'queued', so no spurious coder dispatch fires.
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+    const { originId, fixId } = await buildOriginBlockedOnRecovery(q, qc)
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+    // Subscriber drains BEFORE propagateRecoveryDone is ever called by the server.
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: fixId, reason: 'done' })
+    const { processed } = await sub.drainBlockerResolution(qc)
+
+    expect(processed).toBeGreaterThan(0)
+    // Critical: origin must be done, never queued.
+    const originAfter = await q.getTask(originId)
+    expect(originAfter?.status).toBe('done')
+    expect(originAfter?.status).not.toBe('queued')
+  })
+
+  it('propagate-first order: propagateRecoveryDone runs first; subscriber drain is a no-op that leaves origin done', async () => {
+    // Inline handler calls propagateRecoveryDone before subscriber drains.
+    // Subscriber drain must be a no-op (not re-queue the already-done origin).
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+    const { Arc } = (await import('../../core/arc')) as {
+      Arc: typeof import('../../core/arc').Arc
+    }
+    const { originId, fixId } = await buildOriginBlockedOnRecovery(q, qc)
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+
+    // Inline handler path: propagateRecoveryDone runs first.
+    const propagation = await Arc.load(originId).propagateRecoveryDone()
+    expect(propagation.originFlipped).toBe(true)
+    expect((await q.getTask(originId))?.status).toBe('done')
+
+    // Now publish the fix's terminal event and drain: must be a no-op.
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: fixId, reason: 'done' })
+    await sub.drainBlockerResolution(qc)
+
+    // Origin still done — not re-queued by the subscriber.
+    expect((await q.getTask(originId))?.status).toBe('done')
+  })
+
+  it('main-committer exception: a main-committer recovery done re-queues origin (not marks done)', async () => {
+    // A main-committer cleans the integration branch; it does not deliver the
+    // origin's work. When it completes, the origin must be RE-QUEUED so the
+    // origin can retry on the clean branch — NOT marked done.
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+    const MAIN_COMMITER_PAYLOAD = JSON.stringify({ recipe: 'main-commiter', integrationBranch: 'main' })
+    const { originId, fixId } = await buildOriginBlockedOnRecovery(q, qc, {
+      recoveryPayload: MAIN_COMMITER_PAYLOAD,
+    })
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: fixId, reason: 'done' })
+    const { processed } = await sub.drainBlockerResolution(qc)
+
+    expect(processed).toBeGreaterThan(0)
+    // Main-committer exception: origin re-queued, not done.
+    const originAfter = await q.getTask(originId)
+    expect(originAfter?.status).toBe('queued')
+    expect(originAfter?.status).not.toBe('done')
+  })
+
+  it('origin dependents are unblocked when recovery done propagates origin to done', async () => {
+    // When the recovery done flips origin to done, anything blocked on origin
+    // must be released (via propagateRecoveryDone → unblockByCompletion(origin)).
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+    const { originId, fixId } = await buildOriginBlockedOnRecovery(q, qc)
+
+    // Add a downstream task blocked on the origin.
+    const downstream = await q.enqueueTask('depends-on-origin', undefined, { skipTriage: true })
+    await qc.execute({
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+      args: [downstream.id, originId, Date.now()],
+    })
+    await qc.execute({
+      sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+      args: [downstream.id],
+    })
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: fixId, reason: 'done' })
+    await sub.drainBlockerResolution(qc)
+
+    expect((await q.getTask(originId))?.status).toBe('done')
+    // Downstream must be released to queued via the cascade.
+    expect((await q.getTask(downstream.id))?.status).toBe('queued')
+  })
+})
+
 // Regression: mars-f109e203 — late recovery success must resurrect its origin to done.
 //
 // Incident (2026-07-06, origin mars-50e3b511 / recovery fix-a2b92b18):

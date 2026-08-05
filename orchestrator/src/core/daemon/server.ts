@@ -3157,6 +3157,10 @@ export const startDaemon = async (
                 `[unblock] task ${o.taskId} re-queued after blocker task ${id} completed`,
               )
               bus.emit('task.queued', { taskId: o.taskId })
+            } else if (o.outcome === 'done-via-recovery') {
+              log(
+                `[unblock] task ${o.taskId} propagated to done (own recovery ${id} succeeded)`,
+              )
             } else if (o.outcome === 'failed') {
               log(
                 `[unblock] task ${o.taskId} failed at unblock (retry budget exhausted)`,

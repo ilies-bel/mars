@@ -90,7 +90,9 @@ export async function drainBlockerResolution(
       if (payload.reason !== 'done' && payload.reason !== 'dropped') return false
 
       const result = await Arc.unblockByCompletion(payload.taskId)
-      return result.outcomes.some((o) => o.outcome === 'queued' || o.outcome === 'failed')
+      return result.outcomes.some(
+        (o) => o.outcome === 'queued' || o.outcome === 'failed' || o.outcome === 'done-via-recovery',
+      )
     },
   })
 }

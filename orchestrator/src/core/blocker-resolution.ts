@@ -233,7 +233,14 @@ export interface BlockByFailureResult {
 
 export interface UnblockOutcome {
   taskId: string
-  outcome: 'queued' | 'failed' | 'noop'
+  /**
+   * - `'queued'`          — dependent was re-queued normally.
+   * - `'done-via-recovery'` — dependent was the recovery's origin; propagateRecoveryDone
+   *                          flipped it to done instead of re-queuing (mars-f2034bb9).
+   * - `'failed'`          — dependent failed at unblock time (orphaned origin / worktree ahead).
+   * - `'noop'`            — no state change (still has unsettled blockers, or already processed).
+   */
+  outcome: 'queued' | 'done-via-recovery' | 'failed' | 'noop'
   retryCount: number
   failureReason?: string
 }

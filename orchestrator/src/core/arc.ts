@@ -2401,6 +2401,37 @@ export class Arc {
         outcomes.push({ taskId: row.id, outcome: 'noop', retryCount })
         continue
       }
+      // Recovery-done intercept (mars-f2034bb9): when the settling blocker IS
+      // this dependent's own recovery task (kind='fix', fixForTaskId===dependent,
+      // status='done'), do NOT re-queue the origin — propagate done to it
+      // instead (CLAUDE.md contract: "a successful recovery counts as its
+      // origin reaching done").  This makes the subscriber path converge with
+      // the inline propagateRecoveryDone() call in the daemon regardless of
+      // which path drains first.  propagateRecoveryDone is idempotent on
+      // already-done origins, so whichever path runs second is a no-op.
+      //
+      // EXCEPTION — main-committer recoveries (recipe='main-commiter') skip
+      // this path.  Their role is to clean the integration branch, not to
+      // deliver the origin's work; they fall through to the normal re-queue so
+      // the origin retries on the now-clean branch.
+      //
+      // Throws on propagateRecoveryDone failure — deliberately not caught here
+      // so the subscriber's drainWithStall stall mechanism surfaces it as an
+      // action-queue item rather than silently degrading into a re-queue.
+      if (
+        completingTask?.kind === 'fix' &&
+        completingTask.status === 'done' &&
+        completingTask.fixForTaskId === row.id &&
+        parseMainCommiterPayload(completingTask.recoveryPayload)?.recipe !== MAIN_COMMITER_RECIPE
+      ) {
+        const propagation = await Arc.load(row.id).propagateRecoveryDone()
+        outcomes.push({
+          taskId: row.id,
+          outcome: propagation.originFlipped ? 'done-via-recovery' : 'noop',
+          retryCount,
+        })
+        continue
+      }
       // Fetch the dependent task once; the same row is used for both the
       // orphaned-origin guard below and the worktree-reset path further down.
       const dep = await getTask(row.id)

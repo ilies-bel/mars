@@ -441,7 +441,10 @@ describe('queue-fix-tasks', () => {
     expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(1)
   })
 
-  it('daemon trigger: when a fix task lands done, the source task it blocks transitions back to queued', async () => {
+  it('daemon trigger: when a fix task lands done, the source task it blocks transitions to done via propagateRecoveryDone', async () => {
+    // mars-f2034bb9: a recovery completing its origin's work must flip the
+    // origin to 'done' (not re-queue it). unblockByCompletion now detects the
+    // own-recovery edge and routes through propagateRecoveryDone.
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft, br, rc } = await loadModules(repo)
     const cleanup = registerTestRecipe(rc, 'verify:typecheck/unclassified')
@@ -453,15 +456,17 @@ describe('queue-fix-tasks', () => {
     })
     expect(f.outcome).toBe('blocked')
 
-    // Fix task lands done.
+    // Fix task lands done (recovery succeeded — it ran and merged the work).
     await q.updateTask(f.fixTaskId!, { status: 'done' })
 
     const result = await br.onBlockerTaskCompleted(f.fixTaskId!)
     expect(result.outcomes).toHaveLength(1)
-    expect(result.outcomes[0].outcome).toBe('queued')
+    // Own-recovery path: outcome is 'done-via-recovery', not 'queued'.
+    expect(result.outcomes[0].outcome).toBe('done-via-recovery')
 
     const reloaded = await q.getTask(t.id)
-    expect(reloaded?.status).toBe('queued')
+    // Origin is done — the recovery delivered its work.
+    expect(reloaded?.status).toBe('done')
     cleanup()
   })
 
@@ -502,13 +507,16 @@ describe('queue-fix-tasks', () => {
 
     await q.updateTask(f1.fixTaskId, { status: 'done' })
     const result = await br.onBlockerTaskCompleted(f1.fixTaskId)
-    const queuedIds = result.outcomes
-      .filter((o) => o.outcome === 'queued')
-      .map((o) => o.taskId)
-      .sort()
-    expect(queuedIds).toEqual([t1.id, t2.id].sort())
 
-    expect((await q.getTask(t1.id))?.status).toBe('queued')
+    // mars-f2034bb9: t1 is the fix task's own origin (fixForTaskId=t1.id) →
+    // propagateRecoveryDone flips it to 'done', not 'queued'.
+    // t2 is a piggybacking dependent (fixForTaskId≠t2.id) → normal re-queue.
+    const doneViaRecovery = result.outcomes.filter((o) => o.outcome === 'done-via-recovery')
+    const queued = result.outcomes.filter((o) => o.outcome === 'queued')
+    expect(doneViaRecovery.map((o) => o.taskId)).toEqual([t1.id])
+    expect(queued.map((o) => o.taskId)).toEqual([t2.id])
+
+    expect((await q.getTask(t1.id))?.status).toBe('done')
     expect((await q.getTask(t2.id))?.status).toBe('queued')
     cleanup()
   })
@@ -561,14 +569,15 @@ describe('queue-fix-tasks', () => {
     const fix = await q.getTask(r1.fixTaskId)
     expect(fix?.priority).toBe(3)
 
-    // Completing the shared fix flips both sources back to queued.
+    // Completing the shared fix: t1 is the fix's own origin → done via recovery;
+    // t2 is a piggybacker → re-queued to retry on the fixed codebase.
+    // (mars-f2034bb9: unblockByCompletion now detects own-recovery edges.)
     await q.updateTask(r1.fixTaskId, { status: 'done' })
     const result = await br.onBlockerTaskCompleted(r1.fixTaskId)
-    const queuedIds = result.outcomes
-      .filter((o) => o.outcome === 'queued')
-      .map((o) => o.taskId)
-      .sort()
-    expect(queuedIds).toEqual([t1.id, t2.id].sort())
+    const doneViaRecovery = result.outcomes.filter((o) => o.outcome === 'done-via-recovery')
+    const queued = result.outcomes.filter((o) => o.outcome === 'queued')
+    expect(doneViaRecovery.map((o) => o.taskId)).toEqual([t1.id])
+    expect(queued.map((o) => o.taskId)).toEqual([t2.id])
     delete rc.recipes['shared-sig']
   })
 
