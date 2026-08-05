@@ -1,30 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { openDb, type DbClient } from '../../core/lib/db.js';
-import { ensureSchema } from '../../core/lib/pg-schema.js';
+import { type DbClient } from '../../core/lib/db.js';
+import { getTestDb } from '../../../test/db-fixture.js';
 import { processedOnce } from '../processed-once.js';
-
-let dbSeq = 0;
-
-/**
- * Fresh in-memory PGlite instance per test (MARS_DB_BACKEND=pglite is set by
- * test/setup-env.ts; the target string is only an identity key).
- */
-async function makeClient(): Promise<DbClient> {
-  const client = openDb(`test:processed-once:${process.pid}:${dbSeq++}`);
-  // The canonical schema carries the subscriber_processed_events dedup table.
-  await ensureSchema(client);
-  // A toy "side effects" table acts as the observable boundary for the
-  // tests — we count rows here rather than poking at the dedup table.
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS side_effects (
-      id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-      subscriber_id text   NOT NULL,
-      event_id      bigint NOT NULL,
-      note          text   NOT NULL
-    )
-  `);
-  return client;
-}
 
 async function countSideEffects(
   client: DbClient,
@@ -43,11 +20,21 @@ describe('processedOnce', () => {
   let client: DbClient;
 
   beforeEach(async () => {
-    client = await makeClient();
+    client = await getTestDb();
+    // A toy "side effects" table acts as the observable boundary for the
+    // tests — we count rows here rather than poking at the dedup table.
+    await client.execute(`
+      CREATE TABLE side_effects (
+        id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        subscriber_id text   NOT NULL,
+        event_id      bigint NOT NULL,
+        note          text   NOT NULL
+      )
+    `);
   });
 
   afterEach(async () => {
-    await client.close();
+    await client.execute('DROP TABLE side_effects');
   });
 
   it('runs the side effect exactly once across two invocations with the same eventId', async () => {

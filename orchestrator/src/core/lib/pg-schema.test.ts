@@ -7,6 +7,7 @@ import {
   SCHEMA_TABLES,
   SCHEMA_VERSION,
 } from './pg-schema.js'
+import { FIXTURE_TIMESTAMP_ENCODINGS } from './timestamp-encodings.js'
 
 let keyCounter = 0
 const freshKey = (): string => `pg-schema-test-${process.pid}-${(keyCounter += 1)}`
@@ -35,6 +36,19 @@ const columnsOf = async (c: DbClient, table: string): Promise<Map<string, string
 }
 
 describe('ensureSchema', () => {
+  it('keeps every directly seeded fixture timestamp column classified by its storage encoding', async () => {
+    const c = await freshSchemaClient()
+
+    for (const [table, columns] of Object.entries(FIXTURE_TIMESTAMP_ENCODINGS)) {
+      const schemaColumns = await columnsOf(c, table)
+      for (const [column, encoding] of Object.entries(columns)) {
+        expect(schemaColumns.get(column), `${table}.${column}`).toBe(
+          encoding === 'epoch-millis' ? 'bigint' : 'timestamp with time zone',
+        )
+      }
+    }
+  })
+
   it('creates every canonical table', async () => {
     const c = await freshSchemaClient()
     const r = await c.execute(
@@ -606,7 +620,8 @@ describe('ensureSchema', () => {
     const cols = await columnsOf(c, 'task_blockers')
     expect(cols.get('provenance')).toBe('text')
     expect(cols.get('created_at')).toBe('bigint')
-    const now = Date.now()
+    const now = new Date().toISOString()
+    const nowMs = Date.now()
     await c.execute(
       `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
        VALUES ('t1', 'p', 'queued', ?, ?), ('t2', 'p', 'queued', ?, ?)`,
@@ -614,7 +629,7 @@ describe('ensureSchema', () => {
     )
     await c.execute(
       `INSERT INTO task_blockers (task_id, blocker_task_id, created_at) VALUES ('t1', 't2', ?)`,
-      [now],
+      [nowMs],
     )
     const row = await c.execute(
       `SELECT state, provenance FROM task_blockers WHERE task_id = 't1'`,
@@ -796,7 +811,7 @@ describe('ensureSchema', () => {
       'idx_task_blockers_blocker', 'idx_task_blockers_task_state',
       'idx_trace_events_task_time', 'idx_trace_events_time_desc',
       'idx_trace_events_origin_time', 'idx_trace_events_step_ended_time',
-      'idx_proposals_fingerprint', 'idx_scorer_results_scorer_task',
+      'idx_proposals_source_fingerprint', 'idx_scorer_results_scorer_task',
       'idx_promotion_ledger_workflow', 'idx_memory_packets_domain_salience',
       'idx_action_queue_fingerprint_state', 'idx_action_queue_state',
       'idx_action_queue_open_snoozed_until',
@@ -806,7 +821,8 @@ describe('ensureSchema', () => {
     ]) {
       expect(defs.has(name), `index ${name} missing`).toBe(true)
     }
-    expect(defs.get('idx_proposals_fingerprint')).toContain('IS NOT NULL')
+    expect(defs.get('idx_proposals_source_fingerprint')).toContain('UNIQUE')
+    expect(defs.get('idx_proposals_source_fingerprint')).toContain('IS NOT NULL')
     expect(defs.get('idx_trace_events_step_ended_time')).toContain('step_ended')
     expect(defs.get('idx_trace_events_time_desc')).toContain('DESC')
     expect(defs.get('idx_tasks_priority_created')).toContain('priority DESC')

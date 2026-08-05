@@ -34,7 +34,7 @@
  *   (flagged as a real gap by the migration inventory).
  */
 
-import type { DbClient } from './db.js'
+import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
@@ -220,6 +220,7 @@ const DDL: readonly string[] = [
     env_restart_count    bigint NOT NULL DEFAULT 0,
     requeue_anchor_ms    bigint,
     requeue_dispatch_uptime_ms bigint,
+    quota_rejected_attempts bigint NOT NULL DEFAULT 0,
     created_at           timestamptz NOT NULL,
     updated_at           timestamptz NOT NULL
   )`,
@@ -753,6 +754,11 @@ const DDL: readonly string[] = [
   // `deferrable` is a 0/1 flag (queue.ts reads it as Number(row.deferrable) === 1).
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS stall_diagnostics text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS "deferrable" bigint NOT NULL DEFAULT 0`,
+  // Counter of provider quota-rejection attempts: attempts where the coder never
+  // ran because the provider rejected the run before starting (rate/spend limit).
+  // The poll-fallback ceiling subtracts this from maxAttempt to compute the
+  // effective real-work attempt count, so quota storms do not burn the ceiling.
+  `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS quota_rejected_attempts bigint NOT NULL DEFAULT 0`,
   // `evaporated_at` -> `closed_at`. This block must stay idempotent: the whole
   // DDL batch replays on EVERY daemon boot inside one transaction, so a single
   // failing statement aborts the batch and the daemon can never start again.
@@ -1687,6 +1693,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'gate_enrichment',
   'gate_burn_in',
   'failure_signature_streak',
+  'failure_reflection_signatures',
   'verify_gates',
   'verify_gate_failure_streaks',
   'gate_fix_proposals',
@@ -1727,6 +1734,7 @@ export const IDENTITY_COLUMNS: Readonly<Record<string, string>> = {
   chat_messages: 'seq',
   usage_snapshots: 'id',
   mcp_worker_audit: 'id',
+  conversation_notice_batches: 'id',
 }
 
 /**
@@ -1735,6 +1743,30 @@ export const IDENTITY_COLUMNS: Readonly<Record<string, string>> = {
  * every caller agrees on the same lock. Exported so tests can reference it.
  */
 export const SCHEMA_ADVISORY_LOCK_KEY = 20260726
+
+/**
+ * Rows that belong to an empty, usable schema rather than to application
+ * activity. Keep these separate from DDL so the test database harness can
+ * restore them after TRUNCATE without replaying every migration.
+ */
+const schemaSeedStatements = (appliedAt: string): DbStatement[] => [
+  {
+    sql: `INSERT INTO chat_threads
+            (id, title, status, posture, created_at, updated_at)
+          VALUES ('main', '', 'idle', 'triage', 0, 0)
+          ON CONFLICT (id) DO NOTHING`,
+  },
+  {
+    sql: `INSERT INTO schema_migrations (version, applied_at)
+          VALUES (?, ?) ON CONFLICT (version) DO NOTHING`,
+    args: [SCHEMA_VERSION, appliedAt],
+  },
+]
+
+/** Restore rows that `ensureSchema` creates in a new database after a test reset. */
+export async function __reseedSchemaForTests(client: DbClient): Promise<void> {
+  await __execSchemaBatch(client, schemaSeedStatements(new Date().toISOString()))
+}
 
 /**
  * Applies the complete canonical schema (idempotent) and records
@@ -1766,10 +1798,6 @@ export async function ensureSchema(client: DbClient): Promise<void> {
     // pg_advisory_xact_lock auto-releases on COMMIT/ROLLBACK.
     { sql: 'SELECT pg_advisory_xact_lock(?)', args: [SCHEMA_ADVISORY_LOCK_KEY] },
     ...DDL,
-    {
-      sql: `INSERT INTO schema_migrations (version, applied_at)
-            VALUES (?, ?) ON CONFLICT (version) DO NOTHING`,
-      args: [SCHEMA_VERSION, new Date().toISOString()],
-    },
+    ...schemaSeedStatements(new Date().toISOString()),
   ])
 }

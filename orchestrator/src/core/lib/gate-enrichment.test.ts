@@ -22,8 +22,8 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it, expect, beforeEach } from 'vitest'
-import { openDb, type DbClient } from './db.js'
-import { ensureSchema } from './pg-schema.js'
+import { type DbClient } from './db.js'
+import { getTestDb } from '../../../test/db-fixture.js'
 import {
   approveEnrichment,
   appendEnrichmentScopes,
@@ -55,12 +55,7 @@ import {
   type VerifyStep,
 } from './git/verify'
 
-let dbSeq = 0
-const makeDb = async (): Promise<DbClient> => {
-  const client = openDb(`gate-enrichment-test-${process.pid}-${++dbSeq}`)
-  await ensureSchema(client)
-  return client
-}
+const makeDb = (): Promise<DbClient> => getTestDb()
 
 /** A registered ENCODABLE signature (FailureKind facet: command family). */
 const ENCODABLE_SIG = 'verify:typecheck/typecheck-cannot-find-name'

@@ -395,14 +395,13 @@ const arcPurge: Command = {
   summary: 'purge a whole task arc (origin + all same-origin siblings)',
   usage: 'usage: mars arc purge <id> [--force]',
   run: async (args, deps) => {
-    const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
     const positionals = args.positional.filter((a) => !a.startsWith('--'))
     const id = positionals[0]
     if (!id) {
       deps.err('usage: mars arc purge <id> [--force]')
       return { code: 1 }
     }
-    const force = flagSet.has('--force')
+    const force = hasFlag(args, '--force')
     let result: { purgedIds: string[]; originId: string }
     try {
       result = (await deps.daemon.sendRequest({

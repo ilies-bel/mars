@@ -528,6 +528,13 @@ export interface Task {
   /** Cumulative dispatch uptime at the first dispatch of this re-queue episode. */
   requeueDispatchUptimeMs?: number | null
   /**
+   * Count of attempts where the coder never ran because the provider rejected
+   * the run before starting (rate/spend limit). The poll-fallback ceiling
+   * subtracts this from `maxAttempt` to compute the effective real-work attempt
+   * count, so a quota wall does not burn the ceiling. Defaults to 0.
+   */
+  quotaRejectedAttempts?: number
+  /**
    * Structured QA report persisted by behaviour-verify. Contains per-criterion
    * verdicts, screenshot paths, and timing data. Null when no behaviour-verify
    * has run or on legacy rows.
@@ -797,6 +804,7 @@ SELECT
   t.requeue_dispatch_uptime_ms,
   t.qa_report_json,
   t.deferrable,
+  t.quota_rejected_attempts,
   t.created_at, t.updated_at
 FROM tasks t`
 
@@ -899,6 +907,7 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
         : Number(row.requeue_dispatch_uptime_ms),
     qaReport: parseQaReport(row.qa_report_json),
     deferrable: Number(row.deferrable ?? 0) === 1,
+    quotaRejectedAttempts: Number(row.quota_rejected_attempts ?? 0),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -1138,6 +1147,7 @@ export const updateTask = async (
       | 'requeueAnchorMs'
       | 'requeueDispatchUptimeMs'
       | 'stallDiagnostics'
+      | 'quotaRejectedAttempts'
     > & {
       /** Typed explanation persisted when a task is deliberately dropped. */
       dropReason?: TaskDropReason | null
@@ -1399,6 +1409,10 @@ export const updateTask = async (
     fields.push('requeue_dispatch_uptime_ms = ?')
     args.push(patch.requeueDispatchUptimeMs)
   }
+  if (patch.quotaRejectedAttempts !== undefined) {
+    fields.push('quota_rejected_attempts = ?')
+    args.push(patch.quotaRejectedAttempts)
+  }
   fields.push('updated_at = ?')
   args.push(new Date().toISOString())
   args.push(id)
@@ -1577,7 +1591,7 @@ export const reopenTerminalTask = async (
       args: [id, reason, now],
     },
     {
-      sql: `UPDATE tasks SET status = 'queued', updated_at = ?, error = NULL,
+      sql: `UPDATE tasks SET updated_at = ?, status = 'queued', error = NULL,
               failure_reason = NULL, failure_signature = NULL, failure_reason_code = NULL
             WHERE id = ?`,
       args: [now, id],

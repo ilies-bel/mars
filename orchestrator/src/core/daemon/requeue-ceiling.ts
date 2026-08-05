@@ -120,6 +120,14 @@ export const checkAndEscalateRequeueCeiling = async (
   // A fresh task with no step records is not stuck in the re-queue cycle.
   if (maxAttempt === 0) return false
 
+  // Quota-rejected attempts (provider rate/spend-limit rejections) do not
+  // represent work the coder performed: the coder never ran, the worktree is
+  // untouched, and the rejection is a fleet-wide environmental condition that
+  // no per-task retry can resolve. Subtracting them from the attempt count
+  // gives the number of real dispatch attempts that count toward the ceiling.
+  const effectiveAttempts = Math.max(0, maxAttempt - (t.quotaRejectedAttempts ?? 0))
+  if (effectiveAttempts === 0) return false
+
   // Compute the retry-start anchor.
   //
   // Preference order:
@@ -170,7 +178,9 @@ export const checkAndEscalateRequeueCeiling = async (
   // Either bound trips the escalation. `attemptsExceeded` is checked as a peer
   // of the time bound rather than nested inside it so a hot loop escalates on
   // its attempt count even while it is nowhere near the dispatch-uptime bound.
-  const attemptsExceeded = maxAttempt >= REQUEUE_MAX_ATTEMPTS
+  // Use effectiveAttempts (real attempts minus quota-rejected attempts) so a
+  // provider quota wall does not burn the ceiling.
+  const attemptsExceeded = effectiveAttempts >= REQUEUE_MAX_ATTEMPTS
   if (effectiveElapsedMs < REQUEUE_MAX_RETRY_MS && !attemptsExceeded) {
     // ── Early warning ───────────────────────────────────────────────────────
     if (

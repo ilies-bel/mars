@@ -20,10 +20,16 @@
  */
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { resolve } from 'node:path'
-import { access, constants as fsConstants } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
+import { access, constants as fsConstants, mkdir } from 'node:fs/promises'
 import { integrationBranchName } from './blocker-resolution'
-import { getTask, updateTask, resolveQueueClient } from './queue'
+import {
+  getTask,
+  updateTask,
+  resolveQueueClient,
+  reopenTerminalTask,
+  TERMINAL_TASK_STATUSES,
+} from './queue'
 import { getRepoRoot, getStateDir } from './context'
 import { acquireLock } from './lib/git/lock'
 import { resolveAllRowsForTask } from './lib/action-queue'
@@ -34,6 +40,7 @@ import {
 } from './lib/git/verify'
 import { loadVerifyGates } from './verify-gates'
 import { removeWorktree } from './lib/git/worktree'
+import { provisionWorktreeDeps } from './lib/worktree-deps'
 
 const execFileP = promisify(execFile)
 
@@ -102,26 +109,30 @@ export const landTask = async (
     }
   }
 
-  // ── 3. Require worktree ───────────────────────────────────────────────────
-  const worktreePath = task.worktreePath
-  if (!worktreePath) {
-    return {
-      outcome: 'no-worktree',
-      message:
-        `task ${taskId} has no worktree path; ` +
-        `use 'mars restart ${taskId}' to re-set up the worktree before landing`,
-    }
-  }
+  // ── 3. Restore worktree from the preserved branch when needed ────────────
+  // A missing worktree is recoverable as long as the ahead branch still
+  // exists. Never send the operator to `restart` here: restart intentionally
+  // discards this branch's work in order to start a new implementation.
+  const worktreePath = task.worktreePath ?? resolve(getStateDir(), 'worktrees', taskId)
   try {
     await access(worktreePath, fsConstants.F_OK)
   } catch {
-    return {
-      outcome: 'no-worktree',
-      message:
-        `worktree at ${worktreePath} is missing; ` +
-        `use 'mars restart ${taskId}' to re-create it before landing`,
+    try {
+      await mkdir(dirname(worktreePath), { recursive: true })
+      await execFileP('git', ['worktree', 'add', '--force', worktreePath, branch], {
+        cwd: repoRoot,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return {
+        outcome: 'no-worktree',
+        message:
+          `could not recreate missing worktree at ${worktreePath} from ${branch}: ${msg}. ` +
+          `The branch was left intact; recreate it with \`git worktree add ${worktreePath} ${branch}\` and retry \`mars land ${taskId}\`.`,
+      }
     }
   }
+  await provisionWorktreeDeps({ worktreeRoot: worktreePath, sourceRoot: repoRoot })
 
   // ── 4. Run verify gate ────────────────────────────────────────────────────
   const client = resolveQueueClient()
@@ -195,6 +206,17 @@ export const landTask = async (
   }
 
   // ── 6. Mark task done ─────────────────────────────────────────────────────
+  // `landTask` is the operator gesture for a task that has ALREADY reached a
+  // terminal status (typically 'failed') but whose worktree carries commits
+  // worth keeping. Terminal statuses are absorbing, so the done transition
+  // needs an audited reopen grant first — without it `updateTask` throws
+  // IllegalTransitionError *after* step 5 already fast-forwarded the
+  // integration branch, stranding the operator with landed commits, a task
+  // still marked failed, unresolved action-queue rows and an uncleaned
+  // worktree.
+  if (TERMINAL_TASK_STATUSES.has(task.status)) {
+    await reopenTerminalTask(taskId, 'operator landed worktree-ahead commits')
+  }
   // `updateTask` with status='done' enforces the done-implies-merged invariant
   // (ADR-0052): it checks aheadCount again and redirects to 'failed' if the
   // branch still has commits. Since we just fast-forwarded integration to the

@@ -131,7 +131,13 @@ export const ProjectSelectorInner = ({
           aria-activedescendant={activatedId}
           onKeyDown={onListboxKeyDown}
           data-testid="project-dropdown"
-          className="absolute left-0 top-full z-50 mt-1 min-w-[14rem] rounded border border-primary/30 bg-background shadow-lg outline-none"
+          // max-h-[60vh]: caps at 60% of the viewport so the panel stays inside
+          // the window even with 30+ entries; at ~26px/row that shows ~18 rows on
+          // an 800px viewport — enough to scan without scrolling, but bounded.
+          // overflow-y-auto: scroll internally when the list overflows the cap.
+          // overflow-hidden: clips li backgrounds at the ul's rounded corners so
+          // the selected row's bg-primary/30 doesn't bleed past the border-radius.
+          className="absolute left-0 top-full z-50 mt-1 min-w-[14rem] max-h-[60vh] overflow-y-auto overflow-hidden rounded border border-primary/30 bg-background shadow-lg outline-none"
         >
           {projects.map((p, idx) => {
             const { name, icon } = projectIdentity(p)
@@ -247,6 +253,18 @@ export const ProjectSelector = () => {
       setActiveIndex(null)
     }
   }, [open])
+
+  // Scroll the keyboard-active option into view whenever activeIndex changes.
+  // The listbox uses aria-activedescendant (DOM focus stays on the <ul>), so
+  // the browser will NOT auto-scroll — we must do it explicitly. Without this,
+  // arrowing past the max-h cap leaves the highlight invisible in the scroll
+  // overflow. scrollIntoView({ block: 'nearest' }) moves the minimum amount.
+  useEffect(() => {
+    if (activeIndex === null || !open) return
+    const project = projects[activeIndex]
+    if (!project) return
+    document.getElementById(`ps-opt-${project.projectId}`)?.scrollIntoView({ block: 'nearest' })
+  }, [activeIndex, open, projects])
 
   // Close on outside click
   useEffect(() => {

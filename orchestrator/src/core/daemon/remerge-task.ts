@@ -1,5 +1,10 @@
 import type { WorkflowStore } from '@mars/workflow'
-import { getTask, updateTask } from '../queue'
+import {
+  getTask,
+  reopenTerminalTask,
+  TERMINAL_TASK_STATUSES,
+  updateTask,
+} from '../queue'
 
 export type RemergeErrorCode = 'NOT_FOUND' | 'WRONG_STATUS' | 'NO_BRANCH' | 'NO_COMMITS_AHEAD'
 
@@ -119,6 +124,13 @@ export const coreRemergeTask = async (
   // Route the next dispatch to the remerge pipeline (setup → verify → merge,
   // no code step). coreRestartTask clears this back to null if the operator
   // later calls `mars restart` to do a full re-code.
+  // A terminal task is allowed to re-enter only through this audited seam;
+  // ordinary status writes remain terminal-immutable. The branch/ahead guards
+  // above establish that this is a recovery of preserved work, not a generic
+  // reopening of a failed task.
+  if (TERMINAL_TASK_STATUSES.has(task.status)) {
+    await reopenTerminalTask(id, 'mars remerge existing branch')
+  }
   await updateTask(id, {
     status: 'queued',
     workflow: 'remerge',

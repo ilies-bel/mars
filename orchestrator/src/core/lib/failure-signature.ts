@@ -5,7 +5,7 @@
  * `merge:dirty-target/uncommitted-changes`, `setup:install-failed/lockfile-drift`.
  *
  * The signature is the unit a Recovery recipe binds to (see
- * docs/adr/0002-recipe-per-failure-signature.md). Each registered recipe
+ * docs/knowledge/decisions/0002-recipe-per-failure-signature.md). Each registered recipe
  * declares the signatures it covers; when a failure produces a signature
  * with no recipe, the orchestrator does NOT enqueue a generic recovery —
  * it raises an actionQueue item and dispatches an Investigator agent.

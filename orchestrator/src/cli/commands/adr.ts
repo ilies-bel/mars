@@ -1,5 +1,5 @@
 /**
- * `adr` command group: `add` (daemon-routed write to docs/adr/) plus `list`
+ * `adr` command group: `add` (daemon-routed write to docs/knowledge/decisions/) plus `list`
  * and `show` (local filesystem reads).
  */
 
@@ -10,11 +10,11 @@ import type { Command } from '../command'
 import { spawnNoticeErr } from './shared'
 
 const adrDirFor = (repoRoot: string): string =>
-  resolvePath(repoRoot, 'docs/adr')
+  resolvePath(repoRoot, 'docs/knowledge/decisions')
 
 const adrAdd: Command = {
   path: 'adr add',
-  summary: 'add an ADR (daemon-routed write to docs/adr/)',
+  summary: 'add an ADR (daemon-routed write to docs/knowledge/decisions/)',
   usage: 'usage: mars adr add "<title>" "<body>" (body may be @path)',
   run: async (args, deps) => {
     const title = args.positional[0]
@@ -46,7 +46,7 @@ const adrList: Command = {
       entries = await readdir(adrDir)
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        deps.out('(no ADRs; docs/adr/ does not exist yet)')
+        deps.out('(no ADRs; docs/knowledge/decisions/ does not exist yet)')
         return { code: 0 }
       }
       throw err
@@ -55,7 +55,7 @@ const adrList: Command = {
       .filter((n) => /^\d{4}-[a-z0-9-]+\.md$/.test(n))
       .sort()
     if (adrs.length === 0) {
-      deps.out('(no ADRs in docs/adr/)')
+      deps.out('(no ADRs in docs/knowledge/decisions/)')
       return { code: 0 }
     }
     for (const name of adrs) {
@@ -83,7 +83,7 @@ const adrShow: Command = {
     try {
       entries = await readdir(adrDir)
     } catch {
-      deps.err(`no ADR matching "${arg}" (docs/adr/ does not exist)`)
+      deps.err(`no ADR matching "${arg}" (docs/knowledge/decisions/ does not exist)`)
       return { code: 1 }
     }
     const padded = /^\d+$/.test(arg) ? arg.padStart(4, '0') : null
@@ -93,7 +93,7 @@ const adrShow: Command = {
       return false
     })
     if (!match) {
-      deps.err(`no ADR matching "${arg}" in docs/adr/`)
+      deps.err(`no ADR matching "${arg}" in docs/knowledge/decisions/`)
       return { code: 1 }
     }
     const text = await readFile(resolvePath(adrDir, match), 'utf8')

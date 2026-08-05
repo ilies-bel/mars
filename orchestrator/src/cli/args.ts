@@ -34,11 +34,13 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--limit',
   '--out',
   '--author',
+  '--by',
   '--note',
   '--root-cause',
   '--avoid',
   '--blocked-by',
   '--source',
+  '--payload',
   '--status',
   '--from',
   '--kind',
@@ -84,6 +86,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // mars chat-feedback list — filter by rating ('up' or 'down')
   '--rating',
   '--origin-arc',
+  '--origin',
   // mars verify-gate / mars verify — verify gate registry management
   '--scope',
   '--cmd',
@@ -118,6 +121,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
  */
 export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--force',
+  '--abort',
   '--dry-run',
   '--verbose',
   '--dev',
@@ -141,6 +145,7 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--register-project',
   // `mars init --start`: print daemon URL non-interactively (useful with --yes).
   '--start',
+  '--skip-doctor',
   // `mars task add --live`: sugar for `--workflow live`. DISABLED — the live
   // pipeline is withheld while HITL is being refined; the flag still parses so
   // it can be rejected with a clear error rather than falling through to
@@ -157,6 +162,12 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--optional',
   // mars list --all: bypass the default 10-row limit and return every matching task.
   '--all',
+  // mars task check --uncheck: clear a done-criterion instead of setting it.
+  '--uncheck',
+  // mars worktree reclaim --no-dry-run: rejected today (deletion mode is not
+  // implemented), but declared so the leaf reads it off `args.flags` like every
+  // other boolean rather than fishing it out of the positionals.
+  '--no-dry-run',
   // mars release-notes list — cursor-based feed filtering
   '--unseen',
   '--mark-viewed',

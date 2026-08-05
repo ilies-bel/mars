@@ -2,7 +2,10 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { resolveUploadPath } from './chatUploadPath.ts'
 import { failureKindDecisions } from './actionQueueDecisions.ts'
-import { loadProjectRegistry } from '../../orchestrator/src/registry/projects.ts'
+import {
+  ensureProjectRegistered,
+  loadProjectRegistry,
+} from '../../orchestrator/src/registry/projects.ts'
 import {
   fetchKpis,
   fetchKpiSeries,
@@ -46,6 +49,12 @@ export interface ServerDeps {
   proxyPost?: (stateDir: string, path: string, body: unknown, method?: 'POST' | 'PUT') => Promise<DaemonActionResult>
   /** SSE heartbeat interval in ms. Defaults to 15 000. Override in tests to avoid slow polls. */
   sseHeartbeatMs?: number
+  /**
+   * Called once at startup to register this repo in the project registry.
+   * Defaults to {@link ensureProjectRegistered}. Override in tests to control
+   * or observe registration without touching the real filesystem.
+   */
+  _registerProject?: (repoRoot: string) => void
 }
 
 const parseArgs = (argv: string[]): CliArgs => {
@@ -131,6 +140,21 @@ export const startServer = async (
   const sseHeartbeatMs = deps.sseHeartbeatMs ?? 15_000
   // Resolve the default context once for startup logging and healthz.
   const defaultCtx = resolveRepo(args.repo)
+
+  // Self-register this repo in the project registry so the ProjectSelector
+  // shows it even when no daemon has run yet. ensureProjectRegistered is
+  // idempotent — a repeat boot performs no I/O and cannot create duplicates.
+  // Registration failure is non-fatal: a read-only home dir or a malformed
+  // existing file must not prevent the UI from starting.
+  const registerProject = deps._registerProject ?? ((repoRoot: string) => {
+    ensureProjectRegistered({ repoRoot })
+  })
+  try {
+    registerProject(defaultCtx.repoRoot)
+  } catch (err) {
+    console.warn(`mars-ui: could not register repo in project registry: ${(err as Error).message}`)
+  }
+
   // Per-project handle cache: lazily opens TaskDb/StateDb/SseHub on first
   // request per project and reuses them on subsequent requests.
   const getProjectContext = createProjectContextCache(args.repo)

@@ -48,6 +48,7 @@ export type DaemonRequest =
       }
     }
   | { op: 'continue'; id: string }
+  | { op: 'stop-task'; id: string }
   | { op: 'restart'; id: string; force?: boolean }
   | { op: 'remerge'; id: string }
   | { op: 'purge'; id: string; force?: boolean }

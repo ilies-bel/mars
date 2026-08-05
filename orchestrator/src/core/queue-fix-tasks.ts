@@ -9,7 +9,6 @@ import { type FixRecipeContext, hasRecipe } from './lib/fix-recipes'
 import { raiseActionQueueItem } from './lib/action-queue'
 import type { ActionQueueKind } from './lib/action-queue-kinds'
 import { truncateFailure } from './lib/truncate-failure'
-import { internalBus } from '../internal-bus'
 import { getTask, reopenTerminalTask, updateTask, type Task } from './queue'
 import {
   getRetryBudget,
@@ -61,7 +60,6 @@ export type {
 
 export const RECOVERY_FAILED_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
 export const UNKNOWN_FAILURE_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
-export const FIX_FAIL_LOOP_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
 
 /**
  * A recovery runs in its origin's existing worktree, so a recorded branch and
@@ -193,22 +191,6 @@ const stepFamilyLabel = (failingStep: string): string => {
  * kills are per-task, never gate-wide, so a fleet-wide identical verdict there
  * is not the "starved gate" signature the monitor guards against.
  */
-const DEFAULT_MAX_FIX_ATTEMPTS = 2
-
-/**
- * Cap on the number of fix-task rows we'll ever insert for a single
- * (sourceTaskId, failureSignature) pair. Once the cap is hit, the next
- * dispatch escalates to the actionQueue instead of looping. The rule is
- * signature-agnostic — no hardcoded signature strings.
- */
-export const getMaxFixAttempts = (): number => {
-  const raw = process.env.MARS_MAX_FIX_ATTEMPTS
-  if (!raw) return DEFAULT_MAX_FIX_ATTEMPTS
-  const n = Number(raw)
-  if (!Number.isFinite(n) || n < 0) return DEFAULT_MAX_FIX_ATTEMPTS
-  return Math.floor(n)
-}
-
 const DEFAULT_MAX_NON_CODE_RETRIES = 3
 
 /**
@@ -264,8 +246,8 @@ const bumpNonCodeRetries = async (
 /**
  * Count every historical fix-task attempt for a given (sourceTaskId,
  * failureSignature) pair, regardless of the fix task's current status.
- * Used to drive the fix-fail-loop cap so failed/done/abandoned attempts
- * still count toward the cap.
+ * Used by the sweeper's retry-budget policy, so failed/done/abandoned
+ * attempts still count toward that budget.
  *
  * Uses the `self_heal_attempts` append-only ledger rather than the `tasks`
  * table, because `updateTask({ status: 'done' })` automatically clears the
@@ -373,35 +355,6 @@ const buildRecoveryEscalationBody = (input: {
     .join('\n')
 }
 
-const buildFixFailLoopBody = (input: {
-  sourceTaskId: string
-  originTaskId: string
-  failingStep: string
-  failureSignature: string
-  branch: string | null
-  truncatedError: string
-  attempts: number
-  cap: number
-}): string => {
-  return [
-    `Task ${input.sourceTaskId} (origin ${input.originTaskId}) hit the fix-fail retry cap of ${input.cap} for signature \`${input.failureSignature}\` after ${input.attempts} attempt(s). The orchestrator has stopped auto-retrying this pair. Task ${input.sourceTaskId} stays 'blocked' until resolved.`,
-    '',
-    'Context:',
-    `  Failing step: ${input.failingStep}`,
-    `  Failure signature: ${input.failureSignature}`,
-    input.branch ? `  Branch: ${input.branch}` : null,
-    `  Prior fix-task attempts: ${input.attempts}`,
-    `  Cap (MARS_MAX_FIX_ATTEMPTS): ${input.cap}`,
-    '',
-    'Last error output (tail-truncated):',
-    '```',
-    input.truncatedError,
-    '```',
-  ]
-    .filter((line) => line !== null)
-    .join('\n')
-}
-
 export interface HandleTaskFailureViaTaskInput {
   taskId: string
   failingStep: string
@@ -443,7 +396,6 @@ export interface HandleTaskFailureViaTaskResult {
     | 'blocked'
     | 'failed'
     | 'escalated'
-    | 'fix-fail-loop'
     | 'noop'
     | 'non-code-retry-exhausted'
     | 'requeued'
@@ -469,12 +421,6 @@ export interface HandleTaskFailureViaTaskResult {
  *  - `escalated`: the failing task is itself a recovery (fix_for_task_id
  *     set). Recovery has a retry budget of 0; we mark it failed and
  *     raise a `recovery-failed` actionQueue item for human attention.
- *  - `fix-fail-loop`: (sourceTaskId, failureSignature) pair has already
- *     burned its fix-task attempts cap (`MARS_MAX_FIX_ATTEMPTS`, default
- *     2). No new fix task is inserted; a deduped `fix-fail-loop` actionQueue
- *     item is raised and the source task stays in `blocked` with its
- *     existing error summary.
- *
  * Plus `failed` when the legacy retry budget for the original task is
  * exhausted, and `noop` when the task row vanished.
  */
@@ -1190,106 +1136,6 @@ export const handleTaskFailureWithFixTask = async (
       outcome: 'failed',
       failureSignature,
       retryCount: task.retryCount,
-    }
-  }
-
-  // Fix-fail-loop cap. Count every historical fix-task row for this
-  // (sourceTaskId, failureSignature) pair regardless of status. When
-  // the cap is hit, stop inserting new fix tasks and escalate to the
-  // actionQueue; repeat escalations dedupe on (kind, signature) fingerprint
-  // and bump seenCount on the existing row. Source task stays in
-  // 'blocked' with its existing error summary — never silently flipped
-  // back to 'queued'.
-  const cap = getMaxFixAttempts()
-  const priorAttempts = await countFixTaskAttempts(
-    input.taskId,
-    failureSignature,
-    s,
-  )
-  if (priorAttempts >= cap) {
-    // AUDIT (mars-88a4e657): safe site for the "blocked-implies-edge"
-    // invariant. We re-stamp 'blocked' here AFTER `priorAttempts >= cap`,
-    // which means at least one earlier `upsertFixTask` call already
-    // inserted a `task_blockers` edge for this (sourceTaskId, signature)
-    // pair in the same transaction that first blocked the task. The edge
-    // survives until explicitly cleared by `mars unblock`, so this branch
-    // re-stamps a status the row already has.
-    const now = new Date().toISOString()
-    // No durable task.blocked emit here: per the AUDIT note above this
-    // re-stamps a status the row already holds (no real transition), so an
-    // event would be spurious. Arc.setTaskStatus('blocked') satisfies the
-    // single-writer invariant; the no-mapping path skips the publish.
-    await Arc.setTaskStatus(input.taskId, 'blocked')
-
-    const actionQueueItemId = await raiseActionQueueItem({
-      kind: FIX_FAIL_LOOP_ACTION_QUEUE_KIND,
-      category: 'orchestrator',
-      priority: 'high',
-      title: capTitle(`Diagnose and retry, or abandon ${input.taskId}: fix-fail loop on ${failureSignature}`),
-      body: buildFixFailLoopBody({
-        sourceTaskId: input.taskId,
-        originTaskId: task.originId,
-        failingStep: input.failingStep,
-        failureSignature,
-        branch,
-        truncatedError,
-        attempts: priorAttempts,
-        cap,
-      }),
-      payload: {
-        sourceTaskId: input.taskId,
-        originTaskId: task.originId,
-        failingStep: input.failingStep,
-        failureSignature,
-        attempts: priorAttempts,
-        cap,
-        branch,
-      },
-      context: {
-        repoRoot: process.env.MARS_REPO ?? null,
-      },
-      raisedBy: 'agent:fail-fix-handler',
-      // Dedup on the failure signature so repeat escalations bump
-      // seenCount instead of spawning new rows. No signature string is
-      // hardcoded — the value flows from the classifier.
-      signature: failureSignature,
-      // Collapse all failure-kinds for the same origin into one row.
-      originTaskId: task.originId,
-      occurrence: {
-        at: now,
-        sourceTaskId: input.taskId,
-        failingStep: input.failingStep,
-        attempts: priorAttempts,
-      },
-    })
-
-    import('./lib/failure-reflector').then(({ spawnFailureReflector }) =>
-      spawnFailureReflector({
-        taskId: input.taskId,
-        lastStep: input.failingStep,
-        lastErrorSignature: failureSignature,
-        retryCount: task.retryCount,
-        worktreePath: task.worktreePath,
-        branch,
-      }).catch((err) =>
-        // eslint-disable-next-line no-console
-        console.warn('[failure-reflector] spawn failed (non-fatal):', err),
-      ),
-    )
-
-    internalBus().emit('task.blocked', {
-      taskId: input.taskId,
-      fixTaskId: null,
-      failureSignature,
-      failingStep: input.failingStep,
-    })
-
-    return {
-      outcome: 'fix-fail-loop',
-      failureSignature,
-      retryCount: task.retryCount,
-      actionQueueItemId,
-      attempts: priorAttempts,
     }
   }
 

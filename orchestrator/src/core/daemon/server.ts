@@ -1232,7 +1232,12 @@ export const startDaemon = async (
     await acquire(sems.implement)
     // commitInFlight records the inFlight entry AND clears the matching claim
     // in one step (claim-clears-after-commit); see dispatchTriage.
-    const releaseTracking = tracker.commitInFlight(task.id, 'implement')
+    const taskAbortController = new AbortController()
+    const releaseTracking = tracker.commitInFlight(
+      task.id,
+      'implement',
+      taskAbortController,
+    )
     // Merge-queue handoff bookkeeping.
     // `mergeHandedOff` flips to true when the workflow calls enqueueMergeJobAndAwait,
     // at which point the implement slot has been released and merge tracking started.
@@ -1596,8 +1601,13 @@ export const startDaemon = async (
           runId: task.id,
           logger: workflowLogger,
           onEvent,
+          signal: taskAbortController.signal,
         },
       )
+      if (taskAbortController.signal.aborted) {
+        log(`[implement] ${task.id} stopped by operator`)
+        return
+      }
       // Switch on the WorkflowTerminalError discriminant.  The workflow steps
       // throw WorkflowTerminalError (subclass of Error) with a `kind` field for
       // every self-handled terminal condition; the engine propagates it verbatim
@@ -1708,6 +1718,10 @@ export const startDaemon = async (
       // each individually guarded; whatever happens, control reaches the
       // `finally` and the function resolves.
       const message = err instanceof Error ? err.message : String(err)
+      if (taskAbortController.signal.aborted) {
+        log(`[implement] ${task.id} stopped by operator`)
+        return
+      }
       // The blockers-abort detector lives in the implement workflow module. A
       // dynamic import can itself reject (module-resolution / eval error), and
       // that rejection would escape this catch. Load it best-effort: if the
@@ -3218,6 +3232,22 @@ export const startDaemon = async (
     return result
   }
 
+  // `mars task stop <id>` aborts only a currently dispatched workflow. The
+  // task is left failed (not dropped), preserving its branch and worktree for
+  // an explicit `mars continue <id>`.
+  const handleStop = async (id: string): Promise<void> => {
+    if (!tracker.abort(id)) {
+      throw new Error(`task ${id} is not in flight`)
+    }
+    await handleUpdate(id, {
+      status: 'failed',
+      error: 'stopped by operator via `mars task stop`',
+      failureReason: CANCELLED_FAILURE_REASON,
+      failureReasonCode: 'task-stopped',
+    })
+    log(`[stop-task] ${id}: abort requested; worktree and branch preserved for continue`)
+  }
+
   const handlePurge = async (
     id: string,
     force: boolean,
@@ -4115,6 +4145,7 @@ export const startDaemon = async (
     setTaskPriority,
     handleUpdate,
     handleContinue,
+    handleStop,
     handleRestart,
     handleRemerge,
     handlePurge,
@@ -5148,6 +5179,35 @@ export const startDaemon = async (
   }, POLL_FALLBACK_MS)
   pollFallback.unref()
 
+  // ── Queued-dispatch sweep ─────────────────────────────────────────────────
+  // Writers inside the daemon normally call the dispatch-hint seam immediately
+  // after their transaction commits. This periodic DB re-read is the durable
+  // backstop for a missed hint: unlike pollFallback it also runs while other
+  // workers are active, so one forgotten handoff cannot strand a queued row
+  // until the daemon goes idle or restarts. Re-emitting task.queued intentionally
+  // takes the normal bus path, which feeds pendingImplement and invokes drain();
+  // drain then re-reads the row and validates its status and blockers before it
+  // can claim a worker slot.
+  const QUEUED_DISPATCH_SWEEP_MS = Number(
+    process.env.MARS_QUEUED_DISPATCH_SWEEP_MS ?? 30_000,
+  )
+  const queuedDispatchSweep = setInterval(() => {
+    if (!acceptingWork || pause.isPaused()) return
+    void (async () => {
+      try {
+        const queued = await listTasks('queued')
+        for (const task of queued) {
+          if (!tracker.isInFlight(task.id)) {
+            bus.emit('task.queued', { taskId: task.id })
+          }
+        }
+      } catch (err) {
+        log(`[queued-dispatch-sweep] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, QUEUED_DISPATCH_SWEEP_MS)
+  queuedDispatchSweep.unref()
+
   // ── Stale-worktree sweep ──────────────────────────────────────────────────
   // Periodically raises `stale-worktree` actionQueue items for tasks whose worktree
   // has not been updated within MARS_STALE_WORKTREE_HOURS (default 24h). The
@@ -6011,6 +6071,7 @@ export const startDaemon = async (
     if (shuttingDown) return
     shuttingDown = true
     clearInterval(pollFallback)
+    clearInterval(queuedDispatchSweep)
     clearInterval(githubUpdatePoll)
     clearInterval(devStalenessCheck)
     clearInterval(staleSweep)

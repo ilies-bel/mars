@@ -53,6 +53,7 @@ import {
 } from './store/task-store'
 import { getStateDir, getRepoRoot } from './context'
 import { removeWorktree } from './lib/git/worktree'
+import { provisionWorktreeDeps } from './lib/worktree-deps'
 import { getRecipeOrGeneric, type FixRecipeContext } from './lib/fix-recipes'
 import { buildEventInsert, publish, withWriteTx } from './lib/outbox'
 import { assertNotRecoveryEdge } from './lib/blocker-invariant'
@@ -66,6 +67,7 @@ import {
 } from './lib/main-dirty'
 import type { TraceEventStore } from './lib/trace-events-store'
 import { internalBus } from '../internal-bus'
+import { hintDispatch } from './daemon/dispatch-hint'
 import { getProposal } from './proposals'
 import { markTaskFailed } from './queue-retry'
 import { computeFailureSignature } from './lib/failure-signature'
@@ -344,6 +346,7 @@ export class Arc {
             ['worktree', 'add', newWorktreePath, superseded.branch],
             { cwd: getRepoRoot() },
           )
+          await provisionWorktreeDeps({ worktreeRoot: newWorktreePath })
           inheritedBranch = superseded.branch
           inheritedWorktreePath = newWorktreePath
         } catch (cause) {
@@ -761,9 +764,9 @@ export class Arc {
    * the event id is allocated in the same SQLite transaction as the row change
    * (ADR-0030 same-commit guarantee). Callers that need additional column
    * updates (e.g. `drop_reason`, `failure_reason`) or additional events (e.g.
-   * `task.terminal`) must issue those in a separate transaction **after**
-   * calling this method (see `Arc.propagateRecoveryDone` / the
-   * blocker-resolution `error = NULL` + `task.terminal` two-tx structure).
+   * `task.terminal`) are appended to the same transaction for terminal
+   * statuses. This keeps every terminal status write observable by durable
+   * subscribers without a crash window between the row change and its event.
    *
    * Statuses without a registered event mapping (`'blocked'`, `'running'`,
    * etc.) are still written to the row — the method just skips the publish
@@ -830,8 +833,18 @@ export class Arc {
       } else {
         eventStmt = buildEventInsert('task.queued', { taskId })
       }
-      // Row change + event INSERT share one commit (ADR-0030).
-      await store.batch([updateStmt, eventStmt], 'write')
+      const terminalStmt =
+        newStatus === 'done' || newStatus === 'dropped' || newStatus === 'failed'
+          ? buildEventInsert('task.terminal', {
+              taskId,
+              reason: newStatus,
+            })
+          : null
+      // Row change + lifecycle event(s) share one commit (ADR-0030).
+      await store.batch(
+        terminalStmt ? [updateStmt, eventStmt, terminalStmt] : [updateStmt, eventStmt],
+        'write',
+      )
       return
     }
     await withWriteTx(resolveQueueClient(), async (tx) => {
@@ -853,6 +866,9 @@ export class Arc {
         await publish(tx, 'task.failed', { taskId, error: extras?.error ?? '' })
       } else if (newStatus === 'queued') {
         await publish(tx, 'task.queued', { taskId })
+      }
+      if (newStatus === 'done' || newStatus === 'dropped' || newStatus === 'failed') {
+        await publish(tx, 'task.terminal', { taskId, reason: newStatus })
       }
     })
   }
@@ -1339,6 +1355,7 @@ export class Arc {
       failingStep: input.failingStep,
       originId: source.originId,
     })
+    hintDispatch(fixTaskId, 'implement')
 
     await Arc.maybeAssertArcInvariant(input.sourceTaskId, s)
     return { fixTaskId, created: true }
@@ -1571,6 +1588,7 @@ export class Arc {
       failingStep: `${input.dispatchPhase}:main-dirty`,
       originId: input.sourceOriginId,
     })
+    hintDispatch(fixTaskId, 'implement')
 
     await Arc.maybeAssertArcInvariant(input.sourceTaskId, s)
     return { fixTaskId }

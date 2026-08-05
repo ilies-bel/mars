@@ -227,7 +227,7 @@ export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
       const slimResult = writeSlimInit({
         repoRoot: appCtx.repoRoot,
         contextPath: resolve(appCtx.repoRoot, 'CONTEXT.md'),
-        adrDir: resolve(appCtx.repoRoot, 'docs', 'adr'),
+        adrDir: resolve(appCtx.repoRoot, 'docs', 'knowledge', 'decisions'),
       })
       return slimResult.written
     })

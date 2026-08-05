@@ -306,7 +306,7 @@ describe('ContextRail piles', () => {
 
     const rows = [...container.querySelectorAll('[data-testid="context-rail-adr-row"]')]
     expect(rows.map((row) => row.textContent)).toEqual(['ADR 7: Seven', 'ADR 5: Five', 'ADR 3: Three'])
-    expect(rows[0].getAttribute('href')).toBe('/api/project/adrs/docs%2Fadr%2F0007-seven.md?project=project-1')
+    expect(rows[0].getAttribute('href')).toBe('/api/project/adrs/docs%2Fknowledge%2Fdecisions%2F0007-seven.md?project=project-1')
     await act(async () => root.unmount())
   })
 

@@ -488,7 +488,7 @@ const AdrsPile = ({ adrs, projectId }: AdrsPileProps) => {
         ) : (
           <ul className="flex flex-col gap-0.5">
             {sortedAdrs.slice(0, visibleCount).map((adr) => {
-              const path = `docs/adr/${String(adr.number).padStart(4, '0')}-${adr.slug}.md`
+              const path = `docs/knowledge/decisions/${String(adr.number).padStart(4, '0')}-${adr.slug}.md`
               return (
                 <li key={path}>
                   <a

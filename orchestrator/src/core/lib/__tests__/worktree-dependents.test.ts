@@ -18,9 +18,15 @@
  * SIGNATURE_STORM_TRIP_THRESHOLD and pauses ALL dispatch. A deliberate,
  * expected, per-task outcome must not read as a systemic storm.
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { DbResultSet, DbStatement, DbInValue } from '../db'
 import type { DomainTaskStore } from '../../store/task-store'
+import { __resetDbRegistryForTests, openDb } from '../db'
+import { createTaskStore } from '../../store/task-store'
+
+afterEach(async () => {
+  await __resetDbRegistryForTests()
+})
 
 /**
  * Minimal store stand-in: records the statement and replays canned rows. Only
@@ -107,7 +113,42 @@ describe('findLiveWorktreeDependents — who else is standing on this worktree',
     expect(capture.sql).toBeUndefined()
   })
 
-  it('is best-effort: a query failure reports none rather than failing a landed merge', async () => {
+  it('finds path-only and branch-only live collisions through the PostgreSQL query boundary', async () => {
+    const { findLiveWorktreeDependents } = await import('../worktree-dependents')
+    const store = createTaskStore(openDb(`worktree-dependents-${crypto.randomUUID()}`))
+    const createdAt = new Date().toISOString()
+    const insert = async (id: string, status: string, worktreePath: string | null, branch: string | null) => {
+      await store.execute({
+        sql: `INSERT INTO tasks (id, prompt, status, worktree_path, branch, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        args: [id, 'collision fixture', status, worktreePath, branch, createdAt, createdAt],
+      })
+    }
+    await insert('merging', 'merging', '/worktrees/merging', 'task/merging')
+    await insert('path-collision', 'queued', '/worktrees/shared', null)
+    await insert('branch-collision', 'running', null, 'task/shared')
+    await insert('terminal-collision', 'done', '/worktrees/shared', 'task/shared')
+
+    await expect(
+      findLiveWorktreeDependents({
+        taskId: 'merging',
+        worktreePath: '/worktrees/shared',
+        branch: null,
+        store,
+      }),
+    ).resolves.toEqual([{ id: 'path-collision', status: 'queued' }])
+
+    await expect(
+      findLiveWorktreeDependents({
+        taskId: 'merging',
+        worktreePath: null,
+        branch: 'task/shared',
+        store,
+      }),
+    ).resolves.toEqual([{ id: 'branch-collision', status: 'running' }])
+  })
+
+  it('surfaces a collision lookup failure instead of treating it as no collision', async () => {
     const { findLiveWorktreeDependents } = await import('../worktree-dependents')
     const exploding = {
       query: async (): Promise<DbResultSet> => {
@@ -115,8 +156,6 @@ describe('findLiveWorktreeDependents — who else is standing on this worktree',
       },
     } as unknown as DomainTaskStore
 
-    // The merge has already fast-forwarded by the time this runs; throwing here
-    // would turn a bookkeeping read into a failed merge.
     await expect(
       findLiveWorktreeDependents({
         taskId: 'mars-x',
@@ -124,7 +163,7 @@ describe('findLiveWorktreeDependents — who else is standing on this worktree',
         branch: 'task/mars-x',
         store: exploding,
       }),
-    ).resolves.toEqual([])
+    ).rejects.toThrow('connection reset')
   })
 })
 

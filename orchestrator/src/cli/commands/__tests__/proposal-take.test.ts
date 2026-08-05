@@ -441,6 +441,7 @@ describe('mars proposal take — command coverage', () => {
         setTaskPriority: notImpl('setTaskPriority') as DaemonDeps['setTaskPriority'],
         handleUpdate: notImpl('handleUpdate') as DaemonDeps['handleUpdate'],
         handleContinue: notImpl('handleContinue') as DaemonDeps['handleContinue'],
+        handleStop: notImpl('handleStop') as DaemonDeps['handleStop'],
         handleRestart: notImpl('handleRestart') as DaemonDeps['handleRestart'],
         handleRemerge: notImpl('handleRemerge') as DaemonDeps['handleRemerge'],
         handlePurge: notImpl('handlePurge') as DaemonDeps['handlePurge'],

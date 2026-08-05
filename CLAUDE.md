@@ -179,11 +179,11 @@ worktree without the user's say-so.
 
 - `CONTEXT.md` — domain glossary. Edit only via `mars glossary
   set/remove`; read via `mars glossary list/show`.
-- `docs/adr/NNNN-<slug>.md` — ADRs. Add via `mars adr add`; read via
+- `docs/knowledge/decisions/NNNN-<slug>.md` — ADRs. Add via `mars adr add`; read via
   `mars adr list/show`. ADR only when hard-to-reverse, surprising, and
   embodying a real trade-off.
 
-Never edit `CONTEXT.md` or `docs/adr/**` directly. Reads are fine.
+Never edit `CONTEXT.md` or `docs/knowledge/decisions/**` directly. Reads are fine.
 
 The `/mars:chat` slash command is the conversational entry point.
 It classifies the user's input (an id, free text, or empty) and
@@ -313,6 +313,17 @@ recovery-spawn path itself.
   `orchestrator/docs/implement-pipeline.md`; the `mastra` skill no longer
   applies to this repo.
 - Never commit `.env`, `.mars/`, or `node_modules`.
+- **Read git state through `rtk proxy git …`, never bare `git`.** The RTK
+  shell hook compresses command output lossily and has been observed
+  *replaying a different commit* for `git log -1 <sha>`, and returning a
+  `rev-parse main` that disagreed with `git log main` in the same breath. It
+  also rewrites `grep` output into a `[file] <n> (1):` form with the real
+  paths replaced by numbers. Any decision made from those reads — which
+  commit to merge, reset, or fast-forward to — can be silently wrong. Use
+  `rtk proxy` for every git read whose answer you are about to act on
+  (`rev-parse`, `log`, `status --porcelain`, `rev-list --count`,
+  `merge-base`), and treat a bare-`git` answer that "stops making sense" as
+  the hook lying rather than as a strange repo state.
 - **Recovering a failed task: `continue` before `restart`.** `mars continue
   <id> [<id> ...]` is the **default** recovery verb. It resumes the task on
   its *existing worktree and branch*, reusing every commit the worker already

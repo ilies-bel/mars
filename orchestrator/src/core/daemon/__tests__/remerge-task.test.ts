@@ -264,7 +264,7 @@ describe('coreRemergeTask', () => {
     })
 
     // Then: restart should clear workflow back to null
-    await restart.coreRestartTask(task.id, new Set(['failed']), store)
+    await restart.coreRestartTask(task.id, new Set(['failed']), store, { force: true })
     const afterRestart = await q.getTask(task.id)
     expect(afterRestart?.workflow).toBeNull()
     expect(afterRestart?.status).toBe('queued')

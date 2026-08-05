@@ -48,9 +48,6 @@ export interface StatementRunner {
  *  - `queue-fix-tasks.ts` no-recipe investigator path now sets `status='failed'`
  *    instead of `status='blocked'`, eliminating the edgeless-blocked state.
  *
- * The `AUDIT (mars-88a4e657): safe site` annotation in `queue-fix-tasks.ts`
- * near the fix-fail-loop cap remains valid — that path re-stamps 'blocked' after
- * at least one prior `upsertFixTask` call inserted an edge.
  */
 
 export interface BlockerInvariantOptions {

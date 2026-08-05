@@ -14,12 +14,12 @@
  * JSON strings inside `trace_events` payloads. All assertions check that
  * table.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { gunzip } from 'node:zlib';
 import { promisify } from 'node:util';
 import { EventEmitter } from 'node:events';
-import { openDb, type DbClient } from '../../core/lib/db.js';
-import { ensureSchema } from '../../core/lib/pg-schema.js';
+import { type DbClient } from '../../core/lib/db.js';
+import { getTestDb } from '../../../test/db-fixture.js';
 import { buildTranscriptAppendSubscriber } from './transcript-append.js';
 import type { BusEvent } from '../../bus/events.js';
 
@@ -28,19 +28,6 @@ const gunzipAsync = promisify(gunzip);
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
-
-let dbSeq = 0;
-
-/**
- * Fresh in-memory PGlite instance per test carrying the canonical schema
- * (MARS_DB_BACKEND=pglite is set by test/setup-env.ts; the target string is
- * only an identity key).
- */
-async function makeClient(): Promise<DbClient> {
-  const client = openDb(`test:transcript-append:${process.pid}:${dbSeq++}`);
-  await ensureSchema(client);
-  return client;
-}
 
 /** Construct a minimal `task.completed` BusEvent. */
 function completedEvent(eventId: number, taskId: string): BusEvent {
@@ -82,11 +69,7 @@ describe('transcript-append:task.completed subscriber', () => {
   let client: DbClient;
 
   beforeEach(async () => {
-    client = await makeClient();
-  });
-
-  afterEach(async () => {
-    await client.close();
+    client = await getTestDb();
   });
 
   // ── Acceptance criterion 1 ─────────────────────────────────────────────

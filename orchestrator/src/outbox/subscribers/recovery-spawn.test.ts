@@ -7,7 +7,7 @@ import {
   vi,
 } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { DbClient } from '../../core/lib/db.js'
@@ -89,6 +89,15 @@ interface Loaded {
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-recovery-spawn-test-'))
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+  // `git init -b main` leaves `main` UNBORN — the ref does not exist until the
+  // first commit. `mars continue` refreshes a worktree with
+  // `git merge --no-edit main`, which then fails with "main - not something we
+  // can merge". One commit makes the branch real.
+  execFileSync('git', ['config', 'user.email', 'test@mars.local'], { cwd: repo })
+  execFileSync('git', ['config', 'user.name', 'Mars Test'], { cwd: repo })
+  writeFileSync(resolve(repo, 'README.md'), 'recovery-spawn fixture\n')
+  execFileSync('git', ['add', 'README.md'], { cwd: repo })
+  execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   return repo
 }
@@ -174,7 +183,6 @@ describe('recovery-spawn outbox subscriber', () => {
   afterEach(() => {
     delete process.env.MARS_REPO
     delete process.env.MARS_FIX_RETRY_BUDGET
-    delete process.env.MARS_MAX_FIX_ATTEMPTS
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -268,7 +276,7 @@ describe('recovery-spawn outbox subscriber', () => {
     expect(reloaded?.failureSignature).toBeTruthy()
   })
 
-  it('does not block a task continued before its pending failure event drains', async () => {
+  it('does not consume recovery capacity when continue has not re-run a coder', async () => {
     const { q, rs, continueTask, client } = await loadModules(repo)
     const task = await q.enqueueTask('resume without stale recovery', undefined, {
       skipTriage: true,
@@ -294,6 +302,11 @@ describe('recovery-spawn outbox subscriber', () => {
       args: [task.id],
     })
     expect(recoveries.rows).toHaveLength(0)
+    const attempts = await client.execute({
+      sql: 'SELECT fix_task_id FROM self_heal_attempts WHERE parent_task_id = ?',
+      args: [task.id],
+    })
+    expect(attempts.rows).toHaveLength(0)
   })
 
   it('escalates a pre-setup failure without spawning a recovery task', async () => {
@@ -874,7 +887,6 @@ describe.skip('legacy verify-gate verdict suppression', () => {
   afterEach(() => {
     delete process.env.MARS_REPO
     delete process.env.MARS_FIX_RETRY_BUDGET
-    delete process.env.MARS_MAX_FIX_ATTEMPTS
     rmSync(repo, { recursive: true, force: true })
   })
 
