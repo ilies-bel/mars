@@ -548,7 +548,7 @@ The per-lever setting governing whether Mars may act unprompted, valued off, ask
 _Avoid_: autonomy dial, permission level, auto mode, steward mode
 
 **Main thread**:
-The single durable conversation that owns Mars's own unprompted messages and, as each Subject closes, the Context line it folds back.
+The single durable conversation that answers the operator, owns Mars's unprompted messages, Away digests and the Context lines closed Subjects fold back, and never itself creates work.
 _Avoid_: main chat, root thread, home feed, hero, seeded feed
 
 **Context line**:
