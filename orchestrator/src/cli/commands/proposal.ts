@@ -22,6 +22,8 @@ import {
   listProposalDependencies,
   validateProposalShaped,
   setProposalCoordinated,
+  appendProposalNotes,
+  hasUnresolvedOpenQuestions,
   VALID_SOURCES,
   isProposalSource,
   type ProposalSource,
@@ -357,11 +359,13 @@ const proposalPromote: Command = {
 const proposalSlice: Command = {
   path: 'proposal slice',
   summary: 'decompose a prd-ready proposal into vertical-slice tasks',
-  usage: 'usage: mars proposal slice <id> [--priority 0..3] [--coordinated]',
+  usage: 'usage: mars proposal slice <id> [--priority 0..3] [--coordinated] [--accept-defaults]',
   run: async (args, deps) => {
     const id = args.positional[0]
     if (!id) {
-      deps.err('usage: mars proposal slice <id> [--priority 0..3] [--coordinated]')
+      deps.err(
+        'usage: mars proposal slice <id> [--priority 0..3] [--coordinated] [--accept-defaults]',
+      )
       return { code: 2 }
     }
     const priorityRaw = args.flags['--priority']
@@ -374,12 +378,44 @@ const proposalSlice: Command = {
       }
       priority = parsed.value
     }
+    const acceptDefaults = args.flags['--accept-defaults'] !== undefined
     try {
+      // Gate: refuse to slice if the notes contain an unresolved open-questions
+      // block, unless the operator explicitly passes --accept-defaults.
+      const proposal = await getProposal(id)
+      if (!proposal) {
+        deps.err(`proposal ${id} not found`)
+        return { code: 1 }
+      }
+      if (hasUnresolvedOpenQuestions(proposal.notes)) {
+        if (!acceptDefaults) {
+          deps.err(
+            `proposal ${proposal.id} has an unresolved open-questions block in its notes:\n\n` +
+              `${proposal.notes}\n\n` +
+              `Slicing would silently take every option marked "(recommended)" without a shaping pass.\n` +
+              `Run \`/mars:grill ${proposal.id}\` to resolve the questions first, or pass\n` +
+              `--accept-defaults to proceed knowingly (a dated trace will be appended to the notes).`,
+          )
+          return { code: 1 }
+        }
+        // --accept-defaults passed: record who took the defaults and when.
+        const author = resolveAuthor(args.flags['--author'])
+        const ts = new Date().toISOString()
+        await appendProposalNotes(
+          proposal.id,
+          `DEFAULTS ACCEPTED at ${ts} by ${formatAuthor(author)} — open questions above were not resolved before slicing.`,
+        )
+      }
       if (args.flags['--coordinated'] !== undefined) {
         await setProposalCoordinated(id, true)
       }
       const r = (await deps.daemon.sendRequest(
-        { op: 'proposal.slice', proposalId: id, ...(priority !== undefined && { priority }) },
+        {
+          op: 'proposal.slice',
+          proposalId: id,
+          ...(priority !== undefined && { priority }),
+          ...(acceptDefaults && { acceptDefaults: true }),
+        },
         { onSpawnNotice: spawnNoticeErr(deps.err) },
       )) as { proposalId: string; status: string; taskIds: string[] }
       deps.out(

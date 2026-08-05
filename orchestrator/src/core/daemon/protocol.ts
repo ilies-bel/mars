@@ -64,7 +64,7 @@ export type DaemonRequest =
       priority?: number
       coordinated?: boolean
     }
-  | { op: 'proposal.slice'; proposalId: string; priority?: number }
+  | { op: 'proposal.slice'; proposalId: string; priority?: number; acceptDefaults?: boolean }
   | { op: 'proposal.reslice'; proposalId: string; feedback: string; priority?: number }
   | { op: 'proposal.take'; proposalId: string; workflow?: string }
   | { op: 'refine'; id: string; refresh?: boolean }

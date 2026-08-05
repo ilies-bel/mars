@@ -969,6 +969,25 @@ export const appendProposalNotes = async (
 }
 
 /**
+ * Returns true iff the proposal's notes field contains an unresolved
+ * open-questions block.
+ *
+ * Detection is deliberately simple and conservative: any line whose trimmed
+ * content starts with "OPEN QUESTION" (singular or plural, case-insensitive,
+ * optionally followed by punctuation, whitespace, or an em-dash clause) is
+ * treated as the start of an unresolved block.  The predicate does NOT attempt
+ * to parse individual questions or judge whether they were answered — the
+ * presence of the header is the only signal.
+ *
+ * False positives are cheap (operator adds --accept-defaults); false negatives
+ * are the failure mode we are trying to prevent.
+ */
+export function hasUnresolvedOpenQuestions(notes: string | null | undefined): boolean {
+  if (!notes) return false
+  return notes.split('\n').some((line) => /^OPEN QUESTIONS?(\s|[:\-—]|$)/i.test(line.trim()))
+}
+
+/**
  * Atomically claim a 'prd-ready' proposal for slicing by flipping its status
  * to the intermediate 'slicing' marker. The conditional UPDATE is the only
  * defence against the prd-ready→sliced TOCTOU race: two concurrent slice

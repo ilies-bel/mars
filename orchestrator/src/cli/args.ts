@@ -171,6 +171,8 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   // mars release-notes list — cursor-based feed filtering
   '--unseen',
   '--mark-viewed',
+  // mars proposal slice — bypass the open-questions gate knowingly
+  '--accept-defaults',
 ])
 
 // Short aliases are normalised to their long form before flag lookup.

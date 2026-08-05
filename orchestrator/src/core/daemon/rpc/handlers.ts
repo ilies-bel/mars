@@ -143,7 +143,12 @@ const proposalPromoteHandler = handler('proposal.promote', async (req, deps) => 
 })
 
 const proposalSliceHandler = handler('proposal.slice', async (req, deps) => {
-  const r = await deps.handleProposalSlice(req.proposalId, undefined, req.priority)
+  const r = await deps.handleProposalSlice(
+    req.proposalId,
+    undefined,
+    req.priority,
+    req.acceptDefaults as boolean | undefined,
+  )
   return { ok: true, data: r }
 })
 

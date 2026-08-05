@@ -173,6 +173,7 @@ export interface DaemonDeps {
     proposalId: string,
     resliceFeedback?: string,
     priority?: number,
+    acceptDefaults?: boolean,
   ): Promise<{ proposalId: string; status: string; taskIds: string[] }>
   handleProposalReslice(
     proposalId: string,

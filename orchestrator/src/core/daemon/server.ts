@@ -3425,10 +3425,35 @@ export const startDaemon = async (
     proposalId: string,
     resliceFeedback?: string,
     priority?: number,
+    acceptDefaults?: boolean,
   ): Promise<{ proposalId: string; status: string; taskIds: string[] }> => {
     proposalSliceRuns.set(proposalId, (proposalSliceRuns.get(proposalId) ?? 0) + 1)
     try {
       assertProposalsSourceFresh(proposalsStamp)
+
+      // Gate: hard-fail if the proposal's notes contain an unresolved
+      // open-questions block and the caller has not explicitly opted in.
+      {
+        const { getProposal, hasUnresolvedOpenQuestions, appendProposalNotes } =
+          await import('../proposals')
+        const proposal = await getProposal(proposalId)
+        if (proposal && hasUnresolvedOpenQuestions(proposal.notes)) {
+          if (!acceptDefaults) {
+            throw new Error(
+              `proposal ${proposalId} has an unresolved open-questions block in its notes. ` +
+                `Slicing would silently take every option marked "(recommended)". ` +
+                `Resolve the questions via \`/mars:grill ${proposalId}\` or pass --accept-defaults to proceed knowingly.`,
+            )
+          }
+          // Record the acceptance so it's auditable later.
+          const ts = new Date().toISOString()
+          await appendProposalNotes(
+            proposalId,
+            `DEFAULTS ACCEPTED at ${ts} — open questions above were not resolved before slicing.`,
+          )
+        }
+      }
+
       const { runSlice } = await import('../../workflows/slice-workflow')
       const sliceTaskStore = await getDefaultTaskStore()
       const result = await runSlice(proposalId, resliceFeedback, {
