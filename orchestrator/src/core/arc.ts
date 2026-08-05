@@ -2798,7 +2798,23 @@ export class Arc {
       args: [taskId],
     })
     if (incomplete.rows.length > 0) {
-      return { taskId, outcome: 'noop', retryCount }
+      // Extra lookup for the presentation layer: classify each unsettled blocker
+      // as live (queued/running/blocked) or stranded (failed/MISSING).  We use
+      // a LEFT JOIN so deleted blockers appear with status 'MISSING' — the
+      // operator can then distinguish "still in progress" from "needs rescue".
+      const blockerRows = await store.query({
+        sql: `SELECT b.blocker_task_id AS blocker_id,
+                     COALESCE(t.status, 'MISSING') AS status
+                FROM task_blockers b
+                LEFT JOIN tasks t ON t.id = b.blocker_task_id
+               WHERE b.task_id = ? AND b.state IN ('confirmed', 'pending-review')
+                 AND (t.id IS NULL OR ${UNSETTLED_BLOCKER_SQL})`,
+        args: [taskId],
+      })
+      const blockerStatuses = (
+        blockerRows.rows as unknown as Array<{ blocker_id: string; status: string }>
+      ).map((r) => ({ blockerId: r.blocker_id, status: r.status }))
+      return { taskId, outcome: 'noop', retryCount, blockerStatuses }
     }
 
     // Reset the dependent's worktree to integration HEAD before re-dispatching.

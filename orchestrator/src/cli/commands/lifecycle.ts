@@ -306,6 +306,7 @@ const recover: Command = {
         outcome: 'queued' | 'noop' | 'failed' | 'not-blocked'
         retryCount: number
         failureReason?: string
+        blockerStatuses?: Array<{ blockerId: string; status: string }>
       }>
     }
     if (id) {
@@ -329,16 +330,40 @@ const recover: Command = {
       const noop = data.outcomes.filter(
         (o) => o.outcome === 'noop' || o.outcome === 'not-blocked',
       )
-      deps.out(
-        `recovered ${queued.length} task(s)${queued.length > 0 ? `: ${queued.map((o) => o.taskId).join(', ')}` : ''}`,
-      )
+
+      // Classify noop tasks: stranded (blocked on a failed/missing blocker) vs
+      // waiting on live work (blocked on a queued/running/blocked blocker).
+      const isStranded = (o: (typeof noop)[number]) =>
+        o.blockerStatuses?.some((b) => b.status === 'failed' || b.status === 'MISSING') ??
+        false
+      const stranded = noop.filter(isStranded)
+      const waitingOnLive = noop.filter((o) => !isStranded(o))
+
+      if (queued.length > 0) {
+        deps.out(
+          `recovered ${queued.length} task(s): ${queued.map((o) => o.taskId).join(', ')}`,
+        )
+      }
       if (failed.length > 0) {
         deps.out(
           `failed at unblock: ${failed.map((o) => `${o.taskId} (${o.failureReason ?? 'unknown'})`).join(', ')}`,
         )
       }
-      if (noop.length > 0) {
-        deps.out(`still blocked: ${noop.map((o) => o.taskId).join(', ')}`)
+      for (const o of stranded) {
+        const problems = (o.blockerStatuses ?? [])
+          .filter((b) => b.status === 'failed' || b.status === 'MISSING')
+          .map((b) => `${b.blockerId} (${b.status})`)
+          .join(', ')
+        deps.out(`STRANDED: ${o.taskId} waits on ${problems}`)
+      }
+      if (stranded.length === 0) {
+        if (waitingOnLive.length > 0) {
+          deps.out(
+            `queue healthy — ${waitingOnLive.length} task(s) waiting on live work, nothing stranded`,
+          )
+        } else {
+          deps.out(`queue healthy — no blocked tasks`)
+        }
       }
     }
     return { code: 0 }

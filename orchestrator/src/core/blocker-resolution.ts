@@ -360,6 +360,13 @@ export interface RecoverBlockedTaskOutcome {
   outcome: 'queued' | 'noop' | 'failed' | 'not-blocked'
   retryCount: number
   failureReason?: string
+  /**
+   * Present when `outcome === 'noop'`: the status of each unsettled blocker
+   * edge.  A status of `'MISSING'` means the blocker row has been deleted.
+   * Live statuses (queued/running/blocked) mean normal waiting; `'failed'` or
+   * `'MISSING'` mean the task is stranded and needs operator attention.
+   */
+  blockerStatuses?: Array<{ blockerId: string; status: string }>
 }
 
 export interface RecoverAllBlockedTasksResult {
