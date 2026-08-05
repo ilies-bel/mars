@@ -562,3 +562,7 @@ _Avoid_: pending actions, open ops, chip set, suggestions
 **Reachable surface**:
 The entry point through which a human can actually exercise a PRD's user story in the merged result — a UI affordance, a CLI command, or a bot command — as distinct from an API route or table that only another program can reach.
 _Avoid_: user-facing surface, frontend, UI layer
+
+**Away digest**:
+The single stored message narrating everything that happened during one absence, composed without a provider run when the operator returns and never regenerated afterwards.
+_Avoid_: release notes, delta, what happened, hero delta, daily summary
