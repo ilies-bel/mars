@@ -4364,6 +4364,31 @@ export const startDaemon = async (
             })),
           ]
 
+          // Count tasks blocked behind this arc: tasks whose blocker_task_id
+          // is any task in the arc AND whose status is 'blocked'.
+          const arcTaskIds = arcTasks.map((t) => t.id)
+          let blockedCount = 0
+          try {
+            const placeholders = arcTaskIds.map(() => '?').join(', ')
+            const blockedResult = await store.query({
+              sql: `SELECT COUNT(DISTINCT tb.task_id) AS cnt
+                      FROM task_blockers tb
+                      JOIN tasks t ON t.id = tb.task_id
+                     WHERE tb.blocker_task_id IN (${placeholders})
+                       AND t.status = 'blocked'`,
+              args: arcTaskIds,
+            })
+            const row = blockedResult.rows[0] as
+              | Record<string, unknown>
+              | undefined
+            blockedCount =
+              typeof row?.cnt === 'number'
+                ? row.cnt
+                : parseInt(String(row?.cnt ?? '0'), 10) || 0
+          } catch {
+            // Non-fatal: blocked count unavailable — omit it by leaving 0.
+          }
+
           records.push({
             arcId,
             goal: origin.intent || origin.prompt,
@@ -4372,6 +4397,8 @@ export const startDaemon = async (
             traceTail: capturedError,
             descendants,
             chain,
+            failedPhase: failing.failedPhase ?? null,
+            blockedCount,
           })
         }
         return records

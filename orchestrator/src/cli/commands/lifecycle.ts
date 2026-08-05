@@ -598,7 +598,13 @@ const list: Command = {
     )
 
     for (const t of tasks) {
-      deps.out(`${t.id}\t${t.status}\tP${t.priority ?? 0}\t${t.prompt.slice(0, 60)}`)
+      const sigSuffix =
+        t.status === 'failed' && t.failureSignature
+          ? `\t[${t.failureSignature}]`
+          : ''
+      deps.out(
+        `${t.id}\t${t.status}\tP${t.priority ?? 0}\t${t.prompt.slice(0, 60)}${sigSuffix}`,
+      )
     }
 
     const showing = tasks.length

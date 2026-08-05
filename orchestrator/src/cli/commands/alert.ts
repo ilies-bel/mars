@@ -50,6 +50,72 @@ const renderAlert = (alert: Alert, out: (s: string) => void): void => {
   for (const line of alert.technical.split('\n')) out(`  ${line}`)
 }
 
+/**
+ * Render one arc-failed alert as a multi-line block that names the failing
+ * tip, the recovery chain, the failure signature, and the blast radius
+ * (blocked tasks downstream). This is the `mars alert list` display format.
+ *
+ * Format:
+ *   <arcId>  <kind>  [blocks:<N>]
+ *     goal:  <goal>
+ *     tip:   <tipId> [(<tipLabel>, attempt <M>/<total>)] [phase=<failedPhase>]
+ *     chain: <id1> → <id2> → …   ← only for arcs with > 1 task node
+ *     why:   <signature> — <reason>
+ *
+ * Exported for unit-testing the rendering without an HTTP daemon.
+ */
+export const renderArcAlertBlock = (
+  alert: Alert,
+  out: (s: string) => void,
+): void => {
+  // Header: arc id, kind, and blast radius (omit "blocks:0" — unremarkable).
+  const blocksLabel =
+    typeof alert.blockedCount === 'number' && alert.blockedCount > 0
+      ? `  blocks:${alert.blockedCount}`
+      : ''
+  out(`${alert.arcId}  ${alert.kind}${blocksLabel}`)
+
+  // Goal.
+  out(`  goal: ${alert.goal}`)
+
+  // Identify the tip: the last task-kind chain node with status='failed', or
+  // the last task-kind node when none is explicitly failed.
+  const taskNodes = alert.chain.filter((n) => n.kind === 'task')
+  const tip =
+    [...taskNodes].reverse().find((n) => n.status === 'failed') ??
+    taskNodes[taskNodes.length - 1]
+
+  if (tip) {
+    const isFixTask = tip.id.startsWith('fix-')
+    const fixNodes = taskNodes.filter((n) => n.id.startsWith('fix-'))
+    const fixTotal = fixNodes.length
+    // Attempt label: for fix tasks, M/total where M is position in fix list.
+    const fixIndex = fixNodes.indexOf(tip)
+    const attemptLabel =
+      isFixTask && fixTotal > 0
+        ? ` (fix, attempt ${fixIndex + 1}/${fixTotal})`
+        : tip.attemptIndex !== undefined
+          ? ` (attempt ${tip.attemptIndex})`
+          : ''
+    const phaseLabel =
+      alert.failedPhase != null && alert.failedPhase.length > 0
+        ? `  phase=${alert.failedPhase}`
+        : ''
+    out(`  tip:  ${tip.id}${attemptLabel}${phaseLabel}`)
+  }
+
+  // Chain: only render when there are multiple task-kind nodes (a chain of one
+  // is just the origin repeated, which adds no information).
+  if (taskNodes.length > 1) {
+    out(`  chain: ${taskNodes.map((n) => n.id).join(' → ')}`)
+  }
+
+  // Why: signature + reason on a single line.
+  const sig = alert.failureSignature ?? ''
+  const why = sig.length > 0 ? `${sig} — ${alert.reason}` : alert.reason
+  out(`  why:  ${why}`)
+}
+
 const alertList: Command = {
   path: 'alert list',
   summary: 'list arc-rooted alerts (failed arcs + stale worktrees)',
@@ -72,7 +138,12 @@ const alertList: Command = {
       return { code: 0 }
     }
     for (const alert of alerts) {
-      deps.out(`${alert.arcId}\t${alert.kind}\t${alert.goal}\t${alert.reason}`)
+      if (alert.kind === 'arc-failed') {
+        renderArcAlertBlock(alert, deps.out)
+      } else {
+        // stale-worktree and verify-uncovered: flat single-line format.
+        deps.out(`${alert.arcId}\t${alert.kind}\t${alert.goal}\t${alert.reason}`)
+      }
     }
     return { code: 0 }
   },

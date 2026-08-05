@@ -200,3 +200,84 @@ describe('usage string documents both forms', () => {
     expect(listEntry!.usage).toContain('<status>')
   })
 })
+
+describe('mars list — failed rows show failure signature', () => {
+  it('appends the failure signature for a failed task row', async () => {
+    const store = {
+      listTasksPaged: async () => ({
+        tasks: [
+          {
+            id: 'mars-fail-abc',
+            status: 'failed',
+            priority: 2,
+            prompt: 'some failing task',
+            failureSignature: 'code:coder-exit-nonzero/unclassified',
+          },
+        ],
+        total: 1,
+      }),
+    } as unknown as DomainTaskStore
+    const r = await runCommandInProcess(['list', 'failed'], {
+      store,
+      ctx: fakeCtx,
+      daemon: fakeDaemon,
+    })
+    expect(r.code).toBe(0)
+    const line = r.out.find((l) => l.includes('mars-fail-abc'))
+    expect(line).toBeDefined()
+    expect(line).toContain('code:coder-exit-nonzero/unclassified')
+  })
+
+  it('does not append a signature for a done task', async () => {
+    const store = {
+      listTasksPaged: async () => ({
+        tasks: [
+          {
+            id: 'mars-done-xyz',
+            status: 'done',
+            priority: 1,
+            prompt: 'done task',
+            failureSignature: null,
+          },
+        ],
+        total: 1,
+      }),
+    } as unknown as DomainTaskStore
+    const r = await runCommandInProcess(['list', 'done'], {
+      store,
+      ctx: fakeCtx,
+      daemon: fakeDaemon,
+    })
+    expect(r.code).toBe(0)
+    const line = r.out.find((l) => l.includes('mars-done-xyz'))
+    expect(line).toBeDefined()
+    // No signature bracket appended
+    expect(line).not.toContain('[')
+  })
+
+  it('does not append a signature when failureSignature is null on a failed task', async () => {
+    const store = {
+      listTasksPaged: async () => ({
+        tasks: [
+          {
+            id: 'mars-fail-nosig',
+            status: 'failed',
+            priority: 0,
+            prompt: 'failed with no sig',
+            failureSignature: null,
+          },
+        ],
+        total: 1,
+      }),
+    } as unknown as DomainTaskStore
+    const r = await runCommandInProcess(['list', 'failed'], {
+      store,
+      ctx: fakeCtx,
+      daemon: fakeDaemon,
+    })
+    expect(r.code).toBe(0)
+    const line = r.out.find((l) => l.includes('mars-fail-nosig'))
+    expect(line).toBeDefined()
+    expect(line).not.toContain('[')
+  })
+})

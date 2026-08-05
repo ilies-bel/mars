@@ -73,6 +73,23 @@ export interface Alert {
   recipe?: string | null
   /** Ordered arc lineage: proposal head → origin attempt → restarts → recoveries. */
   chain: AlertChainNode[]
+  /**
+   * The structured failure signature of the tip task (the task that actually
+   * holds the failure signal). Extracted from FailureKind.signature for
+   * convenient rendering without parsing the `technical` blob.
+   */
+  failureSignature?: string
+  /**
+   * The pipeline phase in which the tip task failed (`'code'`, `'verify'`,
+   * etc.). Null for non-failed tips or legacy rows where the column is absent.
+   */
+  failedPhase?: string | null
+  /**
+   * Number of tasks currently `blocked` whose blocker chain leads to this arc.
+   * Omitted (undefined) when the count was not computed (e.g. stale-worktree
+   * alerts). Zero means the arc is leaf-failing with no downstream dependents.
+   */
+  blockedCount?: number
 }
 
 /** Raw inputs {@link buildAlert} derives an {@link Alert} from. */
@@ -88,6 +105,16 @@ export interface BuildAlertInput {
   descendants: readonly AlertDescendant[]
   /** Ordered arc lineage: proposal head → origin attempt → restarts → recoveries. */
   chain: AlertChainNode[]
+  /**
+   * Pipeline phase in which the tip task failed. Passed through to
+   * {@link Alert.failedPhase}.
+   */
+  failedPhase?: string | null
+  /**
+   * Number of tasks blocked behind this arc. Passed through to
+   * {@link Alert.blockedCount}.
+   */
+  blockedCount?: number
 }
 
 /** Collapse whitespace and clip a string to a single readable line. */
@@ -159,6 +186,9 @@ export const buildAlert = (
     technical,
     kind,
     chain: input.chain,
+    failureSignature: failureKind.signature,
+    failedPhase: input.failedPhase ?? null,
+    blockedCount: input.blockedCount,
   }
 }
 
@@ -186,6 +216,17 @@ export interface FailedArcRecord {
    * A lone task with no proposal and no restarts has a single-element chain.
    */
   chain: AlertChainNode[]
+  /**
+   * The pipeline phase in which the tip (failing) task failed (`'code'`,
+   * `'verify'`, etc.). Null for legacy rows or non-failed tips.
+   */
+  failedPhase?: string | null
+  /**
+   * Number of tasks with status `'blocked'` that are blocked by any task in
+   * this arc. Zero means the arc is leaf-failing with no downstream dependents.
+   * Omitted when the count was not computed.
+   */
+  blockedCount?: number
 }
 
 /**
@@ -257,6 +298,8 @@ const alertForFailedArc = (record: FailedArcRecord): Alert => {
     traceTail: record.traceTail,
     descendants: record.descendants,
     chain: record.chain,
+    failedPhase: record.failedPhase,
+    blockedCount: record.blockedCount,
   })
 }
 
