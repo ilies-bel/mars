@@ -528,7 +528,7 @@ The append-only record of every Steward intervention, keyed by target kind, targ
 _Avoid_: intervention log, steward history, steward audit
 
 **Subject**:
-One topic under discussion in chat, backed one-to-one by a chat thread carrying its own freshly-loaded agent context.
+One topic under discussion in chat, backed one-to-one by a chat thread carrying its own freshly-loaded agent context, opened with exactly one Objective and one Terminal condition.
 _Avoid_: topic, segment, conversation, thread segment
 
 **Active subject**:
