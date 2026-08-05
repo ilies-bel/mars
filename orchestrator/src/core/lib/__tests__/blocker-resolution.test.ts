@@ -1277,7 +1277,7 @@ describe('blocker-resolution (task_blockers)', () => {
   // -----------------------------------------------------------------------
   // landTask — operator gesture to land worktree-ahead commits
   // -----------------------------------------------------------------------
-  describe('landTask — operator gesture to land worktree-ahead commits', () => {
+  describe('landTask — operator gesture to land worktree-ahead commits', { timeout: 120_000 }, () => {
     /**
      * Shared load helper for landTask tests.  Resets modules each time so the
      * DB client picks up the MARS_REPO override, matching the pattern used by

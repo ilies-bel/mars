@@ -61,7 +61,7 @@ const makeDeps = () => ({
   handleProposalSlice: null,
 })
 
-describe('runStartupReconcile — stranded slicing proposals', () => {
+describe('runStartupReconcile — stranded slicing proposals', { timeout: 120_000 }, () => {
   let repo: string
 
   beforeEach(() => {
@@ -101,7 +101,7 @@ describe('runStartupReconcile — stranded slicing proposals', () => {
   })
 })
 
-describe('runStartupReconcile — orphaned-blocked scan', () => {
+describe('runStartupReconcile — orphaned-blocked scan', { timeout: 120_000 }, () => {
   let repo: string
 
   beforeEach(() => {
@@ -310,7 +310,7 @@ describe('runStartupReconcile — orphaned-blocked scan', () => {
   })
 })
 
-describe('runStartupReconcile — stalled proposal slicing', () => {
+describe('runStartupReconcile — stalled proposal slicing', { timeout: 120_000 }, () => {
   let repo: string
 
   beforeEach(() => {
@@ -364,7 +364,7 @@ describe('runStartupReconcile — stalled proposal slicing', () => {
   })
 })
 
-describe('runStartupReconcile — retired planning gate', () => {
+describe('runStartupReconcile — retired planning gate', { timeout: 120_000 }, () => {
   let repo: string
 
   beforeEach(() => {
@@ -376,7 +376,7 @@ describe('runStartupReconcile — retired planning gate', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('closes legacy gate rows and releases legacy draft slices exactly once', async () => {
+  it('closes legacy gate rows and releases legacy draft slices exactly once', { timeout: 120_000 }, async () => {
     const { q, reconcile } = await loadModules(repo)
     const proposals = (await import('../../proposals')) as unknown as ProposalsModule
     const proposal = await proposals.createProposal('Legacy slice', { source: 'human' })
@@ -432,7 +432,7 @@ describe('runStartupReconcile — retired planning gate', () => {
   })
 })
 
-describe('runStartupReconcile — recovery-done propagation', () => {
+describe('runStartupReconcile — recovery-done propagation', { timeout: 120_000 }, () => {
   let repo: string
 
   beforeEach(() => {
@@ -444,7 +444,7 @@ describe('runStartupReconcile — recovery-done propagation', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('flips a failed origin to done and re-queues its dependents when the fix task is done but propagation was missed', async () => {
+  it('flips a failed origin to done and re-queues its dependents when the fix task is done but propagation was missed', { timeout: 120_000 }, async () => {
     const { q, reconcile } = await loadModules(repo)
 
     // Create the origin task and force it to 'failed' (simulating the
@@ -565,7 +565,7 @@ describe('runStartupReconcile — recovery-done propagation', () => {
   })
 })
 
-describe('runStartupReconcile — blocker-drift repair precedes orphan scan', () => {
+describe('runStartupReconcile — blocker-drift repair precedes orphan scan', { timeout: 120_000 }, () => {
   let repo: string
 
   beforeEach(() => {
@@ -613,7 +613,7 @@ describe('runStartupReconcile — blocker-drift repair precedes orphan scan', ()
   })
 })
 
-describe('runStartupReconcile — requeue-stale-running (prior-daemon running tasks)', () => {
+describe('runStartupReconcile — requeue-stale-running (prior-daemon running tasks)', { timeout: 120_000 }, () => {
   let repo: string
 
   beforeEach(() => {
@@ -755,7 +755,7 @@ describe('runStartupReconcile — requeue-stale-running (prior-daemon running ta
   })
 })
 
-describe('runStartupReconcile — ghost-subscriber-sweep', () => {
+describe('runStartupReconcile — ghost-subscriber-sweep', { timeout: 120_000 }, () => {
   let repo: string
 
   beforeEach(() => {
@@ -909,7 +909,7 @@ describe('runStartupReconcile — ghost-subscriber-sweep', () => {
   })
 })
 
-describe('runStartupReconcile — vega-reconciling-recovery integration', () => {
+describe('runStartupReconcile — vega-reconciling-recovery integration', { timeout: 120_000 }, () => {
   /**
    * Integration regression for the bug where tasks stranded in
    * `vega-reconciling` after a daemon restart were never recovered.

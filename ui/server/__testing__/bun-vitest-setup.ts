@@ -13,6 +13,8 @@
 import { createServer } from 'node:http'
 import { writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 // ---------------------------------------------------------------------------
 // Bun.serve — creates a Node.js HTTP server that accepts Bun-style fetch
@@ -154,3 +156,20 @@ if (typeof globalThis.Bun === 'undefined') {
     argv: process.argv,
   }
 }
+
+// ---------------------------------------------------------------------------
+// Project registry isolation
+//
+// MARS_PROJECTS_FILE — redirect the project registry away from the developer's
+// real ~/.mars/projects.json. Without this, any server boot during tests
+// (ensureProjectRegistered is called unconditionally on daemon/UI startup)
+// writes a permanent row for a temp repo that is deleted seconds later.
+//
+// IMPORTANT: unconditional assignment (`=`, not `??=`). A developer's shell
+// may already export MARS_PROJECTS_FILE; we must still redirect tests to a
+// throwaway path so production registries are never polluted.
+//
+// Use process.pid for per-worker isolation in Vitest's forks pool so parallel
+// workers never collide on the same file.
+// ---------------------------------------------------------------------------
+process.env.MARS_PROJECTS_FILE = join(tmpdir(), `mars-test-projects-${process.pid}.json`)
