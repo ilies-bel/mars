@@ -566,3 +566,7 @@ _Avoid_: user-facing surface, frontend, UI layer
 **Away digest**:
 The single stored message narrating everything that happened during one absence, composed without a provider run when the operator returns and never regenerated afterwards.
 _Avoid_: release notes, delta, what happened, hero delta, daily summary
+
+**Card**:
+The rich affordance in the feed carrying what happened together with the operator's available moves, and the only means by which a Subject is opened or closed.
+_Avoid_: chip, preloaded response, offer, button, action button
