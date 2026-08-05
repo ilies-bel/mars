@@ -3330,6 +3330,25 @@ export const startDaemon = async (
     const { getRepoRoot } = await import('../context')
 
     const branch = task.branch ?? `task/${task.id}`
+    const repoRoot = getRepoRoot()
+
+    // Refuse to silently discard unmerged work. Mirror the `restart` guard:
+    // if the branch has commits ahead of the integration branch and --force
+    // is not set, tell the operator how many commits are at risk.
+    if (!force) {
+      const { listUniqueCommitsAhead } = await import('../lib/sweep')
+      const { integrationBranchName } = await import('../blocker-resolution')
+      const integrationBranch = integrationBranchName()
+      const commitsAhead = await listUniqueCommitsAhead(branch, integrationBranch, repoRoot)
+      if (commitsAhead.length > 0) {
+        throw new Error(
+          `refusing to drop task ${id}: branch ${branch} has ${commitsAhead.length} commit(s) ` +
+            `ahead of ${integrationBranch} that drop would discard. ` +
+            `Review or land the branch, or rerun with --force to discard it.`,
+        )
+      }
+    }
+
     let worktreeRemoved = false
     if (task.worktreePath && exists(task.worktreePath)) {
       try {
@@ -3340,7 +3359,7 @@ export const startDaemon = async (
       }
     }
     const branchDeleteResult = await exec('git', ['branch', '-D', branch], {
-      cwd: getRepoRoot(),
+      cwd: repoRoot,
     })
       .then(() => true)
       .catch(() => false)

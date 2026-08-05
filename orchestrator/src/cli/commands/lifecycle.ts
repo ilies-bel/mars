@@ -447,7 +447,7 @@ const sync: Command = {
 const drop: Command = {
   path: 'drop',
   summary:
-    'delete any task entirely regardless of status; use mars purge for terminal tasks only',
+    'delete any task entirely (worktree + branch + row) regardless of status; use mars purge for terminal tasks only',
   usage: 'usage: mars drop <id> [<id> ...] [--force]',
   run: async (args, deps) => {
     const ids = args.positional.filter((a) => !a.startsWith('--'))

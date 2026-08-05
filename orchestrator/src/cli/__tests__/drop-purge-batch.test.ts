@@ -78,6 +78,21 @@ afterEach(() => {
 })
 
 // ---------------------------------------------------------------------------
+// mars drop — summary text
+// ---------------------------------------------------------------------------
+
+describe('mars drop — command summary', () => {
+  it('names worktree+branch+row destruction in the one-line summary', async () => {
+    const { allCommands } = await import('../commands/index')
+    const dropEntry = allCommands.find((c) => c.path === 'drop')
+    expect(dropEntry).toBeDefined()
+    expect(dropEntry!.summary).toContain('worktree')
+    expect(dropEntry!.summary).toContain('branch')
+    expect(dropEntry!.summary).toContain('row')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // mars drop — batch behaviour
 // ---------------------------------------------------------------------------
 
@@ -94,6 +109,31 @@ describe('mars drop — single id (existing behaviour preserved)', () => {
     const r = await runCommandInProcess(['drop'], opts)
     expect(r.code).toBe(2)
     expect(r.err.join('\n')).toContain('usage: mars drop')
+  })
+
+  it('propagates daemon refusal when branch has commits ahead and no --force', async () => {
+    const ahead3Error = 'refusing to drop task mars-abc: branch task/mars-abc has 3 commit(s) ahead of main that drop would discard. Review or land the branch, or rerun with --force to discard it.'
+    const fake = makeFakeDaemon(() => {
+      throw new Error(ahead3Error)
+    })
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['drop', 'mars-abc'], { store, ctx, daemon: fake })
+    expect(r.code).not.toBe(0)
+    expect(r.err.join('\n')).toContain('mars-abc')
+    expect(r.err.join('\n')).toContain('3 commit(s) ahead')
+  })
+
+  it('passes --force=true to daemon so ahead-of-main guard is bypassed', async () => {
+    const fake = makeFakeDaemon((req) => {
+      if (req.op === 'drop' && (req as { force?: boolean }).force) {
+        return dropResponse((req as { id: string }).id)
+      }
+      throw new Error('refusing to drop: commits ahead')
+    })
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['drop', 'mars-abc', '--force'], { store, ctx, daemon: fake })
+    expect(r.code).toBe(0)
+    expect(r.out.join('\n')).toContain('dropped mars-abc')
   })
 })
 
