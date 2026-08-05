@@ -578,3 +578,7 @@ _Avoid_: auto-close, archive prompt, done button, self-terminate
 **Terminal condition**:
 The domain event or done-statement declared when a Subject opens, whose satisfaction makes that Subject raise its Closure card.
 _Avoid_: exit criteria, completion check, terminal event, done criterion
+
+**Objective**:
+The single reason a Subject exists, stated in one sentence when it opens and never revised for the life of that Subject.
+_Avoid_: goal, purpose, scope, charter
