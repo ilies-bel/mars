@@ -3,6 +3,7 @@ import type { Author } from '../author'
 import type { Task, TaskPlan, TaskTag, TaskSpec } from '../queue'
 import type { RunInitOptions, RunInitResult } from '../../workflows/init-workflow'
 import type { DispatchPauseState } from './pause-state'
+import type { SignatureStormState } from '../lib/signature-storm-monitor'
 
 export type DaemonRequest =
   | {
@@ -149,6 +150,13 @@ export type DaemonRequest =
     }
   /** Apply a persisted control lever to the running daemon process env immediately. */
   | { op: 'apply-lever'; name: 'recovery' | 'scoring'; value: 'on' | 'off' }
+  /**
+   * Clear the durable signature-storm breaker flag and, if dispatch is paused
+   * with reason 'storm', resume dispatch. An operator or quota pause is left
+   * intact — only the storm flag is cleared. Idempotent when the breaker is
+   * already clear or the daemon is running normally.
+   */
+  | { op: 'reset-breaker' }
 
 export type DaemonResponse =
   | { ok: true; data?: unknown }
@@ -203,6 +211,13 @@ export interface DaemonStatusPayload {
    * pause is restored at startup from the durable breaker flag.
    */
   pause: DispatchPauseState
+  /**
+   * The durable state of the signature-storm circuit breaker, read live from
+   * the DB. Included regardless of whether dispatch is paused, so the operator
+   * can see whether a stale `tripped=true` row is present even after dispatch
+   * resumed via another cause. Use `mars daemon reset-breaker` to clear it.
+   */
+  signatureStorm: SignatureStormState
 }
 
 const NEWLINE = 0x0a

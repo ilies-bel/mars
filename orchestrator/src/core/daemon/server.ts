@@ -3663,6 +3663,12 @@ export const startDaemon = async (
               ? 'daemon started before the current .mars/daemon.json; run `mars daemon reload`'
               : 'raised above the configured cap at runtime')),
     }
+    // Read the durable breaker state from the DB so status always reflects the
+    // actual persisted row — not just the in-memory pause reason. A stale
+    // `tripped=true` row (from a past episode) is indistinguishable from a
+    // genuine live storm without this read.
+    const { readSignatureStormState } = await import('../lib/signature-storm-monitor')
+    const signatureStorm = await readSignatureStormState(getCompositionRootClient())
     return {
       pid: process.pid,
       startedAt,
@@ -3673,6 +3679,7 @@ export const startDaemon = async (
       currentSha,
       isStale,
       pause: pause.get(),
+      signatureStorm,
     }
   }
 

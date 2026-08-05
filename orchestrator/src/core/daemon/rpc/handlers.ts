@@ -592,6 +592,34 @@ const taskContextForWorkerHandler = handler('task.contextForWorker', async (req,
 })
 
 /**
+ * Clear the durable signature-storm breaker flag.
+ *
+ * Always calls `resetSignatureStorm()` to clear the durable DB flag. If
+ * dispatch is paused with reason 'storm', also resumes dispatch and kicks
+ * drain so queued work can proceed. An operator or quota pause is left intact
+ * — only the storm-owned flag is cleared, not the entire pause state.
+ *
+ * The response payload includes `{ resumedDispatch: boolean }` so the CLI can
+ * tell the operator whether dispatch was also resumed (true) or only the stale
+ * flag was cleaned up (false).
+ */
+const resetBreakerHandler = handler('reset-breaker', async (_req, deps) => {
+  const prevPauseState = deps.getPauseState()
+  // Always clear the durable DB flag — this is the whole point of the verb.
+  await deps.resetSignatureStorm()
+  // Resume dispatch only when the storm breaker was the active pause cause.
+  const resumedDispatch = prevPauseState.reason === 'storm'
+  if (resumedDispatch) {
+    deps.resumeDispatch()
+    void deps.drain()
+  }
+  return {
+    ok: true,
+    data: { cleared: true, resumedDispatch },
+  }
+})
+
+/**
  * The full leaf set. Order is help/discovery order; the registry rejects
  * duplicate ops. Mirrors `cli/commands/index.ts`'s `allCommands`.
  */
@@ -641,4 +669,5 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   spendControlShowHandler,
   spendControlSetHandler,
   applyLeverHandler,
+  resetBreakerHandler,
 ]

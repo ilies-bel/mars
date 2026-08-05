@@ -254,6 +254,7 @@ const daemonStatus: Command = {
       currentSha: string | null
       isStale: boolean
       pause: DispatchPauseState
+      signatureStorm: { tripped: boolean; signature: string | null; streak: number; lastTaskId: string | null }
     }
     const pauseLine = describePauseState(data.pause)
     if (pauseLine !== null) {
@@ -278,10 +279,51 @@ const daemonStatus: Command = {
     if (cap.reason !== null) deps.out(`            ${cap.reason}`)
     deps.out(`inFlight:   ${data.inFlight.length}`)
     for (const f of data.inFlight) deps.out(`  ${f.kind} ${f.taskId}`)
+    // Signature-storm breaker state. Always printed so the operator can tell
+    // whether a stale `tripped=true` row is present even when dispatch is
+    // running (cleared by `mars daemon reset-breaker`).
+    const storm = data.signatureStorm
+    if (storm != null) {
+      if (storm.tripped) {
+        deps.out(
+          `⚡ storm-breaker: TRIPPED — signature="${storm.signature ?? 'unknown'}" streak=${storm.streak}` +
+            ` — run \`mars daemon reset-breaker\` to clear`,
+        )
+      } else if (storm.streak > 0) {
+        deps.out(
+          `storm-breaker:  ok (streak=${storm.streak} on "${storm.signature ?? 'unknown'}", not tripped)`,
+        )
+      } else {
+        deps.out(`storm-breaker:  ok (no active streak)`)
+      }
+    }
     if (data.isStale && data.sourceSha !== null && data.currentSha !== null) {
       deps.out(
         `⚠ running code from ${data.sourceSha.slice(0, 7)}; HEAD is now ${data.currentSha.slice(0, 7)} — run \`mars daemon restart\``,
       )
+    }
+    return { code: 0 }
+  },
+}
+
+const daemonResetBreaker: Command = {
+  path: 'daemon reset-breaker',
+  summary: 'clear the signature-storm circuit-breaker flag',
+  usage: 'usage: mars daemon reset-breaker',
+  run: async (_args, deps) => {
+    const liveness = await isDaemonAlive()
+    if (!liveness.alive) {
+      deps.err(`daemon not running (${liveness.reason})`)
+      return { code: 1 }
+    }
+    const result = (await deps.daemon.sendRequest({ op: 'reset-breaker' })) as {
+      cleared: boolean
+      resumedDispatch: boolean
+    }
+    if (result.resumedDispatch) {
+      deps.out('storm-breaker cleared and dispatch resumed')
+    } else {
+      deps.out('storm-breaker cleared (dispatch was not paused due to storm)')
     }
     return { code: 0 }
   },
@@ -668,9 +710,9 @@ const daemonSpendControl: Command = {
 const daemonGroup: Command = {
   path: 'daemon',
   summary: 'daemon subcommands',
-  usage: 'usage: mars daemon <start|stop|restart|kill|status|reload> [flags]',
+  usage: 'usage: mars daemon <start|stop|restart|kill|status|reload|reset-breaker> [flags]',
   run: (_args, deps) => {
-    deps.err('usage: mars daemon <start|stop|restart|kill|status|reload> [flags]')
+    deps.err('usage: mars daemon <start|stop|restart|kill|status|reload|reset-breaker> [flags]')
     return { code: 2 }
   },
 }
@@ -686,5 +728,6 @@ export const daemonCommands: readonly Command[] = [
   daemonSetLever,
   daemonSpendControl,
   daemonUsage,
+  daemonResetBreaker,
   daemonGroup,
 ]

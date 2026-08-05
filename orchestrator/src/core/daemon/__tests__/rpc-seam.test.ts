@@ -143,8 +143,8 @@ describe('RPC registry', () => {
     // Stop-task adds one leaf to the existing registry surface.
     // (35 + preview.spawn + preview.status + preview.teardown + merge.cancel
     //  + spend-control.show + spend-control.set + apply-lever + task.contextForWorker
-    //  + mcp.audit.append + set-dispatch).
-    expect(rpcRegistry.size).toBe(45)
+    //  + mcp.audit.append + set-dispatch + reset-breaker).
+    expect(rpcRegistry.size).toBe(46)
   })
 
   it('rejects duplicate ops', () => {
@@ -364,6 +364,48 @@ describe('set-dispatch', () => {
     )
     expect(res.ok).toBe(false)
     expect((res as { ok: false; error: string }).error).toMatch(/must be 'on' or 'off'/)
+  })
+})
+
+describe('reset-breaker', () => {
+  it('clears the durable storm flag and resumes dispatch when pause reason is storm', async () => {
+    const { deps, state } = makeDeps()
+    state.pause.pause('storm', 'signature storm: code/coder-exit-nonzero x3')
+
+    const res = await dispatchRpc(rpcRegistry, { op: 'reset-breaker' }, deps)
+
+    expect(res).toEqual({ ok: true, data: { cleared: true, resumedDispatch: true } })
+    // DB flag must be cleared.
+    expect(state.stormResets).toBe(1)
+    // Dispatch must be resumed — the storm pause was the active cause.
+    expect(state.pause.isPaused()).toBe(false)
+    // drain() must be kicked so queued work can proceed.
+    expect(state.drained).toBe(1)
+  })
+
+  it('clears only the DB flag when dispatch is paused for a different reason', async () => {
+    const { deps, state } = makeDeps()
+    state.pause.pause('operator', 'operator set dispatch off')
+
+    const res = await dispatchRpc(rpcRegistry, { op: 'reset-breaker' }, deps)
+
+    expect(res).toEqual({ ok: true, data: { cleared: true, resumedDispatch: false } })
+    expect(state.stormResets).toBe(1)
+    // Operator pause must remain intact.
+    expect(state.pause.isPaused()).toBe(true)
+    expect(state.pause.get().reason).toBe('operator')
+    expect(state.drained).toBe(0)
+  })
+
+  it('clears only the DB flag when dispatch is running normally (no active pause)', async () => {
+    const { deps, state } = makeDeps()
+
+    const res = await dispatchRpc(rpcRegistry, { op: 'reset-breaker' }, deps)
+
+    expect(res).toEqual({ ok: true, data: { cleared: true, resumedDispatch: false } })
+    expect(state.stormResets).toBe(1)
+    expect(state.pause.isPaused()).toBe(false)
+    expect(state.drained).toBe(0)
   })
 })
 
