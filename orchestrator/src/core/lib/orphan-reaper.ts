@@ -50,18 +50,41 @@
  * useless as a signal for them and the wall-clock threshold stays.
  *
  * **Agent sessions** are reaped only when the session has genuinely stopped
- * doing anything: no CPU progress anywhere in its process group for
- * {@link DEFAULT_AGENT_IDLE_SECONDS}. Group-wide accounting is what makes this
- * safe — an agent blocked in `read()` while `npm test` runs burns no CPU
- * itself, but its child does, and the child shares its process group. A hard
- * wall-clock cap is available via {@link DEFAULT_AGENT_MAX_AGE_SECONDS} and is
- * INFINITE by default: absent an explicit operator override, a working agent is
- * never killed for merely taking a long time.
+ * doing anything: no CPU progress anywhere in its PROCESS TREE for
+ * {@link DEFAULT_AGENT_IDLE_SECONDS}. A hard wall-clock cap is available via
+ * {@link DEFAULT_AGENT_MAX_AGE_SECONDS} and is INFINITE by default: absent an
+ * explicit operator override, a working agent is never killed for merely
+ * taking a long time.
  *
  * Idleness needs memory across sweeps — one `ps` sample cannot distinguish
  * "wedged" from "waiting on a slow API call". {@link updateActivityLedger}
- * keeps the last-progress timestamp per process group, so a session must look
- * idle across consecutive sweeps before it is eligible.
+ * keeps the last-progress timestamp per candidate, so a session must look idle
+ * across consecutive sweeps before it is eligible.
+ *
+ * ## Why the TREE and not the process group
+ *
+ * The first version of the idleness rule measured CPU per process GROUP, on the
+ * assumption that an agent's children share its pgid. They do not. Claude Code
+ * runs every Bash tool call in a fresh process group, so an agent's `npm test`
+ * is in a group the agent does not belong to.
+ *
+ * Measured on the live machine (2026-08-05): 13 agent sessions, 49 descendant
+ * processes sitting OUTSIDE their agent's process group — including a
+ * dispatched coder at pgid 1175 whose vitest workers were burning 30 s of CPU
+ * at pgid 45267. Group-only accounting sees that agent perfectly flatlined and
+ * would reap it, mid-test-run, for being "idle". This is precisely the failure
+ * the idleness rule was introduced to prevent.
+ *
+ * So the scope is rebuilt from parentage each sweep ({@link buildProcessIndex},
+ * {@link activityScope}). `ppid` survives `setpgid`/`setsid`; it is the only
+ * link that still holds. The process group is kept as a secondary source, for
+ * children whose intermediate parent has already exited.
+ *
+ * The same correction applies to the kill. Signalling only the agent's `-pgid`
+ * left the whole tool-call subtree alive and reparented to init — and permanently
+ * invisible, because a vitest worker's argv is literally `node (vitest 1)`,
+ * which `pgrep -f .mars/worktrees` never matches. {@link killTargetPgids} names
+ * every group the doomed tree occupies.
  *
  * ## Design
  *
@@ -103,6 +126,18 @@ export interface ProcessRow {
 }
 
 /**
+ * One row of the machine-wide process table, carrying only what is needed to
+ * reconstruct parentage and attribute CPU. No argv and no elapsed time, because
+ * this is read for EVERY process on the machine once per sweep.
+ */
+export interface TableRow {
+  pid: number
+  ppid: number
+  pgid: number
+  cpuSeconds: number
+}
+
+/**
  * What kind of process a candidate row is, decided from argv[0] alone.
  *
  * The distinction is load-bearing: a `verify-runner` is reaped on age, an
@@ -132,6 +167,8 @@ export type OrphanReason =
   | 'agent-max-age'
   /** Agent session still making progress — never reaped, however old. */
   | 'agent-active'
+  /** A live agent session's own tool call. Its session is minding it. */
+  | 'agent-descendant'
 
 export interface OrphanVerdict {
   pid: number
@@ -142,7 +179,7 @@ export interface OrphanVerdict {
   taskId: string | null
   /** Which population this row belongs to, and therefore which rule applied. */
   kind: ProcessKind
-  /** Seconds since this row's process group last made CPU progress; null when unknown. */
+  /** Seconds since this row's whole process tree last made CPU progress; null when unknown. */
   idleSeconds: number | null
   verdict: 'reap' | 'skip'
   reason: OrphanReason
@@ -319,11 +356,27 @@ export interface JudgeOptions {
    */
   agentMaxAgeSeconds: number
   /**
-   * pgid → seconds since that process group last made CPU progress.
-   * A group absent from the map has no progress history yet and is treated as
-   * active: silence that has not been OBSERVED across sweeps is not evidence.
+   * Candidate pid → seconds since that process's whole tree last made CPU
+   * progress. A pid absent from the map has no progress history yet and is
+   * treated as active: silence that has not been OBSERVED across sweeps is not
+   * evidence.
    */
-  idleSecondsByGroup: ReadonlyMap<number, number>
+  idleSecondsByPid: ReadonlyMap<number, number>
+  /**
+   * Pids that descend from a live agent session in this very sweep.
+   *
+   * A coder's `npm test` is a candidate in its own right — its argv names the
+   * worktree, and `zsh -c … vitest` matches the runner signature — so without
+   * this it is judged as a LEAKED runner and reaped on age. Observed live: a
+   * healthy coder's tool-call shell 828 s old, i.e. already past
+   * {@link DEFAULT_MIN_AGE_SECONDS}, spared only because its task happened to
+   * be in the in-flight set at that instant.
+   *
+   * Parentage settles it directly: if a live session started this process, it
+   * is that session's business and not an orphan. The session leader is the
+   * unit of decision — when IT is reaped, the whole tree goes with it.
+   */
+  agentDescendantPids: ReadonlySet<number>
 }
 
 /**
@@ -350,7 +403,7 @@ export const judgeProcess = (
 ): OrphanVerdict => {
   const taskId = taskIdFromCommand(row.command, opts.worktreesRoot)
   const kind = classifyCommand(row.command)
-  const idleSeconds = opts.idleSecondsByGroup.get(row.pgid) ?? null
+  const idleSeconds = opts.idleSecondsByPid.get(row.pid) ?? null
   const base = {
     pid: row.pid,
     pgid: row.pgid,
@@ -380,6 +433,9 @@ export const judgeProcess = (
   ) {
     return skip('self')
   }
+  // Anything a live session spawned belongs to that session, whatever its argv
+  // looks like. Checked before the age rule, which is what used to catch these.
+  if (opts.agentDescendantPids.has(row.pid)) return skip('agent-descendant')
 
   /** Ownership test shared by both populations: is anyone still minding it? */
   const abandoned = (): OrphanVerdict => {
@@ -417,40 +473,165 @@ export const judgeProcessTable = (
   opts: JudgeOptions,
 ): readonly OrphanVerdict[] => rows.map((row) => judgeProcess(row, opts))
 
+// ── Process tree ────────────────────────────────────────────────────────────
+
+/**
+ * The process table, indexed for descent.
+ *
+ * Built fresh each sweep from a single machine-wide `ps`. Parentage is the only
+ * link that survives an agent CLI putting its children in their own process
+ * group, so the tree — not the group — is what defines "this session's work".
+ */
+export interface ProcessIndex {
+  byPid: ReadonlyMap<number, TableRow>
+  childrenByPpid: ReadonlyMap<number, readonly TableRow[]>
+  pidsByPgid: ReadonlyMap<number, readonly number[]>
+}
+
+export const buildProcessIndex = (rows: readonly TableRow[]): ProcessIndex => {
+  const byPid = new Map<number, TableRow>()
+  const childrenByPpid = new Map<number, TableRow[]>()
+  const pidsByPgid = new Map<number, number[]>()
+  for (const row of rows) {
+    byPid.set(row.pid, row)
+    // A process is never its own child; init (ppid 0/1) would otherwise loop.
+    if (row.ppid !== row.pid) {
+      const siblings = childrenByPpid.get(row.ppid)
+      if (siblings === undefined) childrenByPpid.set(row.ppid, [row])
+      else siblings.push(row)
+    }
+    const group = pidsByPgid.get(row.pgid)
+    if (group === undefined) pidsByPgid.set(row.pgid, [row.pid])
+    else group.push(row.pid)
+  }
+  return { byPid, childrenByPpid, pidsByPgid }
+}
+
+/**
+ * Every transitive child of `rootPid`, excluding `rootPid` itself.
+ *
+ * Breadth-first with a visited set: a `ps` snapshot is not taken atomically, so
+ * pid reuse between rows can in principle produce a cycle. The guard makes the
+ * walk total regardless.
+ */
+export const descendantPids = (
+  index: ProcessIndex,
+  rootPid: number,
+): ReadonlySet<number> => {
+  const seen = new Set<number>()
+  const queue: number[] = [rootPid]
+  while (queue.length > 0) {
+    const pid = queue.pop() as number
+    for (const child of index.childrenByPpid.get(pid) ?? []) {
+      if (child.pid === rootPid || seen.has(child.pid)) continue
+      seen.add(child.pid)
+      queue.push(child.pid)
+    }
+  }
+  return seen
+}
+
+/**
+ * The set of pids whose CPU counts as "this session is working".
+ *
+ * The union of two relations, because neither alone is sufficient:
+ *
+ * - **descendants (ppid)** — the load-bearing one. Claude Code runs every Bash
+ *   tool call in a NEW process group, so an agent's `npm test` does not share
+ *   the agent's pgid. Measured live: 13 agent sessions, 49 descendants outside
+ *   their agent's group, including a coder whose vitest workers were burning
+ *   30s of CPU in a group the agent did not belong to. Parentage survives
+ *   `setpgid`/`setsid`, so it still links them.
+ * - **process group (pgid)** — the fallback. If an intermediate process exits,
+ *   its children reparent to init and drop out of the ppid walk while staying
+ *   in the group.
+ *
+ * Erring toward a larger scope is deliberate: over-counting CPU spares a live
+ * session, under-counting kills one.
+ */
+export const activityScope = (
+  index: ProcessIndex,
+  pid: number,
+  pgid: number,
+): ReadonlySet<number> => {
+  const scope = new Set<number>([pid])
+  for (const descendant of descendantPids(index, pid)) scope.add(descendant)
+  for (const member of index.pidsByPgid.get(pgid) ?? []) scope.add(member)
+  return scope
+}
+
+/** Sum cumulative CPU across a scope, skipping pids that have since exited. */
+export const scopeCpuSeconds = (
+  index: ProcessIndex,
+  scope: ReadonlySet<number>,
+): number => {
+  let total = 0
+  for (const pid of scope) total += index.byPid.get(pid)?.cpuSeconds ?? 0
+  return total
+}
+
+/**
+ * Every process group that must be signalled to actually kill a session.
+ *
+ * Signalling only the agent's own `-pgid` — what the reaper used to do — leaves
+ * the whole Bash-tool subtree alive in its own group, reparented to init and
+ * running forever. Those survivors are invisible to a later sweep: a vitest
+ * worker's argv is literally `node (vitest 1)`, so `pgrep -f .mars/worktrees`
+ * never matches it and nothing ever cleans it up.
+ *
+ * Derived from descendants only. Same-pgid non-descendants are already covered
+ * by the leader's own pgid, and walking them could drag in an unrelated group.
+ */
+export const killTargetPgids = (
+  index: ProcessIndex,
+  pid: number,
+  pgid: number,
+  protectedPgid: number | null,
+): readonly number[] => {
+  const targets = new Set<number>([pgid])
+  for (const descendant of descendantPids(index, pid)) {
+    const row = index.byPid.get(descendant)
+    if (row !== undefined) targets.add(row.pgid)
+  }
+  // pgid 0/1 would signal init or every process the user owns.
+  return [...targets].filter((t) => t > 1 && t !== protectedPgid)
+}
+
 // ── Activity ledger ─────────────────────────────────────────────────────────
 
-/** Cumulative CPU of a process group, plus when it last advanced. */
-export interface GroupActivity {
-  /** Sum of cumulative CPU seconds across every member of the group. */
+/** Cumulative CPU of one session's whole process tree, plus when it advanced. */
+export interface ScopeActivity {
+  /** Sum of cumulative CPU seconds across every pid in the scope. */
   cpuSeconds: number
   /** Epoch ms at which `cpuSeconds` was last observed to increase. */
   lastProgressAtMs: number
 }
 
-export type ActivityLedger = Map<number, GroupActivity>
+/** Keyed by the pid of the candidate process the scope was computed for. */
+export type ActivityLedger = Map<number, ScopeActivity>
 
 /**
  * Fold a fresh CPU sample into the ledger and return the updated one.
  *
- * A group whose CPU total rose since the previous sweep is stamped active
- * *now*. A group whose total is unchanged keeps its previous timestamp, so
+ * A scope whose CPU total rose since the previous sweep is stamped active
+ * *now*. A scope whose total is unchanged keeps its previous timestamp, so
  * idleness accumulates across sweeps rather than being decided by a single
  * sample — which is the whole point: one sample cannot tell a wedged agent
  * from one waiting on a slow API call.
  *
- * Groups absent from the sample are dropped; their processes are gone.
+ * Pids absent from the sample are dropped; those processes are gone.
  * Pure: the input ledger is never mutated.
  */
 export const updateActivityLedger = (
   sample: ReadonlyMap<number, number>,
-  previous: ReadonlyMap<number, GroupActivity>,
+  previous: ReadonlyMap<number, ScopeActivity>,
   nowMs: number,
 ): ActivityLedger => {
   const next: ActivityLedger = new Map()
-  for (const [pgid, cpuSeconds] of sample) {
-    const prior = previous.get(pgid)
+  for (const [pid, cpuSeconds] of sample) {
+    const prior = previous.get(pid)
     const progressed = prior === undefined || cpuSeconds > prior.cpuSeconds
-    next.set(pgid, {
+    next.set(pid, {
       cpuSeconds,
       lastProgressAtMs: progressed ? nowMs : prior.lastProgressAtMs,
     })
@@ -459,19 +640,61 @@ export const updateActivityLedger = (
 }
 
 /**
- * Derive "seconds since last progress" per group from a ledger.
+ * CPU totals for every candidate's activity scope, keyed by candidate pid.
  *
- * A group first seen in this very sweep yields 0 — never a large number — so a
+ * Two candidates in one session (the agent and a child that also matched
+ * `pgrep`) get overlapping scopes and therefore overlapping totals. That is
+ * fine: the ledger only ever compares a scope against ITS OWN previous total,
+ * never against another's.
+ */
+/**
+ * Every pid descending from an agent session among `candidates`.
+ *
+ * Scoped to sessions that name a worktree, so a developer's own interactive
+ * `claude` never shelters anything from the sweep.
+ */
+export const agentDescendantPids = (
+  index: ProcessIndex,
+  candidates: readonly ProcessRow[],
+  worktreesRoot: string,
+): ReadonlySet<number> => {
+  const out = new Set<number>()
+  for (const row of candidates) {
+    if (classifyCommand(row.command) !== 'agent-session') continue
+    if (taskIdFromCommand(row.command, worktreesRoot) === null) continue
+    for (const pid of descendantPids(index, row.pid)) out.add(pid)
+  }
+  return out
+}
+
+export const sampleScopeCpu = (
+  index: ProcessIndex,
+  candidates: readonly ProcessRow[],
+): ReadonlyMap<number, number> => {
+  const sample = new Map<number, number>()
+  for (const row of candidates) {
+    sample.set(
+      row.pid,
+      scopeCpuSeconds(index, activityScope(index, row.pid, row.pgid)),
+    )
+  }
+  return sample
+}
+
+/**
+ * Derive "seconds since last progress" per candidate pid from a ledger.
+ *
+ * A pid first seen in this very sweep yields 0 — never a large number — so a
  * cold ledger (first sweep after a daemon start) can never reap anything for
  * idleness. Idleness must be *observed*, not assumed.
  */
 export const idleSecondsFromLedger = (
-  ledger: ReadonlyMap<number, GroupActivity>,
+  ledger: ReadonlyMap<number, ScopeActivity>,
   nowMs: number,
 ): ReadonlyMap<number, number> => {
   const out = new Map<number, number>()
-  for (const [pgid, activity] of ledger) {
-    out.set(pgid, Math.max(0, Math.round((nowMs - activity.lastProgressAtMs) / 1000)))
+  for (const [pid, activity] of ledger) {
+    out.set(pid, Math.max(0, Math.round((nowMs - activity.lastProgressAtMs) / 1000)))
   }
   return out
 }
@@ -524,40 +747,48 @@ export const listCandidateProcesses = async (): Promise<readonly ProcessRow[]> =
   return rows
 }
 
+/** Parse one line of `ps -axo pid=,ppid=,pgid=,time=`. */
+export const parseTableLine = (line: string): TableRow | null => {
+  const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)$/)
+  if (!m) return null
+  const cpuSeconds = parseCpuTimeSeconds(m[4])
+  if (cpuSeconds === null) return null
+  return {
+    pid: Number(m[1]),
+    ppid: Number(m[2]),
+    pgid: Number(m[3]),
+    cpuSeconds,
+  }
+}
+
 /**
- * Sum cumulative CPU seconds per process group across EVERY process on the
- * machine.
+ * Read parentage and cumulative CPU for EVERY process on the machine.
  *
- * Group-wide, not per-candidate, and deliberately so: an agent blocked reading
- * its child's stdout accrues no CPU of its own while `npm test` grinds away in
- * the same process group. Charging the child's CPU to the group is what stops
- * "agent is waiting on a long build" from reading as "agent is wedged". It also
- * catches descendants that `pgrep -f .mars/worktrees` never matched, because
- * their own argv does not mention the worktree.
+ * Machine-wide rather than per-candidate, and deliberately so: an agent blocked
+ * reading its child's stdout accrues no CPU of its own while `npm test` grinds
+ * away — in a DIFFERENT process group, under a pid whose argv (`node
+ * (vitest 1)`) mentions no worktree and so was never a candidate. The only way
+ * to find that work is to reconstruct the tree from the whole table.
  *
- * One `ps` per sweep. Returns an empty map on failure, which reads downstream
+ * One `ps` per sweep. Returns an empty array on failure, which reads downstream
  * as "no progress evidence" and therefore spares everything.
  */
-export const readGroupCpuSeconds = async (): Promise<ReadonlyMap<number, number>> => {
-  const totals = new Map<number, number>()
+export const readProcessTable = async (): Promise<readonly TableRow[]> => {
   let out = ''
   try {
-    const { stdout } = await execFileAsync('ps', ['-axo', 'pgid=,time='], {
+    const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,pgid=,time='], {
       maxBuffer: PS_MAX_BUFFER,
     })
     out = stdout
   } catch {
-    return totals
+    return []
   }
+  const rows: TableRow[] = []
   for (const line of out.split('\n')) {
-    const m = line.trim().match(/^(\d+)\s+(\S+)$/)
-    if (!m) continue
-    const cpu = parseCpuTimeSeconds(m[2])
-    if (cpu === null) continue
-    const pgid = Number(m[1])
-    totals.set(pgid, (totals.get(pgid) ?? 0) + cpu)
+    const row = parseTableLine(line)
+    if (row !== null) rows.push(row)
   }
-  return totals
+  return rows
 }
 
 /** Read this process's own process-group id via `ps`; `null` when unavailable. */
@@ -663,7 +894,7 @@ export interface OrphanSweepOptions {
   log?: (line: string) => void
   // ── injected side effects (tests pass fakes so no real pid is signalled) ──
   listProcesses?: () => Promise<readonly ProcessRow[]>
-  groupCpuSeconds?: () => Promise<ReadonlyMap<number, number>>
+  processTable?: () => Promise<readonly TableRow[]>
   /** Persistent progress history. Defaults to the module-level ledger. */
   activityLedger?: ActivityLedger
   nowMs?: () => number
@@ -677,9 +908,10 @@ export interface OrphanSweepOptions {
  * Detect and reap orphaned verify/test subprocesses and abandoned agent
  * sessions.
  *
- * Each reaped group gets a SIGTERM to `-pgid` (so descendants die with the
- * leader) and, after `graceMs`, a SIGKILL if anything in the group survived —
- * a child that ignores SIGTERM must not be able to keep the group alive.
+ * Every group a doomed process tree occupies gets a SIGTERM to `-pgid` and,
+ * after `graceMs`, a SIGKILL if anything in that group survived — a child that
+ * ignores SIGTERM must not be able to keep the group alive. Killing the
+ * leader's group alone is not enough; see {@link killTargetPgids}.
  *
  * Every kill is logged with pid, age, idle time, and the reason the process was
  * judged an orphan. Returns a structured summary so callers can log and act on
@@ -689,7 +921,7 @@ export const sweepOrphans = async (
   opts: OrphanSweepOptions,
 ): Promise<OrphanSweepSummary> => {
   const listProcesses = opts.listProcesses ?? listCandidateProcesses
-  const groupCpuSeconds = opts.groupCpuSeconds ?? readGroupCpuSeconds
+  const processTable = opts.processTable ?? readProcessTable
   const killGroup = opts.killGroup ?? defaultKillGroup
   const groupAlive = opts.groupAlive ?? defaultGroupAlive
   const sleep = opts.sleep ?? defaultSleep
@@ -700,37 +932,46 @@ export const sweepOrphans = async (
   const graceMs = opts.graceMs ?? DEFAULT_KILL_GRACE_MS
 
   const rows = await listProcesses()
+  const index = buildProcessIndex(await processTable())
+  const ownGroup = await ownPgid()
 
-  // Fold the CPU sample into the ledger on EVERY sweep, including sweeps with
-  // no candidates. Skipping it would leave a stale history behind and let a
-  // group that idled while unmatched look instantly reapable when it
-  // reappears.
+  // Fold the CPU sample into the ledger BEFORE the empty-candidate early
+  // return, so history is rebuilt on every sweep rather than frozen.
+  // A candidate that drops out of `pgrep` for a sweep loses its history and
+  // comes back reading as freshly active — the safe direction, since a reap
+  // needs idleness observed across consecutive sweeps.
   const nowMs = now()
-  const refreshed = updateActivityLedger(await groupCpuSeconds(), ledger, nowMs)
+  const refreshed = updateActivityLedger(sampleScopeCpu(index, rows), ledger, nowMs)
   ledger.clear()
-  for (const [pgid, activity] of refreshed) ledger.set(pgid, activity)
+  for (const [pid, activity] of refreshed) ledger.set(pid, activity)
 
   if (rows.length === 0) {
     return { scanned: 0, reaped: 0, skipped: 0, details: [] }
   }
 
+  const worktreesRoot = `${opts.repoRoot.replace(/\/$/, '')}/.mars/worktrees`
   const verdicts = judgeProcessTable(rows, {
-    worktreesRoot: `${opts.repoRoot.replace(/\/$/, '')}/.mars/worktrees`,
+    worktreesRoot,
+    agentDescendantPids: agentDescendantPids(index, rows, worktreesRoot),
     inFlightTaskIds: opts.inFlightTaskIds,
     minAgeSeconds: opts.minAgeSeconds ?? DEFAULT_MIN_AGE_SECONDS,
     agentIdleSeconds: opts.agentIdleSeconds ?? DEFAULT_AGENT_IDLE_SECONDS,
     agentMaxAgeSeconds: opts.agentMaxAgeSeconds ?? DEFAULT_AGENT_MAX_AGE_SECONDS,
-    idleSecondsByGroup: idleSecondsFromLedger(ledger, nowMs),
+    idleSecondsByPid: idleSecondsFromLedger(ledger, nowMs),
     protectedPids: new Set([process.pid, process.ppid]),
-    protectedPgid: await ownPgid(),
+    protectedPgid: ownGroup,
   })
 
-  // One SIGTERM per distinct group — several rows usually share one pgid
-  // (npm → vitest → forks all live in the group the orchestrator created).
+  // Every group the doomed process trees occupy — NOT just the leaders' own
+  // groups. An agent CLI runs each tool call in a fresh process group, so
+  // signalling only `-pgid` of the agent leaves `npm test` alive, reparented to
+  // init, and invisible to later sweeps (its argv names no worktree).
   const doomed = verdicts.filter((v) => v.verdict === 'reap')
   const groups = new Map<number, OrphanVerdict>()
   for (const v of doomed) {
-    if (!groups.has(v.pgid)) groups.set(v.pgid, v)
+    for (const target of killTargetPgids(index, v.pid, v.pgid, ownGroup)) {
+      if (!groups.has(target)) groups.set(target, v)
+    }
   }
 
   for (const v of doomed) {
