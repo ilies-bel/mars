@@ -660,3 +660,162 @@ describe('ProjectSelector – Restart error display', () => {
     expect(html).not.toContain('restart-error-')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Height cap — listbox must not grow unbounded with many projects
+// ---------------------------------------------------------------------------
+
+// Build a 30-entry project list to simulate the live registry.
+const manyProjects: Project[] = Array.from({ length: 30 }, (_, i) => ({
+  projectId: `proj-many-${i}`,
+  repoRoot: `/repos/project-${i}`,
+  name: `Project ${i}`,
+  health: 'live' as const,
+}))
+
+describe('ProjectSelector – listbox height cap with a long list', () => {
+  it('listbox carries a max-height class so it does not grow unbounded', () => {
+    const html = renderToStaticMarkup(
+      <ProjectSelectorInner
+        projects={manyProjects}
+        focusedProjectId="proj-many-0"
+        open={true}
+        starting={null}
+        restarting={null}
+        startError={null}
+        restartError={null}
+        onToggle={noop}
+        onSelect={noop}
+        onStart={noop}
+        onRestart={noop}
+      />,
+    )
+    // The listbox <ul> must carry a max-h-* Tailwind class so the panel is
+    // capped even when the registry has 30+ entries.
+    expect(html).toMatch(/class="[^"]*max-h-[^"]*"/)
+  })
+
+  it('listbox carries overflow-y-auto so rows past the cap are reachable by scrolling', () => {
+    const html = renderToStaticMarkup(
+      <ProjectSelectorInner
+        projects={manyProjects}
+        focusedProjectId="proj-many-0"
+        open={true}
+        starting={null}
+        restarting={null}
+        startError={null}
+        restartError={null}
+        onToggle={noop}
+        onSelect={noop}
+        onStart={noop}
+        onRestart={noop}
+      />,
+    )
+    expect(html).toContain('overflow-y-auto')
+  })
+
+  it('listbox carries overflow-hidden so the selected row bg is clipped at rounded corners', () => {
+    const html = renderToStaticMarkup(
+      <ProjectSelectorInner
+        projects={manyProjects}
+        focusedProjectId="proj-many-0"
+        open={true}
+        starting={null}
+        restarting={null}
+        startError={null}
+        restartError={null}
+        onToggle={noop}
+        onSelect={noop}
+        onStart={noop}
+        onRestart={noop}
+      />,
+    )
+    expect(html).toContain('overflow-hidden')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ArrowDown past the visible fold — aria-activedescendant must stay in sync
+// ---------------------------------------------------------------------------
+
+describe('ProjectSelector – ArrowDown keeps aria-activedescendant in sync past the fold', () => {
+  let container: HTMLElement
+  let root: Root
+
+  beforeEach(async () => {
+    setFocusedProjectId.mockClear()
+    mockUseFocusedProject.mockReturnValue({
+      projects: manyProjects,
+      focusedProjectId: 'proj-many-0',
+      setFocusedProjectId,
+      projectsSettled: true,
+    })
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<ProjectSelector />)
+    })
+  })
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  const openDropdown = async (c: HTMLElement) => {
+    const trigger = c.querySelector<HTMLButtonElement>(
+      '[data-testid="project-selector-trigger"]',
+    )
+    await act(async () => {
+      trigger?.click()
+    })
+  }
+
+  const keyOnListbox = async (c: HTMLElement, key: string) => {
+    const listbox = c.querySelector<HTMLUListElement>('[role="listbox"]')
+    await act(async () => {
+      listbox?.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }),
+      )
+    })
+  }
+
+  it('aria-activedescendant updates correctly after ArrowDown past 10 rows', async () => {
+    await openDropdown(container)
+    // Press ArrowDown 10 times — well past a visible fold of ~10–12 rows.
+    for (let i = 0; i < 10; i++) {
+      await keyOnListbox(container, 'ArrowDown')
+    }
+    const listbox = container.querySelector('[role="listbox"]')
+    // Opening sets activeIndex to index 0 (proj-many-0); 10 ArrowDowns → index 10.
+    expect(listbox?.getAttribute('aria-activedescendant')).toBe('ps-opt-proj-many-10')
+  })
+
+  it('aria-activedescendant reaches the last item after ArrowDown through all 30 entries', async () => {
+    await openDropdown(container)
+    // 29 ArrowDowns from index 0 should land on the last entry (index 29).
+    for (let i = 0; i < 29; i++) {
+      await keyOnListbox(container, 'ArrowDown')
+    }
+    const listbox = container.querySelector('[role="listbox"]')
+    expect(listbox?.getAttribute('aria-activedescendant')).toBe('ps-opt-proj-many-29')
+  })
+
+  it('End jumps directly to the last of 30 entries', async () => {
+    await openDropdown(container)
+    await keyOnListbox(container, 'End')
+    const listbox = container.querySelector('[role="listbox"]')
+    expect(listbox?.getAttribute('aria-activedescendant')).toBe('ps-opt-proj-many-29')
+  })
+
+  it('Home jumps back to the first entry after End', async () => {
+    await openDropdown(container)
+    await keyOnListbox(container, 'End')
+    await keyOnListbox(container, 'Home')
+    const listbox = container.querySelector('[role="listbox"]')
+    expect(listbox?.getAttribute('aria-activedescendant')).toBe('ps-opt-proj-many-0')
+  })
+})
