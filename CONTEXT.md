@@ -558,3 +558,7 @@ _Avoid_: summary, recap, thread summary, closing note
 **Offer set**:
 The ops standing open in the chat feed at a given moment, rendered as Preloaded responses and matched against the operator's free text before it is treated as a new Subject.
 _Avoid_: pending actions, open ops, chip set, suggestions
+
+**Reachable surface**:
+The entry point through which a human can actually exercise a PRD's user story in the merged result — a UI affordance, a CLI command, or a bot command — as distinct from an API route or table that only another program can reach.
+_Avoid_: user-facing surface, frontend, UI layer
