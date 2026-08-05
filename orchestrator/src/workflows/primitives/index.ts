@@ -64,7 +64,7 @@ import {
   appendEnrichmentScopes,
   recordEnrichmentShadowRuns,
 } from '../../core/lib/gate-enrichment'
-import { mergeBranch, checkMergeTargetStatus, isZeroCommitBranch, type MergeResult } from '../../core/lib/git/merge'
+import { mergeBranch, checkMergeTargetStatus, isZeroCommitBranch, isBranchTipInIntegration, type MergeResult } from '../../core/lib/git/merge'
 import { autoCommitWorktreeIfDeterministic } from '../../core/lib/git/commit-main'
 import {
   createWorker,
@@ -626,6 +626,22 @@ export interface SetupWorktreeOpts {
   fixForTaskId?: string | null
   /** Override the task id (defaults to `ctx.runId`). */
   taskId?: string
+  /**
+   * Conflict policy for {@link syncWorktreeToIntegration}. Overrides the
+   * default policy that is derived from `kind`:
+   *
+   * - Default for `kind:'task'`: `'recreate'` — safe for a fresh branch that
+   *   has never been coded yet; the old tip is parked on a ref.
+   * - Default for `kind:'fix'`: `'reconcile'` — the origin's existing commits
+   *   must not be reset; invoke the vcs-supervisor on conflict.
+   *
+   * **Use `'reconcile'` for remerge workflows** where the task branch already
+   * carries commits that must survive the sync. Passing `'recreate'` (or
+   * accepting the default) silently parks the commits and resets to integration
+   * tip, after which `isZeroCommitBranch` fires and the merge is skipped with
+   * `status='done'` — data loss without an error.
+   */
+  onConflict?: WorktreeConflictPolicy
 }
 
 export interface SetupWorktreeResult {
@@ -874,11 +890,17 @@ export const setupWorktree = async (
         ref,
         integrationBranch,
         phase: 'setup',
-        onConflict: isMainCommiterFix
+        // An explicit `onConflict` in opts always wins. This lets remerge
+        // workflows pass `'reconcile'` to prevent a diverged branch from being
+        // silently recreated (which would zero its commits, trigger the
+        // `isZeroCommitBranch` short-circuit, and mark the task done while the
+        // commits were never in integration — the root cause of the silent
+        // data-loss bug this option was added to fix).
+        onConflict: opts.onConflict ?? (isMainCommiterFix
           ? 'escalate'
           : attachesToOrigin
             ? 'reconcile'
-            : 'recreate',
+            : 'recreate'),
         traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
         store,
       })
@@ -3203,6 +3225,52 @@ export const merge = async (
           )
         }
 
+        // Post-merge ancestry assertion: verify the merged SHA is actually
+        // reachable from the integration branch before marking the task done.
+        //
+        // WHY THIS IS NEEDED. When `mergeBranch` returns `merged: true` with a
+        // `mergePostSha`, the fast-forward ref update is supposed to have
+        // advanced `integrationBranch` to that SHA. But silent failures can
+        // produce a false positive (e.g. the remerge zero-commit short-circuit
+        // fired while the branch was recreated at the integration tip, causing
+        // commits on the real task branch to be forever unreferenced — observed
+        // on 6 tasks on 2026-08-05). Without this check the task is marked
+        // `done` and `task/<id>` is deleted, leaving the commits unreachable and
+        // reclaimable by `git gc`.
+        //
+        // The single `merge-base --is-ancestor` probe costs ~5ms. On failure:
+        // stamp the task `failed` with a named signature, do NOT remove the
+        // branch (preserves the commits for investigation), throw to abort.
+        if (m.mergePostSha !== undefined) {
+          const tipInIntegration = await isBranchTipInIntegration(
+            m.mergePostSha,
+            integrationBranch,
+          )
+          if (!tipInIntegration) {
+            const assertMsg = (
+              `merge:post-merge-assertion failed: ${m.mergePostSha.slice(0, 9)} is not ` +
+              `reachable from ${integrationBranch} — branch ${branch} preserved for investigation`
+            )
+            const assertSignature = computeFailureSignature(
+              'merge:post-merge-assertion',
+              assertMsg,
+            )
+            await updateTask(
+              taskId,
+              {
+                status: 'failed',
+                error: assertMsg,
+                failedPhase: 'merge',
+                failureReason: 'merge:post-merge-assertion',
+                failureSignature: assertSignature,
+                failureReasonCode: assertSignature,
+              },
+              store,
+            )
+            throw new Error(assertMsg)
+          }
+        }
+
         // Do NOT reclaim a worktree another live task is standing on. A
         // recovery shares its ORIGIN's directory and branch
         // (`attachToOriginWorktree`), so removing them here when the recovery
@@ -3248,7 +3316,8 @@ export const merge = async (
             error.message.includes('merge pre-flight failed') ||
             error.message.includes('merge aborted; vcs-supervisor could not reconcile') ||
             error.message.includes('merge:main-dirty') ||
-            error.message.includes('merge:integration-gate'))
+            error.message.includes('merge:integration-gate') ||
+            error.message.includes('merge:post-merge-assertion'))
         ) {
           throw error
         }

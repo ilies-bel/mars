@@ -27,7 +27,16 @@ export default defineWorkflow({
     // setup — create a fresh worktree directory on the EXISTING branch.
     // createWorktree detects that task/<id> already exists and attaches to it
     // rather than creating a new branch, so no committed work is lost.
-    await ctx.step('setup', () => setupWorktree(ctx))
+    //
+    // CRITICAL: pass `onConflict: 'reconcile'` so that a diverged branch is
+    // rebased via the vcs-supervisor instead of being silently recreated to
+    // the integration tip. Without this, the default 'recreate' policy would
+    // park the existing commits, reset the branch to integration tip, and the
+    // subsequent isZeroCommitBranch check would short-circuit the merge with
+    // `status='done'` — marking the task done while the commits were never
+    // integrated (the root cause of the silent data-loss bug this option was
+    // added to fix, mars-fe86ca8f).
+    await ctx.step('setup', () => setupWorktree(ctx, { onConflict: 'reconcile' }))
 
     // verify — scope-aware typecheck → tests → lint on the existing commits.
     // Throws on any failure (including branch contamination), so reaching

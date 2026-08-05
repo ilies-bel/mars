@@ -1137,6 +1137,31 @@ export const mergeBranch = async ({
   }
 }
 
+/**
+ * Returns `true` when `branchTipSha` is reachable from `integrationBranch`
+ * (i.e. the fast-forward ref update landed). The single
+ * `merge-base --is-ancestor` probe is sufficient: if the update succeeded, the
+ * integration branch now points AT `branchTipSha` or has it as an ancestor; if
+ * the update was silently skipped or a no-op misclassified, `branchTipSha` is
+ * NOT reachable from the integration tip.
+ *
+ * Called by the `merge` primitive immediately after `mergeBranch` returns
+ * `merged: true` with a `mergePostSha` to guard against the silent-data-loss
+ * path where the task is marked `done` and the branch deleted even though
+ * the ref update never happened.
+ */
+export const isBranchTipInIntegration = async (
+  branchTipSha: string,
+  integrationBranch: string,
+): Promise<boolean> => {
+  const probe = await execProbe(
+    resolveGitBin(),
+    ['merge-base', '--is-ancestor', branchTipSha, integrationBranch],
+    { cwd: repoRoot() },
+  )
+  return probe.exitCode === 0
+}
+
 export const isBranchMergedIntoMain = async (
   branch: string,
   repoRoot: string,
