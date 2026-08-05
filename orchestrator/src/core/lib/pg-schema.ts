@@ -210,6 +210,7 @@ const DDL: readonly string[] = [
     env_restart_count    bigint NOT NULL DEFAULT 0,
     requeue_anchor_ms    bigint,
     requeue_dispatch_uptime_ms bigint,
+    quota_rejected_attempts bigint NOT NULL DEFAULT 0,
     created_at           timestamptz NOT NULL,
     updated_at           timestamptz NOT NULL
   )`,
@@ -743,6 +744,11 @@ const DDL: readonly string[] = [
   // `deferrable` is a 0/1 flag (queue.ts reads it as Number(row.deferrable) === 1).
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS stall_diagnostics text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS "deferrable" bigint NOT NULL DEFAULT 0`,
+  // Counter of provider quota-rejection attempts: attempts where the coder never
+  // ran because the provider rejected the run before starting (rate/spend limit).
+  // The poll-fallback ceiling subtracts this from maxAttempt to compute the
+  // effective real-work attempt count, so quota storms do not burn the ceiling.
+  `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS quota_rejected_attempts bigint NOT NULL DEFAULT 0`,
   // `evaporated_at` -> `closed_at`. This block must stay idempotent: the whole
   // DDL batch replays on EVERY daemon boot inside one transaction, so a single
   // failing statement aborts the batch and the daemon can never start again.

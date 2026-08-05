@@ -1368,9 +1368,14 @@ export const runAgent = async (
   // rejection sentinel that the daemon catches to pause dispatch until
   // resetsAt and raise exactly one level-triggered action-queue row.
   if (r.exitCode !== 0 && r.quotaRejected !== null) {
-    await updateTask(taskId, { status: 'queued' }, store)
+    // Increment the quota-rejected counter so the poll-fallback ceiling can
+    // discount these attempts. Fetch the current value for a safe increment;
+    // the task semaphore guarantees one active coder per task so no race.
+    const currentTask = await getTask(taskId, store)
+    const nextQuotaRejectedAttempts = (currentTask?.quotaRejectedAttempts ?? 0) + 1
+    await updateTask(taskId, { status: 'queued', quotaRejectedAttempts: nextQuotaRejectedAttempts }, store)
     console.log(
-      `[code] task ${taskId}: env-rejected by provider quota (resetsAt=${r.quotaRejected.resetsAt}); re-queued`,
+      `[code] task ${taskId}: env-rejected by provider quota (resetsAt=${r.quotaRejected.resetsAt}); re-queued; quotaRejectedAttempts=${nextQuotaRejectedAttempts}`,
     )
     throw new WorkflowTerminalError('quota-rejected', QUOTA_REJECTED_ABORT_MESSAGE(taskId, r.quotaRejected.resetsAt), { resetsAt: r.quotaRejected.resetsAt })
   }
