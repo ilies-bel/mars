@@ -31,7 +31,7 @@
 
 import type { EventEmitter } from 'node:events'
 import type { MergeArgs, MergeResult } from '../lib/git/merge.js'
-import { mergeBranch, MergeAbortedError } from '../lib/git/merge.js'
+import { mergeBranch, MergeAbortedError, DEFAULT_WATCHDOG_MS } from '../lib/git/merge.js'
 import type { MergeJob, MergeJobStore, EnqueueMergeJobInput } from '../store/merge-job-store.js'
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -172,7 +172,11 @@ async function runMergeJob(
     `[merge-worker] executing job ${job.id} for task ${job.taskId} branch=${job.branch}`,
   )
 
-  const watchdogMs = Number(process.env.MARS_MERGE_WATCHDOG_MS ?? 300_000)
+  // Defaults to the merge primitive's own budget, which is derived from the
+  // vcs-supervisor timeout. Hardcoding a second literal here is how the two
+  // inverted: this worker capped merges at 5 minutes while a conflict-resolving
+  // merge legitimately needs the supervisor's 30.
+  const watchdogMs = Number(process.env.MARS_MERGE_WATCHDOG_MS ?? DEFAULT_WATCHDOG_MS)
 
   let result: MergeJobResult
   try {

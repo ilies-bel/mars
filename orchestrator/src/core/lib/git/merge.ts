@@ -411,8 +411,26 @@ const isRebaseInProgress = async (
 // — matches the repo's no-retry-knob ethos.
 const MAX_MERGE_ATTEMPTS = 3 // 1 initial attempt + 2 retries
 
-/** Default watchdog budget: a merge may hold the lock for at most 5 minutes. */
-const DEFAULT_WATCHDOG_MS = 300_000
+/**
+ * Budget for every part of a merge that is NOT the vcs-supervisor session:
+ * the preflight probes, the rebase itself, the post-supervisor verification,
+ * and the fast-forward ref update. All of these are plain git spawns.
+ */
+const MERGE_GIT_BUDGET_MS = 5 * 60 * 1000
+
+/**
+ * Default watchdog budget: the wall-clock ceiling on a single merge holding
+ * the .merge.lock.
+ *
+ * This MUST stay above `VCS_SUPERVISOR_TIMEOUT_MS`. The watchdog spans the
+ * whole merge, and a rebase conflict dispatches Vega *inside* that span with
+ * its own 30-minute budget. When the watchdog was a flat 5 minutes it always
+ * fired first, so every conflict-resolving merge died mid-session with
+ * `merge:crashed/unclassified — aborted (watchdog) during step
+ * 'vega-supervisor'` and the supervisor could never finish. Deriving the
+ * default from the supervisor budget keeps the two from inverting again.
+ */
+export const DEFAULT_WATCHDOG_MS = VCS_SUPERVISOR_TIMEOUT_MS + MERGE_GIT_BUDGET_MS
 
 /**
  * Short, self-contained timeout for the abort-cleanup git calls. These run
