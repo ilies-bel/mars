@@ -570,3 +570,7 @@ _Avoid_: release notes, delta, what happened, hero delta, daily summary
 **Card**:
 The rich affordance in the feed carrying what happened together with the operator's available moves, and the only means by which a Subject is opened or closed.
 _Avoid_: chip, preloaded response, offer, button, action button
+
+**Closure card**:
+The Card a Subject raises once its terminal condition is met, offering the close gesture that a Subject is never permitted to perform on itself.
+_Avoid_: auto-close, archive prompt, done button, self-terminate
