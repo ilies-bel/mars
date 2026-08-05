@@ -504,8 +504,8 @@ The deterministic verify step: it runs configured shell checks such as typecheck
 _Avoid_: agent verification, agent verify, shell verification
 
 **Notice**:
-A zero-token message Mars speaks on its own about work that needed no decision, which never takes the floor and reaches the feed only while the operator is connected.
-_Avoid_: bell notice, informational message, system message, toast, activity log
+A zero-token, entity-less fact Mars speaks on its own — in the main thread or into an Active subject without taking the floor — that clears only when the operator acknowledges it.
+_Avoid_: bell notice, informational message, system message, toast
 
 **Verify gate**:
 An opt-in, per-verify-scope check the orchestrator runs during the verify phase, held in the gate registry and created by the operator at onboarding.
