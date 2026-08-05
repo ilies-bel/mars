@@ -192,6 +192,13 @@ export interface DaemonDeps {
     aliases?: readonly string[]
   }): Promise<void>
   dispatchAdrAdd(req: { title: string; body: string }): Promise<void>
+  /**
+   * Write the product vision to `docs/knowledge/vision.md` via the structured-
+   * write worktree pipeline and await completion. Unlike `dispatchGlossaryWrite`
+   * and `dispatchAdrAdd` (which are fire-and-forget), the `vision-write` RPC
+   * handler awaits this so the CLI exits only after the merge finishes.
+   */
+  dispatchVisionWrite(content: string): Promise<void>
   handleInit(opts: RunInitOptions): Promise<RunInitResult>
   handleStatus(): Promise<DaemonStatusPayload>
   investigateWorktree(id: string): Promise<unknown>

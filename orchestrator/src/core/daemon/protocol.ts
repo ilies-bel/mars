@@ -78,6 +78,12 @@ export type DaemonRequest =
       surfaceForms?: readonly string[]
     }
   | { op: 'adr-add'; title: string; body: string }
+  /**
+   * Write the product vision to `docs/knowledge/vision.md` via the structured-
+   * write worktree pipeline. The RPC handler awaits completion before returning,
+   * so the CLI `mars vision set` exits only after the file has merged.
+   */
+  | { op: 'vision-write'; content: string }
   | { op: 'init'; opts: RunInitOptions }
   | { op: 'status' }
   | { op: 'reload-config' }

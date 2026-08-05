@@ -52,6 +52,7 @@ export type DispatchKind =
   | 'refine'
   | 'glossary-write'
   | 'adr-add'
+  | 'vision'
   | 'arc-verify'
   | 'merge'
 

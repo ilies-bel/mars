@@ -27,9 +27,6 @@ export const initSettings = async (): Promise<void> => {
 /** Stable key used to persist the last-viewed release-notes timestamp. */
 export const RELEASE_NOTES_LAST_VIEWED_KEY = 'release_notes.last_viewed_at'
 
-/** Stable key for persisting the onboarding product vision. */
-export const ONBOARDING_VISION_KEY = 'onboarding.vision'
-
 /** Stable key for persisting the operator's name during onboarding. */
 export const ONBOARDING_OPERATOR_NAME_KEY = 'onboarding.operator_name'
 

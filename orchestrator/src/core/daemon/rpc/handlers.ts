@@ -197,6 +197,22 @@ const adrAddHandler = handler('adr-add', async (req, deps) => {
   return { ok: true, data: { enqueued: true } }
 })
 
+/**
+ * Write the product vision to `docs/knowledge/vision.md`.
+ *
+ * Unlike `glossary-write` / `adr-add` (fire-and-forget), this handler
+ * **awaits** `dispatchVisionWrite` so the CLI exits only after the merge
+ * finishes — satisfying the "completes only after the structured write merges"
+ * acceptance criterion.
+ */
+const visionWriteHandler = handler('vision-write', async (req, deps) => {
+  if (typeof req.content !== 'string' || req.content.trim().length === 0) {
+    return { ok: false, error: 'vision-write requires a non-empty content string' }
+  }
+  await deps.dispatchVisionWrite(req.content)
+  return { ok: true }
+})
+
 const initHandler = handler('init', async (req, deps) => {
   const result = await deps.handleInit(req.opts)
   return { ok: true, data: result }
@@ -646,6 +662,7 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   refineHandler,
   glossaryWriteHandler,
   adrAddHandler,
+  visionWriteHandler,
   initHandler,
   statusHandler,
   reloadConfigHandler,

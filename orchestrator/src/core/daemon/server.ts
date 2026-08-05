@@ -1052,6 +1052,9 @@ export const startDaemon = async (
     refine: makeSem(initialCaps.refine),
     'glossary-write': structuredWriteSem,
     'adr-add': structuredWriteSem,
+    // vision-write shares the same single-slot structured-write semaphore so
+    // it serialises behind glossary and adr writes; all contend on the merge lock.
+    vision: structuredWriteSem,
     // Arc verification is best-effort post-merge analysis. Keep its historic
     // single-run cap, but make the run visible to the daemon worker pool.
     arcVerify: makeSem(1),

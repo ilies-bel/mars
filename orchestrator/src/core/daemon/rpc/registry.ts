@@ -55,6 +55,7 @@ const WORK_SPAWNING_OPS: ReadonlySet<DaemonRequest['op']> = new Set([
   'proposal.take',
   'glossary-write',
   'adr-add',
+  'vision-write',
   'init',
   // investigate and diagnose-failure spawn Claude processes; consistent with
   // the HTTP handler which gates all POST /actions/:op/:id on isAcceptingWork.
