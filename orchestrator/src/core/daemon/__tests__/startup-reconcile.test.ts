@@ -27,6 +27,12 @@ interface ReconcileModule {
   runStartupReconcile: typeof import('../startup-reconcile').runStartupReconcile
 }
 
+interface ProposalsModule {
+  createProposal: typeof import('../../proposals').createProposal
+  getProposal: typeof import('../../proposals').getProposal
+  setProposalField: typeof import('../../proposals').setProposalField
+}
+
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-startup-reconcile-test-'))
   execFileSync('git', ['init', '-q'], { cwd: repo })
@@ -53,6 +59,46 @@ const makeDeps = () => ({
   bus: new EventEmitter(),
   traceStore: null,
   handleProposalSlice: null,
+})
+
+describe('runStartupReconcile — stranded slicing proposals', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns a proposal left slicing by a prior daemon to prd-ready', async () => {
+    const { reconcile } = await loadModules(repo)
+    const proposals = (await import('../../proposals')) as unknown as ProposalsModule
+    const proposal = await proposals.createProposal('Interrupted slice', { source: 'human' })
+    await proposals.setProposalField(proposal.id, 'status', 'slicing')
+
+    const summary = await reconcile.runStartupReconcile(makeDeps())
+
+    expect((await proposals.getProposal(proposal.id))?.status).toBe('prd-ready')
+    expect(summary.strandedSlicingReverted).toBe(1)
+  })
+
+  it('leaves a proposal alone while this daemon is slicing it', async () => {
+    const { reconcile } = await loadModules(repo)
+    const proposals = (await import('../../proposals')) as unknown as ProposalsModule
+    const proposal = await proposals.createProposal('Active slice', { source: 'human' })
+    await proposals.setProposalField(proposal.id, 'status', 'slicing')
+
+    const summary = await reconcile.runStartupReconcile({
+      ...makeDeps(),
+      isProposalSliceInFlight: (proposalId: string) => proposalId === proposal.id,
+    })
+
+    expect((await proposals.getProposal(proposal.id))?.status).toBe('slicing')
+    expect(summary.strandedSlicingReverted).toBe(0)
+  })
 })
 
 describe('runStartupReconcile — orphaned-blocked scan', () => {
@@ -264,6 +310,128 @@ describe('runStartupReconcile — orphaned-blocked scan', () => {
   })
 })
 
+describe('runStartupReconcile — stalled proposal slicing', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('skips a ready proposal whose previous slice attempt failed', async () => {
+    const { q, reconcile } = await loadModules(repo)
+    const proposals = (await import('../../proposals')) as unknown as ProposalsModule
+    const proposal = await proposals.createProposal('Failed slice', { source: 'human' })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE proposals
+            SET status = 'prd-ready', last_slice_error = 'invalid slice references', last_slice_failed_at = ?
+            WHERE id = ?`,
+      args: [Date.now(), proposal.id],
+    })
+    const slice = vi.fn(async () => ({}))
+    const logs: string[] = []
+
+    const summary = await reconcile.runStartupReconcile({
+      ...makeDeps(),
+      log: (line) => logs.push(line),
+      handleProposalSlice: slice,
+    })
+
+    expect(slice).not.toHaveBeenCalled()
+    expect(summary.stalledProposalsSliced).toBe(0)
+    expect(logs.join('\n')).toContain('invalid slice references')
+  })
+
+  it('dispatches a ready proposal that has no recorded slice failure', async () => {
+    const { reconcile } = await loadModules(repo)
+    const proposals = (await import('../../proposals')) as unknown as ProposalsModule
+    const proposal = await proposals.createProposal('Ready slice', { source: 'human' })
+    const client = (await import('../../queue')).resolveQueueClient()
+    await client.execute({
+      sql: `UPDATE proposals SET status = 'prd-ready' WHERE id = ?`,
+      args: [proposal.id],
+    })
+    const slice = vi.fn(async () => ({}))
+
+    const summary = await reconcile.runStartupReconcile({ ...makeDeps(), handleProposalSlice: slice })
+
+    expect(slice).toHaveBeenCalledWith(proposal.id)
+    expect(summary.stalledProposalsSliced).toBe(1)
+  })
+})
+
+describe('runStartupReconcile — retired planning gate', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('closes legacy gate rows and releases legacy draft slices exactly once', async () => {
+    const { q, reconcile } = await loadModules(repo)
+    const proposals = (await import('../../proposals')) as unknown as ProposalsModule
+    const proposal = await proposals.createProposal('Legacy slice', { source: 'human' })
+    const queued = await q.enqueueTask('independent legacy slice', undefined, {
+      parentProposalId: proposal.id,
+      spec: { files: [], verifyCmd: null, doneCriteria: [], mergeMode: 'auto', sliceKind: 'coder' },
+    })
+    const blocker = await q.enqueueTask('legacy prerequisite', undefined, {
+      parentProposalId: proposal.id,
+      spec: { files: [], verifyCmd: null, doneCriteria: [], mergeMode: 'auto', sliceKind: 'coder' },
+    })
+    const blocked = await q.enqueueTask('dependent legacy slice', undefined, {
+      parentProposalId: proposal.id,
+      spec: { files: [], verifyCmd: null, doneCriteria: [], mergeMode: 'auto', sliceKind: 'coder' },
+    })
+    await q.addBlockers(blocked.id, [blocker.id])
+    const client = q.resolveQueueClient()
+    await client.execute({
+      sql: `UPDATE tasks SET status = 'draft' WHERE id IN (?, ?, ?)`,
+      args: [queued.id, blocker.id, blocked.id],
+    })
+    const legacyKind = ['plan', 'approval'].join('-')
+    await client.execute({
+      sql: `INSERT INTO action_queue_items
+              (id, kind, category, priority, state, title, body, payload, context, raised_by)
+            VALUES (?, ?, 'orchestrator', 'high', 'open', 'Legacy planning gate', '', '{}', '{}', 'test')`,
+      args: ['legacy-gate-row', legacyKind],
+    })
+    const bus = new EventEmitter()
+    const queuedEvents: string[] = []
+    bus.on('task.queued', ({ taskId }) => queuedEvents.push(taskId))
+
+    const first = await reconcile.runStartupReconcile({ ...makeDeps(), bus })
+
+    expect((await q.getTask(queued.id))?.status).toBe('queued')
+    expect((await q.getTask(blocker.id))?.status).toBe('queued')
+    expect((await q.getTask(blocked.id))?.status).toBe('blocked')
+    expect(queuedEvents).toEqual(expect.arrayContaining([queued.id, blocker.id]))
+    expect(first.retiredPlanGateRowsCleared).toBe(1)
+    expect(first.legacySlicedDraftsReleased).toBe(3)
+    const closed = await client.execute({
+      sql: `SELECT state, resolution_note FROM action_queue_items WHERE id = ?`,
+      args: ['legacy-gate-row'],
+    })
+    expect(closed.rows[0]).toMatchObject({
+      state: 'resolved',
+      resolution_note: 'superseded: retired planning gate',
+    })
+
+    const second = await reconcile.runStartupReconcile({ ...makeDeps(), bus: new EventEmitter() })
+    expect(second.retiredPlanGateRowsCleared).toBe(0)
+    expect(second.legacySlicedDraftsReleased).toBe(0)
+  })
+})
+
 describe('runStartupReconcile — recovery-done propagation', () => {
   let repo: string
 
@@ -289,10 +457,13 @@ describe('runStartupReconcile — recovery-done propagation', () => {
 
     // Create a dependent blocked on the origin.
     const dependent = await q.enqueueTask('dependent task', undefined, { skipTriage: true })
+    // `task_blockers.created_at` is a bigint of epoch millis; `tasks`
+    // `.created_at`/`updated_at` are timestamptz and take the ISO form.
     const now = new Date().toISOString()
+    const nowMs = Date.now()
     await q.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-      args: [dependent.id, origin.id, now],
+      args: [dependent.id, origin.id, nowMs],
     })
     await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
@@ -359,7 +530,10 @@ describe('runStartupReconcile — recovery-done propagation', () => {
     const { q, reconcile } = await loadModules(repo)
 
     const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+    // See above: timestamptz columns take the ISO form, the bigint
+    // `task_blockers.created_at` takes epoch millis.
     const now = new Date().toISOString()
+    const nowMs = Date.now()
 
     // Fix task still running — should NOT trigger propagation.
     const fixId = 'fix-reconcile-test-003'
@@ -377,7 +551,7 @@ describe('runStartupReconcile — recovery-done propagation', () => {
     })
     await q.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-      args: [origin.id, fixId, now],
+      args: [origin.id, fixId, nowMs],
     })
 
     const summary = await reconcile.runStartupReconcile(makeDeps())

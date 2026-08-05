@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { Client } from '@libsql/client'
 import type { EventName, EventPayload } from '../../../bus/events.js'
+// Assert against the exported label rather than a copy of its text: the older
+// wording ('A pipeline step did not complete') is retained in failure-kinds.ts
+// only so the view can REPLACE it on legacy rows, and hardcoding it here made
+// these tests assert superseded copy.
+import { GENERIC_FAILURE_LABEL } from '../../lib/failure-kinds.js'
 
 interface QueueModule {
   migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
@@ -460,7 +465,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     // raw string into a coarse catalog code (the ADR-0042 bug fix).
     // The fallback emits plain-English text — no raw step ids.
     expect(row!.payload['failureReasonCode']).toBe('unknown/unknown')
-    expect(row!.title).toContain('A pipeline step did not complete')
+    expect(row!.title).toContain(GENERIC_FAILURE_LABEL)
   })
 
   it('uses unknownFailureKind title/body when failureSignature and reason code are both absent', async () => {
@@ -481,9 +486,9 @@ describe('action-queue-repopulator outbox subscriber', () => {
     // No failureSignature and no captured error → the generic wording, which
     // is the genuine last resort. It still names the task.
     // The fallback emits plain-English text — no raw step ids ('unknown').
-    expect(row!.title).toBe('A pipeline step did not complete [task T-unknow]')
+    expect(row!.title).toBe(`${GENERIC_FAILURE_LABEL} [task T-unknow]`)
     // Body is the verboseReason from unknownFailureKind.
-    expect(row!.body).toContain('A pipeline step did not complete')
+    expect(row!.body).toContain(GENERIC_FAILURE_LABEL)
     // Payload's failureReasonCode mirrors the synthesised unknown signature.
     expect(row!.payload['failureReasonCode']).toBe('unknown/unknown')
   })
@@ -693,6 +698,58 @@ describe('action-queue-repopulator outbox subscriber', () => {
     expect(openAfter.filter((i) => i.payload['proposalId'] === proposalId)).toHaveLength(0)
   })
 
+  it('auto-closes slice-failed row when the proposal is dismissed', async () => {
+    const { q, actionQueue, rep, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const proposalId = 'prop-slice-failed-dismissed'
+
+    await rep.ensureActionQueueRepopulator(client)
+    await actionQueue.raiseActionQueueItem({
+      kind: 'slice-failed',
+      category: 'orchestrator',
+      priority: 'high',
+      title: `Slicer failed for PRD ${proposalId}`,
+      body: 'The slicer rejected the PRD.',
+      payload: { proposalId, error: 'invalid slice references' },
+      context: {},
+      raisedBy: 'slicer',
+      signature: proposalId,
+      originTaskId: proposalId,
+    })
+
+    await publish(pub, client, 'proposal.dismissed', { proposalId })
+    await rep.drainActionQueueRepopulations(client)
+
+    const openAfter = await actionQueue.listActionQueueItems('open', { kind: 'slice-failed' })
+    expect(openAfter.filter((i) => i.payload['proposalId'] === proposalId)).toHaveLength(0)
+  })
+
+  it('auto-closes slice-failed row when the proposal is sliced after an explicit retry', async () => {
+    const { q, actionQueue, rep, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const proposalId = 'prop-slice-failed-retried'
+
+    await rep.ensureActionQueueRepopulator(client)
+    await actionQueue.raiseActionQueueItem({
+      kind: 'slice-failed',
+      category: 'orchestrator',
+      priority: 'high',
+      title: `Slicer failed for PRD ${proposalId}`,
+      body: 'The slicer rejected the PRD.',
+      payload: { proposalId, error: 'invalid slice references' },
+      context: {},
+      raisedBy: 'slicer',
+      signature: proposalId,
+      originTaskId: proposalId,
+    })
+
+    await publish(pub, client, 'proposal.sliced', { proposalId, taskCount: 1 })
+    await rep.drainActionQueueRepopulations(client)
+
+    const openAfter = await actionQueue.listActionQueueItems('open', { kind: 'slice-failed' })
+    expect(openAfter.filter((i) => i.payload['proposalId'] === proposalId)).toHaveLength(0)
+  })
+
   // ── Failure kind registry acceptance criteria ─────────────────────────────
 
   it("task with signature 'setup:install/install-frozen-lockfile' produces title 'The coding environment could not be set up'", async () => {
@@ -722,8 +779,11 @@ describe('action-queue-repopulator outbox subscriber', () => {
   it("task with unregistered signature 'verify:test/unclassified' produces a plain-English verification reason", async () => {
     // verify:test/unclassified is intentionally not in the registry (each test
     // failure has a unique root cause). The fallback maps verify:* steps to a
-    // human-readable reason; the signature itself leads the title so the
-    // operator can tell one unclassified verify failure from another.
+    // human-readable reason. The raw signature must NOT lead the title:
+    // `unknownFailureKind` is explicit that a raw step id "must NOT appear in
+    // user-facing fields; it belongs in transcripts and traces only". The
+    // signature stays available to the operator on the row's payload
+    // (failureReasonCode), which is where a machine-readable id belongs.
     const { q, actionQueue, rep, pub } = await loadModules(repo)
     const client = q.resolveQueueClient()
     const taskId = 'T-verify-test-unclassified'
@@ -740,9 +800,11 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
-    expect(row!.title).toBe(
-      'verify:test/unclassified — A verification check did not pass (no failure-kind record) [task T-verify]',
-    )
+    expect(row!.title).toBe('A verification check did not pass [task T-verify]')
+    // A technical id is still reachable off the payload rather than the
+    // operator-facing copy. Note it is the SYNTHESISED `<failingStep>/unknown`
+    // from unknownFailureKind, not the original unregistered signature.
+    expect(row!.payload['failureReasonCode']).toBe('verify:test/unknown')
   })
 
   // ── Purge-drop orphan guard ───────────────────────────────────────────────
@@ -791,7 +853,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
       kind: 'failed',
       category: 'orchestrator',
       priority: 'high',
-      title: 'A pipeline step did not complete',
+      title: GENERIC_FAILURE_LABEL,
       body: 'test body',
       payload: { taskId },
       context: {},

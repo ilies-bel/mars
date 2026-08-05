@@ -22,7 +22,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { WorkflowStore, StepRecord } from '@mars/workflow'
@@ -62,6 +63,19 @@ interface CeilingModule {
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-ceiling-'))
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
+  // `coreContinueTask` refreshes the task worktree from the integration branch
+  // (`git merge --no-edit main`), so a bare temp directory is no longer a
+  // sufficient fixture — it fails with "not a git repository". Initialise a
+  // real repo on `main` with one commit so the refresh is a no-op merge.
+  const git = (...args: string[]): void => {
+    execFileSync('git', ['-C', repo, ...args], { stdio: 'ignore' })
+  }
+  git('init', '--initial-branch=main')
+  git('config', 'user.email', 'test@mars.local')
+  git('config', 'user.name', 'Mars Test')
+  writeFileSync(resolve(repo, 'README.md'), 'ceiling fixture\n')
+  git('add', 'README.md')
+  git('commit', '-m', 'initial')
   return repo
 }
 
@@ -904,5 +918,68 @@ describe('checkAndEscalateRequeueCeiling', () => {
     expect(escalated).toBe(false)
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('queued')
+  })
+
+  // ── Quota-rejected attempts do not count toward the ceiling ───────────────
+
+  it('does not escalate when all step attempts were provider quota-rejected', async () => {
+    // Scenario: the Codex (or Claude) provider hit a rate/spend limit.  Every
+    // dispatch of this task ends immediately with a quota rejection — the coder
+    // never ran, the worktree is untouched.  The quota path in the code step
+    // re-queues the task AND increments quotaRejectedAttempts by 1 each time so
+    // the ceiling can discount them.  With 13 quota-rejected attempts and an
+    // attempt bound of 12, the ceiling MUST still pass (effectiveAttempts = 0).
+    const { q, ws, ceiling } = await loadModules(repo, { maxAttempts: 12 })
+    const t = await q.enqueueTask('quota-rejected task', undefined, { skipTriage: true })
+    const store: WorkflowStore = ws.createQueueWorkflowStore()
+
+    await store.createRun({
+      id: t.id,
+      workflowId: 'implement',
+      inputJson: '{}',
+      status: 'running',
+      createdAt: 0,
+      updatedAt: 0,
+    })
+    // 13 step records from repeated quota rejections (attempt bound = 12).
+    await store.putStep(makeStepRecord(t.id, 'code', 13, 'failed'))
+
+    // Mark all 13 as quota-rejected so the ceiling excludes them.
+    await q.updateTask(t.id, { quotaRejectedAttempts: 13 })
+    const fresh = await q.getTask(t.id)
+
+    const escalated = await ceiling.checkAndEscalateRequeueCeiling(
+      fresh!,
+      store,
+      makeSilentLog(),
+      Date.now(),
+    )
+
+    // Must NOT escalate — effectiveAttempts = 13 - 13 = 0 (not in re-queue cycle).
+    expect(escalated).toBe(false)
+    expect((await q.getTask(t.id))?.status).toBe('queued')
+  })
+
+  it('escalates on non-quota attempts even when some attempts were quota-rejected', async () => {
+    // 8 total attempts, 4 quota-rejected → 4 effective real attempts.
+    // With attempt bound = 4, effectiveAttempts = 4 → escalate.
+    const { q, ceiling } = await loadModules(repo, { maxAttempts: 4 })
+    const t = await q.enqueueTask('mixed-rejection task', undefined, { skipTriage: true })
+    const steps = [makeStepRecord(t.id, 'code', 8, 'failed')]
+    const store = makeMockStore(steps)
+
+    await q.updateTask(t.id, { quotaRejectedAttempts: 4 })
+    const fresh = await q.getTask(t.id)
+
+    const escalated = await ceiling.checkAndEscalateRequeueCeiling(
+      fresh!,
+      store,
+      makeSilentLog(),
+      Date.now() + 1,
+    )
+
+    // 8 total - 4 quota-rejected = 4 effective attempts ≥ bound → escalate.
+    expect(escalated).toBe(true)
+    expect((await q.getTask(t.id))?.status).toBe('failed')
   })
 })

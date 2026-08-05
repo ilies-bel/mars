@@ -527,10 +527,6 @@ _Avoid_: brand token, raw color
 The append-only record of every Steward intervention, keyed by target kind, target id, and target version (or content hash), that both enforces the one-fix-per-version rule and feeds every display of Steward activity.
 _Avoid_: intervention log, steward history, steward audit
 
-**Focus mode**:
-The chat rendering in which every Subject appears in one continuous append-only timeline the operator never navigates away from.
-_Avoid_: continuous mode, feed mode, sms mode, single-conversation mode
-
 **Subject**:
 One topic under discussion in chat, backed one-to-one by a chat thread carrying its own freshly-loaded agent context.
 _Avoid_: topic, segment, conversation, thread segment
@@ -540,7 +536,7 @@ The single Subject currently bound to the composer, whose thread receives the op
 _Avoid_: current thread, selected thread, focused subject, live subject
 
 **Preloaded response**:
-A labelled next move rendered inline in the chat feed whose op resolves either to a zero-token Mars verb or to opening a Subject.
+A labelled next move rendered inline in the chat feed as a tap-sized chip, standing for an op — a zero-token Mars verb, an autonomy-level write, an external reference, or opening a Subject — that the operator can equally trigger by typing it in their own words.
 _Avoid_: quick reply, suggestion chip, action button, canned reply
 
 **Subject boundary**:
@@ -550,3 +546,15 @@ _Avoid_: handoff, seam, thread break, context reload point
 **Autonomy level**:
 The per-lever setting governing whether Mars may act unprompted, valued off, ask, or tell.
 _Avoid_: autonomy dial, permission level, auto mode, steward mode
+
+**Main thread**:
+The single durable conversation that owns Mars's own unprompted messages and, as each Subject closes, the Context line it folds back.
+_Avoid_: main chat, root thread, home feed, hero, seeded feed
+
+**Context line**:
+The one-sentence outcome of a closed Subject, appended to the main thread so the conversation carries what was settled without carrying the transcript.
+_Avoid_: summary, recap, thread summary, closing note
+
+**Offer set**:
+The ops standing open in the chat feed at a given moment, rendered as Preloaded responses and matched against the operator's free text before it is treated as a new Subject.
+_Avoid_: pending actions, open ops, chip set, suggestions

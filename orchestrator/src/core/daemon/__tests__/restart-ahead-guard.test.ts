@@ -1,7 +1,7 @@
 /**
- * Regression test: coreRestartTask must NOT delete a branch whose tip is
- * ahead of the integration branch. Commits ahead = work product that must
- * not be silently discarded.
+ * Regression test: coreRestartTask must never delete a branch whose tip is
+ * ahead of integration without explicit `--force` confirmation. Commits ahead
+ * are work product, so the refusal reports the destructive scope first.
  *
  * Covers the incident (2026-07-06 ~23:52Z, origin mars-50e3b511 /
  * recovery fix-a2b92b18) where `mars restart fix-a2b92b18` deleted
@@ -79,7 +79,7 @@ describe('coreRestartTask — commits-ahead guard', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('preserves a branch with commits ahead of integration when restarted', async () => {
+  it('refuses an ahead branch without force and reports the commits and files at risk', async () => {
     const { q, restart } = await loadModules(repo)
 
     const task = await q.enqueueTask('origin task', undefined, { skipTriage: true })
@@ -98,10 +98,20 @@ describe('coreRestartTask — commits-ahead guard', () => {
       args: [branch, task.id],
     })
 
-    // Restart must NOT delete the branch — it carries unmerged work
-    await restart.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore())
+    await expect(
+      restart.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore()),
+    ).rejects.toThrow(/1 commit\(s\) and 1 file\(s\).*--force/)
 
+    // The refusal happens before any worktree or branch cleanup.
     expect(branchExists(repo, branch)).toBe(true)
+
+    await restart.coreRestartTask(
+      task.id,
+      new Set(['failed']),
+      new InMemoryStore(),
+      { force: true },
+    )
+    expect(branchExists(repo, branch)).toBe(false)
   })
 
   it('simulates the incident: fix task storing origin branch, restart preserves the origin ref', async () => {
@@ -127,8 +137,11 @@ describe('coreRestartTask — commits-ahead guard', () => {
       args: [originTask.id, originBranch, fixTask.id],
     })
 
-    // `mars restart fix-a2b92b18` — must NOT delete task/mars-50e3b511
-    await restart.coreRestartTask(fixTask.id, new Set(['failed']), new InMemoryStore())
+    // `mars restart fix-a2b92b18` without --force must not delete the origin's
+    // branch merely because the fix row inherited it.
+    await expect(
+      restart.coreRestartTask(fixTask.id, new Set(['failed']), new InMemoryStore()),
+    ).rejects.toThrow(/--force/)
 
     expect(branchExists(repo, originBranch)).toBe(true)
   })
@@ -159,7 +172,7 @@ describe('coreRestartTask — commits-ahead guard', () => {
   // fix, `removeWorktree` deleted the branch (keepBranch defaulted to false)
   // before the commits-ahead guard could see it, making the guard dead code.
 
-  it('preserves a branch and raises worktree-ahead item when worktree exists on disk and branch is ahead', async () => {
+  it('leaves an ahead branch and its worktree untouched without force', async () => {
     const { q, restart } = await loadModules(repo)
 
     const task = await q.enqueueTask('task with live worktree', undefined, { skipTriage: true })
@@ -187,22 +200,14 @@ describe('coreRestartTask — commits-ahead guard', () => {
       args: [branch, wtPath, task.id],
     })
 
-    await restart.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore())
+    await expect(
+      restart.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore()),
+    ).rejects.toThrow(/1 commit\(s\) and 1 file\(s\).*--force/)
 
-    // Branch must survive — the worktree directory existed, removeWorktree ran,
-    // but keepBranch=true means git branch -D was NOT called inside it.
-    // The commits-ahead guard then finds the branch, sees work ahead, and
-    // preserves it while raising a worktree-ahead action-queue item.
+    // Branch and worktree both survive because the destructive path never ran.
     expect(branchExists(repo, branch)).toBe(true)
-
-    // The action-queue item must be raised so the operator can decide what to do
-    const rows = await q.resolveQueueClient().execute({
-      sql: `SELECT kind, signature FROM action_queue_items
-             WHERE signature = ? AND state = 'open'`,
-      args: [`restart-ahead:${task.id}`],
-    })
-    expect(rows.rows.length).toBe(1)
-    expect((rows.rows[0] as { kind: string }).kind).toBe('worktree-ahead')
+    expect(execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repo }).toString())
+      .toContain(wtPath)
   })
 
   it('deletes a branch when worktree exists on disk but branch has no commits ahead', async () => {

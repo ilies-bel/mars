@@ -34,11 +34,13 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--limit',
   '--out',
   '--author',
+  '--by',
   '--note',
   '--root-cause',
   '--avoid',
   '--blocked-by',
   '--source',
+  '--payload',
   '--status',
   '--from',
   '--kind',
@@ -74,6 +76,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // runs: codex (default), claude, or gemini. Persisted to .mars/daemon.json
   // as `defaultProvider` and applied on the next daemon start.
   '--provider',
+  '--verify-gates-json',
   '--feedback',
   // mars memory — domain-scoped memory packet management
   '--domain',
@@ -83,6 +86,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // mars chat-feedback list — filter by rating ('up' or 'down')
   '--rating',
   '--origin-arc',
+  '--origin',
   // mars verify-gate / mars verify — verify gate registry management
   '--scope',
   '--cmd',
@@ -117,6 +121,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
  */
 export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--force',
+  '--abort',
   '--dry-run',
   '--verbose',
   '--dev',
@@ -140,6 +145,7 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--register-project',
   // `mars init --start`: print daemon URL non-interactively (useful with --yes).
   '--start',
+  '--skip-doctor',
   // `mars task add --live`: sugar for `--workflow live`. DISABLED — the live
   // pipeline is withheld while HITL is being refined; the flag still parses so
   // it can be rejected with a clear error rather than falling through to
@@ -156,14 +162,21 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--optional',
   // mars list --all: bypass the default 10-row limit and return every matching task.
   '--all',
+  // mars task check --uncheck: clear a done-criterion instead of setting it.
+  '--uncheck',
+  // mars worktree reclaim --no-dry-run: rejected today (deletion mode is not
+  // implemented), but declared so the leaf reads it off `args.flags` like every
+  // other boolean rather than fishing it out of the positionals.
+  '--no-dry-run',
   // mars release-notes list — cursor-based feed filtering
   '--unseen',
   '--mark-viewed',
 ])
 
-// Short aliases for value-bearing flags, normalised to their long form before
-// the FLAGS_WITH_VALUES lookup.
-export const SHORT_FLAG_ALIASES: Readonly<Record<string, string>> = {}
+// Short aliases are normalised to their long form before flag lookup.
+export const SHORT_FLAG_ALIASES: Readonly<Record<string, string>> = {
+  '-y': '--yes',
+}
 
 export const REPEATABLE_FLAGS: ReadonlySet<string> = new Set([
   '--blocked-by',
@@ -191,6 +204,10 @@ export const parseArgs = (argv: readonly string[]): ParsedArgs => {
 
     if (key === '--repo') {
       repo = inlineValue ?? argv[++i]
+      continue
+    }
+    if (BOOLEAN_FLAGS.has(key)) {
+      flags[key] = inlineValue ?? 'true'
       continue
     }
     if (FLAGS_WITH_VALUES.has(key)) {
@@ -222,6 +239,9 @@ export const parseArgs = (argv: readonly string[]): ParsedArgs => {
   }
   return { repo, flags, multiFlags, positional }
 }
+
+/** True when a boolean flag was supplied. Flag keys retain their `--` prefix. */
+export const hasFlag = (args: ParsedArgs, flag: string): boolean => args.flags[flag] !== undefined
 
 /**
  * Resolve a `@path` reference to its file contents, else return the literal.

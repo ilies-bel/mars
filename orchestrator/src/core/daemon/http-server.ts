@@ -970,10 +970,10 @@ export const startHttpServer = async (
       return
     }
 
-    // GET /view/adrs — list docs/adr/*.md as {number,title,slug}, newest first.
-    // Returns { adrs: [] } when docs/adr/ does not exist. Pure read; no draining gate.
+    // GET /view/adrs — list docs/knowledge/decisions/*.md as {number,title,slug}, newest first.
+    // Returns { adrs: [] } when docs/knowledge/decisions/ does not exist. Pure read; no draining gate.
     if (req.method === 'GET' && req.url === '/view/adrs') {
-      const adrDir = join(getRepoRoot(), 'docs', 'adr')
+      const adrDir = join(getRepoRoot(), 'docs', 'knowledge', 'decisions')
       const ADR_FILENAME_RE = /^(\d{4})-([a-z0-9-]+)\.md$/
       readdir(adrDir)
         .then(async (entries) => {
@@ -1288,9 +1288,10 @@ export const startHttpServer = async (
       return
     }
 
-    // GET /view/steward — four-lane capability summary for the Steward page:
+    // GET /view/steward — capability summary for the Steward page:
     // runtimeTuning (executing), workflowPatches (built/never invoked),
-    // signatureStorm (live, currently tripped), agentSpec (declared/unbuilt).
+    // signatureStorm (live, currently tripped), agentSpec (declared/unbuilt),
+    // and gateHealth (the read-only verify-gate registry projection).
     // Live semaphore state is injected by the daemon via getStewardRuntimeState.
     // Pure read; no draining gate.
     if (req.method === 'GET' && req.url === '/view/steward') {

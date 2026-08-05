@@ -105,6 +105,7 @@ describe('wizard-controller — non-interactive resolution (no stdin hang)', () 
     })
     expect(choices).toEqual({
       registerProject: false,
+      verifyGates: [],
     })
   })
 
@@ -120,6 +121,7 @@ describe('wizard-controller — non-interactive resolution (no stdin hang)', () 
     })
     expect(choices).toEqual({
       registerProject: false,
+      verifyGates: [],
     })
   })
 
@@ -153,6 +155,7 @@ describe('wizard-controller — interactive (mocked readline)', () => {
     expect(asked).toHaveLength(WIZARD_PROMPTS.length)
     expect(choices).toEqual({
       registerProject: false,
+      verifyGates: [],
     })
   })
 

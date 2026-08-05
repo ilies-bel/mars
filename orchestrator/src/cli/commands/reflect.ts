@@ -7,6 +7,7 @@
  */
 
 import type { Command, CommandDeps } from '../command'
+import { hasFlag } from '../args'
 import { errorMessage } from './shared'
 
 const REFLECT_DISABLED_MSG = 'reflection disabled via MARS_REFLECT_DISABLED=1'
@@ -143,8 +144,8 @@ const arcList: Command = {
     const { listDeepReflectArcCandidates } = await import(
       '../../core/lib/deep-reflect-query'
     )
-    const emitJson = args.positional.includes('--json')
-    const withTranscriptOnly = args.positional.includes('--with-transcript-only')
+    const emitJson = hasFlag(args, '--json')
+    const withTranscriptOnly = hasFlag(args, '--with-transcript-only')
 
     let limit = 10
     const limitRaw = args.flags['--limit']
@@ -394,14 +395,13 @@ const arcPurge: Command = {
   summary: 'purge a whole task arc (origin + all same-origin siblings)',
   usage: 'usage: mars arc purge <id> [--force]',
   run: async (args, deps) => {
-    const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
     const positionals = args.positional.filter((a) => !a.startsWith('--'))
     const id = positionals[0]
     if (!id) {
       deps.err('usage: mars arc purge <id> [--force]')
       return { code: 1 }
     }
-    const force = flagSet.has('--force')
+    const force = hasFlag(args, '--force')
     let result: { purgedIds: string[]; originId: string }
     try {
       result = (await deps.daemon.sendRequest({
@@ -602,7 +602,7 @@ const reflectWorkflowFit: Command = {
       return { code: 0 }
     }
 
-    const dryRun = args.positional.includes('--dry-run')
+    const dryRun = hasFlag(args, '--dry-run')
     const inputArg = args.positional.find((a) => !a.startsWith('--')) ?? null
     const envSessionId = process.env.CLAUDE_CODE_SESSION_ID?.trim() ?? ''
 

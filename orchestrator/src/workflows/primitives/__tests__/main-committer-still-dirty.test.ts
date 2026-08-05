@@ -12,9 +12,8 @@
  *
  * Dependents remain 'blocked' because handleTaskFailureWithFixTask is never
  * called (so no fix task is spawned to unblock them), and releaseMainCommitter-
- * Dependents is only called by the daemon's failure path after this throw — which
- * itself guards on main being clean before releasing (existing behaviour,
- * main-dirty-action-queue.ts:releaseMainCommitterDependents).
+ * Failure keeps dependents parked behind the failed committer; a later dirty
+ * episode reparents them to a fresh committer.
  */
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'

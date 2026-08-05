@@ -163,4 +163,25 @@ describe('startHeartbeatWriter — interval ticks', () => {
     expect(updateCalls).toHaveLength(2)
     writer.stop()
   })
+
+  it('does not emit an unhandled rejection when an interval write fails', async () => {
+    process.env.MARS_HEARTBEAT_MS = '5000'
+    const { db } = makeStubDb()
+    vi.mocked(db.execute)
+      .mockResolvedValueOnce({ rows: [], rowsAffected: 1 })
+      .mockRejectedValueOnce(new Error('database is stopping'))
+    const onUnhandledRejection = vi.fn()
+    process.once('unhandledRejection', onUnhandledRejection)
+    const writer = await startHeartbeatWriter({ db })
+    try {
+      await vi.advanceTimersByTimeAsync(5000)
+      vi.useRealTimers()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      expect(onUnhandledRejection).not.toHaveBeenCalled()
+    } finally {
+      writer.stop()
+      process.removeListener('unhandledRejection', onUnhandledRejection)
+    }
+  })
 })

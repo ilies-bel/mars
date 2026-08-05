@@ -6,6 +6,25 @@ const AckSchema = z.object({
   pair: z.object({ from: z.number(), to: z.number() }).nullable(),
 })
 
+const GateHealthEntrySchema = z.object({
+  id: z.string(),
+  scope: z.string(),
+  name: z.string(),
+  tier: z.string(),
+  required: z.boolean(),
+  state: z.enum(['active', 'quarantined']),
+  source: z.string(),
+  command: z.object({
+    cmd: z.string(),
+    args: z.array(z.string()),
+  }),
+  quarantinedAt: z.number().nullable(),
+  quarantineSignature: z.string().nullable(),
+  lastFailureSignature: z.string().nullable(),
+  lastFailureOriginId: z.string().nullable(),
+  lastFailureAt: z.number().nullable(),
+})
+
 export const StewardViewSchema = z.object({
   runtimeTuning: z.object({
     acks: z.array(AckSchema),
@@ -44,6 +63,12 @@ export const StewardViewSchema = z.object({
     allowedTools: z.array(z.string()),
     eventVariants: z.array(z.string()),
     dispatchSites: z.number(),
+  }),
+  gateHealth: z.object({
+    scopes: z.array(z.object({
+      scope: z.string(),
+      gates: z.array(GateHealthEntrySchema),
+    })),
   }),
 })
 

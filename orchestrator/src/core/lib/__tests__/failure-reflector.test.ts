@@ -3,7 +3,7 @@
  *
  * Observable behaviour under test:
  *  1. Claude output is persisted as proposals with source='failure-reflector'
- *  2. Repeated suggestions for the same title are deduplicated (notes appended)
+ *  2. Consecutive failures with the same signature trigger one analysis
  *  3. Non-blocking: errors from Claude are swallowed, never thrown
  *
  * runHeadlessProvider is mocked (provider subprocess boundary). Proposals are verified via
@@ -53,15 +53,26 @@ const baseOpts = {
 
 describe('spawnFailureReflector', () => {
   let repo: string
+  let opts = baseOpts
 
-  beforeEach(() => {
+  beforeEach(async () => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
+    vi.resetAllMocks()
     vi.resetModules()
+    const { __resetContextCacheForTests } = await import('../../context')
+    const { __resetStateClientForTests } = await import('../../store/state-client')
+    __resetContextCacheForTests()
+    __resetStateClientForTests()
+    opts = {
+      ...baseOpts,
+      lastErrorSignature: `${baseOpts.lastErrorSignature}:${repo}`,
+    }
   })
 
   afterEach(() => {
     delete process.env.MARS_REPO
+    delete process.env.MARS_FAILURE_REFLECTOR_MAX
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -83,7 +94,7 @@ describe('spawnFailureReflector', () => {
     const { initProposals, listProposals } = await import('../../proposals')
     await initProposals()
 
-    await spawnFailureReflector(baseOpts)
+    await spawnFailureReflector(opts)
 
     const proposals = await listProposals({ source: 'failure-reflector' })
     expect(proposals).toHaveLength(1)
@@ -108,21 +119,21 @@ describe('spawnFailureReflector', () => {
     const { initProposals, listProposals } = await import('../../proposals')
     await initProposals()
 
-    await spawnFailureReflector(baseOpts)
+    await spawnFailureReflector(opts)
 
     const proposals = await listProposals({ source: 'failure-reflector' })
     expect(proposals).toHaveLength(1)
     expect(proposals[0].solution).toBe('mars verify add lint --cmd npx --args "eslint ."')
   })
 
-  it('deduplicates proposals with the same title on repeated calls', async () => {
+  it('runs one analysis for consecutive failures with the same signature', async () => {
     const { runHeadlessProvider } = await import('../../workers/providers')
     vi.mocked(runHeadlessProvider)
       .mockResolvedValueOnce(
         makeClaudeResult([
           {
             recipe: 'add-typecheck',
-            title: 'Add TypeScript typecheck gate',
+            title: 'Detect TypeScript errors before merging',
             rationale: 'First observation.',
             action: 'mars verify add typecheck --cmd npx --args "tsc --noEmit"',
           },
@@ -143,64 +154,51 @@ describe('spawnFailureReflector', () => {
     const { initProposals, listProposals } = await import('../../proposals')
     await initProposals()
 
-    await spawnFailureReflector(baseOpts)
-    await spawnFailureReflector(baseOpts)
+    for (let i = 0; i < 5; i += 1) {
+      await spawnFailureReflector(opts)
+    }
 
-    // Same title → same fingerprint → deduped to one proposal
     const proposals = await listProposals({ source: 'failure-reflector' })
     expect(proposals).toHaveLength(1)
+    expect(runHeadlessProvider).toHaveBeenCalledTimes(1)
   })
 
-  it('appends rationale from second call to existing proposal notes', async () => {
+  it('keeps a dismissed analysis from being regenerated for the same failure', async () => {
     const { runHeadlessProvider } = await import('../../workers/providers')
-    vi.mocked(runHeadlessProvider)
-      .mockResolvedValueOnce(
-        makeClaudeResult([
-          {
-            recipe: 'add-typecheck',
-            title: 'Add TypeScript typecheck gate',
-            rationale: 'First observation.',
-            action: 'mars verify add typecheck --cmd npx --args "tsc --noEmit"',
-          },
-        ]),
-      )
-      .mockResolvedValueOnce(
-        makeClaudeResult([
-          {
-            recipe: 'add-typecheck',
-            title: 'Add TypeScript typecheck gate',
-            rationale: 'Second observation — same pattern recurred.',
-            action: 'mars verify add typecheck --cmd npx --args "tsc --noEmit"',
-          },
-        ]),
-      )
-
-    const { spawnFailureReflector } = await import('../failure-reflector')
-    const { initProposals, listProposals } = await import('../../proposals')
-    await initProposals()
-
-    await spawnFailureReflector(baseOpts)
-    await spawnFailureReflector(baseOpts)
-
-    const proposals = await listProposals({ source: 'failure-reflector' })
-    expect(proposals[0].notes).toMatch(/Second observation/)
-  })
-
-  it('creates separate proposals for suggestions with different titles', async () => {
-    const { runHeadlessProvider } = await import('../../workers/providers')
-    vi.mocked(runHeadlessProvider).mockResolvedValueOnce(
+    vi.mocked(runHeadlessProvider).mockResolvedValue(
       makeClaudeResult([
         {
           recipe: 'add-typecheck',
           title: 'Add TypeScript typecheck gate',
-          rationale: 'Would catch type errors.',
+          rationale: 'Would catch type errors before merging.',
           action: 'mars verify add typecheck --cmd npx --args "tsc --noEmit"',
         },
+      ]),
+    )
+
+    const { spawnFailureReflector } = await import('../failure-reflector')
+    const { dismissProposal, initProposals, listProposals } = await import('../../proposals')
+    await initProposals()
+
+    await spawnFailureReflector(opts)
+    const [created] = await listProposals({ source: 'failure-reflector' })
+    await dismissProposal(created.id)
+    await spawnFailureReflector(opts)
+
+    expect(await listProposals({ source: 'failure-reflector' })).toHaveLength(1)
+    expect(runHeadlessProvider).toHaveBeenCalledTimes(1)
+  })
+
+  it('creates one proposal when the same failure is reported concurrently', async () => {
+    process.env.MARS_FAILURE_REFLECTOR_MAX = '2'
+    const { runHeadlessProvider } = await import('../../workers/providers')
+    vi.mocked(runHeadlessProvider).mockResolvedValue(
+      makeClaudeResult([
         {
-          recipe: 'add-unit-tests',
-          title: 'Add unit test gate',
-          rationale: 'Would catch regressions.',
-          action: 'mars verify add test --cmd npm --args "test"',
+          recipe: 'add-typecheck',
+          title: 'Add TypeScript typecheck gate',
+          rationale: 'Would catch type errors before merging.',
+          action: 'mars verify add typecheck --cmd npx --args "tsc --noEmit"',
         },
       ]),
     )
@@ -209,7 +207,45 @@ describe('spawnFailureReflector', () => {
     const { initProposals, listProposals } = await import('../../proposals')
     await initProposals()
 
-    await spawnFailureReflector(baseOpts)
+    await Promise.all([spawnFailureReflector(opts), spawnFailureReflector(opts)])
+
+    expect(await listProposals({ source: 'failure-reflector' })).toHaveLength(1)
+    expect(runHeadlessProvider).toHaveBeenCalledTimes(1)
+  })
+
+  it('creates separate proposals for different failure signatures', async () => {
+    const { runHeadlessProvider } = await import('../../workers/providers')
+    vi.mocked(runHeadlessProvider)
+      .mockResolvedValueOnce(
+        makeClaudeResult([
+          {
+            recipe: 'add-typecheck',
+            title: 'Add TypeScript typecheck gate',
+            rationale: 'Would catch type errors.',
+            action: 'mars verify add typecheck --cmd npx --args "tsc --noEmit"',
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        makeClaudeResult([
+          {
+            recipe: 'add-unit-tests',
+            title: 'Add unit test gate',
+            rationale: 'Would catch regressions.',
+            action: 'mars verify add test --cmd npm --args "test"',
+          },
+        ]),
+      )
+
+    const { spawnFailureReflector } = await import('../failure-reflector')
+    const { initProposals, listProposals } = await import('../../proposals')
+    await initProposals()
+
+    await spawnFailureReflector(opts)
+    await spawnFailureReflector({
+      ...opts,
+      lastErrorSignature: 'verify:test-failed:unit-tests',
+    })
 
     const proposals = await listProposals({ source: 'failure-reflector' })
     expect(proposals).toHaveLength(2)
@@ -222,7 +258,7 @@ describe('spawnFailureReflector', () => {
     const { spawnFailureReflector } = await import('../failure-reflector')
 
     // Must resolve (not reject) even when Claude fails
-    await expect(spawnFailureReflector(baseOpts)).resolves.toBeUndefined()
+    await expect(spawnFailureReflector(opts)).resolves.toBeUndefined()
   })
 
   it('does not create any proposals when Claude returns empty suggestions', async () => {
@@ -233,7 +269,7 @@ describe('spawnFailureReflector', () => {
     const { initProposals, listProposals } = await import('../../proposals')
     await initProposals()
 
-    await spawnFailureReflector(baseOpts)
+    await spawnFailureReflector(opts)
 
     const proposals = await listProposals({ source: 'failure-reflector' })
     expect(proposals).toHaveLength(0)
@@ -253,7 +289,7 @@ describe('spawnFailureReflector', () => {
     const { initProposals, listProposals } = await import('../../proposals')
     await initProposals()
 
-    await spawnFailureReflector(baseOpts)
+    await spawnFailureReflector(opts)
 
     const proposals = await listProposals({ source: 'failure-reflector' })
     expect(proposals).toHaveLength(0)

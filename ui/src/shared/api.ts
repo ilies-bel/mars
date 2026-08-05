@@ -1134,7 +1134,7 @@ export const fetchSkills = async (): Promise<Skill[]> => {
 /**
  * Fetch the ADR list from the daemon (via the UI server proxy).
  * Returns ADRs in descending-number order (newest first).
- * Returns an empty array when the daemon is unreachable or docs/adr/ does not exist.
+ * Returns an empty array when the daemon is unreachable or docs/knowledge/decisions/ does not exist.
  */
 export const fetchAdrs = async (projectId?: string): Promise<AdrEntry[]> => {
   const json = await fetchJson(appendProject('/api/adrs', projectId), adrsResponseSchema)

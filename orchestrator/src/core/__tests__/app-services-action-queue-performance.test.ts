@@ -78,6 +78,7 @@ describe('AppServices action queue view', () => {
       buildAlertSources: async () => ({
         listFailedArcs: async () => [],
         listStaleWorktrees: async () => [],
+        listVerifyUncovered: async () => [],
       }),
     })
 

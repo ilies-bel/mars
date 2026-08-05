@@ -9,6 +9,7 @@ import {
   getDiagnosis,
   DIAGNOSIS_KINDS,
 } from '../../core/lib/diagnose'
+import { hasFlag } from '../args'
 import type { Command } from '../command'
 import { errorMessage } from './shared'
 
@@ -77,7 +78,7 @@ const diagnoseShow: Command = {
       return { code: 2 }
     }
     const verdict = await getDiagnosis(taskId)
-    if (args.positional.includes('--json')) {
+    if (hasFlag(args, '--json')) {
       deps.out(JSON.stringify(verdict, null, 2))
       return { code: 0 }
     }

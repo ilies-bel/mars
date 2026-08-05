@@ -34,7 +34,7 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
-import { parsePriority } from '../args'
+import { hasFlag, parsePriority } from '../args'
 
 const execFileAsync = promisify(execFile)
 
@@ -291,12 +291,12 @@ function landSkillProposal(
 
 const proposalPromote: Command = {
   path: 'proposal promote',
-  summary: 'mark a shaped draft proposal as PRD-ready',
-  usage: 'usage: mars proposal promote <id> [--priority 0..3]',
+  summary: 'mark a shaped draft proposal as PRD-ready and start its slices',
+  usage: 'usage: mars proposal promote <id> [--priority 0..3] [--coordinated]',
   run: async (args, deps) => {
     const id = args.positional[0]
     if (!id) {
-      deps.err('usage: mars proposal promote <id> [--priority 0..3]')
+      deps.err('usage: mars proposal promote <id> [--priority 0..3] [--coordinated]')
       return { code: 2 }
     }
     const priorityRaw = args.flags['--priority']
@@ -330,10 +330,17 @@ const proposalPromote: Command = {
     }
     try {
       const r = (await deps.daemon.sendRequest(
-        { op: 'proposal.promote', proposalId: resolved.id, ...(priority !== undefined && { priority }) },
+        {
+          op: 'proposal.promote',
+          proposalId: resolved.id,
+          coordinated: args.flags['--coordinated'] !== undefined,
+          ...(priority !== undefined && { priority }),
+        },
         { onSpawnNotice: spawnNoticeErr(deps.err) },
       )) as { proposalId: string; status: string }
-      deps.out(`proposal ${r.proposalId} marked ${r.status}`)
+      deps.out(
+        `proposal ${r.proposalId} marked ${r.status}; tasks will be enqueued automatically when slicing completes`,
+      )
       if (!(await isDaemonReachable(deps.ctx.stateDir))) {
         deps.err(
           `proposal ${r.proposalId} promoted; the action-queue row will clear when the daemon next runs (daemon not running — run \`mars daemon start\`).`,
@@ -658,7 +665,7 @@ const proposalShipSummary: Command = {
   usage: 'usage: mars proposal ship-summary <id> [--json]',
   run: async (args, deps) => {
     const id = args.positional[0]
-    const emitJson = args.positional.includes('--json')
+    const emitJson = hasFlag(args, '--json')
     if (!id) {
       deps.err('usage: mars proposal ship-summary <id> [--json]')
       return { code: 2 }
@@ -765,35 +772,6 @@ const proposalShipSummary: Command = {
   },
 }
 
-const proposalApprove: Command = {
-  path: 'proposal approve',
-  summary: 'approve a sliced plan and enqueue all slice tasks',
-  usage: 'usage: mars proposal approve <id> [--coordinated]',
-  run: async (args, deps) => {
-    const id = args.positional[0]
-    if (!id) {
-      deps.err('usage: mars proposal approve <id> [--coordinated]')
-      return { code: 1 }
-    }
-    try {
-      if (args.flags['--coordinated'] !== undefined) {
-        await setProposalCoordinated(id, true)
-      }
-      const r = (await deps.daemon.sendRequest(
-        { op: 'proposal.approve', proposalId: id },
-        { onSpawnNotice: spawnNoticeErr(deps.err) },
-      )) as { proposalId: string; queuedCount: number; blockedCount: number }
-      deps.out(
-        `proposal ${r.proposalId} approved: ${r.queuedCount} task(s) queued, ${r.blockedCount} blocked`,
-      )
-    } catch (error: unknown) {
-      deps.err(errorMessage(error))
-      return { code: 1 }
-    }
-    return { code: 0 }
-  },
-}
-
 const proposalTake: Command = {
   path: 'proposal take',
   summary:
@@ -889,7 +867,7 @@ const proposalGroupUsage = `usage: mars proposal <subcommand>
 
   CRUD:      add  list  show  set  delete
   PRD:       add-user-story  remove-user-story
-  Lifecycle: promote  slice  approve  take  reslice  dismiss
+  Lifecycle: promote  slice  take  reslice  dismiss
   Blockers:  block  unblock  blockers  block-task  unblock-task  task-blockers
   Reports:   ship-summary`
 
@@ -912,7 +890,6 @@ export const proposalCommands: readonly Command[] = [
   proposalPromote,
   proposalSlice,
   proposalTake,
-  proposalApprove,
   proposalReslice,
   proposalDismiss,
   proposalDelete,

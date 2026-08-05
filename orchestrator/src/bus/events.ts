@@ -26,6 +26,13 @@ export const EventMap = {
      */
     note: z.string().optional(),
   }),
+  'verify-gate.quarantined': z.object({
+    gateId: z.string(),
+    originId: z.string(),
+    failureSignature: z.string(),
+    /** Captured output from the failing gate invocation, not a derived verdict. */
+    failureEvidence: z.string().default('No captured gate output was available.'),
+  }),
   'task.blocked': z.object({
     taskId: z.string(),
     fixTaskId: z.string().nullable(),
@@ -122,10 +129,6 @@ export const EventMap = {
   'proposal.sliced': z.object({
     proposalId: z.string(),
     taskCount: z.number().int().nonnegative(),
-  }),
-  'proposal.approved': z.object({
-    proposalId: z.string(),
-    queuedCount: z.number().int().nonnegative(),
   }),
   'proposal.deleted': z.object({
     proposalId: z.string(),

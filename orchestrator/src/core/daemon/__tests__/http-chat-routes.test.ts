@@ -151,6 +151,7 @@ vi.mock('../../lib/chat-store', () => ({
     messages: [],
     feedbacks: new Map(),
   }),
+  listMainThreadMessages: vi.fn().mockResolvedValue([]),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   closeSubthread: vi.fn().mockResolvedValue(undefined),
   archiveSubthread: vi.fn().mockResolvedValue(undefined),
@@ -165,6 +166,21 @@ vi.mock('../../lib/chat-store', () => ({
     updated_at: 1_767_225_600_000,
   }),
   clearMessageFeedback: vi.fn().mockResolvedValue(true),
+}))
+
+// The runner now maintains the durable Main-thread memory window before it
+// reaches the provider. Keep this HTTP-route fixture at its external
+// boundaries: memory-window persistence is covered by its own tests.
+vi.mock('../chat-memory-window', () => ({
+  selectMemoryCut: vi.fn().mockResolvedValue(null),
+  readMainMemoryWindow: vi.fn().mockResolvedValue({
+    startsAfterSeq: 0,
+    lastUsedAt: null,
+    cutAt: null,
+    reason: null,
+  }),
+  advanceMainMemoryWindow: vi.fn().mockResolvedValue(undefined),
+  markMainMemoryWindowUsed: vi.fn().mockResolvedValue(undefined),
 }))
 
 const codexApi = await import('../codex-api')
@@ -949,7 +965,14 @@ describe('GET /view/chat/config — HTTP route wiring', () => {
     expect(body.contextWindowTokens).toBe(200_000)
     expect(body.systemPromptSource).toBe('built-in')
     expect(body.systemPrompt.length).toBeGreaterThan(0)
-    expect(body.builtinTools.map((t) => t.name)).toEqual(['shell', 'read_file', 'write_file', 'skill'])
+    expect(body.builtinTools.map((t) => t.name)).toEqual([
+      'shell',
+      'read_file',
+      'write_file',
+      'skill',
+      'set_posture',
+      'override_reshape_as_proposal',
+    ])
     expect(body.mcpServers).toEqual([
       { name: 'codegraph', command: 'codegraph serve --mcp', status: 'connected', tools: [{ name: 'codegraph_search', description: 'Find.' }] },
     ])

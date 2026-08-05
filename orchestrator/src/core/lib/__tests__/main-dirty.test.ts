@@ -139,6 +139,11 @@ describe('spawnOrAttachMainCommitter', () => {
     const src = await queue.enqueueTask('source', undefined, {
       skipTriage: true,
     })
+    await queue.updateTask(src.id, {
+      failureReason: 'stale failure reason',
+      failureReasonCode: 'stale-failure-code',
+      failureSignature: 'stale-failure-signature',
+    })
 
     const { spawnOrAttachMainCommitter } = await import('../main-dirty')
     const resolution = await spawnOrAttachMainCommitter({
@@ -158,7 +163,12 @@ describe('spawnOrAttachMainCommitter', () => {
 
     const after = await queue.getTask(src.id)
     expect(after?.status).toBe('blocked')
-    expect(after?.failureReason).toBe('verify:main-dirty')
+    expect(after?.error).toBe(
+      'dirty integration branch (main) detected at dispatch; parked behind main-commiter recovery',
+    )
+    expect(after?.failureReason).toBeNull()
+    expect(after?.failureReasonCode).toBeNull()
+    expect(after?.failureSignature).toBeNull()
 
     const committer = await queue.getTask(resolution.fixTaskId)
     expect(committer?.kind).toBe('fix')
@@ -189,6 +199,11 @@ describe('spawnOrAttachMainCommitter', () => {
     })
     const src2 = await queue.enqueueTask('source-2', undefined, {
       skipTriage: true,
+    })
+    await queue.updateTask(src2.id, {
+      failureReason: 'stale failure reason',
+      failureReasonCode: 'stale-failure-code',
+      failureSignature: 'stale-failure-signature',
     })
     const detection = {
       dirty: true as const,
@@ -221,6 +236,12 @@ describe('spawnOrAttachMainCommitter', () => {
 
     const src2After = await queue.getTask(src2.id)
     expect(src2After?.status).toBe('blocked')
+    expect(src2After?.error).toBe(
+      'dirty integration branch (main) detected at verify; parked behind main-commiter recovery',
+    )
+    expect(src2After?.failureReason).toBeNull()
+    expect(src2After?.failureReasonCode).toBeNull()
+    expect(src2After?.failureSignature).toBeNull()
 
     const c = queue.resolveQueueClient()
     const edges = await c.execute({
@@ -231,6 +252,12 @@ describe('spawnOrAttachMainCommitter', () => {
       .map((r) => r.task_id)
       .sort()
     expect(ids).toEqual([src1.id, src2.id].sort())
+
+    await queue.updateTask(first.fixTaskId, { status: 'done' })
+    const { Arc } = await import('../../arc')
+    await Arc.unblockByCompletion(first.fixTaskId)
+    expect((await queue.getTask(src1.id))?.status).toBe('queued')
+    expect((await queue.getTask(src2.id))?.status).toBe('queued')
   })
 
   it('spawns independent committers for parallel integration branches', async () => {
@@ -443,8 +470,7 @@ describe('spawnOrAttachMainCommitter', () => {
   })
 
   it('reparents stranded dependents from prior failed committer onto fresh committer', async () => {
-    // Scenario: committer-1 has 3 blocked dependents (daemon crash prevented
-    // releaseMainCommitterDependents from running). src2 arrives → committer-2
+    // Scenario: committer-1 has 3 blocked dependents after failure. src2 arrives → committer-2
     // spawns → reparenting re-parents all 3 stranded deps. When committer-2
     // completes, unblockByCompletion re-queues all 3.
     const queue = await import('../../queue')
@@ -452,6 +478,7 @@ describe('spawnOrAttachMainCommitter', () => {
 
     const c = queue.resolveQueueClient()
     const now = new Date().toISOString()
+    const blockerCreatedAt = Date.now()
     const { parseMainCommiterPayload, serialiseMainCommiterPayload } = await import('../main-dirty')
 
     // Seed a phantom origin task (needed for FK on fix_for_task_id).
@@ -473,7 +500,7 @@ describe('spawnOrAttachMainCommitter', () => {
     for (const dep of [dep1, dep2, dep3]) {
       await c.execute({
         sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-        args: [dep.id, committer1, now],
+        args: [dep.id, committer1, blockerCreatedAt],
       })
       await c.execute({
         sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
@@ -997,4 +1024,3 @@ describe('setup provisioning choice for a main-committer fix', () => {
     })
   })
 })
-

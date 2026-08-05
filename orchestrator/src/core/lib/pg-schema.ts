@@ -34,11 +34,11 @@
  *   (flagged as a real gap by the migration inventory).
  */
 
-import type { DbClient } from './db.js'
+import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0021'
+export const SCHEMA_VERSION = '0025'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -70,16 +70,64 @@ const DDL: readonly string[] = [
     fingerprint       text,
     origin_session_id text,
     coordinated       boolean NOT NULL DEFAULT false,
+    last_slice_error  text,
+    last_slice_failed_at bigint,
     created_at        bigint NOT NULL,
     updated_at        bigint NOT NULL
   )`,
+  // This ledger records that a failure signature has already been analysed,
+  // independently of the proposal lifecycle. Dismissing or deleting a draft
+  // must never re-arm provider work for the same failure signature.
+  `CREATE TABLE IF NOT EXISTS failure_reflection_signatures (
+    source           text   NOT NULL,
+    fingerprint      text   NOT NULL,
+    first_seen_at    bigint NOT NULL,
+    last_seen_at     bigint NOT NULL,
+    occurrence_count bigint NOT NULL DEFAULT 1,
+    PRIMARY KEY (source, fingerprint)
+  )`,
+  // Backfill before normalising duplicate proposal fingerprints so historical
+  // occurrence counts remain intact during the upgrade.
+  `INSERT INTO failure_reflection_signatures
+       (source, fingerprint, first_seen_at, last_seen_at, occurrence_count)
+     SELECT source,
+            fingerprint,
+            MIN(created_at),
+            MAX(updated_at),
+            COUNT(*)
+       FROM proposals
+      WHERE source = 'failure-reflector'
+        AND fingerprint IS NOT NULL
+      GROUP BY source, fingerprint
+     ON CONFLICT (source, fingerprint) DO NOTHING`,
   // Proposal dismissal has always stored this terminal state. Normalize the
   // short-lived, incompatible `rejected` value before proposal readers apply
   // the closed lifecycle type.
   `UPDATE proposals SET status = 'dismissed' WHERE status = 'rejected'`,
   `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS coordinated boolean NOT NULL DEFAULT false`,
-  `CREATE INDEX IF NOT EXISTS idx_proposals_fingerprint
-     ON proposals(fingerprint) WHERE fingerprint IS NOT NULL`,
+  `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_slice_error text`,
+  `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_slice_failed_at bigint`,
+  `ALTER TABLE proposals DROP COLUMN IF EXISTS auto_approve`,
+  // Existing installs may contain duplicate fingerprints from concurrent
+  // reflector runs. Keep every historical proposal, but retain the fingerprint
+  // only on the first row so the source/fingerprint uniqueness boundary can be
+  // installed without discarding operator-visible history.
+  `UPDATE proposals AS duplicate
+      SET fingerprint = NULL
+    WHERE duplicate.fingerprint IS NOT NULL
+      AND EXISTS (
+        SELECT 1
+          FROM proposals AS original
+         WHERE original.source = duplicate.source
+           AND original.fingerprint = duplicate.fingerprint
+           AND (
+             original.created_at < duplicate.created_at
+             OR (original.created_at = duplicate.created_at AND original.id < duplicate.id)
+           )
+      )`,
+  `DROP INDEX IF EXISTS idx_proposals_fingerprint`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_source_fingerprint
+     ON proposals(source, fingerprint) WHERE fingerprint IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS proposal_user_stories (
     proposal_id text   NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
     position    bigint NOT NULL,
@@ -162,6 +210,7 @@ const DDL: readonly string[] = [
     env_restart_count    bigint NOT NULL DEFAULT 0,
     requeue_anchor_ms    bigint,
     requeue_dispatch_uptime_ms bigint,
+    quota_rejected_attempts bigint NOT NULL DEFAULT 0,
     created_at           timestamptz NOT NULL,
     updated_at           timestamptz NOT NULL
   )`,
@@ -695,6 +744,11 @@ const DDL: readonly string[] = [
   // `deferrable` is a 0/1 flag (queue.ts reads it as Number(row.deferrable) === 1).
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS stall_diagnostics text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS "deferrable" bigint NOT NULL DEFAULT 0`,
+  // Counter of provider quota-rejection attempts: attempts where the coder never
+  // ran because the provider rejected the run before starting (rate/spend limit).
+  // The poll-fallback ceiling subtracts this from maxAttempt to compute the
+  // effective real-work attempt count, so quota storms do not burn the ceiling.
+  `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS quota_rejected_attempts bigint NOT NULL DEFAULT 0`,
   // `evaporated_at` -> `closed_at`. This block must stay idempotent: the whole
   // DDL batch replays on EVERY daemon boot inside one transaction, so a single
   // failing statement aborts the batch and the daemon can never start again.
@@ -1059,17 +1113,8 @@ const DDL: readonly string[] = [
     parse_count bigint NOT NULL DEFAULT 0,
     promoted_at bigint
   )`,
-  `CREATE TABLE IF NOT EXISTS gate_verdict_monitor (
-    id              bigint PRIMARY KEY CHECK (id = 1),
-    current_verdict text,
-    streak_count    bigint NOT NULL DEFAULT 0,
-    last_task_id    text,
-    updated_at      bigint NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS gate_suppressed_verdicts (
-    verdict    text PRIMARY KEY,
-    tripped_at bigint NOT NULL
-  )`,
+  `DROP TABLE IF EXISTS gate_suppressed_verdicts`,
+  `DROP TABLE IF EXISTS gate_verdict_monitor`,
   // Signature-storm circuit breaker: singleton streak row that counts
   // consecutive identical failure signatures across DIFFERENT origin tasks.
   // When the streak reaches the threshold, `tripped` is set to true and
@@ -1095,7 +1140,54 @@ const DDL: readonly string[] = [
     tier       text NOT NULL DEFAULT 'task',
     source     text NOT NULL DEFAULT 'human',
     created_at bigint NOT NULL,
+    state      text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'quarantined')),
+    quarantined_at bigint,
+    quarantine_signature text,
+    last_failure_signature text,
+    last_failure_at bigint,
+    last_failure_origin_id text,
     UNIQUE(scope, name)
+  )`,
+  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'active'
+     CHECK (state IN ('active', 'quarantined'))`,
+  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS quarantined_at bigint`,
+  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS quarantine_signature text`,
+  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_signature text`,
+  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_at bigint`,
+  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_origin_id text`,
+
+  // ── quarantined verify-gate repair proposals ─────────────────────────────
+  // The unique quarantine episode key is the durable idempotency boundary for
+  // the gate-fix Steward. A replay may re-run diagnosis, but it can never
+  // create a second operator decision for the same gate/signature pair.
+  `CREATE TABLE IF NOT EXISTS gate_fix_proposals (
+    id                    text PRIMARY KEY,
+    gate_id               text NOT NULL,
+    gate_scope            text NOT NULL,
+    gate_name             text NOT NULL,
+    quarantine_signature  text NOT NULL,
+    failure_evidence      text NOT NULL,
+    current_cmd           text NOT NULL,
+    current_args_json     text NOT NULL,
+    current_required      boolean NOT NULL,
+    current_tier          text NOT NULL CHECK (current_tier IN ('task', 'integration')),
+    proposed_cmd          text NOT NULL,
+    proposed_args_json    text NOT NULL,
+    proposed_required     boolean NOT NULL,
+    proposed_tier         text NOT NULL CHECK (proposed_tier IN ('task', 'integration')),
+    rationale             text NOT NULL,
+    status                text NOT NULL DEFAULT 'awaiting-human'
+                           CHECK (status IN ('awaiting-human', 'approved', 'rejected')),
+    created_at            bigint NOT NULL,
+    UNIQUE (gate_id, quarantine_signature)
+  )`,
+  `UPDATE verify_gates SET state = 'active' WHERE state IS NULL`,
+  `CREATE TABLE IF NOT EXISTS verify_gate_failure_streaks (
+    gate_id           text PRIMARY KEY REFERENCES verify_gates(id) ON DELETE CASCADE,
+    current_signature text NOT NULL,
+    streak_count      integer NOT NULL,
+    last_origin_id    text NOT NULL,
+    updated_at        bigint NOT NULL
   )`,
   `DO $$
    BEGIN
@@ -1166,30 +1258,6 @@ const DDL: readonly string[] = [
      ) THEN
        ALTER TABLE gate_burn_in ALTER COLUMN promoted_at TYPE bigint
          USING (EXTRACT(EPOCH FROM promoted_at::timestamptz) * 1000)::bigint;
-     END IF;
-   END
-   $$`,
-  `DO $$
-   BEGIN
-     IF EXISTS (
-       SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'gate_verdict_monitor'
-          AND column_name = 'updated_at' AND data_type <> 'bigint'
-     ) THEN
-       ALTER TABLE gate_verdict_monitor ALTER COLUMN updated_at TYPE bigint
-         USING (EXTRACT(EPOCH FROM updated_at::timestamptz) * 1000)::bigint;
-     END IF;
-   END
-   $$`,
-  `DO $$
-   BEGIN
-     IF EXISTS (
-       SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'gate_suppressed_verdicts'
-          AND column_name = 'tripped_at' AND data_type <> 'bigint'
-     ) THEN
-       ALTER TABLE gate_suppressed_verdicts ALTER COLUMN tripped_at TYPE bigint
-         USING (EXTRACT(EPOCH FROM tripped_at::timestamptz) * 1000)::bigint;
      END IF;
    END
    $$`,
@@ -1351,7 +1419,9 @@ const DDL: readonly string[] = [
 
   // ── merge queue ───────────────────────────────────────────────────────────
   // Durable single-consumer merge queue (PRD 92af89ce). Each row represents
-  // one pending, in-flight, or terminal merge attempt for a task branch.
+  // one pending, in-flight, or terminal merge attempt for a task branch,
+  // including terminal structured-write bookkeeping tasks. Keep task_id as a
+  // foreign key so every merge job has one uniform task identity.
   // The partial unique index below ensures at most one active job per task.
   `CREATE TABLE IF NOT EXISTS merge_jobs (
     id                 uuid        PRIMARY KEY,
@@ -1595,10 +1665,11 @@ export const SCHEMA_TABLES: readonly string[] = [
   'diagnosis_involved_files',
   'gate_enrichment',
   'gate_burn_in',
-  'gate_verdict_monitor',
-  'gate_suppressed_verdicts',
   'failure_signature_streak',
+  'failure_reflection_signatures',
   'verify_gates',
+  'verify_gate_failure_streaks',
+  'gate_fix_proposals',
   'kpi_snapshots',
   'kpi_counters',
   'promotion_ledger',
@@ -1636,6 +1707,7 @@ export const IDENTITY_COLUMNS: Readonly<Record<string, string>> = {
   chat_messages: 'seq',
   usage_snapshots: 'id',
   mcp_worker_audit: 'id',
+  conversation_notice_batches: 'id',
 }
 
 /**
@@ -1644,6 +1716,30 @@ export const IDENTITY_COLUMNS: Readonly<Record<string, string>> = {
  * every caller agrees on the same lock. Exported so tests can reference it.
  */
 export const SCHEMA_ADVISORY_LOCK_KEY = 20260726
+
+/**
+ * Rows that belong to an empty, usable schema rather than to application
+ * activity. Keep these separate from DDL so the test database harness can
+ * restore them after TRUNCATE without replaying every migration.
+ */
+const schemaSeedStatements = (appliedAt: string): DbStatement[] => [
+  {
+    sql: `INSERT INTO chat_threads
+            (id, title, status, posture, created_at, updated_at)
+          VALUES ('main', '', 'idle', 'triage', 0, 0)
+          ON CONFLICT (id) DO NOTHING`,
+  },
+  {
+    sql: `INSERT INTO schema_migrations (version, applied_at)
+          VALUES (?, ?) ON CONFLICT (version) DO NOTHING`,
+    args: [SCHEMA_VERSION, appliedAt],
+  },
+]
+
+/** Restore rows that `ensureSchema` creates in a new database after a test reset. */
+export async function __reseedSchemaForTests(client: DbClient): Promise<void> {
+  await __execSchemaBatch(client, schemaSeedStatements(new Date().toISOString()))
+}
 
 /**
  * Applies the complete canonical schema (idempotent) and records
@@ -1675,10 +1771,6 @@ export async function ensureSchema(client: DbClient): Promise<void> {
     // pg_advisory_xact_lock auto-releases on COMMIT/ROLLBACK.
     { sql: 'SELECT pg_advisory_xact_lock(?)', args: [SCHEMA_ADVISORY_LOCK_KEY] },
     ...DDL,
-    {
-      sql: `INSERT INTO schema_migrations (version, applied_at)
-            VALUES (?, ?) ON CONFLICT (version) DO NOTHING`,
-      args: [SCHEMA_VERSION, new Date().toISOString()],
-    },
+    ...schemaSeedStatements(new Date().toISOString()),
   ])
 }

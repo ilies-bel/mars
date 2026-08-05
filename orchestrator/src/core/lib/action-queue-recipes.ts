@@ -317,6 +317,17 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  'slice-failed': {
+    humanSummary: () =>
+      'Mars could not turn this PRD into tasks — inspect the failure, then explicitly slice it again when ready.',
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      errorExcerpt: str(ctx.payload['error']),
+    }),
+    verbs: [],
+  },
+
   'hitl-slice-needs-operator': {
     humanSummary: () =>
       'A task in the plan requires a human to take over — attach to it and do the work manually.',
@@ -327,21 +338,6 @@ const RECIPE_DEFINITIONS = {
       instructions: str(ctx.payload['instructions']),
     }),
     verbs: [],
-  },
-
-  'plan-approval': {
-    humanSummary: () =>
-      "A plan has been sliced into tasks and is waiting for your go-ahead before work starts — review and approve or reslice.",
-    humanDetail: (ctx) => ({
-      raisedAt: ctx.raisedAt,
-      entityId: ctx.entityId,
-      proposalId: str(ctx.payload['proposalId']),
-      sliceCount: ctx.payload['sliceCount'],
-    }),
-    verbs: [
-      { op: 'approve-plan', label: 'Approve & enqueue', style: 'primary' },
-      { op: 'reslice', label: 'Reslice with feedback', style: 'default' },
-    ],
   },
 
   // ── Human-in-the-loop ──────────────────────────────────────────────────────
@@ -573,6 +569,21 @@ const RECIPE_DEFINITIONS = {
       entityId: ctx.entityId,
       verdict: str(ctx.payload['verdict']),
       affectedCount: ctx.payload['affectedCount'],
+    }),
+    verbs: [],
+  },
+
+  'verify-uncovered': {
+    humanSummary: (ctx) => {
+      const scope = str(ctx.payload['scope']) || ctx.entityId
+      return `No task-tier verify gate covers changes in ${scope}; the task merged as CAN'T-VERIFY.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      scope: str(ctx.payload['scope']),
+      changedPaths: ctx.payload['changedPaths'],
+      recipe: str(ctx.payload['recipe']),
     }),
     verbs: [],
   },

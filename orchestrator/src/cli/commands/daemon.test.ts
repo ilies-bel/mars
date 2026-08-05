@@ -22,10 +22,10 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
 import type { InProcessOptions } from '../test-adapter'
 import { __resetContextCacheForTests, type OrchestratorContext } from '../../core/context'
 import type { DaemonLiveness } from '../../core/daemon/paths'
@@ -48,7 +48,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()
   return {
     ...actual,
-    spawn: vi.fn(() => ({ unref: vi.fn(), pid: 99999 })),
+    spawn: vi.fn(() => ({ unref: vi.fn(), once: vi.fn(), pid: 99999 })),
   }
 })
 
@@ -80,6 +80,7 @@ vi.mock('../../core/daemon/http-server', () => ({
 import { isDaemonAlive } from '../../core/daemon/paths'
 import { spawn } from 'node:child_process'
 import { runCommandInProcess, makeFakeDaemon } from '../test-adapter'
+import { spawnReplacementDaemon } from '../../core/daemon/server'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -127,17 +128,24 @@ const createGitRepo = (branch: string): string => {
 
 const isDaemonAliveM = vi.mocked(isDaemonAlive)
 const spawnM = vi.mocked(spawn)
+const inheritedDaemonChild = process.env.MARS_DAEMON_CHILD
 
 // ── Test suite ────────────────────────────────────────────────────────────────
 
 describe('daemon start and restart safety', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    delete process.env.MARS_DAEMON_CHILD
   })
 
   afterEach(() => {
     vi.useRealTimers()
     delete process.env.INTEGRATION_BRANCH
+  })
+
+  afterAll(() => {
+    if (inheritedDaemonChild === undefined) delete process.env.MARS_DAEMON_CHILD
+    else process.env.MARS_DAEMON_CHILD = inheritedDaemonChild
   })
 
   // Tracer bullet: the most basic observable outcome — daemon already alive.
@@ -151,6 +159,78 @@ describe('daemon start and restart safety', () => {
     expect(result.out.join('\n')).toContain('5678')
     // Must not spawn a new process when daemon is already live.
     expect(spawnM).not.toHaveBeenCalled()
+  })
+
+  it('refuses a marked child that reaches the detach branch without spawning again', async () => {
+    const previousMarker = process.env.MARS_DAEMON_CHILD
+    process.env.MARS_DAEMON_CHILD = '1'
+    isDaemonAliveM.mockResolvedValue({ alive: false, reason: 'no-pid' } satisfies DaemonLiveness)
+
+    try {
+      const result = await runCommandInProcess(['daemon', 'start'], makeOpts())
+
+      expect(result.code).toBe(1)
+      expect(result.err.join('\n')).toContain('daemon child reached the detach branch')
+      expect(spawnM).not.toHaveBeenCalled()
+    } finally {
+      if (previousMarker === undefined) delete process.env.MARS_DAEMON_CHILD
+      else process.env.MARS_DAEMON_CHILD = previousMarker
+    }
+  })
+
+  it('launches a replacement directly in the foreground daemon branch', async () => {
+    const previousMarker = process.env.MARS_DAEMON_CHILD
+    const previousRepo = process.env.MARS_REPO
+    const repo = mkdtempSync(join(tmpdir(), 'mars-replacement-daemon-'))
+    process.env.MARS_DAEMON_CHILD = 'inherited-parent-marker'
+    process.env.MARS_REPO = repo
+    __resetContextCacheForTests()
+
+    try {
+      await spawnReplacementDaemon()
+
+      expect(spawnM).toHaveBeenCalledTimes(1)
+      const spawnArgs = spawnM.mock.calls[0]?.[1]
+      const spawnOptions = spawnM.mock.calls[0]?.[2]
+      expect(spawnArgs).toEqual(
+        expect.arrayContaining(['daemon', 'start', '--foreground']),
+      )
+      // The child gets the daemon marker deliberately; it does not inherit
+      // an arbitrary parent value that could alter a future launcher branch.
+      expect(spawnOptions?.env?.['MARS_DAEMON_CHILD']).toBe('1')
+    } finally {
+      if (previousMarker === undefined) delete process.env.MARS_DAEMON_CHILD
+      else process.env.MARS_DAEMON_CHILD = previousMarker
+      if (previousRepo === undefined) delete process.env.MARS_REPO
+      else process.env.MARS_REPO = previousRepo
+      __resetContextCacheForTests()
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('records replacement bootstrap stderr in the repository boot log', async () => {
+    const previousRepo = process.env.MARS_REPO
+    const repo = mkdtempSync(join(tmpdir(), 'mars-replacement-daemon-log-'))
+    const { EventEmitter } = await import('node:events')
+    const stderr = new EventEmitter()
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn(), stderr })
+    spawnM.mockImplementationOnce(() => child as never)
+    process.env.MARS_REPO = repo
+    __resetContextCacheForTests()
+
+    try {
+      await spawnReplacementDaemon()
+      stderr.emit('data', Buffer.from('replacement boot failed\n'))
+
+      expect(readFileSync(join(repo, '.mars', 'watch.log'), 'utf8')).toContain(
+        'replacement boot failed',
+      )
+    } finally {
+      if (previousRepo === undefined) delete process.env.MARS_REPO
+      else process.env.MARS_REPO = previousRepo
+      __resetContextCacheForTests()
+      rmSync(repo, { recursive: true, force: true })
+    }
   })
 
   // Core fix: daemon start waits for the socket to become alive after spawn.
@@ -169,8 +249,24 @@ describe('daemon start and restart safety', () => {
     expect(spawnM).toHaveBeenCalledTimes(1)
     const spawnOptions = spawnM.mock.calls[0]?.[2]
     expect(spawnOptions?.env?.['MARS_WORKER_PROVIDER']).toBe('codex')
+    expect(spawnOptions?.env?.['MARS_DAEMON_CHILD']).toBe('1')
     // isDaemonAlive was called at least twice (initial check + at least one poll).
     expect(isDaemonAliveM).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports an early child exit code instead of waiting for the readiness deadline', async () => {
+    const { EventEmitter } = await import('node:events')
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn(), pid: 12345 })
+    spawnM.mockImplementationOnce(() => {
+      queueMicrotask(() => child.emit('exit', 17, null))
+      return child as never
+    })
+    isDaemonAliveM.mockResolvedValue({ alive: false, reason: 'no-pid' } satisfies DaemonLiveness)
+
+    const result = await runCommandInProcess(['daemon', 'start'], makeOpts())
+
+    expect(result.code).toBe(1)
+    expect(result.err.join('\n')).toContain('daemon child exited early (code=17 signal=null)')
   })
 
   // Idempotency: a second daemon start finds the pid from the first's poll.
@@ -189,6 +285,19 @@ describe('daemon start and restart safety', () => {
     expect(pidIn(r2.out)).toBe('7777')
     // Neither spawns a new process.
     expect(spawnM).not.toHaveBeenCalled()
+  })
+
+  it('force-stops the daemon when --force is supplied', async () => {
+    const daemon = makeFakeDaemon()
+
+    const result = await runCommandInProcess(['daemon', 'stop', '--force'], {
+      ...makeOpts(),
+      daemon,
+    })
+
+    expect(result.code).toBe(0)
+    expect(result.out).toContain('daemon stopping (force; in-flight tasks abandoned)')
+    expect(daemon.calls).toEqual([{ op: 'shutdown', force: true }])
   })
 
   it('restores a persisted pause after the daemon is killed and restarted', async () => {

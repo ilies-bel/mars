@@ -686,7 +686,9 @@ describe('takeKpiSnapshot — autonomous_completion_rate column', () => {
       sql: `INSERT INTO action_queue_items
               (id, kind, category, priority, title, raised_by, raised_at, origin_task_id)
             VALUES (?, 'task-blocked', 'orchestrator', 'high', 'blocked', 'test', ?, ?)`,
-      args: ['aq-1', NOW, 'blocked-task'],
+      // `raised_at` is a bigint of epoch millis, unlike the ISO-string `now`
+      // that `takeKpiSnapshot` takes. Passing NOW verbatim is a cast error.
+      args: ['aq-1', Date.parse(NOW), 'blocked-task'],
     })
 
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })

@@ -37,6 +37,7 @@ const makeServices = (traceStore: TraceEventStore): AppServices =>
     buildAlertSources: async () => ({
       listFailedArcs: async () => [],
       listStaleWorktrees: async () => [],
+      listVerifyUncovered: async () => [],
     }),
   })
 

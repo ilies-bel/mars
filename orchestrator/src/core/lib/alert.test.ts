@@ -21,6 +21,7 @@ import {
   type AlertSources,
   type FailedArcRecord,
   type StaleWorktreeRecord,
+  type VerifyUncoveredRecord,
 } from './alert'
 import { resolveFailureKind } from './failure-kinds'
 import type { FailureKind } from './failure-kinds'
@@ -186,10 +187,18 @@ describe('listAlerts / showAlert', () => {
     ageHours: 26,
   }
 
+  const uncoveredRecord: VerifyUncoveredRecord = {
+    fingerprint: 'coverage:src/widgets',
+    recipe: 'add-verify-gate',
+    scope: 'src/widgets',
+    changedPaths: ['src/widgets/BellMenu.tsx', 'src/widgets/BellMenu.test.tsx'],
+  }
+
   it('lists alerts for failed arcs and stale worktrees', async () => {
     const sources: AlertSources = {
       listFailedArcs: vi.fn(async () => [failedArc]),
       listStaleWorktrees: vi.fn(async () => [staleRecord]),
+      listVerifyUncovered: vi.fn(async () => []),
     }
     const alerts = await listAlertsLocal(sources)
 
@@ -207,10 +216,36 @@ describe('listAlerts / showAlert', () => {
     expect(sources.listStaleWorktrees).toHaveBeenCalledTimes(1)
   })
 
+  it('lists each open uncovered verify scope with its CAN\'T-VERIFY evidence', async () => {
+    const sources: AlertSources = {
+      listFailedArcs: async () => [],
+      listStaleWorktrees: async () => [],
+      listVerifyUncovered: async () => [uncoveredRecord],
+    }
+
+    const [alert] = await listAlertsLocal(sources)
+
+    expect(alert).toMatchObject({
+      arcId: 'coverage:src/widgets',
+      kind: 'verify-uncovered',
+      goal: 'src/widgets',
+      reason: "CAN'T-VERIFY: no task-tier verify gate covers the changed files",
+      fingerprint: 'coverage:src/widgets',
+      recipe: 'add-verify-gate',
+    })
+    expect(alert?.technical).toContain('src/widgets/BellMenu.tsx')
+    expect(alert?.technical).toContain('src/widgets/BellMenu.test.tsx')
+
+    await expect(
+      showAlertLocal('coverage:src/widgets', sources),
+    ).resolves.toMatchObject({ kind: 'verify-uncovered' })
+  })
+
   it('showAlert returns the matching arc alert, or null on a miss', async () => {
     const sources: AlertSources = {
       listFailedArcs: async () => [failedArc],
       listStaleWorktrees: async () => [],
+      listVerifyUncovered: async () => [],
     }
     const hit = await showAlertLocal('mars-failed01', sources)
     expect(hit?.arcId).toBe('mars-failed01')
@@ -230,6 +265,7 @@ describe('listAlerts / showAlert', () => {
     const sources: AlertSources = {
       listFailedArcs: async () => [failedArc],
       listStaleWorktrees: async () => [staleRecord],
+      listVerifyUncovered: async () => [],
     }
     buildAlertLocal(
       'arc-x',

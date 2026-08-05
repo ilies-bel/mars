@@ -115,17 +115,28 @@ describe('recipe catalog', () => {
       }
     })
 
-    it('main-commiter parks work on a per-task ref, never the shared stash stack', async () => {
+    it('main-commiter commits ordinary dirty changes and refuses only danger signals', async () => {
       const cat = await loadRecipeCatalog(stateDir)
       const prompt = cat.get('main-commiter')?.prompt ?? ''
       expect(prompt).not.toBe('')
-      // The park sequence is the checkpoint plumbing: a temporary index
-      // seeded from HEAD, a commit object, and a ref named after this task.
-      expect(prompt).toContain('GIT_INDEX_FILE')
-      expect(prompt).toContain('git commit-tree')
-      expect(prompt).toContain('git update-ref refs/mars/parked/$TASK_ID')
-      // Recovery names the ref, never a stack position.
-      expect(prompt).toContain('git cherry-pick -n refs/mars/parked/$TASK_ID')
+      expect(prompt).toContain('Commit unless danger')
+      expect(prompt).toContain('git add -A && git commit -m')
+      // The refusal boundary is closed: orchestrator state, secret-looking
+      // material, and explicit unfinished-work markers are danger signals.
+      expect(prompt).toContain('.mars/')
+      expect(prompt).toContain('exit with a non-zero command immediately')
+      expect(prompt).toContain(
+        'Do not stage, commit, delete, reset, or otherwise modify that path',
+      )
+      expect(prompt).toContain('secret-looking')
+      expect(prompt).toContain('TODO, FIXME, or XXX')
+      expect(prompt).toContain('exit non-zero without committing')
+      // Broad diffs and scratch files are ordinary changes, not ambiguity.
+      expect(prompt).not.toContain('Safe to park')
+      expect(prompt).not.toContain('refs/mars/parked/')
+      expect(prompt).not.toContain('Ambiguous')
+      expect(prompt).not.toContain('unrelated subsystems')
+      expect(prompt).not.toContain('Mixed-domain changes')
     })
   })
 

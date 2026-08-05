@@ -96,12 +96,6 @@ export interface DaemonConfig {
   selfEvolve: SelfEvolveConfig
   scoring: ScoringConfig
   /**
-   * When true, sliced plans are enqueued immediately without operator review
-   * (restores the pre-plan-approval-gate behaviour). Default false.
-   * Override via MARS_AUTO_APPROVE_PLANS=1 or daemon.json `autoApprovePlans: true`.
-   */
-  autoApprovePlans: boolean
-  /**
    * The default agent provider for every Worker in this daemon. Persisted by
    * `mars init --provider <name>` and resolved before headless or PTY workers
    * are imported. An explicit MARS_WORKER_PROVIDER env value overrides it for
@@ -137,8 +131,6 @@ const DEFAULT_SCORING: ScoringConfig = {
   lowTrendThreshold: 0.5,
   lowTrendWindow: 5,
 }
-
-const DEFAULT_AUTO_APPROVE_PLANS = false
 
 const DEFAULT_PROVIDER: ProviderName = 'codex'
 
@@ -460,8 +452,6 @@ export const loadDaemonConfig = (): DaemonConfig => {
       ? envConfNum
       : DEFAULT_SELF_EVOLVE.taskConfidenceThreshold
 
-  const envAutoApprovePlans = envBool('MARS_AUTO_APPROVE_PLANS', DEFAULT_AUTO_APPROVE_PLANS)
-
   const envScoringAutoTrigger = envBool(
     'MARS_SCORING_AUTO_TRIGGER',
     DEFAULT_SCORING.autoTrigger,
@@ -486,7 +476,6 @@ export const loadDaemonConfig = (): DaemonConfig => {
   let fileAutoTrigger: boolean | undefined
   let fileDriftPct: number | undefined
   let fileConfThreshold: number | undefined
-  let fileAutoApprovePlans: boolean | undefined
   let fileScoringAutoTrigger: boolean | undefined
   let fileScoringThreshold: number | undefined
   let fileScoringWindow: number | undefined
@@ -531,9 +520,6 @@ export const loadDaemonConfig = (): DaemonConfig => {
     ) {
       fileConfThreshold = seConfThreshold
     }
-    if (typeof (parsed as Record<string, unknown>).autoApprovePlans === 'boolean') {
-      fileAutoApprovePlans = (parsed as Record<string, unknown>).autoApprovePlans as boolean
-    }
     const sc = parsed.scoring ?? {}
     if (typeof sc.autoTrigger === 'boolean') {
       fileScoringAutoTrigger = sc.autoTrigger
@@ -575,7 +561,6 @@ export const loadDaemonConfig = (): DaemonConfig => {
       lowTrendThreshold: fileScoringThreshold ?? envScoringThreshold,
       lowTrendWindow: fileScoringWindow ?? envScoringWindow,
     },
-    autoApprovePlans: fileAutoApprovePlans ?? envAutoApprovePlans,
     defaultProvider: fileDefaultProvider ?? DEFAULT_PROVIDER,
     controlLevers: readControlLevers(),
   }

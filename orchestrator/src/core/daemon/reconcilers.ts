@@ -17,7 +17,7 @@
 
 import { listTasks } from '../queue'
 import { getDefaultDomainTaskStore } from '../store/task-store'
-import { listProposals } from '../proposals'
+import { listProposals, revertSlicingProposalToReady } from '../proposals'
 import { sweepOrphanRunningSpans } from '../lib/trace-events-store'
 import { Arc } from '../arc'
 import { existsSync } from 'node:fs'
@@ -118,6 +118,65 @@ const blockerDriftRepair: Reconciler = {
       return { blockerDriftRepaired: demoted.length }
     } catch (err) {
       log(`[reconcile] blocker-drift repair failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
+ * Retire the former proposal review gate. Existing databases can still hold
+ * its open action rows and draft slice tasks; resolve the obsolete rows and
+ * apply the current dispatch classification before normal boot reseeding.
+ */
+const retiredPlanGateReconcile: Reconciler = {
+  name: 'retired-plan-gate-reconcile',
+  async run({ log, bus }) {
+    try {
+      const store = getDefaultDomainTaskStore()
+      const { setActionQueueState } = await import('../lib/action-queue')
+      const { updateTask } = await import('../queue')
+      const legacyKind = ['plan', 'approval'].join('-')
+      const legacyRows = await store.query({
+        sql: `SELECT id FROM action_queue_items WHERE kind = ? AND state = 'open'`,
+        args: [legacyKind],
+      })
+      for (const row of legacyRows.rows) {
+        await setActionQueueState((row as unknown as { id: string }).id, 'resolved', {
+          resolution: 'superseded',
+          note: 'superseded: retired planning gate',
+          by: 'startup-reconcile',
+        })
+      }
+
+      const drafts = await store.query({
+        sql: `SELECT id, slice_kind FROM tasks
+              WHERE parent_proposal_id IS NOT NULL AND status = 'draft'`,
+      })
+      let queued = 0
+      for (const row of drafts.rows) {
+        const task = row as unknown as { id: string; slice_kind: string | null }
+        const blockers = await store.query({
+          sql: `SELECT 1 FROM task_blockers WHERE task_id = ? LIMIT 1`,
+          args: [task.id],
+        })
+        const status = task.slice_kind === 'hitl' || blockers.rows.length > 0 ? 'blocked' : 'queued'
+        await updateTask(task.id, { status }, store)
+        if (status === 'queued') {
+          bus.emit('task.queued', { taskId: task.id })
+          queued++
+        }
+      }
+      if (legacyRows.rows.length > 0 || drafts.rows.length > 0) {
+        log(
+          `[reconcile] retired planning gate: cleared ${legacyRows.rows.length} row(s), released ${drafts.rows.length} draft slice task(s) (${queued} queued)`,
+        )
+      }
+      return {
+        retiredPlanGateRowsCleared: legacyRows.rows.length,
+        legacySlicedDraftsReleased: drafts.rows.length,
+      }
+    } catch (err) {
+      log(`[reconcile] retired planning-gate repair failed: ${(err as Error).message}`)
       return {}
     }
   },
@@ -306,12 +365,12 @@ const recoveryDonePropagation: Reconciler = {
       let requeued = 0
       for (const fix of doneFixes) {
         // Guard: main-committer recoveries clean the integration branch but do
-        // NOT deliver the origin task's work. Re-queue source tasks via
-        // releaseMainCommitterDependents instead of marking the origin done.
+        // NOT deliver the origin task's work. Re-queue source tasks only as a
+        // missed-success repair instead of marking the origin done.
         // (Bug mars-4d66145d: no-op main-committer falsely marked origin done
         // and cascade-unblocked dependents before the work shipped.)
         if (parseMainCommiterPayload(fix.recoveryPayload)?.recipe === MAIN_COMMITER_RECIPE) {
-          const release = await Arc.releaseMainCommitterDependents(fix.id, log)
+          const release = await Arc.releaseMainCommitterDependentsAfterSuccess(fix.id, log)
           requeued += release.released
           continue
         }
@@ -344,41 +403,24 @@ const recoveryDonePropagation: Reconciler = {
 }
 
 /**
- * 5b. Failed-committer dependent release — replay the on-failure fan-out for
- *     `main-commiter` recoveries whose in-line `updateTaskWithEvents` handler
- *     was interrupted (a crash, or a DB deadlock whose error was swallowed by
- *     the handler's try/catch) so its dependents were never released.
+ * 5b. Failed-committer action queue — for every failed `main-commiter` that
+ *     still has blocked dependents, restore its one aggregated operator alert.
+ *     A failure is a park, not a successful completion: reconciliation must
+ *     never infer success from a clean integration checkout or release any
+ *     failed-committer blocker edges. A later dirty episode creates a fresh
+ *     committer and reparents this parked cohort.
  *
- *     Symmetric to `recovery-done-propagation` but for the FAILED committer
- *     case: for every failed `main-commiter` fix task that STILL has `blocked`
- *     dependents, refresh the aggregated action-queue row and call
- *     `releaseMainCommitterDependents` — which keeps dependents blocked while
- *     the integration branch is dirty and only re-queues them once it is clean.
- *
- *     Why this gap exists: the on-spawn rescue
- *     (`reparentStrandedDependentsOntoNewCommitter`) only fires when a NEW
- *     committer spawns, which never happens once main goes clean (no task hits
- *     dirty-main). So a committer that failed mid-fan-out over a since-cleaned
- *     main strands its dependents permanently with no path forward. Incident
- *     2026-07-23: a deadlock storm swallowed the on-failure release and left 18
- *     tasks blocked on a dead committer.
- *
- *     Idempotent: both helpers no-op when there is nothing to do (no blocked
- *     dependents / dirty main / already-raised row). Swallows its own errors
- *     (like steps 1–5) so a transient DB hiccup does not abort the rest of the
- *     pass. Must run BEFORE reseed-dispatch so freshly re-queued dependents are
- *     picked up by the same boot's dispatch reseed.
+ *     The signature-keyed action row is idempotent. This step swallows its own
+ *     errors so a transient DB hiccup does not abort the remaining pass.
  */
-const failedCommitterDependentRelease: Reconciler = {
-  name: 'failed-committer-dependent-release',
+const failedCommitterActionQueue: Reconciler = {
+  name: 'failed-committer-action-queue',
   async run({ log }) {
     try {
       const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
         '../lib/main-dirty'
       )
-      const { releaseMainCommitterDependents, raiseAggregatedMainCommiterFailureRow } =
-        await import('./main-dirty-action-queue')
-      const { getRepoRoot } = await import('../context')
+      const { raiseAggregatedMainCommiterFailureRow } = await import('./main-dirty-action-queue')
       const store = getDefaultDomainTaskStore()
 
       // Failed fix tasks that still have at least one `blocked` dependent.
@@ -405,8 +447,8 @@ const failedCommitterDependentRelease: Reconciler = {
         ) {
           continue
         }
-        // Replay the interrupted on-failure fan-out. Both calls are idempotent
-        // and independently guarded, so a failure in one must not skip the other.
+        // Restore the operator-facing projection only. Failed-committer edges
+        // remain attached until a later dirty episode reparents them.
         try {
           await raiseAggregatedMainCommiterFailureRow(row.id, log)
         } catch (rowErr) {
@@ -414,24 +456,17 @@ const failedCommitterDependentRelease: Reconciler = {
             `[reconcile] failed-committer ${row.id}: aggregated action-queue refresh errored: ${(rowErr as Error).message}`,
           )
         }
-        try {
-          await releaseMainCommitterDependents(row.id, log, getRepoRoot())
-        } catch (rowErr) {
-          log(
-            `[reconcile] failed-committer ${row.id}: dependent release errored: ${(rowErr as Error).message}`,
-          )
-        }
         processed++
       }
       if (processed > 0) {
         log(
-          `[reconcile] failed-committer-dependent-release: processed ${processed} failed main-commiter(s) with blocked dependents`,
+          `[reconcile] failed-committer-action-queue: refreshed ${processed} failed main-commiter alert(s) with blocked dependents`,
         )
       }
       return {}
     } catch (err) {
       log(
-        `[reconcile] failed-committer-dependent-release failed: ${(err as Error).message}`,
+        `[reconcile] failed-committer-action-queue failed: ${(err as Error).message}`,
       )
       return {}
     }
@@ -641,7 +676,35 @@ const vegaReconcilingRecovery: Reconciler = {
 }
 
 /**
- * 10. Stalled-proposal slice — pick up prd-ready proposals promoted while the
+ * 10. Stranded-slicing proposal recovery — return claims held by a prior
+ * daemon to prd-ready. A live daemon may run this through `mars sync`, so
+ * preserve a claim while that same daemon has the proposal's slice workflow
+ * in flight.
+ */
+const strandedSlicingProposalReconcile: Reconciler = {
+  name: 'stranded-slicing-proposal-reconcile',
+  async run({ log, isProposalSliceInFlight }) {
+    try {
+      const slicing = await listProposals({ status: 'slicing' })
+      let strandedSlicingReverted = 0
+      for (const proposal of slicing) {
+        if (isProposalSliceInFlight?.(proposal.id)) continue
+        await revertSlicingProposalToReady(proposal.id)
+        log(
+          `[reconcile-slicing] proposal ${proposal.id} stranded in slicing; reverted to prd-ready`,
+        )
+        strandedSlicingReverted++
+      }
+      return { strandedSlicingReverted }
+    } catch (err) {
+      log(`[reconcile-slicing] failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
+ * 11. Stalled-proposal slice — pick up prd-ready proposals promoted while the
  *    daemon was offline. With a `handleProposalSlice` callback (daemon path),
  *    slice them; when null (standalone path), just report them.
  */
@@ -650,9 +713,17 @@ const stalledProposalSlice: Reconciler = {
   async run({ log, handleProposalSlice }) {
     try {
       const stalled = await listProposals({ status: 'prd-ready' })
+      let dispatched = 0
       for (const proposal of stalled) {
+        if (proposal.lastSliceError !== null) {
+          log(
+            `[reconcile-slice] proposal ${proposal.id} skipped after failed slice: ${proposal.lastSliceError}`,
+          )
+          continue
+        }
         if (handleProposalSlice !== null) {
           log(`[reconcile-slice] proposal ${proposal.id} prd-ready on startup; slicing`)
+          dispatched++
           void handleProposalSlice(proposal.id).catch((err) =>
             log(`[reconcile-slice] proposal ${proposal.id} failed: ${(err as Error).message}`),
           )
@@ -662,7 +733,7 @@ const stalledProposalSlice: Reconciler = {
           )
         }
       }
-      return { stalledProposalsSliced: stalled.length }
+      return { stalledProposalsSliced: dispatched }
     } catch (err) {
       log(`[reconcile-slice] failed: ${(err as Error).message}`)
       return {}
@@ -883,12 +954,13 @@ export const RECONCILERS: readonly Reconciler[] = [
   daemonDiedSweep,
   orphanedChatRunSweep,
   blockerDriftRepair,
+  retiredPlanGateReconcile,
   strandedOriginRecoveryRepair,
   terminalOriginChoreRepair,
   mergeJobsStartupReconcile,
   orphanedBlockedScan,
   recoveryDonePropagation,
-  failedCommitterDependentRelease,
+  failedCommitterActionQueue,
   queuedCommitterReseed,
   requeueStaleRunning,
   reseedDispatch,
@@ -896,6 +968,7 @@ export const RECONCILERS: readonly Reconciler[] = [
   verifyingRecovery,
   mergingRecovery,
   vegaReconcilingRecovery,
+  strandedSlicingProposalReconcile,
   stalledProposalSlice,
   staleActionQueueSweep,
   codeDriftClearSweep,

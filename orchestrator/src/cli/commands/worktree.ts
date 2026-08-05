@@ -16,6 +16,7 @@ import {
   probeWorktreeGitState,
   SAFE_CATEGORIES,
 } from '../../core/lib/worktree-reclaim'
+import { hasFlag } from '../args'
 import type { Command } from '../command'
 
 /** Format bytes as a human-readable string (KB / MB / GB). */
@@ -36,8 +37,7 @@ const worktreeReclaim: Command = {
   run: async (args, deps) => {
     // --dry-run is the default and only supported mode; accept the flag for
     // forward compatibility but do not change behaviour based on it.
-    const boolFlags = new Set(args.positional.filter((a) => a.startsWith('--')))
-    if (boolFlags.has('--no-dry-run')) {
+    if (hasFlag(args, '--no-dry-run')) {
       deps.err('error: deletion mode is not yet supported; remove --no-dry-run')
       return { code: 2 }
     }

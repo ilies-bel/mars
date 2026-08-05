@@ -273,26 +273,6 @@ describe('buildActionQueueView — non-failure kinds keep their raiser copy', ()
     expect(rows[0]!.body).toContain('mars daemon restart')
   })
 
-  it('plan-approval keeps the slice-count / PRD title', async () => {
-    const rows = await buildActionQueueView({
-      stateStore: makeStateStore([
-        makeRow({
-          kind: 'plan-approval',
-          title: 'Plan review: 3 slices for PRD prop-42',
-          body: 'slice summary…',
-          payload: { proposalId: 'prop-42', sliceCount: 3 },
-          signature: 'plan-approval:prop-42',
-        }),
-      ]),
-      taskStore: makeTaskStore([]),
-      repoRoot: '/nonexistent',
-      filter: 'open',
-    })
-
-    expect(rows[0]!.title).toBe('Plan review: 3 slices for PRD prop-42')
-    expect(rows[0]!.title).not.toContain('A pipeline step did not complete')
-  })
-
   it('signature-storm keeps the storm title naming the signature', async () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([

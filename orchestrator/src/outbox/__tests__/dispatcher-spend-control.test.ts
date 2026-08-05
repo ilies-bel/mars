@@ -1,35 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { openDb, type DbClient } from '../../core/lib/db.js';
-import { ensureSchema } from '../../core/lib/pg-schema.js';
+import { type DbClient } from '../../core/lib/db.js';
+import { getTestDb } from '../../../test/db-fixture.js';
 import { publishWithRetry } from '../../bus/publisher.js';
 import { registerSubscriber } from '../../bus/subscribers.js';
 import { upsertSpendControl } from '../../core/daemon/spend-control/store.js';
 import { startDispatcher, type Dispatcher } from '../dispatcher.js';
-
-let dbSeq = 0;
-
-/**
- * Fresh in-memory PGlite instance per test carrying the canonical schema
- * (MARS_DB_BACKEND=pglite is set by test/setup-env.ts).
- */
-async function makeClient(): Promise<DbClient> {
-  const client = openDb(`test:spend-control:${process.pid}:${dbSeq++}`);
-  await ensureSchema(client);
-  return client;
-}
 
 describe('Dispatcher spend-control', () => {
   let client: DbClient;
   const dispatchers: Dispatcher[] = [];
 
   beforeEach(async () => {
-    client = await makeClient();
+    client = await getTestDb();
     dispatchers.length = 0;
   });
 
   afterEach(async () => {
     await Promise.all(dispatchers.map(d => d.stop()));
-    await client.close();
   });
 
   function track(d: Dispatcher): Dispatcher {

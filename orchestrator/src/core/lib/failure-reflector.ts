@@ -3,8 +3,7 @@ import { getRepoRoot } from '../context'
 import { createHash } from 'node:crypto'
 import {
   createProposal,
-  findOpenReflectionDraftByFingerprint,
-  appendProposalNotes,
+  recordFailureReflectionOccurrence,
 } from '../proposals'
 import { getDefaultTaskStore } from '../store/task-store'
 import { loadImprovementRecipes, formatRecipeCatalog } from './improvement-recipes'
@@ -163,19 +162,17 @@ const parseSuggestions = (text: string): FailureReflectorSuggestion[] => {
   return results
 }
 
-const persistSuggestion = async (s: FailureReflectorSuggestion): Promise<void> => {
-  const fingerprint = createHash('sha256')
-    .update(`failure-reflector:${s.title}:`)
+const failureReflectorFingerprint = (opts: SpawnFailureReflectorOpts): string =>
+  createHash('sha256')
+    .update(`failure-reflector:${opts.lastStep}:${opts.lastErrorSignature}:`)
     .digest('hex')
     .slice(0, 32)
 
-  const existing = await findOpenReflectionDraftByFingerprint(fingerprint, 'failure-reflector')
-  if (existing) {
-    if (s.rationale) {
-      await appendProposalNotes(existing.id, s.rationale)
-    }
-    return
-  }
+const persistSuggestion = async (
+  opts: SpawnFailureReflectorOpts,
+  s: FailureReflectorSuggestion,
+): Promise<void> => {
+  const fingerprint = failureReflectorFingerprint(opts)
 
   const notes = [s.rationale, s.recipe ? `Recipe: ${s.recipe}` : null]
     .filter(Boolean)
@@ -198,29 +195,34 @@ const persistSuggestion = async (s: FailureReflectorSuggestion): Promise<void> =
  * harness-improvement system prompt (NOT a code-fix prompt), then persists
  * each suggestion as a draft proposal with source='failure-reflector'.
  *
- * Deduplication: repeated suggestions for the same title are collapsed into
- * the existing open draft (notes appended, no new proposal row created).
+ * Deduplication: signatures are claimed in a durable ledger before provider
+ * work begins. That ledger survives the proposal lifecycle, so dismissing or
+ * deleting a proposal cannot regenerate it. The proposal's unique
+ * source/fingerprint index remains a second line of defense and merges notes
+ * if a legacy or cross-process race reaches the insert path.
  *
  * Admission control (see {@link MAX_CONCURRENT}): the call is suppressed when
- * self-heal is disabled or when {@link MAX_CONCURRENT} runs are already in
- * flight. Suppression is silent and non-fatal — the caller never awaits this.
+ * self-heal is disabled, the signature was already analysed, or
+ * {@link MAX_CONCURRENT} runs are already in flight. Suppression
+ * is silent and non-fatal — the caller never awaits this.
  *
- * Note the gate is on concurrency only, never on the failure signature:
- * collapsing repeat analyses is the proposal layer's job (`persistSuggestion`
- * appends to the existing open draft), and doing it here as well would
- * silently skip runs that carry genuinely new arc context.
+ * The concurrency slot is reserved before the durable signature claim, so
+ * overload shedding cannot accidentally mark an unanalysed signature as
+ * complete. The ledger then ensures recurring failures with unchanged
+ * classification do not consume another provider run.
+ * A changed failing step or signature receives its own analysis and draft.
  */
 export const spawnFailureReflector = async (
   opts: SpawnFailureReflectorOpts,
 ): Promise<void> => {
   // ── Admission control ────────────────────────────────────────────────────
-  // Checked before any work so a storm costs nothing but two comparisons.
+  // Checked before any provider work so recurring failures do not saturate it.
   if (isRecoveryDisabled()) return
   if (inFlight >= MAX_CONCURRENT) return
-
   inFlight += 1
 
   try {
+    if (!(await recordFailureReflectionOccurrence(failureReflectorFingerprint(opts)))) return
     const recipes = loadImprovementRecipes()
     const catalog = formatRecipeCatalog(recipes)
     const arcContext = await buildArcContext(opts)
@@ -240,7 +242,7 @@ export const spawnFailureReflector = async (
     const suggestions = parseSuggestions(text)
 
     for (const s of suggestions) {
-      await persistSuggestion(s)
+      await persistSuggestion(opts, s)
     }
   } catch (err) {
     // eslint-disable-next-line no-console

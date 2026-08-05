@@ -22,7 +22,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { InProcessOptions } from '../../test-adapter'
@@ -107,6 +107,38 @@ describe('mars verify-gate — group command', () => {
   })
 })
 
+describe('mars verify-gate detect', () => {
+  it('prints proposed gates without adding them to the registry', async () => {
+    writeFileSync(
+      resolve(repo, 'package.json'),
+      JSON.stringify({ scripts: { typecheck: 'tsc --noEmit', test: 'vitest run' } }),
+    )
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const detected = await run(['verify-gate', 'detect'], { store, ctx, daemon })
+    const listed = await run(['verify-gate', 'list'], { store, ctx, daemon })
+
+    expect(detected.code).toBe(0)
+    expect(detected.out.join('\n')).toContain('typecheck')
+    expect(detected.out.join('\n')).toContain('test')
+    expect(listed.out.join('\n')).toContain('no verify gates configured')
+  })
+
+  it('prints a stable JSON proposal array and explains when no gates are found', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const json = await run(['verify-gate', 'detect', '--json'], { store, ctx, daemon })
+    const text = await run(['verify-gate', 'detect'], { store, ctx, daemon })
+
+    expect(json.code).toBe(0)
+    expect(json.out).toEqual(['[]'])
+    expect(text.code).toBe(0)
+    expect(text.out).toEqual(['no verify gates detected'])
+  })
+})
+
 // ---------------------------------------------------------------------------
 // 2. verify-gate list — empty table
 // ---------------------------------------------------------------------------
@@ -128,7 +160,7 @@ describe('mars verify-gate list — empty table', () => {
 // ---------------------------------------------------------------------------
 
 describe('mars verify-gate list — with gates', () => {
-  it('prints header row with expected column names and a data row per gate', async () => {
+  it('shows gate state and a healthy marker when an active gate has never failed', async () => {
     const { store, ctx } = await loadDeps()
     const daemon = await makeFake()
 
@@ -152,10 +184,42 @@ describe('mars verify-gate list — with gates', () => {
     expect(out).toContain('tier')
     expect(out).toContain('source')
     expect(out).toContain('created_at')
+    expect(out).toContain('state')
+    expect(out).toContain('quarantined_at')
+    expect(out).toContain('last_failure')
+    expect(out).toContain('last_origin')
+    expect(out).toContain('last_failure_at')
     // Data values
     expect(out).toContain('orchestrator')
     expect(out).toContain('typecheck')
     expect(out).toContain('npx')
+    expect(out).toContain('active')
+    expect(out).toContain('healthy')
+  })
+
+  it('shows quarantine and the latest failure evidence for a quarantined gate', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+    const added = await run(
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx'],
+      { store, ctx, daemon },
+    )
+    const { quarantineVerifyGate } = await import('../../../core/verify-gates')
+    const { getCompositionRootClient } = await import('../../../core/store/task-store')
+    await quarantineVerifyGate(
+      getCompositionRootClient(),
+      added.out[0]!,
+      'verify:typecheck:exit-1',
+      'origin-123',
+    )
+
+    const listed = await run(['verify-gate', 'list'], { store, ctx, daemon })
+    const output = listed.out.join('\n')
+
+    expect(output).toContain('quarantined')
+    expect(output).toContain('verify:typecheck:exit-1')
+    expect(output).toContain('origin-123')
+    expect(output).not.toContain('healthy')
   })
 })
 

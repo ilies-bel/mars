@@ -52,6 +52,26 @@ describe('slicerOutputSchema: readFirst + prescriptiveAction', () => {
     expect(parsed.slices[0].prescriptiveAction).toContain('readFirst')
   })
 
+  it('accepts more than twenty valid slices', () => {
+    const parsed = slicerOutputSchema.parse({
+      slices: Array.from({ length: 25 }, (_, index) => ({
+        title: `slice ${index + 1}`,
+        type: 'AFK',
+        whatToBuild: 'Implement one thin vertical slice.',
+        acceptanceCriteria: ['the slice is complete'],
+        blockedBy: [],
+        readFirst: ['orchestrator/src/workflows/slice-workflow.ts'],
+        prescriptiveAction: 'Update the named behaviour and verify it.',
+      })),
+    })
+
+    expect(parsed.slices).toHaveLength(25)
+  })
+
+  it('rejects an empty slices array', () => {
+    expect(() => slicerOutputSchema.parse({ slices: [] })).toThrow()
+  })
+
   it('rejects a slice with an empty readFirst array', () => {
     expect(() =>
       slicerOutputSchema.parse({
@@ -582,6 +602,7 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
+    process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
   afterEach(() => {
@@ -589,6 +610,7 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     vi.doUnmock('../../core/lib/git/claude')
     vi.doUnmock('../../core/queue')
     delete process.env.MARS_REPO
+    delete process.env.MARS_WORKER_PROVIDER
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -614,7 +636,9 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
 
   // Seed a fresh proposal in 'prd-ready' status (the precondition `generateStep`
   // checks) and return its id.
-  const seedPrdReadyProposal = async (): Promise<string> => {
+  const seedPrdReadyProposal = async (
+    { coordinated = false }: { coordinated?: boolean } = {},
+  ): Promise<string> => {
     const proposals = await import('../../core/proposals')
     await proposals.initProposals()
     const proposal = await proposals.createProposal('t', {
@@ -622,7 +646,7 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
       solution: 's',
     })
     await proposals.addProposalUserStory(proposal.id, 'as a user, I want X')
-    const promoted = await proposals.promoteProposal(proposal.id)
+    const promoted = await proposals.promoteProposal(proposal.id, { coordinated })
     expect(promoted.status).toBe('prd-ready')
     return proposal.id
   }
@@ -753,6 +777,51 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     const after = await proposals.getProposal(proposalId)
     expect(after?.status).toBe('prd-ready')
     expect(await countTasksForProposal(proposalId)).toBe(0)
+
+    const actionQueue = await import('../../core/lib/action-queue')
+    const failures = await actionQueue.listActionQueueItems('open', { kind: 'slice-failed' })
+    expect(failures.filter((item) => item.payload['proposalId'] === proposalId)).toHaveLength(1)
+    expect(failures[0].body).toContain('slicer agent crashed')
+  })
+
+  it('lets an explicit re-slice clear a recorded failure and create tasks', async () => {
+    const failedRun = {
+      exitCode: 1,
+      stdout: '',
+      stderr: 'invalid slicer output',
+      sessionId: 'stub-session',
+      conversation: [],
+    }
+    const successfulRun = {
+      exitCode: 0,
+      stdout: envelope(validSlicerOutput),
+      stderr: '',
+      sessionId: 'stub-session',
+      conversation: [],
+    }
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn()
+          .mockResolvedValueOnce(failedRun)
+          .mockResolvedValueOnce(successfulRun),
+      }
+    })
+    vi.resetModules()
+    const proposalId = await seedPrdReadyProposal()
+    const slice = await import('../slice-workflow')
+
+    await expect(slice.runSlice(proposalId)).rejects.toThrow(/invalid slicer output/)
+    const proposals = await import('../../core/proposals')
+    expect((await proposals.getProposal(proposalId))?.lastSliceError).toContain('invalid slicer output')
+
+    await expect(slice.runSlice(proposalId)).resolves.toMatchObject({ proposalId, status: 'sliced' })
+    const after = await proposals.getProposal(proposalId)
+    expect(after?.lastSliceError).toBeNull()
+    expect(after?.lastSliceFailedAt).toBeNull()
   })
 
   it('leaves the proposal at prd-ready when generate-slices times out (exit 124)', async () => {
@@ -862,14 +931,13 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     vi.resetModules()
     const queue = await import('../../core/queue')
     const enqueueTask = vi.spyOn(queue, 'enqueueTask')
-    const proposalId = await seedPrdReadyProposal()
-    const proposals = await import('../../core/proposals')
-    await proposals.setProposalCoordinated(proposalId, true)
+    const proposalId = await seedPrdReadyProposal({ coordinated: true })
 
     const slice = await import('../slice-workflow')
     const result = await slice.runSlice(proposalId)
 
     expect(result.taskIds).toHaveLength(1)
+    expect(result.queuedTaskIds).toEqual(result.taskIds)
     expect(enqueueTask).toHaveBeenCalledTimes(1)
     expect(enqueueTask).toHaveBeenCalledWith(
       `Coordinator for PRD ${proposalId}: t`,
@@ -895,7 +963,7 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     expect(Number((rows.rows[0] as { n: number | bigint }).n)).toBe(0)
   })
 
-  it('cleans up orphaned tasks from a previous crash before re-slicing', async () => {
+  it('restarts a promoted slice once and auto-approves the recovered tasks', async () => {
     // Crash-recovery deduplication: a process crash between Phase 1
     // (task inserts) and Phase 4 (status flip) leaves the proposal prd-ready
     // with orphaned tasks from the crashed run. Without a pre-flight
@@ -934,6 +1002,24 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     })
     expect(await countTasksForProposal(proposalId)).toBe(1) // orphan is there
 
+    // Reloading modules models a daemon restart before it retries the slice.
+    vi.resetModules()
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(validSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+
     // Now re-run the slice — this is the retry after the crash.
     const slice = await import('../slice-workflow')
     const result = await slice.runSlice(proposalId)
@@ -947,6 +1033,10 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     const proposals = await import('../../core/proposals')
     const after = await proposals.getProposal(proposalId)
     expect(after?.status).toBe('sliced')
+    expect(result.queuedTaskIds).toEqual(result.taskIds)
+    expect(result.blockedTaskIds).toEqual([])
+    const restartedQueue = await import('../../core/queue')
+    expect((await restartedQueue.getTask(result.taskIds[0]))?.status).toBe('queued')
   })
 
   it('slice tasks inherit the priority passed to runSlice', async () => {
@@ -1495,17 +1585,18 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
-    // Tests in this block exercise the old auto-enqueue path (Phase 3) and
-    // assert task statuses immediately after slicing. Opt into auto-approve
-    // so tasks land in 'queued'/'blocked' rather than staying in 'draft'.
-    process.env.MARS_AUTO_APPROVE_PLANS = '1'
+    // These tests stub the CLAUDE provider entry point (runClaudeCode). The
+    // worker provider defaults to codex, so without this pin the stub is never
+    // consulted and the Slicer shells out to a real `codex exec` that hangs
+    // until the 30s test timeout.
+    process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
-    delete process.env.MARS_AUTO_APPROVE_PLANS
+    delete process.env.MARS_WORKER_PROVIDER
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -1987,17 +2078,18 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
-    // Tests in this block assert task statuses immediately after slicing.
-    // Opt into auto-approve so tasks land in 'queued'/'blocked' rather
-    // than staying in 'draft'.
-    process.env.MARS_AUTO_APPROVE_PLANS = '1'
+    // These tests stub the CLAUDE provider entry point (runClaudeCode). The
+    // worker provider defaults to codex, so without this pin the stub is never
+    // consulted and the Slicer shells out to a real `codex exec` that hangs
+    // until the 30s test timeout.
+    process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
-    delete process.env.MARS_AUTO_APPROVE_PLANS
+    delete process.env.MARS_WORKER_PROVIDER
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -2866,12 +2958,18 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
+    // These tests stub the CLAUDE provider entry point (runClaudeCode). The
+    // worker provider defaults to codex, so without this pin the stub is never
+    // consulted and the Slicer shells out to a real `codex exec` that hangs
+    // until the 30s test timeout.
+    process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
+    delete process.env.MARS_WORKER_PROVIDER
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -3035,17 +3133,18 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
-    // Tests in this block assert task statuses immediately after slicing.
-    // Opt into auto-approve so tasks land in 'queued'/'blocked' rather
-    // than staying in 'draft'.
-    process.env.MARS_AUTO_APPROVE_PLANS = '1'
+    // These tests stub the CLAUDE provider entry point (runClaudeCode). The
+    // worker provider defaults to codex, so without this pin the stub is never
+    // consulted and the Slicer shells out to a real `codex exec` that hangs
+    // until the 30s test timeout.
+    process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
-    delete process.env.MARS_AUTO_APPROVE_PLANS
+    delete process.env.MARS_WORKER_PROVIDER
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -3342,17 +3441,18 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
-    // Tests in this block assert task statuses immediately after slicing
-    // and rely on HITL tasks landing in 'blocked' rather than 'draft'.
-    // Opt into auto-approve to restore that behaviour.
-    process.env.MARS_AUTO_APPROVE_PLANS = '1'
+    // These tests stub the CLAUDE provider entry point (runClaudeCode). The
+    // worker provider defaults to codex, so without this pin the stub is never
+    // consulted and the Slicer shells out to a real `codex exec` that hangs
+    // until the 30s test timeout.
+    process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
-    delete process.env.MARS_AUTO_APPROVE_PLANS
+    delete process.env.MARS_WORKER_PROVIDER
     rmSync(repo, { recursive: true, force: true })
   })
 

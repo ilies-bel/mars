@@ -8,9 +8,9 @@
  * auto-spawn it. This is the global default; see client.ts sendRequest().
  */
 
-import { spawn } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { appendFileSync, mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import {
   loadDaemonConfig,
   AUTONOMY_LEVELS,
@@ -22,32 +22,36 @@ import type { AutonomyLevel } from '../../core/daemon/config'
 import { describePauseState } from '../../core/daemon/pause-state'
 import type { DispatchPauseState } from '../../core/daemon/pause-state'
 import {
+  captureDaemonBootStderr,
   daemonPaths,
   isDaemonAlive,
-  resolveLaunchCommand,
+  spawnDaemonProcess,
 } from '../../core/daemon/paths'
 import { warnWhenRepoRootDiffersFromIntegration } from '../../core/lib/repo-root-branch-warning'
+import { hasFlag } from '../args'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, isDaemonDownError } from './shared'
 
-const spawnDetached = (deps: CommandDeps): void => {
-  const { command, baseArgs } = resolveLaunchCommand()
+const writeBootLog = (msg: string): void => {
+  const { logFile } = daemonPaths()
+  try {
+    mkdirSync(dirname(logFile), { recursive: true })
+    appendFileSync(logFile, `${new Date().toISOString()} ${msg}\n`)
+  } catch {
+    // ignore — still surface the error through the CLI
+  }
+}
+
+const spawnDetached = (deps: CommandDeps): ChildProcess => {
   const workerProvider =
     process.env.MARS_WORKER_PROVIDER ?? loadDaemonConfig().defaultProvider
-  const child = spawn(
-    command,
-    [...baseArgs, '--repo', deps.ctx.repoRoot, 'daemon', 'start', '--foreground'],
-    {
-      detached: true,
-      stdio: 'ignore',
-      env: {
-        ...process.env,
-        MARS_REPO: deps.ctx.repoRoot,
-        MARS_WORKER_PROVIDER: workerProvider,
-      },
-    },
-  )
+  const child = spawnDaemonProcess({
+    repoRoot: deps.ctx.repoRoot,
+    env: { ...process.env, MARS_WORKER_PROVIDER: workerProvider },
+  })
+  captureDaemonBootStderr(child, resolve(deps.ctx.stateDir, 'watch.log'))
   child.unref()
+  return child
 }
 
 /**
@@ -55,26 +59,68 @@ const spawnDetached = (deps: CommandDeps): void => {
  * connectable or the 10s deadline is exceeded.
  *
  * On success: prints the canonical `[mars] daemon detached (pid …)` message
- * and returns `{ code: 0 }`.  On timeout: prints an error pointing at the
- * watch.log boot log and returns `{ code: 1 }`.
+ * and returns `{ code: 0 }`. On failure: reports whether the child exited or
+ * was still running, and points at the watch.log boot log.
  *
  * Called by both `daemonStart` (after the first spawn) and `daemonRestart`
  * (after stop + respawn), so the poll loop lives here rather than inlined.
  */
-const waitForDaemonReady = async (deps: CommandDeps): Promise<{ code: number }> => {
+const waitForDaemonReady = async (
+  deps: CommandDeps,
+  child: ChildProcess,
+): Promise<{ code: number }> => {
   const { logFile } = daemonPaths()
   const POLL_INTERVAL_MS = 100
   const deadline = Date.now() + 10_000
+  let childExit: { code: number | null; signal: NodeJS.Signals | null } | null = null
+  let childSpawnError: string | null = null
+  let resolveChildStop: () => void = () => {}
+  const childStopped = new Promise<void>((resolve) => {
+    resolveChildStop = resolve
+  })
+  child.once('exit', (code, signal) => {
+    childExit = { code, signal }
+    resolveChildStop()
+  })
+  child.once('error', (err) => {
+    childSpawnError = errorMessage(err)
+    resolveChildStop()
+  })
+
   while (Date.now() < deadline) {
-    await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS))
+    const remaining = Math.min(POLL_INTERVAL_MS, deadline - Date.now())
+    await Promise.race([
+      childStopped,
+      new Promise<void>((resolve) => setTimeout(resolve, remaining)),
+    ])
+    if (childExit !== null || childSpawnError !== null) break
     const check = await isDaemonAlive()
     if (check.alive) {
+      // The daemon switches to its own watch.log logger after boot. Closing
+      // this one-purpose pipe lets the detached CLI return normally.
+      child.stderr?.destroy()
       deps.out(`[mars] daemon detached (pid ${check.pid}, log: ${logFile})`)
       return { code: 0 }
     }
   }
+  // Exit callbacks run outside TypeScript's synchronous control-flow model.
+  // Widen the observed value here after the poll loop has yielded to them.
+  const observedChildExit = childExit as {
+    code: number | null
+    signal: NodeJS.Signals | null
+  } | null
+  if (observedChildExit !== null) {
+    deps.err(
+      `[mars] daemon child exited early (code=${observedChildExit.code} signal=${observedChildExit.signal}); check ${logFile}`,
+    )
+    return { code: 1 }
+  }
+  if (childSpawnError !== null) {
+    deps.err(`[mars] daemon child failed to start (${childSpawnError}); check ${logFile}`)
+    return { code: 1 }
+  }
   deps.err(
-    `[mars] daemon did not become ready within 10s; check ${logFile}`,
+    `[mars] daemon did not become ready within 10s; child still running (pid ${child.pid ?? 'unknown'}); check ${logFile}`,
   )
   return { code: 1 }
 }
@@ -84,7 +130,7 @@ const daemonStop: Command = {
   summary: 'drain-stop the daemon (--force to abandon in-flight)',
   usage: 'usage: mars daemon stop [--force]',
   run: async (args, deps) => {
-    const force = args.positional.includes('--force')
+    const force = hasFlag(args, '--force')
     try {
       if (force) {
         await deps.daemon.sendRequest(
@@ -265,18 +311,13 @@ const daemonStart: Command = {
   summary: 'start the daemon (detached, or --foreground)',
   usage: 'usage: mars daemon start [--foreground]',
   run: async (args, deps) => {
-    const foreground = args.positional.includes('--foreground')
+    // `--foreground` is a BOOLEAN_FLAG, so parseArgs puts it in `flags`, never
+    // in `positional`. Reading it from `positional` made this always false, so
+    // the spawned child re-took the detached branch and spawned another child —
+    // an unbounded respawn chain in which the daemon never booted.
+    const foreground = args.flags['--foreground'] !== undefined
     if (foreground) {
       process.env.MARS_WORKER_PROVIDER ??= loadDaemonConfig().defaultProvider
-      const { logFile } = daemonPaths()
-      const writeBootLog = (msg: string): void => {
-        try {
-          mkdirSync(dirname(logFile), { recursive: true })
-          appendFileSync(logFile, `${new Date().toISOString()} ${msg}\n`)
-        } catch {
-          // ignore — still surface the error below
-        }
-      }
       try {
         const { startDaemon } = await import('../../core/daemon/server')
         await startDaemon({ log: (line) => deps.out(line) })
@@ -302,12 +343,18 @@ const daemonStart: Command = {
       deps.out(`[mars] daemon detached (pid ${liveness.pid}, log: ${logFile})`)
       return { code: 0 }
     }
-    spawnDetached(deps)
+    if (process.env.MARS_DAEMON_CHILD === '1') {
+      const msg = '[mars] daemon child reached the detach branch — refusing to respawn (bootstrap bug)'
+      writeBootLog(msg)
+      deps.err(msg)
+      return { code: 1 }
+    }
+    const child = spawnDetached(deps)
     // Block until the daemon's socket is connectable. This closes the TOCTOU
     // race: a second `daemon start` racing within the boot window will call
     // isDaemonAlive(), find a live socket, and take the idempotent branch
     // above instead of spawning a second child.
-    return waitForDaemonReady(deps)
+    return waitForDaemonReady(deps, child)
   },
 }
 
@@ -333,8 +380,8 @@ const daemonRestart: Command = {
         if (!check.alive) break
       }
     }
-    spawnDetached(deps)
-    return waitForDaemonReady(deps)
+    const child = spawnDetached(deps)
+    return waitForDaemonReady(deps, child)
   },
 }
 

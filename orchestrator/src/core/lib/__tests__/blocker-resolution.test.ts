@@ -1224,6 +1224,27 @@ describe('blocker-resolution (task_blockers)', () => {
       // State and event must both be present — they committed in the same tx.
       expect((await q.getTask(origin.id))?.status).toBe('done')
     })
+
+    it('marks recovery-completed tasks terminal in the same outbox transition', async () => {
+      const { q, br } = await loadModules(repo)
+      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+        args: [origin.id],
+      })
+
+      await br.markOriginDoneFromRecovery(origin.id)
+
+      const events = await q.resolveQueueClient().execute({
+        sql: `SELECT payload FROM events WHERE type = 'task.terminal' ORDER BY id DESC LIMIT 1`,
+        args: [],
+      })
+      expect(events.rows).toHaveLength(1)
+      expect(JSON.parse(events.rows[0].payload as string)).toEqual({
+        taskId: origin.id,
+        reason: 'done',
+      })
+    })
   })
 
   describe('IllegalTransitionError — terminal-state guard', () => {
@@ -1268,8 +1289,9 @@ describe('blocker-resolution (task_blockers)', () => {
       const q = (await import('../../queue')) as unknown as QueueModule
       await q.migrateQueueSchema()
       const actionQueue = (await import('../action-queue')) as unknown as ActionQueueModule
+      const blockerSubscriber = await import('../../../outbox/subscribers/blocker-resolution')
       const { landTask } = await import('../../land-task')
-      return { q, actionQueue, landTask }
+      return { q, actionQueue, blockerSubscriber, landTask }
     }
 
     /**
@@ -1337,6 +1359,41 @@ describe('blocker-resolution (task_blockers)', () => {
       const open = await actionQueue.listActionQueueItems('open')
       const ahead = open.find((i) => i.kind === 'worktree-ahead' && i.payload.taskId === taskId)
       expect(ahead).toBeUndefined()
+    })
+
+    it('queues a task blocked solely on a landed task through the terminal outbox event', async () => {
+      const { q, blockerSubscriber, landTask } = await loadLandModules(repo)
+      const { taskId: blockerId } = await seedWorktreeAheadTask(q, repo)
+      const dependent = await q.enqueueTask('wait for landed work', undefined, { skipTriage: true })
+      await blockTask(q, dependent.id, blockerId)
+
+      // Registration precedes land, so this drain observes exactly the event
+      // written by the operator gesture rather than relying on startup repair.
+      await blockerSubscriber.ensureBlockerResolutionSubscriber(q.resolveQueueClient())
+
+      expect((await landTask(blockerId)).outcome).toBe('landed')
+      expect((await blockerSubscriber.drainBlockerResolution(q.resolveQueueClient())).processed).toBeGreaterThan(0)
+      expect((await q.getTask(dependent.id))?.status).toBe('queued')
+    })
+
+    it('recreates a missing worktree from an ahead failed task branch before landing', async () => {
+      const { q, landTask } = await loadLandModules(repo)
+      const { taskId, worktreePath, commitSha } = await seedWorktreeAheadTask(q, repo)
+
+      // The task branch still contains the committed work, but the directory
+      // was reaped. This is the recovery state `mars land` must repair without
+      // directing the operator to destructive restart.
+      // Simulate the directory disappearing beneath Git, leaving the stale
+      // worktree registration that the incident exposed.
+      rmSync(worktreePath, { recursive: true, force: true })
+
+      const result = await landTask(taskId)
+
+      expect(result.outcome).toBe('landed')
+      expect(result.message).not.toContain('restart')
+      expect(
+        execFileSync('git', ['rev-parse', 'main'], { cwd: repo }).toString().trim(),
+      ).toBe(commitSha)
     })
 
     it('verify failure: refuses non-destructively and leaves branch intact', async () => {

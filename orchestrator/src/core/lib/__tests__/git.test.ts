@@ -1419,12 +1419,17 @@ describe('mergeBranch — no-rebase-state guard: does not spawn Vega when git re
     // Merge must abort (not succeed)
     expect(result.merged).toBe(false)
     expect(result.aborted).toBe(true)
-    // First-line of output must name the real cause
-    expect(result.output).toMatch(/rebase produced no in-progress state/)
-    // The output must classify to the named slug, NOT /unclassified, so it
-    // routes to the Investigator rather than first-principles recovery.
+    // A dirty worktree is now caught by the pre-rebase hygiene check, BEFORE
+    // `git rebase` is invoked at all — so this scenario never reaches the
+    // later "no in-progress state" guard. Both guards suppress Vega; they
+    // differ in the signature they route to, and the failure-signature
+    // registry is explicit that an uncommitted-changes worktree must classify
+    // as /rebase-dirty-worktree (resolution: restart, which re-provisions the
+    // worktree) rather than /rebase-no-in-progress-state (resolution:
+    // Investigator). Asserting the latter here would demand the wrong recovery.
+    expect(result.output).toMatch(/worktree dirty before rebase/)
     const sig = computeFailureSignature('merge:vcs-supervisor-aborted', result.output)
-    expect(sig).toBe('merge:vcs-supervisor-aborted/rebase-no-in-progress-state')
+    expect(sig).toBe('merge:vcs-supervisor-aborted/rebase-dirty-worktree')
   })
 })
 

@@ -179,11 +179,11 @@ worktree without the user's say-so.
 
 - `CONTEXT.md` — domain glossary. Edit only via `mars glossary
   set/remove`; read via `mars glossary list/show`.
-- `docs/adr/NNNN-<slug>.md` — ADRs. Add via `mars adr add`; read via
+- `docs/knowledge/decisions/NNNN-<slug>.md` — ADRs. Add via `mars adr add`; read via
   `mars adr list/show`. ADR only when hard-to-reverse, surprising, and
   embodying a real trade-off.
 
-Never edit `CONTEXT.md` or `docs/adr/**` directly. Reads are fine.
+Never edit `CONTEXT.md` or `docs/knowledge/decisions/**` directly. Reads are fine.
 
 The `/mars:chat` slash command is the conversational entry point.
 It classifies the user's input (an id, free text, or empty) and
@@ -370,6 +370,14 @@ recovery-spawn path itself.
   port. A 200 from a guessed port is usually an unrelated server (the
   UI/Vite catch-all returns index.html for any path), so a
   guessed-port probe proves nothing.
+- **Inspect daemon/UI HTTP payloads with node's `fetch`, not `curl`.** `curl`
+  output is truncated by the shell hook and gets a `(N bytes total)` footer
+  appended, which lands inside the JSON and yields a bogus `SyntaxError: Bad
+  control character in string literal` — indistinguishable from a genuinely
+  corrupt response. Use
+  `node -e "fetch('http://127.0.0.1:'+require('fs').readFileSync('.mars/http.port','utf8').trim()+'/view/<route>').then(r=>r.json()).then(d=>console.log(JSON.stringify(d).slice(0,2000)))"`.
+  `curl -o /dev/null -w '%{http_code}'` is still fine for a bare status probe,
+  since it emits no body.
 - A 404 on a daemon route that exists in source usually means the running
   daemon predates that route — restart with `mars daemon restart` rather
   than scoping a code task. The same applies to a `mars ui` Bun-server 404

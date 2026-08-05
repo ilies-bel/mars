@@ -380,6 +380,60 @@ describe('continue degrades to restart for pre-setup failures', () => {
     ])
   })
 
+  it('runs a custom workflow coder again before retrying verification', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+    const task = await queue.enqueueTask('repair the failed verification', undefined, {
+      skipTriage: true,
+    })
+    const { createQueueWorkflowStore } = await import('../../../workflows/queue-workflow-store')
+    const { defineWorkflow, runWorkflow } = await import('@mars/workflow')
+    const workflowStore = createQueueWorkflowStore(queue.resolveQueueClient())
+    let verifyAttempts = 0
+    const workflow = defineWorkflow({
+      id: 'custom-task',
+      async fn(ctx) {
+        await ctx.step('setup', async () => undefined)
+        await ctx.step('code', async () => undefined)
+        await ctx.step('verify', async () => {
+          verifyAttempts += 1
+          if (verifyAttempts === 1) throw new Error('verify:typecheck failed')
+        })
+      },
+    })
+
+    const first = await runWorkflow(workflow, undefined, {
+      store: workflowStore,
+      runId: task.id,
+    })
+    expect(first.status).toBe('failed')
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'verify:typecheck failed',
+      failedPhase: 'verify',
+      branch: `task/${task.id}`,
+      worktreePath: repo,
+    })
+
+    await continueTask.coreContinueTask(task.id)
+
+    const events: Array<{ step: string | null; event: string }> = []
+    const retried = await runWorkflow(workflow, undefined, {
+      store: workflowStore,
+      runId: task.id,
+      onEvent: ({ step, event }) => events.push({ step, event }),
+    })
+
+    expect(retried.status).toBe('completed')
+    const codeStarted = events.findIndex(
+      ({ step, event }) => step === 'code' && event === 'step.started',
+    )
+    const verifyStarted = events.findIndex(
+      ({ step, event }) => step === 'verify' && event === 'step.started',
+    )
+    expect(codeStarted).toBeGreaterThanOrEqual(0)
+    expect(codeStarted).toBeLessThan(verifyStarted)
+  })
+
   // ── Auto-commit dirty worktree before code-phase resume ───────────────────
 
   it('auto-commits dirty worktree before code-phase resume', async () => {

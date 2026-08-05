@@ -1,30 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { openDb, type DbClient } from '../../core/lib/db.js'
-import { ensureSchema } from '../../core/lib/pg-schema.js'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { type DbClient } from '../../core/lib/db.js'
+import { getTestDb } from '../../../test/db-fixture.js'
 import { publishWithRetry, withWriteTx } from '../publisher.js'
-
-let dbSeq = 0
-
-/**
- * Fresh in-memory PGlite instance per test carrying the canonical schema
- * (MARS_DB_BACKEND=pglite is set by test/setup-env.ts; the target string is
- * only an identity key).
- */
-async function makeClient(): Promise<DbClient> {
-  const client = openDb(`test:publisher:${process.pid}:${dbSeq++}`)
-  await ensureSchema(client)
-  return client
-}
 
 describe('publishWithRetry: concurrent writers', () => {
   let client: DbClient
 
   beforeEach(async () => {
-    client = await makeClient()
-  })
-
-  afterEach(async () => {
-    await client.close()
+    client = await getTestDb()
   })
 
   it('two concurrent publishWithRetry calls both commit with distinct monotonic ids', async () => {
@@ -73,11 +56,7 @@ describe('withWriteTx', () => {
   let client: DbClient
 
   beforeEach(async () => {
-    client = await makeClient()
-  })
-
-  afterEach(async () => {
-    await client.close()
+    client = await getTestDb()
   })
 
   it('rolls the transaction back when fn throws — no partial writes remain', async () => {

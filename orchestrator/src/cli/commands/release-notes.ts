@@ -18,6 +18,7 @@
  */
 
 import type { Command } from '../command'
+import { hasFlag } from '../args'
 import { readDaemonPort } from './shared'
 import type { ReleaseNoteEntry } from '../../core/daemon/view/release-notes'
 
@@ -70,8 +71,8 @@ const releaseNotesList: Command = {
   usage: LIST_USAGE,
   run: async (args, deps) => {
     const since = args.flags['--since']
-    const unseen = args.positional.includes('--unseen')
-    const markViewed = args.positional.includes('--mark-viewed')
+    const unseen = hasFlag(args, '--unseen')
+    const markViewed = hasFlag(args, '--mark-viewed')
 
     // --since and --unseen are mutually exclusive
     if (since !== undefined && unseen) {

@@ -528,6 +528,13 @@ export interface Task {
   /** Cumulative dispatch uptime at the first dispatch of this re-queue episode. */
   requeueDispatchUptimeMs?: number | null
   /**
+   * Count of attempts where the coder never ran because the provider rejected
+   * the run before starting (rate/spend limit). The poll-fallback ceiling
+   * subtracts this from `maxAttempt` to compute the effective real-work attempt
+   * count, so a quota wall does not burn the ceiling. Defaults to 0.
+   */
+  quotaRejectedAttempts?: number
+  /**
    * Structured QA report persisted by behaviour-verify. Contains per-criterion
    * verdicts, screenshot paths, and timing data. Null when no behaviour-verify
    * has run or on legacy rows.
@@ -797,8 +804,15 @@ SELECT
   t.requeue_dispatch_uptime_ms,
   t.qa_report_json,
   t.deferrable,
+  t.quota_rejected_attempts,
   t.created_at, t.updated_at
 FROM tasks t`
+
+/**
+ * Structured writes retain a terminal task row solely to satisfy merge-job
+ * foreign keys. They are bookkeeping, never operator-visible work.
+ */
+export const ORDINARY_TASK_SQL = `COALESCE(t.kind, 'task') <> 'structured-write'`
 
 export const rowToTask = (row: Record<string, unknown>): Task => {
   const functional = (row.plan_functional as string | null) ?? null
@@ -893,6 +907,7 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
         : Number(row.requeue_dispatch_uptime_ms),
     qaReport: parseQaReport(row.qa_report_json),
     deferrable: Number(row.deferrable ?? 0) === 1,
+    quotaRejectedAttempts: Number(row.quota_rejected_attempts ?? 0),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -1132,6 +1147,7 @@ export const updateTask = async (
       | 'requeueAnchorMs'
       | 'requeueDispatchUptimeMs'
       | 'stallDiagnostics'
+      | 'quotaRejectedAttempts'
     > & {
       /** Typed explanation persisted when a task is deliberately dropped. */
       dropReason?: TaskDropReason | null
@@ -1393,6 +1409,10 @@ export const updateTask = async (
     fields.push('requeue_dispatch_uptime_ms = ?')
     args.push(patch.requeueDispatchUptimeMs)
   }
+  if (patch.quotaRejectedAttempts !== undefined) {
+    fields.push('quota_rejected_attempts = ?')
+    args.push(patch.quotaRejectedAttempts)
+  }
   fields.push('updated_at = ?')
   args.push(new Date().toISOString())
   args.push(id)
@@ -1571,7 +1591,7 @@ export const reopenTerminalTask = async (
       args: [id, reason, now],
     },
     {
-      sql: `UPDATE tasks SET status = 'queued', updated_at = ?, error = NULL,
+      sql: `UPDATE tasks SET updated_at = ?, status = 'queued', error = NULL,
               failure_reason = NULL, failure_signature = NULL, failure_reason_code = NULL
             WHERE id = ?`,
       args: [now, id],
@@ -1610,11 +1630,11 @@ export const listTasks = async (status?: TaskStatus): Promise<Task[]> => {
   await ensureQueueSchema()
   const r = status
     ? await resolveQueueClient().execute({
-        sql: `${TASK_SEL} WHERE t.status = ? ORDER BY t.priority DESC, t.created_at ASC`,
+        sql: `${TASK_SEL} WHERE ${ORDINARY_TASK_SQL} AND t.status = ? ORDER BY t.priority DESC, t.created_at ASC`,
         args: [status],
       })
     : await resolveQueueClient().execute(
-        `${TASK_SEL} ORDER BY t.priority DESC, t.created_at ASC`,
+        `${TASK_SEL} WHERE ${ORDINARY_TASK_SQL} ORDER BY t.priority DESC, t.created_at ASC`,
       )
   return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
 }
@@ -1630,7 +1650,7 @@ export const listNonDoneTasks = async (
 ): Promise<Task[]> => {
   await ensureQueueSchema()
   const r = await resolveQueueClient().execute({
-    sql: `${TASK_SEL} WHERE t.status <> 'done' AND t.id <> ? ORDER BY t.created_at DESC LIMIT ?`,
+    sql: `${TASK_SEL} WHERE ${ORDINARY_TASK_SQL} AND t.status <> 'done' AND t.id <> ? ORDER BY t.created_at DESC LIMIT ?`,
     args: [excludeId, limit],
   })
   return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
@@ -1664,9 +1684,9 @@ export const listTasksPaged = async (
   const client = resolveQueueClient()
 
   const countArgs: DbInValue[] = []
-  let countSql = 'SELECT COUNT(*) AS n FROM tasks t'
+  let countSql = `SELECT COUNT(*) AS n FROM tasks t WHERE ${ORDINARY_TASK_SQL}`
   if (status !== undefined) {
-    countSql += ' WHERE t.status = ?'
+    countSql += ' AND t.status = ?'
     countArgs.push(status)
   }
   const countResult = await client.execute(
@@ -1677,9 +1697,9 @@ export const listTasksPaged = async (
   )
 
   const taskArgs: DbInValue[] = []
-  let taskSql = `${TASK_SEL}`
+  let taskSql = `${TASK_SEL} WHERE ${ORDINARY_TASK_SQL}`
   if (status !== undefined) {
-    taskSql += ' WHERE t.status = ?'
+    taskSql += ' AND t.status = ?'
     taskArgs.push(status)
   }
   taskSql += ' ORDER BY t.priority DESC, t.created_at ASC'

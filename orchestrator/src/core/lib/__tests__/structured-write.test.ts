@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { EventEmitter } from 'node:events'
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -37,6 +38,37 @@ const realMergeShim = async (args: {
     lockTimeoutMs: 30_000,
   })
   return { status: 'done' as const, result }
+}
+
+const runThroughDurableMergeWorker = async (args: {
+  taskId: string
+  branch: string
+  worktreePath: string
+  integrationBranch: string
+}) => {
+  const queue = await import('../../queue')
+  const { createMergeJobStore } = await import('../../store/merge-job-store')
+  const { enqueueMergeJobAndAwait, startMergeWorker } = await import('../../daemon/merge-worker')
+  await queue.migrateQueueSchema()
+
+  const controller = new AbortController()
+  const bus = new EventEmitter()
+  const worker = startMergeWorker({
+    store: createMergeJobStore(queue.resolveQueueClient()),
+    bus,
+    log: () => {},
+    signal: controller.signal,
+    pollIntervalMs: 5,
+  })
+  try {
+    return await enqueueMergeJobAndAwait({
+      store: createMergeJobStore(queue.resolveQueueClient()),
+      bus,
+      ...args,
+    })
+  } finally {
+    await worker.stop()
+  }
 }
 
 describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
@@ -79,6 +111,64 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
     // Merge must be routed through enqueueMerge, not a direct mergeBranch call.
     expect(enqueueMergeCalled).toBe(true)
     expect(outcome.kind).toBe('merged')
+  })
+
+  it.each([
+    ['adr', 'docs/knowledge/decisions/0001-real-merge.md', 'ADR body'],
+    ['glossary', 'CONTEXT.md', 'Glossary body'],
+  ])('persists a real merge job for a %s write without exposing bookkeeping as work', async (kind, file, body) => {
+    const { runStructuredWrite } = await import('../structured-write')
+    const queue = await import('../../queue')
+    const { createMergeJobStore } = await import('../../store/merge-job-store')
+
+    const outcome = await runStructuredWrite({
+      kind,
+      commitMessage: `test: ${kind} durable merge`,
+      enqueueMerge: runThroughDurableMergeWorker,
+      mutate: async (worktreePath) => {
+        if (kind === 'adr') mkdirSync(resolve(worktreePath, 'docs', 'knowledge', 'decisions'), { recursive: true })
+        await writeFile(resolve(worktreePath, file), body, 'utf8')
+      },
+    })
+
+    expect(outcome.kind).toBe('merged')
+
+    const mergeJobs = await createMergeJobStore(queue.resolveQueueClient()).listByStatus('done')
+    expect(mergeJobs).toHaveLength(1)
+    expect(mergeJobs[0]?.taskId).toMatch(new RegExp(`^${kind}-`))
+
+    // The FK-backed bookkeeping row never becomes ordinary work: it is neither
+    // listed nor eligible to be dispatched or recovered.
+    expect(await queue.listTasks()).toEqual([])
+    expect(await queue.listTasks('queued')).toEqual([])
+    expect(await queue.listTasks('failed')).toEqual([])
+  })
+
+  it('records a failed structured write in the action queue without throwing', async () => {
+    const queue = await import('../../queue')
+    const { listActionQueueItems } = await import('../action-queue')
+    const { raiseStructuredWriteFailureAction } = await import('../../daemon/server')
+    await queue.migrateQueueSchema()
+
+    await expect(
+      raiseStructuredWriteFailureAction({
+        kind: 'adr',
+        target: 'Record failure visibility',
+        error: new Error('merge job storage unavailable'),
+      }),
+    ).resolves.toBeUndefined()
+
+    const items = await listActionQueueItems()
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({
+      kind: 'failed',
+      title: 'Structured adr write failed: Record failure visibility',
+      payload: {
+        kind: 'adr',
+        target: 'Record failure visibility',
+        error: 'merge job storage unavailable',
+      },
+    })
   })
 
   it('writes, commits, and merges into the integration branch', async () => {

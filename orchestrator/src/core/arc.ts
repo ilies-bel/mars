@@ -53,6 +53,7 @@ import {
 } from './store/task-store'
 import { getStateDir, getRepoRoot } from './context'
 import { removeWorktree } from './lib/git/worktree'
+import { provisionWorktreeDeps } from './lib/worktree-deps'
 import { getRecipeOrGeneric, type FixRecipeContext } from './lib/fix-recipes'
 import { buildEventInsert, publish, withWriteTx } from './lib/outbox'
 import { assertNotRecoveryEdge } from './lib/blocker-invariant'
@@ -66,6 +67,7 @@ import {
 } from './lib/main-dirty'
 import type { TraceEventStore } from './lib/trace-events-store'
 import { internalBus } from '../internal-bus'
+import { hintDispatch } from './daemon/dispatch-hint'
 import { getProposal } from './proposals'
 import { markTaskFailed } from './queue-retry'
 import { computeFailureSignature } from './lib/failure-signature'
@@ -192,13 +194,6 @@ export interface AttachToExistingFixTaskInput {
   sourceTaskId: string
   /** The recovery task to attach the source to. Must already exist as a kind='fix' row. */
   fixTaskId: string
-  /** Catalog code recorded on the source's `failure_reason_code` column. */
-  failureReasonCode: string | null
-  /**
-   * Loose-string archive of the failure for forensic continuity (mirrors
-   * `tasks.failure_reason`). Kept in step with the catalog-driven code.
-   */
-  failureReason: string | null
   /** Short error summary written to `tasks.error` (truncated to 1000 chars). */
   errorSummary: string
   store?: DomainTaskStore
@@ -351,6 +346,7 @@ export class Arc {
             ['worktree', 'add', newWorktreePath, superseded.branch],
             { cwd: getRepoRoot() },
           )
+          await provisionWorktreeDeps({ worktreeRoot: newWorktreePath })
           inheritedBranch = superseded.branch
           inheritedWorktreePath = newWorktreePath
         } catch (cause) {
@@ -768,9 +764,9 @@ export class Arc {
    * the event id is allocated in the same SQLite transaction as the row change
    * (ADR-0030 same-commit guarantee). Callers that need additional column
    * updates (e.g. `drop_reason`, `failure_reason`) or additional events (e.g.
-   * `task.terminal`) must issue those in a separate transaction **after**
-   * calling this method (see `Arc.propagateRecoveryDone` / the
-   * blocker-resolution `error = NULL` + `task.terminal` two-tx structure).
+   * `task.terminal`) are appended to the same transaction for terminal
+   * statuses. This keeps every terminal status write observable by durable
+   * subscribers without a crash window between the row change and its event.
    *
    * Statuses without a registered event mapping (`'blocked'`, `'running'`,
    * etc.) are still written to the row — the method just skips the publish
@@ -837,8 +833,18 @@ export class Arc {
       } else {
         eventStmt = buildEventInsert('task.queued', { taskId })
       }
-      // Row change + event INSERT share one commit (ADR-0030).
-      await store.batch([updateStmt, eventStmt], 'write')
+      const terminalStmt =
+        newStatus === 'done' || newStatus === 'dropped' || newStatus === 'failed'
+          ? buildEventInsert('task.terminal', {
+              taskId,
+              reason: newStatus,
+            })
+          : null
+      // Row change + lifecycle event(s) share one commit (ADR-0030).
+      await store.batch(
+        terminalStmt ? [updateStmt, eventStmt, terminalStmt] : [updateStmt, eventStmt],
+        'write',
+      )
       return
     }
     await withWriteTx(resolveQueueClient(), async (tx) => {
@@ -860,6 +866,9 @@ export class Arc {
         await publish(tx, 'task.failed', { taskId, error: extras?.error ?? '' })
       } else if (newStatus === 'queued') {
         await publish(tx, 'task.queued', { taskId })
+      }
+      if (newStatus === 'done' || newStatus === 'dropped' || newStatus === 'failed') {
+        await publish(tx, 'task.terminal', { taskId, reason: newStatus })
       }
     })
   }
@@ -1346,6 +1355,7 @@ export class Arc {
       failingStep: input.failingStep,
       originId: source.originId,
     })
+    hintDispatch(fixTaskId, 'implement')
 
     await Arc.maybeAssertArcInvariant(input.sourceTaskId, s)
     return { fixTaskId, created: true }
@@ -1402,14 +1412,13 @@ export class Arc {
                    SET updated_at = ?,
                        status = 'blocked',
                        error = ?,
-                       failure_reason = COALESCE(?, failure_reason),
-                       failure_reason_code = COALESCE(?, failure_reason_code)
+                       failure_reason = NULL,
+                       failure_reason_code = NULL,
+                       failure_signature = NULL
                  WHERE id = ?`,
           args: [
             now,
             truncatedError,
-            input.failureReason,
-            input.failureReasonCode,
             input.sourceTaskId,
           ],
         },
@@ -1417,7 +1426,7 @@ export class Arc {
         buildEventInsert('task.blocked', {
           taskId: input.sourceTaskId,
           fixTaskId: input.fixTaskId,
-          failureSignature: input.failureReasonCode ?? 'verify:main-dirty',
+          failureSignature: VERIFY_MAIN_DIRTY_CODE,
           failingStep: 'dispatch:main-dirty',
           originId: source.originId,
         }),
@@ -1427,7 +1436,7 @@ export class Arc {
     internalBus().emit('task.blocked', {
       taskId: input.sourceTaskId,
       fixTaskId: input.fixTaskId,
-      failureSignature: input.failureReasonCode ?? 'verify:main-dirty',
+      failureSignature: VERIFY_MAIN_DIRTY_CODE,
       failingStep: 'dispatch:main-dirty',
       originId: source.originId,
     })
@@ -1447,8 +1456,8 @@ export class Arc {
    *      {@link MainCommiterPayload});
    *   2. Insert (ON CONFLICT DO NOTHING) the origin → recovery `task_blockers` edge
    *      (`state='confirmed'`) — the F.1 ADR-0040 leaf-node exemption mirror;
-   *   3. UPDATE the source to `status='blocked'`, overwriting
-   *      `error`/`failure_reason`/`failure_reason_code = VERIFY_MAIN_DIRTY_CODE`
+   *   3. UPDATE the source to `status='blocked'`, writing its readable
+   *      `error` and clearing all failure metadata
    *      (updated_at first — exempt from the STATUS_WRITE arch guard);
    *   4. the durable `task.blocked` outbox event.
    *
@@ -1529,14 +1538,13 @@ export class Arc {
                  SET updated_at = ?,
                      status = 'blocked',
                      error = ?,
-                     failure_reason = ?,
-                     failure_reason_code = ?
+                     failure_reason = NULL,
+                     failure_reason_code = NULL,
+                     failure_signature = NULL
                WHERE id = ?`,
           args: [
             now,
             SOURCE_ERROR_SUMMARY(input.integrationBranch, input.dispatchPhase),
-            VERIFY_MAIN_DIRTY_CODE,
-            VERIFY_MAIN_DIRTY_CODE,
             input.sourceTaskId,
           ],
         },
@@ -1580,6 +1588,7 @@ export class Arc {
       failingStep: `${input.dispatchPhase}:main-dirty`,
       originId: input.sourceOriginId,
     })
+    hintDispatch(fixTaskId, 'implement')
 
     await Arc.maybeAssertArcInvariant(input.sourceTaskId, s)
     return { fixTaskId }
@@ -2593,12 +2602,9 @@ export class Arc {
    *    `blocked` is existing intended behaviour.
    *
    * Excluded — `main-commiter` recoveries. A main-committer does NOT carry the
-   * origin's work; it cleans the integration branch. Its failure is owned by the
-   * dedicated dead-committer path (`raiseAggregatedMainCommiterFailureRow` +
-   * `releaseMainCommitterDependents`, replayed by the
-   * `failed-committer-dependent-release` reconciler), which RE-QUEUES the source
-   * task once main is clean. Failing the source here would kill work that path
-   * intends to resume.
+   * origin's work; it cleans the integration branch. Its failure keeps the
+   * source parked behind its failed committer and raises an aggregated operator
+   * alert; a later dirty episode reparents the cohort onto a fresh committer.
    *
    * Escalation is NOT raised here: `handleTaskFailureWithFixTask` already
    * raises the origin-keyed `Fix and retry <recovery>, or abandon <origin>` row
@@ -2871,25 +2877,23 @@ export class Arc {
   }
 
   /**
-   * Failed-committer dependent release write funnel (ADR-0052 sole-writer).
-   * Relocated bit-for-bit from `main-dirty-action-queue.ts:releaseMainCommitterDependents`.
+   * Missed-success main-committer completion repair (ADR-0052 sole-writer).
    *
-   * On committer FAILURE, release every task currently `blocked` solely because
+   * After a committer reaches SUCCESS, release every task currently `blocked` solely because
    * of `committerTaskId`: per dependent, in ONE atomic transaction, delete the
-   * dead committer's `task_blockers` edge then flip the dependent `blocked` ->
+   * completed committer's `task_blockers` edge then flip the dependent `blocked` ->
    * `queued` only when no other non-terminal blocker remains, emitting
    * `task.unblocked` in the same commit (ADR-0030). The driving SELECT, the
    * `internalBus().emit` wake-hints, and the per-row logging stay OUTSIDE the
    * atomic (best-effort), exactly as the historic helper structured them.
    *
-   * This is the only place this status write lives now; the daemon helper
-   * `releaseMainCommitterDependents` is a thin delegating wrapper with no
-   * task-table write of its own (ADR-0052 sole-writer).
+   * This method is deliberately a reconciliation seam only. Failed committers
+   * retain their blocker edges so a fresh dirty-main episode can reparent them.
    *
    * Returns `{ released }` (count of dependents re-queued) so the caller can
    * log the same `released/total` summary it logged before.
    */
-  static async releaseMainCommitterDependents(
+  static async releaseMainCommitterDependentsAfterSuccess(
     committerTaskId: string,
     log: (msg: string) => void,
   ): Promise<{ released: number; total: number }> {
@@ -2960,17 +2964,17 @@ export class Arc {
         })
         released++
         log(
-          `[main-dirty] re-queued task ${row.id} released from failed committer ${committerTaskId}`,
+          `[main-dirty] re-queued task ${row.id} released after successful committer ${committerTaskId}`,
         )
       } else {
         log(
-          `[main-dirty] task ${row.id}: committer edge removed but other active blockers remain; left in blocked`,
+          `[main-dirty] task ${row.id}: successful committer edge removed but other active blockers remain; left blocked`,
         )
       }
     }
 
     log(
-      `[main-dirty] released ${released}/${dependents.length} dependent(s) from failed committer ${committerTaskId}`,
+      `[main-dirty] released ${released}/${dependents.length} dependent(s) after successful committer ${committerTaskId}`,
     )
     return { released, total: dependents.length }
   }
@@ -2979,10 +2983,9 @@ export class Arc {
    * Re-parent stranded dependents from prior failed main-committers onto a
    * freshly-spawned committer (ADR-0040 leaf-node exemption, slice F.3).
    *
-   * When a main-committer fails and the daemon has not yet called
-   * `releaseMainCommitterDependents` (e.g. after a crash-restart), some tasks
-   * may still be `blocked` on a dead committer. When a new committer is
-   * spawned, this method collects every such stranded task and:
+   * When a main-committer fails, its tasks remain parked on its blocker edge.
+   * When a new dirty episode spawns a replacement, this method collects every
+   * task still `blocked` on the failed committer and:
    *
    * 1. Inserts `task_blockers(task_id=stranded, blocker_task_id=newCommitterId,
    *    state='confirmed')` — ON CONFLICT DO NOTHING so it's idempotent.

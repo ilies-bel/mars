@@ -1,18 +1,12 @@
 /**
- * Regression coverage for the `failed-committer-dependent-release` reconciler
- * (reconcilers.ts). It replays the interrupted on-failure fan-out for a shared
- * `main-commiter` recovery: when the in-line handler in `updateTaskWithEvents`
- * never released the committer's dependents (a crash, or — the 2026-07-23
- * incident — a DB deadlock whose error was swallowed), the dependents are left
- * `blocked` on a dead committer forever once main goes clean, because the
- * on-spawn `reparentStrandedDependentsOntoNewCommitter` rescue only fires when a
- * NEW committer spawns (which never happens on a clean branch). This reconciler
- * is the startup self-heal for that gap.
+ * Regression coverage for the `failed-committer-action-queue` reconciler
+ * (reconcilers.ts). A failed `main-commiter` deliberately keeps its sources
+ * blocked, even when the integration checkout is clean; startup restores the
+ * aggregated operator alert without releasing the blocker edges.
  *
  * Uses the `vi.resetModules()` + fresh-import isolation pattern from
- * startup-reconcile.test.ts so `resolveContext`/getRepoRoot (which the
- * reconciler consults for the git-clean guard) resolve against THIS test's
- * MARS_REPO rather than a leaked process-wide cache.
+ * startup-reconcile.test.ts so the queue singletons resolve against THIS
+ * test's MARS_REPO rather than a leaked process-wide cache.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
@@ -30,11 +24,8 @@ const makeDeps = () => ({
   handleProposalSlice: null,
 })
 
-// A clean git repo: an initial commit plus a `.gitignore` that ignores every
-// `.mars*` path so `git status --porcelain` stays empty. The release guard
-// inside `releaseMainCommitterDependents` only re-queues dependents when main is
-// clean — and the PGlite test backend materialises a `.mars.pglite/` data dir
-// alongside `.mars/`, so both must be ignored.
+// A clean git repo proves startup reconciliation does not infer success merely
+// because a failed committer's integration checkout has no remaining dirt.
 const setupCleanRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-failed-committer-reconcile-'))
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
@@ -56,12 +47,12 @@ const loadModules = async (repo: string) => {
   const { nullTraceStore } = await import('../../lib/run-tool')
   const { RECONCILERS } = await import('../reconcilers')
   const reconciler = RECONCILERS.find(
-    (r) => r.name === 'failed-committer-dependent-release',
+    (r) => r.name === 'failed-committer-action-queue',
   )
   return { queue, mainDirty, nullTraceStore, reconciler }
 }
 
-describe('failed-committer-dependent-release reconciler', () => {
+describe('failed-committer-action-queue reconciler', () => {
   let repo: string
 
   beforeEach(() => {
@@ -78,7 +69,7 @@ describe('failed-committer-dependent-release reconciler', () => {
     expect(reconciler).toBeDefined()
   })
 
-  it('releases every dependent of a failed main-commiter when main is clean', async () => {
+  it('keeps every dependent blocked and restores one aggregated alert when main is clean', async () => {
     const { queue, mainDirty, nullTraceStore, reconciler } = await loadModules(repo)
 
     const src1 = await queue.enqueueTask('recon-one', undefined, { skipTriage: true })
@@ -103,22 +94,28 @@ describe('failed-committer-dependent-release reconciler', () => {
       traceStore: nullTraceStore,
     })
 
-    // Committer fails. We do NOT invoke the on-failure release — the dependents
-    // stay stranded exactly as they were after the deadlock storm.
+    // Committer fails. Startup must preserve the parked cohort rather than
+    // treating a clean checkout as evidence that their work completed.
     await queue.updateTask(res.fixTaskId, { status: 'failed', error: 'verify failed' })
     expect((await queue.getTask(src1.id))?.status).toBe('blocked')
     expect((await queue.getTask(src2.id))?.status).toBe('blocked')
 
     await reconciler!.run(makeDeps())
 
-    // Both cohort members re-queued; the dead committer's edges are gone.
-    expect((await queue.getTask(src1.id))?.status).toBe('queued')
-    expect((await queue.getTask(src2.id))?.status).toBe('queued')
+    expect((await queue.getTask(src1.id))?.status).toBe('blocked')
+    expect((await queue.getTask(src2.id))?.status).toBe('blocked')
     const edges = await queue.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE blocker_task_id = ?`,
       args: [res.fixTaskId],
     })
-    expect(Number((edges.rows[0] as unknown as { n: number }).n)).toBe(0)
+    expect(Number((edges.rows[0] as unknown as { n: number }).n)).toBe(2)
+    const actionQueue = await import('../../lib/action-queue')
+    const rows = (await actionQueue.listActionQueueItems('open', { kind: 'failed' })).filter(
+      (item) => item.signature === `main-commiter:${res.fixTaskId}`,
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.body).toContain(src1.id)
+    expect(rows[0]!.body).toContain(src2.id)
   })
 
   it('keeps dependents blocked while main is still dirty', async () => {
@@ -153,7 +150,7 @@ describe('failed-committer-dependent-release reconciler', () => {
     // A plain (non-committer) failed fix task with a blocked dependent: the
     // reconciler must skip it (no recovery_payload → not a main-commiter).
     const origin = await queue.enqueueTask('origin', undefined, { skipTriage: true })
-    const now = new Date().toISOString()
+    const now = Date.now()
     const fixId = `fix-plain-${Math.random().toString(36).slice(2, 8)}`
     await queue.resolveQueueClient().execute({
       sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, origin_id, priority, created_at, updated_at) VALUES (?, ?, 'failed', 'fix', ?, ?, 0, ?, ?)`,

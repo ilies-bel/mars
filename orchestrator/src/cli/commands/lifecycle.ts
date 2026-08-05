@@ -9,7 +9,7 @@
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { resolveProposalId, getProposal } from '../../core/proposals'
-import { readMaybeFile } from '../args'
+import { hasFlag, readMaybeFile } from '../args'
 import type { TaskStatus } from '../../core/queue'
 import type { ReconcileSummary } from '../../core/daemon/startup-reconcile'
 import type { Command, CommandDeps } from '../command'
@@ -129,9 +129,10 @@ Refuses (non-zero exit) when the task is not failed or has an in-flight recovery
       : `mars restart <id> [<id> ...] [--force]
 
 Use it to wipe and re-run failed tasks from setup on a fresh worktree and
-branch. Use --force to restart despite a live recovery.`,
+branch. Use --force to restart despite a live recovery or to discard a branch
+with commits ahead of integration; without it, Mars reports the commits and
+files at risk and leaves the task untouched.`,
   run: async (args, deps) => {
-    const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
     const ids = args.positional.filter((a) => !a.startsWith('--'))
     if (ids.length === 0) {
       deps.err(
@@ -141,7 +142,10 @@ branch. Use --force to restart despite a live recovery.`,
       )
       return { code: 2 }
     }
-    const forceRestart = verb === 'restart' && flagSet.has('--force')
+    // `--force` is a declared boolean flag, so `parseArgs` routes it to
+    // `args.flags` and it never reaches `positional`. Reading it off the
+    // positionals silently made the flag a no-op.
+    const forceRestart = verb === 'restart' && hasFlag(args, '--force')
     for (const id of ids) {
       let res: unknown
       try {
@@ -226,13 +230,12 @@ const purge: Command = {
     'purge failed/done/dropped tasks (worktree + branch + row); use mars drop for any status',
   usage: 'usage: mars purge <id> [<id> ...] [--force]',
   run: async (args, deps) => {
-    const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
     const ids = args.positional.filter((a) => !a.startsWith('--'))
     if (ids.length === 0) {
       deps.err('usage: mars purge <id> [<id> ...] [--force]')
       return { code: 2 }
     }
-    const force = flagSet.has('--force')
+    const force = hasFlag(args, '--force')
     let succeeded = 0
     let failed = 0
     for (const id of ids) {
@@ -447,7 +450,6 @@ const drop: Command = {
     'delete any task entirely regardless of status; use mars purge for terminal tasks only',
   usage: 'usage: mars drop <id> [<id> ...] [--force]',
   run: async (args, deps) => {
-    const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
     const ids = args.positional.filter((a) => !a.startsWith('--'))
     if (ids.length === 0) {
       deps.err(
@@ -464,7 +466,7 @@ const drop: Command = {
       )
       return { code: 2 }
     }
-    const force = flagSet.has('--force')
+    const force = hasFlag(args, '--force')
     let succeeded = 0
     let failed = 0
     for (const id of ids) {
@@ -547,8 +549,6 @@ const list: Command = {
   summary: 'list tasks (optionally filtered by status)',
   usage: 'usage: mars list [<status> | --status <status>] [--limit <n>] [--all]',
   run: async (args, deps) => {
-    // Separate boolean flags from positional status arg.
-    const boolFlags = new Set(args.positional.filter((a) => a.startsWith('--')))
     const positionals = args.positional.filter((a) => !a.startsWith('--'))
 
     const flagStatus = args.flags['--status']
@@ -574,7 +574,7 @@ const list: Command = {
       return { code: 2 }
     }
 
-    const showAll = boolFlags.has('--all')
+    const showAll = hasFlag(args, '--all')
 
     // --limit <n> is parsed into args.flags by parseArgs (it's in FLAGS_WITH_VALUES).
     let limit: number | undefined
@@ -620,14 +620,10 @@ const update: Command = {
   usage: 'usage: mars update [--force] [--yes | --accept-all] [--verbose]',
   run: async (args, deps) => {
     const { existsSync } = await import('node:fs')
-    const boolFlags = new Set(args.positional.filter((a) => a.startsWith('--')))
-    const force = boolFlags.has('--force')
-    const yes =
-      boolFlags.has('--yes') ||
-      args.positional.includes('-y') ||
-      boolFlags.has('--no-edit')
-    const acceptAll = boolFlags.has('--accept-all')
-    const verbose = boolFlags.has('--verbose')
+    const force = hasFlag(args, '--force')
+    const yes = hasFlag(args, '--yes') || hasFlag(args, '--no-edit')
+    const acceptAll = hasFlag(args, '--accept-all')
+    const verbose = hasFlag(args, '--verbose')
 
     if (yes && acceptAll) {
       deps.err(
@@ -762,10 +758,9 @@ const release: Command = {
   summary: 'release the lease on an awaiting-human task and resume the pipeline',
   usage: 'usage: mars release <task-id> [--abort] [--note <text>]',
   run: async (args, deps) => {
-    // --note is in FLAGS_WITH_VALUES so the arg parser stores it in args.flags,
-    // not args.positional. --abort is a bare flag and appears in positional.
+    // The shared parser stores both --note and --abort in args.flags.
     const positionals = args.positional
-    const abort = positionals.includes('--abort')
+    const abort = hasFlag(args, '--abort')
     const note: string | undefined = args.flags['--note'] ?? undefined
     const id = positionals.filter((a) => !a.startsWith('--'))[0]
 

@@ -9,7 +9,26 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { parseArgs } from '../args'
+import { hasFlag, parseArgs } from '../args'
+
+describe('boolean flags', () => {
+  it('reports a supplied boolean flag even though it is not positional', () => {
+    const args = parseArgs(['--lean'])
+
+    expect(hasFlag(args, '--lean')).toBe(true)
+    expect(args.positional).toEqual([])
+  })
+
+  it('normalizes the -y alias to --yes', () => {
+    expect(hasFlag(parseArgs(['-y']), '--yes')).toBe(true)
+  })
+
+  it('parses --verify-gates-json as a value-bearing init override', () => {
+    const value = '[{"scope":".","name":"test","cmd":"npm","args":["test"],"required":true,"tier":"task"}]'
+
+    expect(parseArgs(['--verify-gates-json', value]).flags['--verify-gates-json']).toBe(value)
+  })
+})
 
 describe('parseArgs — REPEATABLE_FLAGS greedy consumption', () => {
   it('--files a b c captures all three paths and leaves positional empty', () => {

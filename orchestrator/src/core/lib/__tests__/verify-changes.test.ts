@@ -30,6 +30,34 @@ const truthyCmd = { cmd: 'node', args: ['-e', 'process.exit(0)'] }
 const falsyCmd = { cmd: 'node', args: ['-e', 'process.stderr.write("boom"); process.exit(1)'] }
 
 describe('verifyChanges (data-driven)', () => {
+  it('reports unprovisioned workspace dependencies before a typecheck can emit TypeScript errors', async () => {
+    const worktree = mkdtempSync(resolve(tmpdir(), 'mars-unprovisioned-worktree-'))
+    try {
+      writeFileSync(resolve(worktree, 'tsconfig.json'), '{}')
+      writeFileSync(resolve(worktree, 'package.json'), '{}')
+
+      const result = await verifyChanges({
+        cwd: worktree,
+        steps: [
+          {
+            name: 'typecheck',
+            cmd: 'npx',
+            args: ['tsc', '--noEmit'],
+            required: true,
+          },
+        ],
+      })
+
+      expect(result.passed).toBe(false)
+      expect(result.steps).toHaveLength(1)
+      expect(result.steps[0].output).toContain('worktree deps not provisioned')
+      expect(result.steps[0].output).not.toContain('TS2688')
+      expect(result.steps[0].output).not.toContain('TS2307')
+    } finally {
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
   it('runs steps in declared order and stops on first required failure', async () => {
     const r = await verifyChanges({
       cwd: process.cwd(),
@@ -256,7 +284,7 @@ describe('loadVerifyScopes', () => {
 
   it('missing manifest yields passed:true with zero steps end-to-end', async () => {
     const scopes = await loadVerifyScopes(resolve(workDir, 'absent.json'))
-    const steps = selectVerifySteps(scopes)
+    const steps = selectVerifySteps(scopes, [])
     expect(steps).toEqual([])
     // verifyChanges with no steps passes immediately (no required failures)
     const result = await verifyChanges({ steps, cwd: workDir })
@@ -348,7 +376,7 @@ describe('loadVerifyScopes', () => {
   })
 })
 
-describe('selectVerifySteps (full-workspace verification)', () => {
+describe('selectVerifySteps (changed-path verification)', () => {
   const recipe: VerifyScope[] = [
     {
       scope: '.',
@@ -364,29 +392,55 @@ describe('selectVerifySteps (full-workspace verification)', () => {
     },
   ]
 
-  it('runs every scope even when the task changed only one subtree', () => {
-    const steps = selectVerifySteps(recipe)
+  it('runs the root floor and the gate covering a changed subtree', () => {
+    const steps = selectVerifySteps(recipe, ['apps/web/App.tsx'])
     expect(steps.map((s) => [s.name, s.cmd, s.dir])).toEqual([
       ['root-lint', 'rootcmd', '.'],
       ['test', 'web-test', 'apps/web'],
-      ['test', 'api-test', 'services/api'],
     ])
   })
 
-  it('runs consumer gates for an unrelated producer change', () => {
-    const steps = selectVerifySteps(recipe)
+  it('does not run a non-root gate when no changed path is inside its scope', () => {
+    const steps = selectVerifySteps(recipe, ['packages/shared/index.ts'])
     expect(steps.map((s) => [s.name, s.dir])).toEqual([
       ['root-lint', '.'],
-      ['test', 'apps/web'],
-      ['test', 'services/api'],
     ])
   })
 
   it('always runs the root floor even when the recipe declares it after narrower scopes', () => {
     const reordered: VerifyScope[] = [recipe[1], recipe[2], recipe[0]]
-    const steps = selectVerifySteps(reordered)
+    const steps = selectVerifySteps(reordered, ['services/api/main.go'])
     expect(steps[0].dir).toBe('.')
-    expect(steps.map((s) => s.dir)).toEqual(['.', 'apps/web', 'services/api'])
+    expect(steps.map((s) => s.dir)).toEqual(['.', 'services/api'])
+  })
+})
+
+describe("verifyChanges no-gate coverage verdict", () => {
+  it("permits merge with a named CAN'T-VERIFY outcome when a non-empty diff selects no task gate", async () => {
+    const result = await verifyChanges({
+      cwd: process.cwd(),
+      changedFiles: ['uncovered/file.ts'],
+      steps: [],
+    })
+
+    expect(result).toMatchObject({ passed: true, verdict: "CAN'T-VERIFY" })
+    expect(result.steps).toEqual([
+      expect.objectContaining({
+        name: 'cant-verify:no-gate-coverage',
+        passed: true,
+      }),
+    ])
+  })
+
+  it('does not emit a no-coverage verdict for an empty diff', async () => {
+    const result = await verifyChanges({
+      cwd: process.cwd(),
+      changedFiles: [],
+      steps: [],
+    })
+
+    expect(result).toMatchObject({ passed: true, verdict: 'PASS' })
+    expect(result.steps).toEqual([])
   })
 })
 
@@ -539,10 +593,11 @@ describe('getChangedFiles on a branch behind the integration branch', () => {
     ]
     const result = await verifyChanges({
       cwd: repo,
-      steps: selectVerifySteps(scopes),
+      changedFiles: ['orchestrator/task-change.ts'],
+      steps: selectVerifySteps(scopes, ['orchestrator/task-change.ts']),
     })
-    expect(result.passed).toBe(false)
-    expect(result.steps.find((step) => step.name === 'ui-test')?.passed).toBe(false)
+    expect(result.passed).toBe(true)
+    expect(result.steps.find((step) => step.name === 'ui-test')).toBeUndefined()
   })
 })
 
@@ -718,7 +773,7 @@ describe('main-commiter recovery — verify step exemption', () => {
     const steps =
       commiterPayload?.recipe === MAIN_COMMITER_RECIPE
         ? []
-        : selectVerifySteps(scopeWithSteps)
+        : selectVerifySteps(scopeWithSteps, ['changed.ts'])
     expect(steps).toEqual([])
   })
 
@@ -727,7 +782,7 @@ describe('main-commiter recovery — verify step exemption', () => {
     const steps =
       commiterPayload?.recipe === MAIN_COMMITER_RECIPE
         ? []
-        : selectVerifySteps(scopeWithSteps)
+        : selectVerifySteps(scopeWithSteps, ['changed.ts'])
     expect(steps.map((s) => s.name)).toEqual(['test', 'typecheck', 'lint'])
   })
 
@@ -741,20 +796,19 @@ describe('main-commiter recovery — verify step exemption', () => {
     const steps =
       commiterPayload?.recipe === MAIN_COMMITER_RECIPE
         ? []
-        : selectVerifySteps(scopeWithSteps)
+        : selectVerifySteps(scopeWithSteps, ['changed.ts'])
     expect(steps.map((s) => s.name)).toEqual(['test', 'typecheck', 'lint'])
   })
 
   it('verifyChanges with zero steps and no changedFiles (main-committer recipe) passes', async () => {
-    // Zero configured steps pass — verify gates are optional. This regression
-    // pin ensures the main-committer recipe (which selects no steps) verifies
-    // cleanly.
+    // The main-committer recipe intentionally has no task diff to cover, so
+    // it remains an ordinary pass instead of emitting CAN'T-VERIFY.
     const r = await verifyChanges({
       cwd: process.cwd(),
       steps: [],
       // The main-committer recipe intentionally supplies no verify steps.
     })
-    expect(r.passed).toBe(true)
+    expect(r).toMatchObject({ passed: true, verdict: 'PASS' })
     expect(r.steps).toEqual([])
   })
 })
@@ -856,21 +910,21 @@ describe('typecheck step — no-tsc-toolchain skip guard', () => {
 })
 
 // ---------------------------------------------------------------------------
-// No zero-gate guard — verify gates are optional
+// No zero-gate guard — gaps are merge-permitting but observable
 // ---------------------------------------------------------------------------
-// Verify gates are opt-in. A task with zero configured task-tier steps passes
-// the verify phase (running only the built-in gates), whether or not it changed
-// files. There is intentionally no "you must configure gates" guard.
+// A task with zero configured task-tier steps can still merge. A non-empty
+// diff records CAN'T-VERIFY rather than silently passing; a genuine no-op
+// stays an ordinary pass.
 // ---------------------------------------------------------------------------
-describe('no zero-gate guard — gates are optional', () => {
-  it('passes with zero steps even when changedFiles is non-empty', async () => {
+describe('no zero-gate guard — gaps are merge-permitting but observable', () => {
+  it("permits a non-empty diff with zero steps as CAN'T-VERIFY", async () => {
     const r = await verifyChanges({
       cwd: process.cwd(),
       steps: [],
       changedFiles: ['src/foo.ts', 'src/bar.ts'],
     })
-    expect(r.passed).toBe(true)
-    expect(r.steps).toEqual([])
+    expect(r).toMatchObject({ passed: true, verdict: "CAN'T-VERIFY" })
+    expect(r.steps.map((s) => s.name)).toEqual(['cant-verify:no-gate-coverage'])
   })
 
   it('passes when changedFiles is empty and no task-tier steps (genuine no-op)', async () => {
@@ -879,7 +933,7 @@ describe('no zero-gate guard — gates are optional', () => {
       steps: [],
       changedFiles: [],
     })
-    expect(r.passed).toBe(true)
+    expect(r).toMatchObject({ passed: true, verdict: 'PASS' })
     expect(r.steps).toEqual([])
   })
 
@@ -889,7 +943,7 @@ describe('no zero-gate guard — gates are optional', () => {
       steps: [],
       // changedFiles intentionally omitted
     })
-    expect(r.passed).toBe(true)
+    expect(r).toMatchObject({ passed: true, verdict: 'PASS' })
     expect(r.steps).toEqual([])
   })
 })

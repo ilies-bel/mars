@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   RECOVERY_FAILED_ACTION_QUEUE_KIND,
   UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
-  FIX_FAIL_LOOP_ACTION_QUEUE_KIND,
 } from '../queue-fix-tasks'
 import { TASK_BLOCKED_ACTION_QUEUE_KIND } from '../queue-retry'
 import { DAEMON_KILLED_ACTION_QUEUE_KIND } from '../daemon/daemon-killed-sweep'
@@ -240,7 +239,7 @@ describe('action-queue', () => {
 
     // Simulate 11 failures on the same origin, across kinds and
     // signatures (no-recipe on first failure, recovery-failed on each
-    // subsequent recovery attempt, eventually a fix-fail-loop).
+    // subsequent recovery attempt).
     const ids = [
       await actionQueue.raiseActionQueueItem(
         baseItem({
@@ -964,7 +963,6 @@ describe('ACTION_QUEUE_KINDS membership — writer kind constants', () => {
     const writerKinds: [string, string][] = [
       ['RECOVERY_FAILED_ACTION_QUEUE_KIND', RECOVERY_FAILED_ACTION_QUEUE_KIND],
       ['UNKNOWN_FAILURE_ACTION_QUEUE_KIND', UNKNOWN_FAILURE_ACTION_QUEUE_KIND],
-      ['FIX_FAIL_LOOP_ACTION_QUEUE_KIND', FIX_FAIL_LOOP_ACTION_QUEUE_KIND],
       ['TASK_BLOCKED_ACTION_QUEUE_KIND', TASK_BLOCKED_ACTION_QUEUE_KIND],
       ['DAEMON_KILLED_ACTION_QUEUE_KIND', DAEMON_KILLED_ACTION_QUEUE_KIND],
       ['STALE_WORKTREE_KIND', STALE_WORKTREE_KIND],

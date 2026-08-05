@@ -23,11 +23,12 @@ export interface StewardViewState {
 /**
  * Fetches the Steward capability overview from GET /api/steward.
  *
- * Returns four sections:
+ * Returns five sections:
  *   - runtimeTuning  — the only lane that actually executes
  *   - workflowPatches — built, never invoked
  *   - signatureStorm  — live, may be currently tripped
  *   - agentSpec      — declared, never dispatched
+ *   - gateHealth     — verify-gate registry state and latest failure evidence
  */
 export const useStewardView = (): StewardViewState => {
   const projectId = useFocusedProjectId()

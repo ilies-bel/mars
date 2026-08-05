@@ -266,6 +266,7 @@ const OPERATIONAL_ALERT_COPY: Record<
   'prerequisite-failed': null,
   'draft-proposal': null,
   'slices-dropped': null,
+  'slice-failed': null,
   'hitl-slice-needs-operator': null,
   'awaiting-validation': null,
   'awaiting-validation-preview-gone': null,
@@ -311,7 +312,6 @@ const OPERATIONAL_ALERT_COPY: Record<
   },
   'outbox-lag': null,
   'reflect-recommended': null,
-  'plan-approval': null,
   'done-with-unmerged-commits': null,
   'api-outage': null,
   'daemon-code-drift': null,
@@ -334,6 +334,7 @@ const OPERATIONAL_ALERT_COPY: Record<
         `Inspect \`.mars/watch.log\`, fix or disable the gate, then restart the affected tasks.`,
     }
   },
+  'verify-uncovered': null,
   'workflow-draft-pending': null,
   'gate-enrichment': null,
   'budget-window': null,
@@ -502,6 +503,9 @@ export const getActionQueueEntityId = (row: PersistedActionQueueRow): string => 
   if (row.kind === 'slices-dropped') {
     if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
   }
+  if (row.kind === 'slice-failed') {
+    if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
+  }
   if (row.kind === 'reflect-recommended') return row.signature ?? row.id
   if (row.kind === 'workflow-draft-pending') {
     if (typeof row.payload.workflowName === 'string') return row.payload.workflowName
@@ -515,8 +519,8 @@ export const getActionQueueEntityId = (row: PersistedActionQueueRow): string => 
 /**
  * Append ` [task <id8>]` to a purpose-built title when the row is backed by a
  * task and does not already name it, so two rows of the same kind stay
- * distinguishable. Non-task-backed rows (daemon-code-drift, plan-approval,
- * signature-storm) are returned untouched — their entity id is not a task id.
+ * distinguishable. Non-task-backed rows (daemon-code-drift, signature-storm)
+ * are returned untouched — their entity id is not a task id.
  */
 /**
  * The persisted kinds that ARE a task's structured failure row, and whose
@@ -551,7 +555,7 @@ const tagWithTask = (title: string, taskId: string | null): string => {
  *    has `recipe: null` and must still render it. When such a row's task
  *    carries no signature at all, a persisted title the raiser wrote on
  *    purpose beats the generic label and is kept.
- *  - **every other kind** (daemon-code-drift, plan-approval, signature-storm,
+ *  - **every other kind** (daemon-code-drift, signature-storm,
  *    requeue-ceiling, hitl-slice-needs-operator, …) — purpose-built alerts
  *    whose raiser already wrote specific operator copy ("Daemon running stale
  *    code — a1b2c3d → e4f5g6h"). Derived failure copy must never overwrite

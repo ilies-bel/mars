@@ -27,8 +27,8 @@ import {
 import { truncateFailure } from './truncate-failure'
 import { resolveOriginIdForTask } from './origin'
 
-/** The two operator-facing failure families an Alert can describe. */
-export type AlertKind = 'arc-failed' | 'stale-worktree'
+/** The operator-facing failure families an Alert can describe. */
+export type AlertKind = 'arc-failed' | 'stale-worktree' | 'verify-uncovered'
 
 /**
  * A single descendant task in the arc, surfaced under the Alert's `technical`
@@ -67,6 +67,10 @@ export interface Alert {
   reason: string
   technical: string
   kind: AlertKind
+  /** Action-queue identity for a coverage-gap alert. */
+  fingerprint?: string
+  /** Recovery recipe recorded with a coverage-gap alert, when supplied. */
+  recipe?: string | null
   /** Ordered arc lineage: proposal head → origin attempt → restarts → recoveries. */
   chain: AlertChainNode[]
 }
@@ -199,6 +203,14 @@ export interface StaleWorktreeRecord {
   ageHours: number
 }
 
+/** One open action-queue coverage gap, keyed by its deduplicated fingerprint. */
+export interface VerifyUncoveredRecord {
+  fingerprint: string
+  recipe: string | null
+  scope: string
+  changedPaths: string[]
+}
+
 /**
  * The injectable read sources for {@link listAlerts} / {@link showAlert}.
  * Pure-read by contract: implementations MUST NOT write to any store.
@@ -208,6 +220,8 @@ export interface AlertSources {
   listFailedArcs(): Promise<FailedArcRecord[]>
   /** Enumerate every open stale-worktree row. */
   listStaleWorktrees(): Promise<StaleWorktreeRecord[]>
+  /** Enumerate every open verification coverage-gap row. */
+  listVerifyUncovered(): Promise<VerifyUncoveredRecord[]>
 }
 
 /** The synthetic FailureKind signature prefix that marks a stale-worktree alert. */
@@ -264,19 +278,36 @@ const alertForStaleWorktree = async (
   })
 }
 
+/** Project one open coverage gap into the Bell's goal → reason → evidence shape. */
+const alertForVerifyUncovered = (record: VerifyUncoveredRecord): Alert => ({
+  // Alert routes use `arcId` as their stable identity. Coverage gaps have no
+  // arc, so their action-queue fingerprint is the stable, deduplicated key.
+  arcId: record.fingerprint,
+  goal: oneLine(record.scope),
+  reason: "CAN'T-VERIFY: no task-tier verify gate covers the changed files",
+  technical: record.changedPaths.length > 0
+    ? `changed paths:\n${record.changedPaths.map((path) => `- ${path}`).join('\n')}`
+    : 'changed paths: unavailable',
+  kind: 'verify-uncovered',
+  fingerprint: record.fingerprint,
+  recipe: record.recipe,
+  chain: [],
+})
+
 /**
  * List every current Alert (failed arcs + open stale worktrees). Pure read:
  * gathers the raw inputs from the injected {@link AlertSources} and runs
  * {@link buildAlert} over each. Never persists.
  */
 export const listAlerts = async (sources: AlertSources): Promise<Alert[]> => {
-  const [failedArcs, staleWorktrees] = await Promise.all([
+  const [failedArcs, staleWorktrees, uncoveredVerify] = await Promise.all([
     sources.listFailedArcs(),
     sources.listStaleWorktrees(),
+    sources.listVerifyUncovered(),
   ])
   const arcAlerts = failedArcs.map(alertForFailedArc)
   const staleAlerts = await Promise.all(staleWorktrees.map(alertForStaleWorktree))
-  return [...arcAlerts, ...staleAlerts]
+  return [...arcAlerts, ...staleAlerts, ...uncoveredVerify.map(alertForVerifyUncovered)]
 }
 
 /**

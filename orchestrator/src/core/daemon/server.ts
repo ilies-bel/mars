@@ -17,10 +17,8 @@ import { dirname, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { findExistingMarsDb, resolveContext, resolveDbTarget } from '../context'
 import { openDb, recycleDbPool, type DbClient } from '../lib/db'
-import { ensureSchema } from '../lib/pg-schema'
 import { startEmbeddedPg, type EmbeddedPgHandle } from '../lib/pg-server'
 import { importLegacySqlite } from '../../init/import-sqlite'
-import { reconcileVerifyGatesOnStartup } from '../verify-gates-reconcile'
 import {
   addBlockers,
   dropTask,
@@ -66,6 +64,10 @@ import {
   ensureArcVerifierSubscriber,
 } from '../../outbox/subscribers/arc-verifier-subscriber'
 import {
+  drainGateFixSteward,
+  ensureGateFixStewardSubscriber,
+} from '../../outbox/subscribers/gate-fix-steward'
+import {
   drainRecipeConversationNotices,
   ensureRecipeConversationNoticeSubscriber,
 } from '../../outbox/subscribers/recipe-conversation-notice'
@@ -100,6 +102,7 @@ import {
   getDefaultTaskStore,
   getDefaultDomainTaskStore,
   getCompositionRootClient,
+  runCompositionRootMigrations,
 } from '../store/task-store'
 import { promoteProposal } from '../proposals'
 import {
@@ -116,7 +119,6 @@ import {
 } from '../lib/action-queue'
 import {
   raiseAggregatedMainCommiterFailureRow,
-  releaseMainCommitterDependents,
   sweepStaleFailedMainCommiterActionQueue,
 } from './main-dirty-action-queue'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
@@ -187,18 +189,11 @@ const LOG_ROTATE_BYTES = 10 * 1024 * 1024
  * elsewhere. Pinning both the command argument and environment keeps the
  * replacement reading the same daemon.json, including an operator pause.
  */
-const spawnReplacementDaemon = async (): Promise<void> => {
-  const [{ spawn }, { resolveLaunchCommand }] = await Promise.all([
-    import('node:child_process'),
-    import('./paths'),
-  ])
-  const { command, baseArgs } = resolveLaunchCommand()
+export const spawnReplacementDaemon = async (): Promise<void> => {
+  const { captureDaemonBootStderr, daemonPaths, spawnDaemonProcess } = await import('./paths')
   const { repoRoot } = resolveContext()
-  const child = spawn(command, [...baseArgs, '--repo', repoRoot, 'daemon', 'start'], {
-    detached: true,
-    stdio: 'ignore',
-    env: { ...process.env, MARS_REPO: repoRoot },
-  })
+  const child = spawnDaemonProcess({ repoRoot })
+  captureDaemonBootStderr(child, daemonPaths(repoRoot).logFile)
   child.unref()
 }
 
@@ -214,6 +209,37 @@ export interface DaemonHandle {
 export interface DaemonOptions {
   integrationBranch?: string
   log?: (line: string) => void
+}
+
+/**
+ * Persist a structured-write failure for the operator. Structured writes run
+ * fire-and-forget, so their dispatchers must catch failures rather than let an
+ * unhandled rejection terminate the daemon; this action-queue row is the
+ * durable counterpart to that catch.
+ */
+export const raiseStructuredWriteFailureAction = async (args: {
+  kind: 'adr' | 'glossary'
+  target: string
+  error: unknown
+}): Promise<void> => {
+  const message = args.error instanceof Error ? args.error.message : String(args.error)
+  await raiseActionQueueItem({
+    kind: 'failed',
+    category: 'orchestrator',
+    priority: 'high',
+    title: `Structured ${args.kind} write failed: ${args.target}`,
+    body: [
+      `The structured ${args.kind} write for \`${args.target}\` did not complete.`,
+      '',
+      `Error: ${message}`,
+      '',
+      'The daemon is still running. Review the failure and retry the original command after resolving it.',
+    ].join('\n'),
+    payload: { kind: args.kind, target: args.target, error: message },
+    context: { repoRoot: process.env.MARS_REPO ?? null },
+    raisedBy: 'structured-write:dispatch',
+    signature: `structured-write:failed:${args.kind}:${args.target}`,
+  })
 }
 
 /**
@@ -593,21 +619,17 @@ export const startDaemon = async (
     }
   }
 
-  // Guarantee the canonical schema (single DDL source: pg-schema.ts), then
-  // fold any legacy SQLite `.mars/mars.db` in exactly once. The importer is
+  // Guarantee the canonical schema through the composition-root runner before
+  // any boot sweep or subscriber obtains a database client. The runner shares
+  // its readiness promise with ordinary client operations, preventing a late
+  // reader from starting a second DDL batch while boot reconciliation reads.
+  // Then fold any legacy SQLite `.mars/mars.db` in exactly once. The importer is
   // idempotent (schema_migrations marker + pg-has-data guard) and renames the
   // SQLite file to `mars.db.bak-<ts>` on success; a failed import is logged
   // and retried on the next boot rather than blocking startup.
   const dbClient: DbClient = openDb(resolveDbTarget())
-  await ensureSchema(dbClient)
-  // Backfill verify_gates from the supervisors manifest if the table is empty.
-  // ensureSchema already created the table (it's in the canonical DDL), so this
-  // only needs to seed rows — not create the table. Safe to call on every start:
-  // it inserts only (scope, name) pairs not already present.
-  await reconcileVerifyGatesOnStartup(
-    resolvePath(resolveContext().stateDir, 'supervisors', 'manifest.json'),
-    (msg) => log(`[verify-gates] ${msg}`),
-  )
+  await runCompositionRootMigrations()
+  log('[schema] migrations complete')
   try {
     const legacySqlitePath = findExistingMarsDb()
     if (legacySqlitePath !== null) {
@@ -681,6 +703,7 @@ export const startDaemon = async (
   try {
     heartbeatHandle = await startHeartbeatWriter({
       db: dbClient,
+      log,
       prevGapMs: heartbeatPrevGapMs,
       dispatchUptimeMs: heartbeatDispatchUptimeMs,
     })
@@ -1178,7 +1201,12 @@ export const startDaemon = async (
     await acquire(sems.implement)
     // commitInFlight records the inFlight entry AND clears the matching claim
     // in one step (claim-clears-after-commit); see dispatchTriage.
-    const releaseTracking = tracker.commitInFlight(task.id, 'implement')
+    const taskAbortController = new AbortController()
+    const releaseTracking = tracker.commitInFlight(
+      task.id,
+      'implement',
+      taskAbortController,
+    )
     // Merge-queue handoff bookkeeping.
     // `mergeHandedOff` flips to true when the workflow calls enqueueMergeJobAndAwait,
     // at which point the implement slot has been released and merge tracking started.
@@ -1542,8 +1570,13 @@ export const startDaemon = async (
           runId: task.id,
           logger: workflowLogger,
           onEvent,
+          signal: taskAbortController.signal,
         },
       )
+      if (taskAbortController.signal.aborted) {
+        log(`[implement] ${task.id} stopped by operator`)
+        return
+      }
       // Switch on the WorkflowTerminalError discriminant.  The workflow steps
       // throw WorkflowTerminalError (subclass of Error) with a `kind` field for
       // every self-handled terminal condition; the engine propagates it verbatim
@@ -1654,6 +1687,10 @@ export const startDaemon = async (
       // each individually guarded; whatever happens, control reaches the
       // `finally` and the function resolves.
       const message = err instanceof Error ? err.message : String(err)
+      if (taskAbortController.signal.aborted) {
+        log(`[implement] ${task.id} stopped by operator`)
+        return
+      }
       // The blockers-abort detector lives in the implement workflow module. A
       // dynamic import can itself reject (module-resolution / eval error), and
       // that rejection would escape this catch. Load it best-effort: if the
@@ -1831,15 +1868,24 @@ export const startDaemon = async (
       // One bad structured-write must NEVER crash the daemon. This dispatcher
       // is invoked fire-and-forget (`void dispatchGlossaryWrite(...)`), so an
       // escaping rejection becomes an unhandledRejection that kills the
-      // process. Log-only is correct here: a glossary write operates on a
-      // synthetic id (there is no queued task row to fail), so there is
-      // nothing to mark `failed` — we just record the failure and release the
-      // slot in finally. String() fallback keeps the catch body throw-proof.
+      // process. The action-queue raise makes this otherwise detached failure
+      // visible without compromising that containment.
       log(
         `[glossary-write] ${req.kind} "${req.term}" failed: ${
           err instanceof Error ? err.message : String(err)
         }`,
       )
+      await raiseStructuredWriteFailureAction({
+        kind: 'glossary',
+        target: req.term,
+        error: err,
+      }).catch((raiseErr: unknown) => {
+        log(
+          `[glossary-write] ${req.kind} "${req.term}" failed to raise action-queue item: ${
+            raiseErr instanceof Error ? raiseErr.message : String(raiseErr)
+          }`,
+        )
+      })
     } finally {
       releaseTracking()
       release(sems['glossary-write'])
@@ -1884,16 +1930,24 @@ export const startDaemon = async (
     } catch (err) {
       // One bad structured-write must NEVER crash the daemon. This dispatcher
       // is invoked fire-and-forget (`void dispatchAdrAdd(...)`), so an escaping
-      // rejection becomes an unhandledRejection that kills the process.
-      // Log-only is correct: an ADR add operates on a synthetic id (no queued
-      // task row to fail), so there is nothing to mark `failed` — record the
-      // failure and release the slot in finally. String() fallback keeps the
-      // catch body throw-proof on a non-Error rejection value.
+      // rejection becomes an unhandledRejection that kills the process. Raise
+      // an action-queue item as well, then release the slot in finally.
       log(
         `[adr-add] "${req.title}" failed: ${
           err instanceof Error ? err.message : String(err)
         }`,
       )
+      await raiseStructuredWriteFailureAction({
+        kind: 'adr',
+        target: req.title,
+        error: err,
+      }).catch((raiseErr: unknown) => {
+        log(
+          `[adr-add] "${req.title}" failed to raise action-queue item: ${
+            raiseErr instanceof Error ? raiseErr.message : String(raiseErr)
+          }`,
+        )
+      })
     } finally {
       releaseTracking()
       release(sems['adr-add'])
@@ -2454,6 +2508,53 @@ export const startDaemon = async (
     viewStreamHub.broadcast('tasks')
   }
 
+  // A quarantined registry gate is advisory-only: this Steward can inspect the
+  // repository and submit a candidate definition, but has no registry mutation
+  // or proposal-approval authority. The durable subscriber below owns when it
+  // is called; this callback owns only one provider invocation.
+  const runGateFixStewardDispatch = async (event: import('../agents/steward').GateSystemicFailureEvent) => {
+    const [{ runGateFixSteward }, { stewardAgent, STEWARD_GATE_FIX_TOOLS }, { runClaudeCode }] = await Promise.all([
+      import('../gate-fix-steward'),
+      import('../agents/steward'),
+      import('../lib/git/claude'),
+    ])
+    const outcome = await runGateFixSteward(event, {
+      worker: async (prompt) => {
+        const result = await runClaudeCode({
+          cwd: resolveContext().repoRoot,
+          prompt,
+          systemPrompt: stewardAgent.systemPrompt,
+          model: stewardAgent.model,
+          permissionMode: 'bypassPermissions',
+          // `runClaudeCode` exposes denials rather than an allow-list. Keep
+          // the useful repository-read tools while closing every repair/apply
+          // route; the prompt independently names the same boundary.
+          disallowedTools: [
+            'Edit',
+            'Write',
+            'NotebookEdit',
+            'Bash(mars verify-gate*)',
+            'Bash(mars proposal*)',
+            'Bash(mars gate-fix*)',
+          ],
+        })
+        let output = result.stdout
+        for (const message of result.conversation) {
+          if (message.type === 'result' && typeof message.result === 'string') output = message.result
+        }
+        if (result.exitCode !== 0 || result.quotaRejected !== null) {
+          log(`[gate-fix-steward] ${event.gate.id} diagnosis did not complete cleanly (exit=${result.exitCode})`)
+          return ''
+        }
+        log(`[gate-fix-steward] ${event.gate.id} inspected with ${STEWARD_GATE_FIX_TOOLS.join(', ')}`)
+        return output
+      },
+    })
+    viewStreamHub.broadcast('chat')
+    viewStreamHub.broadcast('action-queue')
+    return outcome
+  }
+
   bus.on('task.added', (e: { taskId: string }) => {
     if (!acceptingWork) return
     if (tracker.isInFlight(e.taskId)) return
@@ -2528,7 +2629,6 @@ export const startDaemon = async (
   bus.on('proposal.dismissed', () => { viewStreamHub.broadcast('progress') })
   bus.on('proposal.promoted',  () => { viewStreamHub.broadcast('progress') })
   bus.on('proposal.sliced',    () => { viewStreamHub.broadcast('progress') })
-  bus.on('proposal.approved',  () => { viewStreamHub.broadcast('progress') })
   bus.on('proposal.deleted',   () => { viewStreamHub.broadcast('progress') })
 
   // Durable transcript append (deep-reflect durability). On every
@@ -2877,24 +2977,6 @@ export const startDaemon = async (
             const payload = parseMainCommiterPayload(after.recoveryPayload)
             if (payload && payload.recipe === MAIN_COMMITER_RECIPE) {
               await raiseAggregatedMainCommiterFailureRow(after.id, log)
-              // Release dependents blocked on the dead committer — but only
-              // when main is actually clean. If main is still dirty, releasing
-              // dependents re-parks them behind a new committer immediately,
-              // burning retry budgets in a guaranteed loop. The git-status
-              // guard inside releaseMainCommitterDependents enforces this;
-              // when dirty it keeps dependents blocked so the operator can
-              // resolve via the action-queue item raised above.
-              try {
-                await releaseMainCommitterDependents(
-                  after.id,
-                  log,
-                  process.env.MARS_REPO ?? '',
-                )
-              } catch (releaseErr) {
-                log(
-                  `[main-dirty] error releasing dependents of failed committer ${after.id}: ${(releaseErr as Error).message}`,
-                )
-              }
             }
           } catch (err) {
             log(
@@ -3119,6 +3201,22 @@ export const startDaemon = async (
     return result
   }
 
+  // `mars task stop <id>` aborts only a currently dispatched workflow. The
+  // task is left failed (not dropped), preserving its branch and worktree for
+  // an explicit `mars continue <id>`.
+  const handleStop = async (id: string): Promise<void> => {
+    if (!tracker.abort(id)) {
+      throw new Error(`task ${id} is not in flight`)
+    }
+    await handleUpdate(id, {
+      status: 'failed',
+      error: 'stopped by operator via `mars task stop`',
+      failureReason: CANCELLED_FAILURE_REASON,
+      failureReasonCode: 'task-stopped',
+    })
+    log(`[stop-task] ${id}: abort requested; worktree and branch preserved for continue`)
+  }
+
   const handlePurge = async (
     id: string,
     force: boolean,
@@ -3256,9 +3354,10 @@ export const startDaemon = async (
   const handleProposalPromote = async (
     proposalId: string,
     priority?: number,
+    coordinated = false,
   ): Promise<{ proposalId: string; status: string }> => {
     assertProposalsSourceFresh(proposalsStamp)
-    const proposal = await promoteProposal(proposalId)
+    const proposal = await promoteProposal(proposalId, { coordinated })
     // Auto-slice: chain slicing fire-and-forget so the RPC stays fast and a
     // slicer failure (e.g. malformed PRD) leaves the proposal in prd-ready for
     // the operator to inspect and re-promote without aborting the promote itself.
@@ -3270,46 +3369,33 @@ export const startDaemon = async (
     return { proposalId: proposal.id, status: proposal.status }
   }
 
+  const proposalSliceRuns = new Map<string, number>()
+
   const handleProposalSlice = async (
     proposalId: string,
     resliceFeedback?: string,
     priority?: number,
   ): Promise<{ proposalId: string; status: string; taskIds: string[] }> => {
-    assertProposalsSourceFresh(proposalsStamp)
-    const { runSlice } = await import('../../workflows/slice-workflow')
-    const sliceTaskStore = await getDefaultTaskStore()
-    const result = await runSlice(proposalId, resliceFeedback, {
-      store: sliceTaskStore,
-      traceStore,
-      ...(priority !== undefined && { priority }),
-    })
-    // When autoApprovePlans=true, slice tasks are transitioned to 'queued'
-    // immediately; emit 'task.queued' for each so the daemon's dispatch
-    // loop picks them up under the implement semaphore. When
-    // autoApprovePlans=false, tasks remain 'draft' until the operator calls
-    // `mars proposal approve`, so no events are emitted here.
-    for (const taskId of result.taskIds) {
-      const t = await getTask(taskId)
-      if (t?.status === 'queued') {
+    proposalSliceRuns.set(proposalId, (proposalSliceRuns.get(proposalId) ?? 0) + 1)
+    try {
+      assertProposalsSourceFresh(proposalsStamp)
+      const { runSlice } = await import('../../workflows/slice-workflow')
+      const sliceTaskStore = await getDefaultTaskStore()
+      const result = await runSlice(proposalId, resliceFeedback, {
+        store: sliceTaskStore,
+        traceStore,
+        ...(priority !== undefined && { priority }),
+      })
+      // Slicing always makes dispatchable work live immediately; notify the
+      // in-memory dispatcher about each queued task after its lifecycle write.
+      for (const taskId of result.queuedTaskIds) {
         bus.emit('task.queued', { taskId })
       }
-    }
-    return result
-  }
-
-  const handleProposalApprove = async (
-    proposalId: string,
-  ): Promise<{ proposalId: string; queuedCount: number; blockedCount: number }> => {
-    const { approveProposalPlan } = await import('../proposals')
-    const { queuedTaskIds, blockedTaskIds } = await approveProposalPlan(proposalId)
-    // Notify the dispatch loop that new tasks are ready to run.
-    for (const taskId of queuedTaskIds) {
-      bus.emit('task.queued', { taskId })
-    }
-    return {
-      proposalId,
-      queuedCount: queuedTaskIds.length,
-      blockedCount: blockedTaskIds.length,
+      return result
+    } finally {
+      const remaining = (proposalSliceRuns.get(proposalId) ?? 1) - 1
+      if (remaining === 0) proposalSliceRuns.delete(proposalId)
+      else proposalSliceRuns.set(proposalId, remaining)
     }
   }
 
@@ -3329,18 +3415,20 @@ export const startDaemon = async (
       )
     }
 
-    // Clear the pending plan-approval row before dropping the old slices.
-    const { supersedeActionQueueItemsBySignature } = await import('../lib/action-queue')
-    await supersedeActionQueueItemsBySignature(
-      'plan-approval',
-      proposalId,
-      'origin-done',
-      'proposal.reslice',
-    ).catch(() => {})
-
-    // Drop old slice tasks and sub-tasks so the slicer starts with a clean slate.
     const taskStore = await getDefaultTaskStore()
-    await Arc.dropProposalSlices(taskStore, proposalId, 'reslice').catch(() => {})
+    const slices = await taskStore.listTasksForProposal(proposalId)
+    const activeSliceIds = slices
+      .filter((task) => task.status !== 'queued' && task.status !== 'blocked')
+      .map((task) => task.id)
+    if (activeSliceIds.length > 0) {
+      throw new Error(
+        `proposal ${proposalId} cannot be resliced: slice task(s) already left the queue: ${activeSliceIds.join(', ')}`,
+      )
+    }
+
+    // Every old slice is still inert, so clean it up through the same Arc
+    // lifecycle path as `mars drop` before cutting replacement work.
+    await Arc.dropProposalSlices(taskStore, proposalId, 'reslice')
 
     // Revert the proposal to 'prd-ready' so the slice workflow can claim it.
     await revertSlicedProposalToReady(proposalId)
@@ -3517,14 +3605,26 @@ export const startDaemon = async (
 
   const reconcile = async (): Promise<void> => {
     const { runStartupReconcile } = await import('./startup-reconcile')
-    await runStartupReconcile({ log, bus, traceStore, handleProposalSlice })
+    await runStartupReconcile({
+      log,
+      bus,
+      traceStore,
+      handleProposalSlice,
+      isProposalSliceInFlight: (proposalId) => proposalSliceRuns.has(proposalId),
+    })
   }
 
   // The 'sync' RPC op: same reconcile as startup, but the summary is returned
   // to the caller rather than discarded.
   const runSync = async (): Promise<unknown> => {
     const { runStartupReconcile } = await import('./startup-reconcile')
-    return runStartupReconcile({ log, bus, traceStore, handleProposalSlice })
+    return runStartupReconcile({
+      log,
+      bus,
+      traceStore,
+      handleProposalSlice,
+      isProposalSliceInFlight: (proposalId) => proposalSliceRuns.has(proposalId),
+    })
   }
 
   // ── Investigate / diagnose-failure handlers (shared by HTTP and RPC) ────────
@@ -4014,6 +4114,7 @@ export const startDaemon = async (
     setTaskPriority,
     handleUpdate,
     handleContinue,
+    handleStop,
     handleRestart,
     handleRemerge,
     handlePurge,
@@ -4026,7 +4127,6 @@ export const startDaemon = async (
     runSync,
     handleProposalPromote,
     handleProposalSlice,
-    handleProposalApprove,
     handleProposalReslice,
     handleProposalTake,
     handleRefine,
@@ -4264,6 +4364,51 @@ export const startDaemon = async (
               prompt: typeof pld.prompt === 'string' ? pld.prompt : '',
               status: typeof pld.status === 'string' ? pld.status : 'unknown',
               ageHours: typeof pld.ageHours === 'number' ? pld.ageHours : 0,
+            })
+          }
+        } catch {
+          /* action_queue_items table may not exist on a fresh repo */
+        }
+        return records
+      },
+      listVerifyUncovered: async () => {
+        const client = getCompositionRootClient()
+        const records: {
+          fingerprint: string
+          recipe: string | null
+          scope: string
+          changedPaths: string[]
+        }[] = []
+        const seenFingerprints = new Set<string>()
+        try {
+          const r = await client.execute(
+            `SELECT fingerprint, payload
+               FROM action_queue_items
+              WHERE kind = 'verify-uncovered' AND state = 'open'
+              ORDER BY raised_at DESC`,
+          )
+          for (const row of r.rows) {
+            const r0 = row as unknown as Record<string, unknown>
+            const fingerprint = typeof r0.fingerprint === 'string' ? r0.fingerprint : null
+            if (!fingerprint || seenFingerprints.has(fingerprint)) continue
+            seenFingerprints.add(fingerprint)
+            let payload: Record<string, unknown> = {}
+            try {
+              const parsed = JSON.parse(r0.payload as string)
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                payload = parsed as Record<string, unknown>
+              }
+            } catch {
+              /* ignore malformed historical payloads */
+            }
+            const changedPaths = Array.isArray(payload.changedPaths)
+              ? payload.changedPaths.filter((path): path is string => typeof path === 'string')
+              : []
+            records.push({
+              fingerprint,
+              recipe: typeof payload.recipe === 'string' ? payload.recipe : null,
+              scope: typeof payload.scope === 'string' ? payload.scope : '.',
+              changedPaths,
             })
           }
         } catch {
@@ -4658,6 +4803,24 @@ export const startDaemon = async (
     }
   })()
 
+  // A verify-gate.quarantined event is durable evidence of a new quarantine
+  // episode. Register before the periodic drain so an event emitted while the
+  // daemon was down is diagnosed exactly once when it returns.
+  void (async () => {
+    try {
+      await ensureGateFixStewardSubscriber(getCompositionRootClient())
+      const { processed } = await drainGateFixSteward(
+        getCompositionRootClient(),
+        runGateFixStewardDispatch,
+        undefined,
+        log,
+      )
+      if (processed > 0) log(`[gate-fix-steward] dispatched ${processed} quarantined gate diagnosis(es) on boot`)
+    } catch (err) {
+      log(`[gate-fix-steward] boot drain failed: ${(err as Error).message}`)
+    }
+  })()
+
   // Blocked tasks with the same canonical failure are narrated together. The
   // per-batch timer is armed from the persisted opened_at value, so the Notice
   // appears after its full coalescing window rather than on this poll cadence.
@@ -4984,6 +5147,35 @@ export const startDaemon = async (
     })()
   }, POLL_FALLBACK_MS)
   pollFallback.unref()
+
+  // ── Queued-dispatch sweep ─────────────────────────────────────────────────
+  // Writers inside the daemon normally call the dispatch-hint seam immediately
+  // after their transaction commits. This periodic DB re-read is the durable
+  // backstop for a missed hint: unlike pollFallback it also runs while other
+  // workers are active, so one forgotten handoff cannot strand a queued row
+  // until the daemon goes idle or restarts. Re-emitting task.queued intentionally
+  // takes the normal bus path, which feeds pendingImplement and invokes drain();
+  // drain then re-reads the row and validates its status and blockers before it
+  // can claim a worker slot.
+  const QUEUED_DISPATCH_SWEEP_MS = Number(
+    process.env.MARS_QUEUED_DISPATCH_SWEEP_MS ?? 30_000,
+  )
+  const queuedDispatchSweep = setInterval(() => {
+    if (!acceptingWork || pause.isPaused()) return
+    void (async () => {
+      try {
+        const queued = await listTasks('queued')
+        for (const task of queued) {
+          if (!tracker.isInFlight(task.id)) {
+            bus.emit('task.queued', { taskId: task.id })
+          }
+        }
+      } catch (err) {
+        log(`[queued-dispatch-sweep] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, QUEUED_DISPATCH_SWEEP_MS)
+  queuedDispatchSweep.unref()
 
   // ── Stale-worktree sweep ──────────────────────────────────────────────────
   // Periodically raises `stale-worktree` actionQueue items for tasks whose worktree
@@ -5773,6 +5965,21 @@ export const startDaemon = async (
   )
   arcVerifierDrain.unref()
 
+  const GATE_FIX_STEWARD_DRAIN_MS = Number(
+    process.env.MARS_GATE_FIX_STEWARD_DRAIN_MS ?? 30_000,
+  )
+  const gateFixStewardDrain = setInterval(
+    singleFlight(async () => {
+      try {
+        await drainGateFixSteward(getCompositionRootClient(), runGateFixStewardDispatch, undefined, log)
+      } catch (err) {
+        log(`[gate-fix-steward] drain errored: ${(err as Error).message}`)
+      }
+    }),
+    GATE_FIX_STEWARD_DRAIN_MS,
+  )
+  gateFixStewardDrain.unref()
+
   // ── Usage snapshot sampler ────────────────────────────────────────────────
   const { startUsageSampler } = await import('./usage-sampler')
   const usageSamplerInterval = startUsageSampler(
@@ -5788,6 +5995,7 @@ export const startDaemon = async (
     if (shuttingDown) return
     shuttingDown = true
     clearInterval(pollFallback)
+    clearInterval(queuedDispatchSweep)
     clearInterval(githubUpdatePoll)
     clearInterval(devStalenessCheck)
     clearInterval(staleSweep)
@@ -5807,6 +6015,7 @@ export const startDaemon = async (
     clearInterval(failureConversationNoticeDrain)
     clearFailureConversationNoticeFlush(getCompositionRootClient())
     clearInterval(arcVerifierDrain)
+    clearInterval(gateFixStewardDrain)
     clearInterval(usageSamplerInterval)
     deferralWakeSweeper.stop()
     // Drop the dispatch hint before the tracker is torn down, so a writer that
@@ -5822,10 +6031,13 @@ export const startDaemon = async (
     // dispatcher is mid-pick must not strand an extra worktree.
     acceptingWork = false
     heartbeatHandle?.setDispatchEnabled(false)
+    // Stop recurring writes before the final flush and database teardown. An
+    // already-running write remains best-effort and has its own rejection
+    // handler in the writer.
+    heartbeatHandle?.stop()
     await heartbeatHandle?.flush().catch((err) => {
       log(`[heartbeat] final flush failed (non-fatal): ${(err as Error).message}`)
     })
-    heartbeatHandle?.stop()
     tracker.clearPending()
     log(`shutting down (force=${force}, inFlight=${tracker.inFlightCount()})`)
 

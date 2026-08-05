@@ -20,6 +20,8 @@
  * fails the build.
  */
 
+import type { VerifyGateInput } from '../core/verify-gates'
+
 /** The shape of a single wizard prompt — the parity contract. */
 export interface WizardPrompt {
   /** Stable identifier; also the key under which the answer lands in WizardChoices. */
@@ -31,7 +33,7 @@ export interface WizardPrompt {
   /** The non-interactive TOML config key. MUST be accepted by loadInitConfig. */
   configKey: string
   /** Answer shape. */
-  type: 'boolean' | 'string' | 'enum'
+  type: 'boolean' | 'string' | 'enum' | 'gate-list'
   /** Allowed values when `type === 'enum'`. */
   choices?: readonly string[]
   /** Fallback used non-interactively and on TTY when the user just hits enter. */
@@ -53,11 +55,14 @@ export interface WizardPrompt {
 export interface WizardChoices {
   /** Register this repo in the global project registry (~/.mars/projects.json). */
   registerProject: boolean
+  /** Verify gates detected before a non-interactive init reaches the daemon. */
+  verifyGates: VerifyGateInput[]
 }
 
 /** Resolved-everywhere defaults; also the non-TTY / error fallback. */
 export const WIZARD_DEFAULTS: WizardChoices = {
   registerProject: true,
+  verifyGates: [],
 }
 
 /**
@@ -73,5 +78,13 @@ export const WIZARD_PROMPTS: readonly WizardPrompt[] = [
     configKey: 'registerProject',
     type: 'boolean',
     default: true,
+  },
+  {
+    id: 'verifyGates',
+    question: 'Detected verify gates:',
+    flag: '--verify-gates-json',
+    configKey: 'verifyGates',
+    type: 'gate-list',
+    default: [],
   },
 ]

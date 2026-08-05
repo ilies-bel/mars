@@ -57,6 +57,7 @@ import {
   cleanWorktreeIfNoCommitsAhead,
   verifyChanges,
   selectVerifySteps,
+  getChangedFiles,
   isInfraFailureOutput,
 } from '../../core/lib/git/verify'
 import {
@@ -85,8 +86,11 @@ import { getTask, hasIncompleteBlockers, TERMINAL_TASK_STATUSES, updateTask } fr
 import { Arc } from '../../core/arc'
 import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks'
 import { computeFailureSignature } from '../../core/lib/failure-signature'
+import { observeVerifyGateFailure } from '../../core/lib/gate-meta-monitor'
 import { resolveOriginIdForTask } from '../../core/lib/origin'
 import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
+import { quarantineVerifyGate } from '../../core/verify-gates'
+import { buildEventInsert } from '../../bus/publisher'
 import { raiseActionQueueItem } from '../../core/lib/action-queue'
 import { findLiveWorktreeDependents } from '../../core/lib/worktree-dependents'
 import { AWAIT_HUMAN_SENTINEL } from '../../core/lib/sentinels'
@@ -1296,6 +1300,7 @@ export const runAgent = async (
       // alive-PID + heartbeat path (case b/c), preventing false ceiling kills
       // of legitimately long-running coders.
       onPid: ctx.services.onPid,
+      externalAbort: ctx.signal,
     },
     traceStore: spanStore(trace),
     stepName: 'run-claude-code',
@@ -1304,6 +1309,11 @@ export const runAgent = async (
     taskId,
     phase: 'code',
   })
+
+  // A task stop is an operator decision, not a coder failure. Bail out before
+  // the ordinary non-zero-exit recovery path can stamp or recover the task;
+  // the daemon already marked it failed with failureReason='cancelled'.
+  if (ctx.signal.aborted) throw new Error(`task ${taskId} stopped by operator`)
 
   // Context-budget hard abort: spawn a resume fix-task and throw the sentinel.
   if (r.exitCode === 138 && r.stderr.includes('context budget exhausted')) {
@@ -1358,9 +1368,14 @@ export const runAgent = async (
   // rejection sentinel that the daemon catches to pause dispatch until
   // resetsAt and raise exactly one level-triggered action-queue row.
   if (r.exitCode !== 0 && r.quotaRejected !== null) {
-    await updateTask(taskId, { status: 'queued' }, store)
+    // Increment the quota-rejected counter so the poll-fallback ceiling can
+    // discount these attempts. Fetch the current value for a safe increment;
+    // the task semaphore guarantees one active coder per task so no race.
+    const currentTask = await getTask(taskId, store)
+    const nextQuotaRejectedAttempts = (currentTask?.quotaRejectedAttempts ?? 0) + 1
+    await updateTask(taskId, { status: 'queued', quotaRejectedAttempts: nextQuotaRejectedAttempts }, store)
     console.log(
-      `[code] task ${taskId}: env-rejected by provider quota (resetsAt=${r.quotaRejected.resetsAt}); re-queued`,
+      `[code] task ${taskId}: env-rejected by provider quota (resetsAt=${r.quotaRejected.resetsAt}); re-queued; quotaRejectedAttempts=${nextQuotaRejectedAttempts}`,
     )
     throw new WorkflowTerminalError('quota-rejected', QUOTA_REJECTED_ABORT_MESSAGE(taskId, r.quotaRejected.resetsAt), { resetsAt: r.quotaRejected.resetsAt })
   }
@@ -1595,6 +1610,7 @@ export const runAgent = async (
         systemPrompt: resolveWorkerSystemPrompt(primaryTag),
         onEvent: async (event) => emit?.(event),
         onPid: ctx.services.onPid,
+        externalAbort: ctx.signal,
       },
       traceStore: spanStore(trace),
       stepName: 'commit-correction',
@@ -1603,6 +1619,8 @@ export const runAgent = async (
       taskId,
       phase: 'code',
     })
+
+    if (ctx.signal.aborted) throw new Error(`task ${taskId} stopped by operator`)
 
     try {
       const correctedState = await detectPostCoderState({
@@ -1635,8 +1653,17 @@ export const runAgent = async (
     const dirtyList = postState.dirtyFiles.join('\n  ')
     const commitsAhead =
       postState.kind === 'dirty-with-commits' ? postState.commitsAhead : 0
+    const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
+      '../../core/lib/main-dirty'
+    )
+    const provenance =
+      parseMainCommiterPayload(fullTask?.recoveryPayload ?? null)?.recipe === MAIN_COMMITER_RECIPE
+        ? 'committer-salvage'
+        : 'coder-left-dirty'
     const autoResult = await autoCommitWorktreeIfDeterministic({
       taskId,
+      provenance,
+      integrationBranch,
       worktreePath,
       dirtyFiles: postState.dirtyFiles,
       traceCtx: buildPhaseCtx(trace, taskId, 'code'),
@@ -1799,7 +1826,7 @@ export interface ReviewResult {
  *     - non-fix tasks run the verify-time dirty-main check and, if the
  *       integration branch is dirty, park behind a `main-commiter` recovery and
  *       throw the `verify:main-dirty` sentinel,
- *     - selects every configured verify scope so cross-package contracts are checked
+ *     - selects root gates plus path-covered scoped gates from the task's actual diff
  *       (a main-commiter recovery skips all test/typecheck/lint steps),
  *     - runs `verifyChanges` (the has-diff / commits-ahead gate always runs),
  *     - on failure stamps the task, spawns the recovery fix-task through `store`,
@@ -2352,7 +2379,7 @@ export const review = async (
       const recipeScopes = await loadVerifyGates(store)
       // Gate-enrichment merge (PRD 745f33e0): human-approved shadow/enforcing
       // checks from the signature-keyed registry are appended BEHIND
-      // loadVerifyGates and flow through unchanged full-workspace selection below
+      // loadVerifyGates and flow through the same changed-path selection below
       // — no recipe schema change,
       // and the seam survives the manifest.json→verify.json migration.
       // `appendEnrichmentScopes` never throws (registry failure → recipe
@@ -2366,13 +2393,20 @@ export const review = async (
           ? parseMainCommiterPayload(recoveryPayload)
           : null
       const isMainCommitter = commiterPayload?.recipe === MAIN_COMMITER_RECIPE
-      const steps = isMainCommitter ? [] : selectVerifySteps(scopes)
+      const changedFiles = await getChangedFiles(
+        worktreePath,
+        integrationBranch,
+        branch,
+        buildPhaseCtx(trace, taskId, 'verify'),
+      )
+      const steps = isMainCommitter ? [] : selectVerifySteps(scopes, changedFiles)
 
       let r = await verifyChanges({
         cwd: verifyCwd,
         steps,
         branch,
         integrationBranch,
+        changedFiles: isMainCommitter ? [] : changedFiles,
         traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
       })
 
@@ -2394,6 +2428,7 @@ export const review = async (
             steps,
             branch,
             integrationBranch,
+            changedFiles: isMainCommitter ? [] : changedFiles,
             traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
           })
         }
@@ -2466,9 +2501,8 @@ export const review = async (
       // free-form step output.
       // Note: `has-diff` is included in r.steps when it passes (it is a real
       // gate that ran). A non-empty gateOutcomes means at least one gate ran;
-      // an empty array only appears when neither has-diff nor any task steps ran
-      // (e.g. a task with no configured gates and no branch/integration diff to
-      // check — gates are optional, so this passes).
+      // a no-coverage task now contributes the explicit
+      // `cant-verify:no-gate-coverage` outcome rather than a silent empty list.
       const gateOutcomes = r.steps.map((s) => ({
         name: s.name,
         tier: s.tier ?? 'task',
@@ -2483,6 +2517,66 @@ export const review = async (
         verifyOutput +
         '\n\n=== gate outcomes ===\n' +
         gateOutcomesBlock
+
+      // Registry-backed task gates are observed before ordinary failure
+      // handling. A systemic threshold crossing quarantines only that gate,
+      // turning its result into a passing CAN'T-VERIFY diagnostic; any other
+      // active gate failure remains a normal task failure.
+      if (!r.passed) {
+        for (const step of r.steps) {
+          if (step.passed || step.tier !== 'task' || step.gateId === undefined) continue
+          const failureSignature = computeFailureSignature(
+            `verify:${step.name}`,
+            step.output,
+          )
+          try {
+            const quarantined = await store.atomic(async (tx) => {
+              const observed = await observeVerifyGateFailure(tx, {
+                gateId: step.gateId!,
+                originId: trace.originId,
+                failureSignature,
+                failedAt: Date.now(),
+              })
+              if (!observed.thresholdCrossed) return false
+              const transitioned = await quarantineVerifyGate(
+                tx,
+                step.gateId!,
+                failureSignature,
+                trace.originId,
+              )
+              if (transitioned) {
+                await tx.execute(
+                  buildEventInsert('verify-gate.quarantined', {
+                    gateId: step.gateId!,
+                    originId: trace.originId,
+                    failureSignature,
+                    failureEvidence: step.output,
+                  }),
+                )
+              }
+              return transitioned
+            })
+            if (quarantined) {
+              step.passed = true
+              step.output = `CAN'T-VERIFY: registry gate ${step.name} was quarantined after systemic failures\n${step.output}`
+            }
+          } catch (error) {
+            console.error(
+              `[verify] task ${taskId}: could not observe registry gate ${step.gateId}:`,
+              error,
+            )
+          }
+        }
+        const stillHasRequiredFailure = r.steps.some((step) => {
+          if (step.passed) return false
+          if (step.gateId === undefined) return true
+          return steps.find((spec) => spec.gateId === step.gateId)?.required ?? true
+        })
+        if (!stillHasRequiredFailure) {
+          r.passed = true
+          r.verdict = "CAN'T-VERIFY"
+        }
+      }
 
       if (!r.passed) {
         const failed = r.steps.filter((s) => !s.passed)

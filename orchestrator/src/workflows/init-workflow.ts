@@ -8,6 +8,8 @@ import { createQueueWorkflowStore } from './queue-workflow-store'
 import { resolveContext } from '../core/context'
 import { initDatabases } from '../init/databases'
 import { WIZARD_DEFAULTS, type WizardChoices } from '../init/wizard'
+import { VerifyGateInputSchema } from '../core/verify-gates'
+import { installOnboardingVerifyGates } from '../init/seed-verify-gates'
 import {
   applyGitignoreScaffold,
   mergeMcpJson,
@@ -25,6 +27,7 @@ import { ensureProjectRegistered } from '../registry/projects.js'
 // workflow input without a structural-type mismatch.
 const wizardChoicesSchema = z.object({
   registerProject: z.boolean(),
+  verifyGates: z.array(VerifyGateInputSchema),
 })
 
 const initInputSchema = z.object({
@@ -208,7 +211,8 @@ const runActivatePlugin = (): void => {
 
 // Linear steps, threaded by native control flow. The step NAMES
 // ('slim-init', 'scaffold-claude', 'merge-mcp-json', 'merge-gitignore',
-// 'scaffold-workflows', 'init-databases', 'seed-recipes', 'activate-plugin')
+// 'scaffold-workflows', 'init-databases', 'seed-verify-gates', 'seed-recipes',
+// 'activate-plugin')
 // are load-bearing trace-view labels. Disk side effects (root CLAUDE.md, the
 // .mars/workflows/*.js scaffold, the init manifest, and the recipe override
 // seeds) and DB side effects (schema + legacy import) are preserved verbatim.
@@ -217,13 +221,13 @@ const runActivatePlugin = (): void => {
 export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
   id: 'init',
   inputSchema: initInputSchema,
-  fn: async (ctx: WorkflowCtx, _input: InitInput): Promise<InitWorkflowOutput> => {
+  fn: async (ctx: WorkflowCtx, input: InitInput): Promise<InitWorkflowOutput> => {
     const w1 = await ctx.step('slim-init', () => {
       const appCtx = resolveContext()
       const slimResult = writeSlimInit({
         repoRoot: appCtx.repoRoot,
         contextPath: resolve(appCtx.repoRoot, 'CONTEXT.md'),
-        adrDir: resolve(appCtx.repoRoot, 'docs', 'adr'),
+        adrDir: resolve(appCtx.repoRoot, 'docs', 'knowledge', 'decisions'),
       })
       return slimResult.written
     })
@@ -240,7 +244,11 @@ export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
     })
     const w2c = await ctx.step('scaffold-workflows', () => runScaffoldWorkflows(w2d))
     const w3 = await ctx.step('init-databases', () => runInitDatabases(w2c))
-    const written = await ctx.step('seed-recipes', () => runSeedRecipes(w3))
+    const w4 = await ctx.step('seed-verify-gates', async () => {
+      await installOnboardingVerifyGates(input.wizardChoices?.verifyGates ?? WIZARD_DEFAULTS.verifyGates)
+      return w3
+    })
+    const written = await ctx.step('seed-recipes', () => runSeedRecipes(w4))
     await ctx.step('activate-plugin', runActivatePlugin)
     return { written }
   },

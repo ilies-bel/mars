@@ -6,6 +6,9 @@
  *   resource-load       — a compute/memory metric is elevated
  *   onboarding          — a new stack is being bootstrapped
  *   workflow-suggestion — the system proposes a new workflow pattern
+ *   gate-systemic-failure — a registry verify gate was quarantined after
+ *                           repeatedly failing across origins; propose, but
+ *                           never apply, a replacement definition
  *   signature-storm     — the all-gate circuit breaker tripped; dispatch is
  *                         PAUSED and the Steward must land a fix
  *
@@ -36,6 +39,15 @@ export const StormFailureExcerptSchema = z.object({
 })
 
 export type StormFailureExcerpt = z.infer<typeof StormFailureExcerptSchema>
+
+export const GateDefinitionSchema = z.object({
+  cmd: z.string().trim().min(1),
+  args: z.array(z.string()),
+  required: z.boolean(),
+  tier: z.enum(['task', 'integration']),
+})
+
+export type GateDefinition = z.infer<typeof GateDefinitionSchema>
 
 export const StewardEventSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -68,16 +80,28 @@ export const StewardEventSchema = z.discriminatedUnion('kind', [
     /** Failure context for those tasks, so the brief is self-contained. */
     failureExcerpts: z.array(StormFailureExcerptSchema).default([]),
   }),
+  z.object({
+    kind: z.literal('gate-systemic-failure'),
+    gate: z.object({
+      id: z.string(),
+      scope: z.string(),
+      name: z.string(),
+    }),
+    currentDefinition: GateDefinitionSchema,
+    quarantineSignature: z.string(),
+    failureEvidence: z.string(),
+  }),
 ])
 
 export type StewardEvent = z.infer<typeof StewardEventSchema>
 export type StewardStormEvent = Extract<StewardEvent, { kind: 'signature-storm' }>
+export type GateSystemicFailureEvent = Extract<StewardEvent, { kind: 'gate-systemic-failure' }>
 
 const STEWARD_SYSTEM_PROMPT = [
   'You are the Steward — the Mars orchestrator\'s first-person voice.',
   '',
   'You receive structured events (kpi-degraded, resource-load, onboarding,',
-  'workflow-suggestion, signature-storm) and respond with concise, actionable',
+  'workflow-suggestion, signature-storm, gate-systemic-failure) and respond with concise, actionable',
   'analysis addressed directly to the operator.',
   '',
   'For advisory events (kpi-degraded, resource-load, onboarding,',
@@ -109,6 +133,9 @@ export const STEWARD_STORM_TOOLS: readonly string[] = [
   'Edit',
   'Write',
 ]
+
+/** Repository-inspection tools granted to a quarantined-gate diagnosis. */
+export const STEWARD_GATE_FIX_TOOLS: readonly string[] = ['Read', 'Bash', 'Grep', 'Glob']
 
 /**
  * Wall-clock ceiling for one storm Steward run (10 minutes).
@@ -263,6 +290,39 @@ export const renderStewardStormBrief = (event: StewardStormEvent): string => {
 
   return lines.join('\n')
 }
+
+/**
+ * Render the deliberately read-only brief for a quarantined registry gate.
+ * The daemon, not the Steward, owns persistence; the only accepted response is
+ * a concrete JSON candidate for operator validation.
+ */
+export const renderGateFixStewardBrief = (event: GateSystemicFailureEvent): string =>
+  [
+    '# Verify gate quarantined after systemic failures',
+    '',
+    `Gate: ${event.gate.scope}/${event.gate.name} (${event.gate.id})`,
+    `Quarantine signature: ${event.quarantineSignature}`,
+    '',
+    '## Current definition',
+    '```json',
+    JSON.stringify(event.currentDefinition, null, 2),
+    '```',
+    '',
+    '## Captured failure evidence',
+    '```',
+    event.failureEvidence,
+    '```',
+    '',
+    'Inspect the repository and the evidence. You have repository-read tools only.',
+    'Do not mutate the verify-gate registry, approve a proposal, or apply a change.',
+    'Do not reactivate the gate. The operator decides whether any proposal is applied.',
+    '',
+    'Return exactly one JSON object and no markdown fences:',
+    '{ "cmd": string, "args": string[], "required": boolean, "tier": "task" | "integration", "rationale": string }',
+    '',
+    'Every field must be concrete. If the current definition is correct, or the',
+    'evidence is insufficient, return an empty response rather than inventing a fix.',
+  ].join('\n')
 
 export const stewardAgent = {
   name: 'steward' as const,

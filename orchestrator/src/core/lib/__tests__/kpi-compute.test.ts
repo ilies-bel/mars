@@ -62,6 +62,15 @@ const makeStore = async (): Promise<TaskStore> => {
   return createTaskStore(client)
 }
 
+/**
+ * The instant every fixture row is stamped with. `tasks.created_at` /
+ * `updated_at` are `timestamptz` and take the ISO form; `action_queue_items`
+ * `.raised_at` is a `bigint` of epoch millis and takes the numeric one.
+ * Feeding the ISO string to the bigint column is a hard Postgres cast error.
+ */
+const FIXTURE_INSTANT_ISO = '2026-01-04T12:00:00Z'
+const RAISED_AT_MS = Date.parse(FIXTURE_INSTANT_ISO)
+
 const insertTask = async (
   store: TaskStore,
   opts: {
@@ -643,8 +652,8 @@ describe('computeAutonomousCompletionRate — fixture cases', () => {
     })
     await store.execute({
       sql: `INSERT INTO action_queue_items (id, kind, category, priority, title, raised_by, raised_at, origin_task_id)
-            VALUES (?, 'task-blocked', 'orchestrator', 'high', 'blocked', 'test', '2026-01-04T12:00:00Z', ?)`,
-      args: ['aq-item-1', 'blocked-arc'],
+            VALUES (?, 'task-blocked', 'orchestrator', 'high', 'blocked', 'test', ?, ?)`,
+      args: ['aq-item-1', RAISED_AT_MS, 'blocked-arc'],
     })
 
     const result = await computeAutonomousCompletionRate(store, WINDOW)
@@ -672,8 +681,8 @@ describe('computeAutonomousCompletionRate — fixture cases', () => {
     await insertTask(store, { id: 'arc-c', status: 'done' })
     await store.execute({
       sql: `INSERT INTO action_queue_items (id, kind, category, priority, title, raised_by, raised_at, origin_task_id)
-            VALUES (?, 'task-blocked', 'orchestrator', 'high', 'blocked', 'test', '2026-01-04T12:00:00Z', ?)`,
-      args: ['aq-item-2', 'arc-c'],
+            VALUES (?, 'task-blocked', 'orchestrator', 'high', 'blocked', 'test', ?, ?)`,
+      args: ['aq-item-2', RAISED_AT_MS, 'arc-c'],
     })
 
     // sampleCount = 3 (arc-a, arc-b-origin, arc-c all have done tasks in window)

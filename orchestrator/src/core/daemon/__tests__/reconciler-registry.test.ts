@@ -27,8 +27,8 @@ describe('RECONCILERS registry', () => {
       'daemon-killed-sweep',
       'daemon-died-sweep',
       'orphaned-chat-run-sweep',
-      'dead-thread-eviction',
       'blocker-drift-repair',
+      'retired-plan-gate-reconcile',
       // Fail origins stranded in `blocked` behind their own failed recovery
       // before anything re-seeds dispatch or re-queues orphaned-blocked rows.
       'stranded-origin-recovery-repair',
@@ -36,7 +36,7 @@ describe('RECONCILERS registry', () => {
       'merge-jobs-startup-reconcile',
       'orphaned-blocked-scan',
       'recovery-done-propagation',
-      'failed-committer-dependent-release',
+      'failed-committer-action-queue',
       'queued-committer-reseed',
       'requeue-stale-running',
       'reseed-dispatch',
@@ -44,6 +44,7 @@ describe('RECONCILERS registry', () => {
       'verifying-recovery',
       'merging-recovery',
       'vega-reconciling-recovery',
+      'stranded-slicing-proposal-reconcile',
       'stalled-proposal-slice',
       'stale-action-queue-sweep',
       'code-drift-clear-sweep',

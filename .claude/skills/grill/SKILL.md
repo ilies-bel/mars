@@ -250,7 +250,7 @@ Those are `to-prd`'s job. The only writes you may issue here are
   answer, and wait for the user's reply before moving on.
 - Do not ask the user for facts the codebase already encodes — explore
   it instead.
-- Do not edit `CONTEXT.md` or `docs/adr/*.md` directly. Both files are
+- Do not edit `CONTEXT.md` or `docs/knowledge/decisions/*.md` directly. Both files are
   written through the daemon-routed structured-write path. Always go
   through `mars glossary` / `mars adr`.
 - Do not couple `CONTEXT.md` to implementation details. The glossary

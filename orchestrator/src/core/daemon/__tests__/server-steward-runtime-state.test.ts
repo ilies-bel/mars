@@ -86,4 +86,41 @@ describe('daemon steward runtime state', () => {
     expect(capturedDeps?.getStewardRuntimeState?.().liveCap).toBeGreaterThanOrEqual(1)
     expect(capturedDeps?.getStewardRuntimeState?.().baselineCap).toBeGreaterThanOrEqual(1)
   })
+
+  it('completes migrations before running the lifecycle reconcile sweep', async () => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-daemon-migration-order-'))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    writeFileSync(resolve(repo, '.gitignore'), '.mars/\n')
+    execFileSync(
+      'git',
+      ['-c', 'user.name=Mars Test', '-c', 'user.email=mars@example.test', 'add', '.gitignore'],
+      { cwd: repo },
+    )
+    execFileSync(
+      'git',
+      ['-c', 'user.name=Mars Test', '-c', 'user.email=mars@example.test', 'commit', '-qm', 'init'],
+      { cwd: repo },
+    )
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
+    process.env.MARS_REPO = repo
+    process.env.MARS_DISABLE_DUCKDB = '1'
+    process.env.MARS_USAGE_SAMPLE_SEC = '3600'
+    process.env.MARS_WORKER_PROVIDER = 'codex'
+    process.env.MARS_CODEX_BIN = '/usr/bin/true'
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+
+    const logs: string[] = []
+    const server = await import('../server')
+    const daemon = await server.startDaemon({ log: (line) => logs.push(line) })
+    stop = async () => { await daemon.stop(true) }
+
+    await vi.waitFor(() => {
+      expect(logs).toContain('[lifecycle-reconcile] resolved=0')
+    })
+
+    expect(logs.indexOf('[schema] migrations complete')).toBeGreaterThanOrEqual(0)
+    expect(logs.indexOf('[schema] migrations complete')).toBeLessThan(
+      logs.indexOf('[lifecycle-reconcile] resolved=0'),
+    )
+  })
 })

@@ -116,8 +116,28 @@ import {
 } from './lib/step-prompt-recovery'
 import { extractAgentToolCalls, type AgentToolCall } from './lib/claude-stream'
 import { buildSituationReport, type SituationSemaphoreSnapshot } from './lib/situation-report'
+import { listVerifyGates, type VerifyGate } from './verify-gates'
 
 export type { AgentToolCall }
+
+/** Operator-facing verify-gate health, projected from the registry row. */
+export type GateHealthEntry = Pick<
+  VerifyGate,
+  | 'id'
+  | 'scope'
+  | 'name'
+  | 'tier'
+  | 'required'
+  | 'state'
+  | 'source'
+  | 'quarantinedAt'
+  | 'quarantineSignature'
+  | 'lastFailureSignature'
+  | 'lastFailureOriginId'
+  | 'lastFailureAt'
+> & {
+  command: Pick<VerifyGate, 'cmd' | 'args'>
+}
 
 /**
  * The daemon-runtime collaborators AppServices needs injected. These are the
@@ -282,6 +302,9 @@ export interface AppServices {
       allowedTools: readonly string[]
       eventVariants: string[]
       dispatchSites: number
+    }
+    gateHealth: {
+      scopes: Array<{ scope: string; gates: GateHealthEntry[] }>
     }
   }>
 }
@@ -888,16 +911,33 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
 
     // Reconstruct the raise-item shape `buildAlertSegment` consumes from the
     // Alert so the seed card reuses the same recipe-driven copy and verbs the
-    // Bell/alert path uses. `arc-failed` maps to the registered `failed` kind;
-    // `stale-worktree` passes through. The arc id is the entity/origin id, and
-    // the arc's intent rides in `payload.goal`.
+    // Bell/alert path uses. Coverage-gap alerts remain `verify-uncovered` so
+    // their thread is not mistaken for an arc failure. The arc id is the
+    // entity/origin id (or coverage fingerprint), and the alert goal rides in
+    // `payload.goal`.
     const item: RaiseActionQueueItem = {
-      kind: alert.kind === 'stale-worktree' ? 'stale-worktree' : 'failed',
+      kind:
+        alert.kind === 'arc-failed'
+          ? 'failed'
+          : alert.kind,
       category: 'orchestrator',
       priority: 'high',
       title: alert.reason,
       body: alert.technical || alert.reason,
-      payload: { taskId: alert.arcId, goal: alert.goal },
+      payload: {
+        taskId: alert.arcId,
+        goal: alert.goal,
+        ...(alert.kind === 'verify-uncovered'
+          ? {
+              scope: alert.goal,
+              changedPaths: alert.technical
+                .split('\n')
+                .filter((line) => line.startsWith('- '))
+                .map((line) => line.slice(2)),
+              recipe: alert.recipe,
+            }
+          : {}),
+      },
       context: {},
       raisedBy: 'operator',
       signature: alert.arcId,
@@ -1356,6 +1396,31 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
 
   const viewSteward: AppServices['viewSteward'] = async (runtime) => {
     const client = getCompositionRootClient()
+    const gatesByScope = new Map<string, GateHealthEntry[]>()
+    const gates = await listVerifyGates()
+    for (const gate of gates.sort((left, right) =>
+      left.scope === right.scope
+        ? left.name.localeCompare(right.name)
+        : left.scope.localeCompare(right.scope),
+    )) {
+      const entries = gatesByScope.get(gate.scope) ?? []
+      entries.push({
+        id: gate.id,
+        scope: gate.scope,
+        name: gate.name,
+        tier: gate.tier,
+        required: gate.required,
+        state: gate.state,
+        source: gate.source,
+        command: { cmd: gate.cmd, args: gate.args },
+        quarantinedAt: gate.quarantinedAt,
+        quarantineSignature: gate.quarantineSignature,
+        lastFailureSignature: gate.lastFailureSignature,
+        lastFailureOriginId: gate.lastFailureOriginId,
+        lastFailureAt: gate.lastFailureAt,
+      })
+      gatesByScope.set(gate.scope, entries)
+    }
 
     // 1. Runtime tuning acks — chat_threads WHERE title = 'Steward: runtime tuning'
     //    joined to chat_messages WHERE kind = 'acknowledgment', newest first.
@@ -1462,6 +1527,9 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         allowedTools: ['Read', 'Bash', 'Grep', 'Glob', 'PromptOptimize'],
         eventVariants: ['kpi-degraded', 'resource-load', 'onboarding', 'workflow-suggestion'],
         dispatchSites: 0,
+      },
+      gateHealth: {
+        scopes: [...gatesByScope].map(([scope, gates]) => ({ scope, gates })),
       },
     }
   }

@@ -431,7 +431,6 @@ const taskFailureKinds = [
   'orphaned-origin',
   'phantom-task',
   'outbox-lag',
-  'plan-approval',
   'done-with-unmerged-commits',
   'api-outage',
   'daemon-code-drift',

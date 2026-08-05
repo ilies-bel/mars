@@ -32,10 +32,9 @@ export interface WorktreeDependent {
  * be dispatched again, so they cannot be harmed by the removal. Anything else —
  * `queued`, `running`, `blocked`, `awaiting-human`, … — still needs the tree.
  *
- * Best-effort by contract: a query failure returns `[]` rather than throwing,
- * because this guard runs on the success path of a merge that has already
- * landed. Failing the merge over a bookkeeping read would be worse than the
- * stale directory it is trying to prevent.
+ * A lookup failure is deliberately allowed to reach the merge path. Treating
+ * it as no dependents would reclaim a shared worktree without having checked
+ * whether it is safe to do so.
  */
 export const findLiveWorktreeDependents = async (args: {
   taskId: string
@@ -48,35 +47,28 @@ export const findLiveWorktreeDependents = async (args: {
 
   const terminal = [...TERMINAL_TASK_STATUSES]
   const statusPlaceholders = terminal.map(() => '?').join(', ')
-  try {
-    const rows = await store.query({
-      sql: `SELECT id, status
+  const matchingColumns: string[] = []
+  const matchingValues: string[] = []
+  if (worktreePath !== null) {
+    matchingColumns.push('worktree_path = ?')
+    matchingValues.push(worktreePath)
+  }
+  if (branch !== null) {
+    matchingColumns.push('branch = ?')
+    matchingValues.push(branch)
+  }
+
+  const rows = await store.query({
+    sql: `SELECT id, status
               FROM tasks
              WHERE id != ?
                AND status NOT IN (${statusPlaceholders})
-               AND (
-                 (? IS NOT NULL AND worktree_path = ?)
-                 OR (? IS NOT NULL AND branch = ?)
-               )
+               AND (${matchingColumns.join(' OR ')})
              ORDER BY created_at ASC`,
-      args: [
-        taskId,
-        ...terminal,
-        worktreePath,
-        worktreePath,
-        branch,
-        branch,
-      ],
-    })
-    return rows.rows.map((r) => {
-      const row = r as unknown as { id: string; status: string }
-      return { id: row.id, status: row.status }
-    })
-  } catch (err: unknown) {
-    console.error(
-      `[worktree-dependents] lookup failed for task ${taskId}; assuming none:`,
-      err,
-    )
-    return []
-  }
+    args: [taskId, ...terminal, ...matchingValues],
+  })
+  return rows.rows.map((r) => {
+    const row = r as unknown as { id: string; status: string }
+    return { id: row.id, status: row.status }
+  })
 }

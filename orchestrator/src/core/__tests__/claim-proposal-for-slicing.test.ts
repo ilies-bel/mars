@@ -89,6 +89,28 @@ describe('claimProposalForSlicing — atomic CAS on prd-ready', () => {
     expect(after?.status).toBe('draft')
   })
 
+  it('keeps promotion coordination after a daemon restart', async () => {
+    const p = await loadMods(repo)
+    const proposal = await p.createProposal('Start work after slicing', {
+      source: 'human',
+      problem: 'Operators need coordinated slices after promotion',
+      solution: 'Queue slices automatically after they finish',
+    })
+    await p.addProposalUserStory(proposal.id, 'As an operator I can promote work once')
+
+    await p.promoteProposal(proposal.id, { coordinated: true })
+
+    // Re-importing the proposal API models a daemon restart: only row state
+    // should carry the coordination choice through eventual slicing.
+    const restarted = await loadMods(repo)
+    const afterRestart = await restarted.getProposal(proposal.id)
+
+    expect(afterRestart).toMatchObject({
+      status: 'prd-ready',
+      coordinated: true,
+    })
+  })
+
   it('markProposalSliced only flips from slicing — calling it without claim throws', async () => {
     // The complementary CAS in markProposalSliced: only the caller that
     // holds the 'slicing' claim can complete the transition to 'sliced'.

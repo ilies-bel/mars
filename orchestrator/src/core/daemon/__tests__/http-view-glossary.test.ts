@@ -177,7 +177,7 @@ describe('GET /view/glossary', () => {
     )) as typeof import('../../lib/run-tool')
     const appServices = createAppServices({
       traceStore: nts,
-      buildAlertSources: async () => ({ listFailedArcs: async () => [], listStaleWorktrees: async () => [] }),
+      buildAlertSources: async () => ({ listFailedArcs: async () => [], listStaleWorktrees: async () => [], listVerifyUncovered: async () => [] }),
     })
 
     const result = await appServices.viewGlossary()

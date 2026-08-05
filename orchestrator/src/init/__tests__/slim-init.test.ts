@@ -15,7 +15,7 @@ import { writeSlimInit } from '../writer'
 const slimInputFor = (root: string) => ({
   repoRoot: root,
   contextPath: resolve(root, 'CONTEXT.md'),
-  adrDir: resolve(root, 'docs', 'adr'),
+  adrDir: resolve(root, 'docs', 'knowledge', 'decisions'),
 })
 
 describe('writeSlimInit', () => {
@@ -50,10 +50,10 @@ describe('writeSlimInit', () => {
     expect(readFileSync(contextPath, 'utf8')).toBe(existing)
   })
 
-  it('creates the docs/adr/ scaffold directory', () => {
+  it('creates the docs/knowledge/decisions/ scaffold directory', () => {
     writeSlimInit(slimInputFor(root))
 
-    const adrDir = resolve(root, 'docs', 'adr')
+    const adrDir = resolve(root, 'docs', 'knowledge', 'decisions')
     expect(existsSync(adrDir)).toBe(true)
   })
 

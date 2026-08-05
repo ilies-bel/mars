@@ -24,6 +24,8 @@ export interface HeartbeatHandle {
 
 export interface HeartbeatDeps {
   db: DbClient
+  /** Receives non-fatal heartbeat write failures while the daemon is running. */
+  log?: (message: string) => void
   /** Injectable for tests; defaults to `() => new Date()`. */
   now?: () => Date
   /**
@@ -51,6 +53,7 @@ export const startHeartbeatWriter = async (
   const prevGapMs = deps.prevGapMs ?? null
   let dispatchUptimeMs = deps.dispatchUptimeMs ?? 0
   let dispatchEnabled = false
+  let stopped = false
   let lastObservedMs = now().getTime()
 
   const settleDispatchUptime = (): number => {
@@ -87,17 +90,27 @@ export const startHeartbeatWriter = async (
     })
   }
 
+  const reportWriteFailure = (err: unknown): void => {
+    if (!stopped) {
+      const message = err instanceof Error ? err.message : String(err)
+      deps.log?.(`[heartbeat] write failed (non-fatal): ${message}`)
+    }
+  }
+
   const timer = setInterval(() => {
     const timestamp = now()
     const uptimeMs = settleDispatchUptime()
-    void persistHeartbeat(timestamp, uptimeMs)
+    void persistHeartbeat(timestamp, uptimeMs).catch(reportWriteFailure)
   }, intervalMs)
 
   // Do not hold the event loop open once the daemon shuts down.
   timer.unref()
 
   return {
-    stop: () => clearInterval(timer),
+    stop: () => {
+      stopped = true
+      clearInterval(timer)
+    },
     flush: async () => {
       const timestamp = now()
       await persistHeartbeat(timestamp, settleDispatchUptime())
@@ -106,7 +119,7 @@ export const startHeartbeatWriter = async (
       const timestamp = now()
       const uptimeMs = settleDispatchUptime()
       dispatchEnabled = enabled
-      void persistHeartbeat(timestamp, uptimeMs)
+      void persistHeartbeat(timestamp, uptimeMs).catch(reportWriteFailure)
     },
     getDispatchUptimeMs: () => settleDispatchUptime(),
   }

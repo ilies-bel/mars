@@ -16,6 +16,7 @@ import {
   parseTaskSpec,
   parseBlockedBy,
   parseTags,
+  hasFlag,
   resolvePlanText,
   resolvePromptSource,
   type TaskSpec,
@@ -128,11 +129,9 @@ export const taskAdd: Command = {
     { syntax: '--workflow <name>', description: 'select the dispatch pipeline' },
   ],
   run: async (args, deps) => {
-    // `--live` is valueless, so the parser leaves it in positional; strip it
-    // before prompt resolution or it would be joined into a literal prompt.
-    const live = args.positional.includes('--live')
-    const deferrableFlag = args.positional.includes('--deferrable')
-    const positional = args.positional.filter((a) => a !== '--live' && a !== '--deferrable')
+    const live = hasFlag(args, '--live')
+    const deferrableFlag = hasFlag(args, '--deferrable')
+    const positional = args.positional
     const unknownFlag = positional.find((arg) => arg.startsWith('--'))
     if (unknownFlag !== undefined) {
       deps.err(`[mars] error: unknown flag ${unknownFlag}; use --merge auto|gated`)
@@ -213,9 +212,7 @@ export const taskAdd: Command = {
       qa = qaRaw
     }
 
-    const deferrable = args.positional.includes('--deferrable') || positional.includes('--deferrable')
-      ? true
-      : undefined
+    const deferrable = hasFlag(args, '--deferrable') ? true : undefined
 
     return enqueueViaDaemon(deps, args.flags, {
       prompt,
@@ -347,8 +344,8 @@ export const taskShow: Command = {
   summary: 'show a single task',
   usage: 'usage: mars task show <id> [--json]',
   run: async (args, deps) => {
-    const emitJson = args.positional.includes('--json')
-    const id = args.positional.filter((a) => a !== '--json')[0]
+    const emitJson = hasFlag(args, '--json')
+    const id = args.positional[0]
     if (!id) {
       deps.err('usage: mars task show <id> [--json]')
       return { code: 2 }
@@ -458,7 +455,6 @@ export const taskCheck: Command = {
   summary: 'toggle a done-criterion check state (1-based index)',
   usage: 'usage: mars task check <id> <n> [--uncheck]',
   run: async (args, deps) => {
-    const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
     const positionals = args.positional.filter((a) => !a.startsWith('--'))
     const id = positionals[0]
     const indexRaw = positionals[1]
@@ -471,7 +467,7 @@ export const taskCheck: Command = {
       deps.err(`criterion index must be a positive integer; got ${indexRaw}`)
       return { code: 1 }
     }
-    const uncheck = flagSet.has('--uncheck')
+    const uncheck = hasFlag(args, '--uncheck')
     const author = detectOriginSession() ?? 'cli'
     try {
       await deps.daemon.sendRequest({
@@ -485,6 +481,35 @@ export const taskCheck: Command = {
     } catch (error: unknown) {
       deps.err(errorMessage(error))
       return { code: 1 }
+    }
+    return { code: 0 }
+  },
+}
+
+export const taskStop: Command = {
+  path: 'task stop',
+  summary: 'stop running tasks while preserving their worktrees',
+  usage: 'usage: mars task stop <id> [<id> ...]',
+  helpBody: `mars task stop <id> [<id> ...]
+
+Stops each currently in-flight task, terminating its provider subprocess while
+preserving its worktree, branch, and commits. Stopped tasks are marked failed
+with a cancellation reason and can be resumed with \`mars continue <id>\`.
+Stops at the first error.`,
+  run: async (args, deps) => {
+    const ids = args.positional.filter((arg) => !arg.startsWith('--'))
+    if (ids.length === 0) {
+      deps.err('usage: mars task stop <id> [<id> ...]')
+      return { code: 2 }
+    }
+    for (const id of ids) {
+      try {
+        await deps.daemon.sendRequest({ op: 'stop-task', id })
+      } catch (error: unknown) {
+        deps.err(`${id}: ${errorMessage(error)}`)
+        return { code: 1 }
+      }
+      deps.out(`stopped ${id}; worktree and branch preserved — run 'mars continue ${id}' to resume`)
     }
     return { code: 0 }
   },
@@ -530,9 +555,9 @@ export const taskAsk: Command = {
 export const taskGroup: Command = {
   path: 'task',
   summary: 'task subcommands',
-  usage: 'usage: mars task <add|ask|show|priority|note|check> ...',
+  usage: 'usage: mars task <add|ask|show|priority|note|check|stop> ...',
   run: (_args, deps) => {
-    deps.err('usage: mars task <add|ask|show|priority|note|check> ...')
+    deps.err('usage: mars task <add|ask|show|priority|note|check|stop> ...')
     return { code: 2 }
   },
 }
@@ -544,5 +569,6 @@ export const taskCommands: readonly Command[] = [
   taskPriority,
   taskNote,
   taskCheck,
+  taskStop,
   taskGroup,
 ]

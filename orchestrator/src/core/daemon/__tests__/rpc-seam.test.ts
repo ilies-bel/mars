@@ -98,6 +98,7 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     setTaskPriority: notImpl('setTaskPriority') as DaemonDeps['setTaskPriority'],
     handleUpdate: notImpl('handleUpdate') as DaemonDeps['handleUpdate'],
     handleContinue: notImpl('handleContinue') as DaemonDeps['handleContinue'],
+    handleStop: notImpl('handleStop') as DaemonDeps['handleStop'],
     handleRestart: notImpl('handleRestart') as DaemonDeps['handleRestart'],
     handleRemerge: notImpl('handleRemerge') as DaemonDeps['handleRemerge'],
     handlePurge: notImpl('handlePurge') as DaemonDeps['handlePurge'],
@@ -110,7 +111,6 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     runSync: notImpl('runSync') as DaemonDeps['runSync'],
     handleProposalPromote: notImpl('handleProposalPromote') as DaemonDeps['handleProposalPromote'],
     handleProposalSlice: notImpl('handleProposalSlice') as DaemonDeps['handleProposalSlice'],
-    handleProposalApprove: notImpl('handleProposalApprove') as DaemonDeps['handleProposalApprove'],
     handleProposalReslice: notImpl('handleProposalReslice') as DaemonDeps['handleProposalReslice'],
     handleProposalTake: notImpl('handleProposalTake') as DaemonDeps['handleProposalTake'],
     handleRefine: notImpl('handleRefine') as DaemonDeps['handleRefine'],
@@ -140,7 +140,7 @@ describe('RPC registry', () => {
   it('registers exactly one leaf per protocol op, no duplicates', () => {
     // Every handler op is unique (buildRpcRegistry throws on dup).
     expect(() => buildRpcRegistry(allRpcHandlers)).not.toThrow()
-    // Spot-check the count matches the 45-op protocol surface
+    // Stop-task adds one leaf to the existing registry surface.
     // (35 + preview.spawn + preview.status + preview.teardown + merge.cancel
     //  + spend-control.show + spend-control.set + apply-lever + task.contextForWorker
     //  + mcp.audit.append + set-dispatch).
@@ -158,6 +158,16 @@ describe('dispatchRpc routing', () => {
     const { deps } = makeDeps()
     const res = await dispatchRpc(rpcRegistry, { op: 'ping' }, deps)
     expect(res).toEqual({ ok: true, data: { pid: process.pid } })
+  })
+
+  it('returns a clear error when stopping a task that is not in flight', async () => {
+    const { deps } = makeDeps({
+      handleStop: vi.fn().mockRejectedValue(new Error('task mars-id is not in flight')),
+    })
+
+    const res = await dispatchRpc(rpcRegistry, { op: 'stop-task', id: 'mars-id' }, deps)
+
+    expect(res).toEqual({ ok: false, error: 'task mars-id is not in flight' })
   })
 
   it('an unknown op returns ok:false with an "unknown op" error', async () => {

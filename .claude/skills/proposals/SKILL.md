@@ -98,9 +98,10 @@ is shown. Then offer the four draft-side actions via **one**
   into a PRD. Use when the draft is still rough and needs sharpening
   against the project's domain model.
 - **Promote** — `mars proposal promote <id>`. Flips status from `draft`
-  to `prd-ready`. Only valid once the proposal is already shaped (has
-  problem / solution / user stories). Slicing creates the underlying
-  tasks separately; this verb does not enqueue.
+  to `prd-ready` and automatically starts slicing. Once the proposal is
+  sliced, its tasks are immediately queued or blocked by their dependencies.
+  Only valid once the proposal is already shaped (has problem / solution /
+  user stories).
 - **Dismiss** — `mars proposal dismiss <id>`. Flips status to `dismissed`
   while keeping the row for history. Use when the proposal is no longer
   worth pursuing.

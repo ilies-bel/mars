@@ -141,6 +141,7 @@ export interface DaemonDeps {
   setTaskPriority(id: string, priority: number): Promise<Task>
   handleUpdate(id: string, patch: DaemonUpdatePatch): Promise<void>
   handleContinue(id: string): Promise<ContinueResult>
+  handleStop(id: string): Promise<void>
   handleRestart(id: string, force?: boolean): Promise<{ status: 'queued' | 'blocked' }>
   handleRemerge(id: string): Promise<{ status: 'queued' }>
   handlePurge(id: string, force: boolean): Promise<{ compensationTaskId?: string }>
@@ -166,15 +167,13 @@ export interface DaemonDeps {
   handleProposalPromote(
     proposalId: string,
     priority?: number,
+    coordinated?: boolean,
   ): Promise<{ proposalId: string; status: string }>
   handleProposalSlice(
     proposalId: string,
     resliceFeedback?: string,
     priority?: number,
   ): Promise<{ proposalId: string; status: string; taskIds: string[] }>
-  handleProposalApprove(
-    proposalId: string,
-  ): Promise<{ proposalId: string; queuedCount: number; blockedCount: number }>
   handleProposalReslice(
     proposalId: string,
     feedback: string,

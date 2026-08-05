@@ -45,6 +45,7 @@ const makeServices = (
     buildAlertSources: async () => ({
       listFailedArcs: async () => [],
       listStaleWorktrees: async () => [],
+      listVerifyUncovered: async () => [],
     }),
     loadWorkerDeclarations: () => [],
     listAwaitingHumanParks: async () => [],
