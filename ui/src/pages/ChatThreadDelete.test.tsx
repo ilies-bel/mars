@@ -8,8 +8,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThreadSidebar } from './ChatPage'
 
 vi.mock('@/shared/api', () => ({
-  fetchChatLayoutPreference: vi.fn().mockResolvedValue({ layout: 'focus' }),
-  putChatLayoutPreference: vi.fn().mockResolvedValue({ layout: 'focus' }),
   fetchActionQueue: vi.fn().mockResolvedValue([]),
   fetchChatThreads: vi.fn().mockResolvedValue([{
     id: 't1', title: 'First subthread', status: 'idle',

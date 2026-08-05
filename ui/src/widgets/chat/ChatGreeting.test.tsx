@@ -58,8 +58,15 @@ const openWork: OpenWorkItem[] = [
   { source: 'blocked-task', id: 'task-1', task: blockedTask('task-1', 'Release is blocked'), priority: 2, at: '2026-01-01T00:00:00.000Z' },
 ]
 
+const manyOpenWork: OpenWorkItem[] = [
+  ...openWork,
+  { source: 'alert', id: 'alert-2', item: alert('alert-2', 'Rebuild index'), priority: 2, at: '2026-01-01T00:00:00.000Z' },
+  { source: 'alert', id: 'alert-3', item: alert('alert-3', 'Rotate credentials'), priority: 1, at: '2026-01-01T00:00:00.000Z' },
+  { source: 'alert', id: 'alert-4', item: alert('alert-4', 'Prune worktrees'), priority: 1, at: '2026-01-01T00:00:00.000Z' },
+]
+
 describe('ChatGreeting', () => {
-  it('names only the highest-ranked open-work item and reports every remaining open item', () => {
+  it('briefs the operator in prose: how many subjects, where to start and why', () => {
     const container = document.createElement('div')
     const root = createRoot(container)
 
@@ -74,16 +81,54 @@ describe('ChatGreeting', () => {
       )
     })
 
-    expect(container.textContent).toContain('Repair deployment')
-    expect(container.textContent).not.toContain('Release is blocked')
+    expect(container.textContent).toContain('2 subjects need you.')
+    expect(container.textContent).toContain('Start with Repair deployment \u2014 it failed and needs a decision.')
+    expect(container.textContent).toContain('After that, Release is blocked.')
+    expect(container.textContent).toContain('2 drafts are also waiting to be shaped.')
     expect(container.textContent).not.toContain('Proposal 1')
     expect(container.querySelectorAll('[data-testid="chat-greeting-next-move"]')).toHaveLength(1)
-    expect(container.querySelector('[data-testid="chat-greeting-remaining"]')?.textContent).toContain('3 more')
+    // Everything named inline, so nothing is deferred to Context.
+    expect(container.querySelector('[data-testid="chat-greeting-remaining"]')).toBeNull()
 
     act(() => root.unmount())
   })
 
-  it('opens its named item and sends remaining work to the context rail', () => {
+  it('names a blocked task with its own reason rather than the failure phrasing', () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    act(() => {
+      root.render(
+        <ChatGreeting rankedOpenWork={[openWork[1]!]} proposals={[]} onOpenWork={() => {}} onShowRail={() => {}} />,
+      )
+    })
+
+    expect(container.textContent).toBe(
+      "One subject needs you. Start with Release is blocked \u2014 it's blocked and can't move on its own.",
+    )
+
+    act(() => root.unmount())
+  })
+
+  it('names two follow-ups and defers the tail to Context', () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    act(() => {
+      root.render(
+        <ChatGreeting rankedOpenWork={manyOpenWork} proposals={[]} onOpenWork={() => {}} onShowRail={() => {}} />,
+      )
+    })
+
+    expect(container.textContent).toContain('5 subjects need you.')
+    expect(container.textContent).toContain('After that, Release is blocked and Rebuild index')
+    expect(container.textContent).toContain('2 more open items in Context.')
+    expect(container.textContent).not.toContain('Rotate credentials')
+
+    act(() => root.unmount())
+  })
+
+  it('opens any named subject and sends the unnamed tail to the context rail', () => {
     const onOpenWork = vi.fn()
     const onShowRail = vi.fn()
     const container = document.createElement('div')
@@ -91,12 +136,15 @@ describe('ChatGreeting', () => {
 
     act(() => {
       root.render(
-        <ChatGreeting rankedOpenWork={openWork} proposals={[]} onOpenWork={onOpenWork} onShowRail={onShowRail} />,
+        <ChatGreeting rankedOpenWork={manyOpenWork} proposals={[]} onOpenWork={onOpenWork} onShowRail={onShowRail} />,
       )
     })
 
     act(() => (container.querySelector('[data-testid="chat-greeting-next-move"]') as HTMLButtonElement).click())
-    expect(onOpenWork).toHaveBeenCalledWith(openWork[0])
+    expect(onOpenWork).toHaveBeenCalledWith(manyOpenWork[0])
+
+    act(() => (container.querySelector('[data-testid="chat-greeting-follow-up-alert-2"]') as HTMLButtonElement).click())
+    expect(onOpenWork).toHaveBeenCalledWith(manyOpenWork[2])
 
     act(() => (container.querySelector('[data-testid="chat-greeting-remaining"]') as HTMLButtonElement).click())
     expect(onShowRail).toHaveBeenCalledTimes(1)
@@ -122,7 +170,8 @@ describe('ChatGreeting', () => {
       )
     })
 
-    expect(container.textContent).toContain('All clear.')
+    expect(container.textContent).toContain('Nothing is failing or blocked right now.')
+    expect(container.textContent).toContain('2 drafts are waiting to be shaped')
     expect(container.querySelectorAll('[data-testid^="preloaded-response-"]')).toHaveLength(1)
     expect(container.textContent).toContain('Grill:')
     act(() => (container.querySelector('[data-testid^="preloaded-response-"]') as HTMLButtonElement).click())
@@ -156,7 +205,7 @@ describe('ChatGreeting', () => {
     act(() => root.unmount())
   })
 
-  it('renders only the terse all-clear sentence when no work or drafts remain', () => {
+  it('renders only the all-clear sentence when no work or drafts remain', () => {
     const container = document.createElement('div')
     const root = createRoot(container)
 
@@ -164,7 +213,7 @@ describe('ChatGreeting', () => {
       root.render(<ChatGreeting rankedOpenWork={[]} proposals={[]} onOpenWork={() => {}} onShowRail={() => {}} />)
     })
 
-    expect(container.textContent).toBe('All clear.')
+    expect(container.textContent).toBe('All clear \u2014 nothing needs you right now.')
     expect(container.querySelector('[data-testid="preloaded-responses"]')).toBeNull()
     act(() => root.unmount())
   })

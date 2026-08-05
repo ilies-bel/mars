@@ -34,8 +34,6 @@ vi.mock('@/shared/useMarsChat', () => ({
   }),
 }))
 vi.mock('@/shared/api', () => ({
-  fetchChatLayoutPreference: vi.fn().mockResolvedValue({ layout: 'focus' }),
-  putChatLayoutPreference: vi.fn().mockResolvedValue({ layout: 'focus' }),
   fetchChatThreads: vi.fn().mockResolvedValue([]), fetchChatThread,
   fetchChatConversation: vi.fn().mockResolvedValue({ entries: [], boundaries: [], memoryStartsAfterSeq: 0, memoryCutAt: null, memoryCutReason: null }), fetchChatHistory: vi.fn().mockResolvedValue([]),
   fetchCodexAuthState: vi.fn().mockResolvedValue(null), refreshCodexAuth: vi.fn().mockResolvedValue(null),

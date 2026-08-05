@@ -43,7 +43,6 @@ const renderPage = (
   items: ActionQueueItem[],
   threads: ChatThread[],
   needsCodexAuth = false,
-  layout: 'focus' | 'threads' = 'threads',
 ): string => {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Infinity } },
@@ -51,7 +50,6 @@ const renderPage = (
   qc.setQueryData(['action-queue', null], items)
   qc.setQueryData(['action-queue-history', null], { rows: [], nextCursor: null })
   qc.setQueryData(['chat-threads', undefined], threads)
-  qc.setQueryData(['preferences', 'chat-layout'], { layout })
   if (needsCodexAuth) qc.setQueryData(['codex-auth', undefined], { needsAuth: true })
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>

@@ -1085,18 +1085,6 @@ export const startServer = async (
           return jsonResponse(result.status, result.body)
         }
 
-        if (path === '/api/preferences/chat-layout' && req.method === 'GET') {
-          const result = await proxyGet(ctx.stateDir, '/preferences/chat-layout')
-          return jsonResponse(result.status, result.body)
-        }
-
-        if (path === '/api/preferences/chat-layout' && req.method === 'PUT') {
-          let body: unknown = {}
-          try { body = await req.json() } catch { /* daemon validates malformed input */ }
-          const result = await proxyPost(ctx.stateDir, '/preferences/chat-layout', body, 'PUT')
-          return jsonResponse(result.status, result.body)
-        }
-
         // POST /api/alerts/:arcId/thread — pull an Alert into a chat thread
         // (slice 4, ADR-0048). Checked before the bare GET /api/alerts so the
         // thread route matches first. The daemon is the sole writer (ADR-0035);
