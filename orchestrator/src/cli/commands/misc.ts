@@ -66,16 +66,26 @@ const uiStatus: Command = {
 const uiLaunch: Command = {
   path: 'ui',
   summary: 'launch the read-only Kanban + trace dashboard',
-  usage: 'usage: mars ui [--port <p>] [--host <h>] [--dev]',
+  usage: 'usage: mars ui [--port <n>] [--host <h>] [--dev]',
+  flags: [
+    { syntax: '--port <n>', description: 'HTTP port (default: 7777)' },
+    { syntax: '--host <h>', description: 'bind address (default: 127.0.0.1)' },
+    { syntax: '--dev', description: 'development mode (API + Vite dev server)' },
+  ],
   run: async (args, deps) => {
     // Intercept --help / -h before any side effects. This mirrors what
     // cli.ts does at the top level, and is the per-command defence so the
     // in-process test adapter (which bypasses cli.ts) exercises the same path.
     if (hasFlag(args, '--help') || hasFlag(args, '-h')) {
       deps.out(
-        'mars ui [--port <p>] [--host <h>] [--dev]\n' +
+        'mars ui [--port <n>] [--host <h>] [--dev]\n' +
           '\n' +
           'launch the read-only Kanban + trace dashboard\n' +
+          '\n' +
+          'Flags:\n' +
+          '  --port <n>      HTTP port (default: 7777)\n' +
+          '  --host <h>      bind address (default: 127.0.0.1)\n' +
+          '  --dev           development mode (API + Vite dev server)\n' +
           '\n' +
           'Subcommands:\n' +
           '  mars ui stop    stop the read-only UI server\n' +
@@ -90,11 +100,11 @@ const uiLaunch: Command = {
     const unknownFlags = args.positional.filter((t) => t.startsWith('-'))
     if (unknownFlags.length > 0) {
       deps.err(`mars ui: unknown flag: ${unknownFlags[0]!}`)
-      deps.err('usage: mars ui [--port <p>] [--host <h>] [--dev]')
+      deps.err('usage: mars ui [--port <n>] [--host <h>] [--dev]')
       return { code: 1 }
     }
     const { launchUi } = await import('../ui')
-    launchUi({
+    await launchUi({
       repo: args.repo,
       port: args.flags['--port'],
       host: args.flags['--host'],
