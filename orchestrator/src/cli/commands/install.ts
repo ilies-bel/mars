@@ -49,6 +49,11 @@ const KNOWN_MARS_OVERRIDE_NOTES: ReadonlyMap<string, string> = new Map([
   ['MARS_CHAT_EFFORT', 'chat reasoning effort override (default: high)'],
   ['MARS_CHAT_MAX_TOOL_TURNS', 'chat max tool turns per run override (default: 40)'],
   ['MARS_CHAT_REQUEST_TIMEOUT_MS', 'chat per-run wall-clock timeout override in ms (default: 600000)'],
+  ['MARS_AGENT_IDLE_SECONDS', 'reaper: agent-session idle window before reaping (default: 900)'],
+  [
+    'MARS_AGENT_MAX_AGE_SECONDS',
+    'reaper: hard wall-clock cap on agent sessions (default: infinite — idleness is the only rule)',
+  ],
 ])
 
 /**
