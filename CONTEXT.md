@@ -540,7 +540,7 @@ A labelled next move rendered inline in the chat feed as a tap-sized chip, stand
 _Avoid_: quick reply, suggestion chip, action button, canned reply
 
 **Subject boundary**:
-The state of the chat feed when no Subject is active, where preloaded responses offer the ranked next Subjects and free text opens a new one.
+The state of the chat feed when no Subject is active, where Cards offer the ranked next Subjects and free text is answered in the main thread rather than opening one.
 _Avoid_: handoff, seam, thread break, context reload point
 
 **Autonomy level**:
