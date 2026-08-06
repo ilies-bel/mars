@@ -1533,3 +1533,88 @@ export const wywaDeltaResponseSchema = z.object({
 
 export type WywaEvent = z.infer<typeof wywaEventSchema>
 export type WywaDeltaResponse = z.infer<typeof wywaDeltaResponseSchema>
+
+// ----------------------------------------------------------------------------
+// Deep reflection reports (GET /api/deep-reflections and
+// GET /api/deep-reflections/:originId). Arc-level analyses produced by
+// `mars arc reflect` and written to .mars/deep-reflections/arc-*.json.
+// ----------------------------------------------------------------------------
+
+export const deepReflectionSummarySchema = z.object({
+  originId: z.string(),
+  recordedAt: z.string(),
+  status: z.string(),
+  totalToolCalls: z.number(),
+  dissonantCallCount: z.number(),
+  verifyMismatchCount: z.number(),
+  thrashingPatternCount: z.number(),
+  verdictResult: z.object({
+    saved: z.number(),
+    absorbed: z.number(),
+    dropped: z.number(),
+  }),
+})
+
+export const reflectionDissonantCallSchema = z.object({
+  taskId: z.string().nullable(),
+  eventIndex: z.number(),
+  tool: z.string(),
+  statedIntent: z.string(),
+  actualOutcome: z.string(),
+  severity: z.string(),
+  evidence: z.string(),
+})
+
+export const reflectionVerifyMismatchSchema = z.object({
+  taskId: z.string(),
+  claimed: z.string(),
+  actual: z.string(),
+  severity: z.string(),
+})
+
+export const reflectionThrashingPatternSchema = z.object({
+  pattern: z.string(),
+  occurrences: z.number(),
+  evidence: z.string(),
+})
+
+export const deepReflectionDetailSchema = deepReflectionSummarySchema.extend({
+  sourceTaskId: z.string().nullable(),
+  autoReflect: z.enum(['on', 'off']),
+  autoTrigger: z.boolean(),
+  report: z.object({
+    summary: z.string(),
+    rootCause: z.string(),
+    toolCallStats: z.object({
+      total: z.number(),
+      byName: z.record(z.string(), z.number()),
+    }),
+    dissonantCalls: z.array(reflectionDissonantCallSchema),
+    verifyMismatch: reflectionVerifyMismatchSchema.nullable(),
+    verifyMismatches: z.array(reflectionVerifyMismatchSchema),
+    thrashingPatterns: z.array(reflectionThrashingPatternSchema),
+    suggestions: z.array(
+      z.object({
+        title: z.string(),
+        prompt: z.string(),
+        rationale: z.string(),
+        verdict: z.string(),
+        targetId: z.string().nullable(),
+      }),
+    ),
+  }).nullable(),
+})
+
+export const deepReflectionsListResponseSchema = z.object({
+  reports: z.array(deepReflectionSummarySchema),
+  autoReflect: z.enum(['on', 'off']),
+  autoTrigger: z.boolean(),
+  lastReflectedAt: z.string().nullable(),
+})
+
+export type DeepReflectionSummary = z.infer<typeof deepReflectionSummarySchema>
+export type DeepReflectionDetail = z.infer<typeof deepReflectionDetailSchema>
+export type ReflectionDissonantCall = z.infer<typeof reflectionDissonantCallSchema>
+export type ReflectionVerifyMismatch = z.infer<typeof reflectionVerifyMismatchSchema>
+export type ReflectionThrashingPattern = z.infer<typeof reflectionThrashingPatternSchema>
+export type DeepReflectionsListResponse = z.infer<typeof deepReflectionsListResponseSchema>

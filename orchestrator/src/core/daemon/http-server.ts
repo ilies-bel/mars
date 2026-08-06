@@ -306,6 +306,87 @@ export interface StaleWorktreeAlert {
 }
 
 /**
+ * One dissonant tool call — a call whose stated intent diverged from its
+ * actual outcome, flagged by the reflection pipeline.
+ */
+export interface ReflectionDissonantCall {
+  taskId: string | null
+  eventIndex: number
+  tool: string
+  statedIntent: string
+  actualOutcome: string
+  severity: string
+  evidence: string
+}
+
+/** One verify mismatch — a task that claimed success but the verify step disagreed. */
+export interface ReflectionVerifyMismatch {
+  taskId: string
+  claimed: string
+  actual: string
+  severity: string
+}
+
+/** One thrashing pattern detected in the arc. */
+export interface ReflectionThrashingPattern {
+  pattern: string
+  occurrences: number
+  evidence: string
+}
+
+/**
+ * Summary row for GET /view/deep-reflections — one entry per arc report file,
+ * newest-first. Includes only the headline counts so the list view is cheap.
+ */
+export interface DeepReflectionSummary {
+  originId: string
+  recordedAt: string
+  status: string
+  totalToolCalls: number
+  dissonantCallCount: number
+  verifyMismatchCount: number
+  thrashingPatternCount: number
+  verdictResult: { saved: number; absorbed: number; dropped: number }
+}
+
+/**
+ * Full report returned by GET /view/deep-reflections/:originId — includes the
+ * complete report body for the detail view. `report` is null when `status` is
+ * not 'complete' (pending / error / partial reports).
+ */
+export interface DeepReflectionDetail extends DeepReflectionSummary {
+  sourceTaskId: string | null
+  autoReflect: 'on' | 'off'
+  autoTrigger: boolean
+  report: {
+    summary: string
+    rootCause: string
+    toolCallStats: { total: number; byName: Record<string, number> }
+    dissonantCalls: ReflectionDissonantCall[]
+    verifyMismatch: ReflectionVerifyMismatch | null
+    verifyMismatches: ReflectionVerifyMismatch[]
+    thrashingPatterns: ReflectionThrashingPattern[]
+    suggestions: Array<{
+      title: string
+      prompt: string
+      rationale: string
+      verdict: string
+      targetId: string | null
+    }>
+  } | null
+}
+
+/**
+ * Wire shape for GET /view/deep-reflections — the list response.
+ */
+export interface DeepReflectionsListResult {
+  reports: DeepReflectionSummary[]
+  autoReflect: 'on' | 'off'
+  autoTrigger: boolean
+  lastReflectedAt: string | null
+}
+
+/**
  * Handlers the daemon supplies for each recovery verb the local HTTP server
  * exposes. Each should throw {@link RestartTaskError} (with `code` set to
  * `'NOT_FOUND'` or `'WRONG_STATUS'`) for known validation failures; any other
@@ -1405,6 +1486,48 @@ export const startHttpServer = async (
       deps.appServices
         .viewArcs(opts)
         .then((candidates) => sendJson(res, 200, candidates))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/deep-reflections/:originId — full detail for one arc reflection
+    // report, including the complete report body, dissonant calls, verify
+    // mismatches, and thrashing patterns. Returns 404 when no matching report
+    // file is found. Pure read; no draining gate.
+    {
+      const drMatch = req.method === 'GET' && req.url
+        ? req.url.match(/^\/view\/deep-reflections\/([^/?]+)(?:\?.*)?$/)
+        : null
+      if (drMatch && drMatch[1]) {
+        const originId = decodeURIComponent(drMatch[1])
+        deps.appServices
+          .viewDeepReflection(originId)
+          .then((detail) => {
+            if (detail === null) {
+              sendJson(res, 404, { ok: false, error: 'report not found' })
+            } else {
+              sendJson(res, 200, detail)
+            }
+          })
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
+    // GET /view/deep-reflections?limit=N — list all arc reflection reports,
+    // newest-first, with headline counts. Reads from .mars/deep-reflections/.
+    // Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/deep-reflections')) {
+      const parsed = new URL(req.url, 'http://localhost')
+      const opts: { limit?: number } = {}
+      const limitRaw = parsed.searchParams.get('limit')
+      if (limitRaw !== null) {
+        const n = Number.parseInt(limitRaw, 10)
+        if (Number.isFinite(n) && n > 0) opts.limit = n
+      }
+      deps.appServices
+        .viewDeepReflections(opts)
+        .then((result) => sendJson(res, 200, result))
         .catch((err: unknown) => sendError(res, err))
       return
     }
