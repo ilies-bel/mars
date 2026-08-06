@@ -425,7 +425,6 @@ describe('mars proposal take — command coverage', () => {
           implement: makeSem(1),
           triage: makeSem(1),
           refine: makeSem(1),
-          structuredWrite: makeSem(1),
           verify: makeSem(1),
         },
         getAcceptingWork: () => true,

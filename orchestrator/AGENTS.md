@@ -78,10 +78,12 @@ in the dispatcher and `release(sems.<kind>)` in `finally`, then call
 emit-then-dispatch directly from a bus handler — push the id into the
 matching `pending*` set and call `drain()` instead, otherwise reconcile
 or a burst of `task add` calls will spawn one worktree per row and melt
-the host. Caps default to triage=8, implement=12, refine=6,
-structured-write=1; see README "Daemon worker pool" for the env vars.
-Tune them at runtime with `mars daemon reload` (re-reads `MARS_MAX_*`
-without restarting the daemon).
+the host. Caps default to triage=8, implement=12, refine=6; see README
+"Daemon worker pool" for the env vars. Tune them at runtime with
+`mars daemon reload` (re-reads `MARS_MAX_*` without restarting the daemon).
+Document writes (glossary, vision) are serialized per-unit-path by
+`DocumentWriteCoordinator`; ADR writes go to unique numbered files and
+need no coordinator.
 
 ### Never do
 

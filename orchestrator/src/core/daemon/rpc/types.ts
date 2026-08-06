@@ -49,15 +49,14 @@ import type { SpendControlLevers } from '../spend-control/store'
  * caps on these objects via `setSemLimit`, so they must be the same object
  * references `startDaemon` and `drain` hold — not snapshots.
  *
- * `structuredWriteSem` is the single semaphore shared by the `glossary-write`
- * and `adr-add` dispatch kinds; `reload-config` updates it once via this
- * reference.
+ * Document-write dispatch kinds (`glossary-write`, `adr-add`, `vision`) are
+ * coordinated by {@link DocumentWriteCoordinator} rather than a shared
+ * semaphore and therefore do not appear here.
  */
 export interface RpcSemaphores {
   implement: Semaphore
   triage: Semaphore
   refine: Semaphore
-  structuredWrite: Semaphore
   verify: Semaphore
 }
 

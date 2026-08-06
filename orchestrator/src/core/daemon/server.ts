@@ -178,6 +178,7 @@ import { computeBudgetPressure, getBudgetPressureConfig } from '../lib/budget-pr
 import { deleteDeferral, upsertDeferral } from '../lib/deferral-store'
 import { shouldDeferDispatch } from '../lib/dispatch-gate'
 import { startDeferralWakeSweeper } from './deferral-wake-sweeper'
+import { DocumentWriteCoordinator } from './document-write-coordinator'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
@@ -1042,19 +1043,17 @@ export const startDaemon = async (
   // across `mars daemon restart`).
   applyControlLevers(initialConfig.controlLevers)
   const initialCaps = initialConfig.caps
-  const structuredWriteSem = makeSem(initialCaps.structuredWrite)
+  // Document-write dispatch kinds ('glossary-write', 'adr-add', 'vision') are
+  // now coordinated by DocumentWriteCoordinator — no shared semaphore needed.
+  const docCoordinator = new DocumentWriteCoordinator()
   // 'merge' is a tracker-only kind (no per-kind semaphore); excluded here.
-  const sems: Record<Exclude<DispatchKind, 'merge' | 'arc-verify'>, Semaphore> & {
+  // Document-write kinds use docCoordinator rather than semaphores.
+  const sems: Record<Exclude<DispatchKind, 'merge' | 'arc-verify' | 'glossary-write' | 'adr-add' | 'vision'>, Semaphore> & {
     arcVerify: Semaphore
   } = {
     triage: makeSem(initialCaps.triage),
     implement: makeSem(initialCaps.implement),
     refine: makeSem(initialCaps.refine),
-    'glossary-write': structuredWriteSem,
-    'adr-add': structuredWriteSem,
-    // vision-write shares the same single-slot structured-write semaphore so
-    // it serialises behind glossary and adr writes; all contend on the merge lock.
-    vision: structuredWriteSem,
     // Arc verification is best-effort post-merge analysis. Keep its historic
     // single-run cap, but make the run visible to the daemon worker pool.
     arcVerify: makeSem(1),
@@ -1070,7 +1069,7 @@ export const startDaemon = async (
   // sets the initial cap here and updates it on `reload-config`.
   setInstallSemCap(initialCaps.setupInstall)
   log(
-    `concurrency caps: implement=${sems.implement.limit} triage=${sems.triage.limit} refine=${sems.refine.limit} structured-write=${structuredWriteSem.limit} arc-verify=${sems.arcVerify.limit} setup-install=${initialCaps.setupInstall} verify=${verifySem.limit}`,
+    `concurrency caps: implement=${sems.implement.limit} triage=${sems.triage.limit} refine=${sems.refine.limit} arc-verify=${sems.arcVerify.limit} setup-install=${initialCaps.setupInstall} verify=${verifySem.limit}`,
   )
   if (restoredOperatorPause) {
     log(
@@ -1847,57 +1846,60 @@ export const startDaemon = async (
     surfaceForms?: readonly string[]
   }): Promise<void> => {
     const synthetic = `glossary-write:${req.kind}:${req.term}:${Date.now()}`
-    await acquire(sems['glossary-write'])
     const releaseTracking = tracker.commitInFlight(synthetic, 'glossary-write')
     log(`[glossary-write] ${req.kind} "${req.term}" dispatching`)
     try {
-      const { runStructuredWrite } = await import('../lib/structured-write')
-      const {
-        readGlossaryFile,
-        writeGlossaryFile,
-        upsertTerm,
-        removeTermByName,
-      } = await import('../lib/glossary')
-      const { resolve: resolvePath } = await import('node:path')
+      // Glossary terms are stored in CONTEXT.md; serialize all glossary writes
+      // against that unit path so concurrent term edits don't conflict.
+      await docCoordinator.run('CONTEXT.md', async () => {
+        const { runStructuredWrite } = await import('../lib/structured-write')
+        const {
+          readGlossaryFile,
+          writeGlossaryFile,
+          upsertTerm,
+          removeTermByName,
+        } = await import('../lib/glossary')
+        const { resolve: resolvePath } = await import('node:path')
 
-      const outcome = await runStructuredWrite({
-        kind: 'glossary',
-        commitMessage:
-          req.kind === 'set'
-            ? `glossary: set "${req.term}"`
-            : `glossary: remove "${req.term}"`,
-        integrationBranch,
-        mutate: async (worktreePath) => {
-          const path = resolvePath(worktreePath, 'CONTEXT.md')
-          const doc = await readGlossaryFile(path)
-          if (req.kind === 'set') {
-            const next = upsertTerm(doc, {
-              term: req.term,
-              definition: req.definition ?? '',
-              aliases: req.aliases ?? [],
-              ...(req.surfaceForms ? { surfaceForms: req.surfaceForms } : {}),
-            })
-            await writeGlossaryFile(path, next)
-            return
-          }
-          const { doc: nextDoc, removed } = removeTermByName(doc, req.term)
-          if (!removed) return false
-          await writeGlossaryFile(path, nextDoc)
-        },
-        enqueueMerge: async (mergeArgs) =>
-          enqueueMergeJobAndAwait({
-            store: getDefaultMergeJobStore(),
-            bus,
-            ...mergeArgs,
-          }),
+        const outcome = await runStructuredWrite({
+          kind: 'glossary',
+          commitMessage:
+            req.kind === 'set'
+              ? `glossary: set "${req.term}"`
+              : `glossary: remove "${req.term}"`,
+          integrationBranch,
+          mutate: async (worktreePath) => {
+            const path = resolvePath(worktreePath, 'CONTEXT.md')
+            const doc = await readGlossaryFile(path)
+            if (req.kind === 'set') {
+              const next = upsertTerm(doc, {
+                term: req.term,
+                definition: req.definition ?? '',
+                aliases: req.aliases ?? [],
+                ...(req.surfaceForms ? { surfaceForms: req.surfaceForms } : {}),
+              })
+              await writeGlossaryFile(path, next)
+              return
+            }
+            const { doc: nextDoc, removed } = removeTermByName(doc, req.term)
+            if (!removed) return false
+            await writeGlossaryFile(path, nextDoc)
+          },
+          enqueueMerge: async (mergeArgs) =>
+            enqueueMergeJobAndAwait({
+              store: getDefaultMergeJobStore(),
+              bus,
+              ...mergeArgs,
+            }),
+        })
+        if (outcome.kind === 'aborted') {
+          log(
+            `[glossary-write] ${req.kind} "${req.term}" -> aborted: ${outcome.reason}`,
+          )
+        } else {
+          log(`[glossary-write] ${req.kind} "${req.term}" -> ${outcome.kind}`)
+        }
       })
-      if (outcome.kind === 'aborted') {
-        log(
-          `[glossary-write] ${req.kind} "${req.term}" -> aborted: ${outcome.reason}`,
-        )
-      } else {
-        log(`[glossary-write] ${req.kind} "${req.term}" -> ${outcome.kind}`)
-      }
     } catch (err) {
       // One bad structured-write must NEVER crash the daemon. This dispatcher
       // is invoked fire-and-forget (`void dispatchGlossaryWrite(...)`), so an
@@ -1922,7 +1924,6 @@ export const startDaemon = async (
       })
     } finally {
       releaseTracking()
-      release(sems['glossary-write'])
     }
   }
 
@@ -1931,10 +1932,12 @@ export const startDaemon = async (
     body: string
   }): Promise<void> => {
     const synthetic = `adr-add:${req.title}:${Date.now()}`
-    await acquire(sems['adr-add'])
     const releaseTracking = tracker.commitInFlight(synthetic, 'adr-add')
     log(`[adr-add] "${req.title}" dispatching`)
     try {
+      // Each ADR lands in a unique numbered file (NNNN-slug.md), so concurrent
+      // ADR additions never touch the same path. No coordinator needed — the
+      // atomic file-number allocator (nextAdrNumber) is the sole correctness gate.
       const { runStructuredWrite } = await import('../lib/structured-write')
       const { writeAdrInWorktree } = await import('../lib/adr')
 
@@ -1984,7 +1987,6 @@ export const startDaemon = async (
       })
     } finally {
       releaseTracking()
-      release(sems['adr-add'])
     }
   }
 
@@ -1998,32 +2000,34 @@ export const startDaemon = async (
    */
   const dispatchVisionWrite = async (content: string): Promise<void> => {
     const synthetic = `vision-write:${Date.now()}`
-    await acquire(sems['vision'])
     const releaseTracking = tracker.commitInFlight(synthetic, 'vision')
     log(`[vision-write] dispatching`)
     try {
-      const { runStructuredWrite } = await import('../lib/structured-write')
-      const { writeVisionInWorktree } = await import('../lib/vision')
+      const { VISION_PATH, writeVisionInWorktree } = await import('../lib/vision')
+      // Serialize vision writes against the canonical vision.md unit path.
+      await docCoordinator.run(VISION_PATH, async () => {
+        const { runStructuredWrite } = await import('../lib/structured-write')
 
-      const outcome = await runStructuredWrite({
-        kind: 'vision',
-        commitMessage: 'vision: set product vision',
-        integrationBranch,
-        mutate: async (worktreePath) => {
-          await writeVisionInWorktree(worktreePath, content)
-        },
-        enqueueMerge: async (mergeArgs) =>
-          enqueueMergeJobAndAwait({
-            store: getDefaultMergeJobStore(),
-            bus,
-            ...mergeArgs,
-          }),
+        const outcome = await runStructuredWrite({
+          kind: 'vision',
+          commitMessage: 'vision: set product vision',
+          integrationBranch,
+          mutate: async (worktreePath) => {
+            await writeVisionInWorktree(worktreePath, content)
+          },
+          enqueueMerge: async (mergeArgs) =>
+            enqueueMergeJobAndAwait({
+              store: getDefaultMergeJobStore(),
+              bus,
+              ...mergeArgs,
+            }),
+        })
+        if (outcome.kind === 'aborted') {
+          log(`[vision-write] -> aborted: ${outcome.reason}`)
+        } else {
+          log(`[vision-write] -> ${outcome.kind}`)
+        }
       })
-      if (outcome.kind === 'aborted') {
-        log(`[vision-write] -> aborted: ${outcome.reason}`)
-      } else {
-        log(`[vision-write] -> ${outcome.kind}`)
-      }
     } catch (err) {
       // The vision-write RPC handler awaits this function, so a rejection
       // propagates back to the CLI call site as an error response.
@@ -2045,7 +2049,6 @@ export const startDaemon = async (
       throw err
     } finally {
       releaseTracking()
-      release(sems['vision'])
     }
   }
 
@@ -4234,7 +4237,6 @@ export const startDaemon = async (
       implement: sems.implement,
       triage: sems.triage,
       refine: sems.refine,
-      structuredWrite: structuredWriteSem,
       verify: verifySem,
     },
     getAcceptingWork: () => acceptingWork,

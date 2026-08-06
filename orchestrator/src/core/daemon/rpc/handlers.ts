@@ -227,15 +227,12 @@ const reloadConfigHandler = handler('reload-config', async (_req, deps) => {
   setSemLimit(deps.sems.implement, caps.implement)
   setSemLimit(deps.sems.triage, caps.triage)
   setSemLimit(deps.sems.refine, caps.refine)
-  // structuredWriteSem is shared by 'glossary-write' and 'adr-add';
-  // update once via the captured reference.
-  setSemLimit(deps.sems.structuredWrite, caps.structuredWrite)
   // Install semaphore lives in worktree-install.ts as a module-level singleton;
   // update it via the exported setter so the new cap takes effect immediately.
   setInstallSemCap(caps.setupInstall)
   setSemLimit(deps.sems.verify, caps.verify)
   deps.log(
-    `concurrency reloaded: implement=${caps.implement} triage=${caps.triage} refine=${caps.refine} structured-write=${caps.structuredWrite} setup-install=${caps.setupInstall} verify=${caps.verify}`,
+    `concurrency reloaded: implement=${caps.implement} triage=${caps.triage} refine=${caps.refine} setup-install=${caps.setupInstall} verify=${caps.verify}`,
   )
   void deps.drain()
   return {
@@ -245,7 +242,6 @@ const reloadConfigHandler = handler('reload-config', async (_req, deps) => {
         implement: caps.implement,
         triage: caps.triage,
         refine: caps.refine,
-        'structured-write': caps.structuredWrite,
         'setup-install': caps.setupInstall,
         verify: caps.verify,
       },

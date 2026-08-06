@@ -56,7 +56,6 @@ export interface DaemonCaps {
   implement: number
   triage: number
   refine: number
-  structuredWrite: number
   /** Maximum concurrent worktree dependency installs (MARS_MAX_SETUP_INSTALL). Default 2. */
   setupInstall: number
   /**
@@ -131,7 +130,6 @@ const DEFAULTS: DaemonCaps = {
   implement: 12,
   triage: 8,
   refine: 6,
-  structuredWrite: 1,
   setupInstall: 2,
   verify: 2,
 }
@@ -446,7 +444,6 @@ export const loadDaemonConfig = (): DaemonConfig => {
     implement: envInt('MARS_MAX_IMPLEMENT', DEFAULTS.implement),
     triage: envInt('MARS_MAX_TRIAGE', DEFAULTS.triage),
     refine: envInt('MARS_MAX_REFINE', DEFAULTS.refine),
-    structuredWrite: envInt('MARS_MAX_STRUCTURED_WRITE', DEFAULTS.structuredWrite),
     setupInstall: envInt('MARS_MAX_SETUP_INSTALL', DEFAULTS.setupInstall),
     verify: envInt('MARS_MAX_VERIFY', DEFAULTS.verify),
   }
@@ -509,10 +506,6 @@ export const loadDaemonConfig = (): DaemonConfig => {
       implement: positiveInt(c.implement, envCaps.implement),
       triage: positiveInt(c.triage, envCaps.triage),
       refine: positiveInt(c.refine, envCaps.refine),
-      structuredWrite: positiveInt(
-        c.structuredWrite ?? c['structured-write'],
-        envCaps.structuredWrite,
-      ),
       setupInstall: positiveInt(
         c.setupInstall ?? c['setup-install'],
         envCaps.setupInstall,
@@ -563,7 +556,6 @@ export const loadDaemonConfig = (): DaemonConfig => {
       implement: fileCaps.implement ?? envCaps.implement,
       triage: fileCaps.triage ?? envCaps.triage,
       refine: fileCaps.refine ?? envCaps.refine,
-      structuredWrite: fileCaps.structuredWrite ?? envCaps.structuredWrite,
       setupInstall: fileCaps.setupInstall ?? envCaps.setupInstall,
       verify: fileCaps.verify ?? envCaps.verify,
     },

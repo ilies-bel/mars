@@ -42,7 +42,6 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): DaemonDeps => ({
     implement: makeSem(2),
     triage: makeSem(2),
     refine: makeSem(2),
-    structuredWrite: makeSem(2),
     verify: makeSem(2),
   },
   getAcceptingWork: () => true,

@@ -297,3 +297,80 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
     expect(headAfter).toBe(headBefore)
   })
 })
+
+describe('runStructuredWrite — parallel disjoint writes', () => {
+  /**
+   * These tests prove AC5 of the document-write-coordinator slice:
+   * two structured writes targeting DIFFERENT files both merge cleanly
+   * without invoking the vcs-supervisor (conflictResolved === false).
+   *
+   * They exercise `runStructuredWrite` directly so the coordinator layer
+   * (DocumentWriteCoordinator) is out of scope — these tests focus purely
+   * on the git/merge layer behaviour: disjoint writes never need Vega.
+   */
+
+  let repo: string
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-structured-write-parallel-'))
+    initRepo(repo)
+    process.env.MARS_REPO = repo
+    process.env.INTEGRATION_BRANCH = 'integration'
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.INTEGRATION_BRANCH
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('two disjoint structured writes both merge with conflictResolved === false (no Vega)', async () => {
+    const { runStructuredWrite } = await import('../structured-write')
+
+    // Launch both writes in parallel; they target different files.
+    const [outcomeA, outcomeB] = await Promise.all([
+      runStructuredWrite({
+        kind: 'glossary',
+        commitMessage: 'docs: add file-a',
+        enqueueMerge: realMergeShim,
+        mutate: async (worktreePath) => {
+          await writeFile(resolve(worktreePath, 'file-a.md'), '# File A\n', 'utf8')
+        },
+      }),
+      runStructuredWrite({
+        kind: 'adr',
+        commitMessage: 'docs: add file-b',
+        enqueueMerge: realMergeShim,
+        mutate: async (worktreePath) => {
+          await writeFile(resolve(worktreePath, 'file-b.md'), '# File B\n', 'utf8')
+        },
+      }),
+    ])
+
+    // Both must merge successfully.
+    expect(outcomeA.kind).toBe('merged')
+    expect(outcomeB.kind).toBe('merged')
+
+    // Neither should have required Vega (no conflict on disjoint files).
+    if (outcomeA.kind === 'merged') {
+      expect(outcomeA.conflictResolved).toBe(false)
+    }
+    if (outcomeB.kind === 'merged') {
+      expect(outcomeB.conflictResolved).toBe(false)
+    }
+
+    // Both files must be present on the integration branch.
+    const fileA = execFileSync('git', ['show', 'integration:file-a.md'], {
+      cwd: repo,
+      encoding: 'utf8',
+    })
+    expect(fileA).toContain('File A')
+
+    const fileB = execFileSync('git', ['show', 'integration:file-b.md'], {
+      cwd: repo,
+      encoding: 'utf8',
+    })
+    expect(fileB).toContain('File B')
+  })
+})

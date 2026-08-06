@@ -207,13 +207,12 @@ const daemonReload: Command = {
           implement: number
           triage: number
           refine: number
-          'structured-write': number
           'setup-install': number
           verify: number
         }
       }
       deps.out(
-        `concurrency reloaded: implement=${data.caps.implement} triage=${data.caps.triage} refine=${data.caps.refine} structured-write=${data.caps['structured-write']} setup-install=${data.caps['setup-install']} verify=${data.caps.verify}`,
+        `concurrency reloaded: implement=${data.caps.implement} triage=${data.caps.triage} refine=${data.caps.refine} setup-install=${data.caps['setup-install']} verify=${data.caps.verify}`,
       )
     } catch (err) {
       const msg = errorMessage(err)
@@ -435,7 +434,6 @@ const CAP_NAME_MAP: Readonly<Record<string, string>> = {
   implement: 'implement',
   triage: 'triage',
   refine: 'refine',
-  'structured-write': 'structuredWrite',
   'setup-install': 'setupInstall',
   verify: 'verify',
 }
@@ -478,13 +476,12 @@ const daemonSetCap: Command = {
           implement: number
           triage: number
           refine: number
-          'structured-write': number
           'setup-install': number
           verify: number
         }
       }
       deps.out(
-        `concurrency reloaded: implement=${data.caps.implement} triage=${data.caps.triage} refine=${data.caps.refine} structured-write=${data.caps['structured-write']} setup-install=${data.caps['setup-install']} verify=${data.caps.verify}`,
+        `concurrency reloaded: implement=${data.caps.implement} triage=${data.caps.triage} refine=${data.caps.refine} setup-install=${data.caps['setup-install']} verify=${data.caps.verify}`,
       )
     } catch (err) {
       const msg = errorMessage(err)

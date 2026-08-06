@@ -72,7 +72,6 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
       implement: makeSem(2),
       triage: makeSem(2),
       refine: makeSem(2),
-      structuredWrite: makeSem(2),
       verify: makeSem(2),
     },
     getAcceptingWork: () => state.accepting,
@@ -256,8 +255,10 @@ describe('inline-case leaves reach live closure state', () => {
     expect(deps.sems.implement.limit).toBe(data.caps.implement)
     expect(deps.sems.triage.limit).toBe(data.caps.triage)
     expect(deps.sems.refine.limit).toBe(data.caps.refine)
-    expect(deps.sems.structuredWrite.limit).toBe(data.caps['structured-write'])
     expect(deps.sems.verify.limit).toBe(data.caps.verify)
+    // structured-write is no longer a reload-config cap; document writes are
+    // coordinated per-unit by DocumentWriteCoordinator.
+    expect(data.caps['structured-write']).toBeUndefined()
     expect(state.drained).toBe(1)
   })
 

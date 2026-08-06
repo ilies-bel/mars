@@ -62,7 +62,7 @@ const makeOpts = (
 
 /** A canned reload-config response matching what the daemon sends back. */
 const reloadResponse = {
-  caps: { implement: 8, triage: 8, refine: 6, 'structured-write': 1, 'setup-install': 2, verify: 2 },
+  caps: { implement: 8, triage: 8, refine: 6, 'setup-install': 2, verify: 2 },
 }
 
 const readM = vi.mocked(readDaemonConfigFile)
@@ -178,19 +178,16 @@ describe('daemon set-cap', () => {
     expect(result.err).toHaveLength(0)
   })
 
-  it('maps kebab-case structured-write to camelCase structuredWrite in the JSON', async () => {
-    readM.mockReturnValue({ caps: { structuredWrite: 1 } })
-
-    await runCommandInProcess(
+  it('rejects structured-write as an unknown cap name (removed)', async () => {
+    const result = await runCommandInProcess(
       ['daemon', 'set-cap', 'structured-write', '2'],
-      makeOpts(() => reloadResponse),
+      makeOpts(),
     )
 
-    const patchArg = patchM.mock.calls[0]?.[0] as Record<string, unknown>
-    const caps = patchArg.caps as Record<string, unknown>
-    expect(caps.structuredWrite).toBe(2)
-    // kebab-case key must NOT appear in the written object
-    expect(caps['structured-write']).toBeUndefined()
+    expect(result.code).toBe(2)
+    expect(result.err.join('\n')).toContain('unknown cap')
+    expect(result.err.join('\n')).toContain('structured-write')
+    expect(patchM).not.toHaveBeenCalled()
   })
 
   it('maps kebab-case setup-install to camelCase setupInstall in the JSON', async () => {
