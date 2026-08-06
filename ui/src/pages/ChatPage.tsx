@@ -576,7 +576,7 @@ const ResultFooter = ({ usage, turnTokens }: { usage: NonNullable<MarsUIMessage[
   const { durationMs, cost } = usage ?? {}
   const parts: string[] = []
   if (durationMs != null) parts.push(formatDuration(durationMs))
-  parts.push(`${turnTokens} tokens`)
+  parts.push(`${turnTokens.toLocaleString()} tokens`)
   if (cost != null && cost > 0) parts.push(`$${cost.toFixed(4)}`)
   return <div className="mt-2 font-mono text-[10px] text-muted-foreground">{parts.join(' · ')}</div>
 }

@@ -42,4 +42,28 @@ describe('chat turn tokens', () => {
     expect(html).toContain('20 tokens')
     expect(html).not.toContain('1000 tokens')
   })
+
+  it('formats large turn token counts with locale separators', () => {
+    const message = chatMessageSchema.parse({
+      id: 'assistant-2',
+      threadId: 'thread-1',
+      role: 'assistant',
+      segments: [{ type: 'result', durationMs: null, inputTokens: 200000, outputTokens: 40000, cacheReadTokens: null, cost: null }],
+      createdAt: '2026-08-01T00:00:00.000Z',
+      feedback: null,
+      turnTokens: 241281,
+    })
+
+    const html = renderToStaticMarkup(
+      createElement(MessageView, { message: chatMessageToUIMessage(message), onRetry: () => undefined }),
+    )
+
+    // The footer must use toLocaleString()-style formatting, not a bare integer
+    const formatted = (241281).toLocaleString()
+    expect(html).toContain(`${formatted} tokens`)
+    // Raw unformatted form should be absent when the locale adds a separator
+    if (formatted !== '241281') {
+      expect(html).not.toContain('241281 tokens')
+    }
+  })
 })

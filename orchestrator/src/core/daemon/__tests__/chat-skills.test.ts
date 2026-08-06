@@ -108,4 +108,21 @@ describe('buildSkillsSection', () => {
     expect(section).toContain('- task: Enqueue a task.')
     expect(section).toContain('`skill` tool')
   })
+
+  it('grill posture includes a retrieval gate that restricts code exploration to behavioral questions', () => {
+    const section = buildSkillsSection([], 'grill')
+    expect(section).not.toBe('')
+    // Should mention the retrieval gate explicitly
+    expect(section.toLowerCase()).toContain('retrieval')
+    // Gate should distinguish behavioral questions from policy/terminology
+    expect(section.toLowerCase()).toMatch(/code.*behav|behav.*code/)
+    expect(section.toLowerCase()).toMatch(/policy|terminolog|rule/)
+  })
+
+  it('grill posture section is non-empty even with no skills', () => {
+    const triage = buildSkillsSection([], 'triage')
+    const grill = buildSkillsSection([], 'grill')
+    expect(triage).toBe('')
+    expect(grill).not.toBe('')
+  })
 })

@@ -104,6 +104,7 @@ export const buildSkillsSection = (skills: readonly SkillInfo[], posture: 'triag
   if (posture === 'grill') {
     lines.push(
       'Grill posture is active: use the glossary, ADR, and PRD tools when the conversation reaches those decisions.',
+      'Retrieval gate: reach for code-exploration tools (codegraph, shell file reads) ONLY when the turn requires knowing how the code actually behaves right now — e.g. "does the current implementation do X?" or "where is Y defined?". Policy questions, terminology decisions, and "what should we do?" turns need only the glossary, prior ADRs, and the conversation so far. Never call codegraph_explore to answer a rule or choose a term.',
     )
   }
   return skills.length > 0 || posture === 'grill' ? lines.join('\n') : ''
