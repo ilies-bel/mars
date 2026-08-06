@@ -74,6 +74,12 @@ export interface ChatThread {
    * Null while the Subject is active.
    */
   closed_at: number | null
+  /**
+   * Epoch-millisecond timestamp set when the operator archives the Subject.
+   * Archived Subjects are hidden from the transcript and rail but remain in the DB.
+   * Null while the Subject is listed.
+   */
+  archived_at: number | null
   /** Domain event that closes this Subject, or null when it needs an explicit close. */
   terminal_event_type?: string | null
   /** Entity id in the terminal event payload that must match before closure. */
@@ -529,6 +535,7 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   alert_item_id: (row.alert_item_id as string | null) ?? null,
   alert_resolved: Boolean(row.alert_resolved),
   closed_at: (row.closed_at as number | null) ?? null,
+  archived_at: (row.archived_at as number | null) ?? null,
   terminal_event_type: (row.terminal_event_type as string | null) ?? null,
   terminal_entity_id: (row.terminal_entity_id as string | null) ?? null,
   parent_thread_id: (row.parent_thread_id as string | null) ?? null,
@@ -609,6 +616,7 @@ export const createThread = async (
     alert_item_id: null,
     alert_resolved: false,
     closed_at: null,
+    archived_at: null,
     terminal_event_type: terminalEvent ?? null,
     terminal_entity_id: terminalEntityId ?? null,
     parent_thread_id: null,
@@ -718,11 +726,12 @@ export const forkThread = async (opts: {
       updated_at: ts,
       origin: null,
       alert_item_id: null,
-    alert_resolved: false,
-    closed_at: null,
-    terminal_event_type: null,
-    terminal_entity_id: null,
-    parent_thread_id: opts.sourceThreadId,
+      alert_resolved: false,
+      closed_at: null,
+      archived_at: null,
+      terminal_event_type: null,
+      terminal_entity_id: null,
+      parent_thread_id: opts.sourceThreadId,
       fork_idempotency_key: opts.idempotencyKey,
     },
     deduped: false,
@@ -795,6 +804,7 @@ export const listConversationEntries = async (): Promise<ChatConversationEntryAp
       FROM chat_messages m
       JOIN chat_threads t ON t.id = m.thread_id
  LEFT JOIN tasks backing_task ON backing_task.id = m.backing_entity_id
+     WHERE t.archived_at IS NULL
      ORDER BY m.seq ASC
   `)
   return (result.rows as unknown as Record<string, unknown>[]).map((row) => {
@@ -833,6 +843,7 @@ export const listSubjectBoundaries = async (): Promise<SubjectBoundaryApiView[]>
       FROM chat_threads t
  LEFT JOIN chat_messages m ON m.thread_id = t.id
      WHERE t.id <> ?
+       AND t.archived_at IS NULL
      ORDER BY t.created_at ASC, t.id ASC, m.seq ASC
   `,
     args: [MAIN_THREAD_ID],
@@ -1098,6 +1109,32 @@ export const closeSubject = async (id: string): Promise<void> => {
   })
 }
 
+/**
+ * Archive a Subject by stamping `archived_at`. Archived Subjects are hidden
+ * from the conversation transcript and the thread rail. Idempotent: the
+ * original archive timestamp is preserved if the Subject is already archived.
+ */
+export const archiveSubthread = async (id: string): Promise<void> => {
+  const c = stateClient()
+  const ts = now()
+  await c.execute({
+    sql: `UPDATE chat_threads SET archived_at = ? WHERE id = ? AND archived_at IS NULL`,
+    args: [ts, id],
+  })
+}
+
+/**
+ * Unarchive a Subject by clearing `archived_at`, restoring it to the
+ * conversation transcript and the thread rail.
+ */
+export const unarchiveSubthread = async (id: string): Promise<void> => {
+  const c = stateClient()
+  await c.execute({
+    sql: `UPDATE chat_threads SET archived_at = NULL WHERE id = ?`,
+    args: [id],
+  })
+}
+
 // ── Feedback API ──────────────────────────────────────────────────────────────
 
 /**
@@ -1249,6 +1286,7 @@ export const startThreadFromAlert = async (
     alert_item_id: arcId,
     alert_resolved: false,
     closed_at: null,
+    archived_at: null,
     terminal_event_type: terminal?.eventType ?? null,
     terminal_entity_id: terminal?.entityId ?? null,
     parent_thread_id: null,

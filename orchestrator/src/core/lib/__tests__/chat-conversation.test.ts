@@ -11,7 +11,10 @@ interface ChatStoreModule {
   createThread: typeof import('../chat-store').createThread
   appendMessage: typeof import('../chat-store').appendMessage
   closeSubject: typeof import('../chat-store').closeSubject
+  archiveSubthread: typeof import('../chat-store').archiveSubthread
+  unarchiveSubthread: typeof import('../chat-store').unarchiveSubthread
   listConversationEntries: typeof import('../chat-store').listConversationEntries
+  listSubjectBoundaries: typeof import('../chat-store').listSubjectBoundaries
   startThreadFromAlert: typeof import('../chat-store').startThreadFromAlert
   resolveAlertThread: typeof import('../chat-store').resolveAlertThread
 }
@@ -227,5 +230,59 @@ describe('listConversationEntries', () => {
         resolution: 'resolved',
       }),
     ])
+  })
+
+  it('hides an archived Subthread from listConversationEntries', async () => {
+    const chat = await loadModule(repo)
+    await chat.initChatStore()
+    const visible = await chat.createThread('Visible subthread')
+    const archived = await chat.createThread('Archived subthread')
+    await chat.appendMessage(visible.id, 'user', 'stays visible')
+    await chat.appendMessage(archived.id, 'user', 'should be hidden')
+
+    await chat.archiveSubthread(archived.id)
+
+    const entries = await chat.listConversationEntries()
+    expect(entries.map((e) => e.subjectId)).not.toContain(archived.id)
+    expect(entries.map((e) => e.subjectId)).toContain(visible.id)
+  })
+
+  it('restores an unarchived Subthread to listConversationEntries', async () => {
+    const chat = await loadModule(repo)
+    await chat.initChatStore()
+    const subthread = await chat.createThread('Was archived')
+    await chat.appendMessage(subthread.id, 'user', 'comes back after unarchive')
+    await chat.archiveSubthread(subthread.id)
+
+    await chat.unarchiveSubthread(subthread.id)
+
+    const entries = await chat.listConversationEntries()
+    expect(entries.map((e) => e.subjectId)).toContain(subthread.id)
+  })
+
+  it('hides an archived Subthread from listSubjectBoundaries', async () => {
+    const chat = await loadModule(repo)
+    await chat.initChatStore()
+    const visible = await chat.createThread('Visible')
+    const archived = await chat.createThread('Archived')
+    await chat.closeSubject(archived.id)
+
+    await chat.archiveSubthread(archived.id)
+
+    const boundaries = await chat.listSubjectBoundaries()
+    expect(boundaries.map((b) => b.subjectId)).not.toContain(archived.id)
+    expect(boundaries.map((b) => b.subjectId)).toContain(visible.id)
+  })
+
+  it('restores an unarchived Subthread boundary to listSubjectBoundaries', async () => {
+    const chat = await loadModule(repo)
+    await chat.initChatStore()
+    const subthread = await chat.createThread('Was archived')
+    await chat.archiveSubthread(subthread.id)
+
+    await chat.unarchiveSubthread(subthread.id)
+
+    const boundaries = await chat.listSubjectBoundaries()
+    expect(boundaries.map((b) => b.subjectId)).toContain(subthread.id)
   })
 })

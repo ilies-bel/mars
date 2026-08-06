@@ -14,6 +14,7 @@ describe('toThreadApiView', () => {
       alert_item_id: null,
       alert_resolved: false,
       closed_at: null,
+      archived_at: null,
       parent_thread_id: null,
       fork_idempotency_key: null,
     }

@@ -45,6 +45,8 @@ import {
   getThread,
   getPreloadedResponse,
   closeSubject,
+  archiveSubthread,
+  unarchiveSubthread,
   setThreadStatus,
   appendMessage,
 } from '../lib/chat-store'
@@ -1875,6 +1877,29 @@ export const startHttpServer = async (
         return
       }
     }
+    // POST /chat/threads/:id/archive   — stamp archived_at; hides the Subthread
+    // POST /chat/threads/:id/unarchive — clear archived_at; restores the Subthread
+    {
+      const archiveMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/chat\/threads\/([^/?]+)\/(un)?archive$/)
+          : null
+      if (archiveMatch && archiveMatch[1]) {
+        const id = decodeURIComponent(archiveMatch[1])
+        const isUnarchive = archiveMatch[2] === 'un'
+        const action = isUnarchive
+          ? unarchiveSubthread(id)
+          : archiveSubthread(id)
+        action
+          .then(() => {
+            deps.viewStreamHub?.broadcast('chat')
+            sendJson(res, 200, { ok: true })
+          })
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
     // GET /chat/threads/:id/ui-stream — resumable UIMessage-chunk stream for one
     // thread's active run. This is the daemon-native replacement for the old
     // client-side `chat-delta` → `UIMessageChunk` mapping: the daemon maps and
@@ -2440,6 +2465,12 @@ export const startHttpServer = async (
               } else if (response.target.op === 'diagnose') {
                 if (!response.target.entityId) throw new Error('diagnose response requires an entityId')
                 await deps.diagnoseFailure(response.target.entityId)
+              } else if (response.target.op === 'archive-subthread') {
+                if (!response.target.entityId) throw new Error('archive-subthread response requires an entityId')
+                await archiveSubthread(response.target.entityId)
+              } else if (response.target.op === 'unarchive-subthread') {
+                if (!response.target.entityId) throw new Error('unarchive-subthread response requires an entityId')
+                await unarchiveSubthread(response.target.entityId)
               } else {
                 const handler = entityHandlers[response.target.op as EntityOp]
                 if (!handler || !response.target.entityId) {
