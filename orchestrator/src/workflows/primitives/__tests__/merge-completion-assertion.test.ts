@@ -1,23 +1,24 @@
 /**
  * Tests for the post-merge ancestry assertion in the `merge()` primitive.
  *
- * Problem (mars-fe86ca8f): When `mergeBranch` returns `merged: true` but the ref
- * update silently failed or was a no-op (e.g. the branch was recreated to the
- * integration tip by the 'recreate' conflict policy in setupWorktree, causing the
- * CAS update-ref to be a no-op), the merge primitive marked the task done and
- * deleted the branch — leaving the actual commits unreachable.
+ * Problem (this task): When `mergeBranch` returns `merged: true` but the ref
+ * update silently failed or was a no-op, the merge primitive marked the task
+ * done and deleted the branch — leaving commits unreachable. The related remerge
+ * data-loss path saw branches silently recreated to the integration tip, so the
+ * zero-commit short-circuit fired, removed the branch, and marked done while the
+ * task's actual commits were never in integration.
  *
- * The fix adds a post-merge assertion: after a successful `mergeBranch` call that
- * sets `mergePostSha`, verify that SHA is an ancestor of `integrationBranch`.
- * If not, stamp the task `failed` with reason `merge:post-merge-assertion` and
- * preserve the branch for investigation.
+ * The fix adds a post-merge assertion: before `removeWorktree`, call
+ * `isBranchTipInIntegration(mergePostSha, integrationBranch)`. If the assertion
+ * fails, stamp the task `failed` and preserve the branch so the operator can
+ * investigate.
  *
  * Coverage:
  *  1. Assertion passes (tip in integration) → worktree removed, task done.
  *  2. Assertion fails (tip NOT in integration) → task stamped failed, worktree
- *     NOT removed, branch preserved.
- *  3. Assertion is called with the right SHA and integration branch.
- *  4. When `mergePostSha` is absent (no-op path) → skip assertion entirely.
+ *     NOT removed, branch preserved for investigation.
+ *  3. When `mergePostSha` is absent (already-merged-noop path) → no assertion,
+ *     normal completion.
  */
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { __resetContextCacheForTests } from '../../../core/context'
@@ -277,11 +278,12 @@ describe('merge — post-merge ancestry assertion', () => {
       result: makeMergeResult(), // no mergePostSha
     })
 
-    mockIsBranchTipInIntegration.mockResolvedValue(true) // set up but should not be called
+    // Assertion mock is NOT set up — if called, it would return undefined (falsy)
+    mockIsBranchTipInIntegration.mockResolvedValue(true) // shouldn't be called
 
     await merge(makeCtx(taskId, enqueueFn), { kind: 'task', ...worktreeOpts(taskId) })
 
-    // Should succeed without calling the assertion
+    // Should succeed without calling the assertion (the noop path has no SHA to check)
     expect(mockIsBranchTipInIntegration).not.toHaveBeenCalled()
 
     const doneCalls = mockUpdateTask.mock.calls.filter(
