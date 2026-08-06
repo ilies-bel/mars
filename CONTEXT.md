@@ -594,3 +594,7 @@ _Avoid_: log-line, noise, telemetry
 **collapsed health notice**:
 One compact, collapsed conversation notice used to summarize non-actionable high-severity operational anomalies. It replaces repeated subthreads for the same condition.
 _Avoid_: subthread, spam
+
+**closed subthread breadcrumb**:
+The single collapsed row left in the main transcript for a closed subthread. It prevents replaying the closed subthread's full contents while preserving navigable context.
+_Avoid_: replay, transcript-dump
