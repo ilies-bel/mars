@@ -255,7 +255,10 @@ describe('continue degrades to restart for pre-setup failures', () => {
       worktreePath,
     })
 
-    await expect(continueTask.coreContinueTask(task.id)).rejects.toThrow(/merging main.*conflicted/)
+    // Inject a null-returning supervisor so the test does not depend on
+    // whether the claude binary is present in the test environment.
+    const supervisorFn = async (): Promise<null> => null
+    await expect(continueTask.coreContinueTask(task.id, { supervisorFn })).rejects.toThrow(/merging main.*conflicted/)
 
     const after = await queue.getTask(task.id)
     expect(after?.status).toBe('failed')
@@ -265,6 +268,142 @@ describe('continue degrades to restart for pre-setup failures', () => {
     const { listActionQueueItems } = await import('../../lib/action-queue')
     const actions = await listActionQueueItems('open', { kind: 'failed' })
     expect(actions.some((action) => action.signature === 'continue:base-refresh-conflict')).toBe(true)
+  })
+
+  // ── vcs-supervisor routing ────────────────────────────────────────────────
+
+  it('routes a merge conflict to vcs-supervisor and re-queues the task on success', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+    const task = await queue.enqueueTask('implement feature', undefined, { skipTriage: true })
+    const worktreePath = resolve(repo, '.mars', 'worktrees', task.id)
+    const branch = `task/${task.id}`
+
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    // Task branch edits baseline.ts
+    writeFileSync(resolve(worktreePath, 'baseline.ts'), 'export const fixed = taskVersion\n')
+    execFileSync('git', ['add', 'baseline.ts'], { cwd: worktreePath })
+    execFileSync('git', ['commit', '-qm', 'task edit'], { cwd: worktreePath })
+
+    // main also edits baseline.ts → conflict when merging main into task branch
+    writeFileSync(resolve(repo, 'baseline.ts'), 'export const fixed = mainVersion\n')
+    execFileSync('git', ['add', 'baseline.ts'], { cwd: repo })
+    execFileSync('git', ['commit', '-qm', 'main fix'], { cwd: repo })
+
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'verify failed',
+      failedPhase: 'verify',
+      branch,
+      worktreePath,
+    })
+
+    let supervisorInvoked = false
+    // The supervisor mock resolves the conflict by writing the final content,
+    // staging, and committing — completing the in-progress merge.
+    const supervisorFn = async (_branch: string, _integrationBranch: string, cwd: string): Promise<unknown> => {
+      supervisorInvoked = true
+      writeFileSync(resolve(cwd, 'baseline.ts'), 'export const fixed = resolved\n')
+      execFileSync('git', ['add', 'baseline.ts'], { cwd })
+      execFileSync(
+        'git',
+        ['-c', 'user.email=vega@test', '-c', 'user.name=Vega', 'commit', '-m', 'merge: resolve conflict'],
+        { cwd },
+      )
+      return { exitCode: 0 }
+    }
+
+    const result = await continueTask.coreContinueTask(task.id, { supervisorFn })
+
+    expect(supervisorInvoked).toBe(true)
+    expect(result.degradedToRestart).toBe(false)
+
+    const after = await queue.getTask(task.id)
+    expect(after?.status).toBe('queued')
+    expect(after?.error).toBeNull()
+  })
+
+  it('error when no resolver available names worktree path, branch, conflicted files, and mars restart fallback', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+    const task = await queue.enqueueTask('implement feature', undefined, { skipTriage: true })
+    const worktreePath = resolve(repo, '.mars', 'worktrees', task.id)
+    const branch = `task/${task.id}`
+
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    writeFileSync(resolve(worktreePath, 'baseline.ts'), 'export const fixed = taskVersion\n')
+    execFileSync('git', ['add', 'baseline.ts'], { cwd: worktreePath })
+    execFileSync('git', ['commit', '-qm', 'task edit'], { cwd: worktreePath })
+
+    writeFileSync(resolve(repo, 'baseline.ts'), 'export const fixed = mainVersion\n')
+    execFileSync('git', ['add', 'baseline.ts'], { cwd: repo })
+    execFileSync('git', ['commit', '-qm', 'main fix'], { cwd: repo })
+
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'verify failed',
+      failedPhase: 'verify',
+      branch,
+      worktreePath,
+    })
+
+    let thrown: Error | null = null
+    try {
+      await continueTask.coreContinueTask(task.id, { supervisorFn: async () => null })
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    // Error must name the worktree path, the branch, and the conflicting file
+    expect(thrown!.message).toContain(worktreePath)
+    expect(thrown!.message).toContain(branch)
+    expect(thrown!.message).toMatch(/baseline\.ts/)
+    // Must state the mars restart fallback
+    expect(thrown!.message).toMatch(/mars restart/)
+    // Must give the manual resolution commands
+    expect(thrown!.message).toMatch(/git merge/)
+  })
+
+  it('leaves the worktree clean with no MERGE_HEAD when the supervisor fails', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+    const task = await queue.enqueueTask('implement feature', undefined, { skipTriage: true })
+    const worktreePath = resolve(repo, '.mars', 'worktrees', task.id)
+    const branch = `task/${task.id}`
+
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    writeFileSync(resolve(worktreePath, 'baseline.ts'), 'export const fixed = taskVersion\n')
+    execFileSync('git', ['add', 'baseline.ts'], { cwd: worktreePath })
+    execFileSync('git', ['commit', '-qm', 'task edit'], { cwd: worktreePath })
+
+    writeFileSync(resolve(repo, 'baseline.ts'), 'export const fixed = mainVersion\n')
+    execFileSync('git', ['add', 'baseline.ts'], { cwd: repo })
+    execFileSync('git', ['commit', '-qm', 'main fix'], { cwd: repo })
+
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'verify failed',
+      failedPhase: 'verify',
+      branch,
+      worktreePath,
+    })
+
+    // Supervisor unavailable — should abort the merge cleanly
+    await expect(
+      continueTask.coreContinueTask(task.id, { supervisorFn: async () => null }),
+    ).rejects.toThrow()
+
+    // No in-progress merge left behind
+    expect(() =>
+      execFileSync('git', ['rev-parse', '--verify', 'MERGE_HEAD'], {
+        cwd: worktreePath,
+        stdio: 'pipe',
+        encoding: 'utf-8',
+      }),
+    ).toThrow()
+
+    // Working tree is clean
+    expect(
+      execFileSync('git', ['status', '--porcelain'], { cwd: worktreePath, encoding: 'utf-8' }),
+    ).toBe('')
   })
 
   it('resumes from failed phase without degrading when worktree exists', async () => {

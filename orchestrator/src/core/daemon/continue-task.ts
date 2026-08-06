@@ -7,6 +7,22 @@ import { computeFailureSignature } from '../lib/failure-signature'
 import { coreRestartTask } from './restart-task'
 import { createQueueWorkflowStore } from '../../workflows/queue-workflow-store'
 
+/**
+ * Injectable supervisor function for the base-refresh conflict handler.
+ * When provided, `coreContinueTask` calls this instead of spawning the real
+ * vcs-supervisor — enabling deterministic unit tests without a claude binary.
+ *
+ * The function must either complete the git merge in `worktreePath` (by
+ * resolving conflict markers, staging, and committing) or return without
+ * doing so. The caller checks `MERGE_HEAD` after the call to decide whether
+ * the conflict was resolved — not the return value.
+ */
+export type ContinueSupervisorFn = (
+  branch: string,
+  integrationBranch: string,
+  worktreePath: string,
+) => Promise<unknown>
+
 export interface ContinueResult {
   /**
    * True when the failure was upstream of worktree creation so there is
@@ -66,7 +82,10 @@ export interface ContinueResult {
  *
  * @throws if the task does not exist or is not in `'failed'` status.
  */
-export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
+export const coreContinueTask = async (
+  id: string,
+  opts: { supervisorFn?: ContinueSupervisorFn } = {},
+): Promise<ContinueResult> => {
   const task = await getTask(id)
   if (!task) throw new Error(`task ${id} not found`)
 
@@ -185,53 +204,133 @@ export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
       )
     }
 
-    // Do not leave a parked task with an in-progress merge. Its commits stay
-    // untouched on the task branch, and the named failure/action queue item
-    // tells the operator why continuing cannot reach the failed phase yet.
+    // ── Collect conflicted files while the merge is still in progress ────────
+    const conflictedFiles: string[] = (() => {
+      try {
+        const raw = execFileSync('git', ['diff', '--name-only', '--diff-filter=U'], {
+          cwd: task.worktreePath as string,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        }).trim()
+        return raw ? raw.split('\n').filter(Boolean) : []
+      } catch {
+        return []
+      }
+    })()
+
+    // ── Route to vcs-supervisor (Vega) to reconcile the conflict ─────────────
+    // Per CLAUDE.md, conflicts go to vcs-supervisor. Pass an injectable
+    // supervisorFn so tests can drive this path without a claude binary.
+    const supervisorFn =
+      opts.supervisorFn ??
+      (async (branch: string, intBranch: string, cwd: string): Promise<unknown> => {
+        const { invokeVcsSupervisor, VCS_SUPERVISOR_TIMEOUT_MS } = await import('../lib/git/merge')
+        return invokeVcsSupervisor(branch, intBranch, cwd, VCS_SUPERVISOR_TIMEOUT_MS).catch(
+          () => null,
+        )
+      })
+
+    await supervisorFn(
+      task.branch as string,
+      integrationBranch,
+      task.worktreePath as string,
+    ).catch((err: unknown) => {
+      console.error(`[continue] task ${id}: vcs-supervisor error:`, err)
+    })
+
+    // ── Verify by checking git state, not the supervisor's return value ───────
+    // MERGE_HEAD exists  → merge still in progress → supervisor did not finish
+    // MERGE_HEAD absent  → merge commit landed      → supervisor resolved it
+    let mergeHeadExists = true
     try {
-      execFileSync('git', ['merge', '--abort'], {
+      execFileSync('git', ['rev-parse', '--verify', 'MERGE_HEAD'], {
         cwd: task.worktreePath as string,
+        stdio: 'pipe',
         encoding: 'utf-8',
       })
     } catch {
-      // The original merge error and durable task state below are the useful
-      // diagnostic even when git reports there was nothing left to abort.
+      // rev-parse exits non-zero when the ref does not exist
+      mergeHeadExists = false
     }
 
-    const failureReason = 'continue:base-refresh-conflict'
-    const summary =
-      `Cannot continue task ${id}: merging ${integrationBranch} into ${task.branch} ` +
-      `conflicted in ${task.worktreePath}. The merge was aborted; worker commits remain intact.\n${output}`
-    await updateTask(id, {
-      status: 'failed',
-      error: summary,
-      failedPhase: task.failedPhase,
-      failureReason,
-      failureReasonCode: failureReason,
-      failureSignature: computeFailureSignature(failureReason, summary),
-    }, store)
-    await raiseActionQueueItem({
-      kind: 'failed',
-      category: 'orchestrator',
-      priority: 'high',
-      title: `Task ${id}: base refresh conflicts with ${integrationBranch}`,
-      body:
-        `mars continue could not merge ${integrationBranch} into ${task.branch}. ` +
-        `The merge was aborted, preserving the worker's commits in ${task.worktreePath}. ` +
-        `Resolve the conflict in that worktree, then run mars continue again.`,
-      payload: {
-        taskId: id,
-        branch: task.branch,
-        worktreePath: task.worktreePath,
-        integrationBranch,
-        failureReason,
-      },
-      context: {},
-      raisedBy: 'continue-task',
-      signature: failureReason,
-      originTaskId: id,
-    })
-    throw new Error(summary)
+    if (!mergeHeadExists) {
+      // Supervisor resolved the conflict — fall through to re-queue normally.
+      console.log(
+        `[continue] task ${id}: vcs-supervisor resolved base-refresh conflict in ${task.worktreePath}`,
+      )
+    } else {
+      // ── Supervisor unavailable or failed — abort and surface an actionable error
+      // The worktree must be left clean so the operator can retry or restart.
+      try {
+        execFileSync('git', ['merge', '--abort'], {
+          cwd: task.worktreePath as string,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        })
+      } catch {
+        // abort is best-effort; the named failure below is the useful signal
+      }
+
+      const conflictsStr =
+        conflictedFiles.length > 0
+          ? `Conflicting files:\n${conflictedFiles.map((f) => `  - ${f}`).join('\n')}\n\n`
+          : ''
+
+      const failureReason = 'continue:base-refresh-conflict'
+      const summary =
+        `Cannot continue task ${id}: merging ${integrationBranch} into ${task.branch} ` +
+        `conflicted in ${task.worktreePath}. The merge was aborted; worker commits remain intact.\n\n` +
+        `${conflictsStr}` +
+        `To resolve manually:\n` +
+        `  cd ${task.worktreePath as string}\n` +
+        `  git merge ${integrationBranch}    # re-attempt the merge\n` +
+        `  # resolve conflict markers, then: git add <files> && git commit\n` +
+        `  mars continue ${id}               # re-queue after resolving\n\n` +
+        `Or discard the worker's commits entirely:\n` +
+        `  mars restart ${id}`
+      await updateTask(
+        id,
+        {
+          status: 'failed',
+          error: summary.slice(0, 2000),
+          failedPhase: task.failedPhase,
+          failureReason,
+          failureReasonCode: failureReason,
+          failureSignature: computeFailureSignature(failureReason, summary),
+        },
+        store,
+      )
+      await raiseActionQueueItem({
+        kind: 'failed',
+        category: 'orchestrator',
+        priority: 'high',
+        title: `Task ${id}: base refresh conflicts with ${integrationBranch}`,
+        body:
+          `mars continue could not merge ${integrationBranch} into ${task.branch as string}. ` +
+          `Worktree: ${task.worktreePath as string}. Branch: ${task.branch as string}.\n\n` +
+          conflictsStr +
+          `To resolve manually:\n` +
+          `  cd ${task.worktreePath as string}\n` +
+          `  git merge ${integrationBranch}\n` +
+          `  # resolve conflict markers, git add, git commit\n` +
+          `  mars continue ${id}\n\n` +
+          `Or discard the worker's commits:\n` +
+          `  mars restart ${id}`,
+        payload: {
+          taskId: id,
+          branch: task.branch,
+          worktreePath: task.worktreePath,
+          integrationBranch,
+          conflictedFiles,
+          failureReason,
+        },
+        context: {},
+        raisedBy: 'continue-task',
+        signature: failureReason,
+        originTaskId: id,
+      })
+      throw new Error(summary)
+    }
   }
 
   if (task.failedPhase === 'verify') {
