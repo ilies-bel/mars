@@ -68,6 +68,10 @@ import {
   ensureGateFixStewardSubscriber,
 } from '../../outbox/subscribers/gate-fix-steward'
 import {
+  ensureArchiveEntriesSubscriber,
+  drainArchiveEntries,
+} from '../archive/insert.js'
+import {
   drainRecipeConversationNotices,
   ensureRecipeConversationNoticeSubscriber,
 } from '../../outbox/subscribers/recipe-conversation-notice'
@@ -5143,6 +5147,20 @@ export const startDaemon = async (
     }
   })()
 
+  // Boot drain for the archive-entries outbox subscriber: register it and
+  // insert entries for any action-queue.resolved / task.terminal { reason:
+  // 'done' } events that were published while the daemon was down.
+  void (async () => {
+    try {
+      await ensureArchiveEntriesSubscriber(getCompositionRootClient())
+      const { processed } = await drainArchiveEntries(getCompositionRootClient())
+      if (processed > 0)
+        log(`[archive-entries] archived ${processed} event(s) on boot`)
+    } catch (err) {
+      log(`[archive-entries] boot drain failed: ${(err as Error).message}`)
+    }
+  })()
+
   // ── Merge worker ──────────────────────────────────────────────────────────
   // Single-consumer loop that claims merge_jobs rows and executes them
   // serially. Always started — the merge queue is unconditionally on.
@@ -6189,6 +6207,24 @@ export const startDaemon = async (
     ARC_VERIFIER_DRAIN_MS,
   )
   arcVerifierDrain.unref()
+
+  // ── Archive-entries drain ────────────────────────────────────────────────
+  // Polls the outbox for action-queue.resolved and task.terminal { reason:
+  // 'done' } events and inserts archive_entries. Insertion is always silent.
+  const ARCHIVE_ENTRIES_DRAIN_MS = Number(
+    process.env.MARS_ARCHIVE_ENTRIES_DRAIN_MS ?? 30_000,
+  )
+  const archiveEntriesDrain = setInterval(
+    singleFlight(async () => {
+      try {
+        await drainArchiveEntries(getCompositionRootClient())
+      } catch (err) {
+        log(`[archive-entries] drain errored: ${(err as Error).message}`)
+      }
+    }),
+    ARCHIVE_ENTRIES_DRAIN_MS,
+  )
+  archiveEntriesDrain.unref()
 
   const GATE_FIX_STEWARD_DRAIN_MS = Number(
     process.env.MARS_GATE_FIX_STEWARD_DRAIN_MS ?? 30_000,

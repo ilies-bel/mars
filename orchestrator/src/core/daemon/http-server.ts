@@ -52,6 +52,7 @@ import {
 } from '../lib/chat-store'
 import { classifyMarsVerb } from '../lib/chat-mars-verbs'
 import { persistLeverAutonomyLevel } from './config'
+import { archiveEntry } from '../archive/insert.js'
 import {
   assembleDelta,
   clampWywaDeltaLimit,
@@ -1572,6 +1573,20 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /archive — archive entries ordered by occurred_at DESC. Returns all
+    // resolved alerts, ack'd notices, and silently-completed tasks. Pure read.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/archive')) {
+      resolveStateClient()
+        .execute(
+          `SELECT id, kind, source_kind, source_id, occurred_at, provenance
+             FROM archive_entries
+            ORDER BY occurred_at DESC`,
+        )
+        .then((result) => sendJson(res, 200, { entries: result.rows }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /alerts/next — the single top Alert the hero "next action" shortcut
     // grabs, or `{}` when none. Checked BEFORE the `/alerts/:arcId` param route
     // so the literal `next` segment is not captured as an arc id.
@@ -2442,6 +2457,18 @@ export const startHttpServer = async (
                 [{ type: 'text', text: response.label }],
                 { kind: 'acknowledgment', contextScope: 'main' },
               )
+              if (response.target.type === 'ack') {
+                // Notice-ack: silently archive the acknowledged notice message.
+                // Errors here must never surface to the user or block the response.
+                archiveEntry(resolveStateClient(), {
+                  kind: 'acked',
+                  sourceKind: 'notice',
+                  sourceId: message.id,
+                  provenance: { responseId: response.id, label: response.label },
+                }).catch(() => {
+                  // intentionally silent — archive is non-fatal by contract
+                })
+              }
               deps.viewStreamHub?.broadcast('chat')
               sendJson(res, 200, { ok: true })
               return

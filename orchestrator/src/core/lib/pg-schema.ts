@@ -38,7 +38,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0026'
+export const SCHEMA_VERSION = '0027'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -1681,6 +1681,24 @@ const DDL: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_presence_transitions_recorded_at
      ON presence_transitions(recorded_at DESC)`,
+
+  // ── archive entries (slice 6 of PRD e2133e10) ────────────────────────────
+  // Immutable log of resolved Alerts, ack'd Notices, and silent successful
+  // task completions. Insertion is always silent — no Card or action-queue row
+  // is ever raised from this table. Read via GET /archive (ordered by
+  // occurred_at DESC). Provenance is free-form jsonb capturing whatever
+  // context the emitting path had available.
+  `CREATE TABLE IF NOT EXISTS archive_entries (
+    id          text        PRIMARY KEY,
+    kind        text        NOT NULL,
+    source_kind text        NOT NULL
+                            CHECK (source_kind IN ('alert','notice','silent_completion')),
+    source_id   text        NOT NULL,
+    occurred_at timestamptz NOT NULL DEFAULT now(),
+    provenance  jsonb       NOT NULL DEFAULT '{}'
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_archive_entries_occurred_at
+     ON archive_entries(occurred_at DESC)`,
 ]
 
 /**
@@ -1760,6 +1778,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'presence_pings',
   'presence_transitions',
   'main_thread_entries',
+  'archive_entries',
 ]
 
 /**
