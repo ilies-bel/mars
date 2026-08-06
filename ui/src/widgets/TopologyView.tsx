@@ -263,6 +263,13 @@ const TopologyViewInner = ({
   // changes and don't echo our own onSelectProposal callbacks into a drill-in.
   const lastSelectedRef = useRef<string | null | undefined>(undefined)
 
+  // Set of proposal ids — used to gate onSelectProposal calls in toggleArc so
+  // that clicking an origin arc card (whose key is a task id, not a proposal id)
+  // never pollutes the proposal filter and blanks the board.
+  const proposalIds = useMemo(() => new Set(proposals.map((p) => p.id)), [proposals])
+  const proposalIdsRef = useRef(proposalIds)
+  proposalIdsRef.current = proposalIds
+
   // Filter to the selected proposal when one is active.
   // Trade-off: tasks with a null parentProposalId disappear while a proposal is
   // selected — this matches BoardView's semantics exactly (same control, same meaning).
@@ -396,7 +403,14 @@ const TopologyViewInner = ({
     (arcKey: string) => {
       const next = openArcKeyRef.current === arcKey ? null : arcKey
       setOpenArcKey(next)
-      onSelectProposalRef.current?.(next)
+      // Only propagate to the proposal filter when the arc key really is a
+      // proposal id. Origin arcs are keyed by a task id — propagating that id
+      // would set selectedProposalId to a task id, which matches no
+      // parentProposalId and empties the board. Collapsing (next === null)
+      // always propagates so the proposal dropdown resets correctly.
+      if (next === null || proposalIdsRef.current.has(next)) {
+        onSelectProposalRef.current?.(next)
+      }
       clearHover()
     },
     [clearHover],

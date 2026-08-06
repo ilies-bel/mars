@@ -3,9 +3,14 @@
  * attrs, overlays) renders under `renderToStaticMarkup`; interaction and
  * viewport behaviour live in effects that the static renderer never runs. The
  * layout/model logic is covered separately in topologyFlowModel.test.ts.
+ *
+ * This file runs in the happy-dom project so it can also test interactive
+ * behaviour (click events on arc cards) with createRoot + act.
  */
 
-import { describe, expect, it } from 'bun:test'
+import { describe, expect, it, vi } from 'bun:test'
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import { TopologyView } from './TopologyView'
@@ -260,5 +265,104 @@ describe('TopologyView – minimap navigation aid', () => {
     // minimap. The minimap class should therefore be absent.
     const html = renderToStaticMarkup(<TopologyView tasks={[]} proposals={noProposals} />)
     expect(html).not.toContain('topo-minimap')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Arc click model: onSelectProposal gating
+//
+// Clicking an arc card must call onSelectProposal only when the arc key is a
+// real proposal id. Origin arcs are keyed by a task id; propagating that id
+// to the parent's proposal filter empties the board because no task has
+// parentProposalId === <task-id>.
+//
+// These tests use createRoot + act (happy-dom environment) to exercise the
+// actual click path: user click → React Flow onNodeClick → toggleArc →
+// conditional onSelectProposal call.
+// ---------------------------------------------------------------------------
+
+describe('TopologyView – arc click model', () => {
+  it('clicking an origin arc card does not call onSelectProposal with the task id', async () => {
+    const onSelectProposal = vi.fn<[string | null], void>()
+
+    // Two tasks sharing arcKey = 'task-origin-arc' form a multi-task arc that
+    // renders as a collapsed arc CARD (not a bare task node).
+    const task1: ProgressTask = { ...stubTask('task-origin-arc') }
+    const task2: ProgressTask = { ...stubTask('task-recovery-arc'), originId: 'task-origin-arc' }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <TopologyView
+            tasks={[task1, task2]}
+            proposals={noProposals}
+            onSelectProposal={onSelectProposal}
+          />,
+        )
+      })
+
+      // The arc card for the origin arc should be in the DOM.
+      const arcCard = container.querySelector('[aria-label*="click to open"]')
+      expect(arcCard).not.toBeNull()
+
+      await act(async () => {
+        arcCard!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      })
+
+      // After the fix: onSelectProposal must NOT be called with the origin
+      // task id — that would blank the board by filtering on a non-proposal id.
+      expect(onSelectProposal).not.toHaveBeenCalledWith('task-origin-arc')
+      expect(onSelectProposal).not.toHaveBeenCalledWith('task-recovery-arc')
+    } finally {
+      await act(async () => { root.unmount() })
+      document.body.removeChild(container)
+    }
+  })
+
+  it('clicking a proposal-backed arc card calls onSelectProposal with the proposal id', async () => {
+    const onSelectProposal = vi.fn<[string | null], void>()
+
+    const proposal: ProgressProposalNode = {
+      id: 'test-proposal-arc',
+      title: 'Test Proposal',
+      source: 'human',
+      status: 'draft',
+    }
+    const task1: ProgressTask = { ...stubTask('tp-arc-1'), parentProposalId: 'test-proposal-arc' }
+    const task2: ProgressTask = { ...stubTask('tp-arc-2'), parentProposalId: 'test-proposal-arc' }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <TopologyView
+            tasks={[task1, task2]}
+            proposals={[proposal]}
+            onSelectProposal={onSelectProposal}
+          />,
+        )
+      })
+
+      const arcCard = container.querySelector('[aria-label*="click to open"]')
+      expect(arcCard).not.toBeNull()
+
+      await act(async () => {
+        arcCard!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      })
+
+      // For a proposal arc the callback must be called with the proposal id so
+      // the parent's proposal dropdown drills in correctly.
+      expect(onSelectProposal).toHaveBeenCalledWith('test-proposal-arc')
+    } finally {
+      await act(async () => { root.unmount() })
+      document.body.removeChild(container)
+    }
   })
 })

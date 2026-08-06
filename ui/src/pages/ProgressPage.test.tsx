@@ -283,3 +283,54 @@ describe('ProgressPage – search zero-state not shown on initial load', () => {
     expect(html).not.toContain('data-testid="search-zero-state"')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Stale URL: ?proposal=<task-id> that is not a known proposal must not blank
+// the board. This can happen when an origin arc card click wrote a task id
+// into the URL before the TopologyView.toggleArc fix, or when a proposal is
+// deleted after the link was bookmarked.
+// ---------------------------------------------------------------------------
+
+describe('ProgressPage – stale proposal URL fallback', () => {
+  it('renders the board rather than No active tasks when ?proposal=<task-id> is unknown', () => {
+    // Simulate a stale URL: ?proposal=task-id-not-a-proposal
+    // In happy-dom the location is live, so we can set it directly.
+    const prevHash = window.location.hash
+    window.location.hash = '#/progress?proposal=task-id-not-a-proposal'
+
+    // tasks is settled (non-null) with one task; proposals is empty.
+    // effectiveProposalId must resolve to null (not found in proposals=[])
+    // so TopologyView receives null and renders all tasks.
+    mockUseProgress.mockImplementation(() => ({
+      ...baseState([]),
+      tasks: [
+        {
+          id: 'task-id-not-a-proposal',
+          status: 'queued',
+          prompt: 'an origin task',
+          branch: null,
+          parentProposalId: null,
+          cluster: 'Queued',
+          blockedBy: [],
+          retryCount: 0,
+          priority: 0,
+        } as unknown as import('@/shared/schemas').ProgressTask,
+      ],
+    }))
+
+    try {
+      const html = renderToStaticMarkup(<ProgressPage />)
+      // The board is populated — task node exists (role="img" canvas is rendered).
+      expect(html).not.toContain('No active tasks')
+      expect(html).toContain('role="img"')
+    } finally {
+      window.location.hash = prevHash
+      mockUseProgress.mockImplementation(() =>
+        baseState([
+          { id: 'p1', title: 'Feature Alpha', source: 'human', status: 'draft' },
+          { id: 'p2', title: 'Feature Beta', source: 'human', status: 'draft' },
+        ]),
+      )
+    }
+  })
+})

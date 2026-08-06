@@ -37,6 +37,23 @@ export const ProgressPage = () => {
   )
   const [searchQuery, setSearchQuery] = useState<string>(initialUrlState.query)
 
+  // Validate the selected proposal id against the proposals that are currently
+  // known. If data has settled (tasks !== null) and the stored id is not a
+  // known proposal id, treat it as null (reset to "All"). This handles stale
+  // ?proposal=<task-id> URLs (e.g. from origin-arc clicks before the fix) and
+  // links to fully-completed or deleted proposals without producing a
+  // permanently blank board.
+  const effectiveProposalId = useMemo((): string | null => {
+    if (selectedProposalId === null || tasks === null) return selectedProposalId
+    return proposals.some((p) => p.id === selectedProposalId) ? selectedProposalId : null
+  }, [selectedProposalId, tasks, proposals])
+
+  // Sync state after the effective id diverges so the URL and dropdown also
+  // clear (avoids a stale value lingering in the hash after a reload).
+  useEffect(() => {
+    if (effectiveProposalId !== selectedProposalId) setSelectedProposalId(effectiveProposalId)
+  }, [effectiveProposalId, selectedProposalId])
+
   // Persist the active tab to localStorage whenever it changes so the user's
   // last-selected view is restored on future bare '#/progress' visits.
   useEffect(() => {
@@ -128,7 +145,7 @@ export const ProgressPage = () => {
             </label>
             <select
               id="proposal-filter-select"
-              value={selectedProposalId ?? ''}
+              value={effectiveProposalId ?? ''}
               onChange={(e) => setSelectedProposalId(e.target.value || null)}
               disabled={tasks === null}
               className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-border disabled:opacity-50"
@@ -150,7 +167,7 @@ export const ProgressPage = () => {
           <TopologyView
             tasks={tasks ?? []}
             proposals={proposals}
-            selectedProposalId={selectedProposalId}
+            selectedProposalId={effectiveProposalId}
             searchMatchIds={searchMatchIds}
             searchQuery={searchQuery}
             onSelectProposal={setSelectedProposalId}
@@ -160,7 +177,7 @@ export const ProgressPage = () => {
             byCluster={byCluster}
             proposals={proposals}
             error={error}
-            selectedProposalId={selectedProposalId}
+            selectedProposalId={effectiveProposalId}
             searchMatchIds={searchMatchIds}
             searchQuery={searchQuery}
           />

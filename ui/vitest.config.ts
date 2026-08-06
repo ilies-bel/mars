@@ -44,6 +44,10 @@ export default defineConfig({
             'src/pages/ChatPage.queue.test.tsx',
             'src/pages/ChatPage.run-control.test.tsx',
             'src/pages/ChatComposerAttachments.test.tsx',
+            // Moved to the dom project: contain interactive click tests that
+            // require a real DOM environment (happy-dom) and createRoot+act.
+            'src/widgets/TopologyView.test.tsx',
+            'src/pages/ProgressPage.test.tsx',
           ],
         },
       },
@@ -107,6 +111,9 @@ export default defineConfig({
             'src/pages/ChatPage.queue.test.tsx',
             'src/pages/ChatPage.run-control.test.tsx',
             'src/pages/ChatComposerAttachments.test.tsx',
+            // Interactive click tests that require a real DOM environment.
+            'src/widgets/TopologyView.test.tsx',
+            'src/pages/ProgressPage.test.tsx',
           ],
         },
       },
