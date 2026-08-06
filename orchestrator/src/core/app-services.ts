@@ -59,6 +59,11 @@ import {
   type ScorerTrend,
 } from './scorer-results'
 import {
+  listScorers,
+  acceptScorer,
+  type Scorer,
+} from './scorers'
+import {
   listWorkflowConfigs,
   type WorkflowConfig,
 } from './workflow-configs'
@@ -266,6 +271,8 @@ export interface AppServices {
     window?: number
   }) => Promise<{ trends: ScorerTrend[]; recent: ScorerResult[] }>
   viewScorerWorkflows: () => Promise<{ workflows: string[] }>
+  viewScorerSuggestions: () => Promise<{ scorers: Scorer[] }>
+  acceptScorerById: (id: string) => Promise<{ scorer: Scorer }>
   // ── framework update (poller cache reader) ──────────────────────────────────
   viewFrameworkUpdate: () => Promise<FrameworkUpdateState>
   // ── workflow configs and promotion ledger (PRD 5b73d277) ──────────────────
@@ -1494,6 +1501,16 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     return { workflows }
   }
 
+  const viewScorerSuggestions: AppServices['viewScorerSuggestions'] = async () => {
+    const scorers = await listScorers({ status: 'suggested' })
+    return { scorers }
+  }
+
+  const acceptScorerById: AppServices['acceptScorerById'] = async (id) => {
+    const scorer = await acceptScorer(id)
+    return { scorer }
+  }
+
   const viewWorkflowConfigs: AppServices['viewWorkflowConfigs'] = async (workflow) => {
     const client = resolveStateClient()
     const configs = await listWorkflowConfigs(client, workflow)
@@ -1780,6 +1797,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewDeepReflection,
     viewScorerTrend,
     viewScorerWorkflows,
+    viewScorerSuggestions,
+    acceptScorerById,
     viewWorkflowConfigs,
     viewPromotionLedger,
     viewLoopLedger,

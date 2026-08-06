@@ -30,6 +30,14 @@ vi.mock('@/entities/watchtower/useScorerWorkflows', () => ({
   useScorerWorkflows: vi.fn(() => ({ data: [], isLoading: false, error: null })),
 }))
 
+vi.mock('@/entities/watchtower/useScorerSuggestions', () => ({
+  useScorerSuggestions: vi.fn(() => ({ scorers: [], isLoading: false, error: null })),
+}))
+
+vi.mock('@/entities/watchtower/useAcceptScorer', () => ({
+  useAcceptScorer: vi.fn(() => ({ accept: () => {}, isPending: false, error: null })),
+}))
+
 import { useKpis } from '@/entities/kpi/useKpis'
 
 const makeKpi = (overrides: Partial<Kpi> & { key: Kpi['key'] }): Kpi => ({

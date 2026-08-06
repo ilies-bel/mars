@@ -1412,6 +1412,43 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /view/scorer-suggestions — suggested scorers not yet accepted or dismissed.
+    // Returns { scorers: Scorer[] } ordered by created_at desc. Pure read; no drain.
+    if (req.method === 'GET' && req.url === '/view/scorer-suggestions') {
+      deps.appServices
+        .viewScorerSuggestions()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // POST /view/scorer-accept — accept a suggested scorer by id. Body: { id: string }.
+    // Routes through the same acceptScorer() path as `mars scorer accept <id>`.
+    if (req.method === 'POST' && req.url === '/view/scorer-accept') {
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let body: unknown
+        try {
+          body = JSON.parse(rawBody)
+        } catch {
+          sendJson(res, 400, { error: 'invalid JSON body' })
+          return
+        }
+        const parsed = z.object({ id: z.string().min(1) }).safeParse(body)
+        if (!parsed.success) {
+          sendJson(res, 400, { error: 'id is required' })
+          return
+        }
+        deps.appServices
+          .acceptScorerById(parsed.data.id)
+          .then((result) => sendJson(res, 200, result))
+          .catch((err: unknown) => sendError(res, err))
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/workflow-configs?workflow=<kind> — versioned workflow config
     // records for a given workflow kind (PRD 5b73d277). Returns {configs}
     // ordered by version desc. Missing workflow param → 400. Pure read.

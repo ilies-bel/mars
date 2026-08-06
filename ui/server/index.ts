@@ -580,6 +580,28 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/scorer-suggestions — suggested scorers not yet accepted or
+        // dismissed. Proxied to the daemon's GET /view/scorer-suggestions. Used
+        // by WatchtowerSection to surface pending suggestions when no results
+        // exist yet.
+        if (path === '/api/scorer-suggestions' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/view/scorer-suggestions')
+          return jsonResponse(r.status, r.body)
+        }
+
+        // POST /api/scorer-accept — accept a suggested scorer by id. Proxied to
+        // the daemon's POST /view/scorer-accept, which routes through the same
+        // acceptScorer() path as `mars scorer accept <id>`. Body: { id: string }.
+        if (path === '/api/scorer-accept' && req.method === 'POST') {
+          try {
+            const body = (await req.json()) as { id?: unknown }
+            const result = await proxyPost(ctx.stateDir, '/view/scorer-accept', body)
+            return jsonResponse(result.status, result.body)
+          } catch (err) {
+            return jsonResponse(500, { error: (err as Error).message })
+          }
+        }
+
         // GET /api/deep-reflections/:originId — full detail for one arc reflection
         // report. Must be matched before /api/deep-reflections so the longer path wins.
         if (path.startsWith('/api/deep-reflections/') && req.method === 'GET') {

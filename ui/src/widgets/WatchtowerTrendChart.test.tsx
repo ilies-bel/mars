@@ -76,6 +76,16 @@ vi.mock('@/entities/watchtower/useLoopLedger', () => ({
   })),
 }))
 
+// WatchtowerSection now uses useScorerSuggestions and useAcceptScorer — mock
+// both so these tests don't need a QueryClientProvider or a live fetch.
+vi.mock('@/entities/watchtower/useScorerSuggestions', () => ({
+  useScorerSuggestions: vi.fn(() => ({ scorers: [], isLoading: false, error: null })),
+}))
+
+vi.mock('@/entities/watchtower/useAcceptScorer', () => ({
+  useAcceptScorer: vi.fn(() => ({ accept: () => {}, isPending: false, error: null })),
+}))
+
 import { useScorerTrend } from '@/entities/watchtower/useScorerTrend'
 import { useScorerWorkflows } from '@/entities/watchtower/useScorerWorkflows'
 import { useWorkflowConfigs } from '@/entities/watchtower/useWorkflowConfigs'
