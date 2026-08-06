@@ -25,6 +25,7 @@
 
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { getDefaultTaskStore, type ArcStatusOptions } from '../store/task-store.js'
@@ -36,6 +37,11 @@ import { probeE2eTooling } from './e2e-tooling.js'
 import { acquireLock } from './git/lock.js'
 import { discoverAppBoot, type BootPlan } from '../../workflows/primitives/app-boot-discovery.js'
 import { runBrowserCheck, type CriterionResult } from '../../workflows/primitives/browser-check.js'
+import {
+  stewardProposeWorkflowPatch,
+  findAwaitingProposalForPath,
+  type ProposeResult,
+} from './steward-workflow-patch.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -56,6 +62,47 @@ export const triggeredOriginIds = new Set<string>()
 /** For test isolation ONLY. Never call in production. */
 export const _clearTriggeredForTests = (): void => {
   triggeredOriginIds.clear()
+}
+
+/**
+ * Number of consecutive tooling-missing arc E2E outcomes that must accumulate
+ * before the Steward proposes removing the behaviour-verify step. Defined in
+ * exactly one place so it appears in rationale messages and tests by name.
+ */
+export const CONSECUTIVE_TOOLING_MISS_THRESHOLD = 3
+
+/**
+ * Counts consecutive arc verifications where `probeE2eTooling` returned
+ * `available: false`. Resets to 0 whenever tooling becomes available.
+ * In-memory per daemon lifetime; cleared between tests via
+ * {@link _clearToolingMissCountForTests}.
+ */
+let consecutiveToolingMissCount = 0
+
+/** For test isolation ONLY. Never call in production. */
+export const _clearToolingMissCountForTests = (): void => {
+  consecutiveToolingMissCount = 0
+}
+
+/**
+ * Injectable seams for the Steward workflow-patch proposal path.
+ * Defaults wire to the real implementations; tests override to avoid DB and
+ * filesystem I/O.
+ */
+export interface StewardPatchDeps {
+  proposeWorkflowPatch: (input: {
+    workflowPath: string
+    unifiedDiff: string
+    rationale: string
+  }) => Promise<ProposeResult>
+  findAwaitingProposalForPath: (workflowPath: string) => Promise<string | null>
+  readWorkflowFile: (absPath: string) => Promise<string | null>
+}
+
+const defaultStewardPatchDeps: StewardPatchDeps = {
+  proposeWorkflowPatch: stewardProposeWorkflowPatch,
+  findAwaitingProposalForPath,
+  readWorkflowFile: (absPath) => readFile(absPath, 'utf-8').catch(() => null),
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -463,6 +510,93 @@ function parseVerdict(text: string): ArcVerificationVerdict {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Workflow-file mutation helpers (used by the tooling-missing proposal path)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Remove the `behaviour-verify` step from a workflow file's source text.
+ *
+ * Handles both the compact single-statement form:
+ *   `await ctx.step('behaviour-verify', () => behaviourVerify(ctx))`
+ * and multi-line variants where the closing `)` appears on a later line.
+ *
+ * Returns `null` when no such step is found (nothing to remove), so the
+ * caller can skip proposing a patch for a workflow that never had the step.
+ */
+function stripBehaviourVerifyStep(content: string): string | null {
+  const lines = content.split('\n')
+  const stepLineIdx = lines.findIndex((l) =>
+    /ctx\.step\(\s*['"]behaviour-verify['"]/.test(l),
+  )
+  if (stepLineIdx === -1) return null
+
+  // Walk forward from the step line counting open/close parens to find the
+  // statement end (depth returns to 0 after the matching close paren).
+  let depth = 0
+  let started = false
+  let endIdx = stepLineIdx
+  outer: for (let i = stepLineIdx; i < lines.length; i++) {
+    for (const ch of lines[i]) {
+      if (ch === '(') { depth++; started = true }
+      else if (ch === ')') {
+        depth--
+        if (started && depth === 0) { endIdx = i; break outer }
+      }
+    }
+  }
+
+  return [...lines.slice(0, stepLineIdx), ...lines.slice(endIdx + 1)].join('\n')
+}
+
+/**
+ * Build a minimal unified diff that removes a contiguous block of lines.
+ *
+ * `oldContent` and `newContent` must differ by exactly one contiguous block
+ * of removed lines (the output of {@link stripBehaviourVerifyStep}).  The
+ * resulting diff is in git's unified format and is accepted by `git apply`.
+ */
+function buildUnifiedRemovalDiff(
+  workflowRelPath: string,
+  oldContent: string,
+  newContent: string,
+): string {
+  const oldLines = oldContent.split('\n')
+  const newLines = newContent.split('\n')
+
+  // Locate the first line where old and new diverge.
+  let startLine = 0
+  while (
+    startLine < oldLines.length &&
+    startLine < newLines.length &&
+    oldLines[startLine] === newLines[startLine]
+  ) {
+    startLine++
+  }
+
+  const removedCount = oldLines.length - newLines.length
+  const CTX = 3
+  const hunkOldStart = Math.max(0, startLine - CTX)
+  const hunkOldEnd = Math.min(oldLines.length, startLine + removedCount + CTX)
+  const oldHunkLen = hunkOldEnd - hunkOldStart
+  const newHunkLen = oldHunkLen - removedCount
+
+  const parts: string[] = [
+    `--- a/${workflowRelPath}`,
+    `+++ b/${workflowRelPath}`,
+    `@@ -${hunkOldStart + 1},${oldHunkLen} +${hunkOldStart + 1},${newHunkLen} @@`,
+  ]
+  for (let i = hunkOldStart; i < hunkOldEnd; i++) {
+    const line = oldLines[i] ?? ''
+    if (i >= startLine && i < startLine + removedCount) {
+      parts.push(`-${line}`)
+    } else {
+      parts.push(` ${line}`)
+    }
+  }
+  return parts.join('\n') + '\n'
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Core verification logic
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -492,6 +626,8 @@ export async function runArcVerification(
     cwd: string
     integrationBranch?: string
     e2eDeps?: Partial<ArcE2eDeps>
+    /** Injectable seams for the tooling-missing Steward proposal path. */
+    stewardDeps?: Partial<StewardPatchDeps>
   },
 ): Promise<ArcVerificationVerdict> {
   const store = await getDefaultTaskStore()
@@ -612,8 +748,52 @@ export async function runArcVerification(
     }).catch(() => {
       // Best-effort — never block the arc.
     })
+
+    // ── Steward patch proposal (level-triggered, threshold-gated) ────────────
+    // Track consecutive tooling-missing outcomes. When the threshold is reached
+    // and no awaiting-human proposal already exists for the workflow, propose
+    // removing the behaviour-verify step so the operator can decide whether to
+    // fix the environment or drop the step.
+    //
+    // ONLY tooling-missing outcomes count. A behavioural FAIL (the app booted,
+    // the surface was reached, a criterion was contradicted) is the step working
+    // correctly — it must never contribute to this counter.
+    consecutiveToolingMissCount++
+    if (consecutiveToolingMissCount >= CONSECUTIVE_TOOLING_MISS_THRESHOLD) {
+      const sdeps: StewardPatchDeps = { ...defaultStewardPatchDeps, ...opts.stewardDeps }
+      // Resolve the workflow file for the arc's origin task.
+      const originTask = await store.getTask(originId)
+      const workflowName = (originTask as { workflow?: string | null } | null)?.workflow ?? 'task'
+      const workflowRelPath = `.mars/workflows/${workflowName}-workflow.js`
+      const workflowAbsPath = join(opts.cwd, workflowRelPath)
+
+      const existingProposalId = await sdeps.findAwaitingProposalForPath(workflowRelPath).catch(() => null)
+      if (existingProposalId === null) {
+        const workflowContent = await sdeps.readWorkflowFile(workflowAbsPath)
+        if (workflowContent !== null) {
+          const newContent = stripBehaviourVerifyStep(workflowContent)
+          if (newContent !== null) {
+            const diff = buildUnifiedRemovalDiff(workflowRelPath, workflowContent, newContent)
+            const missingDesc = toolingReport.missing.map((m) => `- ${m}`).join('\n')
+            const rationale =
+              `${consecutiveToolingMissCount} consecutive arc E2E passes ended ` +
+              `CAN'T-VERIFY because the E2E tooling environment is missing.\n\n` +
+              `Missing:\n${missingDesc}`
+            await sdeps.proposeWorkflowPatch({
+              workflowPath: workflowRelPath,
+              unifiedDiff: diff,
+              rationale,
+            }).catch(() => {
+              // Best-effort — never block the arc.
+            })
+          }
+        }
+      }
+    }
   } else {
-    // Tooling is now available — auto-resolve any stale alert.
+    // Tooling is now available — reset the consecutive-miss counter and
+    // auto-resolve any stale alert.
+    consecutiveToolingMissCount = 0
     const openItems = await listActionQueueItems('open', { kind: 'e2e-tooling-missing' })
     for (const item of openItems) {
       await setActionQueueState(item.id, 'resolved', {

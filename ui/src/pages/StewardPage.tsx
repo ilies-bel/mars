@@ -454,28 +454,56 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
 }
 
 // ---------------------------------------------------------------------------
-// Workflow patches lane — built, never invoked (inert)
+// Workflow patches lane
 // ---------------------------------------------------------------------------
 
 const WorkflowPatchesLane = ({ data }: { data: StewardView['workflowPatches'] }) => {
   const { rows, hasCallers } = data
 
+  if (!hasCallers) {
+    // Inert variant: the patch functions are implemented but have no call sites.
+    return (
+      <article className={laneCardClass(false)} data-testid="lane-workflow-patches">
+        <header className="mb-4">
+          <div className={laneHeaderClass(false)}>
+            <StatusDot active={false} />
+            <span>Workflow patches</span>
+            <span className="ml-auto rounded bg-muted/30 px-1.5 py-0.5 text-[9px] text-muted-foreground">
+              built — no callers
+            </span>
+          </div>
+          <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+            stewardProposeWorkflowPatch, applyWorkflowPatch, and rejectWorkflowPatch are implemented
+            but have no call sites outside their own module and tests. This lane cannot execute.
+          </p>
+        </header>
+        <p
+          className="font-mono text-[10px] text-muted-foreground"
+          data-testid="patches-empty-state"
+        >
+          No proposals in workflow_patch_proposals. This lane has no callers — it is inert, not
+          waiting.
+        </p>
+      </article>
+    )
+  }
+
+  // Active variant: arc-verifier calls stewardProposeWorkflowPatch after N consecutive
+  // tooling-missing outcomes, proposing removal of the behaviour-verify step.
   return (
-    <article className={laneCardClass(false)} data-testid="lane-workflow-patches">
+    <article className={laneCardClass(true)} data-testid="lane-workflow-patches">
       <header className="mb-4">
-        <div className={laneHeaderClass(false)}>
-          <StatusDot active={false} />
+        <div className={laneHeaderClass(true)}>
+          <StatusDot active={true} />
           <span>Workflow patches</span>
-          <span className="ml-auto rounded bg-muted/30 px-1.5 py-0.5 text-[9px] text-muted-foreground">
-            built — no callers
+          <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-[9px] text-success">
+            arc-verifier
           </span>
         </div>
         <p className="mt-1 font-mono text-[10px] text-muted-foreground">
-          stewardProposeWorkflowPatch, applyWorkflowPatch, and rejectWorkflowPatch are implemented
-          but have no call sites outside their own module and tests.
-          {hasCallers
-            ? ' (callers detected — update this page)'
-            : ' This lane cannot execute.'}
+          Trigger: N consecutive arc E2E passes end CAN'T-VERIFY because E2E tooling is missing.
+          The arc-verifier proposes removing the behaviour-verify step so the operator can decide
+          whether to fix the environment or drop the step.
         </p>
       </header>
       {rows.length === 0 ? (
@@ -483,8 +511,7 @@ const WorkflowPatchesLane = ({ data }: { data: StewardView['workflowPatches'] })
           className="font-mono text-[10px] text-muted-foreground"
           data-testid="patches-empty-state"
         >
-          No proposals in workflow_patch_proposals. This lane has no callers — it is inert, not
-          waiting.
+          No pending workflow-patch proposals.
         </p>
       ) : (
         <ul className="space-y-2">
@@ -688,12 +715,12 @@ export const StewardPage = () => {
         {/* Lane 2: Signature storm — live, currently tripped */}
         <SignatureStormLane data={data.signatureStorm} />
 
-        <LaneConnector active={false} />
+        <LaneConnector active={data.workflowPatches.hasCallers} />
 
-        {/* Lane 3: Workflow patches — built, never invoked */}
+        {/* Lane 3: Workflow patches */}
         <WorkflowPatchesLane data={data.workflowPatches} />
 
-        <LaneConnector active={false} />
+        <LaneConnector active={data.workflowPatches.hasCallers} />
 
         {/* Lane 4: Verify gate registry health */}
         <GateHealthLane data={data.gateHealth} />

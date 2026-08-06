@@ -324,6 +324,26 @@ describe('StewardPage', () => {
     expect(html).not.toContain('Nothing yet')
   })
 
+  it('shows active workflow-patches lane with arc-verifier badge when hasCallers is true', () => {
+    vi.mocked(useStewardView).mockReturnValue({
+      data: makeStewardView({ workflowPatches: { rows: [], hasCallers: true } }),
+      isLoading: false,
+      error: null,
+    })
+
+    const html = renderToStaticMarkup(<StewardPage />)
+
+    // Active lane: arc-verifier badge, not the inert badge
+    expect(html).toContain('arc-verifier')
+    expect(html).not.toContain('built — no callers')
+    // Trigger description explains the E2E tooling-missing path
+    // (apostrophe may be HTML-escaped in static markup; match the unescaped key term)
+    expect(html).toContain('VERIFY')
+    expect(html).toContain('behaviour-verify')
+    // Lane is active (executing status dot)
+    expect(html).toContain('executing')
+  })
+
   // ---------------------------------------------------------------------------
   // Verify gate health lane
   // ---------------------------------------------------------------------------

@@ -1518,7 +1518,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       },
       workflowPatches: {
         rows: patchRows,
-        hasCallers: false,
+        hasCallers: true,
       },
       signatureStorm: {
         current_signature: streakRow?.current_signature ?? null,

@@ -119,6 +119,8 @@ const {
   isArcVerifyDisabled,
   loadPrdReachabilityContext,
   _clearTriggeredForTests,
+  _clearToolingMissCountForTests,
+  CONSECUTIVE_TOOLING_MISS_THRESHOLD,
 } = await import('../arc-verifier')
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -143,6 +145,7 @@ describe('arc-verifier', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     _clearTriggeredForTests()
+    _clearToolingMissCountForTests()
     delete process.env.MARS_ARC_VERIFY_DISABLED
   })
 
@@ -1040,6 +1043,248 @@ describe('arc-verifier', () => {
       await runArcVerification('origin-no-tooling', { cwd: '/repo', e2eDeps: deps })
 
       expect(runBrowserCheckSpy).not.toHaveBeenCalled()
+    })
+  })
+
+  // ── Steward workflow-patch proposal ──────────────────────────────────────
+  //
+  // After CONSECUTIVE_TOOLING_MISS_THRESHOLD consecutive arcs where tooling is
+  // unavailable, the verifier proposes removing the behaviour-verify step from
+  // the workflow file so the operator can decide whether to fix the environment
+  // or drop the step. Behavioural FAILs (tooling available, static criterion
+  // contradicted) reset the counter and must never trigger a proposal.
+
+  describe('Steward workflow-patch proposal', () => {
+    // Minimal workflow source that includes a behaviour-verify step.
+    // Must end with '\n' so that git apply context matching works (no
+    // "no newline at end of file" edge case in the generated diff).
+    const WORKFLOW_SRC_WITH_BV = [
+      "import { defineWorkflow } from 'mars/workflow'",
+      "import { behaviourVerify } from 'mars/workflow'",
+      '',
+      'export default defineWorkflow({',
+      '  async fn(ctx) {',
+      "    await ctx.step('setup', () => {})",
+      "    await ctx.step('code', () => {})",
+      "    await ctx.step('behaviour-verify', () => behaviourVerify(ctx))",
+      "    return await ctx.step('merge', () => {})",
+      '  },',
+      '})',
+      '', // trailing newline
+    ].join('\n')
+
+    /** Minimal arc-done store for steward tests. */
+    const makeStewardStore = (originId: string) =>
+      makeStore(
+        { status: 'arc-done', tasks: [{ id: originId, status: 'done' }], landedCommits: ['sha-s'] },
+        [{ id: originId, branch: null }],
+        new Map([[originId, makeTask(originId)]]),
+      )
+
+    /** Build injectable steward deps with sensible defaults. */
+    const makeStewardDeps = (overrides: {
+      propose?: ReturnType<typeof vi.fn>
+      findAwaiting?: ReturnType<typeof vi.fn>
+      readFile?: ReturnType<typeof vi.fn>
+    } = {}) => ({
+      proposeWorkflowPatch:
+        overrides.propose ?? vi.fn(async () => ({ proposalId: 'p1', threadId: 't1' })),
+      findAwaitingProposalForPath:
+        overrides.findAwaiting ?? vi.fn(async (_p: string): Promise<string | null> => null),
+      readWorkflowFile:
+        overrides.readFile ?? vi.fn(async (_p: string) => WORKFLOW_SRC_WITH_BV),
+    })
+
+    beforeEach(() => {
+      // Tooling unavailable by default for all steward tests.
+      probeE2eToolingMock.mockReturnValue({
+        available: false,
+        runner: 'none',
+        missing: ['@playwright/test not installed'],
+        setupSteps: ['npm install --save-dev @playwright/test'],
+      })
+      // Static Claude check always passes so we isolate the tooling / steward branch.
+      runHeadlessProviderMock.mockResolvedValue({
+        exitCode: 0,
+        stdout: '{"ok":true,"findings":[]}',
+        stderr: '',
+        sessionId: null,
+        conversation: [],
+        quotaRejected: null,
+      })
+      listActionQueueItemsMock.mockResolvedValue([])
+    })
+
+    it(`[threshold] ${CONSECUTIVE_TOOLING_MISS_THRESHOLD} consecutive tooling-missing arcs trigger exactly one proposal`, async () => {
+      const propose = vi.fn(async () => ({ proposalId: 'p1', threadId: 't1' }))
+      const stewardDeps = makeStewardDeps({ propose })
+
+      for (let i = 1; i <= CONSECUTIVE_TOOLING_MISS_THRESHOLD; i++) {
+        getDefaultTaskStoreMock.mockResolvedValue(makeStewardStore(`origin-thresh-${i}`))
+        await runArcVerification(`origin-thresh-${i}`, { cwd: '/repo', stewardDeps })
+      }
+
+      expect(propose).toHaveBeenCalledTimes(1)
+      expect(propose).toHaveBeenCalledWith(
+        expect.objectContaining({ workflowPath: '.mars/workflows/task-workflow.js' }),
+      )
+    })
+
+    it('[threshold-rationale] rationale names the miss count, CAN\'T-VERIFY, and missing tool', async () => {
+      const propose = vi.fn(async () => ({ proposalId: 'p1', threadId: 't1' }))
+      const stewardDeps = makeStewardDeps({ propose })
+
+      for (let i = 1; i <= CONSECUTIVE_TOOLING_MISS_THRESHOLD; i++) {
+        getDefaultTaskStoreMock.mockResolvedValue(makeStewardStore(`origin-rationale-${i}`))
+        await runArcVerification(`origin-rationale-${i}`, { cwd: '/repo', stewardDeps })
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const callArg = (propose.mock.calls as any)[0]?.[0] as
+        | { workflowPath: string; unifiedDiff: string; rationale: string }
+        | undefined
+      const rationale = callArg?.rationale ?? ''
+      expect(rationale).toContain(`${CONSECUTIVE_TOOLING_MISS_THRESHOLD} consecutive`)
+      expect(rationale).toContain("CAN'T-VERIFY")
+      expect(rationale).toContain('@playwright/test not installed')
+    })
+
+    it('[no-duplicate] 4th miss does not produce a second proposal when one is already awaiting-human', async () => {
+      const propose = vi.fn(async () => ({ proposalId: 'p1', threadId: 't1' }))
+      const findAwaiting = vi.fn(async (_p: string): Promise<string | null> => null)
+      const stewardDeps = makeStewardDeps({ propose, findAwaiting })
+
+      // Misses 1-3: no existing proposal → proposal created on the 3rd.
+      for (let i = 1; i <= CONSECUTIVE_TOOLING_MISS_THRESHOLD; i++) {
+        getDefaultTaskStoreMock.mockResolvedValue(makeStewardStore(`origin-nodup-${i}`))
+        await runArcVerification(`origin-nodup-${i}`, { cwd: '/repo', stewardDeps })
+      }
+      expect(propose).toHaveBeenCalledTimes(1)
+
+      // Miss 4: proposal now exists in awaiting-human → must not create another.
+      findAwaiting.mockResolvedValue('existing-proposal-id')
+      getDefaultTaskStoreMock.mockResolvedValue(makeStewardStore('origin-nodup-4'))
+      await runArcVerification('origin-nodup-4', { cwd: '/repo', stewardDeps })
+
+      expect(propose).toHaveBeenCalledTimes(1)
+    })
+
+    it('[reset] counter resets on a tooling-available arc; 2 further misses do not trigger a proposal', async () => {
+      const propose = vi.fn(async () => ({ proposalId: 'p1', threadId: 't1' }))
+      const stewardDeps = makeStewardDeps({ propose })
+
+      // 2 misses — below threshold.
+      for (let i = 1; i <= CONSECUTIVE_TOOLING_MISS_THRESHOLD - 1; i++) {
+        getDefaultTaskStoreMock.mockResolvedValue(makeStewardStore(`origin-reset-miss-${i}`))
+        await runArcVerification(`origin-reset-miss-${i}`, { cwd: '/repo', stewardDeps })
+      }
+
+      // Tooling available → counter resets to 0.
+      probeE2eToolingMock.mockReturnValueOnce({
+        available: true,
+        runner: 'playwright' as const,
+        missing: [],
+        setupSteps: [],
+      })
+      getDefaultTaskStoreMock.mockResolvedValue(makeStewardStore('origin-reset-avail'))
+      await runArcVerification('origin-reset-avail', { cwd: '/repo', stewardDeps })
+
+      // 2 more misses — fresh start, still below threshold.
+      for (let i = 1; i <= CONSECUTIVE_TOOLING_MISS_THRESHOLD - 1; i++) {
+        getDefaultTaskStoreMock.mockResolvedValue(makeStewardStore(`origin-reset-miss2-${i}`))
+        await runArcVerification(`origin-reset-miss2-${i}`, { cwd: '/repo', stewardDeps })
+      }
+
+      expect(propose).not.toHaveBeenCalled()
+    })
+
+    it('[behavioural-fails-excluded] tooling-available arcs (even with static FAIL) reset the counter', async () => {
+      const propose = vi.fn(async () => ({ proposalId: 'p1', threadId: 't1' }))
+      const stewardDeps = makeStewardDeps({ propose })
+
+      // 2 tooling-missing arcs (below threshold).
+      for (let i = 1; i <= CONSECUTIVE_TOOLING_MISS_THRESHOLD - 1; i++) {
+        getDefaultTaskStoreMock.mockResolvedValue(makeStewardStore(`origin-bv-miss-${i}`))
+        await runArcVerification(`origin-bv-miss-${i}`, { cwd: '/repo', stewardDeps })
+      }
+
+      // "Behavioural FAIL" arc: tooling available but static criteria check fails.
+      // The tooling-available branch always resets the counter.
+      probeE2eToolingMock.mockReturnValueOnce({
+        available: true,
+        runner: 'playwright' as const,
+        missing: [],
+        setupSteps: [],
+      })
+      runHeadlessProviderMock.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: '{"ok":false,"findings":["criterion not met by the arc"]}',
+        stderr: '',
+        sessionId: null,
+        conversation: [],
+        quotaRejected: null,
+      })
+      getDefaultTaskStoreMock.mockResolvedValue(makeStewardStore('origin-bv-behavioural'))
+      await runArcVerification('origin-bv-behavioural', { cwd: '/repo', stewardDeps })
+
+      // 2 more misses — counter restarted from 0, still below threshold.
+      for (let i = 1; i <= CONSECUTIVE_TOOLING_MISS_THRESHOLD - 1; i++) {
+        getDefaultTaskStoreMock.mockResolvedValue(makeStewardStore(`origin-bv-after-${i}`))
+        await runArcVerification(`origin-bv-after-${i}`, { cwd: '/repo', stewardDeps })
+      }
+
+      expect(propose).not.toHaveBeenCalled()
+    })
+
+    it('[git-apply] emitted unified diff passes git apply --check in a real git repo', async () => {
+      const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises')
+      const { join: pathJoin } = await import('node:path')
+      const { tmpdir } = await import('node:os')
+      const { execFileSync } = await import('node:child_process')
+
+      const repoDir = await mkdtemp(pathJoin(tmpdir(), 'mars-arc-gitapply-'))
+      try {
+        // Bootstrap a minimal git repo with the workflow file committed.
+        execFileSync('git', ['init'], { cwd: repoDir, stdio: 'ignore' })
+        execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir })
+        execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repoDir })
+
+        const workflowDir = pathJoin(repoDir, '.mars', 'workflows')
+        await mkdir(workflowDir, { recursive: true })
+        await writeFile(pathJoin(workflowDir, 'task-workflow.js'), WORKFLOW_SRC_WITH_BV)
+
+        execFileSync('git', ['add', '.'], { cwd: repoDir })
+        execFileSync('git', ['commit', '-m', 'init'], { cwd: repoDir, stdio: 'ignore' })
+
+        // Capture the unified diff from the proposal.
+        let capturedDiff: string | null = null
+        const propose = vi.fn(async (input: { workflowPath: string; unifiedDiff: string; rationale: string }) => {
+          capturedDiff = input.unifiedDiff
+          return { proposalId: 'p1', threadId: 't1' }
+        })
+        // readWorkflowFile must return the same content that is committed.
+        const stewardDeps = makeStewardDeps({
+          propose,
+          readFile: vi.fn(async () => WORKFLOW_SRC_WITH_BV),
+        })
+
+        // Run N arcs to reach the threshold.
+        for (let i = 1; i <= CONSECUTIVE_TOOLING_MISS_THRESHOLD; i++) {
+          getDefaultTaskStoreMock.mockResolvedValue(makeStewardStore(`origin-gitapply-${i}`))
+          await runArcVerification(`origin-gitapply-${i}`, { cwd: repoDir, stewardDeps })
+        }
+
+        expect(capturedDiff).not.toBeNull()
+
+        // Write the captured diff and verify it applies cleanly.
+        const patchFile = pathJoin(repoDir, 'steward.patch')
+        await writeFile(patchFile, capturedDiff!)
+        expect(() =>
+          execFileSync('git', ['apply', '--check', patchFile], { cwd: repoDir }),
+        ).not.toThrow()
+      } finally {
+        await rm(repoDir, { recursive: true, force: true }).catch(() => {})
+      }
     })
   })
 })

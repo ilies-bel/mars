@@ -124,6 +124,24 @@ export const rejectWorkflowPatch = async (
 }
 
 /**
+ * Return the id of any open (awaiting-human) proposal for the given workflow
+ * path, or null when none exists. Used by the arc-verifier to avoid creating
+ * duplicate proposals while an operator decision is pending.
+ */
+export const findAwaitingProposalForPath = async (
+  workflowPath: string,
+): Promise<string | null> => {
+  const c = stateClient()
+  const { rows } = await c.execute({
+    sql: `SELECT id FROM workflow_patch_proposals
+          WHERE workflow_path = ? AND status = 'awaiting-human'
+          LIMIT 1`,
+    args: [workflowPath],
+  })
+  return rows.length > 0 ? (rows[0]!.id as string) : null
+}
+
+/**
  * Get a proposal by id.
  */
 export const getWorkflowPatchProposal = async (
