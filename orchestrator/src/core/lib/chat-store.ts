@@ -615,7 +615,7 @@ export const createThread = async (
       sql: `INSERT INTO chat_threads
               (id, title, status, terminal_event_type, terminal_entity_id, objective, origin, alert_item_id, created_at, updated_at)
             VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?, ?)`,
-      args: [id, threadTitle, terminalEvent ?? null, terminalEntityId ?? null, objective ?? null, origin ?? null, alertItemId ?? null, ts, ts],
+      args: [id, threadTitle, terminalEvent ?? null, terminalEntityId ?? null, objective ?? '', origin ?? null, alertItemId ?? null, ts, ts],
     })
     if (situationReport !== undefined) {
       await tx.execute({
