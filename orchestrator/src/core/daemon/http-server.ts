@@ -1672,6 +1672,42 @@ export const startHttpServer = async (
       }
     }
 
+    // POST /presence — UI client heartbeat. Records the last-seen timestamp in
+    // `presence_pings` and writes one row to `presence_transitions` when the
+    // gap since the previous ping meets or exceeds `thresholdMs` (default
+    // 300 000 ms / 5 min). Returns { ok: true, ts }. Bypasses the draining
+    // gate — lightweight presence write, not task work.
+    if (req.method === 'POST' && req.url === '/presence') {
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let parsed: unknown = {}
+        try {
+          if (rawBody.trim().length > 0) parsed = JSON.parse(rawBody)
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+          return
+        }
+        const presenceSchema = z.object({
+          ts: z.number().int().optional(),
+          thresholdMs: z.number().int().min(1).optional(),
+        })
+        const result = presenceSchema.safeParse(parsed)
+        if (!result.success) {
+          sendJson(res, 400, { ok: false, error: 'invalid body' })
+          return
+        }
+        const ts = result.data.ts ?? Date.now()
+        const thresholdMs = result.data.thresholdMs ?? 300_000
+        import('../presence/tracker.js')
+          .then((m) => m.recordPing(resolveStateClient(), ts, thresholdMs))
+          .then(() => sendJson(res, 200, { ok: true, ts }))
+          .catch((err: unknown) => sendError(res, err))
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /preferences/notifications — returns { enabled: boolean } reflecting the
     // stored value (default true when unset). PUT /preferences/notifications —
     // accepts { enabled: boolean }, persists via setNotificationsEnabled, returns

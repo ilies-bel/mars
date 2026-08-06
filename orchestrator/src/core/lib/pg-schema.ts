@@ -38,7 +38,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0025'
+export const SCHEMA_VERSION = '0026'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -1643,6 +1643,28 @@ const DDL: readonly string[] = [
     target_window_end timestamptz,
     pressure          text NOT NULL
   )`,
+
+  // ── presence tracking (slice 2 of PRD e2133e10) ───────────────────────────
+  // Single-row last-seen timestamp from the UI client heartbeat. The daemon
+  // compares each incoming ping against this value to detect away→present
+  // transitions. Enforced singleton via CHECK(id = 1).
+  `CREATE TABLE IF NOT EXISTS presence_pings (
+    id           bigint PRIMARY KEY CHECK (id = 1),
+    last_seen_ms bigint NOT NULL
+  )`,
+  // Append-only log of away→present transitions. Written exactly once per away
+  // span: when a ping arrives after a gap >= threshold_ms. from_ms/to_ms are
+  // the bounding pings of the away span; threshold_ms records the configured
+  // idle threshold in effect when the transition was detected.
+  `CREATE TABLE IF NOT EXISTS presence_transitions (
+    id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    from_ms      bigint NOT NULL,
+    to_ms        bigint NOT NULL,
+    threshold_ms bigint NOT NULL,
+    recorded_at  bigint NOT NULL DEFAULT ${EPOCH_NOW}
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_presence_transitions_recorded_at
+     ON presence_transitions(recorded_at DESC)`,
 ]
 
 /**
@@ -1719,6 +1741,8 @@ export const SCHEMA_TABLES: readonly string[] = [
   'mcp_worker_audit',
   'daemon_heartbeat',
   'deferrals',
+  'presence_pings',
+  'presence_transitions',
 ]
 
 /**
@@ -1735,6 +1759,7 @@ export const IDENTITY_COLUMNS: Readonly<Record<string, string>> = {
   usage_snapshots: 'id',
   mcp_worker_audit: 'id',
   conversation_notice_batches: 'id',
+  presence_transitions: 'id',
 }
 
 /**
