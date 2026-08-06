@@ -510,7 +510,20 @@ const TopologyViewInner = ({
   if (empty) {
     return (
       <main className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-background">
-        <p className="font-mono text-[13px] text-primary">No active tasks</p>
+        {selectedProposalId != null ? (
+          <div className="flex flex-col items-center gap-3">
+            <p className="font-mono text-[13px] text-primary">No active tasks for this proposal</p>
+            <button
+              data-testid="clear-proposal-filter"
+              onClick={() => onSelectProposal?.(null)}
+              className="rounded border border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+            >
+              Clear filter
+            </button>
+          </div>
+        ) : (
+          <p className="font-mono text-[13px] text-primary">No active tasks</p>
+        )}
       </main>
     )
   }

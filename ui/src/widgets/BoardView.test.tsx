@@ -422,6 +422,66 @@ describe('BoardView – search filter on cluster columns', () => {
   })
 })
 
+describe('BoardView – proposal-filter empty state', () => {
+  it('shows "No active tasks for this proposal" when the proposal filter yields nothing', () => {
+    // All tasks belong to proposal p2; filter is set to p1 → nothing matches.
+    const t1 = task({ id: 'p2-task', cluster: 'Queued', parentProposalId: 'p2' })
+    const byCluster = { ...emptyByCluster(), Queued: [t1] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId="p1" />,
+    )
+
+    expect(html).toContain('No active tasks for this proposal')
+  })
+
+  it('does not show the proposal empty-state when no proposal filter is active', () => {
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={emptyByCluster()} proposals={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).not.toContain('No active tasks for this proposal')
+  })
+
+  it('renders a clear-filter button with the correct testid', () => {
+    const t1 = task({ id: 'p2-task', cluster: 'Queued', parentProposalId: 'p2' })
+    const byCluster = { ...emptyByCluster(), Queued: [t1] }
+
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={byCluster}
+        proposals={[]}
+        error={null}
+        selectedProposalId="p1"
+        onClearProposalFilter={() => {}}
+      />,
+    )
+
+    expect(html).toContain('data-testid="clear-proposal-filter"')
+  })
+
+  it('does not show the proposal empty-state when the search filter is also active (search takes precedence)', () => {
+    // Search is active (searchMatchIds is non-null) so the search zero-state should show, not the proposal one.
+    const t1 = task({ id: 'p1-task', cluster: 'Queued', parentProposalId: 'p1' })
+    const byCluster = { ...emptyByCluster(), Queued: [t1] }
+
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={byCluster}
+        proposals={[]}
+        error={null}
+        selectedProposalId="p1"
+        searchMatchIds={new Set()}
+        searchQuery="nomatch"
+      />,
+    )
+
+    // The search zero-state is shown; the proposal empty-state is not.
+    expect(html).toContain('data-testid="search-zero-state"')
+    expect(html).not.toContain('No active tasks for this proposal')
+  })
+})
+
 describe('BoardView – mobile responsive tab strip (single-column below breakpoint)', () => {
   it('renders a tab strip with a button for each cluster status', () => {
     const html = renderToStaticMarkup(

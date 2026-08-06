@@ -173,6 +173,8 @@ export interface BoardViewProps {
    */
   searchQuery?: string
   purgeArchive?: Map<string, PurgeArchiveEntry>
+  /** Called when the user clicks the "Clear filter" button in the proposal-filter empty state. */
+  onClearProposalFilter?: () => void
 }
 
 export const BoardView = ({
@@ -183,6 +185,7 @@ export const BoardView = ({
   searchMatchIds,
   searchQuery,
   purgeArchive,
+  onClearProposalFilter,
 }: BoardViewProps) => {
   // Filter active (non-Done) tasks by proposal + search before grouping so an
   // Arc spanning a failure and its recovery is represented exactly once, in the
@@ -262,6 +265,27 @@ export const BoardView = ({
       {/*   desktop (>1024px):  flex-row, original 5 equal columns            */}
       {/* ------------------------------------------------------------------ */}
       <main className="relative flex flex-col min-h-0 flex-1 gap-3 overflow-hidden bg-background p-4 md:grid md:grid-cols-[repeat(auto-fit,minmax(280px,1fr))] md:auto-rows-[400px] md:overflow-y-auto lg:flex lg:flex-row lg:overflow-hidden">
+        {/* Zero-state proposal pill — shown when the proposal filter yields no active tasks.
+            Only shown when there is no active text search (search zero-state takes precedence). */}
+        {selectedProposalId !== null && searchMatchIds == null && totalMatchedTasks === 0 && (
+          <div
+            data-testid="proposal-zero-state"
+            className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+          >
+            <div className="pointer-events-auto flex flex-col items-center gap-3">
+              <span className="rounded border border-border bg-card px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
+                No active tasks for this proposal
+              </span>
+              <button
+                data-testid="clear-proposal-filter"
+                onClick={onClearProposalFilter}
+                className="rounded border border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+              >
+                Clear filter
+              </button>
+            </div>
+          </div>
+        )}
         {/* Zero-state search pill — shown when a non-empty search matches no tasks.
             pointer-events:none so it never blocks column scroll interaction. */}
         {searchMatchIds != null && totalMatchedTasks === 0 && (

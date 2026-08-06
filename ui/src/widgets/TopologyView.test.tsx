@@ -64,6 +64,44 @@ describe('TopologyView – empty state', () => {
   })
 })
 
+describe('TopologyView – proposal-filter empty state', () => {
+  it('says "for this proposal" when a proposal filter is active and there are no tasks', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={noTasks}
+        proposals={noProposals}
+        selectedProposalId="p1"
+        onSelectProposal={() => {}}
+      />,
+    )
+    expect(html).toContain('No active tasks for this proposal')
+  })
+
+  it('shows bare "No active tasks" when no proposal filter is set', () => {
+    const html = renderToStaticMarkup(<TopologyView tasks={noTasks} proposals={noProposals} />)
+    // Must not include "for this proposal" — that phrase only appears when a filter is active.
+    expect(html).not.toContain('for this proposal')
+    expect(html).toContain('No active tasks')
+  })
+
+  it('renders a clear-filter button with the correct testid when the proposal filter is active', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={noTasks}
+        proposals={noProposals}
+        selectedProposalId="p1"
+        onSelectProposal={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="clear-proposal-filter"')
+  })
+
+  it('does not render the clear-filter button when there is no proposal filter', () => {
+    const html = renderToStaticMarkup(<TopologyView tasks={noTasks} proposals={noProposals} />)
+    expect(html).not.toContain('data-testid="clear-proposal-filter"')
+  })
+})
+
 describe('TopologyView – rebuild gate (structural signature)', () => {
   // structuralSignature gates the fitView camera reset so cluster/status
   // flips never yank the viewport; the aria-label depends only on task count.

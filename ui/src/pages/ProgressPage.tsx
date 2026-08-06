@@ -180,6 +180,7 @@ export const ProgressPage = () => {
             selectedProposalId={effectiveProposalId}
             searchMatchIds={searchMatchIds}
             searchQuery={searchQuery}
+            onClearProposalFilter={() => setSelectedProposalId(null)}
           />
         )}
         <Footer />
