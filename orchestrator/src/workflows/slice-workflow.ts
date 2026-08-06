@@ -704,6 +704,110 @@ Answer in valid JSON only — no prose, no markdown:
 - No ordering constraint → {"hasDependency": false}`
 
 /**
+ * Detects "hotspot" files — files that appear in `modifies` of two or more
+ * non-schema-drop slices — and emits a synthetic contract-owner slice for
+ * each hotspot. The owner takes exclusive ownership of the shared file;
+ * every consumer slice is updated to:
+ *
+ *   1. Remove the hotspot file from its `modifies` list (ownership transferred
+ *      to the owner slice so Stage 1.5 does not add a redundant sequential edge).
+ *   2. Add the hotspot file to its `readFirst` list (the coder must read the
+ *      shared contract before working on the consumer).
+ *   3. Add the owner's 1-based index to its `blockedBy` list (consumer branches
+ *      off a main that already has the contract).
+ *
+ * Owner slices are appended at the tail of the array (higher 1-based indices
+ * than the existing slices) so no existing `blockedBy` reference needs to be
+ * re-numbered.
+ *
+ * Schema-drop slices (detected via `isSchemaDropSlice`) are excluded from both
+ * hotspot detection and the consumer set — Stage 1 of `injectAutoLinkerBlockers`
+ * manages their ordering. This also means a schema-drop slice + one non-drop
+ * slice sharing a file do NOT trigger owner creation.
+ *
+ * Recovery tasks are not slice-level objects and are never present in the slicer
+ * output, so this function naturally never creates blocker edges touching them
+ * (ADR-0040 constraint).
+ *
+ * Mutates `slices` in place. Exported for unit testing.
+ */
+export const injectContractOwnerSlices = (
+  slices: SliceSpec[],
+): void => {
+  // Build file → [0-based indices of non-schema-drop slices that list the file
+  // in modifies]. Capture state at the start so subsequent mutations during the
+  // hotspot-processing loop do not affect the consumer index lists.
+  const fileToConsumerIndices = new Map<string, number[]>()
+  for (let i = 0; i < slices.length; i++) {
+    if (isSchemaDropSlice(slices[i])) continue
+    for (const file of slices[i].modifies) {
+      const existing = fileToConsumerIndices.get(file)
+      if (existing !== undefined) {
+        existing.push(i)
+      } else {
+        fileToConsumerIndices.set(file, [i])
+      }
+    }
+  }
+
+  // For each hotspot file (2+ consumers), emit an owner slice and update consumers.
+  for (const [hotspotFile, consumerIndices] of fileToConsumerIndices) {
+    if (consumerIndices.length < 2) continue
+
+    const ownerOneBased = slices.length + 1
+    const basename = hotspotFile.split('/').pop() ?? hotspotFile
+    const consumerTitles = consumerIndices.map((i) => slices[i].title)
+
+    const ownerSlice: SliceSpec = {
+      title: `Shared contract: ${basename}`,
+      type: 'AFK',
+      kind: 'coder',
+      whatToBuild:
+        `Establish the shared contract in \`${hotspotFile}\` before the ` +
+        `${consumerIndices.length} consumer slice(s) that all require changes to it. ` +
+        `Consolidate the type, schema, or interface changes needed by the consumers ` +
+        `into this single owner slice so each consumer branches off a main that ` +
+        `already has the contract.`,
+      acceptanceCriteria: [
+        `\`${hotspotFile}\` contains all changes required by the ` +
+          `${consumerIndices.length} consumer slice(s): ` +
+          consumerTitles.map((t) => `"${t}"`).join(', '),
+      ],
+      blockedBy: [],
+      readFirst: [hotspotFile],
+      prescriptiveAction:
+        `In \`${hotspotFile}\`, apply the consolidated type/schema/interface ` +
+        `changes required by the following consumer slices: ${consumerTitles.join('; ')}. ` +
+        `This owner slice must land on main before any consumer slice starts — ` +
+        `each consumer's \`blockedBy\` already references this slice.`,
+      modifies: [hotspotFile],
+      creates: [],
+      verifyCmd: null,
+      mergeMode: 'auto',
+    }
+
+    slices.push(ownerSlice)
+
+    for (const consumerIdx of consumerIndices) {
+      const consumer = slices[consumerIdx]
+
+      // Transfer ownership: remove the hotspot file from the consumer's modifies.
+      consumer.modifies = consumer.modifies.filter((f) => f !== hotspotFile)
+
+      // Ensure the consumer reads the shared contract before implementing.
+      if (!consumer.readFirst.includes(hotspotFile)) {
+        consumer.readFirst = [...consumer.readFirst, hotspotFile]
+      }
+
+      // Block the consumer on the owner.
+      if (!consumer.blockedBy.includes(ownerOneBased)) {
+        consumer.blockedBy = [...consumer.blockedBy, ownerOneBased].sort((a, b) => a - b)
+      }
+    }
+  }
+}
+
+/**
  * Three-stage auto-linker: inject blockedBy edges the slicer LLM forgot.
  * Returns the injected edges with provenance and any inferred edges dropped
  * by the cycle guard (callers should log droppedCycles for traceability).
@@ -1243,6 +1347,11 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
     }
 
     const parsed = parseSlicerOutput(r.stdout)
+    // Pre-repair: detect hotspot files (same file in modifies of 2+ non-drop
+    // consumer slices) and emit a contract-owner slice for each. Consumers are
+    // blocked on their owner and the shared file is removed from their modifies,
+    // so Stage 1.5 is not consulted for those pairs.
+    injectContractOwnerSlices(parsed.slices)
     // Repair: the slicer LLM routinely forgets to wire dependency edges
     // between related slices. Stage 1 handles schema-drop ↔ consumer edges
     // deterministically; Stage 1.5 handles file-overlap pairs mechanically

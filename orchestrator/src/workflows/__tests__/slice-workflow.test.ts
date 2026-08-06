@@ -9,6 +9,7 @@ import {
   slicerOutputSchema,
   sliceFilesForPersistence,
   injectAutoLinkerBlockers,
+  injectContractOwnerSlices,
   type DirectionVerdict,
   dropAlreadySatisfiedSlices,
   annotateUnresolvedReferences,
@@ -1564,6 +1565,212 @@ describe('injectAutoLinkerBlockers: file-overlap mechanical edges (Stage 1.5)', 
     expect(result.injected).toContainEqual(
       expect.objectContaining({ dependerIdx: 2, blockerOneBased: 2, provenance: 'file-overlap' }),
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Contract-owner injection tests
+// ---------------------------------------------------------------------------
+
+describe('injectContractOwnerSlices: hotspot detection and owner injection', () => {
+  // Helper to build minimal valid SliceSpec fixtures.
+  const mkSlice = (overrides: {
+    title: string
+    modifies?: string[]
+    creates?: string[]
+    blockedBy?: number[]
+    readFirst?: string[]
+    prescriptiveAction?: string
+  }) => ({
+    type: 'AFK' as const,
+    kind: 'coder' as const,
+    whatToBuild: `Build ${overrides.title}`,
+    acceptanceCriteria: [`${overrides.title} works`],
+    blockedBy: [] as number[],
+    readFirst: ['orchestrator/src/core/queue.ts'],
+    prescriptiveAction: `In fooFn, change behaviour for ${overrides.title}.`,
+    modifies: [] as string[],
+    creates: [] as string[],
+    verifyCmd: null,
+    mergeMode: 'auto' as const,
+    ...overrides,
+  })
+
+  it('two slices mutating the same file produce an owner slice plus two consumers blocked on it', () => {
+    const slices = [
+      mkSlice({ title: 'Feature A', modifies: ['orchestrator/src/core/pg-schema.ts'] }),
+      mkSlice({ title: 'Feature B', modifies: ['orchestrator/src/core/pg-schema.ts'] }),
+    ]
+
+    injectContractOwnerSlices(slices)
+
+    // Owner slice appended at the end
+    expect(slices).toHaveLength(3)
+    const owner = slices[2]
+    expect(owner.modifies).toContain('orchestrator/src/core/pg-schema.ts')
+    // Consumers are blocked on owner (1-based index 3)
+    expect(slices[0].blockedBy).toContain(3)
+    expect(slices[1].blockedBy).toContain(3)
+  })
+
+  it('consumers no longer declare the hotspot file in modifies after injection', () => {
+    const slices = [
+      mkSlice({ title: 'A', modifies: ['src/chat-store.ts', 'src/other.ts'] }),
+      mkSlice({ title: 'B', modifies: ['src/chat-store.ts'] }),
+    ]
+
+    injectContractOwnerSlices(slices)
+
+    // chat-store.ts removed from consumer modifies
+    expect(slices[0].modifies).not.toContain('src/chat-store.ts')
+    expect(slices[1].modifies).not.toContain('src/chat-store.ts')
+    // Other non-hotspot files are untouched
+    expect(slices[0].modifies).toContain('src/other.ts')
+  })
+
+  it('consumers gain the hotspot file in readFirst after injection', () => {
+    const slices = [
+      mkSlice({ title: 'A', modifies: ['src/schema.ts'] }),
+      mkSlice({ title: 'B', modifies: ['src/schema.ts'] }),
+    ]
+
+    injectContractOwnerSlices(slices)
+
+    expect(slices[0].readFirst).toContain('src/schema.ts')
+    expect(slices[1].readFirst).toContain('src/schema.ts')
+  })
+
+  it('a plan with no hotspot overlap is unchanged (no spurious owner slice)', () => {
+    const slices = [
+      mkSlice({ title: 'A', modifies: ['src/a.ts'] }),
+      mkSlice({ title: 'B', modifies: ['src/b.ts'] }),
+    ]
+    const originalLength = slices.length
+
+    injectContractOwnerSlices(slices)
+
+    expect(slices).toHaveLength(originalLength)
+    expect(slices[0].blockedBy).toEqual([])
+    expect(slices[1].blockedBy).toEqual([])
+  })
+
+  it('a single slice modifying a file does not produce an owner slice', () => {
+    const slices = [
+      mkSlice({ title: 'Only', modifies: ['src/schema.ts'] }),
+    ]
+
+    injectContractOwnerSlices(slices)
+
+    expect(slices).toHaveLength(1)
+    expect(slices[0].blockedBy).toEqual([])
+  })
+
+  it('schema-drop slices are excluded from hotspot detection (Stage 1 handles those)', () => {
+    // One non-drop slice + one schema-drop slice both declare the same file.
+    // The drop is excluded from the hotspot count, so there is no 2-consumer
+    // hotspot and no owner should be created.
+    const slices = [
+      mkSlice({ title: 'Add column to schema', modifies: ['src/schema.ts'] }),
+      mkSlice({
+        title: 'Drop column from schema (hard cut, no migration)',
+        modifies: ['src/schema.ts'],
+      }),
+    ]
+
+    injectContractOwnerSlices(slices)
+
+    // No owner created — only 1 non-drop consumer → not a hotspot
+    expect(slices).toHaveLength(2)
+    expect(slices[0].blockedBy).toEqual([])
+    expect(slices[1].blockedBy).toEqual([])
+  })
+
+  it('repairs a plan that splits mutually dependent type/schema changes with no declared owner', () => {
+    // Two slices that both modify pg-schema.ts with no explicit owner.
+    // This is the "distributing type/schema changes without an owner" anti-pattern.
+    // injectContractOwnerSlices must repair it by producing an owner slice.
+    const slices = [
+      mkSlice({ title: 'Add chat_store column', modifies: ['orchestrator/src/core/pg-schema.ts'] }),
+      mkSlice({ title: 'Use chat_store column in queries', modifies: ['orchestrator/src/core/pg-schema.ts'] }),
+    ]
+
+    injectContractOwnerSlices(slices)
+
+    // Repaired: three slices (2 consumers + 1 owner)
+    expect(slices).toHaveLength(3)
+    // Owner holds the shared file
+    const ownerIdx = 2
+    expect(slices[ownerIdx].modifies).toEqual(['orchestrator/src/core/pg-schema.ts'])
+    // Both consumers blocked on the owner (1-based index 3)
+    expect(slices[0].blockedBy).toContain(3)
+    expect(slices[1].blockedBy).toContain(3)
+  })
+
+  it('preserves existing blockedBy on consumers when adding the owner edge', () => {
+    const slices = [
+      mkSlice({ title: 'A', modifies: ['src/schema.ts'] }),
+      mkSlice({ title: 'B', modifies: ['src/schema.ts'], blockedBy: [1] }),
+    ]
+
+    injectContractOwnerSlices(slices)
+
+    // B had blockedBy:[1] before injection; owner is now index 3 (1-based)
+    expect(slices[1].blockedBy).toContain(1) // existing edge preserved
+    expect(slices[1].blockedBy).toContain(3) // new owner edge added
+  })
+
+  it('multiple hotspot files each get their own owner slice', () => {
+    const slices = [
+      mkSlice({ title: 'A', modifies: ['src/schema.ts', 'src/routes.ts'] }),
+      mkSlice({ title: 'B', modifies: ['src/schema.ts', 'src/routes.ts'] }),
+    ]
+
+    injectContractOwnerSlices(slices)
+
+    // Two owners: one for schema.ts, one for routes.ts
+    expect(slices).toHaveLength(4)
+    // Both consumers blocked on both owners (indices 3 and 4)
+    expect(slices[0].blockedBy).toContain(3)
+    expect(slices[0].blockedBy).toContain(4)
+    expect(slices[1].blockedBy).toContain(3)
+    expect(slices[1].blockedBy).toContain(4)
+  })
+
+  it('owner slices are not recovery tasks — they have coder kind and no recovery markers', () => {
+    // ADR-0040: recovery tasks are leaf nodes and cannot carry blocker edges.
+    // The contract-owner pattern applies to slicer-generated slices only.
+    // Verify that synthetic owner slices are regular coder slices with no
+    // recovery-task-like properties.
+    const slices = [
+      mkSlice({ title: 'A', modifies: ['src/schema.ts'] }),
+      mkSlice({ title: 'B', modifies: ['src/schema.ts'] }),
+    ]
+
+    injectContractOwnerSlices(slices)
+
+    const owner = slices[2]
+    expect(owner.kind).toBe('coder')
+    expect(owner.type).toBe('AFK')
+    expect(owner.blockedBy).toEqual([]) // owner has no blockers
+    // Owner is not tagged as a recovery task (no fixForTaskId-like property)
+    expect(owner).not.toHaveProperty('fixForTaskId')
+    expect(owner).not.toHaveProperty('isRecovery')
+  })
+
+  it('is idempotent — re-running on already-injected slices produces no duplicates', () => {
+    const slices = [
+      mkSlice({ title: 'A', modifies: ['src/schema.ts'] }),
+      mkSlice({ title: 'B', modifies: ['src/schema.ts'] }),
+    ]
+
+    injectContractOwnerSlices(slices)
+    const lengthAfterFirst = slices.length
+
+    // Second call should not add more owners (owner has schema.ts in modifies,
+    // but only 1 non-drop non-owner consumer has it after first pass removes it).
+    injectContractOwnerSlices(slices)
+
+    expect(slices).toHaveLength(lengthAfterFirst)
   })
 })
 
