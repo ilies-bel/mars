@@ -12,7 +12,7 @@ import type { SelfEvolveConfig } from '../daemon/config'
 import { isReflectDisabled } from './reflect-signals'
 import { isAutoReflectDisabled } from './auto-reflect-gate'
 import { insertMemoryPacket } from '../store/memory-packet-store'
-import { loadImprovementRecipes, formatRecipeCatalog } from './improvement-recipes'
+import { loadLeverRegistry, formatRecipeCatalog } from './lever-registry'
 
 export interface ReflectionSuggestion {
   title: string
@@ -289,7 +289,7 @@ const formatChatFeedbackSection = (
 export const buildPrompt = (corpus: ReflectCorpus): string => {
   const summaryJson = JSON.stringify(corpus.costSummary, null, 2)
   const entriesJson = JSON.stringify(corpus.entries, null, 2)
-  const recipeCatalog = formatRecipeCatalog(loadImprovementRecipes())
+  const recipeCatalog = formatRecipeCatalog(loadLeverRegistry())
 
   const base = `${SYNTHESIS_INSTRUCTIONS}
 

@@ -6,7 +6,7 @@ import {
   recordFailureReflectionOccurrence,
 } from '../proposals'
 import { getDefaultTaskStore } from '../store/task-store'
-import { loadImprovementRecipes, formatRecipeCatalog } from './improvement-recipes'
+import { loadLeverRegistry, formatRecipeCatalog } from './lever-registry'
 import { collectAssistantText, extractFirstJsonDocument } from './reflector'
 
 const SYSTEM_PROMPT_TEMPLATE = `You are a harness improvement advisor for the Mars orchestrator.
@@ -223,8 +223,7 @@ export const spawnFailureReflector = async (
 
   try {
     if (!(await recordFailureReflectionOccurrence(failureReflectorFingerprint(opts)))) return
-    const recipes = loadImprovementRecipes()
-    const catalog = formatRecipeCatalog(recipes)
+    const catalog = formatRecipeCatalog(loadLeverRegistry())
     const arcContext = await buildArcContext(opts)
 
     const prompt = SYSTEM_PROMPT_TEMPLATE.replace('{catalog}', catalog).replace(

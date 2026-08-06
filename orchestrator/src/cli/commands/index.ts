@@ -48,6 +48,7 @@ import { mcpWorkerCommands } from './mcp-worker'
 import { worktreeCommands } from './worktree'
 import { stewardCommands } from './steward'
 import { previewValidationCommands } from './preview-validation'
+import { leverCommands } from './lever'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
@@ -91,6 +92,7 @@ export const allCommands: readonly Command[] = [
   ...mcpWorkerCommands,
   ...worktreeCommands,
   ...stewardCommands,
+  ...leverCommands,
 ]
 
 export const registry: CommandRegistry = buildRegistry(allCommands)
