@@ -590,3 +590,7 @@ _Avoid_: history item, resolved row, activity, log entry, archived alert, deed
 **chat placement gate**:
 A chat-visible event must change the operator's decision surface: ask for a decision, require action, record a decision, or carry reusable context. Routine operational facts are logs, not chat.
 _Avoid_: log-line, noise, telemetry
+
+**collapsed health notice**:
+One compact, collapsed conversation notice used to summarize non-actionable high-severity operational anomalies. It replaces repeated subthreads for the same condition.
+_Avoid_: subthread, spam
