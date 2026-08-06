@@ -2564,6 +2564,22 @@ export const ChatPage = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [forkFilter, setForkFilter] = useState<ForkFilter>({})
   const hasForkFilter = Boolean(forkFilter.parentThreadId || forkFilter.hasParent)
+
+  // Composer height tracking — the HeroComposer (main thread, no active
+  // subthread) or the inline Composer (active subthread) is measured via
+  // ResizeObserver so the ConversationTimeline spacer always matches the
+  // composer's rendered height, including when the textarea grows.
+  const composerContainerRef = useRef<HTMLDivElement>(null)
+  const [composerHeight, setComposerHeight] = useState(0)
+  useEffect(() => {
+    const el = composerContainerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(([entry]) => {
+      setComposerHeight(entry.contentRect.height)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   // Auto-close the overlay when the viewport expands to md+
   useEffect(() => {
     if (isMdScreen) setSidebarOpen(false)
@@ -3036,6 +3052,7 @@ export const ChatPage = () => {
                   memoryStartsAfterSeq={conversation.memoryStartsAfterSeq}
                   activeThreadId={activeConversationThreadId}
                   projectId={projectId}
+                  composerHeight={composerHeight}
                   onResponseComplete={(threadId) => {
                     void qc.invalidateQueries({ queryKey: ['chat-threads'] })
                     void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
@@ -3074,7 +3091,7 @@ export const ChatPage = () => {
               )}
             </div>
             {!activeConversationThreadId && (
-              <div className="flex justify-center px-6 pb-6">
+              <div ref={composerContainerRef} className="flex justify-center px-6 pb-6">
                 <HeroComposer
                   onSend={(msg, files, clearState) =>
                     createAndSend({ message: msg, files }, { onSuccess: () => clearState() })

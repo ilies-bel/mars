@@ -36,6 +36,7 @@ vi.mock('@/shared/api', () => ({
 }))
 
 import { ChatPage } from './ChatPage'
+import { ConversationTimeline } from '@/widgets/chat/ConversationTimeline'
 
 const renderPage = (): string => {
   const queryClient = new QueryClient({
@@ -66,5 +67,36 @@ describe('ChatPage main thread', () => {
     expect(html).not.toContain('data-testid="chat-layout-focus"')
     expect(html).not.toContain('data-testid="chat-layout-threads"')
     expect(html).not.toContain('Select a Subject from the list')
+  })
+
+  it('the timeline includes a composer scroll spacer so the last entry is never hidden behind the hero composer', () => {
+    const html = renderPage()
+
+    // The spacer must be inside the conversation timeline, after the entries.
+    expect(html).toContain('data-testid="composer-scroll-spacer"')
+    // Both the timeline and the spacer appear in the same render — the spacer
+    // is inside the <section> that wraps the timeline entries.
+    const timelineIdx = html.indexOf('aria-label="Conversation timeline"')
+    const spacerIdx = html.indexOf('data-testid="composer-scroll-spacer"')
+    expect(timelineIdx).toBeGreaterThan(-1)
+    expect(spacerIdx).toBeGreaterThan(timelineIdx)
+  })
+})
+
+describe('ConversationTimeline composer spacer', () => {
+  it('renders a zero-height spacer by default so the element is always reachable in the DOM', () => {
+    const html = renderToStaticMarkup(
+      createElement(ConversationTimeline, { entries: [] }),
+    )
+    expect(html).toContain('data-testid="composer-scroll-spacer"')
+  })
+
+  it('reflects an explicit composerHeight so a growing multi-line draft extends the spacer', () => {
+    const html = renderToStaticMarkup(
+      createElement(ConversationTimeline, { entries: [], composerHeight: 180 }),
+    )
+    // The inline style height must match the measured composer height.
+    expect(html).toContain('height:180px')
+    expect(html).toContain('data-testid="composer-scroll-spacer"')
   })
 })

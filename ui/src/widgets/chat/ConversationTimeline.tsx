@@ -17,6 +17,14 @@ export interface ConversationTimelineProps {
   onResponseComplete?: (threadId?: string) => void
   /** Resolves a `client` target — currently only opening a proposal Subject. */
   onClientResolve?: (response: PreloadedResponse) => void
+  /**
+   * Height (px) of the composer rendered below or over the scroll container.
+   * A spacer of this height is appended after the last entry so the final
+   * message is never hidden behind the composer when the list is scrolled to
+   * the bottom. Measured and updated via ResizeObserver by the parent so the
+   * spacer tracks a growing multi-line textarea automatically.
+   */
+  composerHeight?: number
 }
 
 const isTextSegment = (segment: unknown): segment is { type: 'text'; text: string } =>
@@ -40,6 +48,7 @@ export const ConversationTimeline = ({
   projectId,
   onResponseComplete,
   onClientResolve,
+  composerHeight = 0,
 }: ConversationTimelineProps) => {
   const visibleEntries = entries.filter((entry) => entry.threadId !== activeThreadId)
   const boundariesBySubthread = new Map(boundaries.map((boundary) => [boundary.subthreadId, boundary]))
@@ -114,6 +123,14 @@ export const ConversationTimeline = ({
           </Fragment>
         )
       })}
+      {/* Spacer so the final entry is never hidden behind the composer.
+          Height is measured by the parent via ResizeObserver and kept in sync
+          as the composer's textarea grows with a multi-line draft. */}
+      <div
+        aria-hidden="true"
+        data-testid="composer-scroll-spacer"
+        style={{ height: composerHeight }}
+      />
     </section>
   )
 }
