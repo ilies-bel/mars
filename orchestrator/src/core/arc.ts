@@ -1860,12 +1860,32 @@ export class Arc {
         (outgoing.rows[0] as unknown as { n: number | bigint }).n,
       )
 
-      // Cascade: collect every fix/recovery task whose fix_for_task_id points
-      // at the origin being dropped. These are deleted atomically in the same
-      // transaction (ADR-0049: purge cascades the whole recovery arc).
+      // Cascade: collect every arc member to delete along with the origin
+      // (ADR-0049: purge cascades the whole recovery arc).
+      //
+      // Two link paths reach arc members from an origin:
+      //   1. fix_for_task_id = origin.id  — recovery chores (kind='fix').
+      //      Cascaded unconditionally (all statuses): fix tasks are the direct
+      //      recovery chain and must never outlive their origin.
+      //   2. origin_id = origin.id AND tagged 'rescue-operator'  — rescue-operator
+      //      tasks spawned by maybeSpawnRescueOperator when the arc has no
+      //      automatic move left. These have fix_for_task_id IS NULL and link
+      //      to their origin only through origin_id. Narrow cascade: only non-done
+      //      rescue-operators are included; a done rescue-operator represents a
+      //      completed arc intervention and is preserved as history.
+      //
+      // Regular blocked tasks that have origin_id = origin.id (e.g. dependents
+      // of a now-purged origin) are intentionally excluded here — the orphan-
+      // detection loop below detects those and fails them instead, which
+      // produces an actionable action-queue item for the operator.
+      //
+      // The AND id <> ? guard is mandatory: an origin's own origin_id equals
+      // its id (self-referential, see Arc.createOrigin), so without the guard
+      // the origin would appear in its own cascade list and emit a duplicate
+      // task.dropped / task.terminal event.
       const fixRefRows = await scope.execute({
-        sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
-        args: [id],
+        sql: `SELECT id FROM tasks WHERE fix_for_task_id = ? OR (origin_id = ? AND id <> ? AND status != 'done' AND tags_json LIKE '%rescue-operator%')`,
+        args: [id, id, id],
       })
       const cascadedFixTaskIds = fixRefRows.rows.map(
         (row) => (row as unknown as { id: string }).id,

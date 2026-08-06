@@ -68,28 +68,31 @@ const seedOriginAndFix = async (
   await q.updateTask(origin.id, { status: 'failed', error: 'test failure' })
 
   const c = q.resolveQueueClient()
-  const now = new Date().toISOString()
+  const isoNow = new Date().toISOString()
+  const epochNow = Date.now()
 
-  // Insert fix task
+  // Insert fix task (tasks.created_at / updated_at expect ISO-8601)
   await c.execute({
     sql: `INSERT INTO tasks
             (id, prompt, status, kind, fix_for_task_id, priority, intent, origin_id, created_at, updated_at)
           VALUES (?, ?, 'failed', 'fix', ?, 0, '', ?, ?, ?)`,
-    args: [fixId, 'recovery fix task', origin.id, fixId, now, now],
+    args: [fixId, 'recovery fix task', origin.id, fixId, isoNow, isoNow],
   })
 
   // Origin is blocked by fix (origin→recovery task_blockers edge)
+  // task_blockers.created_at expects epoch milliseconds (not ISO-8601)
   await c.execute({
     sql: `INSERT INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
-    args: [origin.id, fixId, now],
+    args: [origin.id, fixId, epochNow],
   })
 
   // self_heal_attempts ledger row (fix_task_id FK with ON DELETE CASCADE)
+  // self_heal_attempts.created_at expects epoch milliseconds (not ISO-8601)
   await c.execute({
     sql: `INSERT INTO self_heal_attempts
             (parent_task_id, failure_signature, fix_task_id, created_at)
           VALUES (?, ?, ?, ?)`,
-    args: [origin.id, 'sig-test', fixId, now],
+    args: [origin.id, 'sig-test', fixId, epochNow],
   })
 
   // Junction-table rows for origin — these are the tables whose missing CASCADE
@@ -97,15 +100,16 @@ const seedOriginAndFix = async (
   // both the cascade-delete path (origin drops fix) and the direct-drop path.
   const acOrigin = 'ac-origin-' + fixId
   const acFix = 'ac-fix-' + fixId
+  // task_acceptance.updated_at is bigint (epoch milliseconds)
   await c.execute({
     sql: `INSERT INTO task_acceptance (id, task_id, position, text, updated_at)
           VALUES (?, ?, 0, 'criterion', ?)`,
-    args: [acOrigin, origin.id, now],
+    args: [acOrigin, origin.id, epochNow],
   })
   await c.execute({
     sql: `INSERT INTO task_acceptance (id, task_id, position, text, updated_at)
           VALUES (?, ?, 0, 'criterion', ?)`,
-    args: [acFix, fixId, now],
+    args: [acFix, fixId, epochNow],
   })
 
   const csOrigin = 'cs-origin-' + fixId

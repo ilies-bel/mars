@@ -76,18 +76,21 @@ const seedPairWithProgress = async (
   await q.updateTask(origin.id, { status: 'failed', error: 'test failure' })
 
   const c = q.resolveQueueClient()
-  const now = new Date().toISOString()
+  const isoNow = new Date().toISOString()
+  const epochNow = Date.now()
 
+  // tasks.created_at / updated_at expect ISO-8601
   await c.execute({
     sql: `INSERT INTO tasks
             (id, prompt, status, kind, fix_for_task_id, priority, intent, origin_id, created_at, updated_at)
           VALUES (?, ?, 'failed', 'fix', ?, 0, '', ?, ?, ?)`,
-    args: [fixId, 'recovery fix task', origin.id, fixId, now, now],
+    args: [fixId, 'recovery fix task', origin.id, fixId, isoNow, isoNow],
   })
 
+  // task_blockers.created_at expects epoch milliseconds (not ISO-8601)
   await c.execute({
     sql: `INSERT INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
-    args: [origin.id, fixId, now],
+    args: [origin.id, fixId, epochNow],
   })
 
   // task_progress rows for BOTH tasks — these are what triggered the live FK error
