@@ -1,11 +1,12 @@
 /**
  * `vision` command group: `set` and `show`.
- * Persists the product vision in `app_settings` via the existing
- * getSetting/setSetting helpers and the ONBOARDING_VISION_KEY constant.
  *
- * Reads and writes are local (direct DB access), not daemon-routed.
- * Dynamic imports ensure the module-cache matches the test's vi.resetModules()
- * isolation, following the same pattern as `notifications.ts`.
+ * `vision set` dispatches a `vision-write` RPC to the daemon, which runs the
+ * structured-write pipeline and returns only after the file has merged.
+ * `vision show` reads `docs/knowledge/vision.md` directly from the repo root
+ * via the canonical `readVision` helper.
+ *
+ * There is no database row involved. ONBOARDING_VISION_KEY is gone.
  */
 
 import type { Command } from '../command'
@@ -20,11 +21,7 @@ const visionSet: Command = {
       deps.err('usage: mars vision set "<prose>"')
       return { code: 2 }
     }
-    const { migrateStateSchema } = await import('../../core/store/state-store')
-    const { resolveStateClient } = await import('../../core/store/state-client')
-    const { setSetting, ONBOARDING_VISION_KEY } = await import('../../core/lib/settings')
-    await migrateStateSchema()
-    await setSetting(resolveStateClient(), ONBOARDING_VISION_KEY, vision)
+    await deps.daemon.sendRequest({ op: 'vision-write', content: vision })
     deps.out('vision set')
     return { code: 0 }
   },
@@ -35,11 +32,8 @@ const visionShow: Command = {
   summary: 'show the stored product vision',
   usage: 'usage: mars vision show',
   run: async (_args, deps) => {
-    const { migrateStateSchema } = await import('../../core/store/state-store')
-    const { resolveStateClient } = await import('../../core/store/state-client')
-    const { getSetting, ONBOARDING_VISION_KEY } = await import('../../core/lib/settings')
-    await migrateStateSchema()
-    const vision = await getSetting(resolveStateClient(), ONBOARDING_VISION_KEY)
+    const { readVision } = await import('../../core/lib/vision')
+    const vision = await readVision(deps.ctx.repoRoot)
     if (vision === null) {
       deps.err('no vision set')
       return { code: 1 }

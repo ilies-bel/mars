@@ -14,10 +14,12 @@ import { tmpdir } from 'node:os'
 vi.mock('../../lib/settings', () => ({
   getSetting: vi.fn().mockResolvedValue(null),
   ONBOARDING_OPERATOR_NAME_KEY: 'onboarding.operator_name',
-  ONBOARDING_VISION_KEY: 'onboarding.vision',
 }))
 vi.mock('../../store/state-client', () => ({
   resolveStateClient: vi.fn().mockReturnValue({}),
+}))
+vi.mock('../../lib/vision', () => ({
+  readVision: vi.fn().mockResolvedValue(null),
 }))
 
 import { CHAT_SYSTEM_PROMPT, resolveChatSystemPrompt } from '../chat-system-prompt'

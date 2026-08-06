@@ -218,7 +218,7 @@ export interface DaemonOptions {
  * durable counterpart to that catch.
  */
 export const raiseStructuredWriteFailureAction = async (args: {
-  kind: 'adr' | 'glossary'
+  kind: 'adr' | 'glossary' | 'vision'
   target: string
   error: unknown
 }): Promise<void> => {
@@ -1985,6 +1985,67 @@ export const startDaemon = async (
     } finally {
       releaseTracking()
       release(sems['adr-add'])
+    }
+  }
+
+  /**
+   * Write the product vision to `docs/knowledge/vision.md` via the
+   * structured-write pipeline.
+   *
+   * Unlike `dispatchGlossaryWrite` / `dispatchAdrAdd` (fire-and-forget),
+   * callers AWAIT this function — the `vision-write` RPC handler awaits it so
+   * `mars vision set` exits only after the file has merged.
+   */
+  const dispatchVisionWrite = async (content: string): Promise<void> => {
+    const synthetic = `vision-write:${Date.now()}`
+    await acquire(sems['vision'])
+    const releaseTracking = tracker.commitInFlight(synthetic, 'vision')
+    log(`[vision-write] dispatching`)
+    try {
+      const { runStructuredWrite } = await import('../lib/structured-write')
+      const { writeVisionInWorktree } = await import('../lib/vision')
+
+      const outcome = await runStructuredWrite({
+        kind: 'vision',
+        commitMessage: 'vision: set product vision',
+        integrationBranch,
+        mutate: async (worktreePath) => {
+          await writeVisionInWorktree(worktreePath, content)
+        },
+        enqueueMerge: async (mergeArgs) =>
+          enqueueMergeJobAndAwait({
+            store: getDefaultMergeJobStore(),
+            bus,
+            ...mergeArgs,
+          }),
+      })
+      if (outcome.kind === 'aborted') {
+        log(`[vision-write] -> aborted: ${outcome.reason}`)
+      } else {
+        log(`[vision-write] -> ${outcome.kind}`)
+      }
+    } catch (err) {
+      // The vision-write RPC handler awaits this function, so a rejection
+      // propagates back to the CLI call site as an error response.
+      // Still raise an action-queue row so the failure is surfaced visibly.
+      log(
+        `[vision-write] failed: ${err instanceof Error ? err.message : String(err)}`,
+      )
+      await raiseStructuredWriteFailureAction({
+        kind: 'vision',
+        target: 'vision.md',
+        error: err,
+      }).catch((raiseErr: unknown) => {
+        log(
+          `[vision-write] failed to raise action-queue item: ${
+            raiseErr instanceof Error ? raiseErr.message : String(raiseErr)
+          }`,
+        )
+      })
+      throw err
+    } finally {
+      releaseTracking()
+      release(sems['vision'])
     }
   }
 
@@ -4221,6 +4282,7 @@ export const startDaemon = async (
     handleRefine,
     dispatchGlossaryWrite,
     dispatchAdrAdd,
+    dispatchVisionWrite,
     handleInit,
     handleStatus,
     investigateWorktree,

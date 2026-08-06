@@ -446,7 +446,7 @@ export const startServer = async (
         // Reads directly from repoRoot (no daemon proxy needed — it is a plain file).
         // Returns { content: null } when VISION.md does not exist.
         if (path === '/api/vision' && req.method === 'GET') {
-          const visionPath = join(ctx.repoRoot, 'VISION.md')
+          const visionPath = join(ctx.repoRoot, 'docs', 'knowledge', 'vision.md')
           const content = existsSync(visionPath)
             ? readFileSync(visionPath, 'utf8')
             : null

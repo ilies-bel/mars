@@ -21,7 +21,8 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { DESTRUCTIVE_MARS_VERBS, SAFE_MARS_VERBS } from '../lib/chat-mars-verbs'
-import { getSetting, ONBOARDING_OPERATOR_NAME_KEY, ONBOARDING_VISION_KEY } from '../lib/settings'
+import { getSetting, ONBOARDING_OPERATOR_NAME_KEY } from '../lib/settings'
+import { readVision } from '../lib/vision'
 import { resolveStateClient } from '../store/state-client'
 import { CHAT_ONBOARDING_PROMPT } from './chat-onboarding-prompt'
 
@@ -106,13 +107,15 @@ export interface ResolvedChatSystemPrompt {
  */
 /**
  * Build the optional operator/vision stanza prepended to the base prompt.
+ * Reads the operator name from the state DB and the vision from
+ * `docs/knowledge/vision.md` via the canonical file-based helper.
  * Returns an empty string when neither value is set.
  */
-const buildPersonalisationStanza = async (): Promise<string> => {
+const buildPersonalisationStanza = async (repoRoot: string): Promise<string> => {
   const db = resolveStateClient()
   const [name, vision] = await Promise.all([
     getSetting(db, ONBOARDING_OPERATOR_NAME_KEY),
-    getSetting(db, ONBOARDING_VISION_KEY),
+    readVision(repoRoot),
   ])
   const parts: string[] = []
   if (name) parts.push(`Operator: ${name}.`)
@@ -137,6 +140,6 @@ export const resolveChatSystemPrompt = async (repoRoot: string): Promise<Resolve
     base = CHAT_SYSTEM_PROMPT
   }
 
-  const stanza = await buildPersonalisationStanza()
+  const stanza = await buildPersonalisationStanza(repoRoot)
   return { prompt: stanza + base, source }
 }

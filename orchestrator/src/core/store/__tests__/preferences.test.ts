@@ -82,46 +82,6 @@ describe('preferences — notifications_enabled', () => {
   })
 })
 
-// ── Onboarding settings round-trips ──────────────────────────────────────────
-
-describe('settings — onboarding.vision round-trip', () => {
-  let repo: string
-
-  beforeEach(() => {
-    repo = setupRepo()
-  })
-
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo, { recursive: true, force: true })
-  })
-
-  it('getSetting returns null for vision key when no value is stored', async () => {
-    const { db } = await loadDeps(repo)
-    const { getSetting, ONBOARDING_VISION_KEY } = await import('../../lib/settings')
-    expect(await getSetting(db, ONBOARDING_VISION_KEY)).toBeNull()
-  })
-
-  it('setSetting + getSetting round-trip persists the vision', async () => {
-    const { db } = await loadDeps(repo)
-    const { getSetting, setSetting, ONBOARDING_VISION_KEY } = await import(
-      '../../lib/settings'
-    )
-    await setSetting(db, ONBOARDING_VISION_KEY, 'north star')
-    expect(await getSetting(db, ONBOARDING_VISION_KEY)).toBe('north star')
-  })
-
-  it('setSetting is idempotent — overwrite replaces the stored value', async () => {
-    const { db } = await loadDeps(repo)
-    const { getSetting, setSetting, ONBOARDING_VISION_KEY } = await import(
-      '../../lib/settings'
-    )
-    await setSetting(db, ONBOARDING_VISION_KEY, 'first')
-    await setSetting(db, ONBOARDING_VISION_KEY, 'north star')
-    expect(await getSetting(db, ONBOARDING_VISION_KEY)).toBe('north star')
-  })
-})
-
 describe('settings — onboarding.operator_name round-trip', () => {
   let repo: string
 
@@ -149,17 +109,18 @@ describe('settings — onboarding.operator_name round-trip', () => {
     expect(await getSetting(db, ONBOARDING_OPERATOR_NAME_KEY)).toBe('Alex')
   })
 
-  it('both keys are independent — setting one does not affect the other', async () => {
+  it('multiple operator settings are independent of each other', async () => {
     const { db } = await loadDeps(repo)
     const {
       getSetting,
       setSetting,
-      ONBOARDING_VISION_KEY,
       ONBOARDING_OPERATOR_NAME_KEY,
     } = await import('../../lib/settings')
-    await setSetting(db, ONBOARDING_VISION_KEY, 'north star')
     await setSetting(db, ONBOARDING_OPERATOR_NAME_KEY, 'Alex')
-    expect(await getSetting(db, ONBOARDING_VISION_KEY)).toBe('north star')
     expect(await getSetting(db, ONBOARDING_OPERATOR_NAME_KEY)).toBe('Alex')
+    // A second key is independent.
+    await setSetting(db, 'some.other.key', 'other value')
+    expect(await getSetting(db, ONBOARDING_OPERATOR_NAME_KEY)).toBe('Alex')
+    expect(await getSetting(db, 'some.other.key')).toBe('other value')
   })
 })

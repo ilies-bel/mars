@@ -1,18 +1,19 @@
 /**
  * Tests for `mars vision` and `mars operator` CLI commands.
  *
- * Covers the acceptance criteria for slice 1 of PRD f122a60b:
- *   1. `vision set "<prose>"` — exits 0, persists to app_settings
- *   2. `vision show`          — prints stored value; exits 1 with clear message when absent
+ * Covers the acceptance criteria for the vision-as-file slice:
+ *   1. `vision set "<prose>"` — exits 0, dispatches `vision-write` to the daemon
+ *   2. `vision show`          — reads `docs/knowledge/vision.md`; exits 1 with
+ *                               "no vision set" when the file is absent
  *   3. `operator name-set "<name>"` and `operator name-show` mirror the same pattern
  *
  * Isolation: `vi.resetModules()` + a fresh temp-dir git repo per test group so
- * every test gets a private module-cache and DB, matching the pattern used by
- * `notifications.test.ts` and `preferences.test.ts`.
+ * every test gets a private module-cache and DB.
  *
- * The vision/operator commands import resolveStateClient dynamically inside their
- * `run`, so the module-cache populated by `loadDeps()` here is the same cache
- * the command will see — no separate client injection is required.
+ * `vision set` dispatches a `vision-write` RPC to the fake daemon (which does
+ * NOT write the file).  Tests that need `vision show` to return a value write
+ * `docs/knowledge/vision.md` directly, simulating what the daemon's structured-
+ * write pipeline would produce.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -21,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // cache is cold). 30 s gives ample headroom; subsequent tests are <2 s.
 vi.setConfig({ testTimeout: 30_000 })
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { InProcessOptions } from '../../test-adapter'
@@ -50,9 +51,6 @@ const loadDeps = async (): Promise<Omit<InProcessOptions, 'daemon' | 'stateStore
   const storeModule = await import('../../../core/store/task-store')
   const contextModule = await import('../../../core/context')
   const stateStoreModule = await import('../../../core/store/state-store')
-  // Creates the app_settings table (migration 0002) and sets the
-  // resolveStateClient singleton to point at the temp-dir DB — the command's
-  // run() will call resolveStateClient() and get the same singleton.
   await stateStoreModule.migrateStateSchema()
   return {
     store: storeModule.createTaskStore(queueModule.resolveQueueClient()),
@@ -71,6 +69,17 @@ const run = async (
 const makeFake = async () => {
   const { makeFakeDaemon } = await import('../../test-adapter')
   return makeFakeDaemon()
+}
+
+/**
+ * Write `docs/knowledge/vision.md` inside the test repo so that `vision show`
+ * can read it. This simulates the outcome of the daemon's structured-write
+ * pipeline without actually running it.
+ */
+const writeVisionFile = (content: string): void => {
+  const dir = resolve(repo, 'docs', 'knowledge')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(resolve(dir, 'vision.md'), content, 'utf8')
 }
 
 beforeEach(() => {
@@ -100,6 +109,25 @@ describe('mars vision set', () => {
     expect(r.err).toHaveLength(0)
   })
 
+  it('prints "vision set" on success', async () => {
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(['vision', 'set', 'north star'], { ...deps, daemon: fake })
+
+    expect(r.out.join('\n')).toContain('vision set')
+  })
+
+  it('dispatches a vision-write op to the daemon', async () => {
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    await run(['vision', 'set', 'north star'], { ...deps, daemon: fake })
+
+    expect(fake.calls).toHaveLength(1)
+    expect(fake.calls[0]).toMatchObject({ op: 'vision-write', content: 'north star' })
+  })
+
   it('exits 2 with a usage line when no argument is given', async () => {
     const deps = await loadDeps()
     const fake = await makeFake()
@@ -117,18 +145,18 @@ describe('mars vision set', () => {
 // ---------------------------------------------------------------------------
 
 describe('mars vision show', () => {
-  it('prints the stored vision after "vision set"', async () => {
+  it('prints the stored vision when docs/knowledge/vision.md exists', async () => {
     const deps = await loadDeps()
     const fake = await makeFake()
+    writeVisionFile('north star')
 
-    await run(['vision', 'set', 'north star'], { ...deps, daemon: fake })
     const r = await run(['vision', 'show'], { ...deps, daemon: fake })
 
     expect(r.code).toBe(0)
     expect(r.out.join('\n')).toContain('north star')
   })
 
-  it('exits 1 with "no vision set" when nothing has been stored', async () => {
+  it('exits 1 with "no vision set" when the file is absent', async () => {
     const deps = await loadDeps()
     const fake = await makeFake()
 
@@ -139,16 +167,17 @@ describe('mars vision show', () => {
     expect(combined).toContain('no vision set')
   })
 
-  it('reflects an overwritten vision after a second set', async () => {
+  it('reflects a new value after the file is updated', async () => {
     const deps = await loadDeps()
     const fake = await makeFake()
+    writeVisionFile('first draft')
 
-    await run(['vision', 'set', 'first draft'], { ...deps, daemon: fake })
-    await run(['vision', 'set', 'north star'], { ...deps, daemon: fake })
-    const r = await run(['vision', 'show'], { ...deps, daemon: fake })
+    const first = await run(['vision', 'show'], { ...deps, daemon: fake })
+    expect(first.out.join('\n')).toContain('first draft')
 
-    expect(r.code).toBe(0)
-    expect(r.out.join('\n')).toContain('north star')
+    writeVisionFile('north star')
+    const second = await run(['vision', 'show'], { ...deps, daemon: fake })
+    expect(second.out.join('\n')).toContain('north star')
   })
 })
 
@@ -209,8 +238,8 @@ describe('mars operator name-show', () => {
   it('vision and operator name are stored independently', async () => {
     const deps = await loadDeps()
     const fake = await makeFake()
-
-    await run(['vision', 'set', 'north star'], { ...deps, daemon: fake })
+    // Vision comes from the file; operator name from the DB.
+    writeVisionFile('north star')
     await run(['operator', 'name-set', 'Alex'], { ...deps, daemon: fake })
 
     const vr = await run(['vision', 'show'], { ...deps, daemon: fake })

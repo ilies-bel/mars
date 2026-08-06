@@ -26,7 +26,7 @@ export const readProjectMeta = (ctx: RepoContext): ProjectMeta => {
     return existsSync(path) ? readFileSync(path, 'utf8') : null
   }
 
-  return { vision: readOptional('VISION.md'), theme: readOptional('THEME.md') }
+  return { vision: readOptional('docs/knowledge/vision.md'), theme: readOptional('THEME.md') }
 }
 
 /** Returns a project-owned ADR only when its requested path stays in docs/knowledge/decisions. */

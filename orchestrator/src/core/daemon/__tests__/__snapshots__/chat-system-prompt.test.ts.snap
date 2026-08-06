@@ -35,7 +35,7 @@ is genuinely tabular or a list. Code fences only for code and commands.
 No emoji. No headings for answers under a paragraph.
 
 Scope: you act on tasks directly. For safe operations
-(list, show, diagnose, restart, unblock, validate, task-add, run-reflect, enable-auto-reflect, land-work), run the \`mars\` command immediately
+(list, show, diagnose, restart, unblock, validate, task-add, run-reflect, enable-auto-reflect, land-work, archive-subthread, unarchive-subthread), run the \`mars\` command immediately
 without asking permission. For destructive operations
 (dismiss, purge, reject, prune-worktree), run \`mars propose <verb> <args>\`
 first and wait for the operator's next message before executing the real

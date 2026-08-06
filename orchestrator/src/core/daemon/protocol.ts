@@ -175,7 +175,7 @@ export interface DaemonStatusPayload {
   startedAt: string
   inFlight: ReadonlyArray<{
     taskId: string
-    kind: 'triage' | 'implement' | 'refine' | 'glossary-write' | 'adr-add' | 'arc-verify' | 'merge'
+    kind: 'triage' | 'implement' | 'refine' | 'glossary-write' | 'adr-add' | 'arc-verify' | 'merge' | 'vision'
   }>
   counts: { draft: number; queued: number; running: number; verifying: number; merging: number; 'vega-reconciling': number }
   /**
