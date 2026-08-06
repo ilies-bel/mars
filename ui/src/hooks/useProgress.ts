@@ -29,15 +29,15 @@ const emptyByCluster = (): Record<Cluster, ProgressTask[]> => ({
 })
 
 export const useProgress = (): State => {
-  const { focusedProjectId: projectId, projectsSettled, projectsError, projects } = useFocusedProject()
+  const { focusedProjectId: projectId } = useFocusedProject()
   const connected = useSseConnected()
-  // Option (a) fallback: fire without ?project= when registry is empty so the
-  // server's --repo default can answer.
-  const projectsEmpty = projectsSettled && projectsError === null && projects.length === 0
+  // Always fire — projectId ?? undefined drops the ?project= filter when no
+  // project is selected, letting the server's --repo default answer. Keeping
+  // `enabled` unconditional ensures the board renders on cold load without
+  // waiting for the project registry to settle or for an SSE event to arrive.
   const query = useQuery({
     queryKey: ['progress', projectId],
     queryFn: ({ signal }) => fetchProgress(projectId ?? undefined, signal),
-    enabled: projectId !== null || projectsEmpty,
   })
 
   const tasks = query.data?.tasks ?? null

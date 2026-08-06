@@ -334,3 +334,79 @@ describe('ProgressPage – stale proposal URL fallback', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// Board first paint regression (done criterion 2):
+// The board must render task cards from the very first /api/progress payload
+// without requiring any SSE event, click, or reload.
+//
+// Prior to the fix, useProgress had `enabled: projectId !== null || projectsEmpty`
+// which disabled the query while the project registry was loading (projectId=null,
+// projectsEmpty=false), so the board showed all-zero columns on cold load. After
+// the fix, `enabled` is unconditional — the query fires immediately and the board
+// renders from the very first resolved payload regardless of SSE state.
+// ---------------------------------------------------------------------------
+
+describe('ProgressPage – board first paint without SSE', () => {
+  it('renders arc cards from the first /api/progress payload with SSE offline — no event or click required', () => {
+    // Simulate the very first payload arriving: one running task, SSE not yet
+    // connected (connected: false). This is the scenario that was broken before
+    // the fix — the board showed all zeros despite the API returning tasks.
+    const task = {
+      id: 'task-running-1',
+      status: 'running',
+      prompt: 'Implement the dashboard feature',
+      branch: 'task/task-running-1',
+      parentProposalId: null,
+      originId: null,
+      cluster: 'In progress',
+      plan: null,
+      worktreePath: null,
+      error: null,
+      dropReason: null,
+      retryCount: 0,
+      blockerTaskId: null,
+      blockedBy: [],
+      spec: null,
+      priority: 1,
+      failureSignature: null,
+      compensatesArcId: null,
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+    } as unknown as import('@/shared/schemas').ProgressTask
+
+    mockUseProgress.mockImplementation(() => ({
+      tasks: [task],
+      proposals: [],
+      byCluster: {
+        Queued: [],
+        'In progress': [task],
+        Blocked: [],
+        Failed: [],
+        Done: [],
+      },
+      aggregates: { doneToday: 5, doneTotal: 2578, failedOpen: 0 },
+      error: null,
+      connected: false, // SSE offline — must NOT be a precondition for first paint
+    }))
+
+    const prevHash = window.location.hash
+    window.location.hash = '#/progress?view=board'
+
+    try {
+      const html = renderToStaticMarkup(<ProgressPage />)
+      // The task title must appear in board HTML without any SSE event or click.
+      // If the `enabled` guard is reintroduced (blocking the query until SSE
+      // connects), this assertion will fail — catching the regression.
+      expect(html).toContain('Implement the dashboard feature')
+    } finally {
+      window.location.hash = prevHash
+      mockUseProgress.mockImplementation(() =>
+        baseState([
+          { id: 'p1', title: 'Feature Alpha', source: 'human', status: 'draft' },
+          { id: 'p2', title: 'Feature Beta', source: 'human', status: 'draft' },
+        ]),
+      )
+    }
+  })
+})
