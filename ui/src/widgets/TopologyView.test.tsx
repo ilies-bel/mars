@@ -366,3 +366,49 @@ describe('TopologyView – arc click model', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// Task node click → correct URL hash (from=progress)
+//
+// Clicking a bare task node must navigate to #/task/<id>?from=progress, not a
+// bare #/task/<id>. The `from=progress` param is what lets the drawer's Close
+// button return to the Progress page correctly, and it is what `taskHash`
+// encodes when called with from='progress'.
+// ---------------------------------------------------------------------------
+
+describe('TopologyView – task node click produces task hash with from=progress', () => {
+  it('clicking a task node sets window.location.hash to #/task/<id>?from=progress', async () => {
+    const task = stubTask('click-test-task')
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    // Capture the pre-test hash so we can restore it in finally.
+    const priorHash = window.location.hash
+
+    try {
+      await act(async () => {
+        root.render(<TopologyView tasks={[task]} proposals={noProposals} />)
+      })
+
+      // Task nodes carry aria-label of the form "<label> · <cluster>".
+      // A single task with cluster='Queued' produces "Task click-test-task · queued".
+      const taskNode = container.querySelector('[aria-label$="· queued"]')
+      expect(taskNode).not.toBeNull()
+
+      await act(async () => {
+        taskNode!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      })
+
+      // Must include from=progress so the drawer knows to return to the
+      // Progress page on close — not a bare #/task/<id>.
+      expect(window.location.hash).toBe(
+        `#/task/${encodeURIComponent('click-test-task')}?from=progress`,
+      )
+    } finally {
+      window.location.hash = priorHash
+      await act(async () => { root.unmount() })
+      document.body.removeChild(container)
+    }
+  })
+})

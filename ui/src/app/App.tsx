@@ -10,6 +10,10 @@ import { ShortcutsOverlay } from '@/widgets/ShortcutsOverlay'
 import { useHashRoute } from '@/shared/useHashRoute'
 import { useGlobalKeyboardShortcuts } from '@/shared/useGlobalKeyboardShortcuts'
 import {
+  decodeProgressStateFromTaskHash,
+  encodeProgressState,
+} from '@/shared/progressUrlState'
+import {
   isKnownRoute,
   pageTitle,
   parseKpiRoute,
@@ -69,12 +73,25 @@ const navigateReplace = (hash: string): void => {
 /**
  * Closes a drawer opened from `closeHash` by returning to its origin page.
  * Uses replaceState to avoid phantom back-button entries.
+ *
+ * When the drawer was opened from the Progress page (`from=progress`), any
+ * progress filter state embedded in the hash as `pView`/`pQ`/`pProposal`
+ * params is decoded and restored in the destination URL so drill-in and
+ * search state survive both close and page reload.
  */
 const clearTaskHash = (closeHash: string): void => {
   const origin = parseTaskOrigin(closeHash)
   if (origin === 'kpi') {
     const kpiKey = parseTaskKpiKey(closeHash)
     navigateReplace(kpiKey ? `#/kpi/${encodeURIComponent(kpiKey)}` : '#/kpi')
+    return
+  }
+  if (origin === 'progress') {
+    // Restore the filter state (proposal, view, search) that was embedded in
+    // the task hash when the drawer was opened from the topology/board view.
+    const savedState = decodeProgressStateFromTaskHash(closeHash)
+    const progressParams = encodeProgressState(savedState)
+    navigateReplace(progressParams ? `#/progress${progressParams}` : '#/progress')
     return
   }
   navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')

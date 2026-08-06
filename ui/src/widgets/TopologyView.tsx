@@ -55,7 +55,12 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { chainForProposal, chainForTask, type ChainResult } from '@/shared/chainTrace'
+import {
+  encodeProgressStateAsTaskParams,
+  readProgressStateFromUrl,
+} from '@/shared/progressUrlState'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
+import { taskHash } from '@/shared/routing'
 import {
   buildClusterStyleFromVars,
   buildTopology,
@@ -426,7 +431,9 @@ const TopologyViewInner = ({
   const onNodeClick = useCallback(
     (_: ReactMouseEvent, node: TopoNode) => {
       if (node.data.kind === 'task') {
-        window.location.hash = `#/task/${encodeURIComponent(node.id)}`
+        const progressState = readProgressStateFromUrl()
+        const progressParams = encodeProgressStateAsTaskParams(progressState)
+        window.location.hash = taskHash(node.id, 'progress') + progressParams
       } else if (node.data.kind === 'arcCard') {
         toggleArc(node.data.arcKey)
       } else if (node.data.kind === 'fanoutBundle') {

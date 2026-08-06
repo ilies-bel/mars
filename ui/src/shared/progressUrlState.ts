@@ -86,14 +86,78 @@ export const decodeProgressState = (hash: string): ProgressUrlState => {
 }
 
 /**
+ * Encode progress filter state as additional params appended to a task hash.
+ *
+ * Uses `p`-prefixed names (`pView`, `pQ`, `pProposal`) to avoid collisions
+ * with the task hash's own params (`from`, `step`, `kpiKey`). Default values
+ * are omitted to keep URLs clean.
+ *
+ * Returns a `&`-prefixed string (e.g. `&pProposal=abc`) or `''` when all
+ * state is at its default so the URL stays clean for a bare topology visit.
+ */
+export const encodeProgressStateAsTaskParams = (state: ProgressUrlState): string => {
+  const parts: string[] = []
+  if (state.view !== DEFAULT_TAB) {
+    parts.push(`pView=${encodeURIComponent(state.view)}`)
+  }
+  if (state.query) {
+    parts.push(`pQ=${encodeURIComponent(state.query)}`)
+  }
+  if (state.proposal !== null) {
+    parts.push(`pProposal=${encodeURIComponent(state.proposal)}`)
+  }
+  return parts.length > 0 ? `&${parts.join('&')}` : ''
+}
+
+/**
+ * Decode progress filter state from the `p*` params embedded in a task hash.
+ *
+ * Task hashes opened from the topology view carry the current progress filter
+ * state as `pView`, `pQ`, and `pProposal` params so it can be restored when
+ * the drawer closes (or on a page reload with the drawer open).
+ *
+ * Returns defaults when none of the `p*` params are present.
+ */
+export const decodeProgressStateFromTaskHash = (hash: string): ProgressUrlState => {
+  const qIdx = hash.indexOf('?')
+  if (qIdx === -1) return defaultProgressUrlState()
+
+  const queryStr = hash.slice(qIdx + 1)
+  const params = new Map<string, string>()
+  for (const pair of queryStr.split('&')) {
+    const eqIdx = pair.indexOf('=')
+    if (eqIdx === -1) continue
+    params.set(pair.slice(0, eqIdx), decodeURIComponent(pair.slice(eqIdx + 1)))
+  }
+
+  const rawView = params.get('pView')
+  const view: Tab = rawView === 'board' ? 'board' : DEFAULT_TAB
+
+  const query = params.get('pQ') ?? ''
+
+  const rawProposal = params.get('pProposal')
+  const proposal =
+    rawProposal !== undefined && rawProposal.length > 0 ? rawProposal : null
+
+  return { view, query, proposal }
+}
+
+/**
  * Read the current progress filter state from the browser URL.
  * Falls back to defaults when called outside a browser (SSR, tests).
+ *
+ * Handles two URL shapes:
+ *  - `#/progress?…` — the normal progress-page URL; decoded directly.
+ *  - `#/task/<id>?from=progress&pView=…` — a task overlay opened from the
+ *    progress page (e.g. after a reload with the drawer open); decoded from
+ *    the embedded `p*` params.
  */
 export const readProgressStateFromUrl = (): ProgressUrlState => {
   if (typeof window === 'undefined') return defaultProgressUrlState()
   const hash = window.location.hash || '#/'
-  if (!hash.startsWith('#/progress')) return defaultProgressUrlState()
-  return decodeProgressState(hash)
+  if (hash.startsWith('#/progress')) return decodeProgressState(hash)
+  if (hash.startsWith('#/task/')) return decodeProgressStateFromTaskHash(hash)
+  return defaultProgressUrlState()
 }
 
 /**
