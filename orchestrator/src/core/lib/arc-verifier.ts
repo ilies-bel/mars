@@ -117,6 +117,141 @@ export interface ArcVerificationVerdict {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Reachable-surface judgement
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Structured output the reachability LLM call returns.
+ *
+ * - `unsatisfiedStories`: stories that have NO Reachable surface (UI affordance,
+ *   CLI command, or bot command) AND are not covered by an out-of-scope entry.
+ * - `deferredStories`: stories that are textually covered by an out-of-scope entry.
+ *
+ * Satisfied stories appear in neither array.
+ */
+export interface ReachabilityJudgement {
+  unsatisfiedStories: Array<{ story: string; humanCannotDo: string }>
+  deferredStories: string[]
+}
+
+/**
+ * Judge whether each user story in `userStories` has a Reachable surface
+ * (UI affordance, CLI command, or bot command) in the merged diff.
+ *
+ * Returns immediately with empty arrays when `userStories` is empty.
+ *
+ * An API route, a passing test, or a database column alone does NOT satisfy
+ * a user story.  Stories covered textually by `outOfScope` entries are
+ * classified as deferred and produce no finding.
+ */
+export async function judgeReachableSurfaces(opts: {
+  userStories: string[]
+  outOfScope: string[]
+  diff: string
+  cwd: string
+}): Promise<ReachabilityJudgement> {
+  const { userStories, outOfScope, diff, cwd } = opts
+  if (userStories.length === 0) {
+    return { unsatisfiedStories: [], deferredStories: [] }
+  }
+
+  const promptParts: string[] = [
+    'You are an arc-outcome verifier judging whether promised user surfaces were delivered.',
+    '',
+    'A user story is SATISFIED only when the merged diff contains a Reachable surface:',
+    '  - A UI affordance (a page, button, form, screen, or route visible to the user), OR',
+    '  - A CLI command a human can run, OR',
+    '  - A bot command a human can invoke.',
+    '',
+    'The following do NOT satisfy a user story on their own:',
+    '  - An API route or HTTP endpoint',
+    '  - A passing test or spec',
+    '  - A database column or table',
+    '',
+    'A user story is DEFERRED when it is textually covered by one of the',
+    'out-of-scope entries below.',
+    '',
+    'Return ONLY a JSON object on a single line with this exact shape:',
+    '  {"unsatisfiedStories":[{"story":"<text>","humanCannotDo":"<what a human still cannot do>"}],"deferredStories":["<text>"]}',
+    '- unsatisfiedStories: stories that have NO Reachable surface and are NOT deferred.',
+    '- deferredStories: stories textually covered by an out-of-scope entry.',
+    '- Satisfied stories appear in neither array.',
+    '',
+    '## User stories',
+    ...userStories.map((s) => `  - ${s}`),
+  ]
+
+  if (outOfScope.length > 0) {
+    promptParts.push('', '## Out of scope')
+    promptParts.push(...outOfScope.map((s) => `  - ${s}`))
+  }
+
+  if (diff.length > 0) {
+    promptParts.push('', '## Merged diff (size-capped)')
+    promptParts.push('```diff')
+    promptParts.push(diff)
+    promptParts.push('```')
+  }
+
+  promptParts.push('', 'Return ONLY the JSON object. No other text.')
+  const prompt = promptParts.join('\n')
+
+  const agentResult = await runHeadlessProvider(prompt, {
+    cwd,
+    modelTier: 'fast',
+    timeoutMs: 60_000,
+    disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
+  })
+  const rawText = collectAssistantText(agentResult.conversation) || agentResult.stdout
+
+  // Extract the outermost JSON object.  Use a depth-counting scan instead of a
+  // regex so nested `{…}` objects inside `unsatisfiedStories` are handled correctly.
+  const start = rawText.indexOf('{')
+  if (start === -1) return { unsatisfiedStories: [], deferredStories: [] }
+
+  let depth = 0
+  let inString = false
+  let escape = false
+  let end = -1
+  for (let i = start; i < rawText.length; i++) {
+    const c = rawText[i]
+    if (escape) { escape = false; continue }
+    if (c === '\\' && inString) { escape = true; continue }
+    if (c === '"') { inString = !inString; continue }
+    if (inString) continue
+    if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) { end = i; break }
+    }
+  }
+  if (end === -1) return { unsatisfiedStories: [], deferredStories: [] }
+
+  try {
+    const parsed = JSON.parse(rawText.slice(start, end + 1)) as {
+      unsatisfiedStories?: unknown
+      deferredStories?: unknown
+    }
+    return {
+      unsatisfiedStories: Array.isArray(parsed.unsatisfiedStories)
+        ? parsed.unsatisfiedStories.filter(
+            (s): s is { story: string; humanCannotDo: string } =>
+              typeof s === 'object' &&
+              s !== null &&
+              typeof (s as Record<string, unknown>).story === 'string' &&
+              typeof (s as Record<string, unknown>).humanCannotDo === 'string',
+          )
+        : [],
+      deferredStories: Array.isArray(parsed.deferredStories)
+        ? parsed.deferredStories.filter((s): s is string => typeof s === 'string')
+        : [],
+    }
+  } catch {
+    return { unsatisfiedStories: [], deferredStories: [] }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Fingerprint
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -392,6 +527,28 @@ export async function runArcVerification(
   })
   const rawText = collectAssistantText(agentResult.conversation) || agentResult.stdout
   let verdict = parseVerdict(rawText)
+
+  // ── Reachable-surface check ───────────────────────────────────────────────────
+  // For Proposal Arcs with user stories, judge whether each story has a
+  // Reachable surface (UI affordance, CLI command, or bot command) in the
+  // merged result.  API routes, passing tests, and DB columns do not qualify.
+  // Skip entirely when no user stories were promised.
+  if (prdContext.userStories.length > 0) {
+    const reachability = await judgeReachableSurfaces({
+      userStories: prdContext.userStories,
+      outOfScope: prdContext.outOfScope,
+      diff,
+      cwd: opts.cwd,
+    })
+    if (reachability.unsatisfiedStories.length > 0) {
+      const [primary, ...rest] = reachability.unsatisfiedStories
+      let finding = `User story unsatisfied — "${primary.story}": ${primary.humanCannotDo}`
+      if (rest.length > 0) {
+        finding += ` (+${rest.length} other unsatisfied ${rest.length === 1 ? 'story' : 'stories'})`
+      }
+      verdict = { ok: false, findings: [...verdict.findings, finding] }
+    }
+  }
 
   // ── Arc-level E2E pass (CAN'T-VERIFY: no runnable surface) ──────────────────
   // No per-task preview command exists any more (removed in PRD f354b404 slice 1).

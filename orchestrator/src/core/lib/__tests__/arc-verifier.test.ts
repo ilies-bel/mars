@@ -430,6 +430,212 @@ describe('arc-verifier', () => {
       })
     })
 
+    // ── Reachable-surface judgement (judgeReachableSurfaces) ──────────────────
+
+    describe('reachable-surface judgement', () => {
+      /**
+       * Make a minimal store with `arc-done` + one landed commit so that
+       * `runArcVerification` proceeds to the LLM calls.
+       */
+      const makeReachabilityStore = (originId: string) =>
+        makeStore(
+          { status: 'arc-done', tasks: [{ id: originId, status: 'done' }], landedCommits: ['sha-reach'] },
+          [{ id: originId, branch: null }],
+          new Map([[originId, makeTask(originId)]]),
+        )
+
+      /** Stub first (done-criteria) provider call to pass, second to return reachability JSON. */
+      const stubProviderCalls = (reachabilityResponse: unknown) => {
+        runHeadlessProviderMock
+          .mockResolvedValueOnce({
+            exitCode: 0,
+            stdout: '{"ok":true,"findings":[]}',
+            stderr: '',
+            sessionId: null,
+            conversation: [],
+            quotaRejected: null,
+          })
+          .mockResolvedValueOnce({
+            exitCode: 0,
+            stdout: JSON.stringify(reachabilityResponse),
+            stderr: '',
+            sessionId: null,
+            conversation: [],
+            quotaRejected: null,
+          })
+      }
+
+      beforeEach(() => {
+        findOpenDraftByKpiTagMock.mockResolvedValue(null)
+      })
+
+      // ── fixture (a): admin interface promised, only API shipped ──────────────
+
+      it('(a) produces exactly one finding when a story lacks a Reachable surface', async () => {
+        const story = 'As an admin, I can manage users in the admin interface'
+
+        getProposalMock.mockResolvedValueOnce({
+          id: 'prop-a',
+          userStories: [story],
+          outOfScope: '',
+        })
+        getDefaultTaskStoreMock.mockResolvedValue(makeReachabilityStore('prop-a'))
+
+        stubProviderCalls({
+          unsatisfiedStories: [
+            { story, humanCannotDo: 'The admin interface page was not delivered; only a REST API endpoint exists.' },
+          ],
+          deferredStories: [],
+        })
+
+        const verdict = await runArcVerification('prop-a', { cwd: '/tmp' })
+
+        expect(verdict.ok).toBe(false)
+        // Exactly one reachability finding added.
+        const reachabilityFindings = verdict.findings.filter((f) =>
+          f.includes('User story unsatisfied'),
+        )
+        expect(reachabilityFindings).toHaveLength(1)
+        expect(reachabilityFindings[0]).toContain(story)
+        expect(reachabilityFindings[0]).toContain('admin interface')
+        // Lands in the action queue via the existing failing-verdict path.
+        expect(raiseSpy).toHaveBeenCalledTimes(1)
+        expect(raiseSpy.mock.calls[0][0].kind).toBe('arc-verification-failed')
+      })
+
+      // ── fixture (b): deferred surface in out_of_scope → no finding ───────────
+
+      it('(b) produces no reachability finding when the story is covered by out_of_scope', async () => {
+        const story = 'As a user, I can access the mobile app'
+
+        getProposalMock.mockResolvedValueOnce({
+          id: 'prop-b',
+          userStories: [story],
+          outOfScope: 'Mobile app\nThird-party integrations',
+        })
+        getDefaultTaskStoreMock.mockResolvedValue(makeReachabilityStore('prop-b'))
+
+        stubProviderCalls({
+          unsatisfiedStories: [],
+          deferredStories: [story],
+        })
+
+        const verdict = await runArcVerification('prop-b', { cwd: '/tmp' })
+
+        // No reachability finding — story was deferred.
+        const reachabilityFindings = verdict.findings.filter((f) =>
+          f.includes('User story unsatisfied'),
+        )
+        expect(reachabilityFindings).toHaveLength(0)
+        // Overall verdict driven solely by done-criteria check (which passed).
+        expect(verdict.ok).toBe(true)
+        expect(raiseSpy).not.toHaveBeenCalled()
+      })
+
+      // ── fixture (c): no user_stories → no reachability finding ───────────────
+
+      it('(c) emits no reachability finding when user_stories is empty', async () => {
+        getProposalMock.mockResolvedValueOnce({
+          id: 'prop-c',
+          userStories: [],
+          outOfScope: '',
+        })
+        getDefaultTaskStoreMock.mockResolvedValue(makeReachabilityStore('prop-c'))
+
+        // Only one provider call expected (done-criteria; reachability is skipped).
+        runHeadlessProviderMock.mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: '{"ok":true,"findings":[]}',
+          stderr: '',
+          sessionId: null,
+          conversation: [],
+          quotaRejected: null,
+        })
+
+        const verdict = await runArcVerification('prop-c', { cwd: '/tmp' })
+
+        expect(verdict.ok).toBe(true)
+        const reachabilityFindings = verdict.findings.filter((f) =>
+          f.includes('User story unsatisfied'),
+        )
+        expect(reachabilityFindings).toHaveLength(0)
+        // Provider called exactly once (no second call for reachability).
+        expect(runHeadlessProviderMock).toHaveBeenCalledTimes(1)
+        expect(raiseSpy).not.toHaveBeenCalled()
+      })
+
+      // ── fixture (d): three unsatisfied stories → exactly one finding ──────────
+
+      it('(d) collapses three unsatisfied stories into exactly one finding', async () => {
+        const stories = [
+          'As a user, I can see my dashboard',
+          'As a user, I can edit my profile',
+          'As a user, I can view my order history',
+        ]
+
+        getProposalMock.mockResolvedValueOnce({
+          id: 'prop-d',
+          userStories: stories,
+          outOfScope: '',
+        })
+        getDefaultTaskStoreMock.mockResolvedValue(makeReachabilityStore('prop-d'))
+
+        stubProviderCalls({
+          unsatisfiedStories: [
+            { story: stories[0], humanCannotDo: 'No dashboard page was delivered.' },
+            { story: stories[1], humanCannotDo: 'No profile edit form was delivered.' },
+            { story: stories[2], humanCannotDo: 'No order history page was delivered.' },
+          ],
+          deferredStories: [],
+        })
+
+        const verdict = await runArcVerification('prop-d', { cwd: '/tmp' })
+
+        expect(verdict.ok).toBe(false)
+        // Exactly ONE reachability finding in the verdict.
+        const reachabilityFindings = verdict.findings.filter((f) =>
+          f.includes('User story unsatisfied'),
+        )
+        expect(reachabilityFindings).toHaveLength(1)
+        // Primary story is named.
+        expect(reachabilityFindings[0]).toContain(stories[0])
+        // Count of other unsatisfied stories is mentioned.
+        expect(reachabilityFindings[0]).toContain('+2 other unsatisfied')
+        // Exactly one AQ item raised.
+        expect(raiseSpy).toHaveBeenCalledTimes(1)
+        expect(raiseSpy.mock.calls[0][0].kind).toBe('arc-verification-failed')
+      })
+
+      // ── at-most-one finding regardless of multiple stories ────────────────────
+
+      it('finding message mentions count when exactly two stories are unsatisfied', async () => {
+        const stories = ['Story alpha', 'Story beta']
+
+        getProposalMock.mockResolvedValueOnce({
+          id: 'prop-two',
+          userStories: stories,
+          outOfScope: '',
+        })
+        getDefaultTaskStoreMock.mockResolvedValue(makeReachabilityStore('prop-two'))
+
+        stubProviderCalls({
+          unsatisfiedStories: [
+            { story: stories[0], humanCannotDo: 'No surface for alpha.' },
+            { story: stories[1], humanCannotDo: 'No surface for beta.' },
+          ],
+          deferredStories: [],
+        })
+
+        const verdict = await runArcVerification('prop-two', { cwd: '/tmp' })
+
+        const reachabilityFindings = verdict.findings.filter((f) =>
+          f.includes('User story unsatisfied'),
+        )
+        expect(reachabilityFindings).toHaveLength(1)
+        expect(reachabilityFindings[0]).toContain('+1 other unsatisfied story')
+      })
+    })
+
     // ── arc E2E pass — always CAN'T-VERIFY (no live surface) ─────────────────
     //
     // After the static Claude spot-check, runArcVerification always emits a
