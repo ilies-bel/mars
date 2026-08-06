@@ -281,3 +281,29 @@ export const leverForConversationNotice = (kind: AutonomousNoticeKind): string |
 /** Whether a notice kind reports something done or proposes something to do. */
 export const speechActForConversationNotice = (kind: AutonomousNoticeKind): NoticeSpeechAct =>
   REGISTRY[kind].act
+
+/**
+ * Steward runtime-tuning kinds. These reflect autonomous machine-level
+ * decisions (cap bumps, sheds, restores) that the operator does not need to
+ * act on. They are log lines, not chat events: posting them to the
+ * conversation wastes transcript height without adding decision surface.
+ */
+const STEWARD_RUNTIME_TUNE_KINDS: ReadonlySet<AutonomousNoticeKind> = new Set([
+  'steward.worker-bumped',
+  'steward.worker-reduced',
+  'steward.worker-restored',
+] satisfies AutonomousNoticeKind[])
+
+/**
+ * True for notice kinds that are purely operational log entries.
+ *
+ * The gate is operator-actionability: a notice only belongs in chat when it
+ * changes the operator's decision surface (asks for a decision, requires
+ * action, records a decision, or carries reusable context). Steward
+ * runtime-tuning events (cap bumps/sheds/restores, swap pressure, backlog
+ * threshold adjustments) do not meet that bar — Mars already decided, there
+ * is no prompt the operator needs to read or act on, and posting them
+ * repeatedly degrades the signal-to-noise ratio of the conversation.
+ */
+export const isStewardRuntimeTuneKind = (kind: AutonomousNoticeKind): boolean =>
+  STEWARD_RUNTIME_TUNE_KINDS.has(kind)

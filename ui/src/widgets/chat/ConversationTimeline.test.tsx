@@ -3,6 +3,34 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { ConversationTimeline } from './ConversationTimeline'
 
 describe('ConversationTimeline', () => {
+  it('collapses a closed subthread into one breadcrumb row instead of its messages', () => {
+    const html = renderToStaticMarkup(
+      <ConversationTimeline
+        entries={[
+          {
+            id: 'msg1', seq: 1, threadId: 'closed-sub', subthreadId: 'closed-sub', subthreadTitle: 'Finished task', subthreadClosed: true,
+            role: 'assistant', content: 'First message.', segments: [],
+            createdAt: '2026-01-01T00:00:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
+          },
+          {
+            id: 'msg2', seq: 2, threadId: 'closed-sub', subthreadId: 'closed-sub', subthreadTitle: 'Finished task', subthreadClosed: true,
+            role: 'assistant', content: 'Second message.', segments: [],
+            createdAt: '2026-01-01T00:01:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
+          },
+        ]}
+      />,
+    )
+
+    // One breadcrumb instead of two message cards
+    expect(html).toContain('data-testid="closed-subthread-breadcrumb"')
+    expect(html.match(/data-testid="closed-subthread-breadcrumb"/g)).toHaveLength(1)
+    expect(html).toContain('Finished task')
+    expect(html).toContain('2 messages')
+    // Individual message content is NOT rendered
+    expect(html).not.toContain('First message.')
+    expect(html).not.toContain('Second message.')
+  })
+
   it('keeps the durable scroll mounted and marks the exact memory cut', () => {
     const html = renderToStaticMarkup(
       <ConversationTimeline
@@ -27,11 +55,15 @@ describe('ConversationTimeline', () => {
       />,
     )
 
-    expect(html).toContain('Mars no longer reads this.')
-    expect(html).toContain('This is the final unreadable message.')
+    // Closed subthread collapses to one breadcrumb — no individual message content
+    expect(html).toContain('data-testid="closed-subthread-breadcrumb"')
+    expect(html).toContain('Earlier subthread')
+    expect(html).not.toContain('Mars no longer reads this.')
+    expect(html).not.toContain('This is the final unreadable message.')
+    // Memory boundary placed after the closed subthread breadcrumb
     expect(html).toContain('Mars can read from here')
     expect(html).toContain('Mars reads from here onward.')
-    expect(html.indexOf('This is the final unreadable message.')).toBeLessThan(html.indexOf('Mars can read from here'))
+    expect(html.indexOf('closed-subthread-breadcrumb')).toBeLessThan(html.indexOf('Mars can read from here'))
     expect(html.indexOf('Mars can read from here')).toBeLessThan(html.indexOf('Mars reads from here onward.'))
   })
 
@@ -72,7 +104,8 @@ describe('ConversationTimeline', () => {
     )
 
     for (const html of [withActiveTail, withoutActiveTail]) {
-      expect(html.indexOf('Older message.')).toBeLessThan(html.indexOf('Mars can read from here'))
+      // Closed subthread breadcrumb appears before the memory cut marker
+      expect(html.indexOf('closed-subthread-breadcrumb')).toBeLessThan(html.indexOf('Mars can read from here'))
       expect(html).toContain('data-testid="memory-boundary-line"')
     }
   })
@@ -96,15 +129,16 @@ describe('ConversationTimeline', () => {
       />,
     )
 
+    // The closed subthread is represented as a breadcrumb with its title
     expect(html).toContain('Earlier subthread')
-    expect(html).toContain('closed')
-    expect(html).toContain('assistant · validation')
-    expect(html).toContain('task-42')
-    expect(html).toContain('This was persisted before opening another subthread.')
+    expect(html).toContain('data-testid="closed-subthread-breadcrumb"')
+    // Individual message details are not replayed in the main transcript
+    expect(html).not.toContain('This was persisted before opening another subthread.')
+    // Active subthread is rendered by the live tail, not here
     expect(html).not.toContain('Handled by the live tail.')
   })
 
-  it('places Subthread seams around closed messages while leaving an open Subthread without an end aggregate', () => {
+  it('places Subthread seams around open Subthread messages while leaving closed Subthreads as breadcrumbs', () => {
     const html = renderToStaticMarkup(
       <ConversationTimeline
         entries={[
@@ -132,12 +166,19 @@ describe('ConversationTimeline', () => {
       />,
     )
 
-    expect(html.match(/data-testid="subthread-boundary-start"/g)).toHaveLength(2)
-    expect(html.match(/data-testid="subthread-boundary-end"/g)).toHaveLength(1)
+    // Closed subthread collapses to a breadcrumb with its token summary
+    expect(html).toContain('data-testid="closed-subthread-breadcrumb"')
     expect(html).toContain('350 produced')
     expect(html).toContain('180 carried')
-    expect(html.indexOf('Subthread started')).toBeLessThan(html.indexOf('Situation: this Subthread starts here.'))
-    expect(html.indexOf('The last completed message.')).toBeLessThan(html.indexOf('Subthread complete'))
+    expect(html).not.toContain('Situation: this Subthread starts here.')
+    expect(html).not.toContain('The last completed message.')
+
+    // Memory boundary placed after the closed-subthread breadcrumb
     expect(html).toContain('data-testid="memory-boundary-line"')
+
+    // Open subthread still gets a start boundary seam (no end since not closed)
+    expect(html.match(/data-testid="subthread-boundary-start"/g)).toHaveLength(1)
+    expect(html).not.toContain('data-testid="subthread-boundary-end"')
+    expect(html).toContain('Situation: this one remains open.')
   })
 })

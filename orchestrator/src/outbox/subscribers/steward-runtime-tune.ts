@@ -4,10 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { platform } from 'node:os'
 import { promisify } from 'node:util'
 import { setSemLimit, type Semaphore } from '../../core/daemon/semaphore.js'
-import {
-  postConversationNotice,
-  type ConversationNoticeInput,
-} from '../../core/lib/conversation-delivery.js'
+import type { ConversationNoticeInput } from '../../core/lib/conversation-delivery.js'
 import {
   sweepOrphans,
   formatSweepSummary,
@@ -294,7 +291,6 @@ const defaultReadPagingCounter = async (): Promise<number | null> => {
  */
 export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => void {
   const { bus, implementSem, baselineCap, log } = deps
-  const postNotice = deps.postConversationNotice ?? postConversationNotice
   const readPressure = deps.readPressure ?? ((): Promise<MachinePressure> => samplePressure())
   const readPagingCounter = deps.readPagingCounter ?? defaultReadPagingCounter
   const recordCapDecision = deps.recordCapDecision ?? ((): void => {})
@@ -364,18 +360,10 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
     }
   }
 
-  const ack = async (input: Extract<ConversationNoticeInput, { kind: string }>): Promise<void> => {
-    try {
-      await postNotice(input)
-    } catch (err) {
-      log(`[steward-tune] conversation Notice failed: ${(err as Error).message}`)
-    }
-  }
-
   /**
-   * Record a cap change as durable evidence. The conversation Notice is what
-   * the operator reads now; the ledger is what answers "when did Mars start
-   * doing this, and how often?" weeks later.
+   * Record a cap change as durable evidence. Cap changes are log-only (no chat
+   * notice); the ledger is what answers "when did Mars start doing this, and
+   * how often?" weeks later.
    */
   const ledger = async (
     lane: string,
@@ -478,18 +466,9 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
         newCap,
         `sustained backlog: ${payload.pending} pending for ${Math.round(payload.sustainedMs / 1000)}s (${decision.explanation}; ${evidence})`,
       )
-
-      await ack({
-        kind: 'steward.worker-bumped',
-        payload: {
-          from: oldCap,
-          to: newCap,
-          pending: payload.pending,
-          threshold: Math.round(payload.cap * 0.75),
-          sustainedSeconds: Math.round(payload.sustainedMs / 1000),
-        },
-        priority: 'routine',
-      })
+      // Steward runtime-tuning events are log-only (cap change already logged
+      // above). They do not reach the chat transcript — the operator has
+      // nothing to decide here that a log line cannot communicate.
     })()
   })
 
@@ -510,14 +489,7 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
       log(`[steward-tune] shed implement cap ${oldCap} → ${newCap} (${detail})`)
       recordCapDecision(`steward autotune shed implement ${oldCap} → ${newCap} (${detail})`)
       await ledger('shed', oldCap, newCap, detail)
-
-      // Name the resource that actually tripped, so the operator does not go
-      // looking at CPU when the machine is out of memory.
-      await ack({
-        kind: 'steward.worker-reduced',
-        payload: { from: oldCap, to: newCap, pagingPps: Math.round(pagingPps) },
-        priority: 'routine',
-      })
+      // Steward runtime-tuning events are log-only — see bump lane above.
       return
     }
 
@@ -545,11 +517,7 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
       newCap,
       `paging ${Math.round(pagingPps)} pages/s < ${PAGING_ACTIVE_PPS}, baseline ${baselineCap}`,
     )
-    await ack({
-      kind: 'steward.worker-restored',
-      payload: { from: oldCap, to: newCap },
-      priority: 'routine',
-    })
+    // Steward runtime-tuning events are log-only — see bump lane above.
   }
 
   // Sample once immediately rather than waiting a full interval. Paging is a

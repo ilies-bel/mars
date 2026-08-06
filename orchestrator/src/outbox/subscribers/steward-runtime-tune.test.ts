@@ -214,12 +214,14 @@ describe('steward-runtime-tune', () => {
       })
     })
 
-    it('still announces the change when the ledger write fails', async () => {
-      const { bus, implementSem, writeChatAck, recordLedger, log } = setup(12)
+    it('still bumps the cap when the ledger write fails', async () => {
+      const { bus, implementSem, recordLedger, log } = setup(12)
       recordLedger.mockRejectedValue(new Error('disk full'))
 
       bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 65_000 })
-      await vi.waitFor(() => expect(writeChatAck).toHaveBeenCalledTimes(1))
+      await vi.waitFor(() =>
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('ledger write failed')),
+      )
 
       expect(implementSem.limit).toBe(16)
       expect(log.mock.calls.flat().join('\n')).toContain('ledger write failed')
@@ -231,22 +233,20 @@ describe('steward-runtime-tune', () => {
     expect(implementSem.limit).toBe(12)
 
     bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 65_000 })
-    await vi.waitFor(() => expect(writeChatAck).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(implementSem.limit).toBe(16))
 
     expect(implementSem.limit).toBe(16) // ceil(12 * 1.33) = 16
-    expect(writeChatAck.mock.calls[0]![0]).toMatchObject({
-      kind: 'steward.worker-bumped',
-      payload: { from: 12, to: 16 },
-    })
+    // Tuning events are log-only; no chat notice is posted.
+    expect(writeChatAck).not.toHaveBeenCalled()
   })
 
   it('caps at 2× baseline', async () => {
-    const { bus, implementSem, writeChatAck } = setup(10)
+    const { bus, implementSem } = setup(10)
     // Manually set limit close to the 2× cap
     implementSem.limit = 19
 
     bus.emit('kpi.backlog.degraded', { pending: 20, cap: 19, sustainedMs: 70_000 })
-    await vi.waitFor(() => expect(writeChatAck).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(implementSem.limit).toBe(20))
 
     expect(implementSem.limit).toBe(20) // min(ceil(19*1.33)=26, 2*10=20) = 20
   })
@@ -262,28 +262,25 @@ describe('steward-runtime-tune', () => {
     expect(writeChatAck).not.toHaveBeenCalled()
   })
 
-  it('posts exactly one typed conversation Notice', async () => {
-    const { bus, writeChatAck } = setup(12)
+  it('logs the cap bump and does not post to chat', async () => {
+    const { bus, log, writeChatAck, recordLedger } = setup(12)
 
     bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 60_000 })
-    await vi.waitFor(() => expect(writeChatAck).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(recordLedger).toHaveBeenCalledTimes(1))
 
-    expect(writeChatAck).toHaveBeenCalledWith({
-      kind: 'steward.worker-bumped',
-      payload: { from: 12, to: 16, pending: 15, threshold: 9, sustainedSeconds: 60 },
-      priority: 'routine',
-    })
+    // Steward tuning events are log-only — no chat notice.
+    expect(writeChatAck).not.toHaveBeenCalled()
+    expect(log.mock.calls.flat().join(' ')).toContain('bumped implement cap 12 → 16')
   })
 
   it('does not raise a validation action-queue item', async () => {
-    const { bus, writeChatAck } = setup(12)
+    const { bus, writeChatAck, recordLedger } = setup(12)
 
     bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 60_000 })
-    await vi.waitFor(() => expect(writeChatAck).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(recordLedger).toHaveBeenCalledTimes(1))
 
-    // writeChatAck is called with kind='acknowledgment' (not 'validation')
-    // The subscriber never raises an action-queue item — it calls writeChatAck only
-    expect(writeChatAck).toHaveBeenCalledTimes(1)
+    // Tuning events are log-only; no action-queue item is raised.
+    expect(writeChatAck).not.toHaveBeenCalled()
   })
 
   // ── CPU guard on the bump lane ────────────────────────────────────────────
@@ -292,10 +289,10 @@ describe('steward-runtime-tune', () => {
   // input anywhere in the subscriber, so there is nothing here to stub for it.
 
   it('does not sweep for orphans when there is capacity to spare', async () => {
-    const { bus, writeChatAck, runOrphanSweep } = setup(12, { pressures: pressure(60) })
+    const { bus, recordLedger, runOrphanSweep } = setup(12, { pressures: pressure(60) })
 
     bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 60_000 })
-    await vi.waitFor(() => expect(writeChatAck).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(recordLedger).toHaveBeenCalledTimes(1))
 
     expect(runOrphanSweep).not.toHaveBeenCalled()
   })
@@ -303,12 +300,12 @@ describe('steward-runtime-tune', () => {
   it('raises the cap on a machine other software has loaded, as long as CPU is idle', async () => {
     // The profiled incident: load average ~275 on 10 cores, but 19.1% idle and
     // Mars a minority of the CPU. Load average is not consulted at all.
-    const { bus, implementSem, log, writeChatAck, runOrphanSweep } = setup(12, {
+    const { bus, implementSem, log, recordLedger, runOrphanSweep } = setup(12, {
       pressures: pressure(19.1, 12),
     })
 
     bus.emit('kpi.backlog.degraded', { pending: 50, cap: 12, sustainedMs: 60_000 })
-    await vi.waitFor(() => expect(writeChatAck).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(recordLedger).toHaveBeenCalledTimes(1))
 
     expect(runOrphanSweep).not.toHaveBeenCalled()
     expect(implementSem.limit).toBe(16)
@@ -352,7 +349,7 @@ describe('steward-runtime-tune', () => {
   })
 
   it('breaks the deadlock: reaps on the hold path, then re-samples and raises', async () => {
-    const { bus, implementSem, log, writeChatAck, runOrphanSweep, readPressure } = setup(
+    const { bus, implementSem, log, recordLedger, runOrphanSweep, readPressure } = setup(
       12,
       {
         // First sample: no idle CPU. After the reap the orphans' CPU is gone
@@ -363,7 +360,7 @@ describe('steward-runtime-tune', () => {
     )
 
     bus.emit('kpi.backlog.degraded', { pending: 50, cap: 12, sustainedMs: 60_000 })
-    await vi.waitFor(() => expect(writeChatAck).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(recordLedger).toHaveBeenCalledTimes(1))
 
     expect(runOrphanSweep).toHaveBeenCalledTimes(1)
     expect(readPressure).toHaveBeenCalledTimes(2)
@@ -434,14 +431,13 @@ describe('steward-runtime-tune', () => {
 
   it('names paging as the resource that tripped the shed', async () => {
     vi.useFakeTimers()
-    const { writeChatAck } = setup(12, { pagingPps: 5_000 })
+    const { log, writeChatAck } = setup(12, { pagingPps: 5_000 })
 
     await primePaging()
 
-    expect(writeChatAck.mock.calls[0]![0]).toMatchObject({
-      kind: 'steward.worker-reduced',
-      payload: { from: 12, to: 8, pagingPps: 5000 },
-    })
+    // The shed is log-only; paging rate and direction must be visible in the log.
+    expect(log.mock.calls.flat().join(' ')).toContain('paging 5000 pages/s')
+    expect(writeChatAck).not.toHaveBeenCalled()
   })
 
   it('sheds repeatedly while paging continues, never below 1', async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   AutonomousNoticeKindSchema,
+  isStewardRuntimeTuneKind,
   leverForConversationNotice,
   offersForConversationNotice,
   renderConversationNotice,
@@ -110,6 +111,23 @@ describe('offersForConversationNotice', () => {
         if (offer.target.type !== 'reference') continue
         expect(offer.target.url, kind).toMatch(/^https:\/\//)
       }
+    }
+  })
+})
+
+describe('isStewardRuntimeTuneKind', () => {
+  it('returns true for all three runtime-tuning kinds', () => {
+    expect(isStewardRuntimeTuneKind('steward.worker-bumped')).toBe(true)
+    expect(isStewardRuntimeTuneKind('steward.worker-reduced')).toBe(true)
+    expect(isStewardRuntimeTuneKind('steward.worker-restored')).toBe(true)
+  })
+
+  it('returns false for every other notice kind', () => {
+    const nonTuneKinds = AutonomousNoticeKindSchema.options.filter(
+      (k) => !k.startsWith('steward.'),
+    )
+    for (const kind of nonTuneKinds) {
+      expect(isStewardRuntimeTuneKind(kind), kind).toBe(false)
     }
   })
 })

@@ -243,9 +243,14 @@ describe('conversation notice delivery', () => {
     await chat.closeSubject(subthread.id)
 
     expect((await chat.getThread(subthread.id))?.thread.closed_at).not.toBeNull()
-    expect(await conversationFeed(chat)).toEqual([
-      expect.objectContaining({ content: 'Saved for the next pause.', kind: 'notice' }),
-    ])
+    // closeSubthread also writes a context-line notice to the main thread, so
+    // the feed contains at least two entries: the flushed routine notice and the
+    // context line. Use arrayContaining to assert only what this test cares about.
+    expect(await conversationFeed(chat)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ content: 'Saved for the next pause.', kind: 'notice' }),
+      ]),
+    )
   })
 
   it('retries an undelivered urgent Notice even while a run is active', async () => {
