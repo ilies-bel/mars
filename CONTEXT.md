@@ -586,3 +586,7 @@ _Avoid_: goal, purpose, scope, charter
 **Archive entry**:
 A record of something that already happened — a resolved Alert, an acknowledged Notice, or completed work that never demanded anything — which carries its provenance, never clears, and asks nothing of the operator.
 _Avoid_: history item, resolved row, activity, log entry, archived alert, deed
+
+**chat placement gate**:
+A chat-visible event must change the operator's decision surface: ask for a decision, require action, record a decision, or carry reusable context. Routine operational facts are logs, not chat.
+_Avoid_: log-line, noise, telemetry
