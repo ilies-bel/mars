@@ -13,7 +13,7 @@ export function GlossaryHighlighter({ text, terms }: GlossaryHighlighterProps) {
   if (segments.length === 1 && segments[0].kind === 'text') return segments[0].value
 
   return (
-    <>
+    <span>
       {segments.map((segment, index) => {
         if (segment.kind === 'text') return segment.value
 
@@ -34,6 +34,6 @@ export function GlossaryHighlighter({ text, terms }: GlossaryHighlighterProps) {
           </Tooltip>
         )
       })}
-    </>
+    </span>
   )
 }
