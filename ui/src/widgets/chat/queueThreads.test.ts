@@ -100,6 +100,35 @@ describe('filterThreadsByTitle', () => {
 })
 
 // ---------------------------------------------------------------------------
+// filterThreadsByTitle — derived title from firstUserMessage
+// ---------------------------------------------------------------------------
+
+describe('filterThreadsByTitle with firstUserMessage derived title', () => {
+  const threads = [
+    makeThread({ id: 'a', title: 'Deploy fix' }),
+    makeThread({ id: 'b', title: '', firstUserMessage: 'what is the deploy status?' }),
+    makeThread({ id: 'c', title: '' }), // no title, no firstUserMessage
+  ]
+
+  it('matches against derived title when title is empty but firstUserMessage is set', () => {
+    expect(filterThreadsByTitle(threads, 'deploy status').map((t) => t.id)).toEqual(['b'])
+  })
+
+  it('matches "New thread" placeholder only for threads with no title AND no firstUserMessage', () => {
+    expect(filterThreadsByTitle(threads, 'new').map((t) => t.id)).toEqual(['c'])
+  })
+
+  it('does NOT match "New thread" placeholder for threads that have a firstUserMessage', () => {
+    const matched = filterThreadsByTitle(threads, 'new').map((t) => t.id)
+    expect(matched).not.toContain('b')
+  })
+
+  it('matches normally titled threads by their title', () => {
+    expect(filterThreadsByTitle(threads, 'Deploy fix').map((t) => t.id)).toEqual(['a'])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // isResolvedSelection — resolved pane trigger for vanished rows
 // ---------------------------------------------------------------------------
 

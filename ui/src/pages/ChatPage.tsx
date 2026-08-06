@@ -897,7 +897,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false }
     setEditing(false)
   }
 
-  const title = smartTitle(thread.title)
+  const title = smartTitle(thread.title, thread.firstUserMessage)
 
   // Action-queue ids are opaque persisted ids, not `kind:entity` strings. A
   // thread therefore cannot infer a kind from alertItemId; alert threads use a

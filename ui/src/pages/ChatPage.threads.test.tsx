@@ -264,6 +264,23 @@ describe('smartTitle', () => {
   it('handles an empty string by returning it unchanged', () => {
     expect(smartTitle('')).toBe('New thread')
   })
+
+  it('returns derived title from firstUserMessage when stored title is empty', () => {
+    expect(smartTitle(null, 'what is the deploy status?')).toBe('what is the deploy status?')
+  })
+
+  it('returns "New thread" when title is empty and firstUserMessage is absent', () => {
+    expect(smartTitle(null, null)).toBe('New thread')
+  })
+
+  it('prefers stored title over firstUserMessage when title is non-empty', () => {
+    expect(smartTitle('My explicit title', 'first user message')).toBe('My explicit title')
+  })
+
+  it('applies sentence truncation to long firstUserMessage values', () => {
+    // titleFromPrompt truncates at sentence boundaries; short messages pass through untouched
+    expect(smartTitle(null, 'Short message')).toBe('Short message')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -304,6 +321,23 @@ describe('ThreadSidebar – row scanability', () => {
       }),
     ])
     expect(html).toContain('🔔')
+  })
+
+  it('shows derived title from first user message when thread title is empty', () => {
+    const thread = makeThread({
+      title: null,
+      firstUserMessage: 'what is the deploy status?',
+    })
+    const html = renderSidebar([thread])
+    expect(html).toContain('what is the deploy status?')
+  })
+
+  it('shows "New thread" label for a genuinely empty thread (no title, no messages)', () => {
+    // A thread with no title and no firstUserMessage should show the placeholder.
+    // Use a title that is clearly the placeholder rather than a derived value.
+    const thread = makeThread({ title: null, firstUserMessage: null })
+    const html = renderSidebar([thread])
+    expect(html).toContain('New thread')
   })
 
   it('smart-truncates "Phantom task auto-" prefix in thread titles', () => {

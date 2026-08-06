@@ -121,6 +121,8 @@ export interface ThreadPreview extends ChatThread {
   last_message: string | null
   /** Role of the most recent message, or null when the thread has no messages. */
   last_message_role: string | null
+  /** Text of the first user message, or null when the thread has no user messages. */
+  first_user_message: string | null
 }
 
 export interface ThreadWithMessages {
@@ -153,6 +155,12 @@ export interface ChatThreadApiView {
   /** Declared automatic terminal event, if this Subthread has one. */
   terminalEventType: string | null
   parentThreadId: string | null
+  /**
+   * Text content of the thread's first user message, used by the rail to derive
+   * a display title when no explicit title has been set. Null when the thread
+   * has no user messages yet.
+   */
+  firstUserMessage: string | null
 }
 
 /** Camelcase view shape for messages served over the HTTP API. */
@@ -225,6 +233,7 @@ export const computeAttentionStatus = (
 export const toThreadApiView = (
   t: ChatThread,
   lastMessageRole?: string | null,
+  firstUserMessage?: string | null,
 ): ChatThreadApiView => ({
   id: t.id,
   title: t.title,
@@ -240,6 +249,7 @@ export const toThreadApiView = (
   closedAt: t.closed_at === null ? null : new Date(t.closed_at).toISOString(),
   terminalEventType: t.terminal_event_type ?? null,
   parentThreadId: t.parent_thread_id,
+  firstUserMessage: firstUserMessage ?? null,
 })
 
 /**
@@ -813,7 +823,13 @@ export const listThreads = async (options: ThreadListOptions = {}): Promise<Thre
               FROM chat_messages m
              WHERE m.thread_id = t.id
              ORDER BY m.created_at DESC, m.seq DESC
-             LIMIT 1) AS last_message_role
+             LIMIT 1) AS last_message_role,
+           (SELECT content
+              FROM chat_messages m
+             WHERE m.thread_id = t.id
+               AND m.role = 'user'
+             ORDER BY m.created_at ASC, m.seq ASC
+             LIMIT 1) AS first_user_message
       FROM chat_threads t
      WHERE ${where.join(' AND ')}
      ORDER BY t.created_at DESC, t.id DESC
@@ -822,6 +838,7 @@ export const listThreads = async (options: ThreadListOptions = {}): Promise<Thre
     ...rowToThread(row),
     last_message: (row.last_message as string | null) ?? null,
     last_message_role: (row.last_message_role as string | null) ?? null,
+    first_user_message: (row.first_user_message as string | null) ?? null,
   }))
 }
 
@@ -936,7 +953,13 @@ export const listClosedSubthreads = async (): Promise<ThreadPreview[]> => {
               FROM chat_messages m
              WHERE m.thread_id = t.id
              ORDER BY m.created_at DESC, m.seq DESC
-             LIMIT 1) AS last_message_role
+             LIMIT 1) AS last_message_role,
+           (SELECT content
+              FROM chat_messages m
+             WHERE m.thread_id = t.id
+               AND m.role = 'user'
+             ORDER BY m.created_at ASC, m.seq ASC
+             LIMIT 1) AS first_user_message
       FROM chat_threads t
      WHERE t.closed_at IS NOT NULL AND t.archived_at IS NULL
      ORDER BY t.closed_at DESC, t.id DESC
@@ -945,6 +968,7 @@ export const listClosedSubthreads = async (): Promise<ThreadPreview[]> => {
     ...rowToThread(row),
     last_message: (row.last_message as string | null) ?? null,
     last_message_role: (row.last_message_role as string | null) ?? null,
+    first_user_message: (row.first_user_message as string | null) ?? null,
   }))
 }
 

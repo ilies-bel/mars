@@ -1269,6 +1269,12 @@ export const chatThreadSchema = z.object({
   terminalEventType: z.string().nullable().optional().default(null),
   /** Source thread for a fork, or null for a root conversation. */
   parentThreadId: z.string().nullable().optional().default(null),
+  /**
+   * Text content of the thread's first user message, sent by the server so the
+   * rail can derive a display title when no explicit title has been set.
+   * Null when the thread has no messages yet.
+   */
+  firstUserMessage: z.string().nullable().optional().default(null),
 })
 
 export const chatThreadsResponseSchema = z.object({

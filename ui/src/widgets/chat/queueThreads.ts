@@ -8,6 +8,7 @@
 
 import type { ActionQueueItem, ChatThread } from '@/shared/schemas'
 import { filterByQuery } from '@/pages/ActionQueuePageFilters'
+import { smartTitle } from '@/pages/chatPageUtils'
 
 // ---------------------------------------------------------------------------
 // Open-thread filter — drops resolved projections
@@ -97,11 +98,17 @@ export function draftRowHeadline(title: string): string {
 
 /**
  * Case-insensitive title search over conversation threads. An empty (trimmed)
- * query matches every thread. Threads with no title match under the
- * "New thread" placeholder so a search for "new" still finds them.
+ * query matches every thread. The search key uses the same derived title that
+ * the rail renders: threads with a firstUserMessage match against that derived
+ * title, and genuinely empty threads (no title, no messages) match under the
+ * "New thread" placeholder.
  */
 export function filterThreadsByTitle(threads: ChatThread[], query: string): ChatThread[] {
-  return filterByQuery(threads, query, (thread) => `${thread.title || 'New thread'}\n${thread.alertItemId ?? ''}`)
+  return filterByQuery(
+    threads,
+    query,
+    (thread) => `${smartTitle(thread.title, thread.firstUserMessage)}\n${thread.alertItemId ?? ''}`,
+  )
 }
 
 /** Applies the archive's fork-tree scope to a thread list. */

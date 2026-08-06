@@ -1300,7 +1300,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   const viewChatThreads: AppServices['viewChatThreads'] = async (options) => {
     const { listThreads, toThreadApiView } = await import('./lib/chat-store')
     const threads = await listThreads(options)
-    return { threads: threads.map((t) => toThreadApiView(t, t.last_message_role)) }
+    return { threads: threads.map((t) => toThreadApiView(t, t.last_message_role, t.first_user_message)) }
   }
 
   const viewChatThread: AppServices['viewChatThread'] = async (id) => {
@@ -1320,7 +1320,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   const viewChatHistory: AppServices['viewChatHistory'] = async () => {
     const { listClosedSubthreads, toThreadApiView } = await import('./lib/chat-store')
     const threads = await listClosedSubthreads()
-    return { threads: threads.map((t) => toThreadApiView(t, t.last_message_role)) }
+    return { threads: threads.map((t) => toThreadApiView(t, t.last_message_role, t.first_user_message)) }
   }
 
   const viewChatConversation: AppServices['viewChatConversation'] = async () => {

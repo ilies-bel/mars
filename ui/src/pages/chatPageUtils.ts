@@ -4,6 +4,7 @@
  */
 
 import type { ActionQueueItem, ChatSegmentAttachment } from '@/shared/schemas'
+import { titleFromPrompt } from '@/shared/promptTitle'
 
 // ---------------------------------------------------------------------------
 // relativeTime — human-readable relative timestamp
@@ -47,12 +48,21 @@ const TITLE_PREFIXES = [
 
 /**
  * Returns a compact, human-readable display title for a thread:
- *   - null / empty → "New thread"
+ *   - null / empty + firstUserMessage → derived from the first user message via titleFromPrompt
+ *   - null / empty + no firstUserMessage → "New thread"
  *   - known verbose prefix → the portion after the prefix
  *   - anything else → the title unchanged
+ *
+ * @param title          The stored thread title (null or empty when not yet named).
+ * @param firstUserMessage  The text of the thread's first user message, used as a
+ *                       fallback title source when no explicit title exists.
+ *                       Pass null/undefined for threads that have no messages yet.
  */
-export const smartTitle = (title: string | null): string => {
-  if (!title) return 'New thread'
+export const smartTitle = (title: string | null, firstUserMessage?: string | null): string => {
+  if (!title) {
+    if (firstUserMessage) return titleFromPrompt(firstUserMessage)
+    return 'New thread'
+  }
   for (const prefix of TITLE_PREFIXES) {
     if (title.startsWith(prefix)) return title.slice(prefix.length)
   }
