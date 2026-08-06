@@ -1,6 +1,75 @@
 import { checkSecretPath } from '../dirty-main-salvage'
 import { exec, execProbe, resolveGitBin, type TraceCtx } from './internal'
 
+// ---------------------------------------------------------------------------
+// Branch-safety guards
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown by {@link commitMain} when `taskId` is provided and the current HEAD
+ * branch is the integration branch (`main` or `master`). A checkpoint or
+ * recovery agent that has no task branch must refuse to commit rather than
+ * landing work directly on the integration branch.
+ */
+export class CommitToMainError extends Error {
+  readonly currentBranch: string
+  readonly worktreePath: string
+  constructor(currentBranch: string, worktreePath: string) {
+    super(
+      `refusing to commit: HEAD is on the integration branch '${currentBranch}' at ${worktreePath}. ` +
+        `Commits from recovery/checkpoint paths must land on the invoking task's own branch (task/<id>), ` +
+        `not on the integration branch. Nothing was staged or committed.`,
+    )
+    this.name = 'CommitToMainError'
+    this.currentBranch = currentBranch
+    this.worktreePath = worktreePath
+  }
+}
+
+/**
+ * Thrown by {@link commitMain} when `taskId` is provided and the current HEAD
+ * branch is not `task/<taskId>`. An agent operating in the wrong worktree
+ * context must refuse rather than committing to an unowned branch.
+ */
+export class CommitToWrongBranchError extends Error {
+  readonly currentBranch: string
+  readonly expectedBranch: string
+  readonly worktreePath: string
+  constructor(currentBranch: string, expectedBranch: string, worktreePath: string) {
+    super(
+      `refusing to commit: HEAD is on '${currentBranch}' at ${worktreePath}, ` +
+        `but commits for this task must land on '${expectedBranch}'. ` +
+        `Nothing was staged or committed.`,
+    )
+    this.name = 'CommitToWrongBranchError'
+    this.currentBranch = currentBranch
+    this.expectedBranch = expectedBranch
+    this.worktreePath = worktreePath
+  }
+}
+
+/**
+ * Read the current HEAD branch name. Returns the branch name on success, or
+ * `null` when HEAD is detached or the git command fails.
+ */
+async function readCurrentBranch(
+  git: string,
+  cwd: string,
+  traceCtx?: TraceCtx,
+): Promise<string | null> {
+  const r = await execProbe(git, ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd }, traceCtx)
+  if (r.exitCode !== 0) return null
+  const branch = r.stdout.trim()
+  // git returns 'HEAD' when detached
+  return branch === 'HEAD' ? null : branch
+}
+
+/**
+ * The set of branch names the orchestrator treats as integration branches.
+ * A commit to any of these from a recovery or checkpoint path is always wrong.
+ */
+export const INTEGRATION_BRANCH_NAMES = new Set(['main', 'master'])
+
 export interface CommitMainArgs {
   /** Absolute path to the worktree directory where git commands will run. */
   cwd: string
@@ -8,6 +77,19 @@ export interface CommitMainArgs {
   message: string
   /** Optional trace context for tool event emission. */
   traceCtx?: TraceCtx
+  /**
+   * When provided, enforces that HEAD is on `task/<taskId>` before staging
+   * anything.
+   *
+   * - If HEAD is an integration branch (`main` / `master`) → throws
+   *   {@link CommitToMainError} — distinct error, tested separately.
+   * - If HEAD is any other non-`task/<taskId>` branch → throws
+   *   {@link CommitToWrongBranchError}.
+   *
+   * When omitted the check is skipped (legacy callers that pre-date this
+   * guard and are already on the correct branch by construction).
+   */
+  taskId?: string
 }
 
 export interface CommitMainResult {
@@ -27,11 +109,26 @@ export interface CommitMainResult {
  * committer recipe instructed `git commit -am`, which is blind to untracked
  * paths.
  *
+ * When `taskId` is supplied the function validates the current HEAD branch
+ * before staging: a commit to `main`/`master` throws {@link CommitToMainError};
+ * a commit to any other non-task branch throws {@link CommitToWrongBranchError}.
+ *
  * Throws if `git add -A` or `git commit` returns a non-zero exit code.
  */
 export const commitMain = async (args: CommitMainArgs): Promise<CommitMainResult> => {
   const git = resolveGitBin()
-  const { cwd, message, traceCtx } = args
+  const { cwd, message, traceCtx, taskId } = args
+
+  if (taskId !== undefined) {
+    const currentBranch = await readCurrentBranch(git, cwd, traceCtx)
+    if (currentBranch !== null && INTEGRATION_BRANCH_NAMES.has(currentBranch)) {
+      throw new CommitToMainError(currentBranch, cwd)
+    }
+    const expectedBranch = `task/${taskId}`
+    if (currentBranch !== expectedBranch) {
+      throw new CommitToWrongBranchError(currentBranch ?? '(detached HEAD)', expectedBranch, cwd)
+    }
+  }
 
   await exec(git, ['add', '-A'], { cwd }, traceCtx)
   await exec(git, ['commit', '-m', message], { cwd }, traceCtx)
@@ -66,8 +163,16 @@ export type AutoCommitResult =
    * staged, nothing committed). `git` — `git add`/`git commit` itself failed.
    * The caller stamps the same failure signature either way but reports the
    * distinction, because an operator resolves them differently.
+   *
+   * `main-branch` — HEAD is the integration branch (`main`/`master`). Commits
+   * from recovery or auto-commit paths must NEVER land on the integration
+   * branch. Tested separately because this is the most dangerous failure mode
+   * (the evidence commit `93addc75` was exactly this).
+   *
+   * `wrong-branch` — HEAD is some other non-`task/<taskId>` branch. The
+   * orchestrator only commits to the invoking task's own branch.
    */
-  | { committed: false; refusal: 'unsafe-path' | 'git'; reason: string }
+  | { committed: false; refusal: 'unsafe-path' | 'git' | 'main-branch' | 'wrong-branch'; reason: string }
 
 /**
  * Attempt a deterministic `git add -A && git commit` inside the worktree, on
@@ -91,6 +196,34 @@ export const autoCommitWorktreeIfDeterministic = async (
   const git = resolveGitBin()
   const { taskId, provenance, integrationBranch, worktreePath, dirtyFiles, traceCtx } = args
   const count = dirtyFiles.length
+
+  // Branch-safety guard: commits from the orchestrator must land ONLY on the
+  // invoking task's own branch. A commit to `main`/`master` is rejected with a
+  // distinct refusal so callers can emit a more visible alarm; a commit to any
+  // other non-task branch is rejected as `wrong-branch`.
+  const currentBranch = await readCurrentBranch(git, worktreePath, traceCtx)
+  if (currentBranch !== null && INTEGRATION_BRANCH_NAMES.has(currentBranch)) {
+    return {
+      committed: false,
+      refusal: 'main-branch',
+      reason:
+        `refusing to auto-commit: HEAD is on the integration branch '${currentBranch}' ` +
+        `at ${worktreePath}. Auto-commits may only land on task/<id> branches. ` +
+        `Dirty paths: ${dirtyFiles.join(', ')}`,
+    }
+  }
+  const expectedBranch = `task/${taskId}`
+  if (currentBranch !== expectedBranch) {
+    return {
+      committed: false,
+      refusal: 'wrong-branch',
+      reason:
+        `refusing to auto-commit: HEAD is on '${currentBranch ?? '(detached HEAD)'}' ` +
+        `at ${worktreePath}, expected '${expectedBranch}'. ` +
+        `Auto-commits may only land on the invoking task's own branch. ` +
+        `Dirty paths: ${dirtyFiles.join(', ')}`,
+    }
+  }
 
   for (const filePath of dirtyFiles) {
     const hit = checkSecretPath(filePath)

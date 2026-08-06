@@ -961,6 +961,27 @@ export const setupWorktree = async (
             })
             if (repair.repaired) {
               if (repair.lockfileChanged) {
+                // Branch-safety guard: the lockfile-repair commit must land on
+                // the task's own branch, not on the integration branch.
+                const headBranchR = await runTool(
+                  {
+                    tool: 'git',
+                    argv: ['rev-parse', '--abbrev-ref', 'HEAD'],
+                    cwd: ref.path,
+                    taskId,
+                    originId: trace.originId,
+                    phase: 'setup',
+                  },
+                  trace.traceStore,
+                )
+                const headBranch =
+                  headBranchR.exitCode === 0 ? headBranchR.stdout.trim() : null
+                if (headBranch !== ref.branch) {
+                  throw new Error(
+                    `[setup:install] task ${taskId} branch-guard: lockfile repair would commit to ` +
+                      `'${headBranch ?? '(detached)'}' but expected '${ref.branch}'; refusing commit`,
+                  )
+                }
                 for (const argv of [
                   ['add', '-A'],
                   [
@@ -1461,10 +1482,15 @@ export const runAgent = async (
         postState.kind === 'dirty-no-commits' ||
         postState.kind === 'dirty-with-commits'
       ) {
-        const addR = await runTool(
+        // Branch-safety guard: the checkpoint commit must land ONLY on the
+        // task's own branch (task/<id>), never on the integration branch
+        // (`main`) or any other freeform branch. The 2026-08-05 incident
+        // (commit 93addc75) was caused by this path committing to `main` when
+        // the worktreePath resolved to the main checkout.
+        const headBranchR = await runTool(
           {
             tool: 'git',
-            argv: ['add', '-A'],
+            argv: ['rev-parse', '--abbrev-ref', 'HEAD'],
             cwd: worktreePath,
             taskId,
             originId,
@@ -1472,12 +1498,63 @@ export const runAgent = async (
           },
           trace.traceStore,
         )
-        if (addR.exitCode === 0) {
-          const commitMsg = `wip(checkpoint): coder killed (exit ${r.exitCode}) with ${postState.dirtyFiles.length} uncommitted path(s) — do not merge as-is`
-          const commitR = await runTool(
+        const headBranch = headBranchR.exitCode === 0 ? headBranchR.stdout.trim() : null
+        if (headBranch !== branch) {
+          const isOnMain = headBranch === 'main' || headBranch === 'master'
+          const refusalReason = isOnMain
+            ? `HEAD is on the integration branch '${headBranch}' — wip(checkpoint) commits must land on the task branch '${branch}'`
+            : `HEAD is on '${headBranch ?? '(detached)'}', expected task branch '${branch}'`
+          console.warn(
+            `[code] task ${taskId}: SKIPPING wip(checkpoint) commit — branch guard tripped: ${refusalReason}. ` +
+              `Dirty paths (${postState.dirtyFiles.length}): ${postState.dirtyFiles.slice(0, 10).join(', ')}`,
+          )
+          // Raise an operator alert so the uncommitted work is not silently lost.
+          await raiseActionQueueItem({
+            kind: 'failed',
+            category: 'orchestrator',
+            priority: 'urgent',
+            title: `Task ${taskId}: wip-checkpoint BLOCKED — wrong branch '${headBranch ?? '(detached)'}' (expected '${branch}')`,
+            body: [
+              `Task ${taskId}'s coder exited with exit code ${r.exitCode} leaving ${postState.dirtyFiles.length} uncommitted path(s),`,
+              `but the wip(checkpoint) commit was BLOCKED because the worktree HEAD is on`,
+              `'${headBranch ?? '(detached HEAD)'}' instead of the task's own branch '${branch}'.`,
+              '',
+              isOnMain
+                ? `This is the scenario that produced commit 93addc75 on main (2026-08-05 incident). Nothing was committed.`
+                : `Committing to a non-task branch would land work on an unowned branch.`,
+              '',
+              'The uncommitted work may be lost. Inspect the worktree manually:',
+              `  Worktree: ${worktreePath}`,
+              `  Actual HEAD branch: ${headBranch ?? '(detached HEAD)'}`,
+              `  Expected branch: ${branch}`,
+              '',
+              'Dirty paths:',
+              ...postState.dirtyFiles.map((f) => `  ${f}`),
+            ].join('\n'),
+            payload: {
+              taskId,
+              worktreePath,
+              actualBranch: headBranch,
+              expectedBranch: branch,
+              dirtyFiles: postState.dirtyFiles,
+              coderExitCode: r.exitCode,
+            },
+            context: { repoRoot: process.env.MARS_REPO ?? null },
+            raisedBy: 'workflow:code:wip-checkpoint-branch-guard',
+            signature: `wip-checkpoint-branch-guard:${taskId}`,
+            originTaskId: taskId,
+          }).catch((raiseErr) => {
+            console.error(
+              `[code] task ${taskId}: wip-checkpoint branch-guard action-queue raise errored:`,
+              raiseErr,
+            )
+          })
+        } else {
+          // Branch is correct — proceed with the checkpoint commit.
+          const addR = await runTool(
             {
               tool: 'git',
-              argv: ['commit', '-m', commitMsg],
+              argv: ['add', '-A'],
               cwd: worktreePath,
               taskId,
               originId,
@@ -1485,11 +1562,25 @@ export const runAgent = async (
             },
             trace.traceStore,
           )
-          if (commitR.exitCode === 0) {
-            checkpointFiles = postState.dirtyFiles
-            console.log(
-              `[code] task ${taskId}: checkpointed ${postState.dirtyFiles.length} uncommitted path(s) as wip(checkpoint) commit (exit ${r.exitCode})`,
+          if (addR.exitCode === 0) {
+            const commitMsg = `wip(checkpoint): coder killed (exit ${r.exitCode}) with ${postState.dirtyFiles.length} uncommitted path(s) — do not merge as-is`
+            const commitR = await runTool(
+              {
+                tool: 'git',
+                argv: ['commit', '-m', commitMsg],
+                cwd: worktreePath,
+                taskId,
+                originId,
+                phase: 'code',
+              },
+              trace.traceStore,
             )
+            if (commitR.exitCode === 0) {
+              checkpointFiles = postState.dirtyFiles
+              console.log(
+                `[code] task ${taskId}: checkpointed ${postState.dirtyFiles.length} uncommitted path(s) as wip(checkpoint) commit (exit ${r.exitCode})`,
+              )
+            }
           }
         }
       }
