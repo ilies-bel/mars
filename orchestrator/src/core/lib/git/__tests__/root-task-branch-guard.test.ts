@@ -127,4 +127,29 @@ describe('git-guard: task/* branch must not be checked out at the repo root', ()
 
     expect(currentBranch()).toBe('main')
   })
+
+  it('allows git worktree add -b task/* at the repo root (createWorktree path)', async () => {
+    // `git worktree add -b task/<id> <path>` is the canonical way the
+    // orchestrator provisions a new linked worktree. It does NOT move the
+    // integration checkout's HEAD — it creates a new, separate working tree
+    // and is therefore exempt from the guard.
+    //
+    // This is NOT a `git checkout` invocation, so `assertNotTaskBranchAtRoot`
+    // never fires. This test confirms that the guard does not accidentally
+    // intercept unrelated sub-commands.
+    const { exec, resolveGitBin, TaskBranchAtRootError } = await import('../internal')
+    const gitBin = resolveGitBin()
+
+    const worktreePath = resolve(repoRoot, '.mars', 'worktrees', 'mars-newbranch')
+    // worktree add does NOT fire our guard (args[0] = 'worktree', not 'checkout').
+    await expect(
+      exec(gitBin, ['worktree', 'add', '-b', 'task/mars-newbranch', worktreePath], {
+        cwd: repoRoot,
+      }),
+    ).resolves.toBeDefined()
+
+    // The integration checkout HEAD must still be on main — worktree add never
+    // moves the primary checkout.
+    expect(currentBranch()).toBe('main')
+  })
 })
