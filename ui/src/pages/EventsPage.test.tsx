@@ -46,6 +46,7 @@ const {
   applyLocalPhaseFilter,
   sinceFromRange,
   initialFilterState,
+  ALL_KINDS,
   KIND_OPTIONS,
   SEVERITY_OPTIONS,
   PHASE_OPTIONS,
@@ -116,16 +117,29 @@ const renderPage = (qc: QueryClient): string =>
 // ---------------------------------------------------------------------------
 
 describe('toWireFilter', () => {
-  it('omits a multi-select when every option is selected (default state)', () => {
+  it('default state sends all non-CLI kinds (CLI is off by default)', () => {
+    // cli-invocation is excluded from the default filter state so statusline
+    // polls don't flood the feed. This means the default wire request includes
+    // a kind constraint listing all the non-CLI kinds.
     const wire = toWireFilter(initialFilterState(), null, 100)
     expect(wire.severity).toBeUndefined()
-    expect(wire.kind).toBeUndefined()
+    // kind filter IS set — all 8 non-CLI kinds
+    expect(wire.kind).toBeDefined()
+    expect(wire.kind).not.toContain('cli-invocation')
+    expect(wire.kind).toContain('origin_created')
+    expect(wire.kind).toContain('log_line')
     expect(wire.phase).toBeUndefined()
     expect(wire.since).toBeUndefined()
     expect(wire.taskId).toBeUndefined()
     expect(wire.originId).toBeUndefined()
     expect(wire.q).toBeUndefined()
     expect(wire.limit).toBe(100)
+  })
+
+  it('omits kind filter when every kind including CLI is explicitly selected', () => {
+    const state = { ...initialFilterState(), kinds: ALL_KINDS }
+    const wire = toWireFilter(state, null, 100)
+    expect(wire.kind).toBeUndefined()
   })
 
   it('encodes `since` from the time range', () => {
@@ -228,7 +242,7 @@ describe('applyLocalPhaseFilter', () => {
 })
 
 describe('KIND_OPTIONS vocabulary', () => {
-  it('matches the daemon TRACE_EVENT_KINDS list (including log_line)', () => {
+  it('includes cli-invocation alongside all other trace event kinds', () => {
     expect(KIND_OPTIONS).toEqual([
       'origin_created',
       'step_started',
@@ -238,11 +252,22 @@ describe('KIND_OPTIONS vocabulary', () => {
       'recovery_spawned',
       'task_failed',
       'log_line',
+      'cli-invocation',
     ])
   })
 
   it('exposes the three severity levels', () => {
     expect(SEVERITY_OPTIONS).toEqual(['info', 'warn', 'error'])
+  })
+
+  it('cli-invocation is excluded from the default filter state so CLI rows are hidden by default', () => {
+    const state = initialFilterState()
+    expect(state.kinds.has('cli-invocation')).toBe(false)
+    // All other kinds are included
+    const nonCli = KIND_OPTIONS.filter((k) => k !== 'cli-invocation')
+    for (const k of nonCli) {
+      expect(state.kinds.has(k)).toBe(true)
+    }
   })
 })
 
@@ -604,9 +629,11 @@ describe('EventRow log_line rendering', () => {
     expect(wire.kind).toEqual(['log_line'])
   })
 
-  it('toWireFilter omits kind filter when all kinds including log_line are selected', () => {
-    // Default state now includes log_line — all selected means no filter.
-    const wire = toWireFilter(initialFilterState(), null, 100)
+  it('toWireFilter omits kind filter when all kinds including log_line and CLI are selected', () => {
+    // Only when every kind (including cli-invocation) is explicitly selected
+    // does the wire filter omit the kind constraint.
+    const state = { ...initialFilterState(), kinds: ALL_KINDS }
+    const wire = toWireFilter(state, null, 100)
     expect(wire.kind).toBeUndefined()
   })
 })
@@ -868,18 +895,30 @@ describe('fetchEvents URL shape via toWireFilter', () => {
     fetchSpy.mockRestore()
   })
 
-  it('default state issues a /api/trace-events GET with limit only', async () => {
+  it('default state issues a /api/trace-events GET that excludes cli-invocation', async () => {
+    // CLI is off by default, so the wire request includes kind= for all non-CLI kinds.
     await fetchEvents(toWireFilter(initialFilterState(), null, 100))
     const url = fetchSpy.mock.calls[0]![0] as string
     expect(url).toContain('/api/trace-events')
     expect(url).toContain('limit=100')
-    expect(url).not.toContain('kind=')
+    // kind IS constrained — cli-invocation is excluded
+    expect(url).toContain('kind=')
+    expect(url).not.toContain('cli-invocation')
+    // Other filters are omitted (all selected = no constraint)
     expect(url).not.toContain('severity=')
     expect(url).not.toContain('phase=')
     expect(url).not.toContain('since=')
     expect(url).not.toContain('taskId=')
     expect(url).not.toContain('originId=')
     expect(url).not.toContain('q=')
+  })
+
+  it('with all kinds including CLI selected, kind is omitted from the URL', async () => {
+    // Selecting every kind (including cli-invocation) sends no kind constraint.
+    const state = { ...initialFilterState(), kinds: ALL_KINDS }
+    await fetchEvents(toWireFilter(state, null, 100))
+    const url = fetchSpy.mock.calls[0]![0] as string
+    expect(url).not.toContain('kind=')
   })
 
   it('reducing severity to {error} narrows the URL to severity=error', async () => {
@@ -1217,6 +1256,82 @@ describe('EventsPage — consecutive identical event grouping', () => {
     expect(html).toContain('typecheck (verify step)')
     // Count badge
     expect(html).toContain('×2')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// CLI chip — the core acceptance criterion
+//
+// The CLI (cli-invocation) chip must exist in the KIND filter so statusline
+// polls can be toggled. It must be OFF by default so operators don't wade
+// through diagnostics rows when reading the real event stream.
+// ---------------------------------------------------------------------------
+
+describe('EventsPage — CLI chip', () => {
+  it('renders a CLI chip in the Kind filter row', () => {
+    const qc = makeClient(EMPTY_RESPONSE)
+    const html = renderPage(qc)
+    // The chip button uses the testid convention: <testId>-<option>
+    expect(html).toContain('data-testid="events-kind-cli-invocation"')
+  })
+
+  it('CLI chip is off by default (aria-pressed=false)', () => {
+    const qc = makeClient(EMPTY_RESPONSE)
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    document.body.appendChild(container)
+    act(() => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <EventsPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const cliChip = container.querySelector<HTMLButtonElement>(
+      '[data-testid="events-kind-cli-invocation"]',
+    )!
+    expect(cliChip).not.toBeNull()
+    expect(cliChip.getAttribute('aria-pressed')).toBe('false')
+
+    act(() => { root.unmount() })
+    container.remove()
+  })
+
+  it('enabling the CLI chip (turning it on) makes it aria-pressed=true', () => {
+    const qc = makeClient(EMPTY_RESPONSE)
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    document.body.appendChild(container)
+    act(() => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <EventsPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const cliChip = container.querySelector<HTMLButtonElement>(
+      '[data-testid="events-kind-cli-invocation"]',
+    )!
+    // Start off
+    expect(cliChip.getAttribute('aria-pressed')).toBe('false')
+
+    act(() => { cliChip.click() })
+
+    // Now on
+    expect(cliChip.getAttribute('aria-pressed')).toBe('true')
+
+    act(() => { root.unmount() })
+    container.remove()
+  })
+
+  it('CLI chip humanized label reads "CLI" (not the raw kind string)', () => {
+    const qc = makeClient(EMPTY_RESPONSE)
+    const html = renderPage(qc)
+    // The MultiSelect renders buttons with displayLabel(opt) as text content.
+    // humanizeKind('cli-invocation') === 'CLI'.
+    expect(html).toContain('>CLI<')
   })
 })
 

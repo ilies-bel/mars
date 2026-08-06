@@ -57,6 +57,7 @@ const KIND_OPTIONS = [
   'recovery_spawned',
   'task_failed',
   'log_line',
+  'cli-invocation',
 ] as const
 type Kind = (typeof KIND_OPTIONS)[number]
 
@@ -92,10 +93,15 @@ const ALL_SEVERITIES: ReadonlySet<Severity> = new Set(SEVERITY_OPTIONS)
 const ALL_KINDS: ReadonlySet<Kind> = new Set(KIND_OPTIONS)
 const ALL_PHASES: ReadonlySet<Phase> = new Set(PHASE_OPTIONS)
 
+/** Kinds enabled by default: all except cli-invocation (statusline polls are diagnostics, not operator events). */
+const DEFAULT_KINDS: ReadonlySet<Kind> = new Set(
+  KIND_OPTIONS.filter((k): k is Kind => k !== 'cli-invocation'),
+)
+
 const initialFilterState = (): FilterState => ({
   range: 'all',
   severities: new Set(SEVERITY_OPTIONS),
-  kinds: new Set(KIND_OPTIONS),
+  kinds: new Set(DEFAULT_KINDS),
   phases: new Set(PHASE_OPTIONS),
   taskId: '',
   originId: '',
