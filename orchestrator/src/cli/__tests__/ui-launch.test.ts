@@ -261,9 +261,11 @@ describe('launchUi — detached spawn', () => {
     const conflictMsg =
       'mars-ui: port 7777 is in use by mars-ui for a different project (/other/repo) — pass --port <n> to use another port'
 
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => {
-      throw new Error(`process.exit(${_code})`)
-    } as never)
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(
+      (_code?: string | number | null): never => {
+        throw new Error(`process.exit(${_code})`)
+      },
+    )
 
     try {
       const promise = launchUi({ repo: tmpRepo })

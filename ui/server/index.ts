@@ -1245,8 +1245,29 @@ export const startServer = async (
   return server
 }
 
+const UI_USAGE = `usage: mars-ui [--port <n>] [--host <h>] [--repo <path>] [--dist <path>] [--dev]
+
+Launch the Mars read-only Kanban + trace dashboard.
+
+Options:
+  --port <n>     HTTP port to bind on (default: 7777)
+  --host <h>     bind address (default: 127.0.0.1)
+  --repo <path>  override the Mars repository root (default: git-detected)
+  --dist <path>  serve static files from this directory
+  --dev          development mode: Vite serves the frontend, this server
+                 serves no static files`
+
 if (import.meta.main) {
-  const cliArgs = parseArgs(Bun.argv.slice(2))
+  const argv = Bun.argv.slice(2)
+  // Check --help / -h before any side effect (parsing, the frontend-built
+  // check, server bind, project registration). Checked against the raw argv
+  // rather than after parseArgs so --help is honoured regardless of flag
+  // order (e.g. --port 9000 --help) and even when the frontend is unbuilt.
+  if (argv.includes('--help') || argv.includes('-h')) {
+    process.stdout.write(UI_USAGE + '\n')
+    process.exit(0)
+  }
+  const cliArgs = parseArgs(argv)
   if (!cliArgs.dev) {
     // In production mode verify the frontend is built before binding a port.
     // Defence-in-depth for direct invocations; ui/bin/mars-ui.mjs already
