@@ -49,7 +49,15 @@ export interface Proposal {
   solution: string
   outOfScope: string
   notes: string
-  status: ProposalStatus
+  /**
+   * The proposal's lifecycle status. Normally one of {@link PROPOSAL_STATUSES},
+   * but the field is typed as `string` so that rows carrying a legacy or
+   * unrecognised status (e.g. 'promoted', 'superseded', 'done' from an older
+   * schema era) are returned verbatim rather than crashing the entire listing.
+   * The write path (`setProposalField`) still rejects unknown values via
+   * `assertValidProposalStatus`.
+   */
+  status: string
   source: ProposalSource
   coordinated: boolean
   author: Author | null
@@ -182,7 +190,7 @@ const rowToProposal = (
     solution: (row.solution as string | null) ?? '',
     outOfScope: (row.out_of_scope as string | null) ?? '',
     notes: (row.notes as string | null) ?? '',
-    status: assertValidProposalStatus((row.status as string | null) ?? 'draft'),
+    status: (row.status as string | null) ?? 'draft',
     source: normaliseSource(row.source),
     coordinated: row.coordinated === true,
     author,

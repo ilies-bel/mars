@@ -114,6 +114,16 @@ const DDL: readonly string[] = [
   // short-lived, incompatible `rejected` value before proposal readers apply
   // the closed lifecycle type.
   `UPDATE proposals SET status = 'dismissed' WHERE status = 'rejected'`,
+  // Legacy status values from an earlier schema era that have no current write
+  // path. Rows in the wild carry these because older code used a broader status
+  // set; normalise them once at startup so the reader never sees them:
+  //   'promoted'   — the old name for 'prd-ready' (promoteProposal now writes
+  //                  'prd-ready' directly; 'promoted' was the DB spelling).
+  //   'done'       — a terminal state that predates 'dismissed'; fold it in.
+  //   'superseded' — a terminal state for proposals replaced by another; fold.
+  `UPDATE proposals SET status = 'prd-ready'  WHERE status = 'promoted'`,
+  `UPDATE proposals SET status = 'dismissed'  WHERE status = 'done'`,
+  `UPDATE proposals SET status = 'dismissed'  WHERE status = 'superseded'`,
   `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS coordinated boolean NOT NULL DEFAULT false`,
   `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_slice_error text`,
   `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_slice_failed_at bigint`,
