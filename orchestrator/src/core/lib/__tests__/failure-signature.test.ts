@@ -17,6 +17,7 @@ import {
   UNCLASSIFIED_ERROR_CLASS,
   UNKNOWN_STEP_ID,
 } from '../failure-signature'
+import { truncateFailure } from '../truncate-failure'
 
 describe('recovery-failure reason composition', () => {
   const sig = 'code:commit-contract/uncommitted-changes'
@@ -965,5 +966,116 @@ describe('code:killed — signal-death classification', () => {
     expect(computeFailureSignature('code:coder-exit-nonzero', errorOutput)).toBe(
       'code:killed/sigterm',
     )
+  })
+})
+
+describe('fallback sub-buckets (coarse classifiers when no specific rule matches)', () => {
+  describe('typecheck-error', () => {
+    it('classifies a TS error code not covered by a specific rule as typecheck-error', () => {
+      // TS2571 is not in the specific rule set — should land in the coarse bucket
+      expect(classifyError("src/foo.ts(1,1): error TS2571: Object is of type 'unknown'.")).toBe(
+        'typecheck-error',
+      )
+    })
+
+    it('does not fire when a specific typecheck rule already matched', () => {
+      // TS2339 is claimed by typecheck-property-not-exist — must win over the coarse bucket
+      expect(classifyError('error TS2339: Property does not exist')).toBe(
+        'typecheck-property-not-exist',
+      )
+    })
+
+    it('does not fire when there is no TS error code in the output', () => {
+      expect(classifyError('npm install failed with exit 1')).not.toBe('typecheck-error')
+    })
+  })
+
+  describe('enoent', () => {
+    it('classifies ENOENT as enoent', () => {
+      expect(classifyError("Error: ENOENT: no such file or directory, open '/path/to/file'")).toBe(
+        'enoent',
+      )
+    })
+
+    it('classifies "no such file or directory" as enoent', () => {
+      expect(classifyError('No such file or directory: /missing/path')).toBe('enoent')
+    })
+  })
+
+  describe('timed-out', () => {
+    it('classifies ETIMEDOUT as timed-out', () => {
+      expect(classifyError('Error: connect ETIMEDOUT 1.2.3.4:443')).toBe('timed-out')
+    })
+
+    it('classifies "timed out" prose as timed-out', () => {
+      expect(classifyError('Operation timed out after 30000ms')).toBe('timed-out')
+    })
+  })
+
+  describe('no double-suffix invariant', () => {
+    it('computeFailureSignature is idempotent for identical step', () => {
+      const steps = ['verify:typecheck', 'code:coder-exit-nonzero', 'unknown', 'setup']
+      const outputs = [
+        'TS2571: Object is of type unknown',
+        "Error: ENOENT: no such file or directory, open '/path'",
+        'something completely unrecognised',
+        '',
+      ]
+      for (const step of steps) {
+        for (const output of outputs) {
+          const once = computeFailureSignature(step, output)
+          const twice = computeFailureSignature(step, once)
+          expect(twice).toBe(once)
+          // No double-suffix: at most one '/' (step and class separated by exactly one slash)
+          const slashCount = (once.match(/\//g) ?? []).length
+          expect(slashCount).toBe(1)
+        }
+      }
+    })
+
+    it('computeFailureSignature never double-suffixes when errorOutput already contains unclassified', () => {
+      const sig = computeFailureSignature('verify:typecheck', 'some unknown error')
+      expect(sig).toBe('verify:typecheck/unclassified')
+      // Feeding back the signature must not produce verify:typecheck/unclassified/unclassified
+      const sig2 = computeFailureSignature('verify:typecheck', sig)
+      expect(sig2).toBe('verify:typecheck/unclassified')
+      expect(sig2).not.toContain('/unclassified/unclassified')
+    })
+  })
+
+  describe('path and task-id invariant', () => {
+    it('the signature never contains a filesystem path', () => {
+      const errorWithPath =
+        "Error: ENOENT: no such file or directory, open '/home/user/.mars/worktrees/mars-abc123/src/file.ts'"
+      const sig = computeFailureSignature('setup:worktree-setup', errorWithPath)
+      // Signature is always step/class — a valid slug pair with exactly one slash
+      expect(sig).toMatch(/^[a-z][a-z0-9:/-]*\/[a-z][a-z0-9-]*$/)
+      // No filesystem path fragments bleed through
+      expect(sig).not.toContain('.mars')
+      expect(sig).not.toContain('worktrees')
+      expect(sig).not.toContain('mars-abc123')
+    })
+
+    it('the signature never contains a mars task id', () => {
+      const errorWithTaskId =
+        'origin worktree for recovery is missing: expected branch task/mars-aabbcc11 at /path (origin task mars-aabbcc11) is not present on disk'
+      const sig = computeFailureSignature('setup:origin-worktree-missing', errorWithTaskId)
+      expect(sig).toMatch(/^[a-z][a-z0-9:/-]*\/[a-z][a-z0-9-]*$/)
+      expect(sig).not.toContain('mars-aabbcc11')
+    })
+  })
+
+  describe('captured output tail wiring', () => {
+    it('truncateFailure keeps the TAIL of the error (diagnostic end, not the beginning)', () => {
+      // Re-verify the tail-keeps contract so it is explicitly linked to recovery prompt wiring.
+      // handleTaskFailureWithFixTask calls truncateFailure(errorOutput) and sets statusOutput
+      // to truncatedError — so the tail of real captured output reaches the recovery prompt.
+      const preamble = 'x'.repeat(3000)
+      const tail = 'AssertionError: expected 1 to be 2\n  at suite.ts:42:5'
+      const result = truncateFailure(preamble + tail, 2000)
+      expect(result).toContain('AssertionError: expected 1 to be 2')
+      expect(result).toContain('at suite.ts:42:5')
+      expect(result.startsWith('[…truncated')).toBe(true)
+    })
   })
 })

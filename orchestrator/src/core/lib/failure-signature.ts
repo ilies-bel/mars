@@ -468,6 +468,49 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     errorClass: 'test-pg-deadlock',
     matchFull: /40P01|deadlock detected/,
   },
+
+  // ── Fallback sub-buckets ────────────────────────────────────────────────────
+  //
+  // These rules sit at the END of the list so they fire only when every
+  // specific rule above has already failed to match.  They convert the most
+  // recognisable coarse markers into named slugs, shrinking the
+  // `/unclassified` catch-all bucket without over-narrowing the specific
+  // rules above.  A signature produced by these rules has a recovery recipe
+  // registered for it in fix-recipes.ts or routes to the Investigator —
+  // either outcome is better than `/unclassified`.
+
+  {
+    // Any TypeScript compiler error code (TSxxxx) not already claimed by a
+    // specific rule above.  The specific rules cover the most actionable
+    // single-code patterns (TS2339, TS2304, TS2307, TS2322, TS2345, TS2353,
+    // TS2694); everything else — TS2571, TS2741, TS7006, TS18046, etc. — lands
+    // here instead of `/unclassified`.  The recovery agent can read the full
+    // error output to determine the exact code and fix it.
+    errorClass: 'typecheck-error',
+    match: /\bTS\d{4}:/,
+    matchFull: /\bTS\d{4}:/,
+  },
+  {
+    // File-system path not found.  Covers the Node.js ENOENT error code and
+    // the POSIX "no such file or directory" message that both npm and git emit.
+    // Fires from the body (matchFull) because the ENOENT marker commonly
+    // appears on the second line after a "Command failed:" lead.
+    errorClass: 'enoent',
+    match: /ENOENT|no such file or directory/i,
+    matchFull: /ENOENT|no such file or directory/i,
+  },
+  {
+    // Network or wall-clock timeout.  Covers the Node.js ETIMEDOUT error code
+    // and plain "timed out" / "operation timed out" prose from npm, git, curl,
+    // and the orchestrator's own timeout wrappers.  Does NOT conflict with the
+    // `install-timeout` rule above, which is matched by specific exit codes
+    // (137, 130, 254) and SIGKILL/SIGINT markers — signal-kill exits those
+    // install-timeout rules first, so this generic timeout bucket only fires
+    // for non-install timeouts that lacked a signal marker.
+    errorClass: 'timed-out',
+    match: /ETIMEDOUT|timed? out/i,
+    matchFull: /ETIMEDOUT|timed? out/i,
+  },
 ]
 
 export const classifyError = (errorOutput: string): string => {

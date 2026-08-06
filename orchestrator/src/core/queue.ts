@@ -8,7 +8,11 @@ import type { Author, AuthorKind } from './author'
 import { markSchemaReady, openDb, type DbClient, type DbInValue, type DbStatement } from './lib/db'
 import { ensureSchema } from './lib/pg-schema'
 import { buildEventInsert, withWriteTx } from './lib/outbox'
-import { asStepId, computeFailureSignature } from './lib/failure-signature'
+import {
+  asStepId,
+  computeFailureSignature,
+  TERMINAL_VERDICT_PREFIXES,
+} from './lib/failure-signature'
 import { Arc } from './arc'
 import type { DomainTaskStore as TaskStore } from './store/task-store'
 import { raiseActionQueueItem } from './lib/action-queue'
@@ -1122,7 +1126,22 @@ const deriveFailureSignature = (patch: {
   failureReasonCode?: string | null
 }): string => {
   const code = patch.failureReasonCode ?? null
-  if (code !== null && code.includes('/')) return code
+  if (code !== null && code.includes('/')) {
+    // Strip any leading terminal-verdict prefix before treating `code` as a
+    // signature. Without this, a code like
+    // `recovery_exhausted:verify:typecheck/typecheck-cannot-find-name: …`
+    // would be returned verbatim, embedding free text into failure_signature.
+    const matchedPrefix = TERMINAL_VERDICT_PREFIXES.find((p) => code.startsWith(p))
+    if (matchedPrefix) {
+      // After stripping the prefix: `<step>/<class>: <error text>` — extract
+      // only the `<step>/<class>` part before the `: ` separator.
+      const afterPrefix = code.slice(matchedPrefix.length)
+      const colonSpace = afterPrefix.indexOf(': ')
+      const candidate = colonSpace >= 0 ? afterPrefix.slice(0, colonSpace) : afterPrefix
+      if (candidate.includes('/')) return candidate
+    }
+    return code
+  }
   const step = asStepId(code) ?? asStepId(patch.failedPhase) ?? 'terminal'
   return computeFailureSignature(step, patch.error ?? patch.failureReason ?? '')
 }
