@@ -421,11 +421,14 @@ const AlertsPile = ({ items, onOpenWork }: AlertsPileProps) => (
                   <>
                     <span
                       className={`shrink-0 ${priorityBadgeClass(item.priority >= 3 ? 'high' : item.priority >= 2 ? 'normal' : 'low')}`}
-                      aria-label="blocked"
+                      aria-hidden="true"
                     >
                       ●
                     </span>
-                    <span className="min-w-0 line-clamp-2">{item.task.title}</span>
+                    <span className="min-w-0 flex flex-col">
+                      <span className="line-clamp-2">{item.task.title}</span>
+                      <span className="font-mono text-[9px] text-muted-foreground/70">blocked</span>
+                    </span>
                   </>
                 )}
               </button>
