@@ -16,7 +16,7 @@ export interface SituationSemaphoreSnapshot {
 export interface SituationReportSources {
   listTasks: () => Promise<readonly SituationTask[]>
   getSemaphoreSnapshot: () => SituationSemaphoreSnapshot
-  listActionQueue: () => Promise<readonly unknown[]>
+  listActionQueue: () => Promise<readonly { kind?: string }[]>
 }
 
 const taskCount = (tasks: readonly SituationTask[], status: string): number =>
@@ -39,5 +39,6 @@ export const buildSituationReport = async (
   const blocked = taskCount(tasks, 'blocked')
   const failed = taskCount(tasks, 'failed')
 
-  return `Situation: ${plural(queued, 'queued task')}, ${plural(running, 'running task')}, ${plural(blocked, 'blocked task')}, and ${plural(failed, 'failed task')}. Workers: ${workers.inUse} of ${workers.limit} active. ${plural(actionQueue.length, 'item', 'items')} need attention.`
+  const actionableCount = actionQueue.filter((item) => item.kind !== 'draft-proposal').length
+  return `Situation: ${plural(queued, 'queued task')}, ${plural(running, 'running task')}, ${plural(blocked, 'blocked task')}, and ${plural(failed, 'failed task')}. Workers: ${workers.inUse} of ${workers.limit} active. ${plural(actionableCount, 'item', 'items')} need attention.`
 }

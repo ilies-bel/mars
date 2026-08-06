@@ -156,6 +156,11 @@ const actionQueueList: Command = {
     }
     if (kindSet.size > 0) {
       rows = rows.filter((row) => kindSet.has(row.kind))
+    } else if (filter === 'open') {
+      // Draft proposals are a backlog, not operational alerts. Exclude them from
+      // the default open listing so the count reflects rows that need an operator
+      // decision. They remain accessible via --kind draft-proposal.
+      rows = rows.filter((row) => row.kind !== 'draft-proposal')
     }
     if (rows.length === 0) {
       deps.out('action queue empty')

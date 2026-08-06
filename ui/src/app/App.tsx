@@ -33,6 +33,7 @@ import {
 } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
+import { isAlertQueueItem } from '@/widgets/chat/queueThreads'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { useProgress } from '@/hooks/useProgress'
 import { FocusedProjectProvider } from '@/shared/useFocusedProject'
@@ -164,8 +165,8 @@ const AppInner = () => {
   // so multiple mars tabs are distinguishable in the tab bar and history.
   useEffect(() => {
     if (typeof document === 'undefined') return
-    document.title = pageTitle(route, aqItems.length)
-  }, [route, aqItems.length])
+    document.title = pageTitle(route, aqItems.filter(isAlertQueueItem).length)
+  }, [route, aqItems])
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">

@@ -113,7 +113,7 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('action-queue list', () => {
-  it('fetches from daemon and formats rows tab-separated', async () => {
+  it('fetches from daemon and formats rows tab-separated, excluding draft-proposal by default', async () => {
     const rows: ActionQueueRow[] = [
       makeRow({ id: 'aq-abc', priority: 'high', kind: 'failed', title: 'Task A' }),
       makeRow({ id: 'aq-def', priority: 'low', kind: 'draft-proposal', title: 'Prop B' }),
@@ -129,7 +129,28 @@ describe('action-queue list', () => {
 
     expect(r.code).toBe(0)
     expect(r.out).toContain('aq-abc\thigh\tfailed\tTask A')
+    // draft-proposal excluded from default open listing
+    expect(r.out).not.toContain('aq-def')
+    expect(r.out).not.toContain('draft-proposal')
+  })
+
+  it('--kind draft-proposal surfaces draft proposals when explicitly requested', async () => {
+    const rows: ActionQueueRow[] = [
+      makeRow({ id: 'aq-abc', priority: 'high', kind: 'failed', title: 'Task A' }),
+      makeRow({ id: 'aq-def', priority: 'low', kind: 'draft-proposal', title: 'Prop B' }),
+    ]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => rows,
+    }))
+    writeDaemonPort(repo, FAKE_PORT)
+    const opts = await loadOpts(repo)
+
+    const r = await runCommandInProcess(['action-queue', 'list', 'open', '--kind', 'draft-proposal'], opts)
+
+    expect(r.code).toBe(0)
     expect(r.out).toContain('aq-def\tlow\tdraft-proposal\tProp B')
+    expect(r.out).not.toContain('aq-abc')
   })
 
   it('keeps stored kinds distinct in full and lean listings', async () => {
