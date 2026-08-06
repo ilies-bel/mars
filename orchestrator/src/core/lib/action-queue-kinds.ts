@@ -47,6 +47,7 @@ export const ACTION_QUEUE_KINDS = [
   'spend-control-notice',
   'scheduling-decision',
   'requeue-warning',
+  'arc-superseded-on-main',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

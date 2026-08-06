@@ -404,6 +404,7 @@ const OPERATIONAL_ALERT_COPY: Record<
   'spend-control-notice': null,
   'scheduling-decision': null,
   'requeue-warning': null,
+  'arc-superseded-on-main': null,
 }
 
 const renderOperationalAlertCopy = (

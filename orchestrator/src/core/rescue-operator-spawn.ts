@@ -35,12 +35,40 @@ import { incrementRescueAttempts } from './daemon/kpi-store.js'
 import { recordStewardIntervention } from './steward-ledger'
 import { raiseStewardRepeatActionQueueItem, shouldStewardFire } from './steward-guard'
 import { hintDispatch } from './daemon/dispatch-hint.js'
+import { raiseActionQueueItem } from './lib/action-queue'
+
+/**
+ * Result of a supersession check: whether the arc's intent is already
+ * satisfied on the integration branch.
+ */
+export type SupersessionCheckResult =
+  | { superseded: false }
+  | { superseded: true; sha: string }
+
+/**
+ * Injectable supersession checker. Receives the arc's origin id and returns
+ * whether the arc's intent has already been implemented on main.
+ *
+ * The default production implementation compares the task prompt against
+ * `git log <merge-base>..main` using a cheap model. Tests inject a stub.
+ */
+export type SupersessionChecker = (originId: string) => Promise<SupersessionCheckResult>
 
 export interface MaybeSpawnRescueOperatorInput {
   failedTask: Task
   failureSignature: string
   recipeContext?: FixRecipeContext
   store?: TaskStore
+  /**
+   * Optional supersession checker. When provided, it is called before
+   * spawning a rescue-operator task. If it signals the arc's intent is
+   * already implemented on main, the origin task is dropped with a
+   * `superseded-by:<sha>` reason and one action-queue row is raised for
+   * the operator instead of spawning a rescue.
+   *
+   * Best-effort: a checker error does not block the rescue path.
+   */
+  supersessionChecker?: SupersessionChecker
 }
 
 export interface MaybeSpawnRescueOperatorResult {
@@ -86,6 +114,56 @@ export const maybeSpawnRescueOperator = async (
   // passed a fix/recovery task id — always pass the origin id resolved above.
   if ((await store.getArcRescueAttempts(originId)) >= 1) {
     return { spawned: false }
+  }
+
+  // Supersession check: before spawning a rescue, verify the arc's intent was
+  // not already implemented on main while this arc was failing. When a checker
+  // is provided and confirms supersession, the origin is dropped rather than
+  // rescued and the operator receives one action-queue row to review.
+  // Best-effort: a checker error must not block the rescue path.
+  if (input.supersessionChecker) {
+    try {
+      const checkResult = await input.supersessionChecker(originId)
+      if (checkResult.superseded) {
+        const supersededReason = `superseded-by:${checkResult.sha}`
+        await store.updateTask(originId, {
+          status: 'dropped',
+          failureReason: supersededReason,
+          failureReasonCode: supersededReason,
+        })
+        await store.clearBlockers(originId)
+        await raiseActionQueueItem({
+          kind: 'arc-superseded-on-main',
+          category: 'orchestrator',
+          priority: 'high',
+          title: `Arc ${originId} superseded: intent already on main`,
+          body:
+            `The dead-ended arc ${originId} was not rescued because commit ` +
+            `${checkResult.sha} on main already satisfies its intent. ` +
+            `The origin has been dropped as '${supersededReason}'.`,
+          payload: { originId, supersededBySha: checkResult.sha },
+          context: { repoRoot: process.env.MARS_REPO ?? null },
+          raisedBy: 'rescue-operator:supersession-check',
+          signature: `arc-superseded:${originId}`,
+          originTaskId: originId,
+          occurrence: {
+            at: new Date().toISOString(),
+            originId,
+            supersededBySha: checkResult.sha,
+          },
+        })
+        console.info(
+          `[rescue-operator] arc ${originId} already satisfied on main at ${checkResult.sha} — dropped, no rescue`,
+        )
+        return { spawned: false }
+      }
+    } catch (supersessionErr) {
+      // eslint-disable-next-line no-console
+      console.error(
+        '[rescue-operator] supersession check failed (non-fatal), proceeding with rescue:',
+        supersessionErr,
+      )
+    }
   }
 
   // The rescue task itself passes through the tight-budget triage worker

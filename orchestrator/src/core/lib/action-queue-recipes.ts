@@ -863,6 +863,23 @@ const RECIPE_DEFINITIONS = {
     },
     verbs: [],
   },
+
+  'arc-superseded-on-main': {
+    humanSummary: (ctx) => {
+      const originId = str(ctx.payload['originId']) || ctx.entityId
+      const sha = str(ctx.payload['supersededBySha'])
+      return sha
+        ? `Arc ${originId} dropped as superseded: intent already on main at ${sha.slice(0, 8)}.`
+        : `Arc ${originId} dropped as superseded: intent already on main.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      originId: str(ctx.payload['originId']),
+      supersededBySha: str(ctx.payload['supersededBySha']),
+    }),
+    verbs: [],
+  },
 } satisfies Record<ActionQueueKind, Omit<Recipe, 'preloadedResponses'>>
 
 /**

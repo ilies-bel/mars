@@ -413,6 +413,69 @@ describe('rescue-operator-spawn', () => {
     expect(rescueTask!.tags).toContain('rescue-operator')
   })
 
+  // ── (e) Supersession: checker says superseded → origin dropped, no rescue ──
+
+  it('(e) supersession: origin dropped and action-queue row raised when checker says superseded, no rescue spawned', async () => {
+    const { q, rescue } = await loadModules(repo)
+    const task = await q.enqueueTask('do the thing that was already done on main', undefined, { skipTriage: true })
+
+    const loaded = await q.getTask(task.id)
+    if (!loaded) throw new Error('task not found')
+
+    const supersededSha = 'abc1234567890def1234567890abcdef12345678'
+    const result = await rescue.maybeSpawnRescueOperator({
+      failedTask: loaded,
+      failureSignature: 'code/unclassified',
+      supersessionChecker: async (_originId) => ({ superseded: true as const, sha: supersededSha }),
+    })
+
+    // No rescue task spawned
+    expect(result.spawned).toBe(false)
+    expect(result.rescueTaskId).toBeUndefined()
+    expect(await countRescueTasks(q)).toBe(0)
+
+    // Arc rescue counter stays 0 — supersession doesn't count as a rescue attempt
+    expect(await readArcRescueAttempts(q, task.id)).toBe(0)
+
+    // Origin task is now dropped with the superseded-by reason
+    const dropped = await q.getTask(task.id)
+    expect(dropped?.status).toBe('dropped')
+    expect(dropped?.failureReason).toBe(`superseded-by:${supersededSha}`)
+
+    // Exactly one arc-superseded-on-main action-queue row was raised
+    const aqRows = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM action_queue_items WHERE kind = 'arc-superseded-on-main'`,
+      args: [],
+    })
+    expect(Number((aqRows.rows[0] as unknown as { n: number | bigint }).n)).toBe(1)
+  })
+
+  // ── (f) Supersession: checker says not superseded → happy path unchanged ──
+
+  it('(f) supersession: checker says not superseded → rescue operator spawned normally', async () => {
+    const { q, rescue } = await loadModules(repo)
+    const task = await q.enqueueTask('do the thing', undefined, { skipTriage: true })
+
+    const loaded = await q.getTask(task.id)
+    if (!loaded) throw new Error('task not found')
+
+    const result = await rescue.maybeSpawnRescueOperator({
+      failedTask: loaded,
+      failureSignature: 'code/unclassified',
+      supersessionChecker: async (_originId) => ({ superseded: false as const }),
+    })
+
+    // Rescue task spawned as normal
+    expect(result.spawned).toBe(true)
+    expect(result.rescueTaskId).toBeDefined()
+    expect(await countRescueTasks(q)).toBe(1)
+    expect(await readArcRescueAttempts(q, task.id)).toBe(1)
+
+    // Origin task is NOT dropped
+    const origin = await q.getTask(task.id)
+    expect(origin?.status).toBe('queued')
+  })
+
   it('keeps a large arc rescue prompt below the triage worker budget before it dispatches', async () => {
     const { q, rescue } = await loadModules(repo)
     const rawTranscriptLikePrompt = 'full transcript material that must stay out of triage '.repeat(1_000)
