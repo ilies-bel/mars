@@ -123,9 +123,7 @@ const REGISTRY: LeverRegistryEntry[] = [
       }
     },
     allowedValues: { type: 'enum', values: ['claude', 'codex', 'gemini'] },
-    // Readable from daemon.json but only settable via `mars init --provider`
-    // at repo initialisation time. No runtime command exists — gap for follow-up.
-    gesture: null,
+    gesture: 'mars lever set provider.default <claude|codex|gemini>',
     appliesWithoutRestart: false,
   },
 
@@ -147,9 +145,11 @@ const REGISTRY: LeverRegistryEntry[] = [
     scope: 'per-workflow',
     readCurrent: () => '(see .mars/workflows/*.js)',
     allowedValues: { type: 'freeform' },
-    // No `mars` command exists to add/remove/edit workflow steps. Operators
-    // edit .mars/workflows/<name>.js directly — gap for follow-up.
-    gesture: null,
+    // Workflow step definitions live in .mars/workflows/<name>.js. The
+    // `mars workflow author <name>` command creates or revises a workflow
+    // definition as an agent-authored draft, which must then be approved with
+    // `mars workflow approve <name>` before it becomes dispatch-eligible.
+    gesture: 'mars workflow author <name>',
     appliesWithoutRestart: true,
   },
 
@@ -512,8 +512,7 @@ const REGISTRY: LeverRegistryEntry[] = [
       }
     },
     allowedValues: { type: 'enum', values: ['true', 'false'] },
-    // No `mars` command exists to set scoring config values — gap for follow-up.
-    gesture: null,
+    gesture: 'mars lever set scoring.auto-trigger <true|false>',
     appliesWithoutRestart: false,
   },
   {
@@ -529,7 +528,7 @@ const REGISTRY: LeverRegistryEntry[] = [
       }
     },
     allowedValues: { type: 'range', min: 0, max: 1 },
-    gesture: null,
+    gesture: 'mars lever set scoring.low-trend-threshold <0–1>',
     appliesWithoutRestart: false,
   },
   {
@@ -545,7 +544,7 @@ const REGISTRY: LeverRegistryEntry[] = [
       }
     },
     allowedValues: { type: 'range', min: 1 },
-    gesture: null,
+    gesture: 'mars lever set scoring.low-trend-window <n>',
     appliesWithoutRestart: false,
   },
   {
@@ -573,8 +572,7 @@ const REGISTRY: LeverRegistryEntry[] = [
       }
     },
     allowedValues: { type: 'enum', values: ['true', 'false'] },
-    // No `mars` command exists to set selfEvolve config values — gap for follow-up.
-    gesture: null,
+    gesture: 'mars lever set self-evolve.auto-trigger <true|false>',
     appliesWithoutRestart: false,
   },
   {
@@ -590,7 +588,7 @@ const REGISTRY: LeverRegistryEntry[] = [
       }
     },
     allowedValues: { type: 'range', min: 0 },
-    gesture: null,
+    gesture: 'mars lever set self-evolve.drift-threshold-pct <n>',
     appliesWithoutRestart: false,
   },
   {
@@ -606,7 +604,7 @@ const REGISTRY: LeverRegistryEntry[] = [
       }
     },
     allowedValues: { type: 'range', min: 0, max: 1 },
-    gesture: null,
+    gesture: 'mars lever set self-evolve.task-confidence-threshold <0–1>',
     appliesWithoutRestart: false,
   },
 

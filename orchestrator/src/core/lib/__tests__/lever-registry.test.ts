@@ -328,13 +328,11 @@ describe('noGestureEntries()', () => {
     }
   })
 
-  it('no-gesture entries span expected families', () => {
-    const families = new Set(noGestureEntries().map((e) => e.family))
-    // provider, scoring, self-evolve, workflow all lack a mars command
-    expect(families.has('provider')).toBe(true)
-    expect(families.has('scoring')).toBe(true)
-    expect(families.has('self-evolve')).toBe(true)
-    expect(families.has('workflow')).toBe(true)
+  it('all lever entries have runtime gestures — no gaps remain', () => {
+    // Every lever in the registry now has a gesture. The follow-up slice
+    // added mars lever set for provider.default, scoring.*, and self-evolve.*,
+    // and pointed workflow.steps at mars workflow author <name>.
+    expect(noGestureEntries()).toHaveLength(0)
   })
 
   it('concurrency family has gestures (mars daemon set-cap exists)', () => {
