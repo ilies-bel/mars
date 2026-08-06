@@ -223,6 +223,18 @@ describe('StewardPage', () => {
     expect(html).toContain('executing')
   })
 
+  it('renders worker-cap history as a step chart with time axis, not a raw arrow run', () => {
+    const html = renderToStaticMarkup(<StewardPage />)
+    // Step chart must be present
+    expect(html).toContain('data-testid="cap-step-chart"')
+    // Baseline and ceiling reference markers are present (on bar)
+    expect(html).toContain('baseline: 8')
+    expect(html).toContain('ceiling: 16')
+    // Raw transition arrows must NOT appear outside the details disclosure
+    const htmlWithoutDetails = html.replace(/<details[\s\S]*?<\/details>/g, '')
+    expect(htmlWithoutDetails).not.toContain('→')
+  })
+
   // ---------------------------------------------------------------------------
   // Signature storm lane
   // ---------------------------------------------------------------------------

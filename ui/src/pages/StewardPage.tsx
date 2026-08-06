@@ -81,13 +81,53 @@ const CapRatchet = ({
   ceiling: number
   liveCap: number
 }) => {
-  // Derive the full ratchet sequence: baseline → each bump
+  // Bar scale helpers
   const allValues = [baseline, ...entries.map((e) => e.to)]
   const min = Math.min(...allValues)
   const max = Math.max(ceiling, liveCap, ...allValues)
   const range = max - min || 1
-
   const toPercent = (v: number) => `${Math.round(((v - min) / range) * 100)}%`
+
+  // Step chart geometry (hand-rolled SVG, no charting library)
+  const SVG_W = 400
+  const SVG_H = 56
+  const PAD_X = 8
+  const PAD_TOP = 6
+  const PAD_BOTTOM = 14
+  const chartH = SVG_H - PAD_TOP - PAD_BOTTOM
+  const xLeft = PAD_X
+  const xRight = SVG_W - PAD_X
+  const yRange = max - min || 1
+  const toY = (v: number) => PAD_TOP + chartH - ((v - min) / yRange) * chartH
+
+  // Build step-chart polyline: flat segments (holds) separated by vertical jumps
+  const stepPolyline = (() => {
+    if (entries.length === 0) {
+      const y = toY(baseline).toFixed(1)
+      return `${xLeft},${y} ${xRight},${y}`
+    }
+    const times = entries.map((e) => new Date(e.timestamp).getTime())
+    const tFirst = Math.min(...times)
+    const tLast = Math.max(...times)
+    // Add 10 % right-padding so the final level has a visible hold segment
+    const tRange = (tLast - tFirst) * 1.1 || 1
+    const toX = (t: number) => xLeft + ((t - tFirst) / tRange) * (xRight - xLeft)
+
+    const pts: string[] = []
+    let v = baseline
+    pts.push(`${xLeft.toFixed(1)},${toY(v).toFixed(1)}`)
+    for (const e of entries) {
+      const x = toX(new Date(e.timestamp).getTime()).toFixed(1)
+      pts.push(`${x},${toY(v).toFixed(1)}`)   // hold at current level until bump
+      v = e.to
+      pts.push(`${x},${toY(v).toFixed(1)}`)   // vertical step to new level
+    }
+    pts.push(`${xRight.toFixed(1)},${toY(v).toFixed(1)}`) // extend to right edge
+    return pts.join(' ')
+  })()
+
+  const firstEntry = entries[0]
+  const lastEntry = entries[entries.length - 1]
 
   return (
     <div className="mb-4">
@@ -95,27 +135,23 @@ const CapRatchet = ({
         <span>baseline {baseline}</span>
         <span>ceiling {ceiling}</span>
       </div>
-      {/* Bar */}
+      {/* Bar — shows where the live cap sits relative to baseline/ceiling */}
       <div className="relative h-7 w-full rounded bg-muted/30">
-        {/* Ceiling marker */}
         <div
           className="absolute top-0 h-full w-px bg-warn/60"
           style={{ left: toPercent(ceiling) }}
           title={`ceiling: ${ceiling}`}
         />
-        {/* Baseline marker */}
         <div
           className="absolute top-0 h-full w-px bg-primary/40"
           style={{ left: toPercent(baseline) }}
           title={`baseline: ${baseline}`}
         />
-        {/* Live cap fill */}
         <div
           className="absolute top-0 left-0 h-full rounded bg-success/30 transition-[width]"
           style={{ width: toPercent(liveCap) }}
           title={`live cap: ${liveCap}`}
         />
-        {/* Step markers */}
         {entries.map((e) => (
           <div
             key={e.timestamp}
@@ -124,7 +160,6 @@ const CapRatchet = ({
             title={`bumped to ${e.to}`}
           />
         ))}
-        {/* Live cap label */}
         <span
           className="absolute top-0 flex h-full items-center pl-1 font-mono text-[10px] font-semibold text-success"
           style={{ left: toPercent(liveCap) }}
@@ -132,17 +167,90 @@ const CapRatchet = ({
           {liveCap}
         </span>
       </div>
-      {/* Ratchet sequence */}
+
+      {/* Step chart — cap level over time with baseline/ceiling reference lines */}
+      <svg
+        viewBox={`0 0 ${SVG_W} ${SVG_H}`}
+        width="100%"
+        aria-label="Worker cap history"
+        data-testid="cap-step-chart"
+        className="mt-2 overflow-visible"
+        preserveAspectRatio="none"
+      >
+        {/* Ceiling reference line */}
+        <line
+          x1={xLeft} y1={toY(ceiling).toFixed(1)}
+          x2={xRight} y2={toY(ceiling).toFixed(1)}
+          stroke="currentColor"
+          strokeWidth={1}
+          strokeOpacity={0.3}
+          strokeDasharray="3 2"
+          className="text-warn"
+        />
+        {/* Baseline reference line */}
+        <line
+          x1={xLeft} y1={toY(baseline).toFixed(1)}
+          x2={xRight} y2={toY(baseline).toFixed(1)}
+          stroke="currentColor"
+          strokeWidth={1}
+          strokeOpacity={0.3}
+          strokeDasharray="3 2"
+          className="text-primary"
+        />
+        {/* Step polyline — the cap level over time */}
+        <polyline
+          points={stepPolyline}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.5}
+          strokeLinejoin="miter"
+          strokeLinecap="square"
+          className="text-success"
+        />
+        {/* Time axis: label the first and last transition timestamps */}
+        {firstEntry !== undefined && (
+          <text
+            x={xLeft}
+            y={SVG_H - 2}
+            fontSize={7}
+            fill="currentColor"
+            fillOpacity={0.5}
+            className="text-muted-foreground"
+          >
+            {new Date(firstEntry.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+          </text>
+        )}
+        {lastEntry !== undefined && lastEntry !== firstEntry && (
+          <text
+            x={xRight}
+            y={SVG_H - 2}
+            fontSize={7}
+            fill="currentColor"
+            fillOpacity={0.5}
+            textAnchor="end"
+            className="text-muted-foreground"
+          >
+            {new Date(lastEntry.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+          </text>
+        )}
+      </svg>
+
+      {/* Raw transitions — collapsed by default, available for exact sequence inspection */}
       {entries.length > 0 && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1 font-mono text-[10px] text-muted-foreground">
-          <span className="text-primary">{baseline}</span>
-          {entries.map((e) => (
-            <span key={e.timestamp} className="flex items-center gap-1">
-              <span className="text-muted-foreground/50">→</span>
-              <span className="text-success">{e.to}</span>
-            </span>
-          ))}
-        </div>
+        <details className="mt-1">
+          <summary className="cursor-pointer font-mono text-[9px] text-muted-foreground/40 hover:text-muted-foreground/70 select-none">
+            ▸ raw transitions
+          </summary>
+          <div className="mt-1 flex flex-wrap items-center gap-1 font-mono text-[10px] text-muted-foreground">
+            <span className="text-primary">{baseline}</span>
+            {entries.map((e) => (
+              <span key={e.timestamp} className="flex items-center gap-1">
+                <span className="text-muted-foreground/50">→</span>
+                <span className="text-success">{e.to}</span>
+              </span>
+            ))}
+          </div>
+        </details>
       )}
     </div>
   )
