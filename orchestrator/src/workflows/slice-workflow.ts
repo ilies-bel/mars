@@ -1,10 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { createHash } from 'node:crypto'
 import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
 import { createQueueWorkflowStore } from './queue-workflow-store'
 import {
   claimProposalForSlicing,
+  createProposal,
+  addProposalDependencies,
   getProposal,
   markProposalSliced,
 } from '../core/proposals'
@@ -56,7 +59,34 @@ export const subDeliverableSchema = z.object({
 
 export type SubDeliverableSpec = z.infer<typeof subDeliverableSchema>
 
+/**
+ * A deferred deliverable extracted from the PRD's `outOfScope` section.
+ * Created as a `draft` successor proposal at slice time so the work
+ * is not silently discarded once the parent reaches `sliced`.
+ */
+export const deferredDeliverableSchema = z.object({
+  /** Short title for the successor proposal, derived from the OOS text. */
+  title: z.string().min(1),
+  /**
+   * The verbatim sentence(s) from `outOfScope` that describe this deferred
+   * deliverable. Stored verbatim in the successor's `problem` field so the
+   * draft stands alone when read cold weeks later.
+   */
+  outOfScopeText: z.string().min(1),
+})
+
+export type DeferredDeliverable = z.infer<typeof deferredDeliverableSchema>
+
 export const slicerOutputSchema = z.object({
+  /**
+   * Deferred deliverables extracted from the PRD's `outOfScope` section.
+   * Each entry is a thing that WILL eventually be built (just not in this
+   * PRD), as opposed to a true non-goal that will never be built. The
+   * slicer distinguishes the two so each deferred deliverable can become
+   * a successor `draft` proposal. Omitting the field is safe — the
+   * pipeline treats absence the same as an empty list.
+   */
+  deferredDeliverables: z.array(deferredDeliverableSchema).optional().default([]),
   slices: z
     .array(
       z
@@ -271,10 +301,40 @@ For each slice, produce:
     • acceptanceCriteria (string[], min 1 item)
     • files (string[], optional) — paths the Coder will create/modify
 
+Deferred deliverables — out_of_scope that will eventually be built
+------------------------------------------------------------------
+Also inspect the "Out of scope" section and populate a top-level
+\`deferredDeliverables\` array. The distinction to make:
+
+- DEFERRED DELIVERABLE — something that WILL eventually be built, just
+  not in this PRD. Examples: "The admin UI itself", "Two-way broadcast
+  replies", "A public dashboard for metrics". These are real product
+  features that a planner explicitly split into a separate upcoming proposal.
+  → Include as an entry in \`deferredDeliverables\`.
+
+- TRUE NON-GOAL — something that will NEVER be built as part of this
+  initiative, or an explicit out-of-scope design decision. Examples:
+  "Auto-generating changelog entries from git history", "Backwards
+  compatibility with the v1 API", "Support for IE11". These describe
+  things the proposal deliberately chose NOT to do, permanently.
+  → Do NOT include in \`deferredDeliverables\`.
+
+When genuinely ambiguous, err on the side of including the entry —
+a spurious draft proposal costs one dismiss; a lost deliverable is
+permanent.
+
+For each deferred deliverable, produce:
+- title — a short name (e.g. "Admin UI screens for the broadcast system")
+- outOfScopeText — the verbatim sentence(s) from the "Out of scope" section
+  that describe this deferred deliverable
+
+If the "Out of scope" section is empty, absent, or contains only true
+non-goals, emit \`deferredDeliverables: []\`.
+
 Return ONLY a single JSON object matching exactly this shape, with no
 surrounding prose, no code fences, and no commentary:
 
-{"slices":[{"title":"...","type":"AFK","kind":"coder","whatToBuild":"...","acceptanceCriteria":["..."],"blockedBy":[],"readFirst":["src/foo.ts"],"prescriptiveAction":"In fooFn (foo.ts:42), change return type from string to number and update all call sites.","modifies":["src/foo.ts"],"creates":["src/foo.test.ts"],"verifyCmd":"cd src && npx vitest run foo.test.ts","mergeMode":"auto"}]}
+{"deferredDeliverables":[{"title":"Admin UI screens","outOfScopeText":"The admin UI itself. This proposal delivers the REST contract; the screens live in the admin interface being written separately."}],"slices":[{"title":"...","type":"AFK","kind":"coder","whatToBuild":"...","acceptanceCriteria":["..."],"blockedBy":[],"readFirst":["src/foo.ts"],"prescriptiveAction":"In fooFn (foo.ts:42), change return type from string to number and update all call sites.","modifies":["src/foo.ts"],"creates":["src/foo.test.ts"],"verifyCmd":"cd src && npx vitest run foo.test.ts","mergeMode":"auto"}]}
 
 PRD to decompose
 ================
@@ -1079,6 +1139,51 @@ Save your work: stage and commit when verify passes.
 type SliceInput = z.infer<typeof sliceInputSchema>
 type SliceOutput = z.infer<typeof sliceOutputSchema>
 
+// ---------------------------------------------------------------------------
+// Out-of-scope successor proposals
+// ---------------------------------------------------------------------------
+
+/**
+ * For each deferred deliverable extracted from a PRD's `outOfScope` field,
+ * create a `draft` successor proposal (source='slicer') and link it to the
+ * parent via a `proposal_dependencies` edge (successor blocked by parent).
+ *
+ * Idempotent: the fingerprint `slicer:<parentId>:<titleHash>` deduplicates
+ * across reslice runs via the `idx_proposals_source_fingerprint` unique index.
+ * The dependency edge insert is also `ON CONFLICT DO NOTHING`.
+ *
+ * Non-fatal by design — callers wrap this in best-effort try/catch so a
+ * successor-creation failure never blocks or rolls back the slice pipeline.
+ *
+ * @returns The ids of newly-created (or already-existing) successor proposals.
+ */
+export const createOutOfScopeSuccessors = async (
+  parent: { id: string; title: string },
+  deliverables: readonly DeferredDeliverable[],
+): Promise<string[]> => {
+  if (deliverables.length === 0) return []
+  const ids: string[] = []
+  for (const d of deliverables) {
+    const fingerprint = `slicer:${parent.id}:${createHash('sha256').update(d.title).digest('hex').slice(0, 32)}`
+    const problem =
+      `Deferred from PRD \`${parent.id}\` (${parent.title}).\n\n` +
+      `The original out-of-scope entry that describes this deliverable:\n\n` +
+      `> ${d.outOfScopeText}`
+    const successor = await createProposal(d.title, {
+      source: 'slicer',
+      author: { kind: 'agent', name: 'slicer' },
+      problem,
+      fingerprint,
+    })
+    // Wire the dependency: successor waits on / follows the parent.
+    await addProposalDependencies(successor.id, [parent.id])
+    ids.push(successor.id)
+  }
+  return ids
+}
+
+// ---------------------------------------------------------------------------
+
 // The slice workflow talks to proposals/queue via injected services; the
 // daemon wires the DomainTaskStore and TraceEventStore from the composition
 // root, read inside as `ctx.services.store` and `ctx.services.traceStore`.
@@ -1520,6 +1625,12 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
       // proposal.sliced on the event bus (best-effort).
       await markProposalSliced(proposal.id, taskIds.length)
       proposalFlipped = true
+      // Phase 4b: create successor draft proposals for any deferred
+      // deliverables extracted from the PRD's out_of_scope section.
+      // Non-fatal — a failure here must not roll back the slice pipeline.
+      await createOutOfScopeSuccessors(proposal, parsed.deferredDeliverables).catch(
+        () => {},
+      )
       // Phase 5 (ADR-0015 promote transfer): any task that was blocked by
       // THIS proposal via task_proposal_blockers must now be re-pointed at the
       // resulting work, atomically, so no dispatcher tick observes the

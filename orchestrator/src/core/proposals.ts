@@ -17,6 +17,9 @@ import type { EventName, EventPayload } from '../bus/events.js'
  * - `failure-reflector` — the per-failure reflector.
  * - `skill-forge`       — the skill forge.
  * - `planner`           — the planner.
+ * - `slicer`            — the slicer, creating successor proposals for
+ *                         deferred deliverables declared in a PRD's
+ *                         `out_of_scope` field at slice time.
  * - `human`             — an operator, via the CLI or UI.
  */
 export type ProposalSource =
@@ -26,6 +29,7 @@ export type ProposalSource =
   | 'planner'
   | 'skill-forge'
   | 'failure-reflector'
+  | 'slicer'
 
 export const PROPOSAL_STATUSES = [
   'draft',
@@ -128,6 +132,7 @@ export const VALID_SOURCES: readonly ProposalSource[] = [
   'planner',
   'skill-forge',
   'failure-reflector',
+  'slicer',
 ]
 
 /**
