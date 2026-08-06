@@ -691,6 +691,10 @@ describe('EventRow severity styling', () => {
   })
 
   it('INFO severity badge is NOT font-semibold (stays visually quiet)', () => {
+    // This test uses DOM querying rather than full-HTML string matching so that
+    // other elements (e.g. active filter chips) carrying font-semibold do not
+    // produce a false failure. Only the severity badge span inside the event
+    // row must lack font-semibold for INFO events.
     const qc = makeClient(
       makeResponse([
         makeEvent({
@@ -703,8 +707,134 @@ describe('EventRow severity styling', () => {
         }),
       ]),
     )
-    const html = renderPage(qc)
-    expect(html).not.toContain('font-semibold')
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    document.body.appendChild(container)
+    act(() => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <EventsPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const row = container.querySelector('[data-testid="event-row-ev-info-quiet"]')!
+    // The severity badge is the span whose text content is "info"
+    const severityBadge = Array.from(row.querySelectorAll('span')).find(
+      (s) => s.textContent?.trim() === 'info',
+    )
+    expect(severityBadge).toBeDefined()
+    expect(severityBadge?.className).not.toContain('font-semibold')
+
+    act(() => { root.unmount() })
+    container.remove()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 6. Filter chip active/inactive visual distinction
+//
+// The enabled (active) chip state must be obvious at a glance, not just on
+// inspection. The three pillars of the fix:
+//   a. font-semibold on active — weight cue that doesn't rely on colour.
+//   b. border-dashed on inactive — border-style cue distinct from solid active.
+//   c. aria-pressed reflects state (already wired; these tests confirm the
+//      full active→inactive transition via DOM).
+// ---------------------------------------------------------------------------
+
+describe('EventsPage filter chips — active vs inactive visual distinction', () => {
+  it('active chip carries font-semibold and aria-pressed="true"', () => {
+    // All chips start active. Each must carry font-semibold so the enabled
+    // state is legible by weight alone, not colour alone.
+    const qc = makeClient(EMPTY_RESPONSE)
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    document.body.appendChild(container)
+    act(() => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <EventsPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const infoChip = container.querySelector<HTMLButtonElement>(
+      '[data-testid="events-severity-info"]',
+    )!
+    expect(infoChip.getAttribute('aria-pressed')).toBe('true')
+    expect(infoChip.className).toContain('font-semibold')
+
+    act(() => { root.unmount() })
+    container.remove()
+  })
+
+  it('inactive chip (after toggle) carries border-dashed, lacks font-semibold, and has aria-pressed="false"', () => {
+    // Toggling a chip off must produce a visually distinct state:
+    //   - border-dashed distinguishes the border style from the solid active border.
+    //   - No font-semibold so active/inactive differ by weight too.
+    //   - aria-pressed="false" exposes the state to assistive tech.
+    const qc = makeClient(EMPTY_RESPONSE)
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    document.body.appendChild(container)
+    act(() => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <EventsPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const infoChip = container.querySelector<HTMLButtonElement>(
+      '[data-testid="events-severity-info"]',
+    )!
+    // Start active
+    expect(infoChip.getAttribute('aria-pressed')).toBe('true')
+
+    act(() => { infoChip.click() })
+
+    expect(infoChip.getAttribute('aria-pressed')).toBe('false')
+    expect(infoChip.className).toContain('border-dashed')
+    expect(infoChip.className).not.toContain('font-semibold')
+
+    act(() => { root.unmount() })
+    container.remove()
+  })
+
+  it('toggling does not shift the chip footprint — padding and border-width class stay constant', () => {
+    // The chip must occupy the same physical size in both active and inactive
+    // states so the filter row does not reflow on toggle. Both states share
+    // the base 'border' (1 px) class; only border-colour and border-style change.
+    const qc = makeClient(EMPTY_RESPONSE)
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    document.body.appendChild(container)
+    act(() => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <EventsPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const warnChip = container.querySelector<HTMLButtonElement>(
+      '[data-testid="events-severity-warn"]',
+    )!
+    const activeClass = warnChip.className
+    act(() => { warnChip.click() })
+    const inactiveClass = warnChip.className
+
+    // Border width: both states include 'border' (not 'border-2'), so 1 px only.
+    expect(activeClass).toMatch(/\bborder\b/)
+    expect(inactiveClass).toMatch(/\bborder\b/)
+    // Padding identical in both states.
+    expect(activeClass).toContain('px-2')
+    expect(inactiveClass).toContain('px-2')
+    expect(activeClass).toContain('py-0.5')
+    expect(inactiveClass).toContain('py-0.5')
+
+    act(() => { root.unmount() })
+    container.remove()
   })
 })
 

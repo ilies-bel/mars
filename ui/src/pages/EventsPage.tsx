@@ -170,8 +170,8 @@ const chipClass = (active: boolean): string =>
   [
     'rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide transition-colors',
     active
-      ? 'border-primary/50 bg-primary/15 text-foreground'
-      : 'border-border bg-transparent text-muted-foreground hover:border-primary/40 hover:text-foreground',
+      ? 'border-primary bg-primary/15 font-semibold text-foreground'
+      : 'border-dashed border-border/50 bg-transparent text-muted-foreground/60 hover:border-primary/40 hover:text-muted-foreground',
   ].join(' ')
 
 interface MultiSelectProps<T extends string> {
