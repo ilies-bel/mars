@@ -610,6 +610,41 @@ export const handleTaskFailureWithFixTask = async (
         retryCount: task.retryCount,
       }
     }
+
+    // ── Connectivity park-and-resume for fix tasks ──────────────────────────
+    // An API connectivity failure on a fix (recovery) task is an infrastructure
+    // condition, not a code regression. Escalating it would:
+    //  - consume the origin's single recovery slot (ADR-0040) on a doomed repair
+    //  - strand the coder's committed work in the worktree unreachable
+    //
+    // Instead, park the fix task by re-queuing it on the existing worktree so it
+    // retries once connectivity is restored. The origin stays `blocked` throughout.
+    // `envRestartCount` bounds the park loop: once MAX_ENV_RESTART_ATTEMPTS is
+    // reached, fall through to the normal escalation so the operator gets an item.
+    //
+    // `requeueOrigin` handles the `failed → queued` transition correctly via
+    // `reopenTerminalTask` (when the row is already failed) and then clears the
+    // stale failure fields. The worktree/branch/claudeSessionId are NOT nulled here
+    // (unlike the worktree-rebuild path) because the worktree holds committed work.
+    if (failureSignature.endsWith('/api-unreachable')) {
+      if (task.envRestartCount < MAX_ENV_RESTART_ATTEMPTS) {
+        const nextEnvRestartCount = task.envRestartCount + 1
+        await requeueOrigin(
+          input.taskId,
+          `connectivity park #${nextEnvRestartCount} (${failureSignature})`,
+          { envRestartCount: nextEnvRestartCount },
+          s,
+        )
+        // eslint-disable-next-line no-console
+        console.log(
+          `[failure-handler] fix task ${input.taskId}: connectivity park #${nextEnvRestartCount}/${MAX_ENV_RESTART_ATTEMPTS} — origin ${task.fixForTaskId} stays blocked`,
+        )
+        return { outcome: 'requeued', retryCount: task.retryCount, failureSignature }
+      }
+      // Cap exhausted: fall through to the normal escalation so the operator
+      // gets an action-queue item.
+    }
+
     // Never nest the prefix: `truncatedError` may itself be a previously
     // composed reason (the `task.failed` event carries `error`, which used to
     // hold the composed string), so strip before composing.
