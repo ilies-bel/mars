@@ -815,7 +815,7 @@ export const startServer = async (
         // GET  /api/chat/thread/:id          → daemon /view/chat/thread/:id
         // GET  /api/chat/threads/:id/tasks   → daemon /chat/threads/:id/tasks
         // POST /api/chat/threads             → daemon /chat/threads (create)
-        // POST /api/chat/subjects            → daemon /chat/subjects (create + send)
+        // POST /api/chat/subthreads          → daemon /chat/subthreads (create + send)
         // POST /api/chat/threads/:id/message → daemon /chat/threads/:id/message
         // POST /api/chat/threads/:id/stop    → daemon /chat/threads/:id/stop
         // POST /api/chat/threads/:id/title   → daemon /chat/threads/:id/title
@@ -861,10 +861,12 @@ export const startServer = async (
           return jsonResponse(result.status, result.body)
         }
 
-        if (path === '/api/chat/subjects' && req.method === 'POST') {
+        if (path === '/api/chat/subthreads' && req.method === 'POST') {
           let body: unknown = {}
           try { body = await req.json() } catch { /* daemon validates this */ }
-          const result = await proxyPost(ctx.stateDir, '/chat/subjects', body)
+          // The daemon endpoint is /chat/subthreads (not /chat/subjects — the old
+          // server-side spelling was never updated when the vocabulary moved to Subthread).
+          const result = await proxyPost(ctx.stateDir, '/chat/subthreads', body)
           return jsonResponse(result.status, result.body)
         }
 
