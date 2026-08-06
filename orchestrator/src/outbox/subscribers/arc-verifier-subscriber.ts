@@ -12,6 +12,19 @@
  *      handled at-most-once per subscriber, even across daemon restarts.
  *   2. The daemon dispatcher uses `triggeredOriginIds` in arc-verifier.ts to
  *      ensure each arc is admitted at most once per daemon lifetime.
+ *
+ * Arc origin types:
+ *   - Task Arc: `origin_id` is a task id (self-rooted when `origin_id === id`).
+ *     Single-task arcs complete in one `task.terminal` event; multi-task arcs
+ *     (e.g. a task with recovery fix tasks) share the same `origin_id`.
+ *   - Proposal Arc: `origin_id` is a proposal id. Produced by `mars proposal
+ *     slice`, where every slice task carries `origin_id = proposalId`. The arc
+ *     completes only when ALL slice tasks are terminal with at least one done.
+ *
+ * The subscriber gates dispatch on `arcStatus === 'arc-done'` so intermediate
+ * done events for multi-task arcs (including Proposal Arcs) do not consume the
+ * per-daemon-lifetime dedup slot prematurely. Only the event that makes the arc
+ * fully settled triggers verification.
  */
 
 import type { DbClient } from '../../core/lib/db.js'
@@ -70,18 +83,24 @@ export async function drainArcVerifier(
       // Resolve the arc origin id from the terminal task.
       const originId = await resolveOriginIdForTask(payload.taskId)
 
+      const store = createTaskStore(client)
+
+      // Check arc completion before doing anything. For multi-task arcs
+      // (including Proposal Arcs where origin_id = proposalId), each slice
+      // task fires a task.terminal event as it completes. The dedup set in
+      // triggerArcVerification is per-daemon-lifetime — consuming the slot
+      // on an intermediate event silently suppresses the final arc-done
+      // trigger. By gating here, the slot is only consumed once: on the
+      // event that makes the arc fully settled.
+      const arcStatusResult = await store.arcStatus(originId)
+      if (arcStatusResult.status !== 'arc-done') return false
+
       // Increment rescue_success_total when an arc that had rescue attempts
       // transitions to arc-done (all tasks terminal, at least one done).
-      // The sequential outbox drain guarantees this fires exactly once per
-      // arc completion: prior events see in-progress; only the last done
-      // event sees arc-done.
-      const store = createTaskStore(client)
+      // The guard above guarantees we only reach this when arc-done.
       const arcRescueAttempts = await store.getArcRescueAttempts(originId)
       if (arcRescueAttempts > 0) {
-        const arcStatusResult = await store.arcStatus(originId)
-        if (arcStatusResult.status === 'arc-done') {
-          await incrementRescueSuccess(store)
-        }
+        await incrementRescueSuccess(store)
       }
 
       // The daemon dispatcher owns admission and execution. The outbox handler
