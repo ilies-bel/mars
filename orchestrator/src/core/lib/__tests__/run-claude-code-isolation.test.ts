@@ -228,4 +228,20 @@ describe('buildWorkerEnv', () => {
     const env = buildWorkerEnv()
     expect(env.MARS_DB_BACKEND).toBeUndefined()
   })
+
+  it('sets CI=true so pnpm and other package managers behave non-interactively in TTY-less worker processes', () => {
+    // Regression guard for ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY:
+    // pnpm refuses to remove node_modules when there is no TTY and CI is
+    // unset, causing a failed tool call on every worker run that touches
+    // dependencies. Setting CI=true here (once, for every provider) is the
+    // fix pnpm itself documents.
+    const env = buildWorkerEnv()
+    expect(env.CI).toBe('true')
+  })
+
+  it('sets CI=true even when a taskId is supplied', () => {
+    const env = buildWorkerEnv('mars-abc123')
+    expect(env.CI).toBe('true')
+    expect(env.MARS_MCP_TASK_ID).toBe('mars-abc123')
+  })
 })

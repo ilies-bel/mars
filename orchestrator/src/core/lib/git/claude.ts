@@ -614,6 +614,12 @@ export const buildWorkerEnv = (taskId?: string): NodeJS.ProcessEnv => {
   if (taskId) {
     env['MARS_MCP_TASK_ID'] = taskId
   }
+  // Set CI=true so any package manager the coding agent invokes (pnpm, npm,
+  // yarn, bun) behaves non-interactively in the TTY-less worker process.
+  // Without this, pnpm aborts node_modules removal with
+  // ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY and the agent burns a failed
+  // tool call on an error that has nothing to do with its task.
+  env['CI'] = 'true'
   return env
 }
 
