@@ -582,3 +582,7 @@ _Avoid_: exit criteria, completion check, terminal event, done criterion
 **Objective**:
 The single reason a Subject exists, stated in one sentence when it opens and never revised for the life of that Subject.
 _Avoid_: goal, purpose, scope, charter
+
+**Archive entry**:
+A record of something that already happened — a resolved Alert, an acknowledged Notice, or completed work that never demanded anything — which carries its provenance, never clears, and asks nothing of the operator.
+_Avoid_: history item, resolved row, activity, log entry, archived alert, deed
