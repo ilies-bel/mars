@@ -27,7 +27,7 @@ import { getDefaultTaskStore, type ArcStatusOptions } from '../store/task-store.
 import { raiseActionQueueItem } from './action-queue.js'
 import { runHeadlessProvider } from '../workers/providers.js'
 import { collectAssistantText } from './reflector.js'
-import { createProposal, findOpenDraftByKpiTag } from '../proposals.js'
+import { createProposal, findOpenDraftByKpiTag, getProposal } from '../proposals.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -48,6 +48,53 @@ export const triggeredOriginIds = new Set<string>()
 /** For test isolation ONLY. Never call in production. */
 export const _clearTriggeredForTests = (): void => {
   triggeredOriginIds.clear()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PRD reachability context
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The PRD-level reachability data the arc-verifier needs to judge whether
+ * promised surfaces were delivered. Populated from the source Proposal when
+ * the arc was produced by `mars proposal slice`; empty for task-originated
+ * arcs that have no source Proposal.
+ */
+export interface PrdReachabilityContext {
+  userStories: string[]
+  outOfScope: string[]
+  sourceProposalId: string | null
+}
+
+/**
+ * Load the PRD reachability context for the given arc.
+ *
+ * For a Proposal Arc, `arcId` IS the proposal id (each slice task carries
+ * `origin_id = proposalId`). The proposal row is looked up directly; its
+ * `userStories` list and `out_of_scope` text (split into non-empty lines)
+ * are returned verbatim.
+ *
+ * For a task-originated arc, `arcId` is a task id with no matching proposal
+ * row, so empty arrays and a null `sourceProposalId` are returned.
+ *
+ * Never throws — a lookup failure is treated as "no source proposal".
+ */
+export async function loadPrdReachabilityContext(
+  arcId: string,
+): Promise<PrdReachabilityContext> {
+  const proposal = await getProposal(arcId).catch(() => null)
+  if (proposal === null) {
+    return { userStories: [], outOfScope: [], sourceProposalId: null }
+  }
+  const outOfScope = proposal.outOfScope
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+  return {
+    userStories: proposal.userStories,
+    outOfScope,
+    sourceProposalId: proposal.id,
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,6 +186,7 @@ function buildVerifierPrompt(
     output: string
   }>,
   diff: string,
+  prdContext: PrdReachabilityContext,
 ): string {
   const parts: string[] = [
     `You are an arc-outcome verifier. Arc origin id: ${originId}`,
@@ -182,6 +230,19 @@ function buildVerifierPrompt(
     parts.push('```diff')
     parts.push(diff)
     parts.push('```')
+  }
+
+  if (prdContext.sourceProposalId !== null) {
+    parts.push('', '## PRD context')
+    parts.push(`Source proposal: ${prdContext.sourceProposalId}`)
+    if (prdContext.userStories.length > 0) {
+      parts.push('', 'User stories:')
+      for (const story of prdContext.userStories) parts.push(`  - ${story}`)
+    }
+    if (prdContext.outOfScope.length > 0) {
+      parts.push('', 'Out of scope:')
+      for (const item of prdContext.outOfScope) parts.push(`  - ${item}`)
+    }
   }
 
   parts.push('', 'Return ONLY the JSON object. No other text.')
@@ -318,8 +379,11 @@ export async function runArcVerification(
   // Get the merged diff (best-effort; empty string if git fails).
   const diff = await getMergedDiff(arcStatus.landedCommits, opts.cwd)
 
+  // Load PRD reachability context (populated for Proposal Arcs, empty for task arcs).
+  const prdContext = await loadPrdReachabilityContext(originId)
+
   // Build the verifier prompt and call the provider's fast-tier agent.
-  const prompt = buildVerifierPrompt(originId, arcTaskData, verifyCmdResults, diff)
+  const prompt = buildVerifierPrompt(originId, arcTaskData, verifyCmdResults, diff, prdContext)
   const agentResult = await runHeadlessProvider(prompt, {
     cwd: opts.cwd,
     modelTier: 'fast',

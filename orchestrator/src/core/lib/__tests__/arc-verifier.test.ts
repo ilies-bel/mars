@@ -74,7 +74,7 @@ vi.mock('../reflector', () => ({
   collectAssistantText: vi.fn((_conversation: unknown[]) => ''),
 }))
 
-// ── Mock createProposal / findOpenDraftByKpiTag ───────────────────────────────
+// ── Mock createProposal / findOpenDraftByKpiTag / getProposal ─────────────────
 
 const createProposalMock = vi.hoisted(() =>
   vi.fn(async (_title: string, _opts?: unknown) => ({ id: 'proposal-1', title: 'mock' } as { id: string; title: string })),
@@ -82,9 +82,13 @@ const createProposalMock = vi.hoisted(() =>
 const findOpenDraftByKpiTagMock = vi.hoisted(() =>
   vi.fn(async (_tag: string) => null as { id: string } | null),
 )
+const getProposalMock = vi.hoisted(() =>
+  vi.fn(async (_id: string) => null as { id: string; userStories: string[]; outOfScope: string } | null),
+)
 vi.mock('../../proposals', () => ({
   createProposal: createProposalMock,
   findOpenDraftByKpiTag: findOpenDraftByKpiTagMock,
+  getProposal: getProposalMock,
 }))
 
 // ── Import after mocks ────────────────────────────────────────────────────────
@@ -94,6 +98,7 @@ const {
   runArcVerification,
   isArcVerifyDisabled,
   arcE2eProposalFingerprint,
+  loadPrdReachabilityContext,
   _clearTriggeredForTests,
 } = await import('../arc-verifier')
 
@@ -348,6 +353,81 @@ describe('arc-verifier', () => {
         expect(call[0].kind).toBe('arc-verification-failed')
         expect(call[0].signature).toBe('arc-verification-failed:origin-dedup-raise')
       }
+    })
+
+    // ── loadPrdReachabilityContext ─────────────────────────────────────────────
+
+    describe('loadPrdReachabilityContext', () => {
+      beforeEach(() => {
+        vi.clearAllMocks()
+        _clearTriggeredForTests()
+      })
+
+      it('(a) Proposal Arc with N user stories returns all stories and out-of-scope lines', async () => {
+        getProposalMock.mockResolvedValueOnce({
+          id: 'prop-abc123',
+          userStories: ['As a user, I can log in', 'As an admin, I can manage users', 'As a user, I can reset my password', 'As a user, I can view my profile'],
+          outOfScope: 'Mobile app\nThird-party integrations\nBilling',
+        })
+
+        const ctx = await loadPrdReachabilityContext('prop-abc123')
+
+        expect(ctx.sourceProposalId).toBe('prop-abc123')
+        expect(ctx.userStories).toEqual([
+          'As a user, I can log in',
+          'As an admin, I can manage users',
+          'As a user, I can reset my password',
+          'As a user, I can view my profile',
+        ])
+        expect(ctx.outOfScope).toEqual(['Mobile app', 'Third-party integrations', 'Billing'])
+      })
+
+      it('(b) Proposal Arc with zero user stories returns empty userStories array', async () => {
+        getProposalMock.mockResolvedValueOnce({
+          id: 'prop-empty-stories',
+          userStories: [],
+          outOfScope: '',
+        })
+
+        const ctx = await loadPrdReachabilityContext('prop-empty-stories')
+
+        expect(ctx.sourceProposalId).toBe('prop-empty-stories')
+        expect(ctx.userStories).toEqual([])
+        expect(ctx.outOfScope).toEqual([])
+      })
+
+      it('(c) task-originated Arc with no source Proposal returns empty arrays and null sourceProposalId', async () => {
+        // getProposal returns null — arcId is a task id, not a proposal id
+        getProposalMock.mockResolvedValueOnce(null)
+
+        const ctx = await loadPrdReachabilityContext('task-abc123')
+
+        expect(ctx.sourceProposalId).toBeNull()
+        expect(ctx.userStories).toEqual([])
+        expect(ctx.outOfScope).toEqual([])
+      })
+
+      it('returns empty arrays when getProposal throws (treated as no source proposal)', async () => {
+        getProposalMock.mockRejectedValueOnce(new Error('db error'))
+
+        const ctx = await loadPrdReachabilityContext('anything')
+
+        expect(ctx.sourceProposalId).toBeNull()
+        expect(ctx.userStories).toEqual([])
+        expect(ctx.outOfScope).toEqual([])
+      })
+
+      it('filters blank lines from out-of-scope text', async () => {
+        getProposalMock.mockResolvedValueOnce({
+          id: 'prop-blanks',
+          userStories: ['Story one'],
+          outOfScope: '\nMobile app\n\n  \nBilling\n',
+        })
+
+        const ctx = await loadPrdReachabilityContext('prop-blanks')
+
+        expect(ctx.outOfScope).toEqual(['Mobile app', 'Billing'])
+      })
     })
 
     // ── arc E2E pass — always CAN'T-VERIFY (no live surface) ─────────────────
