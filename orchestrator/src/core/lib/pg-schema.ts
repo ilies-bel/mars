@@ -1717,6 +1717,19 @@ const DDL: readonly string[] = [
   `CREATE INDEX IF NOT EXISTS idx_cards_producer_key
      ON cards(producer_key, created_at DESC)`,
 
+  // ── Cards: Closure card support (slice 10 of PRD e2133e10) ───────────────
+  // `kind`: distinguishes 'closure' cards (raised when a Subject's terminal
+  // condition fires) from default 'opening' cards. DEFAULT 'opening' keeps all
+  // pre-existing cards valid without a backfill.
+  //
+  // `subject_id`: the chat_thread id this Closure card references. Opening
+  // cards carry null here (the Subject does not exist yet when the card is
+  // raised). Only Closure cards carry a non-null subject_id.
+  `ALTER TABLE IF EXISTS cards ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'opening'`,
+  `ALTER TABLE IF EXISTS cards ADD COLUMN IF NOT EXISTS subject_id text`,
+  `CREATE INDEX IF NOT EXISTS idx_cards_closure_subject
+     ON cards(subject_id) WHERE kind = 'closure'`,
+
   // ── Subject required fields (slice 8 of PRD e2133e10) ────────────────────
   // Every Subject must declare why it exists (objective) and when it is done
   // (terminal_condition). Both are enforced at the application layer by
