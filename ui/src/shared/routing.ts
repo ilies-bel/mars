@@ -2,7 +2,7 @@ import type { KpiKey } from './schemas'
 import type { StaleWorktreesPayload } from './schemas'
 import { PRIMITIVE_NAMES, type PrimitiveName } from '@/entities/primitive/types'
 
-export type RouteName = 'progress' | 'events' | 'kpi' | 'studio' | 'chat' | 'steward' | 'reflections'
+export type RouteName = 'progress' | 'events' | 'kpi' | 'studio' | 'chat' | 'steward'
 
 /**
  * Derives the current route from the URL hash.
@@ -25,7 +25,6 @@ export const detectRoute = (hash: string): RouteName => {
   if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return 'kpi'
   if (parseStudioRoute(hash) !== null) return 'studio'
   if (hash === '#/steward') return 'steward'
-  if (hash.startsWith('#/reflections')) return 'reflections'
   return 'chat'
 }
 
@@ -51,7 +50,6 @@ export const isKnownRoute = (hash: string): boolean => {
   // Studio requires a non-empty task id — a bare `#/studio/` redirects.
   if (parseStudioRoute(hash) !== null) return true
   if (hash === '#/steward') return true
-  if (hash.startsWith('#/reflections')) return true
   // Overlay routes (task drawer, proposal drawers, primitive drawer,
   // release notes, shortcuts)
   if (hash.startsWith('#/task/')) return true
@@ -132,7 +130,6 @@ const ROUTE_NAMES: readonly RouteName[] = [
   'studio',
   'chat',
   'steward',
-  'reflections',
 ]
 
 const isRouteName = (value: string): value is RouteName =>
@@ -387,25 +384,6 @@ export const parseReleaseNotesRoute = (hash: string): boolean =>
 export const parseShortcutsRoute = (hash: string): boolean => hash === '#/shortcuts'
 
 /**
- * Parses an optional `#/reflections/<originId>` detail sub-route within the
- * Reflection page. Returns the originId when present, `null` otherwise.
- *
- * The list route `#/reflections` returns `null` (no detail selected).
- */
-export const parseReflectionDetailRoute = (hash: string): string | null => {
-  const m = /^#\/reflections\/([^/?#]+)/.exec(hash)
-  if (!m) return null
-  const id = decodeURIComponent(m[1])
-  return id.length > 0 ? id : null
-}
-
-/**
- * Builds the `#/reflections/<originId>` hash for a reflection detail view.
- */
-export const reflectionDetailHash = (originId: string): string =>
-  `#/reflections/${encodeURIComponent(originId)}`
-
-/**
  * Badge count for the Chat nav entry — stale worktrees only.
  * Drafts are surfaced as projection Threads and must not appear here.
  */
@@ -433,8 +411,6 @@ export const pageTitle = (route: RouteName, aqCount = 0): string => {
       return 'mars — studio'
     case 'steward':
       return 'mars — steward'
-    case 'reflections':
-      return 'mars — reflections'
   }
 }
 

@@ -105,11 +105,6 @@ export const NavBar = ({ hash }: NavBarProps) => {
           Steward
         </a>
       </span>
-      <span className="relative">
-        <a className={linkClass(route === 'reflections')} href="#/reflections">
-          Reflections
-        </a>
-      </span>
       <span className="ml-auto">
         <NotificationsToggle />
       </span>

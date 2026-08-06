@@ -8,8 +8,6 @@ import {
   autoRecipeRunsResponseSchema,
   stewardLedgerResponseSchema,
   wywaDeltaResponseSchema,
-  deepReflectionsListResponseSchema,
-  deepReflectionDetailSchema,
   chatConfigSchema,
   chatConversationResponseSchema,
   chatThreadDetailSchema,
@@ -1269,39 +1267,6 @@ export const fetchWywaDelta = async (opts?: {
   return fetchJson(`/api/wywa-delta${qs}`, wywaDeltaResponseSchema)
 }
 
-/**
- * Fetch the list of arc reflection reports, newest-first.
- * Each entry has headline counts but not the full report body.
- */
-export const fetchDeepReflections = async (
-  projectId?: string,
-  opts?: { limit?: number },
-): Promise<import('./schemas').DeepReflectionsListResponse> => {
-  const params: string[] = []
-  if (projectId) params.push(`project=${encodeURIComponent(projectId)}`)
-  if (opts?.limit !== undefined) params.push(`limit=${opts.limit}`)
-  const qs = params.length > 0 ? `?${params.join('&')}` : ''
-  return fetchJson(`/api/deep-reflections${qs}`, deepReflectionsListResponseSchema)
-}
-
-/**
- * Fetch the full detail for one arc reflection report by originId.
- * Returns the complete report body including dissonant calls, verify
- * mismatches, and thrashing patterns.
- */
-export const fetchDeepReflection = async (
-  originId: string,
-  projectId?: string,
-): Promise<import('./schemas').DeepReflectionDetail> => {
-  const params: string[] = []
-  if (projectId) params.push(`project=${encodeURIComponent(projectId)}`)
-  const qs = params.length > 0 ? `?${params.join('&')}` : ''
-  return fetchJson(
-    `/api/deep-reflections/${encodeURIComponent(originId)}${qs}`,
-    deepReflectionDetailSchema,
-  )
-}
-
 export type {
   ActionQueueHistoryResponse,
   ActionQueueItem,
@@ -1337,10 +1302,4 @@ export type {
   WorkerSession,
   WywaDeltaResponse,
   WywaEvent,
-  DeepReflectionSummary,
-  DeepReflectionDetail,
-  DeepReflectionsListResponse,
-  ReflectionDissonantCall,
-  ReflectionVerifyMismatch,
-  ReflectionThrashingPattern,
 } from './schemas'

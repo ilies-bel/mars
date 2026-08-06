@@ -44,7 +44,6 @@ import { KpiDetailPage } from '@/pages/KpiDetailPage'
 import { KpiIndexPage } from '@/pages/KpiIndexPage'
 import { StudioPage } from '@/pages/StudioPage'
 import { StewardPage } from '@/pages/StewardPage'
-import { ReflectionsPage } from '@/pages/ReflectionsPage'
 import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
 import { FallbackBoundary } from '@/components/FallbackBoundary'
 import { AlertNotifier } from '@/shared/notifications/alertNotifier'
@@ -58,7 +57,6 @@ const ROUTE_BASE: Record<RouteName, string> = {
   kpi: '#/events',
   studio: '#/progress',
   steward: '#/steward',
-  reflections: '#/reflections',
 }
 
 /**
@@ -192,8 +190,6 @@ const AppInner = () => {
             <EventsPage />
           ) : route === 'steward' ? (
             <StewardPage />
-          ) : route === 'reflections' ? (
-            <ReflectionsPage />
           ) : (
             <ChatPage />
           )}
