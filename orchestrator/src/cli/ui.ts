@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { resolveContext } from '../core/context'
 import { stopProcess, makeOsStopDeps } from './ui-stop'
 
+type StreamWithUnref = { unref?: () => void; removeAllListeners: (event: string) => unknown; resume: () => unknown }
+
 interface LaunchOptions {
   repo?: string
   port?: string
@@ -67,7 +69,7 @@ const isAlive = (pid: number): boolean => {
   }
 }
 
-export const launchUi = (opts: LaunchOptions): void => {
+export const launchUi = async (opts: LaunchOptions): Promise<void> => {
   const launcher = resolveLauncher()
   if (!launcher) {
     console.error(
@@ -80,9 +82,10 @@ export const launchUi = (opts: LaunchOptions): void => {
   const host = opts.host ?? '127.0.0.1'
   const ctx = resolveContext(opts.repo)
   const logFile = resolve(ctx.stateDir, 'ui.log')
-  // Open the log file for appending before spawning so the child inherits
-  // a valid, open fd from the very first byte it writes.
+  // Touch the log file so the path shown in the banner always resolves even
+  // though the child's output now travels through pipes instead of this fd.
   const logFd = openSync(logFile, 'a')
+  closeSync(logFd)
 
   const args: string[] = []
   if (opts.repo) args.push('--repo', opts.repo)
@@ -90,23 +93,90 @@ export const launchUi = (opts: LaunchOptions): void => {
   if (opts.host) args.push('--host', opts.host)
   if (opts.dev) args.push('--dev')
 
-  // Spawn detached with stdio redirected to the log file (not the tty).
+  // Readiness signal: we pipe stdout and stderr so the banner is only printed
+  // after the child confirms a successful bind ("listening on <url>" on stdout)
+  // or we learn it failed (non-zero exit with a message on stderr).
   //
-  // detached: true — the child becomes the leader of a new process group, so
-  //   it is not killed by SIGHUP when the launching shell closes.
-  // stdio: ['ignore', logFd, logFd] — disconnecting stdin from the tty
-  //   prevents the kernel from sending SIGHUP when the tty hangs up.
-  // child.unref() — the parent's event loop no longer waits for the child,
-  //   allowing the CLI to exit 0 immediately and leave the server running.
+  // We prefer this over port-polling (avoids a timing gap between the OS bind
+  // and the first successful HTTP probe) and over Node IPC (would require
+  // adding process.send() to ui/server/index.ts).
+  //
+  // detached: true — child leads its own process group; survives parent exit.
+  // stdin 'ignore' — no tty, so no SIGHUP when the launching shell closes.
   const child = spawn(process.execPath, [launcher, ...args], {
     detached: true,
-    stdio: ['ignore', logFd, logFd],
+    stdio: ['ignore', 'pipe', 'pipe'],
     env: process.env,
   })
-  // Parent no longer needs its copy of the fd — the child has inherited its own.
-  closeSync(logFd)
+
+  type Outcome =
+    | { ok: true; url: string }
+    | { ok: false; message: string; exitedZero: boolean }
+
+  const outcome = await new Promise<Outcome>((resolve) => {
+    let stdoutBuf = ''
+    let stderrBuf = ''
+    let settled = false
+
+    const settle = (result: Outcome): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(result)
+    }
+
+    // 10-second guard against a hung child.
+    const timer = setTimeout(() => {
+      settle({
+        ok: false,
+        message: 'mars-ui: timed out waiting for server to start (10s)',
+        exitedZero: false,
+      })
+    }, 10_000)
+
+    child.stdout?.setEncoding('utf8')
+    child.stdout?.on('data', (chunk: string) => {
+      stdoutBuf += chunk
+      const m = stdoutBuf.match(/listening on (http:\/\/\S+)/)
+      if (m) settle({ ok: true, url: m[1] })
+    })
+
+    child.stderr?.setEncoding('utf8')
+    child.stderr?.on('data', (chunk: string) => {
+      stderrBuf += chunk
+    })
+
+    child.on('exit', (code) => {
+      if (settled) return
+      if (code === 0) {
+        // "already running" case: server exits 0 with a message on stdout.
+        const msg = stdoutBuf.trim()
+        if (msg) process.stdout.write(msg + '\n')
+        settle({ ok: false, message: '', exitedZero: true })
+      } else {
+        const msg = stderrBuf.trim() || `mars-ui: server exited with code ${code}`
+        settle({ ok: false, message: msg, exitedZero: false })
+      }
+    })
+  })
+
+  // Drain and unref the streams: keep the pipes open so the running child
+  // does not get EPIPE, but stop buffering and release from the event loop.
+  for (const stream of [child.stdout, child.stderr]) {
+    if (!stream) continue
+    stream.removeAllListeners('data')
+    stream.resume()
+    ;(stream as unknown as StreamWithUnref).unref?.()
+  }
   child.unref()
 
+  if (!outcome.ok) {
+    if (outcome.exitedZero) return  // "already running" — message already forwarded
+    process.stderr.write(outcome.message + '\n')
+    process.exit(1)
+  }
+
+  // Only print the success banner after the child has confirmed it is bound.
   const pidFile = getPidFilePath(opts.repo)
   const entry: UiPidEntry = {
     pid: child.pid!,
@@ -118,7 +188,7 @@ export const launchUi = (opts: LaunchOptions): void => {
 
   process.stdout.write(
     `mars-ui  starting (pid=${child.pid})\n` +
-      `         url=http://${host}:${port}\n` +
+      `         url=${outcome.url}\n` +
       `         log=${logFile}\n`,
   )
 }
