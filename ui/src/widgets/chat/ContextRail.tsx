@@ -362,12 +362,25 @@ interface RailPileProps {
   title: string
   count: number
   children: (visibleCount: number) => React.ReactNode
+  /**
+   * When set, the expanded state shows at most `pageSize` items at a time.
+   * A "Load more" button increments the page so operators can page through
+   * a large list without mounting one DOM node per item.
+   * When omitted, the existing behaviour is preserved (show all when expanded).
+   */
+  pageSize?: number
 }
 
-const RailPile = ({ title, count, children }: RailPileProps) => {
+const RailPile = ({ title, count, children, pageSize }: RailPileProps) => {
   const [expanded, setExpanded] = useState(false)
+  const [page, setPage] = useState(1)
   const showToggle = count > 3
-  const visibleCount = expanded ? count : Math.min(count, 3)
+  const visibleCount = expanded
+    ? pageSize !== undefined
+      ? Math.min(page * pageSize, count)
+      : count
+    : Math.min(count, 3)
+  const hasMore = pageSize !== undefined && expanded && visibleCount < count
 
   return (
     <RailSection title={title}>
@@ -377,9 +390,25 @@ const RailPile = ({ title, count, children }: RailPileProps) => {
           type="button"
           className="mt-1 font-mono text-[10px] text-muted-foreground hover:text-foreground hover:underline"
           aria-expanded={expanded}
-          onClick={() => setExpanded((value) => !value)}
+          onClick={() => {
+            if (expanded) {
+              setExpanded(false)
+              setPage(1)
+            } else {
+              setExpanded(true)
+            }
+          }}
         >
           {expanded ? 'Show less ▴' : `See all ${count} ▾`}
+        </button>
+      )}
+      {hasMore && (
+        <button
+          type="button"
+          className="mt-0.5 font-mono text-[10px] text-muted-foreground hover:text-foreground hover:underline"
+          onClick={() => setPage((p) => p + 1)}
+        >
+          {`Load ${Math.min(pageSize!, count - visibleCount)} more ▾`}
         </button>
       )}
     </RailSection>
@@ -452,25 +481,37 @@ const ProposalsPile = ({ proposals, onOpenProposal }: ProposalsPileProps) => {
   )
 
   return (
-    <RailPile title="Proposals" count={drafts.length}>
+    <RailPile title="Proposals" count={drafts.length} pageSize={25}>
       {(visibleCount) =>
         drafts.length === 0 ? (
           emptyArtifacts('No proposals')
         ) : (
           <ul className="flex flex-col gap-0.5">
-            {drafts.slice(0, visibleCount).map((proposal) => (
-              <li key={proposal.id}>
-                <button
-                  type="button"
-                  title={proposal.title}
-                  className="block w-full truncate text-left font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
-                  onClick={() => onOpenProposal?.(proposal)}
-                  data-testid="context-rail-proposal-row"
-                >
-                  {proposal.title}
-                </button>
-              </li>
-            ))}
+            {drafts.slice(0, visibleCount).map((draft) =>
+              onOpenProposal ? (
+                <li key={draft.id}>
+                  <button
+                    type="button"
+                    title={draft.title}
+                    className="block w-full truncate text-left font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
+                    onClick={() => onOpenProposal(draft)}
+                    data-testid="context-rail-proposal-row"
+                  >
+                    {draft.title}
+                  </button>
+                </li>
+              ) : (
+                <li key={draft.id}>
+                  <span
+                    title={draft.title}
+                    className="block w-full truncate font-mono text-[10px] text-foreground/80"
+                    data-testid="context-rail-proposal-row"
+                  >
+                    {draft.title}
+                  </span>
+                </li>
+              ),
+            )}
           </ul>
         )
       }

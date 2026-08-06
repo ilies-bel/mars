@@ -126,6 +126,26 @@ describe('ContextRail piles', () => {
     state.proposals = []
   })
 
+  it('mounts a bounded number of proposal rows when the pile is expanded with a large fixture', async () => {
+    const MANY = 200
+    state.proposals = Array.from({ length: MANY }, (_, i) => proposal(String(i), i))
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    await act(async () => { root.render(rail()) })
+
+    const section = container.querySelector('section[aria-label="Proposals"]') as HTMLElement
+    const toggle = section.querySelector('button[aria-expanded="false"]') as HTMLButtonElement
+    expect(section.querySelectorAll('[data-testid="context-rail-proposal-row"]')).toHaveLength(3)
+    await act(async () => toggle.click())
+    const rendered = section.querySelectorAll('[data-testid="context-rail-proposal-row"]').length
+    expect(rendered).toBeGreaterThan(3)
+    expect(rendered).toBeLessThan(MANY)
+
+    await act(async () => root.unmount())
+    state.proposals = []
+  })
+
   it('shows only drafts and expands every proposal before showing less again', async () => {
     state.proposals = [
       proposal('one', 1), proposal('two', 2), proposal('three', 3), proposal('four', 4),
