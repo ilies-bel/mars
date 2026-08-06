@@ -1047,12 +1047,19 @@ export const startDaemon = async (
   // across `mars daemon restart`).
   applyControlLevers(initialConfig.controlLevers)
   const initialCaps = initialConfig.caps
-  // Document-write dispatch kinds ('glossary-write', 'adr-add', 'vision') are
-  // now coordinated by DocumentWriteCoordinator — no shared semaphore needed.
+  // Document-write dispatch kinds ('glossary-write', 'adr-add',
+  // 'adr-supersede', 'vision') are now coordinated by DocumentWriteCoordinator
+  // — no shared semaphore needed.
   const docCoordinator = new DocumentWriteCoordinator()
   // 'merge' is a tracker-only kind (no per-kind semaphore); excluded here.
   // Document-write kinds use docCoordinator rather than semaphores.
-  const sems: Record<Exclude<DispatchKind, 'merge' | 'arc-verify' | 'glossary-write' | 'adr-add' | 'vision'>, Semaphore> & {
+  const sems: Record<
+    Exclude<
+      DispatchKind,
+      'merge' | 'arc-verify' | 'glossary-write' | 'adr-add' | 'adr-supersede' | 'vision'
+    >,
+    Semaphore
+  > & {
     arcVerify: Semaphore
   } = {
     triage: makeSem(initialCaps.triage),
@@ -2051,6 +2058,69 @@ export const startDaemon = async (
         )
       })
       throw err
+    } finally {
+      releaseTracking()
+    }
+  }
+
+  const dispatchAdrSupersede = async (req: {
+    oldNumber: string
+    newNumber: string
+  }): Promise<void> => {
+    const label = `${req.oldNumber}→${req.newNumber}`
+    const synthetic = `adr-supersede:${label}:${Date.now()}`
+    const releaseTracking = tracker.commitInFlight(synthetic, 'adr-supersede')
+    log(`[adr-supersede] ${label} dispatching`)
+    try {
+      const { runStructuredWrite } = await import('../lib/structured-write')
+      const { supersedeAdrInWorktree } = await import('../lib/adr')
+
+      // Unlike `adr-add` (which allocates a fresh numbered file and so never
+      // collides), a supersede mutates the EXISTING ADR numbered `oldNumber`.
+      // Two concurrent supersedes of the same ADR would race on that one path,
+      // so serialize them on it via the document-write coordinator.
+      await docCoordinator.run(`docs/knowledge/decisions/${req.oldNumber}`, async () => {
+        const outcome = await runStructuredWrite({
+          kind: 'adr',
+          commitMessage: `adr: supersede ${req.oldNumber} with ${req.newNumber}`,
+          integrationBranch,
+          mutate: async (worktreePath) => {
+            await supersedeAdrInWorktree({
+              worktreePath,
+              oldNumber: req.oldNumber,
+              newNumber: req.newNumber,
+            })
+          },
+          enqueueMerge: async (mergeArgs) =>
+            enqueueMergeJobAndAwait({
+              store: getDefaultMergeJobStore(),
+              bus,
+              ...mergeArgs,
+            }),
+        })
+        if (outcome.kind === 'aborted') {
+          log(`[adr-supersede] ${label} -> aborted: ${outcome.reason}`)
+        } else {
+          log(`[adr-supersede] ${label} -> ${outcome.kind}`)
+        }
+      })
+    } catch (err) {
+      log(
+        `[adr-supersede] ${label} failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+      await raiseStructuredWriteFailureAction({
+        kind: 'adr',
+        target: label,
+        error: err,
+      }).catch((raiseErr: unknown) => {
+        log(
+          `[adr-supersede] ${label} failed to raise action-queue item: ${
+            raiseErr instanceof Error ? raiseErr.message : String(raiseErr)
+          }`,
+        )
+      })
     } finally {
       releaseTracking()
     }
@@ -4289,6 +4359,7 @@ export const startDaemon = async (
     handleRefine,
     dispatchGlossaryWrite,
     dispatchAdrAdd,
+    dispatchAdrSupersede,
     dispatchVisionWrite,
     handleInit,
     handleStatus,

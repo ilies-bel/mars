@@ -78,6 +78,7 @@ export type DaemonRequest =
       surfaceForms?: readonly string[]
     }
   | { op: 'adr-add'; title: string; body: string }
+  | { op: 'adr-supersede'; oldNumber: string; newNumber: string }
   /**
    * Write the product vision to `docs/knowledge/vision.md` via the structured-
    * write worktree pipeline. The RPC handler awaits completion before returning,
@@ -175,7 +176,16 @@ export interface DaemonStatusPayload {
   startedAt: string
   inFlight: ReadonlyArray<{
     taskId: string
-    kind: 'triage' | 'implement' | 'refine' | 'glossary-write' | 'adr-add' | 'arc-verify' | 'merge' | 'vision'
+    kind:
+      | 'triage'
+      | 'implement'
+      | 'refine'
+      | 'glossary-write'
+      | 'adr-add'
+      | 'adr-supersede'
+      | 'arc-verify'
+      | 'merge'
+      | 'vision'
   }>
   counts: { draft: number; queued: number; running: number; verifying: number; merging: number; 'vega-reconciling': number }
   /**

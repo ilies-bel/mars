@@ -197,6 +197,20 @@ const adrAddHandler = handler('adr-add', async (req, deps) => {
   return { ok: true, data: { enqueued: true } }
 })
 
+const adrSupersedeHandler = handler('adr-supersede', async (req, deps) => {
+  if (!req.oldNumber || !/^\d+$/.test(req.oldNumber)) {
+    return { ok: false, error: 'adr-supersede requires a numeric oldNumber' }
+  }
+  if (!req.newNumber || !/^\d+$/.test(req.newNumber)) {
+    return { ok: false, error: 'adr-supersede requires a numeric newNumber' }
+  }
+  void deps.dispatchAdrSupersede({
+    oldNumber: req.oldNumber.padStart(4, '0'),
+    newNumber: req.newNumber.padStart(4, '0'),
+  })
+  return { ok: true, data: { enqueued: true } }
+})
+
 /**
  * Write the product vision to `docs/knowledge/vision.md`.
  *
@@ -658,6 +672,7 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   refineHandler,
   glossaryWriteHandler,
   adrAddHandler,
+  adrSupersedeHandler,
   visionWriteHandler,
   initHandler,
   statusHandler,

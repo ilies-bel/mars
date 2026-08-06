@@ -458,6 +458,7 @@ describe('mars proposal take — command coverage', () => {
         handleRefine: notImpl('handleRefine') as DaemonDeps['handleRefine'],
         dispatchGlossaryWrite: notImpl('dispatchGlossaryWrite') as DaemonDeps['dispatchGlossaryWrite'],
         dispatchAdrAdd: notImpl('dispatchAdrAdd') as DaemonDeps['dispatchAdrAdd'],
+        dispatchAdrSupersede: notImpl('dispatchAdrSupersede') as DaemonDeps['dispatchAdrSupersede'],
         dispatchVisionWrite: notImpl('dispatchVisionWrite') as DaemonDeps['dispatchVisionWrite'],
         handleInit: notImpl('handleInit') as DaemonDeps['handleInit'],
         handleStatus: notImpl('handleStatus') as DaemonDeps['handleStatus'],

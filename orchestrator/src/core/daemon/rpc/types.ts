@@ -191,6 +191,7 @@ export interface DaemonDeps {
     aliases?: readonly string[]
   }): Promise<void>
   dispatchAdrAdd(req: { title: string; body: string }): Promise<void>
+  dispatchAdrSupersede(req: { oldNumber: string; newNumber: string }): Promise<void>
   /**
    * Write the product vision to `docs/knowledge/vision.md` via the structured-
    * write worktree pipeline and await completion. Unlike `dispatchGlossaryWrite`

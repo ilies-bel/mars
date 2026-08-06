@@ -115,6 +115,7 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     handleRefine: notImpl('handleRefine') as DaemonDeps['handleRefine'],
     dispatchGlossaryWrite: notImpl('dispatchGlossaryWrite') as DaemonDeps['dispatchGlossaryWrite'],
     dispatchAdrAdd: notImpl('dispatchAdrAdd') as DaemonDeps['dispatchAdrAdd'],
+    dispatchAdrSupersede: notImpl('dispatchAdrSupersede') as DaemonDeps['dispatchAdrSupersede'],
     dispatchVisionWrite: notImpl('dispatchVisionWrite') as DaemonDeps['dispatchVisionWrite'],
     handleInit: notImpl('handleInit') as DaemonDeps['handleInit'],
     handleStatus: notImpl('handleStatus') as DaemonDeps['handleStatus'],
@@ -143,8 +144,9 @@ describe('RPC registry', () => {
     // Stop-task adds one leaf to the existing registry surface.
     // (35 + preview.spawn + preview.status + preview.teardown + merge.cancel
     //  + spend-control.show + spend-control.set + apply-lever + task.contextForWorker
-    //  + mcp.audit.append + set-dispatch + reset-breaker + vision-write).
-    expect(rpcRegistry.size).toBe(47)
+    //  + mcp.audit.append + set-dispatch + reset-breaker + vision-write
+    //  + adr-supersede).
+    expect(rpcRegistry.size).toBe(48)
   })
 
   it('rejects duplicate ops', () => {
