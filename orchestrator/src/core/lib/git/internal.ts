@@ -38,11 +38,61 @@ interface ExecError extends Error {
   stderr?: string
 }
 
+/**
+ * Thrown when a `git checkout <task/*>` is attempted with `cwd` equal to
+ * the repo root. The repo root is the integration checkout; switching its
+ * HEAD to a task branch contaminates it for every in-flight merge.
+ *
+ * Observed 2026-08-05: HEAD at task/mars-fe86ca8f while the task had no DB
+ * row, and a Worker had modified files INSIDE the integration checkout instead
+ * of its worktree — causing `rescue/main-dirty-*` branches in the past and
+ * blocking unrelated merges.
+ *
+ * Path-restore forms (`git checkout [<ref>] -- <path>`) do NOT move HEAD
+ * and are exempt. Switching to non-task refs (e.g. `git checkout main`) is
+ * also exempt — this guard only blocks the `task/*` namespace.
+ */
+export class TaskBranchAtRootError extends Error {
+  constructor(args: readonly string[], cwd: string) {
+    super(
+      `[git-guard] refusing to switch the integration checkout to a task branch: ` +
+        `git ${args.join(' ')} (cwd=${cwd}). ` +
+        `Workers must operate in a dedicated worktree (.mars/worktrees/<id>/), ` +
+        `not in the repo root.`,
+    )
+    this.name = 'TaskBranchAtRootError'
+  }
+}
+
+/**
+ * Guard: throw if about to switch the repo root HEAD to a `task/*` branch.
+ *
+ * Only `git checkout <task/branch>` is blocked. Path-restore forms
+ * (`git checkout [<ref>] -- <path>`) include `--` as an argument separator
+ * and are always allowed. Branch-creation forms (`git checkout -b task/foo`)
+ * also target the `task/` namespace and are blocked: `createWorktree` uses
+ * `git worktree add -b` instead, which carves a separate linked worktree and
+ * does NOT move the root HEAD.
+ *
+ * Called from `runShell` so both `exec` and `execProbe` share the guard.
+ */
+const assertNotTaskBranchAtRoot = (args: readonly string[], cwd: string): void => {
+  if (args[0] !== 'checkout') return
+  // Path-restore: `git checkout [<ref>] -- <file>` — does NOT move HEAD.
+  if (args.includes('--')) return
+  // First non-flag operand is the branch/commit target.
+  const target = args.slice(1).find((a) => !a.startsWith('-'))
+  if (target === undefined || !target.startsWith('task/')) return
+  if (cwd !== repoRoot()) return
+  throw new TaskBranchAtRootError(args, cwd)
+}
+
 const runShell = async (
   cmd: string,
   args: readonly string[],
   opts: ExecOpts,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> => {
+  assertNotTaskBranchAtRoot(args, opts.cwd)
   const ctx = opts.traceCtx
   const r = await runTool(
     {
