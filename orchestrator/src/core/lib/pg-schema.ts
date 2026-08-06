@@ -38,7 +38,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0028'
+export const SCHEMA_VERSION = '0029'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -1716,6 +1716,36 @@ const DDL: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_cards_producer_key
      ON cards(producer_key, created_at DESC)`,
+
+  // ── Subject required fields (slice 8 of PRD e2133e10) ────────────────────
+  // Every Subject must declare why it exists (objective) and when it is done
+  // (terminal_condition). Both are enforced at the application layer by
+  // openSubject(). The DEFAULT '' keeps existing rows (the main-thread sentinel
+  // and alert-spawned threads created before this slice) valid without a
+  // destructive backfill.
+  //
+  // objective: already in the CREATE TABLE as nullable text. Harden it to
+  // NOT NULL so the database enforces what openSubject() guarantees at the
+  // application layer.
+  `DO $$
+   BEGIN
+     -- Backfill before hardening so no legacy NULL violates the new constraint.
+     UPDATE chat_threads SET objective = '' WHERE objective IS NULL;
+     -- Make NOT NULL only if still nullable (idempotent across repeated boots).
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'chat_threads'
+          AND column_name = 'objective' AND is_nullable = 'YES'
+     ) THEN
+       ALTER TABLE chat_threads ALTER COLUMN objective SET NOT NULL;
+       ALTER TABLE chat_threads ALTER COLUMN objective SET DEFAULT '';
+     END IF;
+   END
+   $$`,
+  // terminal_condition: new column that stores why this Subject is considered done
+  // (a human-readable condition string). NOT NULL with DEFAULT '' keeps all
+  // existing rows legal; openSubject() always writes a non-empty value.
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS terminal_condition text NOT NULL DEFAULT ''`,
 ]
 
 /**
