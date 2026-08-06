@@ -174,7 +174,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
       {
         id: 'triage',
         label: 'Look into it',
-        target: { type: 'subthread', title: `Triage: ${sentenceValue(p.cause)}` },
+        target: { type: 'subject', title: `Triage: ${sentenceValue(p.cause)}` },
       },
       ack('later'),
     ],
@@ -203,7 +203,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
       {
         id: 'install',
         label: 'Install it',
-        target: { type: 'subthread', title: 'Install codegraph' },
+        target: { type: 'subject', title: 'Install codegraph' },
       },
       ack('later'),
       silence(CODEGRAPH_SUGGESTION_LEVER, "Don't ask again", 'never'),
@@ -236,7 +236,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
       {
         id: 'report',
         label: 'Write me a report',
-        target: { type: 'subthread', title: 'Why token spend rose' },
+        target: { type: 'subject', title: 'Why token spend rose' },
       },
       ack('later'),
       silence(ARCHITECTURE_REPORT_LEVER, "Don't do that again", 'never'),
@@ -252,7 +252,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
       {
         id: 'fix',
         label: 'Fix it',
-        target: { type: 'subthread', title: 'Fix the integration branch' },
+        target: { type: 'subject', title: 'Fix the integration branch' },
       },
       ack(),
     ],

@@ -443,7 +443,7 @@ vi.mock('../chat-memory-window', () => ({
 vi.mock('../../lib/chat-store', () => ({
   appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: 0 }),
   getThread: vi.fn(),
-  listMainThreadMessages: vi.fn().mockResolvedValue([]),
+  listMainSessionMessages: vi.fn().mockResolvedValue([]),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
 }))
@@ -526,7 +526,7 @@ describe('ChatRunner UIMessage-chunk streaming', () => {
       messages: [],
       feedbacks: new Map(),
     })
-    vi.mocked(chatStore.listMainThreadMessages).mockResolvedValue([])
+    vi.mocked(chatStore.listMainSessionMessages).mockResolvedValue([])
     vi.mocked(chatMemoryWindow.selectMemoryCut).mockResolvedValue(null)
     vi.mocked(chatMemoryWindow.readMainMemoryWindow).mockResolvedValue({ startsAfterSeq: 0, lastUsedAt: null, cutAt: null, reason: null })
     vi.mocked(chatMemoryWindow.advanceMainMemoryWindow).mockResolvedValue(undefined)
@@ -586,7 +586,7 @@ describe('ChatRunner state machine', () => {
       messages: [],
       feedbacks: new Map(),
     })
-    vi.mocked(chatStore.listMainThreadMessages).mockResolvedValue([])
+    vi.mocked(chatStore.listMainSessionMessages).mockResolvedValue([])
     vi.mocked(chatMemoryWindow.selectMemoryCut).mockResolvedValue(null)
     vi.mocked(chatMemoryWindow.readMainMemoryWindow).mockResolvedValue({ startsAfterSeq: 0, lastUsedAt: null, cutAt: null, reason: null })
     vi.mocked(chatMemoryWindow.advanceMainMemoryWindow).mockResolvedValue(undefined)
@@ -752,7 +752,7 @@ describe('ChatRunner state machine', () => {
       }],
       feedbacks: new Map(),
     })
-    vi.mocked(chatStore.listMainThreadMessages).mockResolvedValue([
+    vi.mocked(chatStore.listMainSessionMessages).mockResolvedValue([
       {
         id: 'main-notice', thread_id: 'closed-subthread', role: 'assistant', content: 'Mars lowered workers to two.',
         segments: null, created_at: 0, context_scope: 'main', kind: 'acknowledgment', backing_entity_id: null,
@@ -797,7 +797,7 @@ describe('ChatRunner state machine', () => {
       undefined,
       { startsAfterSeq: 9, reason: 'retention-lapse' },
     )
-    expect(chatStore.listMainThreadMessages).toHaveBeenCalledWith(9)
+    expect(chatStore.listMainSessionMessages).toHaveBeenCalledWith(9)
     expect(chatMemoryWindow.markMainMemoryWindowUsed).toHaveBeenCalledWith(undefined)
     expect(vi.mocked(mockStream).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(chatMemoryWindow.markMainMemoryWindowUsed).mock.invocationCallOrder[0]!,

@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+import { MAIN_THREAD_ID } from '../pg-schema.js'
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-main-thread-sentinel-test-'))
@@ -46,7 +47,7 @@ describe('main thread sentinel', () => {
       `SELECT id, title, origin, status, closed_at, archived_at FROM chat_threads WHERE id = 'main'`,
     )
     expect(rows.rows).toEqual([{
-      id: chat.MAIN_THREAD_ID,
+      id: MAIN_THREAD_ID,
       title: 'Main thread',
       origin: 'main',
       status: 'idle',
@@ -57,7 +58,7 @@ describe('main thread sentinel', () => {
 
   it('survives the DDL replaying on every boot, keeping its history', async () => {
     const { chat, db } = await loadStore(repo)
-    await chat.appendMessage(chat.MAIN_THREAD_ID, 'assistant', 'Nothing on my side.', undefined, {
+    await chat.appendMessage(MAIN_THREAD_ID, 'assistant', 'Nothing on my side.', undefined, {
       kind: 'notice',
     })
 
@@ -66,7 +67,7 @@ describe('main thread sentinel', () => {
 
     expect((await db.execute(`SELECT count(*) AS n FROM chat_threads WHERE id = 'main'`)).rows)
       .toEqual([{ n: 1 }])
-    expect((await chat.getThread(chat.MAIN_THREAD_ID))?.messages).toHaveLength(1)
+    expect((await chat.getThread(MAIN_THREAD_ID))?.messages).toHaveLength(1)
   })
 
   it('reopens if something closed it: it is the delivery target of last resort', async () => {
@@ -75,8 +76,8 @@ describe('main thread sentinel', () => {
 
     await chat.initChatStore()
 
-    expect((await chat.getThread(chat.MAIN_THREAD_ID))?.thread.closed_at).toBeNull()
-    expect(await chat.listClosedSubthreads()).toEqual([])
+    expect((await chat.getThread(MAIN_THREAD_ID))?.thread.closed_at).toBeNull()
+    expect(await chat.listClosedSubjects()).toEqual([])
   })
 
   it('is not a Subject: listThreads never returns it', async () => {
@@ -89,27 +90,27 @@ describe('main thread sentinel', () => {
 
   it('draws no Subthread boundary in the conversation', async () => {
     const { chat } = await loadStore(repo)
-    await chat.appendMessage(chat.MAIN_THREAD_ID, 'assistant', 'Nothing on my side.', undefined, {
+    await chat.appendMessage(MAIN_THREAD_ID, 'assistant', 'Nothing on my side.', undefined, {
       kind: 'notice',
     })
-    expect(await chat.listSubthreadBoundaries()).toEqual([])
+    expect(await chat.listSubjectBoundaries()).toEqual([])
 
     const subthread = await chat.createThread('A real Subject')
-    expect((await chat.listSubthreadBoundaries()).map((boundary) => boundary.subthreadId))
+    expect((await chat.listSubjectBoundaries()).map((boundary: import('../chat-store').SubjectBoundaryApiView) => boundary.subjectId))
       .toEqual([subthread.id])
   })
 
   it('but its messages DO appear in the conversation feed', async () => {
     const { chat } = await loadStore(repo)
-    await chat.appendMessage(chat.MAIN_THREAD_ID, 'assistant', 'Nothing on my side.', undefined, {
+    await chat.appendMessage(MAIN_THREAD_ID, 'assistant', 'Nothing on my side.', undefined, {
       kind: 'notice',
     })
 
     expect(await chat.listConversationEntries()).toEqual([
       expect.objectContaining({
-        subthreadId: chat.MAIN_THREAD_ID,
-        subthreadTitle: 'Main thread',
-        subthreadClosed: false,
+        subjectId: MAIN_THREAD_ID,
+        subjectTitle: 'Main thread',
+        subjectClosed: false,
         content: 'Nothing on my side.',
         kind: 'notice',
       }),

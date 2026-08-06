@@ -10,7 +10,7 @@ interface ChatStoreModule {
   initChatStore: typeof import('../chat-store').initChatStore
   createThread: typeof import('../chat-store').createThread
   appendMessage: typeof import('../chat-store').appendMessage
-  closeSubthread: typeof import('../chat-store').closeSubthread
+  closeSubject: typeof import('../chat-store').closeSubject
   listConversationEntries: typeof import('../chat-store').listConversationEntries
   startThreadFromAlert: typeof import('../chat-store').startThreadFromAlert
   resolveAlertThread: typeof import('../chat-store').resolveAlertThread
@@ -60,9 +60,9 @@ describe('listConversationEntries', () => {
       expect.objectContaining({
         id: firstMessage.id,
         threadId: first.id,
-        subthreadId: first.id,
-        subthreadTitle: 'First subthread',
-        subthreadClosed: false,
+        subjectId: first.id,
+        subjectTitle: 'First subthread',
+        subjectClosed: false,
         role: 'user',
         content: 'first persisted text',
         segments: [],
@@ -73,9 +73,9 @@ describe('listConversationEntries', () => {
       expect.objectContaining({
         id: secondMessage.id,
         threadId: second.id,
-        subthreadId: second.id,
-        subthreadTitle: 'Second subthread',
-        subthreadClosed: true,
+        subjectId: second.id,
+        subjectTitle: 'Second subthread',
+        subjectClosed: true,
         role: 'assistant',
         content: 'second persisted text',
         segments: [],
@@ -134,7 +134,7 @@ describe('listConversationEntries', () => {
     await chat.appendMessage(open.id, 'assistant', 'Situation: still open.', [
       { type: 'result', inputTokens: 90, outputTokens: 10 },
     ])
-    await chat.closeSubthread(closed.id)
+    await chat.closeSubject(closed.id)
 
     const services = createAppServices({
       traceStore: nullTraceStore,
@@ -149,14 +149,14 @@ describe('listConversationEntries', () => {
 
     expect(conversation.boundaries).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        subthreadId: closed.id,
+        subjectId: closed.id,
         startedAt: expect.any(String),
         closedAt: expect.any(String),
         producedTokens: 350,
         carriedTokens: 180,
       }),
       expect.objectContaining({
-        subthreadId: open.id,
+        subjectId: open.id,
         startedAt: expect.any(String),
         closedAt: null,
         producedTokens: 100,

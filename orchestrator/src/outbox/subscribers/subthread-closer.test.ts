@@ -70,8 +70,8 @@ describe('subthread closer outbox subscriber', () => {
   it('closes every matching Subthread once when its declared terminal event arrives', async () => {
     repo = setupRepo()
     const { client, chat, closer, publisher } = await loadModules(repo)
-    const first = await chat.createThread('First proposal', { terminalEvent: 'proposal.promoted', terminalEntityId: 'proposal-1' })
-    const second = await chat.createThread('Second proposal', { terminalEvent: 'proposal.promoted', terminalEntityId: 'proposal-1' })
+    const first = await chat.createThread('First proposal', 'proposal.promoted', 'proposal-1')
+    const second = await chat.createThread('Second proposal', 'proposal.promoted', 'proposal-1')
     const openEnded = await chat.createThread('Open question')
 
     await closer.ensureSubthreadCloser(client)

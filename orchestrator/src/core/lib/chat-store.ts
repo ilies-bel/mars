@@ -12,6 +12,7 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { withTransaction } from './db'
+import { MAIN_THREAD_ID } from './pg-schema.js'
 import { resolveStateClient } from '../store/state-client'
 import type { ChatContextScope } from '../daemon/chat-context'
 
@@ -330,6 +331,48 @@ const PreloadedSubjectTargetSchema = z.object({
   title: z.string().trim().min(1),
 })
 
+/**
+ * A one-tap target the client resolves on its own — it navigates rather than
+ * mutating state, so the daemon only stores it and refuses to execute it.
+ */
+const PreloadedClientTargetSchema = z.object({
+  type: z.literal('client'),
+  op: z.literal('open-proposal-subject'),
+  entityId: z.string().trim().min(1),
+})
+
+/**
+ * A one-tap target that writes the Autonomy level of the lever that produced
+ * the Notice.
+ */
+const PreloadedLeverTargetSchema = z.object({
+  type: z.literal('lever'),
+  name: z.string().trim().min(1),
+  level: z.enum(['off', 'ask', 'tell']),
+})
+
+/**
+ * A one-tap target that opens supporting reading. Client-only and inert: the
+ * daemon never fetches it, and only `https:` is representable.
+ */
+const PreloadedReferenceTargetSchema = z.object({
+  type: z.literal('reference'),
+  url: z
+    .string()
+    .trim()
+    .url()
+    .refine((value) => value.startsWith('https://'), {
+      message: 'reference url must be https',
+    }),
+})
+
+/**
+ * A one-tap target that records that the operator read the Notice.
+ */
+const PreloadedAckTargetSchema = z.object({
+  type: z.literal('ack'),
+})
+
 /** A stable, template-authored response offered below a Notice. */
 export const PreloadedResponseSchema = z.object({
   id: z.string().trim().min(1),
@@ -337,6 +380,10 @@ export const PreloadedResponseSchema = z.object({
   target: z.discriminatedUnion('type', [
     PreloadedVerbTargetSchema,
     PreloadedSubjectTargetSchema,
+    PreloadedClientTargetSchema,
+    PreloadedLeverTargetSchema,
+    PreloadedReferenceTargetSchema,
+    PreloadedAckTargetSchema,
   ]),
 })
 export type PreloadedResponse = z.infer<typeof PreloadedResponseSchema>
@@ -498,7 +545,7 @@ const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
     content: row.content as string,
     segments: rawSegments != null ? (JSON.parse(rawSegments) as unknown) : null,
     created_at: row.created_at as number,
-    context_scope: row.context_scope === 'main' ? 'main' : 'subject',
+    context_scope: row.context_scope === 'main' ? 'main' : 'subthread',
     kind: (rawKind === 'validation' || rawKind === 'situation' || rawKind === 'notice' || rawKind === 'context_line' ? rawKind : 'acknowledgment') as ChatMessageKind,
     backing_entity_id: (row.backing_entity_id as string | null) ?? null,
   }
@@ -540,7 +587,7 @@ export const createThread = async (
     if (firstUserMessage !== undefined) {
       await tx.execute({
         sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind, backing_entity_id)
-              VALUES (?, ?, 'user', ?, ?, ?, 'subject', 'acknowledgment', NULL)`,
+              VALUES (?, ?, 'user', ?, ?, ?, 'subthread', 'acknowledgment', NULL)`,
         args: [
           randomUUID(),
           id,
@@ -695,8 +742,8 @@ export interface ThreadListOptions {
  */
 export const listThreads = async (options: ThreadListOptions = {}): Promise<ThreadPreview[]> => {
   const c = stateClient()
-  const where = ['t.closed_at IS NULL']
-  const args: string[] = []
+  const where = ['t.closed_at IS NULL', 't.id <> ?']
+  const args: string[] = [MAIN_THREAD_ID]
 
   if (options.parentThreadId) {
     where.push('t.parent_thread_id = ?')
@@ -780,12 +827,16 @@ export const listConversationEntries = async (): Promise<ChatConversationEntryAp
  */
 export const listSubjectBoundaries = async (): Promise<SubjectBoundaryApiView[]> => {
   const c = stateClient()
-  const result = await c.execute(`
+  const result = await c.execute({
+    sql: `
     SELECT t.id, t.created_at, t.closed_at, m.segments, m.seq
       FROM chat_threads t
  LEFT JOIN chat_messages m ON m.thread_id = t.id
+     WHERE t.id <> ?
      ORDER BY t.created_at ASC, t.id ASC, m.seq ASC
-  `)
+  `,
+    args: [MAIN_THREAD_ID],
+  })
   const boundaries = new Map<string, SubjectBoundaryApiView>()
   for (const row of result.rows as unknown as Record<string, unknown>[]) {
     const subjectId = row.id as string
@@ -916,7 +967,7 @@ export const appendMessage = async (
   const segmentsJson = segments !== undefined ? JSON.stringify(segments) : null
   const kind: ChatMessageKind = opts?.kind ?? 'acknowledgment'
   const backingEntityId = opts?.backingEntityId ?? null
-  const contextScope = opts?.contextScope ?? (kind === 'situation' || kind === 'notice' ? 'main' : 'subject')
+  const contextScope = opts?.contextScope ?? (kind === 'situation' || kind === 'notice' ? 'main' : 'subthread')
   await c.execute({
     sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind, backing_entity_id)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,

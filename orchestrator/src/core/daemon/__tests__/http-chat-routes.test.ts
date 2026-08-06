@@ -45,11 +45,11 @@ describe('GET /view/chat/conversation', () => {
       snoozeItem: async () => {}, recipeCatalog: nullRecipeCatalog, traceStore: nullTraceStore,
       appServices: stubAppServices({
         viewChatConversation: async () => ({ entries: [{
-          id: 'message-1', seq: 42, threadId: 'subthread-1', subthreadId: 'subthread-1', subthreadTitle: 'A subthread', subthreadClosed: false,
+          id: 'message-1', seq: 42, threadId: 'subthread-1', subjectId: 'subthread-1', subjectTitle: 'A subthread', subjectClosed: false,
           role: 'assistant', content: 'Persisted narration', segments: [], createdAt: '2026-01-01T00:00:00.000Z',
           kind: 'acknowledgment', backingEntityId: null, resolution: null,
         }], boundaries: [{
-          subthreadId: 'subthread-1', startedAt: '2026-01-01T00:00:00.000Z', closedAt: null, producedTokens: 25, carriedTokens: 20,
+          subjectId: 'subthread-1', startedAt: '2026-01-01T00:00:00.000Z', closedAt: null, producedTokens: 25, carriedTokens: 20,
         }], memoryStartsAfterSeq: 42, memoryCutAt: 1_700_000_000_000, memoryCutReason: 'capacity' }),
       }),
     })
@@ -59,9 +59,9 @@ describe('GET /view/chat/conversation', () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual(expect.objectContaining({
       entries: [expect.objectContaining({
-        seq: 42, subthreadTitle: 'A subthread', content: 'Persisted narration',
+        seq: 42, subjectTitle: 'A subthread', content: 'Persisted narration',
       })],
-      boundaries: [expect.objectContaining({ subthreadId: 'subthread-1', producedTokens: 25, carriedTokens: 20 })],
+      boundaries: [expect.objectContaining({ subjectId: 'subthread-1', producedTokens: 25, carriedTokens: 20 })],
       memoryStartsAfterSeq: 42,
       memoryCutAt: 1_700_000_000_000,
       memoryCutReason: 'capacity',
@@ -197,7 +197,7 @@ const messageEvent = (text: string): unknown => ({
 const {
   setMessageFeedback: mockSetMessageFeedback,
   clearMessageFeedback: mockClearMessageFeedback,
-  closeSubthread: mockCloseSubthread,
+  closeSubject: mockCloseSubthread,
 } = await import('../../lib/chat-store')
 
 const nullRecipeCatalog: RecipeCatalog = {

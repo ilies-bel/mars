@@ -38,7 +38,7 @@ import { corePurgeTask } from './purge-task'
 import {
   appendMessage,
   getThread,
-  listMainThreadMessages,
+  listMainSessionMessages,
   setThreadPosture,
   setThreadStatus,
   updateThreadTitle,
@@ -1036,7 +1036,7 @@ export class ChatRunner {
       const memoryCut = await selectMemoryCut(undefined, this.conversationMemory)
       if (memoryCut) await advanceMainMemoryWindow(undefined, memoryCut)
       const memoryWindow = await readMainMemoryWindow()
-      const mainThreadMessages = await listMainThreadMessages(memoryWindow.startsAfterSeq)
+      const mainThreadMessages = await listMainSessionMessages(memoryWindow.startsAfterSeq)
       const mainPrefix = buildApiInput(buildMainThreadPrefix(mainThreadMessages))
       const subthreadInput = buildApiInput(
         transcript.filter((message) => message.context_scope !== 'main' && message.kind !== 'situation'),

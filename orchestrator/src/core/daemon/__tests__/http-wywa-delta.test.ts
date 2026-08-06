@@ -303,7 +303,7 @@ describe('GET /view/wywa-delta — chat thread events', () => {
   it('surfaces closed Subthreads as closed-subthread items', async () => {
     const { httpServer, chatStore } = await loadModules(repo)
     const thread = await chatStore.createThread('idle-thread')
-    await chatStore.closeSubthread(thread.id)
+    await chatStore.closeSubject(thread.id)
     const { port, close } = await httpServer.startHttpServer(makeDeps())
     try {
       const res = await fetch(`http://127.0.0.1:${port}/view/wywa-delta`)

@@ -28,7 +28,7 @@ describe('Subthread Situation report', () => {
     process.env.MARS_REPO = repo
     const chatStore = await import('../../lib/chat-store')
     await chatStore.initChatStore()
-    const human = await chatStore.createThread('Review deploy', { situationReport: situation })
+    const human = await chatStore.createThread('Review deploy', undefined, undefined, situation)
     const alert = await chatStore.startThreadFromAlert('arc-1', 'Deploy failed', {
       type: 'alert', kind: 'failed', entityId: 'arc-1', priority: 'high',
       title: 'Deploy failed', whyNow: 'verification failed', actions: [], resolved: false,

@@ -29,7 +29,7 @@ const conversationFeed = async (
 ): Promise<Array<{ content: string; subthreadId: string; kind: string }>> =>
   (await chat.listConversationEntries()).map((entry) => ({
     content: entry.content,
-    subthreadId: entry.subthreadId,
+    subthreadId: entry.subjectId,
     kind: entry.kind,
   }))
 
@@ -240,7 +240,7 @@ describe('conversation notice delivery', () => {
       priority: 'routine',
       hasActiveRuns: () => true,
     })
-    await chat.closeSubthread(subthread.id)
+    await chat.closeSubject(subthread.id)
 
     expect((await chat.getThread(subthread.id))?.thread.closed_at).not.toBeNull()
     expect(await conversationFeed(chat)).toEqual([

@@ -117,13 +117,12 @@ describe('openSubject', () => {
     })
 
     expect(thread.id).toBeTruthy()
-    expect(thread.objective).toBe('Fix the failing tests')
 
     // Exactly one Subject row (excluding the 'main' sentinel seeded by the schema).
     const threads = await chat.listThreads()
     const subjects = threads.filter((t) => t.id !== 'main')
     expect(subjects).toHaveLength(1)
-    expect(subjects[0].objective).toBe('Fix the failing tests')
+    expect(subjects[0].id).toBe(thread.id)
   })
 
   it('the thrown error identifies the failing field', async () => {

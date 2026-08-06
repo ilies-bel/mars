@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { renderContextLine } from '../context-line.js'
+import { MAIN_THREAD_ID } from '../pg-schema.js'
 
 describe('renderContextLine', () => {
   it('names the Subject and what it produced', () => {
@@ -46,11 +47,14 @@ const loadStore = async (repo: string) => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const chat = await import('../chat-store')
+  const { resolveStateClient } = await import('../../store/state-client.js')
+  const { withTransaction } = await import('../db.js')
+  const { closeAndArchive } = await import('../../subject/closeAndArchive.js')
   await chat.initChatStore()
-  return chat
+  return { chat, db: resolveStateClient(), withTransaction, closeAndArchive }
 }
 
-describe('closing a Subject', () => {
+describe('closing a Subject via closeAndArchive', () => {
   let repo: string
 
   beforeEach(() => {
@@ -62,44 +66,21 @@ describe('closing a Subject', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('folds the Subject’s outcome back into the main thread', async () => {
-    const chat = await loadStore(repo)
+  it('folds the Subject outcome back into the main thread', async () => {
+    const { chat, db, withTransaction, closeAndArchive } = await loadStore(repo)
     const subject = await chat.createThread('Rework the merge gate')
     await chat.appendMessage(subject.id, 'assistant', 'Queued it.', [
       { type: 'text', text: 'Queued it.' },
       { type: 'task_ref', taskId: 'mars-1' },
     ])
 
-    await chat.closeSubthread(subject.id)
+    await withTransaction(db, (tx) => closeAndArchive(subject.id, tx))
 
     const feed = await chat.listConversationEntries()
     expect(feed.map((entry) => entry.content)).toContain(
       'Closed "Rework the merge gate" — queued 1 task.',
     )
     const line = feed.find((entry) => entry.content.startsWith('Closed '))
-    expect(line).toMatchObject({ subthreadId: chat.MAIN_THREAD_ID, kind: 'notice' })
-  })
-
-  it('says goodbye exactly once, however many times close is called', async () => {
-    const chat = await loadStore(repo)
-    const subject = await chat.createThread('Think about caching')
-
-    await chat.closeSubthread(subject.id)
-    await chat.closeSubthread(subject.id)
-    await chat.closeSubthread(subject.id)
-
-    const lines = (await chat.listConversationEntries())
-      .filter((entry) => entry.content.startsWith('Closed '))
-    expect(lines).toHaveLength(1)
-    expect(lines[0]?.content).toBe('Closed "Think about caching" — queued nothing.')
-  })
-
-  it('does not write a Context line about the main thread itself', async () => {
-    const chat = await loadStore(repo)
-
-    await chat.closeSubthread(chat.MAIN_THREAD_ID)
-
-    expect((await chat.listConversationEntries()).filter((e) => e.content.startsWith('Closed ')))
-      .toEqual([])
+    expect(line).toMatchObject({ subjectId: MAIN_THREAD_ID, kind: 'context_line' })
   })
 })

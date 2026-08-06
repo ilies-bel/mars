@@ -31,7 +31,8 @@ describe('gate-fix-steward outbox subscriber', () => {
     const client = resolveQueueClient()
     const { addVerifyGate, quarantineVerifyGate } = await import('../../core/verify-gates.js')
     const { publishWithRetry } = await import('../../bus/publisher.js')
-    const { createThread, getThread, MAIN_THREAD_ID } = await import('../../core/lib/chat-store.js')
+    const { createThread, getThread } = await import('../../core/lib/chat-store.js')
+    const { MAIN_THREAD_ID } = await import('../../core/lib/pg-schema.js')
     const subscriber = await import('./gate-fix-steward.js')
     const gateId = await addVerifyGate({
       scope: 'orchestrator', name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'],

@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { DbClient } from '../../core/lib/db.js'
+import { MAIN_THREAD_ID } from '../../core/lib/pg-schema.js'
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(join(tmpdir(), 'mars-failure-conversation-notices-test-'))
@@ -64,7 +65,7 @@ describe('failure conversation notices', () => {
     // No run is active, so the Notice lands on the main thread rather than
     // hijacking the idle Subject created in beforeEach.
     expect((await chat.listThreads())[0]?.title).toBe('Current work')
-    const detail = await chat.getThread(chat.MAIN_THREAD_ID)
+    const detail = await chat.getThread(MAIN_THREAD_ID)
     expect(detail?.messages).toEqual([
       expect.objectContaining({
         role: 'assistant',
@@ -79,7 +80,7 @@ describe('failure conversation notices', () => {
     await notices.drainFailureConversationNotices(client, () => Date.now() + notices.FAILURE_NOTICE_COALESCE_MS + 1)
     await notices.flushFailureConversationNotices(client, Date.now() + notices.FAILURE_NOTICE_COALESCE_MS * 2 + 1)
 
-    expect((await chat.getThread(chat.MAIN_THREAD_ID))?.messages).toHaveLength(2)
+    expect((await chat.getThread(MAIN_THREAD_ID))?.messages).toHaveLength(2)
   })
 
   it('keeps different failure signatures in separate batches and ignores replay', async () => {
@@ -90,7 +91,7 @@ describe('failure conversation notices', () => {
     await notices.drainFailureConversationNotices(client, () => Date.now())
     await notices.flushFailureConversationNotices(client, Date.now() + notices.FAILURE_NOTICE_COALESCE_MS)
 
-    const messages = (await chat.getThread(chat.MAIN_THREAD_ID))?.messages ?? []
+    const messages = (await chat.getThread(MAIN_THREAD_ID))?.messages ?? []
     expect(messages).toHaveLength(2)
     expect(messages.map((message) => message.content).join('\n')).toContain('integration branch has uncommitted changes')
 

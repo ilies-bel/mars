@@ -274,7 +274,7 @@ export interface AppServices {
   viewChatHistory: () => Promise<{ threads: import('./lib/chat-store').ChatThreadApiView[] }>
   viewChatConversation: () => Promise<{
     entries: import('./lib/chat-store').ChatConversationEntryApiView[]
-    boundaries: import('./lib/chat-store').SubthreadBoundaryApiView[]
+    boundaries: import('./lib/chat-store').SubjectBoundaryApiView[]
     memoryStartsAfterSeq: number
     memoryCutAt: number | null
     memoryCutReason: import('./daemon/chat-memory-window').MemoryCutReason | null
@@ -378,7 +378,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   const openSubthread: AppServices['openSubthread'] = async ({ title, acknowledgment }) => {
     const { appendMessage, createThread } = await import('./lib/chat-store')
     const situation = await buildSubthreadSituationReport()
-    const thread = await createThread(title, { situationReport: situation })
+    const thread = await createThread(title, undefined, undefined, situation)
     await appendMessage(
       thread.id,
       'user',
@@ -1327,17 +1327,17 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   }
 
   const viewChatHistory: AppServices['viewChatHistory'] = async () => {
-    const { listClosedSubthreads, toThreadApiView } = await import('./lib/chat-store')
-    const threads = await listClosedSubthreads()
+    const { listClosedSubjects, toThreadApiView } = await import('./lib/chat-store')
+    const threads = await listClosedSubjects()
     return { threads: threads.map((t) => toThreadApiView(t, t.last_message_role, t.first_user_message)) }
   }
 
   const viewChatConversation: AppServices['viewChatConversation'] = async () => {
-    const { listConversationEntries, listSubthreadBoundaries } = await import('./lib/chat-store')
+    const { listConversationEntries, listSubjectBoundaries } = await import('./lib/chat-store')
     const { readMainMemoryWindow } = await import('./daemon/chat-memory-window')
     const [entries, boundaries, memoryWindow] = await Promise.all([
       listConversationEntries(),
-      listSubthreadBoundaries(),
+      listSubjectBoundaries(),
       readMainMemoryWindow(),
     ])
     return {

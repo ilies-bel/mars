@@ -12,6 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { DbClient } from '../../db.js'
+import { MAIN_THREAD_ID } from '../../pg-schema.js'
 
 const DAY = 24 * 60 * 60 * 1000
 const NOW = 1_800_000_000_000
@@ -105,7 +106,7 @@ describe('notice detectors', () => {
       await addProposal(db, 'prop-1', 'A draft', 1)
       await addProposal(db, 'prop-2', 'Another draft', 2)
 
-      await chat.appendMessage(chat.MAIN_THREAD_ID, 'assistant', 'Nothing on my side.', [
+      await chat.appendMessage(MAIN_THREAD_ID, 'assistant', 'Nothing on my side.', [
         { type: 'text', text: 'Nothing on my side.' },
         {
           type: 'preloaded_responses',
