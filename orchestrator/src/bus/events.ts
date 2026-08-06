@@ -234,6 +234,20 @@ export const EventMap = {
     targetTaskId: z.string(),
     at: z.string(),
   }),
+  /**
+   * Emitted once per away→present transition detected by `recordPing`. The
+   * away-digest subscriber reacts to this event by composing a narration
+   * digest for the span and writing one `main_thread_entries` row.
+   *
+   * `transitionId` is the `presence_transitions.id` for this span.
+   * `fromMs` / `toMs` are the bounding last-seen timestamps (epoch ms) that
+   * define the away span: events that landed between them are narrated.
+   */
+  'presence.transition': z.object({
+    transitionId: z.number().int(),
+    fromMs: z.number().int(),
+    toMs: z.number().int(),
+  }),
 } as const;
 
 /** Union of every registered event type name. */

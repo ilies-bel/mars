@@ -14,6 +14,7 @@
  */
 
 import type { DbClient } from '../lib/db.js'
+import { publishWithRetry } from '../../bus/publisher.js'
 
 /**
  * Returns `true` when the gap between `prev` and `next` (epoch-milliseconds)
@@ -53,11 +54,18 @@ export async function recordPing(
       : null
 
   if (detectTransition(prev, ts, thresholdMs)) {
-    await db.execute(
-      `INSERT INTO presence_transitions (from_ms, to_ms, threshold_ms, recorded_at)
-       VALUES (?, ?, ?, ?)`,
-      [prev!, ts, thresholdMs, Date.now()],
-    )
+    const transitionResult = await db.execute({
+      sql: `INSERT INTO presence_transitions (from_ms, to_ms, threshold_ms, recorded_at)
+            VALUES (?, ?, ?, ?)
+            RETURNING id`,
+      args: [prev!, ts, thresholdMs, Date.now()],
+    })
+    const transitionId = Number(transitionResult.rows[0].id)
+    await publishWithRetry(db, 'presence.transition', {
+      transitionId,
+      fromMs: prev!,
+      toMs: ts,
+    })
   }
 
   await db.execute(

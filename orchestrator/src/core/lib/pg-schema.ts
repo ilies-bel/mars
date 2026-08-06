@@ -1644,6 +1644,22 @@ const DDL: readonly string[] = [
     pressure          text NOT NULL
   )`,
 
+  // ── main thread entries (slice 4 of PRD e2133e10) ─────────────────────────
+  // Operator-facing narration entries surfaced in the main thread. Each row
+  // records one unit of system-authored speech (e.g. an away digest composed
+  // on return). The `transition_id` column is a UNIQUE foreign key into
+  // `presence_transitions` so the away-digest subscriber is idempotent: a
+  // double-fire on the same transition writes at most one row.
+  `CREATE TABLE IF NOT EXISTS main_thread_entries (
+    id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    kind          text        NOT NULL,
+    transition_id bigint      UNIQUE,
+    payload       jsonb       NOT NULL,
+    created_at    timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_main_thread_entries_created_at
+     ON main_thread_entries(created_at DESC)`,
+
   // ── presence tracking (slice 2 of PRD e2133e10) ───────────────────────────
   // Single-row last-seen timestamp from the UI client heartbeat. The daemon
   // compares each incoming ping against this value to detect away→present
@@ -1743,6 +1759,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'deferrals',
   'presence_pings',
   'presence_transitions',
+  'main_thread_entries',
 ]
 
 /**
@@ -1760,6 +1777,7 @@ export const IDENTITY_COLUMNS: Readonly<Record<string, string>> = {
   mcp_worker_audit: 'id',
   conversation_notice_batches: 'id',
   presence_transitions: 'id',
+  main_thread_entries: 'id',
 }
 
 /**
