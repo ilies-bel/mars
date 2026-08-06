@@ -135,8 +135,12 @@ const ARC_LIVE_PRIORITY: readonly Cluster[] = ['In progress', 'Queued']
 
 /**
  * Shared arc status: the cluster that best represents the arc's current work.
- * Live work (In progress, Queued) surfaces above historical failure or blocked
- * state, so an arc with an active recovery shows "Queued", not "Failed".
+ * Live work (In progress, Queued) surfaces above blocked or failed state, so an
+ * arc with an active recovery shows "Queued", not "Failed".
+ *
+ * When no live work exists, Blocked wins over Failed so that a dependency chain
+ * filed with `--blocked-by` is visible in the Blocked column rather than being
+ * swallowed by the Failed column of the origin it is waiting on.
  *
  * Returns `null` when every member is Done (arc is fully completed — not shown
  * on either surface).
@@ -149,8 +153,8 @@ export const arcPlacementCluster = (
 ): Cluster | null => {
   const live = ARC_LIVE_PRIORITY.find((c) => tasks.some((t) => t.cluster === c))
   if (live) return live
-  if (tasks.some((t) => t.cluster === 'Failed')) return 'Failed'
   if (tasks.some((t) => t.cluster === 'Blocked')) return 'Blocked'
+  if (tasks.some((t) => t.cluster === 'Failed')) return 'Failed'
   return null // all Done
 }
 

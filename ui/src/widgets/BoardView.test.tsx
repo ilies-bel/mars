@@ -34,7 +34,9 @@ const emptyByCluster = () => ({
 })
 
 describe('buildArcsByCluster', () => {
-  it('shows an arc with a failed task and blocked dependent in the Failed column', () => {
+  it('shows an arc with a failed origin and a blocked dependent in the Blocked column', () => {
+    // A blocked dependent waiting on a dependency should surface in Blocked, not
+    // swallowed by the Failed column of the origin it is waiting behind.
     const failedOrigin = task({
       id: 'origin-1',
       cluster: 'Failed',
@@ -50,8 +52,8 @@ describe('buildArcsByCluster', () => {
 
     const arcs = buildArcsByCluster([failedOrigin, blockedDependent], [])
 
-    expect(arcs.Failed).toHaveLength(1)
-    expect(arcs.Blocked).toHaveLength(0)
+    expect(arcs.Blocked).toHaveLength(1)
+    expect(arcs.Failed).toHaveLength(0)
   })
 
   it('shows a recovery Arc once, using its current queued state rather than an older failure', () => {
@@ -140,6 +142,101 @@ describe('buildArcsByCluster', () => {
     const arcs = buildArcsByCluster([first, second], [])
 
     expect(arcs.Queued.map((arc) => arc.id)).toEqual(['legacy-1', 'legacy-2'])
+  })
+
+  // ── Regression: blocked tasks must appear in the Blocked column (mars-fe1a057f) ──
+
+  it('places a standalone blocked task in the Blocked column', () => {
+    // Simplest case: a single blocked task with no arc siblings.
+    // It must appear in Blocked (badge count > 0), not vanish into another column.
+    const blocked = task({
+      id: 'standalone-blocked',
+      cluster: 'Blocked',
+      status: 'blocked',
+      originId: 'standalone-blocked',
+    })
+
+    const arcs = buildArcsByCluster([blocked], [])
+
+    expect(arcs.Blocked).toHaveLength(1)
+    expect(arcs.Blocked[0]!.id).toBe('standalone-blocked')
+    expect(arcs.Queued).toHaveLength(0)
+    expect(arcs.Failed).toHaveLength(0)
+  })
+
+  it('groups two blocked tasks sharing an origin into one Blocked card', () => {
+    // Mirrors the live symptom: mars-5ddbd0 and mars-e3f5ab45 both blocked,
+    // same origin — should produce a SINGLE card in the Blocked column.
+    const blockedA = task({
+      id: 'blocked-a',
+      cluster: 'Blocked',
+      status: 'blocked',
+      originId: 'origin-x',
+    })
+    const blockedB = task({
+      id: 'blocked-b',
+      cluster: 'Blocked',
+      status: 'blocked',
+      originId: 'origin-x',
+    })
+    const failedOrigin = task({
+      id: 'origin-x',
+      cluster: 'Failed',
+      status: 'failed',
+      originId: 'origin-x',
+    })
+
+    const arcs = buildArcsByCluster([failedOrigin, blockedA, blockedB], [])
+
+    // One Blocked card for the arc (not two, not zero, not in Failed)
+    expect(arcs.Blocked).toHaveLength(1)
+    expect(arcs.Blocked[0]!.id).toBe('origin-x')
+    expect(arcs.Failed).toHaveLength(0)
+    const taskIds = arcs.Blocked[0]!.tasks.map((t) => t.id).sort()
+    expect(taskIds).toEqual(['blocked-a', 'blocked-b', 'origin-x'])
+  })
+
+  it('renders two Blocked cards for two independent blocked arcs', () => {
+    // Mirrors the live symptom with two distinct origins:
+    //   arc-1: mars-ebcc5b92 (blocked, origin 38898433-...)
+    //   arc-2: mars-5ddbd0 + mars-e3f5ab45 (blocked, origin mars-d733b012)
+    const blocked1 = task({
+      id: 'blocked-1',
+      cluster: 'Blocked',
+      status: 'blocked',
+      originId: 'failed-origin-a',
+    })
+    const failedA = task({
+      id: 'failed-origin-a',
+      cluster: 'Failed',
+      status: 'failed',
+      originId: 'failed-origin-a',
+    })
+    const blocked2 = task({
+      id: 'blocked-2',
+      cluster: 'Blocked',
+      status: 'blocked',
+      originId: 'failed-origin-b',
+    })
+    const blocked3 = task({
+      id: 'blocked-3',
+      cluster: 'Blocked',
+      status: 'blocked',
+      originId: 'failed-origin-b',
+    })
+    const failedB = task({
+      id: 'failed-origin-b',
+      cluster: 'Failed',
+      status: 'failed',
+      originId: 'failed-origin-b',
+    })
+
+    const arcs = buildArcsByCluster([failedA, blocked1, failedB, blocked2, blocked3], [])
+
+    expect(arcs.Blocked).toHaveLength(2)
+    expect(arcs.Failed).toHaveLength(0)
+    const arcIds = arcs.Blocked.map((a) => a.id).sort()
+    expect(arcIds).toEqual(['failed-origin-a', 'failed-origin-b'])
   })
 })
 

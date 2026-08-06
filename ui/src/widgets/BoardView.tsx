@@ -66,8 +66,9 @@ const compareNewestFirst = (a: ProgressTask, b: ProgressTask): number =>
 /**
  * Collapse the open task projection into its durable Arc roots. An Arc that
  * has a recovery in flight is deliberately placed by that live recovery rather
- * than its historical failure. A blocked dependent does not supersede a
- * failure: it is stuck behind it and needs triage in the Failed column.
+ * than its historical failure. A blocked dependent surfaces in the Blocked
+ * column even when the origin is Failed, so dependency chains filed with
+ * `--blocked-by` remain visible rather than being swallowed by the Failed column.
  *
  * origin_id is a dual-namespace column: it holds either a task id or a proposal
  * id (arcs produced by `mars proposal slice` carry origin_id = proposal_id).

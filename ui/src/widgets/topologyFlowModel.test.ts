@@ -121,12 +121,18 @@ describe('arcPlacementCluster — shared arc status helper', () => {
     expect(arcPlacementCluster([t('Queued'), t('In progress')])).toBe('In progress')
   })
 
-  it('returns Failed when no live tasks exist but some are failed', () => {
+  it('returns Failed when no live or blocked tasks exist but some are failed', () => {
     expect(arcPlacementCluster([t('Failed'), t('Done')])).toBe('Failed')
   })
 
   it('returns Blocked when all remaining tasks are blocked', () => {
     expect(arcPlacementCluster([t('Blocked'), t('Done')])).toBe('Blocked')
+  })
+
+  it('returns Blocked when arc has both failed and blocked tasks (Blocked > Failed)', () => {
+    // Blocked wins over Failed so dependency chains filed with --blocked-by are
+    // visible in the Blocked column rather than swallowed by the Failed column.
+    expect(arcPlacementCluster([t('Failed'), t('Blocked')])).toBe('Blocked')
   })
 
   it('matches buildTopology dom for a mixed done/active arc', () => {
