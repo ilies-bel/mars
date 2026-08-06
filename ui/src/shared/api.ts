@@ -413,6 +413,23 @@ export const fetchKpis = async (projectId?: string): Promise<Kpi[]> => {
 }
 
 /**
+ * Silence a lever by setting its autonomy level to 'off'.
+ *
+ * Called when the operator clicks the Silence button on a Card. After this
+ * call, subsequent events from the same `producerKey` will raise no Cards
+ * until the lever is re-enabled via the Levers settings.
+ */
+export const silenceLever = async (producerKey: string): Promise<void> => {
+  const path = `/api/levers/${encodeURIComponent(producerKey)}`
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ level: 'off' }),
+  })
+  if (!r.ok) await throwMutationError(path, r)
+}
+
+/**
  * Fetch the per-arc breakdown for a single KPI key.
  * Returns the full response including window metadata and arc list.
  */

@@ -1123,6 +1123,21 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // POST /api/levers/:key — set the autonomy level for a lever. Body: { level: 'off'|'ask'|'tell' }.
+        // Proxied to the daemon's /levers/:key endpoint. Setting 'off' mutes the
+        // lever so subsequent Card creation from the same producer_key is suppressed.
+        if (path.startsWith('/api/levers/') && req.method === 'POST') {
+          const rawKey = path.slice('/api/levers/'.length)
+          const key = decodeURIComponent(rawKey)
+          if (!key) {
+            return jsonResponse(400, { error: 'lever key is required' })
+          }
+          let body: unknown = {}
+          try { body = await req.json() } catch { /* empty body — will be rejected by daemon */ }
+          const result = await proxyPost(ctx.stateDir, `/levers/${encodeURIComponent(key)}`, body)
+          return jsonResponse(result.status, result.body)
+        }
+
         // Unknown API path (or /events was already handled above).
         return jsonResponse(404, { error: `no route for ${path}` })
       }

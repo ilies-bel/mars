@@ -38,7 +38,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0027'
+export const SCHEMA_VERSION = '0028'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -1699,6 +1699,23 @@ const DDL: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_archive_entries_occurred_at
      ON archive_entries(occurred_at DESC)`,
+
+  // ── Cards (slice 7 of PRD e2133e10) ──────────────────────────────────────
+  // A Card is the surface through which a Subject opens or closes. It travels
+  // with the autonomy level of the lever that produced it (`autonomy_level`)
+  // and the key of that lever (`producer_key`). The operator can silence the
+  // lever from the Card itself: POSTing to /levers/:key with level='off' mutes
+  // future Cards from that producer. `autonomy_level` is the level at creation
+  // time — the card retains historical context even after the lever is changed.
+  `CREATE TABLE IF NOT EXISTS cards (
+    id             text        PRIMARY KEY,
+    autonomy_level text        NOT NULL CHECK (autonomy_level IN ('off', 'ask', 'tell')),
+    producer_key   text        NOT NULL,
+    body           text        NOT NULL DEFAULT '',
+    created_at     bigint      NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_cards_producer_key
+     ON cards(producer_key, created_at DESC)`,
 ]
 
 /**
@@ -1779,6 +1796,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'presence_transitions',
   'main_thread_entries',
   'archive_entries',
+  'cards',
 ]
 
 /**

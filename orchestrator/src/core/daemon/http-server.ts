@@ -2621,6 +2621,48 @@ export const startHttpServer = async (
       }
     }
 
+    // POST /levers/:key — set the autonomy level for a lever key. Body: { level: 'off'|'ask'|'tell' }.
+    // Bypasses the draining gate (config operation, not task work). Setting 'off' mutes the
+    // lever so subsequent createCard calls for the same key return null (no Card raised).
+    {
+      const leverMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/levers\/([^/?]+)(?:\?.*)?$/)
+          : null
+      if (leverMatch && leverMatch[1]) {
+        const key = decodeURIComponent(leverMatch[1])
+        let rawBody = ''
+        req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+        req.on('end', () => {
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(rawBody)
+          } catch {
+            sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+            return
+          }
+          const result = z
+            .object({ level: z.enum(['off', 'ask', 'tell']) })
+            .safeParse(parsed)
+          if (!result.success) {
+            sendJson(res, 400, {
+              ok: false,
+              error: "level is required and must be 'off', 'ask', or 'tell'",
+            })
+            return
+          }
+          try {
+            persistLeverAutonomyLevel(key, result.data.level)
+            sendJson(res, 200, { ok: true, key, level: result.data.level })
+          } catch (err: unknown) {
+            sendError(res, err)
+          }
+        })
+        req.on('error', (err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
     if (req.method !== 'POST') {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' })
       return
