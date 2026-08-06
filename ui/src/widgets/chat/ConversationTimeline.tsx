@@ -120,6 +120,59 @@ export const ConversationTimeline = ({
           const hasMemoryCut =
             memoryStartsAfterSeq > 0 &&
             subthreadEntries.some((e) => e.seq === memoryStartsAfterSeq)
+
+          // A single-message closed subthread with no active thread shows its
+          // message inline below the breadcrumb. The operator has full context
+          // at a glance and there is nothing meaningful to collapse. Multi-message
+          // subthreads, or those rendered while an active thread is open, fold
+          // to a breadcrumb so noise is not replayed into the working view.
+          const showInline = subthreadEntries.length === 1 && activeThreadId == null
+          if (showInline) {
+            const entry = subthreadEntries[0]!
+            const segmentText = entry.segments.filter(isTextSegment).map((segment) => segment.text).join('\n')
+            const body = segmentText || entry.content
+            const isNotice = entry.kind === 'notice'
+            return (
+              <Fragment key={subthreadId}>
+                <ClosedSubthreadBreadcrumb
+                  title={entry.subthreadTitle}
+                  messageCount={1}
+                  boundary={boundary}
+                />
+                <article
+                  data-thread-id={entry.threadId}
+                  data-message-kind={entry.kind}
+                  data-testid={isNotice ? `notice-card-${entry.id}` : undefined}
+                  className={isNotice ? 'rounded-md border border-primary/20 bg-primary/5 p-3' : undefined}
+                >
+                  <header className="mb-1 flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
+                    {isNotice ? (
+                      <span className="text-primary">Mars</span>
+                    ) : (
+                      <span>{entry.subthreadTitle || 'Untitled subthread'}</span>
+                    )}
+                    {!isNotice && <span>closed</span>}
+                    <span>{entry.role} · {entry.kind}</span>
+                    {entry.backingEntityId && <span>{entry.backingEntityId}</span>}
+                    {entry.resolution === 'resolved' && (
+                      <span data-testid="conversation-message-resolved">Resolved</span>
+                    )}
+                  </header>
+                  {isNotice ? (
+                    <TypedBody
+                      id={entry.id}
+                      text={body}
+                      className="whitespace-pre-wrap font-mono text-[13px] text-foreground"
+                    />
+                  ) : (
+                    <p className="whitespace-pre-wrap font-mono text-[13px] text-foreground">{body}</p>
+                  )}
+                </article>
+                {hasMemoryCut && <MemoryBoundaryLine />}
+              </Fragment>
+            )
+          }
+
           return (
             <Fragment key={subthreadId}>
               <ClosedSubthreadBreadcrumb
