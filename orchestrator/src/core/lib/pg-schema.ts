@@ -1692,13 +1692,24 @@ const DDL: readonly string[] = [
     id          text        PRIMARY KEY,
     kind        text        NOT NULL,
     source_kind text        NOT NULL
-                            CHECK (source_kind IN ('alert','notice','silent_completion')),
+                            CHECK (source_kind IN ('alert','notice','silent_completion','subject')),
     source_id   text        NOT NULL,
     occurred_at timestamptz NOT NULL DEFAULT now(),
     provenance  jsonb       NOT NULL DEFAULT '{}'
   )`,
   `CREATE INDEX IF NOT EXISTS idx_archive_entries_occurred_at
      ON archive_entries(occurred_at DESC)`,
+  // ── archive_entries: extend source_kind to include 'subject' (slice 11 of PRD e2133e10) ─
+  // The closeAndArchive gesture inserts an archive_entry with source_kind='subject'.
+  // The inline CHECK above handles fresh databases; this block migrates existing ones
+  // by replacing the old auto-named constraint.
+  `DO $$
+   BEGIN
+     ALTER TABLE archive_entries DROP CONSTRAINT IF EXISTS archive_entries_source_kind_check;
+     ALTER TABLE archive_entries ADD CONSTRAINT archive_entries_source_kind_check
+       CHECK (source_kind IN ('alert','notice','silent_completion','subject'));
+   END
+   $$`,
 
   // ── Cards (slice 7 of PRD e2133e10) ──────────────────────────────────────
   // A Card is the surface through which a Subject opens or closes. It travels

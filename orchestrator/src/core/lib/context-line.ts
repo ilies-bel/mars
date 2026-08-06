@@ -11,7 +11,7 @@
  * actually produced.
  */
 
-import type { DbClient } from './db.js'
+import type { DbTx } from './db.js'
 
 export interface ClosedSubjectFacts {
   title: string
@@ -49,7 +49,7 @@ export const renderContextLine = (facts: ClosedSubjectFacts): string => {
  * was merely discussed.
  */
 export const readClosedSubjectFacts = async (
-  c: DbClient,
+  c: DbTx,
   threadId: string,
 ): Promise<ClosedSubjectFacts | null> => {
   const thread = await c.execute({

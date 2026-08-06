@@ -21,7 +21,7 @@ import { registerSubscriber, fetchPending, advanceCursor } from '../../bus/subsc
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-export type ArchiveSourceKind = 'alert' | 'notice' | 'silent_completion'
+export type ArchiveSourceKind = 'alert' | 'notice' | 'silent_completion' | 'subject'
 
 export interface ArchiveSource {
   /** Specific disposition: e.g. 'resolved', 'acked', 'done'. */
