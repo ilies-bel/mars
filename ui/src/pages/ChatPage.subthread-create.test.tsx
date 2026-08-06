@@ -108,12 +108,14 @@ describe('ChatPage Subthread boundary composer', () => {
     })
     await vi.waitFor(() => expect(container.querySelector('[data-testid="active-subthread"]')).not.toBeNull())
 
-    const activeComposer = container.querySelector('[data-testid="active-subthread"] textarea') as HTMLTextAreaElement
+    // The composer is portaled into the dock outside the scroll container, so
+    // query it from the composer-dock rather than from inside active-subthread.
+    const activeComposer = container.querySelector('[data-testid="composer-dock"] textarea') as HTMLTextAreaElement
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(activeComposer, 'Continue here')
       activeComposer.dispatchEvent(new Event('input', { bubbles: true }))
       activeComposer.dispatchEvent(new Event('change', { bubbles: true }))
-      ;(container.querySelector('[data-testid="active-subthread"] [data-testid="send-btn"]') as HTMLButtonElement).click()
+      ;(container.querySelector('[data-testid="composer-dock"] [data-testid="send-btn"]') as HTMLButtonElement).click()
     })
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledWith({ text: 'Continue here' }, undefined))
     expect(createSubthreadAndSend).toHaveBeenCalledTimes(1)
