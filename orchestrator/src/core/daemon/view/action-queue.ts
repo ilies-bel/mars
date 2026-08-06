@@ -1112,7 +1112,7 @@ export const buildActionQueueView = async ({
     // actions stay on the individual rows).
     const batchActions = (
       lookupFailureKind(DAEMON_KILLED_SIGNATURE)?.actions ?? []
-    ).filter((a) => a.op === 'restart-all-daemon-killed') as {
+    ).filter((a) => a.op === 'continue-all-daemon-killed') as {
       id: string
       label: string
       op: string

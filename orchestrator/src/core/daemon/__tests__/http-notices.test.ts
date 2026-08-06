@@ -44,7 +44,7 @@ const makeDeps = (): HttpServerDeps => ({
   promoteProposal: async () => {}, validateTask: async () => {}, rejectTask: async () => {},
   landWork: async () => {}, investigateWorktree: async () => ({ explanation: '' }),
   diagnoseFailure: async () => ({ diagnosis: '' }), restartDaemon: async () => {},
-  restartAllDaemonKilled: async () => [], isAcceptingWork: () => true, inFlightCount: () => 0,
+  continueAllDaemonKilled: async () => ({ continued: [], degraded: [], skipped: [] }), isAcceptingWork: () => true, inFlightCount: () => 0,
   selfUpdate: async () => {}, runReflect: async () => ({ proposalsRaised: 0 }),
   enableAutoReflect: async () => {}, stepDone: async () => ({ next: null }), snoozeItem: async () => {},
   recipeCatalog, traceStore: nullTraceStore, appServices: stubAppServices(), chatRunner: stubChatRunner(),

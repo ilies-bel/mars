@@ -384,10 +384,12 @@ export interface HttpServerDeps {
    * scheduled; the current process exits shortly after. */
   restartDaemon: () => Promise<void>
   /**
-   * Batch restart: re-queue every failed task that carries the daemon-killed
-   * failure signature. Returns the IDs that were re-queued.
+   * Batch continue: resume every failed task that carries the daemon-killed
+   * failure signature via the continue path, preserving existing worktrees
+   * and commits. Tasks with no resumable state degrade to restart.
+   * Returns a split of continued / degraded / skipped IDs.
    */
-  restartAllDaemonKilled: () => Promise<string[]>
+  continueAllDaemonKilled: () => Promise<{ continued: string[]; degraded: string[]; skipped: string[] }>
   /** Returns `true` while the daemon is accepting work (draining → `false`). */
   isAcceptingWork: () => boolean
   /** Returns the number of tasks currently dispatched and in flight. Used by the self-update drain gate. */
@@ -2759,11 +2761,11 @@ export const startHttpServer = async (
       return
     }
 
-    // POST /actions/restart-all-daemon-killed — batch re-queue, no :id.
-    if (req.url === '/actions/restart-all-daemon-killed') {
+    // POST /actions/continue-all-daemon-killed — batch continue, no :id.
+    if (req.url === '/actions/continue-all-daemon-killed') {
       deps
-        .restartAllDaemonKilled()
-        .then((restarted) => sendJson(res, 200, { ok: true, restarted }))
+        .continueAllDaemonKilled()
+        .then((result) => sendJson(res, 200, { ok: true, ...result }))
         .catch((err: unknown) => sendError(res, err))
       return
     }

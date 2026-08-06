@@ -203,9 +203,9 @@ describe('resolveActionUrl', () => {
     )
   })
 
-  it('uses the dedicated route for batch op: restart-all-daemon-killed (no :id)', () => {
-    expect(resolveActionUrl(base, id, 'restart-all-daemon-killed')).toBe(
-      `${base}/actions/restart-all-daemon-killed`,
+  it('uses the dedicated route for batch op: continue-all-daemon-killed (no :id)', () => {
+    expect(resolveActionUrl(base, id, 'continue-all-daemon-killed')).toBe(
+      `${base}/actions/continue-all-daemon-killed`,
     )
   })
 
@@ -239,12 +239,12 @@ describe('resolveActionOutcome', () => {
     }
   })
 
-  it('returns fire with the dedicated route for restart-all-daemon-killed', () => {
-    const action = { op: 'restart-all-daemon-killed' } as const
+  it('returns fire with the dedicated route for continue-all-daemon-killed', () => {
+    const action = { op: 'continue-all-daemon-killed' } as const
     const outcome = resolveActionOutcome(base, id, action, true)
     expect(outcome.kind).toBe('fire')
     if (outcome.kind === 'fire') {
-      expect(outcome.url).toBe(`${base}/actions/restart-all-daemon-killed`)
+      expect(outcome.url).toBe(`${base}/actions/continue-all-daemon-killed`)
     }
   })
 
@@ -334,15 +334,15 @@ describe('deriveActionKeys', () => {
   })
 
   it('handles daemon-killed actions with colliding first letters', () => {
-    // requeue → r, restart-all → r taken → tries 'a' (from 'all'), restart-daemon → r taken → tries 'a' taken → tries 'd'
+    // requeue → r, continue-all → c (from 'continue'), restart-daemon → r taken → tries 'd' (from 'daemon')
     const actions = [
       { id: 'requeue', label: 'Requeue now', op: 'restart' },
-      { id: 'restart-all', label: 'Restart all', op: 'restart-all-daemon-killed' },
+      { id: 'continue-all', label: 'Continue all', op: 'continue-all-daemon-killed' },
       { id: 'restart-daemon', label: 'Restart daemon', op: 'restart-daemon', needsConfirm: true },
     ] as ActionQueueRow['actions']
     const keys = deriveActionKeys(actions)
     expect(keys['r']?.id).toBe('requeue')
-    expect(keys['a']?.id).toBe('restart-all')
+    expect(keys['c']?.id).toBe('continue-all')
     expect(keys['d']?.id).toBe('restart-daemon')
   })
 

@@ -96,7 +96,7 @@ export const TEACHABLE_OPS = new Set(['restart', 'purge'])
  * daemon. The proxy builds `/actions/<op>` (no id segment) for these; any
  * other op gets `/actions/<op>/<entityId>`.
  */
-export const PROCESS_LEVEL_OPS = new Set(['restart-daemon', 'restart-all-daemon-killed'])
+export const PROCESS_LEVEL_OPS = new Set(['restart-daemon', 'continue-all-daemon-killed'])
 
 /**
  * Maps a mutation error to a human-readable message. Delegates to
@@ -143,7 +143,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
 
   const mutation = useMutation({
     mutationFn: ({ action }: { action: ActionDescriptor }) => {
-      // Process-level ops (restart-daemon, restart-all-daemon-killed) carry no entity id.
+      // Process-level ops (restart-daemon, continue-all-daemon-killed) carry no entity id.
       const entityId = PROCESS_LEVEL_OPS.has(action.op) ? undefined : item.entityId
       return invokeAction(action.op, entityId)
     },

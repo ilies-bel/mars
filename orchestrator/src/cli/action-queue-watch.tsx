@@ -23,7 +23,7 @@
  *
  * Global/batch ops use dedicated routes (no :id):
  *   restart-daemon             → POST /actions/restart-daemon
- *   restart-all-daemon-killed  → POST /actions/restart-all-daemon-killed
+ *   continue-all-daemon-killed → POST /actions/continue-all-daemon-killed
  *
  * Keybindings (always):
  *   - arrows        : move cursor (↑/↓)
@@ -82,7 +82,7 @@ export const resolveDaemonBaseUrl = (stateDir: string): string | null => {
  */
 const GLOBAL_ACTION_OPS = new Set([
   'restart-daemon',
-  'restart-all-daemon-killed',
+  'continue-all-daemon-killed',
   'run-reflect',
   'enable-auto-reflect',
 ])

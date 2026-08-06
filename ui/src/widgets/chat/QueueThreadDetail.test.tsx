@@ -216,8 +216,8 @@ describe('QueueThreadDetail – Resolution block', () => {
 // ---------------------------------------------------------------------------
 
 describe('PROCESS_LEVEL_OPS – entityId elision', () => {
-  it('restart-all-daemon-killed and restart-daemon are process-level', () => {
-    expect(PROCESS_LEVEL_OPS.has('restart-all-daemon-killed')).toBe(true)
+  it('continue-all-daemon-killed and restart-daemon are process-level', () => {
+    expect(PROCESS_LEVEL_OPS.has('continue-all-daemon-killed')).toBe(true)
     expect(PROCESS_LEVEL_OPS.has('restart-daemon')).toBe(true)
   })
 

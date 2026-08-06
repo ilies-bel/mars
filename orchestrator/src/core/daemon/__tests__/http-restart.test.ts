@@ -63,7 +63,7 @@ const makeDeps = (
   investigateWorktree: async () => ({ explanation: '' }),
   diagnoseFailure: async () => ({ diagnosis: '' }),
   restartDaemon: async () => {},
-  restartAllDaemonKilled: async () => [],
+  continueAllDaemonKilled: async () => ({ continued: [], degraded: [], skipped: [] }),
   isAcceptingWork: () => true,
   inFlightCount: () => 0,
   selfUpdate: async () => {},
@@ -265,10 +265,10 @@ describe('HTTP action endpoint', () => {
     }
   })
 
-  // ── Bulk restart ─────────────────────────────────────────────────────────
+  // ── Bulk continue ─────────────────────────────────────────────────────────
 
-  it('restart-all-daemon-killed restarts only daemon-killed tasks and leaves ordinary failed tasks untouched', async () => {
-    const { queue, httpServer, restartTask } = await loadModules(repo)
+  it('continue-all-daemon-killed continues only daemon-killed tasks and leaves ordinary failed tasks untouched', async () => {
+    const { queue, httpServer } = await loadModules(repo)
 
     // Seed two daemon-killed tasks and one ordinary failed task.
     const t1 = await queue.enqueueTask('daemon-killed task 1', undefined, {
@@ -292,39 +292,55 @@ describe('HTTP action endpoint', () => {
 
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
-        restartAllDaemonKilled: async () => {
+        continueAllDaemonKilled: async () => {
           // Inline implementation matching what server.ts wires up:
-          // list all failed tasks with the daemon-killed signature and restart
-          // each via coreRestartTask.
+          // list all failed tasks with the daemon-killed signature and continue
+          // each via coreContinueTask (degrades to restart for pre-setup failures).
+          const { coreContinueTask } = await import('../continue-task')
           const all = await queue.listTasks('failed')
           const killed = all.filter((t) => t.failureSignature === 'daemon-killed')
-          const restarted: string[] = []
+          const continued: string[] = []
+          const degraded: string[] = []
+          const skipped: string[] = []
           for (const task of killed) {
-            await restartTask.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore())
-            restarted.push(task.id)
+            try {
+              const result = await coreContinueTask(task.id)
+              if (result.degradedToRestart) {
+                degraded.push(task.id)
+              } else {
+                continued.push(task.id)
+              }
+            } catch {
+              skipped.push(task.id)
+            }
           }
-          return restarted
+          return { continued, degraded, skipped }
         },
       }),
     )
 
     try {
       const res = await fetch(
-        `http://127.0.0.1:${port}/actions/restart-all-daemon-killed`,
+        `http://127.0.0.1:${port}/actions/continue-all-daemon-killed`,
         { method: 'POST' },
       )
 
       expect(res.status).toBe(200)
       const body = (await res.json()) as {
         ok: boolean
-        restarted: string[]
+        continued: string[]
+        degraded: string[]
+        skipped: string[]
       }
       expect(body.ok).toBe(true)
-      // Both daemon-killed tasks must be in the restarted list.
-      expect(body.restarted).toContain(t1.id)
-      expect(body.restarted).toContain(t2.id)
-      // The ordinary failed task must NOT be in the list.
-      expect(body.restarted).not.toContain(t3.id)
+      // Both daemon-killed tasks must appear in continued or degraded (pre-setup
+      // tasks with no worktree degrade to restart and appear in degraded).
+      const recovered = [...body.continued, ...body.degraded]
+      expect(recovered).toContain(t1.id)
+      expect(recovered).toContain(t2.id)
+      // The ordinary failed task must NOT appear in any category.
+      expect(recovered).not.toContain(t3.id)
+      expect(body.skipped).not.toContain(t3.id)
 
       // Verify DB state: daemon-killed tasks flipped to queued.
       const r1 = await queue.getTask(t1.id)
@@ -339,12 +355,12 @@ describe('HTTP action endpoint', () => {
     }
   })
 
-  // ── Cancellation guard on restart-all-daemon-killed ──────────────────────
+  // ── Cancellation guard on continue-all-daemon-killed ──────────────────────
 
-  it('restart-all-daemon-killed skips tasks that were user-cancelled (failureReason=cancelled)', async () => {
+  it('continue-all-daemon-killed skips tasks that were user-cancelled (failureReason=cancelled)', async () => {
     // Scenario: a task that carries BOTH failureSignature='daemon-killed' AND
-    // failureReason='cancelled' must NOT be resurrected by the bulk restart —
-    // the user explicitly stopped that work and the restart action must not
+    // failureReason='cancelled' must NOT be resurrected by the bulk continue —
+    // the user explicitly stopped that work and the continue action must not
     // override their intent.
     const { queue, httpServer } = await loadModules(repo)
 
@@ -368,39 +384,56 @@ describe('HTTP action endpoint', () => {
 
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
-        restartAllDaemonKilled: async () => {
+        continueAllDaemonKilled: async () => {
           // Mirror the server.ts production implementation with the cancellation
           // guard so this test exercises the correct filter logic.
+          const { coreContinueTask } = await import('../continue-task')
           const all = await queue.listTasks('failed')
           const killed = all.filter(
             (t) =>
               t.failureSignature === 'daemon-killed' && t.failureReason !== 'cancelled',
           )
-          const restarted: string[] = []
+          const continued: string[] = []
+          const degraded: string[] = []
+          const skipped: string[] = []
           for (const task of killed) {
-            const { coreRestartTask } = await import('../restart-task')
-            await coreRestartTask(task.id, new Set(['failed']), new InMemoryStore())
-            restarted.push(task.id)
+            try {
+              const result = await coreContinueTask(task.id)
+              if (result.degradedToRestart) {
+                degraded.push(task.id)
+              } else {
+                continued.push(task.id)
+              }
+            } catch {
+              skipped.push(task.id)
+            }
           }
-          return restarted
+          return { continued, degraded, skipped }
         },
       }),
     )
 
     try {
       const res = await fetch(
-        `http://127.0.0.1:${port}/actions/restart-all-daemon-killed`,
+        `http://127.0.0.1:${port}/actions/continue-all-daemon-killed`,
         { method: 'POST' },
       )
 
       expect(res.status).toBe(200)
-      const body = (await res.json()) as { ok: boolean; restarted: string[] }
+      const body = (await res.json()) as {
+        ok: boolean
+        continued: string[]
+        degraded: string[]
+        skipped: string[]
+      }
       expect(body.ok).toBe(true)
 
-      // The ordinarily daemon-killed task must be restarted.
-      expect(body.restarted).toContain(daemonKilledTask.id)
-      // The user-cancelled task must NOT be restarted.
-      expect(body.restarted).not.toContain(cancelledTask.id)
+      // The ordinarily daemon-killed task must be resumed (continued or degraded).
+      const recovered = [...body.continued, ...body.degraded]
+      expect(recovered).toContain(daemonKilledTask.id)
+      // The user-cancelled task must NOT appear anywhere.
+      expect(recovered).not.toContain(cancelledTask.id)
+      expect(body.skipped).not.toContain(cancelledTask.id)
 
       // DB state: daemon-killed task is queued; cancelled task remains failed.
       const daemonKilledRow = await queue.getTask(daemonKilledTask.id)

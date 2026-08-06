@@ -200,7 +200,7 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [
       {
-        op: 'restart-all-daemon-killed',
+        op: 'continue-all-daemon-killed',
         label: 'Restart all affected',
         style: 'primary',
       },

@@ -476,7 +476,7 @@ describe('buildActionQueueView — daemon-killed-batch', () => {
     expect(batchRow.errorKind).toBe('daemon-killed-batch')
     expect(batchRow.priority).toBe('high')
     expect(batchRow.title).toContain('2')
-    expect(batchRow.actions[0]!.op).toBe('restart-all-daemon-killed')
+    expect(batchRow.actions[0]!.op).toBe('continue-all-daemon-killed')
   })
 })
 
@@ -571,7 +571,7 @@ describe('GET /view/action-queue via HTTP server', () => {
       investigateWorktree: async () => ({ explanation: '' }),
       diagnoseFailure: async () => ({ diagnosis: '' }),
       restartDaemon: async () => {},
-      restartAllDaemonKilled: async () => [],
+      continueAllDaemonKilled: async () => ({ continued: [], degraded: [], skipped: [] }),
       isAcceptingWork: () => true,
   inFlightCount: () => 0,
   selfUpdate: async () => {},

@@ -274,7 +274,7 @@ export const proxyDelete = async (
  * verb instead of the legacy `restart` action), but `proxyAction` strips the id
  * here too so a stale caller can never produce a 404-inducing entity path.
  */
-const PROCESS_LEVEL_ACTION_OPS = new Set(['restart-daemon', 'restart-all-daemon-killed'])
+const PROCESS_LEVEL_ACTION_OPS = new Set(['restart-daemon', 'continue-all-daemon-killed'])
 
 /**
  * Forward a recovery action to the daemon. `op` is the verb from the registry;

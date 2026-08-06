@@ -501,7 +501,7 @@ describe('buildActionQueueView — daemon-killed batch row', () => {
     expect(taskRow!.title).toContain('[task task-1]')
   })
 
-  it('exposes restart-all-daemon-killed on the synthetic batch row', async () => {
+  it('exposes continue-all-daemon-killed on the synthetic batch row', async () => {
     // Build two daemon-killed rows to trigger the batch synthesis.
     const rows = await buildActionQueueView({
       ...BASE_PARAMS,
@@ -526,7 +526,7 @@ describe('buildActionQueueView — daemon-killed batch row', () => {
     const batchRow = rows.find((r) => r.entityId === '__daemon-killed-batch__')
     expect(batchRow).toBeDefined()
     expect(
-      batchRow!.actions.some((a) => a.op === 'restart-all-daemon-killed'),
+      batchRow!.actions.some((a) => a.op === 'continue-all-daemon-killed'),
     ).toBe(true)
   })
 
@@ -555,10 +555,10 @@ describe('buildActionQueueView — daemon-killed batch row', () => {
     })
 
     const batchRow = rows.find((r) => r.entityId === '__daemon-killed-batch__')
-    // The batch row carries only the `restart-all-daemon-killed` verb, filtered
+    // The batch row carries only the `continue-all-daemon-killed` verb, filtered
     // from the daemon-killed Failure kind's full menu.
     expect(batchRow!.actions.map((a) => a.op)).toEqual([
-      'restart-all-daemon-killed',
+      'continue-all-daemon-killed',
     ])
   })
 })

@@ -58,8 +58,9 @@ import { DAEMON_KILLED_SIGNATURE } from './retry-budget'
  *                                recipe; persists a diagnosis onto the action
  *                                queue item. Operator-triggered.
  * - `restart-daemon`           — process-level: re-exec the daemon itself.
- * - `restart-all-daemon-killed`— batch: re-queue every failed task that carries
- *                                the daemon-killed signature in one request.
+ * - `continue-all-daemon-killed`— batch: resume every failed task that carries
+ *                                the daemon-killed signature in one request,
+ *                                preserving existing worktrees and commits.
  * - `copy`                     — client-side only; the UI copies `hint` verbatim
  *                                to the clipboard. Must NEVER reach the daemon.
  * - `dismiss`                  — dismiss a draft proposal: flips its status from
@@ -83,7 +84,7 @@ export type ActionOp =
   | 'investigate'
   | 'diagnose-failure'
   | 'restart-daemon'
-  | 'restart-all-daemon-killed'
+  | 'continue-all-daemon-killed'
   | 'copy'
   | 'dismiss'
   | 'validate'
@@ -235,9 +236,9 @@ export const WORKTREE_MISSING_ACTIONS: ActionDescriptor[] = [
 const DAEMON_KILLED_ACTIONS: ActionDescriptor[] = [
   { id: 'requeue', label: 'Requeue now', op: 'restart' },
   {
-    id: 'restart-all',
-    label: 'Restart all daemon-killed',
-    op: 'restart-all-daemon-killed',
+    id: 'continue-all',
+    label: 'Continue all daemon-killed',
+    op: 'continue-all-daemon-killed',
   },
   {
     id: 'restart-daemon',

@@ -4799,37 +4799,49 @@ export const startDaemon = async (
       // Trigger our own graceful shutdown after the response flushes.
       setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100)
     },
-    restartAllDaemonKilled: async () => {
+    continueAllDaemonKilled: async () => {
       // Find every failed task stamped with the daemon-killed signature and
-      // re-queue each one. Partial failures are tolerated: tasks that fail to
-      // restart (e.g. wrong status race) are skipped; only successfully
-      // restarted ids are returned.
+      // resume each one via the continue path, preserving existing worktrees
+      // and commits. Partial failures are tolerated: tasks that fail to
+      // continue (e.g. wrong status race) are counted as skipped.
+      //
+      // Degradation: tasks with no resumable state (null failedPhase, missing
+      // branch/worktree, or worktree deleted from disk) degrade to restart via
+      // the same documented path as `mars continue` and are counted separately.
       //
       // Cancellation guard: skip tasks with failureReason='cancelled' — the user
-      // explicitly stopped that work and a bulk restart must not override that
+      // explicitly stopped that work and a bulk continue must not override that
       // intent. The user can still explicitly re-queue a cancelled task via the
       // per-task 'restart' action if they change their mind.
+      const { coreContinueTask } = await import('./continue-task')
       const failed = await listTasks('failed')
       const killed = failed.filter(
         (t) =>
           t.failureSignature === DAEMON_KILLED_SIGNATURE &&
           t.failureReason !== CANCELLED_FAILURE_REASON,
       )
-      const restarted: string[] = []
+      const continued: string[] = []
+      const degraded: string[] = []
+      const skipped: string[] = []
       for (const task of killed) {
         try {
-          const result = await coreRestart(task.id, new Set(['failed']), makeWorkflowStore())
-          if (result.status === 'queued') {
-            bus.emit('task.queued', { taskId: task.id })
+          const result = await coreContinueTask(task.id)
+          bus.emit('task.queued', { taskId: task.id })
+          if (result.degradedToRestart) {
+            degraded.push(task.id)
+          } else {
+            continued.push(task.id)
           }
-          restarted.push(task.id)
         } catch {
-          // Skip tasks that can't be restarted (e.g. raced to a different
-          // status between the list and the restart). The others still proceed.
+          // Skip tasks that can't be continued (e.g. raced to a different
+          // status between the list and the continue). The others still proceed.
+          skipped.push(task.id)
         }
       }
-      log(`restart-all-daemon-killed: restarted ${restarted.length}/${killed.length} task(s)`)
-      return restarted
+      log(
+        `continue-all-daemon-killed: continued=${continued.length} degraded=${degraded.length} skipped=${skipped.length} out of ${killed.length} task(s)`,
+      )
+      return { continued, degraded, skipped }
     },
     runReflect: async () => {
       // Run the same reflect pipeline as `mars reflect` and close the level-triggered
