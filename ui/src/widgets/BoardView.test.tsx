@@ -143,7 +143,94 @@ describe('buildArcsByCluster', () => {
   })
 })
 
+describe('buildArcsByCluster — active count and unified status', () => {
+  it('sets activeCount = number of non-Done tasks in the arc', () => {
+    const doneOrigin = task({
+      id: 'origin',
+      cluster: 'Done',
+      status: 'done',
+      originId: 'origin',
+    })
+    const active1 = task({ id: 'a1', cluster: 'In progress', status: 'running', originId: 'origin' })
+    const active2 = task({ id: 'a2', cluster: 'Failed', status: 'failed', originId: 'origin' })
+
+    const arcs = buildArcsByCluster([doneOrigin, active1, active2], [])
+    const arc = arcs['In progress'][0]!
+
+    expect(arc.activeCount).toBe(2)            // 2 non-Done tasks
+    expect(arc.tasks.length).toBe(3)           // total including Done origin
+  })
+
+  it('sets activeCount = tasks.length when no Done members are present', () => {
+    const t1 = task({ id: 'o1', cluster: 'Queued', originId: 'o1' })
+    const t2 = task({ id: 'f1', cluster: 'Queued', originId: 'o1', fixForTaskId: 'o1' })
+
+    const arcs = buildArcsByCluster([t1, t2], [])
+    const arc = arcs.Queued[0]!
+
+    expect(arc.activeCount).toBe(2)
+    expect(arc.tasks.length).toBe(2)
+  })
+
+  it('places arc in In progress when any live task exists, even with more failed tasks — same as topology dom', () => {
+    // This is the status-word divergence scenario from the bug report:
+    // topology used dominant() → Failed; board used live-priority → In progress.
+    // Both now use arcPlacementCluster() so they agree.
+    const failed1 = task({ id: 'f1', cluster: 'Failed', status: 'failed', originId: 'o1' })
+    const failed2 = task({ id: 'f2', cluster: 'Failed', status: 'failed', originId: 'o1' })
+    const live = task({ id: 'r1', cluster: 'In progress', status: 'running', originId: 'o1', fixForTaskId: 'f1' })
+
+    const arcs = buildArcsByCluster([failed1, failed2, live], [])
+    // Board places the arc in In progress (live priority).
+    expect(arcs['In progress']).toHaveLength(1)
+    expect(arcs.Failed).toHaveLength(0)
+    expect(arcs['In progress'][0]!.cluster).toBe('In progress')
+    expect(arcs['In progress'][0]!.activeCount).toBe(3) // all 3 are non-Done
+  })
+})
+
 describe('BoardView – Arc summaries', () => {
+  it('shows "X of Y active" count when Done members are included in the arc', () => {
+    // Arc with a done origin + active recovery — the count must say how many
+    // are still live so the operator can see that not all 3 tasks need attention.
+    const doneOrigin = task({
+      id: 'origin-d',
+      cluster: 'Done',
+      status: 'done',
+      originId: 'origin-d',
+    })
+    const active = task({
+      id: 'active-r',
+      cluster: 'In progress',
+      status: 'running',
+      originId: 'origin-d',
+    })
+    // Done tasks arrive in byCluster['Done']; active in their cluster bucket.
+    const byCluster = { ...emptyByCluster(), Done: [doneOrigin], 'In progress': [active] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
+    )
+
+    // 1 active of 2 total → "1 of 2 active"
+    expect(html).toContain('1 of 2 active')
+    // Must NOT say "2 tasks" (would hide that one is done)
+    expect(html).not.toMatch(/\b2 tasks?\b/)
+  })
+
+  it('shows plain task count when no Done members are present', () => {
+    const t1 = task({ id: 'a', cluster: 'Queued' })
+    const t2 = task({ id: 'b', cluster: 'Queued', originId: 'a' })
+    const byCluster = { ...emptyByCluster(), Queued: [t1, t2] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toContain('2 tasks')
+    expect(html).not.toContain('of')
+  })
+
   it('renders a single collapsed Arc with its tasks revealed on expansion', () => {
     const origin = task({
       id: 'origin-1',

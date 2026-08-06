@@ -10,8 +10,13 @@ export interface BoardArc {
   id: string
   /** The single roll-up status used to place this arc on the board. */
   cluster: Cluster
-  /** Open tasks belonging to the arc, ordered from origin to latest recovery. */
+  /** All tasks belonging to the arc (active + Done), ordered from origin to latest recovery. */
   tasks: UITask[]
+  /**
+   * Count of active (non-Done) members. Shown as "X of Y active" when fewer
+   * than `tasks.length`, making the Done-task inclusion explicit on the card.
+   */
+  activeCount: number
   title: string
   updatedAt: string
   /**
@@ -76,7 +81,13 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, pu
           arcs.map((arc) => {
             const startIndex = taskIndex
             taskIndex += arc.tasks.length
-            const taskLabel = arc.tasks.length === 1 ? 'task' : 'tasks'
+            const totalCount = arc.tasks.length
+            const activeCount = arc.activeCount
+            // "2 of 13 active" when Done members are included; "3 tasks" otherwise.
+            const countDisplay =
+              activeCount < totalCount
+                ? `${activeCount} of ${totalCount} active`
+                : `${totalCount} ${totalCount === 1 ? 'task' : 'tasks'}`
             const isLive = arc.cluster === 'In progress'
             // The fine-grained substep the live work is on ("merging", "verifying", …),
             // read off the arc's actively-executing task. Only meaningful for
@@ -116,7 +127,7 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, pu
                 className={`mars-card group rounded-lg bg-card hover:bg-secondary${isLive ? ' mars-card-live' : ''}`}
               >
                 <summary
-                  aria-label={`Arc ${arc.id}: ${arc.cluster}, ${arc.tasks.length} ${taskLabel}${isCompensation ? `, compensating arc ${arc.compensatesArcId}` : ''}`}
+                  aria-label={`Arc ${arc.id}: ${arc.cluster}, ${countDisplay}${isCompensation ? `, compensating arc ${arc.compensatesArcId}` : ''}`}
                   className="flex cursor-pointer list-none items-start gap-2 p-3 [&::-webkit-details-marker]:hidden"
                 >
                   <span
@@ -166,7 +177,7 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, pu
                       {arc.cluster}
                     </span>
                     <span className="font-mono text-meta text-muted-foreground">
-                      {arc.tasks.length} {taskLabel}
+                      {countDisplay}
                     </span>
                   </span>
                 </summary>

@@ -4,6 +4,7 @@ import { blockerKey, type ChainResult } from '@/shared/chainTrace'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import {
   arcKeyFromNodeId,
+  arcPlacementCluster,
   buildClusterStyleFromVars,
   buildTopology,
   CLUSTER_CSS,
@@ -95,6 +96,63 @@ describe('dominant', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// arcPlacementCluster — shared count/status helper
+// ---------------------------------------------------------------------------
+
+describe('arcPlacementCluster — shared arc status helper', () => {
+  const t = (cluster: ProgressTask['cluster']) => ({ cluster } as const)
+
+  it('returns null for an all-Done arc', () => {
+    expect(arcPlacementCluster([t('Done'), t('Done')])).toBeNull()
+  })
+
+  it('returns In progress when any active task is in progress, even with more failed', () => {
+    // This is the divergence case: topology used to show "Failed" (plurality),
+    // board showed "In progress" (live priority). Both now agree on "In progress".
+    expect(arcPlacementCluster([t('Failed'), t('Failed'), t('In progress')])).toBe('In progress')
+  })
+
+  it('returns Queued when any active task is queued, even with more failed', () => {
+    expect(arcPlacementCluster([t('Failed'), t('Failed'), t('Queued')])).toBe('Queued')
+  })
+
+  it('In progress wins over Queued (higher live priority)', () => {
+    expect(arcPlacementCluster([t('Queued'), t('In progress')])).toBe('In progress')
+  })
+
+  it('returns Failed when no live tasks exist but some are failed', () => {
+    expect(arcPlacementCluster([t('Failed'), t('Done')])).toBe('Failed')
+  })
+
+  it('returns Blocked when all remaining tasks are blocked', () => {
+    expect(arcPlacementCluster([t('Blocked'), t('Done')])).toBe('Blocked')
+  })
+
+  it('matches buildTopology dom for a mixed done/active arc', () => {
+    // Key regression: same arc, both surfaces must agree on count and status.
+    const mixedTasks = [
+      task({ id: 'origin', cluster: 'Done', prompt: 'origin work' }),
+      task({ id: 'done-fix', cluster: 'Done', originId: 'origin' }),
+      task({ id: 'active-ip', cluster: 'In progress', originId: 'origin' }),
+      task({ id: 'active-fail', cluster: 'Failed', originId: 'origin' }),
+    ]
+    const { nodes } = buildTopology(mixedTasks, [], null)
+    const card = nodes.find((n) => n.type === 'arcCard')!
+    expect(card).toBeDefined()
+
+    // count = 2 active, totalCount = 4 (2 Done + 2 active)
+    expect(card.data.count).toBe(2)
+    expect(card.data.totalCount).toBe(4)
+
+    // dom is arcPlacementCluster applied to active members — both views agree
+    const activeMembers = mixedTasks.filter((t) => t.cluster !== 'Done')
+    expect(card.data.dom).toBe(arcPlacementCluster(activeMembers))
+    // In progress has live priority over Failed
+    expect(card.data.dom).toBe('In progress')
+  })
+})
+
 describe('CLUSTER_CSS', () => {
   it('has a defined var() entry for every Cluster value including Done', () => {
     const keys = Object.keys(CLUSTER_CSS)
@@ -137,7 +195,7 @@ describe('arcKeyFromNodeId', () => {
 })
 
 describe('buildTopology', () => {
-  it('emits one collapsed card per multi-task proposal arc with dominant status and count', () => {
+  it('emits one collapsed card per multi-task proposal arc with live-priority status and count', () => {
     const tasks = [
       task({ id: 't1', cluster: 'Failed', parentProposalId: 'p1' }),
       task({ id: 't2', cluster: 'Failed', parentProposalId: 'p1' }),
@@ -147,7 +205,8 @@ describe('buildTopology', () => {
     const card = nodes.find((n) => n.type === 'arcCard')!
     expect(card.id).toBe('arc:p1')
     expect(card.data.label).toBe('Ship it')
-    expect(card.data).toMatchObject({ count: 3, dom: 'Failed', isProposal: true })
+    // Queued is live-priority so it wins over the 2 Failed tasks (same as board placement).
+    expect(card.data).toMatchObject({ count: 3, totalCount: 3, dom: 'Queued', isProposal: true })
     // Member tasks are hidden while the arc is collapsed.
     expect(nodes.filter((n) => n.type === 'task')).toHaveLength(0)
   })
@@ -327,7 +386,7 @@ describe('buildTopology — Done task filtering', () => {
     expect(edges).toHaveLength(0)
   })
 
-  it('active card count reflects only active members, not Done members', () => {
+  it('active card count reflects only active members, not Done members; totalCount includes all', () => {
     const tasks = [
       task({ id: 'origin', cluster: 'Done', prompt: 'origin' }),
       task({ id: 'done1', cluster: 'Done', originId: 'origin' }),
@@ -337,7 +396,9 @@ describe('buildTopology — Done task filtering', () => {
     const { nodes } = buildTopology(tasks, [], null)
     const card = nodes.find((n) => n.type === 'arcCard')!
     expect(card).toBeDefined()
+    // count = 2 active; totalCount = 4 (including 2 Done members)
     expect(card.data.count).toBe(2)
+    expect(card.data.totalCount).toBe(4)
   })
 })
 

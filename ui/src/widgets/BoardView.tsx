@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { Cluster, ProgressProposalNode, ProgressTask, PurgeArchiveEntry } from '@/shared/schemas'
 import type { Role, UITask } from '@/shared/types'
 import { taskTitle } from '@/shared/promptTitle'
-import { resolveArcLabel, taskArcKey } from '@/widgets/topologyFlowModel'
+import { arcPlacementCluster, resolveArcLabel, taskArcKey } from '@/widgets/topologyFlowModel'
 import { ArcColumn, type BoardArc } from '@/widgets/Column'
 
 // ---------------------------------------------------------------------------
@@ -60,10 +60,6 @@ const toUI = (t: ProgressTask): UITask => ({
 // and ALL_TABS so desktop and mobile tell the same story.
 const CLUSTERS: readonly Cluster[] = ['Blocked', 'Queued', 'In progress', 'Failed']
 
-// Live work keeps an Arc visible while recovery is in flight. Blocked comes
-// after Failed because a blocked dependent cannot advance past that failure.
-const ARC_LIVE_PRIORITY: readonly Cluster[] = ['In progress', 'Queued']
-
 const compareNewestFirst = (a: ProgressTask, b: ProgressTask): number =>
   b.updatedAt.localeCompare(a.updatedAt)
 
@@ -100,19 +96,9 @@ export const buildArcsByCluster = (
   }
 
   for (const [id, arcTasks] of grouped) {
-    // Live descendants supersede a prior failure while recovery is in flight.
-    // A blocked descendant does not: it is stuck behind the failure.
-    // An arc whose tasks are all Done is skipped — the board shows active work.
-    const live = ARC_LIVE_PRIORITY.find((candidate) =>
-      arcTasks.some((task) => task.cluster === candidate),
-    )
-    const cluster =
-      live ??
-      (arcTasks.some((task) => task.cluster === 'Failed')
-        ? 'Failed'
-        : arcTasks.some((task) => task.cluster === 'Blocked')
-          ? 'Blocked'
-          : null)
+    // Use the shared arcPlacementCluster helper so Board and Topology always
+    // agree on the status word. Returns null when every task is Done.
+    const cluster = arcPlacementCluster(arcTasks)
     if (cluster === null) continue // all-Done arc: not shown on the board
     const orderedTasks = [...arcTasks].sort((a, b) => {
       if (a.id === id) return -1
@@ -138,6 +124,7 @@ export const buildArcsByCluster = (
       id,
       cluster,
       tasks: orderedTasks.map(toUI),
+      activeCount: orderedTasks.filter((t) => t.cluster !== 'Done').length,
       title,
       updatedAt: latestTask.updatedAt,
       compensatesArcId: displayTask.compensatesArcId ?? null,

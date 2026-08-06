@@ -127,6 +127,34 @@ export const PROPOSAL_STROKE = 'var(--color-dag-proposal-stroke)'
 export const PROPOSAL_TEXT = 'var(--color-dag-proposal-text)'
 
 // ---------------------------------------------------------------------------
+// Shared arc-status helper
+// ---------------------------------------------------------------------------
+
+/** Priority order for arc placement: live work surfaces first. */
+const ARC_LIVE_PRIORITY: readonly Cluster[] = ['In progress', 'Queued']
+
+/**
+ * Shared arc status: the cluster that best represents the arc's current work.
+ * Live work (In progress, Queued) surfaces above historical failure or blocked
+ * state, so an arc with an active recovery shows "Queued", not "Failed".
+ *
+ * Returns `null` when every member is Done (arc is fully completed — not shown
+ * on either surface).
+ *
+ * Used by both the Topology model (for the arc-card `dom` field) and the Board
+ * view (for column placement) so both surfaces always agree on the status word.
+ */
+export const arcPlacementCluster = (
+  tasks: ReadonlyArray<{ readonly cluster: Cluster }>,
+): Cluster | null => {
+  const live = ARC_LIVE_PRIORITY.find((c) => tasks.some((t) => t.cluster === c))
+  if (live) return live
+  if (tasks.some((t) => t.cluster === 'Failed')) return 'Failed'
+  if (tasks.some((t) => t.cluster === 'Blocked')) return 'Blocked'
+  return null // all Done
+}
+
+// ---------------------------------------------------------------------------
 // Rollups
 // ---------------------------------------------------------------------------
 
@@ -250,7 +278,10 @@ export interface ArcCardNodeData extends Record<string, unknown> {
   arcKey: string
   /** Whether the arc key is a real proposal id (purple identity) or an origin arc. */
   isProposal: boolean
+  /** Active (non-Done) member count — what the topology draws. */
   count: number
+  /** Total member count including Done — shown as "X of Y active" when Y > X. */
+  totalCount: number
   dom: Cluster
   emphasis: Emphasis
 }
@@ -260,7 +291,10 @@ export interface ArcGroupNodeData extends Record<string, unknown> {
   label: string
   arcKey: string
   isProposal: boolean
+  /** Active (non-Done) member count — what the topology draws. */
   count: number
+  /** Total member count including Done — shown as "X of Y active" when Y > X. */
+  totalCount: number
   dom: Cluster
   emphasis: Emphasis
 }
@@ -675,10 +709,9 @@ export const buildTopology = (
     // names its arc. This preserves the 8f2a5a12 fix.
     const label = resolveArcLabel(key, group, proposalMap) ?? (taskTitle(group[0]!) || key)
 
-    // dom and counts tally only active members — Done members are not work in progress.
-    const counts = emptyCounts()
-    for (const t of activeMembers) counts[t.cluster]++
-    const dom = dominant({ total: activeMembers.length, counts })
+    // dom reflects the arc's current work using the shared placement logic so
+    // Topology and Board always display the same status word for the same arc.
+    const dom = arcPlacementCluster(activeMembers) ?? 'Queued'
 
     if (!isMulti(key)) {
       const t = activeMembers[0]!
@@ -707,7 +740,7 @@ export const buildTopology = (
         position: { x: pos.x, y: pos.y },
         width: groupSize.w,
         height: groupSize.h,
-        data: { kind: 'arcGroup', label, arcKey: key, isProposal: proposalMap.has(key), count: activeMembers.length, dom, emphasis: 'rest' },
+        data: { kind: 'arcGroup', label, arcKey: key, isProposal: proposalMap.has(key), count: activeMembers.length, totalCount: group.length, dom, emphasis: 'rest' },
       })
       for (const t of activeMembers) {
         const p = innerPositions.get(t.id)!
@@ -729,7 +762,7 @@ export const buildTopology = (
         position: { x: pos.x, y: pos.y },
         width: CARD_W,
         height: CARD_H,
-        data: { kind: 'arcCard', label, arcKey: key, isProposal: proposalMap.has(key), count: activeMembers.length, dom, emphasis: 'rest' },
+        data: { kind: 'arcCard', label, arcKey: key, isProposal: proposalMap.has(key), count: activeMembers.length, totalCount: group.length, dom, emphasis: 'rest' },
       })
     }
   }

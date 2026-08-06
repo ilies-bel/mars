@@ -152,11 +152,15 @@ TaskNode.displayName = 'TaskNode'
 
 const ArcCardNode = memo(({ data }: NodeProps<Node<ArcCardNodeData>>) => {
   const style = CLUSTER_CSS[data.dom]
+  const countDisplay =
+    data.totalCount > data.count
+      ? `${data.count} of ${data.totalCount} active`
+      : `${data.count} task${data.count === 1 ? '' : 's'}`
   return (
     <div
       className={`topo-node topo-card relative flex h-16 w-[232px] cursor-pointer flex-col justify-center gap-0.5 rounded-lg border-[1.5px] px-3 shadow-[0_2px_12px_rgba(0,0,0,0.4)] ${emphasisClass(data.emphasis)}`}
       style={{ background: style.fill, borderColor: data.isProposal ? PROPOSAL_STROKE : style.stroke }}
-      aria-label={`${data.label} · ${data.count} tasks · click to open`}
+      aria-label={`${data.label} · ${countDisplay} · click to open`}
     >
       <FlowHandles />
       <span
@@ -166,7 +170,7 @@ const ArcCardNode = memo(({ data }: NodeProps<Node<ArcCardNodeData>>) => {
         {data.label}
       </span>
       <span className="font-mono text-[9.5px]" style={{ color: style.text, opacity: 0.7 }}>
-        {data.count} task{data.count === 1 ? '' : 's'} · {data.dom.toLowerCase()}
+        {countDisplay} · {data.dom.toLowerCase()}
       </span>
     </div>
   )
@@ -175,6 +179,10 @@ ArcCardNode.displayName = 'ArcCardNode'
 
 const ArcGroupNode = memo(({ data, width, height }: NodeProps<Node<ArcGroupNodeData>>) => {
   const style = CLUSTER_CSS[data.dom]
+  const countDisplay =
+    data.totalCount > data.count
+      ? `${data.count} of ${data.totalCount} active`
+      : `${data.count} task${data.count === 1 ? '' : 's'}`
   return (
     <div
       className={`topo-node relative rounded-xl border-[1.5px] ${emphasisClass(data.emphasis)}`}
@@ -193,7 +201,7 @@ const ArcGroupNode = memo(({ data, width, height }: NodeProps<Node<ArcGroupNodeD
       >
         <span className="truncate">{data.label}</span>
         <span className="shrink-0 font-mono text-[9.5px] font-normal opacity-60">
-          {data.count} task{data.count === 1 ? '' : 's'}
+          {countDisplay}
         </span>
       </div>
     </div>
