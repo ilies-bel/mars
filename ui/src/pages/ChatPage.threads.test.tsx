@@ -553,3 +553,84 @@ describe('ChatPage – handleOpenSubthread: chip opens Subthread inline', () => 
     expect(container.querySelector('[data-testid="active-subthread"]')).not.toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// ChatPage — docked composer and jump-to-bottom
+// ---------------------------------------------------------------------------
+
+describe('ChatPage – docked composer and jump-to-bottom', () => {
+  let container: HTMLDivElement
+  let root: ReturnType<typeof createRoot>
+
+  beforeEach(() => {
+    mockFetchChatHistory.mockResolvedValue([])
+    mockFetchChatConversation.mockResolvedValue({
+      entries: [], boundaries: [], memoryStartsAfterSeq: 0, memoryCutAt: null, memoryCutReason: null,
+    })
+    mockStartThreadFromAlert.mockResolvedValue({ threadId: 'subthread-dock-123' })
+    mockUseActionQueue.mockReturnValue({
+      items: [],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount()
+    })
+    container.remove()
+    vi.clearAllMocks()
+  })
+
+  it('renders a jump-to-bottom control in the seeded feed', async () => {
+    await act(async () => {
+      root.render(
+        createElement(QueryClientProvider, { client: makeQc() }, createElement(ChatPage)),
+      )
+    })
+    const btn = container.querySelector('[data-testid="jump-to-bottom"]')
+    expect(btn).not.toBeNull()
+  })
+
+  it('composer is in the composer dock (outside scroll container) after a subthread opens', async () => {
+    const arcItem = makeArcFailedItem()
+    mockUseActionQueue.mockReturnValue({
+      items: [arcItem],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+
+    await act(async () => {
+      root.render(
+        createElement(QueryClientProvider, { client: makeQc() }, createElement(ChatPage)),
+      )
+    })
+
+    const chip = container.querySelector('[data-testid="chat-greeting-next-move"]')
+    expect(chip).not.toBeNull()
+
+    await act(async () => {
+      chip!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // Active subthread must exist
+    expect(container.querySelector('[data-testid="active-subthread"]')).not.toBeNull()
+
+    // Composer must NOT be inside the transcript scroll area
+    const scrollArea = container.querySelector('[data-testid="transcript-scroll"]')
+    expect(scrollArea?.querySelector('[data-testid="composer"]')).toBeNull()
+
+    // Composer must be inside the composer dock
+    const dock = container.querySelector('[data-testid="composer-dock"]')
+    expect(dock).not.toBeNull()
+    expect(dock?.querySelector('[data-testid="composer"]')).not.toBeNull()
+  })
+})

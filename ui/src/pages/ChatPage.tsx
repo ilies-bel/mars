@@ -20,6 +20,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useQuery, useMutation } from '@tanstack/react-query'
@@ -1093,6 +1094,12 @@ interface ChatConversationProps {
   /** Return the page to the Subthread boundary once this Subthread closes. */
   onSubthreadClosed: (threadId: string) => void
   glossaryTerms: GlossaryTerm[]
+  /**
+   * When provided, the Composer is rendered into this element via a React
+   * portal so it is always docked outside the scroll container regardless
+   * of how deep the transcript scrolls.
+   */
+  composerTarget?: Element | null
 }
 
 /**
@@ -1112,6 +1119,7 @@ const ChatConversation = ({
   onLiveBufferChange,
   onSubthreadClosed,
   glossaryTerms,
+  composerTarget,
 }: ChatConversationProps) => {
   const qc = useQueryClient()
 
@@ -1367,31 +1375,36 @@ const ChatConversation = ({
           </button>
         </div>
       )}
-      <Composer
-        threadId={threadId}
-        projectId={projectId}
-        disabled={false}
-        isBusy={isBusy || serverRunning}
-        onSend={handleSend}
-        onStop={handleStop}
-        initialText={localPrefill ?? prefill}
-        onInitialTextConsumed={() => {
-          if (localPrefill !== undefined) {
-            setLocalPrefill(undefined)
-          } else {
-            onPrefillConsumed()
-          }
-        }}
-        threadTokens={totalTokens > 0 ? totalTokens : null}
-        onQueueNext={(text, att) => setQueued({ text, attachments: att })}
-        queuedNext={queued ? { text: queued.text, attachmentCount: queued.attachments?.length ?? 0 } : null}
-        onCancelQueued={() => {
-          if (queued) {
-            setLocalPrefill(queued.text)
-            setQueued(null)
-          }
-        }}
-      />
+      {(() => {
+        const composerEl = (
+          <Composer
+            threadId={threadId}
+            projectId={projectId}
+            disabled={false}
+            isBusy={isBusy || serverRunning}
+            onSend={handleSend}
+            onStop={handleStop}
+            initialText={localPrefill ?? prefill}
+            onInitialTextConsumed={() => {
+              if (localPrefill !== undefined) {
+                setLocalPrefill(undefined)
+              } else {
+                onPrefillConsumed()
+              }
+            }}
+            threadTokens={totalTokens > 0 ? totalTokens : null}
+            onQueueNext={(text, att) => setQueued({ text, attachments: att })}
+            queuedNext={queued ? { text: queued.text, attachmentCount: queued.attachments?.length ?? 0 } : null}
+            onCancelQueued={() => {
+              if (queued) {
+                setLocalPrefill(queued.text)
+                setQueued(null)
+              }
+            }}
+          />
+        )
+        return composerTarget ? createPortal(composerEl, composerTarget) : composerEl
+      })()}
     </>
   )
 }
@@ -2566,10 +2579,18 @@ export const ChatPage = () => {
   const hasForkFilter = Boolean(forkFilter.parentThreadId || forkFilter.hasParent)
 
   // Composer height tracking — the HeroComposer (main thread, no active
-  // subthread) or the inline Composer (active subthread) is measured via
-  // ResizeObserver so the ConversationTimeline spacer always matches the
-  // composer's rendered height, including when the textarea grows.
-  const composerContainerRef = useRef<HTMLDivElement>(null)
+  // Composer height tracking — the HeroComposer wrapper (main thread) or the
+  // composer dock (active subthread) is measured via ResizeObserver so the
+  // ConversationTimeline spacer always matches the rendered composer height.
+  // composerAreaRef is a callback ref that sets both composerContainerRef (for
+  // the ResizeObserver) and composerDockEl (the portal target for the Composer
+  // when a subthread is active).
+  const composerContainerRef = useRef<HTMLDivElement | null>(null)
+  const [composerDockEl, setComposerDockEl] = useState<Element | null>(null)
+  const composerAreaRef = useCallback((el: HTMLDivElement | null) => {
+    composerContainerRef.current = el
+    setComposerDockEl(el)
+  }, [])
   const [composerHeight, setComposerHeight] = useState(0)
   useEffect(() => {
     const el = composerContainerRef.current
@@ -2579,6 +2600,23 @@ export const ChatPage = () => {
     })
     ro.observe(el)
     return () => ro.disconnect()
+  }, [composerDockEl])
+
+  // Transcript scroll tracking — reveals the jump-to-bottom button when the
+  // user has scrolled up in the seeded-feed transcript scroll container.
+  const transcriptScrollRef = useRef<HTMLDivElement>(null)
+  const [isScrolledUp, setIsScrolledUp] = useState(false)
+  useEffect(() => {
+    const el = transcriptScrollRef.current
+    if (!el) return
+    const handleScroll = () => {
+      setIsScrolledUp(el.scrollTop + el.clientHeight < el.scrollHeight - 10)
+    }
+    el.addEventListener('scroll', handleScroll, { passive: true })
+    return () => el.removeEventListener('scroll', handleScroll)
+  }, [])
+  const scrollToBottom = useCallback(() => {
+    transcriptScrollRef.current?.scrollTo({ top: transcriptScrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [])
   // Auto-close the overlay when the viewport expands to md+
   useEffect(() => {
@@ -3024,7 +3062,11 @@ export const ChatPage = () => {
           // pinned: Mars's opening briefing, then the chronological
           // conversation. Selecting a Subject renders it inline below.
           <div className="flex h-full flex-col" data-testid="seeded-feed">
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+            <div
+              ref={transcriptScrollRef}
+              data-testid="transcript-scroll"
+              className="min-h-0 flex-1 overflow-y-auto px-6 py-6"
+            >
               <div
                 data-testid="mars-opening-message"
                 className="flex flex-col gap-1"
@@ -3086,12 +3128,35 @@ export const ChatPage = () => {
                     onLiveBufferChange={setActiveLiveBuffer}
                     onSubthreadClosed={handleSubthreadClosed}
                     glossaryTerms={glossary ?? []}
+                    composerTarget={composerDockEl}
                   />
                 </div>
               )}
             </div>
-            {!activeConversationThreadId && (
-              <div ref={composerContainerRef} className="flex justify-center px-6 pb-6">
+            {/* Jump-to-bottom — always in the DOM, visibility driven by scroll state.
+                Rendered below the scroll container so it does not scroll away. */}
+            <button
+              data-testid="jump-to-bottom"
+              type="button"
+              aria-hidden={!isScrolledUp}
+              tabIndex={isScrolledUp ? 0 : -1}
+              className={[
+                'mx-auto mb-1 flex items-center gap-1 rounded-full border border-primary/30 px-3 py-1 font-mono text-[10px] text-primary transition-opacity',
+                isScrolledUp ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none',
+              ].join(' ')}
+              onClick={scrollToBottom}
+            >
+              ↓ Latest message
+            </button>
+            {/* Composer area — docked OUTSIDE the scroll container so it stays
+                visible regardless of how far the user has scrolled up.
+                When a subthread is active: an empty dock div serves as the
+                portal target; ChatConversation renders the Composer into it.
+                When on the main thread: the HeroComposer renders here directly. */}
+            {activeConversationThreadId ? (
+              <div ref={composerAreaRef} data-testid="composer-dock" />
+            ) : (
+              <div ref={composerAreaRef} className="flex justify-center px-6 pb-6">
                 <HeroComposer
                   onSend={(msg, files, clearState) =>
                     createAndSend({ message: msg, files }, { onSuccess: () => clearState() })
