@@ -354,4 +354,51 @@ describe('runReflectRecommendedDetector', () => {
     expect(result.rowId).toBeNull()
     expect(await ctx.countOpenReflectRows()).toBe(0)
   })
+
+  // Diagnostic skip reasons
+  it("returns skipReason='no-evidence' when no signals fire and autoTrigger is off", async () => {
+    const ctx = await loadContext(repo)
+    // No data inserted — all detectors quiet
+
+    const result = await ctx.runReflectRecommendedDetector({ store: ctx.store })
+
+    expect(result.raised).toBe(false)
+    expect(result.skipReason).toBe('no-evidence')
+  })
+
+  it("returns skipReason='auto-trigger-on' when autoTrigger is on even with evidence present", async () => {
+    process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER = 'true'
+    const ctx = await loadContext(repo)
+
+    // Insert KPI drift that would normally fire the detector
+    await insertSnapshot(ctx.store, {
+      id: 'snap-prior',
+      takenAt: '2026-01-01T00:00:00Z',
+      failureRate: 0.10,
+    })
+    await insertSnapshot(ctx.store, {
+      id: 'snap-current',
+      takenAt: '2026-01-02T00:00:00Z',
+      failureRate: 0.25,
+    })
+
+    const result = await ctx.runReflectRecommendedDetector({ store: ctx.store })
+
+    expect(result.raised).toBe(false)
+    expect(result.skipReason).toBe('auto-trigger-on')
+  })
+
+  it('returns skipReason=null when a row is raised', async () => {
+    const ctx = await loadContext(repo)
+
+    // Insert failure cluster that fires the detector
+    await insertFailedTask(ctx.store, 'task-s1', 'verify/timeout')
+    await insertFailedTask(ctx.store, 'task-s2', 'verify/timeout')
+    await insertFailedTask(ctx.store, 'task-s3', 'verify/timeout')
+
+    const result = await ctx.runReflectRecommendedDetector({ store: ctx.store })
+
+    expect(result.raised).toBe(true)
+    expect(result.skipReason).toBeNull()
+  })
 })

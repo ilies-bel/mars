@@ -5559,9 +5559,17 @@ export const startDaemon = async (
             `[reflect-detector] raised reflect-recommended row (row=${result.rowId})`,
           )
           viewStreamHub.broadcast('action-queue')
+        } else if (result.skipReason === 'auto-trigger-on') {
+          log(
+            '[reflect-detector] no row raised — selfEvolve.autoTrigger=true handles proposals directly via KPI-drift trigger',
+          )
+        } else {
+          log(
+            '[reflect-detector] no signals: kpiDrift=0 failureClusters=0 tokenSpike=null; reflection not yet needed',
+          )
         }
       } catch (err) {
-        log(`[reflect-detector] errored: ${(err as Error).message}`)
+        log(`[reflect-detector] errored: ${(err as Error).message}; check logs for details`)
       }
     })()
   }, REFLECT_DETECTOR_MS)

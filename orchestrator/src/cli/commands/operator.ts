@@ -51,10 +51,12 @@ const operatorStatus: Command = {
   usage: 'usage: mars operator status',
   run: async (_args, deps) => {
     const liveness = await isDaemonAlive()
-    const levers = loadDaemonConfig().controlLevers
+    const cfg = loadDaemonConfig()
+    const levers = cfg.controlLevers
     deps.out(`recovery: ${levers.recovery}`)
     deps.out(`scoring: ${levers.scoring}`)
     deps.out(`auto-reflect: ${levers.autoReflect}`)
+    deps.out(`auto-trigger: ${cfg.selfEvolve.autoTrigger ? 'on' : 'off'}`)
     if (!liveness.alive) {
       deps.out(
         `dispatch: ${readPersistedPaused() ? 'paused' : 'on'}  in-flight: unavailable (daemon down)`,

@@ -55,12 +55,15 @@ describe('mars operator status when the daemon is down', () => {
     const { persistPaused } = await import('../../../core/daemon/config')
     persistPaused(true)
     const task = await deps.store.enqueueTask('record budget spend while daemon is down')
+    // Use a timestamp 1 hour ago so the event falls inside the 4h budget window
+    // regardless of when the test runs.
+    const oneHourAgo = Date.now() - 60 * 60 * 1000
     await deps.store.execute({
       sql: `INSERT INTO trace_events (id, timestamp, kind, task_id, payload)
             VALUES (?, ?, 'step_ended', ?, ?)`,
       args: [
         'operator-status-daemon-down-event',
-        Date.parse('2026-07-31T21:53:48.275Z'),
+        oneHourAgo,
         task.id,
         JSON.stringify({
           usageSignals: {
@@ -85,6 +88,7 @@ describe('mars operator status when the daemon is down', () => {
       'recovery: off',
       'scoring: off',
       'auto-reflect: off',
+      'auto-trigger: off',
       'dispatch: paused  in-flight: unavailable (daemon down)',
       'window:  900.0k / 5.0M weighted tokens over 4h (18.0% — good)',
       '  top contributing arcs:',
@@ -95,5 +99,24 @@ describe('mars operator status when the daemon is down', () => {
       'open budget rows: none',
     ])
     expect(statusDaemon.calls).toEqual([])
+  })
+
+  it('shows auto-trigger: on when selfEvolve.autoTrigger is enabled via env var', async () => {
+    process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER = 'true'
+    vi.doMock('../../../core/daemon/paths', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('../../../core/daemon/paths')>()),
+      isDaemonAlive: vi.fn().mockResolvedValue({ alive: false, reason: 'pid file missing' }),
+    }))
+    const deps = await loadDeps()
+    const { makeFakeDaemon, runCommandInProcess } = await import('../../test-adapter')
+
+    const result = await runCommandInProcess(['operator', 'status'], {
+      ...deps,
+      daemon: makeFakeDaemon(),
+    })
+
+    const outText = result.out.join('\n')
+    expect(outText).toContain('auto-trigger: on')
+    delete process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER
   })
 })

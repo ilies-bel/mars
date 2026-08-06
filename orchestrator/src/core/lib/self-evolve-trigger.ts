@@ -219,6 +219,16 @@ export interface ReflectWorthinessEvidence {
   tokenSpike: { taskId: string; weightedTokens: number; multipleOfMedian: number } | null
 }
 
+/**
+ * Why the reflect-recommended detector did not raise a row.
+ *
+ * - `'auto-trigger-on'`: selfEvolve.autoTrigger=true, so the KPI-drift trigger
+ *   handles proposals directly and the action-queue chip is not needed.
+ * - `'no-evidence'`: all three detectors (KPI drift, failure clusters, token
+ *   spike) evaluated the rolling window and found nothing above threshold.
+ */
+export type ReflectDetectorSkipReason = 'auto-trigger-on' | 'no-evidence'
+
 export interface ReflectRecommendedResult {
   /** True when the row was raised (or the existing open row was bumped). */
   raised: boolean
@@ -226,6 +236,11 @@ export interface ReflectRecommendedResult {
   rowId: string | null
   /** Evidence that caused the raise, null when not raised. */
   evidence: ReflectWorthinessEvidence | null
+  /**
+   * Why the detector did not raise a row. Non-null only when raised=false.
+   * Null when raised=true.
+   */
+  skipReason: ReflectDetectorSkipReason | null
 }
 
 /**
@@ -382,7 +397,10 @@ export const runReflectRecommendedDetector = async (opts?: {
       'status-changed',
       'self-evolve:reflect-detector',
     )
-    return { raised: false, rowId: null, evidence: null }
+    const skipReason: ReflectDetectorSkipReason = cfg.selfEvolve.autoTrigger
+      ? 'auto-trigger-on'
+      : 'no-evidence'
+    return { raised: false, rowId: null, evidence: null, skipReason }
   }
 
   // Build human-readable evidence summary.
@@ -419,7 +437,7 @@ export const runReflectRecommendedDetector = async (opts?: {
     signature: REFLECT_RECOMMENDED_SIG,
   })
 
-  return { raised: true, rowId, evidence }
+  return { raised: true, rowId, evidence, skipReason: null }
 }
 
 /**
