@@ -94,8 +94,11 @@ if (isDev) {
     process.exit(code ?? 0)
   })
 } else {
-  // Production mode: require dist/ to be present.
-  if (!existsSync(distDir)) {
+  // Production mode: require dist/index.html to be present before binding a
+  // port. Checking the directory alone is insufficient — an empty dist/ passes
+  // the directory test but causes the server to serve 404s for every request.
+  const distIndex = resolve(distDir, 'index.html')
+  if (!existsSync(distIndex)) {
     console.error(
       'mars-ui: frontend is not built.\n' +
         `  Run \`npm --prefix ${pkgRoot} run build\` first, then retry.`,

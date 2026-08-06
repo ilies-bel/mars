@@ -200,6 +200,48 @@ describe('resolveLauncher', () => {
     // the correct type.
     expect(result === null || typeof result === 'string').toBe(true)
   })
+
+  it('returns the repo-root launcher when it exists, even when a worktree launcher also exists on disk', () => {
+    // Simulate the real failure mode: a worktree has a ui/ directory (the
+    // git checkout includes it) and a repo-root also has the launcher built.
+    // resolveLauncher must return the repo-root one.
+    const base = mkdtempSync(resolve(tmpdir(), 'mars-ui-both-'))
+    try {
+      // Repo-root launcher (the one we want).
+      const repoRoot = resolve(base, 'project')
+      mkdirSync(resolve(repoRoot, 'ui', 'bin'), { recursive: true })
+      writeFileSync(resolve(repoRoot, 'ui', 'bin', 'mars-ui.mjs'), '#!/usr/bin/env node\n')
+
+      // Worktree launcher (should be ignored even though it exists on disk).
+      const worktreeLauncher = resolve(base, '.mars', 'worktrees', 'mars-task-xyz', 'ui', 'bin', 'mars-ui.mjs')
+      mkdirSync(resolve(base, '.mars', 'worktrees', 'mars-task-xyz', 'ui', 'bin'), { recursive: true })
+      writeFileSync(worktreeLauncher, '#!/usr/bin/env node\n')
+
+      const result = resolveLauncher(repoRoot)
+      expect(result).toBe(resolve(repoRoot, 'ui', 'bin', 'mars-ui.mjs'))
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('returns null when the only available launcher lives inside .mars/worktrees/', () => {
+    // When the CLI source itself is inside a task worktree (dev-install via
+    // tsx wrapper), the script-relative candidates resolve into that worktree.
+    // We simulate this by passing a repoRoot that is itself a worktree path —
+    // the resolved candidate contains .mars/worktrees/ and must be rejected.
+    const base = mkdtempSync(resolve(tmpdir(), 'mars-ui-worktree-only-'))
+    try {
+      const worktreeRoot = resolve(base, '.mars', 'worktrees', 'mars-task-abc')
+      mkdirSync(resolve(worktreeRoot, 'ui', 'bin'), { recursive: true })
+      writeFileSync(resolve(worktreeRoot, 'ui', 'bin', 'mars-ui.mjs'), '#!/usr/bin/env node\n')
+
+      // No non-worktree launcher exists anywhere the function can find.
+      const result = resolveLauncher(worktreeRoot)
+      expect(result).toBeNull()
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('printUiDiscoveryHint — init dashboard discoverability', () => {

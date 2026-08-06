@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { existsSync, writeFileSync, unlinkSync, readFileSync, openSync, closeSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { dirname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveContext } from '../core/context'
 import { stopProcess, makeOsStopDeps } from './ui-stop'
@@ -19,13 +19,30 @@ export interface UiPidEntry {
   startedAt: string
 }
 
-export const resolveLauncher = (): string | null => {
+export const resolveLauncher = (repoRoot?: string): string | null => {
   const here = dirname(fileURLToPath(import.meta.url))
-  const candidates = [
+  // Segment that identifies a path living inside a worktree checkout.
+  // Any candidate containing this segment is skipped — serving a worktree's
+  // UI build is never correct and produces confusing 404s.
+  const worktreeSegment = `${sep}.mars${sep}worktrees${sep}`
+
+  const candidates: string[] = []
+  // Repo-root candidate comes first — preferred over script-relative fallbacks.
+  if (repoRoot) {
+    candidates.push(resolve(repoRoot, 'ui/bin/mars-ui.mjs'))
+  }
+  // Script-relative fallbacks for packaged / global installs where the
+  // launcher lives next to the CLI binary rather than under a repo.
+  candidates.push(
     resolve(here, '../../../ui/bin/mars-ui.mjs'),
     resolve(here, '../../ui/bin/mars-ui.mjs'),
-  ]
+  )
+
   for (const candidate of candidates) {
+    if (candidate.includes(worktreeSegment)) {
+      process.stderr.write(`[mars ui] skipping worktree launcher: ${candidate}\n`)
+      continue
+    }
     if (existsSync(candidate)) return candidate
   }
   return null
@@ -68,7 +85,10 @@ const isAlive = (pid: number): boolean => {
 }
 
 export const launchUi = (opts: LaunchOptions): void => {
-  const launcher = resolveLauncher()
+  // Resolve repo context first so we can pass repoRoot to resolveLauncher,
+  // ensuring the repo-root UI package is preferred over any worktree copy.
+  const ctx = resolveContext(opts.repo)
+  const launcher = resolveLauncher(ctx.repoRoot)
   if (!launcher) {
     console.error(
       'ui package not found; run `cd ui && npm install` or reinstall mars',
@@ -78,7 +98,6 @@ export const launchUi = (opts: LaunchOptions): void => {
 
   const port = opts.port ? parseInt(opts.port, 10) : 7777
   const host = opts.host ?? '127.0.0.1'
-  const ctx = resolveContext(opts.repo)
   const logFile = resolve(ctx.stateDir, 'ui.log')
   // Open the log file for appending before spawning so the child inherits
   // a valid, open fd from the very first byte it writes.
