@@ -16,11 +16,54 @@ import { readDaemonPort } from './shared'
 const NO_DAEMON_MSG =
   'alerts: daemon not running — run `mars daemon start` (the alert view is served by the daemon)'
 
+const DAEMON_BUSY_MSG =
+  'alerts: daemon did not answer within 2s (may be draining or busy — use `mars daemon status` to check)'
+
+const ALERT_FETCH_TIMEOUT_MS = 2_000
+
+/**
+ * Map a fetch error to the appropriate user-visible message.
+ *
+ * Distinguishes three cases:
+ * - Timeout / abort → daemon is up but slow (possibly draining); do NOT say
+ *   "not running" since that prompts the operator to run `mars daemon start`
+ *   against a daemon that is alive.
+ * - Connection error (ECONNREFUSED / socket hang-up) → daemon stopped.
+ * - Anything else → propagate as a generic error.
+ */
+const alertFetchErrorMessage = (err: unknown): string => {
+  if (
+    typeof err === 'object' &&
+    err !== null &&
+    'name' in err &&
+    (err.name === 'TimeoutError' || err.name === 'AbortError')
+  ) {
+    return DAEMON_BUSY_MSG
+  }
+  const socketError = /\b(ECONNREFUSED|ECONNRESET|EPIPE|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ETIMEDOUT)\b/
+  const msg = err instanceof Error ? err.message : String(err)
+  const code =
+    typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : ''
+  if (socketError.test(msg) || socketError.test(code)) {
+    return NO_DAEMON_MSG
+  }
+  if (err instanceof Error && /^daemon returned \d+$/.test(err.message)) {
+    return `alerts: ${err.message}`
+  }
+  return DAEMON_BUSY_MSG
+}
+
 /** Fetch the full Alert list from the daemon. Throws on an unreachable daemon. */
 const fetchAlerts = async (port: number): Promise<Alert[]> => {
-  const res = await fetch(`http://127.0.0.1:${port}/alerts`)
-  if (!res.ok) throw new Error(`daemon returned ${res.status}`)
-  return (await res.json()) as Alert[]
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ALERT_FETCH_TIMEOUT_MS)
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/alerts`, { signal: controller.signal })
+    if (!res.ok) throw new Error(`daemon returned ${res.status}`)
+    return (await res.json()) as Alert[]
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /**
@@ -32,12 +75,19 @@ const fetchAlert = async (
   port: number,
   arcId: string,
 ): Promise<Alert | null> => {
-  const res = await fetch(
-    `http://127.0.0.1:${port}/alerts/${encodeURIComponent(arcId)}`,
-  )
-  if (res.status === 404) return null
-  if (!res.ok) throw new Error(`daemon returned ${res.status}`)
-  return (await res.json()) as Alert
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ALERT_FETCH_TIMEOUT_MS)
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${port}/alerts/${encodeURIComponent(arcId)}`,
+      { signal: controller.signal },
+    )
+    if (res.status === 404) return null
+    if (!res.ok) throw new Error(`daemon returned ${res.status}`)
+    return (await res.json()) as Alert
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /** Render the arc-rooted goal → reason → technical hierarchy for one alert. */
@@ -129,8 +179,8 @@ const alertList: Command = {
     let alerts: Alert[]
     try {
       alerts = await fetchAlerts(port)
-    } catch {
-      deps.err(NO_DAEMON_MSG)
+    } catch (err) {
+      deps.err(alertFetchErrorMessage(err))
       return { code: 1 }
     }
     if (alerts.length === 0) {
@@ -177,8 +227,8 @@ const alertShow: Command = {
     let alert: Alert | null
     try {
       alert = await fetchAlert(port, arcId)
-    } catch {
-      deps.err(NO_DAEMON_MSG)
+    } catch (err) {
+      deps.err(alertFetchErrorMessage(err))
       return { code: 1 }
     }
     if (alert === null) {

@@ -3755,6 +3755,7 @@ export const startDaemon = async (
       isStale,
       pause: pause.get(),
       signatureStorm,
+      draining: !acceptingWork,
     }
   }
 

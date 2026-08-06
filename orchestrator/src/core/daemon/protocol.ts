@@ -218,6 +218,13 @@ export interface DaemonStatusPayload {
    */
   pause: DispatchPauseState
   /**
+   * True while the daemon has stopped accepting new work (drain requested or
+   * force-shutdown initiated). In-flight tasks are still running to completion;
+   * `inFlight.length` tells the operator how many remain. Cleared when the
+   * daemon fully shuts down (status is no longer observable at that point).
+   */
+  draining: boolean
+  /**
    * The durable state of the signature-storm circuit breaker, read live from
    * the DB. Included regardless of whether dispatch is paused, so the operator
    * can see whether a stale `tripped=true` row is present even after dispatch

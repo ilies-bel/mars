@@ -254,6 +254,15 @@ const daemonStatus: Command = {
       isStale: boolean
       pause: DispatchPauseState
       signatureStorm: { tripped: boolean; signature: string | null; streak: number; lastTaskId: string | null }
+      draining?: boolean
+    }
+    // Drain state takes precedence over pause and staleness notices. A draining
+    // daemon is alive but winding down — the operator must not reach for
+    // `restart` while tasks are still completing.
+    if (data.draining) {
+      deps.out(
+        `⏳ DRAINING — stopped accepting new work; ${data.inFlight.length} in-flight task(s) remaining. Run \`mars daemon kill\` to abort.`,
+      )
     }
     const pauseLine = describePauseState(data.pause)
     if (pauseLine !== null) {
@@ -296,9 +305,17 @@ const daemonStatus: Command = {
         deps.out(`storm-breaker:  ok (no active streak)`)
       }
     }
-    if (data.isStale && data.sourceSha !== null && data.currentSha !== null) {
+    // Suppress the `restart` recommendation during a drain — the daemon is
+    // alive and finishing in-flight tasks; `restart` would abort them. The
+    // operator can choose `kill` if they truly want to abandon in-flight work.
+    if (data.isStale && data.sourceSha !== null && data.currentSha !== null && !data.draining) {
       deps.out(
         `⚠ running code from ${data.sourceSha.slice(0, 7)}; HEAD is now ${data.currentSha.slice(0, 7)} — run \`mars daemon restart\``,
+      )
+    }
+    if (data.isStale && data.sourceSha !== null && data.currentSha !== null && data.draining) {
+      deps.out(
+        `ℹ running code from ${data.sourceSha.slice(0, 7)}; HEAD is now ${data.currentSha.slice(0, 7)} (wait for drain to complete, then run \`mars daemon start\`)`,
       )
     }
     return { code: 0 }

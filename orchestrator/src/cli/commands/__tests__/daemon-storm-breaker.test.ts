@@ -69,6 +69,7 @@ const baseStatus = {
   currentSha: null,
   isStale: false,
   pause: { paused: false, reason: null, since: null, detail: null },
+  draining: false,
 }
 
 const makeOpts = (

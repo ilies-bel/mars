@@ -412,16 +412,34 @@ describe('reset-breaker', () => {
 })
 
 describe('drain gate and validation', () => {
-  it('refuses work-spawning ops while draining (acceptingWork=false)', async () => {
+  it('refuses dispatch-spawning ops while draining (acceptingWork=false)', async () => {
     const { deps } = makeDeps()
+    deps.setAcceptingWork(false)
+    // `continue` is a work-spawning op (it resumes a Claude process).
+    const res = await dispatchRpc(
+      rpcRegistry,
+      { op: 'continue', id: 'mars-abc' },
+      deps,
+    )
+    expect(res.ok).toBe(false)
+    expect((res as { errorCode?: string }).errorCode).toBe('DRAINING')
+  })
+
+  it('allows add while draining so operators can record tasks without aborting the drain', async () => {
+    const addedTask = { id: 'mars-new', prompt: 'do a thing', status: 'queued' }
+    const handleAdd = vi.fn().mockResolvedValue(addedTask) as unknown as DaemonDeps['handleAdd']
+    const { deps } = makeDeps({ handleAdd })
     deps.setAcceptingWork(false)
     const res = await dispatchRpc(
       rpcRegistry,
       { op: 'add', prompt: 'do a thing' },
       deps,
     )
-    expect(res.ok).toBe(false)
-    expect((res as { errorCode?: string }).errorCode).toBe('DRAINING')
+    expect(res.ok).toBe(true)
+    expect(handleAdd).toHaveBeenCalledWith(
+      'do a thing',
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    )
   })
 
   it('still serves read-only ops (ping) while draining', async () => {

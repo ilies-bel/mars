@@ -39,13 +39,18 @@ export const buildRpcRegistry = (
 export const rpcRegistry: RpcRegistry = buildRpcRegistry(allRpcHandlers)
 
 /**
- * The ops that spawn new work (Claude processes / queue mutations). While the
- * daemon is draining (`acceptingWork === false`) these are refused with a
- * `DRAINING` error code, exactly as the old `handleRequest` prologue did. The
- * HTTP handler gates the same surface on `isAcceptingWork`.
+ * The ops that spawn new work (Claude processes / dispatch) or continue
+ * in-flight work. While the daemon is draining (`acceptingWork === false`)
+ * these are refused with a `DRAINING` error code, exactly as the old
+ * `handleRequest` prologue did. The HTTP handler gates the same surface on
+ * `isAcceptingWork`.
+ *
+ * `add` is intentionally NOT in this set: recording a task during a drain is
+ * safe — it writes a `queued` row and nothing dispatches until the daemon
+ * restarts. Refusing `add` during drain forces operators to use destructive
+ * `kill` just to file a loose end, which is the wrong trade-off.
  */
 const WORK_SPAWNING_OPS: ReadonlySet<DaemonRequest['op']> = new Set([
-  'add',
   'continue',
   'restart',
   'refine',
