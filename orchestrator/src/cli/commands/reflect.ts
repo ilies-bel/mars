@@ -472,7 +472,15 @@ const sessionReflect: Command = {
       return { code: 1 }
     }
 
-    const sessionResult = await loadSessionArcs(sessionId)
+    let sessionResult: Awaited<ReturnType<typeof loadSessionArcs>>
+    try {
+      sessionResult = await loadSessionArcs(sessionId)
+    } catch (err) {
+      deps.err(
+        `failed to load arcs for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+      )
+      return { code: 1 }
+    }
     if (!sessionResult) {
       deps.err(
         `no tasks found for session ${sessionId} — nothing to reflect on`,
@@ -633,7 +641,15 @@ const reflectWorkflowFit: Command = {
       return { code: 1 }
     }
 
-    const sessionResult = await loadSessionArcs(sessionId)
+    let sessionResult: Awaited<ReturnType<typeof loadSessionArcs>>
+    try {
+      sessionResult = await loadSessionArcs(sessionId)
+    } catch (err) {
+      deps.err(
+        `failed to load arcs for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+      )
+      return { code: 1 }
+    }
     if (!sessionResult) {
       deps.err(`no tasks found for session ${sessionId} — nothing to reflect on`)
       return { code: 1 }

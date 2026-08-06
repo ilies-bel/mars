@@ -16,6 +16,11 @@ interface QueueModule {
 interface DeepQueryModule {
   loadDeepReflectArc: typeof import('../deep-reflect-query').loadDeepReflectArc
   listDeepReflectArcCandidates: typeof import('../deep-reflect-query').listDeepReflectArcCandidates
+  loadSessionArcs: typeof import('../deep-reflect-query').loadSessionArcs
+}
+
+interface DbModule {
+  closeAllDbs: typeof import('../db').closeAllDbs
 }
 
 /**
@@ -415,5 +420,65 @@ describe('loadDeepReflectArc — foreground session slice', () => {
     expect(arc).not.toBeNull()
     // operatorContext must be null when reflection is disabled.
     expect(arc!.operatorContext).toBeNull()
+  })
+})
+
+describe('loadSessionArcs', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(async () => {
+    // Close PGlite BEFORE the next vi.resetModules() call so that WASM
+    // allocations are returned to the free list rather than orphaned. Without
+    // this, successive DDL-heavy tests exhaust the shared WASM heap and
+    // contaminate other test suites in the same process.
+    const db = (await import('../db')) as unknown as DbModule
+    await db.closeAllDbs()
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns null for a session with no tasks', async () => {
+    const { dq } = await loadModules(repo)
+    const result = await dq.loadSessionArcs('session-with-no-tasks')
+    expect(result).toBeNull()
+  })
+
+  it('returns originIds for a multi-task session in creation order', async () => {
+    const { q, dq } = await loadModules(repo)
+    const sessionId = 'multi-task-session-abc'
+    const task1 = await q.enqueueTask('first task', undefined, {
+      skipTriage: true,
+      originSessionId: sessionId,
+    })
+    const task2 = await q.enqueueTask('second task', undefined, {
+      skipTriage: true,
+      originSessionId: sessionId,
+    })
+    const result = await dq.loadSessionArcs(sessionId)
+    expect(result).not.toBeNull()
+    expect(result!.sessionId).toBe(sessionId)
+    expect(result!.originIds).toContain(task1.id)
+    expect(result!.originIds).toContain(task2.id)
+    const idx1 = result!.originIds.indexOf(task1.id)
+    const idx2 = result!.originIds.indexOf(task2.id)
+    expect(idx1).toBeLessThan(idx2)
+  })
+
+  it('throws on a store query failure instead of silently returning null', async () => {
+    const { q, dq } = await loadModules(repo)
+    const sessionId = 'session-for-failure-test'
+    // Warm cachedDefaultStore so getDefaultTaskStore() returns immediately
+    // without calling ensureSchema() (which would recreate renamed columns).
+    await q.enqueueTask('seed task to prime the store cache', undefined, { skipTriage: true })
+    // Rename column to induce a SQL error without DROP TABLE CASCADE (which
+    // would corrupt the PGlite WASM heap and contaminate other tests).
+    await q.resolveQueueClient().execute({
+      sql: 'ALTER TABLE tasks RENAME COLUMN origin_session_id TO origin_session_id_renamed',
+    })
+    await expect(dq.loadSessionArcs(sessionId)).rejects.toThrow()
   })
 })

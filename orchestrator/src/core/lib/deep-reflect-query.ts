@@ -1088,7 +1088,9 @@ export const resolveSessionId = async (input: string): Promise<string | null> =>
  * Load all arcs that originated from a Foreground session, together with
  * workflow_step_runs data for harness step-fitness analysis.
  *
- * Returns null when no tasks are found for the session.
+ * Returns null when no tasks are found (genuinely empty result).
+ * Throws when the underlying store query fails — a failed query and an empty
+ * result are distinct outcomes and must not produce the same message.
  */
 export const loadSessionArcs = async (
   sessionId: string,
@@ -1096,20 +1098,22 @@ export const loadSessionArcs = async (
 ): Promise<SessionArcsResult | null> => {
   const store = await getDefaultTaskStore()
 
-  // Find all distinct arc origin IDs for this session.
-  let originIds: string[]
-  try {
-    const r = await store.query({
-      sql: `SELECT DISTINCT COALESCE(origin_id, id) AS origin_id
-              FROM tasks
-             WHERE origin_session_id = ?
-             ORDER BY created_at ASC`,
-      args: [sessionId],
-    })
-    originIds = r.rows.map((row) => (row as unknown as { origin_id: string }).origin_id)
-  } catch {
-    return null
-  }
+  // Find all distinct arc origin IDs for this session, ordered by creation
+  // time of the first task in each arc.
+  //
+  // NOTE: SELECT DISTINCT … ORDER BY <non-selected-col> is rejected by
+  // PostgreSQL. Use GROUP BY + MIN aggregation instead — semantically
+  // equivalent and Postgres-portable. No try/catch: a SQL failure must
+  // propagate so the caller can surface it distinctly from "no tasks found".
+  const r = await store.query({
+    sql: `SELECT COALESCE(origin_id, id) AS origin_id, MIN(created_at) AS first_created
+            FROM tasks
+           WHERE origin_session_id = ?
+           GROUP BY COALESCE(origin_id, id)
+           ORDER BY first_created ASC`,
+    args: [sessionId],
+  })
+  const originIds = r.rows.map((row) => (row as unknown as { origin_id: string }).origin_id)
 
   if (originIds.length === 0) return null
 
