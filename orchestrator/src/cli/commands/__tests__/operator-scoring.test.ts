@@ -68,6 +68,42 @@ describe('mars operator status — scoring lever', () => {
     expect(r.out.join('\n')).toContain('scoring: on')
   })
 
+  it('annotates "0 accepted scorers — nothing is graded" when scoring is on but no scorer is accepted', async () => {
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(['operator', 'status'], { ...deps, daemon: fake })
+
+    expect(r.code).toBe(0)
+    expect(r.out.join('\n')).toContain(
+      'scoring: on (0 accepted scorers — nothing is graded)',
+    )
+  })
+
+  it('shows plain "scoring: on" once a scorer is accepted', async () => {
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    // Suggest then accept a scorer so the accepted-count is 1.
+    const { suggestScorer, acceptScorer } = await import('../../../core/scorers')
+    const { scorer } = await suggestScorer({
+      workflow: 'task',
+      title: 'Test quality dimension',
+      rubric: 'Score 0..1 based on test quality',
+      originArcId: 'arc-test-id',
+      reportPath: null,
+      evidence: [],
+      confidence: 0.8,
+    })
+    await acceptScorer(scorer.id)
+
+    const r = await run(['operator', 'status'], { ...deps, daemon: fake })
+
+    expect(r.code).toBe(0)
+    const scoringLine = r.out.find((line) => line.startsWith('scoring:'))
+    expect(scoringLine).toBe('scoring: on')
+  })
+
   it('reflects "scoring: off" after operator set scoring off', async () => {
     const deps = await loadDeps()
     const fake = await makeFake()

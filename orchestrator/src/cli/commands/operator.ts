@@ -54,7 +54,35 @@ const operatorStatus: Command = {
     const cfg = loadDaemonConfig()
     const levers = cfg.controlLevers
     deps.out(`recovery: ${levers.recovery}`)
-    deps.out(`scoring: ${levers.scoring}`)
+    if (levers.scoring === 'on') {
+      // Count accepted scorers so the operator knows whether the lever is
+      // actually doing anything. `scoring: on` with 0 accepted scorers means
+      // nothing is graded, which is misleading without the annotation.
+      // Use a direct COUNT query (via resolveStateClient) rather than
+      // listScorers so we do not call initScorers() — initScorers runs
+      // ensureSchema directly, bypassing the schemaReadyByTarget cache and
+      // doubling the schema-init overhead in tests.
+      let acceptedCount = 0
+      try {
+        const { resolveStateClient } = await import('../../core/store/state-client')
+        const result = await resolveStateClient().execute({
+          sql: `SELECT COUNT(*) AS n FROM scorers WHERE status = 'accepted'`,
+          args: [],
+        })
+        acceptedCount = Number(
+          (result.rows[0] as { n?: number | bigint } | undefined)?.n ?? 0,
+        )
+      } catch {
+        // Non-fatal: scorer table may not exist yet in a brand-new repo.
+      }
+      if (acceptedCount === 0) {
+        deps.out(`scoring: on (0 accepted scorers — nothing is graded)`)
+      } else {
+        deps.out(`scoring: on`)
+      }
+    } else {
+      deps.out(`scoring: off`)
+    }
     deps.out(`auto-reflect: ${levers.autoReflect}`)
     deps.out(`auto-trigger: ${cfg.selfEvolve.autoTrigger ? 'on' : 'off'}`)
     if (!liveness.alive) {
