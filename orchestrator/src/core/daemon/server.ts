@@ -4615,6 +4615,7 @@ export const startDaemon = async (
   const appServices = createAppServices({
     traceStore,
     buildAlertSources,
+    getPauseState: () => pause.get(),
     getSituationSemaphoreSnapshot: () => {
       const workerSems = [...new Set([...Object.values(sems), verifySem])]
       return {

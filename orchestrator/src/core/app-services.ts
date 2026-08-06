@@ -83,6 +83,7 @@ import type {
   PersistedActionQueueRow,
   TaskForActionQueue,
 } from './daemon/view/action-queue'
+import type { DispatchPauseState } from './daemon/pause-state'
 import type { TerminalEvent } from './daemon/view/terminal-events'
 import type { ReleaseNoteEntry } from './daemon/view/release-notes'
 import type { Session } from './daemon/view/sessions'
@@ -180,6 +181,13 @@ export interface AppServicesDeps {
   listAwaitingHumanParks?: () => Promise<PrimitivePark[]>
   /** Current worker-pool state, supplied by the daemon's semaphore owner. */
   getSituationSemaphoreSnapshot?: () => SituationSemaphoreSnapshot
+  /**
+   * Optional: supplies the current dispatch-pause state so the action-queue
+   * projection can derive live-accurate titles (e.g. whether a
+   * `signature-storm` row should claim "dispatch is paused"). When absent the
+   * renderers that depend on it default to the unpaused branch.
+   */
+  getPauseState?: () => DispatchPauseState
 }
 
 /**
@@ -1061,6 +1069,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       taskStore,
       repoRoot: getRepoRoot(),
       filter,
+      pauseState: deps.getPauseState?.() ?? null,
     })
   }
 

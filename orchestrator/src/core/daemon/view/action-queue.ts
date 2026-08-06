@@ -25,6 +25,7 @@ import {
   type RecipeVerb,
 } from '../../lib/action-queue-recipes'
 import { isActionQueueKind, type ActionQueueKind } from '../../lib/action-queue-kinds'
+import type { DispatchPauseState } from '../pause-state'
 
 /**
  * The display kind is the persisted action-queue kind. It is deliberately not
@@ -240,7 +241,7 @@ const formatOperationalDuration = (milliseconds: number): string => {
  */
 const OPERATIONAL_ALERT_COPY: Record<
   ActionQueueKind,
-  ((row: PersistedActionQueueRow) => { title: string; body: string }) | null
+  ((row: PersistedActionQueueRow, pauseState: DispatchPauseState | null) => { title: string; body: string }) | null
 > = {
   failed: null,
   'steward-repeat': null,
@@ -248,7 +249,7 @@ const OPERATIONAL_ALERT_COPY: Record<
   'diagnose-inconclusive': null,
   'daemon-killed': null,
   'coder-question': null,
-  'daemon-died': (row) => {
+  'daemon-died': (row, _pauseState) => {
     const pid = typeof row.payload.pid === 'number' ? row.payload.pid : 'unknown'
     const detectedAt =
       typeof row.payload.crashDetectedAt === 'string'
@@ -272,7 +273,7 @@ const OPERATIONAL_ALERT_COPY: Record<
   'awaiting-validation-preview-gone': null,
   'awaiting-human': null,
   'behaviour-unverified': null,
-  'subscriber-stalled': (row) => {
+  'subscriber-stalled': (row, _pauseState) => {
     const rawSubscriber =
       typeof row.payload.subscriberId === 'string'
         ? row.payload.subscriberId
@@ -293,7 +294,7 @@ const OPERATIONAL_ALERT_COPY: Record<
   },
   'observability-store-oversize': null,
   'orphaned-origin': null,
-  'phantom-task': (row) => {
+  'phantom-task': (row, _pauseState) => {
     const taskId =
       typeof row.payload.taskId === 'string' ? row.payload.taskId : (row.signature ?? 'unknown task')
     const status =
@@ -317,7 +318,7 @@ const OPERATIONAL_ALERT_COPY: Record<
   'daemon-code-drift': null,
   'workflow-install-drift': null,
   'provider-rate-limited': null,
-  'gate-broken': (row) => {
+  'gate-broken': (row, _pauseState) => {
     const verdict =
       typeof row.payload.verdict === 'string'
         ? row.payload.verdict
@@ -343,7 +344,7 @@ const OPERATIONAL_ALERT_COPY: Record<
   'promotion-decision': null,
   'tool-promotion': null,
   'arc-verification-failed': null,
-  'signature-storm': (row) => {
+  'signature-storm': (row, pauseState) => {
     const signature =
       typeof row.payload.signature === 'string'
         ? row.payload.signature
@@ -365,18 +366,33 @@ const OPERATIONAL_ALERT_COPY: Record<
           `\`steward_ledger\` rows for target '${signature}'.`,
       }
     }
+    // Derive the "dispatch is paused" clause from current state, not the
+    // frozen instant the breaker tripped. The action queue is a pure
+    // projection: a row that was raised while the storm breaker was armed
+    // must not keep claiming dispatch is paused once the breaker clears.
+    const dispatchPausedByStorm =
+      pauseState !== null && pauseState.paused && pauseState.reason === 'storm'
+    if (dispatchPausedByStorm) {
+      return {
+        title: `${streak} tasks failed with \`${signature}\`; dispatch is paused`,
+        body:
+          `The same failure signature is recurring across tasks, so dispatch is paused. ` +
+          `There is no single task transcript for this incident. Dispatch resumes as soon as the Steward reports ` +
+          `an outcome (fix, no-op, or failure), or on the bounded crash/hang fallback. ` +
+          `Inspect \`.mars/watch.log\`, correct the shared cause, then inspect \`mars operator\` before resuming dispatch.`,
+      }
+    }
     return {
-      title: `${streak} tasks failed with \`${signature}\`; dispatch is paused`,
+      title: `${streak} tasks failed with \`${signature}\``,
       body:
-        `The same failure signature is recurring across tasks, so dispatch is paused. ` +
-        `There is no single task transcript for this incident. Dispatch resumes as soon as the Steward reports ` +
-        `an outcome (fix, no-op, or failure), or on the bounded crash/hang fallback. ` +
-        `Inspect \`.mars/watch.log\`, correct the shared cause, then inspect \`mars operator\` before resuming dispatch.`,
+        `The same failure signature recurred across tasks. Dispatch has since resumed. ` +
+        `There is no single task transcript for this incident. ` +
+        `Inspect \`.mars/watch.log\` and correct the shared cause to prevent future storms.`,
     }
   },
   'gate-enrichment-stale': null,
   'env-incident': null,
-  'stale-queued': (row) => {
+  'stale-queued': (row, _pauseState) => {
     const taskId =
       typeof row.payload.taskId === 'string' ? row.payload.taskId : (row.signature ?? 'unknown task')
     const age =
@@ -390,7 +406,7 @@ const OPERATIONAL_ALERT_COPY: Record<
         `No task transcript exists until dispatch starts.`,
     }
   },
-  'stale-queued-summary': (row) => {
+  'stale-queued-summary': (row, _pauseState) => {
     const suppressed =
       typeof row.payload.suppressedCount === 'number' ? row.payload.suppressedCount : 'Additional'
     const queueDepth = typeof row.payload.queueDepth === 'number' ? ` Queue depth is ${row.payload.queueDepth}.` : ''
@@ -409,8 +425,9 @@ const OPERATIONAL_ALERT_COPY: Record<
 
 const renderOperationalAlertCopy = (
   row: PersistedActionQueueRow,
+  pauseState: DispatchPauseState | null,
 ): { title: string; body: string } | null =>
-  isActionQueueKind(row.kind) ? OPERATIONAL_ALERT_COPY[row.kind]?.(row) ?? null : null
+  isActionQueueKind(row.kind) ? OPERATIONAL_ALERT_COPY[row.kind]?.(row, pauseState) ?? null : null
 
 /** Narrow task shape `buildActionQueueView` needs — a subset of the queue Task. */
 export interface TaskForActionQueue {
@@ -479,6 +496,14 @@ export interface BuildActionQueueViewParams {
   /** Absolute path to the repo root — used for the stale-worktree git probe. */
   repoRoot: string
   filter: DerivedActionQueueFilter
+  /**
+   * Current dispatch-pause state, supplied by the daemon so the action-queue
+   * projection can derive live-accurate titles (e.g. whether a
+   * `signature-storm` row should claim "dispatch is paused"). When null the
+   * renderers that depend on it default to the unpaused branch — safe for
+   * tests, CLI fall-through paths, and history views.
+   */
+  pauseState?: DispatchPauseState | null
 }
 
 export interface BuildActionQueueHistoryViewParams {
@@ -652,7 +677,9 @@ export const buildActionQueueView = async ({
   taskStore,
   repoRoot,
   filter: _filter,
+  pauseState: rawPauseState,
 }: BuildActionQueueViewParams): Promise<ActionQueueRow[]> => {
+  const pauseState = rawPauseState ?? null
   const profileStart = performance.now()
   const persistedRows = await stateStore.listOpenActionQueueItems()
   const persistedRowsLoadedAt = performance.now()
@@ -905,7 +932,9 @@ export const buildActionQueueView = async ({
     // Operational rows are not task-failure rows, even when they name a task.
     // Their renderer owns the diagnosis and pointer instead of the FailureKind
     // fallback, which only understands a task's failure signature.
-    const operationalCopy = renderOperationalAlertCopy(row)
+    // Pass the live pause state so renderers (e.g. signature-storm) can derive
+    // the "dispatch is paused" clause from current reality, not frozen history.
+    const operationalCopy = renderOperationalAlertCopy(row, pauseState)
     if (operationalCopy !== null) {
       title = operationalCopy.title
       body = operationalCopy.body
@@ -1367,7 +1396,9 @@ export const buildActionQueueHistoryView = async ({
       body = copy.body
     }
 
-    const operationalCopy = renderOperationalAlertCopy(row)
+    // History rows are already resolved; dispatch state at resolution time is
+    // unknown and irrelevant. Pass null so the pause clause defaults to unpaused.
+    const operationalCopy = renderOperationalAlertCopy(row, null)
     if (operationalCopy !== null) {
       title = operationalCopy.title
       body = operationalCopy.body

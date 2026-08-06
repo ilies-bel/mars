@@ -273,7 +273,10 @@ describe('buildActionQueueView — non-failure kinds keep their raiser copy', ()
     expect(rows[0]!.body).toContain('mars daemon restart')
   })
 
-  it('signature-storm keeps the storm title naming the signature', async () => {
+  it('signature-storm derives its title from the renderer (streak + signature, no pause clause when unpaused)', async () => {
+    // The signature-storm renderer always derives a fresh title from the payload —
+    // it does NOT keep the persisted title. When no pauseState is supplied (or
+    // dispatch is running), the "dispatch is paused" clause is omitted.
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeRow({
@@ -287,11 +290,11 @@ describe('buildActionQueueView — non-failure kinds keep their raiser copy', ()
       taskStore: makeTaskStore([]),
       repoRoot: '/nonexistent',
       filter: 'open',
+      // No pauseState → defaults to null → dispatch is treated as running
     })
 
-    expect(rows[0]!.title).toBe(
-      '3 tasks failed with `code/uncommitted-changes`; dispatch is paused',
-    )
+    expect(rows[0]!.title).toBe('3 tasks failed with `code/uncommitted-changes`')
+    expect(rows[0]!.title).not.toContain('dispatch is paused')
   })
 
   it('a task-backed non-failure kind is tagged with its task but not retitled', async () => {
@@ -974,7 +977,9 @@ describe('buildActionQueueView — operational alert copy', () => {
 
     const byId = new Map(rows.map((row) => [row.id, row]))
     expect(byId.get('storm')!.title).toContain('6 tasks failed with `code/unclassified`')
-    expect(byId.get('storm')!.body).toContain('mars operator')
+    // With no pauseState supplied (defaults to unpaused), dispatch is NOT claimed to be paused.
+    expect(byId.get('storm')!.title).not.toContain('dispatch is paused')
+    expect(byId.get('storm')!.body).toContain('.mars/watch.log')
     expect(byId.get('gate')!.title).toContain('Gate test')
     expect(byId.get('gate')!.body).toContain('verify:test/test-assertion-error')
     expect(byId.get('daemon')!.title).toContain('pid 4242')
@@ -992,5 +997,80 @@ describe('buildActionQueueView — operational alert copy', () => {
       expect(row.title).not.toBe('A pipeline step did not complete')
       expect(row.body).not.toContain('See the transcript for details')
     }
+  })
+})
+
+// ── signature-storm pause-state projection ────────────────────────────────────
+
+describe('buildActionQueueView — signature-storm pause-state projection', () => {
+  const stormRow = makeRow({
+    id: 'storm',
+    kind: 'signature-storm',
+    signature: 'signature-storm:verify:typecheck/unclassified',
+    payload: { signature: 'verify:typecheck/unclassified', streak: 3 },
+  })
+
+  it('does NOT claim dispatch is paused when pauseState is null', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([stormRow]),
+      taskStore: makeTaskStore([]),
+      // pauseState omitted — defaults to null (unknown / unpaused)
+    })
+    const row = rows.find((r) => r.id === 'storm')!
+    expect(row.title).not.toContain('dispatch is paused')
+    expect(row.body).not.toContain('dispatch is paused')
+  })
+
+  it('does NOT claim dispatch is paused when dispatch is running', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([stormRow]),
+      taskStore: makeTaskStore([]),
+      pauseState: { paused: false, reason: null, since: null, detail: null },
+    })
+    const row = rows.find((r) => r.id === 'storm')!
+    expect(row.title).not.toContain('dispatch is paused')
+    expect(row.body).not.toContain('dispatch is paused')
+  })
+
+  it('does NOT claim dispatch is paused when paused for a reason other than storm', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([stormRow]),
+      taskStore: makeTaskStore([]),
+      pauseState: { paused: true, reason: 'operator', since: '2026-08-06T00:00:00.000Z', detail: null },
+    })
+    const row = rows.find((r) => r.id === 'storm')!
+    expect(row.title).not.toContain('dispatch is paused')
+  })
+
+  it('DOES claim dispatch is paused when paused with reason storm', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([stormRow]),
+      taskStore: makeTaskStore([]),
+      pauseState: { paused: true, reason: 'storm', since: '2026-08-06T00:00:00.000Z', detail: null },
+    })
+    const row = rows.find((r) => r.id === 'storm')!
+    expect(row.title).toContain('dispatch is paused')
+    expect(row.body).toContain('dispatch is paused')
+  })
+
+  it('includes the streak and signature in title regardless of pause state', async () => {
+    const runningRows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([stormRow]),
+      taskStore: makeTaskStore([]),
+      pauseState: { paused: false, reason: null, since: null, detail: null },
+    })
+    const pausedRows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([stormRow]),
+      taskStore: makeTaskStore([]),
+      pauseState: { paused: true, reason: 'storm', since: '2026-08-06T00:00:00.000Z', detail: null },
+    })
+    expect(runningRows.find((r) => r.id === 'storm')!.title).toContain('3 tasks failed with `verify:typecheck/unclassified`')
+    expect(pausedRows.find((r) => r.id === 'storm')!.title).toContain('3 tasks failed with `verify:typecheck/unclassified`')
   })
 })
