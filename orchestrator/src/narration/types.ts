@@ -48,3 +48,21 @@ export interface NarrationLine {
   /** The canonical, deterministic narration string for this arc. */
   text: string
 }
+
+/**
+ * A digest composed for an away-span (a contiguous time window during which
+ * the operator was absent). Contains the narration lines emitted for the span
+ * plus per-shape counts so the caller can render a summary without re-scanning
+ * the lines array.
+ */
+export interface AwayDigest {
+  /** One narration line per resolved arc in the span, in first-seen order. */
+  lines: NarrationLine[]
+  /** Per-arc-shape counts. Each count is the number of arcs that resolved to
+   * that shape in the span. */
+  counts: {
+    landed: number
+    'stumbled-recovered': number
+    'needs-you': number
+  }
+}
