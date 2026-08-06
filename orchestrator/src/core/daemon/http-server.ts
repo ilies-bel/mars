@@ -2663,6 +2663,40 @@ export const startHttpServer = async (
       }
     }
 
+    // POST /main-thread/ask — read-only Q&A path for the main thread.
+    // Accepts free text and returns a static inline answer; never enqueues a
+    // task, opens a Subject, or mutates any domain entity beyond writing one
+    // `main_thread_entries` row of kind='answer'. Bypasses the draining gate —
+    // this is a lightweight informational write, not orchestrator work.
+    if (req.method === 'POST' && req.url === '/main-thread/ask') {
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(rawBody)
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+          return
+        }
+        const bodySchema = z.object({ text: z.string().min(1) })
+        const result = bodySchema.safeParse(parsed)
+        if (!result.success) {
+          sendJson(res, 400, {
+            ok: false,
+            error: 'body must be { text: string } with at least one character',
+          })
+          return
+        }
+        import('../mainthread/ask.js')
+          .then((m) => m.ask(resolveStateClient(), result.data.text))
+          .then((entry) => sendJson(res, 200, { ok: true, entry }))
+          .catch((err: unknown) => sendError(res, err))
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
+    }
+
     if (req.method !== 'POST') {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' })
       return
