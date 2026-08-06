@@ -24,6 +24,8 @@
  */
 
 import { execFile } from 'node:child_process'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { getDefaultTaskStore, type ArcStatusOptions } from '../store/task-store.js'
 import { raiseActionQueueItem, listActionQueueItems, setActionQueueState } from './action-queue.js'
@@ -31,6 +33,9 @@ import { runHeadlessProvider } from '../workers/providers.js'
 import { collectAssistantText } from './reflector.js'
 import { getProposal } from '../proposals.js'
 import { probeE2eTooling } from './e2e-tooling.js'
+import { acquireLock } from './git/lock.js'
+import { discoverAppBoot, type BootPlan } from '../../workflows/primitives/app-boot-discovery.js'
+import { runBrowserCheck, type CriterionResult } from '../../workflows/primitives/browser-check.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -111,12 +116,62 @@ export const isArcVerifyDisabled = (): boolean =>
   process.env.MARS_ARC_VERIFY_DISABLED === '1'
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Arc-level E2E pass types + injectable deps
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Result of the arc-level E2E browser pass.
+ *
+ * `ran: false` means the pass was skipped; `cantVerifyReason` explains why.
+ * `ran: true` means the pass executed and `criterionResults` holds evidence.
+ * The pass NEVER fails the arc — it only captures evidence.
+ */
+export interface ArcE2ePassResult {
+  ran: boolean
+  cantVerifyReason: 'no-criteria' | 'no-boot-plan' | 'already-done' | null
+  criterionResults: CriterionResult[]
+}
+
+/**
+ * Injectable side-effect seams for the arc-level E2E pass.
+ * Override in tests so no real filesystem, lock, or browser is needed.
+ */
+export interface ArcE2eDeps {
+  discoverAppBoot: (repoRoot: string) => BootPlan | null
+  runBrowserCheck: (
+    bootPlan: BootPlan,
+    criteria: readonly string[],
+    opts: { taskId: string; worktreeDir: string; logDir: string },
+  ) => Promise<CriterionResult[]>
+  acquireLock: (lockPath: string, timeoutMs: number) => Promise<() => Promise<void>>
+  isE2ePassDone: (originId: string, marsStateDir: string) => boolean
+  markE2ePassDone: (originId: string, marsStateDir: string) => Promise<void>
+}
+
+/** How long to wait for the machine-wide E2E lock before giving up. */
+const E2E_LOCK_TIMEOUT_MS = 300_000
+
+const defaultArcE2eDeps: ArcE2eDeps = {
+  discoverAppBoot,
+  runBrowserCheck: (bootPlan, criteria, opts) => runBrowserCheck(bootPlan, criteria, opts),
+  acquireLock,
+  isE2ePassDone: (originId, marsStateDir) =>
+    existsSync(join(marsStateDir, 'e2e-passes', `${originId}.done`)),
+  markE2ePassDone: async (originId, marsStateDir) => {
+    const dir = join(marsStateDir, 'e2e-passes')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, `${originId}.done`), '')
+  },
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Verdict type
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface ArcVerificationVerdict {
   ok: boolean
   findings: string[]
+  e2ePass?: ArcE2ePassResult
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -436,6 +491,7 @@ export async function runArcVerification(
   opts: {
     cwd: string
     integrationBranch?: string
+    e2eDeps?: Partial<ArcE2eDeps>
   },
 ): Promise<ArcVerificationVerdict> {
   const store = await getDefaultTaskStore()
@@ -567,6 +623,71 @@ export async function runArcVerification(
       }).catch(() => {
         // Best-effort.
       })
+    }
+
+    // ── Arc-level E2E pass ────────────────────────────────────────────────────
+    // Boot the app, capture a screenshot per done criterion, then tear down the
+    // server. Serialized machine-wide via `.mars/.e2e.lock`. A durable marker
+    // prevents re-runs after a daemon restart. The arc is NEVER failed here —
+    // all errors are CAN'T-VERIFY outcomes, not arc failures.
+    const marsStateDir = join(opts.cwd, '.mars')
+    const e2eDepsResolved: ArcE2eDeps = { ...defaultArcE2eDeps, ...opts.e2eDeps }
+
+    let e2ePass: ArcE2ePassResult | undefined
+
+    if (e2eDepsResolved.isE2ePassDone(originId, marsStateDir)) {
+      // Fast path: completed in a prior daemon lifetime — skip.
+      e2ePass = { ran: false, cantVerifyReason: 'already-done', criterionResults: [] }
+    } else {
+      // Collect all done criteria across every task in the arc.
+      const allCriteria = arcTaskData.flatMap((t) => [...t.doneCriteria])
+
+      if (allCriteria.length === 0) {
+        // CAN'T-VERIFY: no criteria authored on any arc task.
+        e2ePass = { ran: false, cantVerifyReason: 'no-criteria', criterionResults: [] }
+      } else {
+        const bootPlan = e2eDepsResolved.discoverAppBoot(opts.cwd)
+
+        if (bootPlan === null) {
+          // CAN'T-VERIFY: no runnable app surface discovered.
+          e2ePass = { ran: false, cantVerifyReason: 'no-boot-plan', criterionResults: [] }
+        } else {
+          // Acquire the machine-wide cross-process lock so only one E2E pass
+          // runs at a time, then re-check the durable marker (double-checked
+          // locking: another worker may have completed the pass while we waited).
+          let releaseLock: (() => Promise<void>) | null = null
+          try {
+            releaseLock = await e2eDepsResolved.acquireLock(
+              join(marsStateDir, '.e2e.lock'),
+              E2E_LOCK_TIMEOUT_MS,
+            )
+
+            // Second marker check under the lock.
+            if (e2eDepsResolved.isE2ePassDone(originId, marsStateDir)) {
+              e2ePass = { ran: false, cantVerifyReason: 'already-done', criterionResults: [] }
+            } else {
+              const logDir = join(marsStateDir, 'dev-servers')
+              const criterionResults = await e2eDepsResolved.runBrowserCheck(
+                bootPlan,
+                allCriteria,
+                { taskId: originId, worktreeDir: opts.cwd, logDir },
+              )
+              await e2eDepsResolved.markE2ePassDone(originId, marsStateDir)
+              e2ePass = { ran: true, cantVerifyReason: null, criterionResults }
+            }
+          } catch (e2eErr) {
+            // Best-effort: E2E infra errors never fail the arc.
+            console.error(`[arc-verifier] E2E pass for arc ${originId} errored:`, e2eErr)
+            // e2ePass remains undefined — no evidence to attach.
+          } finally {
+            await releaseLock?.()
+          }
+        }
+      }
+    }
+
+    if (e2ePass !== undefined) {
+      verdict = { ...verdict, e2ePass }
     }
   }
 

@@ -812,4 +812,234 @@ describe('arc-verifier', () => {
       })
     })
   })
+
+  // ── Arc-level E2E pass ────────────────────────────────────────────────────
+  //
+  // When E2E tooling is available the verifier boots the app and captures
+  // a screenshot per done criterion. The pass is:
+  //  - serialized machine-wide via .mars/.e2e.lock
+  //  - durable: a completed pass is never re-run (marker survives daemon restart)
+  //  - best-effort: arc verdict is never changed by E2E pass success/failure
+
+  describe('arc-level E2E pass', () => {
+    /** Shared helper — minimal arc-done store with tasks that have criteria. */
+    const makeArcDoneStore = (
+      originId: string,
+      doneCriteria: string[] = ['widget loads'],
+    ) =>
+      makeStore(
+        { status: 'arc-done', tasks: [{ id: originId, status: 'done' }], landedCommits: ['sha-e2e'] },
+        [{ id: originId, branch: null }],
+        new Map([[originId, makeTask(originId, { doneCriteria })]]),
+      )
+
+    type StubCriterionResult = { criterion: string; verdict: 'unverifiable'; screenshotPath: string | null; note: string }
+
+    /** Build a fresh injectable deps object for each test. */
+    const makeE2eDeps = (overrides: {
+      isPassDone?: boolean
+      bootPlan?: { cmd: string; cwd: string; url: string; reason: string } | null
+      browserCheckResult?: StubCriterionResult[]
+      acquireLock?: (path: string, timeout: number) => Promise<() => Promise<void>>
+      markE2ePassDone?: (originId: string, stateDir: string) => Promise<void>
+    } = {}) => {
+      const markerMap = new Map<string, boolean>()
+      const {
+        isPassDone = false,
+        bootPlan = { cmd: 'npm run dev', cwd: '/repo', url: 'http://localhost:5173', reason: 'vite' },
+        browserCheckResult = [{ criterion: 'widget loads', verdict: 'unverifiable' as const, screenshotPath: 'qa/0.png', note: 'captured' }],
+      } = overrides
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const runBrowserCheckSpy = vi.fn(async () => browserCheckResult as any)
+      const acquireLockSpy = overrides.acquireLock ?? vi.fn(async (_path: string, _timeout: number) => vi.fn(async () => {}))
+      const markDoneBase = overrides.markE2ePassDone ?? vi.fn(async () => {})
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const deps: any = {
+        discoverAppBoot: vi.fn(() => bootPlan),
+        runBrowserCheck: runBrowserCheckSpy,
+        acquireLock: acquireLockSpy,
+        isE2ePassDone: vi.fn((_originId: string, _stateDir: string) => isPassDone || (markerMap.get(_originId) ?? false)),
+        markE2ePassDone: async (originId: string, stateDir: string) => {
+          markerMap.set(originId, true)
+          return markDoneBase(originId, stateDir)
+        },
+      }
+
+      return {
+        deps,
+        runBrowserCheckSpy,
+        acquireLockSpy: acquireLockSpy as ReturnType<typeof vi.fn>,
+        markDoneBase: markDoneBase as ReturnType<typeof vi.fn>,
+      }
+    }
+
+    beforeEach(() => {
+      // E2E tooling available for all tests in this block.
+      probeE2eToolingMock.mockReturnValue({
+        available: true,
+        runner: 'playwright' as const,
+        missing: [],
+        setupSteps: [],
+      })
+      listActionQueueItemsMock.mockResolvedValue([])
+      // Static Claude check always passes.
+      runHeadlessProviderMock.mockResolvedValue({
+        exitCode: 0,
+        stdout: '{"ok":true,"findings":[]}',
+        stderr: '',
+        sessionId: null,
+        conversation: [],
+        quotaRejected: null,
+      })
+    })
+
+    // ── Tracer bullet: browser check runs when tooling + boot + criteria ──────
+
+    it('[e2e-pass] calls runBrowserCheck when tooling available + boot plan + criteria', async () => {
+      const { deps, runBrowserCheckSpy } = makeE2eDeps()
+      getDefaultTaskStoreMock.mockResolvedValue(makeArcDoneStore('origin-e2e-runs'))
+
+      await runArcVerification('origin-e2e-runs', { cwd: '/repo', e2eDeps: deps })
+
+      expect(runBrowserCheckSpy).toHaveBeenCalledOnce()
+      expect(runBrowserCheckSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ cmd: 'npm run dev' }),
+        ['widget loads'],
+        expect.objectContaining({ taskId: 'origin-e2e-runs' }),
+      )
+    })
+
+    // ── Arc verdict never changes due to E2E pass ────────────────────────────
+
+    it('[e2e-pass:verdict-unchanged] arc verdict ok=true is preserved even when E2E ran', async () => {
+      const { deps } = makeE2eDeps()
+      getDefaultTaskStoreMock.mockResolvedValue(makeArcDoneStore('origin-e2e-verdict'))
+
+      const verdict = await runArcVerification('origin-e2e-verdict', { cwd: '/repo', e2eDeps: deps })
+
+      expect(verdict.ok).toBe(true)
+      expect(verdict.findings).toEqual([])
+    })
+
+    // ── CAN'T-VERIFY: no done criteria ───────────────────────────────────────
+
+    it('[e2e-pass:no-criteria] skips runBrowserCheck when arc has no done criteria', async () => {
+      const { deps, runBrowserCheckSpy, acquireLockSpy } = makeE2eDeps()
+      getDefaultTaskStoreMock.mockResolvedValue(makeArcDoneStore('origin-e2e-no-crit', []))
+
+      await runArcVerification('origin-e2e-no-crit', { cwd: '/repo', e2eDeps: deps })
+
+      expect(runBrowserCheckSpy).not.toHaveBeenCalled()
+      expect(acquireLockSpy).not.toHaveBeenCalled()
+    })
+
+    // ── CAN'T-VERIFY: no boot plan ───────────────────────────────────────────
+
+    it('[e2e-pass:no-boot] skips runBrowserCheck when no boot plan discovered', async () => {
+      const { deps, runBrowserCheckSpy, acquireLockSpy } = makeE2eDeps({ bootPlan: null })
+      getDefaultTaskStoreMock.mockResolvedValue(makeArcDoneStore('origin-e2e-no-boot'))
+
+      await runArcVerification('origin-e2e-no-boot', { cwd: '/repo', e2eDeps: deps })
+
+      expect(runBrowserCheckSpy).not.toHaveBeenCalled()
+      expect(acquireLockSpy).not.toHaveBeenCalled()
+    })
+
+    // ── Durable marker: completed pass never re-runs ─────────────────────────
+
+    it('[e2e-pass:durable] second call with same originId skips runBrowserCheck after marker is set', async () => {
+      const { deps, runBrowserCheckSpy } = makeE2eDeps()
+      getDefaultTaskStoreMock.mockResolvedValue(makeArcDoneStore('origin-durable'))
+
+      // First call: runs E2E pass, marker is set inside makeE2eDeps
+      await runArcVerification('origin-durable', { cwd: '/repo', e2eDeps: deps })
+      expect(runBrowserCheckSpy).toHaveBeenCalledTimes(1)
+
+      // Second call: isE2ePassDone now returns true (marker in markerMap)
+      await runArcVerification('origin-durable', { cwd: '/repo', e2eDeps: deps })
+      expect(runBrowserCheckSpy).toHaveBeenCalledTimes(1) // unchanged
+    })
+
+    it('[e2e-pass:durable-preexist] pre-existing marker (simulates daemon restart) skips run', async () => {
+      // isPassDone: true simulates a marker file written in a previous daemon lifetime
+      const { deps, runBrowserCheckSpy } = makeE2eDeps({ isPassDone: true })
+      getDefaultTaskStoreMock.mockResolvedValue(makeArcDoneStore('origin-preexist'))
+
+      await runArcVerification('origin-preexist', { cwd: '/repo', e2eDeps: deps })
+
+      expect(runBrowserCheckSpy).not.toHaveBeenCalled()
+    })
+
+    // ── Serialization: lock acquired before browser check, released after ────
+
+    it('[e2e-pass:lock] acquireLock is called with .e2e.lock path before runBrowserCheck', async () => {
+      let lockAcquiredBeforeBrowserCheck = false
+      let lockAcquired = false
+
+      const { deps } = makeE2eDeps({
+        acquireLock: async () => {
+          lockAcquired = true
+          return async () => {}
+        },
+      })
+      // Wrap runBrowserCheck to verify lock is held
+      const originalRun = deps.runBrowserCheck
+      deps.runBrowserCheck = vi.fn(async (...args) => {
+        lockAcquiredBeforeBrowserCheck = lockAcquired
+        return originalRun(...args)
+      })
+      getDefaultTaskStoreMock.mockResolvedValue(makeArcDoneStore('origin-lock-order'))
+
+      await runArcVerification('origin-lock-order', { cwd: '/repo', e2eDeps: deps })
+
+      expect(lockAcquiredBeforeBrowserCheck).toBe(true)
+    })
+
+    it('[e2e-pass:lock-path] acquireLock receives a path containing .e2e.lock', async () => {
+      const { deps, acquireLockSpy } = makeE2eDeps()
+      getDefaultTaskStoreMock.mockResolvedValue(makeArcDoneStore('origin-lock-path'))
+
+      await runArcVerification('origin-lock-path', { cwd: '/repo', e2eDeps: deps })
+
+      expect(acquireLockSpy).toHaveBeenCalledWith(
+        expect.stringContaining('.e2e.lock'),
+        expect.any(Number),
+      )
+    })
+
+    it('[e2e-pass:lock-released] lock is released in finally even when runBrowserCheck throws', async () => {
+      let released = false
+      const { deps } = makeE2eDeps({
+        acquireLock: async () => {
+          return async () => { released = true }
+        },
+        browserCheckResult: undefined, // will be overridden below
+      })
+      deps.runBrowserCheck = vi.fn(async () => { throw new Error('browser crashed') })
+
+      getDefaultTaskStoreMock.mockResolvedValue(makeArcDoneStore('origin-lock-release'))
+
+      // Must not throw — arc verdict is best-effort only
+      const verdict = await runArcVerification('origin-lock-release', { cwd: '/repo', e2eDeps: deps })
+      expect(verdict.ok).toBe(true) // arc verdict unchanged
+      expect(released).toBe(true)   // lock released
+    })
+
+    it('[e2e-pass:no-tooling] runBrowserCheck NOT called when tooling unavailable', async () => {
+      probeE2eToolingMock.mockReturnValueOnce({
+        available: false,
+        runner: 'none',
+        missing: ['playwright not installed'],
+        setupSteps: ['npm install @playwright/test'],
+      })
+      const { deps, runBrowserCheckSpy } = makeE2eDeps()
+      getDefaultTaskStoreMock.mockResolvedValue(makeArcDoneStore('origin-no-tooling'))
+
+      await runArcVerification('origin-no-tooling', { cwd: '/repo', e2eDeps: deps })
+
+      expect(runBrowserCheckSpy).not.toHaveBeenCalled()
+    })
+  })
 })
