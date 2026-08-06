@@ -6,29 +6,43 @@
  *   2. no-merge arcs skipped — arc with no landed commits → no agent call, no AQ item
  *   3. failing verdict → exactly one arc-verification-failed AQ item
  *   4. kill-switch flag suppresses all runs
- *   5. arc E2E pass — always CAN'T-VERIFY (no live surface):
- *      - origin task with done criteria → draft proposal emitted (source='arc-verifier')
- *      - origin task with no done criteria → arc-verifier draft proposal emitted
- *      - fingerprint already exists → no duplicate proposal created
+ *   5. E2E tooling probe (level-triggered):
+ *      - tooling unavailable → raises one global e2e-tooling-missing AQ item
+ *      - second arc on same repo → raiseActionQueueItem called again (DB dedupes via signature)
+ *      - body carries missing[] and setupSteps[] from the probe
+ *      - tooling available → resolves any open e2e-tooling-missing items
  *
  * System boundaries mocked:
- *   - raiseActionQueueItem (action-queue DB write)
+ *   - raiseActionQueueItem / listActionQueueItems / setActionQueueState (action-queue DB)
  *   - runHeadlessProvider (selected provider subprocess)
  *   - getDefaultTaskStore (mars.db read)
- *   - createProposal / findOpenDraftByKpiTag (proposals DB write)
+ *   - probeE2eTooling (filesystem probe)
+ *   - getProposal (proposals DB read)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { RaiseActionQueueItem } from '../action-queue'
+import type { E2eToolingReport } from '../e2e-tooling'
 
-// ── Mock raiseActionQueueItem ─────────────────────────────────────────────────
+// ── Mock raiseActionQueueItem / listActionQueueItems / setActionQueueState ────
 
 const raiseSpy = vi.hoisted(() =>
   vi.fn(async (_item: RaiseActionQueueItem): Promise<string> => 'mock-item-id'),
 )
+const listActionQueueItemsMock = vi.hoisted(() =>
+  vi.fn(async () => [] as Array<{ id: string }>),
+)
+const setActionQueueStateMock = vi.hoisted(() =>
+  vi.fn(async () => {}),
+)
 vi.mock('../action-queue', async (importActual) => {
   const actual = await importActual<typeof import('../action-queue')>()
-  return { ...actual, raiseActionQueueItem: raiseSpy }
+  return {
+    ...actual,
+    raiseActionQueueItem: raiseSpy,
+    listActionQueueItems: listActionQueueItemsMock,
+    setActionQueueState: setActionQueueStateMock,
+  }
 })
 
 // ── Mock provider runner ─────────────────────────────────────────────────────
@@ -74,21 +88,27 @@ vi.mock('../reflector', () => ({
   collectAssistantText: vi.fn((_conversation: unknown[]) => ''),
 }))
 
-// ── Mock createProposal / findOpenDraftByKpiTag / getProposal ─────────────────
+// ── Mock getProposal ──────────────────────────────────────────────────────────
 
-const createProposalMock = vi.hoisted(() =>
-  vi.fn(async (_title: string, _opts?: unknown) => ({ id: 'proposal-1', title: 'mock' } as { id: string; title: string })),
-)
-const findOpenDraftByKpiTagMock = vi.hoisted(() =>
-  vi.fn(async (_tag: string) => null as { id: string } | null),
-)
 const getProposalMock = vi.hoisted(() =>
   vi.fn(async (_id: string) => null as { id: string; userStories: string[]; outOfScope: string } | null),
 )
 vi.mock('../../proposals', () => ({
-  createProposal: createProposalMock,
-  findOpenDraftByKpiTag: findOpenDraftByKpiTagMock,
   getProposal: getProposalMock,
+}))
+
+// ── Mock probeE2eTooling ──────────────────────────────────────────────────────
+
+const probeE2eToolingMock = vi.hoisted(() =>
+  vi.fn((_repoRoot: string): E2eToolingReport => ({
+    available: false,
+    runner: 'none',
+    missing: ['@playwright/test is not listed in any package.json'],
+    setupSteps: ['npm install --save-dev @playwright/test'],
+  })),
+)
+vi.mock('../e2e-tooling', () => ({
+  probeE2eTooling: probeE2eToolingMock,
 }))
 
 // ── Import after mocks ────────────────────────────────────────────────────────
@@ -97,7 +117,6 @@ const {
   triggerArcVerification,
   runArcVerification,
   isArcVerifyDisabled,
-  arcE2eProposalFingerprint,
   loadPrdReachabilityContext,
   _clearTriggeredForTests,
 } = await import('../arc-verifier')
@@ -257,9 +276,12 @@ describe('arc-verifier', () => {
       expect(verdict.ok).toBe(false)
       expect(verdict.findings).toEqual(expect.arrayContaining(findings))
 
-      // Exactly one action-queue item raised.
-      expect(raiseSpy).toHaveBeenCalledTimes(1)
-      const raised = raiseSpy.mock.calls[0][0] as RaiseActionQueueItem
+      // Exactly one arc-verification-failed item raised (e2e-tooling-missing may also be raised).
+      const arcFailCalls = raiseSpy.mock.calls.filter(
+        (c) => (c[0] as RaiseActionQueueItem).kind === 'arc-verification-failed',
+      )
+      expect(arcFailCalls).toHaveLength(1)
+      const raised = arcFailCalls[0][0] as RaiseActionQueueItem
       expect(raised.kind).toBe('arc-verification-failed')
       expect(raised.signature).toBe('arc-verification-failed:origin-fail')
       expect(raised.originTaskId).toBe('origin-fail')
@@ -290,7 +312,11 @@ describe('arc-verifier', () => {
 
       expect(verdict.ok).toBe(true)
       expect(verdict.findings).toEqual([])
-      expect(raiseSpy).not.toHaveBeenCalled()
+      // No arc-verification-failed raised (e2e-tooling-missing may still be raised).
+      const arcFailCalls = raiseSpy.mock.calls.filter(
+        (c) => (c[0] as RaiseActionQueueItem).kind === 'arc-verification-failed',
+      )
+      expect(arcFailCalls).toHaveLength(0)
     })
 
     it('[verdict-fail] handles unparseable agent output gracefully', async () => {
@@ -318,9 +344,12 @@ describe('arc-verifier', () => {
       // Unparseable output is treated as a failure.
       expect(verdict.ok).toBe(false)
       expect(verdict.findings.length).toBeGreaterThan(0)
-      // Still raises one item.
-      expect(raiseSpy).toHaveBeenCalledTimes(1)
-      expect(raiseSpy.mock.calls[0][0].kind).toBe('arc-verification-failed')
+      // Still raises one arc-verification-failed item.
+      const arcFailCalls = raiseSpy.mock.calls.filter(
+        (c) => (c[0] as RaiseActionQueueItem).kind === 'arc-verification-failed',
+      )
+      expect(arcFailCalls).toHaveLength(1)
+      expect(arcFailCalls[0][0].kind).toBe('arc-verification-failed')
     })
 
     it('[verdict-fail] raises only one item when called twice for the same arc', async () => {
@@ -345,11 +374,13 @@ describe('arc-verifier', () => {
       await runArcVerification('origin-dedup-raise', { cwd: process.cwd() })
       await runArcVerification('origin-dedup-raise', { cwd: process.cwd() })
 
-      // raiseActionQueueItem is called twice, but the action-queue dedup (via
-      // signature) collapses them into one row. Our test just asserts the
-      // kind and signature are correct both times.
-      expect(raiseSpy).toHaveBeenCalledTimes(2)
-      for (const call of raiseSpy.mock.calls) {
+      // raiseActionQueueItem is called twice for arc-verification-failed (the action-queue
+      // dedup via signature collapses them into one row in the DB).
+      const arcFailCalls = raiseSpy.mock.calls.filter(
+        (c) => (c[0] as RaiseActionQueueItem).kind === 'arc-verification-failed',
+      )
+      expect(arcFailCalls).toHaveLength(2)
+      for (const call of arcFailCalls) {
         expect(call[0].kind).toBe('arc-verification-failed')
         expect(call[0].signature).toBe('arc-verification-failed:origin-dedup-raise')
       }
@@ -465,10 +496,6 @@ describe('arc-verifier', () => {
           })
       }
 
-      beforeEach(() => {
-        findOpenDraftByKpiTagMock.mockResolvedValue(null)
-      })
-
       // ── fixture (a): admin interface promised, only API shipped ──────────────
 
       it('(a) produces exactly one finding when a story lacks a Reachable surface', async () => {
@@ -499,8 +526,11 @@ describe('arc-verifier', () => {
         expect(reachabilityFindings[0]).toContain(story)
         expect(reachabilityFindings[0]).toContain('admin interface')
         // Lands in the action queue via the existing failing-verdict path.
-        expect(raiseSpy).toHaveBeenCalledTimes(1)
-        expect(raiseSpy.mock.calls[0][0].kind).toBe('arc-verification-failed')
+        const arcFailCalls = raiseSpy.mock.calls.filter(
+          (c) => (c[0] as RaiseActionQueueItem).kind === 'arc-verification-failed',
+        )
+        expect(arcFailCalls).toHaveLength(1)
+        expect(arcFailCalls[0][0].kind).toBe('arc-verification-failed')
       })
 
       // ── fixture (b): deferred surface in out_of_scope → no finding ───────────
@@ -529,7 +559,11 @@ describe('arc-verifier', () => {
         expect(reachabilityFindings).toHaveLength(0)
         // Overall verdict driven solely by done-criteria check (which passed).
         expect(verdict.ok).toBe(true)
-        expect(raiseSpy).not.toHaveBeenCalled()
+        // No arc-verification-failed raised (e2e-tooling-missing may still be raised).
+        const arcFailCalls = raiseSpy.mock.calls.filter(
+          (c) => (c[0] as RaiseActionQueueItem).kind === 'arc-verification-failed',
+        )
+        expect(arcFailCalls).toHaveLength(0)
       })
 
       // ── fixture (c): no user_stories → no reachability finding ───────────────
@@ -561,7 +595,11 @@ describe('arc-verifier', () => {
         expect(reachabilityFindings).toHaveLength(0)
         // Provider called exactly once (no second call for reachability).
         expect(runHeadlessProviderMock).toHaveBeenCalledTimes(1)
-        expect(raiseSpy).not.toHaveBeenCalled()
+        // No arc-verification-failed raised (e2e-tooling-missing may still be raised).
+        const arcFailCalls = raiseSpy.mock.calls.filter(
+          (c) => (c[0] as RaiseActionQueueItem).kind === 'arc-verification-failed',
+        )
+        expect(arcFailCalls).toHaveLength(0)
       })
 
       // ── fixture (d): three unsatisfied stories → exactly one finding ──────────
@@ -601,9 +639,12 @@ describe('arc-verifier', () => {
         expect(reachabilityFindings[0]).toContain(stories[0])
         // Count of other unsatisfied stories is mentioned.
         expect(reachabilityFindings[0]).toContain('+2 other unsatisfied')
-        // Exactly one AQ item raised.
-        expect(raiseSpy).toHaveBeenCalledTimes(1)
-        expect(raiseSpy.mock.calls[0][0].kind).toBe('arc-verification-failed')
+        // Exactly one arc-verification-failed AQ item raised.
+        const arcFailCalls = raiseSpy.mock.calls.filter(
+          (c) => (c[0] as RaiseActionQueueItem).kind === 'arc-verification-failed',
+        )
+        expect(arcFailCalls).toHaveLength(1)
+        expect(arcFailCalls[0][0].kind).toBe('arc-verification-failed')
       })
 
       // ── at-most-one finding regardless of multiple stories ────────────────────
@@ -636,29 +677,23 @@ describe('arc-verifier', () => {
       })
     })
 
-    // ── arc E2E pass — always CAN'T-VERIFY (no live surface) ─────────────────
+    // ── E2E tooling probe (level-triggered) ──────────────────────────────────
     //
-    // After the static Claude spot-check, runArcVerification always emits a
-    // arc-verifier draft proposal (source='arc-verifier') because no per-task preview
-    // command exists (removed in PRD f354b404 slice 1). The arc is never failed
-    // for this infrastructure gap.
+    // When tooling is unavailable, one global e2e-tooling-missing action-queue
+    // item is raised (deduped via fixed signature in the DB layer, not here).
+    // When tooling is available, any open item is auto-resolved.
 
-    describe("arc E2E pass — always CAN'T-VERIFY", () => {
-      /** Make a store where the origin task has the given spec. */
-      const makeE2eStore = (
-        originId: string,
-        spec: { verifyCmd?: string | null; doneCriteria?: string[] } = {},
-      ) => {
-        const task = makeTask(originId, spec)
-        return makeStore(
+    describe('E2E tooling probe', () => {
+      /** Make a minimal arc-done store for isolation. */
+      const makeE2eStore = (originId: string) =>
+        makeStore(
           { status: 'arc-done', tasks: [{ id: originId, status: 'done' }], landedCommits: ['sha-e2e'] },
           [{ id: originId, branch: null }],
-          new Map([[originId, task]]),
+          new Map([[originId, makeTask(originId)]]),
         )
-      }
 
       beforeEach(() => {
-        // Static Claude check always passes so we isolate the E2E branch.
+        // Static Claude check always passes so we isolate the tooling branch.
         runHeadlessProviderMock.mockResolvedValue({
           exitCode: 0,
           stdout: '{"ok":true,"findings":[]}',
@@ -667,58 +702,113 @@ describe('arc-verifier', () => {
           conversation: [],
           quotaRejected: null,
         })
-        findOpenDraftByKpiTagMock.mockResolvedValue(null)
+        // Default: tooling unavailable
+        probeE2eToolingMock.mockReturnValue({
+          available: false,
+          runner: 'none',
+          missing: ['@playwright/test is not listed in any package.json'],
+          setupSteps: ['npm install --save-dev @playwright/test'],
+        })
+        listActionQueueItemsMock.mockResolvedValue([])
       })
 
-      it('[e2e-has-criteria] emits an arc-verifier draft proposal (source=arc-verifier) when origin task has done criteria', async () => {
-        getDefaultTaskStoreMock.mockResolvedValue(
-          makeE2eStore('origin-e2e-criteria', { doneCriteria: ['Feature works'] }),
-        )
+      it('[tooling-missing] raises e2e-tooling-missing with global signature when tooling unavailable', async () => {
+        getDefaultTaskStoreMock.mockResolvedValue(makeE2eStore('origin-e2e-missing'))
 
-        const verdict = await runArcVerification('origin-e2e-criteria', { cwd: '/tmp' })
-
-        // Static check passes, no live surface → verdict unchanged.
-        expect(verdict).toEqual({ ok: true, findings: [] })
-        // An arc-verifier draft proposal was emitted.
-        expect(createProposalMock).toHaveBeenCalledOnce()
-        const proposalOpts = (createProposalMock.mock.calls as unknown as Array<[string, { source: string }]>)[0][1]
-        expect(proposalOpts.source).toBe('arc-verifier')
-        // No AQ item — arc is not failed.
-        expect(raiseSpy).not.toHaveBeenCalled()
-      })
-
-      it('[e2e-no-criteria] emits an arc-verifier draft proposal when origin task has no done criteria', async () => {
-        getDefaultTaskStoreMock.mockResolvedValue(
-          makeE2eStore('origin-e2e-no-criteria', { doneCriteria: [] }),
-        )
-
-        const verdict = await runArcVerification('origin-e2e-no-criteria', { cwd: '/tmp' })
+        const verdict = await runArcVerification('origin-e2e-missing', { cwd: '/repo' })
 
         expect(verdict).toEqual({ ok: true, findings: [] })
-        expect(createProposalMock).toHaveBeenCalledOnce()
-        expect(((createProposalMock.mock.calls as unknown as Array<[string, { source: string }]>)[0][1]).source).toBe('arc-verifier')
-        expect(raiseSpy).not.toHaveBeenCalled()
-      })
-
-      it('[e2e-dedup-proposal] does not create duplicate proposals when fingerprint already exists', async () => {
-        getDefaultTaskStoreMock.mockResolvedValue(
-          makeE2eStore('origin-dedup-proposal', { doneCriteria: ['works'] }),
+        // raiseActionQueueItem called once for the tooling alert.
+        const e2eCalls = raiseSpy.mock.calls.filter(
+          (c) => (c[0] as RaiseActionQueueItem).kind === 'e2e-tooling-missing',
         )
-        // Simulate existing open proposal.
-        findOpenDraftByKpiTagMock.mockResolvedValue({ id: 'existing-proposal' })
-
-        const verdict = await runArcVerification('origin-dedup-proposal', { cwd: '/tmp' })
-
-        expect(verdict).toEqual({ ok: true, findings: [] })
-        // findOpenDraftByKpiTag was called, found an existing one → no createProposal.
-        expect(createProposalMock).not.toHaveBeenCalled()
+        expect(e2eCalls).toHaveLength(1)
+        const raised = e2eCalls[0][0] as RaiseActionQueueItem
+        expect(raised.signature).toBe('e2e-tooling-missing')
+        // No per-arc id in signature — it is global.
+        expect(raised.signature).not.toContain('origin-e2e-missing')
       })
 
-      it('[e2e-fingerprint] arcE2eProposalFingerprint is stable and contains originId', () => {
-        const fp = arcE2eProposalFingerprint('origin-xyz')
-        expect(fp).toContain('origin-xyz')
-        // Called twice with the same id → same result.
-        expect(fp).toBe(arcE2eProposalFingerprint('origin-xyz'))
+      it('[tooling-missing] body contains the missing pieces and setup steps from the probe', async () => {
+        probeE2eToolingMock.mockReturnValue({
+          available: false,
+          runner: 'none',
+          missing: ['@playwright/test is not installed', 'Playwright browsers are not installed'],
+          setupSteps: ['npm install --save-dev @playwright/test', 'npx playwright install --with-deps chromium'],
+        })
+        getDefaultTaskStoreMock.mockResolvedValue(makeE2eStore('origin-e2e-body'))
+
+        await runArcVerification('origin-e2e-body', { cwd: '/repo' })
+
+        const e2eCall = raiseSpy.mock.calls.find(
+          (c) => (c[0] as RaiseActionQueueItem).kind === 'e2e-tooling-missing',
+        )
+        expect(e2eCall).toBeDefined()
+        const raised = e2eCall![0] as RaiseActionQueueItem
+        expect(raised.payload['missing']).toEqual([
+          '@playwright/test is not installed',
+          'Playwright browsers are not installed',
+        ])
+        expect(raised.payload['setupSteps']).toEqual([
+          'npm install --save-dev @playwright/test',
+          'npx playwright install --with-deps chromium',
+        ])
+        expect(raised.body).toContain('@playwright/test is not installed')
+        expect(raised.body).toContain('npx playwright install --with-deps chromium')
+      })
+
+      it('[tooling-missing-two-arcs] second arc completion calls raiseActionQueueItem again (DB dedupes via signature)', async () => {
+        getDefaultTaskStoreMock.mockResolvedValue(makeE2eStore('origin-arc-1'))
+        await runArcVerification('origin-arc-1', { cwd: '/repo' })
+
+        getDefaultTaskStoreMock.mockResolvedValue(makeE2eStore('origin-arc-2'))
+        await runArcVerification('origin-arc-2', { cwd: '/repo' })
+
+        // Both arcs call raise; the DB layer dedupes via fingerprint.
+        const e2eCalls = raiseSpy.mock.calls.filter(
+          (c) => (c[0] as RaiseActionQueueItem).kind === 'e2e-tooling-missing',
+        )
+        expect(e2eCalls).toHaveLength(2)
+        // Both share the same global signature.
+        for (const [item] of e2eCalls) {
+          expect((item as RaiseActionQueueItem).signature).toBe('e2e-tooling-missing')
+        }
+      })
+
+      it('[tooling-available] resolves open e2e-tooling-missing items when tooling is available', async () => {
+        probeE2eToolingMock.mockReturnValue({
+          available: true,
+          runner: 'playwright' as const,
+          missing: [],
+          setupSteps: [],
+        })
+        listActionQueueItemsMock.mockResolvedValue([{ id: 'aq-stale-01' }, { id: 'aq-stale-02' }])
+        getDefaultTaskStoreMock.mockResolvedValue(makeE2eStore('origin-e2e-avail'))
+
+        const verdict = await runArcVerification('origin-e2e-avail', { cwd: '/repo' })
+
+        expect(verdict.ok).toBe(true)
+        // No e2e-tooling-missing raised.
+        expect(raiseSpy.mock.calls.some((c) => (c[0] as RaiseActionQueueItem).kind === 'e2e-tooling-missing')).toBe(false)
+        // Both stale items resolved.
+        expect(setActionQueueStateMock).toHaveBeenCalledTimes(2)
+        expect(setActionQueueStateMock).toHaveBeenCalledWith('aq-stale-01', 'resolved', expect.objectContaining({ by: 'arc-verifier' }))
+        expect(setActionQueueStateMock).toHaveBeenCalledWith('aq-stale-02', 'resolved', expect.objectContaining({ by: 'arc-verifier' }))
+      })
+
+      it('[tooling-available-no-open] does not call setActionQueueState when no open items exist', async () => {
+        probeE2eToolingMock.mockReturnValue({
+          available: true,
+          runner: 'playwright' as const,
+          missing: [],
+          setupSteps: [],
+        })
+        listActionQueueItemsMock.mockResolvedValue([])
+        getDefaultTaskStoreMock.mockResolvedValue(makeE2eStore('origin-e2e-clean'))
+
+        await runArcVerification('origin-e2e-clean', { cwd: '/repo' })
+
+        expect(setActionQueueStateMock).not.toHaveBeenCalled()
       })
     })
   })

@@ -421,6 +421,7 @@ const OPERATIONAL_ALERT_COPY: Record<
   'scheduling-decision': null,
   'requeue-warning': null,
   'arc-superseded-on-main': null,
+  'e2e-tooling-missing': null,
 }
 
 const renderOperationalAlertCopy = (

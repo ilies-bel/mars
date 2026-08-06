@@ -880,6 +880,24 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [],
   },
+
+  'e2e-tooling-missing': {
+    humanSummary: (ctx) => {
+      const missing = ctx.payload['missing']
+      const count = Array.isArray(missing) ? missing.length : 0
+      return count > 0
+        ? `E2E tooling is not set up (${count} prerequisite${count === 1 ? '' : 's'} missing) — arcs are running without a live E2E pass.`
+        : 'E2E tooling is not set up — arcs are running without a live E2E pass.'
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      missing: ctx.payload['missing'],
+      setupSteps: ctx.payload['setupSteps'],
+      mostRecentArcId: str(ctx.payload['mostRecentArcId']),
+    }),
+    verbs: [],
+  },
 } satisfies Record<ActionQueueKind, Omit<Recipe, 'preloadedResponses'>>
 
 /**

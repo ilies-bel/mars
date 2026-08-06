@@ -48,6 +48,7 @@ export const ACTION_QUEUE_KINDS = [
   'scheduling-decision',
   'requeue-warning',
   'arc-superseded-on-main',
+  'e2e-tooling-missing',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

@@ -6,12 +6,14 @@
  *   1. Re-runs each task's verifyCmd where present.
  *   2. Spot-checks the arc's done criteria against the actual merged diff.
  *   3. Returns a structured verdict { ok, findings[] }.
- *   4. Emits a Reflector draft proposal describing what the operator needs to
- *      set up for live E2E coverage — the arc is never failed for missing infra.
  *
  * On a failing verdict one `arc-verification-failed` action-queue item is raised
  * (deduped per originId; the operator decides the remediation). On a passing
  * verdict the outcome is recorded as a trace event for the Studio timeline.
+ *
+ * When the E2E tooling environment is not configured a single global
+ * `e2e-tooling-missing` action-queue item is raised (deduped across all arcs
+ * via a fixed signature). It auto-resolves when the tooling probe succeeds.
  *
  * `MARS_ARC_VERIFY_DISABLED=1` suppresses all runs. This is an environment-
  * level emergency escape hatch during incident storms.
@@ -24,10 +26,11 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { getDefaultTaskStore, type ArcStatusOptions } from '../store/task-store.js'
-import { raiseActionQueueItem } from './action-queue.js'
+import { raiseActionQueueItem, listActionQueueItems, setActionQueueState } from './action-queue.js'
 import { runHeadlessProvider } from '../workers/providers.js'
 import { collectAssistantText } from './reflector.js'
-import { createProposal, findOpenDraftByKpiTag, getProposal } from '../proposals.js'
+import { getProposal } from '../proposals.js'
+import { probeE2eTooling } from './e2e-tooling.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -252,17 +255,6 @@ export async function judgeReachableSurfaces(opts: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Fingerprint
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Fingerprint for the CAN'T-VERIFY arc E2E Reflector draft proposal.
- * Deduplicates across daemon restarts via the `kpi_tag` column.
- */
-export const arcE2eProposalFingerprint = (originId: string): string =>
-  `arc-e2e-unverifiable:${originId}`
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -415,41 +407,12 @@ function parseVerdict(text: string): ArcVerificationVerdict {
   }
 }
 
-/**
- * Emit a draft proposal (source: 'arc-verifier') describing a missing arc E2E
- * environment, deduped by `fingerprint` via the `kpi_tag` column.
- * Best-effort: errors are swallowed so a DB hiccup never fails the arc.
- *
- * The source is `arc-verifier`, NOT `reflection`: these rows come from arc
- * verification, not from the reflector, and sharing one value made it
- * impossible to tell from the data which subsystem wrote a proposal.
- *
- * Called when no live E2E environment is available for this arc.
- */
-async function emitArcE2eProposalIfNew(
-  originId: string,
-  fingerprint: string,
-  problem: string,
-  solution: string,
-  notes: string,
-): Promise<void> {
-  const existing = await findOpenDraftByKpiTag(fingerprint).catch(() => null)
-  if (existing !== null) return
-  await createProposal(`Set up E2E environment for arc ${originId}`, {
-    source: 'arc-verifier',
-    author: { kind: 'agent', name: 'arc-verifier' },
-    problem,
-    solution,
-    notes,
-    kpiTag: fingerprint,
-  }).catch(() => {
-    // Draft proposal creation is best-effort — never block the arc.
-  })
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Core verification logic
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Global action-queue signature for the E2E tooling alert (not per-arc). */
+const E2E_TOOLING_SIGNATURE = 'e2e-tooling-missing'
 
 /**
  * Run the arc-outcome verification for the given `originId`.
@@ -459,8 +422,11 @@ async function emitArcE2eProposalIfNew(
  * testable core — it does NOT check the dedup set or the kill-switch;
  * those are enforced by {@link triggerArcVerification}.
  *
- * After the static spot-check, emits a Reflector draft proposal when no
- * live E2E environment is available — the arc is not failed for missing infra.
+ * After the static spot-check, probes the E2E tooling environment. When the
+ * tooling is unavailable, exactly one global `e2e-tooling-missing` action-queue
+ * item is raised (deduped across all arcs via a fixed signature). When the
+ * tooling is available, any open alert is auto-resolved. The arc is never
+ * failed for missing E2E infra.
  *
  * @returns The verifier's verdict. When the arc has no landed commits or
  *   is not `arc-done`, returns `{ ok: true, findings: [] }` (no-op).
@@ -550,24 +516,59 @@ export async function runArcVerification(
     }
   }
 
-  // ── Arc-level E2E pass (CAN'T-VERIFY: no runnable surface) ──────────────────
-  // No per-task preview command exists any more (removed in PRD f354b404 slice 1).
-  // Emit a Reflector draft proposal so the operator knows the arc went unexercised.
-  const originE2eData = arcTaskData.find((t) => t.id === originId)
-  const arcE2eCriteria: readonly string[] = originE2eData?.doneCriteria ?? []
-  const e2eFingerprint = arcE2eProposalFingerprint(originId)
-  const cantReason = arcE2eCriteria.length === 0
-    ? 'no done criteria on origin task'
-    : 'no runnable preview surface configured for this arc'
-  await emitArcE2eProposalIfNew(
-    originId,
-    e2eFingerprint,
-    `Arc ${originId} completed without a live E2E pass: ${cantReason}.`,
-    arcE2eCriteria.length === 0
-      ? 'Add done criteria to the origin task spec so the arc verifier knows what to exercise on the live surface.'
-      : 'Wire a dev server into the workflow or the task\'s environment so the arc verifier has a live URL to exercise.',
-    `Arc origin: ${originId}`,
-  )
+  // ── E2E tooling probe (level-triggered) ──────────────────────────────────────
+  // Probe whether the repo has a working E2E environment. When tooling is absent
+  // raise exactly one global `e2e-tooling-missing` action-queue item — the
+  // fixed signature ensures N arcs produce at most one row. When tooling is
+  // present, auto-resolve any stale open alert. The arc is never failed for
+  // missing E2E infra.
+  const toolingReport = probeE2eTooling(opts.cwd)
+  if (!toolingReport.available) {
+    const arcShort = originId.slice(0, 8)
+    const missingList = toolingReport.missing.map((m) => `- ${m}`).join('\n')
+    const stepsBlock = toolingReport.setupSteps
+      .map((s, i) => `${i + 1}. \`${s}\``)
+      .join('\n')
+    await raiseActionQueueItem({
+      kind: 'e2e-tooling-missing',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: 'E2E tooling not set up — live arc verification skipped',
+      body: [
+        `Arc \`${arcShort}\` completed without a live E2E pass because the E2E`,
+        'tooling environment is not yet configured. Set it up once and every',
+        'future arc will be exercised automatically.',
+        '',
+        '**What is missing:**',
+        missingList,
+        '',
+        '**Setup steps:**',
+        stepsBlock,
+      ].join('\n'),
+      payload: {
+        missing: toolingReport.missing,
+        setupSteps: toolingReport.setupSteps,
+        mostRecentArcId: originId,
+      },
+      context: {},
+      raisedBy: 'arc-verifier',
+      signature: E2E_TOOLING_SIGNATURE,
+    }).catch(() => {
+      // Best-effort — never block the arc.
+    })
+  } else {
+    // Tooling is now available — auto-resolve any stale alert.
+    const openItems = await listActionQueueItems('open', { kind: 'e2e-tooling-missing' })
+    for (const item of openItems) {
+      await setActionQueueState(item.id, 'resolved', {
+        resolution: 'auto-resolved',
+        note: 'E2E tooling detected as available',
+        by: 'arc-verifier',
+      }).catch(() => {
+        // Best-effort.
+      })
+    }
+  }
 
   // On failure: raise exactly one arc-verification-failed action-queue item.
   // The signature `arc-verification-failed:<originId>` ensures dedup via
