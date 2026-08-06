@@ -208,9 +208,25 @@ Stop when you and the user share an understanding of:
   (failure, empty state, edge cases the scenarios surfaced);
 - what is explicitly out of scope.
 
-You don't need a checklist confirmation. You'll feel the conversation
-settle: the user stops introducing new constraints, the scenarios stop
-producing new branches, and the language has stabilised.
+### Convergence rule
+
+**A question earns another turn only if answering it differently would
+change *what gets built*, not how it looks.** Apply this test to every
+open point before asking anything:
+
+- Gate question: "Do you want this feature to be operator-only or also
+  user-facing?" — answering this differently changes the scope entirely.
+  Ask it.
+- Implementation detail: "Should the breadcrumb show just title/status,
+  or also a one-line outcome summary?" — the implementor can decide this
+  without user input. Do **not** ask it. Write it as an open choice in
+  the task prompt instead (e.g. `[open choice: breadcrumb detail level]`).
+
+When every remaining open point fails the gate test, the grill is
+converged. File without being asked: update the glossary, then invoke
+`mars:to-prd`. Three or more settled decisions with no remaining
+fork that changes the feature is a sufficient signal — don't keep
+refining.
 
 When you're there, announce the handoff in one short line and **invoke
 the `mars:to-prd` skill via the Skill tool yourself**, passing the
@@ -256,6 +272,10 @@ Those are `to-prd`'s job. The only writes you may issue here are
 - Do not couple `CONTEXT.md` to implementation details. The glossary
   carries terms meaningful to domain experts — not function names,
   config keys, or library types.
+- Do not ask implementation-level questions that an implementor can
+  resolve without user input. If a question would not change *what gets
+  built*, park it as an open choice in the task prompt, not as a
+  turn-consuming question in the conversation.
 - Do not invent details the user did not provide. If a branch can't be
   answered without guessing, ask. If the user genuinely doesn't know,
   default-and-defer in the conversation; `to-prd` will fold that into
