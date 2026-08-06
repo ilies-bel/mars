@@ -16,7 +16,6 @@
 import { useState, useMemo, type RefObject } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchAdrs, fetchGlossary, fetchTasksForThread } from '@/shared/api'
-import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { useThreadFocus } from './useThreadFocus'
 import { buildActivityFeed } from './activityFeed'
 import { dispatchAlertVerb, verbButtonClass } from './alertVerbs'
@@ -403,23 +402,30 @@ const AlertsPile = ({ items, onOpenWork }: AlertsPileProps) => (
             <li key={`${item.source}:${item.id}`}>
               <button
                 type="button"
-                className="flex w-full items-center gap-1 text-left font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
+                title={item.source === 'alert' ? item.item.title : item.task.title}
+                className="flex w-full items-start gap-1 text-left font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
                 onClick={() => onOpenWork?.(item)}
                 data-testid="context-rail-alert-row"
               >
                 {item.source === 'alert' ? (
                   <>
-                    <span className={`shrink-0 uppercase ${priorityBadgeClass(item.item.priority)}`}>
-                      {item.item.priority} · {kindBadgeLabel(item.item.kind)}
+                    <span
+                      className={`shrink-0 ${priorityBadgeClass(item.item.priority)}`}
+                      aria-label={`${item.item.priority} priority`}
+                    >
+                      ●
                     </span>
-                    <span className="min-w-0 truncate">{item.item.title}</span>
+                    <span className="min-w-0 line-clamp-2">{item.item.title}</span>
                   </>
                 ) : (
                   <>
-                    <span className={`shrink-0 uppercase ${priorityBadgeClass(item.priority >= 3 ? 'high' : item.priority >= 2 ? 'normal' : 'low')}`}>
-                      {item.priority} · blocked
+                    <span
+                      className={`shrink-0 ${priorityBadgeClass(item.priority >= 3 ? 'high' : item.priority >= 2 ? 'normal' : 'low')}`}
+                      aria-label="blocked"
+                    >
+                      ●
                     </span>
-                    <span className="min-w-0 truncate">{item.task.title}</span>
+                    <span className="min-w-0 line-clamp-2">{item.task.title}</span>
                   </>
                 )}
               </button>
@@ -453,6 +459,7 @@ const ProposalsPile = ({ proposals, onOpenProposal }: ProposalsPileProps) => {
               <li key={proposal.id}>
                 <button
                   type="button"
+                  title={proposal.title}
                   className="block w-full truncate text-left font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
                   onClick={() => onOpenProposal?.(proposal)}
                   data-testid="context-rail-proposal-row"
@@ -493,6 +500,7 @@ const AdrsPile = ({ adrs, projectId }: AdrsPileProps) => {
                 <li key={path}>
                   <a
                     href={`/api/project/adrs/${encodeURIComponent(path)}${projectQuery}`}
+                    title={`ADR ${adr.number}: ${adr.title}`}
                     className="block truncate font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
                     target="_blank"
                     rel="noopener noreferrer"

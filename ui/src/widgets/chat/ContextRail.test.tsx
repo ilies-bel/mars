@@ -13,7 +13,8 @@ import { describe, it, expect } from 'bun:test'
 import { vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ArtifactsRail, ContextRail } from './ContextRail'
-import type { ActionQueueItem, ChatThreadDetail, ProgressTask } from '@/shared/schemas'
+import type { ActionQueueItem, ChatThreadDetail, DraftFeature, ProgressTask } from '@/shared/schemas'
+import type { OpenWorkItem } from './openWork'
 
 // ---------------------------------------------------------------------------
 // Module mocks
@@ -817,5 +818,123 @@ describe('ContextRail – FocusPanel verbs row', () => {
     // Button carries the disabled attribute
     expect(html).toContain('data-testid="focus-verb-restart"')
     expect(html).toContain('disabled')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Truncated rows: title attribute + alert row readability (slice – context rail UX)
+// ---------------------------------------------------------------------------
+
+describe('ContextRail – truncated rows reveal full text on hover', () => {
+  it('alert row button has a title attribute with the full alert title', () => {
+    const fullTitle =
+      'Daemon died unexpectedly due to quota exhaustion on task mars-long-running-batch'
+    const openWorkItems: OpenWorkItem[] = [
+      {
+        source: 'alert',
+        id: 'alert-hover-1',
+        item: {
+          id: 'alert-hover-1',
+          entityId: 'task-hover-1',
+          kind: 'failed',
+          title: fullTitle,
+          body: '',
+          at: '2024-01-01T00:00:00.000Z',
+          priority: 'high',
+          dag: null,
+          errorKind: '',
+          actions: [],
+          humanSummary: '',
+          verbs: [],
+        },
+        priority: 3,
+        at: '2024-01-01T00:00:00.000Z',
+      },
+    ]
+
+    const html = renderToStaticMarkup(<ContextRail openWork={openWorkItems} />)
+
+    expect(html).toContain(`title="${fullTitle}"`)
+  })
+
+  it('alert row title span uses line-clamp-2 so identifying text is visible without hover', () => {
+    const openWorkItems: OpenWorkItem[] = [
+      {
+        source: 'alert',
+        id: 'alert-clamp-1',
+        item: {
+          id: 'alert-clamp-1',
+          entityId: 'task-clamp-1',
+          kind: 'signature-storm',
+          title: 'Signature storm: 3 tasks failed with identical verify errors',
+          body: '',
+          at: '2024-01-01T00:00:00.000Z',
+          priority: 'high',
+          dag: null,
+          errorKind: '',
+          actions: [],
+          humanSummary: '',
+          verbs: [],
+        },
+        priority: 3,
+        at: '2024-01-01T00:00:00.000Z',
+      },
+    ]
+
+    const html = renderToStaticMarkup(<ContextRail openWork={openWorkItems} />)
+
+    // The title span must use line-clamp-2, not truncate, so text wraps instead of cutting off
+    expect(html).toContain('line-clamp-2')
+    // Sanity: the alert row itself is present
+    expect(html).toContain('data-testid="context-rail-alert-row"')
+  })
+
+  it('proposal row button has a title attribute with the full proposal title', () => {
+    const fullProposalTitle =
+      'Spawn vcs-supervisor on conflicting merges to resolve intent rather than picking a side'
+    const proposals: DraftFeature[] = [
+      {
+        id: 'prop-hover-1',
+        title: fullProposalTitle,
+        problem: 'Merge conflicts lose intent',
+        solution: 'Use vcs-supervisor',
+        status: 'draft',
+        source: 'user',
+        createdAt: 1700000000000,
+        updatedAt: 1700000000000,
+        acceptanceCount: 0,
+        userStories: [],
+      },
+    ]
+
+    const html = renderToStaticMarkup(<ContextRail proposals={proposals} />)
+
+    expect(html).toContain(`title="${fullProposalTitle}"`)
+  })
+
+  it('ADR link has a title attribute with the full ADR heading', () => {
+    mockState.queryOverride = (opts: { queryKey: unknown[] }) => {
+      if (opts.queryKey[0] === 'adrs') {
+        return {
+          data: [
+            {
+              number: 91,
+              title: 'A Subject can never be its own blocker',
+              slug: 'subject-cannot-self-block',
+            },
+          ],
+          isLoading: false,
+          isError: false,
+        }
+      }
+      return { data: undefined, isLoading: true, isError: false }
+    }
+
+    const html = renderToStaticMarkup(
+      <ArtifactsRail tasks={[]} files={[]} meta={{ vision: null, theme: null }} />,
+    )
+    mockState.queryOverride = null
+
+    expect(html).toContain('title="ADR 91: A Subject can never be its own blocker"')
   })
 })
