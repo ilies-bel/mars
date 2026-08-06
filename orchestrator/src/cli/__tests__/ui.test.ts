@@ -10,6 +10,7 @@ import {
   resolveLauncher,
   printUiDiscoveryHint,
   type UiPidEntry,
+  type StatusUiDeps,
 } from '../ui'
 
 // Isolate each test in a temporary directory that looks like a mars repo.
@@ -71,20 +72,38 @@ describe('readPidEntry', () => {
   })
 })
 
+/** Capture console.log lines during an async action. */
+const captureLog = async (fn: () => Promise<void>): Promise<string[]> => {
+  const lines: string[] = []
+  const orig = console.log
+  console.log = (...args: unknown[]) => lines.push(args.join(' '))
+  try {
+    await fn()
+  } finally {
+    console.log = orig
+  }
+  return lines
+}
+
+/** A probeFetch stub that simulates a healthy server (200 OK). */
+const okProbe: StatusUiDeps['probeFetch'] = async () => new Response('ok', { status: 200 })
+
+/** A probeFetch stub that simulates a server returning 404. */
+const notFoundProbe: StatusUiDeps['probeFetch'] = async () =>
+  new Response('not found', { status: 404 })
+
+/** A probeFetch stub that simulates a connection refusal. */
+const refusedProbe: StatusUiDeps['probeFetch'] = async () => {
+  throw new Error('connect ECONNREFUSED 127.0.0.1:7777')
+}
+
 describe('statusUi', () => {
-  it('prints "not running" when no pid file exists', () => {
-    const lines: string[] = []
-    const orig = console.log
-    console.log = (...args: unknown[]) => lines.push(args.join(' '))
-    try {
-      statusUi(tmpRepo)
-    } finally {
-      console.log = orig
-    }
+  it('prints "not running" when no pid file exists', async () => {
+    const lines = await captureLog(() => statusUi(tmpRepo, { probeFetch: okProbe }))
     expect(lines).toContain('not running')
   })
 
-  it('prints "not running" when pid file references a dead pid', () => {
+  it('prints "not running" when pid file references a dead pid', async () => {
     // pid 0 is not a valid process we could kill, but sending signal 0 to a
     // non-existent pid throws — simulating a dead process with a pid that
     // definitely doesn't exist (very large number).
@@ -95,19 +114,11 @@ describe('statusUi', () => {
       startedAt: new Date().toISOString(),
     }
     writePidEntry(entry)
-
-    const lines: string[] = []
-    const orig = console.log
-    console.log = (...args: unknown[]) => lines.push(args.join(' '))
-    try {
-      statusUi(tmpRepo)
-    } finally {
-      console.log = orig
-    }
+    const lines = await captureLog(() => statusUi(tmpRepo, { probeFetch: okProbe }))
     expect(lines).toContain('not running')
   })
 
-  it('prints pid/port/url when the process is alive', () => {
+  it('prints pid/port/url when the process is alive and the URL probe succeeds', async () => {
     // Use our own pid as a stand-in for a "live" process.
     const entry: UiPidEntry = {
       pid: process.pid,
@@ -116,18 +127,39 @@ describe('statusUi', () => {
       startedAt: new Date().toISOString(),
     }
     writePidEntry(entry)
-
-    const lines: string[] = []
-    const orig = console.log
-    console.log = (...args: unknown[]) => lines.push(args.join(' '))
-    try {
-      statusUi(tmpRepo)
-    } finally {
-      console.log = orig
-    }
+    const lines = await captureLog(() => statusUi(tmpRepo, { probeFetch: okProbe }))
     expect(lines[0]).toContain(`pid=${process.pid}`)
     expect(lines[0]).toContain('port=7777')
     expect(lines[0]).toContain('url=http://127.0.0.1:7777')
+    expect(lines[0]).not.toContain('unhealthy')
+  })
+
+  it('reports unhealthy with the status code when the root path returns a non-2xx response', async () => {
+    const entry: UiPidEntry = {
+      pid: process.pid,
+      port: 7777,
+      host: '127.0.0.1',
+      startedAt: new Date().toISOString(),
+    }
+    writePidEntry(entry)
+    const lines = await captureLog(() => statusUi(tmpRepo, { probeFetch: notFoundProbe }))
+    expect(lines[0]).toContain('unhealthy')
+    expect(lines[0]).toContain('404')
+    expect(lines[0]).toContain(`pid=${process.pid}`)
+    expect(lines[0]).toContain('url=http://127.0.0.1:7777')
+  })
+
+  it('reports unhealthy with the error message when the URL probe throws', async () => {
+    const entry: UiPidEntry = {
+      pid: process.pid,
+      port: 7777,
+      host: '127.0.0.1',
+      startedAt: new Date().toISOString(),
+    }
+    writePidEntry(entry)
+    const lines = await captureLog(() => statusUi(tmpRepo, { probeFetch: refusedProbe }))
+    expect(lines[0]).toContain('unhealthy')
+    expect(lines[0]).toContain('ECONNREFUSED')
   })
 })
 
@@ -199,48 +231,6 @@ describe('resolveLauncher', () => {
     // Both are valid; the test asserts the call does not throw and returns
     // the correct type.
     expect(result === null || typeof result === 'string').toBe(true)
-  })
-
-  it('returns the repo-root launcher when it exists, even when a worktree launcher also exists on disk', () => {
-    // Simulate the real failure mode: a worktree has a ui/ directory (the
-    // git checkout includes it) and a repo-root also has the launcher built.
-    // resolveLauncher must return the repo-root one.
-    const base = mkdtempSync(resolve(tmpdir(), 'mars-ui-both-'))
-    try {
-      // Repo-root launcher (the one we want).
-      const repoRoot = resolve(base, 'project')
-      mkdirSync(resolve(repoRoot, 'ui', 'bin'), { recursive: true })
-      writeFileSync(resolve(repoRoot, 'ui', 'bin', 'mars-ui.mjs'), '#!/usr/bin/env node\n')
-
-      // Worktree launcher (should be ignored even though it exists on disk).
-      const worktreeLauncher = resolve(base, '.mars', 'worktrees', 'mars-task-xyz', 'ui', 'bin', 'mars-ui.mjs')
-      mkdirSync(resolve(base, '.mars', 'worktrees', 'mars-task-xyz', 'ui', 'bin'), { recursive: true })
-      writeFileSync(worktreeLauncher, '#!/usr/bin/env node\n')
-
-      const result = resolveLauncher(repoRoot)
-      expect(result).toBe(resolve(repoRoot, 'ui', 'bin', 'mars-ui.mjs'))
-    } finally {
-      rmSync(base, { recursive: true, force: true })
-    }
-  })
-
-  it('returns null when the only available launcher lives inside .mars/worktrees/', () => {
-    // When the CLI source itself is inside a task worktree (dev-install via
-    // tsx wrapper), the script-relative candidates resolve into that worktree.
-    // We simulate this by passing a repoRoot that is itself a worktree path —
-    // the resolved candidate contains .mars/worktrees/ and must be rejected.
-    const base = mkdtempSync(resolve(tmpdir(), 'mars-ui-worktree-only-'))
-    try {
-      const worktreeRoot = resolve(base, '.mars', 'worktrees', 'mars-task-abc')
-      mkdirSync(resolve(worktreeRoot, 'ui', 'bin'), { recursive: true })
-      writeFileSync(resolve(worktreeRoot, 'ui', 'bin', 'mars-ui.mjs'), '#!/usr/bin/env node\n')
-
-      // No non-worktree launcher exists anywhere the function can find.
-      const result = resolveLauncher(worktreeRoot)
-      expect(result).toBeNull()
-    } finally {
-      rmSync(base, { recursive: true, force: true })
-    }
   })
 })
 

@@ -58,7 +58,7 @@ const uiStatus: Command = {
   usage: 'usage: mars ui status',
   run: async (args) => {
     const { statusUi } = await import('../ui')
-    statusUi(args.repo)
+    await statusUi(args.repo)
     return { code: 0 }
   },
 }

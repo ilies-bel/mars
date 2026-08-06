@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { existsSync, writeFileSync, unlinkSync, readFileSync, openSync, closeSync } from 'node:fs'
-import { dirname, resolve, sep } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveContext } from '../core/context'
 import { stopProcess, makeOsStopDeps } from './ui-stop'
@@ -19,30 +19,13 @@ export interface UiPidEntry {
   startedAt: string
 }
 
-export const resolveLauncher = (repoRoot?: string): string | null => {
+export const resolveLauncher = (): string | null => {
   const here = dirname(fileURLToPath(import.meta.url))
-  // Segment that identifies a path living inside a worktree checkout.
-  // Any candidate containing this segment is skipped — serving a worktree's
-  // UI build is never correct and produces confusing 404s.
-  const worktreeSegment = `${sep}.mars${sep}worktrees${sep}`
-
-  const candidates: string[] = []
-  // Repo-root candidate comes first — preferred over script-relative fallbacks.
-  if (repoRoot) {
-    candidates.push(resolve(repoRoot, 'ui/bin/mars-ui.mjs'))
-  }
-  // Script-relative fallbacks for packaged / global installs where the
-  // launcher lives next to the CLI binary rather than under a repo.
-  candidates.push(
+  const candidates = [
     resolve(here, '../../../ui/bin/mars-ui.mjs'),
     resolve(here, '../../ui/bin/mars-ui.mjs'),
-  )
-
+  ]
   for (const candidate of candidates) {
-    if (candidate.includes(worktreeSegment)) {
-      process.stderr.write(`[mars ui] skipping worktree launcher: ${candidate}\n`)
-      continue
-    }
     if (existsSync(candidate)) return candidate
   }
   return null
@@ -85,10 +68,7 @@ const isAlive = (pid: number): boolean => {
 }
 
 export const launchUi = (opts: LaunchOptions): void => {
-  // Resolve repo context first so we can pass repoRoot to resolveLauncher,
-  // ensuring the repo-root UI package is preferred over any worktree copy.
-  const ctx = resolveContext(opts.repo)
-  const launcher = resolveLauncher(ctx.repoRoot)
+  const launcher = resolveLauncher()
   if (!launcher) {
     console.error(
       'ui package not found; run `cd ui && npm install` or reinstall mars',
@@ -98,6 +78,7 @@ export const launchUi = (opts: LaunchOptions): void => {
 
   const port = opts.port ? parseInt(opts.port, 10) : 7777
   const host = opts.host ?? '127.0.0.1'
+  const ctx = resolveContext(opts.repo)
   const logFile = resolve(ctx.stateDir, 'ui.log')
   // Open the log file for appending before spawning so the child inherits
   // a valid, open fd from the very first byte it writes.
@@ -142,13 +123,39 @@ export const launchUi = (opts: LaunchOptions): void => {
   )
 }
 
-export const statusUi = (repo?: string): void => {
+/** Injectable seams for {@link statusUi}. Production passes nothing. */
+export interface StatusUiDeps {
+  /** Probe the root path of the advertised URL. Defaults to global fetch. */
+  probeFetch?: (url: string, signal: AbortSignal) => Promise<Response>
+}
+
+export const statusUi = async (repo?: string, deps: StatusUiDeps = {}): Promise<void> => {
   const entry = readPidEntry(repo)
   if (!entry || !isAlive(entry.pid)) {
     console.log('not running')
     return
   }
-  console.log(`pid=${entry.pid}  port=${entry.port}  url=http://${entry.host}:${entry.port}`)
+
+  const baseUrl = `http://${entry.host}:${entry.port}`
+  const doFetch = deps.probeFetch ?? ((url, signal) => fetch(url, { signal }))
+
+  let unhealthyReason: string | null = null
+  try {
+    const resp = await doFetch(`${baseUrl}/`, AbortSignal.timeout(2_000))
+    if (!resp.ok) {
+      unhealthyReason = `root path returned ${resp.status}`
+    }
+  } catch (err) {
+    unhealthyReason = (err as Error).message
+  }
+
+  if (unhealthyReason === null) {
+    console.log(`pid=${entry.pid}  port=${entry.port}  url=${baseUrl}`)
+  } else {
+    console.log(
+      `pid=${entry.pid}  port=${entry.port}  url=${baseUrl}  status=unhealthy  reason=${unhealthyReason}`,
+    )
+  }
 }
 
 export const stopUi = async (repo?: string): Promise<void> => {

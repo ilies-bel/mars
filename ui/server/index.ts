@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { extname, join, normalize, resolve } from 'node:path'
+import { dirname, extname, join, normalize, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { resolveUploadPath } from './chatUploadPath.ts'
 import { failureKindDecisions } from './actionQueueDecisions.ts'
 import {
@@ -34,6 +35,9 @@ interface CliArgs {
   port: number
   host: string
   distDir?: string
+  /** When true the server is in development mode: Vite serves the frontend
+   *  on its own port so this server must not serve any static files. */
+  dev?: boolean
 }
 
 /**
@@ -81,6 +85,7 @@ const parseArgs = (argv: string[]): CliArgs => {
       out.host = val
     }
     else if (a === '--dist') out.distDir = next()
+    else if (a === '--dev') out.dev = true
   }
   return out
 }
@@ -159,7 +164,15 @@ export const startServer = async (
   // request per project and reuses them on subsequent requests.
   const getProjectContext = createProjectContextCache(args.repo)
 
-  const distDir = args.distDir ? resolve(args.distDir) : undefined
+  // In dev mode Vite owns the frontend; this server must not serve static
+  // files.  In production mode default to the built ui/dist beside this
+  // server file so the server works whether invoked directly or via the
+  // ui/bin/mars-ui.mjs launcher (which also passes --dist explicitly).
+  const distDir = args.distDir
+    ? resolve(args.distDir)
+    : args.dev
+    ? undefined
+    : resolve(dirname(fileURLToPath(import.meta.url)), '..', 'dist')
 
   let server: Awaited<ReturnType<typeof Bun.serve>>
   try {
@@ -1197,8 +1210,24 @@ export const startServer = async (
 }
 
 if (import.meta.main) {
-  const args = parseArgs(Bun.argv.slice(2))
-  startServer(args).catch((err) => {
+  const cliArgs = parseArgs(Bun.argv.slice(2))
+  if (!cliArgs.dev) {
+    // In production mode verify the frontend is built before binding a port.
+    // Defence-in-depth for direct invocations; ui/bin/mars-ui.mjs already
+    // performs the same check before spawning this server.
+    const serverDir = dirname(fileURLToPath(import.meta.url))
+    const effectiveDistDir = cliArgs.distDir
+      ? resolve(cliArgs.distDir)
+      : resolve(serverDir, '..', 'dist')
+    if (!existsSync(join(effectiveDistDir, 'index.html'))) {
+      process.stderr.write(
+        `mars-ui: frontend is not built.\n` +
+          `  Run \`npm --prefix ${resolve(serverDir, '..')} run build\` first, then retry.\n`,
+      )
+      process.exit(1)
+    }
+  }
+  startServer(cliArgs).catch((err) => {
     console.error(err)
     process.exit(1)
   })
