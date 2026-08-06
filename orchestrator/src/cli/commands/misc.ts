@@ -67,7 +67,32 @@ const uiLaunch: Command = {
   path: 'ui',
   summary: 'launch the read-only Kanban + trace dashboard',
   usage: 'usage: mars ui [--port <p>] [--host <h>] [--dev]',
-  run: async (args) => {
+  run: async (args, deps) => {
+    // Intercept --help / -h before any side effects. This mirrors what
+    // cli.ts does at the top level, and is the per-command defence so the
+    // in-process test adapter (which bypasses cli.ts) exercises the same path.
+    if (hasFlag(args, '--help') || hasFlag(args, '-h')) {
+      deps.out(
+        'mars ui [--port <p>] [--host <h>] [--dev]\n' +
+          '\n' +
+          'launch the read-only Kanban + trace dashboard\n' +
+          '\n' +
+          'Subcommands:\n' +
+          '  mars ui stop    stop the read-only UI server\n' +
+          '  mars ui status  print UI server status',
+      )
+      return { code: 0 }
+    }
+    // Unrecognised flags are not in BOOLEAN_FLAGS or FLAGS_WITH_VALUES, so
+    // parseArgs routes them into positionals. Reject them explicitly instead
+    // of silently ignoring them and starting the server — this is how the
+    // class of bug reported in this task was hidden.
+    const unknownFlags = args.positional.filter((t) => t.startsWith('-'))
+    if (unknownFlags.length > 0) {
+      deps.err(`mars ui: unknown flag: ${unknownFlags[0]!}`)
+      deps.err('usage: mars ui [--port <p>] [--host <h>] [--dev]')
+      return { code: 1 }
+    }
     const { launchUi } = await import('../ui')
     launchUi({
       repo: args.repo,

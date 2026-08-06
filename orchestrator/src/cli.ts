@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { MARS_VERSION } from './version'
-import { parseArgs } from './cli/args'
+import { parseArgs, hasFlag } from './cli/args'
 import { registry } from './cli/commands'
 import { dispatch, isUnknown, makeProductionDeps } from './cli/dispatch'
 import { renderCommandHelp, renderTopLevelHelp } from './cli/help'
@@ -125,7 +125,7 @@ const main = async (): Promise<number> => {
     return 0
   }
 
-  if (rest.some((arg) => HELP_FLAGS.has(arg))) {
+  if (rest.some((arg) => HELP_FLAGS.has(arg)) || hasFlag(parsed, '--help') || hasFlag(parsed, '-h')) {
     const subTokens = rest.filter((arg) => !HELP_FLAGS.has(arg))
     if (subTokens.length > 0 && printCommandHelp(`${cmd} ${subTokens.join(' ')}`)) return 0
     if (printCommandHelp(cmd)) return 0
