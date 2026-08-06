@@ -1133,14 +1133,20 @@ const ChatConversation = ({
     [threadDetail],
   )
 
+  // Capture send-phase errors (non-2xx / network) so handleSend can re-throw
+  // them. The AI SDK's sendMessage() resolves even on errors (it stores them
+  // as state), so we need this side channel. Set synchronously by onSendError
+  // inside makeRequest's catch block — before sendMessage's Promise resolves —
+  // so it is always available by the time handleSend resumes after the await.
+  const pendingSendErrRef = useRef<Error | null>(null)
+
   const { messages, status, sendMessage, stop, error, setMessages, resumeStream } = useMarsChat({
     threadId,
     projectId,
     initialMessages: persisted,
+    onSendError: (err) => { pendingSendErrRef.current = err },
   })
 
-  // Reconcile persisted history into useChat when a refetch actually changed it,
-  // but never mid-stream — useChat owns the transcript while a reply streams.
   const appliedSigRef = useRef<string>(' ')
   useEffect(() => {
     if (status === 'streaming' || status === 'submitted') return
@@ -1187,10 +1193,16 @@ const ChatConversation = ({
 
   const handleSend = useCallback(
     async (text: string, attachments?: AttachmentInfo[]) => {
+      // Reset before each send so a previous error doesn't bleed through.
+      pendingSendErrRef.current = null
       await sendMessage(
         { text },
         attachments && attachments.length > 0 ? { body: { attachments } } : undefined,
       )
+      // sendMessage() resolves even on errors — check the side channel.
+      // onSendError sets pendingSendErrRef synchronously inside makeRequest's
+      // catch block, so it is already set by the time we reach this line.
+      if (pendingSendErrRef.current) throw pendingSendErrRef.current
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
       void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
     },
@@ -1466,7 +1478,11 @@ const SlashPalette = ({ matches, activeIndex, onSelect, onActivate }: SlashPalet
 function sendErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.kind === 'unreachable') return 'Daemon not running — start it with `mars daemon start`.'
-    if (err.kind === 'stale-daemon') return 'Daemon error — try restarting with `mars daemon restart`.'
+    if (err.kind === 'stale-daemon') {
+      const statusStr = err.status != null ? ` (${err.status})` : ''
+      return `Daemon error${statusStr} — try restarting with \`mars daemon restart\`.`
+    }
+    if (err.status != null) return `Message could not be sent — server responded ${err.status}.`
   }
   return 'Message could not be sent — please try again.'
 }

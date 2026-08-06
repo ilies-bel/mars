@@ -16,6 +16,24 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Composer } from './ChatPage'
 
 // ---------------------------------------------------------------------------
+// ApiError mock — must be hoisted so vi.mock can reference it
+// ---------------------------------------------------------------------------
+
+const { MockApiError } = vi.hoisted(() => {
+  class MockApiError extends Error {
+    kind: string
+    status: number | undefined
+    constructor(message: string, kind: string, status?: number) {
+      super(message)
+      this.name = 'ApiError'
+      this.kind = kind
+      this.status = status
+    }
+  }
+  return { MockApiError }
+})
+
+// ---------------------------------------------------------------------------
 // Mock the API layer — Composer calls uploadAttachment + postChatMessage
 // ---------------------------------------------------------------------------
 
@@ -31,6 +49,8 @@ vi.mock('@/shared/api', () => ({
   invokeAction: vi.fn().mockResolvedValue({}),
   setMessageFeedback: vi.fn().mockResolvedValue({}),
   clearMessageFeedback: vi.fn().mockResolvedValue({}),
+  // ApiError must be included so ChatPage.tsx's sendErrorMessage can call instanceof ApiError
+  ApiError: MockApiError,
 }))
 
 // ---------------------------------------------------------------------------
@@ -420,5 +440,95 @@ describe('Composer – thread token count', () => {
       renderComposer(container, { threadTokens: 0 })
     })
     expect(container.querySelector('[data-testid="thread-token-count"]')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Send-error recovery — text is preserved and an error is shown on failure
+//
+// These tests cover the two failure modes described in the bug:
+//   1. Non-2xx response (e.g. 404) → onSend rejects with ApiError
+//   2. Server unreachable (fetch rejected) → onSend rejects with TypeError
+//
+// Both cases must:
+//   a. Leave the typed text in the composer so it can be retried / copied.
+//   b. Render an error message visible to the operator.
+// ---------------------------------------------------------------------------
+
+/** Type text into the composer's textarea and flush React state. */
+async function typeText(container: HTMLElement, text: string): Promise<void> {
+  const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+  if (!textarea) throw new Error('textarea not found')
+  await act(() => {
+    // Set the native value first so e.target.value is correct in the event.
+    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+    nativeSetter?.call(textarea, text)
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
+/** Click the send button and allow async mutations to settle. */
+async function clickSend(container: HTMLElement): Promise<void> {
+  const btn = container.querySelector('[data-testid="send-btn"]') as HTMLButtonElement | null
+  if (!btn) throw new Error('send button not found')
+  await act(async () => {
+    btn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    // Flush two microtask ticks so the mutation promise rejects and React re-renders.
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
+describe('Composer – send-error recovery', () => {
+  it('preserves typed text and renders an error when onSend rejects with a non-2xx (ApiError)', async () => {
+    const sendErr = new MockApiError('POST /api/chat/threads/t1/message → 404', 'stale-daemon', 404)
+    await act(() => {
+      renderComposer(container, { onSend: vi.fn().mockRejectedValue(sendErr) })
+    })
+
+    await typeText(container, 'my important message')
+    await clickSend(container)
+
+    // Error banner must be rendered.
+    await vi.waitFor(() => {
+      expect(container.querySelector('[data-testid="composer-send-error"]')).not.toBeNull()
+    })
+
+    // Text must still be in the textarea — not cleared on failure.
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    expect(textarea.value).toBe('my important message')
+  })
+
+  it('preserves typed text and renders an error when onSend rejects with a network failure (TypeError)', async () => {
+    const networkErr = new TypeError('Failed to fetch')
+    await act(() => {
+      renderComposer(container, { onSend: vi.fn().mockRejectedValue(networkErr) })
+    })
+
+    await typeText(container, 'another message')
+    await clickSend(container)
+
+    await vi.waitFor(() => {
+      expect(container.querySelector('[data-testid="composer-send-error"]')).not.toBeNull()
+    })
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    expect(textarea.value).toBe('another message')
+  })
+
+  it('clears text after a successful send', async () => {
+    await act(() => {
+      renderComposer(container, { onSend: vi.fn().mockResolvedValue(undefined) })
+    })
+
+    await typeText(container, 'success message')
+    await clickSend(container)
+
+    await vi.waitFor(() => {
+      const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+      expect(textarea.value).toBe('')
+    })
+    // No error banner on success.
+    expect(container.querySelector('[data-testid="composer-send-error"]')).toBeNull()
   })
 })

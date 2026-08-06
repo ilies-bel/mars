@@ -194,13 +194,39 @@ export const createMarsChatTransport = (
   const { threadId, projectId } = options
 
   return {
-    sendMessages: ({ messages, abortSignal, body }) => {
+    /**
+     * Post the user turn and return a stream of UIMessageChunks for the
+     * daemon's response.
+     *
+     * `postChatMessage` is awaited BEFORE the ReadableStream is created so
+     * that non-2xx responses and network failures propagate as a rejected
+     * Promise. The AI SDK's `makeRequest` catches this rejection and calls
+     * `onError`, which `ChatConversation.handleSend` uses to restore the
+     * composer text. A 409 "already running" is still swallowed — it means
+     * a concurrent send is in flight and we should attach to its stream.
+     */
+    sendMessages: async ({ messages, abortSignal, body }) => {
       // Last user turn -> daemon content + full attachment metadata.
       const lastUser = [...messages].reverse().find((m) => m.role === 'user')
       const content = flattenText(lastUser)
       const attachments = readAttachments(body)
 
-      const stream = new ReadableStream<UIMessageChunk>({
+      // Phase 1: POST the user turn. Errors here (non-2xx, network) are
+      // re-thrown so they propagate to makeRequest's catch → onError, which
+      // signals the failure back to ChatConversation so text is NOT cleared.
+      try {
+        await postChatMessage(threadId, content, projectId, attachments)
+      } catch (err: unknown) {
+        if (!(err instanceof ApiError && err.status === 409)) {
+          throw err
+        }
+        // 409 "already running" — fall through and attach to the existing run.
+      }
+
+      // Phase 2: stream the daemon's response. Errors here (SSE drops,
+      // stream failures) happen after the message was persisted, so they are
+      // surfaced as error chunks rather than re-thrown (text was already sent).
+      return new ReadableStream<UIMessageChunk>({
         start(controller) {
           let closed = false
           const isClosed = (): boolean => closed
@@ -230,20 +256,6 @@ export const createMarsChatTransport = (
           abortSignal?.addEventListener('abort', onAbort)
 
           void (async () => {
-            // Post the user turn. A 409 "already running" is a valid race — attach
-            // to the existing run's stream instead of surfacing an error.
-            try {
-              await postChatMessage(threadId, content, projectId, attachments)
-            } catch (err: unknown) {
-              if (!(err instanceof ApiError && err.status === 409)) {
-                const message = err instanceof Error ? err.message : String(err)
-                enqueue({ type: 'error', errorText: message } as UIMessageChunk)
-                enqueue({ type: 'finish', finishReason: 'error' } as UIMessageChunk)
-                close()
-                return
-              }
-            }
-
             // Follow the run's UIMessage-chunk stream (buffer replay covers a run
             // that started/finished before we connected).
             try {
@@ -269,8 +281,6 @@ export const createMarsChatTransport = (
           })()
         },
       })
-
-      return Promise.resolve(stream)
     },
 
     // Resume an in-flight run (e.g. a daemon-initiated alert-origin run) for
