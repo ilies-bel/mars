@@ -560,9 +560,21 @@ describe('structuralSignature', () => {
     )
   })
 
-  it('does NOT change when a task cluster changes — cluster is a visual-only property', () => {
+  it('does NOT change when a task cluster changes between non-Done statuses — colour-only update', () => {
+    // Queued/Blocked/Failed/In-progress transitions are visual only: the node
+    // stays on the canvas at the same position. Re-fitting would yank the
+    // viewport unnecessarily, so the signature must be stable here.
     expect(structuralSignature(base, [])).toBe(
       structuralSignature([task({ id: 't1', cluster: 'Failed' })], []),
+    )
+  })
+
+  it('DOES change when a task transitions to Done — Done removes the node from the graph', () => {
+    // buildTopology excludes Done tasks from the rendered graph. The signature
+    // must capture this so fitKey changes and fitView is triggered to
+    // re-centre the (now smaller) canvas.
+    expect(structuralSignature(base, [])).not.toBe(
+      structuralSignature([task({ id: 't1', cluster: 'Done' })], []),
     )
   })
 

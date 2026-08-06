@@ -898,8 +898,12 @@ export const dataSignature = (
 /**
  * Structural-only signature: captures topology changes (task/proposal adds,
  * removes, re-parenting, blocker edges, arc grouping) but intentionally
- * EXCLUDES `cluster`. Used as the fit-view gate so a status flip never yanks
- * the camera.
+ * EXCLUDES non-Done `cluster` changes. Used as the fit-view gate so a
+ * routine status flip (Queued→Blocked etc.) never yanks the camera.
+ *
+ * Done IS included because buildTopology excludes Done tasks from the
+ * rendered graph — a task completing removes its node and the remaining
+ * content must be re-centred.
  */
 export const structuralSignature = (
   tasks: ReadonlyArray<ProgressTask>,
@@ -908,7 +912,7 @@ export const structuralSignature = (
   const taskSig = tasks
     .map(
       (t) =>
-        `${t.id}|${t.parentProposalId ?? ''}|${t.originId ?? ''}|${t.fixForTaskId ?? ''}|${t.kind ?? ''}|${(t.blockedBy ?? []).join(',')}`,
+        `${t.id}|${t.parentProposalId ?? ''}|${t.originId ?? ''}|${t.fixForTaskId ?? ''}|${t.kind ?? ''}|${(t.blockedBy ?? []).join(',')}|${t.cluster === 'Done' ? 'd' : ''}`,
     )
     .join(';')
   const propSig = proposals.map((p) => `${p.id}|${p.title}`).join(';')

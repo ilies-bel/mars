@@ -48,6 +48,7 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
+  useNodesInitialized,
   useReactFlow,
   type Node,
   type NodeProps,
@@ -255,6 +256,7 @@ const TopologyViewInner = ({
   onSelectProposal,
 }: TopologyViewProps) => {
   const { fitView } = useReactFlow()
+  const nodesInitialized = useNodesInitialized()
 
   const [openArcKey, setOpenArcKey] = useState<string | null>(null)
   const [expandedBundles, setExpandedBundles] = useState<Set<string>>(new Set())
@@ -342,15 +344,16 @@ const TopologyViewInner = ({
   const fitKey = `${structSig}|${openArcKey ?? ''}|${[...expandedBundles].sort().join(',')}`
   const lastFitKeyRef = useRef<string | null>(null)
   useEffect(() => {
-    if (empty || lastFitKeyRef.current === fitKey) return
+    // Gate on nodesInitialized so fitView runs only after React Flow has
+    // measured every node in the updated graph. A bare requestAnimationFrame
+    // fires too early when new nodes are added (e.g. arcGroup on drill-in) —
+    // unmeasured nodes are excluded from the bounds, leaving the graph pinned
+    // at its layout origin in the top-left corner of the canvas.
+    if (empty || !nodesInitialized || lastFitKeyRef.current === fitKey) return
     lastFitKeyRef.current = fitKey
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    // rAF: let React Flow measure the fresh nodes before fitting.
-    const raf = requestAnimationFrame(() => {
-      void fitView({ padding: 0.1, duration: reduced ? 0 : 240, maxZoom: 1.2 })
-    })
-    return () => cancelAnimationFrame(raf)
-  }, [empty, fitKey, fitView])
+    void fitView({ padding: 0.1, duration: reduced ? 0 : 240, maxZoom: 1.2 })
+  }, [empty, fitKey, nodesInitialized, fitView])
 
   // ---- hover-to-trace -------------------------------------------------------
   const reduced = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches

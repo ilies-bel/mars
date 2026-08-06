@@ -13,6 +13,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
+import { structuralSignature } from './topologyFlowModel'
 import { TopologyView } from './TopologyView'
 
 const noTasks: ProgressTask[] = []
@@ -413,6 +414,168 @@ describe('TopologyView – arc click model', () => {
 // button return to the Progress page correctly, and it is what `taskHash`
 // encodes when called with from='progress'.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Fit-view gate: structuralSignature must change when nodes enter/leave the
+// rendered graph so the viewport is re-centred after completions.
+//
+// buildTopology excludes Done tasks from the rendered graph. If
+// structuralSignature ignores Done, the fitKey never changes on completion,
+// the viewport stays pinned at its old transform, and the graph drifts to
+// the top-left corner over time.
+// ---------------------------------------------------------------------------
+
+describe('TopologyView – fitView gate sensitivity (structuralSignature)', () => {
+  it('structural signature changes when a task transitions to Done', () => {
+    // When a task becomes Done, buildTopology removes its node from the graph.
+    // The structuralSignature must reflect this removal so fitKey changes and
+    // fitView is triggered to re-centre the (now smaller) graph.
+    const activeTask = stubTask('t1') // cluster: 'Queued'
+    const doneTask = { ...stubTask('t1'), cluster: 'Done' as const }
+
+    const sigActive = structuralSignature([activeTask], [])
+    const sigDone = structuralSignature([doneTask], [])
+
+    expect(sigActive).not.toBe(sigDone)
+  })
+
+  it('structural signature does not change when a task shifts between non-Done statuses', () => {
+    // A Queued→Blocked or Queued→Failed transition is a colour-only change;
+    // the node stays on the canvas at the same position. Re-fitting would
+    // yank the viewport without moving any content, so the signature must be
+    // stable for these transitions.
+    const queued = stubTask('t1') // cluster: 'Queued'
+    const blocked = { ...stubTask('t1'), cluster: 'Blocked' as const }
+    const failed = { ...stubTask('t1'), cluster: 'Failed' as const }
+    const inProgress = { ...stubTask('t1'), cluster: 'In progress' as const }
+
+    const sigQueued = structuralSignature([queued], [])
+    expect(structuralSignature([blocked], [])).toBe(sigQueued)
+    expect(structuralSignature([failed], [])).toBe(sigQueued)
+    expect(structuralSignature([inProgress], [])).toBe(sigQueued)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Canvas re-renders correctly after task removal (node count update)
+// ---------------------------------------------------------------------------
+
+describe('TopologyView – canvas updates after task removal', () => {
+  it('updates the aria-label task count when a task is removed', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <TopologyView
+            tasks={[stubTask('t1'), stubTask('t2'), stubTask('t3')]}
+            proposals={noProposals}
+          />,
+        )
+      })
+
+      // Three tasks → aria-label says "3 tasks"
+      const canvas = container.querySelector('[role="img"]')
+      expect(canvas?.getAttribute('aria-label')).toContain('3 tasks')
+
+      // Remove one task (simulates it reaching terminal status and leaving the projection)
+      await act(async () => {
+        root.render(
+          <TopologyView
+            tasks={[stubTask('t1'), stubTask('t2')]}
+            proposals={noProposals}
+          />,
+        )
+      })
+
+      // Canvas must still be present (not the empty state)
+      expect(container.querySelector('[role="img"]')).not.toBeNull()
+      expect(container.textContent).not.toContain('No active tasks')
+      // Aria-label must reflect the new count
+      expect(container.querySelector('[role="img"]')?.getAttribute('aria-label')).toContain('2 tasks')
+    } finally {
+      await act(async () => { root.unmount() })
+      document.body.removeChild(container)
+    }
+  })
+
+  it('transitions to empty state when the last task is removed', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(<TopologyView tasks={[stubTask('t1')]} proposals={noProposals} />)
+      })
+      expect(container.querySelector('[role="img"]')).not.toBeNull()
+
+      await act(async () => {
+        root.render(<TopologyView tasks={[]} proposals={noProposals} />)
+      })
+
+      expect(container.textContent).toContain('No active tasks')
+      expect(container.querySelector('[role="img"]')).toBeNull()
+    } finally {
+      await act(async () => { root.unmount() })
+      document.body.removeChild(container)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Arc drill-in produces the breadcrumb so the canvas is demonstrably
+// centred-on-expanded-group (breadcrumb = observable signal that the group
+// rendered in the expanded state, which is the precondition for a correct fit).
+// ---------------------------------------------------------------------------
+
+describe('TopologyView – arc drill-in breadcrumb', () => {
+  it('shows the arc label in the breadcrumb chip when an arc card is opened', async () => {
+    const proposal: ProgressProposalNode = {
+      id: 'p-drill',
+      title: 'Drill-in proposal',
+      source: 'human',
+      status: 'draft',
+    }
+    const task1: ProgressTask = { ...stubTask('pd-1'), parentProposalId: 'p-drill' }
+    const task2: ProgressTask = { ...stubTask('pd-2'), parentProposalId: 'p-drill' }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <TopologyView
+            tasks={[task1, task2]}
+            proposals={[proposal]}
+            onSelectProposal={() => {}}
+          />,
+        )
+      })
+
+      // Click the arc card to drill in
+      const arcCard = container.querySelector('[aria-label*="click to open"]')
+      expect(arcCard).not.toBeNull()
+
+      await act(async () => {
+        arcCard!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      })
+
+      // After drill-in, the breadcrumb chip must contain the proposal title
+      // and the collapse hint. This is the observable signal that the expanded
+      // arc group rendered (prerequisite for a correct fitView call).
+      expect(container.textContent).toContain('Drill-in proposal')
+      expect(container.textContent?.toLowerCase()).toContain('esc to collapse')
+    } finally {
+      await act(async () => { root.unmount() })
+      document.body.removeChild(container)
+    }
+  })
+})
 
 describe('TopologyView – task node click produces task hash with from=progress', () => {
   it('clicking a task node sets window.location.hash to #/task/<id>?from=progress', async () => {
