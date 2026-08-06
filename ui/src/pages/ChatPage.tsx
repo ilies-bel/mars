@@ -2378,6 +2378,15 @@ export const ThreadSidebar = ({
     queryFn: () => hasForkFilter ? fetchChatThreads(projectId, forkFilter) : fetchChatThreads(projectId),
   })
 
+  // Total subthread count across the transcript (open + closed), used to
+  // disambiguate the rail label when closed subthreads exist but are not listed.
+  // React Query deduplicates this with the main ChatPage chat-conversation fetch.
+  const { data: conversationData } = useQuery({
+    queryKey: ['chat-conversation', projectId],
+    queryFn: () => fetchChatConversation(projectId),
+  })
+  const totalSubthreadCount = conversationData?.boundaries.length
+
   const { mutate: create } = useMutation({
     mutationFn: () => createChatThread({ projectId }),
     onSuccess: (thread) => {
@@ -2414,6 +2423,7 @@ export const ThreadSidebar = ({
           isSelected={selectedId === null}
           onSelect={onSelectMainThread}
           subthreadCount={threads.length}
+          totalSubthreadCount={totalSubthreadCount}
         />
       </div>
       <SidebarFilters

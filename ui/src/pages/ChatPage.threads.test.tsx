@@ -24,7 +24,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThreadSidebar, ChatPage } from './ChatPage'
 import { relativeTime, smartTitle } from './chatPageUtils'
 import { ArtifactsRail } from '@/widgets/chat/ContextRail'
-import type { ChatThread, ActionQueueItem } from '@/shared/schemas'
+import type { ChatThread, ActionQueueItem, SubthreadBoundary } from '@/shared/schemas'
 
 const mockFetchChatHistory = vi.hoisted(() => vi.fn())
 const mockFetchChatConversation = vi.hoisted(() => vi.fn())
@@ -177,6 +177,51 @@ const renderSidebarPending = (): string => {
     defaultOptions: { queries: { retry: false, gcTime: Infinity } },
   })
   // No setQueryData — query stays in pending state for static render
+  return renderToStaticMarkup(
+    createElement(
+      QueryClientProvider,
+      { client: qc },
+      createElement(ThreadSidebar, {
+        selectedId: null,
+        onSelect: () => {},
+        filters: { query: '', kind: 'all', origin: 'all' },
+        onFiltersChange: () => {},
+        selectedItem: null,
+        onFastAction: () => {},
+      }),
+    ),
+  )
+}
+
+const makeBoundary = (id: string, closedAt: string | null = null): SubthreadBoundary => ({
+  subthreadId: id,
+  startedAt: '2024-01-01T00:00:00.000Z',
+  closedAt,
+  producedTokens: 10,
+  carriedTokens: 5,
+})
+
+/**
+ * Render the sidebar pre-seeded with both thread list and conversation boundaries.
+ * The boundary count drives the "X open · Y total" label in MainThreadRow when
+ * closed subthreads exist.
+ */
+const renderSidebarWithBoundaries = (
+  threads: ChatThread[],
+  boundaries: SubthreadBoundary[],
+): string => {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  })
+  qc.setQueryData(['chat-threads', undefined], threads)
+  qc.setQueryData(['chat-history', undefined], [])
+  qc.setQueryData(['chat-conversation', undefined], {
+    entries: [],
+    boundaries,
+    memoryStartsAfterSeq: 0,
+    memoryCutAt: null,
+    memoryCutReason: null,
+  })
   return renderToStaticMarkup(
     createElement(
       QueryClientProvider,
@@ -381,6 +426,64 @@ describe('ThreadSidebar – pending state', () => {
     // The empty-state paragraph uses data-testid="empty-rail"
     expect(html).toContain('data-testid="empty-rail"')
     expect(html).not.toContain('aria-busy="true"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// MainThreadRow count label — open vs total disambiguation
+// ---------------------------------------------------------------------------
+
+describe('MainThreadRow count label', () => {
+  it('shows "X open · Y total" when closed subthreads exist in the transcript', () => {
+    // 1 open thread in the sidebar, but 3 total in the conversation (2 closed)
+    const openThread = makeThread({ id: 'th-open-1' })
+    const boundaries = [
+      makeBoundary('th-open-1', null),                    // open (closedAt is null)
+      makeBoundary('th-closed-1', '2024-01-01T01:00:00.000Z'), // closed
+      makeBoundary('th-closed-2', '2024-01-01T02:00:00.000Z'), // closed
+    ]
+    const html = renderSidebarWithBoundaries([openThread], boundaries)
+    expect(html).toContain('1 open')
+    expect(html).toContain('3 total')
+    // Must not show "1 subthread" — that label doesn't describe what the transcript holds
+    expect(html).not.toContain('1 subthread')
+  })
+
+  it('shows "X subthreads" without "N open" when all transcript threads are also listed', () => {
+    const threads = [
+      makeThread({ id: 'th-a' }),
+      makeThread({ id: 'th-b' }),
+    ]
+    // Both threads open — open count equals total count
+    const boundaries = [makeBoundary('th-a', null), makeBoundary('th-b', null)]
+    const html = renderSidebarWithBoundaries(threads, boundaries)
+    expect(html).toContain('2 subthreads')
+    // No "N open" count in the subtitle (the search box may say "open threads")
+    expect(html).not.toContain('2 open')
+    expect(html).not.toContain('2 total')
+  })
+
+  it('falls back to "X subthreads" when conversation data has not loaded yet', () => {
+    // renderSidebar does NOT seed conversation data — totalSubthreadCount is undefined
+    const threads = [makeThread({ id: 'th-x' }), makeThread({ id: 'th-y' })]
+    const html = renderSidebar(threads)
+    expect(html).toContain('2 subthreads')
+    // No "N open" count in the subtitle
+    expect(html).not.toContain('2 open')
+  })
+
+  it('updates the open count when a subthread closes (open drops, total stays)', () => {
+    // After closing 1 of 3 threads: 2 open, 3 total
+    const openA = makeThread({ id: 'th-a' })
+    const openB = makeThread({ id: 'th-b' })
+    const boundaries = [
+      makeBoundary('th-a', null),
+      makeBoundary('th-b', null),
+      makeBoundary('th-closed', '2024-06-01T00:00:00.000Z'),
+    ]
+    const html = renderSidebarWithBoundaries([openA, openB], boundaries)
+    expect(html).toContain('2 open')
+    expect(html).toContain('3 total')
   })
 })
 

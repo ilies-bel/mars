@@ -4,6 +4,12 @@ export interface MainThreadRowProps {
   onSelect: () => void
   /** Open subthreads, shown as a subordinate count. */
   subthreadCount: number
+  /**
+   * Total subthreads across the transcript (open + closed).
+   * When provided and greater than subthreadCount, both counts are surfaced
+   * so the label accurately describes what the transcript renders.
+   */
+  totalSubthreadCount?: number
 }
 
 /**
@@ -28,29 +34,40 @@ export const MainThreadRow = ({
   isSelected,
   onSelect,
   subthreadCount,
-}: MainThreadRowProps) => (
-  <button
-    type="button"
-    onClick={onSelect}
-    aria-current={isSelected ? 'true' : undefined}
-    aria-label="Main thread"
-    data-testid="main-thread-row"
-    data-selected={isSelected ? 'true' : 'false'}
-    className={[
-      'w-full rounded-md border px-2 py-2 text-left transition-colors',
-      isSelected
-        ? 'border-primary/60 bg-primary/25 text-foreground'
-        : 'border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 hover:text-foreground',
-    ].join(' ')}
-  >
-    <span className="flex items-center gap-1.5">
-      <span aria-hidden="true" className="text-[12px]">◆</span>
-      <span className="font-mono text-[12px] font-semibold tracking-wide">Main thread</span>
-    </span>
-    <span className="mt-0.5 block font-mono text-[9px] text-muted-foreground">
-      {subthreadCount === 0
-        ? 'Everything, in one place'
-        : `Everything, in one place · ${subthreadCount} subthread${subthreadCount === 1 ? '' : 's'}`}
-    </span>
-  </button>
-)
+  totalSubthreadCount,
+}: MainThreadRowProps) => {
+  const showBothCounts =
+    totalSubthreadCount != null && totalSubthreadCount > subthreadCount
+
+  const subtitle =
+    subthreadCount === 0
+      ? 'Everything, in one place'
+      : showBothCounts
+        ? `Everything, in one place · ${subthreadCount} open · ${totalSubthreadCount} total`
+        : `Everything, in one place · ${subthreadCount} subthread${subthreadCount === 1 ? '' : 's'}`
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-current={isSelected ? 'true' : undefined}
+      aria-label="Main thread"
+      data-testid="main-thread-row"
+      data-selected={isSelected ? 'true' : 'false'}
+      className={[
+        'w-full rounded-md border px-2 py-2 text-left transition-colors',
+        isSelected
+          ? 'border-primary/60 bg-primary/25 text-foreground'
+          : 'border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 hover:text-foreground',
+      ].join(' ')}
+    >
+      <span className="flex items-center gap-1.5">
+        <span aria-hidden="true" className="text-[12px]">◆</span>
+        <span className="font-mono text-[12px] font-semibold tracking-wide">Main thread</span>
+      </span>
+      <span className="mt-0.5 block font-mono text-[9px] text-muted-foreground">
+        {subtitle}
+      </span>
+    </button>
+  )
+}
