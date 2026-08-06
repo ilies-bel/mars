@@ -1915,6 +1915,47 @@ describe('non-code failure re-queue routing', () => {
     expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
   })
 
+  it('code:killed/sigterm increments envRestartCount so the environmental budget is real', async () => {
+    // Criterion 3: the re-queue is budgeted. The env restart counter must be
+    // incremented on each re-queue so the cap (MAX_ENV_RESTART_ATTEMPTS) can
+    // actually fire. If the counter is not persisted the cap never fires and the
+    // task re-queues forever (the mars-6cf9774f incident: env_restart_count was
+    // omitted from TASK_SEL so every read resolved it to 0).
+    const { q, ft } = await loadModules(repo)
+    const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed',
+              failure_reason = 'coder-exit-nonzero',
+              failed_phase = 'code',
+              error = 'coder exited 143 before completing'
+            WHERE id = ?`,
+      args: [t.id],
+    })
+
+    const errorOutput = [
+      'code child killed by SIGTERM (exit 143)',
+      'coder process exited 143. worktree had 2 uncommitted path(s); preserved as wip(checkpoint) commit on branch task/t-abc.',
+    ].join('\n')
+
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'code:coder-exit-nonzero',
+      errorOutput,
+    })
+
+    // First kill: env restart (re-queue).
+    expect(r.outcome).toBe('requeued')
+    expect(r.failureSignature).toBe('code:killed/sigterm')
+
+    const reloaded = await q.getTask(t.id)
+    // envRestartCount must advance 0 → 1, proving the budget counter is persisted
+    // and will eventually reach MAX_ENV_RESTART_ATTEMPTS instead of looping forever.
+    expect(reloaded?.envRestartCount).toBe(1)
+    // Code recovery slot must remain untouched.
+    expect(reloaded?.retryCount).toBe(0)
+  })
+
   it('preflight:no-gates-configured marks task failed without spawning a fix-task', async () => {
     // A preflight failure is a configuration error — no verify gates are
     // registered for the changed files. The handler must NOT spawn a recovery
