@@ -3,7 +3,7 @@
  *
  * The page must:
  *   - render the capability lanes, including standing verify-gate health
- *   - show the misnomer callout (server.ts misnomer note)
+ *   - show a status note explaining the steward is not wired up in operator terms
  *   - display storm breach state correctly (tripped / clear)
  *   - show a disagreement banner when tripped ≠ isPaused
  *   - render runtime tuning acks
@@ -195,11 +195,15 @@ describe('StewardPage', () => {
     expect(html).toContain('Verify gates')
   })
 
-  it('renders the misnomer callout about server.ts', () => {
+  it('renders a status note explaining the steward is not wired up in operator terms', () => {
     const html = renderToStaticMarkup(<StewardPage />)
-    expect(html).toContain('misnomer')
-    expect(html).toContain('Haiku')
-    expect(html).toContain('stewardAgent')
+    expect(html).toContain('not wired up in this build')
+    expect(html).toContain('different path')
+    expect(html).toContain('Nothing on this page acts on the queue')
+    // Must NOT expose code-review internals to the operator
+    expect(html).not.toContain('server.ts:')
+    expect(html).not.toContain('investigateWorktree')
+    expect(html).not.toContain('runClaudeCode')
   })
 
   // ---------------------------------------------------------------------------

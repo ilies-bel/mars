@@ -491,20 +491,18 @@ const GateHealthLane = ({
 )
 
 // ---------------------------------------------------------------------------
-// Misnomer callout
+// Steward status note
 // ---------------------------------------------------------------------------
 
-const MisnomerCallout = () => (
+const StewardStatusNote = () => (
   <aside
     className="rounded border border-warn/30 bg-warn/5 px-4 py-3"
     role="note"
-    data-testid="misnomer-callout"
+    data-testid="steward-status-note"
   >
     <p className="font-mono text-[10px] text-warn/90">
-      <strong>Note — server.ts:1810 misnomer:</strong> The comment says it "spawns the steward",
-      but <code>investigateWorktree</code> (server.ts:~2850) actually dispatches a fire-and-forget{' '}
-      <strong>Haiku</strong> run via <code>runClaudeCode</code> — not <code>stewardAgent</code>.
-      The stewardAgent is declared and registered but has zero production dispatch sites.
+      The Steward is not wired up in this build — the runtime-tuning entries below are produced by
+      a different path. Nothing on this page acts on the queue.
     </p>
   </aside>
 )
@@ -571,7 +569,7 @@ export const StewardPage = () => {
         </div>
       </header>
 
-      <MisnomerCallout />
+      <StewardStatusNote />
 
       <div className="flex flex-col gap-4">
         {/* Lane 1: Runtime tuning — the only lane that actually executes */}
