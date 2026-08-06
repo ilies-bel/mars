@@ -790,3 +790,228 @@ describe('implementInputSchema — qa field', () => {
     expect(source).toContain('reviewType: qa')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Regression fixtures — narrow-test false positives (mars-5c83d931 incident)
+//
+// The failure mode: the slicer put a focused test in verifyCmd but the
+// orchestrator's verify step ALSO runs a package-wide typecheck via a gate.
+// The coder only ran the focused test (which passed), missed the typecheck
+// (which failed), and the task failed at the orchestrator's verify gate.
+//
+// Fix: composePrompt accepts the active gate steps and merges them into the
+// <verify> block so the coder sees exactly what the orchestrator will run.
+// ---------------------------------------------------------------------------
+describe('composePrompt — gate-step augmentation in <verify> (narrow-test regression)', () => {
+  it('regression fixture: typecheck gate is included in <verify> when verifyCmd has only focused tests', () => {
+    // Simulates: slicer set verifyCmd = "cd orchestrator && npx vitest run src/foo.test.ts"
+    // while the active gate registry also has a tsc check.
+    // A narrow-test false positive — focused tests pass, typecheck fails —
+    // must be caught by the coder, not only at the orchestrator verify gate.
+    const gateSteps = [
+      {
+        name: 'typecheck',
+        cmd: 'npx',
+        args: ['tsc', '--noEmit'] as string[],
+        dir: 'orchestrator',
+        required: true,
+      },
+    ]
+    const out = composePrompt(
+      'implement the feature',
+      null,
+      'coder',
+      {
+        files: ['orchestrator/src/foo.ts'],
+        verifyCmd: 'cd orchestrator && npx vitest run src/foo.test.ts',
+        doneCriteria: ['tests pass'],
+        mergeMode: 'auto',
+      },
+      'mars-test',
+      '',
+      'task',
+      [],
+      gateSteps,
+    )
+    // Both the focused test AND the typecheck gate must appear in <verify>.
+    // If only the focused test runs and passes while tsc fails, the coder
+    // must still catch the failure before ending the code step.
+    expect(out).toContain('<verify>')
+    expect(out).toContain('npx vitest run src/foo.test.ts')
+    expect(out).toContain('npx tsc --noEmit')
+  })
+
+  it('does not duplicate a gate command already present in verifyCmd', () => {
+    // If the slicer already put tsc in verifyCmd, the gate must not appear twice.
+    const gateSteps = [
+      {
+        name: 'typecheck',
+        cmd: 'npx',
+        args: ['tsc', '--noEmit'] as string[],
+        dir: 'orchestrator',
+        required: true,
+      },
+    ]
+    const out = composePrompt(
+      'implement the feature',
+      null,
+      'coder',
+      {
+        files: ['orchestrator/src/foo.ts'],
+        verifyCmd: 'cd orchestrator && npx tsc --noEmit',
+        doneCriteria: [],
+        mergeMode: 'auto',
+      },
+      'mars-test',
+      '',
+      'task',
+      [],
+      gateSteps,
+    )
+    const verifyStart = out.indexOf('<verify>')
+    const verifyEnd = out.indexOf('</verify>') + 9
+    const verifyBlock = out.slice(verifyStart, verifyEnd)
+    // The tsc command should appear exactly once inside the <verify> block.
+    const tscOccurrences = (verifyBlock.match(/npx tsc --noEmit/g) ?? []).length
+    expect(tscOccurrences).toBe(1)
+  })
+
+  it('renders gate steps in <verify> even when verifyCmd is null', () => {
+    // When the slicer left verifyCmd null, the orchestrator will still run
+    // its gates. Surface those gates to the coder.
+    const gateSteps = [
+      {
+        name: 'typecheck',
+        cmd: 'npx',
+        args: ['tsc', '--noEmit'] as string[],
+        dir: 'orchestrator',
+        required: true,
+      },
+    ]
+    const out = composePrompt(
+      'implement the feature',
+      null,
+      'coder',
+      {
+        files: ['orchestrator/src/foo.ts'],
+        verifyCmd: null,
+        doneCriteria: [],
+        mergeMode: 'auto',
+      },
+      'mars-test',
+      '',
+      'task',
+      [],
+      gateSteps,
+    )
+    expect(out).toContain('<verify>')
+    expect(out).toContain('cd orchestrator && npx tsc --noEmit')
+  })
+
+  it('no <verify> section when verifyCmd is null and no gate steps provided', () => {
+    // Criterion: a task whose spec has no verify command works fine —
+    // no crash, no empty <verify> section rendered as if it were a contract.
+    const out = composePrompt(
+      'implement the feature',
+      null,
+      'coder',
+      {
+        files: [],
+        verifyCmd: null,
+        doneCriteria: [],
+        mergeMode: 'auto',
+      },
+    )
+    expect(out).not.toContain('<verify>')
+  })
+
+  it('skips integration-tier gate steps — they are deferred and not run per-task', () => {
+    // The orchestrator defers integration-tier steps; showing them in the
+    // coder's <verify> block would mislead the coder into running expensive
+    // gates that the orchestrator skips at task-verify time.
+    const gateSteps = [
+      {
+        name: 'full-suite',
+        cmd: 'npx',
+        args: ['vitest', 'run', '--reporter=verbose'] as string[],
+        dir: '.',
+        required: true,
+        tier: 'integration' as const,
+      },
+      {
+        name: 'typecheck',
+        cmd: 'npx',
+        args: ['tsc', '--noEmit'] as string[],
+        dir: '.',
+        required: true,
+        tier: 'task' as const,
+      },
+    ]
+    const out = composePrompt(
+      'implement the feature',
+      null,
+      'coder',
+      { files: [], verifyCmd: null, doneCriteria: [], mergeMode: 'auto' },
+      'mars-test',
+      '',
+      'task',
+      [],
+      gateSteps,
+    )
+    expect(out).toContain('<verify>')
+    expect(out).toContain('npx tsc --noEmit')
+    // The integration-tier full suite must NOT appear in the coder's brief.
+    expect(out).not.toContain('npx vitest run --reporter=verbose')
+  })
+
+  it('gate steps from a root-scope (.) do not get a cd prefix', () => {
+    const gateSteps = [
+      {
+        name: 'typecheck',
+        cmd: 'npx',
+        args: ['tsc', '--noEmit'] as string[],
+        dir: '.',
+        required: true,
+      },
+    ]
+    const out = composePrompt(
+      'implement the feature',
+      null,
+      'coder',
+      { files: [], verifyCmd: null, doneCriteria: [], mergeMode: 'auto' },
+      'mars-test',
+      '',
+      'task',
+      [],
+      gateSteps,
+    )
+    expect(out).toContain('npx tsc --noEmit')
+    // Root-scope steps must NOT get a `cd . && ` prefix.
+    expect(out).not.toContain('cd . && ')
+  })
+
+  it('backward-compatible: default gateSteps=[] keeps current behaviour for callers without DB access', () => {
+    // The scorer runtime and metrics helpers call composePrompt without gate
+    // steps. They must see the same output as before this change.
+    const out = composePrompt(
+      'implement the feature',
+      null,
+      'coder',
+      {
+        files: ['src/a.ts'],
+        verifyCmd: 'npx tsc --noEmit',
+        doneCriteria: ['types pass'],
+        mergeMode: 'auto',
+      },
+      'mars-test',
+    )
+    // Verify block still present with the spec's own verifyCmd.
+    expect(out).toContain('<verify>')
+    expect(out).toContain('npx tsc --noEmit')
+    // No spurious extra lines.
+    const verifyStart = out.indexOf('<verify>')
+    const verifyEnd = out.indexOf('</verify>') + 9
+    const verifyBlock = out.slice(verifyStart, verifyEnd)
+    expect(verifyBlock.trim()).toBe('<verify>\nnpx tsc --noEmit\n</verify>')
+  })
+})

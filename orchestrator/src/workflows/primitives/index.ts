@@ -1253,6 +1253,21 @@ export const runAgent = async (
     tags,
   })
   const lessons = await fetchLessonsForTask(domains).catch(() => [] as string[])
+  // Load active verify gate steps so the coder's <verify> block contains the
+  // exact commands the orchestrator's verify step will run (package-wide
+  // typecheck included), not only what the slicer put in spec.verifyCmd.
+  // This prevents narrow-test false positives where focused tests pass but the
+  // package typecheck fails at the orchestrator's verify gate.
+  // Best-effort: gate-load failures must never block dispatch.
+  const gateSteps = await (async () => {
+    try {
+      const { loadVerifyGates } = await import('../../core/verify-gates')
+      const scopes = await loadVerifyGates(store)
+      return selectVerifySteps(scopes, spec?.files ?? [])
+    } catch {
+      return []
+    }
+  })()
   const fullPrompt = composePrompt(
     basePrompt,
     plan,
@@ -1262,6 +1277,7 @@ export const runAgent = async (
     worktreePath,
     kind,
     lessons,
+    gateSteps,
   )
 
   // Registry workers: merge operator-declared Workers so their tag sets are

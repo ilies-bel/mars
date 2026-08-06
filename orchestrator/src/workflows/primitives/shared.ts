@@ -25,6 +25,7 @@ import { composeCodexPrompt } from '../../core/workers/providers/codex-headless'
 import { TDD_WORKER_BRIEF } from '../tdd-brief'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
 import type { WorkerName } from '../../core/workers'
+import type { VerifyStepSpec } from '../../core/lib/git/verify'
 
 // ---------------------------------------------------------------------------
 // Schemas mirrored from the workflow input contract
@@ -293,7 +294,35 @@ export const recoveryAttachesToOrigin = (
 // Prompt composition
 // ---------------------------------------------------------------------------
 
-const renderSpec = (spec: TaskSpec | null, taskId: string): string | null => {
+/**
+ * True when `step` is already represented in `verifyCmd` — the step's command
+ * string (e.g. `npx tsc --noEmit`) appears verbatim somewhere inside the
+ * existing verify command. Used to avoid duplicating gate entries that the
+ * slicer already included.
+ */
+const isGateCoveredByVerifyCmd = (step: VerifyStepSpec, verifyCmd: string): boolean => {
+  const stepCmd = [step.cmd, ...step.args].join(' ')
+  return verifyCmd.includes(stepCmd)
+}
+
+/**
+ * Render a verify gate step as a runnable shell command. When the step is
+ * scoped to a non-root directory, prepends `cd <dir> && ` so the coder runs
+ * it from the right subdirectory.
+ */
+const gateStepToCmd = (step: VerifyStepSpec): string => {
+  const cmd = [step.cmd, ...step.args].join(' ')
+  if (step.dir && step.dir !== '.') {
+    return `cd ${step.dir} && ${cmd}`
+  }
+  return cmd
+}
+
+const renderSpec = (
+  spec: TaskSpec | null,
+  taskId: string,
+  gateSteps: ReadonlyArray<VerifyStepSpec> = [],
+): string | null => {
   if (!spec) return null
   const parts: string[] = []
   if (spec.mergeMode === 'gated') {
@@ -318,8 +347,23 @@ const renderSpec = (spec: TaskSpec | null, taskId: string): string | null => {
       `<prescriptive_action>\n${prescriptiveAction.trim()}\n</prescriptive_action>`,
     )
   }
-  if (spec.verifyCmd && spec.verifyCmd.trim().length > 0) {
-    parts.push(`<verify>\n${spec.verifyCmd.trim()}\n</verify>`)
+  // Build the <verify> block: the spec's own verifyCmd (if any) PLUS any
+  // task-tier gate steps not already covered by it. Integration-tier steps are
+  // deferred by the orchestrator's verify phase and must NOT appear here —
+  // showing them would mislead the coder into running expensive gates that the
+  // orchestrator skips during per-task verification.
+  const hasVerifyCmd = Boolean(spec.verifyCmd?.trim())
+  const taskGateSteps = gateSteps.filter((s) => s.tier !== 'integration')
+  const uncoveredGateSteps = hasVerifyCmd
+    ? taskGateSteps.filter((s) => !isGateCoveredByVerifyCmd(s, spec.verifyCmd!))
+    : taskGateSteps
+  if (hasVerifyCmd || uncoveredGateSteps.length > 0) {
+    const verifyLines: string[] = []
+    if (hasVerifyCmd) verifyLines.push(spec.verifyCmd!.trim())
+    for (const step of uncoveredGateSteps) {
+      verifyLines.push(gateStepToCmd(step))
+    }
+    parts.push(`<verify>\n${verifyLines.join('\n')}\n</verify>`)
   }
   if (spec.doneCriteria.length > 0) {
     const lines = spec.doneCriteria.map((c) => `  - [ ] ${c}`).join('\n')
@@ -361,6 +405,18 @@ export const composePrompt = (
   worktreeRoot = '',
   kind: 'task' | 'fix' | 'diagnose' = 'task',
   lessons: string[] = [],
+  /**
+   * Active task-tier verify gate steps for this task, loaded from the gate
+   * registry at dispatch time. When non-empty, the rendered `<verify>` block
+   * includes any gate commands not already present in `spec.verifyCmd` — so
+   * the coder sees exactly what the orchestrator's verify step will run,
+   * including the package-wide typecheck that the slicer may have omitted
+   * from its focused-test `verifyCmd`.
+   *
+   * Defaults to `[]` (backward-compatible; callers without DB access — the
+   * scorer runtime, metrics helpers — are unaffected).
+   */
+  gateSteps: ReadonlyArray<VerifyStepSpec> = [],
 ): string => {
   // Diagnose Chore short-circuit: the prompt arrives fully composed.
   if (kind === 'diagnose') return prompt.trim()
@@ -376,7 +432,7 @@ export const composePrompt = (
     const taskCwd = resolveTaskCwd(worktreeRoot, spec?.files ?? [])
     sections.push(renderOrientation(worktreeRoot, taskCwd))
   }
-  const specBlock = renderSpec(spec, taskId)
+  const specBlock = renderSpec(spec, taskId, gateSteps)
   if (specBlock !== null) sections.push(specBlock)
   if (lessons.length > 0) {
     const items = lessons.map((l) => `  - ${l}`).join('\n')
