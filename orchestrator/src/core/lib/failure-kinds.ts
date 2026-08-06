@@ -708,6 +708,28 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
   )
     .map((k) => ({ ...k, recipe: recipeRef(k.signature) }))
     .concat([
+      // ── continue:base-refresh-conflict/merge-conflict-unresolved ───────────
+      // Raised by coreContinueTask when `git merge <integrationBranch>` in the
+      // task's worktree produces a conflict that the VCS supervisor could not
+      // resolve. The merge is aborted and the worker's commits remain intact.
+      // The operator must resolve the conflict manually (or restart to discard
+      // the worker's commits) and run `mars continue` again. No automated fix
+      // recipe exists: conflict resolution is operator-owned.
+      {
+        signature: 'continue:base-refresh-conflict/merge-conflict-unresolved',
+        staticEncodable: notEncodable('orchestration'),
+        warmTitle: 'The task could not be resumed: merge conflict with integration branch',
+        verboseReason:
+          'mars continue found a merge conflict when refreshing the task branch from the integration branch. ' +
+          'The merge was aborted; the worker commits are intact. ' +
+          'Resolve the conflict manually and run `mars continue` again, or use `mars restart` to discard the worker commits and start over.',
+        recipe: null,
+        actions: [
+          { id: 'diagnose-failure', label: 'Investigate', op: 'diagnose-failure' },
+          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
+          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+        ],
+      },
       // ── daemon-killed ──────────────────────────────────────────────────────
       // Uses the DAEMON_KILLED_SIGNATURE constant (not a <step>/<class> shape)
       // and the requeue/batch-restart menu. No recovery recipe: the daemon
@@ -833,6 +855,7 @@ const STEP_FAMILY_LABELS: Readonly<Record<string, string>> = Object.freeze({
   code: 'The coder did not complete successfully',
   merge: 'The changes could not be merged',
   triage: 'The task could not be triaged',
+  continue: 'The task could not be resumed',
 })
 
 /**

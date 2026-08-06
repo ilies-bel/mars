@@ -1451,6 +1451,9 @@ export const updateTask = async (
         buildEventInsert('task.failed', {
           taskId: id,
           error: patch.error ?? patch.failureReason ?? '',
+          // Carry the failure signature in the event payload so subscribers
+          // can read it even after reopenTerminalTask NULLs the task-row field.
+          failureSignature: patch.failureSignature ?? deriveFailureSignature(patch),
         }),
         buildEventInsert('task.terminal', { taskId: id, reason: 'failed' }),
       )

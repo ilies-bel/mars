@@ -25,6 +25,13 @@ export const EventMap = {
      * `## QA note` heading so the recovery agent sees the operator's feedback.
      */
     note: z.string().optional(),
+    /**
+     * The `<failingStep>/<error-class>` signature written to `failure_signature`
+     * at failure time.  Carried in the event so the action-queue-repopulator
+     * can read the signature even when the recovery-spawner's
+     * `reopenTerminalTask` call has already NULLed the task-row field.
+     */
+    failureSignature: z.string().optional(),
   }),
   'verify-gate.quarantined': z.object({
     gateId: z.string(),

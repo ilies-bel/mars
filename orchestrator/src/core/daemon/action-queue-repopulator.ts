@@ -107,7 +107,16 @@ export async function ensureActionQueueRepopulator(client: DbClient): Promise<vo
  */
 async function applyActionQueueMutation(event: BusEvent): Promise<void> {
   if (TASK_RAISE_EVENTS.has(event.type)) {
-    const { taskId } = event.payload as { taskId: string; dropReason?: string }
+    // For task.failed events, extract the signature and error from the event
+    // payload so they are available even after reopenTerminalTask NULLs the
+    // task-row fields.  Both fields are optional for backward compatibility
+    // (older events may not carry them) and for non-failed event types where
+    // neither field is present.
+    const {
+      taskId,
+      error: eventError = '',
+      failureSignature: eventSignature,
+    } = event.payload as { taskId: string; error?: string; failureSignature?: string; dropReason?: string }
 
     // Purge-drop guard: dropTask emits task.dropped{dropReason:'purged'} +
     // task.terminal{purged} before deleting the task row. The Invalidator
@@ -165,8 +174,16 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
     // real record (title, reason, recipe ref, action menu) instead of
     // collapsing to `unknown`. Falls through to an unknown record when the
     // signature is null or unregistered.
-    const sig = task.failureSignature ?? null
-    const fk = resolveFailureKind(sig, task.error ?? '')
+    //
+    // Prefer the event-payload signature over the task-row field: the
+    // recovery-spawner's reopenTerminalTask NULLs failure_signature before
+    // this subscriber drains the same task.failed event, so the task row may
+    // be stale.  Both sources carry the same value — the one written by
+    // updateTask at failure time — so the event is authoritative when both
+    // exist, and the task row is the fallback for events predating this field.
+    const sig = eventSignature ?? task.failureSignature ?? null
+    const capturedError = task.error ?? ''
+    const fk = resolveFailureKind(sig, capturedError)
 
     // raiseActionQueueItem is idempotent: if an open origin row already exists,
     // it bumps seen_count rather than inserting a duplicate row.
@@ -180,7 +197,7 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
       title: failedTaskTitle({
         signature: sig,
         taskId,
-        capturedError: task.error ?? '',
+        capturedError,
       }),
       body: fk.verboseReason,
       payload: {
@@ -193,6 +210,11 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
           label: a.label,
           op: a.op,
         })),
+        // Include the raw captured output from the event so operators can
+        // inspect the actual error (e.g. conflicted file paths) from the
+        // action-queue payload even when the task row has been reopened and
+        // its error field NULLed.
+        ...(eventError ? { capturedError: eventError.slice(0, 2000) } : {}),
       },
       context: {},
       raisedBy: `action-queue-repopulator:${event.type}`,

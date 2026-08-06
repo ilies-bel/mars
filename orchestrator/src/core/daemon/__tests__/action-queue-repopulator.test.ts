@@ -1031,4 +1031,116 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openAfterBlocked = await actionQueue.listActionQueueItems('open')
     expect(openAfterBlocked.filter((i) => i.payload['taskId'] === taskId)).toHaveLength(0)
   })
+
+  // ── event-payload signature tests ────────────────────────────────────────────
+  // The repopulator must read failureSignature from the task.failed event payload
+  // rather than the task row, because the recovery-spawner's reopenTerminalTask
+  // NULLs the task-row field before the repopulator drains the same event.
+  // These tests prove both branches: a known signature names itself; a genuinely
+  // absent signature still produces the "could not determine" copy.
+  // The storm breaker (recovery-spawner) records the same signature value —
+  // the one written by updateTask at failure time and carried in the event.
+
+  it('uses event-payload failureSignature when task-row field was nulled by reopenTerminalTask', async () => {
+    // This is the root-cause scenario: coreContinueTask fails with a known
+    // signature, the recovery-spawner reopens the task (NULLing failure_signature),
+    // and then the repopulator drains the task.failed event. Without the fix the
+    // repopulator reads null from the task row and emits "Mars could not determine";
+    // with the fix it reads the signature from the event payload.
+    const { q, actionQueue, rep, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-continue-conflict-race'
+
+    await rep.ensureActionQueueRepopulator(client)
+    await insertTaskRow(client, { id: taskId })
+
+    // Publish with a known failure signature (as updateTask does at failure time).
+    await publish(pub, client, 'task.failed', {
+      taskId,
+      error: 'merging main into task/T-continue-conflict-race conflicted',
+      failureSignature: 'continue:base-refresh-conflict/merge-conflict-unresolved',
+    })
+
+    // Simulate reopenTerminalTask NULLing the failure_signature column (as the
+    // recovery-spawner does between event emission and repopulator drain).
+    await client.execute({
+      sql: `UPDATE tasks SET failure_signature = NULL, error = NULL WHERE id = ?`,
+      args: [taskId],
+    })
+
+    const { processed } = await rep.drainActionQueueRepopulations(client)
+    expect(processed).toBe(1)
+
+    const openItems = await actionQueue.listActionQueueItems('open')
+    const row = openItems.find((i) => i.payload['taskId'] === taskId)
+    expect(row).toBeDefined()
+    // Title must name the signature — never the "could not determine" copy.
+    expect(row!.title).toContain('continue:base-refresh-conflict/merge-conflict-unresolved')
+    expect(row!.title).not.toContain('Mars could not determine why this task failed')
+    // The resolved signature in the payload matches the event payload (same field
+    // as the storm-breaker records).
+    expect(row!.payload['failureSignature']).toBe(
+      'continue:base-refresh-conflict/merge-conflict-unresolved',
+    )
+  })
+
+  it('continue:base-refresh-conflict names the conflicted files via the payload capturedError', async () => {
+    // The event's error field contains the full conflict summary including the
+    // specific conflicted file paths. The repopulator must surface them in the
+    // payload so operators can read the files from the action-queue item even
+    // after the task row's error column was NULLed by reopenTerminalTask.
+    const { q, actionQueue, rep, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-continue-conflict-files'
+    const conflictedFile = 'orchestrator/src/core/lib/chat-store.ts'
+    const conflictSummary =
+      `Cannot continue task ${taskId}: merging main into task/${taskId} conflicted.\n\n` +
+      `Conflicting files:\n  - ${conflictedFile}\n\nTo resolve manually: ...`
+
+    await rep.ensureActionQueueRepopulator(client)
+    await insertTaskRow(client, { id: taskId })
+
+    await publish(pub, client, 'task.failed', {
+      taskId,
+      error: conflictSummary,
+      failureSignature: 'continue:base-refresh-conflict/merge-conflict-unresolved',
+    })
+
+    // Simulate reopenTerminalTask NULLing the fields.
+    await client.execute({
+      sql: `UPDATE tasks SET failure_signature = NULL, error = NULL WHERE id = ?`,
+      args: [taskId],
+    })
+
+    await rep.drainActionQueueRepopulations(client)
+
+    const openItems = await actionQueue.listActionQueueItems('open')
+    const row = openItems.find((i) => i.payload['taskId'] === taskId)
+    expect(row).toBeDefined()
+    // The payload capturedError carries the error from the event, including
+    // the specific conflicted file paths.
+    expect(String(row!.payload['capturedError'] ?? '')).toContain(conflictedFile)
+  })
+
+  it('still emits the could-not-determine copy when neither event nor task carries a signature', async () => {
+    // Genuine unknown: no failureSignature in the event payload and none in the
+    // task row. The "could not determine" copy is the correct last resort here.
+    const { q, actionQueue, rep, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-truly-unknown'
+
+    await rep.ensureActionQueueRepopulator(client)
+    await insertTaskRow(client, { id: taskId })
+
+    // Publish without failureSignature (truly unknown failure).
+    await publish(pub, client, 'task.failed', { taskId, error: '' })
+
+    const { processed } = await rep.drainActionQueueRepopulations(client)
+    expect(processed).toBe(1)
+
+    const openItems = await actionQueue.listActionQueueItems('open')
+    const row = openItems.find((i) => i.payload['taskId'] === taskId)
+    expect(row).toBeDefined()
+    expect(row!.title).toContain('Mars could not determine why this task failed')
+  })
 })

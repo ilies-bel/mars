@@ -532,6 +532,19 @@ describe('failedTaskTitle', () => {
     )
   })
 
+  it('names the signature in the title for continue:base-refresh-conflict/merge-conflict-unresolved', () => {
+    // This is the signature coreContinueTask writes when git merge conflicts and
+    // the VCS supervisor cannot resolve it. The title must carry the full
+    // signature so the action-queue list is immediately scannable.
+    const title = failedTaskTitle({
+      signature: 'continue:base-refresh-conflict/merge-conflict-unresolved',
+      taskId: 'mars-5c83d931',
+    })
+    expect(title).toContain('continue:base-refresh-conflict/merge-conflict-unresolved')
+    expect(title).not.toContain('Mars could not determine why this task failed')
+    expect(title).toContain('[task mars-5c8]')
+  })
+
   it('gives two failures with different signatures two different titles', () => {
     const a = failedTaskTitle({
       signature: 'verify:test/test-assertion-error',
@@ -576,6 +589,13 @@ describe('unknownFailureKind — triage family and colon-less step forms', () =>
   it('unrecognised family still hits the generic fallback', () => {
     const kind = unknownFailureKind('xyzzy:warp', '')
     expect(kind.warmTitle).toBe('Mars could not determine why this task failed')
+  })
+
+  it('continue family maps to the plain-English resume label, not the generic fallback', () => {
+    const kind = unknownFailureKind('continue:some-unregistered-sub-step', '')
+    expect(kind.warmTitle).toBe('The task could not be resumed')
+    expect(kind.warmTitle).not.toBe('Mars could not determine why this task failed')
+    expect(kind.warmTitle).not.toContain('continue:some-unregistered-sub-step')
   })
 
   it('no warmTitle contains a colon', () => {
