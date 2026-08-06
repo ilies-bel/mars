@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 import { resolveContext, resolveDbTarget } from './context'
 import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
-import { openDb, type DbClient, type DbInValue, type DbStatement } from './lib/db'
+import { markSchemaReady, openDb, type DbClient, type DbInValue, type DbStatement } from './lib/db'
 import { ensureSchema } from './lib/pg-schema'
 import { buildEventInsert, withWriteTx } from './lib/outbox'
 import { asStepId, computeFailureSignature } from './lib/failure-signature'
@@ -624,7 +624,17 @@ export const resolveQueueClient = (): DbClient => {
 let schemaReady: Promise<void> | null = null
 
 export const ensureQueueSchema = (): Promise<void> => {
-  schemaReady ??= ensureSchema(resolveQueueClient())
+  if (!schemaReady) {
+    // Call markSchemaReady after the DDL completes so that the first
+    // execute() / batch() call on this client doesn't re-run ensureSchema.
+    // Direct ensureSchema callers bypass ensureClientSchema and therefore
+    // never update schemaReadyByTarget; without this, every test that calls
+    // migrateQueueSchema() followed by a resolveStateClient().execute() pays
+    // an extra ~10 s DDL pass on PGlite-backed databases.
+    schemaReady = ensureSchema(resolveQueueClient()).then(() => {
+      markSchemaReady(resolveQueueClient())
+    })
+  }
   return schemaReady
 }
 

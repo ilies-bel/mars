@@ -634,6 +634,8 @@ interface RegistryEntry {
 
 const registry = new Map<string, RegistryEntry>()
 const backendOf = new WeakMap<DbClient, BackendOps>()
+/** Reverse map: client → the registry key used by schemaReadyByTarget. */
+const keyByClient = new WeakMap<DbClient, string>()
 
 // A client can be opened directly by a CLI command or a focused library test,
 // without first passing through daemon startup.  Keep that path safe by
@@ -705,6 +707,7 @@ function makeClient(backend: BackendOps, key: string): DbClient {
     },
   }
   backendOf.set(client, backend)
+  keyByClient.set(client, key)
   return client
 }
 
@@ -767,6 +770,28 @@ export async function closeAllDbs(): Promise<void> {
     }
   }
   schemaReadyByTarget.clear()
+}
+
+/**
+ * Record that the schema for `client`'s target is already initialised.
+ *
+ * Direct callers of `ensureSchema` (e.g. `ensureQueueSchema`, bus
+ * subscribers) bypass `ensureClientSchema` and therefore do not update
+ * `schemaReadyByTarget`.  Without this marker, the very next `execute()` or
+ * `batch()` call on the same client triggers a second full DDL pass — a
+ * ~10 s overhead on PGlite in tests and a harmless-but-wasteful no-op on a
+ * live PostgreSQL cluster.
+ *
+ * Call this immediately after the direct `ensureSchema` promise resolves.
+ * It is a no-op if the key is already present (e.g. because a concurrent
+ * `ensureClientSchema` beat us to it).
+ */
+export function markSchemaReady(client: DbClient): void {
+  const key = keyByClient.get(client)
+  if (key === undefined) return
+  if (!schemaReadyByTarget.has(key)) {
+    schemaReadyByTarget.set(key, Promise.resolve())
+  }
 }
 
 /**
