@@ -23,6 +23,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThreadSidebar, ChatPage } from './ChatPage'
 import { relativeTime, smartTitle } from './chatPageUtils'
+import { ArtifactsRail } from '@/widgets/chat/ContextRail'
 import type { ChatThread, ActionQueueItem } from '@/shared/schemas'
 
 const mockFetchChatHistory = vi.hoisted(() => vi.fn())
@@ -120,6 +121,8 @@ vi.mock('@/shared/api', () => ({
   setMessageFeedback: vi.fn().mockResolvedValue(undefined),
   clearMessageFeedback: vi.fn().mockResolvedValue(undefined),
   invokeAction: vi.fn().mockResolvedValue(undefined),
+  fetchTasksForThread: vi.fn().mockResolvedValue([]),
+  eventsUrl: () => '/events',
   ApiError: class ApiError extends Error {
     kind: string
     constructor(kind: string, message: string) {
@@ -632,5 +635,90 @@ describe('ChatPage – docked composer and jump-to-bottom', () => {
     const dock = container.querySelector('[data-testid="composer-dock"]')
     expect(dock).not.toBeNull()
     expect(dock?.querySelector('[data-testid="composer"]')).not.toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ArtifactsRail – TASKS panel rendering
+// ---------------------------------------------------------------------------
+
+describe('ArtifactsRail – TASKS panel rendering', () => {
+  it('renders task IDs passed via the tasks prop', () => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    const html = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(ArtifactsRail, {
+          tasks: ['mars-abc12345', 'mars-def67890'],
+          files: [],
+          meta: { vision: null, theme: null },
+        }),
+      ),
+    )
+    expect(html).toContain('mars-abc12345')
+    expect(html).toContain('mars-def67890')
+    expect(html).not.toContain('No tasks created in this thread')
+  })
+
+  it('shows the empty state when no tasks are linked to the thread', () => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    const html = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(ArtifactsRail, {
+          tasks: [],
+          files: [],
+          meta: { vision: null, theme: null },
+        }),
+      ),
+    )
+    expect(html).toContain('No tasks created in this thread')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ContextRail TASKS panel – live re-derivation via React Query
+// ---------------------------------------------------------------------------
+
+describe('ContextRail TASKS panel – live re-derivation', () => {
+  it('prefix-invalidating ["thread-tasks"] marks all thread-scoped task queries stale', async () => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    })
+    // Pre-seed two thread-scoped task queries (simulating two open threads).
+    qc.setQueryData(['thread-tasks', 'th-1'], [])
+    qc.setQueryData(['thread-tasks', 'th-2'], ['mars-abc12345'])
+
+    // Both queries start fresh (not yet invalidated).
+    expect(qc.getQueryState(['thread-tasks', 'th-1'])?.isInvalidated).toBe(false)
+    expect(qc.getQueryState(['thread-tasks', 'th-2'])?.isInvalidated).toBe(false)
+
+    // This is the call SseInvalidator makes when a 'chat' or 'tasks' SSE event fires.
+    await qc.invalidateQueries({ queryKey: ['thread-tasks'] })
+
+    // Both thread-specific queries should now be stale, so ContextRail re-fetches.
+    expect(qc.getQueryState(['thread-tasks', 'th-1'])?.isInvalidated).toBe(true)
+    expect(qc.getQueryState(['thread-tasks', 'th-2'])?.isInvalidated).toBe(true)
+  })
+
+  it('unrelated query keys are not affected by ["thread-tasks"] invalidation', async () => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    })
+    qc.setQueryData(['tasks', null], [])
+    qc.setQueryData(['thread-tasks', 'th-1'], [])
+
+    await qc.invalidateQueries({ queryKey: ['thread-tasks'] })
+
+    // The global 'tasks' query should NOT be invalidated by a 'thread-tasks' invalidation.
+    expect(qc.getQueryState(['tasks', null])?.isInvalidated).toBe(false)
+    // Only the thread-scoped query is stale.
+    expect(qc.getQueryState(['thread-tasks', 'th-1'])?.isInvalidated).toBe(true)
   })
 })

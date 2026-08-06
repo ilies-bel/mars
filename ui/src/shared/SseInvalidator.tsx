@@ -71,6 +71,9 @@ export const SseInvalidator = () => {
 
     // 'chat' events fire when a thread is created, updated, or a new message
     // lands. Invalidate active threads, archived Subthreads, and any open detail.
+    // Also invalidate thread-tasks so the TASKS panel in ContextRail reflects any
+    // tasks filed by the agent during the conversation (linkTaskToThread is called
+    // after shell-based `mars task add` commands, before this event fires).
     let chatDebounce: ReturnType<typeof setTimeout> | null = null
     es.addEventListener('chat', () => {
       if (chatDebounce !== null) clearTimeout(chatDebounce)
@@ -83,6 +86,10 @@ export const SseInvalidator = () => {
         // durable but invisible until something else forces a refetch —
         // which is not a conversation, it is a log you have to go and read.
         void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
+        // Re-derive the TASKS panel: the agent may have filed tasks during this
+        // conversation turn via shell `mars task add`. The link is written before
+        // hub.broadcast('chat') fires, so the re-fetch returns fresh data.
+        void qc.invalidateQueries({ queryKey: ['thread-tasks'] })
       }, 150)
     })
 

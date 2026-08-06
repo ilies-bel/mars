@@ -1202,6 +1202,20 @@ export class ChatRunner {
               result = { content: truncate(r.text, MCP_OUTPUT_CHAR_CAP), isError: r.isError }
             } else {
               result = await executeToolCall(call.tool, args, repoRoot, abort.signal)
+              // When the agent runs `mars task add ...` as a shell command, link
+              // any created tasks to this thread so the TASKS panel reflects them.
+              // `linkTaskToThread` uses ON CONFLICT DO NOTHING — repeated calls for
+              // the same pair are safe. Errors are swallowed; the end-of-run drift
+              // log will flag any residual gap.
+              if (call.tool === 'shell' && !result.isError) {
+                const cmd = typeof args.command === 'string' ? args.command : ''
+                if (cmd.includes('mars task') && isObject(result.content)) {
+                  const stdout = String((result.content as Record<string, unknown>).stdout ?? '')
+                  for (const m of stdout.matchAll(CHAT_TASK_ID_RE)) {
+                    await linkTaskToThread(threadId, m[0]).catch(() => {})
+                  }
+                }
+              }
             }
 
             // Detect mars-propose envelope: stdout is valid JSON matching

@@ -88,6 +88,50 @@ describe('SseInvalidator – React Query invalidation mechanism', () => {
     vi.useRealTimers()
   })
 
+  it('invalidates thread-tasks on a chat SSE event so the TASKS panel re-fetches', async () => {
+    vi.useFakeTimers()
+    const listeners = new Map<string, EventListener[]>()
+
+    class MockEventSource {
+      onerror: (() => void) | null = null
+      constructor(_url: string) {}
+      addEventListener(type: string, listener: EventListener) {
+        listeners.set(type, [...(listeners.get(type) ?? []), listener])
+      }
+      close() {}
+    }
+
+    vi.stubGlobal('EventSource', MockEventSource)
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    })
+    // Simulate a thread that has a task linked.
+    qc.setQueryData(['thread-tasks', 'th-abc'], ['mars-abc12345'])
+
+    await act(async () => {
+      root.render(
+        createElement(QueryClientProvider, { client: qc }, createElement(SseInvalidator)),
+      )
+    })
+
+    // Fire a 'chat' event (emitted by the daemon at the end of each run,
+    // after linkTaskToThread has persisted the task→thread association).
+    for (const listener of listeners.get('chat') ?? []) listener(new Event('chat'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150)
+    })
+
+    // The thread-tasks query must be invalidated so ContextRail re-fetches it.
+    expect(qc.getQueryState(['thread-tasks', 'th-abc'])?.isInvalidated).toBe(true)
+
+    await act(async () => root.unmount())
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
   it('marks the progress cache stale when invalidateQueries is called', async () => {
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
