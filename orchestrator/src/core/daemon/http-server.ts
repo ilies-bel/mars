@@ -627,6 +627,15 @@ export interface HttpServerDeps {
    * marks liveCap / isPaused as -1 / false (daemon not wired up yet).
    */
   getStewardRuntimeState?: () => { liveCap: number; baselineCap: number; isPaused: boolean }
+  /**
+   * Returns the daemon's git SHAs for the code-drift signal. Used by
+   * `GET /view/daemon-version` so the UI server's skew detector can
+   * distinguish "daemon running older code" from "route not found".
+   *
+   * Optional — when absent the endpoint returns `{ sourceSha: null, currentSha: null, isStale: false }`.
+   * This keeps the behaviour safe on test setups that build a minimal deps object.
+   */
+  getDaemonShas?: () => { sourceSha: string | null; currentSha: string | null; isStale: boolean }
 }
 
 export interface HttpServerHandle {
@@ -903,6 +912,17 @@ export const startHttpServer = async (
     if (req.method === 'GET' && req.url === '/agents/live') {
       const agents = deps.getLiveAgentsRoster?.() ?? []
       sendJson(res, 200, { agents })
+      return
+    }
+
+    // GET /view/daemon-version — expose the daemon's git SHAs so the UI server
+    // can detect "daemon running older code" and return a structured remedy
+    // instead of forwarding a raw 404/405. Pure read; no draining gate.
+    // Returns { sourceSha, currentSha, isStale } — null SHAs on prod installs
+    // or when git was unavailable at startup.
+    if (req.method === 'GET' && req.url === '/view/daemon-version') {
+      const shas = deps.getDaemonShas?.() ?? { sourceSha: null, currentSha: null, isStale: false }
+      sendJson(res, 200, shas)
       return
     }
 

@@ -5140,6 +5140,7 @@ export const startDaemon = async (
       baselineCap: initialCaps.implement,
       isPaused: pause.get().paused,
     }),
+    getDaemonShas: () => ({ sourceSha, currentSha, isStale }),
     getLiveAgentsRoster: () =>
       buildLiveAgentsRoster({
         flights: tracker.inFlightSnapshot().map((e) => ({

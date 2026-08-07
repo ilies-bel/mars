@@ -22,10 +22,35 @@ describe('resolveFallback', () => {
     expect(fb.severity).toBe('error')
   })
 
-  it('maps an ApiError of kind "stale-daemon" to the daemon-restart remedy as a warning', () => {
+  it('maps an ApiError of kind "stale-daemon" to the daemon-not-running remedy as a warning', () => {
     const fb = resolveFallback(new ApiError('boom', 'stale-daemon'), 'tasks')
+    expect(fb.remedy).toContain('mars daemon')
+    expect(fb.severity).toBe('warning')
+  })
+
+  it('maps an ApiError of kind "stale-daemon-code" without SHAs to the generic restart copy', () => {
+    const fb = resolveFallback(new ApiError('boom', 'stale-daemon-code'), 'tasks')
+    expect(fb.headline).toContain('older code')
     expect(fb.remedy).toContain('mars daemon restart')
     expect(fb.severity).toBe('warning')
+  })
+
+  it('maps stale-daemon-code with SHAs to a SHA-specific headline and warning severity', () => {
+    const err = new ApiError('boom', 'stale-daemon-code', 405, {
+      sourceSha: 'abc1234',
+      currentSha: 'def9876',
+    })
+    const fb = resolveFallback(err, 'tasks')
+    expect(fb.headline).toContain('abc1234')
+    expect(fb.headline).toContain('def9876')
+    expect(fb.remedy).toContain('mars daemon restart')
+    expect(fb.severity).toBe('warning')
+  })
+
+  it('stale-daemon and stale-daemon-code produce distinct messages', () => {
+    const fbDown = resolveFallback(new ApiError('boom', 'stale-daemon'), 'tasks')
+    const fbCode = resolveFallback(new ApiError('boom', 'stale-daemon-code', 405, { sourceSha: 'abc1234', currentSha: 'def9876' }), 'tasks')
+    expect(fbDown.headline).not.toBe(fbCode.headline)
   })
 
   it('maps an ApiError of kind "other" to the generic server-error remedy', () => {

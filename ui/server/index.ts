@@ -20,6 +20,58 @@ import {
   readDaemonHttpPort,
 } from './daemonHttp.ts'
 import { DAEMON_ERROR } from '../src/shared/daemonErrors.ts'
+
+/**
+ * Wrap a proxyGet function with stale-daemon-code detection. When the daemon
+ * returns 404 or 405 for a route, check GET /view/daemon-version. If the
+ * daemon reports that it is running older code than HEAD (isStale=true), return
+ * a structured STALE_DAEMON_CODE error with both short SHAs instead of the raw
+ * daemon body. The HTTP status is kept honest — the point is the payload, not
+ * faking a 200.
+ *
+ * This wrapper is applied once at startup in {@link startServer} so every
+ * /api/* route that proxies to the daemon gets the check automatically.
+ *
+ * @param rawProxyGet - The underlying proxyGet to wrap (and use for the
+ *   daemon-version check to avoid infinite recursion through the wrapper).
+ */
+const withSkewDetection = (
+  rawProxyGet: (stateDir: string, path: string) => Promise<import('./daemonHttp.ts').DaemonActionResult>,
+): ((stateDir: string, path: string) => Promise<import('./daemonHttp.ts').DaemonActionResult>) =>
+  async (stateDir, path) => {
+    const r = await rawProxyGet(stateDir, path)
+    if (r.status !== 404 && r.status !== 405) return r
+
+    // Check if the daemon is stale (HEAD has advanced since it started).
+    // Use rawProxyGet directly to avoid recursing through this wrapper.
+    let versionResult: import('./daemonHttp.ts').DaemonActionResult | null = null
+    try {
+      versionResult = await rawProxyGet(stateDir, '/view/daemon-version')
+    } catch {
+      // Treat any error fetching daemon-version as "no info" — fall through.
+    }
+    if (versionResult?.status !== 200) return r
+
+    const v = versionResult.body as {
+      isStale?: boolean
+      sourceSha?: string | null
+      currentSha?: string | null
+    }
+    if (!v.isStale || !v.sourceSha || !v.currentSha) return r
+
+    const src = v.sourceSha.slice(0, 7)
+    const cur = v.currentSha.slice(0, 7)
+    return {
+      status: r.status,
+      body: {
+        ok: false,
+        errorCode: DAEMON_ERROR.STALE_DAEMON_CODE,
+        sourceSha: src,
+        currentSha: cur,
+        error: `Daemon is running older code (\`${src}\` vs \`${cur}\`). Run \`mars daemon restart\`.`,
+      },
+    }
+  }
 import {
   createProjectContextCache,
   readProjectAdr,
@@ -176,7 +228,11 @@ export const startServer = async (
   args: CliArgs,
   deps: ServerDeps = {},
 ): Promise<Awaited<ReturnType<typeof Bun.serve>>> => {
-  const proxyGet = deps.proxyGet ?? realProxyGet
+  // Wrap proxyGet with stale-daemon-code detection so every proxied /api/*
+  // route automatically gets a structured STALE_DAEMON_CODE error when the
+  // daemon returns 404/405 AND reports that it is running older code than HEAD.
+  const rawProxyGet = deps.proxyGet ?? realProxyGet
+  const proxyGet = withSkewDetection(rawProxyGet)
   const proxyPost = deps.proxyPost ?? realProxyPost
   const sseHeartbeatMs = deps.sseHeartbeatMs ?? 15_000
   // Resolve the default context once for startup logging and healthz.

@@ -50,8 +50,14 @@ const KIND_COPY: Record<
     severity: 'error',
   },
   'stale-daemon': {
-    headline: 'The daemon is unreachable (stale port).',
-    remedy: 'Restart it with `mars daemon restart`.',
+    headline: 'The daemon is not running.',
+    remedy: 'Start it with `mars daemon start`, or restart with `mars daemon restart`.',
+    severity: 'warning',
+  },
+  'stale-daemon-code': {
+    // Fallback copy used when SHAs are not available in the error object.
+    headline: 'This Mars daemon is running older code than the UI.',
+    remedy: 'Run `mars daemon restart` to pick up the latest code.',
     severity: 'warning',
   },
   other: {
@@ -78,6 +84,20 @@ export function resolveFallback(error: unknown, surfaceLabel: string): Fallback 
   const detail = dev ? stringifyError(error) : null
 
   if (error instanceof ApiError) {
+    // stale-daemon-code: show the specific SHA comparison so the operator can
+    // verify the message is not a guess ("abc1234 vs def9876" pinpoints the drift).
+    if (
+      error.kind === 'stale-daemon-code' &&
+      error.sourceSha !== undefined &&
+      error.currentSha !== undefined
+    ) {
+      return {
+        headline: `This Mars daemon is running older code than the UI (\`${error.sourceSha}\` vs \`${error.currentSha}\`).`,
+        remedy: 'Run `mars daemon restart` to pick up the latest code.',
+        detail,
+        severity: 'warning',
+      }
+    }
     const copy = KIND_COPY[error.kind]
     return { headline: copy.headline, remedy: copy.remedy, detail, severity: copy.severity }
   }

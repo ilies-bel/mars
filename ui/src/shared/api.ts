@@ -68,26 +68,41 @@ import {
 } from './schemas'
 
 /** Discriminant for `ApiError` — lets the UI render the right remedy. */
-export type ApiErrorKind = 'unreachable' | 'stale-daemon' | 'other'
+export type ApiErrorKind = 'unreachable' | 'stale-daemon' | 'stale-daemon-code' | 'other'
 
 /**
  * Typed fetch error thrown by `fetchJson`.
  *
  * - `unreachable` — connection refused (TypeError) or non-JSON response
- *   (hitting Vite catch-all). Remedy: start the API server.
- * - `stale-daemon` — HTTP 404 or 405 with a JSON body. The server is up but
- *   predates the route. Remedy: `mars daemon restart`.
+ *   (hitting Vite catch-all). Remedy: start the API server or daemon.
+ * - `stale-daemon` — proxy transport error (port file stale / ECONNREFUSED).
+ *   Remedy: `mars daemon restart`.
+ * - `stale-daemon-code` — daemon is alive but running older code than HEAD.
+ *   The daemon returned 404/405 for a route it doesn't know yet, and its own
+ *   version endpoint confirmed that sourceSha ≠ currentSha. The `sourceSha`
+ *   and `currentSha` fields carry both 7-char SHAs. Remedy: `mars daemon restart`.
  * - `other` — any other HTTP error (e.g. 500).
  */
 export class ApiError extends Error {
   readonly kind: ApiErrorKind
   readonly status: number | undefined
+  /** 7-char source SHA — populated only when kind is `stale-daemon-code`. */
+  readonly sourceSha: string | undefined
+  /** 7-char current SHA — populated only when kind is `stale-daemon-code`. */
+  readonly currentSha: string | undefined
 
-  constructor(message: string, kind: ApiErrorKind, status?: number) {
+  constructor(
+    message: string,
+    kind: ApiErrorKind,
+    status?: number,
+    shas?: { sourceSha: string; currentSha: string },
+  ) {
     super(message)
     this.name = 'ApiError'
     this.kind = kind
     this.status = status
+    this.sourceSha = shas?.sourceSha
+    this.currentSha = shas?.currentSha
   }
 }
 
@@ -108,6 +123,7 @@ export const appendProject = (path: string, projectId: string | undefined): stri
 const errorCodeToKind = (errorCode: unknown): ApiErrorKind => {
   if (errorCode === DAEMON_ERROR.NO_DAEMON) return 'unreachable'
   if (errorCode === DAEMON_ERROR.PROXY_FAILED) return 'stale-daemon'
+  if (errorCode === DAEMON_ERROR.STALE_DAEMON_CODE) return 'stale-daemon-code'
   return 'other'
 }
 
@@ -137,11 +153,19 @@ export const fetchJson = async <T>(
     const ct = r.headers.get('content-type') ?? ''
     const isJson = ct.includes('application/json')
     let kind: ApiErrorKind
+    let shas: { sourceSha: string; currentSha: string } | undefined
     if (isJson) {
-      const body = await r.json().catch(() => null) as { errorCode?: unknown } | null
+      const body = await r.json().catch(() => null) as {
+        errorCode?: unknown
+        sourceSha?: unknown
+        currentSha?: unknown
+      } | null
       const errorCode = body?.errorCode
       if (errorCode) {
         kind = errorCodeToKind(errorCode)
+        if (kind === 'stale-daemon-code' && typeof body?.sourceSha === 'string' && typeof body?.currentSha === 'string') {
+          shas = { sourceSha: body.sourceSha, currentSha: body.currentSha }
+        }
       } else if (r.status === 404 || r.status === 405) {
         kind = 'stale-daemon'
       } else {
@@ -150,7 +174,7 @@ export const fetchJson = async <T>(
     } else {
       kind = 'other'
     }
-    throw new ApiError(`GET ${path} → ${r.status}`, kind, r.status)
+    throw new ApiError(`GET ${path} → ${r.status}`, kind, r.status, shas)
   }
   const ct = r.headers.get('content-type') ?? ''
   if (!ct.includes('application/json')) {

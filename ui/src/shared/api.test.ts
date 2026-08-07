@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import type { Mock } from 'bun:test'
 import { traceEventSchema } from './schemas'
+import { DAEMON_ERROR } from './daemonErrors'
 import {
   ApiError,
   ackActionQueueItem,
@@ -231,6 +232,78 @@ describe('fetchTasks', () => {
     const cause = new Error('unexpected network error')
     fetchSpy.mockRejectedValue(cause)
     await expect(fetchTasks()).rejects.toThrow('unexpected network error')
+  })
+
+  it('throws ApiError of kind stale-daemon-code with SHAs when server returns STALE_DAEMON_CODE', async () => {
+    fetchSpy.mockResolvedValue(
+      json(
+        {
+          ok: false,
+          errorCode: DAEMON_ERROR.STALE_DAEMON_CODE,
+          sourceSha: 'abc1234',
+          currentSha: 'def9876',
+          error: 'Daemon is running older code. Run `mars daemon restart`.',
+        },
+        404,
+      ),
+    )
+    let caught: unknown
+    try {
+      await fetchTasks()
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(ApiError)
+    const apiErr = caught as ApiError
+    expect(apiErr.kind).toBe('stale-daemon-code')
+    expect(apiErr.sourceSha).toBe('abc1234')
+    expect(apiErr.currentSha).toBe('def9876')
+    expect(apiErr.status).toBe(404)
+  })
+
+  it('throws ApiError of kind unreachable when daemon is down (NO_DAEMON errorCode)', async () => {
+    fetchSpy.mockResolvedValue(
+      json(
+        { ok: false, error: 'daemon not running', errorCode: DAEMON_ERROR.NO_DAEMON },
+        503,
+      ),
+    )
+    let caught: unknown
+    try {
+      await fetchTasks()
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(ApiError)
+    const apiErr = caught as ApiError
+    expect(apiErr.kind).toBe('unreachable')
+  })
+
+  it('daemon-stale-code, daemon-down, and UI-server-down produce three different kinds', async () => {
+    // Case 1: stale-daemon-code (daemon alive but old code)
+    fetchSpy.mockResolvedValue(
+      json({ ok: false, errorCode: DAEMON_ERROR.STALE_DAEMON_CODE, sourceSha: 'abc1234', currentSha: 'def9876' }, 404),
+    )
+    let caught1: ApiError | null = null
+    try { await fetchTasks() } catch (err) { caught1 = err as ApiError }
+
+    // Case 2: daemon-down (NO_DAEMON errorCode)
+    fetchSpy.mockResolvedValue(
+      json({ ok: false, errorCode: DAEMON_ERROR.NO_DAEMON }, 503),
+    )
+    let caught2: ApiError | null = null
+    try { await fetchTasks() } catch (err) { caught2 = err as ApiError }
+
+    // Case 3: UI-server-down (TypeError — no response at all)
+    fetchSpy.mockRejectedValue(new TypeError('Failed to fetch'))
+    let caught3: ApiError | null = null
+    try { await fetchTasks() } catch (err) { caught3 = err as ApiError }
+
+    expect(caught1?.kind).toBe('stale-daemon-code')
+    expect(caught2?.kind).toBe('unreachable')
+    expect(caught3?.kind).toBe('unreachable')
+    // stale-daemon-code is distinguishable from daemon-down
+    expect(caught1?.kind).not.toBe(caught2?.kind)
   })
 })
 
