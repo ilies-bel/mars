@@ -63,16 +63,23 @@ export interface ContinueResult {
  * and injects a resume banner into the coder prompt.
  *
  * Degraded path: the failure occurred upstream of worktree creation (e.g. a
- * dirty-main guard at setup, or the worktree has since been deleted). There
- * is nothing on disk worth preserving, so continue silently delegates to
- * {@link coreRestartTask} and returns `degradedToRestart: true` with a
- * `note` for the CLI to display.
+ * dirty-main guard at setup, or the worktree has since been deleted) AND the
+ * branch has no committed work ahead of the integration branch. There is nothing
+ * on disk worth preserving, so continue delegates to {@link coreRestartTask} and
+ * returns `degradedToRestart: true` with a `note` for the CLI to display.
+ *
+ * When `failedPhase` is unrecorded but the branch IS ahead of the integration
+ * branch (e.g. the daemon was restarted while the coder was running), continue
+ * exits non-zero and names `mars remerge` as the correct alternative — never
+ * silently performing a restart that would discard committed work.
  *
  * Refusal set:
  *   - task is not in `'failed'` status
- *   - in-flight recovery exists     — wait for it to complete first
+ *   - in-flight recovery exists          — wait for it to complete first
+ *   - failedPhase unrecorded AND branch
+ *     has commits ahead of main          — use `mars remerge` instead
  *
- * Degraded-to-restart set:
+ * Degraded-to-restart set (only when branch has no committed work ahead):
  *   - `failedPhase === null`        — failure before any phase was recorded
  *   - no branch / worktreePath      — worktree was never created
  *   - worktree path missing on disk — worktree was created but is gone
@@ -134,6 +141,35 @@ export const coreContinueTask = async (
     worktreeMissingOnDisk
 
   if (isPreSetup) {
+    // Before degrading to a restart, check whether the task's branch has
+    // committed work ahead of the integration branch. If it does, a silent
+    // restart would discard that work — and 'mars remerge' is the right path.
+    // This situation arises when the daemon is restarted mid-task (no
+    // failedPhase recorded) but the coder had already landed commits.
+    const integrationBranchForCheck = process.env.INTEGRATION_BRANCH ?? 'main'
+    if (task.branch) {
+      const { listUniqueCommitsAhead } = await import('../lib/sweep')
+      const { getRepoRoot } = await import('../context')
+      const repoRoot = getRepoRoot()
+      const commitsAhead = await listUniqueCommitsAhead(
+        task.branch,
+        integrationBranchForCheck,
+        repoRoot,
+      )
+      if (commitsAhead.length > 0) {
+        throw new Error(
+          `mars continue: cannot determine resume point for task ${id} — ` +
+          `failed_phase was not recorded (the daemon may have been restarted while this task was in flight).\n` +
+          `Branch ${task.branch} has ${commitsAhead.length} commit(s) ahead of ` +
+          `${integrationBranchForCheck} with committed work.\n` +
+          `To re-verify and merge the existing work without re-running the coder:\n` +
+          `  mars remerge ${id}\n` +
+          `To discard the existing work and re-run from setup:\n` +
+          `  mars restart ${id}`,
+        )
+      }
+    }
+
     await coreRestartTask(id, new Set(['failed']), createQueueWorkflowStore())
     const note = worktreeMissingOnDisk
       ? `worktree at ${task.worktreePath} is missing from disk; cannot re-enter ${task.failedPhase} phase — restarting from setup`

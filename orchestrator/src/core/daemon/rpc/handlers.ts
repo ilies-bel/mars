@@ -424,6 +424,10 @@ const killHandler = handler('kill', async (_req, deps) => {
         failureSignature: DAEMON_KILLED_SIGNATURE,
         failureReason: 'killed by `mars daemon kill`',
         failureReasonCode: 'unknown',
+        // Record the phase so `mars continue` can resume rather than
+        // degrading to restart. implement/triage/refine all run inside the
+        // coding step of the workflow pipeline.
+        failedPhase: 'code',
       })
     } catch {
       // best-effort

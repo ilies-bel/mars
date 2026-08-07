@@ -611,4 +611,130 @@ describe('continue degrades to restart for pre-setup failures', () => {
       rmSync(gitRepo, { recursive: true, force: true })
     }
   })
+
+  // ── Branch-ahead guard: failedPhase null but commits exist ────────────────
+  // This is the real-world scenario from the bug report: the daemon was
+  // restarted while a task was in flight (no failedPhase recorded), but the
+  // coder had already landed commits on the branch. `mars continue` must NOT
+  // silently restart and discard those commits. Instead it must exit non-zero
+  // and name `mars remerge` as the correct alternative.
+
+  it('exits non-zero and names mars remerge when failedPhase is null but branch is ahead of main', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const task = await queue.enqueueTask('add feature Y', undefined, { skipTriage: true })
+    const branch = `task/${task.id}`
+    const worktreePath = resolve(repo, '.mars', 'worktrees', task.id)
+
+    // Create a worktree with a commit — simulating work the coder landed
+    // before the daemon was restarted (killing the task without recording phase).
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    writeFileSync(resolve(worktreePath, 'feature-y.ts'), 'export const y = 1\n')
+    execFileSync('git', ['add', 'feature-y.ts'], { cwd: worktreePath })
+    execFileSync('git', ['commit', '-qm', 'feat: add feature Y'], { cwd: worktreePath })
+
+    // Stamp the task row as if the daemon killed it mid-flight (no failedPhase).
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'daemon killed mid-flight',
+      failedPhase: null,  // explicitly null — this is the scenario
+      branch,
+      worktreePath,
+    })
+
+    // continue must reject — not restart — and name mars remerge.
+    let thrown: Error | null = null
+    try {
+      await continueTask.coreContinueTask(task.id)
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    // The error must be framed as what `continue` could not do.
+    expect(thrown!.message).toContain('mars continue')
+    expect(thrown!.message).toContain('failed_phase was not recorded')
+    // Must name the right alternative — not restart --force.
+    expect(thrown!.message).toContain('mars remerge')
+    expect(thrown!.message).toContain(task.id)
+    // Must NOT suggest --force (which would discard work).
+    expect(thrown!.message).not.toContain('--force')
+    // The branch name must be mentioned so the operator knows what is at risk.
+    expect(thrown!.message).toContain(branch)
+
+    // The task must remain in 'failed' status — no restart was performed.
+    const after = await queue.getTask(task.id)
+    expect(after?.status).toBe('failed')
+    // The branch and worktreePath must be preserved — no cleanup happened.
+    expect(after?.branch).toBe(branch)
+    expect(after?.worktreePath).toBe(worktreePath)
+  })
+
+  it('still degrades to restart when failedPhase is null and branch has no commits ahead', async () => {
+    // A task with failedPhase=null but a branch that is at the same point
+    // as main (0 unique commits). There is nothing to lose; degrading to
+    // restart is correct and must still work.
+    const { queue, continueTask } = await loadModules(repo)
+
+    const task = await queue.enqueueTask('background work', undefined, { skipTriage: true })
+    const branch = `task/${task.id}`
+    const worktreePath = resolve(repo, '.mars', 'worktrees', task.id)
+
+    // Branch with no commits ahead of main (just mirrors the initial commit).
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    // No additional commits — branch tip == main tip.
+
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'killed before coder ran',
+      failedPhase: null,
+      branch,
+      worktreePath,
+    })
+
+    const result = await continueTask.coreContinueTask(task.id)
+
+    // Degrades to restart: no committed work to protect.
+    expect(result.degradedToRestart).toBe(true)
+    const after = await queue.getTask(task.id)
+    expect(after?.status).toBe('queued')
+    expect(after?.branch).toBeNull()
+    expect(after?.worktreePath).toBeNull()
+  })
+
+  // ── Kill-handler fix: failedPhase recorded after daemon kill ──────────────
+  // After the fix to the kill handler (`mars daemon kill` now records
+  // failedPhase: 'code' for implement/triage/refine tasks), `mars continue`
+  // can resume those tasks normally instead of degrading to restart or
+  // confusing the operator with a restart-framed error.
+
+  it('resumes normally when failedPhase is code (as recorded by the fixed kill handler)', async () => {
+    // Simulate the state the kill handler writes after the fix:
+    //   status='failed', failedPhase='code', failureSignature=DAEMON_KILLED_SIGNATURE,
+    //   branch and worktreePath set (coder had started working).
+    const { queue, continueTask } = await loadModules(repo)
+    const { DAEMON_KILLED_SIGNATURE } = (await import('../../lib/retry-budget')) as typeof import('../../lib/retry-budget')
+
+    const task = await queue.enqueueTask('task that was mid-code when daemon killed', undefined, { skipTriage: true })
+
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      failureSignature: DAEMON_KILLED_SIGNATURE,
+      error: 'killed by `mars daemon kill`',
+      failedPhase: 'code',    // now recorded by the fixed kill handler
+      branch: `task/${task.id}`,
+      worktreePath: repo,     // repo dir exists on disk (simulates intact worktree)
+    })
+
+    const result = await continueTask.coreContinueTask(task.id)
+
+    // Resumes in the coder — no degradation.
+    expect(result.degradedToRestart).toBe(false)
+    expect(result.coderResume).toBe(true)
+
+    const after = await queue.getTask(task.id)
+    expect(after?.status).toBe('queued')
+    expect(after?.failedPhase).toBe('code')     // preserved for the coder resume banner
+    expect(after?.branch).toBe(`task/${task.id}`)  // branch preserved
+  })
 })
