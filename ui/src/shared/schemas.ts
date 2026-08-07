@@ -216,6 +216,10 @@ export const todoResponseSchema = z.object({
 
 export const proposalsResponseSchema = z.object({
   drafts: z.array(draftFeatureSchema),
+  /** Total count of proposals matching the request filters, before pagination. */
+  total: z.number().optional().default(0),
+  /** Opaque cursor for the next page; null when this is the last page. */
+  nextCursor: z.string().nullable().optional().default(null),
 })
 
 export const staleWorktreesResponseSchema = z.object({

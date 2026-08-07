@@ -81,7 +81,7 @@ import {
   type KpiRecord,
 } from './daemon/kpi-store'
 import type { TraceEventStore } from './lib/trace-events-store'
-import type { Proposal } from './proposals'
+import type { Proposal, ProposalSource } from './proposals'
 import type {
   ActionQueueRow,
   DerivedActionQueueFilter,
@@ -235,7 +235,12 @@ export interface AppServices {
   viewTasks: () => Promise<{ tasks: unknown[] }>
   viewTask: (id: string) => Promise<{ task: unknown } | null>
   viewProgress: () => Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[]; aggregates: ProgressAggregates }>
-  viewProposals: () => Promise<{ drafts: DraftFeature[]; staleWorktrees: StaleWorktreeAlert[] }>
+  viewProposals: (opts?: {
+    source?: ProposalSource
+    status?: string
+    limit?: number
+    cursor?: string | null
+  }) => Promise<{ drafts: DraftFeature[]; staleWorktrees: StaleWorktreeAlert[]; total: number; nextCursor: string | null }>
   viewProposal: (id: string) => Promise<Proposal | null>
   // ── trace-derived views ─────────────────────────────────────────────────────
   viewStepSpans: (params: { originId?: string; taskId?: string }) => Promise<{ spans: StepSpan[] }>
@@ -1132,7 +1137,11 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     })
   }
 
-  const viewProposals: AppServices['viewProposals'] = async () => {
+  const viewProposals: AppServices['viewProposals'] = async (opts = {}) => {
+    const { source: sourceFilter, status, limit: rawLimit, cursor } = opts
+    const limit = Math.min(Math.max(1, rawLimit ?? 50), 200)
+    const offset = cursor !== null && cursor !== undefined ? Math.max(0, Number.parseInt(cursor, 10) || 0) : 0
+
     const client = getCompositionRootClient()
     // Check if the proposals table exists (absent on a fresh repo before
     // the first `mars init` / daemon run that initialises the schema).
@@ -1141,17 +1150,42 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         WHERE table_schema = current_schema() AND table_name = 'proposals'`,
     )
     const drafts: DraftFeature[] = []
+    let total = 0
+    let nextCursor: string | null = null
+
     if (tablesResult.rows.length > 0) {
-      const r = await client.execute(
-        `SELECT p.id, p.title, p.problem, p.solution, p.status, p.source,
+      // Build WHERE clause from caller-supplied filters.
+      const conditions: string[] = []
+      const filterArgs: string[] = []
+      if (status !== undefined) {
+        conditions.push('p.status = ?')
+        filterArgs.push(status)
+      }
+      if (sourceFilter !== undefined) {
+        conditions.push('p.source = ?')
+        filterArgs.push(sourceFilter)
+      }
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+      // Total count (for pagination metadata).
+      const countResult = await client.execute({
+        sql: `SELECT COUNT(*) AS total FROM proposals p ${whereClause}`,
+        args: filterArgs,
+      })
+      total = Number((countResult.rows[0] as unknown as { total: unknown }).total ?? 0)
+
+      const r = await client.execute({
+        sql: `SELECT p.id, p.title, p.problem, p.solution, p.status, p.source,
                 p.created_at, p.updated_at,
                 (SELECT COUNT(*) FROM proposal_user_stories s WHERE s.proposal_id = p.id) AS acceptance_count
          FROM proposals p
-         WHERE p.status = 'draft'
-         ORDER BY p.created_at DESC`,
-      )
+         ${whereClause}
+         ORDER BY p.created_at DESC
+         LIMIT ? OFFSET ?`,
+        args: [...filterArgs, limit, offset],
+      })
 
-      // Load user stories for all draft proposals in one query.
+      // Load user stories for all returned proposals in one query.
       const storiesMap = new Map<string, string[]>()
       if (r.rows.length > 0) {
         const ids = r.rows.map((row) => (row as unknown as { id: string }).id)
@@ -1173,19 +1207,25 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       for (const row of r.rows) {
         const r0 = row as unknown as Record<string, unknown>
         const src = r0.source
-        const source: DraftFeature['source'] = isProposalSource(src) ? src : 'human'
+        const mappedSource: DraftFeature['source'] = isProposalSource(src) ? src : 'human'
         drafts.push({
           id: r0.id as string,
           title: (r0.title as string | null) ?? '',
           problem: (r0.problem as string | null) ?? '',
           solution: (r0.solution as string | null) ?? '',
           status: (r0.status as string | null) ?? 'draft',
-          source,
+          source: mappedSource,
           createdAt: Number(r0.created_at ?? 0),
           updatedAt: Number(r0.updated_at ?? 0),
           acceptanceCount: Number(r0.acceptance_count ?? 0),
           userStories: storiesMap.get(r0.id as string) ?? [],
         })
+      }
+
+      // Emit nextCursor when more results exist beyond the current page.
+      const nextOffset = offset + limit
+      if (nextOffset < total) {
+        nextCursor = String(nextOffset)
       }
     }
 
@@ -1230,7 +1270,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       }
     } catch { /* action_queue_items table may not exist on a fresh repo */ }
 
-    return { drafts, staleWorktrees }
+    return { drafts, staleWorktrees, total, nextCursor }
   }
 
   const viewProposal: AppServices['viewProposal'] = (id) => getProposal(id)

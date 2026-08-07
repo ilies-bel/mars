@@ -49,19 +49,21 @@ const makeDeps = (
 })
 
 describe('GET /view/proposals', () => {
-  it('returns {drafts:[], staleWorktrees:[]} when proposals table does not exist', async () => {
+  it('returns {drafts:[], staleWorktrees:[], total:0, nextCursor:null} when proposals table does not exist', async () => {
     // proposalsTableExists() === false maps to viewProposals returning empty arrays
     const { startHttpServer } = await import('../http-server')
     const { port, close } = await startHttpServer(
-      makeDeps({ viewProposals: async () => ({ drafts: [], staleWorktrees: [] }) }),
+      makeDeps({ viewProposals: async () => ({ drafts: [], staleWorktrees: [], total: 0, nextCursor: null }) }),
     )
     try {
       const res = await fetch(`http://127.0.0.1:${port}/view/proposals`)
       expect(res.status).toBe(200)
       expect(res.headers.get('content-type')).toContain('application/json')
-      const body = (await res.json()) as { drafts: unknown[]; staleWorktrees: unknown[] }
+      const body = (await res.json()) as { drafts: unknown[]; staleWorktrees: unknown[]; total: number; nextCursor: string | null }
       expect(body.drafts).toEqual([])
       expect(body.staleWorktrees).toEqual([])
+      expect(body.total).toBe(0)
+      expect(body.nextCursor).toBeNull()
     } finally {
       await close()
     }
@@ -92,7 +94,7 @@ describe('GET /view/proposals', () => {
     }
     const { startHttpServer } = await import('../http-server')
     const { port, close } = await startHttpServer(
-      makeDeps({ viewProposals: async () => ({ drafts: [draft], staleWorktrees: [stale] }) }),
+      makeDeps({ viewProposals: async () => ({ drafts: [draft], staleWorktrees: [stale], total: 1, nextCursor: null }) }),
     )
     try {
       const res = await fetch(`http://127.0.0.1:${port}/view/proposals`)
@@ -100,6 +102,8 @@ describe('GET /view/proposals', () => {
       const body = (await res.json()) as {
         drafts: DraftFeature[]
         staleWorktrees: StaleWorktreeAlert[]
+        total: number
+        nextCursor: string | null
       }
       expect(body.drafts).toHaveLength(1)
       expect(body.drafts[0]).toMatchObject({
@@ -114,6 +118,8 @@ describe('GET /view/proposals', () => {
         ageHours: 36,
         branch: 'task/task-abc',
       })
+      expect(body.total).toBe(1)
+      expect(body.nextCursor).toBeNull()
     } finally {
       await close()
     }
@@ -134,6 +140,87 @@ describe('GET /view/proposals', () => {
       const body = (await res.json()) as { ok: boolean; error: string }
       expect(body.ok).toBe(false)
       expect(body.error).toBe('db locked')
+    } finally {
+      await close()
+    }
+  })
+
+  it('passes source query param to viewProposals', async () => {
+    let capturedOpts: Parameters<AppServices['viewProposals']>[0] | undefined
+    const { startHttpServer } = await import('../http-server')
+    const { port, close } = await startHttpServer(
+      makeDeps({
+        viewProposals: async (opts) => {
+          capturedOpts = opts
+          return { drafts: [], staleWorktrees: [], total: 0, nextCursor: null }
+        },
+      }),
+    )
+    try {
+      await fetch(`http://127.0.0.1:${port}/view/proposals?source=reflection`)
+      expect(capturedOpts?.source).toBe('reflection')
+    } finally {
+      await close()
+    }
+  })
+
+  it('passes status query param to viewProposals', async () => {
+    let capturedOpts: Parameters<AppServices['viewProposals']>[0] | undefined
+    const { startHttpServer } = await import('../http-server')
+    const { port, close } = await startHttpServer(
+      makeDeps({
+        viewProposals: async (opts) => {
+          capturedOpts = opts
+          return { drafts: [], staleWorktrees: [], total: 0, nextCursor: null }
+        },
+      }),
+    )
+    try {
+      await fetch(`http://127.0.0.1:${port}/view/proposals?status=draft`)
+      expect(capturedOpts?.status).toBe('draft')
+    } finally {
+      await close()
+    }
+  })
+
+  it('passes limit and cursor query params to viewProposals', async () => {
+    let capturedOpts: Parameters<AppServices['viewProposals']>[0] | undefined
+    const { startHttpServer } = await import('../http-server')
+    const { port, close } = await startHttpServer(
+      makeDeps({
+        viewProposals: async (opts) => {
+          capturedOpts = opts
+          return { drafts: [], staleWorktrees: [], total: 100, nextCursor: '50' }
+        },
+      }),
+    )
+    try {
+      await fetch(`http://127.0.0.1:${port}/view/proposals?limit=50&cursor=50`)
+      expect(capturedOpts?.limit).toBe(50)
+      expect(capturedOpts?.cursor).toBe('50')
+    } finally {
+      await close()
+    }
+  })
+
+  it('returns nextCursor in response for paginated results', async () => {
+    const { startHttpServer } = await import('../http-server')
+    const { port, close } = await startHttpServer(
+      makeDeps({
+        viewProposals: async () => ({
+          drafts: [],
+          staleWorktrees: [],
+          total: 200,
+          nextCursor: '50',
+        }),
+      }),
+    )
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/view/proposals?limit=50`)
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { total: number; nextCursor: string | null }
+      expect(body.total).toBe(200)
+      expect(body.nextCursor).toBe('50')
     } finally {
       await close()
     }

@@ -382,10 +382,22 @@ export const startServer = async (
         }
 
         if (path === '/api/proposals') {
-          const r = await proxyGet(ctx.stateDir, '/view/proposals')
+          // Forward the four supported filter/pagination params to the daemon.
+          // Callers MUST pass what they need — no unfiltered default.
+          const qs = new URLSearchParams()
+          for (const param of ['source', 'status', 'limit', 'cursor'] as const) {
+            const v = url.searchParams.get(param)
+            if (v !== null) qs.set(param, v)
+          }
+          const daemonPath = qs.size > 0 ? `/view/proposals?${qs.toString()}` : '/view/proposals'
+          const r = await proxyGet(ctx.stateDir, daemonPath)
           if (r.status !== 200) return jsonResponse(r.status, r.body)
-          const body = r.body as { drafts?: unknown }
-          return jsonResponse(200, { drafts: body.drafts ?? [] })
+          const body = r.body as { drafts?: unknown; total?: number; nextCursor?: string | null }
+          return jsonResponse(200, {
+            drafts: body.drafts ?? [],
+            total: body.total ?? 0,
+            nextCursor: body.nextCursor ?? null,
+          })
         }
 
         // GET /api/proposals/:id — proxy the daemon's by-id proposal endpoint.

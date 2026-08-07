@@ -305,8 +305,17 @@ export const fetchProgress = async (
   return { tasks: data.tasks, proposals: data.proposals, aggregates: data.aggregates }
 }
 
-export const fetchProposalsPayload = async (projectId?: string): Promise<ProposalsPayload> => {
-  return fetchJson(appendProject('/api/proposals', projectId), proposalsResponseSchema)
+export const fetchProposalsPayload = async (
+  projectId?: string,
+  opts?: { source?: string; status?: string; limit?: number; cursor?: string | null },
+): Promise<ProposalsPayload> => {
+  const qs = new URLSearchParams()
+  if (opts?.source !== undefined) qs.set('source', opts.source)
+  if (opts?.status !== undefined) qs.set('status', opts.status)
+  if (opts?.limit !== undefined) qs.set('limit', String(opts.limit))
+  if (opts?.cursor != null) qs.set('cursor', opts.cursor)
+  const basePath = qs.size > 0 ? `/api/proposals?${qs.toString()}` : '/api/proposals'
+  return fetchJson(appendProject(basePath, projectId), proposalsResponseSchema)
 }
 
 export const fetchProposalDetail = async (id: string, projectId?: string): Promise<ProposalDetail> => {

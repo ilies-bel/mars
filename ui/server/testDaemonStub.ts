@@ -558,30 +558,64 @@ const makeReleaseNotesStore = (
 })
 
 /**
- * `/view/proposals` — mirrors `appServices.viewProposals()`
- * (`{ drafts, staleWorktrees }`). Replicates the AppServices logic directly:
- * draft proposals from `proposals` (+ optional `proposal_user_stories`), and
- * stale-worktree alerts from open `action_queue_items` rows of that kind. Both
- * sources tolerate an absent table.
+ * `/view/proposals[?source=…&status=…&limit=…&cursor=…]` — mirrors
+ * `appServices.viewProposals()` with server-side filtering and pagination.
+ * Returns `{ drafts, staleWorktrees, total, nextCursor }`. Both sources
+ * tolerate an absent table. The cursor is an opaque offset string (matches the
+ * production daemon's encoding). `staleWorktrees` is always returned in full
+ * regardless of pagination parameters.
  */
 const viewProposals = async (
   dbPath: string,
-): Promise<{ drafts: DraftFeature[]; staleWorktrees: StaleWorktreeAlert[] }> => {
+  params: URLSearchParams,
+): Promise<{ drafts: DraftFeature[]; staleWorktrees: StaleWorktreeAlert[]; total: number; nextCursor: string | null }> => {
   const client = createClient({ url: `file:${dbPath}` })
 
+  const sourceParam = params.get('source')
+  const statusParam = params.get('status')
+  const limitRaw = params.get('limit')
+  const cursorParam = params.get('cursor')
+  const limit = limitRaw !== null ? Math.min(Math.max(1, Number.parseInt(limitRaw, 10) || 50), 200) : 50
+  const offset = cursorParam !== null ? Math.max(0, Number.parseInt(cursorParam, 10) || 0) : 0
+
   const drafts: DraftFeature[] = []
+  let total = 0
+  let nextCursor: string | null = null
+
   try {
     const tablesResult = await client.execute(
       `SELECT name FROM sqlite_master WHERE type='table' AND name='proposals'`,
     )
     if (tablesResult.rows.length > 0) {
-      const r = await client.execute(
-        `SELECT p.id, p.title, p.problem, p.solution, p.status, p.source,
+      // Build WHERE clause from caller-supplied filters.
+      const conditions: string[] = []
+      const filterArgs: string[] = []
+      if (statusParam !== null) {
+        conditions.push('p.status = ?')
+        filterArgs.push(statusParam)
+      }
+      if (sourceParam !== null) {
+        conditions.push('p.source = ?')
+        filterArgs.push(sourceParam)
+      }
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+      // Total count.
+      const countResult = await client.execute({
+        sql: `SELECT COUNT(*) AS total FROM proposals p ${whereClause}`,
+        args: filterArgs,
+      })
+      total = Number((countResult.rows[0] as unknown as { total: unknown }).total ?? 0)
+
+      const r = await client.execute({
+        sql: `SELECT p.id, p.title, p.problem, p.solution, p.status, p.source,
                 p.created_at, p.updated_at
            FROM proposals p
-          WHERE p.status = 'draft'
-          ORDER BY p.created_at DESC`,
-      )
+          ${whereClause}
+          ORDER BY p.created_at DESC
+          LIMIT ? OFFSET ?`,
+        args: [...filterArgs, limit, offset],
+      })
       const storiesMap = new Map<string, string[]>()
       if (r.rows.length > 0) {
         try {
@@ -606,7 +640,7 @@ const viewProposals = async (
       for (const row of r.rows) {
         const r0 = row as unknown as Record<string, unknown>
         const src = r0.source
-        const source: DraftFeature['source'] = isProposalSource(src) ? src : 'human'
+        const mappedSource: DraftFeature['source'] = isProposalSource(src) ? src : 'human'
         const stories = storiesMap.get(r0.id as string) ?? []
         drafts.push({
           id: r0.id as string,
@@ -614,12 +648,17 @@ const viewProposals = async (
           problem: (r0.problem as string | null) ?? '',
           solution: (r0.solution as string | null) ?? '',
           status: (r0.status as string | null) ?? 'draft',
-          source,
+          source: mappedSource,
           createdAt: Number(r0.created_at ?? 0),
           updatedAt: Number(r0.updated_at ?? 0),
           acceptanceCount: stories.length,
           userStories: stories,
         })
+      }
+
+      const nextOffset = offset + limit
+      if (nextOffset < total) {
+        nextCursor = String(nextOffset)
       }
     }
   } catch {
@@ -662,7 +701,7 @@ const viewProposals = async (
     // action_queue_items table absent — no stale worktrees.
   }
 
-  return { drafts, staleWorktrees }
+  return { drafts, staleWorktrees, total, nextCursor }
 }
 
 /**
@@ -860,7 +899,7 @@ export const makeDaemonStub = (
     }
 
     if (url.pathname === '/view/proposals') {
-      return { status: 200, body: await viewProposals(dbPath) }
+      return { status: 200, body: await viewProposals(dbPath, url.searchParams) }
     }
 
     if (url.pathname === '/view/terminal-events') {

@@ -108,6 +108,51 @@ describe('fetchProposals', () => {
     expect(calledUrl).not.toContain('project=')
   })
 
+  it('appends ?source=<value> when opts.source is provided', async () => {
+    fetchSpy.mockResolvedValue(json(todoPayload()))
+    await fetchProposals(undefined, { source: 'reflection' })
+    const calledUrl = (fetchSpy.mock.calls[0] as string[])[0]!
+    expect(calledUrl).toContain('source=reflection')
+  })
+
+  it('appends ?status=<value> when opts.status is provided', async () => {
+    fetchSpy.mockResolvedValue(json(todoPayload()))
+    await fetchProposals(undefined, { status: 'draft' })
+    const calledUrl = (fetchSpy.mock.calls[0] as string[])[0]!
+    expect(calledUrl).toContain('status=draft')
+  })
+
+  it('appends ?limit=<value> when opts.limit is provided', async () => {
+    fetchSpy.mockResolvedValue(json(todoPayload()))
+    await fetchProposals(undefined, { limit: 25 })
+    const calledUrl = (fetchSpy.mock.calls[0] as string[])[0]!
+    expect(calledUrl).toContain('limit=25')
+  })
+
+  it('appends ?cursor=<value> when opts.cursor is a non-null string', async () => {
+    fetchSpy.mockResolvedValue(json(todoPayload()))
+    await fetchProposals(undefined, { cursor: '50' })
+    const calledUrl = (fetchSpy.mock.calls[0] as string[])[0]!
+    expect(calledUrl).toContain('cursor=50')
+  })
+
+  it('does not append cursor when opts.cursor is null', async () => {
+    fetchSpy.mockResolvedValue(json(todoPayload()))
+    await fetchProposals(undefined, { cursor: null })
+    const calledUrl = (fetchSpy.mock.calls[0] as string[])[0]!
+    expect(calledUrl).not.toContain('cursor=')
+  })
+
+  it('combines multiple opts into a single query string', async () => {
+    fetchSpy.mockResolvedValue(json(todoPayload()))
+    await fetchProposals('proj-42', { source: 'reflection', status: 'draft', limit: 10 })
+    const calledUrl = (fetchSpy.mock.calls[0] as string[])[0]!
+    expect(calledUrl).toContain('source=reflection')
+    expect(calledUrl).toContain('status=draft')
+    expect(calledUrl).toContain('limit=10')
+    expect(calledUrl).toContain('project=proj-42')
+  })
+
   it('propagates fetch errors from the underlying API call', async () => {
     fetchSpy.mockRejectedValue(new TypeError('Failed to fetch'))
     await expect(fetchProposals()).rejects.toThrow('cannot reach the mars-ui API server')

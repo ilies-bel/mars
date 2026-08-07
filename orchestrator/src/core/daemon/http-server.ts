@@ -1230,13 +1230,31 @@ export const startHttpServer = async (
       return
     }
 
-    // GET /view/proposals — draft proposals + open stale-worktree alerts for
-    // the proposals/alerts surface. The daemon is the sole reader of its own
-    // DB; the UI server proxies this endpoint instead of querying mars.db
-    // directly. Pure read; no draining gate.
-    if (req.method === 'GET' && req.url === '/view/proposals') {
+    // GET /view/proposals[?source=…&status=…&limit=…&cursor=…] — paginated
+    // proposals + open stale-worktree alerts for the proposals/alerts surface.
+    // Accepts query parameters: `source` (ProposalSource), `status` (proposal
+    // lifecycle status), `limit` (1–200, default 50), and `cursor` (opaque
+    // offset string returned as `nextCursor` in the previous page). The
+    // response always includes `total` (matching count before pagination) and
+    // `nextCursor` (null when the last page has been reached).
+    // The daemon is the sole reader of its own DB; the UI server proxies this
+    // endpoint instead of querying the database directly. Pure read; no drain.
+    if (req.method === 'GET' && req.url && /^\/view\/proposals(?:\?|$)/.test(req.url)) {
+      const parsed = new URL(req.url, 'http://localhost')
+      const viewProposalsOpts: Parameters<AppServices['viewProposals']>[0] = {}
+      const sourceParam = parsed.searchParams.get('source')
+      if (sourceParam !== null) viewProposalsOpts.source = sourceParam as ProposalSource
+      const statusParam = parsed.searchParams.get('status')
+      if (statusParam !== null) viewProposalsOpts.status = statusParam
+      const limitRaw = parsed.searchParams.get('limit')
+      if (limitRaw !== null) {
+        const n = Number.parseInt(limitRaw, 10)
+        if (Number.isFinite(n) && n > 0) viewProposalsOpts.limit = n
+      }
+      const cursorParam = parsed.searchParams.get('cursor')
+      if (cursorParam !== null) viewProposalsOpts.cursor = cursorParam
       deps.appServices
-        .viewProposals()
+        .viewProposals(viewProposalsOpts)
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return

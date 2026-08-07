@@ -19,7 +19,9 @@ export const useProposals = (): State => {
   const projectsEmpty = projectsSettled && projectsError === null && projects.length === 0
   const query = useQuery({
     queryKey: ['proposals', projectId],
-    queryFn: () => fetchProposalsPayload(projectId ?? undefined),
+    // Request only draft proposals with an explicit limit so the server does
+    // not return the full unfiltered table on every load.
+    queryFn: () => fetchProposalsPayload(projectId ?? undefined, { status: 'draft', limit: 50 }),
     enabled: projectId !== null || projectsEmpty,
   })
 
