@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   mkdirSync,
   mkdtempSync,
+  readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -122,7 +124,8 @@ describe('recipe catalog', () => {
       expect(prompt).toContain('Commit unless danger')
       expect(prompt).toContain('git add -A && git commit -m')
       // The refusal boundary is closed: orchestrator state, secret-looking
-      // material, and explicit unfinished-work markers are danger signals.
+      // material, explicit unfinished-work markers, and large pure-deletion
+      // diffs are danger signals.
       expect(prompt).toContain('.mars/')
       expect(prompt).toContain('exit with a non-zero command immediately')
       expect(prompt).toContain(
@@ -131,6 +134,11 @@ describe('recipe catalog', () => {
       expect(prompt).toContain('secret-looking')
       expect(prompt).toContain('TODO, FIXME, or XXX')
       expect(prompt).toContain('exit non-zero without committing')
+      // Deletion-only guard: a pure-deletion diff above 50 files is a danger
+      // signal (the fc56b07d incident pattern — 1,908 deletions committed).
+      expect(prompt).toContain('pure deletion')
+      expect(prompt).toContain('50')
+      expect(prompt).toContain('git diff --diff-filter=D --name-only HEAD')
       // Broad diffs and scratch files are ordinary changes, not ambiguity.
       expect(prompt).not.toContain('Safe to park')
       expect(prompt).not.toContain('refs/mars/parked/')
@@ -334,5 +342,68 @@ tools: [Bash]
         rmSync(elsewhere, { recursive: true, force: true })
       }
     })
+  })
+})
+
+/**
+ * `refs/stash` is banned in all orchestrator TypeScript source (not just
+ * recipes). This test scans every non-test `.ts` file under `src/` for any
+ * `git stash <verb>` invocation. Comment lines (JSDoc `*` lines and `//`
+ * single-line comments) are stripped before matching so ban-explanation prose
+ * ("do NOT use git stash push") doesn't self-trip the guard.
+ *
+ * WHY THIS EXISTS. The CLAUDE.md convention says never use `git stash` but
+ * nothing machine-enforced it, which is why a stash-based state transfer
+ * survived in the main-commiter path until the fc56b07d incident.
+ */
+describe('git stash ban in TypeScript source', () => {
+  const invocationPattern = /\bgit stash (push|pop|create|apply|save|branch|store)\b/
+
+  /** Recursively collect every `.ts` source file under `dir`, excluding test
+   *  files and declaration files so the ban targets executable code only. */
+  const collectSourceFiles = (dir: string): string[] => {
+    const results: string[] = []
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        // Skip __tests__ directories — ban-explanation test strings would
+        // otherwise trip the guard (e.g. the checkpoint-isolation test that
+        // describes the old stash pop bug).
+        if (entry.name === '__tests__') continue
+        results.push(...collectSourceFiles(resolve(dir, entry.name)))
+      } else if (
+        entry.name.endsWith('.ts') &&
+        !entry.name.endsWith('.test.ts') &&
+        !entry.name.endsWith('.d.ts')
+      ) {
+        results.push(resolve(dir, entry.name))
+      }
+    }
+    return results
+  }
+
+  it('no TypeScript source file in orchestrator/src invokes a git stash verb', () => {
+    // __dirname is orchestrator/src/core/lib/__tests__; go up to orchestrator/src
+    const srcRoot = resolve(__dirname, '../../..')
+    const tsFiles = collectSourceFiles(srcRoot)
+
+    for (const file of tsFiles) {
+      const content = readFileSync(file, 'utf8')
+      // Strip comment lines: JSDoc block lines (trimmed start = '*') and
+      // single-line comments (trimmed start = '//').  Executable string
+      // literals and exec-call arguments are not stripped, so an actual
+      // git-stash invocation in code is still caught.
+      const codeLines = content
+        .split('\n')
+        .filter((line) => {
+          const t = line.trim()
+          return !t.startsWith('//') && !t.startsWith('*')
+        })
+      const code = codeLines.join('\n')
+
+      expect(
+        code,
+        `${file.replace(srcRoot + '/', '')} contains a git stash invocation — use checkpoint.ts instead`,
+      ).not.toMatch(invocationPattern)
+    }
   })
 })

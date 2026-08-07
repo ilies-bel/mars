@@ -277,6 +277,106 @@ export const attachToOriginWorktree = async (
 }
 
 /**
+ * Thrown by {@link provisionCommitterWorktree} when the set of files staged
+ * in the committer worktree after checkpoint restore does not match the set of
+ * files the checkpoint originally captured.
+ *
+ * A mismatch means the committer would commit a DIFFERENT set of files than
+ * what was stranded on the integration branch — exactly the failure mode that
+ * produced the fc56b07d incident (1,908 deletions of the Reflection surface
+ * when only modifications should have been committed). The work is never lost:
+ * the checkpoint ref is still intact on the per-task ref.
+ */
+export class CommitterTransferMismatchError extends Error {
+  readonly checkpoint: { ref: string; sha: string; files: string[] }
+  readonly worktreePath: string
+  readonly missingFromWorktree: string[]
+  readonly unexpectedInWorktree: string[]
+
+  constructor(
+    checkpoint: { ref: string; sha: string; files: string[] },
+    worktreePath: string,
+    missingFromWorktree: string[],
+    unexpectedInWorktree: string[],
+  ) {
+    super(
+      `Committer transfer integrity check failed: checkpoint ${checkpoint.ref} ` +
+        `(${checkpoint.sha.slice(0, 9)}) captured ${checkpoint.files.length} file(s) but ` +
+        `the worktree at ${worktreePath} shows a different staged diff after restore. ` +
+        (missingFromWorktree.length > 0
+          ? `Missing from worktree: [${missingFromWorktree.slice(0, 5).join(', ')}${missingFromWorktree.length > 5 ? ` …+${missingFromWorktree.length - 5} more` : ''}]. `
+          : '') +
+        (unexpectedInWorktree.length > 0
+          ? `Unexpected in worktree: [${unexpectedInWorktree.slice(0, 5).join(', ')}${unexpectedInWorktree.length > 5 ? ` …+${unexpectedInWorktree.length - 5} more` : ''}]. `
+          : '') +
+        `The work is NOT lost — it is still anchored on ${checkpoint.ref}. ` +
+        `Operator action required: inspect the checkpoint and the worktree diff before committing.`,
+    )
+    this.name = 'CommitterTransferMismatchError'
+    this.checkpoint = checkpoint
+    this.worktreePath = worktreePath
+    this.missingFromWorktree = missingFromWorktree
+    this.unexpectedInWorktree = unexpectedInWorktree
+  }
+}
+
+/**
+ * Thrown by {@link provisionCommitterWorktree} when the entire staged diff in
+ * the committer worktree consists only of file deletions AND the deletion count
+ * exceeds {@link COMMITTER_DELETION_ONLY_THRESHOLD}.
+ *
+ * A pure large-scale deletion diff in the committer worktree is almost
+ * certainly a corrupt state transfer rather than an intentional stranded change.
+ * The fc56b07d incident committed 1,908 deletions of the Reflection surface
+ * that was meant to be ADDED; this guard would have caught that.
+ *
+ * Threshold reasoning: small pure-deletion diffs (≤50 files) can legitimately
+ * appear in a committer worktree when a developer removed an old file or
+ * directory and left the deletion uncommitted. Above 50, the probability of an
+ * accidental deletion-only stranded change approaches zero while the probability
+ * of a corrupt transfer approaches certainty.
+ */
+export class CommitterDeletionOnlyError extends Error {
+  readonly checkpoint: { ref: string; sha: string; files: string[] }
+  readonly worktreePath: string
+  readonly deletionCount: number
+  readonly threshold: number
+
+  constructor(
+    checkpoint: { ref: string; sha: string; files: string[] },
+    worktreePath: string,
+    deletionCount: number,
+    threshold: number,
+  ) {
+    super(
+      `Committer deletion-only guard tripped: the staged diff in ${worktreePath} contains ` +
+        `${deletionCount} pure file deletions (threshold: ${threshold}). A large pure-deletion ` +
+        `diff almost certainly indicates a corrupt state transfer rather than an intended stranded ` +
+        `change. The work is anchored on ${checkpoint.ref}. ` +
+        `Operator action required: inspect the checkpoint before committing.`,
+    )
+    this.name = 'CommitterDeletionOnlyError'
+    this.checkpoint = checkpoint
+    this.worktreePath = worktreePath
+    this.deletionCount = deletionCount
+    this.threshold = threshold
+  }
+}
+
+/**
+ * Maximum number of pure file deletions allowed in a committer worktree
+ * before the deletion-only guard trips. Above this count a pure-deletion diff
+ * is treated as a corrupt state transfer and aborted with
+ * {@link CommitterDeletionOnlyError}.
+ *
+ * 50 files: small enough that it catches mass-deletion accidents (the fc56b07d
+ * incident had 1,908 deletions), large enough to allow legitimate cases where a
+ * developer removed a sizeable directory and left it uncommitted on the
+ * integration branch.
+ */
+export const COMMITTER_DELETION_ONLY_THRESHOLD = 50
+
+/**
  * Slice F.2 (main-commiter): provision a worktree the committer recovery
  * runs inside. The committer's whole purpose is to read the dirty state of
  * the integration branch and dispose of it; the dirty state lives on
@@ -298,12 +398,28 @@ export const attachToOriginWorktree = async (
  * an unrelated task. A checkpoint ref is per-task and is restored by object id,
  * so one task's checkpoint is un-poppable by another.
  *
+ * After restore, two safety checks run before the integration checkout is
+ * cleared:
+ *
+ *  1. **Transfer integrity** — the staged diff in the committer worktree must
+ *     match the set of files the checkpoint captured. A mismatch aborts with
+ *     {@link CommitterTransferMismatchError}. This would have stopped the
+ *     fc56b07d incident (1,908 deletions committed when modifications were
+ *     intended).
+ *
+ *  2. **Deletion-only guard** — a pure deletion diff whose file count exceeds
+ *     {@link COMMITTER_DELETION_ONLY_THRESHOLD} aborts with
+ *     {@link CommitterDeletionOnlyError}. Legitimate stranded deletions are
+ *     rare; above 50 files the pattern almost certainly indicates a corrupt
+ *     transfer rather than an intended change.
+ *
  * Ordering is chosen so no failure can lose work:
  *  1. capture   — `repoRoot` untouched; the state now also exists as a commit.
  *  2. worktree  — created off the integration tip.
  *  3. restore   — throws loudly (`CheckpointRestoreError`) on conflict, leaving
  *                 `repoRoot` still dirty and the checkpoint ref intact.
- *  4. discard   — only once the state is provably present in the worktree.
+ *  4. verify    — mismatch or deletion-only throws; `repoRoot` is still dirty.
+ *  5. discard   — only once the state is provably and correctly in the worktree.
  *
  * If there is nothing to capture (e.g. only ignored files are dirty, which a
  * checkpoint deliberately never holds) the worktree is still created on the
@@ -321,6 +437,7 @@ export const provisionCommitterWorktree = async (
   args: CommitterWorktreeArgs,
 ): Promise<WorktreeRef> => {
   const cwd = repoRoot()
+  const git = resolveGitBin()
   const ctx: TraceCtx | undefined = args.traceCtx
     ? { ...args.traceCtx, phase: args.traceCtx.phase ?? 'setup' }
     : undefined
@@ -375,11 +492,132 @@ export const provisionCommitterWorktree = async (
 
   if (checkpoint !== null) {
     // Apply by object id — never by stack position. Throws on conflict or on a
-    // no-op apply, which leaves `repoRoot` dirty and the ref intact rather than
-    // silently stranding the operator's work.
+    // no-op apply, which leaves `repoRoot` dirty and the checkpoint ref intact.
     await restoreCheckpoint({ cwd: worktree.path, checkpoint, traceCtx: ctx })
-    // The state is now provably in the committer's worktree, so clearing the
-    // integration checkout cannot lose it.
+
+    // ── Safety check 1: transfer integrity ──────────────────────────────────
+    // Verify the staged diff in the committer worktree matches the set of
+    // files the checkpoint captured. A mismatch means the committer would
+    // commit DIFFERENT files from what was stranded on the integration branch.
+    // The most likely cause is a corrupt state transfer (the fc56b07d incident
+    // happened because the agent committed deletions of files that should have
+    // been added). `repoRoot` is still dirty at this point; this check runs
+    // BEFORE discardWorkingTreeChanges so a mismatch leaves the source intact.
+    const stagedDiffOut = await exec(
+      git,
+      ['diff', '--cached', '--name-only', 'HEAD'],
+      { cwd: worktree.path },
+      ctx,
+    )
+    const stagedFiles = new Set(
+      stagedDiffOut.stdout.trim().split('\n').filter((f) => f.length > 0),
+    )
+    const capturedSet = new Set(checkpoint.files)
+    const missingFromWorktree = checkpoint.files.filter((f) => !stagedFiles.has(f))
+    const unexpectedInWorktree = [...stagedFiles].filter((f) => !capturedSet.has(f))
+
+    if (missingFromWorktree.length > 0 || unexpectedInWorktree.length > 0) {
+      // Raise an action-queue item for immediate operator visibility — the task
+      // will also fail normally, but waiting for the recovery-spawn path to
+      // raise an item would add latency and consume the recovery slot.
+      try {
+        const { raiseActionQueueItem } = await import('../action-queue')
+        await raiseActionQueueItem({
+          kind: 'failed',
+          category: 'orchestrator',
+          priority: 'urgent',
+          title: `Committer transfer mismatch: ${args.recoveryTaskId} — ${missingFromWorktree.length + unexpectedInWorktree.length} file(s) differ`,
+          body: [
+            `The committer worktree for recovery task ${args.recoveryTaskId} shows a different staged diff`,
+            `from what checkpoint ${checkpoint.ref} (${checkpoint.sha.slice(0, 9)}) captured.`,
+            '',
+            missingFromWorktree.length > 0
+              ? `Files in checkpoint but absent from worktree (${missingFromWorktree.length}): ${missingFromWorktree.slice(0, 10).join(', ')}${missingFromWorktree.length > 10 ? ` …+${missingFromWorktree.length - 10} more` : ''}`
+              : '',
+            unexpectedInWorktree.length > 0
+              ? `Files in worktree but absent from checkpoint (${unexpectedInWorktree.length}): ${[...unexpectedInWorktree].slice(0, 10).join(', ')}${unexpectedInWorktree.length > 10 ? ` …+${unexpectedInWorktree.length - 10} more` : ''}`
+              : '',
+            '',
+            `The work is NOT lost — it is still anchored on ${checkpoint.ref}.`,
+            `Operator action required: inspect the checkpoint and retry the task manually.`,
+          ]
+            .filter((l) => l.length > 0)
+            .join('\n'),
+          payload: { recoveryTaskId: args.recoveryTaskId, checkpointRef: checkpoint.ref },
+          context: { repoRoot: process.env.MARS_REPO ?? null },
+          raisedBy: 'orchestrator:committer-safety',
+          signature: `committer-transfer-mismatch:${args.recoveryTaskId}`,
+          occurrence: { at: new Date().toISOString(), recoveryTaskId: args.recoveryTaskId },
+        })
+      } catch {
+        // Non-fatal: the action-queue raise is best-effort. The typed error
+        // below is the primary abort signal.
+      }
+      throw new CommitterTransferMismatchError(
+        checkpoint,
+        worktree.path,
+        missingFromWorktree,
+        unexpectedInWorktree,
+      )
+    }
+
+    // ── Safety check 2: deletion-only guard ─────────────────────────────────
+    // A committer worktree whose entire staged diff consists only of file
+    // deletions above COMMITTER_DELETION_ONLY_THRESHOLD is almost certainly a
+    // corrupt state transfer, not an intentional stranded change.
+    // (The fc56b07d incident had 1,908 such deletions.)
+    const deletionsOnlyOut = await exec(
+      git,
+      ['diff', '--cached', '--diff-filter=D', '--name-only', 'HEAD'],
+      { cwd: worktree.path },
+      ctx,
+    )
+    const deletedFiles = deletionsOnlyOut.stdout.trim().split('\n').filter((f) => f.length > 0)
+    const totalStagedCount = stagedFiles.size
+
+    if (
+      totalStagedCount > 0 &&
+      deletedFiles.length === totalStagedCount &&
+      deletedFiles.length > COMMITTER_DELETION_ONLY_THRESHOLD
+    ) {
+      try {
+        const { raiseActionQueueItem } = await import('../action-queue')
+        await raiseActionQueueItem({
+          kind: 'failed',
+          category: 'orchestrator',
+          priority: 'urgent',
+          title: `Committer deletion-only guard: ${args.recoveryTaskId} would commit ${deletedFiles.length} pure deletions`,
+          body: [
+            `The committer worktree for recovery task ${args.recoveryTaskId} contains a pure-deletion`,
+            `staged diff of ${deletedFiles.length} files — above the ${COMMITTER_DELETION_ONLY_THRESHOLD}-file threshold.`,
+            '',
+            `A deletion-only diff of this scale almost certainly indicates a corrupt state transfer`,
+            `rather than an intentional stranded change. Committing it would destroy files on the`,
+            `integration branch.`,
+            '',
+            `The work is NOT lost — it is still anchored on checkpoint ${checkpoint.ref}.`,
+            `Operator action required: inspect the checkpoint and retry the task manually.`,
+          ].join('\n'),
+          payload: { recoveryTaskId: args.recoveryTaskId, checkpointRef: checkpoint.ref, deletionCount: deletedFiles.length },
+          context: { repoRoot: process.env.MARS_REPO ?? null },
+          raisedBy: 'orchestrator:committer-safety',
+          signature: `committer-deletion-only:${args.recoveryTaskId}`,
+          occurrence: { at: new Date().toISOString(), recoveryTaskId: args.recoveryTaskId },
+        })
+      } catch {
+        // Non-fatal: the action-queue raise is best-effort. The typed error
+        // below is the primary abort signal.
+      }
+      throw new CommitterDeletionOnlyError(
+        checkpoint,
+        worktree.path,
+        deletedFiles.length,
+        COMMITTER_DELETION_ONLY_THRESHOLD,
+      )
+    }
+
+    // The state is now provably and correctly in the committer's worktree,
+    // so clearing the integration checkout cannot lose it.
     await discardWorkingTreeChanges({ cwd, traceCtx: ctx })
   }
 
