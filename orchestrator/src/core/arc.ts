@@ -238,6 +238,32 @@ export interface AppendProgressParams {
   criterionIndex?: number | null
 }
 
+// ── Acceptance / criterion verdict types ──────────────────────────────────────
+
+/**
+ * Verdict for a single done-criterion recorded in `task_acceptance`.
+ *
+ * - `pending`        — not yet evaluated (seeded at task creation)
+ * - `met`            — criterion was satisfied
+ * - `not-met`        — criterion failed verification
+ * - `cannot-verify`  — no surface to exercise (e.g. no Vite project)
+ */
+export type AcceptanceStatus = 'pending' | 'met' | 'not-met' | 'cannot-verify'
+
+/**
+ * A single row from `task_acceptance`, returned by {@link Arc.listAcceptance}.
+ */
+export interface AcceptanceEntry {
+  id: string
+  taskId: string
+  /** Zero-based position matching `task_done_criteria.position`. */
+  position: number
+  text: string
+  status: AcceptanceStatus
+  note: string | null
+  updatedAt: number
+}
+
 export class Arc {
   /**
    * Private — construct an Arc only via {@link Arc.load} or
@@ -464,11 +490,21 @@ export class Arc {
         }
       }
       // Write spec.doneCriteria to task_done_criteria junction table.
+      // Also seed a pending task_acceptance row so mars show can display 4-state verdicts.
+      // Note: task_acceptance.updated_at is bigint (ms epoch), while the outer `now`
+      // is an ISO string (for the tasks table). Use Date.now() here explicitly.
+      const seedNow = Date.now()
       if (taskSpec?.doneCriteria && taskSpec.doneCriteria.length > 0) {
         for (let i = 0; i < taskSpec.doneCriteria.length; i++) {
           await tx.execute({
             sql: `INSERT INTO task_done_criteria (task_id, criterion, position) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
             args: [id, taskSpec.doneCriteria[i], i],
+          })
+          await tx.execute({
+            sql: `INSERT INTO task_acceptance (id, task_id, position, text, status, updated_at)
+                  VALUES (?, ?, ?, ?, 'pending', ?)
+                  ON CONFLICT (task_id, position) DO NOTHING`,
+            args: [`acc-${id.slice(-8)}-${i}`, id, i, taskSpec.doneCriteria[i], seedNow],
           })
         }
       }
@@ -3352,6 +3388,23 @@ export class Arc {
             VALUES (?, ?, ?, ?, ?, ?, ?)`,
       args: [id, params.taskId, now, params.author, params.kind, body, criterionIndex],
     })
+    // Mirror check/uncheck to task_acceptance so mars show can display 4-state verdicts.
+    if ((params.kind === 'check' || params.kind === 'uncheck') && criterionIndex !== null) {
+      const criteria = task.spec?.doneCriteria ?? []
+      const position = criterionIndex - 1 // convert 1-based criterion_index to 0-based position
+      const criterionText = criteria[position] ?? ''
+      const newStatus: AcceptanceStatus = params.kind === 'check' ? 'met' : 'pending'
+      const accId = `acc-${params.taskId.slice(-8)}-${position}`
+      await resolvedStore.execute({
+        sql: `INSERT INTO task_acceptance (id, task_id, position, text, status, note, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT (task_id, position) DO UPDATE SET
+                status = excluded.status,
+                note = excluded.note,
+                updated_at = excluded.updated_at`,
+        args: [accId, params.taskId, position, criterionText, newStatus, body || null, now],
+      })
+    }
     return {
       id,
       taskId: params.taskId,
@@ -3436,6 +3489,87 @@ export class Arc {
     return doneCriteria.map((criterion, i) => {
       const state = stateMap.get(i + 1)
       return { criterion, checked: state?.checked ?? false }
+    })
+  }
+
+  /**
+   * Record per-criterion verdicts in `task_acceptance`.
+   *
+   * Called by `behaviourVerify` after exercising a task's done-criteria against
+   * the live app surface. Each entry carries a zero-based `position` (matching
+   * `task_done_criteria.position`), the criterion text, a verdict status, and an
+   * optional evidence note.
+   *
+   * Uses INSERT … ON CONFLICT DO UPDATE so re-runs overwrite the previous verdict.
+   */
+  static async recordCriterionVerdicts(
+    taskId: string,
+    entries: ReadonlyArray<{
+      position: number
+      text: string
+      status: AcceptanceStatus
+      note?: string | null
+    }>,
+    store?: DomainTaskStore,
+  ): Promise<void> {
+    if (entries.length === 0) return
+    await ensureQueueSchema()
+    const resolvedStore = store ?? getDefaultDomainTaskStore()
+    const now = Date.now()
+    for (const entry of entries) {
+      const accId = `acc-${taskId.slice(-8)}-${entry.position}`
+      await resolvedStore.execute({
+        sql: `INSERT INTO task_acceptance (id, task_id, position, text, status, note, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT (task_id, position) DO UPDATE SET
+                status = excluded.status,
+                note = excluded.note,
+                updated_at = excluded.updated_at`,
+        args: [accId, taskId, entry.position, entry.text, entry.status, entry.note ?? null, now],
+      })
+    }
+  }
+
+  /**
+   * List per-criterion acceptance verdicts for a task, ordered by position.
+   *
+   * Returns rows from `task_acceptance` — the single source of truth for
+   * criterion verdicts after behaviour-verify runs. Returns an empty array for
+   * tasks that pre-date the `task_acceptance` seeding (no rows seeded at
+   * creation time), letting callers fall back to the legacy `task_progress` fold.
+   */
+  static async listAcceptance(
+    taskId: string,
+    store?: DomainTaskStore,
+  ): Promise<AcceptanceEntry[]> {
+    await ensureQueueSchema()
+    const resolvedStore = store ?? getDefaultDomainTaskStore()
+    const r = await resolvedStore.query({
+      sql: `SELECT id, task_id, position, text, status, note, updated_at
+              FROM task_acceptance
+             WHERE task_id = ?
+             ORDER BY position ASC`,
+      args: [taskId],
+    })
+    return r.rows.map((row) => {
+      const rec = row as unknown as {
+        id: string
+        task_id: string
+        position: number | bigint
+        text: string
+        status: string
+        note: string | null
+        updated_at: number | bigint
+      }
+      return {
+        id: rec.id,
+        taskId: rec.task_id,
+        position: typeof rec.position === 'bigint' ? Number(rec.position) : rec.position,
+        text: rec.text,
+        status: rec.status as AcceptanceStatus,
+        note: rec.note,
+        updatedAt: typeof rec.updated_at === 'bigint' ? Number(rec.updated_at) : rec.updated_at,
+      }
     })
   }
 }

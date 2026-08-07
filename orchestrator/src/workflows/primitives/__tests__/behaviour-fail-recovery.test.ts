@@ -105,6 +105,7 @@ const makeDeps = (args: {
     getDiff: vi.fn(async () => 'ui/src/App.tsx\n'),
     runBrowserCheck: vi.fn(async () => args.browserResults ?? defaultBrowserResults),
     handleTaskFailure,
+    recordCriterionVerdicts: vi.fn(async () => {}),
   }
 
   return { deps, handleTaskFailure }
@@ -330,5 +331,34 @@ describe('behaviourVerify — FAIL verdict triggers recovery', () => {
     // instead of spawning a second recovery (which would violate ADR-0040).
     expect(call.taskId).toBe(fixId)
     expect(call.taskId).not.toBe(originId)
+  })
+
+  // ── Acceptance 8: not-met verdict is recorded in task_acceptance before throw ─
+
+  it('records not-met verdict in task_acceptance BEFORE throwing — so the record survives the failure', async () => {
+    const { store } = makeTraceStore()
+    const ctx = makeCtx({ taskId: 'mars-behav01', kind: 'task' }, store)
+    const { deps } = makeDeps({
+      task: taskWithCriteria('mars-behav01', ['banner renders on the home page']),
+      browserResults: [
+        { criterion: 'banner renders on the home page', verdict: 'fail', screenshotPath: 'qa/0.png', note: 'not visible' },
+      ],
+    })
+
+    await expect(
+      behaviourVerify(ctx, { worktree: { path: viteRepoRoot, branch: 'task/mars-behav01' }, deps }),
+    ).rejects.toThrow()
+
+    // recordCriterionVerdicts must have been called with not-met BEFORE the throw
+    expect(vi.mocked(deps.recordCriterionVerdicts)).toHaveBeenCalledOnce()
+    const [taskId, entries] = vi.mocked(deps.recordCriterionVerdicts).mock.calls[0]
+    expect(taskId).toBe('mars-behav01')
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({
+      position: 0,
+      text: 'banner renders on the home page',
+      status: 'not-met',
+      note: 'not visible',
+    })
   })
 })

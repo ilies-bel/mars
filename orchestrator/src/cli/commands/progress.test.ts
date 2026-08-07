@@ -8,7 +8,7 @@
  * internal state.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -35,6 +35,11 @@ const setupRepo = (): string => {
 }
 
 const loadStoreAndCtx = async (): Promise<{ store: DomainTaskStore; ctx: OrchestratorContext }> => {
+  // Reset module cache so each test gets a fresh PGlite singleton bound to its
+  // own MARS_REPO. Without this, the clientSingleton in queue.ts persists across
+  // tests and points to the previous test's deleted data directory, causing
+  // "could not open file" errors on any table access after the first test.
+  vi.resetModules()
   process.env.MARS_REPO = repo
   const queueModule = await import('../../core/queue')
   await queueModule.migrateQueueSchema()
@@ -329,11 +334,11 @@ describe('mars task show — journal and checklist', () => {
     expect(outputStr).toContain('session-abc')
   })
 
-  it('shows checked/unchecked state in doneCriteria', async () => {
+  it('shows met state (✓) after check — task_acceptance is the verdict table', async () => {
     const { store, ctx } = await loadStoreAndCtx()
     const task = await createTask(store, { doneCriteria: ['implement', 'test'] })
     const { Arc } = await import('../../core/arc')
-    // Check criterion 1, leave criterion 2 unchecked
+    // Check criterion 1 — appendProgress mirrors to task_acceptance (status='met')
     await Arc.appendProgress(
       { taskId: task.id, author: 'session-xyz', kind: 'check', body: '', criterionIndex: 1 },
       store,
@@ -345,11 +350,12 @@ describe('mars task show — journal and checklist', () => {
     )
     expect(result.code).toBe(0)
     const outputStr = result.out.join('\n')
-    expect(outputStr).toContain('[x] implement')
+    // New 4-state display: met → [✓], pending → [ ]
+    expect(outputStr).toContain('[✓] implement')
     expect(outputStr).toContain('[ ] test')
   })
 
-  it('shows unchecked after check → uncheck sequence', async () => {
+  it('shows pending ([ ]) after check → uncheck sequence', async () => {
     const { store, ctx } = await loadStoreAndCtx()
     const task = await createTask(store, { doneCriteria: ['implement'] })
     const { Arc } = await import('../../core/arc')
@@ -367,7 +373,34 @@ describe('mars task show — journal and checklist', () => {
       { store, ctx, daemon: fake },
     )
     expect(result.code).toBe(0)
+    // Uncheck → task_acceptance status reverted to 'pending' → shows [ ]
     expect(result.out.join('\n')).toContain('[ ] implement')
+  })
+
+  it('renders all four verdict states: met ✓, not-met ✗, cannot-verify ?, pending (space)', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const task = await createTask(store, {
+      doneCriteria: ['criterion-met', 'criterion-not-met', 'criterion-cannot-verify', 'criterion-pending'],
+    })
+    const { Arc } = await import('../../core/arc')
+    // Directly record verdicts via Arc.recordCriterionVerdicts
+    await Arc.recordCriterionVerdicts(task.id, [
+      { position: 0, text: 'criterion-met', status: 'met', note: 'looked good' },
+      { position: 1, text: 'criterion-not-met', status: 'not-met', note: 'failed' },
+      { position: 2, text: 'criterion-cannot-verify', status: 'cannot-verify', note: 'no surface' },
+      // position 3 left as pending (seeded at creation)
+    ], store)
+    const fake = makeFakeDaemon()
+    const result = await runCommandInProcess(
+      ['task', 'show', task.id],
+      { store, ctx, daemon: fake },
+    )
+    expect(result.code).toBe(0)
+    const outputStr = result.out.join('\n')
+    expect(outputStr).toContain('[✓] criterion-met')
+    expect(outputStr).toContain('[✗] criterion-not-met')
+    expect(outputStr).toContain('[?] criterion-cannot-verify')
+    expect(outputStr).toContain('[ ] criterion-pending')
   })
 
   it('exits 1 with error when task id is unknown', async () => {

@@ -360,6 +360,8 @@ const makeDeps = (args: {
     // Not triggered in these tests (all browser results are 'unverifiable');
     // stub prevents TS error and guards against accidental calls.
     handleTaskFailure: vi.fn(async () => ({ outcome: 'noop' as const })),
+    // Stub: tests that exercise the verdict-recording path assert on this mock.
+    recordCriterionVerdicts: vi.fn(async () => {}),
   }
   return { deps }
 }
@@ -614,5 +616,75 @@ describe('behaviourVerify — boot discovery from repo signals', () => {
     } finally {
       rmSync(emptyRepoRoot, { recursive: true, force: true })
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Verdict recording in task_acceptance
+// ---------------------------------------------------------------------------
+
+describe('behaviourVerify — verdict recording (task_acceptance writes)', () => {
+  let viteRepo: string
+
+  beforeEach(() => {
+    __resetContextCacheForTests()
+    process.env.MARS_REPO = tmpRepo
+    viteRepo = mkdtempSync(join(tmpdir(), 'mars-verdict-rec-'))
+    writeFileSync(join(viteRepo, 'vite.config.ts'), '')
+  })
+
+  afterEach(() => {
+    rmSync(viteRepo, { recursive: true, force: true })
+  })
+
+  it('CAN\'T-VERIFY (no preview command) marks all criteria as cannot-verify in task_acceptance', async () => {
+    const { store } = makeTraceStore()
+    const ctx = makeCtx({ taskId: 'mars-rec01', kind: 'task' }, store)
+    const { deps } = makeDeps({
+      task: taskWithSpec({ doneCriteria: ['criterion A', 'criterion B'] }),
+      diff: '', // no UI files → no-preview-command
+    })
+
+    await behaviourVerify(ctx, { worktree: WORKTREE, deps })
+
+    expect(vi.mocked(deps.recordCriterionVerdicts)).toHaveBeenCalledOnce()
+    const [taskId, entries] = vi.mocked(deps.recordCriterionVerdicts).mock.calls[0]
+    expect(taskId).toBe('mars-rec01')
+    expect(entries).toHaveLength(2)
+    expect(entries[0]).toMatchObject({ position: 0, text: 'criterion A', status: 'cannot-verify' })
+    expect(entries[1]).toMatchObject({ position: 1, text: 'criterion B', status: 'cannot-verify' })
+  })
+
+  it('no-done-criteria path does NOT call recordCriterionVerdicts (nothing to record)', async () => {
+    const { store } = makeTraceStore()
+    const ctx = makeCtx({ taskId: 'mars-rec02', kind: 'task' }, store)
+    const { deps } = makeDeps({ task: taskWithSpec({ doneCriteria: [] }) })
+
+    await behaviourVerify(ctx, { worktree: WORKTREE, deps })
+
+    expect(vi.mocked(deps.recordCriterionVerdicts)).not.toHaveBeenCalled()
+  })
+
+  it('PASS verdict marks passed criteria as met and unverifiable as cannot-verify', async () => {
+    const { store } = makeTraceStore()
+    const ctx = makeCtx({ taskId: 'mars-rec03', kind: 'task' }, store)
+    const { deps } = makeDeps({
+      task: taskWithSpec({ doneCriteria: ['criterion A', 'criterion B'] }),
+      diff: 'ui/App.tsx\n', // trigger boot discovery
+    })
+    // Return pass for first criterion, unverifiable for second
+    vi.mocked(deps.runBrowserCheck).mockResolvedValueOnce([
+      { criterion: 'criterion A', verdict: 'pass', screenshotPath: 'a.png', note: 'ok' },
+      { criterion: 'criterion B', verdict: 'unverifiable', screenshotPath: null, note: '' },
+    ])
+
+    await behaviourVerify(ctx, { worktree: { path: viteRepo, branch: 'task/mars-rec03' }, deps })
+
+    // Should have recorded verdicts: met + cannot-verify
+    expect(vi.mocked(deps.recordCriterionVerdicts)).toHaveBeenCalledOnce()
+    const [, entries] = vi.mocked(deps.recordCriterionVerdicts).mock.calls[0]
+    const byPos = Object.fromEntries(entries.map((e) => [e.position, e]))
+    expect(byPos[0]?.status).toBe('met')
+    expect(byPos[1]?.status).toBe('cannot-verify')
   })
 })

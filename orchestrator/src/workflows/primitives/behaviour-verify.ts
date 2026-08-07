@@ -65,6 +65,7 @@ import {
   type HandleTaskFailureViaTaskInput,
   type HandleTaskFailureViaTaskResult,
 } from '../../core/queue-fix-tasks'
+import { Arc, type AcceptanceStatus } from '../../core/arc'
 import {
   resolveTaskId,
   resolveTrace,
@@ -345,6 +346,23 @@ export interface BehaviourVerifyDeps {
    * the static `verify` primitive's inline `handleTaskFailureWithFixTask` call.
    */
   handleTaskFailure: (input: HandleTaskFailureViaTaskInput) => Promise<HandleTaskFailureViaTaskResult>
+  /**
+   * Persist structured per-criterion verdicts to `task_acceptance`.
+   * Called at every behaviour-verify exit path so the outcome is always
+   * recorded before the step returns or throws.
+   *
+   * The default implementation delegates to {@link Arc.recordCriterionVerdicts}.
+   */
+  recordCriterionVerdicts: (
+    taskId: string,
+    entries: ReadonlyArray<{
+      position: number
+      text: string
+      status: AcceptanceStatus
+      note?: string | null
+    }>,
+    store: TaskStore,
+  ) => Promise<void>
 }
 
 const defaultGetDiff = async (worktreePath: string, integrationBranch: string): Promise<string> => {
@@ -369,6 +387,8 @@ const defaultDeps: BehaviourVerifyDeps = {
   getDiff: defaultGetDiff,
   runBrowserCheck: (boot, criteria, opts) => runBrowserCheck(boot, criteria, opts),
   handleTaskFailure: handleTaskFailureWithFixTask,
+  recordCriterionVerdicts: (taskId, entries, store) =>
+    Arc.recordCriterionVerdicts(taskId, entries, store),
 }
 
 /** Per-call domain options for {@link behaviourVerify}. All fields default. */
@@ -661,6 +681,25 @@ export const behaviourVerify = async (
         )
       })
 
+    // Record all criteria as cannot-verify in task_acceptance so mars show
+    // surfaces the outcome rather than leaving them pending.
+    if (criteria.length > 0) {
+      const entries = criteria.map((text, i) => ({
+        position: i,
+        text,
+        // When the caller already produced per-criterion verdicts (e.g.
+        // no-exercisable-criteria path), map those; otherwise mark all as
+        // cannot-verify since we couldn't reach any live surface.
+        status: (detail.verdicts ?? []).find((v) => v.criterionIndex === i)?.verdict === 'pass'
+          ? ('met' as AcceptanceStatus)
+          : ('cannot-verify' as AcceptanceStatus),
+        note: `cannot-verify: ${reason}`,
+      }))
+      await deps.recordCriterionVerdicts(taskId, entries, store).catch((err) => {
+        console.error(`[behaviour-verify] task ${taskId} recordCriterionVerdicts errored:`, err)
+      })
+    }
+
     return {
       outcome: 'unverifiable',
       reason,
@@ -769,8 +808,29 @@ export const behaviourVerify = async (
 
       const fold = foldVerdicts(verdicts)
 
+      // Map CriterionVerdict → AcceptanceStatus entries for task_acceptance.
+      const toAcceptanceEntries = (
+        vs: readonly CriterionVerdict[],
+      ) => vs.map((v) => ({
+        position: v.criterionIndex,
+        text: criteria[v.criterionIndex] ?? '',
+        status: (
+          v.verdict === 'pass' ? 'met' :
+          v.verdict === 'fail' ? 'not-met' :
+          'cannot-verify'
+        ) as AcceptanceStatus,
+        note: v.note || null,
+      }))
+
       if (fold.decision === 'fail') {
         behaviourFailed = true
+        // Persist not-met (and any passed/unverifiable) verdicts BEFORE throwing
+        // so they are visible in task_acceptance even when the task fails.
+        await deps.recordCriterionVerdicts(taskId, toAcceptanceEntries(verdicts), store).catch(
+          (err) => {
+            console.error(`[behaviour-verify] task ${taskId} recordCriterionVerdicts errored:`, err)
+          },
+        )
         const devServerLogPath = join(logDir, `${taskId}-server.log`)
         const evidenceBlock = buildFailEvidenceBlock({
           failed: fold.failed,
@@ -790,6 +850,12 @@ export const behaviourVerify = async (
       }
 
       if (fold.decision === 'pass') {
+        // Persist met/cannot-verify verdicts so mars show reflects the outcome.
+        await deps.recordCriterionVerdicts(taskId, toAcceptanceEntries(verdicts), store).catch(
+          (err) => {
+            console.error(`[behaviour-verify] task ${taskId} recordCriterionVerdicts errored:`, err)
+          },
+        )
         stepResult = {
           outcome: 'pass',
           reason: null,

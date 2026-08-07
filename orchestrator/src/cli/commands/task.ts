@@ -285,11 +285,31 @@ export const renderTaskDetail = async (
     }
     if (task.spec.doneCriteria.length > 0) {
       const { Arc } = await import('../../core/arc')
-      const journalEntries = await Arc.listProgress(task.id, undefined, deps.store)
-      const checklist = Arc.deriveChecklist(journalEntries, task.spec.doneCriteria)
       deps.out(`doneCriteria:`)
-      for (const { criterion, checked } of checklist) {
-        deps.out(`  - [${checked ? 'x' : ' '}] ${criterion}`)
+      // Use task_acceptance (4-state: met ✓, not-met ✗, cannot-verify ?, pending  )
+      // when rows exist (new tasks seeded at creation). Fall back to legacy task_progress
+      // fold ([x]/[ ]) for pre-existing tasks that have no task_acceptance rows.
+      const acceptances = await Arc.listAcceptance(task.id, deps.store)
+      if (acceptances.length > 0) {
+        const acceptanceByPosition = new Map(acceptances.map((a) => [a.position, a]))
+        for (let i = 0; i < task.spec.doneCriteria.length; i++) {
+          const criterion = task.spec.doneCriteria[i]
+          const acc = acceptanceByPosition.get(i)
+          const status = acc?.status ?? 'pending'
+          const symbol =
+            status === 'met' ? '✓'
+            : status === 'not-met' ? '✗'
+            : status === 'cannot-verify' ? '?'
+            : ' '
+          deps.out(`  - [${symbol}] ${criterion}`)
+        }
+      } else {
+        // Legacy path: fold task_progress check/uncheck journal
+        const journalEntries = await Arc.listProgress(task.id, undefined, deps.store)
+        const checklist = Arc.deriveChecklist(journalEntries, task.spec.doneCriteria)
+        for (const { criterion, checked } of checklist) {
+          deps.out(`  - [${checked ? 'x' : ' '}] ${criterion}`)
+        }
       }
     }
   }
