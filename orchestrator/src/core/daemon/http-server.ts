@@ -356,8 +356,8 @@ export interface DeepReflectionSummary {
  */
 export interface DeepReflectionDetail extends DeepReflectionSummary {
   sourceTaskId: string | null
-  autoReflect: 'on' | 'off'
-  autoTrigger: boolean
+  autoRunReflect: 'on' | 'off'
+  autoEnqueue: boolean
   report: {
     summary: string
     rootCause: string
@@ -381,8 +381,8 @@ export interface DeepReflectionDetail extends DeepReflectionSummary {
  */
 export interface DeepReflectionsListResult {
   reports: DeepReflectionSummary[]
-  autoReflect: 'on' | 'off'
-  autoTrigger: boolean
+  autoRunReflect: 'on' | 'off'
+  autoEnqueue: boolean
   lastReflectedAt: string | null
 }
 

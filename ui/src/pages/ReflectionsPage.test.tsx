@@ -3,7 +3,7 @@
  *
  * The page must:
  *   - render the reflection list on cold load (no click or SSE event required)
- *   - show run-state banner with autoReflect / autoTrigger status
+ *   - show run-state banner with autoRunReflect / autoEnqueue status
  *   - show an empty state when there are no reports
  *   - show a loading skeleton while data is in flight
  *   - show a fallback when the list fetch errors
@@ -77,8 +77,8 @@ const makeListResponse = (overrides: Partial<DeepReflectionsListResponse> = {}):
       verdictResult: { saved: 0, absorbed: 1, dropped: 0 },
     },
   ],
-  autoReflect: 'on',
-  autoTrigger: true,
+  autoRunReflect: 'on',
+  autoEnqueue: true,
   lastReflectedAt: '2026-01-15T10:00:00Z',
   ...overrides,
 })
@@ -93,8 +93,8 @@ const makeDetailResponse = (overrides: Partial<DeepReflectionDetail> = {}): Deep
   thrashingPatternCount: 0,
   verdictResult: { saved: 1, absorbed: 0, dropped: 0 },
   sourceTaskId: 'task-789',
-  autoReflect: 'on',
-  autoTrigger: true,
+  autoRunReflect: 'on',
+  autoEnqueue: true,
   report: {
     summary: 'The agent made overly optimistic assumptions about file presence.',
     rootCause: 'File existence checks were skipped before Read calls.',
@@ -236,17 +236,17 @@ describe('ReflectionsPage', () => {
   // Run-state banner
   // -------------------------------------------------------------------------
 
-  it('shows the run-state banner with last-reflected time and autoReflect ON state', () => {
+  it('shows the run-state banner with last-reflected time and autoRunReflect ON state', () => {
     const html = renderToStaticMarkup(<ReflectionsPage />)
 
     expect(html).toContain('data-testid="run-state-banner"')
     expect(html).toContain('auto-reflect is ON and auto-trigger is ON')
   })
 
-  it('shows autoReflect OFF state when the lever is off', () => {
+  it('shows autoRunReflect OFF state when the lever is off', () => {
     vi.mocked(useQuery)
       .mockReset()
-      .mockReturnValueOnce(mockQueryResult({ data: makeListResponse({ autoReflect: 'off', autoTrigger: false }) }))
+      .mockReturnValueOnce(mockQueryResult({ data: makeListResponse({ autoRunReflect: 'off', autoEnqueue: false }) }))
       .mockReturnValueOnce(mockQueryResult({ data: undefined }))
 
     const html = renderToStaticMarkup(<ReflectionsPage />)
@@ -255,10 +255,10 @@ describe('ReflectionsPage', () => {
     expect(html).not.toContain('auto-reflect is ON')
   })
 
-  it('shows autoReflect ON but auto-trigger OFF when autoTrigger is false', () => {
+  it('shows autoRunReflect ON but auto-trigger OFF when autoEnqueue is false', () => {
     vi.mocked(useQuery)
       .mockReset()
-      .mockReturnValueOnce(mockQueryResult({ data: makeListResponse({ autoReflect: 'on', autoTrigger: false }) }))
+      .mockReturnValueOnce(mockQueryResult({ data: makeListResponse({ autoRunReflect: 'on', autoEnqueue: false }) }))
       .mockReturnValueOnce(mockQueryResult({ data: undefined }))
 
     const html = renderToStaticMarkup(<ReflectionsPage />)

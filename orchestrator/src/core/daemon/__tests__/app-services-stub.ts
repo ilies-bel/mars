@@ -80,7 +80,7 @@ export const stubAppServices = (
     },
   }),
   viewArcs: async () => [],
-  viewDeepReflections: async () => ({ reports: [], autoReflect: 'on', autoTrigger: false, lastReflectedAt: null }),
+  viewDeepReflections: async () => ({ reports: [], autoRunReflect: 'on', autoEnqueue: false, lastReflectedAt: null }),
   viewDeepReflection: async () => null,
   viewScorerTrend: async () => ({ trends: [], recent: [] }),
   viewScorerWorkflows: async () => ({ workflows: [] }),

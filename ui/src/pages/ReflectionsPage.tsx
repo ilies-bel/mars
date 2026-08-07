@@ -80,17 +80,17 @@ const severityLabel = (severity: string): string =>
 // ---------------------------------------------------------------------------
 
 interface RunStateBannerProps {
-  autoReflect: 'on' | 'off'
-  autoTrigger: boolean
+  autoRunReflect: 'on' | 'off'
+  autoEnqueue: boolean
   lastReflectedAt: string | null
 }
 
-const RunStateBanner = ({ autoReflect, autoTrigger, lastReflectedAt }: RunStateBannerProps) => {
+const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt }: RunStateBannerProps) => {
   const lastRan = lastReflectedAt ? `Last reflection: ${fmt(lastReflectedAt)} (${fmtRelative(lastReflectedAt)})` : 'No reflection has run yet.'
   const triggerDesc =
-    autoReflect === 'off'
+    autoRunReflect === 'off'
       ? 'auto-reflect is OFF — reflection will not run automatically. Run manually with `mars arc reflect <originId>`.'
-      : autoTrigger
+      : autoEnqueue
         ? 'auto-reflect is ON and auto-trigger is ON — reflection runs automatically after each arc.'
         : 'auto-reflect is ON but auto-trigger is OFF — reflection must be triggered manually with `mars arc reflect <originId>`.'
 
@@ -101,7 +101,7 @@ const RunStateBanner = ({ autoReflect, autoTrigger, lastReflectedAt }: RunStateB
     >
       <span className="text-muted-foreground">{lastRan}</span>
       {' · '}
-      <span className={autoReflect === 'on' && autoTrigger ? 'text-success' : 'text-warn'}>
+      <span className={autoRunReflect === 'on' && autoEnqueue ? 'text-success' : 'text-warn'}>
         {triggerDesc}
       </span>
     </div>
@@ -220,8 +220,8 @@ const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
     <div className="flex flex-col gap-4">
       {/* Header: run state */}
       <RunStateBanner
-        autoReflect={detail.autoReflect}
-        autoTrigger={detail.autoTrigger}
+        autoRunReflect={detail.autoRunReflect}
+        autoEnqueue={detail.autoEnqueue}
         lastReflectedAt={detail.recordedAt}
       />
 
@@ -492,8 +492,8 @@ export const ReflectionsPage = () => {
 
             {listData && (
               <RunStateBanner
-                autoReflect={listData.autoReflect}
-                autoTrigger={listData.autoTrigger}
+                autoRunReflect={listData.autoRunReflect}
+                autoEnqueue={listData.autoEnqueue}
                 lastReflectedAt={listData.lastReflectedAt}
               />
             )}

@@ -1321,16 +1321,16 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     listDeepReflectArcCandidates(opts)
 
   /**
-   * Read the reflection control state (autoReflect lever + selfEvolve.autoTrigger).
+   * Read the reflection control state (autoRunReflect lever + selfEvolve.autoEnqueue).
    * Falls back to safe defaults when the config file is absent or malformed.
    */
-  const readReflectState = (): { autoReflect: 'on' | 'off'; autoTrigger: boolean } => {
+  const readReflectState = (): { autoRunReflect: 'on' | 'off'; autoEnqueue: boolean } => {
     try {
       const levers = readControlLevers()
       const cfg = loadDaemonConfig()
-      return { autoReflect: levers.autoReflect, autoTrigger: cfg.selfEvolve.autoTrigger }
+      return { autoRunReflect: levers.autoRunReflect, autoEnqueue: cfg.selfEvolve.autoEnqueue }
     } catch {
-      return { autoReflect: 'on', autoTrigger: false }
+      return { autoRunReflect: 'on', autoEnqueue: false }
     }
   }
 
@@ -1341,8 +1341,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       entries = await readdir(dir)
     } catch {
       // Directory absent — no reports yet.
-      const { autoReflect, autoTrigger } = readReflectState()
-      return { reports: [], autoReflect, autoTrigger, lastReflectedAt: null }
+      const { autoRunReflect, autoEnqueue } = readReflectState()
+      return { reports: [], autoRunReflect, autoEnqueue, lastReflectedAt: null }
     }
 
     const arcFiles = entries
@@ -1390,8 +1390,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     }
 
     const lastReflectedAt = reports[0]?.recordedAt ?? null
-    const { autoReflect, autoTrigger } = readReflectState()
-    return { reports, autoReflect, autoTrigger, lastReflectedAt }
+    const { autoRunReflect, autoEnqueue } = readReflectState()
+    return { reports, autoRunReflect, autoEnqueue, lastReflectedAt }
   }
 
   const viewDeepReflection: AppServices['viewDeepReflection'] = async (originId) => {
@@ -1472,7 +1472,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       }
     }
 
-    const { autoReflect, autoTrigger } = readReflectState()
+    const { autoRunReflect, autoEnqueue } = readReflectState()
 
     return {
       originId: typeof data.originId === 'string' ? data.originId : originId,
@@ -1488,8 +1488,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         dropped: typeof verdictResult.dropped === 'number' ? verdictResult.dropped : 0,
       },
       sourceTaskId: typeof data.sourceTaskId === 'string' ? data.sourceTaskId : null,
-      autoReflect,
-      autoTrigger,
+      autoRunReflect,
+      autoEnqueue,
       report: report === null ? null : {
         summary: typeof report.summary === 'string' ? report.summary : '',
         rootCause: typeof report.rootCause === 'string' ? report.rootCause : '',

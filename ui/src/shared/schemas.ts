@@ -1584,8 +1584,8 @@ export const reflectionThrashingPatternSchema = z.object({
 
 export const deepReflectionDetailSchema = deepReflectionSummarySchema.extend({
   sourceTaskId: z.string().nullable(),
-  autoReflect: z.enum(['on', 'off']),
-  autoTrigger: z.boolean(),
+  autoRunReflect: z.enum(['on', 'off']),
+  autoEnqueue: z.boolean(),
   report: z.object({
     summary: z.string(),
     rootCause: z.string(),
@@ -1611,8 +1611,8 @@ export const deepReflectionDetailSchema = deepReflectionSummarySchema.extend({
 
 export const deepReflectionsListResponseSchema = z.object({
   reports: z.array(deepReflectionSummarySchema),
-  autoReflect: z.enum(['on', 'off']),
-  autoTrigger: z.boolean(),
+  autoRunReflect: z.enum(['on', 'off']),
+  autoEnqueue: z.boolean(),
   lastReflectedAt: z.string().nullable(),
 })
 

@@ -111,8 +111,8 @@ describe('GET /view/deep-reflections', () => {
 
     const listResult: DeepReflectionsListResult = {
       reports: [sampleReport],
-      autoReflect: 'on',
-      autoTrigger: false,
+      autoRunReflect: 'on',
+      autoEnqueue: false,
       lastReflectedAt: '2026-08-06T18:42:55.791Z',
     }
 
@@ -127,8 +127,8 @@ describe('GET /view/deep-reflections', () => {
       expect(body.reports).toHaveLength(1)
       expect(body.reports[0]?.originId).toBe('origin-abc')
       expect(body.reports[0]?.dissonantCallCount).toBe(1)
-      expect(body.autoReflect).toBe('on')
-      expect(body.autoTrigger).toBe(false)
+      expect(body.autoRunReflect).toBe('on')
+      expect(body.autoEnqueue).toBe(false)
       expect(body.lastReflectedAt).toBe('2026-08-06T18:42:55.791Z')
     } finally {
       await close()
@@ -142,8 +142,8 @@ describe('GET /view/deep-reflections', () => {
       makeDeps({
         viewDeepReflections: async () => ({
           reports: [],
-          autoReflect: 'off',
-          autoTrigger: false,
+          autoRunReflect: 'off',
+          autoEnqueue: false,
           lastReflectedAt: null,
         }),
       }),
@@ -168,7 +168,7 @@ describe('GET /view/deep-reflections', () => {
       makeDeps({
         viewDeepReflections: async (opts) => {
           capturedOpts = opts
-          return { reports: [], autoReflect: 'on', autoTrigger: false, lastReflectedAt: null }
+          return { reports: [], autoRunReflect: 'on', autoEnqueue: false, lastReflectedAt: null }
         },
       }),
     )
@@ -224,8 +224,8 @@ describe('GET /view/deep-reflections/:originId', () => {
     const detail: DeepReflectionDetail = {
       ...sampleReport,
       sourceTaskId: 'reflect-abc123',
-      autoReflect: 'on',
-      autoTrigger: false,
+      autoRunReflect: 'on',
+      autoEnqueue: false,
       report: {
         summary: 'Arc completed with some issues.',
         rootCause: 'Isolated test loops produced local confidence.',
@@ -280,7 +280,7 @@ describe('GET /view/deep-reflections/:originId', () => {
       expect(body.report?.dissonantCalls[0]?.severity).toBe('high')
       expect(body.report?.verifyMismatch?.claimed).toBe('All tests pass')
       expect(body.report?.thrashingPatterns).toHaveLength(1)
-      expect(body.autoReflect).toBe('on')
+      expect(body.autoRunReflect).toBe('on')
     } finally {
       await close()
     }
@@ -319,8 +319,8 @@ describe('GET /view/deep-reflections/:originId', () => {
       thrashingPatternCount: 0,
       verdictResult: { saved: 0, absorbed: 0, dropped: 0 },
       sourceTaskId: null,
-      autoReflect: 'on',
-      autoTrigger: false,
+      autoRunReflect: 'on',
+      autoEnqueue: false,
       report: null,
     }
 
