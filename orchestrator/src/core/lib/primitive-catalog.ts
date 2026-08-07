@@ -20,7 +20,8 @@
  * so drift is caught at test time.
  */
 
-import { WORKER_CONFIGS, type WorkerName } from '../workers'
+import { WORKER_CONFIGS, WORKER_PROVIDER, type WorkerName } from '../workers'
+import { PROVIDER_MODELS } from '../workers/provider-types'
 import type { WorkerDeclaration } from '../workers/persisted-registry'
 import type { TraceEventPhase } from './trace-events-store'
 
@@ -217,9 +218,12 @@ export const buildWorkerProfiles = (
   }
   if (name === 'runAgent') {
     for (const decl of registryDeclarations) {
+      // Resolve the concrete model id from the tier under the active provider.
+      const providerName = decl.provider ?? WORKER_PROVIDER
+      const resolvedModel = PROVIDER_MODELS[providerName][decl.modelTier]
       profiles.set(decl.name, {
         workerName: decl.name,
-        model: decl.model,
+        model: resolvedModel,
         effort: decl.effort,
         permissionMode: decl.permissionMode,
         forfeitedTools: [...decl.disallowedTools],

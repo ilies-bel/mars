@@ -9,14 +9,16 @@ import { resolve } from 'node:path'
 import {
   addWorkerToRegistry,
   listMergedWorkers,
+  listWorkersForDisplay,
   loadWorkerRegistry,
   type WorkerDeclaration,
 } from '../persisted-registry'
 import { WORKER_CONFIGS } from '..'
+import { PROVIDER_MODELS } from '../provider-types'
 
 const MINIMUM_DECL: WorkerDeclaration = {
   name: 'TestWorker',
-  model: 'claude-sonnet-4-6',
+  modelTier: 'balanced',
   effort: 'high',
   permissionMode: 'default',
   bare: false,
@@ -50,15 +52,15 @@ describe('loadWorkerRegistry', () => {
     expect(loaded.some((d) => d.name === 'PersistedWorker')).toBe(true)
   })
 
-  it('round-trips the model field correctly', () => {
+  it('round-trips the modelTier field correctly', () => {
     addWorkerToRegistry(stateDir, {
       ...MINIMUM_DECL,
       name: 'RoundTripWorker',
-      model: 'claude-opus-4-7',
+      modelTier: 'flagship',
     })
     const loaded = loadWorkerRegistry(stateDir)
     const found = loaded.find((d) => d.name === 'RoundTripWorker')
-    expect(found?.model).toBe('claude-opus-4-7')
+    expect(found?.modelTier).toBe('flagship')
   })
 
   it('throws when a declaration specifies an unknown provider', () => {
@@ -77,6 +79,57 @@ describe('loadWorkerRegistry', () => {
     expect(() => loadWorkerRegistry(stateDir)).toThrow(
       "Unknown provider 'unknown-agent' in worker-registry.json",
     )
+  })
+
+  it('migrates a legacy entry with model: string to modelTier', () => {
+    // Simulate an old-format registry file with a concrete model id.
+    const filePath = resolve(stateDir, 'worker-registry.json')
+    writeFileSync(
+      filePath,
+      JSON.stringify({
+        LegacyCoder: {
+          name: 'LegacyCoder',
+          model: 'gpt-5.6-terra',  // old format: codex balanced
+          effort: 'high',
+          permissionMode: 'default',
+          bare: false,
+          disallowedTools: [],
+          outputFormat: 'stream-json',
+          runtime: 'headless',
+        },
+      }, null, 2) + '\n',
+      'utf8',
+    )
+    const loaded = loadWorkerRegistry(stateDir)
+    const found = loaded.find((d) => d.name === 'LegacyCoder')
+    // Migration should have inferred the tier from the model id.
+    expect(found?.modelTier).toBe('balanced')
+    expect('model' in (found ?? {})).toBe(false)
+  })
+
+  it('migrates a legacy entry with an unknown model id to modelOverride', () => {
+    const filePath = resolve(stateDir, 'worker-registry.json')
+    writeFileSync(
+      filePath,
+      JSON.stringify({
+        UnknownModelWorker: {
+          name: 'UnknownModelWorker',
+          model: 'gpt-4o-mini',  // not in any provider tier table
+          effort: 'high',
+          permissionMode: 'default',
+          bare: false,
+          disallowedTools: [],
+          outputFormat: 'stream-json',
+          runtime: 'headless',
+        },
+      }, null, 2) + '\n',
+      'utf8',
+    )
+    const loaded = loadWorkerRegistry(stateDir)
+    const found = loaded.find((d) => d.name === 'UnknownModelWorker')
+    // Falls back to 'balanced' tier and stores the unknown id as modelOverride.
+    expect(found?.modelTier).toBe('balanced')
+    expect(found?.modelOverride).toBe('gpt-4o-mini')
   })
 })
 
@@ -98,12 +151,12 @@ describe('addWorkerToRegistry', () => {
     const decl: WorkerDeclaration = {
       ...MINIMUM_DECL,
       name: 'NewlyAddedWorker',
-      model: 'claude-opus-4-7',
+      modelTier: 'flagship',
     }
     addWorkerToRegistry(stateDir, decl)
     const loaded = loadWorkerRegistry(stateDir)
     const found = loaded.find((d) => d.name === 'NewlyAddedWorker')
-    expect(found?.model).toBe('claude-opus-4-7')
+    expect(found?.modelTier).toBe('flagship')
   })
 
   it('overwrites an existing entry when called again with the same name', () => {
@@ -111,18 +164,18 @@ describe('addWorkerToRegistry', () => {
     addWorkerToRegistry(stateDir, {
       ...MINIMUM_DECL,
       name: 'Mutable',
-      model: 'claude-opus-4-7',
+      modelTier: 'flagship',
     })
     const loaded = loadWorkerRegistry(stateDir)
     const found = loaded.filter((d) => d.name === 'Mutable')
     // Exactly one entry — no duplicates.
     expect(found).toHaveLength(1)
-    expect(found[0]?.model).toBe('claude-opus-4-7')
+    expect(found[0]?.modelTier).toBe('flagship')
   })
 
   it('does not re-seed defaults on the second write when file already exists', () => {
     addWorkerToRegistry(stateDir, { ...MINIMUM_DECL, name: 'First' })
-    // Manually tweak the Coder model in the file after first seed.
+    // Manually tweak the Coder tier in the file after first seed.
     const filePath = resolve(stateDir, 'worker-registry.json')
     const raw = JSON.parse(readFileSync(filePath, 'utf8')) as Record<
       string,
@@ -130,20 +183,20 @@ describe('addWorkerToRegistry', () => {
     >
     raw['Coder'] = {
       ...(raw['Coder'] as WorkerDeclaration),
-      model: 'custom-coder-model',
+      modelTier: 'fast',
     }
     writeFileSync(filePath, JSON.stringify(raw, null, 2) + '\n', 'utf8')
 
-    // Second add should NOT re-seed (would overwrite our custom-coder-model).
+    // Second add should NOT re-seed (would overwrite our custom tier).
     addWorkerToRegistry(stateDir, { ...MINIMUM_DECL, name: 'Second' })
     const loaded = loadWorkerRegistry(stateDir)
     const coder = loaded.find((d) => d.name === 'Coder')
-    expect(coder?.model).toBe('custom-coder-model')
+    expect(coder?.modelTier).toBe('fast')
   })
 })
 
 // ---------------------------------------------------------------------------
-// listMergedWorkers
+// WorkerDeclaration tags
 // ---------------------------------------------------------------------------
 
 describe('WorkerDeclaration tags', () => {
@@ -210,6 +263,10 @@ describe('WorkerDeclaration runtime:pty round-trip', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// listMergedWorkers
+// ---------------------------------------------------------------------------
+
 describe('listMergedWorkers', () => {
   it('returns exactly the seven default workers when no registry file exists', () => {
     const workers = listMergedWorkers(stateDir)
@@ -244,11 +301,13 @@ describe('listMergedWorkers', () => {
     addWorkerToRegistry(stateDir, {
       ...MINIMUM_DECL,
       name: 'Coder',
-      model: 'registry-overridden-model',
+      modelTier: 'flagship',
     })
-    const workers = listMergedWorkers(stateDir)
+    const workers = listMergedWorkers(stateDir, 'claude')
     const coder = workers.find((w) => w.config.name === 'Coder')
-    expect(coder?.config.model).toBe('registry-overridden-model')
+    // The resolved model should be the flagship model for claude.
+    expect(coder?.config.model).toBe(PROVIDER_MODELS.claude.flagship)
+    expect(coder?.config.modelTier).toBe('flagship')
   })
 
   it('does not duplicate the default when the registry contains a matching entry', () => {
@@ -271,5 +330,117 @@ describe('listMergedWorkers', () => {
     expect(found?.config.provider).toBe('codex')
     expect(found?.runtime).toBe('pty')
     expect(found?.config.tags).toContain('codex')
+  })
+
+  // -------------------------------------------------------------------------
+  // Tier-based model resolution (core of the bug fix)
+  // -------------------------------------------------------------------------
+
+  it('resolves the balanced tier to the claude balanced model when activeProvider is claude', () => {
+    // Write a balanced-tier declaration with no explicit provider.
+    addWorkerToRegistry(stateDir, { ...MINIMUM_DECL, name: 'AnyWorker', modelTier: 'balanced' })
+    const workers = listMergedWorkers(stateDir, 'claude')
+    const found = workers.find((w) => w.config.name === 'AnyWorker')
+    expect(found?.config.model).toBe(PROVIDER_MODELS.claude.balanced)
+  })
+
+  it('resolves the balanced tier to the codex balanced model when activeProvider is codex', () => {
+    addWorkerToRegistry(stateDir, { ...MINIMUM_DECL, name: 'AnyWorker', modelTier: 'balanced' })
+    const workers = listMergedWorkers(stateDir, 'codex')
+    const found = workers.find((w) => w.config.name === 'AnyWorker')
+    expect(found?.config.model).toBe(PROVIDER_MODELS.codex.balanced)
+  })
+
+  it('changing activeProvider changes the resolved model without editing the registry', () => {
+    // Store a tier once; switch provider — different model, no registry write.
+    addWorkerToRegistry(stateDir, { ...MINIMUM_DECL, name: 'Coder', modelTier: 'balanced' })
+
+    const workersWithClaude = listMergedWorkers(stateDir, 'claude')
+    const workersWithCodex = listMergedWorkers(stateDir, 'codex')
+
+    const coderClaude = workersWithClaude.find((w) => w.config.name === 'Coder')
+    const coderCodex = workersWithCodex.find((w) => w.config.name === 'Coder')
+
+    expect(coderClaude?.config.model).toBe(PROVIDER_MODELS.claude.balanced)
+    expect(coderCodex?.config.model).toBe(PROVIDER_MODELS.codex.balanced)
+    // The two models must differ (the point of the whole fix).
+    expect(coderClaude?.config.model).not.toBe(coderCodex?.config.model)
+  })
+
+  it('the resolved model in config.model matches what listWorkersForDisplay shows', () => {
+    // A trace records provider + config.model; the list must show the same value.
+    addWorkerToRegistry(stateDir, { ...MINIMUM_DECL, name: 'Coder', modelTier: 'balanced' })
+    const workers = listMergedWorkers(stateDir, 'claude')
+    const displayEntries = listWorkersForDisplay(stateDir, 'claude')
+    const workerCoder = workers.find((w) => w.config.name === 'Coder')
+    const displayCoder = displayEntries.find((e) => e.worker.config.name === 'Coder')
+    // These MUST agree — trace provider vs displayed model cannot disagree.
+    expect(workerCoder?.config.model).toBe(displayCoder?.resolvedModel)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listWorkersForDisplay — tier display and conflict detection
+// ---------------------------------------------------------------------------
+
+describe('listWorkersForDisplay', () => {
+  it('returns display entries with modelTier and resolvedModel', () => {
+    const entries = listWorkersForDisplay(stateDir, 'claude')
+    const coder = entries.find((e) => e.worker.config.name === 'Coder')
+    expect(coder?.modelTier).toBeDefined()
+    expect(coder?.resolvedModel).toBe(PROVIDER_MODELS.claude[coder!.modelTier])
+  })
+
+  it('surfaces a conflict when modelOverride does not belong to the active provider', () => {
+    // Write an entry with a modelOverride that does not belong to claude.
+    const filePath = resolve(stateDir, 'worker-registry.json')
+    writeFileSync(
+      filePath,
+      JSON.stringify({
+        ConflictWorker: {
+          name: 'ConflictWorker',
+          modelTier: 'balanced',
+          modelOverride: 'gpt-5.6-terra',  // codex model, not claude
+          effort: 'high',
+          permissionMode: 'default',
+          bare: false,
+          disallowedTools: [],
+          outputFormat: 'stream-json',
+          runtime: 'headless',
+        },
+      }, null, 2) + '\n',
+      'utf8',
+    )
+    const entries = listWorkersForDisplay(stateDir, 'claude')
+    const conflict = entries.find((e) => e.worker.config.name === 'ConflictWorker')
+    expect(conflict?.conflictingOverride).toBe('gpt-5.6-terra')
+    // Falls back to tier-based resolution, not the conflicting override.
+    expect(conflict?.resolvedModel).toBe(PROVIDER_MODELS.claude.balanced)
+  })
+
+  it('no conflict when modelOverride belongs to the active provider', () => {
+    const filePath = resolve(stateDir, 'worker-registry.json')
+    writeFileSync(
+      filePath,
+      JSON.stringify({
+        OverrideWorker: {
+          name: 'OverrideWorker',
+          modelTier: 'balanced',
+          modelOverride: 'claude-opus-4-7',  // claude flagship — valid for claude
+          effort: 'high',
+          permissionMode: 'default',
+          bare: false,
+          disallowedTools: [],
+          outputFormat: 'stream-json',
+          runtime: 'headless',
+        },
+      }, null, 2) + '\n',
+      'utf8',
+    )
+    const entries = listWorkersForDisplay(stateDir, 'claude')
+    const override = entries.find((e) => e.worker.config.name === 'OverrideWorker')
+    // Override is valid — no conflict and the override model is used.
+    expect(override?.conflictingOverride).toBeUndefined()
+    expect(override?.resolvedModel).toBe('claude-opus-4-7')
   })
 })

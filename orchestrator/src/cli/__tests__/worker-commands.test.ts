@@ -34,6 +34,11 @@ afterEach(() => {
 })
 
 const ENV = (): Record<string, string> => ({ MARS_REPO: tmpRepo })
+// Use claude as the active provider so model-id tests can use claude model ids.
+const ENV_CLAUDE = (): Record<string, string> => ({
+  MARS_REPO: tmpRepo,
+  MARS_WORKER_PROVIDER: 'claude',
+})
 
 // ---------------------------------------------------------------------------
 // mars worker list
@@ -54,15 +59,29 @@ describe('mars worker list', () => {
     expect(result.stdout).toContain('Fixer')
   })
 
-  it('prints model identifiers for the built-in workers', () => {
-    const result = runCli(['worker', 'list'], ENV())
+  it('names the active provider in the output', () => {
+    const result = runCli(['worker', 'list'], ENV_CLAUDE())
+    expect(result.stdout).toContain('Provider: claude')
+  })
+
+  it('shows tier names in the output', () => {
+    const result = runCli(['worker', 'list'], ENV_CLAUDE())
+    // Planner and Slicer use flagship; Coder, Fixer use balanced; Triager uses fast.
+    expect(result.stdout).toContain('flagship')
+    expect(result.stdout).toContain('balanced')
+    expect(result.stdout).toContain('fast')
+  })
+
+  it('shows resolved model identifiers under the active claude provider', () => {
+    const result = runCli(['worker', 'list'], ENV_CLAUDE())
+    // Claude models should appear in the resolved model column.
     expect(result.stdout).toContain('claude-sonnet-4-6')
     expect(result.stdout).toContain('claude-opus-4-7')
   })
 
   it('shows a newly added worker after mars worker add', () => {
     runCli(
-      ['worker', 'add', 'ScaffoldWorker', '--model', 'claude-sonnet-4-6'],
+      ['worker', 'add', 'ScaffoldWorker', '--model', 'balanced'],
       ENV(),
     )
     const result = runCli(['worker', 'list'], ENV())
@@ -75,17 +94,25 @@ describe('mars worker list', () => {
 // ---------------------------------------------------------------------------
 
 describe('mars worker add', () => {
-  it('exits 0 when name and model are supplied', () => {
+  it('exits 0 when name and model tier are supplied', () => {
     const result = runCli(
-      ['worker', 'add', 'MyWorker', '--model', 'claude-sonnet-4-6'],
+      ['worker', 'add', 'MyWorker', '--model', 'balanced'],
       ENV(),
+    )
+    expect(result.status).toBe(0)
+  })
+
+  it('exits 0 when --model is a concrete model id belonging to the active provider', () => {
+    const result = runCli(
+      ['worker', 'add', 'ModelIdWorker', '--model', 'claude-opus-4-7'],
+      ENV_CLAUDE(),
     )
     expect(result.status).toBe(0)
   })
 
   it('prints confirmation that the worker was added', () => {
     const result = runCli(
-      ['worker', 'add', 'ConfirmedWorker', '--model', 'claude-sonnet-4-6'],
+      ['worker', 'add', 'ConfirmedWorker', '--model', 'balanced'],
       ENV(),
     )
     expect(result.stdout).toContain('ConfirmedWorker')
@@ -93,7 +120,7 @@ describe('mars worker add', () => {
 
   it('creates the registry file on first write', () => {
     runCli(
-      ['worker', 'add', 'FirstWorker', '--model', 'claude-sonnet-4-6'],
+      ['worker', 'add', 'FirstWorker', '--model', 'balanced'],
       ENV(),
     )
     expect(
@@ -103,7 +130,7 @@ describe('mars worker add', () => {
 
   it('seeds the registry with hard-coded defaults on first write', () => {
     runCli(
-      ['worker', 'add', 'SeedCheck', '--model', 'claude-sonnet-4-6'],
+      ['worker', 'add', 'SeedCheck', '--model', 'balanced'],
       ENV(),
     )
     const content = readFileSync(
@@ -118,17 +145,31 @@ describe('mars worker add', () => {
     expect(registry).toHaveProperty('Fixer')
   })
 
-  it('stores the supplied model in the registry', () => {
+  it('stores the supplied tier in the registry when given a tier name', () => {
     runCli(
-      ['worker', 'add', 'ModelCheck', '--model', 'claude-opus-4-7'],
+      ['worker', 'add', 'TierCheck', '--model', 'flagship'],
       ENV(),
     )
     const content = readFileSync(
       resolve(tmpRepo, '.mars', 'worker-registry.json'),
       'utf8',
     )
-    const registry = JSON.parse(content) as Record<string, { model: string }>
-    expect(registry['ModelCheck']?.model).toBe('claude-opus-4-7')
+    const registry = JSON.parse(content) as Record<string, { modelTier: string }>
+    expect(registry['TierCheck']?.modelTier).toBe('flagship')
+  })
+
+  it('maps a concrete model id to its tier when the model belongs to the active provider', () => {
+    // claude-opus-4-7 is the flagship tier for the claude provider.
+    runCli(
+      ['worker', 'add', 'ModelCheck', '--model', 'claude-opus-4-7'],
+      ENV_CLAUDE(),
+    )
+    const content = readFileSync(
+      resolve(tmpRepo, '.mars', 'worker-registry.json'),
+      'utf8',
+    )
+    const registry = JSON.parse(content) as Record<string, { modelTier: string }>
+    expect(registry['ModelCheck']?.modelTier).toBe('flagship')
   })
 
   it('exits 2 with usage message when --model is omitted', () => {
@@ -143,6 +184,16 @@ describe('mars worker add', () => {
     expect(result.stderr).toContain('usage:')
   })
 
+  it('exits 2 with an error when --model is a concrete model id not in the active provider', () => {
+    // gpt-5.6-terra belongs to codex, not claude.
+    const result = runCli(
+      ['worker', 'add', 'Mismatch', '--model', 'gpt-5.6-terra'],
+      ENV_CLAUDE(),
+    )
+    expect(result.status).toBe(2)
+    expect(result.stderr).toContain('not in provider')
+  })
+
   it('respects --effort flag', () => {
     runCli(
       [
@@ -150,7 +201,7 @@ describe('mars worker add', () => {
         'add',
         'EffortWorker',
         '--model',
-        'claude-sonnet-4-6',
+        'balanced',
         '--effort',
         'medium',
       ],
@@ -171,7 +222,7 @@ describe('mars worker add', () => {
         'add',
         'BadEffort',
         '--model',
-        'claude-sonnet-4-6',
+        'balanced',
         '--effort',
         'bogus',
       ],
@@ -183,7 +234,7 @@ describe('mars worker add', () => {
 
   it('stores a single --tag in the registry', () => {
     runCli(
-      ['worker', 'add', 'TaggedWorker', '--model', 'claude-sonnet-4-6', '--tag', 'scaffold'],
+      ['worker', 'add', 'TaggedWorker', '--model', 'balanced', '--tag', 'scaffold'],
       ENV(),
     )
     const content = readFileSync(
@@ -198,7 +249,7 @@ describe('mars worker add', () => {
     runCli(
       [
         'worker', 'add', 'MultiTagWorker',
-        '--model', 'claude-sonnet-4-6',
+        '--model', 'balanced',
         '--tag', 'scaffold',
         '--tag', 'docs',
       ],
@@ -214,7 +265,7 @@ describe('mars worker add', () => {
 
   it('omits the tags field when no --tag is supplied', () => {
     runCli(
-      ['worker', 'add', 'NoTagWorker', '--model', 'claude-sonnet-4-6'],
+      ['worker', 'add', 'NoTagWorker', '--model', 'balanced'],
       ENV(),
     )
     const content = readFileSync(
@@ -228,7 +279,7 @@ describe('mars worker add', () => {
 
   it('seeded built-in Workers carry tag sets matching their role names', () => {
     runCli(
-      ['worker', 'add', 'TriggerSeed', '--model', 'claude-sonnet-4-6'],
+      ['worker', 'add', 'TriggerSeed', '--model', 'balanced'],
       ENV(),
     )
     const content = readFileSync(

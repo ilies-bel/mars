@@ -40,6 +40,25 @@ export const PROVIDER_MODELS: Readonly<Record<ProviderName, ProviderModels>> = {
 } as const
 
 /**
+ * Reverse-map a concrete model id to the tier it occupies for the given
+ * provider. Returns undefined when the model does not appear in that
+ * provider's tier table (i.e. it is not a tier-derived model for this
+ * provider). When a provider maps the same model to multiple tiers (e.g.
+ * Gemini's flagship and balanced are both gemini-2.5-pro), returns the
+ * higher-priority tier: flagship > balanced > fast.
+ */
+export const tierForModel = (
+  model: string,
+  provider: ProviderName,
+): ProviderModelTier | undefined => {
+  const models = PROVIDER_MODELS[provider]
+  for (const tier of ['flagship', 'balanced', 'fast'] as ProviderModelTier[]) {
+    if (models[tier] === model) return tier
+  }
+  return undefined
+}
+
+/**
  * Provider-declared limits that govern whether consecutive conversation
  * requests can reuse a prefix and how much transcript can fit in one turn.
  */

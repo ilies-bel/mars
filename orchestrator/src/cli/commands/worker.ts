@@ -6,29 +6,64 @@
  */
 
 import {
-  listMergedWorkers,
+  listWorkersForDisplay,
   addWorkerToRegistry,
+  type WorkerDeclaration,
 } from '../../core/workers/persisted-registry'
+import { WORKER_PROVIDER } from '../../core/workers'
+import { PROVIDER_MODELS, tierForModel, type ProviderModelTier, type ProviderName } from '../../core/workers/provider-types'
 import type { Command } from '../command'
 
+const TIER_NAMES = new Set<string>(['flagship', 'balanced', 'fast'])
+
 const WORKER_ADD_USAGE =
-  'usage: mars worker add <name> --model <model> [--effort high|medium|...] [--permission-mode default|bypassPermissions] [--tag <tag> ...]'
+  'usage: mars worker add <name> --model <tier|model> [--effort high|medium|...] [--permission-mode default|bypassPermissions] [--tag <tag> ...]'
 
 const workerList: Command = {
   path: 'worker list',
   summary: 'list the merged worker registry',
   usage: 'usage: mars worker list',
   run: (_args, deps) => {
-    const workers = listMergedWorkers(deps.ctx.stateDir)
+    const activeProvider = WORKER_PROVIDER
+    const entries = listWorkersForDisplay(deps.ctx.stateDir, activeProvider)
+    deps.out(`Provider: ${activeProvider}`)
+    deps.out('')
     const header =
-      'NAME'.padEnd(20) + 'MODEL'.padEnd(36) + 'EFFORT'.padEnd(10) + 'PERMISSION'
+      'NAME'.padEnd(20) +
+      'TIER'.padEnd(12) +
+      'MODEL'.padEnd(36) +
+      'EFFORT'.padEnd(10) +
+      'PERMISSION'
     deps.out(header)
-    for (const w of workers) {
+    for (const entry of entries) {
+      const { worker, modelTier, resolvedModel, conflictingOverride } = entry
       const perm =
-        w.config.permissionMode === 'bypassPermissions' ? 'bypass' : w.config.permissionMode
-      deps.out(
-        w.config.name.padEnd(20) + w.config.model.padEnd(36) + w.config.effort.padEnd(10) + perm,
-      )
+        worker.config.permissionMode === 'bypassPermissions'
+          ? 'bypass'
+          : worker.config.permissionMode
+      if (conflictingOverride !== undefined) {
+        // Surface the conflict clearly: the stored override doesn't belong to
+        // the active provider. Mark the tier column with '!' and show the
+        // tier-based fallback model so the row is still readable.
+        deps.out(
+          worker.config.name.padEnd(20) +
+            `${modelTier}!`.padEnd(12) +
+            resolvedModel.padEnd(36) +
+            worker.config.effort.padEnd(10) +
+            perm,
+        )
+        deps.out(
+          `  CONFLICT: ${worker.config.name} has override '${conflictingOverride}' which is not in provider '${activeProvider}' — resolved via tier '${modelTier}' (${resolvedModel})`,
+        )
+      } else {
+        deps.out(
+          worker.config.name.padEnd(20) +
+            modelTier.padEnd(12) +
+            resolvedModel.padEnd(36) +
+            worker.config.effort.padEnd(10) +
+            perm,
+        )
+      }
     }
     return { code: 0 }
   },
@@ -40,8 +75,8 @@ const workerAdd: Command = {
   usage: WORKER_ADD_USAGE,
   run: (args, deps) => {
     const name = args.positional[0]
-    const model = args.flags['--model']
-    if (!name || !model) {
+    const modelArg = args.flags['--model']
+    if (!name || !modelArg) {
       deps.err(WORKER_ADD_USAGE)
       return { code: 2 }
     }
@@ -71,11 +106,33 @@ const workerAdd: Command = {
       return { code: 2 }
     }
 
+    // Resolve --model to a ProviderModelTier. Accepts:
+    //   1. A tier name directly: flagship | balanced | fast
+    //   2. A concrete model id that belongs to the active provider — mapped to its tier.
+    // Rejects concrete model ids from a different provider (mismatch).
+    let resolvedTier: ProviderModelTier
+    if (TIER_NAMES.has(modelArg)) {
+      resolvedTier = modelArg as ProviderModelTier
+    } else {
+      const activeProvider = WORKER_PROVIDER
+      const matchedTier = tierForModel(modelArg, activeProvider)
+      if (matchedTier === undefined) {
+        deps.err(
+          `--model '${modelArg}' is not in provider '${activeProvider}' ` +
+            `and is not a recognised tier (flagship|balanced|fast). ` +
+            `Use a tier name or a model id from the active provider ` +
+            `(${Object.values(PROVIDER_MODELS[activeProvider]).join(', ')}).`,
+        )
+        return { code: 2 }
+      }
+      resolvedTier = matchedTier
+    }
+
     const tags = args.multiFlags['--tag']
 
-    addWorkerToRegistry(deps.ctx.stateDir, {
+    const decl: WorkerDeclaration = {
       name,
-      model,
+      modelTier: resolvedTier,
       effort: effortRaw as 'low' | 'medium' | 'high' | 'xhigh' | 'max',
       permissionMode: permRaw as
         | 'acceptEdits'
@@ -89,7 +146,9 @@ const workerAdd: Command = {
       outputFormat: 'stream-json',
       runtime: 'headless',
       ...(tags !== undefined && tags.length > 0 ? { tags } : {}),
-    })
+    }
+
+    addWorkerToRegistry(deps.ctx.stateDir, decl)
     deps.out(`added worker ${name}`)
     return { code: 0 }
   },

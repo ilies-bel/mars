@@ -221,9 +221,12 @@ describe('viewPrimitive — identity and tool surface', () => {
   })
 
   it('includes operator-declared registry Workers as runAgent candidates', async () => {
+    // Use provider: 'claude' explicitly so the resolved model is
+    // PROVIDER_MODELS.claude.fast regardless of the active daemon provider.
     const decl: WorkerDeclaration = {
       name: 'DocsWriter',
-      model: 'claude-haiku-4-5-20251001',
+      modelTier: 'fast',
+      provider: 'claude',
       effort: 'low',
       permissionMode: 'default',
       bare: false,
@@ -237,7 +240,7 @@ describe('viewPrimitive — identity and tool surface', () => {
     const runAgent = await withRegistry.viewPrimitive({ name: 'runAgent' })
     const registryWorker = runAgent!.workers.find((w) => w.workerName === 'DocsWriter')
     expect(registryWorker).toMatchObject({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-haiku-4-5-20251001',  // claude fast tier
       source: 'registry',
       forfeitedTools: ['Edit'],
     })

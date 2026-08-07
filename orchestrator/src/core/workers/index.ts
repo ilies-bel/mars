@@ -25,7 +25,8 @@ import {
   type RunClaudeResult,
 } from '../lib/git/claude'
 import type { ClaudeEvent } from '../lib/claude-stream'
-import { PROVIDER_MODELS, type ProviderModelTier, type ProviderName } from './provider-types'
+import { PROVIDER_MODELS, tierForModel, type ProviderModelTier, type ProviderName } from './provider-types'
+export { tierForModel } from './provider-types'
 import {
   PROVIDERS,
   resolveProviderName,
@@ -134,6 +135,12 @@ export interface WorkerConfig {
   // the primary model is unavailable / overloaded. Pinned per Worker so the
   // operator audits which fallback applies per stage.
   readonly fallbackModel?: string
+  // Semantic tier this Worker was configured for. Drives the display in
+  // `mars worker list` so operators see tier + resolved model, not just the
+  // opaque model id. Optional — test fixtures that construct WorkerConfig
+  // directly may omit it; built-in WORKER_CONFIGS always set it. When absent,
+  // callers that need the tier can reverse-map via tierForModel().
+  readonly modelTier?: ProviderModelTier
   readonly effort: ClaudeEffort
   readonly permissionMode: ClaudePermissionMode
   readonly bare: boolean
@@ -365,6 +372,10 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   Coder: {
     name: 'Coder',
     model: CODER_MODEL,
+    // Coder defaults to balanced; MARS_WORKER_MODEL may pin a different
+    // concrete model but the tier is the declared intent.
+    modelTier: ((): ProviderModelTier =>
+      tierForModel(CODER_MODEL, WORKER_PROVIDER) ?? 'balanced')(),
     effort: 'high',
     permissionMode: 'bypassPermissions',
     bare: false,
@@ -379,6 +390,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   Planner: {
     name: 'Planner',
     model: providerModel(WORKER_PROVIDER, 'flagship'),
+    modelTier: 'flagship',
     effort: 'high',
     permissionMode: 'default',
     bare: false,
@@ -393,6 +405,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   Slicer: {
     name: 'Slicer',
     model: providerModel(WORKER_PROVIDER, 'flagship'),
+    modelTier: 'flagship',
     effort: 'high',
     permissionMode: 'default',
     bare: false,
@@ -415,6 +428,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   Triager: {
     name: 'Triager',
     model: providerModel(WORKER_PROVIDER, 'fast'),
+    modelTier: 'fast',
     effort: 'low',
     permissionMode: 'default',
     bare: true,
@@ -428,6 +442,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   Fixer: {
     name: 'Fixer',
     model: providerModel(WORKER_PROVIDER, 'balanced'),
+    modelTier: 'balanced',
     effort: 'high',
     permissionMode: 'bypassPermissions',
     bare: false,
@@ -452,6 +467,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   BehaviourVerifier: {
     name: 'BehaviourVerifier',
     model: providerModel(WORKER_PROVIDER, 'balanced'),
+    modelTier: 'balanced',
     effort: 'medium',
     permissionMode: 'bypassPermissions',
     bare: false,
@@ -475,6 +491,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   Scorer: {
     name: 'Scorer',
     model: providerModel(WORKER_PROVIDER, 'fast'),
+    modelTier: 'fast',
     effort: 'medium',
     permissionMode: 'default',
     bare: false,
@@ -498,6 +515,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   RescueOperator: {
     name: 'RescueOperator',
     model: providerModel(WORKER_PROVIDER, 'balanced'),
+    modelTier: 'balanced',
     effort: 'high',
     permissionMode: 'bypassPermissions',
     bare: false,

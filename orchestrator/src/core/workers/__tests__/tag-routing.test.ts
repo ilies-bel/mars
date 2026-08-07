@@ -16,7 +16,7 @@ import {
 
 const CODEX_DECL: WorkerDeclaration = {
   name: 'CodexCoder',
-  model: 'claude-sonnet-4-6',
+  modelTier: 'balanced',
   effort: 'high',
   permissionMode: 'default',
   bare: false,
