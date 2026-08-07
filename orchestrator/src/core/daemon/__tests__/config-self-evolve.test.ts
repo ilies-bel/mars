@@ -30,34 +30,34 @@ describe('loadDaemonConfig – selfEvolve', () => {
   const writeDaemonJson = (content: unknown) =>
     writeFileSync(join(tmpDir, '.mars', 'daemon.json'), JSON.stringify(content))
 
-  it('defaults to autoTrigger=false and driftThresholdPct=10 with no env or file', () => {
+  it('defaults to autoEnqueue=false and driftThresholdPct=10 with no env or file', () => {
     const cfg = loadDaemonConfig()
-    expect(cfg.selfEvolve.autoTrigger).toBe(false)
+    expect(cfg.selfEvolve.autoEnqueue).toBe(false)
     expect(cfg.selfEvolve.driftThresholdPct).toBe(10)
   })
 
   it('reads MARS_SELF_EVOLVE_AUTO_TRIGGER=1 as true', () => {
     process.env['MARS_SELF_EVOLVE_AUTO_TRIGGER'] = '1'
     const cfg = loadDaemonConfig()
-    expect(cfg.selfEvolve.autoTrigger).toBe(true)
+    expect(cfg.selfEvolve.autoEnqueue).toBe(true)
   })
 
   it('reads MARS_SELF_EVOLVE_AUTO_TRIGGER=true as true', () => {
     process.env['MARS_SELF_EVOLVE_AUTO_TRIGGER'] = 'true'
     const cfg = loadDaemonConfig()
-    expect(cfg.selfEvolve.autoTrigger).toBe(true)
+    expect(cfg.selfEvolve.autoEnqueue).toBe(true)
   })
 
   it('reads MARS_SELF_EVOLVE_AUTO_TRIGGER=0 as false', () => {
     process.env['MARS_SELF_EVOLVE_AUTO_TRIGGER'] = '0'
     const cfg = loadDaemonConfig()
-    expect(cfg.selfEvolve.autoTrigger).toBe(false)
+    expect(cfg.selfEvolve.autoEnqueue).toBe(false)
   })
 
   it('reads MARS_SELF_EVOLVE_AUTO_TRIGGER=false as false', () => {
     process.env['MARS_SELF_EVOLVE_AUTO_TRIGGER'] = 'false'
     const cfg = loadDaemonConfig()
-    expect(cfg.selfEvolve.autoTrigger).toBe(false)
+    expect(cfg.selfEvolve.autoEnqueue).toBe(false)
   })
 
   it('reads MARS_SELF_EVOLVE_DRIFT_THRESHOLD=25 as 25', () => {
@@ -84,11 +84,11 @@ describe('loadDaemonConfig – selfEvolve', () => {
     expect(cfg.selfEvolve.driftThresholdPct).toBe(10)
   })
 
-  it('file autoTrigger overrides env autoTrigger (file > env)', () => {
+  it('file autoEnqueue overrides env autoEnqueue (file > env)', () => {
     process.env['MARS_SELF_EVOLVE_AUTO_TRIGGER'] = '0'
-    writeDaemonJson({ selfEvolve: { autoTrigger: true } })
+    writeDaemonJson({ selfEvolve: { autoEnqueue: true } })
     const cfg = loadDaemonConfig()
-    expect(cfg.selfEvolve.autoTrigger).toBe(true)
+    expect(cfg.selfEvolve.autoEnqueue).toBe(true)
   })
 
   it('file driftThresholdPct overrides env driftThresholdPct (file > env)', () => {
@@ -102,14 +102,20 @@ describe('loadDaemonConfig – selfEvolve', () => {
     writeFileSync(join(tmpDir, '.mars', 'daemon.json'), 'NOT_VALID_JSON')
     process.env['MARS_SELF_EVOLVE_AUTO_TRIGGER'] = '1'
     const cfg = loadDaemonConfig()
-    expect(cfg.selfEvolve.autoTrigger).toBe(true)
+    expect(cfg.selfEvolve.autoEnqueue).toBe(true)
     expect(cfg.selfEvolve.driftThresholdPct).toBe(10)
   })
 
-  it('invalid selfEvolve.autoTrigger type in file falls back to env/default', () => {
-    writeDaemonJson({ selfEvolve: { autoTrigger: 'yes' } })
+  it('invalid selfEvolve.autoEnqueue type in file falls back to env/default', () => {
+    writeDaemonJson({ selfEvolve: { autoEnqueue: 'yes' } })
     const cfg = loadDaemonConfig()
-    expect(cfg.selfEvolve.autoTrigger).toBe(false)
+    expect(cfg.selfEvolve.autoEnqueue).toBe(false)
+  })
+
+  it('migrates old selfEvolve.autoTrigger key to autoEnqueue on read', () => {
+    writeDaemonJson({ selfEvolve: { autoTrigger: true } })
+    const cfg = loadDaemonConfig()
+    expect(cfg.selfEvolve.autoEnqueue).toBe(true)
   })
 
   it('invalid selfEvolve.driftThresholdPct (negative) in file falls back to env/default', () => {
@@ -121,7 +127,19 @@ describe('loadDaemonConfig – selfEvolve', () => {
   it('missing selfEvolve key in file falls back to env+defaults', () => {
     writeDaemonJson({ caps: { implement: 5 } })
     const cfg = loadDaemonConfig()
-    expect(cfg.selfEvolve.autoTrigger).toBe(false)
+    expect(cfg.selfEvolve.autoEnqueue).toBe(false)
     expect(cfg.selfEvolve.driftThresholdPct).toBe(10)
+  })
+
+  it('controlLevers default: memoryCapture=on, autoRunReflect=off with no file', () => {
+    const cfg = loadDaemonConfig()
+    expect(cfg.controlLevers.memoryCapture).toBe('on')
+    expect(cfg.controlLevers.autoRunReflect).toBe('off')
+  })
+
+  it('controlLevers migrates old autoReflect key to memoryCapture', () => {
+    writeDaemonJson({ controlLevers: { autoReflect: 'off' } })
+    const cfg = loadDaemonConfig()
+    expect(cfg.controlLevers.memoryCapture).toBe('off')
   })
 })

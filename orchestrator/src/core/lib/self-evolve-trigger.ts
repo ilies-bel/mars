@@ -1,15 +1,15 @@
 /**
  * KPI-drift self-evolve trigger and reflect-recommended detector.
  *
- * `runSelfEvolveTrigger`: When selfEvolve.autoTrigger is true: loads the two
+ * `runSelfEvolveTrigger`: When selfEvolve.autoEnqueue is true: loads the two
  * most recently taken KPI snapshots, runs the drift detector, and raises one
  * draft proposal (source='reflection') per confirmed regression that does not
  * already have an open draft. When the switch is off this function is a no-op.
  *
  * `runReflectRecommendedDetector`: Evaluates reflect-worthiness regardless of
- * autoTrigger. When any signal fires AND autoTrigger is off, raises one
+ * autoEnqueue. When any signal fires AND autoEnqueue is off, raises one
  * level-triggered 'reflect-recommended' action-queue row with evidence. When
- * no signal fires, or autoTrigger is on, the row is closed. Three detectors:
+ * no signal fires, or autoEnqueue is on, the row is closed. Three detectors:
  *   1. KPI drift (reuses detectKpiDrift)
  *   2. ≥3 recent tasks share a failure signature
  *   3. Any recent task's token spend ≥2× the window median
@@ -135,8 +135,8 @@ const readLatestTwoSnapshots = async (
 /**
  * Entry point for the KPI-drift self-evolve trigger.
  *
- * When autoTrigger is false: returns immediately with no proposals raised.
- * When autoTrigger is true: checks drift and raises one draft proposal per
+ * When autoEnqueue is false: returns immediately with no proposals raised.
+ * When autoEnqueue is true: checks drift and raises one draft proposal per
  * confirmed regression that does not already have an open draft.
  *
  * Never queues tasks. The `store` option is for test injection; production
@@ -146,7 +146,7 @@ export const runSelfEvolveTrigger = async (opts?: {
   store?: TaskStore
 }): Promise<SelfEvolveTriggerResult> => {
   const cfg = loadDaemonConfig()
-  if (!cfg.selfEvolve.autoTrigger) {
+  if (!cfg.selfEvolve.autoEnqueue) {
     return { raised: [], skipped: [] }
   }
 
@@ -222,12 +222,13 @@ export interface ReflectWorthinessEvidence {
 /**
  * Why the reflect-recommended detector did not raise a row.
  *
- * - `'auto-trigger-on'`: selfEvolve.autoTrigger=true, so the KPI-drift trigger
- *   handles proposals directly and the action-queue chip is not needed.
+ * - `'auto-enqueue-on'`: selfEvolve.autoEnqueue=true, so high-confidence
+ *   mechanical suggestions are auto-enqueued as tasks and the action-queue
+ *   chip is not needed.
  * - `'no-evidence'`: all three detectors (KPI drift, failure clusters, token
  *   spike) evaluated the rolling window and found nothing above threshold.
  */
-export type ReflectDetectorSkipReason = 'auto-trigger-on' | 'no-evidence'
+export type ReflectDetectorSkipReason = 'auto-enqueue-on' | 'no-evidence'
 
 export interface ReflectRecommendedResult {
   /** True when the row was raised (or the existing open row was bumped). */
@@ -309,7 +310,7 @@ const detectFailureClusters = async (
 
 /**
  * Evaluate all reflect-worthiness signals over the rolling window.
- * Returns the evidence structure regardless of autoTrigger status — the
+ * Returns the evidence structure regardless of autoEnqueue status — the
  * caller decides what to do with the result.
  */
 const evaluateWorthiness = async (
@@ -362,14 +363,28 @@ const evaluateWorthiness = async (
 }
 
 /**
+ * Count tasks created in the last `days` days.
+ * Used to build the reflect-recommended title so operators know the corpus size.
+ */
+const countRecentTasks = async (store: TaskStore, days: number): Promise<number> => {
+  const windowStart = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+  const r = await store.query({
+    sql: `SELECT COUNT(*) AS n FROM tasks WHERE created_at > ? AND status NOT IN ('queued','blocked')`,
+    args: [windowStart],
+  })
+  const row = r.rows[0] as unknown as { n: number | bigint }
+  return typeof row?.n === 'bigint' ? Number(row.n) : (row?.n ?? 0)
+}
+
+/**
  * Level-triggered reflect-recommended detector (ADR-0048).
  *
  * Evaluates reflect-worthiness over a rolling window using three cheap SQL
- * detectors (no LLM). When any signal fires and autoTrigger is off, ensures
+ * detectors (no LLM). When any signal fires and autoEnqueue is off, ensures
  * exactly one open 'reflect-recommended' action-queue row exists with the
  * evidence in its payload (re-raises are idempotent — the existing row is
- * bumped, not duplicated). When no signal fires, or autoTrigger is on (the
- * trigger already handles KPI drift directly), closes any open row.
+ * bumped, not duplicated). When no signal fires, or autoEnqueue is on (the
+ * trigger already handles routing of mechanical suggestions), closes any open row.
  *
  * The `store` option is for test injection; production callers omit it.
  */
@@ -389,7 +404,7 @@ export const runReflectRecommendedDetector = async (opts?: {
     './action-queue.js'
   )
 
-  if (!worthy || cfg.selfEvolve.autoTrigger) {
+  if (!worthy || cfg.selfEvolve.autoEnqueue) {
     // Close any stale open row (level-trigger off).
     await supersedeActionQueueItemsBySignature(
       'reflect-recommended',
@@ -397,11 +412,14 @@ export const runReflectRecommendedDetector = async (opts?: {
       'status-changed',
       'self-evolve:reflect-detector',
     )
-    const skipReason: ReflectDetectorSkipReason = cfg.selfEvolve.autoTrigger
-      ? 'auto-trigger-on'
+    const skipReason: ReflectDetectorSkipReason = cfg.selfEvolve.autoEnqueue
+      ? 'auto-enqueue-on'
       : 'no-evidence'
     return { raised: false, rowId: null, evidence: null, skipReason }
   }
+
+  // Count recent tasks to include corpus size in the title.
+  const corpusSize = await countRecentTasks(store, DETECTOR_WINDOW_DAYS)
 
   // Build human-readable evidence summary.
   const evidenceParts: string[] = []
@@ -425,11 +443,13 @@ export const runReflectRecommendedDetector = async (opts?: {
     )
   }
 
+  const title = `Reflection recommended — ${corpusSize} task${corpusSize !== 1 ? 's' : ''} over last ${DETECTOR_WINDOW_DAYS} days`
+
   const rowId = await raiseActionQueueItem({
     kind: 'reflect-recommended',
     category: 'reflector',
-    priority: 'normal',
-    title: 'Reflection recommended',
+    priority: 'high',
+    title,
     body: evidenceParts.join('\n'),
     payload: { evidence },
     context: {},
@@ -442,7 +462,7 @@ export const runReflectRecommendedDetector = async (opts?: {
 
 /**
  * Close any open 'reflect-recommended' action-queue row. Called when the
- * operator runs reflect or enables auto-trigger so the level-trigger is
+ * operator runs reflect or enables auto-enqueue so the level-trigger is
  * immediately cleared without waiting for the next detector sweep.
  */
 export const closeReflectRecommendedRow = async (): Promise<void> => {

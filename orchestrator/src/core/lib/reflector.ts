@@ -10,7 +10,7 @@ import { enqueueTask } from '../queue'
 import type { ReflectCorpus } from './reflect-query'
 import type { SelfEvolveConfig } from '../daemon/config'
 import { isReflectDisabled } from './reflect-signals'
-import { isAutoReflectDisabled } from './auto-reflect-gate'
+import { isMemoryCaptureDisabled } from './auto-reflect-gate'
 import { insertMemoryPacket } from '../store/memory-packet-store'
 import { loadLeverRegistry, formatRecipeCatalog, formatLeverList } from './lever-registry'
 import type { LeverRegistryEntry } from './lever-registry'
@@ -60,7 +60,7 @@ export interface ReflectionSuggestion {
    * Model-assessed confidence (0..1) grounded in frequency, token deltas, and
    * reproducibility. Used to gate auto-enqueuing: only suggestions with
    * confidence >= selfEvolve.taskConfidenceThreshold and kind='mechanical' are
-   * auto-enqueued when autoTrigger is enabled.
+   * auto-enqueued when autoEnqueue is enabled.
    */
   confidence: number
   /**
@@ -733,11 +733,11 @@ const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<void> => {
 export const persistSuggestions = async (
   suggestions: readonly ReflectionSuggestion[],
   _sourceTaskId: string,
-  selfEvolve?: Pick<SelfEvolveConfig, 'autoTrigger' | 'taskConfidenceThreshold'>,
+  selfEvolve?: Pick<SelfEvolveConfig, 'autoEnqueue' | 'taskConfidenceThreshold'>,
 ): Promise<void> => {
   for (const s of suggestions) {
     if (
-      selfEvolve?.autoTrigger === true &&
+      selfEvolve?.autoEnqueue === true &&
       s.kind === 'mechanical' &&
       s.confidence >= (selfEvolve.taskConfidenceThreshold ?? 0.8)
     ) {
@@ -753,7 +753,7 @@ export const persistSuggestions = async (
     } else {
       await persistOneSuggestion(s)
     }
-    if (!isAutoReflectDisabled() && !isReflectDisabled()) {
+    if (!isMemoryCaptureDisabled() && !isReflectDisabled()) {
       await insertMemoryPacket({
         domain: 'general',
         text: s.prompt,

@@ -83,8 +83,20 @@ const operatorStatus: Command = {
     } else {
       deps.out(`scoring: off`)
     }
-    deps.out(`auto-reflect: ${levers.autoReflect}`)
-    deps.out(`auto-trigger: ${cfg.selfEvolve.autoTrigger ? 'on' : 'off'}`)
+    deps.out(`memory-capture: ${levers.memoryCapture}`)
+    deps.out(`auto-enqueue: ${cfg.selfEvolve.autoEnqueue ? 'on' : 'off'}`)
+    deps.out(`auto-run-reflect: ${levers.autoRunReflect}`)
+    // Reflection history and next-trigger summary.
+    if (cfg.lastReflectRanAt) {
+      deps.out(`reflection last ran: ${cfg.lastReflectRanAt}`)
+    } else {
+      deps.out(`reflection last ran: never`)
+    }
+    if (levers.autoRunReflect === 'on') {
+      deps.out(`next reflection: automatic when KPI drift, failure clusters, or token spike detected`)
+    } else {
+      deps.out(`next reflection: operator action required (reflect-recommended row raised when conditions are met)`)
+    }
     if (!liveness.alive) {
       deps.out(
         `dispatch: ${readPersistedPaused() ? 'paused' : 'on'}  in-flight: unavailable (daemon down)`,
@@ -158,7 +170,7 @@ const operatorSet: Command = {
   path: 'operator set',
   summary: 'set a control lever and apply it immediately',
   usage:
-    'usage: mars operator set <dispatch|recovery|scoring|auto-reflect> <on|off>\n' +
+    'usage: mars operator set <dispatch|recovery|scoring|memory-capture|auto-run-reflect> <on|off>\n' +
     '       mars operator set <budget-window|budget-window-tokens|budget-arc-tokens> <value>',
   run: async (args, deps) => {
     const positional = args.positional.filter((a) => !a.startsWith('--'))
@@ -188,7 +200,7 @@ const operatorSet: Command = {
       deps.err(`mars operator set: ${errorMessage(err)}`)
       return { code: 2 }
     }
-    const validLevers = ['dispatch', 'recovery', 'scoring', 'auto-reflect'] as const
+    const validLevers = ['dispatch', 'recovery', 'scoring', 'memory-capture', 'auto-run-reflect'] as const
     type LeverName = (typeof validLevers)[number]
     if (!validLevers.includes(lever as LeverName)) {
       deps.err(
@@ -236,13 +248,17 @@ const operatorSet: Command = {
       }
       return { code: 0 }
     }
-    // `dispatch` returned above; the rest are env-var kill-switches living in
-    // the `controlLevers` map.
+    // `dispatch` returned above; the rest are control levers in the
+    // `controlLevers` map.
     const leverName = lever as Exclude<LeverName, 'dispatch'>
-    const configLeverName =
-      leverName === 'auto-reflect' ? 'autoReflect' : leverName
+    const configLeverName: keyof import('../../core/daemon/config').ControlLevers =
+      leverName === 'memory-capture' ? 'memoryCapture'
+      : leverName === 'auto-run-reflect' ? 'autoRunReflect'
+      : leverName as 'recovery' | 'scoring'
     writeControlLever(configLeverName, value)
-    if (configLeverName !== 'autoReflect') {
+    // memory-capture and auto-run-reflect are read dynamically from daemon.json
+    // on every call so no live apply-lever RPC is needed.
+    if (configLeverName !== 'memoryCapture' && configLeverName !== 'autoRunReflect') {
       try {
         await deps.daemon.sendRequest({ op: 'apply-lever', name: configLeverName, value })
       } catch (err) {

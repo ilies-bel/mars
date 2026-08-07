@@ -49,7 +49,22 @@ export type ControlLeverValue = 'on' | 'off'
 export interface ControlLevers {
   recovery: ControlLeverValue
   scoring: ControlLeverValue
-  autoReflect: ControlLeverValue
+  /**
+   * Gates memory-packet insertion after reflection suggestions are persisted.
+   * When 'off', suggestions are still saved as proposals but NOT inserted into
+   * the memory store. Has no bearing on whether reflection runs at all.
+   * Gesture: `mars operator set memory-capture <on|off>`.
+   */
+  memoryCapture: ControlLeverValue
+  /**
+   * Gates whether reflection runs automatically when the recommend condition is
+   * met, versus waiting for an explicit operator action on the
+   * reflect-recommended action-queue row.
+   * When 'off' (default), the operator must act on the row to trigger a run.
+   * When 'on', the detector auto-runs the reflect pipeline and closes the row.
+   * Gesture: `mars operator set auto-run-reflect <on|off>`.
+   */
+  autoRunReflect: ControlLeverValue
 }
 
 export interface DaemonCaps {
@@ -74,11 +89,17 @@ export interface DaemonCaps {
 }
 
 export interface SelfEvolveConfig {
-  autoTrigger: boolean
+  /**
+   * When true, a high-confidence mechanical reflection suggestion is
+   * automatically enqueued as a Task (rather than left as a draft proposal).
+   * Controls only the routing of suggestion outputs — not whether reflection
+   * runs. Default false.
+   */
+  autoEnqueue: boolean
   driftThresholdPct: number
   /**
    * Minimum confidence (0..1) for a 'mechanical' suggestion to be
-   * auto-enqueued as a Task when autoTrigger is true. Default 0.8.
+   * auto-enqueued as a Task when autoEnqueue is true. Default 0.8.
    * 'architectural' suggestions are never auto-enqueued regardless of this value.
    */
   taskConfidenceThreshold: number
@@ -124,6 +145,12 @@ export interface DaemonConfig {
    * `recovery: 'on'` (the default) clears it.
    */
   controlLevers: ControlLevers
+  /**
+   * ISO-8601 timestamp of when the reflection pipeline last completed.
+   * Written by `persistLastReflectRanAt` when `runReflect` finishes.
+   * Absent until at least one reflection has run.
+   */
+  lastReflectRanAt?: string
 }
 
 const DEFAULTS: DaemonCaps = {
@@ -135,7 +162,7 @@ const DEFAULTS: DaemonCaps = {
 }
 
 const DEFAULT_SELF_EVOLVE: SelfEvolveConfig = {
-  autoTrigger: false,
+  autoEnqueue: false,
   driftThresholdPct: 10,
   taskConfidenceThreshold: 0.8,
 }
@@ -151,7 +178,8 @@ const DEFAULT_PROVIDER: ProviderName = 'codex'
 const DEFAULT_CONTROL_LEVERS: ControlLevers = {
   recovery: 'on',
   scoring: 'on',
-  autoReflect: 'on',
+  memoryCapture: 'on',
+  autoRunReflect: 'off',
 }
 
 const VALID_PROVIDER_NAMES = new Set<string>(['claude', 'gemini', 'codex'])
@@ -187,10 +215,10 @@ export const daemonConfigPath = (): string =>
  * Merges the patch into the existing file content, creating or overwriting
  * the file. Any fields not mentioned in `patch` are preserved.
  *
- * Used by the `enable-auto-reflect` action to set `autoTrigger=true` without
+ * Used by the `enable-auto-reflect` action to set `autoEnqueue=true` without
  * losing other configured values. Safe to call from the daemon process.
  */
-export const persistSelfEvolveAutoTrigger = (autoTrigger: boolean): void => {
+export const persistSelfEvolveAutoEnqueue = (autoEnqueue: boolean): void => {
   const existing = readDaemonConfigFile()
   const existingSe =
     existing.selfEvolve !== null &&
@@ -198,7 +226,15 @@ export const persistSelfEvolveAutoTrigger = (autoTrigger: boolean): void => {
     !Array.isArray(existing.selfEvolve)
       ? (existing.selfEvolve as Record<string, unknown>)
       : {}
-  patchDaemonConfigFile({ selfEvolve: { ...existingSe, autoTrigger } })
+  patchDaemonConfigFile({ selfEvolve: { ...existingSe, autoEnqueue } })
+}
+
+/**
+ * Persist the timestamp when reflection last ran to daemon.json.
+ * Read back in `loadDaemonConfig().lastReflectRanAt` for operator status.
+ */
+export const persistLastReflectRanAt = (isoTimestamp: string): void => {
+  patchDaemonConfigFile({ lastReflectRanAt: isoTimestamp })
 }
 
 /**
@@ -386,6 +422,9 @@ export const persistLeverAutonomyLevel = (name: string, level: AutonomyLevel): v
  * Read the persisted `controlLevers` from daemon.json, returning defaults for
  * any absent or invalid fields. Does not apply the levers to process.env —
  * call `applyControlLevers` to do that.
+ *
+ * Migrates on read: the old `autoReflect` key is accepted as `memoryCapture`
+ * so existing daemon.json files from before the rename continue to work.
  */
 export const readControlLevers = (): ControlLevers => {
   const file = readDaemonConfigFile()
@@ -399,8 +438,14 @@ export const readControlLevers = (): ControlLevers => {
     if (record.scoring === 'on' || record.scoring === 'off') {
       result.scoring = record.scoring
     }
-    if (record.autoReflect === 'on' || record.autoReflect === 'off') {
-      result.autoReflect = record.autoReflect
+    // Accept new key first, fall back to old key for migration.
+    if (record.memoryCapture === 'on' || record.memoryCapture === 'off') {
+      result.memoryCapture = record.memoryCapture
+    } else if (record.autoReflect === 'on' || record.autoReflect === 'off') {
+      result.memoryCapture = record.autoReflect as ControlLeverValue
+    }
+    if (record.autoRunReflect === 'on' || record.autoRunReflect === 'off') {
+      result.autoRunReflect = record.autoRunReflect
     }
   }
   return result
@@ -448,9 +493,9 @@ export const loadDaemonConfig = (): DaemonConfig => {
     verify: envInt('MARS_MAX_VERIFY', DEFAULTS.verify),
   }
 
-  const envAutoTrigger = envBool(
+  const envAutoEnqueue = envBool(
     'MARS_SELF_EVOLVE_AUTO_TRIGGER',
-    DEFAULT_SELF_EVOLVE.autoTrigger,
+    DEFAULT_SELF_EVOLVE.autoEnqueue,
   )
   const rawDrift = process.env['MARS_SELF_EVOLVE_DRIFT_THRESHOLD']
   const envDriftNum = rawDrift !== undefined && rawDrift !== '' ? Number(rawDrift) : NaN
@@ -486,13 +531,14 @@ export const loadDaemonConfig = (): DaemonConfig => {
   )
 
   let fileCaps: Partial<DaemonCaps> = {}
-  let fileAutoTrigger: boolean | undefined
+  let fileAutoEnqueue: boolean | undefined
   let fileDriftPct: number | undefined
   let fileConfThreshold: number | undefined
   let fileScoringAutoTrigger: boolean | undefined
   let fileScoringThreshold: number | undefined
   let fileScoringWindow: number | undefined
   let fileDefaultProvider: ProviderName | undefined
+  let fileLastReflectRanAt: string | undefined
 
   try {
     const raw = readFileSync(daemonConfigPath(), 'utf8')
@@ -500,6 +546,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
       caps?: Record<string, unknown>
       selfEvolve?: Record<string, unknown>
       scoring?: Record<string, unknown>
+      lastReflectRanAt?: unknown
     }
     const c = parsed.caps ?? {}
     fileCaps = {
@@ -513,8 +560,11 @@ export const loadDaemonConfig = (): DaemonConfig => {
       verify: positiveInt(c.verify, envCaps.verify),
     }
     const se = parsed.selfEvolve ?? {}
-    if (typeof se.autoTrigger === 'boolean') {
-      fileAutoTrigger = se.autoTrigger
+    // Accept new key first, fall back to old key for migration.
+    if (typeof se.autoEnqueue === 'boolean') {
+      fileAutoEnqueue = se.autoEnqueue
+    } else if (typeof se.autoTrigger === 'boolean') {
+      fileAutoEnqueue = se.autoTrigger
     }
     const seThreshold = se.driftThresholdPct
     if (typeof seThreshold === 'number' && Number.isFinite(seThreshold) && seThreshold > 0) {
@@ -547,6 +597,9 @@ export const loadDaemonConfig = (): DaemonConfig => {
     if (typeof rawProvider === 'string' && VALID_PROVIDER_NAMES.has(rawProvider)) {
       fileDefaultProvider = rawProvider as ProviderName
     }
+    if (typeof parsed.lastReflectRanAt === 'string' && parsed.lastReflectRanAt.length > 0) {
+      fileLastReflectRanAt = parsed.lastReflectRanAt
+    }
   } catch {
     // No file, unreadable, or invalid JSON — fall back to env+defaults.
   }
@@ -560,7 +613,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
       verify: fileCaps.verify ?? envCaps.verify,
     },
     selfEvolve: {
-      autoTrigger: fileAutoTrigger ?? envAutoTrigger,
+      autoEnqueue: fileAutoEnqueue ?? envAutoEnqueue,
       driftThresholdPct: fileDriftPct ?? envDriftPct,
       taskConfidenceThreshold: fileConfThreshold ?? envConfThreshold,
     },
@@ -571,5 +624,6 @@ export const loadDaemonConfig = (): DaemonConfig => {
     },
     defaultProvider: fileDefaultProvider ?? DEFAULT_PROVIDER,
     controlLevers: readControlLevers(),
+    lastReflectRanAt: fileLastReflectRanAt,
   }
 }

@@ -116,21 +116,39 @@ describe('mars operator status — scoring lever', () => {
   })
 })
 
-describe('mars operator auto-reflect lever', () => {
+describe('mars operator memory-capture lever', () => {
   it('persists off and reports it in status', async () => {
     const deps = await loadDeps()
     const fake = await makeFake()
 
-    const set = await run(['operator', 'set', 'auto-reflect', 'off'], {
+    const set = await run(['operator', 'set', 'memory-capture', 'off'], {
       ...deps,
       daemon: fake,
     })
     const status = await run(['operator', 'status'], { ...deps, daemon: fake })
 
     expect(set.code).toBe(0)
-    expect(set.out.join('\n')).toContain('auto-reflect: off')
+    expect(set.out.join('\n')).toContain('memory-capture: off')
     expect(status.code).toBe(0)
-    expect(status.out.join('\n')).toContain('auto-reflect: off')
+    expect(status.out.join('\n')).toContain('memory-capture: off')
+  })
+})
+
+describe('mars operator auto-run-reflect lever', () => {
+  it('persists on and reports it in status', async () => {
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const set = await run(['operator', 'set', 'auto-run-reflect', 'on'], {
+      ...deps,
+      daemon: fake,
+    })
+    const status = await run(['operator', 'status'], { ...deps, daemon: fake })
+
+    expect(set.code).toBe(0)
+    expect(set.out.join('\n')).toContain('auto-run-reflect: on')
+    expect(status.code).toBe(0)
+    expect(status.out.join('\n')).toContain('auto-run-reflect: on')
   })
 })
 

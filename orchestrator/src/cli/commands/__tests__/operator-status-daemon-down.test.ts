@@ -45,7 +45,7 @@ describe('mars operator status when the daemon is down', () => {
     for (const [lever, value] of [
       ['recovery', 'off'],
       ['scoring', 'off'],
-      ['auto-reflect', 'off'],
+      ['memory-capture', 'off'],
       ['budget-window', '4h'],
       ['budget-window-tokens', '5000000'],
       ['budget-arc-tokens', '750000'],
@@ -87,8 +87,11 @@ describe('mars operator status when the daemon is down', () => {
     expect(result.out).toEqual([
       'recovery: off',
       'scoring: off',
-      'auto-reflect: off',
-      'auto-trigger: off',
+      'memory-capture: off',
+      'auto-enqueue: off',
+      'auto-run-reflect: off',
+      'reflection last ran: never',
+      'next reflection: operator action required (reflect-recommended row raised when conditions are met)',
       'dispatch: paused  in-flight: unavailable (daemon down)',
       'window:  900.0k / 5.0M weighted tokens over 4h (18.0% — good)',
       '  top contributing arcs:',
@@ -101,7 +104,7 @@ describe('mars operator status when the daemon is down', () => {
     expect(statusDaemon.calls).toEqual([])
   })
 
-  it('shows auto-trigger: on when selfEvolve.autoTrigger is enabled via env var', async () => {
+  it('shows auto-enqueue: on when selfEvolve.autoEnqueue is enabled via env var', async () => {
     process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER = 'true'
     vi.doMock('../../../core/daemon/paths', async (importOriginal) => ({
       ...(await importOriginal<typeof import('../../../core/daemon/paths')>()),
@@ -116,7 +119,7 @@ describe('mars operator status when the daemon is down', () => {
     })
 
     const outText = result.out.join('\n')
-    expect(outText).toContain('auto-trigger: on')
+    expect(outText).toContain('auto-enqueue: on')
     delete process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER
   })
 })

@@ -195,7 +195,7 @@ describe('readCurrent() against seeded daemon.json', () => {
   it('operator.recovery returns persisted control lever value', () => {
     writeFileSync(
       join(tmpDir, '.mars', 'daemon.json'),
-      JSON.stringify({ controlLevers: { recovery: 'off', scoring: 'on', autoReflect: 'on' } }),
+      JSON.stringify({ controlLevers: { recovery: 'off', scoring: 'on', memoryCapture: 'on', autoRunReflect: 'off' } }),
     )
     const e = loadLeverRegistry().find((x) => x.id === 'operator.recovery')!
     expect(e.readCurrent()).toBe('off')
@@ -204,7 +204,7 @@ describe('readCurrent() against seeded daemon.json', () => {
   it('operator.scoring returns persisted control lever value', () => {
     writeFileSync(
       join(tmpDir, '.mars', 'daemon.json'),
-      JSON.stringify({ controlLevers: { recovery: 'on', scoring: 'off', autoReflect: 'on' } }),
+      JSON.stringify({ controlLevers: { recovery: 'on', scoring: 'off', memoryCapture: 'on', autoRunReflect: 'off' } }),
     )
     const e = loadLeverRegistry().find((x) => x.id === 'operator.scoring')!
     expect(e.readCurrent()).toBe('off')
@@ -222,13 +222,31 @@ describe('readCurrent() against seeded daemon.json', () => {
     expect(e.readCurrent()).toBe('off')
   })
 
-  it('operator.auto-reflect returns persisted autoReflect value', () => {
+  it('operator.memory-capture returns persisted memoryCapture value', () => {
+    writeFileSync(
+      join(tmpDir, '.mars', 'daemon.json'),
+      JSON.stringify({ controlLevers: { recovery: 'on', scoring: 'on', memoryCapture: 'off', autoRunReflect: 'off' } }),
+    )
+    const e = loadLeverRegistry().find((x) => x.id === 'operator.memory-capture')!
+    expect(e.readCurrent()).toBe('off')
+  })
+
+  it('operator.memory-capture migrates old autoReflect key from daemon.json', () => {
     writeFileSync(
       join(tmpDir, '.mars', 'daemon.json'),
       JSON.stringify({ controlLevers: { recovery: 'on', scoring: 'on', autoReflect: 'off' } }),
     )
-    const e = loadLeverRegistry().find((x) => x.id === 'operator.auto-reflect')!
+    const e = loadLeverRegistry().find((x) => x.id === 'operator.memory-capture')!
     expect(e.readCurrent()).toBe('off')
+  })
+
+  it('operator.auto-run-reflect returns persisted autoRunReflect value', () => {
+    writeFileSync(
+      join(tmpDir, '.mars', 'daemon.json'),
+      JSON.stringify({ controlLevers: { recovery: 'on', scoring: 'on', memoryCapture: 'on', autoRunReflect: 'on' } }),
+    )
+    const e = loadLeverRegistry().find((x) => x.id === 'operator.auto-run-reflect')!
+    expect(e.readCurrent()).toBe('on')
   })
 
   it('scoring.auto-trigger returns persisted value', () => {
@@ -258,12 +276,12 @@ describe('readCurrent() against seeded daemon.json', () => {
     expect(e.readCurrent()).toBe('8')
   })
 
-  it('self-evolve.auto-trigger returns persisted value', () => {
+  it('self-evolve.auto-enqueue returns persisted value', () => {
     writeFileSync(
       join(tmpDir, '.mars', 'daemon.json'),
-      JSON.stringify({ selfEvolve: { autoTrigger: true } }),
+      JSON.stringify({ selfEvolve: { autoEnqueue: true } }),
     )
-    const e = loadLeverRegistry().find((x) => x.id === 'self-evolve.auto-trigger')!
+    const e = loadLeverRegistry().find((x) => x.id === 'self-evolve.auto-enqueue')!
     expect(e.readCurrent()).toBe('true')
   })
 

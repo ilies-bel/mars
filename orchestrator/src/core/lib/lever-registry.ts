@@ -426,19 +426,35 @@ const REGISTRY: LeverRegistryEntry[] = [
     appliesWithoutRestart: true,
   },
   {
-    id: 'operator.auto-reflect',
-    label: 'Auto-reflect lever (enables/disables failure reflection)',
+    id: 'operator.memory-capture',
+    label: 'Memory-capture lever (enables/disables inserting memory packets after reflection suggestions are persisted)',
     family: 'operator',
     scope: 'global',
     readCurrent: () => {
       try {
-        return readControlLevers().autoReflect
+        return readControlLevers().memoryCapture
       } catch {
         return null
       }
     },
     allowedValues: { type: 'enum', values: ['on', 'off'] },
-    gesture: 'mars operator set auto-reflect <on|off>',
+    gesture: 'mars operator set memory-capture <on|off>',
+    appliesWithoutRestart: true,
+  },
+  {
+    id: 'operator.auto-run-reflect',
+    label: 'Auto-run-reflect lever (runs reflection automatically when conditions are met, vs. waiting for operator action)',
+    family: 'operator',
+    scope: 'global',
+    readCurrent: () => {
+      try {
+        return readControlLevers().autoRunReflect
+      } catch {
+        return null
+      }
+    },
+    allowedValues: { type: 'enum', values: ['on', 'off'] },
+    gesture: 'mars operator set auto-run-reflect <on|off>',
     appliesWithoutRestart: true,
   },
 
@@ -560,13 +576,13 @@ const REGISTRY: LeverRegistryEntry[] = [
 
   // ── self-evolve ───────────────────────────────────────────────────────────
   {
-    id: 'self-evolve.auto-trigger',
-    label: 'Self-evolve auto-trigger (auto-enqueues mechanical improvement tasks)',
+    id: 'self-evolve.auto-enqueue',
+    label: 'Self-evolve auto-enqueue (auto-enqueues high-confidence mechanical reflection suggestions as tasks)',
     family: 'self-evolve',
     scope: 'global',
     readCurrent: () => {
       try {
-        return String(loadDaemonConfig().selfEvolve.autoTrigger)
+        return String(loadDaemonConfig().selfEvolve.autoEnqueue)
       } catch {
         return null
       }

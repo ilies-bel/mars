@@ -4850,6 +4850,7 @@ export const startDaemon = async (
       const { runReflector, persistSuggestions } = await import('../lib/reflector')
       const { closeReflectRecommendedRow } = await import('../lib/self-evolve-trigger')
       const { insertReflectionTask } = await import('../queue')
+      const { persistLastReflectRanAt } = await import('./config')
       const corpus = await loadRecentTaskCorpus({ limit: 10 })
       let proposalsRaised = 0
       if (corpus.entries.length > 0) {
@@ -4865,14 +4866,15 @@ export const startDaemon = async (
       }
       // Close the reflect-recommended row regardless of whether proposals were raised.
       await closeReflectRecommendedRow()
+      persistLastReflectRanAt(new Date().toISOString())
       viewStreamHub.broadcast('action-queue')
       return { proposalsRaised }
     },
     enableAutoReflect: async () => {
-      const { persistSelfEvolveAutoTrigger } = await import('./config')
+      const { persistSelfEvolveAutoEnqueue } = await import('./config')
       const { closeReflectRecommendedRow } = await import('../lib/self-evolve-trigger')
-      persistSelfEvolveAutoTrigger(true)
-      log('[enable-auto-reflect] selfEvolve.autoTrigger set to true in daemon.json')
+      persistSelfEvolveAutoEnqueue(true)
+      log('[enable-auto-reflect] selfEvolve.autoEnqueue set to true in daemon.json')
       await closeReflectRecommendedRow()
       viewStreamHub.broadcast('action-queue')
     },
@@ -5643,9 +5645,40 @@ export const startDaemon = async (
             `[reflect-detector] raised reflect-recommended row (row=${result.rowId})`,
           )
           viewStreamHub.broadcast('action-queue')
-        } else if (result.skipReason === 'auto-trigger-on') {
+          // When auto-run-reflect is on, immediately run the reflection pipeline
+          // instead of waiting for an operator action on the row.
+          const { loadDaemonConfig: getLatestCfg } = await import('./config')
+          if (getLatestCfg().controlLevers.autoRunReflect === 'on') {
+            log('[reflect-detector] auto-run-reflect=on — running reflection automatically')
+            try {
+              const { loadRecentTaskCorpus } = await import('../lib/reflect-query')
+              const { runReflector, persistSuggestions } = await import('../lib/reflector')
+              const { closeReflectRecommendedRow: closeRow } = await import('../lib/self-evolve-trigger')
+              const { insertReflectionTask } = await import('../queue')
+              const { persistLastReflectRanAt } = await import('./config')
+              const corpus = await loadRecentTaskCorpus({ limit: 10 })
+              let proposalsRaised = 0
+              if (corpus.entries.length > 0) {
+                const reflResult = await runReflector(corpus)
+                if (reflResult.suggestions.length > 0) {
+                  const sourceTaskId = await insertReflectionTask(corpus.entries.length)
+                  await persistSuggestions(reflResult.suggestions, sourceTaskId)
+                  proposalsRaised = reflResult.suggestions.length
+                  viewStreamHub.broadcast('proposals')
+                  viewStreamHub.broadcast('action-queue')
+                }
+              }
+              await closeRow()
+              persistLastReflectRanAt(new Date().toISOString())
+              viewStreamHub.broadcast('action-queue')
+              log(`[reflect-detector] auto-reflect completed (proposals=${proposalsRaised})`)
+            } catch (reflectErr) {
+              log(`[reflect-detector] auto-reflect errored: ${(reflectErr as Error).message}`)
+            }
+          }
+        } else if (result.skipReason === 'auto-enqueue-on') {
           log(
-            '[reflect-detector] no row raised — selfEvolve.autoTrigger=true handles proposals directly via KPI-drift trigger',
+            '[reflect-detector] no row raised — selfEvolve.autoEnqueue=true routes mechanical suggestions directly to task queue',
           )
         } else {
           log(

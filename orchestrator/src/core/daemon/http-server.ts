@@ -401,7 +401,7 @@ export interface HttpServerDeps {
    */
   runReflect: () => Promise<{ proposalsRaised: number }>
   /**
-   * Set selfEvolve.autoTrigger=true in the daemon config (persisted to
+   * Set selfEvolve.autoEnqueue=true in the daemon config (persisted to
    * daemon.json), then close the open reflect-recommended action-queue row
    * so the level-trigger is immediately cleared.
    */
@@ -670,7 +670,7 @@ const handleEventsRequest = async (
  *   POST /actions/reject/:id     → reject a preview-gated task (→ failed)
  *   POST /actions/restart-daemon       → re-exec the daemon
  *   POST /actions/run-reflect          → run reflect flow + clear reflect-recommended row
- *   POST /actions/enable-auto-reflect  → set autoTrigger=true + clear reflect-recommended row
+ *   POST /actions/enable-auto-reflect  → set autoEnqueue=true + clear reflect-recommended row
  *   POST /actions/land-work/:id        → merge ahead commits onto integration branch
  *
  * The server uses an OS-assigned port (port 0). Callers discover the port via
@@ -2803,7 +2803,7 @@ export const startHttpServer = async (
       return
     }
 
-    // POST /actions/enable-auto-reflect — persist selfEvolve.autoTrigger=true
+    // POST /actions/enable-auto-reflect — persist selfEvolve.autoEnqueue=true
     // to daemon.json and clear the open reflect-recommended row so the
     // level-trigger is immediately cleared. Global op: no entity id.
     if (req.url === '/actions/enable-auto-reflect') {
