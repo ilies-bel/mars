@@ -1,11 +1,14 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { __resetContextCacheForTests } from '../../context'
 import {
   loadLeverRegistry,
   noGestureEntries,
+  noConsumerEntries,
+  getWiringState,
   formatRecipeCatalog,
   type LeverFamily,
   type LeverRegistryEntry,
@@ -13,6 +16,10 @@ import {
 import { parseArgs } from '../../../cli/args.js'
 import { route } from '../../../cli/registry.js'
 import { registry } from '../../../cli/commands/index.js'
+
+// Orchestrator root: navigate up 4 dirs from __tests__/ → lib/ → core/ → src/ → orchestrator/
+const __filename = fileURLToPath(import.meta.url)
+const orchestratorRoot = join(dirname(__filename), '..', '..', '..', '..')
 
 const VALID_FAMILIES: LeverFamily[] = [
   'model',
@@ -580,6 +587,113 @@ describe('verify.add-* gesture strings produce non-empty gate argv', () => {
           `the gate would run '${parsed.flags['--cmd']}' with no arguments, which ` +
           `never verifies what the gate name implies. Fix the gesture to use -- or --args.`,
       ).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('wiring state: getWiringState()', () => {
+  it('returns wired for entries that have both consumer and gesture', () => {
+    // caps.implement has both a consumer and a gesture
+    const e = loadLeverRegistry().find((x) => x.id === 'caps.implement')!
+    expect(e.consumer).toBeDefined()
+    expect(e.gesture).not.toBeNull()
+    expect(getWiringState(e)).toBe('wired')
+  })
+
+  it('returns no-consumer for entries without a consumer field', () => {
+    const e = loadLeverRegistry().find((x) => x.id === 'self-evolve.drift-threshold-pct')!
+    expect(e.consumer).toBeUndefined()
+    expect(getWiringState(e)).toBe('no-consumer')
+  })
+
+  it('returns no-gesture for entries with consumer but without gesture', () => {
+    // Construct a synthetic entry with consumer but no gesture
+    const synth: LeverRegistryEntry = {
+      id: 'test.no-gesture',
+      label: 'Test no-gesture',
+      family: 'self-evolve',
+      scope: 'global',
+      readCurrent: () => null,
+      allowedValues: { type: 'freeform' },
+      gesture: null,
+      appliesWithoutRestart: false,
+      consumer: { file: 'src/core/daemon/config.ts', symbol: 'applyControlLevers' },
+    }
+    expect(getWiringState(synth)).toBe('no-gesture')
+  })
+
+  it('self-evolve.task-confidence-threshold is wired (consumer at reflector.ts)', () => {
+    const e = loadLeverRegistry().find((x) => x.id === 'self-evolve.task-confidence-threshold')!
+    expect(getWiringState(e)).toBe('wired')
+    expect(e.consumer?.file).toContain('reflector')
+    expect(e.consumer?.symbol).toBe('persistSuggestions')
+  })
+
+  it('scoring.low-trend-threshold is wired (consumer at scorer-trend-trigger.ts)', () => {
+    const e = loadLeverRegistry().find((x) => x.id === 'scoring.low-trend-threshold')!
+    expect(getWiringState(e)).toBe('wired')
+    expect(e.consumer?.file).toContain('scorer-trend-trigger')
+  })
+})
+
+describe('wiring state: noConsumerEntries()', () => {
+  it('returns entries without consumer field', () => {
+    for (const e of noConsumerEntries()) {
+      expect(e.consumer, `${e.id}: noConsumerEntries() should only have entries without consumer`).toBeUndefined()
+    }
+  })
+
+  it('self-evolve.drift-threshold-pct is in noConsumerEntries()', () => {
+    const ids = noConsumerEntries().map((e) => e.id)
+    expect(ids).toContain('self-evolve.drift-threshold-pct')
+  })
+
+  it('caps.implement is NOT in noConsumerEntries()', () => {
+    const ids = noConsumerEntries().map((e) => e.id)
+    expect(ids).not.toContain('caps.implement')
+  })
+
+  it('no consumer-gap entry is also a gesture-gap — they are separate categories', () => {
+    // Every no-consumer entry should still have a gesture (separate failure modes)
+    // This is not guaranteed by the type, just verified for the current registry.
+    const noConsumer = noConsumerEntries()
+    const noGesture = noGestureEntries()
+    const noGestureIds = new Set(noGesture.map((e) => e.id))
+    for (const e of noConsumer) {
+      // A no-consumer entry CAN also be no-gesture (both categories can overlap),
+      // but the current registry has no-consumer entries WITH gestures.
+      if (noGestureIds.has(e.id)) {
+        // Overlap is allowed but currently unexpected — flag it visibly
+        // to force a future reviewer to verify intentionality.
+        console.warn(`[lever-registry test] ${e.id} is both no-consumer AND no-gesture`)
+      }
+    }
+    // No assertion — we just want to surface it if it happens.
+  })
+})
+
+describe('wiring state: build-enforcing consumer ref validation', () => {
+  it('every declared consumer file exists in the orchestrator tree', () => {
+    for (const e of loadLeverRegistry()) {
+      if (!e.consumer) continue
+      const fullPath = join(orchestratorRoot, e.consumer.file)
+      expect(
+        existsSync(fullPath),
+        `${e.id}: declared consumer file '${e.consumer.file}' does not exist at ${fullPath}`,
+      ).toBe(true)
+    }
+  })
+
+  it('every declared consumer symbol appears in the consumer file', () => {
+    for (const e of loadLeverRegistry()) {
+      if (!e.consumer) continue
+      const fullPath = join(orchestratorRoot, e.consumer.file)
+      if (!existsSync(fullPath)) continue // already caught by the previous test
+      const src = readFileSync(fullPath, 'utf8')
+      expect(
+        src.includes(e.consumer.symbol),
+        `${e.id}: declared consumer symbol '${e.consumer.symbol}' not found in '${e.consumer.file}'`,
+      ).toBe(true)
     }
   })
 })

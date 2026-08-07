@@ -20,7 +20,12 @@
  */
 
 import type { Command } from '../command'
-import { loadLeverRegistry, noGestureEntries } from '../../core/lib/lever-registry'
+import {
+  loadLeverRegistry,
+  noGestureEntries,
+  noConsumerEntries,
+  getWiringState,
+} from '../../core/lib/lever-registry'
 import type { CapQuerier } from '../../core/lib/lever-registry'
 import {
   readDaemonConfigFile,
@@ -40,6 +45,9 @@ const leverList: Command = {
     'changes it.',
     '',
     'No daemon connection required; values are read directly from config files.',
+    '',
+    'The wiring column shows: wired (a verified production consumer), no-gesture',
+    '(consumer exists but no CLI verb yet), or no-consumer (nothing reads it).',
   ].join('\n'),
   run: (_args, deps) => {
     const entries = loadLeverRegistry()
@@ -49,28 +57,43 @@ const leverList: Command = {
     const famW = Math.max(6, ...entries.map((e) => e.family.length))
     const scopeW = Math.max(5, ...entries.map((e) => e.scope.length))
     const curW = Math.max(7, ...entries.map((e) => (e.readCurrent() ?? '(unknown)').length))
+    const wiringW = Math.max(6, ...entries.map((e) => getWiringState(e).length))
 
     const pad = (s: string, w: number) => s.padEnd(w)
 
     deps.out(
-      `${pad('id', idW)}  ${pad('family', famW)}  ${pad('scope', scopeW)}  ${pad('current', curW)}  gesture`,
+      `${pad('id', idW)}  ${pad('family', famW)}  ${pad('scope', scopeW)}  ${pad('current', curW)}  ${pad('wiring', wiringW)}  gesture`,
     )
     deps.out(
-      `${'-'.repeat(idW)}  ${'-'.repeat(famW)}  ${'-'.repeat(scopeW)}  ${'-'.repeat(curW)}  ${'-------'}`,
+      `${'-'.repeat(idW)}  ${'-'.repeat(famW)}  ${'-'.repeat(scopeW)}  ${'-'.repeat(curW)}  ${'-'.repeat(wiringW)}  ${'-------'}`,
     )
 
     for (const e of entries) {
       const cur = e.readCurrent() ?? '(unknown)'
       const gesture = e.gesture ?? '(no gesture)'
-      deps.out(`${pad(e.id, idW)}  ${pad(e.family, famW)}  ${pad(e.scope, scopeW)}  ${pad(cur, curW)}  ${gesture}`)
+      const wiring = getWiringState(e)
+      deps.out(`${pad(e.id, idW)}  ${pad(e.family, famW)}  ${pad(e.scope, scopeW)}  ${pad(cur, curW)}  ${pad(wiring, wiringW)}  ${gesture}`)
     }
 
-    const gaps = noGestureEntries()
-    if (gaps.length > 0) {
-      deps.out('')
-      deps.out(
-        `${gaps.length} entr${gaps.length === 1 ? 'y' : 'ies'} lack a runtime gesture — run \`mars lever show <id>\` for details.`,
+    const gestureGaps = noGestureEntries()
+    const consumerGaps = noConsumerEntries()
+
+    const lines: string[] = []
+    if (gestureGaps.length > 0 || consumerGaps.length > 0) {
+      lines.push('')
+    }
+    if (gestureGaps.length > 0) {
+      lines.push(
+        `${gestureGaps.length} entr${gestureGaps.length === 1 ? 'y' : 'ies'} lack a runtime gesture — run \`mars lever show <id>\` for details.`,
       )
+    }
+    if (consumerGaps.length > 0) {
+      lines.push(
+        `${consumerGaps.length} entr${consumerGaps.length === 1 ? 'y' : 'ies'} ${consumerGaps.length === 1 ? 'has' : 'have'} no runtime consumer (no-consumer) — changing ${consumerGaps.length === 1 ? 'it' : 'them'} has no effect until wired.`,
+      )
+    }
+    for (const line of lines) {
+      deps.out(line)
     }
 
     return ok()
@@ -131,13 +154,26 @@ const leverShow: Command = {
       allowed = 'freeform'
     }
 
+    const wiring = getWiringState(entry)
+    const wiringLabel =
+      wiring === 'wired'
+        ? 'wired (verified production consumer)'
+        : wiring === 'no-gesture'
+          ? 'no-gesture (consumer exists, no CLI verb yet)'
+          : 'no-consumer (nothing reads this value at runtime)'
+
     deps.out(`id:          ${entry.id}`)
     deps.out(`label:       ${entry.label}`)
     deps.out(`family:      ${entry.family}`)
     deps.out(`scope:       ${entry.scope}`)
     deps.out(`current:     ${cur}`)
+    deps.out(`wiring:      ${wiringLabel}`)
     deps.out(`gesture:     ${entry.gesture ?? '(no gesture — gap for follow-up slice)'}`)
-    deps.out(`restart?:    ${entry.appliesWithoutRestart ? 'no' : 'yes (mars daemon reload or restart)'}`)
+    // Suppress restart? for no-consumer levers: the restart remedy is misleading
+    // when the lever has no effect at all, regardless of restart.
+    if (wiring !== 'no-consumer') {
+      deps.out(`restart?:    ${entry.appliesWithoutRestart ? 'no' : 'yes (mars daemon reload or restart)'}`)
+    }
     deps.out(`allowed:     ${allowed}`)
 
     if (entry.recipe) {

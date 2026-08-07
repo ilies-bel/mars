@@ -11,6 +11,13 @@
  * Levers with `gesture: null` are the documented gaps — readable from
  * `.mars/daemon.json` but not yet settable through any `mars` command. The
  * follow-up slice builds those gestures.
+ *
+ * Wiring state: each entry carries an optional `consumer` field pointing at
+ * the production file+symbol that reads the lever's value to alter runtime
+ * behaviour. Entries without a declared consumer render as `no-consumer` —
+ * meaning either the feature is not yet wired, or the lever's value is stored
+ * but nothing acts on it. The build-enforcing test in lever-registry.test.ts
+ * verifies every declared consumer reference actually exists in the codebase.
  */
 
 import {
@@ -36,6 +43,32 @@ export type LeverFamily =
   | 'task-spec'
 
 export type LeverScope = 'global' | 'per-workflow' | 'per-task'
+
+/**
+ * The wiring state of a lever — whether its value is actually read by
+ * production code to alter runtime behaviour.
+ *
+ * - `wired`       — a declared consumer exists and reads this value at runtime.
+ * - `no-gesture`  — a consumer exists but no CLI verb can set it yet.
+ * - `no-consumer` — no production code reads this lever's value; changes have
+ *                   no effect until the feature is wired.
+ */
+export type LeverWiringState = 'wired' | 'no-gesture' | 'no-consumer'
+
+/**
+ * A reference to the production code that reads a lever's value.
+ *
+ * `file` is relative to the orchestrator root (e.g. `src/core/daemon/server.ts`).
+ * `symbol` is the function name or export that reads the config value.
+ *
+ * The build-enforcing test in `lever-registry.test.ts` verifies that every
+ * declared consumer reference points to an existing file containing the named
+ * symbol. An entry whose declared consumer doesn't exist will fail the build.
+ */
+export interface LeverConsumerRef {
+  file: string
+  symbol: string
+}
 
 export interface AllowedEnum {
   type: 'enum'
@@ -124,6 +157,17 @@ export interface LeverRegistryEntry {
   /** Whether the change takes effect without `mars daemon reload` or restart. */
   appliesWithoutRestart: boolean
   /**
+   * The verified production consumer of this lever — the file and symbol that
+   * reads the lever's config value to alter runtime behaviour.
+   *
+   * When present, wiring state is `wired` (or `no-gesture` if `gesture` is
+   * null). When absent, wiring state is `no-consumer` — meaning nothing in
+   * production acts on this lever's value. The build-enforcing test verifies
+   * every declared reference actually exists; a phantom consumer ref fails the
+   * build immediately.
+   */
+  consumer?: LeverConsumerRef
+  /**
    * Present only for verify-family recipe levers. Used by
    * `formatRecipeCatalog` to build reflector prompts.
    */
@@ -143,6 +187,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'freeform' },
     gesture: 'mars worker add <name> --model <model>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/daemon/server.ts', symbol: 'startDaemon' },
   },
   {
     id: 'worker.effort',
@@ -153,6 +198,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['low', 'medium', 'high', 'xhigh', 'max'] },
     gesture: 'mars worker add <name> --effort <effort>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/daemon/server.ts', symbol: 'startDaemon' },
   },
 
   // ── provider ──────────────────────────────────────────────────────────────
@@ -171,6 +217,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['claude', 'codex', 'gemini'] },
     gesture: 'mars lever set provider.default <claude|codex|gemini>',
     appliesWithoutRestart: false,
+    consumer: { file: 'src/core/daemon/server.ts', symbol: 'startDaemon' },
   },
 
   // ── workflow ──────────────────────────────────────────────────────────────
@@ -183,6 +230,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'freeform' },
     gesture: 'mars task add --workflow <name>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/cli/commands/task.ts', symbol: 'taskAdd' },
   },
   {
     id: 'workflow.steps',
@@ -198,6 +246,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     // becomes dispatch-eligible.
     gesture: 'mars workflow author <name> --from <-|path>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/daemon/server.ts', symbol: 'startDaemon' },
   },
 
   // ── verify (recipes folded in from improvement-recipes.ts) ────────────────
@@ -210,6 +259,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'freeform' },
     gesture: 'mars verify add typecheck --cmd npx -- tsc --noEmit',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/lib/reflector.ts', symbol: 'buildPrompt' },
     recipe: {
       triggerPattern: 'Repo has TypeScript files but no typecheck gate',
       problem:
@@ -232,6 +282,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'freeform' },
     gesture: 'mars verify add test --cmd npm -- test',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/lib/reflector.ts', symbol: 'buildPrompt' },
     recipe: {
       triggerPattern: 'Repo has test files but no test gate',
       problem: 'Your repo has test files but no test gate. Add one to run tests on every task.',
@@ -253,6 +304,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'freeform' },
     gesture: 'mars verify add lint --cmd npx -- eslint .',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/lib/reflector.ts', symbol: 'buildPrompt' },
     recipe: {
       triggerPattern: 'Repo has a linter config but no lint gate',
       problem: 'Your repo has a linter config but no lint gate.',
@@ -274,6 +326,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'freeform' },
     gesture: 'mars verify add e2e --cmd npx -- playwright test',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/lib/reflector.ts', symbol: 'buildPrompt' },
     recipe: {
       triggerPattern: 'UI changes ship without automated browser verification',
       problem: 'UI changes ship without automated browser verification. Add Playwright E2E.',
@@ -299,6 +352,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'freeform' },
     gesture: 'mars verify add integration --cmd npm -- run test:integration',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/lib/reflector.ts', symbol: 'buildPrompt' },
     recipe: {
       triggerPattern: 'Repo has integration tests but no gate for them',
       problem: 'Your repo has integration tests but no gate for them.',
@@ -320,6 +374,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'freeform' },
     gesture: 'mars credentials set SSO_TOKEN MARS_SSO_TOKEN',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/lib/reflector.ts', symbol: 'buildPrompt' },
     recipe: {
       triggerPattern: 'E2E tests need authenticated flows',
       problem: 'E2E tests need authenticated flows. Set up SSO credential injection.',
@@ -352,6 +407,7 @@ const REGISTRY: LeverRegistryEntry[] = [
         return null
       }
     },
+    consumer: { file: 'src/core/daemon/server.ts', symbol: 'startDaemon' },
     readEffective: async (querier) => {
       try {
         const status = await querier.sendRequest({ op: 'status' }) as {
@@ -392,6 +448,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'range', min: 1 },
     gesture: 'mars daemon set-cap triage <n>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/daemon/server.ts', symbol: 'startDaemon' },
   },
   {
     id: 'caps.refine',
@@ -408,6 +465,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'range', min: 1 },
     gesture: 'mars daemon set-cap refine <n>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/daemon/server.ts', symbol: 'startDaemon' },
   },
   {
     id: 'caps.setup-install',
@@ -424,6 +482,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'range', min: 1 },
     gesture: 'mars daemon set-cap setup-install <n>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/daemon/server.ts', symbol: 'startDaemon' },
   },
   {
     id: 'caps.verify',
@@ -440,6 +499,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'range', min: 1 },
     gesture: 'mars daemon set-cap verify <n>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/daemon/server.ts', symbol: 'startDaemon' },
   },
 
   // ── steward autotune ──────────────────────────────────────────────────────
@@ -505,6 +565,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['on', 'off'] },
     gesture: 'mars operator set recovery <on|off>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/daemon/config.ts', symbol: 'applyControlLevers' },
   },
   {
     id: 'operator.dispatch',
@@ -524,6 +585,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['on', 'off'] },
     gesture: 'mars operator set dispatch <on|off>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/daemon/config.ts', symbol: 'applyControlLevers' },
   },
   {
     id: 'operator.scoring',
@@ -540,6 +602,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['on', 'off'] },
     gesture: 'mars operator set scoring <on|off>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/daemon/config.ts', symbol: 'applyControlLevers' },
   },
   {
     id: 'operator.memory-capture',
@@ -556,6 +619,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['on', 'off'] },
     gesture: 'mars operator set memory-capture <on|off>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/daemon/config.ts', symbol: 'applyControlLevers' },
   },
   {
     id: 'operator.auto-run-reflect',
@@ -572,6 +636,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['on', 'off'] },
     gesture: 'mars operator set auto-run-reflect <on|off>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/daemon/config.ts', symbol: 'applyControlLevers' },
   },
 
   // ── budget ────────────────────────────────────────────────────────────────
@@ -592,6 +657,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'freeform' },
     gesture: 'mars operator set budget-window <duration>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/lib/spend-meter.ts', symbol: 'computeBudgetStatus' },
   },
   {
     id: 'budget.window-tokens',
@@ -610,6 +676,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'range', min: 1 },
     gesture: 'mars operator set budget-window-tokens <n>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/lib/spend-meter.ts', symbol: 'computeBudgetStatus' },
   },
   {
     id: 'budget.arc-tokens',
@@ -628,6 +695,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'range', min: 1 },
     gesture: 'mars operator set budget-arc-tokens <n>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/lib/spend-meter.ts', symbol: 'computeBudgetStatus' },
   },
 
   // ── scoring ───────────────────────────────────────────────────────────────
@@ -646,6 +714,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['true', 'false'] },
     gesture: 'mars lever set scoring.auto-trigger <true|false>',
     appliesWithoutRestart: false,
+    consumer: { file: 'src/core/lib/scorer-trend-trigger.ts', symbol: 'runScorerLowTrendTrigger' },
   },
   {
     id: 'scoring.low-trend-threshold',
@@ -662,6 +731,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'range', min: 0, max: 1 },
     gesture: 'mars lever set scoring.low-trend-threshold <0–1>',
     appliesWithoutRestart: false,
+    consumer: { file: 'src/core/lib/scorer-trend-trigger.ts', symbol: 'runScorerLowTrendTrigger' },
   },
   {
     id: 'scoring.low-trend-window',
@@ -678,6 +748,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'range', min: 1 },
     gesture: 'mars lever set scoring.low-trend-window <n>',
     appliesWithoutRestart: false,
+    consumer: { file: 'src/core/lib/scorer-trend-trigger.ts', symbol: 'runScorerLowTrendTrigger' },
   },
   {
     id: 'scorer.acceptance',
@@ -688,6 +759,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'freeform' },
     gesture: 'mars scorer accept <id>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/core/lib/scorer-runtime.ts', symbol: 'runScorersForTask' },
   },
 
   // ── self-evolve ───────────────────────────────────────────────────────────
@@ -706,6 +778,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['true', 'false'] },
     gesture: 'mars lever set self-evolve.auto-enqueue <true|false>',
     appliesWithoutRestart: false,
+    consumer: { file: 'src/core/lib/reflector.ts', symbol: 'persistSuggestions' },
   },
   {
     id: 'self-evolve.drift-threshold-pct',
@@ -722,6 +795,12 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'range', min: 0 },
     gesture: 'mars lever set self-evolve.drift-threshold-pct <n>',
     appliesWithoutRestart: false,
+    // No consumer declared: this value is stored in daemon.json and read by
+    // the config loader, but no production subsystem binds a runtime decision
+    // to it yet. mars-e78e0004 decides whether to wire it or cut it.
+    // NOTE: self-evolve-trigger.ts does reference driftThresholdPct; the brief
+    // author classified this as no-consumer, so we follow suit until
+    // mars-e78e0004 resolves the wiring decision.
   },
   {
     id: 'self-evolve.task-confidence-threshold',
@@ -738,6 +817,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'range', min: 0, max: 1 },
     gesture: 'mars lever set self-evolve.task-confidence-threshold <0–1>',
     appliesWithoutRestart: false,
+    consumer: { file: 'src/core/lib/reflector.ts', symbol: 'persistSuggestions' },
   },
 
   // ── task-spec ─────────────────────────────────────────────────────────────
@@ -750,6 +830,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'freeform' },
     gesture: 'mars task add --files <path>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/cli/commands/task.ts', symbol: 'taskAdd' },
   },
   {
     id: 'task-spec.verify',
@@ -760,6 +841,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'freeform' },
     gesture: 'mars task add --verify "<cmd>"',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/cli/commands/task.ts', symbol: 'taskAdd' },
   },
   {
     id: 'task-spec.done',
@@ -770,6 +852,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'freeform' },
     gesture: 'mars task add --done "<criterion>"',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/cli/commands/task.ts', symbol: 'taskAdd' },
   },
   {
     id: 'task-spec.merge',
@@ -780,6 +863,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['auto', 'gated'] },
     gesture: 'mars task add --merge auto|gated',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/cli/commands/task.ts', symbol: 'taskAdd' },
   },
   {
     id: 'task-spec.priority',
@@ -790,6 +874,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'range', min: 0, max: 3 },
     gesture: 'mars task add --priority <0-3>',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/cli/commands/task.ts', symbol: 'taskAdd' },
   },
   {
     id: 'task-spec.tag',
@@ -800,6 +885,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['coder', 'writer'] },
     gesture: 'mars task add --tag coder|writer',
     appliesWithoutRestart: true,
+    consumer: { file: 'src/cli/commands/task.ts', symbol: 'taskAdd' },
   },
 ]
 
@@ -819,6 +905,32 @@ export function loadLeverRegistry(): LeverRegistryEntry[] {
  */
 export function noGestureEntries(): LeverRegistryEntry[] {
   return REGISTRY.filter((e) => e.gesture === null)
+}
+
+/**
+ * Returns registry entries that have no declared consumer — levers whose
+ * config value is stored but not yet acted on by any production subsystem.
+ *
+ * An entry without a `consumer` field is `no-consumer`: changing its value
+ * has no runtime effect until the feature is wired. The count of these entries
+ * is reported separately from gesture-gaps in the `mars lever list` footer.
+ */
+export function noConsumerEntries(): LeverRegistryEntry[] {
+  return REGISTRY.filter((e) => !e.consumer)
+}
+
+/**
+ * Derives the wiring state of a lever entry from its declared consumer and
+ * gesture.
+ *
+ * - `wired`       — consumer declared and gesture present.
+ * - `no-gesture`  — consumer declared but no CLI verb to set it.
+ * - `no-consumer` — no production code declared as reading this lever's value.
+ */
+export function getWiringState(e: LeverRegistryEntry): LeverWiringState {
+  if (!e.consumer) return 'no-consumer'
+  if (!e.gesture) return 'no-gesture'
+  return 'wired'
 }
 
 /**

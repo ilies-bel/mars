@@ -212,3 +212,98 @@ describe('lever show — non-caps levers use readCurrent() as before', () => {
     expect(currentLine).not.toMatch(/persisted.only/i)
   })
 })
+
+// ── wiring state ────────────────────────────────────────────────────────────
+
+describe('lever show — wiring state line', () => {
+  it('caps.implement shows wired (verified production consumer)', async () => {
+    writeFileSync(
+      resolve(repo, '.mars', 'daemon.json'),
+      JSON.stringify({ caps: { implement: 5 } }),
+    )
+    const daemon = await makeFake({ implementCap: { configured: 5, effective: 5, reason: null } })
+
+    const result = await run(['lever', 'show', 'caps.implement'], daemon)
+
+    expect(result.code).toBe(0)
+    const wiringLine = result.out.find((l) => l.startsWith('wiring:'))
+    expect(wiringLine).toBeDefined()
+    expect(wiringLine).toContain('wired')
+    // Must include the restart? line since it's wired
+    const restartLine = result.out.find((l) => l.startsWith('restart?:'))
+    expect(restartLine).toBeDefined()
+  })
+
+  it('self-evolve.drift-threshold-pct shows no-consumer and omits restart? line', async () => {
+    writeFileSync(
+      resolve(repo, '.mars', 'daemon.json'),
+      JSON.stringify({ selfEvolve: { driftThresholdPct: 10 } }),
+    )
+    const daemon = await makeFake()
+
+    const result = await run(['lever', 'show', 'self-evolve.drift-threshold-pct'], daemon)
+
+    expect(result.code).toBe(0)
+    const wiringLine = result.out.find((l) => l.startsWith('wiring:'))
+    expect(wiringLine).toBeDefined()
+    expect(wiringLine).toContain('no-consumer')
+    // restart? line must be suppressed for no-consumer levers
+    const restartLine = result.out.find((l) => l.startsWith('restart?:'))
+    expect(restartLine).toBeUndefined()
+  })
+})
+
+// ── lever group command usage fallback ───────────────────────────────────────
+
+describe('lever group command', () => {
+  it('mars lever (no subcommand) prints usage to stderr and exits with code 2', async () => {
+    const daemon = await makeFake()
+    const result = await run(['lever'], daemon)
+
+    expect(result.code).toBe(2)
+    expect(result.err.join('\n')).toContain('usage: mars lever')
+    expect(result.err.join('\n')).toMatch(/list|show|set/)
+  })
+})
+
+// ── lever list wiring column ──────────────────────────────────────────────────
+
+describe('lever list — wiring column', () => {
+  it('header row includes a wiring column', async () => {
+    const daemon = await makeFake()
+    const result = await run(['lever', 'list'], daemon)
+
+    expect(result.code).toBe(0)
+    const header = result.out[0]
+    expect(header).toContain('wiring')
+  })
+
+  it('caps.implement row shows wired state', async () => {
+    const daemon = await makeFake()
+    const result = await run(['lever', 'list'], daemon)
+
+    const capsLine = result.out.find((l) => l.includes('caps.implement'))
+    expect(capsLine).toBeDefined()
+    expect(capsLine).toContain('wired')
+  })
+
+  it('self-evolve.drift-threshold-pct row shows no-consumer state', async () => {
+    const daemon = await makeFake()
+    const result = await run(['lever', 'list'], daemon)
+
+    const driftLine = result.out.find((l) => l.includes('self-evolve.drift-threshold-pct'))
+    expect(driftLine).toBeDefined()
+    expect(driftLine).toContain('no-consumer')
+  })
+
+  it('footer reports consumer-gaps separately from gesture-gaps', async () => {
+    const daemon = await makeFake()
+    const result = await run(['lever', 'list'], daemon)
+
+    const output = result.out.join('\n')
+    // Consumer-gap footer line must appear (there is at least one no-consumer lever)
+    expect(output).toContain('no runtime consumer')
+    // Gesture-gap footer line must NOT appear (all levers have gestures)
+    expect(output).not.toContain('lack a runtime gesture')
+  })
+})
