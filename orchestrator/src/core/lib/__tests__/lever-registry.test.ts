@@ -11,6 +11,8 @@ import {
   type LeverRegistryEntry,
 } from '../lever-registry.js'
 import { parseArgs } from '../../../cli/args.js'
+import { route } from '../../../cli/registry.js'
+import { registry } from '../../../cli/commands/index.js'
 
 const VALID_FAMILIES: LeverFamily[] = [
   'model',
@@ -523,6 +525,95 @@ describe('verify.add-* gesture strings produce non-empty gate argv', () => {
           `the gate would run '${parsed.flags['--cmd']}' with no arguments, which ` +
           `never verifies what the gate name implies. Fix the gesture to use -- or --args.`,
       ).toBeGreaterThan(0)
+    }
+  })
+})
+
+// ─── Gesture walker ────────────────────────────────────────────────────────────
+//
+// For every lever with a non-null gesture, verify:
+//   1. The gesture parses without throwing.
+//   2. The first 1–2 positionals route to a known command.
+//   3. Every flag explicitly listed in the gesture (outside optional [...] brackets)
+//      is present in the parsed result — i.e. no required flag is silently dropped.
+//
+// This is the guard that prevents a whole class of bug from recurring: an
+// advertised gesture that fails immediately when run verbatim because a required
+// flag is missing or because the command path does not exist.
+
+describe('lever gesture walker — every gesture routes to a known CLI command', () => {
+  /**
+   * Tokenize a gesture string (with `mars ` prefix stripped and optional
+   * `[...]` sections removed) into the argv that parseArgs expects.
+   *
+   * The gesture may include `<placeholder>` tokens for positional arguments and
+   * `--flag <placeholder>` pairs for flag values. Both forms survive the
+   * tokenization as-is: parseArgs treats unknown-looking tokens as positionals,
+   * and a `--flag` in FLAGS_WITH_VALUES will consume the next token as its value
+   * regardless of its content.
+   */
+  function tokenizeGesture(gesture: string): string[] {
+    // Strip the leading 'mars ' prefix
+    const withoutMars = gesture.replace(/^mars\s+/, '')
+    // Remove optional sections enclosed in [...] so they don't introduce
+    // unrecognised flags that parseArgs would choke on.
+    const withoutOptionals = withoutMars.replace(/\[.*?\]/g, '').trim()
+    // Split on whitespace and drop empty tokens
+    return withoutOptionals.split(/\s+/).filter(Boolean)
+  }
+
+  it('every lever gesture routes to a known command', () => {
+    const levers = loadLeverRegistry()
+    const withGesture = levers.filter((e) => e.gesture !== null)
+
+    expect(withGesture.length).toBeGreaterThan(0)
+
+    for (const lever of withGesture) {
+      const tokens = tokenizeGesture(lever.gesture!)
+
+      // parseArgs must not throw
+      let parsed: ReturnType<typeof parseArgs>
+      expect(
+        () => { parsed = parseArgs(tokens) },
+        `lever '${lever.id}' gesture '${lever.gesture}' threw during parseArgs`,
+      ).not.toThrow()
+      parsed = parseArgs(tokens)
+
+      // The positionals must resolve to a known command
+      const match = route(registry, parsed.positional)
+      expect(
+        match,
+        `lever '${lever.id}' gesture '${lever.gesture}' does not route to any known CLI command (positionals: ${JSON.stringify(parsed.positional)})`,
+      ).not.toBeNull()
+    }
+  })
+
+  it('every flag explicitly listed in a gesture is present after parsing', () => {
+    const levers = loadLeverRegistry()
+
+    for (const lever of levers) {
+      if (!lever.gesture) continue
+
+      const tokens = tokenizeGesture(lever.gesture)
+      const parsed = parseArgs(tokens)
+
+      // Collect flag tokens from the tokenized gesture (starts with '--').
+      // Stop at the bare '--' separator: everything after it is forwarded to an
+      // external command (e.g. `--cmd npx -- tsc --noEmit`) and is not a Mars
+      // CLI flag.
+      const doubleDashIdx = tokens.indexOf('--')
+      const flagRegion = doubleDashIdx === -1 ? tokens : tokens.slice(0, doubleDashIdx)
+      const explicitFlags = flagRegion.filter((t) => t.startsWith('--'))
+
+      for (const flag of explicitFlags) {
+        const inSingle = parsed.flags[flag] !== undefined
+        const inMulti =
+          parsed.multiFlags[flag] !== undefined && parsed.multiFlags[flag].length > 0
+        expect(
+          inSingle || inMulti,
+          `lever '${lever.id}' gesture '${lever.gesture}' lists flag '${flag}' but it was not parsed — the flag or its value may be missing from the gesture string`,
+        ).toBe(true)
+      }
     }
   })
 })

@@ -185,10 +185,11 @@ const REGISTRY: LeverRegistryEntry[] = [
     readCurrent: () => '(see .mars/workflows/*.js)',
     allowedValues: { type: 'freeform' },
     // Workflow step definitions live in .mars/workflows/<name>.js. The
-    // `mars workflow author <name>` command creates or revises a workflow
-    // definition as an agent-authored draft, which must then be approved with
-    // `mars workflow approve <name>` before it becomes dispatch-eligible.
-    gesture: 'mars workflow author <name>',
+    // `mars workflow author <name> --from <-|path>` command creates or revises
+    // a workflow definition as an agent-authored draft (body via stdin or file),
+    // which must then be approved with `mars workflow approve <name>` before it
+    // becomes dispatch-eligible.
+    gesture: 'mars workflow author <name> --from <-|path>',
     appliesWithoutRestart: true,
   },
 
@@ -275,7 +276,7 @@ const REGISTRY: LeverRegistryEntry[] = [
         'Install @playwright/test',
         'Create e2e/ with smoke test',
         'Configure a live dev server in the workflow environment',
-        'Set up credentials: mars credentials set SSO_TOKEN SSO_TOKEN_ENV',
+        'Set up credentials: mars credentials set SSO_TOKEN MARS_SSO_TOKEN',
         'Add gate: mars verify add e2e --cmd npx --args "playwright test"',
       ],
       verifyGate: { name: 'e2e', cmd: 'npx', args: ['playwright', 'test'] },
@@ -310,16 +311,17 @@ const REGISTRY: LeverRegistryEntry[] = [
     scope: 'global',
     readCurrent: () => '(see mars credentials list)',
     allowedValues: { type: 'freeform' },
-    gesture: 'mars credentials set SSO_TOKEN <your-token>',
+    gesture: 'mars credentials set SSO_TOKEN MARS_SSO_TOKEN',
     appliesWithoutRestart: true,
     recipe: {
       triggerPattern: 'E2E tests need authenticated flows',
       problem: 'E2E tests need authenticated flows. Set up SSO credential injection.',
       solution:
-        'Use `mars credentials set` to store SSO tokens and inject them into E2E test runs.',
+        'Use `mars credentials set` to register the env-var name that holds the SSO token. The secret itself lives in your shell environment, not in Mars.',
       setupSteps: [
-        'Identify the env var your app reads for the SSO token (e.g. SSO_TOKEN)',
-        'Store it: mars credentials set SSO_TOKEN <your-token>',
+        'Identify the env var your app reads for the SSO token (e.g. MARS_SSO_TOKEN)',
+        'Register the credential name→env-var mapping: mars credentials set SSO_TOKEN MARS_SSO_TOKEN',
+        'Export the actual secret in your shell or CI environment: export MARS_SSO_TOKEN=<your-token>',
         'Create an auth state file (e.g. e2e/auth.json) that Playwright loads via `storageState`',
         'Add a global setup script that reads the credential and writes auth state before tests run',
         'Reference auth state in playwright.config.ts: `use: { storageState: "e2e/auth.json" }`',

@@ -16,6 +16,9 @@ import {
 } from '../../core/lib/credential-store'
 import type { Command } from '../command'
 
+/** Pattern for a valid POSIX environment-variable name. */
+const ENV_VAR_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+
 const credentialsSet: Command = {
   path: 'credentials set',
   summary: 'register or update a credential name→env-var mapping',
@@ -30,6 +33,16 @@ const credentialsSet: Command = {
     }
     if (!envVar) {
       deps.err('usage: mars credentials set <name> <env-var> [--description <desc>]')
+      return { code: 2 }
+    }
+
+    if (!ENV_VAR_RE.test(envVar)) {
+      deps.err(
+        `error: '${envVar}' is not a valid environment-variable name (expected [A-Za-z_][A-Za-z0-9_]*)`,
+      )
+      deps.err(
+        'Mars stores only the variable name, not the secret itself — supply the actual value via your shell environment.',
+      )
       return { code: 2 }
     }
 

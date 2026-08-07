@@ -330,3 +330,79 @@ describe('mars credentials remove — unknown name', () => {
     expect(r.err).toHaveLength(0)
   })
 })
+
+// ---------------------------------------------------------------------------
+// 13. credentials set — invalid env-var identifier
+// ---------------------------------------------------------------------------
+
+describe('mars credentials set — invalid env-var identifier', () => {
+  it('exits non-zero and persists nothing when env-var contains a hyphen', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['credentials', 'set', 'sso-token', 'pretend-secret-value-abc123'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).not.toBe(0)
+    const errText = r.err.join('\n')
+    expect(errText.length).toBeGreaterThan(0)
+    expect(errText).toContain('pretend-secret-value-abc123')
+
+    // Should persist nothing
+    const listR = await run(['credentials', 'list'], { store, ctx, daemon })
+    expect(listR.out.join('\n')).toContain('no credentials configured')
+  })
+
+  it('error message explains that Mars stores only the variable name', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['credentials', 'set', 'sso-token', 'my-secret-value'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).not.toBe(0)
+    const errText = r.err.join('\n')
+    expect(errText.toLowerCase()).toContain('variable name')
+  })
+
+  it('rejects an env-var starting with a digit', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['credentials', 'set', 'sso-token', '1INVALID_VAR'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).not.toBe(0)
+  })
+
+  it('accepts a valid POSIX env-var identifier', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['credentials', 'set', 'sso-token', 'MARS_SSO_TOKEN'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).toBe(0)
+    expect(r.out.join('\n')).toContain('MARS_SSO_TOKEN')
+  })
+
+  it('accepts an env-var starting with an underscore', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['credentials', 'set', 'sso-token', '_PRIVATE_VAR'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).toBe(0)
+  })
+})
