@@ -222,4 +222,39 @@ describe('reflector persist dedup', () => {
     // But no new row was created
     expect(await countProposals()).toBe(1)
   })
+
+  it('applyVerdicts writes back a non-null targetId onto each saved suggestion', async () => {
+    const { applyVerdicts } = await import('../reflector')
+
+    const leverSuggestion = {
+      title: 'Tune workflow.steps to run acceptance commands',
+      prompt: 'Run exact acceptance commands with preserved exit codes. Save your work.',
+      rationale: 'Verify output was absent on several tasks',
+      rootCauseKey: 'verify_output_absent',
+      affectedTaskIds: ['task-a'],
+      frequency: 1,
+      confidence: 0.9,
+      kind: 'architectural' as const,
+      verdict: 'save' as const,
+      targetId: null,
+      dupOf: null,
+      outcome: {
+        type: 'lever' as const,
+        lever: {
+          id: 'workflow.steps',
+          currentValue: 'Code sessions may use filtered local checks.',
+          proposedValue: 'Run exact acceptance commands with preserved exit codes.',
+          gesture: 'mars workflow author <name>',
+        },
+      },
+    }
+
+    const result = await applyVerdicts([leverSuggestion], 'src-task-lever')
+    expect(result.saved).toBe(1)
+    // The suggestion object should have a non-null targetId after persistence.
+    expect(result.savedSuggestions[0]?.targetId).not.toBeNull()
+    expect(typeof result.savedSuggestions[0]?.targetId).toBe('string')
+    // The proposal exists in the store and its id matches the suggestion's targetId.
+    expect(await countProposals()).toBe(1)
+  })
 })

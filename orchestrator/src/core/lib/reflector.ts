@@ -650,8 +650,13 @@ export const runReflector = async (
  *
  * Called from both persistSuggestions (token-level reflection) and
  * applyVerdicts (deep-reflection save path), which justifies the extraction.
+ *
+ * Returns the proposal id that was created or found (the existing id when
+ * fingerprint dedup merged the suggestion into an already-open draft). Returns
+ * null only for the dedup merge path where notes were appended but no new row
+ * was created — the existing proposal's id is still returned in that case.
  */
-const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<void> => {
+const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<string | null> => {
   // Build an outcome block for the proposal so `mars proposal show <id>`
   // gives the operator enough context to act without opening the code.
   const registry = loadLeverRegistry()
@@ -685,9 +690,9 @@ const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<void> => {
       if (parts.length > 0) {
         await appendProposalNotes(existing.id, parts.join('\n'))
       }
-      return
+      return existing.id
     }
-    await createProposal(s.title, {
+    const proposal = await createProposal(s.title, {
       source: 'reflection',
       author: { kind: 'agent', name: 'reflector' },
       solution: s.prompt,
@@ -695,15 +700,16 @@ const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<void> => {
       fingerprint,
       suggestionOutcome: s.outcome,
     })
-    return
+    return proposal.id
   }
-  await createProposal(s.title, {
+  const proposal = await createProposal(s.title, {
     source: 'reflection',
     author: { kind: 'agent', name: 'reflector' },
     solution: s.prompt,
     notes,
     suggestionOutcome: s.outcome,
   })
+  return proposal.id
 }
 
 export const persistSuggestions = async (
@@ -794,8 +800,11 @@ export const applyVerdicts = async (
     }
     // Route through the same fingerprint dedup as persistSuggestions so that
     // deep-reflection 'save' verdicts also merge into existing open drafts
-    // rather than creating duplicates.
-    await persistOneSuggestion(s)
+    // rather than creating duplicates. Write the created/found proposal id back
+    // onto the suggestion so callers (and the serialised report on disk) can link
+    // the suggestion to its proposal.
+    const proposalId = await persistOneSuggestion(s)
+    s.targetId = proposalId
     saved += 1
     savedSuggestions.push(s)
   }

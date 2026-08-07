@@ -17,7 +17,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ReflectionsPage } from './ReflectionsPage'
+import { ReflectionsPage, ReflectionDetailView } from './ReflectionsPage'
 import type { DeepReflectionsListResponse, DeepReflectionDetail } from '@/shared/api'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -527,5 +527,134 @@ describe('ReflectionsPage', () => {
     expect(serverSource).toContain('/api/deep-reflections')
     // Detail route (longer path, must also be handled)
     expect(serverSource).toContain('/api/deep-reflections/')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Lever binding section — direct ReflectionDetailView tests
+//
+// These test the new "LEVER CHANGES — WHAT YOU CAN TUNE NOW" section added to
+// fix mars-46fb20fd. ReflectionDetailView is rendered directly so the tests do
+// not need useQuery/useHashRoute mocking.
+// ---------------------------------------------------------------------------
+
+describe('ReflectionDetailView — lever bindings (mars-46fb20fd)', () => {
+  const baseDetail = (
+    suggestions: NonNullable<DeepReflectionDetail['report']>['suggestions'],
+    extraOverrides: Partial<DeepReflectionDetail> = {},
+  ): DeepReflectionDetail => ({
+    originId: 'test-origin',
+    recordedAt: '2026-01-01T00:00:00.000Z',
+    status: 'complete',
+    totalToolCalls: 0,
+    dissonantCallCount: 0,
+    verifyMismatchCount: 0,
+    thrashingPatternCount: 0,
+    verdictResult: { saved: 1, absorbed: 0, dropped: 0 },
+    sourceTaskId: null,
+    autoRunReflect: 'on',
+    autoEnqueue: false,
+    report: {
+      summary: 'Test summary',
+      rootCause: 'Test root cause',
+      toolCallStats: { total: 0, byName: {} },
+      dissonantCalls: [],
+      verifyMismatch: null,
+      verifyMismatches: [],
+      thrashingPatterns: [],
+      suggestions,
+    },
+    ...extraOverrides,
+  })
+
+  const leverSuggestion = (targetId: string | null = null) => ({
+    title: 'Tune workflow.steps verify commands',
+    prompt: 'Run exact acceptance commands. Save your work.',
+    rationale: 'Verify output was absent on several tasks',
+    verdict: 'save',
+    targetId,
+    outcome: {
+      type: 'lever' as const,
+      lever: {
+        id: 'workflow.steps',
+        family: 'workflow',
+        currentValue: 'Code sessions may use filtered local checks.',
+        proposedValue: 'Run exact acceptance commands with preserved exit codes.',
+        gesture: 'mars workflow author <name>',
+      },
+    },
+  })
+
+  it('renders the lever-changes section when a lever suggestion is present', () => {
+    const html = renderToStaticMarkup(
+      <ReflectionDetailView detail={baseDetail([leverSuggestion()])} />,
+    )
+    expect(html).toContain('data-testid="lever-changes-section"')
+  })
+
+  it('shows the lever id even when targetId is null', () => {
+    const html = renderToStaticMarkup(
+      <ReflectionDetailView detail={baseDetail([leverSuggestion(null)])} />,
+    )
+    expect(html).toContain('data-testid="lever-change-id-0"')
+    expect(html).toContain('workflow.steps')
+  })
+
+  it('shows the proposed value even when targetId is null', () => {
+    const html = renderToStaticMarkup(
+      <ReflectionDetailView detail={baseDetail([leverSuggestion(null)])} />,
+    )
+    expect(html).toContain('Run exact acceptance commands with preserved exit codes.')
+  })
+
+  it('shows the gesture as copyable text even when targetId is null', () => {
+    const html = renderToStaticMarkup(
+      <ReflectionDetailView detail={baseDetail([leverSuggestion(null)])} />,
+    )
+    expect(html).toContain('data-testid="lever-change-gesture-0"')
+    // < and > are HTML-escaped in renderToStaticMarkup
+    expect(html).toContain('mars workflow author')
+  })
+
+  it('shows a proposal link when targetId is non-null', () => {
+    const html = renderToStaticMarkup(
+      <ReflectionDetailView detail={baseDetail([leverSuggestion('abc-tune-workflow-steps')])} />,
+    )
+    expect(html).toContain('abc-tune-workflow-steps')
+    expect(html).toContain('data-testid="lever-change-id-0"')
+  })
+
+  it('does not show a proposal link when targetId is null', () => {
+    const html = renderToStaticMarkup(
+      <ReflectionDetailView detail={baseDetail([leverSuggestion(null)])} />,
+    )
+    // No "→ proposal" link text in the lever change card
+    expect(html).not.toContain('→ proposal')
+  })
+
+  it('does not show lever-changes section when there are no lever suggestions', () => {
+    const html = renderToStaticMarkup(
+      <ReflectionDetailView
+        detail={baseDetail([
+          {
+            title: 'Add a new knob',
+            prompt: 'Build the new lever. Save your work.',
+            rationale: 'No lever exists for this control',
+            verdict: 'save',
+            targetId: null,
+            outcome: {
+              type: 'leverGap' as const,
+              leverGap: {
+                proposedLeverId: 'cache.warmup-policy',
+                family: 'workflow',
+                whatItWouldControl: 'cache warm-up strategy on the code step',
+              },
+            },
+          },
+        ])}
+      />
+    )
+    expect(html).not.toContain('data-testid="lever-changes-section"')
+    expect(html).toContain('data-testid="lever-gaps-section"')
   })
 })

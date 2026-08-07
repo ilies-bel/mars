@@ -278,20 +278,27 @@ const DissonantCallCard = ({ call, index }: DissonantCallCardProps) => (
   </div>
 )
 
-interface ReflectionDetailViewProps {
+export interface ReflectionDetailViewProps {
   detail: DeepReflectionDetail
 }
 
-const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
+export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
   const sortedCalls = detail.report ? sortBySeverity(detail.report.dissonantCalls) : []
   const byNameEntries: Array<[string, number]> = detail.report
     ? (Object.entries(detail.report.toolCallStats.byName) as Array<[string, number]>)
         .sort(([, a], [, b]) => b - a)
     : []
 
+  // Saved proposals with a proposal link — shown in "Proposals Filed" for non-lever suggestions.
   const savedSuggestions = detail.report?.suggestions.filter(
-    (s) => s.verdict === 'save' && s.targetId,
+    (s) => s.verdict === 'save' && s.targetId && s.outcome?.type !== 'lever',
   ) ?? []
+
+  // Lever bindings — rendered regardless of targetId; targetId only adds a proposal link.
+  const leverBindings = (detail.report?.suggestions ?? [])
+    .filter((s): s is typeof s & { outcome: NonNullable<typeof s.outcome> & { type: 'lever' } } =>
+      s.outcome != null && s.outcome.type === 'lever'
+    )
 
   // Aggregate lever gaps across all suggestions in this arc (not just saved ones).
   const leverGaps = (detail.report?.suggestions ?? [])
@@ -469,6 +476,51 @@ const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
                     <OutcomeTag outcome={s.outcome as SuggestionOutcome} />
                   </div>
                 ))}
+              </div>
+            </section>
+          )}
+
+          {/* Lever Changes — knobs you can tune right now */}
+          {leverBindings.length > 0 && (
+            <section data-testid="lever-changes-section">
+              <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+                Lever Changes — what you can tune now ({leverBindings.length})
+              </h3>
+              <div className="flex flex-col gap-2">
+                {leverBindings.map((s, i) => {
+                  const lever = (s.outcome as { type: 'lever'; lever: { id: string; family: string; currentValue: string | null; proposedValue: string; gesture: string | null } }).lever
+                  return (
+                    <div
+                      key={i}
+                      data-testid={`lever-change-${i}`}
+                      className="border border-primary/30 bg-primary/5 p-2 font-mono text-[11px]"
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <span data-testid={`lever-change-id-${i}`} className="text-primary font-semibold">{lever.id}</span>
+                        <span className="text-muted-foreground text-[9px] uppercase">{lever.family}</span>
+                        {s.targetId && (
+                          <a
+                            href={proposalHash(s.targetId, 'reflections')}
+                            className="ml-auto text-[10px] text-muted-foreground hover:text-primary transition-colors"
+                          >
+                            → proposal {s.targetId}
+                          </a>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 text-[10px] mt-1">
+                        <span className="text-muted-foreground">{lever.currentValue ?? '(unknown)'}</span>
+                        <span className="text-muted-foreground">→</span>
+                        <span data-testid={`lever-change-proposed-${i}`} className="text-foreground">{lever.proposedValue}</span>
+                      </div>
+                      {lever.gesture && (
+                        <div className="mt-2 border-t border-primary/10 pt-2">
+                          <span className="text-[9px] uppercase tracking-wide text-muted-foreground">Run: </span>
+                          <code data-testid={`lever-change-gesture-${i}`} className="text-primary select-all">{lever.gesture}</code>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </section>
           )}
