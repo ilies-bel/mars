@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { spawnSync, execFileSync, type SpawnSyncReturns } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer, type AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -105,6 +106,35 @@ describe('mars continue — exits promptly (no-hang regression)', () => {
     // status is null only when spawnSync's timeout fired — the process hung.
     expect(result.status).not.toBeNull()
     // Non-zero: daemon unavailable → sendRequest throws → CLI exits 1.
+    expect(result.status).not.toBe(0)
+  })
+
+  it('exits within the timeout even when emitCliInvocationTrace faces a stalled DB', async () => {
+    // Root-cause regression test: before connectionTimeoutMillis: 5_000 was added
+    // to makeEmbeddedBackend (db.ts), pool.connect() waited indefinitely when
+    // PostgreSQL was at max connections. This is exactly what the fake server below
+    // simulates — it accepts the TCP connection but never sends the Postgres auth
+    // response. Without the fix, the CLI hangs past spawnSync's 15 s timeout and
+    // spawnSync returns { status: null }, failing the assertion.
+    //
+    // The test only exercises emitCliInvocationTrace (the daemon is absent, so
+    // sendRequest fails fast). The stalled server is reachable because both the
+    // test process (server) and the CLI child process run on the same host.
+    const server = createServer((conn) => { conn.on('error', () => {}) })
+    await new Promise<void>((onListen) => server.listen(0, '127.0.0.1', onListen))
+    const { port } = server.address() as AddressInfo
+
+    // Write a fake pg.dsn pointing to the stalled server so emitCliInvocationTrace
+    // actually tries to connect instead of returning early for a missing pg.dsn.
+    writeFileSync(resolve(repo, '.mars', 'pg.dsn'), `postgresql://127.0.0.1:${port}/mars`)
+
+    const result = runCli(['continue', 'mars-abc'], { MARS_REPO: repo })
+    server.close()
+
+    // status is null only when spawnSync's timeout fired — the process hung.
+    expect(result.status).not.toBeNull()
+    // Non-zero: daemon unavailable → sendRequest throws → CLI exits 1.
+    // emitCliInvocationTrace's timeout is swallowed by .catch(() => {}).
     expect(result.status).not.toBe(0)
   })
 })
