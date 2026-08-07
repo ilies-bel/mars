@@ -94,11 +94,38 @@ const operatorStatus: Command = {
     deps.out(`scoring-low-trend-threshold: ${cfg.scoring.lowTrendThreshold}`)
     deps.out(`scoring-low-trend-window: ${cfg.scoring.lowTrendWindow}`)
     deps.out(`auto-run-reflect: ${levers.autoRunReflect}`)
-    // Reflection history and next-trigger summary.
-    if (cfg.lastReflectRanAt) {
-      deps.out(`reflection last ran: ${cfg.lastReflectRanAt}`)
-    } else {
-      deps.out(`reflection last ran: never`)
+    // Reflection history: derive from arc files on disk so manual `mars arc reflect`
+    // invocations are counted too (daemon.json only records auto-run completions).
+    // This is the same source viewDeepReflections uses, so the CLI and the
+    // Reflections page banner always agree on the answer.
+    {
+      const { readdir, readFile } = await import('node:fs/promises')
+      const { resolve } = await import('node:path')
+      const deepReflectDir = resolve(deps.ctx.stateDir, 'deep-reflections')
+      let lastReflectedAt: string | null = null
+      try {
+        const files = (await readdir(deepReflectDir)).filter((f) => f.endsWith('.json'))
+        for (const file of files) {
+          try {
+            const raw = await readFile(resolve(deepReflectDir, file), 'utf8')
+            const data = JSON.parse(raw) as Record<string, unknown>
+            if (typeof data.recordedAt === 'string' && data.recordedAt.length > 0) {
+              if (lastReflectedAt === null || data.recordedAt > lastReflectedAt) {
+                lastReflectedAt = data.recordedAt
+              }
+            }
+          } catch {
+            // Skip unreadable or malformed files.
+          }
+        }
+      } catch {
+        // Directory absent — no reflections yet.
+      }
+      if (lastReflectedAt !== null) {
+        deps.out(`reflection last ran: ${lastReflectedAt}`)
+      } else {
+        deps.out(`reflection last ran: never`)
+      }
     }
     if (levers.autoRunReflect === 'on') {
       deps.out(`next reflection: automatic when KPI drift, failure clusters, or token spike detected`)
