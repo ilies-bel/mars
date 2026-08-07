@@ -249,28 +249,28 @@ describe('mars lever set scoring.low-trend-window', () => {
   })
 })
 
-// ── self-evolve.auto-trigger ──────────────────────────────────────────────────
+// ── self-evolve.auto-enqueue ──────────────────────────────────────────────────
 
-describe('mars lever set self-evolve.auto-trigger', () => {
+describe('mars lever set self-evolve.auto-enqueue', () => {
   it('persists true as a boolean in daemon.json', async () => {
     const deps = await loadDeps()
     const fake = await makeFake()
 
-    const result = await run(['lever', 'set', 'self-evolve.auto-trigger', 'true'], {
+    const result = await run(['lever', 'set', 'self-evolve.auto-enqueue', 'true'], {
       ...deps,
       daemon: fake,
     })
 
     expect(result.code).toBe(0)
     const config = readConfig()
-    expect((config.selfEvolve as Record<string, unknown>).autoTrigger).toBe(true)
+    expect((config.selfEvolve as Record<string, unknown>).autoEnqueue).toBe(true)
   })
 
   it('rejects an invalid enum value', async () => {
     const deps = await loadDeps()
     const fake = await makeFake()
 
-    const result = await run(['lever', 'set', 'self-evolve.auto-trigger', 'on'], {
+    const result = await run(['lever', 'set', 'self-evolve.auto-enqueue', 'on'], {
       ...deps,
       daemon: fake,
     })
@@ -412,13 +412,13 @@ describe('lever set value survives daemon restart (persists to daemon.json)', ()
 
 // ── cross-surface consistency: operator status vs lever list ─────────────────
 
-describe('operator status and lever list agree on self-evolve.auto-trigger', () => {
+describe('operator status and lever list agree on self-evolve.auto-enqueue', () => {
   it('both surfaces reflect the value written by lever set', async () => {
     const deps = await loadDeps()
     const fake = await makeFake()
 
-    // Set auto-trigger to true
-    const setResult = await run(['lever', 'set', 'self-evolve.auto-trigger', 'true'], {
+    // Set auto-enqueue to true
+    const setResult = await run(['lever', 'set', 'self-evolve.auto-enqueue', 'true'], {
       ...deps,
       daemon: fake,
     })
@@ -426,12 +426,12 @@ describe('operator status and lever list agree on self-evolve.auto-trigger', () 
 
     // lever list must show 'true'
     const listResult = await run(['lever', 'list'], { ...deps, daemon: fake })
-    const autoTriggerLine = listResult.out.find((l) => l.includes('self-evolve.auto-trigger'))
-    expect(autoTriggerLine).toContain('true')
+    const autoEnqueueLine = listResult.out.find((l) => l.includes('self-evolve.auto-enqueue'))
+    expect(autoEnqueueLine).toContain('true')
 
-    // operator status must show 'auto-trigger: on'
+    // operator status must show 'auto-enqueue: on'
     const statusResult = await run(['operator', 'status'], { ...deps, daemon: fake })
-    expect(statusResult.out.join('\n')).toContain('auto-trigger: on')
+    expect(statusResult.out.join('\n')).toContain('auto-enqueue: on')
   })
 
   it('both surfaces reflect off after setting to false', async () => {
@@ -439,17 +439,17 @@ describe('operator status and lever list agree on self-evolve.auto-trigger', () 
     const fake = await makeFake()
 
     // First set to true, then back to false
-    await run(['lever', 'set', 'self-evolve.auto-trigger', 'true'], { ...deps, daemon: fake })
-    await run(['lever', 'set', 'self-evolve.auto-trigger', 'false'], { ...deps, daemon: fake })
+    await run(['lever', 'set', 'self-evolve.auto-enqueue', 'true'], { ...deps, daemon: fake })
+    await run(['lever', 'set', 'self-evolve.auto-enqueue', 'false'], { ...deps, daemon: fake })
 
     // lever list must show 'false'
     const listResult = await run(['lever', 'list'], { ...deps, daemon: fake })
-    const autoTriggerLine = listResult.out.find((l) => l.includes('self-evolve.auto-trigger'))
-    expect(autoTriggerLine).toContain('false')
+    const autoEnqueueLine = listResult.out.find((l) => l.includes('self-evolve.auto-enqueue'))
+    expect(autoEnqueueLine).toContain('false')
 
-    // operator status must show 'auto-trigger: off'
+    // operator status must show 'auto-enqueue: off'
     const statusResult = await run(['operator', 'status'], { ...deps, daemon: fake })
-    expect(statusResult.out.join('\n')).toContain('auto-trigger: off')
+    expect(statusResult.out.join('\n')).toContain('auto-enqueue: off')
   })
 })
 

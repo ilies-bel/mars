@@ -21,6 +21,7 @@
 
 import type { Command } from '../command'
 import { loadLeverRegistry, noGestureEntries } from '../../core/lib/lever-registry'
+import type { CapQuerier } from '../../core/lib/lever-registry'
 import { readDaemonConfigFile, patchDaemonConfigFile } from '../../core/daemon/config'
 import { ok, fail } from '../command'
 
@@ -74,7 +75,7 @@ const leverShow: Command = {
   path: 'lever show',
   summary: 'show details for one lever',
   usage: 'usage: mars lever show <id>',
-  run: (args, deps) => {
+  run: async (args, deps) => {
     const id = args.positional[0]
     if (!id) {
       deps.err('usage: mars lever show <id>')
@@ -89,7 +90,29 @@ const leverShow: Command = {
       return fail(1)
     }
 
-    const cur = entry.readCurrent() ?? '(requires daemon/db connection)'
+    // Resolve the current value, overlaying daemon-reported effective state
+    // when the entry supports it (e.g. caps.implement which the steward
+    // autotuner may raise in-process without writing daemon.json).
+    let cur: string
+    if (entry.readEffective) {
+      const configured = entry.readCurrent() ?? '(unknown)'
+      const effectiveRead = await entry.readEffective(deps.daemon as CapQuerier)
+      if (effectiveRead === null) {
+        // Daemon is unreachable — mark as persisted-only to prevent the
+        // operator from treating the configured value as the live state.
+        cur = `${configured} (persisted only — daemon not running)`
+      } else if (effectiveRead.effective === configured) {
+        // Configured and effective agree — just show the value.
+        cur = effectiveRead.effective
+      } else {
+        // Drift: the daemon is enforcing a different value than daemon.json.
+        // Show both so the operator gets an accurate picture.
+        const reasonPart = effectiveRead.reason !== null ? ` — ${effectiveRead.reason}` : ''
+        cur = `${configured} (effective ${effectiveRead.effective}${reasonPart}) ⚠`
+      }
+    } else {
+      cur = entry.readCurrent() ?? '(requires daemon/db connection)'
+    }
 
     // Render allowed values
     let allowed: string
@@ -150,7 +173,7 @@ const SETTABLE_LEVER_IDS = new Set([
   'scoring.auto-trigger',
   'scoring.low-trend-threshold',
   'scoring.low-trend-window',
-  'self-evolve.auto-trigger',
+  'self-evolve.auto-enqueue',
   'self-evolve.drift-threshold-pct',
   'self-evolve.task-confidence-threshold',
 ])
@@ -168,7 +191,7 @@ const leverSet: Command = {
     '  scoring.auto-trigger               true | false',
     '  scoring.low-trend-threshold        0–1',
     '  scoring.low-trend-window           >= 1 (positive integer)',
-    '  self-evolve.auto-trigger           true | false',
+    '  self-evolve.auto-enqueue           true | false',
     '  self-evolve.drift-threshold-pct    >= 0',
     '  self-evolve.task-confidence-threshold  0–1',
     '',
@@ -270,13 +293,13 @@ const leverSet: Command = {
           ? (file.selfEvolve as Record<string, unknown>)
           : {}
       const field =
-        id === 'self-evolve.auto-trigger'
-          ? 'autoTrigger'
+        id === 'self-evolve.auto-enqueue'
+          ? 'autoEnqueue'
           : id === 'self-evolve.drift-threshold-pct'
             ? 'driftThresholdPct'
             : 'taskConfidenceThreshold'
       const typed =
-        id === 'self-evolve.auto-trigger' ? value === 'true' : Number(value)
+        id === 'self-evolve.auto-enqueue' ? value === 'true' : Number(value)
       patchDaemonConfigFile({ selfEvolve: { ...existing, [field]: typed } })
     }
 

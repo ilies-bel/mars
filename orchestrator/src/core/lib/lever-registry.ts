@@ -57,17 +57,56 @@ export interface RecipeMetadata {
   maturityLevel: 'bare' | 'typecheck' | 'tests' | 'e2e'
 }
 
+/**
+ * The effective live value of a lever in a running daemon, which may diverge
+ * from the persisted config (e.g. steward autotune raising `implementCap`
+ * in-process). Returned by `LeverRegistryEntry.readEffective`.
+ */
+export interface EffectiveRead {
+  effective: string
+  reason: string | null
+}
+
+/**
+ * Minimal daemon interface needed to query live lever state.
+ *
+ * The production `DaemonClient` from `src/cli/command.ts` satisfies this
+ * structurally — its `sendRequest` accepts `DaemonRequest` (a union that
+ * includes `{ op: 'status' }`), and TypeScript's bivariant method checking
+ * allows assigning it here. Tests use `makeFakeDaemon` from `test-adapter.ts`
+ * which also satisfies the interface.
+ */
+export interface CapQuerier {
+  sendRequest(req: { op: 'status' }): Promise<unknown>
+}
+
 export interface LeverRegistryEntry {
   id: string
   label: string
   family: LeverFamily
   scope: LeverScope
   /**
-   * Returns the live value as a human-readable string.
+   * Returns the persisted (configured) value as a human-readable string.
    * Returns null when the value cannot be determined without a daemon or DB
    * connection (e.g. active verify gates, worker registry).
+   *
+   * This reflects what is stored in `.mars/daemon.json` — NOT necessarily
+   * what is in force. For the live effective value, see `readEffective`.
    */
   readCurrent(): string | null
+  /**
+   * Optional async query for the live effective value from a running daemon.
+   * The effective value may differ from `readCurrent()` when the daemon has
+   * adjusted a lever in-process (e.g. steward autotune raising the implement
+   * cap on a sustained backlog). Returns null when the daemon is unreachable.
+   *
+   * When defined, `lever show` calls this and overlays the result on
+   * `readCurrent()`, displaying both the configured and effective values if
+   * they differ, or marking the value as persisted-only when the daemon is
+   * down. The reflection binding path receives the effective value (or an
+   * explicit "unknown" marker) rather than the potentially stale persisted one.
+   */
+  readEffective?: (querier: CapQuerier) => Promise<EffectiveRead | null>
   allowedValues: AllowedValues
   /**
    * The exact `mars` command that applies a change, with `<placeholder>` for
@@ -300,6 +339,27 @@ const REGISTRY: LeverRegistryEntry[] = [
     readCurrent: () => {
       try {
         return String(loadDaemonConfig().caps.implement)
+      } catch {
+        return null
+      }
+    },
+    readEffective: async (querier) => {
+      try {
+        const status = await querier.sendRequest({ op: 'status' }) as {
+          implementCap: { configured: number; effective: number; reason: string | null }
+        }
+        if (
+          typeof status !== 'object' ||
+          status === null ||
+          !('implementCap' in status)
+        ) {
+          return null
+        }
+        const { implementCap } = status
+        return {
+          effective: String(implementCap.effective),
+          reason: implementCap.reason,
+        }
       } catch {
         return null
       }
@@ -588,7 +648,7 @@ const REGISTRY: LeverRegistryEntry[] = [
       }
     },
     allowedValues: { type: 'enum', values: ['true', 'false'] },
-    gesture: 'mars lever set self-evolve.auto-trigger <true|false>',
+    gesture: 'mars lever set self-evolve.auto-enqueue <true|false>',
     appliesWithoutRestart: false,
   },
   {
