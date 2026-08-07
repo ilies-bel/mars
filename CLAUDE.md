@@ -270,12 +270,14 @@ recovery-spawn path itself.
 - Coder runs get a deviation-rules brief: no bailing without an auto-fix
   commit, a `--blocked-by $TASK_ID` follow-up, or a `mars proposal add`.
 - **Worker provider and models:** Codex is the default. `defaultProvider` in
-  `.mars/daemon.json` selects Codex, Claude, or Gemini for every Worker;
-  `MARS_WORKER_PROVIDER` is the one-daemon override. Providers translate the
-  flagship/balanced/fast tiers to native model ids. Codex uses
-  `gpt-5.6-sol` / `gpt-5.6-terra` / `gpt-5.6-luna` through `codex exec` and
-  reuses the local `codex login` session. `MARS_WORKER_MODEL` overrides only
-  the Coder model.
+  `.mars/daemon.json` selects Codex, Claude, or Gemini for every **un-pinned**
+  (built-in) Worker; operator-added workers that explicitly set a `provider`
+  in the registry keep their pin and are unaffected by `defaultProvider`.
+  `MARS_WORKER_PROVIDER` is the one-daemon override (same scope: un-pinned
+  workers only). Providers translate the flagship/balanced/fast tiers to
+  native model ids. Codex uses `gpt-5.6-sol` / `gpt-5.6-terra` /
+  `gpt-5.6-luna` through `codex exec` and reuses the local `codex login`
+  session. `MARS_WORKER_MODEL` overrides only the Coder model.
 - To inspect live runs, open `mars ui` (read-only Kanban + trace dashboard)
   or query the daemon HTTP API: read `PORT=$(cat .mars/http.port)` first —
   the daemon binds an OS-assigned ephemeral port (see Conventions).

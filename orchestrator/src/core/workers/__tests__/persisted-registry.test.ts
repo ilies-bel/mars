@@ -380,6 +380,94 @@ describe('listMergedWorkers', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Built-in worker provider-pin invariant
+// ---------------------------------------------------------------------------
+
+describe('built-in provider-pin invariant', () => {
+  it('seeds the registry without a provider field on any built-in worker', () => {
+    addWorkerToRegistry(stateDir, MINIMUM_DECL) // triggers seed
+    const filePath = resolve(stateDir, 'worker-registry.json')
+    const raw = JSON.parse(readFileSync(filePath, 'utf8')) as Record<
+      string,
+      Record<string, unknown>
+    >
+    for (const name of Object.keys(WORKER_CONFIGS)) {
+      expect(raw[name], `built-in '${name}' must not carry a provider pin`).not.toHaveProperty('provider')
+    }
+  })
+
+  it('strips provider from a new-format built-in entry when loading the registry', () => {
+    // Simulate an older seeded registry that stored provider: "codex" for a built-in.
+    const filePath = resolve(stateDir, 'worker-registry.json')
+    writeFileSync(
+      filePath,
+      JSON.stringify({
+        Coder: {
+          name: 'Coder',
+          modelTier: 'balanced',
+          provider: 'codex',   // pinned — invariant violation from old seeding
+          effort: 'high',
+          permissionMode: 'bypassPermissions',
+          bare: false,
+          disallowedTools: [],
+          outputFormat: 'stream-json',
+          runtime: 'headless',
+        },
+      }, null, 2) + '\n',
+      'utf8',
+    )
+    const loaded = loadWorkerRegistry(stateDir)
+    const coder = loaded.find((d) => d.name === 'Coder')
+    // The migration must strip the pinned provider.
+    expect(coder?.provider).toBeUndefined()
+  })
+
+  it('changing activeProvider changes a built-in whose registry entry had a pinned provider', () => {
+    // Write a registry with Coder pinned to codex (old seeding artefact).
+    const filePath = resolve(stateDir, 'worker-registry.json')
+    writeFileSync(
+      filePath,
+      JSON.stringify({
+        Coder: {
+          name: 'Coder',
+          modelTier: 'balanced',
+          provider: 'codex',   // pinned — must be stripped on load
+          effort: 'high',
+          permissionMode: 'bypassPermissions',
+          bare: false,
+          disallowedTools: [],
+          outputFormat: 'stream-json',
+          runtime: 'headless',
+        },
+      }, null, 2) + '\n',
+      'utf8',
+    )
+
+    const workersWithClaude = listMergedWorkers(stateDir, 'claude')
+    const coderClaude = workersWithClaude.find((w) => w.config.name === 'Coder')
+    // After pin is stripped the worker must adopt the supplied activeProvider.
+    expect(coderClaude?.config.provider).toBe('claude')
+    expect(coderClaude?.config.model).toBe(PROVIDER_MODELS.claude.balanced)
+  })
+
+  it('an operator-pinned novel worker keeps its provider when activeProvider changes', () => {
+    // Novel workers (non-built-in names) with an explicit provider must NOT be
+    // stripped — the pin is intentional operator configuration.
+    addWorkerToRegistry(stateDir, {
+      ...MINIMUM_DECL,
+      name: 'PinnedWorker',
+      provider: 'codex',
+      modelTier: 'balanced',
+    })
+    const workers = listMergedWorkers(stateDir, 'claude')
+    const found = workers.find((w) => w.config.name === 'PinnedWorker')
+    // Explicit operator pin must survive even when activeProvider is different.
+    expect(found?.config.provider).toBe('codex')
+    expect(found?.config.model).toBe(PROVIDER_MODELS.codex.balanced)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // listWorkersForDisplay — tier display and conflict detection
 // ---------------------------------------------------------------------------
 

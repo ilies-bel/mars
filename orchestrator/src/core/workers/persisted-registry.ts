@@ -163,9 +163,21 @@ export const loadWorkerRegistry = (stateDir: string): WorkerDeclaration[] => {
     const name = typeof entry['name'] === 'string' ? entry['name'] : undefined
     const isBuiltIn = name !== undefined && builtInNames.has(name)
     // Migrate legacy entries that still carry model: string.
-    const decl: WorkerDeclaration = isLegacyDeclaration(entry)
-      ? migrateLegacyDeclaration(entry, isBuiltIn)
-      : (entry as unknown as WorkerDeclaration)
+    // Also strip the provider from new-format built-in entries — older versions
+    // of configToDeclaration persisted provider: WORKER_PROVIDER, pinning every
+    // built-in to whichever provider was active at seeding time and defeating
+    // the defaultProvider lever. Built-ins must always inherit the active
+    // daemon provider so a provider swap takes effect without a registry edit.
+    let decl: WorkerDeclaration
+    if (isLegacyDeclaration(entry)) {
+      decl = migrateLegacyDeclaration(entry, isBuiltIn)
+    } else if (isBuiltIn && 'provider' in entry) {
+      // New-format built-in with a pinned provider — strip it.
+      const { provider: _provider, ...rest } = entry
+      decl = rest as unknown as WorkerDeclaration
+    } else {
+      decl = entry as unknown as WorkerDeclaration
+    }
     decls.push(decl)
   }
   return decls
