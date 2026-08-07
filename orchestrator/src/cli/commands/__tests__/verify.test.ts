@@ -12,10 +12,13 @@
  *   8. `verify add` with --optional → stored as required=false
  *   9. `verify add` with --tier integration → stored correctly
  *  10. `verify add` duplicate (scope,name) → exit 1 with helpful message
- *  11. `verify remove <name>` by name → removes gate
- *  12. `verify remove <id>` by UUID → removes gate
+ *  11. `verify remove <name>` by name → removes gate, prints confirmation
+ *  12. `verify remove <id>` by UUID → removes gate, prints confirmation
  *  13. `verify remove` with no args → exit 2
- *  14. `verify remove` unknown name → silent exit 0 (idempotent)
+ *  14. `verify remove` unknown name → exit 1 naming the target
+ *  15–16. `verify add` bare -- separator
+ *  17. `verify add` bare multiplexer guard
+ *  18. `verify remove` name exists only in a different scope → exit 1 naming the scope
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -293,7 +296,7 @@ describe('mars verify add — duplicate (scope,name)', () => {
 // ---------------------------------------------------------------------------
 
 describe('mars verify remove — by name', () => {
-  it('removes the gate and exits 0', async () => {
+  it('removes the gate, exits 0, and prints a confirmation naming the target', async () => {
     const { store, ctx } = await loadDeps()
     const daemon = await makeFake()
 
@@ -301,6 +304,7 @@ describe('mars verify remove — by name', () => {
 
     const removeR = await run(['verify', 'remove', 'typecheck'], { store, ctx, daemon })
     expect(removeR.code).toBe(0)
+    expect(removeR.out.join('\n')).toContain('typecheck')
 
     // Gate is gone
     const listR = await run(['verify', 'list'], { store, ctx, daemon })
@@ -313,7 +317,7 @@ describe('mars verify remove — by name', () => {
 // ---------------------------------------------------------------------------
 
 describe('mars verify remove — by UUID', () => {
-  it('removes the gate by UUID and exits 0', async () => {
+  it('removes the gate by UUID, exits 0, and prints a confirmation', async () => {
     const { store, ctx } = await loadDeps()
     const daemon = await makeFake()
 
@@ -326,6 +330,7 @@ describe('mars verify remove — by UUID', () => {
 
     const removeR = await run(['verify', 'remove', id], { store, ctx, daemon })
     expect(removeR.code).toBe(0)
+    expect(removeR.out.join('\n')).toContain(id)
 
     const listR = await run(['verify', 'list'], { store, ctx, daemon })
     expect(listR.out.join('\n')).toContain('no verify gates configured')
@@ -349,18 +354,19 @@ describe('mars verify remove — no args', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 14. verify remove — unknown name (idempotent)
+// 14. verify remove — unknown name
 // ---------------------------------------------------------------------------
 
 describe('mars verify remove — unknown name', () => {
-  it('exits 0 silently when the name does not match any gate', async () => {
+  it('exits 1 and names the target when the gate does not exist', async () => {
     const { store, ctx } = await loadDeps()
     const daemon = await makeFake()
 
     const r = await run(['verify', 'remove', 'nonexistent-gate'], { store, ctx, daemon })
 
-    expect(r.code).toBe(0)
-    expect(r.err).toHaveLength(0)
+    expect(r.code).toBe(1)
+    const errText = r.err.join('\n')
+    expect(errText).toContain('nonexistent-gate')
   })
 })
 
@@ -466,5 +472,34 @@ describe('mars verify add — bare multiplexer guard', () => {
 
     expect(r.code).toBe(2)
     expect(r.err.join('\n')).toContain('npm')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 18. verify remove — name exists only in a non-default scope
+// ---------------------------------------------------------------------------
+
+describe('mars verify remove — name in non-default scope', () => {
+  it('exits 1, names the scope searched, and hints at the scope where it was found', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    // Add the gate in a non-default scope
+    await run(
+      ['verify', 'add', 'typecheck', '--cmd', 'echo', '--scope', 'apps/web'],
+      { store, ctx, daemon },
+    )
+
+    // Try to remove from the default scope (.) — should fail
+    const r = await run(['verify', 'remove', 'typecheck'], { store, ctx, daemon })
+
+    expect(r.code).toBe(1)
+    const errText = r.err.join('\n')
+    // Must name the gate
+    expect(errText).toContain('typecheck')
+    // Must name the scope that was searched
+    expect(errText).toContain('.')
+    // Must hint at the scope where it actually lives
+    expect(errText).toContain('apps/web')
   })
 })

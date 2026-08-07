@@ -113,12 +113,12 @@ describe('removeCredential', () => {
     expect(creds).toHaveLength(0)
   })
 
-  it('silently does nothing when the credential does not exist', async () => {
+  it('returns false when the credential does not exist', async () => {
     const { ensureCredentialSchema, removeCredential, listCredentials } =
       await import('../credential-store.js')
     await ensureCredentialSchema(client)
 
-    await expect(removeCredential('NON_EXISTENT')).resolves.toBeUndefined()
+    await expect(removeCredential('NON_EXISTENT')).resolves.toBe(false)
     expect(await listCredentials()).toHaveLength(0)
   })
 })

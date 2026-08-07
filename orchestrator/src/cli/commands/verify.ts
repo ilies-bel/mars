@@ -165,12 +165,32 @@ const verifyRemove: Command = {
     }
 
     if (UUID_RE.test(nameOrId)) {
-      // Delete by id — idempotent.
-      await removeVerifyGate(nameOrId)
+      // Delete by id.
+      const deleted = await removeVerifyGate(nameOrId)
+      if (!deleted) {
+        deps.err(`no verify gate with id '${nameOrId}'`)
+        return { code: 1 }
+      }
+      deps.out(`removed verify gate '${nameOrId}'`)
     } else {
-      // Delete by name within the default scope.
+      // Delete by name within the given scope.
       const scope = args.flags['--scope'] ?? '.'
-      await removeVerifyGate({ scope, name: nameOrId })
+      const deleted = await removeVerifyGate({ scope, name: nameOrId })
+      if (!deleted) {
+        // Check if a gate with this name exists in a different scope.
+        const all = await listVerifyGates()
+        const inOtherScope = all.find((g) => g.name === nameOrId)
+        if (inOtherScope) {
+          deps.err(
+            `no verify gate named '${nameOrId}' in scope '${scope}' ` +
+              `(found in scope '${inOtherScope.scope}' — re-run with --scope ${inOtherScope.scope})`,
+          )
+        } else {
+          deps.err(`no verify gate named '${nameOrId}' in scope '${scope}'`)
+        }
+        return { code: 1 }
+      }
+      deps.out(`removed verify gate '${nameOrId}' (scope: ${scope})`)
     }
 
     return { code: 0 }

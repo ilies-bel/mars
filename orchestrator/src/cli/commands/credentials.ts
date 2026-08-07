@@ -107,7 +107,12 @@ const credentialsRemove: Command = {
       return { code: 2 }
     }
 
-    await removeCredential(name)
+    const deleted = await removeCredential(name)
+    if (!deleted) {
+      deps.err(`no credential named '${name}'`)
+      return { code: 1 }
+    }
+    deps.out(`removed credential '${name}'`)
     return { code: 0 }
   },
 }

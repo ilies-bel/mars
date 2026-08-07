@@ -60,12 +60,15 @@ export const setCredential = async (
 }
 
 /**
- * Delete a credential by name. Silently does nothing if no credential with
+ * Delete a credential by name.
+ *
+ * Returns `true` if a credential was deleted, `false` if no credential with
  * that name exists.
  */
-export const removeCredential = async (name: string): Promise<void> => {
+export const removeCredential = async (name: string): Promise<boolean> => {
   const c = resolveStateClient()
-  await c.execute(`DELETE FROM credentials WHERE name = ?`, [name])
+  const r = await c.execute(`DELETE FROM credentials WHERE name = ?`, [name])
+  return r.rowsAffected > 0
 }
 
 /** Return all credentials ordered by name. */

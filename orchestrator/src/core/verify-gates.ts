@@ -211,20 +211,22 @@ export const addVerifyGate = async (input: VerifyGateInput): Promise<string> => 
  * - a gate `id` string, or
  * - a `{ scope, name }` object to delete by the unique (scope, name) pair.
  *
- * Silently does nothing if no matching gate exists.
+ * Returns `true` if a gate was deleted, `false` if no matching gate was found.
  */
 export const removeVerifyGate = async (
   idOrRef: string | { scope: string; name: string },
-): Promise<void> => {
+): Promise<boolean> => {
   const c = resolveStateClient()
+  let r
   if (typeof idOrRef === 'string') {
-    await c.execute(`DELETE FROM verify_gates WHERE id = ?`, [idOrRef])
+    r = await c.execute(`DELETE FROM verify_gates WHERE id = ?`, [idOrRef])
   } else {
-    await c.execute(`DELETE FROM verify_gates WHERE scope = ? AND name = ?`, [
+    r = await c.execute(`DELETE FROM verify_gates WHERE scope = ? AND name = ?`, [
       idOrRef.scope,
       idOrRef.name,
     ])
   }
+  return r.rowsAffected > 0
 }
 
 /**

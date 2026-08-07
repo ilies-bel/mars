@@ -11,9 +11,9 @@
  *   7. `credentials list` shows yes/no for set? based on env var presence
  *   8. `credentials set` with --description stores description
  *   9. `credentials set` upsert — updating an existing credential works
- *  10. `credentials remove <name>` removes the credential
+ *  10. `credentials remove <name>` removes the credential and prints confirmation
  *  11. `credentials remove` with no args → exit 2
- *  12. `credentials remove` unknown name → silent exit 0 (idempotent)
+ *  12. `credentials remove` unknown name → exit 1 naming the target
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -282,7 +282,7 @@ describe('mars credentials set — upsert', () => {
 // ---------------------------------------------------------------------------
 
 describe('mars credentials remove — happy path', () => {
-  it('removes the credential and exits 0', async () => {
+  it('removes the credential, exits 0, and prints a confirmation naming the target', async () => {
     const { store, ctx } = await loadDeps()
     const daemon = await makeFake()
 
@@ -293,6 +293,7 @@ describe('mars credentials remove — happy path', () => {
 
     const removeR = await run(['credentials', 'remove', 'github-token'], { store, ctx, daemon })
     expect(removeR.code).toBe(0)
+    expect(removeR.out.join('\n')).toContain('github-token')
 
     const listR = await run(['credentials', 'list'], { store, ctx, daemon })
     expect(listR.out.join('\n')).toContain('no credentials configured')
@@ -316,18 +317,19 @@ describe('mars credentials remove — no args', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 12. credentials remove — unknown name (idempotent)
+// 12. credentials remove — unknown name
 // ---------------------------------------------------------------------------
 
 describe('mars credentials remove — unknown name', () => {
-  it('exits 0 silently when the name does not exist', async () => {
+  it('exits 1 and names the target when the credential does not exist', async () => {
     const { store, ctx } = await loadDeps()
     const daemon = await makeFake()
 
     const r = await run(['credentials', 'remove', 'nonexistent'], { store, ctx, daemon })
 
-    expect(r.code).toBe(0)
-    expect(r.err).toHaveLength(0)
+    expect(r.code).toBe(1)
+    const errText = r.err.join('\n')
+    expect(errText).toContain('nonexistent')
   })
 })
 
