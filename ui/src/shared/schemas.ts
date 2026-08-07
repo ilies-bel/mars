@@ -1604,6 +1604,27 @@ export const deepReflectionDetailSchema = deepReflectionSummarySchema.extend({
         rationale: z.string(),
         verdict: z.string(),
         targetId: z.string().nullable(),
+        outcome: z.union([
+          z.object({
+            type: z.literal('lever'),
+            lever: z.object({
+              id: z.string(),
+              family: z.string(),
+              currentValue: z.string().nullable(),
+              proposedValue: z.string(),
+              gesture: z.string().nullable(),
+            }),
+          }),
+          z.object({
+            type: z.literal('leverGap'),
+            leverGap: z.object({
+              proposedLeverId: z.string(),
+              family: z.string(),
+              whatItWouldControl: z.string(),
+            }),
+          }),
+          z.null(),
+        ]),
       }),
     ),
   }).nullable(),

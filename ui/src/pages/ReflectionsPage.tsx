@@ -7,7 +7,9 @@
  *   - dissonant calls ordered by severity (high before low)
  *   - verify mismatches and thrashing patterns
  *   - tool-call statistics as a compact breakdown
- *   - suggestions that were filed as proposals (linked to the proposal drawer)
+ *   - suggestions that were filed as proposals (linked to the proposal drawer),
+ *     each showing its lever binding (id + family + gesture) or declared gap,
+ *     or explicitly marked as unbound (predates the binding feature)
  *
  * The page states when reflection last ran and what would trigger the next run,
  * so the surface is honest about whether anything feeds it.
@@ -28,6 +30,15 @@ import { useFocusedProject } from '@/shared/useFocusedProject'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { parseReflectionDetailRoute, reflectionDetailHash, proposalHash } from '@/shared/routing'
 import { useHashRoute } from '@/shared/useHashRoute'
+
+// ---------------------------------------------------------------------------
+// Outcome types (mirrored from the server-side ReflectionSuggestionOutcome)
+// ---------------------------------------------------------------------------
+
+type SuggestionOutcome =
+  | { type: 'lever'; lever: { id: string; family: string; currentValue: string | null; proposedValue: string; gesture: string | null } }
+  | { type: 'leverGap'; leverGap: { proposedLeverId: string; family: string; whatItWouldControl: string } }
+  | null
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -74,6 +85,72 @@ const severityClass = (severity: string): string => {
 
 const severityLabel = (severity: string): string =>
   severity.charAt(0).toUpperCase() + severity.slice(1)
+
+// ---------------------------------------------------------------------------
+// Outcome chip — shows lever binding (id + gesture) or declared gap, or
+// renders an explicit "unbound" badge when no binding is present.
+// ---------------------------------------------------------------------------
+
+interface OutcomeTagProps {
+  outcome: SuggestionOutcome
+}
+
+const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
+  if (outcome == null) {
+    return (
+      <div
+        data-testid="outcome-unbound"
+        className="mt-2 border border-primary/20 bg-card px-2 py-1 font-mono text-[10px] text-muted-foreground inline-flex items-center gap-1"
+      >
+        <span className="uppercase tracking-wide">No lever binding</span>
+        <span className="text-[9px]">(predates binding feature)</span>
+      </div>
+    )
+  }
+  if (outcome.type === 'lever') {
+    const { id, family, currentValue, proposedValue, gesture } = outcome.lever
+    return (
+      <div
+        data-testid="outcome-lever"
+        className="mt-2 border border-primary/30 bg-primary/5 px-2 py-1 font-mono text-[10px]"
+      >
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="uppercase tracking-wide text-muted-foreground">Lever</span>
+          <span className="text-primary font-semibold">{id}</span>
+          <span className="text-muted-foreground text-[9px] uppercase">{family}</span>
+          {currentValue !== null && (
+            <>
+              <span className="text-muted-foreground">{currentValue}</span>
+              <span className="text-muted-foreground">→</span>
+            </>
+          )}
+          <span className="text-foreground">{proposedValue}</span>
+        </div>
+        {gesture && (
+          <div className="mt-1 text-[10px] text-foreground">
+            <span className="text-muted-foreground uppercase tracking-wide text-[9px]">Gesture: </span>
+            <code className="text-primary">{gesture}</code>
+          </div>
+        )}
+      </div>
+    )
+  }
+  // leverGap
+  const { proposedLeverId, family, whatItWouldControl } = outcome.leverGap
+  return (
+    <div
+      data-testid="outcome-lever-gap"
+      className="mt-2 border border-warn/30 bg-warn/5 px-2 py-1 font-mono text-[10px]"
+    >
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="uppercase tracking-wide text-warn">Lever Gap</span>
+        <span className="text-foreground font-semibold">{proposedLeverId}</span>
+        <span className="text-muted-foreground text-[9px] uppercase">{family}</span>
+      </div>
+      <div className="mt-1 text-[10px] text-muted-foreground">{whatItWouldControl}</div>
+    </div>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // RunState banner — when did reflection last run, what triggers the next?
@@ -215,6 +292,13 @@ const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
   const savedSuggestions = detail.report?.suggestions.filter(
     (s) => s.verdict === 'save' && s.targetId,
   ) ?? []
+
+  // Aggregate lever gaps across all suggestions in this arc (not just saved ones).
+  const leverGaps = (detail.report?.suggestions ?? [])
+    .filter((s): s is typeof s & { outcome: NonNullable<typeof s.outcome> & { type: 'leverGap' } } =>
+      s.outcome != null && s.outcome.type === 'leverGap'
+    )
+    .map((s) => (s.outcome as { type: 'leverGap'; leverGap: { proposedLeverId: string; family: string; whatItWouldControl: string } }).leverGap)
 
   return (
     <div className="flex flex-col gap-4">
@@ -362,23 +446,52 @@ const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
             </div>
           </section>
 
-          {/* Filed proposals — link arc → proposals */}
+          {/* Filed proposals — link arc → proposals, with lever binding */}
           {savedSuggestions.length > 0 && (
             <section>
               <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
                 Proposals Filed ({savedSuggestions.length})
               </h3>
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-2">
                 {savedSuggestions.map((s, i) => (
-                  <a
+                  <div
                     key={i}
-                    href={proposalHash(s.targetId!, 'reflections')}
                     data-testid={`filed-proposal-${i}`}
-                    className="flex items-center gap-2 border border-primary/20 bg-card p-2 hover:border-primary/50 transition-colors font-mono text-[11px]"
+                    className="border border-primary/20 bg-card p-2 font-mono text-[11px]"
                   >
-                    <span className="text-primary flex-1">{s.title}</span>
-                    <span className="text-muted-foreground text-[10px]">→ proposal {s.targetId}</span>
-                  </a>
+                    <a
+                      href={proposalHash(s.targetId!, 'reflections')}
+                      className="flex items-center gap-2 hover:text-primary transition-colors"
+                    >
+                      <span className="text-primary flex-1">{s.title}</span>
+                      <span className="text-muted-foreground text-[10px]">→ proposal {s.targetId}</span>
+                    </a>
+                    <OutcomeTag outcome={s.outcome as SuggestionOutcome} />
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Lever Gaps — knobs Mars wishes it had */}
+          {leverGaps.length > 0 && (
+            <section data-testid="lever-gaps-section">
+              <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+                Lever Gaps — knobs Mars wishes it had ({leverGaps.length})
+              </h3>
+              <div className="flex flex-col gap-2">
+                {leverGaps.map((gap, i) => (
+                  <div
+                    key={i}
+                    data-testid={`lever-gap-${i}`}
+                    className="border border-warn/30 bg-warn/5 p-2 font-mono text-[11px]"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-foreground font-semibold">{gap.proposedLeverId}</span>
+                      <span className="text-muted-foreground text-[9px] uppercase">{gap.family}</span>
+                    </div>
+                    <div className="mt-1 text-[10px] text-muted-foreground">{gap.whatItWouldControl}</div>
+                  </div>
                 ))}
               </div>
             </section>

@@ -653,6 +653,7 @@ const viewProposals = async (
           updatedAt: Number(r0.updated_at ?? 0),
           acceptanceCount: stories.length,
           userStories: stories,
+          suggestionOutcome: null,
         })
       }
 

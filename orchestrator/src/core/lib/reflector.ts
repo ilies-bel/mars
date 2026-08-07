@@ -15,36 +15,10 @@ import { insertMemoryPacket } from '../store/memory-packet-store'
 import { loadLeverRegistry, formatRecipeCatalog, formatLeverList } from './lever-registry'
 import type { LeverRegistryEntry } from './lever-registry'
 
-/**
- * A suggestion bound to a specific, user-updatable lever in the registry.
- * `currentValue` is read live from the registry at filing time (or from the
- * model's response when the registry cannot be read).
- */
-export interface LeverBinding {
-  id: string
-  currentValue: string | null
-  proposedValue: string
-}
-
-/**
- * A suggestion where no existing lever expresses the required change.
- * Names what the knob WOULD be so the operator knows what to look for.
- */
-export interface LeverGap {
-  proposedLeverId: string
-  family: string
-  whatItWouldControl: string
-}
-
-/**
- * Every reflection suggestion must carry exactly one outcome — either a
- * binding to an existing lever or a declaration that no lever exists for
- * the change. This makes an unbound suggestion unrepresentable at the type
- * level.
- */
-export type SuggestionOutcome =
-  | { type: 'lever'; lever: LeverBinding }
-  | { type: 'leverGap'; leverGap: LeverGap }
+// Re-export the shared outcome types so callers importing from 'reflector'
+// continue to get them (deep-reflector.ts, tests, etc.).
+export type { LeverBinding, LeverGap, SuggestionOutcome } from './suggestion-outcome'
+import type { SuggestionOutcome } from './suggestion-outcome'
 
 export interface ReflectionSuggestion {
   title: string
@@ -719,6 +693,7 @@ const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<void> => {
       solution: s.prompt,
       notes,
       fingerprint,
+      suggestionOutcome: s.outcome,
     })
     return
   }
@@ -727,6 +702,7 @@ const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<void> => {
     author: { kind: 'agent', name: 'reflector' },
     solution: s.prompt,
     notes,
+    suggestionOutcome: s.outcome,
   })
 }
 

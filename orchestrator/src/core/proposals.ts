@@ -5,6 +5,8 @@ import { buildEventInsert } from './lib/outbox'
 import { withTransaction, type DbClient } from './lib/db.js'
 import { ensureSchema } from './lib/pg-schema.js'
 import type { EventName, EventPayload } from '../bus/events.js'
+import type { SuggestionOutcome } from './lib/suggestion-outcome.js'
+export type { SuggestionOutcome, LeverBinding, LeverGap } from './lib/suggestion-outcome.js'
 
 /**
  * Which subsystem produced a proposal. One value per producer — `source` is
@@ -66,6 +68,13 @@ export interface Proposal {
   userStories: string[]
   lastSliceError: string | null
   lastSliceFailedAt: number | null
+  /**
+   * Structured lever binding from ADR-0092. Non-null only for reflection-
+   * sourced proposals created after the binding feature landed. Null means
+   * "predates the binding feature" — never confused with a lever gap (which has
+   * `{ type: 'leverGap', ... }` explicitly).
+   */
+  suggestionOutcome: SuggestionOutcome | null
 }
 
 /**
@@ -173,6 +182,21 @@ const assertValidSource = (raw: unknown): ProposalSource => {
   )
 }
 
+const parseSuggestionOutcome = (raw: unknown): SuggestionOutcome | null => {
+  if (raw == null) return null
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (!parsed || typeof parsed !== 'object') return null
+    const o = parsed as Record<string, unknown>
+    if (o.type === 'lever' || o.type === 'leverGap') {
+      return o as SuggestionOutcome
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 const rowToProposal = (
   row: Record<string, unknown>,
   userStories: string[],
@@ -200,6 +224,7 @@ const rowToProposal = (
     lastSliceError: (row.last_slice_error as string | null) ?? null,
     lastSliceFailedAt:
       row.last_slice_failed_at == null ? null : Number(row.last_slice_failed_at),
+    suggestionOutcome: parseSuggestionOutcome(row.suggestion_outcome),
   }
 }
 
@@ -230,6 +255,12 @@ export interface CreateProposalOptions {
    * is created outside a Claude Code session.
    */
   originSessionId?: string | null
+  /**
+   * Structured lever binding from ADR-0092. Set only for reflection-sourced
+   * proposals; null (or omitted) for proposals created by other sources or
+   * before the binding feature.
+   */
+  suggestionOutcome?: SuggestionOutcome | null
 }
 
 export const createProposal = async (
@@ -255,12 +286,15 @@ export const createProposal = async (
   const kpiTag = opts?.kpiTag ?? null
   const fingerprint = opts?.fingerprint ?? null
   const originSessionId = opts?.originSessionId ?? null
+  const suggestionOutcomeJson =
+    opts?.suggestionOutcome != null ? JSON.stringify(opts.suggestionOutcome) : null
   const result = await c.execute({
     sql: `INSERT INTO proposals
             (id, title, problem, solution, out_of_scope, notes,
              status, source, author_kind, author_name,
-             kpi_tag, fingerprint, origin_session_id, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)
+             kpi_tag, fingerprint, origin_session_id, suggestion_outcome,
+             created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT (source, fingerprint) WHERE fingerprint IS NOT NULL
           DO UPDATE SET
             notes = CASE
@@ -268,10 +302,12 @@ export const createProposal = async (
               WHEN proposals.notes = '' THEN EXCLUDED.notes
               ELSE proposals.notes || chr(10) || EXCLUDED.notes
             END,
+            suggestion_outcome = COALESCE(EXCLUDED.suggestion_outcome, proposals.suggestion_outcome),
             updated_at = EXCLUDED.updated_at
           RETURNING id, title, problem, solution, out_of_scope, notes, status,
                     source, author_kind, author_name, coordinated, created_at,
-                    updated_at, last_slice_error, last_slice_failed_at`,
+                    updated_at, last_slice_error, last_slice_failed_at,
+                    suggestion_outcome`,
     args: [
       id,
       title,
@@ -285,6 +321,7 @@ export const createProposal = async (
       kpiTag,
       fingerprint,
       originSessionId,
+      suggestionOutcomeJson,
       now,
       now,
     ],

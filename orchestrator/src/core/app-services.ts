@@ -109,6 +109,7 @@ import type {
   PrimitivePark,
   DeepReflectionsListResult,
   DeepReflectionDetail,
+  ReflectionSuggestionOutcome,
 } from './daemon/http-server'
 import {
   PRIMITIVE_CATALOG,
@@ -119,6 +120,7 @@ import {
   type PrimitiveCatalogEntry,
 } from './lib/primitive-catalog'
 import { loadWorkerRegistry, type WorkerDeclaration } from './workers/persisted-registry'
+import { loadLeverRegistry } from './lib/lever-registry'
 import {
   extractFirstUserMessageText,
   recoverPromptFromDiskTranscript,
@@ -335,6 +337,43 @@ export interface AppServices {
       scopes: Array<{ scope: string; gates: GateHealthEntry[] }>
     }
   }>
+}
+
+/**
+ * Enrich a raw SuggestionOutcome (stored as JSON in the DB or parsed from a
+ * deep-reflection arc file) with live registry metadata: the lever's `family`
+ * and `gesture`. Returns null for null/unknown input.
+ */
+const enrichOutcome = (raw: unknown): ReflectionSuggestionOutcome => {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  if (o.type === 'lever') {
+    const lever = (o.lever && typeof o.lever === 'object' ? o.lever : {}) as Record<string, unknown>
+    const id = typeof lever.id === 'string' ? lever.id : ''
+    const entry = loadLeverRegistry().find((e) => e.id === id)
+    return {
+      type: 'lever',
+      lever: {
+        id,
+        family: entry ? String(entry.family) : '',
+        currentValue: typeof lever.currentValue === 'string' ? lever.currentValue : null,
+        proposedValue: typeof lever.proposedValue === 'string' ? lever.proposedValue : '',
+        gesture: entry?.gesture ?? null,
+      },
+    }
+  }
+  if (o.type === 'leverGap') {
+    const gap = (o.leverGap && typeof o.leverGap === 'object' ? o.leverGap : {}) as Record<string, unknown>
+    return {
+      type: 'leverGap',
+      leverGap: {
+        proposedLeverId: typeof gap.proposedLeverId === 'string' ? gap.proposedLeverId : '',
+        family: typeof gap.family === 'string' ? gap.family : '',
+        whatItWouldControl: typeof gap.whatItWouldControl === 'string' ? gap.whatItWouldControl : '',
+      },
+    }
+  }
+  return null
 }
 
 /**
@@ -1184,7 +1223,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
 
       const r = await client.execute({
         sql: `SELECT p.id, p.title, p.problem, p.solution, p.status, p.source,
-                p.created_at, p.updated_at,
+                p.created_at, p.updated_at, p.suggestion_outcome,
                 (SELECT COUNT(*) FROM proposal_user_stories s WHERE s.proposal_id = p.id) AS acceptance_count
          FROM proposals p
          ${whereClause}
@@ -1227,6 +1266,13 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
           updatedAt: Number(r0.updated_at ?? 0),
           acceptanceCount: Number(r0.acceptance_count ?? 0),
           userStories: storiesMap.get(r0.id as string) ?? [],
+          suggestionOutcome: enrichOutcome(
+            r0.suggestion_outcome != null
+              ? (typeof r0.suggestion_outcome === 'string'
+                  ? JSON.parse(r0.suggestion_outcome)
+                  : r0.suggestion_outcome)
+              : null,
+          ),
         })
       }
 
@@ -1511,6 +1557,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
             rationale: typeof ss.rationale === 'string' ? ss.rationale : '',
             verdict: typeof ss.verdict === 'string' ? ss.verdict : '',
             targetId: typeof ss.targetId === 'string' ? ss.targetId : null,
+            outcome: enrichOutcome(ss.outcome),
           }
         }),
       },

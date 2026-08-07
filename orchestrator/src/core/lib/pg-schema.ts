@@ -128,6 +128,11 @@ const DDL: readonly string[] = [
   `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_slice_error text`,
   `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_slice_failed_at bigint`,
   `ALTER TABLE proposals DROP COLUMN IF EXISTS auto_approve`,
+  // Structured lever binding — every reflection finding binds to a lever or
+  // declares a gap (ADR-0092). Stored as JSON text so round-trips are
+  // predictable across both the embedded-pg and PGlite backends. NULL means
+  // "predates the binding feature" (not a gap) — never back-filled from prose.
+  `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS suggestion_outcome text`,
   // Existing installs may contain duplicate fingerprints from concurrent
   // reflector runs. Keep every historical proposal, but retain the fingerprint
   // only on the first row so the source/fingerprint uniqueness boundary can be

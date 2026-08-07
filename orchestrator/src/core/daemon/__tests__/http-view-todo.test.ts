@@ -81,6 +81,7 @@ describe('GET /view/proposals', () => {
       updatedAt: 1_700_000_001_000,
       acceptanceCount: 2,
       userStories: [],
+      suggestionOutcome: null,
     }
     const stale: StaleWorktreeAlert = {
       taskId: 'task-abc',

@@ -291,6 +291,12 @@ export interface DraftFeature {
   acceptanceCount: number
   /** Ordered list of user story texts for this proposal. Empty when none have been added. */
   userStories: string[]
+  /**
+   * Structured lever binding from ADR-0092. Non-null only for reflection-
+   * sourced proposals created after the binding feature. Null means the
+   * proposal predates the binding feature or was created by another source.
+   */
+  suggestionOutcome: ReflectionSuggestionOutcome
 }
 
 /** Wire shape returned by GET /view/proposals for a single stale-worktree alert. */
@@ -350,6 +356,33 @@ export interface DeepReflectionSummary {
 }
 
 /**
+ * Enriched outcome served to the UI. For a `lever` outcome the entry's
+ * `family` and `gesture` are looked up from the live lever registry at serve
+ * time. For a `leverGap` outcome they come directly from the model output.
+ * `null` means the suggestion predates the binding feature.
+ */
+export type ReflectionSuggestionOutcome =
+  | {
+      type: 'lever'
+      lever: {
+        id: string
+        family: string
+        currentValue: string | null
+        proposedValue: string
+        gesture: string | null
+      }
+    }
+  | {
+      type: 'leverGap'
+      leverGap: {
+        proposedLeverId: string
+        family: string
+        whatItWouldControl: string
+      }
+    }
+  | null
+
+/**
  * Full report returned by GET /view/deep-reflections/:originId — includes the
  * complete report body for the detail view. `report` is null when `status` is
  * not 'complete' (pending / error / partial reports).
@@ -372,6 +405,8 @@ export interface DeepReflectionDetail extends DeepReflectionSummary {
       rationale: string
       verdict: string
       targetId: string | null
+      /** Structured lever binding — null means predates binding feature. */
+      outcome: ReflectionSuggestionOutcome
     }>
   } | null
 }

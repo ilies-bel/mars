@@ -259,7 +259,7 @@ describe('GET /view/deep-reflections/:originId', () => {
           { pattern: 'Repeated reads of pg-schema.ts', occurrences: 7, evidence: 'repeated reads' },
         ],
         suggestions: [
-          { title: 'Fix the wiring', prompt: 'Wire it up', rationale: 'It was not wired', verdict: 'save', targetId: null },
+          { title: 'Fix the wiring', prompt: 'Wire it up', rationale: 'It was not wired', verdict: 'save', targetId: null, outcome: null },
         ],
       },
     }

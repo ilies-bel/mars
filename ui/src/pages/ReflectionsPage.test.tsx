@@ -148,6 +148,7 @@ const makeDetailResponse = (overrides: Partial<DeepReflectionDetail> = {}): Deep
         rationale: 'Prevents silent null reads.',
         verdict: 'save',
         targetId: 'proposal-aaa',
+        outcome: null,
       },
     ],
   },
