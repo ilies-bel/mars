@@ -5,6 +5,7 @@ import {
   createProposal,
   findOpenReflectionDraftByFingerprint,
   appendProposalNotes,
+  findOpenTasksMatchingTitle,
 } from '../proposals'
 import { enqueueTask } from '../queue'
 import type { ReflectCorpus } from './reflect-query'
@@ -675,38 +676,48 @@ const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<string | n
   }
   const notes = [s.rationale, outcomeBlock].filter(Boolean).join('\n')
 
-  if (s.rootCauseKey) {
-    const fingerprint = createHash('sha256')
-      .update(`reflection:${s.rootCauseKey}:`)
-      .digest('hex')
-      .slice(0, 32)
-    const existing = await findOpenReflectionDraftByFingerprint(fingerprint)
-    if (existing) {
-      const parts: string[] = []
-      if (s.affectedTaskIds.length > 0) {
-        parts.push(`Also observed in: ${s.affectedTaskIds.join(', ')}`)
-      }
-      if (s.rationale) parts.push(s.rationale)
-      if (parts.length > 0) {
-        await appendProposalNotes(existing.id, parts.join('\n'))
-      }
-      return existing.id
+  // Always derive a fingerprint whether or not the model emitted rootCauseKey.
+  // When rootCauseKey is present, use it (same fingerprint as before so existing
+  // dedup rows keep working). When absent, derive a structural key from the
+  // normalized title and the outcome id — this ensures dedup runs on every
+  // suggestion and prevents the 0-absorbed rate observed when the model omits
+  // the key (1 of 176 proposals had a fingerprint before this fix).
+  const outcomeId =
+    s.outcome.type === 'lever' ? s.outcome.lever.id : s.outcome.leverGap.proposedLeverId
+  const fingerprintInput = s.rootCauseKey
+    ? `reflection:${s.rootCauseKey}:`
+    : `reflection-derived:${s.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}:${outcomeId}:`
+  const fingerprint = createHash('sha256').update(fingerprintInput).digest('hex').slice(0, 32)
+
+  const existing = await findOpenReflectionDraftByFingerprint(fingerprint)
+  if (existing) {
+    const parts: string[] = []
+    if (s.affectedTaskIds.length > 0) {
+      parts.push(`Also observed in: ${s.affectedTaskIds.join(', ')}`)
     }
-    const proposal = await createProposal(s.title, {
-      source: 'reflection',
-      author: { kind: 'agent', name: 'reflector' },
-      solution: s.prompt,
-      notes,
-      fingerprint,
-      suggestionOutcome: s.outcome,
-    })
-    return proposal.id
+    if (s.rationale) parts.push(s.rationale)
+    if (parts.length > 0) {
+      await appendProposalNotes(existing.id, parts.join('\n'))
+    }
+    return existing.id
   }
+
+  // Flag the new draft when open tasks may already address the same issue,
+  // so the operator can see the overlap without hunting through the queue.
+  const matchingTaskIds = await findOpenTasksMatchingTitle(s.title)
+  const proposalNotes =
+    matchingTaskIds.length > 0
+      ? [notes, `Open task(s) may address same issue: ${matchingTaskIds.join(', ')}`]
+          .filter(Boolean)
+          .join('\n')
+      : notes
+
   const proposal = await createProposal(s.title, {
     source: 'reflection',
     author: { kind: 'agent', name: 'reflector' },
     solution: s.prompt,
-    notes,
+    notes: proposalNotes,
+    fingerprint,
     suggestionOutcome: s.outcome,
   })
   return proposal.id

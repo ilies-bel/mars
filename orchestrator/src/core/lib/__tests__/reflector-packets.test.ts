@@ -17,6 +17,7 @@ vi.mock('../../proposals', () => ({
   createProposal: vi.fn().mockResolvedValue({ id: 'prop-1' }),
   findOpenReflectionDraftByFingerprint: vi.fn().mockResolvedValue(null),
   appendProposalNotes: vi.fn().mockResolvedValue(undefined),
+  findOpenTasksMatchingTitle: vi.fn().mockResolvedValue([]),
 }))
 
 import { persistSuggestions } from '../reflector'

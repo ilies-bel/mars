@@ -18,6 +18,7 @@ vi.mock('../../proposals', () => ({
   createProposal: vi.fn().mockResolvedValue({ id: 'proposal-1' }),
   findOpenReflectionDraftByFingerprint: vi.fn().mockResolvedValue(null),
   appendProposalNotes: vi.fn().mockResolvedValue(undefined),
+  findOpenTasksMatchingTitle: vi.fn().mockResolvedValue([]),
 }))
 
 vi.mock('../../queue', () => ({

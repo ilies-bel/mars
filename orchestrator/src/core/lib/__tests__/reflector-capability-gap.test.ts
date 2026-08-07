@@ -27,6 +27,7 @@ vi.mock('../../proposals', () => ({
   createProposal: createProposalMock,
   findOpenReflectionDraftByFingerprint: findOpenReflectionDraftByFingerprintMock,
   appendProposalNotes: appendProposalNotesMock,
+  findOpenTasksMatchingTitle: vi.fn().mockResolvedValue([]),
 }))
 
 const gap: VerdictedCapabilityGapSuggestion = {

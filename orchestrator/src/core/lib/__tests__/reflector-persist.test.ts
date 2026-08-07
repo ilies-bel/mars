@@ -161,14 +161,17 @@ describe('reflector persist dedup', () => {
     expect(await countProposals()).toBe(2)
   })
 
-  it('suggestion without rootCauseKey always creates a new proposal (no dedup)', async () => {
+  it('suggestion without rootCauseKey deduplicates by derived title+outcome fingerprint', async () => {
+    // New behaviour: even without rootCauseKey the structural fingerprint
+    // (normalised title + outcome id) is always derived, so a second run of
+    // the same suggestion is absorbed rather than creating a duplicate row.
     const { persistSuggestions } = await import('../reflector')
 
     const bare = {
       title: 'Generic cleanup',
       prompt: 'Do a cleanup. Save your work.',
       rationale: null,
-      rootCauseKey: '',
+      rootCauseKey: '',  // model omitted this
       affectedTaskIds: [],
       frequency: 1,
       confidence: 0,
@@ -179,8 +182,94 @@ describe('reflector persist dedup', () => {
     await persistSuggestions([bare], 'source-task-1')
     await persistSuggestions([bare], 'source-task-2')
 
-    // No fingerprint → no dedup → two rows
-    expect(await countProposals()).toBe(2)
+    // Derived fingerprint → dedup → one row, not two
+    expect(await countProposals()).toBe(1)
+  })
+
+  it('fingerprint is persisted on the draft even when model omits rootCauseKey', async () => {
+    const { persistSuggestions } = await import('../reflector')
+    const { findOpenReflectionDraftByFingerprint } = await import('../../proposals')
+    const { createHash } = await import('node:crypto')
+
+    const suggestion = {
+      title: 'Handle connection timeouts gracefully',
+      prompt: 'Add retry logic for timeouts. Save your work.',
+      rationale: null,
+      rootCauseKey: '',  // model omitted this
+      affectedTaskIds: [],
+      frequency: 1,
+      confidence: 0,
+      kind: 'mechanical' as const,
+      outcome: baseOutcome,
+    }
+
+    await persistSuggestions([suggestion], 'src-task-1')
+    expect(await countProposals()).toBe(1)
+
+    // The derived fingerprint is deterministic: sha256('reflection-derived:<slug>:<outcomeId>:')
+    const slug = 'handle-connection-timeouts-gracefully'
+    const outcomeId = baseOutcome.leverGap.proposedLeverId
+    const fingerprint = createHash('sha256')
+      .update(`reflection-derived:${slug}:${outcomeId}:`)
+      .digest('hex')
+      .slice(0, 32)
+
+    // The draft is findable by its derived fingerprint
+    const draft = await findOpenReflectionDraftByFingerprint(fingerprint)
+    expect(draft).not.toBeNull()
+    expect(draft?.id).toBeTruthy()
+
+    // Second run is absorbed: total stays 1
+    await persistSuggestions(
+      [{ ...suggestion, affectedTaskIds: ['task-z'] }],
+      'src-task-2',
+    )
+    expect(await countProposals()).toBe(1)
+  })
+
+  it('open task with matching keywords is flagged on the new draft notes', async () => {
+    const { resolveStateClient } = await import('../../store/state-client')
+    const { initProposals, findOpenReflectionDraftByFingerprint } = await import('../../proposals')
+    const { applyVerdicts } = await import('../reflector')
+    const { createHash } = await import('node:crypto')
+
+    await initProposals()
+
+    // Insert a queued task whose prompt overlaps with the suggestion title keywords.
+    // (arc-sole-writer.test.ts skips *.test.ts files, so this direct INSERT is permitted.)
+    const c = resolveStateClient()
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES (?, ?, 'queued', NOW(), NOW())`,
+      args: ['mars-overlap-task', 'preserve recovery budget during api outages to prevent cascades'],
+    })
+
+    const suggestion = {
+      title: 'Preserve recovery budget on API outages',
+      prompt: 'Add backoff for API outage scenarios. Save your work.',
+      rationale: null,
+      rootCauseKey: 'api_outage_recovery',
+      affectedTaskIds: [],
+      frequency: 1,
+      confidence: 0.8,
+      kind: 'mechanical' as const,
+      verdict: 'save' as const,
+      targetId: null,
+      dupOf: null,
+      outcome: baseOutcome,
+    }
+
+    const result = await applyVerdicts([suggestion], 'src-task')
+    expect(result.saved).toBe(1)
+
+    // The proposal's notes should mention the matching task id
+    const fingerprint = createHash('sha256')
+      .update('reflection:api_outage_recovery:')
+      .digest('hex')
+      .slice(0, 32)
+    const draft = await findOpenReflectionDraftByFingerprint(fingerprint)
+    expect(draft).not.toBeNull()
+    expect(draft?.notes).toMatch(/mars-overlap-task/)
   })
 
   it('applyVerdicts save path routes through the same fingerprint dedup', async () => {

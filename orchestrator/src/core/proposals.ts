@@ -995,6 +995,45 @@ export const findOpenReflectionDraftByFingerprint = async (
 }
 
 /**
+ * Return ids of open (non-done, non-dropped) tasks whose prompt shares at
+ * least 2 distinctive keywords with the given suggestion title. Used by the
+ * reflector to flag potential overlapping work on new reflection drafts so the
+ * operator can see a possible duplicate before acting on it.
+ *
+ * "Distinctive" means longer than 3 characters and not on a common stop-word
+ * list. Returns at most 5 ids. Returns [] when fewer than 2 distinctive
+ * keywords can be extracted from the title, or when no tasks match.
+ */
+export const findOpenTasksMatchingTitle = async (title: string): Promise<string[]> => {
+  const STOP = new Set([
+    'that', 'this', 'with', 'from', 'have', 'will', 'when', 'does', 'should',
+    'would', 'could', 'make', 'made', 'into', 'over', 'after', 'before', 'which',
+    'their', 'there', 'then', 'than', 'them', 'they', 'each', 'some', 'been',
+    'were', 'also', 'what', 'where', 'code', 'task',
+  ])
+  const words = title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 3 && !STOP.has(w))
+  if (words.length < 2) return []
+  await initProposals()
+  const c = stateClient()
+  const matchSum = words
+    .map(() => `CASE WHEN LOWER(t.prompt) LIKE ? THEN 1 ELSE 0 END`)
+    .join(' + ')
+  const r = await c.execute({
+    sql: `SELECT t.id FROM tasks t
+          WHERE t.status NOT IN ('done', 'dropped')
+            AND (${matchSum}) >= 2
+          ORDER BY t.created_at DESC
+          LIMIT 5`,
+    args: words.map((w) => `%${w}%`),
+  })
+  return (r.rows as unknown as Array<{ id: string }>).map((row) => row.id)
+}
+
+/**
  * Append a line of text to a proposal's notes field. Idempotent in the sense
  * that each call adds a newline-separated block; it does not deduplicate the
  * content itself. Used by the reflector to accumulate evidence from multiple
