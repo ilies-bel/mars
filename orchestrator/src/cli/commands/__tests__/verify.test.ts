@@ -157,7 +157,7 @@ describe('mars verify add — happy path', () => {
     const daemon = await makeFake()
 
     const r = await run(
-      ['verify', 'add', 'typecheck', '--cmd', 'npx'],
+      ['verify', 'add', 'typecheck', '--cmd', 'echo'],
       { store, ctx, daemon },
     )
 
@@ -251,7 +251,7 @@ describe('mars verify add — --tier integration', () => {
     const daemon = await makeFake()
 
     await run(
-      ['verify', 'add', 'e2e', '--cmd', 'npm', '--tier', 'integration'],
+      ['verify', 'add', 'e2e', '--cmd', 'echo', '--tier', 'integration'],
       { store, ctx, daemon },
     )
 
@@ -271,7 +271,7 @@ describe('mars verify add — duplicate (scope,name)', () => {
     const daemon = await makeFake()
 
     const r1 = await run(
-      ['verify', 'add', 'typecheck', '--cmd', 'npx'],
+      ['verify', 'add', 'typecheck', '--cmd', 'echo'],
       { store, ctx, daemon },
     )
     expect(r1.code).toBe(0)
@@ -297,7 +297,7 @@ describe('mars verify remove — by name', () => {
     const { store, ctx } = await loadDeps()
     const daemon = await makeFake()
 
-    await run(['verify', 'add', 'typecheck', '--cmd', 'npx'], { store, ctx, daemon })
+    await run(['verify', 'add', 'typecheck', '--cmd', 'echo'], { store, ctx, daemon })
 
     const removeR = await run(['verify', 'remove', 'typecheck'], { store, ctx, daemon })
     expect(removeR.code).toBe(0)
@@ -318,7 +318,7 @@ describe('mars verify remove — by UUID', () => {
     const daemon = await makeFake()
 
     const addR = await run(
-      ['verify', 'add', 'typecheck', '--cmd', 'npx'],
+      ['verify', 'add', 'typecheck', '--cmd', 'echo'],
       { store, ctx, daemon },
     )
     expect(addR.code).toBe(0)
@@ -361,5 +361,110 @@ describe('mars verify remove — unknown name', () => {
 
     expect(r.code).toBe(0)
     expect(r.err).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 15. verify add — bare `--` separator stores trailing tokens as gate args
+// ---------------------------------------------------------------------------
+
+describe('mars verify add — bare -- separator', () => {
+  it('stores tokens after -- as gate args (never silently discards them)', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['verify', 'add', 'typecheck', '--cmd', 'npx', '--', 'tsc', '--noEmit'],
+      { store, ctx, daemon },
+    )
+
+    // Must succeed (exit 0) and store the gate
+    expect(r.code).toBe(0)
+
+    // The gate's args must contain the -- operands
+    const listR = await run(['verify', 'list'], { store, ctx, daemon })
+    const out = listR.out.join('\n')
+    expect(out).toContain('tsc')
+    expect(out).toContain('--noEmit')
+    // args must NOT be the empty array []
+    expect(out).not.toContain('"args":  []')
+    expect(out).not.toMatch(/"args":\s*\[\]/)
+  })
+
+  it('combines -- args with --args flags when both are present', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['verify', 'add', 'lint', '--cmd', 'npx', '--args', 'eslint', '--', '.'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).toBe(0)
+
+    const listR = await run(['verify', 'list'], { store, ctx, daemon })
+    const out = listR.out.join('\n')
+    expect(out).toContain('eslint')
+    expect(out).toContain('.')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 16. verify add — bare multiplexer rejection
+// ---------------------------------------------------------------------------
+
+describe('mars verify add — bare multiplexer guard', () => {
+  it('rejects a bare npx gate (no args) with exit 2 and an error', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['verify', 'add', 'typecheck', '--cmd', 'npx'],
+      { store, ctx, daemon },
+    )
+
+    // Gate with no args and cmd=npx must be rejected
+    expect(r.code).toBe(2)
+    const errText = r.err.join('\n')
+    expect(errText).toContain('npx')
+    // Must guide the user to provide args
+    expect(errText.toLowerCase()).toMatch(/--args|-- |subcommand/)
+  })
+
+  it('accepts npx when args are provided via --', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['verify', 'add', 'typecheck', '--cmd', 'npx', '--', 'tsc', '--noEmit'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).toBe(0)
+  })
+
+  it('accepts npx when args are provided via --args', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['verify', 'add', 'typecheck', '--cmd', 'npx', '--args', 'tsc', '--args', '--noEmit'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).toBe(0)
+  })
+
+  it('rejects a bare npm gate (no args) with exit 2', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['verify', 'add', 'tests', '--cmd', 'npm'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain('npm')
   })
 })

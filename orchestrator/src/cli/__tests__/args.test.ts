@@ -110,3 +110,49 @@ describe('parseArgs — REPEATABLE_FLAGS greedy consumption', () => {
     expect(result.positional).toEqual([])
   })
 })
+
+describe('parseArgs — bare -- separator', () => {
+  it('empty input produces empty rest', () => {
+    const result = parseArgs([])
+    expect(result.rest).toEqual([])
+  })
+
+  it('no -- separator produces empty rest', () => {
+    const result = parseArgs(['verify', 'add', 'typecheck', '--cmd', 'npx'])
+    expect(result.rest).toEqual([])
+    expect(result.positional).toEqual(['verify', 'add', 'typecheck'])
+  })
+
+  it('-- puts everything after it into rest, not positional or flags', () => {
+    const result = parseArgs(['--cmd', 'npx', '--', 'tsc', '--noEmit'])
+    expect(result.flags['--cmd']).toBe('npx')
+    expect(result.rest).toEqual(['tsc', '--noEmit'])
+    expect(result.positional).toEqual([])
+  })
+
+  it('-- with flag-like tokens after it are verbatim in rest, not parsed as flags', () => {
+    const result = parseArgs(['--cmd', 'npx', '--', '--noEmit', '--strict'])
+    expect(result.rest).toEqual(['--noEmit', '--strict'])
+    expect(result.flags['--noEmit']).toBeUndefined()
+  })
+
+  it('positional before -- and rest after -- are both captured', () => {
+    const result = parseArgs(['typecheck', '--cmd', 'npx', '--', 'tsc', '--noEmit'])
+    expect(result.positional).toEqual(['typecheck'])
+    expect(result.flags['--cmd']).toBe('npx')
+    expect(result.rest).toEqual(['tsc', '--noEmit'])
+  })
+
+  it('bare -- with nothing after it produces empty rest', () => {
+    const result = parseArgs(['--cmd', 'npx', '--'])
+    expect(result.rest).toEqual([])
+    expect(result.flags['--cmd']).toBe('npx')
+  })
+
+  it('-- stops greedy consumption of REPEATABLE_FLAGS', () => {
+    // --args tsc stops at --, not continuing to consume --noEmit
+    const result = parseArgs(['--args', 'tsc', '--', '--noEmit'])
+    expect(result.multiFlags['--args']).toEqual(['tsc'])
+    expect(result.rest).toEqual(['--noEmit'])
+  })
+})

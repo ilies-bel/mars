@@ -38,12 +38,13 @@ export const dispatch = async (
     return { unknown: true, cmd: parsed.positional[0] }
   }
   // Hand the command a ParsedArgs scoped to its own positionals (the path
-  // tokens that selected it are stripped). repo/flags/multiFlags pass through.
+  // tokens that selected it are stripped). repo/flags/multiFlags/rest pass through.
   const scoped: ParsedArgs = {
     repo: parsed.repo,
     flags: parsed.flags,
     multiFlags: parsed.multiFlags,
     positional: match.rest,
+    rest: parsed.rest,
   }
   return match.command.run(scoped, deps)
 }

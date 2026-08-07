@@ -20,6 +20,14 @@ import type { Command } from '../command'
 /** UUID v4 pattern used to distinguish gate ids from gate names. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+/**
+ * Package-runner multiplexers that require at least one argument to be useful.
+ * A gate whose cmd is one of these and whose resolved args array is empty will
+ * run a bare binary that either always passes (npx, pnpm, bunx) or always fails
+ * (npm, yarn) — never verifying what its name implies.
+ */
+const BARE_MULTIPLEXER_CMDS = new Set(['npx', 'npm', 'pnpm', 'yarn', 'bunx'])
+
 /** Detect a PostgreSQL UNIQUE-constraint violation (23505) or its message equivalent. */
 const isUniqueConstraint = (err: unknown): boolean => {
   if (!(err instanceof Error)) return false
@@ -81,7 +89,7 @@ const verifyAdd: Command = {
   path: 'verify add',
   summary: 'register a new verify gate',
   usage:
-    'usage: mars verify add <name> --cmd <cmd> [--args <arg>...] [--scope <scope>] [--tier task|integration] [--optional]',
+    'usage: mars verify add <name> --cmd <cmd> [-- <arg>...] [--args <arg>...] [--scope <scope>] [--tier task|integration] [--optional]',
   run: async (args, deps) => {
     const name = args.positional[0]
     const cmd = args.flags['--cmd']
@@ -104,7 +112,22 @@ const verifyAdd: Command = {
     }
     const tier = tierRaw as 'task' | 'integration'
 
-    const gateArgs = args.multiFlags['--args'] ?? []
+    // Gate args can be supplied via --args (repeatable) or via a bare -- separator
+    // (everything after -- becomes the gate's argv). Both forms are supported and
+    // combined; -- args come first since that is the shell-natural ordering.
+    const gateArgs = [...(args.rest ?? []), ...(args.multiFlags['--args'] ?? [])]
+
+    // Refuse to register a bare-multiplexer gate. A command like `npx` with no
+    // args runs a REPL or prints help — it never verifies what the gate name implies.
+    if (gateArgs.length === 0 && BARE_MULTIPLEXER_CMDS.has(cmd)) {
+      deps.err(
+        `refusing to register a bare '${cmd}' gate with no arguments — it would ` +
+          `${cmd === 'npm' || cmd === 'yarn' ? 'always fail' : 'always pass'} without checking anything. ` +
+          `Specify what to run via -- or --args: e.g. --cmd ${cmd} -- <subcommand>`,
+      )
+      return { code: 2 }
+    }
+
     const required = !hasFlag(args, '--optional')
 
     try {

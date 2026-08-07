@@ -19,6 +19,14 @@ export interface ParsedArgs {
   flags: Record<string, string>
   multiFlags: Record<string, string[]>
   positional: string[]
+  /**
+   * Tokens that appeared after a bare `--` separator. These are never parsed
+   * as flags — they are the raw argv for a sub-process or gate command.
+   *
+   * Example: `mars verify add typecheck --cmd npx -- tsc --noEmit`
+   * → `rest = ['tsc', '--noEmit']`
+   */
+  rest: string[]
 }
 
 /** Value-bearing flags: `--flag value` or `--flag=value`. */
@@ -193,11 +201,23 @@ export const parseArgs = (argv: readonly string[]): ParsedArgs => {
   const positional: string[] = []
   const flags: Record<string, string> = {}
   const multiFlags: Record<string, string[]> = {}
+  const rest: string[] = []
   let repo: string | undefined
+  let seenDoubleDash = false
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === undefined) continue
+
+    // Everything after a bare `--` goes into `rest` unmodified.
+    if (seenDoubleDash) {
+      rest.push(a)
+      continue
+    }
+    if (a === '--') {
+      seenDoubleDash = true
+      continue
+    }
 
     const eq = a.indexOf('=')
     const rawKey = eq === -1 ? a : a.slice(0, eq)
@@ -239,7 +259,7 @@ export const parseArgs = (argv: readonly string[]): ParsedArgs => {
     }
     positional.push(a)
   }
-  return { repo, flags, multiFlags, positional }
+  return { repo, flags, multiFlags, positional, rest }
 }
 
 /** True when a boolean flag was supplied. Flag keys retain their `--` prefix. */

@@ -10,6 +10,7 @@ import {
   type LeverFamily,
   type LeverRegistryEntry,
 } from '../lever-registry.js'
+import { parseArgs } from '../../../cli/args.js'
 
 const VALID_FAMILIES: LeverFamily[] = [
   'model',
@@ -474,6 +475,54 @@ describe('family coverage completeness check', () => {
       expect(globalFamilies.has(f), `family '${f}' is missing from global registry entries`).toBe(
         true,
       )
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Drift-prevention: verify.add-* gesture strings must produce non-empty argv
+//
+// This test parses every `verify.add-*` lever's gesture string with the real
+// `parseArgs` and asserts the resulting gate command has a non-empty argument
+// list. A gesture that silently produces an empty argv is strictly worse than
+// having no gate — it launders unverified work as verified.
+// ---------------------------------------------------------------------------
+
+describe('verify.add-* gesture strings produce non-empty gate argv', () => {
+  it('every verify.add-* lever gesture resolves to a gate with non-empty args', () => {
+    const verifyAddLevers = loadLeverRegistry().filter(
+      (e) => e.id.startsWith('verify.add-') && e.gesture !== null && e.gesture.includes('verify add'),
+    )
+
+    // There should be at least the five known verify.add-* levers with
+    // `mars verify add` gestures.
+    expect(
+      verifyAddLevers.length,
+      'expected at least 5 verify.add-* levers with "mars verify add" gestures',
+    ).toBeGreaterThanOrEqual(5)
+
+    for (const lever of verifyAddLevers) {
+      const gesture = lever.gesture!
+      // Split the gesture into tokens (handle single spaces; no shell quoting needed
+      // since these gestures are simple flag strings without quoted values).
+      const tokens = gesture.trim().split(/\s+/)
+
+      // Strip "mars verify add <name>" prefix (first 4 tokens).
+      // e.g. ["mars","verify","add","typecheck","--cmd","npx","--","tsc","--noEmit"]
+      //                                          ↑ index 3 is the name
+      const afterPrefix = tokens.slice(4) // everything after "mars verify add <name>"
+
+      const parsed = parseArgs(afterPrefix)
+
+      // Gate argv = rest (from --) + --args flags
+      const gateArgs = [...parsed.rest, ...(parsed.multiFlags['--args'] ?? [])]
+
+      expect(
+        gateArgs.length,
+        `lever '${lever.id}' gesture "${gesture}" resolves to an empty gate argv — ` +
+          `the gate would run '${parsed.flags['--cmd']}' with no arguments, which ` +
+          `never verifies what the gate name implies. Fix the gesture to use -- or --args.`,
+      ).toBeGreaterThan(0)
     }
   })
 })
