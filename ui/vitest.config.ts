@@ -5,6 +5,39 @@ import react from '@vitejs/plugin-react'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+// -----------------------------------------------------------------------------
+// Merge-gate reliability guardrail — mirrored from orchestrator/vitest.config.ts
+//
+// Mars runs many coder tasks in parallel, each doing a full `npm test`. Vitest
+// otherwise sizes the forks pool to the host core count (~9 forks here), and
+// this config declares FOUR projects, so one suite alone can spawn ~4×9 forks.
+// N parallel worktrees × that fan-out exhausts RAM and starves the host.
+//
+// Observed 2026-07-21 (orchestrator): repeated daemon deaths + orphaned fork
+// storms at load ~200 — which is why orchestrator/vitest.config.ts pins
+// maxForks=1. That bound was never copied here, and on 2026-08-07 this config
+// reproduced the same incident from the UI side: 8 implement tasks, 111 vitest
+// processes, load 210 on 10 cores, zero task completions in 15 minutes.
+//
+// One fork per suite trades slower per-suite wall time for a bounded aggregate
+// no matter how many suites run at once. Override on an idle machine via
+// VITEST_MAX_FORKS. Do not remove without an ADR — and if you change it, change
+// orchestrator/vitest.config.ts in the same commit so the two cannot drift again.
+//
+// Applied to the root `test` block AND to every project: inline projects do not
+// reliably inherit pool settings across vitest versions, and a silent
+// non-inherit here is exactly the failure this guard exists to prevent.
+// -----------------------------------------------------------------------------
+const boundedPool = {
+  pool: 'forks' as const,
+  poolOptions: {
+    forks: {
+      maxForks: Number(process.env.VITEST_MAX_FORKS ?? 1),
+      minForks: Number(process.env.VITEST_MIN_FORKS ?? 1),
+    },
+  },
+}
+
 /** Shared resolve aliases used by all test projects. */
 const sharedAlias = {
   '@': path.resolve(__dirname, 'src'),
@@ -19,6 +52,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: { alias: sharedAlias },
   test: {
+    ...boundedPool,
     // Three inline projects so each runs with its own environment and timeout:
     //   node   — src/ unit tests (no DOM), 5 s default timeout
     //   server — every server/**/*.test.ts, 60 s (real HTTP server + PGlite)
@@ -28,6 +62,7 @@ export default defineConfig({
         plugins: [react()],
         resolve: { alias: sharedAlias },
         test: {
+          ...boundedPool,
           name: 'node',
           environment: 'node',
           // Provide minimal Bun runtime globals so tests written against Bun's
@@ -55,6 +90,7 @@ export default defineConfig({
         plugins: [react()],
         resolve: { alias: sharedAlias },
         test: {
+          ...boundedPool,
           name: 'contracts',
           environment: 'node',
           include: [],
@@ -70,6 +106,7 @@ export default defineConfig({
         plugins: [react()],
         resolve: { alias: sharedAlias },
         test: {
+          ...boundedPool,
           name: 'server',
           environment: 'node',
           setupFiles: ['server/__testing__/bun-vitest-setup.ts'],
@@ -101,6 +138,7 @@ export default defineConfig({
         plugins: [react()],
         resolve: { alias: sharedAlias },
         test: {
+          ...boundedPool,
           name: 'dom',
           environment: 'happy-dom',
           // Composer interactive tests + ChatPage.test.tsx (slash-palette keyboard tests
