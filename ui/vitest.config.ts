@@ -28,14 +28,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // reliably inherit pool settings across vitest versions, and a silent
 // non-inherit here is exactly the failure this guard exists to prevent.
 // -----------------------------------------------------------------------------
+// Vitest 4 reworked the pool API: `poolOptions` was removed; `maxForks` is now
+// the top-level `maxWorkers`. The `VITEST_MAX_WORKERS` env var is also read
+// automatically by vitest 4, but we set the default here explicitly so the
+// bound is visible in config (not a hidden env-var-only behaviour). We also
+// honour the legacy `VITEST_MAX_FORKS` name so operator runbooks written for
+// the orchestrator config still work without change.
+// See: https://vitest.dev/guide/migration#pool-rework
 const boundedPool = {
   pool: 'forks' as const,
-  poolOptions: {
-    forks: {
-      maxForks: Number(process.env.VITEST_MAX_FORKS ?? 1),
-      minForks: Number(process.env.VITEST_MIN_FORKS ?? 1),
-    },
-  },
+  maxWorkers: Number(process.env.VITEST_MAX_WORKERS ?? process.env.VITEST_MAX_FORKS ?? 1),
 }
 
 /** Shared resolve aliases used by all test projects. */
