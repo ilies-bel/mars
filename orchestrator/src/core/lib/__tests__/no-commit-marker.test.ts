@@ -53,4 +53,59 @@ describe('detectNoCommitMarker', () => {
     const m = detectNoCommitMarker('… Nothing to commit. …')
     expect(m).toMatch(/Nothing to commit/i)
   })
+
+  // -------------------------------------------------------------------------
+  // Quoted-material stripping — the phrase in a fenced block or backtick span
+  // is quoting the world, not declaring intent.
+  // -------------------------------------------------------------------------
+
+  it('does not trigger on "nothing to commit" inside a fenced code block', () => {
+    const prompt = [
+      'Fix the bug where git emits an unexpected message.',
+      '',
+      'The relevant git output:',
+      '```',
+      '$ git status',
+      'nothing to commit, working tree clean',
+      '```',
+      '',
+      'The fix involves updating src/core/queue.ts.',
+    ].join('\n')
+    expect(detectNoCommitMarker(prompt)).toBeNull()
+  })
+
+  it('does not trigger on "Nothing to commit" inside a tilde-fenced block', () => {
+    const prompt = [
+      'Fix the orchestrator stall described below.',
+      '~~~',
+      'Nothing to commit.',
+      '~~~',
+      'Implement the fix in queue.ts.',
+    ].join('\n')
+    expect(detectNoCommitMarker(prompt)).toBeNull()
+  })
+
+  it('does not trigger on "nothing to commit" inside an inline backtick span', () => {
+    const prompt =
+      'Fix the case where the CLI prints `nothing to commit` on clean trees. Edit queue.ts.'
+    expect(detectNoCommitMarker(prompt)).toBeNull()
+  })
+
+  it('still triggers on "nothing to commit" in plain prose (heading, body)', () => {
+    // Headings are NOT quoted spans — the structural-evidence bypass in the CLI
+    // caller handles that case; detectNoCommitMarker itself still matches.
+    const prompt = '# Fix the nothing to commit stall\n\nSome body text.'
+    expect(detectNoCommitMarker(prompt)).not.toBeNull()
+  })
+
+  it('still triggers when phrase appears both in prose and a fenced block (prose match wins)', () => {
+    const prompt = [
+      'Nothing to commit — fix the stall described below.',
+      '```',
+      '$ git status',
+      'nothing to commit',
+      '```',
+    ].join('\n')
+    expect(detectNoCommitMarker(prompt)).not.toBeNull()
+  })
 })

@@ -762,3 +762,109 @@ describe('task add --workflow registry validation', () => {
     expect(fake.calls).toHaveLength(0)
   })
 })
+
+// ---------------------------------------------------------------------------
+// No-commit guard: structural evidence bypass (mars-7a038f4c)
+//
+// A prompt that quotes git output ("nothing to commit") in a heading or body
+// must NOT be blocked when the task carries structural evidence of a code
+// change (--files or a build/test --verify).  Only genuinely read-only
+// prompts — no --files, no build-like --verify — should be refused.
+// ---------------------------------------------------------------------------
+
+describe('task add no-commit guard: structural evidence bypass', () => {
+  it('enqueues when prompt quotes "nothing to commit" in a heading but --files is present', async () => {
+    // Write the prompt file BEFORE loadStoreAndCtx (vi.resetModules) — consistent
+    // with the existing --prompt-file test pattern in this file.
+    const promptFile = join(repo, 'prompt-nc1.txt')
+    writeFileSync(
+      promptFile,
+      [
+        '# Fix the nothing to commit stall in Main committer',
+        '',
+        'The committer loops forever when the worker produces no diff.',
+        'Fix it in orchestrator/src/core/queue.ts.',
+      ].join('\n'),
+    )
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-nc1', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      [
+        'task', 'add',
+        '--prompt-file', promptFile,
+        '--files', 'orchestrator/src/core/queue.ts',
+        '--verify', 'npx tsc --noEmit && npm test',
+      ],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+  })
+
+  it('enqueues when prompt quotes git output with --files and build-like --verify', async () => {
+    const promptFile = join(repo, 'prompt-nc2.txt')
+    writeFileSync(
+      promptFile,
+      [
+        'Fix the committer stall described below.',
+        '',
+        'The error observed:',
+        '  nothing to commit, working tree clean',
+        '',
+        'Update src/core/queue.ts to short-circuit.',
+      ].join('\n'),
+    )
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-nc2', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      [
+        'task', 'add',
+        '--prompt-file', promptFile,
+        '--files', 'src/core/queue.ts',
+        '--verify', 'npm test',
+      ],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+  })
+
+  it('still refuses a genuinely read-only prompt with no --files and no build-like --verify', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-nc3', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    // Single-line inline prompt that triggers the guard
+    const r = await runCommandInProcess(
+      ['task', 'add', 'Read-only, report only, no edits. Summarise the test suite.'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(1)
+    expect(fake.calls).toHaveLength(0)
+    const errText = r.err.join('\n')
+    expect(errText).toContain('refusing to enqueue')
+    // Escape hatch is mentioned in the error message
+    expect(errText).toContain('--files')
+  })
+
+  it('enqueues when only --files is present (no --verify) even if prompt triggers the phrase', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-nc4', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    // Prompt must come BEFORE --files to avoid greedy multi-flag parsing consuming it.
+    const r = await runCommandInProcess(
+      ['task', 'add', 'Fix the nothing to commit stall. Edit src/foo.ts.', '--files', 'src/foo.ts'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+  })
+
+  it('enqueues when only a build-like --verify is present (no --files) even if prompt triggers the phrase', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-nc5', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--verify', 'npx tsc --noEmit', 'Fix the nothing to commit stall. Edit src/foo.ts.'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+  })
+})

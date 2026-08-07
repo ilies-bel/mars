@@ -54,6 +54,16 @@ interface EnqueueParams {
 }
 
 /**
+ * Returns true when `cmd` looks like a build / typecheck / test command.
+ * Used to decide whether `--verify` constitutes structural evidence of a
+ * source-code change, which overrides the no-commit text heuristic.
+ */
+const isBuildLikeVerifyCmd = (cmd: string): boolean =>
+  /\b(?:tsc|vitest|jest|mocha|ava|tap|jasmine|karma|cypress|playwright|puppeteer|npm\s+(?:test|run)|yarn\s+(?:test|run)|pnpm\s+(?:test|run)|npx|bunx|bun\s+test|cargo\s+(?:test|build|check)|go\s+(?:test|build)|make|gradle|mvn)\b/i.test(
+    cmd,
+  )
+
+/**
  * Shared enqueue path for `task add` (skipTriage=true) and the deprecated
  * `add` (skipTriage=false). Returns a CommandResult; prints via deps sinks.
  */
@@ -62,15 +72,29 @@ const enqueueViaDaemon = async (
   flags: Record<string, string>,
   params: EnqueueParams,
 ): Promise<CommandResult> => {
-  const marker = detectNoCommitMarker(params.prompt)
-  if (marker !== null) {
-    deps.err(
-      `[mars] refusing to enqueue: prompt declares it produces no source-code change (matched: ${marker.slice(0, 80)}).`,
-    )
-    deps.err(
-      `[mars] such tasks are typically read-only queries or scripts — run them manually rather than routing through Mars.`,
-    )
-    return { code: 1 }
+  // Structural evidence of a code change bypasses the no-commit text heuristic:
+  //   --files    → the caller is explicitly declaring target source files.
+  //   --verify   → a build/typecheck/test command implies a source change exists.
+  // Without this bypass, quoting git output ("nothing to commit") in a bug
+  // title or fenced block falsely triggers the guard even on well-formed tasks.
+  const hasStructuralEvidence =
+    (params.spec?.files?.length ?? 0) > 0 ||
+    (params.spec?.verifyCmd != null && isBuildLikeVerifyCmd(params.spec.verifyCmd))
+
+  if (!hasStructuralEvidence) {
+    const marker = detectNoCommitMarker(params.prompt)
+    if (marker !== null) {
+      deps.err(
+        `[mars] refusing to enqueue: prompt declares it produces no source-code change (matched: ${marker.slice(0, 80)}).`,
+      )
+      deps.err(
+        `[mars] such tasks are typically read-only queries or scripts — run them manually rather than routing through Mars.`,
+      )
+      deps.err(
+        `[mars] to override: pass --files <path> to declare a source change, or add a --verify build/test command.`,
+      )
+      return { code: 1 }
+    }
   }
   const functional = resolvePlanText(
     flags,
