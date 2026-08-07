@@ -69,9 +69,9 @@ afterEach(() => {
 
 describe('auto-reflect gate', () => {
   it('reads autoReflect: off from daemon.json', async () => {
-    const { isAutoReflectDisabled } = await import('../auto-reflect-gate')
+    const { isMemoryCaptureDisabled } = await import('../auto-reflect-gate')
 
-    expect(isAutoReflectDisabled()).toBe(true)
+    expect(isMemoryCaptureDisabled()).toBe(true)
   })
 
   it('skips automatic reflection persistence while preserving task signal capture', async () => {
