@@ -50,6 +50,7 @@ import { listAlerts, showAlert, type Alert, type AlertSources } from './lib/aler
 import type { RaiseActionQueueItem } from './lib/action-queue'
 import { loadRecentTaskCorpus, type ReflectCorpus, type LoadCorpusOptions } from './lib/reflect-query'
 import { listDeepReflectArcCandidates, type ArcCandidate } from './lib/deep-reflect-query'
+import { readControlLevers, loadDaemonConfig } from './daemon/config'
 import {
   computeScorerTrend,
   listScorerResults,
@@ -106,6 +107,8 @@ import type {
   PrimitiveObservedTool,
   PrimitiveRun,
   PrimitivePark,
+  DeepReflectionsListResult,
+  DeepReflectionDetail,
 } from './daemon/http-server'
 import {
   PRIMITIVE_CATALOG,
@@ -262,6 +265,11 @@ export interface AppServices {
   // ── reflect / arcs ──────────────────────────────────────────────────────────
   viewReflect: (opts?: LoadCorpusOptions) => Promise<ReflectCorpus>
   viewArcs: (opts?: { limit?: number; withTranscriptOnly?: boolean }) => Promise<ArcCandidate[]>
+  // ── deep reflection reports ──────────────────────────────────────────────────
+  /** List all arc reflection reports newest-first with headline counts. */
+  viewDeepReflections: (opts?: { limit?: number }) => Promise<DeepReflectionsListResult>
+  /** Fetch the full detail of one arc reflection report by originId. */
+  viewDeepReflection: (originId: string) => Promise<DeepReflectionDetail | null>
   // ── scorer results (record-only quality signal, PRD 6cf85bc9) ──────────────
   viewScorerTrend: (opts?: {
     workflow?: string
@@ -1312,6 +1320,203 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   const viewArcs: AppServices['viewArcs'] = (opts) =>
     listDeepReflectArcCandidates(opts)
 
+  /**
+   * Read the reflection control state (autoReflect lever + selfEvolve.autoTrigger).
+   * Falls back to safe defaults when the config file is absent or malformed.
+   */
+  const readReflectState = (): { autoReflect: 'on' | 'off'; autoTrigger: boolean } => {
+    try {
+      const levers = readControlLevers()
+      const cfg = loadDaemonConfig()
+      return { autoReflect: levers.autoReflect, autoTrigger: cfg.selfEvolve.autoTrigger }
+    } catch {
+      return { autoReflect: 'on', autoTrigger: false }
+    }
+  }
+
+  const viewDeepReflections: AppServices['viewDeepReflections'] = async (opts) => {
+    const dir = resolvePath(resolveContext().stateDir, 'deep-reflections')
+    let entries: string[]
+    try {
+      entries = await readdir(dir)
+    } catch {
+      // Directory absent — no reports yet.
+      const { autoReflect, autoTrigger } = readReflectState()
+      return { reports: [], autoReflect, autoTrigger, lastReflectedAt: null }
+    }
+
+    const arcFiles = entries
+      .filter((f) => f.startsWith('arc-') && f.endsWith('.json'))
+      .sort()
+      .reverse() // most-recent first (ISO stamp in filename)
+
+    const limit = opts?.limit ?? 100
+    const toRead = arcFiles.slice(0, limit)
+
+    const reports: import('./daemon/http-server').DeepReflectionSummary[] = []
+    for (const file of toRead) {
+      try {
+        const raw = await readFile(resolvePath(dir, file), 'utf8')
+        const data = JSON.parse(raw) as Record<string, unknown>
+        const report = data.report && typeof data.report === 'object' ? data.report as Record<string, unknown> : null
+        const dissonantCalls = Array.isArray(report?.dissonantCalls) ? report.dissonantCalls : []
+        const verifyMismatches = Array.isArray(report?.verifyMismatches)
+          ? report.verifyMismatches
+          : report?.verifyMismatch ? [report.verifyMismatch] : []
+        const thrashingPatterns = Array.isArray(report?.thrashingPatterns) ? report.thrashingPatterns : []
+        const toolCallStats = report?.toolCallStats && typeof report.toolCallStats === 'object'
+          ? report.toolCallStats as { total?: unknown }
+          : null
+        const verdictResult = data.verdictResult && typeof data.verdictResult === 'object'
+          ? data.verdictResult as { saved?: unknown; absorbed?: unknown; dropped?: unknown }
+          : {}
+        reports.push({
+          originId: typeof data.originId === 'string' ? data.originId : file,
+          recordedAt: typeof data.recordedAt === 'string' ? data.recordedAt : '',
+          status: typeof data.status === 'string' ? data.status : 'unknown',
+          totalToolCalls: typeof toolCallStats?.total === 'number' ? toolCallStats.total : 0,
+          dissonantCallCount: dissonantCalls.length,
+          verifyMismatchCount: verifyMismatches.length,
+          thrashingPatternCount: thrashingPatterns.length,
+          verdictResult: {
+            saved: typeof verdictResult.saved === 'number' ? verdictResult.saved : 0,
+            absorbed: typeof verdictResult.absorbed === 'number' ? verdictResult.absorbed : 0,
+            dropped: typeof verdictResult.dropped === 'number' ? verdictResult.dropped : 0,
+          },
+        })
+      } catch {
+        // Skip malformed files silently.
+      }
+    }
+
+    const lastReflectedAt = reports[0]?.recordedAt ?? null
+    const { autoReflect, autoTrigger } = readReflectState()
+    return { reports, autoReflect, autoTrigger, lastReflectedAt }
+  }
+
+  const viewDeepReflection: AppServices['viewDeepReflection'] = async (originId) => {
+    const dir = resolvePath(resolveContext().stateDir, 'deep-reflections')
+    let entries: string[]
+    try {
+      entries = await readdir(dir)
+    } catch {
+      return null
+    }
+
+    // Find the file matching this originId — filenames are arc-<originId>-<slug>-<ISO>.json.
+    // The originId is always the first segment after "arc-".
+    const arcFiles = entries.filter(
+      (f) => f.startsWith('arc-') && f.endsWith('.json') && f.startsWith(`arc-${originId}`)
+    )
+    if (arcFiles.length === 0) return null
+
+    // Most-recent file for this originId (sort ascending then take last).
+    const file = [...arcFiles].sort().at(-1)!
+    let raw: string
+    try {
+      raw = await readFile(resolvePath(dir, file), 'utf8')
+    } catch {
+      return null
+    }
+
+    let data: Record<string, unknown>
+    try {
+      data = JSON.parse(raw) as Record<string, unknown>
+    } catch {
+      return null
+    }
+
+    const report = data.report && typeof data.report === 'object' ? data.report as Record<string, unknown> : null
+    const dissonantCalls = Array.isArray(report?.dissonantCalls) ? report.dissonantCalls : []
+    const verifyMismatches = Array.isArray(report?.verifyMismatches)
+      ? report.verifyMismatches
+      : report?.verifyMismatch ? [report.verifyMismatch] : []
+    const thrashingPatterns = Array.isArray(report?.thrashingPatterns) ? report.thrashingPatterns : []
+    const suggestions = Array.isArray(report?.suggestions) ? report.suggestions : []
+    const toolCallStats = report?.toolCallStats && typeof report.toolCallStats === 'object'
+      ? report.toolCallStats as { total?: unknown; byName?: unknown }
+      : null
+    const verdictResult = data.verdictResult && typeof data.verdictResult === 'object'
+      ? data.verdictResult as { saved?: unknown; absorbed?: unknown; dropped?: unknown }
+      : {}
+
+    const normCall = (c: unknown): import('./daemon/http-server').ReflectionDissonantCall => {
+      const call = (c && typeof c === 'object' ? c : {}) as Record<string, unknown>
+      return {
+        taskId: typeof call.taskId === 'string' ? call.taskId : null,
+        eventIndex: typeof call.eventIndex === 'number' ? call.eventIndex : 0,
+        tool: typeof call.tool === 'string' ? call.tool : '',
+        statedIntent: typeof call.statedIntent === 'string' ? call.statedIntent : '',
+        actualOutcome: typeof call.actualOutcome === 'string' ? call.actualOutcome : '',
+        severity: typeof call.severity === 'string' ? call.severity : 'low',
+        evidence: typeof call.evidence === 'string' ? call.evidence : '',
+      }
+    }
+
+    const normMismatch = (m: unknown): import('./daemon/http-server').ReflectionVerifyMismatch => {
+      const mm = (m && typeof m === 'object' ? m : {}) as Record<string, unknown>
+      return {
+        taskId: typeof mm.taskId === 'string' ? mm.taskId : '',
+        claimed: typeof mm.claimed === 'string' ? mm.claimed : '',
+        actual: typeof mm.actual === 'string' ? mm.actual : '',
+        severity: typeof mm.severity === 'string' ? mm.severity : 'low',
+      }
+    }
+
+    const normPattern = (p: unknown): import('./daemon/http-server').ReflectionThrashingPattern => {
+      const pp = (p && typeof p === 'object' ? p : {}) as Record<string, unknown>
+      return {
+        pattern: typeof pp.pattern === 'string' ? pp.pattern : '',
+        occurrences: typeof pp.occurrences === 'number' ? pp.occurrences : 0,
+        evidence: typeof pp.evidence === 'string' ? pp.evidence : '',
+      }
+    }
+
+    const { autoReflect, autoTrigger } = readReflectState()
+
+    return {
+      originId: typeof data.originId === 'string' ? data.originId : originId,
+      recordedAt: typeof data.recordedAt === 'string' ? data.recordedAt : '',
+      status: typeof data.status === 'string' ? data.status : 'unknown',
+      totalToolCalls: typeof toolCallStats?.total === 'number' ? toolCallStats.total : 0,
+      dissonantCallCount: dissonantCalls.length,
+      verifyMismatchCount: verifyMismatches.length,
+      thrashingPatternCount: thrashingPatterns.length,
+      verdictResult: {
+        saved: typeof verdictResult.saved === 'number' ? verdictResult.saved : 0,
+        absorbed: typeof verdictResult.absorbed === 'number' ? verdictResult.absorbed : 0,
+        dropped: typeof verdictResult.dropped === 'number' ? verdictResult.dropped : 0,
+      },
+      sourceTaskId: typeof data.sourceTaskId === 'string' ? data.sourceTaskId : null,
+      autoReflect,
+      autoTrigger,
+      report: report === null ? null : {
+        summary: typeof report.summary === 'string' ? report.summary : '',
+        rootCause: typeof report.rootCause === 'string' ? report.rootCause : '',
+        toolCallStats: {
+          total: typeof toolCallStats?.total === 'number' ? toolCallStats.total : 0,
+          byName: (toolCallStats?.byName && typeof toolCallStats.byName === 'object' && !Array.isArray(toolCallStats.byName))
+            ? toolCallStats.byName as Record<string, number>
+            : {},
+        },
+        dissonantCalls: dissonantCalls.map(normCall),
+        verifyMismatch: verifyMismatches.length > 0 ? normMismatch(verifyMismatches[0]) : null,
+        verifyMismatches: verifyMismatches.map(normMismatch),
+        thrashingPatterns: thrashingPatterns.map(normPattern),
+        suggestions: suggestions.map((s: unknown) => {
+          const ss = (s && typeof s === 'object' ? s : {}) as Record<string, unknown>
+          return {
+            title: typeof ss.title === 'string' ? ss.title : '',
+            prompt: typeof ss.prompt === 'string' ? ss.prompt : '',
+            rationale: typeof ss.rationale === 'string' ? ss.rationale : '',
+            verdict: typeof ss.verdict === 'string' ? ss.verdict : '',
+            targetId: typeof ss.targetId === 'string' ? ss.targetId : null,
+          }
+        }),
+      },
+    }
+  }
+
   // Per-workflow score trend (median + p90, never a bare mean) plus the
   // recent result rows. This is the queryable surface Studio/UI read; how
   // it renders is out of scope here (PRD 6cf85bc9).
@@ -1628,6 +1833,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewReleaseNotes,
     viewReflect,
     viewArcs,
+    viewDeepReflections,
+    viewDeepReflection,
     viewScorerTrend,
     viewScorerWorkflows,
     viewScorerSuggestions,

@@ -614,6 +614,26 @@ export const startServer = async (
           }
         }
 
+        // GET /api/deep-reflections/:originId — full detail for one arc reflection
+        // report. Must be matched before /api/deep-reflections so the longer path wins.
+        if (path.startsWith('/api/deep-reflections/') && req.method === 'GET') {
+          const originId = decodeURIComponent(path.slice('/api/deep-reflections/'.length))
+          if (!originId) {
+            return jsonResponse(400, { error: 'originId is required' })
+          }
+          const r = await proxyGet(
+            ctx.stateDir,
+            `/view/deep-reflections/${encodeURIComponent(originId)}`,
+          )
+          return jsonResponse(r.status, r.body)
+        }
+
+        // GET /api/deep-reflections?limit=N — list arc reflection reports newest-first.
+        if (path === '/api/deep-reflections' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, `/view/deep-reflections${url.search}`)
+          return jsonResponse(r.status, r.body)
+        }
+
         // GET /api/kpis/:key/arcs — per-arc breakdown for a single KPI.
         // Must be matched before /api/kpis so the longer path wins.
         if (path.startsWith('/api/kpis/') && path.endsWith('/arcs') && req.method === 'GET') {
