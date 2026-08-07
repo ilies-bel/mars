@@ -303,8 +303,23 @@ export const renderTaskDetail = async (
   if (task.failureReason) {
     deps.out(`failureReason: ${task.failureReason}`)
   }
-  if (task.retryCount > 0) {
-    deps.out(`retryCount: ${task.retryCount}`)
+  if (task.recoverySpawnedCount > 0) {
+    // Show whether the one-shot recovery slot was consumed and by which fix task.
+    // Query self_heal_attempts (append-only; survives fix-task purge) to find the
+    // fix task id — task.recoverySpawnedCount alone can't tell us which task.
+    const healRow = await deps.store.query({
+      sql: `SELECT fix_task_id FROM self_heal_attempts
+             WHERE parent_task_id = ?
+             ORDER BY created_at DESC
+             LIMIT 1`,
+      args: [task.id],
+    })
+    const fixTaskId = (healRow.rows[0] as Record<string, unknown> | undefined)?.fix_task_id
+    if (fixTaskId) {
+      deps.out(`recoverySlot: spent (fix: ${fixTaskId})`)
+    } else {
+      deps.out(`recoverySlot: spent (fix task not found in ledger)`)
+    }
   }
   if (task.fixForTaskId) {
     deps.out(`fixForTask: ${task.fixForTaskId}`)

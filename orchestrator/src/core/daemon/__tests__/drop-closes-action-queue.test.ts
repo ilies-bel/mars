@@ -121,7 +121,7 @@ describe('dropTask — inline action-queue row resolution (no event drain needed
     // Directly insert a fix task pointing at the origin (mirrors production arc structure).
     const fixId = 'mars-drop-fix-001'
     await client.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, kind, origin_id, priority, created_at, updated_at, retry_count)
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, kind, origin_id, priority, created_at, updated_at, recovery_spawned_count)
             VALUES (?, ?, 'failed', ?, 'fix', ?, 0, datetime('now'), datetime('now'), 0)`,
       args: [fixId, 'recovery for origin', origin.id, origin.id],
     })

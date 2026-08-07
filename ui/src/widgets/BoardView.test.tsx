@@ -14,7 +14,7 @@ const task = (
   worktreePath: null,
   error: null,
   dropReason: null,
-  retryCount: 0,
+  recoverySpawnedCount: 0,
   blockerTaskId: null,
   blockedBy: [],
   spec: null,

@@ -691,7 +691,7 @@ describe('environmental-failure policy — no storm, no recovery-budget consumpt
     void ENV_SIGNATURE // referenced in assertion above implicitly via computeFailureSignature
   })
 
-  it('N consecutive environmental failures do NOT consume the origin recovery budget (retryCount unchanged)', async () => {
+  it('N consecutive environmental failures do NOT consume the origin recovery budget (recoverySpawnedCount unchanged)', async () => {
     const loaded = await loadModules(repo)
     const { q, rs, client } = loaded
     const sm_mod = loaded.sm
@@ -705,10 +705,10 @@ describe('environmental-failure policy — no storm, no recovery-budget consumpt
       ids.push(await failEnvTask(loaded, i))
     }
 
-    // Each task should be requeued with retryCount still 0 (budget intact).
+    // Each task should be requeued with recoverySpawnedCount still 0 (budget intact).
     for (const id of ids) {
       const t = await q.getTask(id)
-      expect(t?.retryCount).toBe(0)
+      expect(t?.recoverySpawnedCount).toBe(0)
     }
 
     // No fix tasks spawned for any of the origins.

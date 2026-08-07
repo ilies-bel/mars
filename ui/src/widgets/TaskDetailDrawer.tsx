@@ -665,7 +665,7 @@ export const TaskDetailBody = ({
           <MetaCell label="Created" value={relativeTime(task.createdAt) || task.createdAt} />
           <MetaCell label="Updated" value={relativeTime(task.updatedAt) || task.updatedAt} />
         </div>
-        <p className="font-mono text-[10px] text-primary">recovery: {task.retryCount}</p>
+        <p className="font-mono text-[10px] text-primary">recovery: {task.recoverySpawnedCount}</p>
       </div>
 
       {/* h. Diagnostics — collapsed by default. */}

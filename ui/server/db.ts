@@ -75,7 +75,7 @@ interface TaskRow {
   error: string | null
   failure_signature: string | null
   drop_reason: string | null
-  retry_count: number | null
+  recovery_spawned_count: number | null
   blocker_task_id: string | null
   blocker_task_ids: string | null
   parent_proposal_id: string | null
@@ -116,7 +116,7 @@ export interface Task {
    */
   failureSignature: string | null
   dropReason: string | null
-  retryCount: number
+  recoverySpawnedCount: number
   blockerTaskId: string | null
   /**
    * Every Task carries the full list of task ids that block it, derived from
@@ -198,7 +198,7 @@ const rowToTask = (row: TaskRow): Task => {
     error: row.error,
     failureSignature: row.failure_signature ?? null,
     dropReason: row.drop_reason ?? null,
-    retryCount: Number(row.retry_count ?? 0),
+    recoverySpawnedCount: Number(row.recovery_spawned_count ?? 0),
     blockerTaskId: row.blocker_task_id ?? null,
     blockedBy: parseBlockedBy(row.blocker_task_ids ?? null),
     parentProposalId: row.parent_proposal_id ?? null,
@@ -259,7 +259,7 @@ export class TaskDb {
     )
     const hasDropReason = colNames.has('drop_reason')
     const hasFailureSignature = colNames.has('failure_signature')
-    const hasRetryCount = colNames.has('retry_count')
+    const hasRecoverySpawnedCount = colNames.has('recovery_spawned_count')
     const hasFilesJson = colNames.has('files_json')
     const hasReadFirstJson = colNames.has('read_first_json')
     const hasPrescriptiveAction = colNames.has('prescriptive_action')
@@ -281,7 +281,7 @@ export class TaskDb {
       't.error',
       hasFailureSignature ? 't.failure_signature' : `NULL AS failure_signature`,
       hasDropReason ? 't.drop_reason' : `NULL AS drop_reason`,
-      hasRetryCount ? 't.retry_count' : `0 AS retry_count`,
+      hasRecoverySpawnedCount ? 't.recovery_spawned_count' : `0 AS recovery_spawned_count`,
       't.created_at',
       't.updated_at',
       hasFilesJson ? 't.files_json' : `NULL AS files_json`,

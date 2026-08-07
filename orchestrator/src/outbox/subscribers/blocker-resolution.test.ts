@@ -63,12 +63,12 @@ const blockTask = async (
   q: QueueModule,
   taskId: string,
   blockerTaskId: string,
-  retryCount = 0,
+  recoverySpawnedCount = 0,
 ): Promise<void> => {
   await q.addBlockers(taskId, [blockerTaskId])
   await q.resolveQueueClient().execute({
-    sql: `UPDATE tasks SET status = 'blocked', retry_count = ? WHERE id = ?`,
-    args: [retryCount, taskId],
+    sql: `UPDATE tasks SET status = 'blocked', recovery_spawned_count = ? WHERE id = ?`,
+    args: [recoverySpawnedCount, taskId],
   })
 }
 
@@ -308,7 +308,7 @@ describe('blocker-resolution outbox subscriber', () => {
     const b = await q.enqueueTask('b', undefined, { skipTriage: true })
     await q.addBlockers(dep.id, [a.id, b.id])
     await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET status = 'blocked', retry_count = 0 WHERE id = ?`,
+      sql: `UPDATE tasks SET status = 'blocked', recovery_spawned_count = 0 WHERE id = ?`,
       args: [dep.id],
     })
     // Only a is done; b is still pending.
@@ -334,7 +334,7 @@ describe('blocker-resolution outbox subscriber', () => {
 // When a `main-commiter` recovery (fix task with recipe='main-commiter') reaches
 // done, tasks parked behind it must be RE-QUEUED — never marked done via
 // propagateRecoveryDone().  The false-done path was triggered when:
-//   1. The parked task's retry budget was exhausted (high retry_count).
+//   1. The parked task's retry budget was exhausted (high recovery_spawned_count).
 //   2. An OLDER done main-committer had fix_for_task_id pointing at the parked task
 //      (pre-ADR-0040 "leaf-residue" edges).
 // Arc.unblockByCompletion() would find that older committer via
@@ -372,14 +372,14 @@ describe('blocker-resolution: main-committer done must re-queue parked tasks, no
       const MAIN_COMMITER_PAYLOAD = JSON.stringify({ recipe: 'main-commiter', integrationBranch: 'main' })
       const minutesAgo = (m: number): string => new Date(Date.now() - m * 60_000).toISOString()
 
-      // Source task with high retry_count (budget = 3, so retry_count = 10 is exhausted)
+      // Source task with high recovery_spawned_count (budget = 3, so recovery_spawned_count = 10 is exhausted)
       const src = await q.enqueueTask('implement-feature', undefined, { skipTriage: true })
-      await qc.execute({ sql: `UPDATE tasks SET retry_count = 10 WHERE id = ?`, args: [src.id] })
+      await qc.execute({ sql: `UPDATE tasks SET recovery_spawned_count = 10 WHERE id = ?`, args: [src.id] })
 
       // Older done main-committer C1 with fix_for_task_id = src.id (pre-ADR-0040 residue)
       const c1Id = `fix-old1-${src.id.slice(0, 6)}`
       await qc.execute({
-        sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, recovery_payload, created_at, updated_at)
+        sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, recovery_spawned_count, origin_id, priority, recovery_payload, created_at, updated_at)
               VALUES (?, 'clean main (old)', 'done', 'fix', 'agent', 'main-commiter-spawn', ?, 0, ?, 3, ?, ?, ?)`,
         args: [c1Id, src.id, src.id, MAIN_COMMITER_PAYLOAD, minutesAgo(5), minutesAgo(4)],
       })
@@ -387,7 +387,7 @@ describe('blocker-resolution: main-committer done must re-queue parked tasks, no
       // New main-committer C2: the one that just completed
       const c2Id = `fix-new-${src.id.slice(0, 6)}`
       await qc.execute({
-        sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, recovery_payload, created_at, updated_at)
+        sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, recovery_spawned_count, origin_id, priority, recovery_payload, created_at, updated_at)
               VALUES (?, 'clean main (new)', 'done', 'fix', 'agent', 'main-commiter-spawn', ?, 0, ?, 3, ?, ?, ?)`,
         args: [c2Id, src.id, src.id, MAIN_COMMITER_PAYLOAD, minutesAgo(1), minutesAgo(0)],
       })
@@ -420,7 +420,7 @@ describe('blocker-resolution: main-committer done must re-queue parked tasks, no
       // recovery-done path.  A real (non-main-committer) fix task with
       // fix_for_task_id = origin causes origin → done via propagateRecoveryDone
       // — the mechanism the daemon runs on a fix-task completion. This holds
-      // regardless of the origin's retry_count (the retry-budget silent-fail
+      // regardless of the origin's recovery_spawned_count (the retry-budget silent-fail
       // gate was removed — mars-3d63fe52).
       const { q, sub } = await loadModules(repo)
       const qc = q.resolveQueueClient()
@@ -430,17 +430,17 @@ describe('blocker-resolution: main-committer done must re-queue parked tasks, no
         Arc: typeof import('../../core/arc').Arc
       }
 
-      // Origin parked as blocked with a high retry_count.
+      // Origin parked as blocked with a high recovery_spawned_count.
       const origin = await q.enqueueTask('origin-task', undefined, { skipTriage: true })
       await qc.execute({
-        sql: `UPDATE tasks SET status = 'blocked', retry_count = 10 WHERE id = ?`,
+        sql: `UPDATE tasks SET status = 'blocked', recovery_spawned_count = 10 WHERE id = ?`,
         args: [origin.id],
       })
 
       // Real recovery task (kind='fix', no recovery_payload → not a main-committer)
       const fixId = `fix-real-${origin.id.slice(0, 6)}`
       await qc.execute({
-        sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, recovery_payload, created_at, updated_at)
+        sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, recovery_spawned_count, origin_id, priority, recovery_payload, created_at, updated_at)
               VALUES (?, 'fix the code', 'done', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, NULL, ?, ?)`,
         args: [fixId, origin.id, origin.id, new Date(Date.now() - 60_000).toISOString(), new Date().toISOString()],
       })
@@ -504,7 +504,7 @@ describe('blocker-resolution: a failed recovery must fail its origin, not strand
     const now = new Date().toISOString()
     const blockerCreatedAt = Date.now()
     await qc.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, failure_reason, failure_signature, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, recovery_spawned_count, origin_id, priority, failure_reason, failure_signature, created_at, updated_at)
             VALUES (?, 'fix the code', 'failed', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, ?, ?, ?, ?)`,
       args: [
         recoveryId,
@@ -630,7 +630,7 @@ describe('blocker-resolution: a failed recovery must fail its origin, not strand
     const now = new Date().toISOString()
     const blockerCreatedAt = Date.now()
     await qc.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, recovery_payload, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, recovery_spawned_count, origin_id, priority, recovery_payload, created_at, updated_at)
             VALUES (?, 'clean main', 'failed', 'fix', 'agent', 'main-commiter-spawn', ?, 0, ?, 3, ?, ?, ?)`,
       args: [
         committerId,
@@ -747,7 +747,7 @@ describe('blocker-resolution: recovery done must flip origin to done (mars-f2034
     const fixId = `fix-${origin.id.slice(0, 8)}`
     const now = new Date().toISOString()
     await qc.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, recovery_payload, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, recovery_spawned_count, origin_id, priority, recovery_payload, created_at, updated_at)
             VALUES (?, 'fix the code', 'done', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, ?, ?, ?)`,
       args: [fixId, origin.id, origin.id, opts.recoveryPayload ?? null, now, now],
     })
@@ -756,7 +756,7 @@ describe('blocker-resolution: recovery done must flip origin to done (mars-f2034
       args: [origin.id, fixId, Date.now()],
     })
     await qc.execute({
-      sql: `UPDATE tasks SET status = 'blocked', retry_count = 1 WHERE id = ?`,
+      sql: `UPDATE tasks SET status = 'blocked', recovery_spawned_count = 1 WHERE id = ?`,
       args: [origin.id],
     })
     return { originId: origin.id, fixId }
@@ -905,7 +905,7 @@ describe('blocker-resolution: late recovery success must resurrect failed origin
       const origin = await q.enqueueTask('implement-feature', undefined, { skipTriage: true })
       // Origin failed when the first recovery attempt exhausted its retry budget.
       await qc.execute({
-        sql: `UPDATE tasks SET status = 'failed', retry_count = 5 WHERE id = ?`,
+        sql: `UPDATE tasks SET status = 'failed', recovery_spawned_count = 5 WHERE id = ?`,
         args: [origin.id],
       })
 
@@ -925,7 +925,7 @@ describe('blocker-resolution: late recovery success must resurrect failed origin
       // — the operator restarted it and it completed successfully.
       const fixId = `fix-${origin.id.slice(0, 8)}`
       await qc.execute({
-        sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, created_at, updated_at)
+        sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, recovery_spawned_count, origin_id, priority, created_at, updated_at)
               VALUES (?, 'fix the code', 'done', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, ?, ?)`,
         args: [fixId, origin.id, origin.id, new Date().toISOString(), new Date().toISOString()],
       })

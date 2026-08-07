@@ -38,7 +38,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0029'
+export const SCHEMA_VERSION = '0030'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -184,7 +184,7 @@ const DDL: readonly string[] = [
     claude_session_id    text,
     error                text,
     drop_reason          text,
-    retry_count          bigint NOT NULL DEFAULT 0,
+    recovery_spawned_count bigint NOT NULL DEFAULT 0,
     author_kind          text,
     author_name          text,
     failure_reason       text,
@@ -1780,6 +1780,22 @@ const DDL: readonly string[] = [
   // (a human-readable condition string). NOT NULL with DEFAULT '' keeps all
   // existing rows legal; openSubject() always writes a non-empty value.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS terminal_condition text NOT NULL DEFAULT ''`,
+  // mars-73177222: rename retry_count → recovery_spawned_count.
+  // The old name implied "retries" but this column tracks ONLY whether the
+  // one-shot code-recovery slot was consumed (incremented exactly once, in
+  // Arc.spawnRecovery). Any value > 0 reads as "recovery was spent" even
+  // for tasks whose fix tasks were later purged. The new name is unambiguous.
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'tasks'
+          AND column_name = 'retry_count'
+     ) THEN
+       ALTER TABLE tasks RENAME COLUMN retry_count TO recovery_spawned_count;
+     END IF;
+   END
+   $$`,
 ]
 
 /**

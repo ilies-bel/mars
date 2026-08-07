@@ -24,7 +24,7 @@ const baseTask = (overrides: Partial<Task>): Task => ({
   failureReason: null,
   failureReasonCode: null,
   stallDiagnostics: null,
-  retryCount: 0,
+  recoverySpawnedCount: 0,
   envRestartCount: 0,
   fixForTaskId: null,
   failureSignature: null,

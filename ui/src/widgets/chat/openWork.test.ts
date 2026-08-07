@@ -29,7 +29,7 @@ const blockedTask = (overrides: Partial<UITask> = {}): UITask => ({
   role: 'orchestrator',
   failed: false,
   dropReason: null,
-  retryCount: 0,
+  recoverySpawnedCount: 0,
   blockerTaskId: null,
   spec: null,
   createdAt: '2026-01-01T00:00:00.000Z',

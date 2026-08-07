@@ -29,7 +29,7 @@ const makeTask = (
   worktreePath: null,
   error: null,
   dropReason: null,
-  retryCount: 0,
+  recoverySpawnedCount: 0,
   blockerTaskId: null,
   blockedBy: [],
   parentProposalId: null,

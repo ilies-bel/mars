@@ -97,7 +97,7 @@ const makeTask = (id: string, createdAt: number): Task =>
     dropReason: null,
     failureReason: null,
     failureReasonCode: null,
-    retryCount: 0,
+    recoverySpawnedCount: 0,
     requeueAnchorMs: null,
     createdAt: new Date(createdAt).toISOString(),
     updatedAt: new Date(createdAt).toISOString(),

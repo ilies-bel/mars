@@ -209,8 +209,8 @@ describe('computeAttemptDensity', () => {
 // ──────────────────────────────────────────────────────────────────────────────
 
 // Minimal Task fixture: retry count is part of the public diagnostic contract.
-const makeTask = (id: string = 'task-abc', retryCount = 3): Task =>
-  ({ id, retryCount } as unknown as Task)
+const makeTask = (id: string = 'task-abc', recoverySpawnedCount = 3): Task =>
+  ({ id, recoverySpawnedCount } as unknown as Task)
 
 // Build a StepWindow fixture for density tests.
 const makeWindow = (attemptCount: number, spanMs: number): StepWindow => ({

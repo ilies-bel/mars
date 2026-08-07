@@ -49,7 +49,7 @@ const createQueueSchema = async (path: string): Promise<Client> => {
     claude_session_id TEXT,
     error TEXT,
     drop_reason TEXT,
-    retry_count INTEGER NOT NULL DEFAULT 0,
+    recovery_spawned_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`)
@@ -85,7 +85,7 @@ const insertTask = async (
   createdAt: string = new Date().toISOString(),
 ): Promise<void> => {
   await c.execute({
-    sql: `INSERT INTO tasks (id, prompt, status, retry_count, created_at, updated_at)
+    sql: `INSERT INTO tasks (id, prompt, status, recovery_spawned_count, created_at, updated_at)
           VALUES (?, ?, ?, 0, ?, ?)`,
     args: [id, `prompt for ${id}`, status, createdAt, createdAt],
   })
@@ -132,7 +132,7 @@ describe('GET /api/tasks — blockedBy field (no task_blockers table)', () => {
       claude_session_id TEXT,
       error TEXT,
       drop_reason TEXT,
-      retry_count INTEGER NOT NULL DEFAULT 0,
+      recovery_spawned_count INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`)
@@ -156,7 +156,7 @@ describe('GET /api/tasks — blockedBy field (no task_blockers table)', () => {
   it('returns blockedBy: [] for all tasks when task_blockers table is absent', async () => {
     const qc = createClient({ url: `file:${queueDbPath}` })
     await qc.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, retry_count, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, recovery_spawned_count, created_at, updated_at)
             VALUES ('t-legacy', 'legacy task', 'queued', 0, ?, ?)`,
       args: [new Date().toISOString(), new Date().toISOString()],
     })
@@ -282,7 +282,7 @@ describe('GET /api/tasks — blockedBy field', () => {
         id: string
         prompt: string
         status: string
-        retryCount: number
+        recoverySpawnedCount: number
         blockedBy: string[]
         createdAt: string
       }>
@@ -293,7 +293,7 @@ describe('GET /api/tasks — blockedBy field', () => {
     const t3 = body.tasks.find((t) => t.id === 't-3')
     expect(t3?.status).toBe('blocked')
     expect(t3?.prompt).toBe('prompt for t-3')
-    expect(t3?.retryCount).toBe(0)
+    expect(t3?.recoverySpawnedCount).toBe(0)
     expect(t3?.blockedBy).toEqual(['t-1'])
     expect(typeof t3?.createdAt).toBe('string')
   })

@@ -88,10 +88,10 @@ export const TaskCard = memo(({ task, index }: Props) => {
               {substep}
             </span>
           ) : null}
-          {task.retryCount > 0 ? (
+          {task.recoverySpawnedCount > 0 ? (
             <span
               className="rounded bg-muted-foreground/10 px-1.5 py-0.5 font-mono text-micro font-semibold tracking-wide text-muted-foreground"
-              title={`recovered ×${task.retryCount}`}
+              title={`recovered ×${task.recoverySpawnedCount}`}
             >
               ↻ recovered
             </span>

@@ -17,7 +17,7 @@
  * This is a pure refactor: behaviour is byte-for-byte equivalent to the three
  * originals per phase. In particular every `updateTask` is wrapped in
  * `.catch(() => {})` exactly as before — a single failed row must not abort
- * the pass — and `retryCount` is never touched (a daemon restart is not a
+ * the pass — and `recoverySpawnedCount` is never touched (a daemon restart is not a
  * task fault and must not burn a retry-budget slot).
  *
  * The dynamic `import(...)` calls are preserved from the inline steps: they
@@ -210,7 +210,7 @@ const CLEARED_TRANSIENT = {
  *     any survive, else `queued` (+ optional `task.queued` emit) and record the
  *     id in `requeued`.
  *
- * Every `updateTask` is `.catch(() => {})`-swallowed; `retryCount` is never
+ * Every `updateTask` is `.catch(() => {})`-swallowed; `recoverySpawnedCount` is never
  * written. Returns the per-pass counts and the requeued ids.
  */
 export const recoverPhase = async (

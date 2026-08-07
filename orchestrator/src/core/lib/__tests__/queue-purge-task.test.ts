@@ -210,7 +210,7 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
     const c = q.resolveQueueClient()
     const siblingId = 'mars-sibling01'
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, kind, origin_id, priority, created_at, updated_at, retry_count)
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, kind, origin_id, priority, created_at, updated_at, recovery_spawned_count)
             VALUES (?, ?, 'queued', ?, 'fix', ?, 0, datetime('now'), datetime('now'), 0)`,
       args: [siblingId, 'fix for parent', parent.id, parent.id],
     })
@@ -248,7 +248,7 @@ describe('dropTask (shared purge/drop helper) — edge cleanup', () => {
     const c = q.resolveQueueClient()
     const sibId = 'mars-sibling02'
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, kind, origin_id, priority, created_at, updated_at, retry_count)
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, kind, origin_id, priority, created_at, updated_at, recovery_spawned_count)
             VALUES (?, ?, 'queued', ?, 'fix', ?, 0, datetime('now'), datetime('now'), 0)`,
       args: [sibId, 'fix sibling', target.id, target.id],
     })

@@ -55,7 +55,7 @@ const toUI = (t: Task, byId: Map<string, Task>): UITask => {
     role: roleFromTask(t),
     failed: t.status === 'failed',
     dropReason: t.dropReason ?? null,
-    retryCount: t.retryCount ?? 0,
+    recoverySpawnedCount: t.recoverySpawnedCount ?? 0,
     priority: t.priority,
     blockerTaskId: t.blockerTaskId ?? null,
     spec: t.spec ?? null,

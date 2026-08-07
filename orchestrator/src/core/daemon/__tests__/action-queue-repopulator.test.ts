@@ -379,7 +379,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const now = new Date().toISOString()
     await client.execute({
       sql: `INSERT INTO tasks (
-              id, prompt, status, origin_id, retry_count,
+              id, prompt, status, origin_id, recovery_spawned_count,
               failure_reason, failure_reason_code,
               kind, recovery_payload,
               failure_signature, error,
@@ -959,7 +959,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const now = new Date().toISOString()
     await client.execute({
       sql: `INSERT INTO tasks (
-              id, prompt, status, origin_id, retry_count,
+              id, prompt, status, origin_id, recovery_spawned_count,
               failure_reason, failure_reason_code,
               kind, recovery_payload,
               failure_signature, error,
@@ -1001,7 +1001,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const now = new Date().toISOString()
     await client.execute({
       sql: `INSERT INTO tasks (
-              id, prompt, status, origin_id, retry_count,
+              id, prompt, status, origin_id, recovery_spawned_count,
               failure_reason, failure_reason_code,
               kind, recovery_payload,
               failure_signature, error,

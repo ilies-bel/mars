@@ -173,7 +173,7 @@ describe('fix-task connectivity park-and-resume', () => {
     // Verify the origin is blocked (recovery slot consumed).
     const originAfterSpawn = await q.getTask(origin.id)
     expect(originAfterSpawn?.status).toBe('blocked')
-    expect(originAfterSpawn?.retryCount).toBe(1)
+    expect(originAfterSpawn?.recoverySpawnedCount).toBe(1)
 
     // Now simulate the fix task's coder failing due to API connectivity.
     // This is the exact condition the bug report describes.
@@ -200,11 +200,11 @@ describe('fix-task connectivity park-and-resume', () => {
 
     // ── Origin recovery budget intact ─────────────────────────────────────
     // The origin remains `blocked` (waiting for the fix task to complete).
-    // Its retryCount has NOT been incremented again — the slot was only
+    // Its recoverySpawnedCount has NOT been incremented again — the slot was only
     // consumed once when the fix task was first spawned.
     const originAfterPark = await q.getTask(origin.id)
     expect(originAfterPark?.status).toBe('blocked')
-    expect(originAfterPark?.retryCount).toBe(1)
+    expect(originAfterPark?.recoverySpawnedCount).toBe(1)
 
     // ── Invariant 3: no fix-of-fix task was spawned ────────────────────────
     const descendants = await q.resolveQueueClient().execute({

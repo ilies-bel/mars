@@ -38,7 +38,7 @@ type BlockerStatus = { blockerId: string; status: string }
 type RecoverOutcome = {
   taskId: string
   outcome: 'queued' | 'noop' | 'failed' | 'not-blocked'
-  retryCount: number
+  recoverySpawnedCount: number
   failureReason?: string
   blockerStatuses?: BlockerStatus[]
 }
@@ -54,13 +54,13 @@ describe('mars recover — bulk (no id): healthy case', () => {
       {
         taskId: 'mars-aaa',
         outcome: 'noop',
-        retryCount: 0,
+        recoverySpawnedCount: 0,
         blockerStatuses: [{ blockerId: 'mars-bbb', status: 'queued' }],
       },
       {
         taskId: 'mars-ccc',
         outcome: 'noop',
-        retryCount: 0,
+        recoverySpawnedCount: 0,
         blockerStatuses: [{ blockerId: 'mars-ddd', status: 'running' }],
       },
     ])
@@ -106,7 +106,7 @@ describe('mars recover — bulk (no id): stranded case', () => {
       {
         taskId: 'mars-aaa',
         outcome: 'noop',
-        retryCount: 0,
+        recoverySpawnedCount: 0,
         blockerStatuses: [{ blockerId: 'mars-bbb', status: 'failed' }],
       },
     ])
@@ -132,7 +132,7 @@ describe('mars recover — bulk (no id): stranded case', () => {
       {
         taskId: 'mars-aaa',
         outcome: 'noop',
-        retryCount: 0,
+        recoverySpawnedCount: 0,
         blockerStatuses: [{ blockerId: 'mars-deleted', status: 'MISSING' }],
       },
     ])
@@ -156,13 +156,13 @@ describe('mars recover — bulk (no id): stranded case', () => {
       {
         taskId: 'mars-stranded',
         outcome: 'noop',
-        retryCount: 0,
+        recoverySpawnedCount: 0,
         blockerStatuses: [{ blockerId: 'mars-dead', status: 'failed' }],
       },
       {
         taskId: 'mars-live',
         outcome: 'noop',
-        retryCount: 0,
+        recoverySpawnedCount: 0,
         blockerStatuses: [{ blockerId: 'mars-ok', status: 'queued' }],
       },
     ])
@@ -185,11 +185,11 @@ describe('mars recover — bulk (no id): stranded case', () => {
 describe('mars recover — bulk (no id): mixed outcomes', () => {
   it('some recovered + all noop on live work → recovered message + healthy summary', async () => {
     const daemon = makeDaemon([
-      { taskId: 'mars-rec', outcome: 'queued', retryCount: 1 },
+      { taskId: 'mars-rec', outcome: 'queued', recoverySpawnedCount: 1 },
       {
         taskId: 'mars-wait',
         outcome: 'noop',
-        retryCount: 0,
+        recoverySpawnedCount: 0,
         blockerStatuses: [{ blockerId: 'mars-parent', status: 'running' }],
       },
     ])

@@ -283,7 +283,7 @@ export const countFixTaskAttempts = async (
  * Atomically:
  *  - INSERT a new runnable fix-task row (status='queued', skip triage),
  *  - INSERT a task_blockers row linking the source task to the fix task,
- *  - UPDATE the source task to status='blocked' with retry_count incremented.
+ *  - UPDATE the source task to status='blocked' with recovery_spawned_count incremented.
  *
  * Idempotent on (sourceTaskId, failureSignature): if a fix task is already
  * outstanding for that pair, the existing task is reused.
@@ -403,7 +403,7 @@ export interface HandleTaskFailureViaTaskResult {
     | 'steward-repeat'
   fixTaskId?: string
   failureSignature?: string
-  retryCount?: number
+  recoverySpawnedCount?: number
   actionQueueItemId?: string
   attempts?: number
   /** Streak count when the signature-storm circuit breaker first trips. */
@@ -525,7 +525,7 @@ export const handleTaskFailureWithFixTask = async (
     return {
       outcome: 'failed',
       failureSignature: configFailureSignature,
-      retryCount: task.retryCount,
+      recoverySpawnedCount: task.recoverySpawnedCount,
     }
   }
 
@@ -550,7 +550,7 @@ export const handleTaskFailureWithFixTask = async (
     return {
       outcome: 'failed',
       failureSignature,
-      retryCount: task.retryCount,
+      recoverySpawnedCount: task.recoverySpawnedCount,
     }
   }
 
@@ -580,7 +580,7 @@ export const handleTaskFailureWithFixTask = async (
     return {
       outcome: 'failed',
       failureSignature,
-      retryCount: task.retryCount,
+      recoverySpawnedCount: task.recoverySpawnedCount,
     }
   }
 
@@ -607,7 +607,7 @@ export const handleTaskFailureWithFixTask = async (
       return {
         outcome: 'escalated',
         failureSignature,
-        retryCount: task.retryCount,
+        recoverySpawnedCount: task.recoverySpawnedCount,
       }
     }
 
@@ -639,7 +639,7 @@ export const handleTaskFailureWithFixTask = async (
         console.log(
           `[failure-handler] fix task ${input.taskId}: connectivity park #${nextEnvRestartCount}/${MAX_ENV_RESTART_ATTEMPTS} — origin ${task.fixForTaskId} stays blocked`,
         )
-        return { outcome: 'requeued', retryCount: task.retryCount, failureSignature }
+        return { outcome: 'requeued', recoverySpawnedCount: task.recoverySpawnedCount, failureSignature }
       }
       // Cap exhausted: fall through to the normal escalation so the operator
       // gets an action-queue item.
@@ -675,7 +675,7 @@ export const handleTaskFailureWithFixTask = async (
         return {
           outcome: 'signature-storm-tripped',
           failureSignature,
-          retryCount: task.retryCount,
+          recoverySpawnedCount: task.recoverySpawnedCount,
           stormStreak: stormResult.streak,
         }
       }
@@ -683,7 +683,7 @@ export const handleTaskFailureWithFixTask = async (
         return {
           outcome: 'escalated',
           failureSignature,
-          retryCount: task.retryCount,
+          recoverySpawnedCount: task.recoverySpawnedCount,
         }
       }
     } catch (stormErr) {
@@ -752,7 +752,7 @@ export const handleTaskFailureWithFixTask = async (
     return {
       outcome: 'escalated',
       failureSignature,
-      retryCount: task.retryCount,
+      recoverySpawnedCount: task.recoverySpawnedCount,
       actionQueueItemId,
     }
   }
@@ -778,7 +778,7 @@ export const handleTaskFailureWithFixTask = async (
     return {
       outcome: 'failed',
       failureSignature,
-      retryCount: task.retryCount,
+      recoverySpawnedCount: task.recoverySpawnedCount,
     }
   }
 
@@ -801,7 +801,7 @@ export const handleTaskFailureWithFixTask = async (
   // The `envRestartCount` counter gates an infinite-restart loop: once it
   // reaches MAX_ENV_RESTART_ATTEMPTS, fall through to the normal terminal path
   // so the origin eventually gets a human-visible action-queue item.
-  // `retryCount` is intentionally NOT incremented so the origin's recovery
+  // `recoverySpawnedCount` is intentionally NOT incremented so the origin's recovery
   // budget is fully intact if a genuine failure follows.
   if (isEnvironmentalSignature(failureSignature)) {
     if (task.envRestartCount < MAX_ENV_RESTART_ATTEMPTS) {
@@ -836,7 +836,7 @@ export const handleTaskFailureWithFixTask = async (
         console.log(
           `[failure-handler] task ${input.taskId}: environmental restart #${nextEnvRestartCount}/${MAX_ENV_RESTART_ATTEMPTS} (${failureSignature})`,
         )
-        return { outcome: 'requeued', retryCount: task.retryCount, failureSignature }
+        return { outcome: 'requeued', recoverySpawnedCount: task.recoverySpawnedCount, failureSignature }
       }
     }
     // Cap reached (or the setup-replay reset failed): fall through to the
@@ -963,7 +963,7 @@ export const handleTaskFailureWithFixTask = async (
         return {
           outcome: 'signature-storm-tripped',
           failureSignature,
-          retryCount: task.retryCount,
+          recoverySpawnedCount: task.recoverySpawnedCount,
           stormStreak: stormResult.streak,
         }
       }
@@ -978,9 +978,9 @@ export const handleTaskFailureWithFixTask = async (
 
   const budget = getRetryBudget()
 
-  // ── Pre-classify BEFORE the retryCount gate (Slice 3 PRD d7835017) ────────
+  // ── Pre-classify BEFORE the recoverySpawnedCount gate (Slice 3 PRD d7835017) ────────
   // Non-code failures (orchestration, infra, connectivity) must bypass the
-  // `retryCount > budget` gate so the code recovery slot is never burned on
+  // `recoverySpawnedCount > budget` gate so the code recovery slot is never burned on
   // a failure that code edits cannot fix. Classify first, apply the budget
   // gate only to code failures below.
   const failureCategory = classifyFailure(failureSignature)
@@ -1045,7 +1045,7 @@ export const handleTaskFailureWithFixTask = async (
         originTaskId: task.originId,
         occurrence: { at: new Date().toISOString(), taskId: input.taskId, failureSignature, nonCodeCount },
       })
-      return { outcome: 'non-code-retry-exhausted', failureSignature, retryCount: task.retryCount }
+      return { outcome: 'non-code-retry-exhausted', failureSignature, recoverySpawnedCount: task.recoverySpawnedCount }
     }
     await requeueOrigin(
       input.taskId,
@@ -1057,7 +1057,7 @@ export const handleTaskFailureWithFixTask = async (
     console.log(
       `[failure-handler] task ${input.taskId}: phantom-kill non-code re-queue #${nonCodeCount}/${nonCodeCap} (${failureSignature})`,
     )
-    return { outcome: 'requeued', retryCount: task.retryCount, failureSignature }
+    return { outcome: 'requeued', recoverySpawnedCount: task.recoverySpawnedCount, failureSignature }
   }
 
   // ── Non-code failure re-queue ─────────────────────────────────────────────
@@ -1091,7 +1091,7 @@ export const handleTaskFailureWithFixTask = async (
         originTaskId: task.originId,
         occurrence: { at: new Date().toISOString(), taskId: input.taskId, failureSignature, nonCodeCount },
       })
-      return { outcome: 'non-code-retry-exhausted', failureSignature, retryCount: task.retryCount }
+      return { outcome: 'non-code-retry-exhausted', failureSignature, recoverySpawnedCount: task.recoverySpawnedCount }
     }
     // Same precondition rule as the environmental restart above, and the same
     // reason it matters here: a worktree-missing origin that has burned its
@@ -1113,7 +1113,7 @@ export const handleTaskFailureWithFixTask = async (
         error: truncatedError,
         failureSignature,
       })
-      return { outcome: 'non-code-retry-exhausted', failureSignature, retryCount: task.retryCount }
+      return { outcome: 'non-code-retry-exhausted', failureSignature, recoverySpawnedCount: task.recoverySpawnedCount }
     }
     await requeueOrigin(
       input.taskId,
@@ -1125,14 +1125,14 @@ export const handleTaskFailureWithFixTask = async (
     console.log(
       `[failure-handler] task ${input.taskId}: non-code failure (${failureCategory}:${failureSignature}) re-queue #${nonCodeCount}/${nonCodeCap} — no recovery slot consumed`,
     )
-    return { outcome: 'requeued', retryCount: task.retryCount, failureSignature }
+    return { outcome: 'requeued', recoverySpawnedCount: task.recoverySpawnedCount, failureSignature }
   }
 
   // ── Code-failure budget gate (Slice 3 PRD d7835017) ──────────────────────
   // Applied ONLY after non-code paths (phantom-kill and classify) have been
   // excluded. Non-code failures bypass this entirely so they can use the
   // self_heal_attempts counter without burning the one-shot code-recovery slot.
-  if (task.retryCount > budget) {
+  if (task.recoverySpawnedCount > budget) {
     // Guard: do not double-prepend if failureSignature somehow already carries
     // the prefix (defence-in-depth; the primary fix is in computeFailureSignature).
     await markTaskFailed(
@@ -1148,7 +1148,7 @@ export const handleTaskFailureWithFixTask = async (
     await raiseRecoveryExhaustedActionQueue({
       taskId: input.taskId,
       lastStep: input.failingStep,
-      retryCount: task.retryCount,
+      recoverySpawnedCount: task.recoverySpawnedCount,
       lastErrorSignature: failureSignature,
       lastErrorSummary: truncatedError,
       branch,
@@ -1159,7 +1159,7 @@ export const handleTaskFailureWithFixTask = async (
         taskId: input.taskId,
         lastStep: input.failingStep,
         lastErrorSignature: failureSignature,
-        retryCount: task.retryCount,
+        recoverySpawnedCount: task.recoverySpawnedCount,
         worktreePath: task.worktreePath,
         branch,
       }).catch((err) =>
@@ -1170,7 +1170,7 @@ export const handleTaskFailureWithFixTask = async (
     return {
       outcome: 'failed',
       failureSignature,
-      retryCount: task.retryCount,
+      recoverySpawnedCount: task.recoverySpawnedCount,
     }
   }
 
@@ -1226,7 +1226,7 @@ export const handleTaskFailureWithFixTask = async (
     return {
       outcome: 'failed',
       failureSignature,
-      retryCount: task.retryCount,
+      recoverySpawnedCount: task.recoverySpawnedCount,
       actionQueueItemId,
     }
   }
@@ -1264,7 +1264,7 @@ export const handleTaskFailureWithFixTask = async (
     return {
       outcome: 'steward-repeat',
       failureSignature,
-      retryCount: task.retryCount,
+      recoverySpawnedCount: task.recoverySpawnedCount,
       actionQueueItemId,
     }
   }
@@ -1316,6 +1316,6 @@ export const handleTaskFailureWithFixTask = async (
     outcome: 'blocked',
     fixTaskId: result.fixTaskId,
     failureSignature,
-    retryCount: task.retryCount + 1,
+    recoverySpawnedCount: task.recoverySpawnedCount + 1,
   }
 }

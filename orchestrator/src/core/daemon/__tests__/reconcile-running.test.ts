@@ -67,19 +67,19 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     expect(reloaded?.status).toBe('queued')
   })
 
-  it('does not increment retryCount — a daemon restart is not a task fault', async () => {
+  it('does not increment recoverySpawnedCount — a daemon restart is not a task fault', async () => {
     const { q, rr } = await loadModules(repo)
     const t = await q.enqueueTask('some work', undefined, { skipTriage: true })
 
     await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET status = 'running', retry_count = 1 WHERE id = ?`,
+      sql: `UPDATE tasks SET status = 'running', recovery_spawned_count = 1 WHERE id = ?`,
       args: [t.id],
     })
 
     await rr.requeueRunningTasksFromPriorDaemon(repo)
 
     const reloaded = await q.getTask(t.id)
-    expect(reloaded?.retryCount).toBe(1) // unchanged from before the restart
+    expect(reloaded?.recoverySpawnedCount).toBe(1) // unchanged from before the restart
   })
 
   it('clears all in-flight fields (including pointers) when the worktree path does not exist on disk', async () => {

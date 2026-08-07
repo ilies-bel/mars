@@ -28,7 +28,7 @@ const makeTask = (
     dropReason: null,
     failureReason: null,
     failureReasonCode: null,
-    retryCount: 0,
+    recoverySpawnedCount: 0,
     envRestartCount: 0,
     fixForTaskId: null,
     failureSignature: null,

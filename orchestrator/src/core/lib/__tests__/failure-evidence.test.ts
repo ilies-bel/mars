@@ -149,7 +149,7 @@ describe('failure evidence', () => {
       failureReason: 'verify:typecheck',
       failureSignature: 'verify:typecheck/typecheck-property-missing',
       failureReasonCode: 'verify:typecheck/typecheck-property-missing',
-      retryCount: 1,
+      recoverySpawnedCount: 1,
     })
 
     // 2. The recovery-spawner reopens the row before handing it to the failure
@@ -160,7 +160,7 @@ describe('failure evidence', () => {
     expect(cleared?.error).toBeNull()
     expect(cleared?.failureSignature).toBeNull()
 
-    // 3. retry_count (1) > budget (0): the recovery-exhausted branch lands the
+    // 3. recovery_spawned_count (1) > budget (0): the recovery-exhausted branch lands the
     //    row terminal through `markTaskFailed`.
     const r = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,

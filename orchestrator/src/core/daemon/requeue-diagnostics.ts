@@ -218,7 +218,7 @@ export const classifyRequeueBreach = (
   const density = window != null ? computeAttemptDensity(window) : 0
   const attemptCount = window?.attemptCount ?? 0
 
-  if (t.retryCount > 2 && density >= DENSITY_FLOOR_PER_MIN) {
+  if (t.recoverySpawnedCount > 2 && density >= DENSITY_FLOOR_PER_MIN) {
     return {
       kind: 'retry-churn',
       reason:

@@ -69,7 +69,7 @@ const blockedTask = (id: string): UITask => ({
   role: 'orchestrator',
   failed: false,
   dropReason: null,
-  retryCount: 0,
+  recoverySpawnedCount: 0,
   blockerTaskId: null,
   spec: null,
   createdAt: `2026-01-0${id}T00:00:00.000Z`,

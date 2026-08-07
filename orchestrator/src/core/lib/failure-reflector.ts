@@ -42,7 +42,7 @@ export interface SpawnFailureReflectorOpts {
   taskId: string
   lastStep: string
   lastErrorSignature: string
-  retryCount: number
+  recoverySpawnedCount: number
   worktreePath: string | null
   branch: string | null
 }
@@ -133,7 +133,7 @@ const buildArcContext = async (opts: SpawnFailureReflectorOpts): Promise<string>
     `Prompt: ${taskPrompt}`,
     `Last failing step: ${opts.lastStep}`,
     `Failure signature: ${opts.lastErrorSignature}`,
-    `Retry count: ${opts.retryCount}`,
+    `Retry count: ${opts.recoverySpawnedCount}`,
     opts.branch ? `Branch: ${opts.branch}` : null,
     opts.worktreePath ? `Worktree: ${opts.worktreePath}` : null,
     '',

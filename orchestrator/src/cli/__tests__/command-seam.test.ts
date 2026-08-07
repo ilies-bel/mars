@@ -457,6 +457,67 @@ describe('task show / list (store-backed reads)', () => {
     expect(r.code).toBe(0)
     expect(r.out.join('\n')).toContain('queued task same form')
   })
+
+  // ── mars-73177222: recovery slot display in mars show ──────────────────────
+
+  it('mars show: omits recoverySlot when recovery was never spawned (recoverySpawnedCount=0)', async () => {
+    // A task that was re-queued for non-code failures (or just queued fresh)
+    // has recoverySpawnedCount=0. mars show must NOT output a "recoverySlot"
+    // line — the slot is still available.
+    const { store, ctx } = await loadStoreAndCtx()
+    const task = await store.enqueueTask('no recovery spawned', undefined, { skipTriage: true })
+    // recoverySpawnedCount stays at 0 — no Arc.spawnRecovery was called.
+    const r = await runCommandInProcess(['task', 'show', task.id], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    const text = r.out.join('\n')
+    expect(text).not.toContain('recoverySlot')
+    // Verify the field is genuinely 0 on the task object.
+    const loaded = await store.getTask(task.id)
+    expect(loaded?.recoverySpawnedCount).toBe(0)
+  })
+
+  it('mars show: displays recoverySlot: spent with fix-task ID from self_heal_attempts ledger', async () => {
+    // When a recovery was spawned (Arc.spawnRecovery incremented
+    // recovery_spawned_count and wrote a self_heal_attempts row), mars show
+    // must report the fix-task id. The self_heal_attempts ledger survives
+    // fix-task purge, so this works even when the fix task no longer exists
+    // in the tasks table (the 319-task problem that motivated the rename).
+    const { store, ctx } = await loadStoreAndCtx()
+    const task = await store.enqueueTask('origin task', undefined, { skipTriage: true })
+
+    // Simulate Arc.spawnRecovery: bump the counter and write the ledger row.
+    const fixTaskId = 'fix-abc12345'
+    const now = Date.now()
+    await store.execute({
+      sql: `UPDATE tasks SET recovery_spawned_count = 1, status = 'blocked' WHERE id = ?`,
+      args: [task.id],
+    })
+    // self_heal_attempts.fix_task_id has a FK on tasks(id). Create a minimal
+    // fix-task row so the FK is satisfied (mirroring what Arc.spawnRecovery does).
+    await store.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, origin_id, priority, created_at, updated_at)
+            VALUES (?, 'fix task', 'queued', 'fix', ?, ?, 3, ?, ?)`,
+      args: [fixTaskId, task.id, task.id, new Date().toISOString(), new Date().toISOString()],
+    })
+    await store.execute({
+      sql: `INSERT INTO self_heal_attempts (parent_task_id, failure_signature, fix_task_id, created_at)
+            VALUES (?, ?, ?, ?)`,
+      args: [task.id, 'some-failure', fixTaskId, now],
+    })
+
+    const r = await runCommandInProcess(['task', 'show', task.id], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    const text = r.out.join('\n')
+    expect(text).toContain(`recoverySlot: spent (fix: ${fixTaskId})`)
+  })
 })
 
 describe('task priority (daemon-routed mutation)', () => {

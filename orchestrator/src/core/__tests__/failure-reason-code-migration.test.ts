@@ -65,13 +65,13 @@ describe('failure_reason_code migration', () => {
     const q = createClient({ url: queueDb })
     await q.execute(`CREATE TABLE tasks (
       id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
-      origin_id TEXT, retry_count INTEGER NOT NULL DEFAULT 0,
+      origin_id TEXT, recovery_spawned_count INTEGER NOT NULL DEFAULT 0,
       failure_reason TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )`)
     const now = new Date().toISOString()
     await q.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, failure_reason, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, recovery_spawned_count, failure_reason, created_at, updated_at)
             VALUES ('legacy', 'old task', 'failed', 'legacy', 0, 'verify:test/unclassified', ?, ?)`,
       args: [now, now],
     })

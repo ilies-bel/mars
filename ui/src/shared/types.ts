@@ -26,7 +26,7 @@ export interface UITask {
   role: Role
   failed: boolean
   dropReason: string | null
-  retryCount: number
+  recoverySpawnedCount: number
   priority: number
   blockerTaskId: string | null
   /**

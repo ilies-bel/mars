@@ -30,7 +30,7 @@ import { recoverPhase } from './phase-recovery'
  *  3. Resets the task row to `queued` with all in-flight fields cleared —
  *     `branch`, `worktreePath`, `claudeSessionId`, `error`, `failedPhase` —
  *     so the next dispatch starts a clean setup step.
- *  4. `retryCount` is intentionally NOT touched: the restart is not a fault
+ *  4. `recoverySpawnedCount` is intentionally NOT touched: the restart is not a fault
  *     and must not consume a retry-budget slot.
  *  5. A task that still has incomplete blockers is restored to `blocked`
  *     rather than `queued`, and is omitted from the returned ids.

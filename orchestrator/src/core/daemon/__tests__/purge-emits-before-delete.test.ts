@@ -158,7 +158,7 @@ describe('corePurgeTask — task.dropped emitted before DELETE', () => {
     // Directly insert a fix task pointing at the origin.
     const fixId = 'mars-casc-fix01'
     await client.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, kind, origin_id, priority, created_at, updated_at, retry_count)
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, kind, origin_id, priority, created_at, updated_at, recovery_spawned_count)
             VALUES (?, ?, 'queued', ?, 'fix', ?, 0, datetime('now'), datetime('now'), 0)`,
       args: [fixId, 'recovery for origin', origin.id, origin.id],
     })

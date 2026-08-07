@@ -41,7 +41,7 @@ const buildFixture = (dir: string): string => {
       prompt TEXT NOT NULL,
       status TEXT NOT NULL,
       error TEXT,
-      retry_count INTEGER NOT NULL DEFAULT 0,
+      recovery_spawned_count INTEGER NOT NULL DEFAULT 0,
       legacy_junk TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -70,7 +70,7 @@ const buildFixture = (dir: string): string => {
     CREATE TABLE legacy_only_table (id TEXT PRIMARY KEY);
   `)
   const insertTask = db.prepare(
-    `INSERT INTO tasks (id, prompt, status, error, retry_count, legacy_junk, created_at, updated_at)
+    `INSERT INTO tasks (id, prompt, status, error, recovery_spawned_count, legacy_junk, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   )
   insertTask.run('t1', 'do the thing', 'done', null, 0, 'junk', NOW, NOW)
@@ -130,13 +130,13 @@ describe('importLegacySqlite', () => {
 
     // Row content survives, including NULLs and PG defaults for absent columns.
     const t2 = await client.execute(
-      `SELECT prompt, status, error, retry_count, priority, intent FROM tasks WHERE id = 't2'`,
+      `SELECT prompt, status, error, recovery_spawned_count, priority, intent FROM tasks WHERE id = 't2'`,
     )
     expect(t2.rows[0]).toEqual({
       prompt: 'blocked work',
       status: 'blocked',
       error: 'boom',
-      retry_count: 2,
+      recovery_spawned_count: 2,
       priority: 0, // PG column absent from the fixture → schema default
       intent: '',
     })

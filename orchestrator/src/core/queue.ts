@@ -359,7 +359,7 @@ export interface Task {
    * Null on non-stalled tasks and legacy rows.
    */
   stallDiagnostics: string | null
-  retryCount: number
+  recoverySpawnedCount: number
   /**
    * Number of times this task has been auto-restarted due to an environmental
    * failure signature (worktree pruned, timeout, etc.). Incremented by the
@@ -794,7 +794,7 @@ SELECT
   t.branch, t.worktree_path, t.claude_session_id,
   (SELECT COALESCE(json_agg(session_id ORDER BY position)::text, '[]')
      FROM task_claude_sessions WHERE task_id = t.id) AS claude_session_ids,
-  t.error, t.drop_reason, t.retry_count, t.env_restart_count,
+  t.error, t.drop_reason, t.recovery_spawned_count, t.env_restart_count,
   t.author_kind, t.author_name,
   t.failure_reason, t.failure_reason_code, t.stall_diagnostics, t.recovery_payload,
   t.fix_for_task_id, t.failure_signature, t.kind, t.priority, t.tag,
@@ -873,7 +873,7 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     failureReason: (row.failure_reason as string | null) ?? null,
     failureReasonCode: (row.failure_reason_code as string | null) ?? null,
     stallDiagnostics: (row.stall_diagnostics as string | null) ?? null,
-    retryCount: Number(row.retry_count ?? 0),
+    recoverySpawnedCount: Number(row.recovery_spawned_count ?? 0),
     // MUST be present in TASK_SEL. This column is a WRITE-ONLY-looking field:
     // the only writer is updateTask and the only reader is the environmental
     // auto-restart cap in queue-fix-tasks.ts. When TASK_SEL omitted it,
@@ -1170,7 +1170,7 @@ export const updateTask = async (
       | 'currentStepName'
       | 'currentStepGuide'
       | 'activityDetail'
-      | 'retryCount'
+      | 'recoverySpawnedCount'
       | 'envRestartCount'
       | 'workflow'
       | 'requeueAnchorMs'
@@ -1332,9 +1332,9 @@ export const updateTask = async (
     fields.push('claude_session_id = ?')
     args.push(patch.claudeSessionId)
   }
-  if (patch.retryCount !== undefined) {
-    fields.push('retry_count = ?')
-    args.push(patch.retryCount)
+  if (patch.recoverySpawnedCount !== undefined) {
+    fields.push('recovery_spawned_count = ?')
+    args.push(patch.recoverySpawnedCount)
   }
   if (patch.envRestartCount !== undefined) {
     fields.push('env_restart_count = ?')

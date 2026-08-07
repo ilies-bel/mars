@@ -44,7 +44,7 @@ const baseOpts = {
   taskId: 'test-task-abc',
   lastStep: 'verify:test-failed',
   lastErrorSignature: 'verify:test-failed:typecheck',
-  retryCount: 1,
+  recoverySpawnedCount: 1,
   worktreePath: null,
   branch: null,
 }

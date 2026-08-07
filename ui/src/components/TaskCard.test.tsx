@@ -10,7 +10,7 @@ const minTask = (id: string, overrides: Partial<UITask> = {}): UITask => ({
   role: 'builder',
   failed: false,
   dropReason: null,
-  retryCount: 0,
+  recoverySpawnedCount: 0,
   priority: 2,
   blockerTaskId: null,
   spec: null,
@@ -238,7 +238,7 @@ describe('TaskCard – type scale', () => {
   })
 
   it('uses text-micro scale class for tertiary labels', () => {
-    const task = minTask('t-scale-3', { retryCount: 2 })
+    const task = minTask('t-scale-3', { recoverySpawnedCount: 2 })
     const html = renderToStaticMarkup(<TaskCard task={task} index={0} />)
     expect(html).toContain('text-micro')
     expect(html).not.toContain('text-[10px]')

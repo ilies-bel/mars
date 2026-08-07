@@ -96,7 +96,7 @@ const blockedTask = (id: string, title: string) => ({
   role: 'orchestrator' as const,
   failed: false,
   dropReason: null,
-  retryCount: 0,
+  recoverySpawnedCount: 0,
   priority: 2,
   blockerTaskId: null,
   spec: null,

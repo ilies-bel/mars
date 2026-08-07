@@ -29,13 +29,13 @@ const seedTask = async (dbPath: string, id: string, status: string): Promise<voi
       claude_session_id TEXT,
       error TEXT,
       drop_reason TEXT,
-      retry_count INTEGER NOT NULL DEFAULT 0,
+      recovery_spawned_count INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`)
     const now = new Date().toISOString()
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, retry_count, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, recovery_spawned_count, created_at, updated_at)
             VALUES (?, ?, ?, 0, ?, ?)`,
       args: [id, `prompt for ${id}`, status, now, now],
     })

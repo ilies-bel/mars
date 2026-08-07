@@ -53,7 +53,7 @@ const createQueueSchema = async (path: string): Promise<Client> => {
     claude_session_id TEXT,
     error TEXT,
     drop_reason TEXT,
-    retry_count INTEGER NOT NULL DEFAULT 0,
+    recovery_spawned_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`)
@@ -88,7 +88,7 @@ const insertTask = async (
   updatedAt: string = new Date().toISOString(),
 ): Promise<void> => {
   await c.execute({
-    sql: `INSERT INTO tasks (id, prompt, status, retry_count, created_at, updated_at)
+    sql: `INSERT INTO tasks (id, prompt, status, recovery_spawned_count, created_at, updated_at)
           VALUES (?, ?, ?, 0, ?, ?)`,
     args: [id, `prompt for ${id}`, status, updatedAt, updatedAt],
   })
@@ -324,7 +324,7 @@ describe('GET /api/progress — proposal nodes for DAG view', () => {
   it('returns proposals array alongside tasks when an in-scope task has a parent_proposal_id', async () => {
     const qc = createClient({ url: `file:${queueDbPath}` })
     await qc.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, retry_count, created_at, updated_at, parent_proposal_id)
+      sql: `INSERT INTO tasks (id, prompt, status, recovery_spawned_count, created_at, updated_at, parent_proposal_id)
             VALUES (?, ?, ?, 0, ?, ?, ?)`,
       args: ['t-sliced', 'prompt for t-sliced', 'running', new Date().toISOString(), new Date().toISOString(), 'p-abc'],
     })
@@ -365,7 +365,7 @@ describe('GET /api/progress — proposal nodes for DAG view', () => {
   ): Promise<void> => {
     const now = new Date().toISOString()
     await client.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, retry_count, created_at, updated_at, parent_proposal_id)
+      sql: `INSERT INTO tasks (id, prompt, status, recovery_spawned_count, created_at, updated_at, parent_proposal_id)
             VALUES (?, ?, ?, 0, ?, ?, ?)`,
       args: [id, 'prompt', status, now, now, proposalId],
     })
@@ -521,7 +521,7 @@ describe('GET /api/progress — failedOpen aggregate excludes recovery tasks', (
       worktree_path TEXT,
       error TEXT,
       drop_reason TEXT,
-      retry_count INTEGER NOT NULL DEFAULT 0,
+      recovery_spawned_count INTEGER NOT NULL DEFAULT 0,
       fix_for_task_id TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -554,13 +554,13 @@ describe('GET /api/progress — failedOpen aggregate excludes recovery tasks', (
     const qc = createClient({ url: `file:${queueDbPath}` })
     // Origin task: failed, fix_for_task_id IS NULL
     await qc.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, retry_count, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, recovery_spawned_count, created_at, updated_at)
             VALUES (?, ?, 'failed', NULL, 0, ?, ?)`,
       args: ['origin-1', 'origin task', new Date().toISOString(), new Date().toISOString()],
     })
     // Recovery task: failed, fix_for_task_id IS NOT NULL
     await qc.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, retry_count, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, recovery_spawned_count, created_at, updated_at)
             VALUES (?, ?, 'failed', ?, 0, ?, ?)`,
       args: ['fix-1', 'recovery task', 'origin-1', new Date().toISOString(), new Date().toISOString()],
     })
@@ -581,18 +581,18 @@ describe('GET /api/progress — failedOpen aggregate excludes recovery tasks', (
   it('counts each distinct origin separately when multiple origins fail', async () => {
     const qc = createClient({ url: `file:${queueDbPath}` })
     await qc.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, retry_count, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, recovery_spawned_count, created_at, updated_at)
             VALUES (?, ?, 'failed', NULL, 0, ?, ?)`,
       args: ['origin-a', 'task a', new Date().toISOString(), new Date().toISOString()],
     })
     await qc.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, retry_count, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, recovery_spawned_count, created_at, updated_at)
             VALUES (?, ?, 'failed', NULL, 0, ?, ?)`,
       args: ['origin-b', 'task b', new Date().toISOString(), new Date().toISOString()],
     })
     // Recovery for origin-a
     await qc.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, retry_count, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, recovery_spawned_count, created_at, updated_at)
             VALUES (?, ?, 'failed', ?, 0, ?, ?)`,
       args: ['fix-a', 'fix for a', 'origin-a', new Date().toISOString(), new Date().toISOString()],
     })

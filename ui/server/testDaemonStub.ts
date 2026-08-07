@@ -279,7 +279,7 @@ const viewTasks = async (dbPath: string): Promise<{ tasks: unknown[] }> => {
     pick('error'),
     pick('failure_signature'),
     pick('drop_reason'),
-    cols.has('retry_count') ? 'retry_count' : '0 AS retry_count',
+    cols.has('recovery_spawned_count') ? 'recovery_spawned_count' : '0 AS recovery_spawned_count',
     pick('parent_proposal_id'),
     pick('origin_id'),
     pick('fix_for_task_id'),
@@ -313,7 +313,7 @@ const viewTasks = async (dbPath: string): Promise<{ tasks: unknown[] }> => {
       error: (ro.error as string | null) ?? null,
       failureSignature: (ro.failure_signature as string | null) ?? null,
       dropReason: (ro.drop_reason as string | null) ?? null,
-      retryCount: Number(ro.retry_count ?? 0),
+      recoverySpawnedCount: Number(ro.recovery_spawned_count ?? 0),
       blockerTaskId: blockerMap.get(ro.id as string)?.[0] ?? null,
       blockedBy: blockerMap.get(ro.id as string) ?? [],
       parentProposalId: (ro.parent_proposal_id as string | null) ?? null,
@@ -355,7 +355,7 @@ const makeProgressTaskStore = (
       pick('error'),
       pick('failure_signature'),
       pick('drop_reason'),
-      cols.has('retry_count') ? 'retry_count' : '0 AS retry_count',
+      cols.has('recovery_spawned_count') ? 'recovery_spawned_count' : '0 AS recovery_spawned_count',
       cols.has('priority') ? 'priority' : '0 AS priority',
       pick('parent_proposal_id'),
       pick('read_first_json'),
@@ -389,7 +389,7 @@ const makeProgressTaskStore = (
       error: (ro.error as string | null) ?? null,
       failureSignature: (ro.failure_signature as string | null) ?? null,
       dropReason: (ro.drop_reason as string | null) ?? null,
-      retryCount: Number(ro.retry_count ?? 0),
+      recoverySpawnedCount: Number(ro.recovery_spawned_count ?? 0),
       priority: (ro.priority as number) ?? 0,
       blockerTaskId: blockerMap.get(ro.id as string)?.[0] ?? null,
       blockedBy: blockerMap.get(ro.id as string) ?? [],
@@ -493,7 +493,7 @@ const makeTerminalEventsStore = (client: Client, cols: Set<string>) => ({
   async listTasks() {
     if (cols.size === 0) return []
     try {
-      const retry = cols.has('retry_count') ? 'retry_count' : '0 AS retry_count'
+      const retry = cols.has('recovery_spawned_count') ? 'recovery_spawned_count' : '0 AS recovery_spawned_count'
       const r = await client.execute(
         `SELECT id, prompt, status, ${retry}, updated_at FROM tasks`,
       )
@@ -503,7 +503,7 @@ const makeTerminalEventsStore = (client: Client, cols: Set<string>) => ({
           id: ro.id as string,
           prompt: (ro.prompt as string) ?? '',
           status: ro.status as string,
-          retryCount: Number(ro.retry_count ?? 0),
+          recoverySpawnedCount: Number(ro.recovery_spawned_count ?? 0),
           updatedAt: (ro.updated_at as string) ?? '',
         }
       })

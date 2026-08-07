@@ -304,7 +304,7 @@ const recover: Command = {
       outcomes: Array<{
         taskId: string
         outcome: 'queued' | 'noop' | 'failed' | 'not-blocked'
-        retryCount: number
+        recoverySpawnedCount: number
         failureReason?: string
         blockerStatuses?: Array<{ blockerId: string; status: string }>
       }>

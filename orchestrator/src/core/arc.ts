@@ -1148,7 +1148,7 @@ export class Arc {
    * Recovery-spawn write funnel (ADR-0052). Atomically:
    *  - INSERT a new runnable fix-task row (status='queued', skip triage),
    *  - INSERT a task_blockers row linking the source task to the fix task,
-   *  - UPDATE the source task to status='blocked' with retry_count incremented,
+   *  - UPDATE the source task to status='blocked' with recovery_spawned_count incremented,
    *  - append a `self_heal_attempts` ledger row,
    *  - emit a durable `task.blocked` event in the same batch.
    *
@@ -1191,7 +1191,7 @@ export class Arc {
     if (!source) {
       throw new Error(`source task ${input.sourceTaskId} not found`)
     }
-    const nextRetryCount = source.retryCount + 1
+    const nextRecoverySpawnedCount = source.recoverySpawnedCount + 1
     const errorSummary = truncate(
       `${input.failingStep}: ${input.truncatedError}`,
       1000,
@@ -1214,10 +1214,10 @@ export class Arc {
             sql: `UPDATE tasks
                    SET updated_at = ?,
                        status = 'blocked',
-                       retry_count = ?,
+                       recovery_spawned_count = ?,
                        error = ?
                  WHERE id = ?`,
-            args: [now, nextRetryCount, errorSummary, input.sourceTaskId],
+            args: [now, nextRecoverySpawnedCount, errorSummary, input.sourceTaskId],
           },
           // Durable task.blocked in the same atomic batch (ADR-0030); the
           // internalBus().emit below stays only as an in-process wake-hint.
@@ -1286,7 +1286,7 @@ export class Arc {
                 author_kind, author_name,
                 fix_for_task_id, failure_signature,
                 kind,
-                retry_count, origin_id, priority,
+                recovery_spawned_count, origin_id, priority,
                 created_at, updated_at
               ) VALUES (?, ?, 'queued', ?, ?, ?, ?, 'fix', 0, ?, ?, ?, ?)`,
           args: [
@@ -1317,10 +1317,10 @@ export class Arc {
           sql: `UPDATE tasks
                  SET updated_at = ?,
                      status = 'blocked',
-                     retry_count = ?,
+                     recovery_spawned_count = ?,
                      error = ?
                WHERE id = ?`,
-          args: [now, nextRetryCount, errorSummary, input.sourceTaskId],
+          args: [now, nextRecoverySpawnedCount, errorSummary, input.sourceTaskId],
         },
         // Append-only ledger row for the sweeper's per-(parent,signature)
         // dedup + budget logic. Lives inside the same batch as the
@@ -1501,7 +1501,7 @@ export class Arc {
                 author_kind, author_name,
                 fix_for_task_id, failure_signature,
                 failure_reason, failure_reason_code,
-                retry_count, origin_id, priority,
+                recovery_spawned_count, origin_id, priority,
                 recovery_payload,
                 created_at, updated_at
               ) VALUES (?, ?, 'queued', 'fix', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
@@ -2372,7 +2372,7 @@ export class Arc {
     const now = new Date().toISOString()
 
     const r = await store.query({
-      sql: `SELECT t.id AS id, t.retry_count AS retry_count
+      sql: `SELECT t.id AS id, t.recovery_spawned_count AS recovery_spawned_count
               FROM task_blockers b
               JOIN tasks t ON t.id = b.task_id
              WHERE b.blocker_task_id = ?
@@ -2384,9 +2384,9 @@ export class Arc {
     const integrationBranch = integrationBranchName()
 
     for (const row of r.rows as unknown as BlockedDependentRow[]) {
-      const retryCount = Number(row.retry_count ?? 0)
+      const recoverySpawnedCount = Number(row.recovery_spawned_count ?? 0)
       // An unblocked dependent always proceeds to re-dispatch, regardless of
-      // retry_count. (No retry-budget gate: it used to fail eligible
+      // recovery_spawned_count. (No retry-budget gate: it used to fail eligible
       // dependents at unblock time — mars-3d63fe52.)
       const incomplete = await store.query({
         sql: `SELECT 1
@@ -2398,7 +2398,7 @@ export class Arc {
         args: [row.id],
       })
       if (incomplete.rows.length > 0) {
-        outcomes.push({ taskId: row.id, outcome: 'noop', retryCount })
+        outcomes.push({ taskId: row.id, outcome: 'noop', recoverySpawnedCount })
         continue
       }
       // Recovery-done intercept (mars-f2034bb9): when the settling blocker IS
@@ -2428,7 +2428,7 @@ export class Arc {
         outcomes.push({
           taskId: row.id,
           outcome: propagation.originFlipped ? 'done-via-recovery' : 'noop',
-          retryCount,
+          recoverySpawnedCount,
         })
         continue
       }
@@ -2454,7 +2454,7 @@ export class Arc {
             outcomes.push({
               taskId: row.id,
               outcome: 'failed',
-              retryCount,
+              recoverySpawnedCount,
               failureReason: ORPHANED_ORIGIN_FAILURE_REASON,
             })
             continue
@@ -2489,7 +2489,7 @@ export class Arc {
             outcomes.push({
               taskId: row.id,
               outcome: 'failed',
-              retryCount,
+              recoverySpawnedCount,
               failureReason: WORKTREE_AHEAD_FAILURE_REASON,
             })
             continue
@@ -2517,13 +2517,13 @@ export class Arc {
         return didFlip
       })
       if (flipped) {
-        outcomes.push({ taskId: row.id, outcome: 'queued', retryCount })
+        outcomes.push({ taskId: row.id, outcome: 'queued', recoverySpawnedCount })
         internalBus().emit('task.unblocked', {
           taskId: row.id,
           blockerTaskId,
         })
       } else {
-        outcomes.push({ taskId: row.id, outcome: 'noop', retryCount })
+        outcomes.push({ taskId: row.id, outcome: 'noop', recoverySpawnedCount })
       }
     }
 
@@ -2739,7 +2739,7 @@ export class Arc {
     const store = await getDefaultTaskStore()
 
     const r = await store.query({
-      sql: `SELECT t.id AS id, t.retry_count AS retry_count
+      sql: `SELECT t.id AS id, t.recovery_spawned_count AS recovery_spawned_count
               FROM task_blockers b
               JOIN tasks t ON t.id = b.task_id
              WHERE b.blocker_task_id = ?
@@ -2750,7 +2750,7 @@ export class Arc {
 
     const outcomes: UnblockOutcome[] = []
     for (const row of r.rows as unknown as BlockedDependentRow[]) {
-      const retryCount = Number(row.retry_count ?? 0)
+      const recoverySpawnedCount = Number(row.recovery_spawned_count ?? 0)
       const cascadeSignature = computeFailureSignature(
         'blocked-dependent',
         CANCELLED_CASCADE_FAILURE_REASON,
@@ -2796,7 +2796,7 @@ export class Arc {
       outcomes.push({
         taskId: row.id,
         outcome: 'failed',
-        retryCount,
+        recoverySpawnedCount,
         failureReason: CANCELLED_CASCADE_FAILURE_REASON,
       })
     }
@@ -2823,14 +2823,14 @@ export class Arc {
     const taskId = this.arcId
     const task = await getTask(taskId)
     if (!task || task.status !== 'blocked') {
-      return { taskId, outcome: 'not-blocked', retryCount: 0 }
+      return { taskId, outcome: 'not-blocked', recoverySpawnedCount: 0 }
     }
 
-    const retryCount = task.retryCount ?? 0
+    const recoverySpawnedCount = task.recoverySpawnedCount ?? 0
     const store = await getDefaultTaskStore()
 
     // A task whose blockers have all resolved always proceeds to re-dispatch,
-    // regardless of retry_count. (No retry-budget gate: it used to fail
+    // regardless of recovery_spawned_count. (No retry-budget gate: it used to fail
     // eligible dependents at unblock time — mars-3d63fe52.)
     const now = new Date().toISOString()
 
@@ -2865,7 +2865,7 @@ export class Arc {
       const blockerStatuses = (
         blockerRows.rows as unknown as Array<{ blocker_id: string; status: string }>
       ).map((r) => ({ blockerId: r.blocker_id, status: r.status }))
-      return { taskId, outcome: 'noop', retryCount, blockerStatuses }
+      return { taskId, outcome: 'noop', recoverySpawnedCount, blockerStatuses }
     }
 
     // Reset the dependent's worktree to integration HEAD before re-dispatching.
@@ -2889,7 +2889,7 @@ export class Arc {
             err.integrationBranch,
           )
           await markTaskFailed(taskId, WORKTREE_AHEAD_FAILURE_REASON)
-          return { taskId, outcome: 'failed', retryCount, failureReason: WORKTREE_AHEAD_FAILURE_REASON }
+          return { taskId, outcome: 'failed', recoverySpawnedCount, failureReason: WORKTREE_AHEAD_FAILURE_REASON }
         }
         throw err
       }
@@ -2912,9 +2912,9 @@ export class Arc {
 
     if (flipped) {
       internalBus().emit('task.unblocked', { taskId })
-      return { taskId, outcome: 'queued', retryCount }
+      return { taskId, outcome: 'queued', recoverySpawnedCount }
     }
-    return { taskId, outcome: 'noop', retryCount }
+    return { taskId, outcome: 'noop', recoverySpawnedCount }
   }
 
   /**

@@ -279,7 +279,7 @@ describe('checkAndEscalateRequeueCeiling', () => {
     const { q, ceiling } = await loadModules(repo, { maxRetryMs: 100 })
     const task = await q.enqueueTask('paused task', undefined, { skipTriage: true })
     await q.updateTask(task.id, {
-      retryCount: 1,
+      recoverySpawnedCount: 1,
       requeueDispatchUptimeMs: 1_000,
     })
     const fresh = await q.getTask(task.id)
@@ -306,7 +306,7 @@ describe('checkAndEscalateRequeueCeiling', () => {
     const { q, ceiling } = await loadModules(repo, { maxRetryMs: 100 })
     const task = await q.enqueueTask('hot loop task', undefined, { skipTriage: true })
     await q.updateTask(task.id, {
-      retryCount: 5,
+      recoverySpawnedCount: 5,
       requeueDispatchUptimeMs: 1_000,
     })
     const fresh = await q.getTask(task.id)
@@ -330,7 +330,7 @@ describe('checkAndEscalateRequeueCeiling', () => {
     const { q, ceiling } = await loadModules(repo, { maxRetryMs: 100 })
     const task = await q.enqueueTask('sparse retry task', undefined, { skipTriage: true })
     await q.updateTask(task.id, {
-      retryCount: 1,
+      recoverySpawnedCount: 1,
       requeueDispatchUptimeMs: 1_000,
     })
     const fresh = await q.getTask(task.id)
@@ -407,7 +407,7 @@ describe('checkAndEscalateRequeueCeiling', () => {
       updatedAt: 0,
     })
     await store.putStep(makeStepRecord(t.id, 'setup-worktree', 3, 'failed'))
-    await q.updateTask(t.id, { retryCount: 3 })
+    await q.updateTask(t.id, { recoverySpawnedCount: 3 })
     const retrying = await q.getTask(t.id)
 
     const escalated = await ceiling.checkAndEscalateRequeueCeiling(
@@ -690,7 +690,7 @@ describe('checkAndEscalateRequeueCeiling', () => {
     // Fixture: attempt=5, startedAt=0 → spanMs=0 → density=5/1=5 ≥ 1/min.
     const { q, aq, ceiling } = await loadModules(repo, { maxRetryMs: 0 })
     const t = await q.enqueueTask('churn task', undefined, { skipTriage: true })
-    await q.updateTask(t.id, { retryCount: 5 })
+    await q.updateTask(t.id, { recoverySpawnedCount: 5 })
     const retrying = await q.getTask(t.id)
     const steps = [makeStepRecord('run-1', 'code', 5, 'failed', 0)]
     const store = makeMockStore(steps)

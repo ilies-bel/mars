@@ -64,7 +64,7 @@ describe('Triaging status + Blocker state schema', () => {
     const now = new Date().toISOString()
     const c = resolveQueueClient()
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, recovery_spawned_count, kind, priority, tag, created_at, updated_at)
             VALUES (?, ?, 'triaging', ?, 0, 'task', 0, 'coder', ?, ?)`,
       args: ['t-triaging', 'do thing', 't-triaging', now, now],
     })
@@ -81,12 +81,12 @@ describe('Triaging status + Blocker state schema', () => {
     const now = new Date().toISOString()
     const c = resolveQueueClient()
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, recovery_spawned_count, kind, priority, tag, created_at, updated_at)
             VALUES ('a', 'a', 'queued', 'a', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, recovery_spawned_count, kind, priority, tag, created_at, updated_at)
             VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
@@ -105,12 +105,12 @@ describe('Triaging status + Blocker state schema', () => {
     const now = new Date().toISOString()
     const c = resolveQueueClient()
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, recovery_spawned_count, kind, priority, tag, created_at, updated_at)
             VALUES ('a', 'a', 'triaging', 'a', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, recovery_spawned_count, kind, priority, tag, created_at, updated_at)
             VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
@@ -130,12 +130,12 @@ describe('Triaging status + Blocker state schema', () => {
     const now = new Date().toISOString()
     const c = resolveQueueClient()
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, recovery_spawned_count, kind, priority, tag, created_at, updated_at)
             VALUES ('a', 'a', 'queued', 'a', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, recovery_spawned_count, kind, priority, tag, created_at, updated_at)
             VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
@@ -161,12 +161,12 @@ describe('Triaging status + Blocker state schema', () => {
     const now = new Date().toISOString()
     const c = resolveQueueClient()
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, recovery_spawned_count, kind, priority, tag, created_at, updated_at)
             VALUES ('dep', 'dependent', 'queued', 'dep', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, recovery_spawned_count, kind, priority, tag, created_at, updated_at)
             VALUES ('blk', 'blocker', 'queued', 'blk', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
@@ -202,12 +202,12 @@ describe('Triaging status + Blocker state schema', () => {
     const now = new Date().toISOString()
     const c = resolveQueueClient()
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, recovery_spawned_count, kind, priority, tag, created_at, updated_at)
             VALUES ('a', 'a', 'queued', 'a', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, priority, tag, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, recovery_spawned_count, kind, priority, tag, created_at, updated_at)
             VALUES ('b', 'b', 'queued', 'b', 0, 'task', 0, 'coder', ?, ?)`,
       args: [now, now],
     })
@@ -239,7 +239,7 @@ describe('Triaging status + Blocker state schema', () => {
     const q = createClient({ url: queueDb })
     await q.execute(`CREATE TABLE tasks (
       id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
-      retry_count INTEGER NOT NULL DEFAULT 0, origin_id TEXT,
+      recovery_spawned_count INTEGER NOT NULL DEFAULT 0, origin_id TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )`)
     await q.execute(`CREATE TABLE task_blockers (

@@ -12,13 +12,13 @@ satisfied on `main`:
 - `ui/server/events.ts` already exports `listTerminalEvents` and the
   `EVENT_FEED_LIMIT = 200` cap, emitting one `'completed'` per task in
   `status='done'`, one `'failed'` per prior attempt for `status='failed'`
-  (with a minimum of one), and `retryCount` `'failed'` entries plus one
+  (with a minimum of one), and `recoverySpawnedCount` `'failed'` entries plus one
   terminal `'dropped'` for `status='dropped'`.
 - `ui/server/index.ts` already routes `GET /api/events` through that
   helper and wraps the result as `{ events }`.
 - `ui/server/events.test.ts` already covers the full acceptance matrix:
   empty feed, single-completed shape, kind whitelist, two-failed +
-  one-dropped, single-failed with retryCount=0, newest-first sort, 200
+  one-dropped, single-failed with recoverySpawnedCount=0, newest-first sort, 200
   cap (250 → 200), and the missing-table case.
 - The slice landed in commit `63580ea` *"add GET /api/events feed of
   terminal-state task moments"*.

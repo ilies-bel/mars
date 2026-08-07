@@ -258,7 +258,7 @@ describe('recovery-spawn outbox subscriber', () => {
       failureSignature: 'verify:typecheck/typecheck-property-missing',
       branch: `task/${t.id}`,
       worktreePath: repo,
-      retryCount: 1,
+      recoverySpawnedCount: 1,
     })
 
     await rs.ensureRecoverySpawner(client)
@@ -446,7 +446,7 @@ describe('recovery-spawn outbox subscriber', () => {
       failureSignature: 'verify/unclassified',
       branch: `task/${t.id}`,
       worktreePath: repo,
-      retryCount: 2,
+      recoverySpawnedCount: 2,
     })
 
     await rs.ensureRecoverySpawner(client)

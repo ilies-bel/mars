@@ -250,14 +250,14 @@ describe('restart → done auto-dismisses the failed action-queue row', () => {
     const now = new Date().toISOString()
     // PRD task: still queued (other slices running) — NOT a terminal state.
     await client.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, origin_id, retry_count, kind, created_at, updated_at)
+      sql: `INSERT INTO tasks (id, prompt, status, origin_id, recovery_spawned_count, kind, created_at, updated_at)
             VALUES (?, ?, 'queued', ?, 0, 'task', ?, ?)`,
       args: ['prd-task-still-running', '(prd prompt)', null, now, now],
     })
     // Sliced task: failed, then done (recovered), origin_id → PRD task id.
     await client.execute({
       sql: `INSERT INTO tasks (
-              id, prompt, status, origin_id, retry_count,
+              id, prompt, status, origin_id, recovery_spawned_count,
               failure_reason, failure_reason_code,
               kind, recovery_payload,
               failure_signature, error,

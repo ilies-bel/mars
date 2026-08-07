@@ -18,7 +18,7 @@ describe('publish: atomic event insertion', () => {
       // Simulate an accompanying state write inside the same tx.
       await tx.execute({
         sql: `INSERT INTO tasks
-                (id, prompt, status, origin_id, retry_count, created_at, updated_at)
+                (id, prompt, status, origin_id, recovery_spawned_count, created_at, updated_at)
               VALUES ('abc', 'test task', 'queued', 'abc', 0, ?, ?)`,
         args: [now, now],
       })
@@ -51,7 +51,7 @@ describe('publish: atomic event insertion', () => {
         await publish(tx, 'task.queued', { taskId: 'xyz' })
         await tx.execute({
           sql: `INSERT INTO tasks
-                  (id, prompt, status, origin_id, retry_count, created_at, updated_at)
+                  (id, prompt, status, origin_id, recovery_spawned_count, created_at, updated_at)
                 VALUES ('xyz', 'rollback task', 'queued', 'xyz', 0, ?, ?)`,
           args: [now, now],
         })

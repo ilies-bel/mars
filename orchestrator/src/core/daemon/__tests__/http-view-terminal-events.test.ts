@@ -129,7 +129,7 @@ describe('GET /view/terminal-events', () => {
         id: 'task-done-1',
         prompt: 'ship the thing',
         status: 'done',
-        retryCount: 0,
+        recoverySpawnedCount: 0,
         updatedAt: '2026-05-15T10:00:00.000Z',
       },
     ]
@@ -147,7 +147,7 @@ describe('GET /view/terminal-events', () => {
       expect(ev.taskId).toBe('task-done-1')
       expect(ev.kind).toBe('completed')
       expect(ev.occurredAt).toBe('2026-05-15T10:00:00.000Z')
-      expect(ev.retryCount).toBe(0)
+      expect(ev.recoverySpawnedCount).toBe(0)
       expect(typeof ev.summary).toBe('string')
       expect(ev.summary.length).toBeGreaterThan(0)
     } finally {
@@ -160,13 +160,13 @@ describe('GET /view/terminal-events', () => {
 
     const now = '2026-05-15T10:00:00.000Z'
     const tasks = [
-      { id: 't-queued', prompt: 'q', status: 'queued', retryCount: 0, updatedAt: now },
-      { id: 't-running', prompt: 'r', status: 'running', retryCount: 0, updatedAt: now },
-      { id: 't-blocked', prompt: 'b', status: 'blocked', retryCount: 0, updatedAt: now },
-      { id: 't-verifying', prompt: 'v', status: 'verifying', retryCount: 0, updatedAt: now },
-      { id: 't-done', prompt: 'd', status: 'done', retryCount: 0, updatedAt: now },
-      { id: 't-failed', prompt: 'f', status: 'failed', retryCount: 0, updatedAt: now },
-      { id: 't-dropped', prompt: 'dr', status: 'dropped', retryCount: 1, updatedAt: now },
+      { id: 't-queued', prompt: 'q', status: 'queued', recoverySpawnedCount: 0, updatedAt: now },
+      { id: 't-running', prompt: 'r', status: 'running', recoverySpawnedCount: 0, updatedAt: now },
+      { id: 't-blocked', prompt: 'b', status: 'blocked', recoverySpawnedCount: 0, updatedAt: now },
+      { id: 't-verifying', prompt: 'v', status: 'verifying', recoverySpawnedCount: 0, updatedAt: now },
+      { id: 't-done', prompt: 'd', status: 'done', recoverySpawnedCount: 0, updatedAt: now },
+      { id: 't-failed', prompt: 'f', status: 'failed', recoverySpawnedCount: 0, updatedAt: now },
+      { id: 't-dropped', prompt: 'dr', status: 'dropped', recoverySpawnedCount: 1, updatedAt: now },
     ]
 
     const { port, close } = await httpServer.startHttpServer(
@@ -200,7 +200,7 @@ describe('GET /view/terminal-events', () => {
         id: 'task-drop',
         prompt: 'deploy thing',
         status: 'dropped',
-        retryCount: 2,
+        recoverySpawnedCount: 2,
         updatedAt: '2026-05-15T12:00:00.000Z',
       },
     ]
@@ -232,7 +232,7 @@ describe('GET /view/terminal-events', () => {
         id: 'task-fail',
         prompt: 'do stuff',
         status: 'failed',
-        retryCount: 0,
+        recoverySpawnedCount: 0,
         updatedAt: '2026-05-15T10:00:00.000Z',
       },
     ]
@@ -258,9 +258,9 @@ describe('GET /view/terminal-events', () => {
 
     // Tasks supplied in non-chronological order; listTerminalEvents must sort them.
     const tasks = [
-      { id: 'older', prompt: 'old task', status: 'done', retryCount: 0, updatedAt: '2026-01-01T00:00:00.000Z' },
-      { id: 'newest', prompt: 'new task', status: 'done', retryCount: 0, updatedAt: '2026-05-15T12:00:00.000Z' },
-      { id: 'middle', prompt: 'mid task', status: 'done', retryCount: 0, updatedAt: '2026-03-01T00:00:00.000Z' },
+      { id: 'older', prompt: 'old task', status: 'done', recoverySpawnedCount: 0, updatedAt: '2026-01-01T00:00:00.000Z' },
+      { id: 'newest', prompt: 'new task', status: 'done', recoverySpawnedCount: 0, updatedAt: '2026-05-15T12:00:00.000Z' },
+      { id: 'middle', prompt: 'mid task', status: 'done', recoverySpawnedCount: 0, updatedAt: '2026-03-01T00:00:00.000Z' },
     ]
 
     const { port, close } = await httpServer.startHttpServer(
@@ -292,7 +292,7 @@ describe('GET /view/terminal-events', () => {
       id: `t-${String(i).padStart(3, '0')}`,
       prompt: `task ${i}`,
       status: 'done',
-      retryCount: 0,
+      recoverySpawnedCount: 0,
       updatedAt: `2026-01-${String((i % 28) + 1).padStart(2, '0')}T${String(
         i % 24,
       ).padStart(2, '0')}:00:00.${String(i).padStart(3, '0')}Z`,

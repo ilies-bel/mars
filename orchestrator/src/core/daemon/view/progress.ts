@@ -70,7 +70,7 @@ export interface ProgressTask {
   error: string | null
   failureSignature: string | null
   dropReason: string | null
-  retryCount: number
+  recoverySpawnedCount: number
   blockerTaskId: string | null
   blockedBy: string[]
   parentProposalId: string | null
@@ -107,7 +107,7 @@ export interface ProgressTaskRow {
   error: string | null
   failureSignature: string | null
   dropReason: string | null
-  retryCount: number
+  recoverySpawnedCount: number
   blockerTaskId: string | null
   blockedBy: string[]
   parentProposalId: string | null
@@ -239,7 +239,7 @@ export const buildProgressView = async (
       error: row.error,
       failureSignature: row.failureSignature,
       dropReason: row.dropReason,
-      retryCount: row.retryCount,
+      recoverySpawnedCount: row.recoverySpawnedCount,
       blockerTaskId: row.blockerTaskId,
       blockedBy: row.blockedBy,
       parentProposalId: row.parentProposalId,
@@ -325,7 +325,7 @@ export const createProgressTaskStore = (client: DbClient): ProgressTaskStore => 
              t.plan_functional, t.plan_technical,
              t.branch, t.worktree_path, t.error,
              t.failure_signature, t.drop_reason,
-             COALESCE(t.retry_count, 0) AS retry_count,
+             COALESCE(t.recovery_spawned_count, 0) AS recovery_spawned_count,
              t.parent_proposal_id,
              (SELECT COALESCE(json_agg(path ORDER BY position)::text, '[]')
                 FROM task_spec_files WHERE task_id = t.id) AS files_json,
@@ -359,7 +359,7 @@ export const createProgressTaskStore = (client: DbClient): ProgressTaskStore => 
         error: (ro.error as string | null) ?? null,
         failureSignature: (ro.failure_signature as string | null) ?? null,
         dropReason: (ro.drop_reason as string | null) ?? null,
-        retryCount: Number(ro.retry_count ?? 0),
+        recoverySpawnedCount: Number(ro.recovery_spawned_count ?? 0),
         blockerTaskId: (ro.blocker_task_id as string | null) ?? null,
         blockedBy: parseBlockedBy(ro.blocker_task_ids),
         parentProposalId: (ro.parent_proposal_id as string | null) ?? null,

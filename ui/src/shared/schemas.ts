@@ -84,7 +84,7 @@ export const taskSchema = z.object({
   worktreePath: z.string().nullable(),
   error: z.string().nullable(),
   dropReason: z.string().nullable(),
-  retryCount: z.number(),
+  recoverySpawnedCount: z.number(),
   priority: z.number(),
   blockerTaskId: z.string().nullable().optional(),
   /**

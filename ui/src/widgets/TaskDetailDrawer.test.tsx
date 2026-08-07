@@ -44,7 +44,7 @@ const task = (
   worktreePath: null,
   error: null,
   dropReason: null,
-  retryCount: 0,
+  recoverySpawnedCount: 0,
   blockerTaskId: null,
   blockedBy: overrides.blockedBy ?? [],
   spec: null,
@@ -662,7 +662,7 @@ const fullTask = (overrides: Partial<Task> & { id: string }): Task => ({
   error: overrides.error ?? null,
   failureSignature: overrides.failureSignature ?? null,
   dropReason: overrides.dropReason ?? null,
-  retryCount: overrides.retryCount ?? 0,
+  recoverySpawnedCount: overrides.recoverySpawnedCount ?? 0,
   blockerTaskId: overrides.blockerTaskId ?? null,
   blockedBy: overrides.blockedBy ?? [],
   parentProposalId: overrides.parentProposalId ?? null,
@@ -2529,7 +2529,7 @@ const renderSlice3 = (element: React.ReactElement): string => {
 }
 
 const slice3Task = (overrides: Partial<ProgressTask> & { id: string; cluster: ProgressTask['cluster'] }): ProgressTask => ({
-  id: overrides.id, prompt: overrides.prompt ?? `Task ${overrides.id}`, status: overrides.status ?? 'queued', plan: null, branch: null, worktreePath: null, error: null, dropReason: null, retryCount: 0, blockerTaskId: null, blockedBy: overrides.blockedBy ?? [], spec: null, createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z', cluster: overrides.cluster, parentProposalId: overrides.parentProposalId ?? null, ...overrides,
+  id: overrides.id, prompt: overrides.prompt ?? `Task ${overrides.id}`, status: overrides.status ?? 'queued', plan: null, branch: null, worktreePath: null, error: null, dropReason: null, recoverySpawnedCount: 0, blockerTaskId: null, blockedBy: overrides.blockedBy ?? [], spec: null, createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z', cluster: overrides.cluster, parentProposalId: overrides.parentProposalId ?? null, ...overrides,
 })
 const slice3Proposal = (id: string, title = `Goal ${id}`): ProgressProposalNode => ({ id, title, source: 'human', status: 'prd-ready' })
 const slice3Span = (overrides: Partial<StepSpan> & { stepName: string }): StepSpan => ({

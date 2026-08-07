@@ -12,7 +12,7 @@ interface EventEntry {
   taskId: string
   kind: 'completed' | 'failed' | 'dropped'
   occurredAt: string
-  retryCount: number
+  recoverySpawnedCount: number
   summary: string
 }
 
@@ -40,7 +40,7 @@ const createQueueSchema = async (path: string): Promise<Client> => {
     claude_session_id TEXT,
     error TEXT,
     drop_reason TEXT,
-    retry_count INTEGER NOT NULL DEFAULT 0,
+    recovery_spawned_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`)
@@ -71,7 +71,7 @@ const createStateSchema = async (path: string): Promise<Client> => {
 interface InsertTaskArgs {
   id: string
   status: string
-  retryCount?: number
+  recoverySpawnedCount?: number
   prompt?: string
   createdAt?: string
   updatedAt?: string
@@ -80,13 +80,13 @@ interface InsertTaskArgs {
 const insertTask = async (c: Client, args: InsertTaskArgs): Promise<void> => {
   const now = new Date().toISOString()
   await c.execute({
-    sql: `INSERT INTO tasks (id, prompt, status, retry_count, created_at, updated_at)
+    sql: `INSERT INTO tasks (id, prompt, status, recovery_spawned_count, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?)`,
     args: [
       args.id,
       args.prompt ?? `prompt for ${args.id}`,
       args.status,
-      args.retryCount ?? 0,
+      args.recoverySpawnedCount ?? 0,
       args.createdAt ?? now,
       args.updatedAt ?? now,
     ],
@@ -139,7 +139,7 @@ describe('GET /api/events', () => {
       id: 'task-done-1',
       status: 'done',
       prompt: 'ship the thing',
-      retryCount: 0,
+      recoverySpawnedCount: 0,
       updatedAt: '2026-05-15T10:00:00.000Z',
     })
     qc.close()
@@ -152,7 +152,7 @@ describe('GET /api/events', () => {
     expect(ev.taskId).toBe('task-done-1')
     expect(ev.kind).toBe('completed')
     expect(ev.occurredAt).toBe('2026-05-15T10:00:00.000Z')
-    expect(ev.retryCount).toBe(0)
+    expect(ev.recoverySpawnedCount).toBe(0)
     expect(typeof ev.summary).toBe('string')
     expect(ev.summary.length).toBeGreaterThan(0)
   })
@@ -187,7 +187,7 @@ describe('GET /api/events', () => {
     await insertTask(qc, {
       id: 'task-drop',
       status: 'dropped',
-      retryCount: 2,
+      recoverySpawnedCount: 2,
       updatedAt: '2026-05-15T12:00:00.000Z',
     })
     qc.close()
@@ -207,7 +207,7 @@ describe('GET /api/events', () => {
     await insertTask(qc, {
       id: 'task-fail',
       status: 'failed',
-      retryCount: 0,
+      recoverySpawnedCount: 0,
     })
     qc.close()
 

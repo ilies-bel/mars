@@ -165,7 +165,7 @@ describe('GET /view/progress', () => {
         error: null,
         failureSignature: null,
         dropReason: null,
-        retryCount: 0,
+        recoverySpawnedCount: 0,
         blockerTaskId: null,
         blockedBy: [],
         parentProposalId: 'prop-1',

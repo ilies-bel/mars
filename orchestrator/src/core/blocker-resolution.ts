@@ -241,7 +241,7 @@ export interface UnblockOutcome {
    * - `'noop'`            — no state change (still has unsettled blockers, or already processed).
    */
   outcome: 'queued' | 'done-via-recovery' | 'failed' | 'noop'
-  retryCount: number
+  recoverySpawnedCount: number
   failureReason?: string
 }
 
@@ -252,7 +252,7 @@ export interface UnblockByTaskResult {
 
 export interface BlockedDependentRow {
   id: string
-  retry_count: number | null
+  recovery_spawned_count: number | null
 }
 
 export interface FailStrandedOriginOutcome {
@@ -347,7 +347,7 @@ export const raiseActionQueueForBlockedTask = async (taskId: string): Promise<vo
   await raiseRecoveryExhaustedActionQueue({
     taskId,
     lastStep,
-    retryCount: task.retryCount,
+    recoverySpawnedCount: task.recoverySpawnedCount,
     lastErrorSignature: task.failureSignature,
     lastErrorSummary: lastErrorSummary || null,
     branch: task.branch,
@@ -365,7 +365,7 @@ export interface PropagateRecoveryDoneResult {
 export interface RecoverBlockedTaskOutcome {
   taskId: string
   outcome: 'queued' | 'noop' | 'failed' | 'not-blocked'
-  retryCount: number
+  recoverySpawnedCount: number
   failureReason?: string
   /**
    * Present when `outcome === 'noop'`: the status of each unsettled blocker

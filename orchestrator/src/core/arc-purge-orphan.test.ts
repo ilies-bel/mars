@@ -50,12 +50,12 @@ const blockTask = async (
   q: QueueModule,
   taskId: string,
   blockerTaskId: string,
-  retryCount = 0,
+  recoverySpawnedCount = 0,
 ): Promise<void> => {
   await q.addBlockers(taskId, [blockerTaskId])
   await q.resolveQueueClient().execute({
-    sql: `UPDATE tasks SET status = 'blocked', retry_count = ? WHERE id = ?`,
-    args: [retryCount, taskId],
+    sql: `UPDATE tasks SET status = 'blocked', recovery_spawned_count = ? WHERE id = ?`,
+    args: [recoverySpawnedCount, taskId],
   })
 }
 

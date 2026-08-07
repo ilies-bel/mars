@@ -51,7 +51,7 @@ const initRepo = async (
     const now = new Date().toISOString()
     await client.execute({
       sql: `INSERT INTO tasks
-              (id, prompt, status, priority, origin_id, tags_json, kind, intent, retry_count, created_at, updated_at)
+              (id, prompt, status, priority, origin_id, tags_json, kind, intent, recovery_spawned_count, created_at, updated_at)
             VALUES (?, ?, 'queued', 0, ?, '["coder"]', 'task', ?, 0, ?, ?)`,
       args: [
         `test-${repoPath.slice(-6)}`,

@@ -10,7 +10,7 @@ const makeTask = (
   worktreePath: null,
   error: null,
   dropReason: null,
-  retryCount: 0,
+  recoverySpawnedCount: 0,
   priority: 2,
   blockerTaskId: null,
   createdAt: '2024-01-01T00:00:00Z',

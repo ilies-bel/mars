@@ -45,7 +45,7 @@ const toUI = (t: ProgressTask): UITask => ({
   role: roleFromStatus(t.status),
   failed: t.status === 'failed',
   dropReason: t.dropReason ?? null,
-  retryCount: t.retryCount ?? 0,
+  recoverySpawnedCount: t.recoverySpawnedCount ?? 0,
   priority: t.priority,
   blockerTaskId: t.blockerTaskId ?? null,
   spec: t.spec ?? null,

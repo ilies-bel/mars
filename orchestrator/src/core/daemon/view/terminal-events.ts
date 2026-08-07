@@ -4,7 +4,7 @@ export interface TerminalEvent {
   taskId: string
   kind: EventKind
   occurredAt: string
-  retryCount: number
+  recoverySpawnedCount: number
   summary: string
 }
 
@@ -15,7 +15,7 @@ export interface TaskStoreForEvents {
       id: string
       prompt: string
       status: string
-      retryCount: number
+      recoverySpawnedCount: number
       updatedAt: string
     }>
   >
@@ -41,12 +41,12 @@ const eventsForTask = (task: {
   id: string
   prompt: string
   status: string
-  retryCount: number
+  recoverySpawnedCount: number
   updatedAt: string
 }): TerminalEvent[] => {
   const summary = summarise(task.prompt)
   const occurredAt = task.updatedAt
-  const retryCount = task.retryCount
+  const recoverySpawnedCount = task.recoverySpawnedCount
 
   if (task.status === 'done') {
     return [
@@ -54,7 +54,7 @@ const eventsForTask = (task: {
         taskId: task.id,
         kind: 'completed',
         occurredAt,
-        retryCount,
+        recoverySpawnedCount,
         summary,
       },
     ]
@@ -64,12 +64,12 @@ const eventsForTask = (task: {
     // Each individual failed attempt earns a 'failed' event. A task that
     // is currently failed but has no retries yet still represents one
     // observed failure, so we always emit at least one.
-    const count = Math.max(retryCount, 1)
+    const count = Math.max(recoverySpawnedCount, 1)
     return Array.from({ length: count }, (_, i) => ({
       taskId: task.id,
       kind: 'failed' as const,
       occurredAt,
-      retryCount: i + 1,
+      recoverySpawnedCount: i + 1,
       summary,
     }))
   }
@@ -79,12 +79,12 @@ const eventsForTask = (task: {
     // failed, then the orchestrator gave up. Emit one 'failed' per prior
     // attempt followed by the terminal 'dropped'.
     const failed: TerminalEvent[] = Array.from(
-      { length: retryCount },
+      { length: recoverySpawnedCount },
       (_, i) => ({
         taskId: task.id,
         kind: 'failed' as const,
         occurredAt,
-        retryCount: i + 1,
+        recoverySpawnedCount: i + 1,
         summary,
       }),
     )
@@ -94,7 +94,7 @@ const eventsForTask = (task: {
         taskId: task.id,
         kind: 'dropped',
         occurredAt,
-        retryCount,
+        recoverySpawnedCount,
         summary,
       },
     ]
