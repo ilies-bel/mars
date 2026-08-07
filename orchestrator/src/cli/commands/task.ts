@@ -490,12 +490,21 @@ export const taskPriority: Command = {
 export const taskNote: Command = {
   path: 'task note',
   summary: 'append a progress note to a task',
-  usage: 'usage: mars task note <id> "<text>"',
+  usage: 'usage: mars task note <id> ("<text>" | @<file> | -)',
   run: async (args, deps) => {
     const id = args.positional[0]
-    const body = args.positional[1]
-    if (!id || !body) {
-      deps.err('usage: mars task note <id> "<text>"')
+    if (!id) {
+      deps.err('usage: mars task note <id> ("<text>" | @<file> | -)')
+      return { code: 1 }
+    }
+    const bodyResult = resolvePromptSource(args.positional.slice(1), args.flags)
+    if (!bodyResult.ok) {
+      deps.err(bodyResult.message)
+      return { code: 2 }
+    }
+    const body = bodyResult.value
+    if (!body) {
+      deps.err('usage: mars task note <id> ("<text>" | @<file> | -)')
       return { code: 1 }
     }
     const author = detectOriginSession() ?? 'cli'

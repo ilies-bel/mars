@@ -307,6 +307,19 @@ recovery-spawn path itself.
 
 ## Conventions
 
+- **Prose-body inputs: always use `@<path>` or `-` for multi-line or
+  shell-special content.** The CLI processes text after the shell has already
+  evaluated it — backticks and `$(...)` in an inline `"..."` argument are
+  expanded (or silently deleted) before the process starts, corrupting the
+  stored text with no signal. The correct forms are:
+  - `@<path>` — reads the file verbatim (one trailing newline stripped)
+  - `-` — reads stdin verbatim (one trailing newline stripped)
+  - `"<inline>"` — safe only for genuinely short, shell-neutral values
+  These three shapes are accepted by: `mars task add`, `mars task note`,
+  `mars proposal add`, `mars glossary set` (definition argument), and
+  `mars adr add`. Do not use bare inline quotes for any body that may
+  contain backticks, `$(...)`, newlines, or other shell metacharacters.
+
 - Bun compiles the `mars` CLI into standalone single-file binaries (the
   binary embeds its own runtime; no Bun installation required to run it).
   The orchestrator runs on Node `>=22.13.0` — Bun is not involved there.

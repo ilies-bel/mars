@@ -36,7 +36,7 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
-import { hasFlag, parsePriority } from '../args'
+import { hasFlag, parsePriority, resolvePromptSource } from '../args'
 
 const execFileAsync = promisify(execFile)
 
@@ -119,11 +119,16 @@ export const renderProposalDetail = async (
 const proposalAdd: Command = {
   path: 'proposal add',
   summary: 'create a proposal/plan (author detected from env/git)',
-  usage: 'usage: mars proposal add "<goal>" [--author kind:name]',
+  usage: 'usage: mars proposal add ("<goal>" | @<file> | -) [--author kind:name]',
   run: async (args, deps) => {
-    const goal = args.positional.join(' ')
+    const goalResult = resolvePromptSource(args.positional, args.flags)
+    if (!goalResult.ok) {
+      deps.err(goalResult.message)
+      return { code: 2 }
+    }
+    const goal = goalResult.value
     if (!goal) {
-      deps.err('usage: mars proposal add "<goal>" [--author kind:name]')
+      deps.err('usage: mars proposal add ("<goal>" | @<file> | -) [--author kind:name]')
       return { code: 2 }
     }
     const author = resolveAuthor(args.flags['--author'])

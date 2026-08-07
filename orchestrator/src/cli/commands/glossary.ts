@@ -12,6 +12,7 @@ import {
 } from '../../core/lib/glossary'
 import type { Command } from '../command'
 import { spawnNoticeErr } from './shared'
+import { resolvePromptSource } from '../args'
 
 const contextPathFor = (repoRoot: string): string =>
   resolvePath(repoRoot, 'CONTEXT.md')
@@ -20,13 +21,24 @@ const glossarySet: Command = {
   path: 'glossary set',
   summary: 'set a glossary term (daemon-routed write to CONTEXT.md)',
   usage:
-    'usage: mars glossary set "<term>" "<definition>" [--avoid alias1,alias2] [--surface-form f1 ...]',
+    'usage: mars glossary set "<term>" ("<definition>" | @<file> | -) [--avoid alias1,alias2] [--surface-form f1 ...]',
   run: async (args, deps) => {
     const term = args.positional[0]
-    const definition = args.positional[1]
-    if (!term || !definition) {
+    if (!term) {
       deps.err(
-        'usage: mars glossary set "<term>" "<definition>" [--avoid alias1,alias2] [--surface-form f1 ...]',
+        'usage: mars glossary set "<term>" ("<definition>" | @<file> | -) [--avoid alias1,alias2] [--surface-form f1 ...]',
+      )
+      return { code: 2 }
+    }
+    const defResult = resolvePromptSource(args.positional.slice(1), args.flags)
+    if (!defResult.ok) {
+      deps.err(defResult.message)
+      return { code: 2 }
+    }
+    const definition = defResult.value
+    if (!definition) {
+      deps.err(
+        'usage: mars glossary set "<term>" ("<definition>" | @<file> | -) [--avoid alias1,alias2] [--surface-form f1 ...]',
       )
       return { code: 2 }
     }

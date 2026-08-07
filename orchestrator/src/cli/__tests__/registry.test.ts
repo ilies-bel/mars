@@ -53,6 +53,7 @@ describe('grouping is computed routing, not a unit', () => {
       'task note',
       'task priority',
       'task show',
+      'task stop',
     ])
     // The largest ladder, proposal, contributes a leaf per verb.
     expect((groups.get('proposal') ?? []).length).toBeGreaterThanOrEqual(18)
