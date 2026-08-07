@@ -49,12 +49,20 @@ describe('parseDeepReflectionReport', () => {
           verdict: 'save',
           target_id: null,
           dup_of: null,
+          outcome: {
+            type: 'leverGap',
+            leverGap: { proposedLeverId: 'test.regression-gate', family: 'verify', whatItWouldControl: 'regression test coverage gate' },
+          },
         },
         {
           title: 'Trivial nit',
           prompt: 'fix typo. Save your work.',
           rationale: 'minor',
           verdict: 'drop',
+          outcome: {
+            type: 'leverGap',
+            leverGap: { proposedLeverId: 'test.nit-gate', family: 'verify', whatItWouldControl: 'trivial nit gate' },
+          },
         },
       ],
     })
@@ -156,7 +164,15 @@ describe('parseDeepReflectionReport', () => {
       thrashingPatterns: [],
       rootCause: '',
       suggestions: [
-        { title: 'Good', prompt: 'do thing. Save your work.', verdict: 'foo' },
+        {
+          title: 'Good',
+          prompt: 'do thing. Save your work.',
+          verdict: 'foo',
+          outcome: {
+            type: 'leverGap',
+            leverGap: { proposedLeverId: 'test.good-lever', family: 'workflow', whatItWouldControl: 'good test lever' },
+          },
+        },
         { title: '', prompt: 'no title' },
         { title: 'No prompt' },
       ],
@@ -211,6 +227,10 @@ describe('parseDeepReflectionReport', () => {
           verdict: 'save',
           target_id: null,
           dup_of: null,
+          outcome: {
+            type: 'leverGap',
+            leverGap: { proposedLeverId: 'commit.pre-check-gate', family: 'workflow', whatItWouldControl: 'pre-commit validation step' },
+          },
         },
       ],
     })

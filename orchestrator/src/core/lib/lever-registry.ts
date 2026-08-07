@@ -690,6 +690,33 @@ export function noGestureEntries(): LeverRegistryEntry[] {
 }
 
 /**
+ * Renders every lever in the registry as a compact list suitable for
+ * inclusion in reflector prompts.
+ *
+ * Each line describes one lever: its id, label, family, live current value
+ * (via `readCurrent()`, or "(unknown)" on error), allowed values, and the
+ * `mars` command that applies a change (or "(no command — gap)" when none
+ * exists).
+ *
+ * Accepts the full registry (from `loadLeverRegistry()`) or any subset.
+ */
+export function formatLeverList(entries: LeverRegistryEntry[]): string {
+  if (entries.length === 0) return '_(no levers in registry)_\n'
+  const rows = entries.map((e) => {
+    const current = e.readCurrent()
+    const allowed =
+      e.allowedValues.type === 'enum'
+        ? `enum(${e.allowedValues.values.join('|')})`
+        : e.allowedValues.type === 'range'
+          ? `range(${e.allowedValues.min}..${e.allowedValues.max ?? '∞'})`
+          : 'freeform'
+    const gesture = e.gesture ?? '(no command — gap)'
+    return `- **${e.id}** | ${e.label} | family: ${e.family} | current: ${current ?? '(unknown)'} | allowed: ${allowed} | gesture: \`${gesture}\``
+  })
+  return rows.join('\n') + '\n'
+}
+
+/**
  * Renders verify-family recipe entries as Markdown for inclusion in reflector
  * prompts. Replaces the former `formatRecipeCatalog` from improvement-recipes.ts.
  *

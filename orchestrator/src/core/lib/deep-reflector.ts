@@ -4,11 +4,13 @@ import {
   collectAssistantText,
   extractFirstJsonDocument,
   parseVerdict,
+  parseAndValidateOutcome,
   type SuggestionVerdict,
   type VerdictedSuggestion,
   type VerdictedScorerSuggestion,
   type VerdictedCapabilityGapSuggestion,
 } from './reflector'
+import { loadLeverRegistry, formatLeverList } from './lever-registry'
 import type { DeepReflectArc, SessionArcsResult } from './deep-reflect-query'
 import type { ClaudeEvent } from './claude-stream'
 import { digestArc } from './arc-digest'
@@ -269,7 +271,11 @@ Schema:
       "rationale": "cite task ids + event indices + quoted excerpts",
       "verdict": "save|absorb|drop",
       "target_id": "<id>|null",
-      "dup_of": "<id>|null"
+      "dup_of": "<id>|null",
+      "outcome": {
+        "type": "lever",
+        "lever": { "id": "caps.implement", "currentValue": "12", "proposedValue": "8" }
+      }
     }
   ],
   "scorerSuggestions": [
@@ -307,7 +313,16 @@ Rules:
   without it, the entry cannot be cited and will be dropped.
 - Do not invent event indices or task ids. If you cannot pinpoint one,
   omit the entry.
-- Quote text verbatim in evidence; do not paraphrase.`
+- Quote text verbatim in evidence; do not paraphrase.
+- LEVER BINDING (required on every suggestion): Each suggestion MUST include
+  an \`outcome\` field. Use \`{ "type": "lever", "lever": { "id": "<lever-id>",
+  "currentValue": "<current>", "proposedValue": "<new-value>" } }\` when a
+  lever in the registry (provided above) directly expresses the change. Use
+  \`{ "type": "leverGap", "leverGap": { "proposedLeverId": "<slug>",
+  "family": "<family>", "whatItWouldControl": "<description>" } }\` when no
+  lever exists. BIAS TOWARD GAPS when uncertain — a wrongly-bound lever
+  tells the operator to turn the wrong dial. A suggestion without a valid
+  \`outcome\` will be REJECTED and never filed.`
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Conversation truncation helpers
@@ -639,7 +654,11 @@ Conversation for ${t.taskId} (ClaudeEvent[] JSON; index into this array for even
   //    byte-offset cut lands inside that blob and hands the analyst invalid
   //    JSON. Instead the budget is spent on whole conversation events, and —
   //    as a last resort — whole task blocks.
+  const leverList = formatLeverList(loadLeverRegistry())
   const preamble = `${SYNTHESIS_INSTRUCTIONS_ARC}
+
+Lever registry (bind each suggestion's outcome to a lever id from this list, or declare a leverGap):
+${leverList}
 
 Arc metadata:
 ${headJson}
@@ -816,6 +835,7 @@ const parseToolCallStats = (
 
 const parseSuggestions = (raw: unknown): VerdictedSuggestion[] => {
   if (!Array.isArray(raw)) return []
+  const registry = loadLeverRegistry()
   const out: VerdictedSuggestion[] = []
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue
@@ -860,6 +880,8 @@ const parseSuggestions = (raw: unknown): VerdictedSuggestion[] => {
     const kind: 'mechanical' | 'architectural' =
       rawKind === 'mechanical' || rawKind === 'architectural' ? rawKind : 'mechanical'
     if (!title || !prompt) continue
+    const outcome = parseAndValidateOutcome(o.outcome, registry)
+    if (!outcome) continue
     out.push({
       title,
       prompt,
@@ -872,6 +894,7 @@ const parseSuggestions = (raw: unknown): VerdictedSuggestion[] => {
       verdict,
       targetId,
       dupOf,
+      outcome,
     })
   }
   return out
@@ -1077,7 +1100,11 @@ Schema (same as arc-reflect):
       "rationale": "cite arc ids + step names + token counts",
       "verdict": "save|absorb|drop",
       "target_id": null,
-      "dup_of": null
+      "dup_of": null,
+      "outcome": {
+        "type": "lever",
+        "lever": { "id": "caps.implement", "currentValue": "12", "proposedValue": "8" }
+      }
     }
   ]
 }
@@ -1088,7 +1115,12 @@ Rules:
 - Every suggestion's prompt must be self-contained and name a specific file.
 - Do not invent arc IDs or step names. Use only what is provided.
 - rootCauseKey in the suggestion is derived from the title: convert to
-  snake_case (the consumer does this automatically; omit the field here).`
+  snake_case (the consumer does this automatically; omit the field here).
+- LEVER BINDING (required on every suggestion): Each suggestion MUST include
+  an \`outcome\` field. Use \`{ "type": "lever", ... }\` when a lever in the
+  registry (provided above) directly expresses the change, or \`{ "type":
+  "leverGap", ... }\` when none does. A suggestion without a valid \`outcome\`
+  will be REJECTED and never filed.`
 
 /** Max bytes for the total assembled session prompt. */
 const SESSION_PROMPT_CAP_BYTES = 300 * 1024
@@ -1170,11 +1202,15 @@ export const buildSessionPrompt = (result: SessionArcsResult): string => {
     return byArc
   }
 
+  const sessionLeverList = formatLeverList(loadLeverRegistry())
   const render = (
     arcs: typeof arcsSummary,
     stepRuns: readonly SessionArcsResult['stepRuns'][number][],
     elisionNote: string,
   ): string => `${SYNTHESIS_INSTRUCTIONS_SESSION}
+
+Lever registry (bind each suggestion's outcome to a lever id from this list, or declare a leverGap):
+${sessionLeverList}
 
 Session metadata:
 ${sessionMetaJson}

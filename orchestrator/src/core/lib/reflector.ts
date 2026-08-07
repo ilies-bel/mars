@@ -12,7 +12,39 @@ import type { SelfEvolveConfig } from '../daemon/config'
 import { isReflectDisabled } from './reflect-signals'
 import { isAutoReflectDisabled } from './auto-reflect-gate'
 import { insertMemoryPacket } from '../store/memory-packet-store'
-import { loadLeverRegistry, formatRecipeCatalog } from './lever-registry'
+import { loadLeverRegistry, formatRecipeCatalog, formatLeverList } from './lever-registry'
+import type { LeverRegistryEntry } from './lever-registry'
+
+/**
+ * A suggestion bound to a specific, user-updatable lever in the registry.
+ * `currentValue` is read live from the registry at filing time (or from the
+ * model's response when the registry cannot be read).
+ */
+export interface LeverBinding {
+  id: string
+  currentValue: string | null
+  proposedValue: string
+}
+
+/**
+ * A suggestion where no existing lever expresses the required change.
+ * Names what the knob WOULD be so the operator knows what to look for.
+ */
+export interface LeverGap {
+  proposedLeverId: string
+  family: string
+  whatItWouldControl: string
+}
+
+/**
+ * Every reflection suggestion must carry exactly one outcome — either a
+ * binding to an existing lever or a declaration that no lever exists for
+ * the change. This makes an unbound suggestion unrepresentable at the type
+ * level.
+ */
+export type SuggestionOutcome =
+  | { type: 'lever'; lever: LeverBinding }
+  | { type: 'leverGap'; leverGap: LeverGap }
 
 export interface ReflectionSuggestion {
   title: string
@@ -39,6 +71,13 @@ export interface ReflectionSuggestion {
    *   review and is never auto-enqueued regardless of confidence.
    */
   kind: 'mechanical' | 'architectural'
+  /**
+   * Required discriminated outcome — either a binding to an existing lever in
+   * the registry (with current → proposed value) or a declaration that no lever
+   * exists for the change (leverGap). A suggestion without a valid outcome is
+   * rejected during parsing and never filed.
+   */
+  outcome: SuggestionOutcome
 }
 
 export interface TokenAnalysis {
@@ -172,7 +211,11 @@ no markdown — just the JSON. Shape:
       "affectedTaskIds": ["task-id-1", "task-id-2"],
       "frequency": 2,
       "confidence": 0.85,
-      "kind": "mechanical"
+      "kind": "mechanical",
+      "outcome": {
+        "type": "lever",
+        "lever": { "id": "caps.implement", "currentValue": "12", "proposedValue": "8" }
+      }
     }
   ]
 }
@@ -217,6 +260,27 @@ per window). Example: "Expected effect: raises completeness by eliminating
 setup-phase failures; saves ~N weighted tokens per affected task by
 avoiding retry cycles." Do not emit a suggestion prompt that omits both
 KPI impacts.
+
+LEVER BINDING (required on every suggestion): Each suggestion MUST include
+an \`outcome\` field that is EXACTLY ONE of:
+- \`{ "type": "lever", "lever": { "id": "<lever-id>", "currentValue": "<current>",
+    "proposedValue": "<new-value>" } }\` — use when a lever in the registry
+    below directly expresses the change. The \`id\` MUST match a lever from
+    the registry list. \`currentValue\` is what the registry shows now;
+    \`proposedValue\` is the value you recommend and MUST be in the lever's
+    allowed range.
+- \`{ "type": "leverGap", "leverGap": { "proposedLeverId": "<slug>",
+    "family": "<family>", "whatItWouldControl": "<description>" } }\` — use
+    when no existing lever directly expresses the change. Name what the knob
+    WOULD be called.
+
+BIAS TOWARD GAPS: When in doubt between binding a lever and filing a gap,
+file a gap. A wrongly-bound lever tells the operator to turn a dial that
+will not help. "The slicer distributed a shared contract across seven tasks"
+is a code change, not a knob — that must be a leverGap, not forced onto
+\`caps.implement\` or any unrelated lever. An out-of-range proposedValue or
+an id not in the registry will cause the suggestion to be REJECTED and
+never filed — the operator will never see it.
 
 3. harnessMaturity: assess the current verify-gate configuration.
    - Count tasks that ran with zero verify gates (look for the
@@ -289,12 +353,17 @@ const formatChatFeedbackSection = (
 export const buildPrompt = (corpus: ReflectCorpus): string => {
   const summaryJson = JSON.stringify(corpus.costSummary, null, 2)
   const entriesJson = JSON.stringify(corpus.entries, null, 2)
-  const recipeCatalog = formatRecipeCatalog(loadLeverRegistry())
+  const registry = loadLeverRegistry()
+  const recipeCatalog = formatRecipeCatalog(registry)
+  const leverList = formatLeverList(registry)
 
   const base = `${SYNTHESIS_INSTRUCTIONS}
 
 Improvement recipe catalog (use these for harness maturity suggestions):
 ${recipeCatalog}
+
+Lever registry (bind each suggestion's outcome to a lever id from this list, or declare a leverGap):
+${leverList}
 
 Token summary (precomputed — trust these numbers, do not recompute):
 ${summaryJson}
@@ -440,6 +509,82 @@ export const collectAssistantText = (
   return parts.join('\n')
 }
 
+/**
+ * Parse and validate a raw suggestion `outcome` value from model output.
+ *
+ * For a `lever` outcome, validates that:
+ * - The lever id exists in the registry.
+ * - The proposed value is within the lever's `allowedValues`.
+ *
+ * Returns `null` and logs a warning for any validation failure so a badly-
+ * behaved model is visible rather than silently dropping findings.
+ *
+ * Exported so it can be reused in `deep-reflector.ts` without a separate
+ * copy.
+ */
+export const parseAndValidateOutcome = (
+  raw: unknown,
+  registry: LeverRegistryEntry[],
+): SuggestionOutcome | null => {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  const type = o.type
+
+  if (type === 'lever') {
+    const leverRaw = o.lever
+    if (!leverRaw || typeof leverRaw !== 'object') return null
+    const l = leverRaw as Record<string, unknown>
+    const id = typeof l.id === 'string' ? l.id.trim() : null
+    const proposedValue = typeof l.proposedValue === 'string' ? l.proposedValue.trim() : null
+    if (!id || proposedValue === null || proposedValue === '') return null
+
+    const entry = registry.find((e) => e.id === id)
+    if (!entry) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[reflector] outcome validation: unknown lever id "${id}" — rejecting suggestion`,
+      )
+      return null
+    }
+
+    const av = entry.allowedValues
+    if (av.type === 'enum' && !av.values.includes(proposedValue)) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[reflector] outcome validation: proposedValue "${proposedValue}" not in allowedValues for lever "${id}" — rejecting suggestion`,
+      )
+      return null
+    }
+    if (av.type === 'range') {
+      const v = Number(proposedValue)
+      if (!Number.isFinite(v) || v < av.min || (av.max !== undefined && v > av.max)) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[reflector] outcome validation: proposedValue "${proposedValue}" out of range for lever "${id}" — rejecting suggestion`,
+        )
+        return null
+      }
+    }
+
+    const currentValue = typeof l.currentValue === 'string' ? l.currentValue : null
+    return { type: 'lever', lever: { id, currentValue, proposedValue } }
+  }
+
+  if (type === 'leverGap') {
+    const gapRaw = o.leverGap
+    if (!gapRaw || typeof gapRaw !== 'object') return null
+    const g = gapRaw as Record<string, unknown>
+    const proposedLeverId = typeof g.proposedLeverId === 'string' ? g.proposedLeverId.trim() : null
+    const family = typeof g.family === 'string' ? g.family.trim() : null
+    const whatItWouldControl =
+      typeof g.whatItWouldControl === 'string' ? g.whatItWouldControl.trim() : null
+    if (!proposedLeverId || !family || !whatItWouldControl) return null
+    return { type: 'leverGap', leverGap: { proposedLeverId, family, whatItWouldControl } }
+  }
+
+  return null
+}
+
 export const runReflector = async (
   corpus: ReflectCorpus,
 ): Promise<ReflectionResult> => {
@@ -466,6 +611,7 @@ export const runReflector = async (
     }
   }
   const tokenAnalysis = parseTokenAnalysis(parsed.tokenAnalysis)
+  const registry = loadLeverRegistry()
 
   const suggestions: ReflectionSuggestion[] = []
   for (const raw of parsed.suggestions) {
@@ -497,6 +643,8 @@ export const runReflector = async (
     const kind: 'mechanical' | 'architectural' =
       rawKind === 'mechanical' || rawKind === 'architectural' ? rawKind : 'mechanical'
     if (!title || !prompt) continue
+    const outcome = parseAndValidateOutcome(obj.outcome, registry)
+    if (!outcome) continue
     suggestions.push({
       title,
       prompt,
@@ -506,6 +654,7 @@ export const runReflector = async (
       frequency,
       confidence,
       kind,
+      outcome,
     })
   }
 
@@ -529,6 +678,24 @@ export const runReflector = async (
  * applyVerdicts (deep-reflection save path), which justifies the extraction.
  */
 const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<void> => {
+  // Build an outcome block for the proposal so `mars proposal show <id>`
+  // gives the operator enough context to act without opening the code.
+  const registry = loadLeverRegistry()
+  let outcomeBlock: string
+  if (s.outcome.type === 'lever') {
+    const { id, proposedValue } = s.outcome.lever
+    const entry = registry.find((e) => e.id === id)
+    // Read the live current value from the registry; fall back to what the
+    // model reported if the registry cannot be read (daemon not running, etc.).
+    const currentValue = entry?.readCurrent() ?? s.outcome.lever.currentValue ?? '(unknown)'
+    const gesture = entry?.gesture ?? '(no command)'
+    outcomeBlock = `Lever: ${id} | ${currentValue} → ${proposedValue}\nGesture: ${gesture}`
+  } else {
+    const { proposedLeverId, family, whatItWouldControl } = s.outcome.leverGap
+    outcomeBlock = `Lever gap: ${proposedLeverId} (family: ${family})\nWhat it would control: ${whatItWouldControl}`
+  }
+  const notes = [s.rationale, outcomeBlock].filter(Boolean).join('\n')
+
   if (s.rootCauseKey) {
     const fingerprint = createHash('sha256')
       .update(`reflection:${s.rootCauseKey}:`)
@@ -550,7 +717,7 @@ const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<void> => {
       source: 'reflection',
       author: { kind: 'agent', name: 'reflector' },
       solution: s.prompt,
-      notes: s.rationale ?? '',
+      notes,
       fingerprint,
     })
     return
@@ -559,7 +726,7 @@ const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<void> => {
     source: 'reflection',
     author: { kind: 'agent', name: 'reflector' },
     solution: s.prompt,
-    notes: s.rationale ?? '',
+    notes,
   })
 }
 
@@ -611,6 +778,11 @@ export interface VerdictedSuggestion {
   verdict: SuggestionVerdict
   targetId?: string | null
   dupOf?: string | null
+  /**
+   * Required discriminated outcome — mirrors {@link ReflectionSuggestion.outcome}.
+   * A verdict applied to an unbound suggestion is never filed.
+   */
+  outcome: SuggestionOutcome
 }
 
 export interface ApplyVerdictsResult {

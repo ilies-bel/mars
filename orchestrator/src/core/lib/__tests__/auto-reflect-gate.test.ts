@@ -7,6 +7,7 @@ import type { DeepReflectArc } from '../deep-reflect-query'
 
 vi.mock('../../workers/providers', () => ({
   runHeadlessProvider: vi.fn(),
+  usageSemanticsOf: vi.fn().mockReturnValue('none' as const),
 }))
 
 vi.mock('../../store/memory-packet-store', () => ({
@@ -110,6 +111,10 @@ describe('auto-reflect gate', () => {
           frequency: 1,
           confidence: 0.8,
           kind: 'mechanical',
+          outcome: {
+            type: 'leverGap' as const,
+            leverGap: { proposedLeverId: 'test.auto-reflect', family: 'operator', whatItWouldControl: 'auto-reflect test lever' },
+          },
         },
       ],
       'source-task',

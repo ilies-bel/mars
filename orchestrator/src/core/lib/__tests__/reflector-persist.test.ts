@@ -50,6 +50,11 @@ describe('reflector persist dedup', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
+  const baseOutcome = {
+    type: 'leverGap' as const,
+    leverGap: { proposedLeverId: 'verify.typecheck-flags', family: 'verify', whatItWouldControl: 'typecheck strictness flags' },
+  }
+
   it('first call with rootCauseKey creates exactly one proposal', async () => {
     const { persistSuggestions } = await import('../reflector')
 
@@ -64,6 +69,7 @@ describe('reflector persist dedup', () => {
           frequency: 2,
           confidence: 0,
           kind: 'mechanical' as const,
+          outcome: baseOutcome,
         },
       ],
       'source-task-1',
@@ -84,6 +90,7 @@ describe('reflector persist dedup', () => {
       frequency: 2,
       confidence: 0,
       kind: 'mechanical' as const,
+      outcome: baseOutcome,
     }
 
     await persistSuggestions([suggestion], 'source-task-1')
@@ -131,6 +138,7 @@ describe('reflector persist dedup', () => {
           frequency: 1,
           confidence: 0,
           kind: 'mechanical' as const,
+          outcome: baseOutcome,
         },
         {
           title: 'Improve cache hit ratio',
@@ -141,6 +149,10 @@ describe('reflector persist dedup', () => {
           frequency: 1,
           confidence: 0,
           kind: 'mechanical' as const,
+          outcome: {
+            type: 'leverGap' as const,
+            leverGap: { proposedLeverId: 'cache.warmup-policy', family: 'workflow', whatItWouldControl: 'cache warm-up strategy on the code step' },
+          },
         },
       ],
       'source-task-1',
@@ -161,6 +173,7 @@ describe('reflector persist dedup', () => {
       frequency: 1,
       confidence: 0,
       kind: 'mechanical' as const,
+      outcome: baseOutcome,
     }
 
     await persistSuggestions([bare], 'source-task-1')
@@ -185,6 +198,7 @@ describe('reflector persist dedup', () => {
       verdict: 'save' as const,
       targetId: null,
       dupOf: null,
+      outcome: baseOutcome,
     }
 
     const first = await applyVerdicts([verdictedSuggestion], 'src-task-1')

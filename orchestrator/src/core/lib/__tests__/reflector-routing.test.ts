@@ -59,12 +59,20 @@ const mechanical = {
   frequency: 3,
   confidence: 0.9,
   kind: 'mechanical' as const,
+  outcome: {
+    type: 'lever' as const,
+    lever: { id: 'verify.add-typecheck', currentValue: '(see mars verify-gate list)', proposedValue: 'add' },
+  },
 }
 
 const architectural = {
   ...mechanical,
   rootCauseKey: 'architectural_seam_change',
   kind: 'architectural' as const,
+  outcome: {
+    type: 'leverGap' as const,
+    leverGap: { proposedLeverId: 'slicer.contract-isolation', family: 'workflow', whatItWouldControl: 'how the slicer handles shared contract files across tasks' },
+  },
 }
 
 describe('persistSuggestions routing', () => {
