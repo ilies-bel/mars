@@ -1778,16 +1778,23 @@ export const startHttpServer = async (
       return
     }
 
-    // GET /view/action-queue?filter=open|all — the full derived actionQueue view.
-    // The action queue is a pure projection of entity state; the Invalidator is
-    // the sole row-closer. Pure read; no draining gate.
+    // GET /view/action-queue?filter=open|all[&kinds=csv] — the full derived
+    // actionQueue view. The action queue is a pure projection of entity state;
+    // the Invalidator is the sole row-closer. Pure read; no draining gate.
+    // `kinds` is an optional comma-separated list of action-queue kinds to
+    // return; when present, only matching rows are enriched and returned.
     if (req.method === 'GET' && req.url && req.url.startsWith('/view/action-queue')) {
       const parsed = new URL(req.url, 'http://localhost')
       const filterRaw = parsed.searchParams.get('filter')
       const filter: DerivedActionQueueFilter =
         filterRaw === 'all' ? filterRaw : 'open'
+      const kindsRaw = parsed.searchParams.get('kinds')
+      const kinds: ReadonlySet<string> | undefined =
+        kindsRaw
+          ? new Set(kindsRaw.split(',').map((k) => k.trim()).filter(Boolean))
+          : undefined
       deps.appServices
-        .viewActionQueue(filter)
+        .viewActionQueue(filter, kinds ? { kinds } : undefined)
         .then((rows) => sendJson(res, 200, rows))
         .catch((err: unknown) => sendError(res, err))
       return

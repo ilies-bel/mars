@@ -208,7 +208,10 @@ export interface AppServicesDeps {
  */
 export interface AppServices {
   // ── action queue ──────────────────────────────────────────────────────────
-  viewActionQueue: (filter: DerivedActionQueueFilter) => Promise<ActionQueueRow[]>
+  viewActionQueue: (
+    filter: DerivedActionQueueFilter,
+    opts?: { kinds?: ReadonlySet<string> },
+  ) => Promise<ActionQueueRow[]>
   viewActionQueueHistory: (opts: {
     cursor?: string | null
     limit?: number
@@ -1091,7 +1094,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     })
   }
 
-  const viewActionQueue: AppServices['viewActionQueue'] = async (filter) => {
+  const viewActionQueue: AppServices['viewActionQueue'] = async (filter, opts) => {
     const { buildActionQueueView } = await import('./daemon/view/action-queue')
     const { listVisibleActionQueueItems } = await import('./lib/action-queue')
 
@@ -1129,6 +1132,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       repoRoot: getRepoRoot(),
       filter,
       pauseState: deps.getPauseState?.() ?? null,
+      kinds: opts?.kinds,
     })
   }
 

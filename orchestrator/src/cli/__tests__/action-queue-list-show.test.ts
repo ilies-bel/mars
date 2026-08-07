@@ -30,6 +30,7 @@ import {
   type ActionQueueRow,
   type PersistedActionQueueRow,
 } from '../../core/daemon/view/action-queue'
+import { DAEMON_VIEW_TIMEOUT_MS } from '../commands/action-queue'
 
 const FAKE_PORT = 19999
 
@@ -261,7 +262,7 @@ describe('action-queue list', () => {
     expect(r.out).toHaveLength(0)
   })
 
-  it('reports a daemon-view timeout without claiming the daemon is down', async () => {
+  it('reports a daemon-view timeout with the configured budget — not a hardcoded string', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(
       Object.assign(new Error('request timed out'), { name: 'TimeoutError' }),
     ))
@@ -271,7 +272,14 @@ describe('action-queue list', () => {
     const r = await runCommandInProcess(['action-queue', 'list', 'open'], opts)
 
     expect(r.code).toBe(1)
-    expect(r.err.join('\n')).toContain('daemon did not answer within 2s')
+    // The error message must reference the configured budget (derived from the
+    // exported constant, NOT a hardcoded literal). If the constant changes, the
+    // message changes with it.
+    const expectedBudgetLabel = `${DAEMON_VIEW_TIMEOUT_MS / 1_000}s`
+    expect(r.err.join('\n')).toContain(`daemon did not answer within ${expectedBudgetLabel}`)
+    // Should also report elapsed time so the operator can distinguish a
+    // genuine hang from a momentary hiccup.
+    expect(r.err.join('\n')).toMatch(/\d+ms elapsed/)
     expect(r.err.join('\n')).not.toContain('daemon not running')
   })
 
@@ -287,7 +295,12 @@ describe('action-queue list', () => {
     const { fetchActionQueueView } = await import('../commands/action-queue')
     const startedAt = Date.now()
 
-    await expect(fetchActionQueueView(FAKE_PORT, 'open')).rejects.toMatchObject({
+    // Pass a short signal so the test doesn't wait the full DAEMON_VIEW_TIMEOUT_MS.
+    // The test verifies that the abort signal is wired correctly (the fetch rejects
+    // when the signal fires), not that the default production timeout is short.
+    await expect(
+      fetchActionQueueView(FAKE_PORT, 'open', { signal: AbortSignal.timeout(2_000) }),
+    ).rejects.toMatchObject({
       name: 'TimeoutError',
     })
 
@@ -573,11 +586,11 @@ describe('action-queue show', () => {
     expect(r.err.join('\n')).toContain('daemon not running')
   })
 
-  it('reports a timeout without claiming the daemon is down', async () => {
+  it('reports a timeout with the configured budget — not a hardcoded string', async () => {
     // Covers the stale-port case: a port file pointing at a dead listener makes
     // the request hang. The abort is simulated rather than waited out —
     // AbortSignal.timeout is a Node-internal timer that fake timers cannot
-    // advance, so a real never-resolving fetch would cost 15s of wall clock.
+    // advance, so a real never-resolving fetch would cost the full budget.
     const mockFetch = vi.fn().mockRejectedValue(
       Object.assign(new Error('request aborted'), { name: 'AbortError' }),
     )
@@ -588,7 +601,10 @@ describe('action-queue show', () => {
     const r = await runCommandInProcess(['action-queue', 'show', 'aq-any'], opts)
 
     expect(r.code).toBe(1)
-    expect(r.err.join('\n')).toContain('daemon did not answer within 2s')
+    // Message must be derived from the configured budget constant, not hardcoded.
+    const expectedBudgetLabel = `${DAEMON_VIEW_TIMEOUT_MS / 1_000}s`
+    expect(r.err.join('\n')).toContain(`daemon did not answer within ${expectedBudgetLabel}`)
+    expect(r.err.join('\n')).toMatch(/\d+ms elapsed/)
     expect(r.err.join('\n')).not.toContain('daemon not running')
     // A stale port must not hang forever: the request carries a timeout signal.
     expect(mockFetch.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal)

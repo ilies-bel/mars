@@ -28,16 +28,30 @@ const LEAN_PREVIEW = 3
 const NO_DAEMON_MSG =
   'action queue: daemon not running — run `mars daemon start` (the action queue view is served by the daemon)'
 
-const DAEMON_VIEW_TIMEOUT_MS = 2_000
+/**
+ * How long the CLI waits for the daemon to build and return the action-queue
+ * view. Generous enough that a daemon under load never produces a false
+ * "unknown" — the CLI must never claim the queue is empty when it is merely
+ * slow. Exported so tests can build assertions against the configured value
+ * rather than a hardcoded string.
+ */
+export const DAEMON_VIEW_TIMEOUT_MS = 30_000
 
-const actionQueueViewErrorMessage = (err: unknown): string => {
+const actionQueueViewErrorMessage = (
+  err: unknown,
+  elapsedMs: number,
+  budgetMs: number,
+): string => {
   if (
     typeof err === 'object' &&
     err !== null &&
     'name' in err &&
     (err.name === 'TimeoutError' || err.name === 'AbortError')
   ) {
-    return `action queue: daemon did not answer within ${DAEMON_VIEW_TIMEOUT_MS / 1_000}s (the view may be slow or the daemon busy)`
+    return (
+      `action queue: daemon did not answer within ${budgetMs / 1_000}s ` +
+      `(${elapsedMs}ms elapsed; the view may be slow or the daemon busy)`
+    )
   }
   if (err instanceof Error && /^daemon returned \d+$/.test(err.message)) {
     return `action queue: ${err.message}`
@@ -79,15 +93,27 @@ export { readDaemonPort }
 /**
  * Fetch the action queue view from the daemon's derived-view endpoint.
  * Throws when the daemon is unreachable or returns a non-2xx response.
+ *
+ * @param opts.kinds  When provided, only rows whose `kind` is in this set are
+ *   returned. The set is forwarded as a `kinds` query param so the daemon can
+ *   skip enrichment of non-matching rows — important for the polling pattern
+ *   `--kind failed,stale-queued`.
+ * @param opts.signal  Override the abort signal. Defaults to
+ *   `AbortSignal.timeout(DAEMON_VIEW_TIMEOUT_MS)`. Pass a shorter timeout in
+ *   tests to avoid 30-second waits.
  */
 export const fetchActionQueueView = async (
   port: number,
   filter: string,
+  opts?: { kinds?: ReadonlySet<string>; signal?: AbortSignal },
 ): Promise<ActionQueueRow[]> => {
-  const res = await fetch(
-    `http://127.0.0.1:${port}/view/action-queue?filter=${encodeURIComponent(filter)}`,
-    { signal: AbortSignal.timeout(DAEMON_VIEW_TIMEOUT_MS) },
-  )
+  const url = new URL(`http://127.0.0.1:${port}/view/action-queue`)
+  url.searchParams.set('filter', filter)
+  if (opts?.kinds && opts.kinds.size > 0) {
+    url.searchParams.set('kinds', [...opts.kinds].join(','))
+  }
+  const signal = opts?.signal ?? AbortSignal.timeout(DAEMON_VIEW_TIMEOUT_MS)
+  const res = await fetch(url.toString(), { signal })
   if (!res.ok) throw new Error(`daemon returned ${res.status}`)
   return (await res.json()) as ActionQueueRow[]
 }
@@ -148,10 +174,14 @@ const actionQueueList: Command = {
       return { code: 1 }
     }
     let rows: ActionQueueRow[]
+    const fetchStartedAt = Date.now()
     try {
-      rows = await fetchActionQueueView(port, filter)
+      rows = await fetchActionQueueView(port, filter, {
+        kinds: kindSet.size > 0 ? kindSet : undefined,
+      })
     } catch (err) {
-      deps.err(actionQueueViewErrorMessage(err))
+      const elapsedMs = Date.now() - fetchStartedAt
+      deps.err(actionQueueViewErrorMessage(err, elapsedMs, DAEMON_VIEW_TIMEOUT_MS))
       return { code: 1 }
     }
     if (kindSet.size > 0) {
@@ -211,10 +241,12 @@ const actionQueueShow: Command = {
       return { code: 1 }
     }
     let rows: ActionQueueRow[]
+    const showFetchStartedAt = Date.now()
     try {
       rows = await fetchActionQueueView(port, 'all')
     } catch (err) {
-      deps.err(actionQueueViewErrorMessage(err))
+      const elapsedMs = Date.now() - showFetchStartedAt
+      deps.err(actionQueueViewErrorMessage(err, elapsedMs, DAEMON_VIEW_TIMEOUT_MS))
       return { code: 1 }
     }
     const row =

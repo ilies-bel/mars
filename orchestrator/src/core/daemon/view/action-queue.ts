@@ -516,6 +516,13 @@ export interface BuildActionQueueViewParams {
    * tests, CLI fall-through paths, and history views.
    */
   pauseState?: DispatchPauseState | null
+  /**
+   * When provided, only rows whose `kind` is in this set are enriched and
+   * returned. Applied before the task-graph query so callers that filter to a
+   * small subset (e.g. `--kind failed,stale-queued`) avoid paying the
+   * enrichment cost for every unrelated open row.
+   */
+  kinds?: ReadonlySet<string>
 }
 
 export interface BuildActionQueueHistoryViewParams {
@@ -690,10 +697,19 @@ export const buildActionQueueView = async ({
   repoRoot,
   filter: _filter,
   pauseState: rawPauseState,
+  kinds,
 }: BuildActionQueueViewParams): Promise<ActionQueueRow[]> => {
   const pauseState = rawPauseState ?? null
   const profileStart = performance.now()
-  const persistedRows = await stateStore.listOpenActionQueueItems()
+  const allPersistedRows = await stateStore.listOpenActionQueueItems()
+  // Early kind filter: skip enrichment for non-matching rows. Applied before
+  // the task-graph query so callers with a small kind set (e.g. the polling
+  // pattern `--kind failed,stale-queued`) avoid loading the full task graph
+  // for 60+ unrelated open rows.
+  const persistedRows =
+    kinds && kinds.size > 0
+      ? allPersistedRows.filter((row) => kinds.has(row.kind))
+      : allPersistedRows
   const persistedRowsLoadedAt = performance.now()
 
   const allTasks = await taskStore.listTasksForActionQueueItems(persistedRows)
