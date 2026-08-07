@@ -7,10 +7,14 @@
  * `task add`.
  */
 
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { basename, resolve } from 'node:path'
 import { resolveAuthor, formatAuthor, detectOriginSession, type Author } from '../../core/author'
 import { detectNoCommitMarker } from '../../core/lib/no-commit-marker'
 import { causeForSignature } from '../../core/lib/failure-signature'
 import { getProposal } from '../../core/proposals'
+import { planWorkflowCopies } from '../../init/scaffold-workflows'
+import { readWorkflowProvenance } from '../../workflows/agent-draft'
 import {
   parsePriority,
   parseTaskSpec,
@@ -25,7 +29,7 @@ import type { Command, CommandDeps, CommandResult } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
 
 const TASK_ADD_USAGE =
-  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--merge auto|gated] [--workflow <name>] [--live (disabled)] [--supersede <task-id>] [--qa auto|manual] [plan flags]'
+  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag <label>] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--merge auto|gated] [--workflow <name>] [--live (disabled)] [--supersede <task-id>] [--qa auto|manual] [plan flags]'
 
 interface EnqueueParams {
   prompt: string
@@ -150,6 +154,32 @@ export const taskAdd: Command = {
         'the live pipeline is disabled while HITL is being refined; enqueue without --live/--workflow live',
       )
       return { code: 2 }
+    }
+    // Validate --workflow against the registry — same source as `mars workflow list`.
+    // Bundled template names are always valid; user-defined custom workflows in
+    // .mars/workflows/ are valid when not pending operator approval (agent-draft).
+    // Rejecting here keeps bogus values out of the tasks.workflow column entirely;
+    // without this guard the task is queued, dispatched, then hard-failed at
+    // dispatch:workflow-load — minutes later, with no link back to the typo.
+    if (workflow !== undefined) {
+      const validKinds = new Set<string>()
+      for (const copy of planWorkflowCopies(deps.ctx.repoRoot)) {
+        validKinds.add(basename(copy.src).replace(/-workflow\.js$/, ''))
+      }
+      const wfDir = resolve(deps.ctx.stateDir, 'workflows')
+      if (existsSync(wfDir)) {
+        for (const filename of readdirSync(wfDir).filter((n) => n.endsWith('.js'))) {
+          const content = readFileSync(resolve(wfDir, filename), 'utf8')
+          if (!readWorkflowProvenance(content).pendingApproval) {
+            validKinds.add(filename.replace(/-workflow\.js$/, ''))
+          }
+        }
+      }
+      if (!validKinds.has(workflow)) {
+        const sorted = [...validKinds].filter((k) => k !== 'live').sort().join(', ')
+        deps.err(`workflow must be one of ${sorted}; got '${workflow}'`)
+        return { code: 2 }
+      }
     }
     const promptResult = resolvePromptSource(positional, args.flags)
     if (!promptResult.ok) {

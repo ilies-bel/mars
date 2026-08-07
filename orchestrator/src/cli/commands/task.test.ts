@@ -625,3 +625,140 @@ describe('task add --qa validation', () => {
     expect(req).not.toHaveProperty('qa')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Enumerable-flag regression guard
+// (--merge, --priority, --workflow all reject invalid values with non-zero exit
+//  and name the valid set; --tag is open by design and accepts any string)
+// ---------------------------------------------------------------------------
+
+describe('task add enumerable-flag validation', () => {
+  it('--merge chore: exits non-zero, message names valid values (regression guard)', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-m', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--merge', 'chore', 'some prompt'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).not.toBe(0)
+    expect(r.err.join('\n')).toContain('chore')
+    expect(r.err.join('\n')).toMatch(/auto.*gated|gated.*auto/)
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('--priority 99: exits non-zero, message names valid range (regression guard)', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-p', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--priority', '99', 'some prompt'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).not.toBe(0)
+    expect(r.err.join('\n')).toContain('99')
+    expect(r.err.join('\n')).toContain('0..3')
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('--workflow not-a-real-workflow: exits 2, message names valid set (regression guard)', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-w', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--workflow', 'not-a-real-workflow', 'some prompt'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(2)
+    const errText = r.err.join('\n')
+    expect(errText).toContain('not-a-real-workflow')
+    expect(errText).toContain('workflow must be one of')
+    // Message names at least one bundled workflow — guards against hardcoding vs registry drift
+    expect(errText).toMatch(/report|diagnose|fix|task/)
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('--tag any-value: accepted (tags are an open set by design, no finite valid list)', async () => {
+    // NOTE: prompt must precede --tag; the greedy repeatable-flag parser would
+    // otherwise consume the trailing positional as a second tag value.
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-t', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'some prompt', '--tag', 'not-a-real-tag'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// --workflow validation: registry-derived, not hardcoded
+// ---------------------------------------------------------------------------
+
+describe('task add --workflow registry validation', () => {
+  it('accepts a bundled workflow name (report) and forwards it to the daemon', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-report2', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--workflow', 'report', 'some prompt'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls[0]).toMatchObject({ op: 'add', workflow: 'report' })
+  })
+
+  it('accepts a bundled workflow name (diagnose) and forwards it to the daemon', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-diag', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--workflow', 'diagnose', 'some prompt'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls[0]).toMatchObject({ op: 'add', workflow: 'diagnose' })
+  })
+
+  it('accepts a user-defined custom workflow placed in .mars/workflows/', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-custom', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    // Create a custom (approved, non-draft) workflow file in the repo's workflow dir
+    const wfDir = resolve(ctx.stateDir, 'workflows')
+    mkdirSync(wfDir, { recursive: true })
+    writeFileSync(resolve(wfDir, 'my-custom-workflow.js'), '// custom workflow\nexport default {};\n')
+    const r = await runCommandInProcess(
+      ['task', 'add', '--workflow', 'my-custom', 'some prompt'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls[0]).toMatchObject({ op: 'add', workflow: 'my-custom' })
+  })
+
+  it('rejects an agent-draft workflow (pending-approval marker is not dispatch-eligible)', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-draft', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const wfDir = resolve(ctx.stateDir, 'workflows')
+    mkdirSync(wfDir, { recursive: true })
+    // Write a file with the pending-approval draft marker
+    writeFileSync(
+      resolve(wfDir, 'my-draft-workflow.js'),
+      '// @mars-workflow-author: agent:cli\n// @mars-workflow-draft: pending-approval\nexport default {};\n',
+    )
+    const r = await runCommandInProcess(
+      ['task', 'add', '--workflow', 'my-draft', 'some prompt'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain('workflow must be one of')
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('rejects an unknown workflow before enqueue — no value reaches the tasks.workflow column', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-x', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--workflow', 'totally-bogus', 'some prompt'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(2)
+    // Daemon never receives the request — the bogus value cannot reach the DB
+    expect(fake.calls).toHaveLength(0)
+  })
+})
