@@ -423,6 +423,16 @@ const OPERATIONAL_ALERT_COPY: Record<
   'arc-superseded-on-main': null,
   'e2e-tooling-missing': null,
   'low-disk-space': null,
+  'baseline-broken': (row) => {
+    const gateName =
+      typeof row.payload.failingGateName === 'string'
+        ? row.payload.failingGateName
+        : 'unknown gate'
+    return {
+      title: `Integration branch fails required gate: ${gateName}`,
+      body: typeof row.payload.output === 'string' ? row.payload.output : '',
+    }
+  },
 }
 
 const renderOperationalAlertCopy = (

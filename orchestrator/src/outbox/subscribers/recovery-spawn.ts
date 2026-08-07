@@ -87,19 +87,27 @@ export type SignatureStormTripCallback = (opts: {
  * leaves the dedup row in place — the next drain reads `alreadyProcessed` and
  * skips without re-spawning.
  *
- * @param client          The DB client carrying the outbox + subscriber tables.
- * @param log             Optional logger for per-event failures and stall notices.
- * @param onStormTripped  Optional daemon-side callback: called (exactly once per
- *                        storm episode) when the signature-storm circuit breaker
- *                        first trips. The callback should pause dispatch and
- *                        spawn the steward. Idempotency is guaranteed by the
- *                        persistent `tripped` flag in `failure_signature_streak`.
- * @returns               The count of `task.failed` events whose side effect ran.
+ * @param client              The DB client carrying the outbox + subscriber tables.
+ * @param log                 Optional logger for per-event failures and stall notices.
+ * @param onStormTripped      Optional daemon-side callback: called (exactly once per
+ *                            storm episode) when the signature-storm circuit breaker
+ *                            first trips. The callback should pause dispatch and
+ *                            spawn the steward. Idempotency is guaranteed by the
+ *                            persistent `tripped` flag in `failure_signature_streak`.
+ * @param overrideFailingStep Optional daemon-side callback: given the task id and
+ *                            the derived failing step, may return a replacement step
+ *                            id. Use this to reclassify a verify failure as
+ *                            `verify:poisoned-baseline` when the integration branch
+ *                            itself was already failing the gate at the moment the
+ *                            task ran — those failures must not count toward the
+ *                            signature-storm streak.
+ * @returns                   The count of `task.failed` events whose side effect ran.
  */
 export async function drainRecoverySpawner(
   client: DbClient,
   log?: (msg: string) => void,
   onStormTripped?: SignatureStormTripCallback,
+  overrideFailingStep?: (taskId: string, failingStep: string) => string | null,
 ): Promise<{ processed: number }> {
   return drainWithStall({
     client,
@@ -121,8 +129,14 @@ export async function drainRecoverySpawner(
       // stamped by the primitives; `asStepId` rejects prose so terminal paths that
       // write a sentence fall back to `failed_phase` / UNKNOWN_STEP_ID. See the
       // longer note at the second use below.
-      const failingStep =
+      const rawFailingStep =
         asStepId(task.failureReason) ?? asStepId(task.failedPhase) ?? UNKNOWN_STEP_ID
+      // Allow the daemon to reclassify a verify failure as `verify:poisoned-baseline`
+      // when the integration branch was already failing the gate at the moment the
+      // task ran. Those failures are not a code defect and must not count toward the
+      // signature-storm streak — `isSignatureStormExempt` skips the streak increment
+      // for the `verify:poisoned-baseline` prefix.
+      const failingStep = overrideFailingStep?.(taskId, rawFailingStep) ?? rawFailingStep
 
       // Evidence preservation across the reopen.
       //

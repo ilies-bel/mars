@@ -914,6 +914,28 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [],
   },
+
+  'baseline-broken': {
+    humanSummary: (ctx) => {
+      const gateName =
+        typeof ctx.payload['failingGateName'] === 'string'
+          ? ctx.payload['failingGateName']
+          : 'unknown gate'
+      return `Integration branch fails required gate "${gateName}" — dispatch is paused until the baseline is fixed.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      failingGateName: ctx.payload['failingGateName'],
+    }),
+    verbs: [
+      {
+        op: 'resume-dispatch',
+        label: 'Resume dispatch',
+        style: 'primary',
+      },
+    ],
+  },
 } satisfies Record<ActionQueueKind, Omit<Recipe, 'preloadedResponses'>>
 
 /**

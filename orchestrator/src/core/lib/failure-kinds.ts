@@ -817,8 +817,13 @@ export const isEnvironmentalSignature = (signature: string): boolean => {
  * error-class suffix is included because the failure-signature classifier
  * records this condition as `.../unclassified`.
  */
-export const isSignatureStormExempt = (signature: string): boolean =>
-  signature.split('/', 1)[0] === 'orchestration:main-committer-still-dirty'
+export const isSignatureStormExempt = (signature: string): boolean => {
+  const prefix = signature.split('/', 1)[0]
+  return (
+    prefix === 'orchestration:main-committer-still-dirty' ||
+    prefix === 'verify:poisoned-baseline'
+  )
+}
 
 /**
  * Extract the failing step from a `<failingStep>/<error-class>` signature.

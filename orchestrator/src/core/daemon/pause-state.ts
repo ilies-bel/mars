@@ -10,9 +10,10 @@
  *
  * Now every pause goes through one controller that records WHY:
  *
- *   'operator' — a persisted operator dispatch pause
- *   'storm'    — the signature-storm circuit breaker tripped
- *   'quota'    — the provider rejected runs on a rate/spend limit
+ *   'operator'  — a persisted operator dispatch pause
+ *   'storm'     — the signature-storm circuit breaker tripped
+ *   'quota'     — the provider rejected runs on a rate/spend limit
+ *   'baseline'  — the integration branch itself fails a required gate
  *
  * The reason is what makes resume coherent: the daemon knows a `storm` pause
  * also owns the durable `tripped` flag and clears both together, and status
@@ -25,7 +26,7 @@
  */
 
 /** Why dispatch is paused. */
-export type PauseReason = 'operator' | 'storm' | 'quota'
+export type PauseReason = 'operator' | 'storm' | 'quota' | 'baseline'
 
 /** An immutable snapshot of the daemon's dispatch-pause state. */
 export interface DispatchPauseState {

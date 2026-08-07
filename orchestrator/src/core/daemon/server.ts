@@ -147,6 +147,7 @@ import {
   type StormStewardReport,
 } from './storm-breaker'
 import { collectStormEvidence, type StormEvidence } from './storm-evidence'
+import { createBaselineHealthChecker } from './baseline-health'
 import { setInstallSemCap } from '../lib/worktree-install'
 import { probeDuckDBLock } from './duckdb-lock'
 import {
@@ -2902,6 +2903,30 @@ export const startDaemon = async (
     })()
   })
 
+  // Baseline health re-check: whenever a task completes successfully, the
+  // integration branch has advanced (the merge committer fast-forwarded main).
+  // Re-run the baseline gates so a previously-poisoned branch is cleared if
+  // the merging commit fixed the breakage, or a newly broken baseline is
+  // detected before the next task is dispatched.
+  // Best-effort: a gate-runner error must not affect the dispatch path.
+  bus.on('task.completed', (e: { taskId: string; status?: string }) => {
+    if (e.status !== 'done') return
+    void (async () => {
+      try {
+        const { poisoned } = await baselineHealthChecker.check()
+        if (poisoned) {
+          log(`[baseline-health] integration branch poisoned after task ${e.taskId} merged — dispatch paused`)
+        }
+      } catch (err) {
+        log(
+          `[baseline-health] post-merge check failed (non-fatal): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        )
+      }
+    })()
+  })
+
   // Proposal lifecycle events update the Progress-tab DAG in place.
   bus.on('proposal.added',     () => { viewStreamHub.broadcast('progress') })
   bus.on('proposal.updated',   () => { viewStreamHub.broadcast('progress') })
@@ -5141,6 +5166,85 @@ export const startDaemon = async (
     )
   }
 
+  // ── Baseline health checker ───────────────────────────────────────────────
+  // Detect a poisoned integration branch (one that fails a required task-tier
+  // gate) before dispatching tasks, so N tasks don't fail with identical
+  // verify errors and incorrectly drive the signature-storm streak.
+  //
+  // Awaited before reconcile() so the pause is installed BEFORE the first
+  // drain() fires, preventing tasks from being dispatched off a broken base.
+  const baselineHealthChecker = createBaselineHealthChecker({
+    repoRoot: resolveContext().repoRoot,
+    loadGates: async () => {
+      const { loadVerifyGates } = await import('../verify-gates')
+      const scopes = await loadVerifyGates(getCompositionRootClient())
+      return scopes.flatMap((scope) =>
+        scope.steps
+          // Only task-tier required gates — those are the ones that fail during
+          // per-task verify. Integration-tier gates run at merge time and are
+          // not relevant for baseline-poison detection.
+          .filter((s) => s.required && (s.tier === 'task' || s.tier === undefined))
+          .map((s) => ({
+            id: s.gateId ?? `${scope.scope}/${s.name}`,
+            name: s.name,
+            cmd: s.cmd,
+            args: Array.from(s.args),
+            scope: scope.scope,
+            required: s.required,
+          })),
+      )
+    },
+    runGate: async (gate, cwd) => {
+      const { execProbe } = await import('../lib/git/internal')
+      const result = await execProbe(gate.cmd, gate.args, { cwd })
+      return { gate, exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr }
+    },
+    pause,
+    raiseActionQueueRow: async (failingGateName, output) => {
+      await raiseActionQueueItem({
+        kind: 'baseline-broken',
+        category: 'orchestrator',
+        priority: 'urgent',
+        title: `Integration branch fails required gate: ${failingGateName}`,
+        body:
+          `The integration branch (${integrationBranch}) fails a required verify gate ` +
+          `("${failingGateName}"). Dispatch is paused until the baseline is fixed. ` +
+          `Fix the integration branch and run \`mars operator set dispatch on\` to resume. ` +
+          `Tasks that fail this gate while the baseline is broken are classified as ` +
+          `\`verify:poisoned-baseline\` and do not count toward the signature-storm streak.\n\n` +
+          `Gate output:\n\`\`\`\n${output}\n\`\`\``,
+        payload: { failingGateName, output },
+        context: { failingGateName },
+        raisedBy: 'baseline-health-checker',
+        signature: 'baseline-broken',
+      })
+    },
+    resolveActionQueueRow: async () => {
+      await supersedeActionQueueItemsBySignature(
+        'baseline-broken',
+        'baseline-broken',
+        'condition-cleared',
+        'baseline-health-checker',
+      )
+    },
+    log,
+  })
+
+  // Run the baseline check at startup — before reconcile() triggers the first
+  // drain() — so a broken baseline is detected before any task is dispatched.
+  try {
+    const { poisoned } = await baselineHealthChecker.check()
+    if (poisoned) {
+      log('[baseline-health] integration branch poisoned at startup — dispatch paused')
+    }
+  } catch (err) {
+    log(
+      `[baseline-health] startup check failed (non-fatal): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    )
+  }
+
   // Re-check durable usage deferrals at the same cadence as the other daemon
   // sweepers. The flight tracker retains ownership of its pending set, so the
   // sweeper gets only the narrow capability it needs to re-queue a task.
@@ -5297,6 +5401,11 @@ export const startDaemon = async (
         getCompositionRootClient(),
         log,
         handleSignatureStorm,
+        (taskId, failingStep) => {
+          if (!baselineHealthChecker.isBaselinePoisoned()) return null
+          if (!failingStep.startsWith('verify:')) return null
+          return 'verify:poisoned-baseline'
+        },
       )
       if (processed > 0)
         log(`[recovery-spawner] spawned fix tasks for ${processed} failure(s) on boot`)
@@ -6353,7 +6462,16 @@ export const startDaemon = async (
   const recoverySpawnerDrain = setInterval(
     singleFlight(async () => {
       try {
-        await drainRecoverySpawner(getCompositionRootClient(), log, handleSignatureStorm)
+        await drainRecoverySpawner(
+          getCompositionRootClient(),
+          log,
+          handleSignatureStorm,
+          (taskId, failingStep) => {
+            if (!baselineHealthChecker.isBaselinePoisoned()) return null
+            if (!failingStep.startsWith('verify:')) return null
+            return 'verify:poisoned-baseline'
+          },
+        )
       } catch (err) {
         log(`[recovery-spawner] drain errored: ${(err as Error).message}`)
       }
