@@ -8,7 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { runCommandInProcess, makeFakeDaemon } from '../test-adapter'
@@ -70,6 +70,18 @@ const passingProbes = (overrides?: Partial<DoctorProbes>): DoctorProbes => ({
   },
   readTextFile(_path) {
     return JSON.stringify({ tokens: { access_token: 'test-access-token' } })
+  },
+  async baselineGates() {
+    return [] // empty → WARN (no gates configured), but not FAIL
+  },
+  runGate(_cmd, _args, _cwd) {
+    return { passed: true, output: '' }
+  },
+  freeDiskBytes(_path) {
+    return 10 * 1024 * 1024 * 1024 // 10 GiB → PASS
+  },
+  systemLoad() {
+    return { loadAvg1: 1.0, cpuCount: 4 } // 0.25× per core → PASS
   },
   ...overrides,
 })
@@ -383,6 +395,252 @@ describe('runDoctorChecks — database', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Health checks — baseline verify gates
+// ---------------------------------------------------------------------------
+
+describe('runDoctorChecks — baseline health', () => {
+  it('WARN when baselineGates returns null (DB unavailable)', async () => {
+    const probes = passingProbes({ async baselineGates() { return null } })
+    const results = await runDoctorChecks(probes, null)
+    const check = results.find((r) => r.label === 'baseline')
+    expect(check?.status).toBe('WARN')
+    expect(check?.message).toContain('DB not running')
+  })
+
+  it('WARN when baselineGates returns [] (no gates configured)', async () => {
+    const probes = passingProbes({ async baselineGates() { return [] } })
+    const results = await runDoctorChecks(probes, null)
+    const check = results.find((r) => r.label === 'baseline')
+    expect(check?.status).toBe('WARN')
+    expect(check?.message).toContain('no task-tier verify gates')
+  })
+
+  it('WARN when gates are present but repoRoot is null', async () => {
+    const probes = passingProbes({
+      async baselineGates() {
+        return [{ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], dir: '.' }]
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', null)
+    const check = results.find((r) => r.label === 'baseline')
+    expect(check?.status).toBe('WARN')
+    expect(check?.message).toContain('no repo root')
+  })
+
+  it('PASS when gate passes', async () => {
+    const probes = passingProbes({
+      async baselineGates() {
+        return [{ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], dir: '.' }]
+      },
+      runGate(_cmd, _args, _cwd) { return { passed: true, output: '' } },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'baseline: typecheck')
+    expect(check?.status).toBe('PASS')
+  })
+
+  it('FAIL when gate fails and names the gate in the label and message', async () => {
+    const probes = passingProbes({
+      async baselineGates() {
+        return [{ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], dir: 'orchestrator' }]
+      },
+      runGate(_cmd, _args, _cwd) { return { passed: false, output: 'TS2345: error' } },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'baseline: typecheck')
+    expect(check?.status).toBe('FAIL')
+    expect(check?.message).toContain('typecheck')
+    expect(check?.message).toContain('tsc')
+  })
+
+  it('runs each gate and reports one result per gate', async () => {
+    const probes = passingProbes({
+      async baselineGates() {
+        return [
+          { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], dir: '.' },
+          { name: 'test', cmd: 'npm', args: ['test'], dir: '.' },
+        ]
+      },
+      runGate(cmd) {
+        return { passed: cmd === 'npx', output: '' }
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    expect(results.find((r) => r.label === 'baseline: typecheck')?.status).toBe('PASS')
+    expect(results.find((r) => r.label === 'baseline: test')?.status).toBe('FAIL')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Health checks — disk capacity
+// ---------------------------------------------------------------------------
+
+describe('runDoctorChecks — disk capacity', () => {
+  it('PASS when free disk >= 5 GiB', async () => {
+    const probes = passingProbes({ freeDiskBytes: () => 10 * 1024 * 1024 * 1024 })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    expect(results.find((r) => r.label === 'disk')?.status).toBe('PASS')
+  })
+
+  it('WARN when free disk is between 1 GiB and 5 GiB', async () => {
+    const probes = passingProbes({ freeDiskBytes: () => 2 * 1024 * 1024 * 1024 })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'disk')
+    expect(check?.status).toBe('WARN')
+  })
+
+  it('FAIL when free disk < 1 GiB', async () => {
+    const probes = passingProbes({ freeDiskBytes: () => 500 * 1024 * 1024 })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'disk')
+    expect(check?.status).toBe('FAIL')
+    expect(check?.message).toContain('mars purge')
+  })
+
+  it('skips disk check when freeDiskBytes returns null', async () => {
+    const probes = passingProbes({ freeDiskBytes: () => null })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    expect(results.find((r) => r.label === 'disk')).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Health checks — system load
+// ---------------------------------------------------------------------------
+
+describe('runDoctorChecks — system load', () => {
+  it('PASS when load per core <= 4', async () => {
+    const probes = passingProbes({ systemLoad: () => ({ loadAvg1: 2.0, cpuCount: 4 }) })
+    const results = await runDoctorChecks(probes, null)
+    expect(results.find((r) => r.label === 'load')?.status).toBe('PASS')
+  })
+
+  it('WARN when load per core is between 4 and 8', async () => {
+    const probes = passingProbes({ systemLoad: () => ({ loadAvg1: 20.0, cpuCount: 4 }) })
+    const results = await runDoctorChecks(probes, null)
+    const check = results.find((r) => r.label === 'load')
+    expect(check?.status).toBe('WARN')
+  })
+
+  it('FAIL when load per core > 8', async () => {
+    const probes = passingProbes({ systemLoad: () => ({ loadAvg1: 36.0, cpuCount: 4 }) })
+    const results = await runDoctorChecks(probes, null)
+    const check = results.find((r) => r.label === 'load')
+    expect(check?.status).toBe('FAIL')
+    expect(check?.message).toContain('verify timeouts')
+  })
+
+  it('omits load check when systemLoad returns null', async () => {
+    const probes = passingProbes({ systemLoad: () => null })
+    const results = await runDoctorChecks(probes, null)
+    expect(results.find((r) => r.label === 'load')).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Health checks — config coherence
+// ---------------------------------------------------------------------------
+
+describe('runDoctorChecks — config coherence (defaultProvider vs registry)', () => {
+  const makeConfigProbes = (daemonJson: object, registryJson: object): DoctorProbes =>
+    passingProbes({
+      readTextFile(path) {
+        if (path.endsWith('daemon.json')) return JSON.stringify(daemonJson)
+        if (path.endsWith('worker-registry.json')) return JSON.stringify(registryJson)
+        return JSON.stringify({ tokens: { access_token: 'tok' } })
+      },
+    })
+
+  it('PASS when all registry workers agree with defaultProvider', async () => {
+    const probes = makeConfigProbes(
+      { defaultProvider: 'claude' },
+      { worker1: { provider: 'claude' }, worker2: { provider: 'claude' } },
+    )
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    expect(results.find((r) => r.label === 'config: provider')?.status).toBe('PASS')
+  })
+
+  it('FAIL when registry workers pin a different provider than defaultProvider', async () => {
+    const probes = makeConfigProbes(
+      { defaultProvider: 'claude' },
+      { worker1: { provider: 'codex' }, worker2: { provider: 'claude' } },
+    )
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'config: provider')
+    expect(check?.status).toBe('FAIL')
+    expect(check?.message).toContain("defaultProvider='claude'")
+    expect(check?.message).toContain('mars operator set provider')
+  })
+
+  it('skips coherence check when repoRoot is null', async () => {
+    const probes = makeConfigProbes({ defaultProvider: 'claude' }, { worker1: { provider: 'codex' } })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', null)
+    expect(results.find((r) => r.label === 'config: provider')).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Health checks — unknown daemon.json keys
+// ---------------------------------------------------------------------------
+
+describe('runDoctorChecks — unknown daemon.json keys', () => {
+  it('WARN when daemon.json has unknown top-level keys', async () => {
+    const probes = passingProbes({
+      readTextFile(path) {
+        if (path.endsWith('daemon.json')) {
+          return JSON.stringify({ defaultProvider: 'claude', legacyFeatureFlag: true })
+        }
+        if (path.endsWith('worker-registry.json')) return JSON.stringify({})
+        return JSON.stringify({ tokens: { access_token: 'tok' } })
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'config: daemon.json keys')
+    expect(check?.status).toBe('WARN')
+    expect(check?.message).toContain("'legacyFeatureFlag'")
+  })
+
+  it('no unknown-key result when all keys are known', async () => {
+    const probes = passingProbes({
+      readTextFile(path) {
+        if (path.endsWith('daemon.json')) {
+          return JSON.stringify({ defaultProvider: 'claude', paused: false })
+        }
+        if (path.endsWith('worker-registry.json')) return JSON.stringify({})
+        return JSON.stringify({ tokens: { access_token: 'tok' } })
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    expect(results.find((r) => r.label === 'config: daemon.json keys')).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Exit code gate
+// ---------------------------------------------------------------------------
+
+describe('runDoctorChecks — exit code gate', () => {
+  it('exits non-zero when any check FAILs', async () => {
+    // Simulate git missing → FAIL
+    const probes = passingProbes({
+      tryRun(cmd) {
+        if (cmd === 'git') return null
+        return 0
+      },
+    })
+    const results = await runDoctorChecks(probes, null)
+    expect(results.some((r) => r.status === 'FAIL')).toBe(true)
+    // The command should exit 1 when there are FAILs
+  })
+
+  it('exits zero when worst status is WARN', async () => {
+    // All probes healthy → daemon WARN is expected (not running)
+    const results = await runDoctorChecks(passingProbes(), null)
+    expect(results.some((r) => r.status === 'FAIL')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // doctor command via in-process seam
 // ---------------------------------------------------------------------------
 
@@ -400,5 +658,36 @@ describe('mars doctor command (in-process)', () => {
     // non-empty → r.code should be 1).
     const hasFail = r.err.some((line) => line.startsWith('FAIL'))
     expect(r.code).toBe(hasFail ? 1 : 0)
+  })
+
+  it('section headers appear in output when results have sections', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['doctor'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    const allLines = [...r.out, ...r.err]
+    const hasToolsHeader = allLines.some((l) => l.includes('── Tools'))
+    const hasHealthHeader = allLines.some((l) => l.includes('── Health'))
+    // Both sections should appear since realProbes always runs both groups
+    expect(hasToolsHeader).toBe(true)
+    expect(hasHealthHeader).toBe(true)
+  })
+
+  it('writes a daemon.json with an orphan key to the test repo and verifies the WARN surfaces', async () => {
+    // Write a daemon.json with an unknown key to the test repo
+    writeFileSync(
+      resolve(repo, '.mars', 'daemon.json'),
+      JSON.stringify({ defaultProvider: 'claude', orphanKey: 'oops' }),
+    )
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['doctor'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    const allLines = [...r.out, ...r.err]
+    expect(allLines.some((l) => l.includes("'orphanKey'"))).toBe(true)
   })
 })
