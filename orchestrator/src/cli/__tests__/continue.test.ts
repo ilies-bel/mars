@@ -1,7 +1,12 @@
-import { describe, it, expect } from 'vitest'
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
+import { spawnSync, execFileSync, type SpawnSyncReturns } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { runCommandInProcess, makeFakeDaemon, type InProcessOptions } from '../test-adapter'
+import type { DomainTaskStore } from '../../core/store/task-store'
+import type { OrchestratorContext } from '../../core/context'
 
 const here = dirname(fileURLToPath(import.meta.url))
 // src/cli/__tests__ -> src/cli -> src -> orchestrator
@@ -78,5 +83,152 @@ describe('mars continue — no task id', () => {
     const result = runCli(['continue'])
     expect(result.stderr).toContain('usage')
     expect(result.stderr).toContain('continue')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Exit-within-timeout regression: asserts the process exits rather than hangs.
+// If the CLI hangs (e.g. emitCliInvocationTrace blocking on a stalled pg.Pool
+// connection), spawnSync returns status=null after the timeout and the
+// `not.toBeNull()` assertion fails — which is the correct signal.
+// Root fix: connectionTimeoutMillis: 5_000 in makeEmbeddedBackend (db.ts).
+// Sibling verbs (restart, drop, purge, block, unblock) share the same
+// emitCliInvocationTrace path and are fixed by the same change.
+// ---------------------------------------------------------------------------
+
+describe('mars continue — exits promptly (no-hang regression)', () => {
+  it('exits within the timeout when the daemon socket is absent', () => {
+    // Run with a temp repo that has no watch.sock. The CLI should fail fast
+    // (ENOENT on the socket) and exit non-zero — never hang.
+    // `repo` is set up by the module-level beforeEach.
+    const result = runCli(['continue', 'mars-abc'], { MARS_REPO: repo })
+    // status is null only when spawnSync's timeout fired — the process hung.
+    expect(result.status).not.toBeNull()
+    // Non-zero: daemon unavailable → sendRequest throws → CLI exits 1.
+    expect(result.status).not.toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// In-process tests (runCommandInProcess + makeFakeDaemon).
+// These test the command's output shape and multi-id dispatch without
+// spawning a real process or touching the Unix socket.
+// ---------------------------------------------------------------------------
+
+let repo: string
+
+const setupRepo = (): string => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'mars-continue-'))
+  execFileSync('git', ['init', '-q'], { cwd: dir })
+  mkdirSync(resolve(dir, '.mars'), { recursive: true })
+  return dir
+}
+
+const loadStoreAndCtx = async (): Promise<{
+  store: DomainTaskStore
+  ctx: OrchestratorContext
+}> => {
+  vi.resetModules()
+  process.env.MARS_REPO = repo
+  const queueModule = await import('../../core/queue')
+  await queueModule.migrateQueueSchema()
+  const storeModule = await import('../../core/store/task-store')
+  const contextModule = await import('../../core/context')
+  return {
+    store: storeModule.createTaskStore(queueModule.resolveQueueClient()),
+    ctx: contextModule.resolveContext(repo),
+  }
+}
+
+const baseOpts = async (
+  responder?: (req: { op: string; id?: string }) => unknown,
+): Promise<InProcessOptions> => {
+  const { store, ctx } = await loadStoreAndCtx()
+  return { store, ctx, daemon: makeFakeDaemon(responder as Parameters<typeof makeFakeDaemon>[0]) }
+}
+
+beforeEach(() => {
+  repo = setupRepo()
+})
+afterEach(() => {
+  vi.unstubAllGlobals()
+  delete process.env.MARS_REPO
+  rmSync(repo, { recursive: true, force: true })
+})
+
+describe('mars continue — stdout names task, phase, and degradedToRestart', () => {
+  it('names the task id and reports it was continued from the code phase', async () => {
+    const opts = await baseOpts(() => ({ degradedToRestart: false, coderResume: true }))
+    const r = await runCommandInProcess(['continue', 'mars-code1'], opts)
+    expect(r.code).toBe(0)
+    const out = r.out.join('\n')
+    // task id
+    expect(out).toContain('mars-code1')
+    // resumed phase: code
+    expect(out).toContain('continue from code')
+    // not degraded
+    expect(out).not.toContain('restart from setup')
+  })
+
+  it('names the task id and phase when continuing from the generic failed phase', async () => {
+    const opts = await baseOpts(() => ({ degradedToRestart: false }))
+    const r = await runCommandInProcess(['continue', 'mars-verify1'], opts)
+    expect(r.code).toBe(0)
+    const out = r.out.join('\n')
+    expect(out).toContain('mars-verify1')
+    expect(out).toContain('continue from the failed phase')
+  })
+
+  it('reports degradedToRestart and includes the task id', async () => {
+    const opts = await baseOpts(() => ({
+      degradedToRestart: true,
+      note: 'worktree not found on disk',
+    }))
+    const r = await runCommandInProcess(['continue', 'mars-deg1'], opts)
+    expect(r.code).toBe(0)
+    const out = r.out.join('\n')
+    expect(out).toContain('mars-deg1')
+    // CLI surfaces the degraded path
+    expect(out).toContain('restart from setup')
+    // and the note
+    expect(out).toContain('worktree not found on disk')
+  })
+})
+
+describe('mars continue — multi-id form (two ids end-to-end)', () => {
+  it('sends one daemon request per id and emits a per-task result line for each', async () => {
+    const ids = ['mars-m1', 'mars-m2']
+    const fake = makeFakeDaemon((req) => {
+      if (req.op === 'continue') return { degradedToRestart: false, coderResume: true }
+      return {}
+    })
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['continue', ...ids], { store, ctx, daemon: fake })
+
+    expect(r.code).toBe(0)
+    // Exactly one continue call per id
+    const continueCalls = fake.calls.filter((c) => c.op === 'continue')
+    expect(continueCalls).toHaveLength(2)
+    expect(continueCalls.map((c) => (c as { id: string }).id)).toEqual(ids)
+    // Per-task output line for each
+    const out = r.out.join('\n')
+    expect(out).toContain('mars-m1')
+    expect(out).toContain('mars-m2')
+  })
+
+  it('stops at the first failure and exits non-zero when a daemon call throws', async () => {
+    const ids = ['mars-ok', 'mars-bad']
+    const fake = makeFakeDaemon((req) => {
+      if ((req as { id: string }).id === 'mars-bad') throw new Error('task not failed')
+      return { degradedToRestart: false }
+    })
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['continue', ...ids], { store, ctx, daemon: fake })
+
+    expect(r.code).not.toBe(0)
+    // First id output appeared
+    expect(r.out.join('\n')).toContain('mars-ok')
+    // Error surfaces the failing id
+    expect(r.err.join('\n')).toContain('mars-bad')
   })
 })

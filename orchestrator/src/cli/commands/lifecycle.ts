@@ -116,16 +116,18 @@ const makeContinueRestart = (verb: 'continue' | 'restart'): Command => ({
       ? `mars continue <id> [<id> ...]
 
 Resume failed task(s) on their existing worktree and branch, preserving
-commits already made by the worker. In short: resume failed tasks from their last checkpoint.
-There are no flags in v1.
+commits already made by the worker. There are no flags in v1.
 
-Code- and verify-phase failures re-enter the coder on the preserved worktree;
-code failures first salvage dangling changes and verify failures include the
-recorded verify output. Pre-setup failures,
-missing worktrees, and legacy rows are Degraded-to-restart and report
-degradedToRestart: true.
+A code-phase failure re-enters the coder on the preserved worktree after
+creating a salvage checkpoint of any dangling uncommitted changes. A
+verify-phase failure re-enters the coder on the same worktree with the
+recorded verify output so it can repair its diff.
 
-Refuses (non-zero exit) when the task is not failed or has an in-flight recovery.`
+Pre-setup failures, missing worktrees, and legacy rows trigger Degraded-to-restart
+behaviour and report degradedToRestart: true in the result.
+
+Refuses (non-zero exit) when the task is not in the failed state or already has
+an in-flight recovery task running.`
       : `mars restart <id> [<id> ...] [--force]
 
 Use it to wipe and re-run failed tasks from setup on a fresh worktree and

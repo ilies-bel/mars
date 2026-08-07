@@ -489,6 +489,14 @@ function makeEmbeddedBackend(dsn: string): BackendOps {
     // timeout a dead connection silently wedges the merge body and holds
     // .merge.lock indefinitely.
     query_timeout: 60_000,
+    // Bound connection acquisition time. Without this, pool.connect() waits
+    // indefinitely when PostgreSQL is under load or temporarily at max
+    // connections. The default is 0 (infinite). This is the root cause of
+    // `mars continue` (and all CLI verbs that call emitCliInvocationTrace)
+    // hanging after the daemon has already processed the request: the trace
+    // write opens a fresh pool, pool.connect() hangs, and process.exit()
+    // is never reached. 5 s is generous for a local embedded instance.
+    connectionTimeoutMillis: 5_000,
   })
   // An idle client dropping (e.g. server restart) emits 'error' on the pool;
   // without a listener that crashes the process. The next checkout surfaces
