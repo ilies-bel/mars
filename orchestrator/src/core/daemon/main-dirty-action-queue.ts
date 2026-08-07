@@ -14,6 +14,11 @@
  *    one actionQueue row whose body lists every task currently `blocked` on this
  *    committer. Overrides the generic `action-queue-repopulator` row for this
  *    specific recovery so the operator sees the affected cohort at a glance.
+ *
+ * 3. `resolveStaleStructuredWriteDirtyMainRows` (boot-time reconcile): scan all
+ *    open `structured-write:dirty-main:*` rows and resolve any whose integration
+ *    branch is now clean — level-triggered: the condition cleared, so the row
+ *    must disappear.
  */
 import {
   findOpenActionQueueItemIdBySignature,
@@ -21,9 +26,11 @@ import {
   supersedeActionQueueItemsBySignature,
   supersedeActionQueueItemsForOrigin,
 } from '../lib/action-queue'
+import { resolveStateClient } from '../store/state-client'
 import { getDefaultTaskStore } from '../store/task-store'
 import type { DomainTaskStore as TaskStore } from '../store/task-store'
-import { MAIN_COMMITER_RECIPE } from '../lib/main-dirty'
+import { MAIN_COMMITER_RECIPE, checkIntegrationBranchDirty } from '../lib/main-dirty'
+import { nullTraceStore } from '../lib/run-tool'
 import { updateTask } from '../queue'
 
 /**
@@ -386,4 +393,97 @@ export const handleCommitterStillDirty = async (
     signature: `main-committer-still-dirty:${taskId}`,
     originTaskId: taskId,
   })
+}
+
+/**
+ * Boot-time reconcile: resolve any open `structured-write:dirty-main:*`
+ * action-queue rows whose integration branch is now clean.
+ *
+ * The row is level-triggered on the "integration branch is dirty" condition:
+ * it appears when `runStructuredWrite` finds the branch dirty, and it must
+ * disappear once the branch is clean again. Without this sweep, the row stays
+ * open indefinitely even after the operator commits their changes — becoming
+ * permanent noise that competes with genuine failures in the action queue.
+ *
+ * Decision rationale (recorded here per task mars-6dcd3230):
+ *  - **Daemon-start sweep** (this function) rather than a queue-read-time check
+ *    because checking git status on every list/read would add git I/O latency
+ *    to all queue reads and is disproportionate. A startup sweep runs once,
+ *    clears stale rows in one pass, and is consistent with the existing pattern
+ *    for other level-triggered cleanup (`supersedeObsoletePreflightDirtyMainRows`,
+ *    `clearUnrelatedDirtActionQueue` on the next dispatch cycle).
+ *  - The function is also safe to call from tests or the CLI for ad-hoc repair.
+ *
+ * Idempotent: re-running when no open rows exist (or when the branch is still
+ * dirty) writes nothing to the database.
+ *
+ * @param repoRoot - Absolute path to the integration branch checkout.
+ * @param log      - Logger for debug output; no-op for tests.
+ * @returns IDs of the rows that were resolved.
+ */
+export const resolveStaleStructuredWriteDirtyMainRows = async (
+  repoRoot: string,
+  log: (msg: string) => void = () => {},
+): Promise<string[]> => {
+  const c = resolveStateClient()
+
+  // Find all open rows raised by the structured-write dirty-main preflight.
+  const rows = await c.execute({
+    sql: `SELECT id, payload, signature
+            FROM action_queue_items
+           WHERE state = 'open'
+             AND raised_by = 'structured-write:dirty-main'`,
+    args: [],
+  })
+
+  if (rows.rows.length === 0) return []
+
+  const resolved: string[] = []
+
+  for (const raw of rows.rows as unknown as Array<{
+    id: string
+    payload: string | null
+    signature: string | null
+  }>) {
+    let integrationBranch: string | null = null
+    try {
+      const payload = raw.payload ? (JSON.parse(raw.payload) as Record<string, unknown>) : {}
+      if (typeof payload.integrationBranch === 'string') {
+        integrationBranch = payload.integrationBranch
+      }
+    } catch {
+      // Malformed payload — skip.
+    }
+
+    if (!integrationBranch) {
+      log(
+        `[structured-write-reconcile] skipping row ${raw.id}: missing integrationBranch in payload`,
+      )
+      continue
+    }
+
+    // Re-probe the integration branch. If clean, resolve the row.
+    const dirt = await checkIntegrationBranchDirty({
+      repoRoot,
+      integrationBranch,
+      traceCtx: { store: nullTraceStore, phase: 'setup' },
+    }).catch(() => ({ dirty: true, statusOutput: '' })) // Treat probe errors as "still dirty".
+
+    if (dirt.dirty) continue
+
+    // Branch is clean — the condition that raised the row has cleared.
+    const signature = raw.signature ?? `structured-write:dirty-main:${integrationBranch}`
+    const closedIds = await supersedeActionQueueItemsBySignature(
+      'failed',
+      signature,
+      'condition-cleared',
+      'daemon:structured-write-dirty-main-reconcile',
+    )
+    resolved.push(...closedIds)
+    log(
+      `[structured-write-reconcile] resolved ${closedIds.length} stale dirty-main row(s) for ${integrationBranch} (branch is now clean)`,
+    )
+  }
+
+  return resolved
 }

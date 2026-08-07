@@ -124,6 +124,7 @@ import {
 import {
   raiseAggregatedMainCommiterFailureRow,
   sweepStaleFailedMainCommiterActionQueue,
+  resolveStaleStructuredWriteDirtyMainRows,
 } from './main-dirty-action-queue'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { AWAIT_HUMAN_SENTINEL } from '../lib/sentinels'
@@ -877,6 +878,26 @@ export const startDaemon = async (
   } catch (err) {
     log(
       `[hitl-orphan-sweep] orphan sweep failed: ${(err as Error).message}`,
+    )
+  }
+
+  // Boot-time level-triggered reconcile: resolve any open
+  // `structured-write:dirty-main:*` action-queue rows whose integration branch
+  // is now clean. These rows are raised when `runStructuredWrite` finds the
+  // branch dirty; they must disappear once the operator commits their changes.
+  // Without this sweep the rows persist indefinitely as permanent noise at
+  // whatever priority they were raised with.
+  try {
+    const { repoRoot: swRecRoot } = resolveContext()
+    const swResolved = await resolveStaleStructuredWriteDirtyMainRows(swRecRoot, log)
+    if (swResolved.length > 0) {
+      log(
+        `[structured-write-reconcile] resolved ${swResolved.length} stale dirty-main actionQueue row(s)`,
+      )
+    }
+  } catch (err) {
+    log(
+      `[structured-write-reconcile] reconcile failed (non-fatal): ${(err as Error).message}`,
     )
   }
 

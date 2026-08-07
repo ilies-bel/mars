@@ -296,6 +296,145 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
     const headBefore = gitOutput(repo, ['rev-parse', 'integration'])
     expect(headAfter).toBe(headBefore)
   })
+
+  it('dirty-main alert body does not recommend git stash — commit or restore instead', async () => {
+    // The action-queue item raised when main is dirty must NEVER tell the operator
+    // to stash, because refs/stash is shared across all worktrees in this repo
+    // and a later pop can hand you another task's uncommitted work.
+    const queue = await import('../../queue')
+    const { listActionQueueItems } = await import('../action-queue')
+    const { runStructuredWrite } = await import('../structured-write')
+    await queue.migrateQueueSchema()
+
+    // Make the integration branch dirty.
+    writeFileSync(resolve(repo, 'README'), 'PRECIOUS UNCOMMITTED WORK\n')
+
+    await runStructuredWrite({
+      kind: 'glossary',
+      commitMessage: 'docs(glossary): add-term-that-will-not-land',
+      enqueueMerge: realMergeShim,
+      mutate: async (worktreePath) => {
+        await writeFile(resolve(worktreePath, 'CONTEXT.md'), '# Context\n', 'utf8')
+      },
+    })
+
+    // Wait a tick for the best-effort action-queue raise (it's a fire-and-forget `.catch()`).
+    await new Promise((r) => setTimeout(r, 50))
+
+    const items = await listActionQueueItems()
+    expect(items.length).toBeGreaterThanOrEqual(1)
+
+    const dirtyMainItem = items.find((i) => i.signature?.startsWith('structured-write:dirty-main:'))
+    expect(dirtyMainItem).toBeDefined()
+
+    const body = dirtyMainItem!.body
+
+    // Must NOT recommend stashing.
+    expect(body).not.toMatch(/commit or stash/i)
+    expect(body).not.toMatch(/you can stash/i)
+    expect(body).not.toMatch(/please stash/i)
+    // The phrase "git stash" ONLY appears as an explicit ban ("Do NOT git stash").
+    const stashMentions = body.match(/git stash/gi) ?? []
+    for (const mention of stashMentions) {
+      // Any mention must be part of a "Do NOT" or "BANNED" context, not a recommendation.
+      const idx = body.indexOf(mention)
+      const surroundingContext = body.slice(Math.max(0, idx - 20), idx + mention.length + 10)
+      expect(surroundingContext).toMatch(/NOT|BANNED|Do NOT/i)
+    }
+
+    // Must name the exact re-run command so the operator knows what to run.
+    expect(body).toContain('mars glossary')
+
+    // Must include the git checkout restore alternative.
+    expect(body).toContain('git checkout')
+
+    // Priority must NOT be `high` — it is a self-clearing, recoverable condition.
+    expect(dirtyMainItem!.priority).toBe('normal')
+  }, 15000)
+
+  it('dirty-main action-queue row self-resolves once the integration branch is cleaned', async () => {
+    // The structured-write:dirty-main:* row is level-triggered on the "branch is
+    // dirty" condition. resolveStaleStructuredWriteDirtyMainRows() must close it
+    // when the branch is clean, preventing indefinite noise at high priority.
+    const queue = await import('../../queue')
+    const { listActionQueueItems } = await import('../action-queue')
+    const { runStructuredWrite } = await import('../structured-write')
+    const { resolveStaleStructuredWriteDirtyMainRows } = await import(
+      '../../daemon/main-dirty-action-queue'
+    )
+    await queue.migrateQueueSchema()
+
+    // Make the integration branch dirty.
+    writeFileSync(resolve(repo, 'README'), 'PRECIOUS UNCOMMITTED WORK\n')
+
+    await runStructuredWrite({
+      kind: 'glossary',
+      commitMessage: 'docs(glossary): should-be-aborted',
+      enqueueMerge: realMergeShim,
+      mutate: async (worktreePath) => {
+        await writeFile(resolve(worktreePath, 'CONTEXT.md'), '# Context\n', 'utf8')
+      },
+    })
+
+    // Wait for the best-effort action-queue raise.
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Confirm the row is open.
+    const itemsBefore = await listActionQueueItems()
+    const dirtyMainItem = itemsBefore.find((i) =>
+      i.signature?.startsWith('structured-write:dirty-main:'),
+    )
+    expect(dirtyMainItem?.state).toBe('open')
+
+    // Now clean main — commit the dirty file.
+    execFileSync('git', ['add', '-A'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'operator commits dirty work'], { cwd: repo })
+
+    // Run the reconcile sweep.
+    const resolved = await resolveStaleStructuredWriteDirtyMainRows(repo)
+    expect(resolved.length).toBeGreaterThanOrEqual(1)
+
+    // The row must now be resolved.
+    const itemsAfter = await listActionQueueItems()
+    const stillOpen = itemsAfter.filter((i) =>
+      i.signature?.startsWith('structured-write:dirty-main:') && i.state === 'open',
+    )
+    expect(stillOpen).toHaveLength(0)
+  }, 30000)
+
+  it('dirty-main rows still dedupe to one open row on repeated aborts', async () => {
+    // Repeated dirty-main aborts must NOT create multiple open rows — the
+    // existing dedup (seen_count bump on same fingerprint) must be preserved.
+    const queue = await import('../../queue')
+    const { listActionQueueItems } = await import('../action-queue')
+    const { runStructuredWrite } = await import('../structured-write')
+    await queue.migrateQueueSchema()
+
+    // Make the integration branch dirty.
+    writeFileSync(resolve(repo, 'README'), 'PRECIOUS UNCOMMITTED WORK\n')
+
+    // Abort twice — should produce exactly one open row.
+    for (let i = 0; i < 2; i++) {
+      await runStructuredWrite({
+        kind: 'glossary',
+        commitMessage: `docs(glossary): attempt-${i}`,
+        enqueueMerge: realMergeShim,
+        mutate: async (worktreePath) => {
+          await writeFile(resolve(worktreePath, 'CONTEXT.md'), '# Context\n', 'utf8')
+        },
+      })
+    }
+
+    // Wait for the best-effort raise calls.
+    await new Promise((r) => setTimeout(r, 50))
+
+    const items = await listActionQueueItems()
+    const dirtyMainItems = items.filter((i) =>
+      i.signature?.startsWith('structured-write:dirty-main:') && i.state === 'open',
+    )
+    expect(dirtyMainItems).toHaveLength(1)
+    expect(dirtyMainItems[0]!.seenCount).toBeGreaterThanOrEqual(2)
+  }, 15000)
 })
 
 describe('runStructuredWrite — parallel disjoint writes', () => {

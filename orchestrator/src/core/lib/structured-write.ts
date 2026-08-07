@@ -120,19 +120,28 @@ export const runStructuredWrite = async (
       raiseActionQueueItem({
         kind: 'failed',
         category: 'orchestrator',
-        priority: 'high',
-        title: `Structured write aborted: ${integration} has uncommitted changes — clean main and re-run \`mars ${args.kind}\``,
+        // `normal` rather than `high`: the condition is transient and
+        // self-clearing (the daemon-start reconcile resolves this row once
+        // the branch is clean), and it is operator-recoverable without any
+        // orchestrator involvement. Raising it at `high` buries genuine task
+        // failures and competes with non-recoverable alerts; `normal` keeps
+        // it visible without inflating triage burden. It stays at `failed`
+        // kind so it appears in the action queue and is clearly actionable.
+        priority: 'normal',
+        title: `Structured write aborted: ${integration} has uncommitted changes — clean ${integration} and re-run \`mars ${args.kind}\``,
         body: [
           `A structured write operation (\`${args.kind}\`) was aborted because the integration branch (\`${integration}\`) has uncommitted changes.`,
           '',
-          `The operation did **not** stash or discard your work. Once you commit or stash the changes listed below, re-run the original command.`,
+          `The operation did **not** discard your work. Once the paths below are committed (or restored with \`git checkout <ref> -- <path>\`), re-run: \`mars ${args.kind}\``,
+          '',
+          '> **Do NOT** `git stash`: `refs/stash` is shared by every worktree in this repo; a later `pop` can hand you another task\'s uncommitted work.',
           '',
           'Dirty paths:',
           '```',
           dirty.statusOutput,
           '```',
         ].join('\n'),
-        payload: { kind: args.kind, integrationBranch: integration, statusOutput: dirty.statusOutput },
+        payload: { kind: args.kind, integrationBranch: integration, statusOutput: dirty.statusOutput, commitMessage: args.commitMessage },
         context: { repoRoot: process.env.MARS_REPO ?? null },
         raisedBy: 'structured-write:dirty-main',
         signature: `structured-write:dirty-main:${integration}`,
