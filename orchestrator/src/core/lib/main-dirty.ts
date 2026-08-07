@@ -807,3 +807,52 @@ export const spawnOrAttachMainCommitter = async (
     reapedZombieCommitterId,
   }
 }
+
+// ---------------------------------------------------------------------------
+// Short-circuit: settle a committer done when the branch is already clean
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether the integration branch is still dirty. If it is already
+ * clean, settle the committer task `done` immediately — no agent needed —
+ * and return `{ settled: true }`. Returns `{ settled: false }` when the
+ * branch is still dirty and the caller must proceed with the normal agent
+ * dispatch.
+ *
+ * Called from two sites (satisfying the no-single-caller-helper rule):
+ *  1. `dispatchImplement` in server.ts — the primary short-circuit that
+ *     prevents agents from ever running against a clean integration branch.
+ *  2. The running-committer lifetime sweep in server.ts — a periodic
+ *     backstop that settles long-running committers whose branch was cleaned
+ *     by an external action while the agent was already running.
+ *
+ * After this returns `{ settled: true }`, the caller MUST emit
+ * `bus.emit('task.completed', { taskId, status: 'done' })` so the daemon's
+ * blocker-resolution handler releases the committer's blocked dependents via
+ * `Arc.unblockByCompletion`.
+ */
+export const settleCommitterDoneIfClean = async (
+  committerTaskId: string,
+  integrationBranch: string,
+  repoRoot: string,
+  traceStore: TraceEventStore,
+): Promise<{ settled: boolean }> => {
+  const detection = await checkIntegrationBranchDirty({
+    repoRoot,
+    integrationBranch,
+    traceCtx: {
+      taskId: committerTaskId,
+      originId: committerTaskId,
+      phase: 'setup',
+      store: traceStore,
+    },
+  })
+
+  if (!detection.dirty) {
+    const { updateTask } = await import('../queue')
+    await updateTask(committerTaskId, { status: 'done' })
+    return { settled: true }
+  }
+
+  return { settled: false }
+}

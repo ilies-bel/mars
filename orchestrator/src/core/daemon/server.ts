@@ -1415,6 +1415,40 @@ export const startDaemon = async (
           )
         }
       }
+      // ── Main-committer short-circuit ────────────────────────────────────
+      // Before spawning an agent for a main-commiter fix task, verify the
+      // integration branch is still dirty. If another task already cleaned it
+      // between the time this committer was queued and now, settle the
+      // committer done immediately — no worktree, no agent, no tokens.
+      // The `finally` block handles semaphore and tracker release as normal.
+      if (task.kind === 'fix') {
+        try {
+          const { parseMainCommiterPayload, settleCommitterDoneIfClean } =
+            await import('../lib/main-dirty')
+          const committerPayload = parseMainCommiterPayload(task.recoveryPayload ?? null)
+          if (committerPayload !== null) {
+            const { settled } = await settleCommitterDoneIfClean(
+              task.id,
+              committerPayload.integrationBranch,
+              resolveContext().repoRoot,
+              traceStore,
+            )
+            if (settled) {
+              log(
+                `[main-dirty] committer ${task.id}: branch '${committerPayload.integrationBranch}' already clean; settled done without agent`,
+              )
+              bus.emit('task.completed', { taskId: task.id, status: 'done' as const })
+              return
+            }
+          }
+        } catch (checkErr) {
+          log(
+            `[main-dirty] pre-dispatch clean check for committer ${task.id} threw (proceeding to agent): ${
+              checkErr instanceof Error ? checkErr.message : String(checkErr)
+            }`,
+          )
+        }
+      }
       // Eagerly persist 'running' so the DB count matches the in-flight tracker
       // before the setup-worktree step executes. Without this, there is a window
       // between commitInFlight (which makes the task visible in 'mars daemon
@@ -5856,6 +5890,114 @@ export const startDaemon = async (
     })()
   }, STALE_QUEUED_COMMITTER_SWEEP_MS)
   staleQueuedCommitterSweep.unref()
+
+  // ── Running-committer lifetime sweep ─────────────────────────────────────
+  // A main-committer that is still `running` past its bounded lifetime is
+  // either stuck (agent can't commit) or working on a branch that has since
+  // been cleaned by another means. Two outcomes:
+  //
+  //   (a) Branch is now clean → settle the committer done immediately
+  //       (no further agent action needed) and release blocked dependents.
+  //   (b) Branch still dirty → fail the committer with an operator alert so
+  //       the queue is never held in `blocked` indefinitely.
+  //
+  // Default lifetime: 45 minutes. Override via MARS_COMMITTER_LIFETIME_MS.
+  // Sweep interval: 5 minutes. .unref() so it never prevents shutdown.
+  const RUNNING_COMMITTER_LIFETIME_SWEEP_MS = 5 * 60_000
+  const RUNNING_COMMITTER_LIFETIME_MS = Number(
+    process.env.MARS_COMMITTER_LIFETIME_MS ?? 45 * 60_000,
+  )
+  const runningCommitterLifetimeSweep = setInterval(() => {
+    void (async () => {
+      try {
+        const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE, settleCommitterDoneIfClean } =
+          await import('../lib/main-dirty')
+        const { getDefaultDomainTaskStore: getDomainStore } = await import('../store/task-store')
+        const threshold = new Date(Date.now() - RUNNING_COMMITTER_LIFETIME_MS).toISOString()
+
+        const r = await getDomainStore().query(
+          `SELECT DISTINCT t.id AS id, t.recovery_payload AS recovery_payload
+             FROM tasks t
+             JOIN task_blockers tb ON tb.blocker_task_id = t.id
+             JOIN tasks dep ON dep.id = tb.task_id
+            WHERE t.kind = 'fix'
+              AND t.status = 'running'
+              AND dep.status = 'blocked'
+              AND t.updated_at < ?`,
+          [threshold],
+        )
+
+        for (const row of r.rows as unknown as Array<{
+          id: string
+          recovery_payload: string | null
+        }>) {
+          const payload = parseMainCommiterPayload(row.recovery_payload)
+          if (payload?.recipe !== MAIN_COMMITER_RECIPE) continue
+
+          try {
+            const { settled } = await settleCommitterDoneIfClean(
+              row.id,
+              payload.integrationBranch,
+              resolveContext().repoRoot,
+              traceStore,
+            )
+            if (settled) {
+              const lifetimeMin = Math.round(RUNNING_COMMITTER_LIFETIME_MS / 60_000)
+              log(
+                `[running-committer-sweep] committer ${row.id}: branch '${payload.integrationBranch}' is now clean after ${lifetimeMin}+ min; settled done`,
+              )
+              bus.emit('task.completed', { taskId: row.id, status: 'done' as const })
+              viewStreamHub.broadcast('tasks')
+            } else {
+              // Branch still dirty but committer has exceeded its lifetime.
+              // Fail it so the operator can investigate and blocked dependents
+              // are eventually released via recovery-spawn or manual intervention.
+              const lifetimeMin = Math.round(RUNNING_COMMITTER_LIFETIME_MS / 60_000)
+              log(
+                `[running-committer-sweep] committer ${row.id} exceeded ${lifetimeMin}-min lifetime with dirty branch '${payload.integrationBranch}'; failing and raising alert`,
+              )
+              await updateTask(row.id, {
+                status: 'failed',
+                failedPhase: 'code',
+                failureReason: 'committer:lifetime-exceeded',
+                failureReasonCode: 'committer:lifetime-exceeded',
+                failureSignature: 'committer:lifetime-exceeded',
+                error: `main-committer exceeded ${lifetimeMin}-minute lifetime; integration branch '${payload.integrationBranch}' is still dirty`,
+              })
+              bus.emit('task.failed', { taskId: row.id, error: 'committer:lifetime-exceeded' })
+              viewStreamHub.broadcast('tasks')
+              try {
+                const { raiseActionQueueItem: raiseItem } = await import('../lib/action-queue')
+                await raiseItem({
+                  kind: 'failed',
+                  category: 'orchestrator',
+                  priority: 'urgent',
+                  title: `main-commiter ${row.id} exceeded ${lifetimeMin}-min lifetime; integration branch still dirty`,
+                  body: `The main-committer for '${payload.integrationBranch}' has been running over ${lifetimeMin} minutes without completing and the branch is still dirty. Manually clean the integration branch or use \`mars continue ${row.id}\` to retry.`,
+                  payload: { committerTaskId: row.id, integrationBranch: payload.integrationBranch, lifetimeMs: RUNNING_COMMITTER_LIFETIME_MS },
+                  context: {},
+                  raisedBy: 'daemon:running-committer-lifetime-sweep',
+                  signature: `committer:lifetime-exceeded:${row.id}`,
+                })
+                viewStreamHub.broadcast('action-queue')
+              } catch (alertErr) {
+                log(
+                  `[running-committer-sweep] alert raise for ${row.id} failed (non-fatal): ${(alertErr as Error).message}`,
+                )
+              }
+            }
+          } catch (sweepErr) {
+            log(
+              `[running-committer-sweep] check for committer ${row.id} failed (non-fatal): ${(sweepErr as Error).message}`,
+            )
+          }
+        }
+      } catch (err) {
+        log(`[running-committer-sweep] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, RUNNING_COMMITTER_LIFETIME_SWEEP_MS)
+  runningCommitterLifetimeSweep.unref()
 
   // ── Reflect-recommended detector sweep ───────────────────────────────────
   // Periodically evaluates reflect-worthiness (KPI drift, failure clusters,
