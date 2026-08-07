@@ -31,13 +31,25 @@ vi.mock('../../core/daemon/paths', () => ({
   })),
 }))
 
-vi.mock('../../core/daemon/config', () => ({
-  readDaemonConfigFile: vi.fn(),
-  patchDaemonConfigFile: vi.fn(),
-  daemonConfigPath: vi.fn(() => '/fake/.mars/daemon.json'),
-}))
+// Use importActual so constants (AUTONOMY_LEVELS, CAP_CLI_TO_JSON, MAX_CONCURRENCY_CAP)
+// come from the real module while only file-I/O functions are stubbed out.
+vi.mock('../../core/daemon/config', async (importActual) => {
+  const actual = await importActual<typeof import('../../core/daemon/config')>()
+  return {
+    ...actual,
+    readDaemonConfigFile: vi.fn(),
+    patchDaemonConfigFile: vi.fn(),
+    daemonConfigPath: vi.fn(() => '/fake/.mars/daemon.json'),
+  }
+})
 
-import { readDaemonConfigFile, patchDaemonConfigFile } from '../../core/daemon/config'
+import {
+  readDaemonConfigFile,
+  patchDaemonConfigFile,
+  CAP_CLI_TO_JSON,
+  MAX_CONCURRENCY_CAP,
+} from '../../core/daemon/config'
+import type { DaemonCaps } from '../../core/daemon/config'
 import { runCommandInProcess, makeFakeDaemon } from '../test-adapter'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -213,5 +225,92 @@ describe('daemon set-cap', () => {
     const patchArg = patchM.mock.calls[0]?.[0] as Record<string, unknown>
     const caps = patchArg.caps as Record<string, unknown>
     expect(caps.verify).toBe(1)
+  })
+
+  it('rejects a cap above MAX_CONCURRENCY_CAP naming the ceiling', async () => {
+    const over = MAX_CONCURRENCY_CAP + 1
+    const result = await runCommandInProcess(
+      ['daemon', 'set-cap', 'implement', String(over)],
+      makeOpts(),
+    )
+
+    expect(result.code).toBe(2)
+    const errText = result.err.join('\n')
+    expect(errText).toContain(String(MAX_CONCURRENCY_CAP))
+    expect(errText).toContain(String(over))
+    expect(patchM).not.toHaveBeenCalled()
+  })
+
+  it('accepts a cap exactly at MAX_CONCURRENCY_CAP', async () => {
+    readM.mockReturnValue({})
+
+    const result = await runCommandInProcess(
+      ['daemon', 'set-cap', 'implement', String(MAX_CONCURRENCY_CAP)],
+      makeOpts(() => reloadResponse),
+    )
+
+    expect(result.code).toBe(0)
+    expect(patchM).toHaveBeenCalledTimes(1)
+    const patchArg = patchM.mock.calls[0]?.[0] as Record<string, unknown>
+    const caps = patchArg.caps as Record<string, unknown>
+    expect(caps.implement).toBe(MAX_CONCURRENCY_CAP)
+  })
+
+  it('strips unknown cap keys (e.g. structuredWrite) when patching', async () => {
+    readM.mockReturnValue({ caps: { implement: 3, structuredWrite: 1 } })
+
+    await runCommandInProcess(
+      ['daemon', 'set-cap', 'triage', '4'],
+      makeOpts(() => reloadResponse),
+    )
+
+    const patchArg = patchM.mock.calls[0]?.[0] as Record<string, unknown>
+    const caps = patchArg.caps as Record<string, unknown>
+    expect(caps.triage).toBe(4)
+    expect(caps.implement).toBe(3)
+    // structuredWrite must have been stripped
+    expect(caps.structuredWrite).toBeUndefined()
+  })
+})
+
+// ── Drift-gate: every DaemonCaps key must be settable via set-cap ─────────────
+
+describe('CAP_CLI_TO_JSON ↔ DaemonCaps drift gate', () => {
+  it('covers every DaemonCaps key as a value', () => {
+    // The compile-time guard (Record<keyof DaemonCaps, string> on CAP_JSON_TO_CLI)
+    // is the primary fence; this test is a runtime backup that fails when the
+    // mapping is generated from code that passes tsc but omits a key at runtime.
+    const coveredJsonKeys = new Set<string>(Object.values(CAP_CLI_TO_JSON))
+
+    // These are the canonical DaemonCaps keys — update here if the interface changes.
+    const daemonCapsKeys: (keyof DaemonCaps)[] = [
+      'implement',
+      'triage',
+      'refine',
+      'setupInstall',
+      'verify',
+    ]
+
+    for (const key of daemonCapsKeys) {
+      expect(coveredJsonKeys.has(key), `DaemonCaps key '${key}' not reachable via set-cap`).toBe(
+        true,
+      )
+    }
+  })
+
+  it('every CLI name in CAP_CLI_TO_JSON maps to a valid DaemonCaps key', () => {
+    const validJsonKeys: ReadonlySet<string> = new Set<keyof DaemonCaps>([
+      'implement',
+      'triage',
+      'refine',
+      'setupInstall',
+      'verify',
+    ])
+    for (const [cliName, jsonKey] of Object.entries(CAP_CLI_TO_JSON)) {
+      expect(
+        validJsonKeys.has(jsonKey),
+        `CLI name '${cliName}' maps to unknown DaemonCaps key '${jsonKey}'`,
+      ).toBe(true)
+    }
   })
 })

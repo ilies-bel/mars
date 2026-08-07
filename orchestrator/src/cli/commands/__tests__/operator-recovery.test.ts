@@ -198,7 +198,7 @@ describe('applyControlLevers persistence (simulated daemon restart)', () => {
 // ---------------------------------------------------------------------------
 
 describe('mars operator set — invalid inputs', () => {
-  it('exits non-zero for an unknown lever', async () => {
+  it('exits non-zero for an unknown lever, names it, and lists valid levers', async () => {
     const deps = await loadDeps()
     const fake = await makeFake()
 
@@ -208,11 +208,16 @@ describe('mars operator set — invalid inputs', () => {
     })
 
     expect(r.code).not.toBe(0)
-    const combined = [...r.out, ...r.err].join('\n')
-    expect(combined).toContain('badlever')
+    const errText = r.err.join('\n')
+    // Names the rejected token
+    expect(errText).toContain('badlever')
+    // Distinguishes "unknown lever" from "bad value"
+    expect(errText).toContain('unknown lever')
+    // Lists the valid levers so the operator can self-correct
+    expect(errText).toContain('valid levers')
   })
 
-  it('exits non-zero for an invalid value', async () => {
+  it('exits non-zero for an invalid value on a control lever, naming the token', async () => {
     const deps = await loadDeps()
     const fake = await makeFake()
 
@@ -222,8 +227,28 @@ describe('mars operator set — invalid inputs', () => {
     })
 
     expect(r.code).not.toBe(0)
-    const combined = [...r.out, ...r.err].join('\n')
-    expect(combined).toContain('maybe')
+    const errText = r.err.join('\n')
+    // Names the rejected value
+    expect(errText).toContain('maybe')
+    // Does NOT say "unknown lever" — the lever is known, only the value is wrong
+    expect(errText).not.toContain('unknown lever')
+  })
+
+  it('exits non-zero for an invalid value on dispatch, naming the token', async () => {
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(['operator', 'set', 'dispatch', 'maybe'], {
+      ...deps,
+      daemon: fake,
+    })
+
+    expect(r.code).not.toBe(0)
+    const errText = r.err.join('\n')
+    // Names the rejected value
+    expect(errText).toContain('maybe')
+    // Does NOT say "unknown lever" — dispatch is a valid lever
+    expect(errText).not.toContain('unknown lever')
   })
 
   it('exits non-zero when no args given', async () => {

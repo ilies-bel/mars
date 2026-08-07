@@ -14,6 +14,8 @@ import { dirname, resolve } from 'node:path'
 import {
   loadDaemonConfig,
   AUTONOMY_LEVELS,
+  CAP_CLI_TO_JSON,
+  MAX_CONCURRENCY_CAP,
   patchDaemonConfigFile,
   persistLeverAutonomyLevel,
   readDaemonConfigFile,
@@ -449,18 +451,6 @@ const daemonRestart: Command = {
   },
 }
 
-/**
- * Maps the kebab-case CLI cap names to their camelCase JSON keys in daemon.json.
- * `loadDaemonConfig` reads both spellings; we always write camelCase for consistency.
- */
-const CAP_NAME_MAP: Readonly<Record<string, string>> = {
-  implement: 'implement',
-  triage: 'triage',
-  refine: 'refine',
-  'setup-install': 'setupInstall',
-  verify: 'verify',
-}
-
 const daemonSetCap: Command = {
   path: 'daemon set-cap',
   summary: 'set a concurrency cap and hot-reload into the running daemon',
@@ -473,10 +463,10 @@ const daemonSetCap: Command = {
       deps.err('usage: mars daemon set-cap <name> <n>')
       return { code: 2 }
     }
-    const capKey = CAP_NAME_MAP[name]
+    const capKey = CAP_CLI_TO_JSON[name]
     if (capKey === undefined) {
       deps.err(
-        `mars daemon set-cap: unknown cap '${name}'; valid names: ${Object.keys(CAP_NAME_MAP).join(', ')}`,
+        `mars daemon set-cap: unknown cap '${name}'; valid names: ${Object.keys(CAP_CLI_TO_JSON).join(', ')}`,
       )
       return { code: 2 }
     }
@@ -485,14 +475,25 @@ const daemonSetCap: Command = {
       deps.err(`mars daemon set-cap: <n> must be a positive integer; got '${rawN}'`)
       return { code: 2 }
     }
+    if (n > MAX_CONCURRENCY_CAP) {
+      deps.err(
+        `mars daemon set-cap: <n> must be ≤ ${MAX_CONCURRENCY_CAP} (machine ceiling); got '${rawN}'`,
+      )
+      return { code: 2 }
+    }
     const current = readDaemonConfigFile()
-    const existingCaps =
+    const rawCaps =
       current.caps !== null &&
       typeof current.caps === 'object' &&
       !Array.isArray(current.caps)
         ? (current.caps as Record<string, unknown>)
         : {}
-    patchDaemonConfigFile({ caps: { ...existingCaps, [capKey]: n } })
+    // Keep only known cap JSON keys — strips legacy/unknown keys like structuredWrite.
+    const knownJsonKeys = new Set<string>(Object.values(CAP_CLI_TO_JSON))
+    const cleanedCaps = Object.fromEntries(
+      Object.entries(rawCaps).filter(([k]) => knownJsonKeys.has(k)),
+    )
+    patchDaemonConfigFile({ caps: { ...cleanedCaps, [capKey]: n } })
     try {
       const data = (await deps.daemon.sendRequest({ op: 'reload-config' })) as {
         caps: {

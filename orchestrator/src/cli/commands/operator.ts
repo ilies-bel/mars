@@ -219,6 +219,10 @@ const operatorSet: Command = {
     // uncommitted operator work). Write the file FIRST, then apply live —
     // the same order as every other lever.
     if (lever === 'dispatch') {
+      if (value !== 'on' && value !== 'off') {
+        deps.err(`mars operator set: value for 'dispatch' must be 'on' or 'off'; got '${value}'`)
+        return { code: 2 }
+      }
       const paused = value === 'off'
       persistPaused(paused)
       try {

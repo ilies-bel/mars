@@ -1,4 +1,5 @@
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { cpus } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { z } from 'zod'
 import { resolveContext } from '../context'
@@ -87,6 +88,42 @@ export interface DaemonCaps {
    */
   verify: number
 }
+
+/**
+ * Maps every DaemonCaps property key (camelCase) to the CLI cap name (kebab-case).
+ * Typed as `Record<keyof DaemonCaps, string>` — TypeScript errors here if a
+ * DaemonCaps key is missing, so the compile step acts as the drift gate.
+ * Never edit one without updating the other.
+ */
+const CAP_JSON_TO_CLI: Record<keyof DaemonCaps, string> = {
+  implement: 'implement',
+  triage: 'triage',
+  refine: 'refine',
+  setupInstall: 'setup-install',
+  verify: 'verify',
+}
+
+/**
+ * Maps CLI cap names (kebab-case, as typed by the operator) to DaemonCaps
+ * property keys (camelCase, as stored in daemon.json). Derived from
+ * CAP_JSON_TO_CLI so the two cannot drift — use this in `set-cap` to validate
+ * and translate user input.
+ */
+export const CAP_CLI_TO_JSON: Readonly<Record<string, keyof DaemonCaps>> =
+  Object.fromEntries(
+    Object.entries(CAP_JSON_TO_CLI).map(([json, cli]) => [cli, json as keyof DaemonCaps]),
+  )
+
+/**
+ * Maximum allowed concurrency cap per worker kind.
+ *
+ * Derived from the machine's CPU count so it scales with hardware but stays
+ * bounded. A fat-fingered value like 9999 is refused at `set-cap` time with an
+ * error that names this ceiling. Formula: `max(64, cpus * 2)` — 64 already
+ * exceeds the largest default cap (implement=12), and on server-class hardware
+ * with many cores the ceiling scales naturally without operator intervention.
+ */
+export const MAX_CONCURRENCY_CAP: number = Math.max(64, cpus().length * 2)
 
 export interface SelfEvolveConfig {
   /**
