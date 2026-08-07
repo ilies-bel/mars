@@ -1610,9 +1610,20 @@ export const deepReflectionDetailSchema = deepReflectionSummarySchema.extend({
             lever: z.object({
               id: z.string(),
               family: z.string(),
+              scope: z.string(),
               currentValue: z.string().nullable(),
               proposedValue: z.string(),
               gesture: z.string().nullable(),
+              appliesWithoutRestart: z.boolean(),
+              history: z.array(
+                z.object({
+                  appliedAt: z.string(),
+                  leverId: z.string(),
+                  fromValue: z.string().nullable(),
+                  toValue: z.string(),
+                  findingId: z.string().optional(),
+                }),
+              ),
             }),
           }),
           z.object({

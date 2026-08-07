@@ -1288,6 +1288,23 @@ export const startServer = async (
           return jsonResponse(result.status, result.body)
         }
 
+        // POST /api/lever-apply — apply one lever value through the daemon's
+        // persistence path. Body: { leverId: string; proposedValue: string; findingId?: string }.
+        // Proxied to the daemon's /lever-apply endpoint so a single writer owns daemon.json.
+        if (path === '/api/lever-apply' && req.method === 'POST') {
+          let body: unknown = {}
+          try { body = await req.json() } catch { /* empty body — rejected by daemon */ }
+          const result = await proxyPost(ctx.stateDir, '/lever-apply', body)
+          return jsonResponse(result.status, result.body)
+        }
+
+        // GET /api/lever-apply-history[?leverId=<id>] — history of applied lever changes.
+        // Proxied to the daemon's /lever-apply-history endpoint, newest-first.
+        if (path === '/api/lever-apply-history' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, `/lever-apply-history${url.search}`)
+          return jsonResponse(r.status, r.body)
+        }
+
         // Unknown API path (or /events was already handled above).
         return jsonResponse(404, { error: `no route for ${path}` })
       }

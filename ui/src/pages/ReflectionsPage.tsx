@@ -11,6 +11,12 @@
  *     each showing its lever binding (id + family + gesture) or declared gap,
  *     or explicitly marked as unbound (predates the binding feature)
  *
+ * Lever changes render as actionable controls — not reports. Each bound finding
+ * shows a single apply button labelled with the transition (`id: old → new`).
+ * Global levers that need a daemon reload show a confirmation step naming the
+ * blast radius (in-flight count). Lever gaps are visually distinct and carry no
+ * apply control.
+ *
  * The page states when reflection last ran and what would trigger the next run,
  * so the surface is honest about whether anything feeds it.
  *
@@ -18,8 +24,9 @@
  * Renders on cold load — no click or SSE event required.
  */
 
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchDeepReflections, fetchDeepReflection } from '@/shared/api'
+import { fetchDeepReflections, fetchDeepReflection, applyLever } from '@/shared/api'
 import type {
   DeepReflectionSummary,
   DeepReflectionDetail,
@@ -35,10 +42,39 @@ import { useHashRoute } from '@/shared/useHashRoute'
 // Outcome types (mirrored from the server-side ReflectionSuggestionOutcome)
 // ---------------------------------------------------------------------------
 
+export interface LeverApplyHistoryEntry {
+  appliedAt: string
+  leverId: string
+  fromValue: string | null
+  toValue: string
+  findingId?: string
+}
+
+export interface LeverData {
+  id: string
+  family: string
+  scope: string
+  currentValue: string | null
+  proposedValue: string
+  gesture: string | null
+  appliesWithoutRestart: boolean
+  history: LeverApplyHistoryEntry[]
+}
+
 type SuggestionOutcome =
-  | { type: 'lever'; lever: { id: string; family: string; currentValue: string | null; proposedValue: string; gesture: string | null } }
+  | { type: 'lever'; lever: LeverData }
   | { type: 'leverGap'; leverGap: { proposedLeverId: string; family: string; whatItWouldControl: string } }
   | null
+
+// ---------------------------------------------------------------------------
+// Per-lever apply state (managed by ReflectionDetailView)
+// ---------------------------------------------------------------------------
+
+export type LeverApplyState =
+  | { status: 'idle' }
+  | { status: 'applying' }
+  | { status: 'applied'; appliedAt: string; appliedValue: string }
+  | { status: 'error'; error: string }
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -151,6 +187,260 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
     </div>
   )
 }
+
+// ---------------------------------------------------------------------------
+// LeverChangeCard — one actionable lever binding.
+//
+// Exported for direct unit testing: render it with a specific `applyState` and
+// `showConfirm` value to assert the static markup without a DOM environment.
+// ---------------------------------------------------------------------------
+
+export interface LeverChangeCardProps {
+  lever: LeverData
+  applyState: LeverApplyState
+  showConfirm: boolean
+  /** In-flight task count — needed only when scope=global and !appliesWithoutRestart. */
+  inFlightCount: number
+  index: number
+  proposalTargetId?: string | null
+  /** Called when the operator clicks the apply button (per-task) or the confirm button (global). */
+  onApply: () => void
+  /** Called when the operator clicks the apply button on a global lever (shows confirmation first). */
+  onRequestConfirm: () => void
+  /** Called when the operator cancels the confirmation. */
+  onCancelConfirm: () => void
+}
+
+export const LeverChangeCard = ({
+  lever,
+  applyState,
+  showConfirm,
+  inFlightCount,
+  index,
+  proposalTargetId,
+  onApply,
+  onRequestConfirm,
+  onCancelConfirm,
+}: LeverChangeCardProps) => {
+  const isGlobal = lever.scope === 'global'
+  const needsRestart = !lever.appliesWithoutRestart
+  const transitionLabel = `${lever.id}: ${lever.currentValue ?? '(unset)'} → ${lever.proposedValue}`
+
+  return (
+    <div
+      data-testid={`lever-change-${index}`}
+      className="border border-primary/30 bg-primary/5 p-2 font-mono text-[11px]"
+    >
+      {/* Header: id + family + optional proposal link */}
+      <div className="flex items-center gap-2 mb-1">
+        <span data-testid={`lever-change-id-${index}`} className="text-primary font-semibold">{lever.id}</span>
+        <span className="text-muted-foreground text-[9px] uppercase">{lever.family}</span>
+        <span className="text-muted-foreground text-[9px]">{lever.scope}</span>
+        {proposalTargetId && (
+          <a
+            href={proposalHash(proposalTargetId, 'reflections')}
+            className="ml-auto text-[10px] text-muted-foreground hover:text-primary transition-colors"
+          >
+            → proposal {proposalTargetId}
+          </a>
+        )}
+      </div>
+
+      {/* Transition */}
+      <div className="flex items-center gap-2 text-[10px] mt-1">
+        <span className="text-muted-foreground">{lever.currentValue ?? '(unset)'}</span>
+        <span className="text-muted-foreground">→</span>
+        <span data-testid={`lever-change-proposed-${index}`} className="text-foreground font-semibold">{lever.proposedValue}</span>
+      </div>
+
+      {/* Gesture (read-only reference) */}
+      {lever.gesture && (
+        <div className="mt-1">
+          <span className="text-[9px] uppercase tracking-wide text-muted-foreground">CLI: </span>
+          <code data-testid={`lever-change-gesture-${index}`} className="text-primary select-all">{lever.gesture}</code>
+        </div>
+      )}
+
+      {/* Apply state: idle → show apply button or confirmation */}
+      {applyState.status === 'idle' && !showConfirm && (
+        <div className="mt-2 border-t border-primary/10 pt-2">
+          {isGlobal ? (
+            // Global levers: click opens confirmation step first
+            <button
+              data-testid={`lever-apply-btn-${index}`}
+              onClick={onRequestConfirm}
+              className="border border-primary/50 bg-primary/10 px-2 py-1 text-[10px] text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+              aria-label={`Apply ${transitionLabel} (requires confirmation)`}
+            >
+              {transitionLabel}
+            </button>
+          ) : (
+            // Per-task / per-workflow levers: apply directly, no confirmation
+            <button
+              data-testid={`lever-apply-btn-${index}`}
+              onClick={onApply}
+              className="border border-primary/50 bg-primary/10 px-2 py-1 text-[10px] text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+              aria-label={`Apply ${transitionLabel}`}
+            >
+              {transitionLabel}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Confirmation step for global levers */}
+      {applyState.status === 'idle' && showConfirm && (
+        <div
+          data-testid={`lever-confirm-${index}`}
+          className="mt-2 border border-warn/40 bg-warn/5 p-2 text-[10px]"
+          role="alertdialog"
+          aria-label={`Confirm applying ${lever.id} globally`}
+        >
+          <div className="text-warn font-semibold mb-1">
+            Apply globally: {transitionLabel}
+          </div>
+          <div className="text-muted-foreground mb-1">
+            This lever has <strong>global scope</strong> — it affects every future task.
+          </div>
+          {needsRestart && (
+            <div
+              data-testid={`lever-confirm-blast-radius-${index}`}
+              className="text-error text-[10px] mb-1"
+            >
+              ⚠ Requires daemon reload — this will hard-stop{' '}
+              <strong>{inFlightCount} in-flight task{inFlightCount !== 1 ? 's' : ''}</strong>{' '}
+              and re-queue them.
+            </div>
+          )}
+          {!needsRestart && (
+            <div className="text-muted-foreground text-[10px] mb-1">
+              Takes effect without a daemon restart.
+            </div>
+          )}
+          <div className="flex items-center gap-2 mt-2">
+            <button
+              data-testid={`lever-confirm-apply-btn-${index}`}
+              onClick={onApply}
+              className="border border-warn/50 bg-warn/10 px-2 py-1 text-[10px] text-warn hover:bg-warn/20 focus:outline-none focus:ring-1 focus:ring-warn transition-colors"
+              aria-label={`Confirm: ${transitionLabel}`}
+            >
+              Confirm: {transitionLabel}
+            </button>
+            <button
+              data-testid={`lever-confirm-cancel-btn-${index}`}
+              onClick={onCancelConfirm}
+              className="border border-primary/20 px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+              aria-label="Cancel"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Applying in progress */}
+      {applyState.status === 'applying' && (
+        <div
+          data-testid={`lever-applying-${index}`}
+          className="mt-2 border-t border-primary/10 pt-2 text-[10px] text-muted-foreground"
+          aria-live="polite"
+        >
+          Applying…
+        </div>
+      )}
+
+      {/* Applied successfully */}
+      {applyState.status === 'applied' && (
+        <div
+          data-testid={`lever-applied-${index}`}
+          className="mt-2 border-t border-success/20 pt-2 text-[10px] text-success"
+          aria-live="polite"
+        >
+          ✓ Applied: {applyState.appliedValue} at {fmt(applyState.appliedAt)}
+        </div>
+      )}
+
+      {/* Failed apply — surface error and keep the finding actionable */}
+      {applyState.status === 'error' && (
+        <div
+          data-testid={`lever-apply-error-${index}`}
+          className="mt-2 border border-error/30 bg-error/5 p-2 text-[10px]"
+          role="alert"
+          aria-live="assertive"
+        >
+          <div className="text-error font-semibold mb-1">Apply failed</div>
+          <div className="text-error">{applyState.error}</div>
+          <div className="mt-1">
+            {isGlobal ? (
+              <button
+                data-testid={`lever-retry-btn-${index}`}
+                onClick={onRequestConfirm}
+                className="border border-primary/50 bg-primary/10 px-2 py-1 text-[10px] text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+              >
+                Try again: {transitionLabel}
+              </button>
+            ) : (
+              <button
+                data-testid={`lever-retry-btn-${index}`}
+                onClick={onApply}
+                className="border border-primary/50 bg-primary/10 px-2 py-1 text-[10px] text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+              >
+                Try again: {transitionLabel}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Apply history — shows prior applications of this lever */}
+      {lever.history.length > 0 && applyState.status !== 'applied' && (
+        <div
+          data-testid={`lever-history-${index}`}
+          className="mt-2 border-t border-primary/10 pt-1 text-[9px] text-muted-foreground"
+        >
+          Last applied: {fmtRelative(lever.history[0].appliedAt)}
+          {lever.history[0].fromValue !== null && (
+            <> ({lever.history[0].fromValue} → {lever.history[0].toValue})</>
+          )}
+          {lever.history.length > 1 && <> · {lever.history.length} total applications</>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// LeverGapCard — clearly NOT an actionable control.
+// Must be visually and semantically distinct from LeverChangeCard.
+// ---------------------------------------------------------------------------
+
+export interface LeverGapCardProps {
+  gap: { proposedLeverId: string; family: string; whatItWouldControl: string }
+  index: number
+}
+
+export const LeverGapCard = ({ gap, index }: LeverGapCardProps) => (
+  <div
+    data-testid={`lever-gap-${index}`}
+    className="border border-warn/30 bg-warn/5 p-2 font-mono text-[11px]"
+    aria-label={`Lever gap: no parameter controls ${gap.proposedLeverId}`}
+  >
+    <div className="flex items-center gap-2">
+      <span className="uppercase font-semibold text-warn text-[9px] tracking-wide">Lever Gap</span>
+      <span className="text-foreground font-semibold">{gap.proposedLeverId}</span>
+      <span className="text-muted-foreground text-[9px] uppercase">{gap.family}</span>
+    </div>
+    <div className="mt-1 text-[10px] text-muted-foreground">{gap.whatItWouldControl}</div>
+    {/* Explicit "no apply control" statement — cannot be confused with a bound finding */}
+    <div
+      data-testid={`lever-gap-no-control-${index}`}
+      className="mt-1 border border-warn/20 bg-warn/5 px-2 py-1 text-[9px] text-warn"
+      role="note"
+    >
+      No parameter controls this yet — this is a documented gap, not a lever you can set.
+    </div>
+  </div>
+)
 
 // ---------------------------------------------------------------------------
 // RunState banner — when did reflection last run, what triggers the next?
@@ -306,6 +596,39 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
       s.outcome != null && s.outcome.type === 'leverGap'
     )
     .map((s) => (s.outcome as { type: 'leverGap'; leverGap: { proposedLeverId: string; family: string; whatItWouldControl: string } }).leverGap)
+
+  // ── Per-lever apply state ────────────────────────────────────────────────
+  // One entry per leverBinding index. Start idle. State persists across renders
+  // but is scoped to this detail view instance (fresh on each navigation).
+  const [applyStates, setApplyStates] = useState<LeverApplyState[]>(
+    () => leverBindings.map(() => ({ status: 'idle' as const })),
+  )
+  const [confirmIndex, setConfirmIndex] = useState<number | null>(null)
+
+  const setApplyState = (idx: number, state: LeverApplyState) => {
+    setApplyStates((prev) => {
+      const next = [...prev]
+      next[idx] = state
+      return next
+    })
+  }
+
+  const handleApply = (idx: number, lever: LeverData, findingId: string | null) => {
+    setApplyState(idx, { status: 'applying' })
+    setConfirmIndex(null)
+    applyLever(lever.id, lever.proposedValue, findingId ?? undefined)
+      .then((result) => {
+        setApplyState(idx, {
+          status: 'applied',
+          appliedAt: result.appliedAt,
+          appliedValue: result.appliedValue,
+        })
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err)
+        setApplyState(idx, { status: 'error', error: msg })
+      })
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -488,37 +811,20 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
               </h3>
               <div className="flex flex-col gap-2">
                 {leverBindings.map((s, i) => {
-                  const lever = (s.outcome as { type: 'lever'; lever: { id: string; family: string; currentValue: string | null; proposedValue: string; gesture: string | null } }).lever
+                  const lever = (s.outcome as { type: 'lever'; lever: LeverData }).lever
                   return (
-                    <div
+                    <LeverChangeCard
                       key={i}
-                      data-testid={`lever-change-${i}`}
-                      className="border border-primary/30 bg-primary/5 p-2 font-mono text-[11px]"
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span data-testid={`lever-change-id-${i}`} className="text-primary font-semibold">{lever.id}</span>
-                        <span className="text-muted-foreground text-[9px] uppercase">{lever.family}</span>
-                        {s.targetId && (
-                          <a
-                            href={proposalHash(s.targetId, 'reflections')}
-                            className="ml-auto text-[10px] text-muted-foreground hover:text-primary transition-colors"
-                          >
-                            → proposal {s.targetId}
-                          </a>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 text-[10px] mt-1">
-                        <span className="text-muted-foreground">{lever.currentValue ?? '(unknown)'}</span>
-                        <span className="text-muted-foreground">→</span>
-                        <span data-testid={`lever-change-proposed-${i}`} className="text-foreground">{lever.proposedValue}</span>
-                      </div>
-                      {lever.gesture && (
-                        <div className="mt-2 border-t border-primary/10 pt-2">
-                          <span className="text-[9px] uppercase tracking-wide text-muted-foreground">Run: </span>
-                          <code data-testid={`lever-change-gesture-${i}`} className="text-primary select-all">{lever.gesture}</code>
-                        </div>
-                      )}
-                    </div>
+                      index={i}
+                      lever={lever}
+                      applyState={applyStates[i] ?? { status: 'idle' }}
+                      showConfirm={confirmIndex === i}
+                      inFlightCount={0}
+                      proposalTargetId={s.targetId}
+                      onApply={() => handleApply(i, lever, s.targetId ?? null)}
+                      onRequestConfirm={() => setConfirmIndex(i)}
+                      onCancelConfirm={() => setConfirmIndex(null)}
+                    />
                   )
                 })}
               </div>
@@ -533,17 +839,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
               </h3>
               <div className="flex flex-col gap-2">
                 {leverGaps.map((gap, i) => (
-                  <div
-                    key={i}
-                    data-testid={`lever-gap-${i}`}
-                    className="border border-warn/30 bg-warn/5 p-2 font-mono text-[11px]"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-foreground font-semibold">{gap.proposedLeverId}</span>
-                      <span className="text-muted-foreground text-[9px] uppercase">{gap.family}</span>
-                    </div>
-                    <div className="mt-1 text-[10px] text-muted-foreground">{gap.whatItWouldControl}</div>
-                  </div>
+                  <LeverGapCard key={i} gap={gap} index={i} />
                 ))}
               </div>
             </section>

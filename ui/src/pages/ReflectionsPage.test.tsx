@@ -17,7 +17,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ReflectionsPage, ReflectionDetailView } from './ReflectionsPage'
+import { ReflectionsPage, ReflectionDetailView, LeverChangeCard, LeverGapCard } from './ReflectionsPage'
+import type { LeverApplyState, LeverData } from './ReflectionsPage'
 import type { DeepReflectionsListResponse, DeepReflectionDetail } from '@/shared/api'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -567,7 +568,7 @@ describe('ReflectionDetailView — lever bindings (mars-46fb20fd)', () => {
     ...extraOverrides,
   })
 
-  const leverSuggestion = (targetId: string | null = null) => ({
+  const leverSuggestion = (targetId: string | null = null, overrides: Partial<LeverData> = {}) => ({
     title: 'Tune workflow.steps verify commands',
     prompt: 'Run exact acceptance commands. Save your work.',
     rationale: 'Verify output was absent on several tasks',
@@ -578,9 +579,13 @@ describe('ReflectionDetailView — lever bindings (mars-46fb20fd)', () => {
       lever: {
         id: 'workflow.steps',
         family: 'workflow',
+        scope: 'per-workflow',
         currentValue: 'Code sessions may use filtered local checks.',
         proposedValue: 'Run exact acceptance commands with preserved exit codes.',
         gesture: 'mars workflow author <name>',
+        appliesWithoutRestart: true,
+        history: [],
+        ...overrides,
       },
     },
   })
@@ -656,5 +661,225 @@ describe('ReflectionDetailView — lever bindings (mars-46fb20fd)', () => {
     )
     expect(html).not.toContain('data-testid="lever-changes-section"')
     expect(html).toContain('data-testid="lever-gaps-section"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// LeverChangeCard — direct unit tests for the apply control behaviour.
+//
+// LeverChangeCard is a pure presentational component that accepts state as
+// props, making it testable with renderToStaticMarkup (no DOM / happy-dom).
+// ---------------------------------------------------------------------------
+
+describe('LeverChangeCard — apply control', () => {
+  const makeLever = (overrides: Partial<LeverData> = {}): LeverData => ({
+    id: 'caps.implement',
+    family: 'caps',
+    scope: 'global',
+    currentValue: '3',
+    proposedValue: '6',
+    gesture: 'mars operator set caps.implement 6',
+    appliesWithoutRestart: true,
+    history: [],
+    ...overrides,
+  })
+
+  const noopCallbacks = {
+    onApply: () => {},
+    onRequestConfirm: () => {},
+    onCancelConfirm: () => {},
+  }
+
+  it('renders the apply button with a transition label, not a bare "Apply"', () => {
+    const html = renderToStaticMarkup(
+      <LeverChangeCard
+        lever={makeLever()}
+        applyState={{ status: 'idle' }}
+        showConfirm={false}
+        inFlightCount={0}
+        index={0}
+        {...noopCallbacks}
+      />,
+    )
+
+    // Button must carry the transition label
+    expect(html).toContain('caps.implement: 3 → 6')
+    // Must NOT be a bare "Apply" without the lever ID
+    expect(html).not.toMatch(/>Apply</)
+  })
+
+  it('shows apply button directly for per-task lever (no confirmation step)', () => {
+    const html = renderToStaticMarkup(
+      <LeverChangeCard
+        lever={makeLever({ scope: 'per-task', appliesWithoutRestart: true })}
+        applyState={{ status: 'idle' }}
+        showConfirm={false}
+        inFlightCount={0}
+        index={0}
+        {...noopCallbacks}
+      />,
+    )
+
+    expect(html).toContain('data-testid="lever-apply-btn-0"')
+    // No confirmation block rendered in idle state for per-task lever
+    expect(html).not.toContain('data-testid="lever-confirm-0"')
+  })
+
+  it('shows confirmation block for global scope lever when showConfirm=true', () => {
+    const html = renderToStaticMarkup(
+      <LeverChangeCard
+        lever={makeLever({ scope: 'global', appliesWithoutRestart: true })}
+        applyState={{ status: 'idle' }}
+        showConfirm={true}
+        inFlightCount={0}
+        index={0}
+        {...noopCallbacks}
+      />,
+    )
+
+    expect(html).toContain('data-testid="lever-confirm-0"')
+    expect(html).toContain('data-testid="lever-confirm-apply-btn-0"')
+    expect(html).toContain('data-testid="lever-confirm-cancel-btn-0"')
+    expect(html).toContain('global scope')
+  })
+
+  it('includes in-flight task count in confirmation for global lever requiring restart', () => {
+    const html = renderToStaticMarkup(
+      <LeverChangeCard
+        lever={makeLever({ scope: 'global', appliesWithoutRestart: false })}
+        applyState={{ status: 'idle' }}
+        showConfirm={true}
+        inFlightCount={7}
+        index={0}
+        {...noopCallbacks}
+      />,
+    )
+
+    expect(html).toContain('data-testid="lever-confirm-blast-radius-0"')
+    expect(html).toContain('7 in-flight tasks')
+    expect(html).toContain('daemon reload')
+  })
+
+  it('renders "applying…" feedback while applying', () => {
+    const html = renderToStaticMarkup(
+      <LeverChangeCard
+        lever={makeLever()}
+        applyState={{ status: 'applying' }}
+        showConfirm={false}
+        inFlightCount={0}
+        index={0}
+        {...noopCallbacks}
+      />,
+    )
+
+    expect(html).toContain('data-testid="lever-applying-0"')
+    expect(html).toContain('Applying')
+  })
+
+  it('renders applied confirmation with timestamp after successful apply', () => {
+    const html = renderToStaticMarkup(
+      <LeverChangeCard
+        lever={makeLever()}
+        applyState={{ status: 'applied', appliedAt: '2026-01-15T10:00:00Z', appliedValue: '6' }}
+        showConfirm={false}
+        inFlightCount={0}
+        index={0}
+        {...noopCallbacks}
+      />,
+    )
+
+    expect(html).toContain('data-testid="lever-applied-0"')
+    expect(html).toContain('Applied')
+    // Must NOT show the apply button when already applied
+    expect(html).not.toContain('data-testid="lever-apply-btn-0"')
+  })
+
+  it('surfaces failed apply error on the control while keeping the finding actionable (retry button present)', () => {
+    const html = renderToStaticMarkup(
+      <LeverChangeCard
+        lever={makeLever()}
+        applyState={{ status: 'error', error: 'daemon returned 422: value out of range' }}
+        showConfirm={false}
+        inFlightCount={0}
+        index={0}
+        {...noopCallbacks}
+      />,
+    )
+
+    expect(html).toContain('data-testid="lever-apply-error-0"')
+    expect(html).toContain('daemon returned 422: value out of range')
+    // Retry button must be present — finding remains actionable
+    expect(html).toContain('data-testid="lever-retry-btn-0"')
+    expect(html).toContain('caps.implement: 3 → 6')
+  })
+
+  it('shows apply history when present', () => {
+    const history = [
+      {
+        appliedAt: '2026-01-10T08:00:00Z',
+        leverId: 'caps.implement',
+        fromValue: '2',
+        toValue: '3',
+        findingId: 'finding-abc',
+      },
+    ]
+    const html = renderToStaticMarkup(
+      <LeverChangeCard
+        lever={makeLever({ history })}
+        applyState={{ status: 'idle' }}
+        showConfirm={false}
+        inFlightCount={0}
+        index={0}
+        {...noopCallbacks}
+      />,
+    )
+
+    expect(html).toContain('data-testid="lever-history-0"')
+    expect(html).toContain('Last applied')
+  })
+
+  it('does not render "Apply all" or batch-apply controls', () => {
+    // Render two lever cards and confirm there's no shared "apply all" control.
+    const lever1 = makeLever({ id: 'caps.implement' })
+    const lever2 = makeLever({ id: 'caps.refine', proposedValue: '4' })
+    const html =
+      renderToStaticMarkup(<LeverChangeCard lever={lever1} applyState={{ status: 'idle' }} showConfirm={false} inFlightCount={0} index={0} {...noopCallbacks} />) +
+      renderToStaticMarkup(<LeverChangeCard lever={lever2} applyState={{ status: 'idle' }} showConfirm={false} inFlightCount={0} index={1} {...noopCallbacks} />)
+
+    expect(html).not.toContain('Apply all')
+    expect(html).not.toContain('apply-all')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// LeverGapCard — must be unmistakably different from LeverChangeCard.
+// ---------------------------------------------------------------------------
+
+describe('LeverGapCard — no apply control', () => {
+  const gap = {
+    proposedLeverId: 'cache.warmup-policy',
+    family: 'workflow',
+    whatItWouldControl: 'cache warm-up strategy on the code step',
+  }
+
+  it('renders the gap without any apply button', () => {
+    const html = renderToStaticMarkup(<LeverGapCard gap={gap} index={0} />)
+
+    expect(html).not.toContain('data-testid="lever-apply-btn-0"')
+    expect(html).not.toContain('data-testid="lever-confirm-0"')
+  })
+
+  it('shows explicit "no parameter controls this" statement', () => {
+    const html = renderToStaticMarkup(<LeverGapCard gap={gap} index={0} />)
+
+    expect(html).toContain('data-testid="lever-gap-no-control-0"')
+    expect(html).toContain('No parameter controls this yet')
+  })
+
+  it('carries the "Lever Gap" label', () => {
+    const html = renderToStaticMarkup(<LeverGapCard gap={gap} index={0} />)
+
+    expect(html).toContain('Lever Gap')
+    expect(html).toContain('cache.warmup-policy')
   })
 })

@@ -121,6 +121,7 @@ import {
 } from './lib/primitive-catalog'
 import { loadWorkerRegistry, type WorkerDeclaration } from './workers/persisted-registry'
 import { loadLeverRegistry } from './lib/lever-registry'
+import { readLeverApplyHistory } from './lib/lever-apply'
 import {
   extractFirstUserMessageText,
   recoverPromptFromDiskTranscript,
@@ -354,14 +355,25 @@ const enrichOutcome = (raw: unknown): ReflectionSuggestionOutcome => {
     const lever = (o.lever && typeof o.lever === 'object' ? o.lever : {}) as Record<string, unknown>
     const id = typeof lever.id === 'string' ? lever.id : ''
     const entry = loadLeverRegistry().find((e) => e.id === id)
+    // History is read at serve time so the UI always sees the current record
+    // without a separate round-trip. Sorted newest-first.
+    let history: import('./daemon/http-server').LeverApplyHistoryEntry[] = []
+    try {
+      history = readLeverApplyHistory(id).reverse()
+    } catch {
+      // history is best-effort — never fail enrichment because of a missing file
+    }
     return {
       type: 'lever',
       lever: {
         id,
         family: entry ? String(entry.family) : '',
+        scope: entry ? String(entry.scope) : 'global',
         currentValue: typeof lever.currentValue === 'string' ? lever.currentValue : null,
         proposedValue: typeof lever.proposedValue === 'string' ? lever.proposedValue : '',
         gesture: entry?.gesture ?? null,
+        appliesWithoutRestart: entry?.appliesWithoutRestart ?? true,
+        history,
       },
     }
   }

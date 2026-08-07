@@ -356,9 +356,23 @@ export interface DeepReflectionSummary {
 }
 
 /**
+ * One record in the lever-apply history returned as part of an enriched lever
+ * outcome. Persisted to .mars/lever-apply-history.jsonl by the HTTP
+ * POST /lever-apply endpoint.
+ */
+export interface LeverApplyHistoryEntry {
+  appliedAt: string
+  leverId: string
+  fromValue: string | null
+  toValue: string
+  findingId?: string
+}
+
+/**
  * Enriched outcome served to the UI. For a `lever` outcome the entry's
- * `family` and `gesture` are looked up from the live lever registry at serve
- * time. For a `leverGap` outcome they come directly from the model output.
+ * `family`, `gesture`, `scope`, `appliesWithoutRestart`, and `history` are
+ * looked up from the live lever registry and history store at serve time. For
+ * a `leverGap` outcome they come directly from the model output.
  * `null` means the suggestion predates the binding feature.
  */
 export type ReflectionSuggestionOutcome =
@@ -367,9 +381,13 @@ export type ReflectionSuggestionOutcome =
       lever: {
         id: string
         family: string
+        scope: string
         currentValue: string | null
         proposedValue: string
         gesture: string | null
+        appliesWithoutRestart: boolean
+        /** History of prior applications of this lever, newest-first. */
+        history: LeverApplyHistoryEntry[]
       }
     }
   | {
@@ -2880,6 +2898,89 @@ export const startHttpServer = async (
         req.on('error', (err: unknown) => sendError(res, err))
         return
       }
+    }
+
+    // GET /lever-apply-history[?leverId=<id>] — history of operator-applied
+    // lever changes (written by POST /lever-apply). Newest-first. Bypasses the
+    // draining gate — pure read.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/lever-apply-history')) {
+      try {
+        const parsed = new URL(req.url, 'http://localhost')
+        const leverId = parsed.searchParams.get('leverId') ?? undefined
+        import('../lib/lever-apply.js')
+          .then((m) => {
+            const history = m.readLeverApplyHistory(leverId)
+            sendJson(res, 200, { ok: true, history })
+          })
+          .catch((err: unknown) => sendError(res, err))
+      } catch (err: unknown) {
+        sendError(res, err)
+      }
+      return
+    }
+
+    // POST /lever-apply — apply one lever value through the same persistence
+    // path as the matching CLI command. Body: { leverId: string; proposedValue:
+    // string; findingId?: string }. Bypasses the draining gate — config writes
+    // are not task work. Records the apply to the history JSONL file.
+    if (req.method === 'POST' && req.url === '/lever-apply') {
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(rawBody)
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+          return
+        }
+        const bodySchema = z.object({
+          leverId: z.string().min(1),
+          proposedValue: z.string(),
+          findingId: z.string().optional(),
+        })
+        const bodyResult = bodySchema.safeParse(parsed)
+        if (!bodyResult.success) {
+          sendJson(res, 400, {
+            ok: false,
+            error: 'body must be { leverId: string; proposedValue: string; findingId?: string }',
+          })
+          return
+        }
+        const { leverId, proposedValue, findingId } = bodyResult.data
+        import('../lib/lever-apply.js')
+          .then((m) => {
+            const result = m.applyLeverValue(leverId, proposedValue)
+            const appliedAt = new Date().toISOString()
+            m.appendLeverApplyHistory({
+              appliedAt,
+              leverId,
+              fromValue: result.fromValue,
+              toValue: result.appliedValue,
+              ...(findingId ? { findingId } : {}),
+            })
+            sendJson(res, 200, {
+              ok: true,
+              leverId,
+              fromValue: result.fromValue,
+              appliedValue: result.appliedValue,
+              requiresRestart: result.requiresRestart,
+              appliedAt,
+            })
+          })
+          .catch((err: unknown) => {
+            if (err instanceof Error && err.name === 'LeverApplyError') {
+              const code = (err as { code?: string }).code ?? 'APPLY_ERROR'
+              const status =
+                code === 'NOT_FOUND' ? 404 : code === 'INVALID_VALUE' ? 400 : 422
+              sendJson(res, status, { ok: false, error: err.message, code })
+            } else {
+              sendError(res, err)
+            }
+          })
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
     }
 
     // POST /main-thread/ask — read-only Q&A path for the main thread.

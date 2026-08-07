@@ -1311,6 +1311,29 @@ export const fetchDeepReflection = async (
   )
 }
 
+/**
+ * Apply one lever value through the daemon's persistence path (POST /api/lever-apply).
+ * On success returns the applied value, from value, and whether a daemon restart is required.
+ * On failure throws with an `error` string and optional `code`.
+ */
+export const applyLever = async (
+  leverId: string,
+  proposedValue: string,
+  findingId?: string,
+): Promise<{ leverId: string; fromValue: string | null; appliedValue: string; requiresRestart: boolean; appliedAt: string }> => {
+  const r = await fetch(`${BASE}/api/lever-apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ leverId, proposedValue, ...(findingId ? { findingId } : {}) }),
+  })
+  const body = await r.json().catch(() => null) as Record<string, unknown> | null
+  if (!r.ok) {
+    const msg = typeof body?.error === 'string' ? body.error : `POST /api/lever-apply → ${r.status}`
+    throw new Error(msg)
+  }
+  return body as { leverId: string; fromValue: string | null; appliedValue: string; requiresRestart: boolean; appliedAt: string }
+}
+
 export type {
   ActionQueueHistoryResponse,
   ActionQueueItem,
