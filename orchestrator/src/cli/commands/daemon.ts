@@ -13,7 +13,6 @@ import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import {
   loadDaemonConfig,
-  AUTONOMY_LEVELS,
   CAP_CLI_TO_JSON,
   MAX_CONCURRENCY_CAP,
   patchDaemonConfigFile,
@@ -21,6 +20,12 @@ import {
   readDaemonConfigFile,
 } from '../../core/daemon/config'
 import type { AutonomyLevel } from '../../core/daemon/config'
+import {
+  AUTONOMY_LEVELS,
+  KNOWN_PRODUCER_KEYS,
+  PRODUCER_LEVER_SPECS,
+  getLever,
+} from '../../core/levers/store'
 import { describePauseState } from '../../core/daemon/pause-state'
 import type { DispatchPauseState } from '../../core/daemon/pause-state'
 import {
@@ -534,6 +539,12 @@ const daemonSetLever: Command = {
       deps.err('usage: mars daemon set-lever <name> autonomy <off|ask|tell>')
       return { code: 2 }
     }
+    if (!KNOWN_PRODUCER_KEYS.includes(name)) {
+      deps.err(
+        `mars daemon set-lever: unknown lever '${name}'; valid keys are: ${KNOWN_PRODUCER_KEYS.join(', ')}`,
+      )
+      return { code: 2 }
+    }
     if (!VALID_AUTONOMY_LEVELS.has(value)) {
       deps.err(
         `mars daemon set-lever: autonomy must be 'off', 'ask', or 'tell'; got '${value}'`,
@@ -542,6 +553,20 @@ const daemonSetLever: Command = {
     }
     persistLeverAutonomyLevel(name, value as AutonomyLevel)
     deps.out(`lever ${name} autonomy=${value}`)
+    return { code: 0 }
+  },
+}
+
+/** List all known card-producer levers with their current and default autonomy level. */
+const daemonListLevers: Command = {
+  path: 'daemon list-levers',
+  summary: 'list known card-producer levers with current and default autonomy level',
+  usage: 'usage: mars daemon list-levers',
+  run: (_args, deps) => {
+    for (const spec of PRODUCER_LEVER_SPECS) {
+      const current = getLever(spec.key)
+      deps.out(`${spec.key}: current=${current} default=${spec.defaultAutonomyLevel}`)
+    }
     return { code: 0 }
   },
 }
@@ -747,6 +772,7 @@ export const daemonCommands: readonly Command[] = [
   daemonReload,
   daemonSetCap,
   daemonSetLever,
+  daemonListLevers,
   daemonSpendControl,
   daemonUsage,
   daemonResetBreaker,

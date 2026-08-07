@@ -17,12 +17,12 @@
  * inserting, so calling it more than once for the same Subject is safe.
  */
 
-import { randomUUID } from 'node:crypto'
 import type { DbClient } from '../lib/db.js'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
 import { drainWithStall } from '../daemon/subscriber-drain.js'
 import { registerSubscriberName } from '../../outbox/registry.js'
+import { createCard, getLever } from '../levers/store.js'
 
 export const TERMINAL_MATCHER_SUBSCRIBER = 'terminal-matcher'
 registerSubscriberName(TERMINAL_MATCHER_SUBSCRIBER)
@@ -70,6 +70,10 @@ export function matchTerminal(
  *   stays 'open') until the operator accepts the Closure card.
  * - Skips card insertion when a Closure card for this Subject already exists,
  *   making this function safe to call more than once.
+ * - Consults the `terminal-matcher` lever via `createCard()`; when the lever
+ *   is set to `'off'`, the mute check fires and no card is inserted.
+ * - `autonomy_level` on the inserted row reflects the lever's current level
+ *   (not a hardcoded value), so the UI shows the operator's chosen posture.
  */
 export async function raiseClosureCard(
   client: DbClient,
@@ -84,13 +88,22 @@ export async function raiseClosureCard(
     sql: `SELECT id FROM cards WHERE kind = 'closure' AND subject_id = ?`,
     args: [subject.id],
   })
-  if (existing.rows.length === 0) {
-    await client.execute({
-      sql: `INSERT INTO cards (id, kind, subject_id, autonomy_level, producer_key, body, created_at)
-            VALUES (?, 'closure', ?, 'tell', 'terminal-matcher', '', ?)`,
-      args: [randomUUID(), subject.id, now],
-    })
-  }
+  if (existing.rows.length > 0) return
+
+  // Consult the lever. createCard() returns null when the lever is 'off' —
+  // that is the mute signal; no row is inserted.
+  const card = createCard({
+    producer_key: TERMINAL_MATCHER_SUBSCRIBER,
+    autonomy_level: getLever(TERMINAL_MATCHER_SUBSCRIBER),
+    body: '',
+  })
+  if (card === null) return
+
+  await client.execute({
+    sql: `INSERT INTO cards (id, kind, subject_id, autonomy_level, producer_key, body, created_at)
+          VALUES (?, 'closure', ?, ?, ?, ?, ?)`,
+    args: [card.id, subject.id, card.autonomy_level, card.producer_key, card.body, card.created_at],
+  })
 }
 
 /**

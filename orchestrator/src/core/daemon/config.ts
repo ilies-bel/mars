@@ -444,18 +444,23 @@ export const persistAutotuneMaxImplement = (n: number | null): void => {
 }
 
 /**
- * Read the autonomy_level for `name` from daemon.json's `levers` map.
- * Returns `'ask'` when the lever is absent. A persisted invalid or retired
- * value is rejected explicitly so an operator's autonomy choice is never
- * silently changed to the default.
+ * Read the autonomy_level for `name` from daemon.json's `producerLevers` map.
+ * Returns the default level when the lever is absent. A persisted invalid or
+ * retired value is rejected explicitly so an operator's autonomy choice is
+ * never silently changed to the default.
+ *
+ * Migration: falls back to the legacy `levers` key when `producerLevers` is
+ * absent, so existing daemon.json files continue to work until the key is
+ * rewritten by `persistLeverAutonomyLevel`.
  */
 export const readLeverAutonomyLevel = (name: string): AutonomyLevel => {
   const raw = readDaemonConfigFile()
-  const levers = raw.levers
-  if (levers === null || typeof levers !== 'object' || Array.isArray(levers)) {
+  // Prefer `producerLevers`; fall back to the legacy `levers` key.
+  const leversRaw = raw.producerLevers ?? raw.levers
+  if (leversRaw === null || typeof leversRaw !== 'object' || Array.isArray(leversRaw)) {
     return defaultLevelFor(name)
   }
-  const leverData = (levers as Record<string, unknown>)[name]
+  const leverData = (leversRaw as Record<string, unknown>)[name]
   if (leverData === null || typeof leverData !== 'object' || Array.isArray(leverData)) {
     return defaultLevelFor(name)
   }
@@ -463,13 +468,13 @@ export const readLeverAutonomyLevel = (name: string): AutonomyLevel => {
   if (autonomyLevel !== undefined && !AUTONOMY_LEVELS.includes(autonomyLevel as AutonomyLevel)) {
     const kind = autonomyLevel === 'silent' ? 'retired' : 'invalid'
     throw new Error(
-      `daemon.json lever '${name}' has ${kind} autonomy level '${String(autonomyLevel)}'; valid levels are 'off', 'ask', or 'tell'`,
+      `daemon.json producerLevers '${name}' has ${kind} autonomy level '${String(autonomyLevel)}'; valid levels are 'off', 'ask', or 'tell'`,
     )
   }
   const parsed = leverSchema.safeParse(leverData)
   if (!parsed.success) {
     throw new Error(
-      `daemon.json lever '${name}' is invalid; autonomy must be 'off', 'ask', or 'tell'`,
+      `daemon.json producerLevers '${name}' is invalid; autonomy must be 'off', 'ask', or 'tell'`,
     )
   }
   return parsed.data.autonomy_level
@@ -507,26 +512,40 @@ export const persistWorkerPromptOverride = (
 }
 
 /**
- * Persist an autonomy_level for `name` into daemon.json's `levers` map.
+ * Persist an autonomy_level for `name` into daemon.json's `producerLevers` map.
  * Merge-patches so other lever fields and top-level keys are preserved.
+ *
+ * Always writes to `producerLevers` (the canonical key). Existing entries in
+ * the legacy `levers` key are merged in on first write so no data is lost
+ * during the migration.
  */
 export const persistLeverAutonomyLevel = (name: string, level: AutonomyLevel): void => {
   const current = readDaemonConfigFile()
-  const existingLevers =
+  // Merge legacy `levers` entries into `producerLevers` on first write.
+  const legacyLevers =
     current.levers !== null &&
     typeof current.levers === 'object' &&
     !Array.isArray(current.levers)
       ? (current.levers as Record<string, unknown>)
       : {}
+  const existingLevers =
+    current.producerLevers !== null &&
+    typeof current.producerLevers === 'object' &&
+    !Array.isArray(current.producerLevers)
+      ? (current.producerLevers as Record<string, unknown>)
+      : legacyLevers
   const existingLever =
     existingLevers[name] !== null &&
     typeof existingLevers[name] === 'object' &&
     !Array.isArray(existingLevers[name])
       ? (existingLevers[name] as Record<string, unknown>)
       : {}
-  patchDaemonConfigFile({
-    levers: { ...existingLevers, [name]: { ...existingLever, autonomy_level: level } },
-  })
+  const patch: Record<string, unknown> = {
+    producerLevers: { ...existingLevers, [name]: { ...existingLever, autonomy_level: level } },
+  }
+  // Remove the legacy key when migrating; null removes the top-level key.
+  if (current.levers !== undefined) patch.levers = null
+  patchDaemonConfigFile(patch)
 }
 
 /**

@@ -14,11 +14,14 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { openDb, type DbClient } from '../lib/db.js'
 import type { BusEvent } from '../../bus/events.js'
-import { ensureTerminalMatcher, matchTerminal, drainTerminalMatcher, raiseClosureCard } from './terminalMatcher.js'
+import { ensureTerminalMatcher, matchTerminal, drainTerminalMatcher, raiseClosureCard, TERMINAL_MATCHER_SUBSCRIBER } from './terminalMatcher.js'
+import { setLever } from '../levers/store.js'
+import { __resetContextCacheForTests } from '../context.js'
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -246,9 +249,43 @@ describe('terminalMatcher', () => {
       })
       expect(cardResult.rows).toHaveLength(1)
     })
+
+    it('inserts zero cards when the terminal-matcher lever is set to off', async () => {
+      // Set up a temporary repo dir so the lever config is isolated per-test.
+      const tmpDir = mkdtempSync(join(tmpdir(), 'mars-tm-lever-test-'))
+      mkdirSync(join(tmpDir, '.mars'), { recursive: true })
+      process.env.MARS_REPO = tmpDir
+      __resetContextCacheForTests()
+
+      try {
+        setLever(TERMINAL_MATCHER_SUBSCRIBER, 'off')
+
+        const subjectId = await insertSubject(client, {
+          terminalEventType: 'task.terminal',
+          terminalEntityId: null,
+        })
+        const subject = {
+          id: subjectId,
+          terminal_event_type: 'task.terminal',
+          terminal_entity_id: null,
+        }
+
+        await raiseClosureCard(client, subject)
+
+        const cardResult = await client.execute({
+          sql: `SELECT id FROM cards WHERE kind = 'closure' AND subject_id = ?`,
+          args: [subjectId],
+        })
+        expect(cardResult.rows).toHaveLength(0)
+      } finally {
+        delete process.env.MARS_REPO
+        __resetContextCacheForTests()
+        rmSync(tmpDir, { recursive: true, force: true })
+      }
+    })
   })
 
-  // ── Architecture guard ───────────────────────────────────────────────────────
+  // ── Architecture guards ──────────────────────────────────────────────────────
 
   it('terminalMatcher.ts does not auto-close Subjects (no closed_at assignment)', () => {
     const src = readFileSync(
@@ -259,5 +296,17 @@ describe('terminalMatcher', () => {
     // the operator accepts the Closure card.
     expect(src).not.toMatch(/closed_at\s*=/)
     expect(src).not.toContain('closeSubthread')
+  })
+
+  it('terminalMatcher.ts does not hardcode producer_key or autonomy_level at an INSERT site', () => {
+    const src = readFileSync(
+      resolve(process.cwd(), 'src/core/subject/terminalMatcher.ts'),
+      'utf8',
+    )
+    // The INSERT must use variables from createCard(), not string literals.
+    // This guards against the regression where 'terminal-matcher' and 'tell'
+    // were hardcoded directly in the SQL.
+    expect(src).not.toMatch(/INSERT INTO cards[\s\S]*?'terminal-matcher'/)
+    expect(src).not.toMatch(/INSERT INTO cards[\s\S]*?'tell'/)
   })
 })

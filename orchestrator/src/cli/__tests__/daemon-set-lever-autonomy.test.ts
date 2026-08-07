@@ -33,6 +33,7 @@ vi.mock('../../core/daemon/paths', () => ({
 }))
 
 vi.mock('../../core/daemon/config', () => ({
+  AUTONOMY_LEVELS: ['off', 'ask', 'tell'] as const,
   readDaemonConfigFile: vi.fn(),
   patchDaemonConfigFile: vi.fn(),
   persistLeverAutonomyLevel: vi.fn(),
@@ -79,41 +80,53 @@ describe('daemon set-lever autonomy', () => {
     persistM.mockReturnValue(undefined)
   })
 
-  it('persists autonomy=tell for a named lever', async () => {
+  it('persists autonomy=tell for a known lever', async () => {
     const result = await runCommandInProcess(
-      ['daemon', 'set-lever', 'recovery', 'autonomy', 'tell'],
+      ['daemon', 'set-lever', 'terminal-matcher', 'autonomy', 'tell'],
       makeOpts(),
     )
 
     expect(result.code).toBe(0)
-    expect(persistM).toHaveBeenCalledWith('recovery', 'tell')
-    expect(result.out.join('\n')).toContain('lever recovery autonomy=tell')
+    expect(persistM).toHaveBeenCalledWith('terminal-matcher', 'tell')
+    expect(result.out.join('\n')).toContain('lever terminal-matcher autonomy=tell')
   })
 
-  it('persists autonomy=off for a named lever', async () => {
+  it('persists autonomy=off for a known lever', async () => {
     const result = await runCommandInProcess(
-      ['daemon', 'set-lever', 'chat', 'autonomy', 'off'],
+      ['daemon', 'set-lever', 'terminal-matcher', 'autonomy', 'off'],
       makeOpts(),
     )
 
     expect(result.code).toBe(0)
-    expect(persistM).toHaveBeenCalledWith('chat', 'off')
-    expect(result.out.join('\n')).toContain('lever chat autonomy=off')
+    expect(persistM).toHaveBeenCalledWith('terminal-matcher', 'off')
+    expect(result.out.join('\n')).toContain('lever terminal-matcher autonomy=off')
   })
 
-  it('persists autonomy=ask for a named lever', async () => {
+  it('persists autonomy=ask for a known lever', async () => {
     const result = await runCommandInProcess(
-      ['daemon', 'set-lever', 'scoring', 'autonomy', 'ask'],
+      ['daemon', 'set-lever', 'terminal-matcher', 'autonomy', 'ask'],
       makeOpts(),
     )
 
     expect(result.code).toBe(0)
-    expect(persistM).toHaveBeenCalledWith('scoring', 'ask')
+    expect(persistM).toHaveBeenCalledWith('terminal-matcher', 'ask')
+  })
+
+  it('rejects an unknown lever name with non-zero exit and lists valid keys', async () => {
+    const result = await runCommandInProcess(
+      ['daemon', 'set-lever', 'bogus-lever', 'autonomy', 'tell'],
+      makeOpts(),
+    )
+
+    expect(result.code).toBe(2)
+    expect(result.err.join('\n')).toContain("unknown lever 'bogus-lever'")
+    expect(result.err.join('\n')).toContain('terminal-matcher')
+    expect(persistM).not.toHaveBeenCalled()
   })
 
   it('rejects the retired silent autonomy value with the valid set', async () => {
     const result = await runCommandInProcess(
-      ['daemon', 'set-lever', 'recovery', 'autonomy', 'silent'],
+      ['daemon', 'set-lever', 'terminal-matcher', 'autonomy', 'silent'],
       makeOpts(),
     )
 
@@ -124,7 +137,7 @@ describe('daemon set-lever autonomy', () => {
 
   it('rejects missing arguments with code 2 and usage hint', async () => {
     const result = await runCommandInProcess(
-      ['daemon', 'set-lever', 'recovery'],
+      ['daemon', 'set-lever', 'terminal-matcher'],
       makeOpts(),
     )
 
@@ -135,7 +148,7 @@ describe('daemon set-lever autonomy', () => {
 
   it('rejects wrong property name with code 2', async () => {
     const result = await runCommandInProcess(
-      ['daemon', 'set-lever', 'recovery', 'enabled', 'on'],
+      ['daemon', 'set-lever', 'terminal-matcher', 'enabled', 'on'],
       makeOpts(),
     )
 

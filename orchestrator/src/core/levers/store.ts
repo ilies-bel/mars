@@ -19,6 +19,37 @@ import {
 export type { AutonomyLevel }
 export { AUTONOMY_LEVELS }
 
+// ── Producer key registry ─────────────────────────────────────────────────────
+
+/**
+ * Specification for a card-producer lever.
+ *
+ * Only keys listed here can be set via `mars daemon set-lever`. The default
+ * autonomy level is `'ask'` unless an entry overrides it.
+ */
+export interface ProducerLeverSpec {
+  /** The producer key used as `producer_key` on Card rows and in daemon.json. */
+  key: string
+  /**
+   * The autonomy level applied when no explicit value has been persisted.
+   * Matches the value returned by `getLever(key)` on a fresh installation.
+   */
+  defaultAutonomyLevel: AutonomyLevel
+}
+
+/**
+ * Registry of every known card-producer key.
+ *
+ * Extend this array when a new subscriber is capable of raising Cards.
+ * `mars daemon set-lever` validates against this list and rejects unknown keys.
+ */
+export const PRODUCER_LEVER_SPECS: readonly ProducerLeverSpec[] = [
+  { key: 'terminal-matcher', defaultAutonomyLevel: 'ask' },
+] as const
+
+/** Ordered list of known producer keys, derived from PRODUCER_LEVER_SPECS. */
+export const KNOWN_PRODUCER_KEYS: readonly string[] = PRODUCER_LEVER_SPECS.map((s) => s.key)
+
 // ── Card type ────────────────────────────────────────────────────────────────
 
 /**
