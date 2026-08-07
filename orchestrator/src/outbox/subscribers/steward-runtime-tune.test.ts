@@ -6,6 +6,7 @@ import {
   decideCapHold,
   IDLE_FLOOR_PERCENT,
   MARS_SHARE_CEILING_PERCENT,
+  PROC_PER_CORE_CEIL,
 } from './steward-runtime-tune.js'
 import type { OrphanSweepSummary } from '../../core/lib/orphan-reaper.js'
 import type { MachinePressure } from '../../core/lib/machine-pressure.js'
@@ -18,14 +19,19 @@ const summary = (reaped: number): OrphanSweepSummary => ({
   details: [],
 })
 
-/** A 10-core box. `idle` and `marsShare` are the only knobs a test needs. */
-const pressure = (idlePercent: number, marsSharePercent = 5): MachinePressure => ({
+/**
+ * A 10-core box.
+ * - `idle` and `marsShare` are the primary CPU knobs.
+ * - `marsProcessCount` controls process-density; default 4 keeps it well
+ *   below the `PROC_PER_CORE_CEIL` ceiling (0.4 per core on 10 cores).
+ */
+const pressure = (idlePercent: number, marsSharePercent = 5, marsProcessCount = 4): MachinePressure => ({
   cores: 10,
   idlePercent,
   marsCores: (marsSharePercent / 100) * 10,
   marsSharePercent,
   foreignBusyPercent: Math.max(0, 100 - idlePercent - marsSharePercent),
-  marsProcessCount: 4,
+  marsProcessCount,
   sampleMs: 1_000,
 })
 
@@ -64,6 +70,12 @@ describe('steward-runtime-tune', () => {
       readConfiguredImplementCap?: () => number
       /** Simulates the steward.autotune-max-implement ceiling lever. */
       readAutotuneMaxImplement?: () => number | null
+      /**
+       * Mars process count used by the sample-loop's process-oversubscription
+       * check.  Default: 4 processes on 10 cores = 0.4/core — well below the
+       * `PROC_PER_CORE_CEIL` ceiling so existing tests are unaffected.
+       */
+      marsProcessCount?: number
     } = {},
   ) => {
     const bus = new EventEmitter()
@@ -87,6 +99,8 @@ describe('steward-runtime-tune', () => {
     const recordLedger = vi.fn().mockResolvedValue('ledger-1')
     const readAutonomyLevel =
       overrides.readAutonomyLevel ?? vi.fn(() => overrides.autonomyLevel ?? 'tell')
+    const procCount = overrides.marsProcessCount ?? 4
+    const readProcessDensity = vi.fn(async () => ({ marsProcessCount: procCount, cores: 10 }))
     const stop = startStewardRuntimeTune({
       bus,
       implementSem,
@@ -103,6 +117,7 @@ describe('steward-runtime-tune', () => {
       recordLedger,
       readConfiguredImplementCap: overrides.readConfiguredImplementCap,
       readAutotuneMaxImplement: overrides.readAutotuneMaxImplement,
+      readProcessDensity,
     })
     disposers.push(stop)
     return {
@@ -117,6 +132,7 @@ describe('steward-runtime-tune', () => {
       readPagingCounter,
       readAutonomyLevel,
       recordLedger,
+      readProcessDensity,
     }
   }
 
@@ -404,6 +420,7 @@ describe('steward-runtime-tune', () => {
       runOrphanSweep: () => Promise.reject(new Error('pgrep exploded')),
       readPressure: () => Promise.resolve(pressure(1, 40)),
       readPagingCounter: async () => 0,
+      readProcessDensity: async () => ({ marsProcessCount: 4, cores: 10 }),
     })
     disposers.push(stop)
 
@@ -500,6 +517,7 @@ describe('steward-runtime-tune', () => {
       postConversationNotice: ackSpy(),
       readPressure: () => Promise.resolve(pressure(60)),
       readPagingCounter: async () => null,
+      readProcessDensity: async () => ({ marsProcessCount: 4, cores: 10 }),
     })
     disposers.push(stop)
 
@@ -661,6 +679,7 @@ describe('steward-runtime-tune', () => {
       postConversationNotice: ackSpy(),
       readPressure: () => Promise.resolve(pressure(60)),
       readPagingCounter,
+      readProcessDensity: async () => ({ marsProcessCount: 4, cores: 10 }),
     })
 
     // The immediate start-up sample already ran; what the disposer must stop
@@ -673,6 +692,73 @@ describe('steward-runtime-tune', () => {
     await vi.advanceTimersByTimeAsync(15_000 * 3)
 
     expect(readPagingCounter.mock.calls.length).toBe(callsBeforeStop)
+  })
+
+  // ── process oversubscription guard ───────────────────────────────────────
+  //
+  // Too many processes per core is the mechanism that caused 56 vitest processes
+  // on a 10-core box when implement_cap=3.  The autotuner must hold the bump
+  // lane and actively shed when process density exceeds the ceiling.
+
+  it('does not raise a cap when proc-per-core exceeds the ceiling, even with idle CPU and backlog', async () => {
+    // 90 processes on 10 cores = 9 per core > default PROC_PER_CORE_CEIL (8).
+    // CPU is comfortable (60% idle) so without this guard the bump lane would fire.
+    const { bus, implementSem, log } = setup(12, {
+      pressures: pressure(60, 5, 90),
+    })
+
+    bus.emit('kpi.backlog.degraded', { pending: 50, cap: 12, sustainedMs: 60_000 })
+    await vi.waitFor(() => expect(log).toHaveBeenCalled())
+
+    expect(implementSem.limit).toBe(12)
+    // The hold log must quote the process density so the reason is explainable.
+    const lines = log.mock.calls.map((c) => String(c[0])).join('\n')
+    expect(lines).toContain('processes on')
+    expect(lines).toContain('/core')
+  })
+
+  it('lowers the cap under sustained process oversubscription during sampling', async () => {
+    vi.useFakeTimers()
+    // 90 processes on 10 cores = 9 per core > default PROC_PER_CORE_CEIL (8).
+    // Unlike paging, process density is not a rate — the shed fires on the FIRST
+    // sample, not after two consecutive readings.
+    const { implementSem, log } = setup(12, {
+      marsProcessCount: 90,
+    })
+
+    // Let the startup sample run (fire-and-forget — all mocks resolve immediately).
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(implementSem.limit).toBe(8) // floor(12 * 0.67)
+    expect(log.mock.calls.flat().join(' ')).toContain('shed implement cap')
+    expect(log.mock.calls.flat().join(' ')).toContain('processes on')
+  })
+
+  it('does not shed on process count when density is below the ceiling', async () => {
+    vi.useFakeTimers()
+    // 4 processes on 10 cores = 0.4 per core — well below the ceiling.
+    const { implementSem } = setup(12, { marsProcessCount: 4 })
+
+    await vi.advanceTimersByTimeAsync(15_000 * 4)
+
+    expect(implementSem.limit).toBe(12)
+  })
+
+  it('does not recover the cap while process density is above the ceiling', async () => {
+    vi.useFakeTimers()
+    // Start below baseline (simulates prior shed), but process count is high.
+    // The recover lane must be blocked while oversubscribed.
+    const { implementSem } = setup(1, {
+      baselineCap: 4,
+      marsProcessCount: 90,  // 9 per core
+    })
+
+    await vi.advanceTimersByTimeAsync(0) // start-up sample
+    // If the recover lane incorrectly runs, it would climb above 1.
+    await vi.advanceTimersByTimeAsync(15_000 * 4)
+
+    // The shed would keep it at 1; crucially it must not climb.
+    expect(implementSem.limit).toBeLessThanOrEqual(1)
   })
 
   // ── recover lane ──────────────────────────────────────────────────────────
@@ -741,6 +827,7 @@ describe('steward-runtime-tune', () => {
         lastMs = now
         return Math.round(counter)
       },
+      readProcessDensity: async () => ({ marsProcessCount: 4, cores: 10 }),
     })
     disposers.push(stop)
 
@@ -803,5 +890,39 @@ describe('decideCapHold', () => {
         0,
       )
     }
+  })
+
+  // ── process-oversubscription guard ──────────────────────────────────────────
+
+  it('holds when proc-per-core exceeds the ceiling, even with idle CPU and low Mars share', () => {
+    // 90 processes on 10 cores = 9 per core > ceiling 8.
+    // CPU is comfortable so the existing idle/share guards would not fire.
+    const d = decideCapHold({
+      pressure: pressure(60, 5, 90),
+      ...thresholds,
+      procPerCoreCeil: PROC_PER_CORE_CEIL,
+    })
+    expect(d.hold).toBe(true)
+    expect(d.reason).toBe('proc-oversubscribed')
+    expect(d.explanation).toContain('processes on')
+    expect(d.explanation).toContain('/core')
+  })
+
+  it('raises when proc-per-core is exactly at the ceiling (not strictly above)', () => {
+    // 80 processes on 10 cores = 8.0 per core = ceiling → not above → capacity available.
+    const d = decideCapHold({
+      pressure: pressure(60, 5, 80),
+      ...thresholds,
+      procPerCoreCeil: PROC_PER_CORE_CEIL,
+    })
+    expect(d.hold).toBe(false)
+    expect(d.reason).toBe('capacity-available')
+  })
+
+  it('idle-floor guard wins over proc ceiling (lowest idle is most severe)', () => {
+    // Both would fire, but idle-floor is checked first.
+    expect(
+      decideCapHold({ pressure: pressure(1, 5, 90), ...thresholds, procPerCoreCeil: 8 }).reason,
+    ).toBe('machine-saturated')
   })
 })

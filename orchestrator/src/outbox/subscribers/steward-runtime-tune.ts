@@ -12,6 +12,7 @@ import {
 } from '../../core/lib/orphan-reaper.js'
 import {
   formatPressure,
+  readProcessDensity as defaultReadProcessDensity,
   samplePressure,
   type MachinePressure,
 } from '../../core/lib/machine-pressure.js'
@@ -186,6 +187,19 @@ export interface StewardRuntimeTuneDeps {
    * test. Return `null` when the figure cannot be determined.
    */
   readPagingCounter?: () => Promise<number | null>
+  /**
+   * Override for testing — returns the Mars process-tree size and logical core
+   * count used by the sample-loop's process-oversubscription shed check.
+   *
+   * Separated from `readPressure` so the sample loop can check process density
+   * without a 1-second CPU sampling window, and without consuming readings from
+   * the bump lane's pressure queue. Defaults to a single `ps` call via
+   * `readProcessDensity` from `core/lib/machine-pressure`.
+   *
+   * Must be injected in tests: the default shells out to `ps`, which has
+   * no place in a unit test.
+   */
+  readProcessDensity?: () => Promise<{ marsProcessCount: number; cores: number }>
 }
 
 const BUMP_FACTOR = 1.33
@@ -206,6 +220,19 @@ export const IDLE_FLOOR_PERCENT = Number(process.env.MARS_TUNE_IDLE_FLOOR_PCT ??
 export const MARS_SHARE_CEILING_PERCENT = Number(
   process.env.MARS_TUNE_SELF_SHARE_CEILING_PCT ?? 85,
 )
+
+/**
+ * Ceiling on the number of Mars processes per logical CPU core. Above this,
+ * context-switching overhead and memory contention (notably from concurrent
+ * vitest worker pools) dominate, and admitting more implement workers only
+ * makes things worse.
+ *
+ * Rationale: with implement_cap=3 and 3 verify gates each launching 10 vitest
+ * workers on a 10-core box, that is `3 × 3 × 10 = 90` processes — 9 per core.
+ * The bump lane held and the sample loop sheds once this ceiling is crossed,
+ * breaking the quadratic oversubscription loop before it fully develops.
+ */
+export const PROC_PER_CORE_CEIL = Number(process.env.MARS_TUNE_PROC_PER_CORE_CEIL ?? 8)
 
 /**
  * Pages swapped per second above which the host counts as actively paging.
@@ -232,7 +259,7 @@ const MIN_CAP = 1
 
 export interface CapHoldDecision {
   hold: boolean
-  reason: 'capacity-available' | 'machine-saturated' | 'mars-saturated' | 'host-paging'
+  reason: 'capacity-available' | 'machine-saturated' | 'mars-saturated' | 'host-paging' | 'proc-oversubscribed'
   /** Operator-facing justification, including the numbers behind it. */
   explanation: string
 }
@@ -244,7 +271,10 @@ export interface CapHoldDecision {
  *
  * 1. idle below the floor → hold. The box really has no capacity left.
  * 2. Mars's own share above the ceiling → hold. More workers will not help.
- * 3. otherwise → raise, EVEN IF the system load average is enormous. Load
+ * 3. proc-per-core above the ceiling → hold. More workers cause quadratic
+ *    oversubscription via vitest worker pools (each verify run spawns ~cores
+ *    workers). This is checked only when `procPerCoreCeil` is supplied.
+ * 4. otherwise → raise, EVEN IF the system load average is enormous. Load
  *    average is not consulted anywhere: on the profiled machine it was ~275
  *    while 19 % of the CPU sat idle, because it counts blocked threads from a
  *    filesystem-event storm that Mars neither caused nor can fix.
@@ -257,6 +287,8 @@ export const decideCapHold = (input: {
   pressure: MachinePressure
   idleFloorPercent: number
   marsShareCeilingPercent: number
+  /** When supplied, holds if `marsProcessCount / cores > procPerCoreCeil`. */
+  procPerCoreCeil?: number
 }): CapHoldDecision => {
   const { pressure: p } = input
   if (p.idlePercent < input.idleFloorPercent) {
@@ -271,6 +303,20 @@ export const decideCapHold = (input: {
       hold: true,
       reason: 'mars-saturated',
       explanation: `mars already uses ${p.marsSharePercent.toFixed(1)}% of the machine (ceiling ${input.marsShareCeilingPercent}%)`,
+    }
+  }
+  if (
+    input.procPerCoreCeil !== undefined &&
+    p.cores > 0 &&
+    p.marsProcessCount / p.cores > input.procPerCoreCeil
+  ) {
+    const density = (p.marsProcessCount / p.cores).toFixed(1)
+    return {
+      hold: true,
+      reason: 'proc-oversubscribed',
+      explanation:
+        `${p.marsProcessCount} processes on ${p.cores} cores (${density}/core) ` +
+        `exceeds the ${input.procPerCoreCeil} ceiling`,
     }
   }
   return {
@@ -318,6 +364,7 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
   const { bus, implementSem, baselineCap, log } = deps
   const readPressure = deps.readPressure ?? ((): Promise<MachinePressure> => samplePressure())
   const readPagingCounter = deps.readPagingCounter ?? defaultReadPagingCounter
+  const getProcessDensity = deps.readProcessDensity ?? defaultReadProcessDensity
   const recordCapDecision = deps.recordCapDecision ?? ((): void => {})
   const readAutonomyLevel =
     deps.readAutonomyLevel ?? ((): AutonomyLevel => readLeverAutonomyLevel(STEWARD_RUNTIME_TUNE_LEVER))
@@ -445,6 +492,11 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
    * host is the wrong place to admit more memory-heavy workers however much
    * idle CPU it reports, and unlike CPU the memory pressure is Mars's own
    * verify suites doing it.
+   *
+   * Process-density is checked here too so the bump lane never raises the cap
+   * into an already-oversubscribed process landscape. Combined with the shed
+   * lane in `sample()`, this breaks the quadratic `cap × gates × workers`
+   * feedback loop.
    */
   const verdictFor = (pressure: MachinePressure): CapHoldDecision => {
     if (pagingPps >= PAGING_ACTIVE_PPS) {
@@ -458,6 +510,7 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
       pressure,
       idleFloorPercent: IDLE_FLOOR_PERCENT,
       marsShareCeilingPercent: MARS_SHARE_CEILING_PERCENT,
+      procPerCoreCeil: PROC_PER_CORE_CEIL,
     })
   }
 
@@ -533,7 +586,7 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
     if (!mayTune()) return
     const oldCap = implementSem.limit
 
-    // ── shed ──────────────────────────────────────────────────────────────
+    // ── paging shed ───────────────────────────────────────────────────────
     if (pagingPps >= PAGING_SHED_TRIGGER) {
       if (oldCap <= MIN_CAP) return
 
@@ -547,6 +600,44 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
       await ledger('shed', oldCap, newCap, detail)
       // Steward runtime-tuning events are log-only — see bump lane above.
       return
+    }
+
+    // ── process-oversubscription check ────────────────────────────────────
+    // Check process density once per sample interval. Reading it here (rather
+    // than sharing state with the bump lane) gives a fresh count independent of
+    // when `kpi.backlog.degraded` last fired, and keeps the bump lane's
+    // pressure-queue ordering intact for tests.
+    //
+    // A host with too many processes per core cannot benefit from more workers:
+    // verify suites each spawn ~cores vitest workers, so the total process count
+    // grows as `cap × gates × ncpu`. This check breaks that quadratic loop by
+    // shedding the cap when oversubscription is detected and blocking recovery
+    // until density falls back below the ceiling.
+    let procPerCore = 0
+    try {
+      const { marsProcessCount, cores } = await getProcessDensity()
+      procPerCore = cores > 0 ? marsProcessCount / cores : 0
+      if (procPerCore > PROC_PER_CORE_CEIL) {
+        if (oldCap > MIN_CAP) {
+          const newCap = Math.max(MIN_CAP, Math.floor(oldCap * SHED_FACTOR))
+          if (newCap !== oldCap) {
+            setSemLimit(implementSem, newCap)
+            const detail =
+              `${marsProcessCount} processes on ${cores} cores ` +
+              `(${procPerCore.toFixed(1)}/core) exceeds ${PROC_PER_CORE_CEIL} ceiling`
+            log(`[steward-tune] shed implement cap ${oldCap} → ${newCap} (${detail})`)
+            recordCapDecision(`steward autotune shed implement ${oldCap} → ${newCap} (${detail})`)
+            await ledger('shed-proc', oldCap, newCap, detail)
+          }
+        }
+        // Block recover while oversubscribed: the cap just went down to reduce
+        // process count; let it stabilise before climbing back.
+        return
+      }
+    } catch (err) {
+      // A failing density read must not disable the recover lane. Treat it as
+      // zero pressure — the permissive direction.
+      log(`[steward-tune] process-density read failed (non-fatal): ${(err as Error).message}`)
     }
 
     // ── recover ───────────────────────────────────────────────────────────

@@ -157,6 +157,36 @@ describe('signature-storm-monitor — unit', () => {
     expect(r2.tripped).toBe(false)
   })
 
+  it('verify:killed/sigterm does not increment the storm streak', async () => {
+    // A verify child killed by SIGTERM is a resource-contention / watchdog
+    // event, not a test regression.  Under high host load multiple verify runs
+    // can be killed at the same time, which would otherwise look like a
+    // systemic failure and pause dispatch for what is a transient pressure
+    // problem.  The signature must be exempt from the streak counter entirely.
+    const { sm, client } = await loadModules(repo)
+
+    const r1 = await sm.recordFailureSignature(client, 'task-1', 'verify:killed/sigterm')
+    expect(r1.streak).toBe(0)
+    expect(r1.tripped).toBe(false)
+
+    // Multiple occurrences must not accumulate a streak.
+    const r2 = await sm.recordFailureSignature(client, 'task-2', 'verify:killed/sigterm')
+    expect(r2.streak).toBe(0)
+    expect(r2.tripped).toBe(false)
+
+    // A genuine failure after a SIGTERM kill starts at streak 1, not N.
+    const r3 = await sm.recordFailureSignature(client, 'task-3', 'verify:test/unclassified')
+    expect(r3.streak).toBe(1)
+  })
+
+  it('verify:killed/sigkill does not increment the storm streak', async () => {
+    const { sm, client } = await loadModules(repo)
+
+    const r = await sm.recordFailureSignature(client, 'task-1', 'verify:killed/sigkill')
+    expect(r.streak).toBe(0)
+    expect(r.tripped).toBe(false)
+  })
+
   it('resets streak to 1 when a different signature appears', async () => {
     const { sm, client } = await loadModules(repo)
 

@@ -224,6 +224,27 @@ export const samplePressure = async (
   }
 }
 
+/**
+ * Quick Mars-process-tree count — a single `ps` call with no CPU sampling
+ * window.  Used by the steward-tune shed lane to detect process oversubscription
+ * without incurring the full 1-second window of {@link samplePressure}.
+ *
+ * Never throws: on any failure it returns `{ marsProcessCount: 0, cores }`,
+ * which keeps the autotuner permissive rather than pinning the cap floor.
+ */
+export const readProcessDensity = async (
+  rootPid = process.pid,
+): Promise<{ marsProcessCount: number; cores: number }> => {
+  const cores = Math.max(1, cpus().length)
+  try {
+    const procs = await readProcTable()
+    const tree = collectTree(procs, rootPid)
+    return { marsProcessCount: tree.size, cores }
+  } catch {
+    return { marsProcessCount: 0, cores }
+  }
+}
+
 /** One-line rendering of a sample, for the `[steward-tune]` decision log. */
 export const formatPressure = (p: MachinePressure): string =>
   `${p.idlePercent.toFixed(1)}% idle; mars tree ${p.marsCores.toFixed(2)}/${p.cores} cores ` +

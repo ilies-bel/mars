@@ -809,20 +809,34 @@ export const isEnvironmentalSignature = (signature: string): boolean => {
 }
 
 /**
- * Returns true for operator-owned conditions that already raise their own
- * actionable alert and therefore must not pause all dispatch as a storm.
+ * Returns true for signatures that must never contribute to the signature-storm
+ * streak counter.  There are two distinct reasons a signature belongs here:
  *
- * `main-committer-still-dirty` is one dirty integration checkout observed by
- * several recovery tasks, not several independent task failures. The optional
- * error-class suffix is included because the failure-signature classifier
- * records this condition as `.../unclassified`.
+ *  1. **Operator-owned systemic conditions** — they already raise their own
+ *     actionable alert and pausing all dispatch adds nothing.
+ *     Examples: `orchestration:main-committer-still-dirty`,
+ *     `verify:poisoned-baseline`.
+ *
+ *  2. **Infrastructure kills under resource pressure** — a verify child killed
+ *     by SIGTERM or SIGKILL is an admission-control event (watchdog timeout,
+ *     host oversubscription), not a test regression.  Under high host load
+ *     multiple verify runs can be killed at the same time, which would
+ *     otherwise produce a streak of identical `verify:killed/sigterm` signatures
+ *     and pause dispatch for what is a transient pressure problem.
+ *     Example: `verify:killed/sigterm`, `verify:killed/sigkill`.
  */
 export const isSignatureStormExempt = (signature: string): boolean => {
+  // Operator-owned conditions — several tasks observing one systemic condition
+  // is not a streak of independent task failures, and each already raises its
+  // own actionable alert. Error-class suffix is optional: the classifier
+  // records these as `.../unclassified`.
   const prefix = signature.split('/', 1)[0]
-  return (
-    prefix === 'orchestration:main-committer-still-dirty' ||
-    prefix === 'verify:poisoned-baseline'
-  )
+  if (prefix === 'orchestration:main-committer-still-dirty') return true
+  if (prefix === 'verify:poisoned-baseline') return true
+  // Infrastructure kills — resource-pressure kills must not trip the storm
+  // breaker or cause the queue to pause as if it were a test regression.
+  if (signature === 'verify:killed/sigterm' || signature === 'verify:killed/sigkill') return true
+  return false
 }
 
 /**
