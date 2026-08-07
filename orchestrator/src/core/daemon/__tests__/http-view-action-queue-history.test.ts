@@ -321,6 +321,7 @@ describe('GET /view/action-queue/history via HTTP server', () => {
 
       runReflect: async () => ({ proposalsRaised: 0 }),
   enableAutoReflect: async () => {},
+  disableAutoReflect: async () => {},
   stepDone: async () => ({ next: null as string | null }),
   snoozeItem: async () => {},
       recipeCatalog,
@@ -392,6 +393,7 @@ describe('GET /view/action-queue/history via HTTP server', () => {
 
       runReflect: async () => ({ proposalsRaised: 0 }),
   enableAutoReflect: async () => {},
+  disableAutoReflect: async () => {},
   stepDone: async () => ({ next: null as string | null }),
   snoozeItem: async () => {},
       recipeCatalog,

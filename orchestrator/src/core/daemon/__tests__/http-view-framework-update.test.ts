@@ -40,6 +40,7 @@ const makeDeps = (
 
   runReflect: async () => ({ proposalsRaised: 0 }),
   enableAutoReflect: async () => {},
+  disableAutoReflect: async () => {},
   stepDone: async () => ({ next: null as string | null }),
   snoozeItem: async () => {},
   recipeCatalog: nullRecipeCatalog,

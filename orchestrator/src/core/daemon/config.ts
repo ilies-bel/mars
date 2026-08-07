@@ -267,6 +267,38 @@ export const persistSelfEvolveAutoEnqueue = (autoEnqueue: boolean): void => {
 }
 
 /**
+ * Persist a selfEvolve patch to daemon.json, merging into the existing block.
+ * Any fields not in `patch` are preserved. Used by `operator set` for
+ * selfEvolve knobs other than `autoEnqueue`.
+ */
+export const persistSelfEvolvePatch = (patch: Partial<SelfEvolveConfig>): void => {
+  const existing = readDaemonConfigFile()
+  const existingSe =
+    existing.selfEvolve !== null &&
+    typeof existing.selfEvolve === 'object' &&
+    !Array.isArray(existing.selfEvolve)
+      ? (existing.selfEvolve as Record<string, unknown>)
+      : {}
+  patchDaemonConfigFile({ selfEvolve: { ...existingSe, ...patch } })
+}
+
+/**
+ * Persist a scoring patch to daemon.json, merging into the existing block.
+ * Any fields not in `patch` are preserved. Used by `operator set` for
+ * scoring knobs.
+ */
+export const persistScoringPatch = (patch: Partial<ScoringConfig>): void => {
+  const existing = readDaemonConfigFile()
+  const existingSc =
+    existing.scoring !== null &&
+    typeof existing.scoring === 'object' &&
+    !Array.isArray(existing.scoring)
+      ? (existing.scoring as Record<string, unknown>)
+      : {}
+  patchDaemonConfigFile({ scoring: { ...existingSc, ...patch } })
+}
+
+/**
  * Persist the timestamp when reflection last ran to daemon.json.
  * Read back in `loadDaemonConfig().lastReflectRanAt` for operator status.
  */

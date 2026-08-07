@@ -407,4 +407,42 @@ describe('runSelfEvolveTrigger', () => {
     expect(proposals).toHaveLength(1)
     expect(proposals[0].title).toContain('failure_rate')
   })
+
+  // driftThresholdPct: prove the value changes what gets raised.
+  // With a threshold of 200% only a >200% drift fires; with 10% (default) a 50% drift fires.
+  it('respects driftThresholdPct — a drift below the threshold is not raised', async () => {
+    process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER = 'true'
+    // Set threshold to 200% so a 50% regression is below threshold
+    process.env.MARS_SELF_EVOLVE_DRIFT_THRESHOLD = '200'
+    const ctx = await loadContext(repo)
+
+    // prior: 0.10, current: 0.15 — +50% drift (lower-is-better regression)
+    await insertSnapshot(ctx.store, {
+      id: 'snap-prior',
+      takenAt: '2026-01-01T00:00:00Z',
+      failureRate: 0.10,
+    })
+    await insertSnapshot(ctx.store, {
+      id: 'snap-current',
+      takenAt: '2026-01-02T00:00:00Z',
+      failureRate: 0.15,
+    })
+
+    const result = await ctx.runSelfEvolveTrigger({ store: ctx.store })
+
+    // Below the 200% threshold — no proposal raised
+    expect(result.raised).toHaveLength(0)
+    const proposals = await ctx.listProposals({ source: 'reflection' })
+    expect(proposals).toHaveLength(0)
+
+    // Reset to a low threshold so the same drift IS raised
+    delete process.env.MARS_SELF_EVOLVE_DRIFT_THRESHOLD
+    vi.resetModules()
+    process.env.MARS_SELF_EVOLVE_DRIFT_THRESHOLD = '10'
+    const ctx2 = await loadContext(repo)
+
+    const result2 = await ctx2.runSelfEvolveTrigger({ store: ctx2.store })
+    // With threshold=10% the 50% drift is above threshold — one proposal raised
+    expect(result2.raised).toHaveLength(1)
+  })
 })

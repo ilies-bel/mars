@@ -62,7 +62,8 @@ describe('POST /chat/messages/:messageId/responses/:responseId', () => {
       diagnoseFailure: async () => ({ diagnosis: '' }), restartDaemon: async () => {},
       continueAllDaemonKilled: async () => ({ continued: [], degraded: [], skipped: [] }), isAcceptingWork: () => true, inFlightCount: () => 0,
       selfUpdate: async () => {}, runReflect: async () => ({ proposalsRaised: 0 }),
-      enableAutoReflect: async () => {}, stepDone: async () => ({ next: null as string | null }),
+      enableAutoReflect: async () => {},
+      disableAutoReflect: async () => {}, stepDone: async () => ({ next: null as string | null }),
       snoozeItem: async () => {}, recipeCatalog: nullRecipeCatalog, traceStore: nullTraceStore,
       appServices: stubAppServices(),
     })
@@ -108,7 +109,8 @@ describe('POST /chat/messages/:messageId/responses/:responseId', () => {
       diagnoseFailure: async () => ({ diagnosis: '' }), restartDaemon: async () => {},
       continueAllDaemonKilled: async () => ({ continued: [], degraded: [], skipped: [] }), isAcceptingWork: () => true, inFlightCount: () => 0,
       selfUpdate: async () => {}, runReflect: async () => ({ proposalsRaised: 0 }),
-      enableAutoReflect: async () => {}, stepDone: async () => ({ next: null as string | null }),
+      enableAutoReflect: async () => {},
+      disableAutoReflect: async () => {}, stepDone: async () => ({ next: null as string | null }),
       snoozeItem: async () => {}, recipeCatalog: nullRecipeCatalog, traceStore: nullTraceStore,
       appServices: stubAppServices({ openSubthread }),
     })

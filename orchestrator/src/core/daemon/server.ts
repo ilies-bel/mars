@@ -4993,6 +4993,12 @@ export const startDaemon = async (
       await closeReflectRecommendedRow()
       viewStreamHub.broadcast('action-queue')
     },
+    disableAutoReflect: async () => {
+      const { persistSelfEvolveAutoEnqueue } = await import('./config')
+      persistSelfEvolveAutoEnqueue(false)
+      log('[disable-auto-reflect] selfEvolve.autoEnqueue set to false in daemon.json')
+      viewStreamHub.broadcast('action-queue')
+    },
     isAcceptingWork: () => acceptingWork,
     inFlightCount: () => tracker.inFlightCount(),
     selfUpdate: async () => {

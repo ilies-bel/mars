@@ -46,7 +46,8 @@ const makeDeps = (): HttpServerDeps => ({
   diagnoseFailure: async () => ({ diagnosis: '' }), restartDaemon: async () => {},
   continueAllDaemonKilled: async () => ({ continued: [], degraded: [], skipped: [] }), isAcceptingWork: () => true, inFlightCount: () => 0,
   selfUpdate: async () => {}, runReflect: async () => ({ proposalsRaised: 0 }),
-  enableAutoReflect: async () => {}, stepDone: async () => ({ next: null }), snoozeItem: async () => {},
+  enableAutoReflect: async () => {},
+  disableAutoReflect: async () => {}, stepDone: async () => ({ next: null }), snoozeItem: async () => {},
   recipeCatalog, traceStore: nullTraceStore, appServices: stubAppServices(), chatRunner: stubChatRunner(),
 })
 

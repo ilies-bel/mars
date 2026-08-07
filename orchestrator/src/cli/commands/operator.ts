@@ -31,6 +31,9 @@ import type { Command } from '../command'
 import {
   loadDaemonConfig,
   persistPaused,
+  persistSelfEvolveAutoEnqueue,
+  persistSelfEvolvePatch,
+  persistScoringPatch,
   readPersistedPaused,
   writeControlLever,
 } from '../../core/daemon/config'
@@ -85,6 +88,11 @@ const operatorStatus: Command = {
     }
     deps.out(`memory-capture: ${levers.memoryCapture}`)
     deps.out(`auto-enqueue: ${cfg.selfEvolve.autoEnqueue ? 'on' : 'off'}`)
+    deps.out(`drift-threshold-pct: ${cfg.selfEvolve.driftThresholdPct}`)
+    deps.out(`task-confidence-threshold: ${cfg.selfEvolve.taskConfidenceThreshold}`)
+    deps.out(`scoring-auto-trigger: ${cfg.scoring.autoTrigger ? 'on' : 'off'}`)
+    deps.out(`scoring-low-trend-threshold: ${cfg.scoring.lowTrendThreshold}`)
+    deps.out(`scoring-low-trend-window: ${cfg.scoring.lowTrendWindow}`)
     deps.out(`auto-run-reflect: ${levers.autoRunReflect}`)
     // Reflection history and next-trigger summary.
     if (cfg.lastReflectRanAt) {
@@ -170,7 +178,8 @@ const operatorSet: Command = {
   path: 'operator set',
   summary: 'set a control lever and apply it immediately',
   usage:
-    'usage: mars operator set <dispatch|recovery|scoring|memory-capture|auto-run-reflect> <on|off>\n' +
+    'usage: mars operator set <dispatch|recovery|scoring|memory-capture|auto-run-reflect|auto-enqueue|scoring-auto-trigger> <on|off>\n' +
+    '       mars operator set <drift-threshold-pct|task-confidence-threshold|scoring-low-trend-threshold|scoring-low-trend-window> <n>\n' +
     '       mars operator set <budget-window|budget-window-tokens|budget-arc-tokens> <value>',
   run: async (args, deps) => {
     const positional = args.positional.filter((a) => !a.startsWith('--'))
@@ -196,15 +205,57 @@ const operatorSet: Command = {
         deps.out(`budget-arc-tokens: ${value}`)
         return { code: 0 }
       }
+      // ── selfEvolve numeric knobs ──────────────────────────────────────────
+      if (lever === 'drift-threshold-pct') {
+        const n = Number(value)
+        if (!Number.isFinite(n) || n <= 0) {
+          deps.err(`mars operator set: drift-threshold-pct must be a positive number; got '${value}'`)
+          return { code: 2 }
+        }
+        persistSelfEvolvePatch({ driftThresholdPct: n })
+        deps.out(`drift-threshold-pct: ${n}`)
+        return { code: 0 }
+      }
+      if (lever === 'task-confidence-threshold') {
+        const n = Number(value)
+        if (!Number.isFinite(n) || n < 0 || n > 1) {
+          deps.err(`mars operator set: task-confidence-threshold must be a number 0–1; got '${value}'`)
+          return { code: 2 }
+        }
+        persistSelfEvolvePatch({ taskConfidenceThreshold: n })
+        deps.out(`task-confidence-threshold: ${n}`)
+        return { code: 0 }
+      }
+      // ── scoring numeric knobs ─────────────────────────────────────────────
+      if (lever === 'scoring-low-trend-threshold') {
+        const n = Number(value)
+        if (!Number.isFinite(n) || n < 0 || n > 1) {
+          deps.err(`mars operator set: scoring-low-trend-threshold must be a number 0–1; got '${value}'`)
+          return { code: 2 }
+        }
+        persistScoringPatch({ lowTrendThreshold: n })
+        deps.out(`scoring-low-trend-threshold: ${n}`)
+        return { code: 0 }
+      }
+      if (lever === 'scoring-low-trend-window') {
+        const n = Number(value)
+        if (!Number.isInteger(n) || n < 1) {
+          deps.err(`mars operator set: scoring-low-trend-window must be a positive integer; got '${value}'`)
+          return { code: 2 }
+        }
+        persistScoringPatch({ lowTrendWindow: n })
+        deps.out(`scoring-low-trend-window: ${n}`)
+        return { code: 0 }
+      }
     } catch (err) {
       deps.err(`mars operator set: ${errorMessage(err)}`)
       return { code: 2 }
     }
-    const validLevers = ['dispatch', 'recovery', 'scoring', 'memory-capture', 'auto-run-reflect'] as const
+    const validLevers = ['dispatch', 'recovery', 'scoring', 'memory-capture', 'auto-run-reflect', 'auto-enqueue', 'scoring-auto-trigger'] as const
     type LeverName = (typeof validLevers)[number]
     if (!validLevers.includes(lever as LeverName)) {
       deps.err(
-        `mars operator set: unknown lever '${lever}'; valid levers: ${validLevers.join(', ')}`,
+        `mars operator set: unknown lever '${lever}'; valid levers: ${validLevers.join(', ')}, drift-threshold-pct, task-confidence-threshold, scoring-low-trend-threshold, scoring-low-trend-window, budget-window, budget-window-tokens, budget-arc-tokens`,
       )
       return { code: 2 }
     }
@@ -252,9 +303,20 @@ const operatorSet: Command = {
       }
       return { code: 0 }
     }
-    // `dispatch` returned above; the rest are control levers in the
-    // `controlLevers` map.
-    const leverName = lever as Exclude<LeverName, 'dispatch'>
+    // ── selfEvolve boolean knobs (not in controlLevers map) ──────────────────
+    if (lever === 'auto-enqueue') {
+      persistSelfEvolveAutoEnqueue(value === 'on')
+      deps.out(`auto-enqueue: ${value}`)
+      return { code: 0 }
+    }
+    if (lever === 'scoring-auto-trigger') {
+      persistScoringPatch({ autoTrigger: value === 'on' })
+      deps.out(`scoring-auto-trigger: ${value}`)
+      return { code: 0 }
+    }
+    // `dispatch`, `auto-enqueue`, and `scoring-auto-trigger` returned above;
+    // the rest are control levers in the `controlLevers` map.
+    const leverName = lever as Exclude<LeverName, 'dispatch' | 'auto-enqueue' | 'scoring-auto-trigger'>
     const configLeverName: keyof import('../../core/daemon/config').ControlLevers =
       leverName === 'memory-capture' ? 'memoryCapture'
       : leverName === 'auto-run-reflect' ? 'autoRunReflect'

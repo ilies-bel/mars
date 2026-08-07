@@ -523,6 +523,12 @@ export interface HttpServerDeps {
    */
   enableAutoReflect: () => Promise<void>
   /**
+   * Set selfEvolve.autoEnqueue=false in the daemon config (persisted to
+   * daemon.json). The reflect-recommended detector will re-raise its row
+   * on the next sweep if conditions are still met.
+   */
+  disableAutoReflect: () => Promise<void>
+  /**
    * Execute a daemon self-update: download the latest release binary, verify
    * sha256, atomically swap it for the current binary, and re-exec the daemon.
    * Throws {@link SelfUpdateError} on every non-happy path.
@@ -787,6 +793,7 @@ const handleEventsRequest = async (
  *   POST /actions/restart-daemon       → re-exec the daemon
  *   POST /actions/run-reflect          → run reflect flow + clear reflect-recommended row
  *   POST /actions/enable-auto-reflect  → set autoEnqueue=true + clear reflect-recommended row
+ *   POST /actions/disable-auto-reflect → set autoEnqueue=false (detector re-raises row on next sweep)
  *   POST /actions/land-work/:id        → merge ahead commits onto integration branch
  *
  * The server uses an OS-assigned port (port 0). Callers discover the port via
@@ -2967,6 +2974,17 @@ export const startHttpServer = async (
     if (req.url === '/actions/enable-auto-reflect') {
       deps
         .enableAutoReflect()
+        .then(() => sendJson(res, 200, { ok: true }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // POST /actions/disable-auto-reflect — persist selfEvolve.autoEnqueue=false
+    // to daemon.json. The reflect-recommended detector will re-raise its
+    // action-queue row on the next sweep if conditions are still met.
+    if (req.url === '/actions/disable-auto-reflect') {
+      deps
+        .disableAutoReflect()
         .then(() => sendJson(res, 200, { ok: true }))
         .catch((err: unknown) => sendError(res, err))
       return
