@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, extname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveUploadPath } from './chatUploadPath.ts'
@@ -38,6 +38,14 @@ interface CliArgs {
   /** When true the server is in development mode: Vite serves the frontend
    *  on its own port so this server must not serve any static files. */
   dev?: boolean
+  /**
+   * Root of the UI source tree (the directory containing `src/`, `index.html`,
+   * `package.json`, `vite.config.ts`). When provided, `startServer` compares
+   * the newest source mtime against `dist/index.html` mtime at startup and
+   * throws if the bundle is stale. When omitted the check is skipped — tests
+   * that do not care about staleness leave this unset.
+   */
+  srcDir?: string
 }
 
 /**
@@ -123,6 +131,34 @@ const jsonResponse = (status: number, body: unknown): Response =>
     },
   })
 
+/**
+ * Return the newest mtime (in ms) across all files under `dir`, recursively.
+ * Returns 0 when the directory is missing, empty, or unreadable.
+ */
+const maxMtimeMs = (dir: string): number => {
+  let max = 0
+  let entries: string[]
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return max
+  }
+  for (const name of entries) {
+    const full = join(dir, name)
+    try {
+      const st = statSync(full)
+      if (st.isDirectory()) {
+        max = Math.max(max, maxMtimeMs(full))
+      } else {
+        max = Math.max(max, st.mtimeMs)
+      }
+    } catch {
+      /* skip unreadable entries */
+    }
+  }
+  return max
+}
+
 const staticResponse = (root: string, urlPath: string): Response | null => {
   const safe = normalize(urlPath).replace(/^(\.\.[\\/])+/, '')
   const candidate = join(root, safe === '/' ? 'index.html' : safe)
@@ -174,6 +210,44 @@ export const startServer = async (
     ? undefined
     : resolve(dirname(fileURLToPath(import.meta.url)), '..', 'dist')
 
+  // Staleness guard — only runs when a srcDir was provided (production startup
+  // passes the UI root; tests that don't care omit srcDir to skip this).
+  if (distDir && args.srcDir) {
+    const srcDir = resolve(args.srcDir)
+    // Collect the newest mtime across tracked source files.
+    let newestSrc = maxMtimeMs(join(srcDir, 'src'))
+    for (const f of ['index.html', 'package.json', 'vite.config.ts']) {
+      try {
+        newestSrc = Math.max(newestSrc, statSync(join(srcDir, f)).mtimeMs)
+      } catch { /* file may not exist */ }
+    }
+    // Compare against dist/index.html which is the canonical build output.
+    let distBuiltAtMs = 0
+    try {
+      distBuiltAtMs = statSync(join(distDir, 'index.html')).mtimeMs
+    } catch { /* missing dist — handled by the not-built check above */ }
+
+    if (newestSrc > distBuiltAtMs) {
+      const srcDate = newestSrc > 0 ? new Date(newestSrc).toISOString() : 'unknown'
+      const distDate = distBuiltAtMs > 0 ? new Date(distBuiltAtMs).toISOString() : 'never built'
+      throw new Error(
+        `mars-ui: frontend bundle is stale — source is newer than the last build.\n` +
+        `  dist built: ${distDate}\n` +
+        `  src newest: ${srcDate}\n` +
+        `  Run \`npm --prefix <ui-dir> run build\` to rebuild, then retry.`,
+      )
+    }
+  }
+
+  // Bundle provenance — read once at startup so /healthz and the startup log
+  // both report the same build timestamp without re-statting on every request.
+  let bundleBuiltAt: string | null = null
+  if (distDir) {
+    try {
+      bundleBuiltAt = new Date(statSync(join(distDir, 'index.html')).mtimeMs).toISOString()
+    } catch { /* dist not present — the not-built check above will surface this */ }
+  }
+
   let server: Awaited<ReturnType<typeof Bun.serve>>
   try {
     server = await Bun.serve({
@@ -196,7 +270,14 @@ export const startServer = async (
       }
 
       if (path === '/healthz') {
-        return jsonResponse(200, { ok: true, repo: defaultCtx.repoRoot })
+        const healthBody: Record<string, unknown> = { ok: true, repo: defaultCtx.repoRoot }
+        if (args.dev) {
+          healthBody.servedFrom = 'vite-dev'
+        } else if (bundleBuiltAt !== null) {
+          healthBody.bundleBuiltAt = bundleBuiltAt
+          healthBody.servedFrom = 'dist'
+        }
+        return jsonResponse(200, healthBody)
       }
 
       // All API routes and the SSE endpoint need a per-project context.
@@ -1262,6 +1343,11 @@ export const startServer = async (
   console.log(`mars-ui  repo=${defaultCtx.repoRoot}`)
   console.log(`         db=${defaultCtx.queueDbPath}`)
   console.log(`         listening on ${url}`)
+  if (args.dev) {
+    console.log(`         serving via vite dev server`)
+  } else if (bundleBuiltAt) {
+    console.log(`         serving dist (built ${bundleBuiltAt})`)
+  }
   return server
 }
 
@@ -1303,6 +1389,8 @@ if (import.meta.main) {
       )
       process.exit(1)
     }
+    // Pass the UI root so startServer can detect a stale bundle at boot.
+    cliArgs.srcDir = resolve(serverDir, '..')
   }
   startServer(cliArgs).catch((err) => {
     console.error(err)

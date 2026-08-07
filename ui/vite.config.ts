@@ -25,6 +25,12 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     port: 5173,
+    // Fail immediately when the port is already in use (default strictPort:false
+    // silently switches to the next free port, which causes mars-ui to keep running
+    // on the wrong port while the frontend becomes unreachable). With strictPort:true,
+    // Vite exits non-zero so mars-ui.mjs propagates the error rather than silently
+    // falling back to the stale prebuilt dist bundle.
+    strictPort: true,
     proxy: {
       '/api': API,
       '/events': { target: API, changeOrigin: true },
