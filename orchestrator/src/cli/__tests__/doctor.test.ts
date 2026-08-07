@@ -569,7 +569,46 @@ describe('runDoctorChecks — config coherence (defaultProvider vs registry)', (
     const check = results.find((r) => r.label === 'config: provider')
     expect(check?.status).toBe('FAIL')
     expect(check?.message).toContain("defaultProvider='claude'")
-    expect(check?.message).toContain('mars operator set provider')
+    // The old gesture 'mars operator set provider' does not exist — must not appear.
+    expect(check?.message).not.toContain('mars operator set provider')
+  })
+
+  it('config coherence FAIL gesture comes from the lever registry, not a hardcoded string', async () => {
+    const probes = makeConfigProbes(
+      { defaultProvider: 'claude' },
+      { worker1: { provider: 'codex' } },
+    )
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'config: provider')
+    expect(check?.status).toBe('FAIL')
+
+    // Read the gesture from the lever registry — the same source doctor uses.
+    const { loadLeverRegistry } = await import('../../core/lib/lever-registry')
+    const providerLever = loadLeverRegistry().find((e) => e.id === 'provider.default')
+    expect(providerLever?.gesture).toBeDefined()
+
+    // The gesture base (prefix before the placeholder) must appear in the message.
+    // This ensures doctor reads from the registry rather than embedding a separate copy.
+    const gestureBase = (providerLever!.gesture as string).replace('<claude|codex|gemini>', 'codex')
+    expect(check?.message).toContain(gestureBase)
+  })
+
+  it('config coherence FAIL message offers both directions and does not pick a side', async () => {
+    const probes = makeConfigProbes(
+      { defaultProvider: 'claude' },
+      {
+        worker1: { provider: 'codex' },
+        worker2: { provider: 'codex' },
+        worker3: { provider: 'codex' },
+      },
+    )
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'config: provider')
+    expect(check?.status).toBe('FAIL')
+    // Must offer the "align daemon.json to registry" direction with the correct command.
+    expect(check?.message).toContain('mars lever set provider.default codex')
+    // Must acknowledge the re-seed direction rather than silently omitting it.
+    expect(check?.message).toContain("re-seed the registry to 'claude'")
   })
 
   it('skips coherence check when repoRoot is null', async () => {
@@ -689,5 +728,133 @@ describe('mars doctor command (in-process)', () => {
     })
     const allLines = [...r.out, ...r.err]
     expect(allLines.some((l) => l.includes("'orphanKey'"))).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Gesture validity — every 'mars X Y' command in doctor messages is a known
+// CLI path. This prevents a class of defect where a FAIL message names a
+// command that does not exist.
+// ---------------------------------------------------------------------------
+
+describe("doctor gestures — every 'mars ...' command in FAIL/WARN messages is a known CLI path", () => {
+  it('all mars commands mentioned in check messages resolve to registered command paths', async () => {
+    // Exercise every probe configuration that produces FAIL/WARN messages with
+    // 'mars ...' remediation strings so we catch gesture drift.
+    const configs: Array<{ label: string; probes: DoctorProbes; pgDsnPath: string | null; repoRoot: string | null }> = [
+      {
+        label: 'git missing',
+        probes: passingProbes({ tryRun: (cmd) => (cmd === 'git' ? null : 0) }),
+        pgDsnPath: null,
+        repoRoot: null,
+      },
+      {
+        label: 'db dsn missing',
+        probes: passingProbes({ fileReadable: () => false }),
+        pgDsnPath: '/some/.mars/pg.dsn',
+        repoRoot: null,
+      },
+      {
+        label: 'low disk (< 1 GiB)',
+        probes: passingProbes({ freeDiskBytes: () => 500 * 1024 * 1024 }),
+        pgDsnPath: null,
+        repoRoot: '/repo',
+      },
+      {
+        label: 'low disk (1–5 GiB)',
+        probes: passingProbes({ freeDiskBytes: () => 2 * 1024 * 1024 * 1024 }),
+        pgDsnPath: null,
+        repoRoot: '/repo',
+      },
+      {
+        label: 'daemon stale',
+        probes: passingProbes({
+          daemonLiveness: async () => ({
+            alive: true, pid: 42, isStale: true,
+            sourceSha: 'aabbccdd1234567', currentSha: 'deadbeef9876543',
+          }),
+        }),
+        pgDsnPath: null,
+        repoRoot: null,
+      },
+      {
+        label: 'baseline gates db unavailable',
+        probes: passingProbes({ baselineGates: async () => null }),
+        pgDsnPath: null,
+        repoRoot: '/repo',
+      },
+      {
+        label: 'no verify gates configured',
+        probes: passingProbes({ baselineGates: async () => [] }),
+        pgDsnPath: null,
+        repoRoot: '/repo',
+      },
+      {
+        label: 'config provider mismatch',
+        probes: passingProbes({
+          readTextFile(path) {
+            if (path.endsWith('daemon.json')) return JSON.stringify({ defaultProvider: 'claude' })
+            if (path.endsWith('worker-registry.json')) return JSON.stringify({ w1: { provider: 'codex' } })
+            return JSON.stringify({ tokens: { access_token: 'tok' } })
+          },
+        }),
+        pgDsnPath: null,
+        repoRoot: '/repo',
+      },
+    ]
+
+    // Build the set of known registered command paths (e.g. "daemon restart",
+    // "lever set", "worktree reclaim") so we can validate extracted gestures.
+    const { allCommands } = await import('../commands/index')
+    const knownPaths = new Set(allCommands.map((c) => c.path))
+
+    // Extract every 'mars X ...' occurrence from a message string.
+    const extractMarsCommands = (msg: string): string[] => {
+      const matches: string[] = []
+      // Match single-quoted 'mars ...' and backtick-quoted `mars ...` spans.
+      for (const pattern of [/'(mars [^']+)'/g, /`(mars [^`]+)`/g]) {
+        for (const m of msg.matchAll(pattern)) {
+          matches.push(m[1]!)
+        }
+      }
+      return matches
+    }
+
+    // Resolve a "mars X Y Z ..." invocation to its command path by trying
+    // prefixes from longest to shortest (commands have 1–3 token paths).
+    const resolveGesture = (invocation: string): string | null => {
+      // Strip leading "mars " and any trailing arguments / placeholders.
+      const afterMars = invocation.replace(/^mars\s+/, '').trim()
+      const tokens = afterMars.split(/\s+/)
+      for (let len = Math.min(tokens.length, 3); len >= 1; len--) {
+        const candidate = tokens.slice(0, len).join(' ')
+        if (knownPaths.has(candidate)) return candidate
+      }
+      return null
+    }
+
+    const failures: string[] = []
+
+    for (const config of configs) {
+      const results = await runDoctorChecks(
+        config.probes,
+        config.pgDsnPath,
+        providerProbeDeps(),
+        'claude',
+        config.repoRoot,
+      )
+      for (const r of results) {
+        for (const marsCmd of extractMarsCommands(r.message)) {
+          const resolved = resolveGesture(marsCmd)
+          if (resolved === null) {
+            failures.push(`[${config.label}] check '${r.label}' (${r.status}): '${marsCmd}' does not resolve to a known command path`)
+          }
+        }
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error('Doctor messages reference non-existent commands:\n' + failures.join('\n'))
+    }
   })
 })

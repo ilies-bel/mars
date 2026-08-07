@@ -29,6 +29,7 @@ import {
   resolveProviderName,
 } from '../../core/workers/providers'
 import type { ProviderName } from '../../core/workers/provider-types'
+import { loadLeverRegistry } from '../../core/lib/lever-registry'
 
 // ---------------------------------------------------------------------------
 // Public types (exported for tests)
@@ -520,14 +521,14 @@ export const runDoctorChecks = async (
           label: 'disk',
           status: 'FAIL',
           section: 'health',
-          message: `${gib.toFixed(1)} GiB free on worktree volume — remove stale worktrees: run 'mars worktree list' then 'mars purge <id>'`,
+          message: `${gib.toFixed(1)} GiB free on worktree volume — remove stale worktrees: run 'mars worktree reclaim' to identify, then 'mars purge <id>'`,
         })
       } else if (gib < 5) {
         results.push({
           label: 'disk',
           status: 'WARN',
           section: 'health',
-          message: `${gib.toFixed(1)} GiB free on worktree volume — low, consider running 'mars worktree list'`,
+          message: `${gib.toFixed(1)} GiB free on worktree volume — low, consider running 'mars worktree reclaim'`,
         })
       } else {
         results.push({
@@ -588,11 +589,22 @@ export const runDoctorChecks = async (
           .map((w) => String(w.provider))
         const uniquePinned = [...new Set(pinned)]
         if (uniquePinned.length > 0) {
+          // Read the authoritative gesture from the lever registry rather than
+          // hardcoding it here (which drifted before and named a non-existent command).
+          const providerLever = loadLeverRegistry().find((e) => e.id === 'provider.default')
+          // Build an actionable gesture: substitute the first pinned value into the
+          // <claude|codex|gemini> placeholder so the operator can copy-paste it.
+          const alignDaemonGesture = providerLever?.gesture
+            ? providerLever.gesture.replace('<claude|codex|gemini>', uniquePinned[0]!)
+            : '(see: mars lever show provider.default)'
           results.push({
             label: 'config: provider',
             status: 'FAIL',
             section: 'health',
-            message: `defaultProvider='${defaultProvider}' in daemon.json but ${pinned.length} worker(s) pin provider='${uniquePinned.join("', '")}' in worker-registry.json — run 'mars operator set provider ${defaultProvider}' to re-seed the registry`,
+            message:
+              `defaultProvider='${defaultProvider}' in daemon.json but ${pinned.length} worker(s) pin provider='${uniquePinned.join("', '")}' in worker-registry.json — ` +
+              `to align daemon.json with the registry: ${alignDaemonGesture}; ` +
+              `to re-seed the registry to '${defaultProvider}': no command exists, update worker pins manually`,
           })
         } else {
           results.push({
