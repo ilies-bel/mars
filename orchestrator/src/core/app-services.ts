@@ -1388,19 +1388,18 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     } catch {
       // Directory absent — no reports yet.
       const { autoRunReflect, autoEnqueue } = readReflectState()
-      return { reports: [], autoRunReflect, autoEnqueue, lastReflectedAt: null }
+      return { reports: [], totalDiscovered: 0, unreadableCount: 0, autoRunReflect, autoEnqueue, lastReflectedAt: null }
     }
 
-    const arcFiles = entries
-      .filter((f) => f.startsWith('arc-') && f.endsWith('.json'))
-      .sort()
-      .reverse() // most-recent first (ISO stamp in filename)
+    // Accept every .json file regardless of prefix — naming conventions have
+    // already changed once and will again; filter on content, not filename.
+    const jsonFiles = entries.filter((f) => f.endsWith('.json'))
+    const totalDiscovered = jsonFiles.length
 
-    const limit = opts?.limit ?? 100
-    const toRead = arcFiles.slice(0, limit)
-
-    const reports: import('./daemon/http-server').DeepReflectionSummary[] = []
-    for (const file of toRead) {
+    // Parse all files first so we can sort by content, not by filename.
+    const parsed: import('./daemon/http-server').DeepReflectionSummary[] = []
+    let unreadableCount = 0
+    for (const file of jsonFiles) {
       try {
         const raw = await readFile(resolvePath(dir, file), 'utf8')
         const data = JSON.parse(raw) as Record<string, unknown>
@@ -1416,7 +1415,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         const verdictResult = data.verdictResult && typeof data.verdictResult === 'object'
           ? data.verdictResult as { saved?: unknown; absorbed?: unknown; dropped?: unknown }
           : {}
-        reports.push({
+        parsed.push({
           originId: typeof data.originId === 'string' ? data.originId : file,
           recordedAt: typeof data.recordedAt === 'string' ? data.recordedAt : '',
           status: typeof data.status === 'string' ? data.status : 'unknown',
@@ -1431,13 +1430,24 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
           },
         })
       } catch {
-        // Skip malformed files silently.
+        // Malformed file — count it so the caller can surface the gap.
+        unreadableCount++
       }
     }
 
-    const lastReflectedAt = reports[0]?.recordedAt ?? null
+    // Sort by the report's own recordedAt, newest first. ISO 8601 strings sort
+    // lexically, so localeCompare is byte-equivalent to a Date comparison here.
+    parsed.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt))
+
+    // lastReflectedAt = max recordedAt across ALL successfully parsed reports,
+    // independent of the page limit. After descending sort, that is parsed[0].
+    const lastReflectedAt = parsed.length > 0 ? parsed[0]!.recordedAt : null
+
+    const limit = opts?.limit ?? 100
+    const reports = parsed.slice(0, limit)
+
     const { autoRunReflect, autoEnqueue } = readReflectState()
-    return { reports, autoRunReflect, autoEnqueue, lastReflectedAt }
+    return { reports, totalDiscovered, unreadableCount, autoRunReflect, autoEnqueue, lastReflectedAt }
   }
 
   const viewDeepReflection: AppServices['viewDeepReflection'] = async (originId) => {

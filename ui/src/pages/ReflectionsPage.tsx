@@ -597,8 +597,15 @@ export const ReflectionsPage = () => {
                 Reflections
               </h2>
               {listData && (
-                <span className="font-mono text-[10px] text-muted-foreground">
-                  {listData.reports.length} report{listData.reports.length !== 1 ? 's' : ''}
+                <span className="font-mono text-[10px] text-muted-foreground" data-testid="report-count">
+                  {listData.totalDiscovered > listData.reports.length
+                    ? `${listData.reports.length} of ${listData.totalDiscovered} reports`
+                    : `${listData.reports.length} report${listData.reports.length !== 1 ? 's' : ''}`}
+                  {listData.unreadableCount > 0 && (
+                    <span className="ml-2 text-warn">
+                      ({listData.unreadableCount} unreadable)
+                    </span>
+                  )}
                 </span>
               )}
             </div>

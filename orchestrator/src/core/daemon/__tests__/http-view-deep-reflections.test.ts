@@ -112,6 +112,8 @@ describe('GET /view/deep-reflections', () => {
 
     const listResult: DeepReflectionsListResult = {
       reports: [sampleReport],
+      totalDiscovered: 1,
+      unreadableCount: 0,
       autoRunReflect: 'on',
       autoEnqueue: false,
       lastReflectedAt: '2026-08-06T18:42:55.791Z',
@@ -143,6 +145,8 @@ describe('GET /view/deep-reflections', () => {
       makeDeps({
         viewDeepReflections: async () => ({
           reports: [],
+          totalDiscovered: 0,
+          unreadableCount: 0,
           autoRunReflect: 'off',
           autoEnqueue: false,
           lastReflectedAt: null,
@@ -169,7 +173,7 @@ describe('GET /view/deep-reflections', () => {
       makeDeps({
         viewDeepReflections: async (opts) => {
           capturedOpts = opts
-          return { reports: [], autoRunReflect: 'on', autoEnqueue: false, lastReflectedAt: null }
+          return { reports: [], totalDiscovered: 0, unreadableCount: 0, autoRunReflect: 'on', autoEnqueue: false, lastReflectedAt: null }
         },
       }),
     )

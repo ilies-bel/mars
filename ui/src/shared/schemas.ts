@@ -1632,6 +1632,10 @@ export const deepReflectionDetailSchema = deepReflectionSummarySchema.extend({
 
 export const deepReflectionsListResponseSchema = z.object({
   reports: z.array(deepReflectionSummarySchema),
+  /** Total .json files discovered in the directory, independent of paging. */
+  totalDiscovered: z.number(),
+  /** Number of files that could not be read or parsed. */
+  unreadableCount: z.number(),
   autoRunReflect: z.enum(['on', 'off']),
   autoEnqueue: z.boolean(),
   lastReflectedAt: z.string().nullable(),

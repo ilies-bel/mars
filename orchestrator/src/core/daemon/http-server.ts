@@ -416,6 +416,10 @@ export interface DeepReflectionDetail extends DeepReflectionSummary {
  */
 export interface DeepReflectionsListResult {
   reports: DeepReflectionSummary[]
+  /** Total number of .json files discovered in the deep-reflections directory, regardless of paging. */
+  totalDiscovered: number
+  /** Number of .json files that could not be read or parsed (malformed). */
+  unreadableCount: number
   autoRunReflect: 'on' | 'off'
   autoEnqueue: boolean
   lastReflectedAt: string | null

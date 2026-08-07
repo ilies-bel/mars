@@ -77,6 +77,8 @@ const makeListResponse = (overrides: Partial<DeepReflectionsListResponse> = {}):
       verdictResult: { saved: 0, absorbed: 1, dropped: 0 },
     },
   ],
+  totalDiscovered: 2,
+  unreadableCount: 0,
   autoRunReflect: 'on',
   autoEnqueue: true,
   lastReflectedAt: '2026-01-15T10:00:00Z',
@@ -212,6 +214,29 @@ describe('ReflectionsPage', () => {
     // Both rows present
     expect(html).toContain('abc123')
     expect(html).toContain('def456')
+  })
+
+  it('shows "N of M reports" when totalDiscovered exceeds the returned page', () => {
+    vi.mocked(useQuery)
+      .mockReset()
+      .mockReturnValueOnce(mockQueryResult({ data: makeListResponse({ totalDiscovered: 74 }) }))
+      .mockReturnValueOnce(mockQueryResult({ data: undefined }))
+
+    const html = renderToStaticMarkup(<ReflectionsPage />)
+
+    expect(html).toContain('2 of 74 reports')
+    expect(html).not.toContain('2 reports')
+  })
+
+  it('shows unreadable count warning when unreadableCount is non-zero', () => {
+    vi.mocked(useQuery)
+      .mockReset()
+      .mockReturnValueOnce(mockQueryResult({ data: makeListResponse({ unreadableCount: 3 }) }))
+      .mockReturnValueOnce(mockQueryResult({ data: undefined }))
+
+    const html = renderToStaticMarkup(<ReflectionsPage />)
+
+    expect(html).toContain('3 unreadable')
   })
 
   it('shows dissonant call and verify mismatch counts in list rows', () => {
