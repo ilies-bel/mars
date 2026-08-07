@@ -84,6 +84,9 @@ export interface WorkerDisplayEntry {
   // this field carries the conflicting override id. mars worker list displays
   // a conflict warning instead of the override as if it were in effect.
   readonly conflictingOverride?: string
+  // True when this worker is a hard-coded built-in (one of the eight shipped
+  // defaults). False for operator-added workers persisted in the registry.
+  readonly isBuiltIn: boolean
 }
 
 const REGISTRY_FILENAME = 'worker-registry.json'
@@ -355,8 +358,66 @@ export const listWorkersForDisplay = (
       resolvedModel: model,
       activeProvider: providerName,
       ...(conflict !== undefined ? { conflictingOverride: conflict } : {}),
+      isBuiltIn: defaultNames.has(decl.name),
     }
   })
+}
+
+// Remove an operator-added Worker declaration from the registry file. Refuses
+// to remove built-in workers (those shipped as hard-coded defaults in
+// WORKER_CONFIGS). Throws if the name is not found in the registry or if the
+// worker is a built-in.
+//
+// Returns the names of operator-added workers that remain after removal —
+// useful for building error messages in callers that want to list valid names.
+export const removeWorkerFromRegistry = (
+  stateDir: string,
+  name: string,
+): void => {
+  const filePath = resolve(stateDir, REGISTRY_FILENAME)
+  const builtInNames = new Set(Object.keys(WORKER_CONFIGS))
+
+  // Refuse to remove built-in workers.
+  if (builtInNames.has(name)) {
+    const operatorNames = existsSync(filePath)
+      ? Object.keys(
+          JSON.parse(readFileSync(filePath, 'utf8')) as Record<string, unknown>,
+        ).filter((n) => !builtInNames.has(n))
+      : []
+    const hint =
+      operatorNames.length > 0
+        ? ` Operator-added workers that can be removed: ${operatorNames.join(', ')}.`
+        : ' No operator-added workers are registered.'
+    throw new Error(
+      `'${name}' is a built-in worker and cannot be removed.${hint}`,
+    )
+  }
+
+  // Registry must exist and contain the worker.
+  if (!existsSync(filePath)) {
+    throw new Error(
+      `worker '${name}' not found — no registry file exists. No operator-added workers are registered.`,
+    )
+  }
+
+  const existing = JSON.parse(readFileSync(filePath, 'utf8')) as Record<
+    string,
+    WorkerDeclaration
+  >
+
+  if (!(name in existing)) {
+    const operatorNames = Object.keys(existing).filter(
+      (n) => !builtInNames.has(n),
+    )
+    const hint =
+      operatorNames.length > 0
+        ? `valid operator-added workers: ${operatorNames.join(', ')}`
+        : 'no operator-added workers are registered'
+    throw new Error(`unknown worker '${name}'; ${hint}`)
+  }
+
+  delete existing[name]
+  writeFileSync(filePath, JSON.stringify(existing, null, 2) + '\n', 'utf8')
 }
 
 // Add or update a Worker declaration in the registry file. Seeds the registry

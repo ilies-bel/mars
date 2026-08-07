@@ -11,6 +11,7 @@ import {
   listMergedWorkers,
   listWorkersForDisplay,
   loadWorkerRegistry,
+  removeWorkerFromRegistry,
   type WorkerDeclaration,
 } from '../persisted-registry'
 import { WORKER_CONFIGS } from '..'
@@ -530,5 +531,84 @@ describe('listWorkersForDisplay', () => {
     // Override is valid — no conflict and the override model is used.
     expect(override?.conflictingOverride).toBeUndefined()
     expect(override?.resolvedModel).toBe('claude-opus-4-7')
+  })
+
+  it('marks built-in workers as isBuiltIn=true and operator-added as isBuiltIn=false', () => {
+    addWorkerToRegistry(stateDir, { ...MINIMUM_DECL, name: 'OperatorWorker' })
+    const entries = listWorkersForDisplay(stateDir, 'claude')
+    const coder = entries.find((e) => e.worker.config.name === 'Coder')
+    const operatorWorker = entries.find((e) => e.worker.config.name === 'OperatorWorker')
+    expect(coder?.isBuiltIn).toBe(true)
+    expect(operatorWorker?.isBuiltIn).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// removeWorkerFromRegistry
+// ---------------------------------------------------------------------------
+
+describe('removeWorkerFromRegistry', () => {
+  it('removes an operator-added worker so it no longer appears in loadWorkerRegistry', () => {
+    addWorkerToRegistry(stateDir, { ...MINIMUM_DECL, name: 'ScratchWorker' })
+    expect(loadWorkerRegistry(stateDir).some((d) => d.name === 'ScratchWorker')).toBe(true)
+    removeWorkerFromRegistry(stateDir, 'ScratchWorker')
+    expect(loadWorkerRegistry(stateDir).some((d) => d.name === 'ScratchWorker')).toBe(false)
+  })
+
+  it('leaves registry containing all built-ins but not the removed worker after add-then-remove', () => {
+    // Seed + add a scratch worker.
+    addWorkerToRegistry(stateDir, { ...MINIMUM_DECL, name: 'ScratchForRoundTrip' })
+    const filePath = resolve(stateDir, 'worker-registry.json')
+
+    // Remove the scratch worker.
+    removeWorkerFromRegistry(stateDir, 'ScratchForRoundTrip')
+    const afterRemove = readFileSync(filePath, 'utf8')
+
+    // The file should not contain ScratchForRoundTrip any more.
+    expect(afterRemove).not.toContain('ScratchForRoundTrip')
+    // All built-ins must still be present.
+    for (const name of Object.keys(WORKER_CONFIGS)) {
+      expect(afterRemove).toContain(name)
+    }
+  })
+
+  it('throws when trying to remove a built-in worker', () => {
+    expect(() => removeWorkerFromRegistry(stateDir, 'Coder')).toThrow(
+      "'Coder' is a built-in worker and cannot be removed.",
+    )
+  })
+
+  it('throws with a non-zero exit when removing an unknown worker', () => {
+    // Seed registry first so it exists.
+    addWorkerToRegistry(stateDir, MINIMUM_DECL)
+    // Remove the one we added so there are no operator workers.
+    removeWorkerFromRegistry(stateDir, MINIMUM_DECL.name)
+    // Now try to remove something that was never there.
+    expect(() => removeWorkerFromRegistry(stateDir, 'NonExistentWorker')).toThrow(
+      "unknown worker 'NonExistentWorker'",
+    )
+  })
+
+  it('throws naming valid operator-added workers when an unknown name is given', () => {
+    addWorkerToRegistry(stateDir, { ...MINIMUM_DECL, name: 'ValidOp' })
+    expect(() => removeWorkerFromRegistry(stateDir, 'BadName')).toThrow(
+      'ValidOp',
+    )
+  })
+
+  it('throws when registry file is absent and a remove is attempted', () => {
+    expect(() => removeWorkerFromRegistry(stateDir, 'Anything')).toThrow(
+      'not found',
+    )
+  })
+
+  it('preserves built-in workers when an operator-added worker is removed', () => {
+    addWorkerToRegistry(stateDir, { ...MINIMUM_DECL, name: 'ToRemove' })
+    removeWorkerFromRegistry(stateDir, 'ToRemove')
+    const remaining = loadWorkerRegistry(stateDir).map((d) => d.name)
+    for (const name of Object.keys(WORKER_CONFIGS)) {
+      expect(remaining).toContain(name)
+    }
+    expect(remaining).not.toContain('ToRemove')
   })
 })

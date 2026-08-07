@@ -8,6 +8,8 @@
 import {
   listWorkersForDisplay,
   addWorkerToRegistry,
+  removeWorkerFromRegistry,
+  loadWorkerRegistry,
   type WorkerDeclaration,
 } from '../../core/workers/persisted-registry'
 import { WORKER_PROVIDER } from '../../core/workers'
@@ -30,23 +32,26 @@ const workerList: Command = {
     deps.out('')
     const header =
       'NAME'.padEnd(20) +
+      'SOURCE'.padEnd(12) +
       'TIER'.padEnd(12) +
       'MODEL'.padEnd(36) +
       'EFFORT'.padEnd(10) +
       'PERMISSION'
     deps.out(header)
     for (const entry of entries) {
-      const { worker, modelTier, resolvedModel, conflictingOverride } = entry
+      const { worker, modelTier, resolvedModel, conflictingOverride, isBuiltIn } = entry
       const perm =
         worker.config.permissionMode === 'bypassPermissions'
           ? 'bypass'
           : worker.config.permissionMode
+      const source = isBuiltIn ? 'built-in' : 'operator'
       if (conflictingOverride !== undefined) {
         // Surface the conflict clearly: the stored override doesn't belong to
         // the active provider. Mark the tier column with '!' and show the
         // tier-based fallback model so the row is still readable.
         deps.out(
           worker.config.name.padEnd(20) +
+            source.padEnd(12) +
             `${modelTier}!`.padEnd(12) +
             resolvedModel.padEnd(36) +
             worker.config.effort.padEnd(10) +
@@ -58,6 +63,7 @@ const workerList: Command = {
       } else {
         deps.out(
           worker.config.name.padEnd(20) +
+            source.padEnd(12) +
             modelTier.padEnd(12) +
             resolvedModel.padEnd(36) +
             worker.config.effort.padEnd(10) +
@@ -154,12 +160,66 @@ const workerAdd: Command = {
   },
 }
 
+const WORKER_REMOVE_USAGE = 'usage: mars worker remove <name>'
+
+const workerRemove: Command = {
+  path: 'worker remove',
+  summary: 'remove an operator-added worker from the registry',
+  usage: WORKER_REMOVE_USAGE,
+  run: async (args, deps) => {
+    const name = args.positional[0]
+    if (!name) {
+      deps.err(WORKER_REMOVE_USAGE)
+      return { code: 2 }
+    }
+
+    // Check for running/queued tasks whose tags would route to this worker.
+    // A task routes to a worker when the task's tag set intersects the worker's
+    // tag set. We refuse removal when any such task is in an active state so
+    // that dispatch never lands on a now-absent worker entry.
+    const workerDecls = loadWorkerRegistry(deps.ctx.stateDir)
+    const targetDecl = workerDecls.find((d) => d.name === name)
+
+    // Validate early: if targetDecl is undefined the worker either doesn't
+    // exist in the registry or is a built-in; removeWorkerFromRegistry will
+    // produce the right error. But we still want to do the running-task check
+    // when the worker IS found before attempting removal.
+    if (targetDecl !== undefined && (targetDecl.tags?.length ?? 0) > 0) {
+      const workerTagSet = new Set(targetDecl.tags ?? [])
+      const activeStatuses = ['running', 'queued'] as const
+      for (const status of activeStatuses) {
+        const tasks = await deps.store.listTasks(status)
+        for (const task of tasks) {
+          const taskTags: readonly string[] = task.tags ?? []
+          const intersection = taskTags.filter((t) => workerTagSet.has(t))
+          if (intersection.length > 0) {
+            deps.err(
+              `cannot remove worker '${name}': task ${task.id} (status=${status}) ` +
+                `is routed to it via tag(s): ${intersection.join(', ')}`,
+            )
+            return { code: 1 }
+          }
+        }
+      }
+    }
+
+    try {
+      removeWorkerFromRegistry(deps.ctx.stateDir, name)
+      deps.out(`removed worker ${name}`)
+      return { code: 0 }
+    } catch (err: unknown) {
+      deps.err(err instanceof Error ? err.message : String(err))
+      return { code: 1 }
+    }
+  },
+}
+
 const workerGroup: Command = {
   path: 'worker',
   summary: 'worker subcommands',
-  usage: 'usage: mars worker <list|add>',
+  usage: 'usage: mars worker <list|add|remove>',
   run: (_args, deps) => {
-    deps.err('usage: mars worker <list|add>')
+    deps.err('usage: mars worker <list|add|remove>')
     return { code: 2 }
   },
 }
@@ -167,5 +227,6 @@ const workerGroup: Command = {
 export const workerCommands: readonly Command[] = [
   workerList,
   workerAdd,
+  workerRemove,
   workerGroup,
 ]
