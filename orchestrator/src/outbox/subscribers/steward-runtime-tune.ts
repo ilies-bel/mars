@@ -15,7 +15,12 @@ import {
   samplePressure,
   type MachinePressure,
 } from '../../core/lib/machine-pressure.js'
-import { readLeverAutonomyLevel, type AutonomyLevel } from '../../core/daemon/config.js'
+import {
+  loadDaemonConfig,
+  readAutotuneMaxImplement as readAutotuneMaxImplementFromConfig,
+  readLeverAutonomyLevel,
+  type AutonomyLevel,
+} from '../../core/daemon/config.js'
 import { STEWARD_RUNTIME_TUNE_LEVER } from '../../core/lib/conversation-copy.js'
 import {
   recordStewardIntervention,
@@ -151,6 +156,26 @@ export interface StewardRuntimeTuneDeps {
   readAutonomyLevel?: () => AutonomyLevel
   /** Override for testing — defaults to the durable Steward ledger. */
   recordLedger?: (entry: StewardLedgerEntry) => Promise<unknown>
+  /**
+   * Read the currently-configured implement cap from daemon.json. Called at
+   * bump-decision time (not just at startup) so that a `mars daemon set-cap
+   * implement 4` takes effect on the next bump check — the autotuner will not
+   * exceed the cap the operator explicitly set.
+   *
+   * Must be injected in tests. The production default reads from daemon.json
+   * and falls back to `baselineCap` on any read error.
+   */
+  readConfiguredImplementCap?: () => number
+  /**
+   * Read the `steward.autotune-max-implement` ceiling from daemon.json. When
+   * non-null, this is the hard cap for autotune bumps regardless of the
+   * configured cap. When null (not set), the ceiling is either the currently
+   * configured cap (when the operator has lowered it below baseline) or
+   * `baselineCap * 2` (the default adaptive range).
+   *
+   * Must be injected in tests. The production default reads from daemon.json.
+   */
+  readAutotuneMaxImplement?: () => number | null
   /**
    * Override for testing — returns the host's *cumulative* count of pages
    * swapped in plus out since boot. The subscriber differences consecutive
@@ -305,7 +330,37 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
         inFlightTaskIds: deps.getInFlightTaskIds(),
         log,
       }))
-  const maxCap = baselineCap * 2
+  // Default: return baselineCap so unit tests (which don't inject this and
+  // don't have a `.mars/daemon.json` in a known state) see a neutral configured
+  // cap equal to baseline. The production server.ts injects the real reader
+  // that reads from daemon.json at bump-decision time.
+  const readConfiguredImplementCap = deps.readConfiguredImplementCap ?? ((): number => baselineCap)
+  const readAutotuneMaxImplement =
+    deps.readAutotuneMaxImplement ?? readAutotuneMaxImplementFromConfig
+
+  /**
+   * Compute the effective ceiling for a bump decision.
+   *
+   * Priority (highest first):
+   *  1. An explicit `steward.autotune-max-implement` ceiling — operator opted
+   *     in to a bounded range above the configured cap.
+   *  2. The currently-configured cap, when the operator has lowered it below
+   *     the baseline — an explicit `set-cap` gesture wins until cleared.
+   *  3. `baselineCap × 2` — the default adaptive range.
+   *
+   * This means an operator who does `mars daemon set-cap implement 4` (bringing
+   * the cap below the daemon's startup value) will see autotune respect that
+   * cap as a hard ceiling; the autotuner cannot fight back. Setting
+   * `steward.autotune-max-implement` explicitly re-enables growth above the
+   * configured cap up to the named ceiling.
+   */
+  const bumpCeiling = (): number => {
+    const ceilingSetting = readAutotuneMaxImplement()
+    if (ceilingSetting !== null) return ceilingSetting
+    const configuredCap = readConfiguredImplementCap()
+    if (configuredCap < baselineCap) return configuredCap
+    return baselineCap * 2
+  }
 
   // Paging is a rate, so it takes two samples to observe. `prev` holds the
   // last counter reading; `pagingPps` is the most recent computed rate, which
@@ -413,6 +468,7 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
         return
       }
       const oldCap = implementSem.limit
+      const maxCap = bumpCeiling()
       if (oldCap >= maxCap) {
         log(`[steward-tune] implement cap already at max (${maxCap}), skipping`)
         return
@@ -494,11 +550,18 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
     }
 
     // ── recover ───────────────────────────────────────────────────────────
-    // Only undo a previous shed; growth above baseline stays the bump lane's
-    // job, gated on backlog and the CPU guard.
-    if (oldCap >= baselineCap) return
+    // Only undo a previous paging shed; growth above baseline stays the bump
+    // lane's job, gated on backlog and the CPU guard.
+    //
+    // The recovery target is bounded by the currently-configured cap so that
+    // an operator who lowers the cap via `mars daemon set-cap implement <n>`
+    // does not see the recover lane silently restore toward the old baseline.
+    // If the configured cap is below baseline, recovery stops at the configured
+    // cap (not at baseline) — the operator's explicit gesture wins.
+    const recoveryTarget = Math.min(baselineCap, readConfiguredImplementCap())
+    if (oldCap >= recoveryTarget) return
 
-    const newCap = Math.min(baselineCap, oldCap + 1)
+    const newCap = Math.min(recoveryTarget, oldCap + 1)
     if (newCap === oldCap) return
 
     setSemLimit(implementSem, newCap)

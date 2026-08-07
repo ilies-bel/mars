@@ -13,7 +13,14 @@
  * follow-up slice builds those gestures.
  */
 
-import { loadDaemonConfig, readControlLevers, readPersistedPaused } from '../daemon/config'
+import {
+  loadDaemonConfig,
+  readAutotuneMaxImplement,
+  readControlLevers,
+  readLeverAutonomyLevel,
+  readPersistedPaused,
+} from '../daemon/config'
+import { STEWARD_RUNTIME_TUNE_LEVER } from './conversation-copy'
 import { readBudgetConfig } from './spend-meter'
 
 export type LeverFamily =
@@ -432,6 +439,53 @@ const REGISTRY: LeverRegistryEntry[] = [
     },
     allowedValues: { type: 'range', min: 1 },
     gesture: 'mars daemon set-cap verify <n>',
+    appliesWithoutRestart: true,
+  },
+
+  // ── steward autotune ──────────────────────────────────────────────────────
+  {
+    id: 'steward.autotune',
+    label: 'Steward implement-cap autotuner (on/off)',
+    family: 'concurrency',
+    scope: 'global',
+    readCurrent: () => {
+      try {
+        const level = readLeverAutonomyLevel(STEWARD_RUNTIME_TUNE_LEVER)
+        return level === 'off' ? 'off' : 'on'
+      } catch {
+        return null
+      }
+    },
+    allowedValues: { type: 'enum', values: ['on', 'off'] },
+    /**
+     * Gesture: `mars lever set steward.autotune off` disables the autotuner;
+     * `mars lever set steward.autotune on` re-enables it. Takes effect on the
+     * next backlog-degraded or paging-sample event without a daemon restart.
+     */
+    gesture: 'mars lever set steward.autotune <on|off>',
+    appliesWithoutRestart: true,
+  },
+  {
+    id: 'steward.autotune-max-implement',
+    label: 'Steward autotune implement-cap ceiling (hard upper bound)',
+    family: 'concurrency',
+    scope: 'global',
+    readCurrent: () => {
+      try {
+        const n = readAutotuneMaxImplement()
+        return n !== null ? String(n) : '(not set — defaults to 2× configured cap)'
+      } catch {
+        return null
+      }
+    },
+    allowedValues: { type: 'range', min: 1 },
+    /**
+     * Gesture: `mars lever set steward.autotune-max-implement 8` bounds the
+     * autotuner at 8 slots regardless of the configured cap. Use `clear` to
+     * remove the ceiling and restore the default 2× behaviour. Takes effect
+     * immediately (no restart required).
+     */
+    gesture: 'mars lever set steward.autotune-max-implement <n>',
     appliesWithoutRestart: true,
   },
 

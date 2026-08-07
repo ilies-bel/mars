@@ -93,6 +93,31 @@ describe('loadLeverRegistry()', () => {
     }
   })
 
+  it('includes steward.autotune lever that surfaces in mars lever list', () => {
+    const entries = loadLeverRegistry()
+    const lever = entries.find((e) => e.id === 'steward.autotune')
+    expect(lever, 'steward.autotune missing from registry').toBeDefined()
+    expect(lever!.family).toBe('concurrency')
+    expect(lever!.scope).toBe('global')
+    expect(lever!.gesture).toContain('steward.autotune')
+    const allowed = lever!.allowedValues
+    expect(allowed.type).toBe('enum')
+    if (allowed.type === 'enum') {
+      expect(allowed.values).toContain('on')
+      expect(allowed.values).toContain('off')
+    }
+  })
+
+  it('includes steward.autotune-max-implement lever with range allowedValues', () => {
+    const entries = loadLeverRegistry()
+    const lever = entries.find((e) => e.id === 'steward.autotune-max-implement')
+    expect(lever, 'steward.autotune-max-implement missing from registry').toBeDefined()
+    expect(lever!.family).toBe('concurrency')
+    expect(lever!.allowedValues.type).toBe('range')
+    expect(lever!.gesture).toBeTruthy()
+    expect(lever!.appliesWithoutRestart).toBe(true)
+  })
+
   it('includes all six verify recipe IDs', () => {
     const ids = loadLeverRegistry().map((e) => e.id)
     const recipeIds = [
@@ -328,6 +353,36 @@ describe('readCurrent() against seeded daemon.json', () => {
     )
     const e = loadLeverRegistry().find((x) => x.id === 'budget.arc-tokens')!
     expect(e.readCurrent()).toBe('100000')
+  })
+
+  it('steward.autotune readCurrent returns on when lever is absent (default tell)', () => {
+    writeFileSync(join(tmpDir, '.mars', 'daemon.json'), JSON.stringify({}))
+    const e = loadLeverRegistry().find((x) => x.id === 'steward.autotune')!
+    expect(e.readCurrent()).toBe('on')
+  })
+
+  it('steward.autotune readCurrent returns off when autonomy_level is off', () => {
+    writeFileSync(
+      join(tmpDir, '.mars', 'daemon.json'),
+      JSON.stringify({ levers: { steward_runtime_tune: { autonomy_level: 'off' } } }),
+    )
+    const e = loadLeverRegistry().find((x) => x.id === 'steward.autotune')!
+    expect(e.readCurrent()).toBe('off')
+  })
+
+  it('steward.autotune-max-implement readCurrent returns (not set) when absent', () => {
+    writeFileSync(join(tmpDir, '.mars', 'daemon.json'), JSON.stringify({}))
+    const e = loadLeverRegistry().find((x) => x.id === 'steward.autotune-max-implement')!
+    expect(e.readCurrent()).toContain('not set')
+  })
+
+  it('steward.autotune-max-implement readCurrent returns the configured ceiling', () => {
+    writeFileSync(
+      join(tmpDir, '.mars', 'daemon.json'),
+      JSON.stringify({ steward: { autotuneMaxImplement: 8 } }),
+    )
+    const e = loadLeverRegistry().find((x) => x.id === 'steward.autotune-max-implement')!
+    expect(e.readCurrent()).toBe('8')
   })
 
   it('per-task levers return a sentinel (not a config value)', () => {

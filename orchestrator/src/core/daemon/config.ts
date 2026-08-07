@@ -402,6 +402,48 @@ export const persistPaused = (value: boolean): void => {
 }
 
 /**
+ * Read the persisted `steward.autotuneMaxImplement` ceiling from daemon.json.
+ * Returns `null` when the lever is absent (autotune defaults to 2× the
+ * baseline cap in that case). Only positive integers are accepted; anything
+ * else is treated as absent.
+ */
+export const readAutotuneMaxImplement = (): number | null => {
+  const raw = readDaemonConfigFile()
+  const steward = raw.steward
+  if (steward === null || typeof steward !== 'object' || Array.isArray(steward)) return null
+  const val = (steward as Record<string, unknown>).autotuneMaxImplement
+  if (
+    typeof val !== 'number' ||
+    !Number.isFinite(val) ||
+    !Number.isInteger(val) ||
+    val < 1
+  )
+    return null
+  return val
+}
+
+/**
+ * Persist the `steward.autotuneMaxImplement` ceiling to daemon.json. Pass
+ * `null` to remove the ceiling (restores the default 2× baseline behaviour).
+ * Preserves all other keys via `patchDaemonConfigFile`.
+ */
+export const persistAutotuneMaxImplement = (n: number | null): void => {
+  const current = readDaemonConfigFile()
+  const existing =
+    current.steward !== null &&
+    typeof current.steward === 'object' &&
+    !Array.isArray(current.steward)
+      ? (current.steward as Record<string, unknown>)
+      : {}
+  if (n === null) {
+    const { autotuneMaxImplement: _removed, ...rest } = existing
+    patchDaemonConfigFile({ steward: Object.keys(rest).length > 0 ? rest : null })
+  } else {
+    patchDaemonConfigFile({ steward: { ...existing, autotuneMaxImplement: n } })
+  }
+}
+
+/**
  * Read the autonomy_level for `name` from daemon.json's `levers` map.
  * Returns `'ask'` when the lever is absent. A persisted invalid or retired
  * value is rejected explicitly so an operator's autonomy choice is never

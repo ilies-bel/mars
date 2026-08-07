@@ -22,7 +22,13 @@
 import type { Command } from '../command'
 import { loadLeverRegistry, noGestureEntries } from '../../core/lib/lever-registry'
 import type { CapQuerier } from '../../core/lib/lever-registry'
-import { readDaemonConfigFile, patchDaemonConfigFile } from '../../core/daemon/config'
+import {
+  readDaemonConfigFile,
+  patchDaemonConfigFile,
+  persistAutotuneMaxImplement,
+  persistLeverAutonomyLevel,
+} from '../../core/daemon/config'
+import { STEWARD_RUNTIME_TUNE_LEVER } from '../../core/lib/conversation-copy'
 import { ok, fail } from '../command'
 
 const leverList: Command = {
@@ -176,6 +182,8 @@ const SETTABLE_LEVER_IDS = new Set([
   'self-evolve.auto-enqueue',
   'self-evolve.drift-threshold-pct',
   'self-evolve.task-confidence-threshold',
+  'steward.autotune',
+  'steward.autotune-max-implement',
 ])
 
 const leverSet: Command = {
@@ -194,6 +202,8 @@ const leverSet: Command = {
     '  self-evolve.auto-enqueue           true | false',
     '  self-evolve.drift-threshold-pct    >= 0',
     '  self-evolve.task-confidence-threshold  0–1',
+    '  steward.autotune                   on | off',
+    '  steward.autotune-max-implement     >= 1 (positive integer; omit to restore default)',
     '',
     'Other levers use dedicated commands — see mars lever list.',
   ].join('\n'),
@@ -301,6 +311,14 @@ const leverSet: Command = {
       const typed =
         id === 'self-evolve.auto-enqueue' ? value === 'true' : Number(value)
       patchDaemonConfigFile({ selfEvolve: { ...existing, [field]: typed } })
+    } else if (id === 'steward.autotune') {
+      // Map on→tell, off→off. `tell` is the autonomous default; `ask` is
+      // meaningless for a runtime knob (nothing to ask at 3am), so it is not
+      // exposed here. Existing `ask` values are left as-is by reads but will
+      // be promoted to `tell` the next time the operator sets `on`.
+      persistLeverAutonomyLevel(STEWARD_RUNTIME_TUNE_LEVER, value === 'off' ? 'off' : 'tell')
+    } else if (id === 'steward.autotune-max-implement') {
+      persistAutotuneMaxImplement(Number(value))
     }
 
     // ── Echo the transition ──────────────────────────────────────────────────

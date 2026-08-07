@@ -6013,6 +6013,16 @@ export const startDaemon = async (
     recordCapDecision: (reason) => {
       implementCapReason = reason
     },
+    // Re-read from daemon.json at each bump decision so that a `mars daemon
+    // set-cap implement <n>` takes effect immediately: the autotuner will not
+    // exceed the cap the operator explicitly set.
+    readConfiguredImplementCap: () => {
+      try {
+        return loadDaemonConfig().caps.implement
+      } catch {
+        return initialCaps.implement
+      }
+    },
   })
   // Prompt health follows the same daemon event bus as the other autonomous
   // Steward capabilities. Its own autonomy lever decides whether a degraded

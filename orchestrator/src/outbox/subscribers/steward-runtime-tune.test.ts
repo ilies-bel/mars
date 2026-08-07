@@ -60,6 +60,10 @@ describe('steward-runtime-tune', () => {
       baselineCap?: number
       autonomyLevel?: AutonomyLevel
       readAutonomyLevel?: () => AutonomyLevel
+      /** Simulates the configured cap in daemon.json (after a set-cap). Defaults to `cap`. */
+      readConfiguredImplementCap?: () => number
+      /** Simulates the steward.autotune-max-implement ceiling lever. */
+      readAutotuneMaxImplement?: () => number | null
     } = {},
   ) => {
     const bus = new EventEmitter()
@@ -97,6 +101,8 @@ describe('steward-runtime-tune', () => {
       readPagingCounter,
       readAutonomyLevel,
       recordLedger,
+      readConfiguredImplementCap: overrides.readConfiguredImplementCap,
+      readAutotuneMaxImplement: overrides.readAutotuneMaxImplement,
     })
     disposers.push(stop)
     return {
@@ -532,6 +538,112 @@ describe('steward-runtime-tune', () => {
 
     expect(implementSem.limit).toBe(8)
     expect(log.mock.calls.flat().join(' ')).toMatch(/shed implement cap 12 → 8/)
+  })
+
+  // ── operator set-cap ceiling ───────────────────────────────────────────────
+  //
+  // The bump lane must respect the operator's explicitly-configured implement
+  // cap (as persisted in daemon.json after `mars daemon set-cap implement <n>`).
+  // When the configured cap has been LOWERED below the daemon's startup
+  // baseline, that cap becomes the autotune ceiling — the operator's gesture
+  // wins until cleared via `steward.autotune-max-implement`.
+
+  describe('operator set-cap ceiling', () => {
+    it('with steward.autotune off, a sustained backlog does not change the configured cap', async () => {
+      const { bus, implementSem, log } = setup(12, { autonomyLevel: 'off' })
+
+      bus.emit('kpi.backlog.degraded', { pending: 50, cap: 12, sustainedMs: 65_000 })
+      await vi.waitFor(() =>
+        expect(log).toHaveBeenCalledWith(
+          expect.stringContaining('autotuning is off'),
+        ),
+      )
+
+      expect(implementSem.limit).toBe(12)
+    })
+
+    it('does not exceed the operator-configured cap when it is lower than the baseline', async () => {
+      // Operator does `mars daemon set-cap implement 4` during an incident.
+      // Baseline was 12 at startup; semaphore also starts at 4.
+      // The recover lane (which restores toward baseline) is bounded to the
+      // configured cap (4), so it won't raise from 4 to 5.
+      const { bus, implementSem, log } = setup(4, {
+        baselineCap: 12,
+        readConfiguredImplementCap: () => 4,
+      })
+
+      bus.emit('kpi.backlog.degraded', { pending: 50, cap: 4, sustainedMs: 65_000 })
+      await vi.waitFor(() => expect(log).toHaveBeenCalled())
+
+      // Ceiling = configuredCap (4) because configuredCap < baselineCap.
+      // oldCap (4) >= maxCap (4) → skip.
+      expect(implementSem.limit).toBe(4)
+    })
+
+    it('can still raise when configured cap equals baseline (normal operation)', async () => {
+      // Baseline = 6, configured cap = 6 (no operator intervention).
+      // Normal autotuning should raise up to baseline * 2 = 12.
+      const { bus, implementSem } = setup(6, {
+        baselineCap: 6,
+        readConfiguredImplementCap: () => 6,
+      })
+
+      bus.emit('kpi.backlog.degraded', { pending: 30, cap: 6, sustainedMs: 65_000 })
+      await vi.waitFor(() => expect(implementSem.limit).toBeGreaterThan(6))
+
+      // ceil(6 * 1.33) = 8; max is baseline * 2 = 12
+      expect(implementSem.limit).toBe(8)
+    })
+
+    it('raises up to the steward.autotune-max-implement ceiling and then stops', async () => {
+      // Ceiling = 8. Baseline = 6 (so default maxCap would be 12). Ceiling wins.
+      // Start cap at 6 (= baseline) so the recover lane does not interfere.
+      const { bus, implementSem, log } = setup(6, {
+        baselineCap: 6,
+        readAutotuneMaxImplement: () => 8,
+      })
+
+      bus.emit('kpi.backlog.degraded', { pending: 30, cap: 6, sustainedMs: 65_000 })
+      await vi.waitFor(() => expect(implementSem.limit).toBe(8))
+
+      // Second backlog: 8 >= ceiling(8) → skipped.
+      bus.emit('kpi.backlog.degraded', { pending: 30, cap: 8, sustainedMs: 65_000 })
+      await vi.waitFor(() => expect(log).toHaveBeenCalledWith(expect.stringContaining('already at max')))
+      expect(implementSem.limit).toBe(8)
+    })
+
+    it('steward.autotune-max-implement overrides the configured-cap ceiling', async () => {
+      // Operator set cap=4 (< baseline=12) BUT also set an explicit ceiling=8.
+      // The explicit ceiling takes precedence — operator opted in to autotune headroom.
+      // Start at cap=4; recover lane is bounded at configuredCap=4 (no interference).
+      const { bus, implementSem } = setup(4, {
+        baselineCap: 12,
+        readConfiguredImplementCap: () => 4,
+        readAutotuneMaxImplement: () => 8,
+      })
+
+      bus.emit('kpi.backlog.degraded', { pending: 50, cap: 4, sustainedMs: 65_000 })
+      await vi.waitFor(() => expect(implementSem.limit).toBeGreaterThan(4))
+
+      // ceiling = 8; ceil(4 * 1.33) = ceil(5.32) = 6 → min(6, 8) = 6
+      expect(implementSem.limit).toBe(6)
+    })
+
+    it('a saturated host prevents a raise even when implement slots are idle', async () => {
+      // Machine-saturated: only 2% idle. Slots may be empty (no in-flight
+      // tasks) but the host has no spare capacity. Must hold regardless.
+      const { bus, implementSem, log } = setup(6, {
+        baselineCap: 6,
+        pressures: pressure(2, 30),
+        sweepReaped: 0,
+      })
+
+      bus.emit('kpi.backlog.degraded', { pending: 50, cap: 6, sustainedMs: 65_000 })
+      await vi.waitFor(() => expect(log).toHaveBeenCalled())
+
+      expect(implementSem.limit).toBe(6) // no raise despite idle slots
+      expect(log.mock.calls.flat().join('\n')).toContain('2.0% idle')
+    })
   })
 
   it('stops sampling after the disposer runs', async () => {
