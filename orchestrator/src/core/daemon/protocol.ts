@@ -241,6 +241,13 @@ export interface DaemonStatusPayload {
    * resumed via another cause. Use `mars daemon reset-breaker` to clear it.
    */
   signatureStorm: SignatureStormState
+  /**
+   * Footprint of `.mars/worktrees/` at the time `daemon status` was called.
+   * `count` is the number of direct-child directories; `totalBytes` is a
+   * lower-bound estimate (direct-entry stat sizes only). `null` when the
+   * directory does not exist or the measurement failed.
+   */
+  worktrees: { count: number; totalBytes: number } | null
 }
 
 const NEWLINE = 0x0a

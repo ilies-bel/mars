@@ -255,6 +255,7 @@ const daemonStatus: Command = {
       pause: DispatchPauseState
       signatureStorm: { tripped: boolean; signature: string | null; streak: number; lastTaskId: string | null }
       draining?: boolean
+      worktrees?: { count: number; totalBytes: number } | null
     }
     // Drain state takes precedence over pause and staleness notices. A draining
     // daemon is alive but winding down — the operator must not reach for
@@ -287,6 +288,11 @@ const daemonStatus: Command = {
     if (cap.reason !== null) deps.out(`            ${cap.reason}`)
     deps.out(`inFlight:   ${data.inFlight.length}`)
     for (const f of data.inFlight) deps.out(`  ${f.kind} ${f.taskId}`)
+    // Worktree footprint — helps operators spot disk-space accumulation early.
+    if (data.worktrees != null) {
+      const mb = (data.worktrees.totalBytes / (1024 * 1024)).toFixed(1)
+      deps.out(`worktrees:  count=${data.worktrees.count} size≈${mb} MiB (lower-bound; use \`du -sh .mars/worktrees/*\` for precise sizes)`)
+    }
     // Signature-storm breaker state. Always printed so the operator can tell
     // whether a stale `tripped=true` row is present even when dispatch is
     // running (cleared by `mars daemon reset-breaker`).

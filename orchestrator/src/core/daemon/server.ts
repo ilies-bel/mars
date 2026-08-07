@@ -183,6 +183,13 @@ import { deleteDeferral, upsertDeferral } from '../lib/deferral-store'
 import { shouldDeferDispatch } from '../lib/dispatch-gate'
 import { startDeferralWakeSweeper } from './deferral-wake-sweeper'
 import { DocumentWriteCoordinator } from './document-write-coordinator'
+import {
+  reclaimSettledWorktrees,
+  sweepOrphanWorktrees,
+  reclaimExcessFailedWorktrees,
+  getWorktreeFootprint,
+  checkDiskSpace,
+} from './worktree-reclaim'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
@@ -873,6 +880,39 @@ export const startDaemon = async (
     )
   }
 
+  // Boot-time worktree reclaim: remove on-disk directories that are no longer
+  // needed — orphans (no owning task row), done/dropped (settled) worktrees,
+  // and excess failed worktrees over the cap. Each sweep is independent and
+  // non-fatal: a failure in one does not prevent the others from running.
+  // This is the startup half of a two-part reclaim strategy; the periodic half
+  // runs in the setInterval drain below.
+  try {
+    const { repoRoot: recRoot } = resolveContext()
+
+    const orphanResult = await sweepOrphanWorktrees(recRoot, log)
+    if (orphanResult.removed.length > 0) {
+      log(
+        `[worktree-reclaim] startup: removed ${orphanResult.removed.length} orphan worktree dir(s)`,
+      )
+    }
+
+    const settledResult = await reclaimSettledWorktrees(recRoot, log)
+    if (settledResult.removed.length > 0) {
+      log(
+        `[worktree-reclaim] startup: removed ${settledResult.removed.length} settled (done/dropped) worktree(s)`,
+      )
+    }
+
+    const capResult = await reclaimExcessFailedWorktrees(recRoot, log)
+    if (capResult.removed.length > 0) {
+      log(
+        `[worktree-reclaim] startup: removed ${capResult.removed.length} excess failed worktree(s) (over cap)`,
+      )
+    }
+  } catch (err) {
+    log(`[worktree-reclaim] startup sweep failed (non-fatal): ${(err as Error).message}`)
+  }
+
   // Forensic backfill check for ADR-0040 (recovery tasks are leaf nodes).
   // Read-only scan of `task_blockers` for rows where either endpoint is a
   // recovery (fix) task — those edges predate the leaf-node guard and must
@@ -1218,6 +1258,52 @@ export const startDaemon = async (
   const dispatchImplement = async (task: Task): Promise<void> => {
     if (tracker.isInFlight(task.id)) return
     tracker.removePending(task.id, 'implement')
+
+    // ── Disk-space guard ──────────────────────────────────────────────────
+    // Refuse to dispatch when free space is below the threshold. A dispatch
+    // that cannot write (setup creates a worktree + node_modules) is worse
+    // than a dispatch that does not start — the 2026-07 incident where the
+    // disk reached 100% and corrupted a main-committer's output is the proof.
+    // The action-queue item persists across restarts so the operator sees it
+    // even after killing the daemon to free space.
+    try {
+      const diskCheck = await checkDiskSpace(resolveContext().repoRoot)
+      if (!diskCheck.ok) {
+        const freeMiB = Math.round(diskCheck.freeBytes / (1024 * 1024))
+        const threshMiB = Math.round(diskCheck.thresholdBytes / (1024 * 1024))
+        log(
+          `[disk-guard] dispatch refused for task ${task.id}: only ${freeMiB} MiB free (threshold: ${threshMiB} MiB)`,
+        )
+        await raiseActionQueueItem({
+          kind: 'low-disk-space',
+          category: 'orchestrator',
+          priority: 'high',
+          title: `Low disk space: only ${freeMiB} MiB free — dispatch paused`,
+          body: [
+            `Dispatch refused: the filesystem hosting \`.mars/worktrees/\` has only **${freeMiB} MiB** free.`,
+            `Threshold: ${threshMiB} MiB (override via \`MARS_LOW_DISK_THRESHOLD_BYTES\`).`,
+            '',
+            'Free space and dispatch will resume automatically. To recover now:',
+            '1. Run `mars purge <id>` for terminal tasks you no longer need.',
+            '2. Identify large worktrees with `du -sh .mars/worktrees/* | sort -h`.',
+            '3. Remove unneeded worktrees with `mars prune <id>`.',
+          ].join('\n'),
+          payload: { freeBytes: diskCheck.freeBytes, thresholdBytes: diskCheck.thresholdBytes },
+          context: { repoRoot: process.env.MARS_REPO ?? null },
+          raisedBy: 'daemon:disk-guard',
+          signature: 'low-disk-space:worktrees',
+        })
+        tracker.unclaim(task.id, 'implement')
+        return
+      }
+    } catch (diskErr) {
+      // Disk check failure is non-fatal — proceed with dispatch rather than
+      // blocking all work on a transient measurement error.
+      log(
+        `[disk-guard] check failed for task ${task.id} (non-fatal, proceeding): ${(diskErr as Error).message}`,
+      )
+    }
+
     const usageSnapshot = await getLatestUsageSnapshot(dbClient)
     const deferral = shouldDeferDispatch(
       task,
@@ -3814,6 +3900,13 @@ export const startDaemon = async (
     // genuine live storm without this read.
     const { readSignatureStormState } = await import('../lib/signature-storm-monitor')
     const signatureStorm = await readSignatureStormState(getCompositionRootClient())
+    // Worktree footprint — best-effort; null on failure (never throws).
+    let worktrees: { count: number; totalBytes: number } | null = null
+    try {
+      worktrees = await getWorktreeFootprint(resolveContext().repoRoot)
+    } catch {
+      // Non-fatal: daemon status continues without footprint.
+    }
     return {
       pid: process.pid,
       startedAt,
@@ -3826,6 +3919,7 @@ export const startDaemon = async (
       pause: pause.get(),
       signatureStorm,
       draining: !acceptingWork,
+      worktrees,
     }
   }
 
@@ -6352,6 +6446,42 @@ export const startDaemon = async (
   )
   archiveEntriesDrain.unref()
 
+  // ── Worktree reclaim drain ───────────────────────────────────────────────
+  // Periodic cleanup of `.mars/worktrees/`. Three sweeps per tick:
+  //   1. Settled (done/dropped) — reclaim immediately; branch refs retained.
+  //   2. Orphan dirs — directories with no owning task row.
+  //   3. Excess failed — cap the number of retained failed worktrees.
+  //
+  // Rationale: the 2026-07 incident showed that 287 GB accumulated unnoticed
+  // in `.mars/worktrees/` because nothing ever reclaimed them. The startup
+  // sweep above handles the backlog on the first boot; this drain prevents
+  // new accumulation. Default cadence: every 10 minutes.
+  const WORKTREE_RECLAIM_DRAIN_MS = Number(
+    process.env.MARS_WORKTREE_RECLAIM_DRAIN_MS ?? 10 * 60 * 1_000,
+  )
+  const worktreeReclaimDrain = setInterval(
+    singleFlight(async () => {
+      try {
+        const { repoRoot: recRoot } = resolveContext()
+        const orphan = await sweepOrphanWorktrees(recRoot, log)
+        if (orphan.removed.length > 0)
+          log(`[worktree-reclaim] periodic: removed ${orphan.removed.length} orphan dir(s)`)
+
+        const settled = await reclaimSettledWorktrees(recRoot, log)
+        if (settled.removed.length > 0)
+          log(`[worktree-reclaim] periodic: removed ${settled.removed.length} settled worktree(s)`)
+
+        const cap = await reclaimExcessFailedWorktrees(recRoot, log)
+        if (cap.removed.length > 0)
+          log(`[worktree-reclaim] periodic: removed ${cap.removed.length} excess failed worktree(s)`)
+      } catch (err) {
+        log(`[worktree-reclaim] periodic drain errored: ${(err as Error).message}`)
+      }
+    }),
+    WORKTREE_RECLAIM_DRAIN_MS,
+  )
+  worktreeReclaimDrain.unref()
+
   const GATE_FIX_STEWARD_DRAIN_MS = Number(
     process.env.MARS_GATE_FIX_STEWARD_DRAIN_MS ?? 30_000,
   )
@@ -6404,6 +6534,7 @@ export const startDaemon = async (
     clearFailureConversationNoticeFlush(getCompositionRootClient())
     clearInterval(arcVerifierDrain)
     clearInterval(gateFixStewardDrain)
+    clearInterval(worktreeReclaimDrain)
     clearInterval(usageSamplerInterval)
     deferralWakeSweeper.stop()
     // Drop the dispatch hint before the tracker is torn down, so a writer that

@@ -898,6 +898,22 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [],
   },
+
+  'low-disk-space': {
+    humanSummary: (ctx) => {
+      const freeMiB = typeof ctx.payload['freeBytes'] === 'number'
+        ? Math.round((ctx.payload['freeBytes'] as number) / (1024 * 1024))
+        : '?'
+      return `Low disk space: only ${freeMiB} MiB free — dispatch is paused until space is reclaimed.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      freeBytes: ctx.payload['freeBytes'],
+      thresholdBytes: ctx.payload['thresholdBytes'],
+    }),
+    verbs: [],
+  },
 } satisfies Record<ActionQueueKind, Omit<Recipe, 'preloadedResponses'>>
 
 /**

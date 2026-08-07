@@ -422,6 +422,7 @@ const OPERATIONAL_ALERT_COPY: Record<
   'requeue-warning': null,
   'arc-superseded-on-main': null,
   'e2e-tooling-missing': null,
+  'low-disk-space': null,
 }
 
 const renderOperationalAlertCopy = (
