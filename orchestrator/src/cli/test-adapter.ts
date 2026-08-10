@@ -66,6 +66,15 @@ export interface InProcessOptions {
 /**
  * Run a single command in-process. `argv` is the post-`mars` argument vector
  * (e.g. `['task', 'add', 'do the thing']`).
+ *
+ * Mirrors the production `cli.ts` outer try/catch: if `dispatch` (or the
+ * command itself) throws an unhandled error, the adapter returns
+ * `{ code: 1, err: ['error: <message>'] }` rather than propagating the
+ * exception. This lets tests assert on the throw → exit-1 path exactly
+ * as a caller of the real binary would observe it.
+ *
+ * Intentional exit-0 paths (e.g. "action queue empty") are unaffected —
+ * they return a {@link CommandResult} without throwing.
  */
 export const runCommandInProcess = async (
   argv: readonly string[],
@@ -86,10 +95,17 @@ export const runCommandInProcess = async (
     },
   }
 
-  const parsed = parseArgs(argv)
-  const result = await dispatch(registry, parsed, deps)
-  if (isUnknown(result)) {
-    return { code: 1, out, err, unknown: true }
+  try {
+    const parsed = parseArgs(argv)
+    const result = await dispatch(registry, parsed, deps)
+    if (isUnknown(result)) {
+      return { code: 1, out, err, unknown: true }
+    }
+    return { code: result.code, value: result.value, out, err }
+  } catch (thrown: unknown) {
+    // Mirror cli.ts: `console.error(\`error: \${message}\`)` then exit 1.
+    const message = thrown instanceof Error ? thrown.message : String(thrown)
+    err.push(`error: ${message}`)
+    return { code: 1, out, err }
   }
-  return { code: result.code, value: result.value, out, err }
 }
