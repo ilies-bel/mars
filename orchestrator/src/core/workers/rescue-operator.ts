@@ -113,7 +113,7 @@ const MAX_MEMBER_ID_CHARS = 256
 const MAX_FAILURE_SIGNATURE_CHARS = 500
 const MAX_FAILURE_REASON_CHARS = 2_000
 
-export type RescueArcMember = Pick<
+type RescueArcMember = Pick<
   Task,
   'id' | 'status' | 'failureSignature' | 'failureReason' | 'createdAt'
 > & {
