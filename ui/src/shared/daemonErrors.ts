@@ -5,6 +5,12 @@ export const DAEMON_ERROR = {
   /** Port file present but the fetch to the daemon threw. HTTP 502. */
   PROXY_FAILED: 'PROXY_FAILED',
   /**
+   * Daemon is reachable but did not return a response within the proxy timeout.
+   * HTTP 504. Indicates a hanging route on the daemon side; the caller should
+   * surface this as a transient error rather than a permanent failure.
+   */
+  PROXY_TIMEOUT: 'PROXY_TIMEOUT',
+  /**
    * Daemon is running but its code predates the requested route (404/405) and
    * the daemon reports that HEAD has advanced since it started (isStale=true).
    * Remedy: `mars daemon restart`. The response body carries `sourceSha` and

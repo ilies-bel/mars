@@ -81,17 +81,47 @@ describe('proxyGet — transport error classification', () => {
     expect((result.body as { errorCode: string }).errorCode).toBe(DAEMON_ERROR.NO_DAEMON)
   })
 
-  it('returns 502 PROXY_FAILED for other transport errors (e.g. timeout)', async () => {
+  it('returns 502 PROXY_FAILED for other transport errors (e.g. generic network error)', async () => {
     writeFileSync(join(stateDir, 'http.port'), '58344')
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockRejectedValue(new TypeError('network timeout')),
+      vi.fn().mockRejectedValue(new TypeError('network error')),
     )
 
     const result = await proxyGet(stateDir, '/api/tasks')
 
     expect(result.status).toBe(502)
     expect((result.body as { errorCode: string }).errorCode).toBe(DAEMON_ERROR.PROXY_FAILED)
+  })
+
+  it('returns 504 PROXY_TIMEOUT when the daemon fetch times out (AbortSignal.timeout)', async () => {
+    // Simulate the DOMException that AbortSignal.timeout() raises when the
+    // time limit is exceeded. The error has name === 'TimeoutError'.
+    writeFileSync(join(stateDir, 'http.port'), '58344')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockRejectedValue(new DOMException('The operation timed out.', 'TimeoutError')),
+    )
+
+    const result = await proxyGet(stateDir, '/alerts')
+
+    expect(result.status).toBe(504)
+    expect((result.body as { errorCode: string }).errorCode).toBe(DAEMON_ERROR.PROXY_TIMEOUT)
+  })
+
+  it('returns 504 PROXY_TIMEOUT when TimeoutError surfaces on err.cause (Node-style wrapping)', async () => {
+    // Node wraps the original error in err.cause; verify both shapes are handled.
+    writeFileSync(join(stateDir, 'http.port'), '58344')
+    const cause = new DOMException('The operation timed out.', 'TimeoutError')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockRejectedValue(Object.assign(new TypeError('fetch failed'), { cause })),
+    )
+
+    const result = await proxyGet(stateDir, '/alerts')
+
+    expect(result.status).toBe(504)
+    expect((result.body as { errorCode: string }).errorCode).toBe(DAEMON_ERROR.PROXY_TIMEOUT)
   })
 })
 

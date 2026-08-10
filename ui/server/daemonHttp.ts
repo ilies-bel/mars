@@ -62,15 +62,29 @@ export const readDaemonHttpPort = async (
 }
 
 /**
+ * Maximum time (ms) to wait for any single daemon HTTP response before giving
+ * up and returning 504 / PROXY_TIMEOUT. Ten seconds is generous enough for
+ * slow queries while short enough that a hanging daemon route does not block
+ * a browser tab indefinitely.
+ */
+const PROXY_TIMEOUT_MS = 10_000
+
+/**
  * Single owner of the daemon-connectivity envelope shared by every proxy fn:
  * read the published port, synthesize a 503 (`NO_DAEMON`) when the daemon is
- * not running, run the caller's fetch, and convert any transport throw into a
- * 502 (`PROXY_FAILED`). The wire-contract error codes are the same ones the
- * client maps to `ApiError.kind` (see `errorCodeToKind` in `shared/api.ts`).
+ * not running, run the caller's fetch (with a per-request timeout via
+ * `AbortSignal.timeout`), and convert any transport throw into a structured
+ * error response. The wire-contract error codes are the same ones the client
+ * maps to `ApiError.kind` (see `errorCodeToKind` in `shared/api.ts`).
+ *
+ * Error classification:
+ * - `ECONNREFUSED` → 503 NO_DAEMON  (port file stale; daemon exited)
+ * - `TimeoutError`  → 504 PROXY_TIMEOUT  (daemon reachable but silent)
+ * - anything else  → 502 PROXY_FAILED
  */
 const withDaemon = async (
   stateDir: string,
-  call: (port: number) => Promise<DaemonActionResult>,
+  call: (port: number, signal: AbortSignal) => Promise<DaemonActionResult>,
 ): Promise<DaemonActionResult> => {
   const port = await readDaemonHttpPort(stateDir)
   if (port === null) {
@@ -79,8 +93,9 @@ const withDaemon = async (
       body: { ok: false, error: 'daemon not running', errorCode: DAEMON_ERROR.NO_DAEMON },
     }
   }
+  const signal = AbortSignal.timeout(PROXY_TIMEOUT_MS)
   try {
-    return await call(port)
+    return await call(port, signal)
   } catch (err) {
     // A connection-refused error means the port file is stale: the daemon exited
     // without removing it. Surface this as NO_DAEMON (503) — the same envelope
@@ -89,12 +104,26 @@ const withDaemon = async (
     //
     // Node's fetch wraps the syscall error in `err.cause`; Bun may surface it
     // directly on `err`. Check both.
-    const rawErr = err as { code?: string; cause?: { code?: string } }
+    const rawErr = err as { code?: string; cause?: { code?: string; name?: string }; name?: string }
     const errCode = rawErr.code ?? rawErr.cause?.code
     if (errCode === 'ECONNREFUSED') {
       return {
         status: 503,
         body: { ok: false, error: 'daemon not running', errorCode: DAEMON_ERROR.NO_DAEMON },
+      }
+    }
+    // AbortSignal.timeout() causes fetch to throw a DOMException with
+    // name === 'TimeoutError'. Surface this as 504 so the caller (and the UI)
+    // can distinguish "daemon silent" from "daemon unreachable".
+    // Node wraps the DOMException in err.cause; Bun may surface it directly.
+    if (rawErr.name === 'TimeoutError' || rawErr.cause?.name === 'TimeoutError') {
+      return {
+        status: 504,
+        body: {
+          ok: false,
+          error: 'daemon did not respond in time',
+          errorCode: DAEMON_ERROR.PROXY_TIMEOUT,
+        },
       }
     }
     return {
@@ -194,8 +223,8 @@ export const proxyGet = async (
   stateDir: string,
   path: string,
 ): Promise<DaemonActionResult> =>
-  withDaemon(stateDir, async (port) => {
-    const res = await fetch(`http://127.0.0.1:${port}${path}`)
+  withDaemon(stateDir, async (port, signal) => {
+    const res = await fetch(`http://127.0.0.1:${port}${path}`, { signal })
     const body = await res.json().catch(() => ({}))
     return { status: res.status, body }
   })
@@ -213,11 +242,12 @@ export const proxyPost = async (
   body: unknown,
   method: 'POST' | 'PUT' = 'POST',
 ): Promise<DaemonActionResult> =>
-  withDaemon(stateDir, async (port) => {
+  withDaemon(stateDir, async (port, signal) => {
     const res = await fetch(`http://127.0.0.1:${port}${path}`, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal,
     })
     const responseBody = await res.json().catch(() => ({}))
     return { status: res.status, body: responseBody }
@@ -235,7 +265,7 @@ export const proxyStream = async (
   path: string,
   req: Request,
 ): Promise<DaemonActionResult> =>
-  withDaemon(stateDir, async (port) => {
+  withDaemon(stateDir, async (port, signal) => {
     const ct = req.headers.get('Content-Type')
     const res = await fetch(`http://127.0.0.1:${port}${path}`, {
       method: 'POST',
@@ -244,6 +274,7 @@ export const proxyStream = async (
       // duplex: 'half' is required by some runtimes (Node ≥18) when the body
       // is a ReadableStream. Bun supports it natively without this option.
       duplex: 'half',
+      signal,
     })
     const body = await res.json().catch(() => ({}))
     return { status: res.status, body }
@@ -258,8 +289,8 @@ export const proxyDelete = async (
   stateDir: string,
   path: string,
 ): Promise<DaemonActionResult> =>
-  withDaemon(stateDir, async (port) => {
-    const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'DELETE' })
+  withDaemon(stateDir, async (port, signal) => {
+    const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'DELETE', signal })
     const body = await res.json().catch(() => ({}))
     return { status: res.status, body }
   })
@@ -287,7 +318,7 @@ export const proxyAction = async (
   op: string,
   entityId?: string,
 ): Promise<DaemonActionResult> =>
-  withDaemon(stateDir, async (port) => {
+  withDaemon(stateDir, async (port, signal) => {
     // Process-level ops carry no entity scope — strip entityId unconditionally
     // to prevent the wrong /actions/<op>/<id> path from being built.
     const effectiveEntityId = PROCESS_LEVEL_ACTION_OPS.has(op) ? undefined : entityId
@@ -295,7 +326,7 @@ export const proxyAction = async (
       effectiveEntityId === undefined
         ? `/actions/${op}`
         : `/actions/${op}/${encodeURIComponent(effectiveEntityId)}`
-    const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST' })
+    const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', signal })
     const body = await res.json().catch(() => ({}))
     return { status: res.status, body }
   })
