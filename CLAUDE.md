@@ -136,7 +136,7 @@ completion.
 
 The Mars action queue is the single human-facing work surface. Everything that
 needs the user — operational alerts from self-heal, tasks the orchestrator
-stopped on after exhausting retries (kind `task-blocked`), and draft proposals
+stopped on after exhausting retries (kind `failed`), and draft proposals
 waiting to be shaped (kind `draft-proposal`) — appears as an action queue
 message. Pick one via `mars action-queue list` or `/mars:action-queue`; the action queue
 dispatches to the right resolver (`/mars:unblock`, `/mars:grill`, or
