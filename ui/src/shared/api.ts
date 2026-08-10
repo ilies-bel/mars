@@ -1,4 +1,4 @@
-import { z, type ZodIssue, type ZodType } from 'zod'
+import { z, type ZodType } from 'zod'
 import { DAEMON_ERROR } from './daemonErrors'
 import {
   actionQueueHistoryResponseSchema,
@@ -106,27 +106,6 @@ export class ApiError extends Error {
   }
 }
 
-/**
- * Thrown by `fetchJson` when the HTTP response is OK but its body fails Zod
- * schema validation. The overwhelmingly common cause in this repo is a version
- * skew between the UI bundle and the running daemon — one was rebuilt without
- * the other after a rename or shape change.
- *
- * Unlike `ApiError`, this is NOT an HTTP-level error: the request succeeded
- * (200 OK, valid JSON) and only the *shape* is wrong. `resolveFallback` detects
- * this class and surfaces the first offending field path plus the fix gestures.
- */
-export class SchemaError extends Error {
-  /** The raw Zod issues — surface these to the operator for diagnosis. */
-  readonly issues: ZodIssue[]
-
-  constructor(apiPath: string, issues: ZodIssue[]) {
-    super(`GET ${apiPath} → response failed schema validation`)
-    this.name = 'SchemaError'
-    this.issues = issues
-  }
-}
-
 const BASE = import.meta.env.VITE_API_BASE ?? ''
 
 /**
@@ -207,10 +186,9 @@ export const fetchJson = async <T>(
   const raw = await r.json()
   const result = schema.safeParse(raw)
   if (!result.success) {
-    if (import.meta.env.DEV) {
-      console.error('[mars-ui] Schema validation failed for', path, result.error.issues)
-    }
-    throw new SchemaError(path, result.error.issues)
+    throw new Error(
+      `GET ${path} → response failed schema validation: ${result.error.message}`,
+    )
   }
   return result.data
 }
