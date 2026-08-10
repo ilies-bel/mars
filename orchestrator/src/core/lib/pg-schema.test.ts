@@ -914,4 +914,63 @@ describe('ensureSchema', () => {
     )
     expect(live).toEqual(IDENTITY_COLUMNS)
   })
+
+  // Regression guard: a live-DB rename of action_queue_items.state → status
+  // (without a matching code change) used to surface as a cryptic
+  // "column does not exist" error from a CREATE INDEX statement, giving the
+  // operator nothing to act on. The guard must produce a message that names the
+  // table, both column names, and the ALTER to run.
+  it('rejects with a diagnostic message when action_queue_items.state is named status', async () => {
+    const c = openDb(freshKey())
+    try {
+      // Bootstrap a table whose column matches the broken live-DB shape.
+      await __execSchemaBatch(c, [
+        `CREATE TABLE action_queue_items (
+          id              text   PRIMARY KEY,
+          kind            text   NOT NULL,
+          category        text   NOT NULL,
+          priority        text   NOT NULL,
+          status          text   NOT NULL DEFAULT 'open',
+          title           text   NOT NULL,
+          body            text   NOT NULL DEFAULT '',
+          payload         text   NOT NULL DEFAULT '{}',
+          context         text   NOT NULL DEFAULT '{}',
+          raised_by       text   NOT NULL,
+          raised_at       bigint NOT NULL,
+          resolved_at     bigint,
+          resolution      text,
+          resolution_note text,
+          root_cause      text,
+          fingerprint     text,
+          signature       text,
+          seen_count      bigint NOT NULL DEFAULT 1,
+          last_seen_at    bigint,
+          resolved_by     text,
+          origin_task_id  text,
+          snoozed_until   bigint
+        )`,
+      ])
+
+      // ensureSchema must reject — not with a raw CREATE INDEX error, but
+      // with a message that names table, old column, new column, and remedy.
+      await expect(ensureSchema(c)).rejects.toThrow(/action_queue_items/)
+      await expect(ensureSchema(c)).rejects.toThrow(/status/)
+      await expect(ensureSchema(c)).rejects.toThrow(/state/)
+      await expect(ensureSchema(c)).rejects.toThrow(/RENAME COLUMN/)
+    } finally {
+      await c.close()
+    }
+  })
+
+  it('boots cleanly when action_queue_items.state is already canonical', async () => {
+    // The guard must be a strict no-op on a correctly-shaped database.
+    const c = await freshSchemaClient()
+    try {
+      const cols = await columnsOf(c, 'action_queue_items')
+      expect(cols.has('state')).toBe(true)
+      expect(cols.has('status')).toBe(false)
+    } finally {
+      await c.close()
+    }
+  })
 })

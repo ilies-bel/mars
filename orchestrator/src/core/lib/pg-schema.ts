@@ -690,6 +690,32 @@ const DDL: readonly string[] = [
    $$`,
   `ALTER TABLE action_queue_items
      ALTER COLUMN raised_at SET DEFAULT ${EPOCH_NOW}`,
+  // Guard: the canonical column is 'state'. If the live table carries 'status'
+  // instead (e.g. a task worktree ran a migration against the shared live DB
+  // and the code was never merged), the CREATE INDEX statements below would
+  // fail with a cryptic "column does not exist" error that names an index
+  // rather than the actual problem. Detect the drift here and surface a HINT
+  // that names both columns and the exact ALTER to run — the same pattern as
+  // the chat_threads evaporated_at/closed_at guard above.
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'action_queue_items'
+          AND column_name = 'status'
+     ) AND NOT EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'action_queue_items'
+          AND column_name = 'state'
+     ) THEN
+       RAISE EXCEPTION
+         'action_queue_items has column "status" where the canonical schema expects "state"; daemon cannot boot until reconciled'
+         USING HINT = 'A schema change applied to the shared live database (possibly from a task worktree) renamed "state" to "status". '
+                   || 'Fix with: ALTER TABLE action_queue_items RENAME COLUMN status TO state; '
+                   || 'then restart the daemon.';
+     END IF;
+   END
+   $$`,
   `CREATE INDEX IF NOT EXISTS idx_action_queue_fingerprint_state
      ON action_queue_items(fingerprint, state)`,
   `CREATE INDEX IF NOT EXISTS idx_action_queue_state ON action_queue_items(state)`,

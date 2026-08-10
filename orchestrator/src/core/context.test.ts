@@ -7,6 +7,7 @@ import { resolve } from 'node:path'
 import {
   __resetContextCacheForTests,
   resolveContext,
+  resolveDbTarget,
 } from './context.js'
 
 const git = (cwd: string, ...args: string[]): string =>
@@ -93,5 +94,32 @@ describe('resolveContext repo-root detection', () => {
       resolve(realRepo, '.mars', 'observability.duckdb'),
     )
     expect(ctx.stateDbPath).not.toBe(ctx.observabilityDbPath)
+  })
+
+  // Regression guard: a dispatched coder running in a worktree resolves the
+  // real repo root (via --git-common-dir) and therefore can see the parent
+  // repo's live .mars/pg.dsn. The test suite forces MARS_DB_BACKEND=pglite in
+  // test/setup-env.ts (unconditional '=', not '??=') precisely to prevent
+  // worktree-running code from accidentally writing to the live database.
+  // This assertion documents and enforces that guarantee.
+  it('resolveDbTarget returns pglite key from worktree cwd, not parent repo live DSN', () => {
+    // Write a fake pg.dsn in the real repo's .mars/ to simulate a live daemon.
+    const marsDir = resolve(realRepo, '.mars')
+    mkdirSync(marsDir, { recursive: true })
+    const fakeDsn = 'postgres://mars@127.0.0.1:54321/mars'
+    writeFileSync(resolve(marsDir, 'pg.dsn'), fakeDsn)
+
+    // Act as a dispatched coder whose cwd is a Mars-managed linked worktree.
+    process.chdir(worktreeDir)
+    __resetContextCacheForTests()
+
+    // With MARS_DB_BACKEND=pglite forced by the test setup, resolveDbTarget
+    // must return the pglite identity key (the .mars/ state dir path), never
+    // the live postgres:// DSN from the parent repo.
+    const target = resolveDbTarget()
+    expect(target).not.toBe(fakeDsn)
+    expect(target).not.toMatch(/^postgres:\/\//)
+    // The pglite key is a filesystem path rooted at the real repo's .mars dir.
+    expect(target).toContain('.mars')
   })
 })
