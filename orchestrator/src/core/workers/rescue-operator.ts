@@ -121,7 +121,7 @@ type RescueArcMember = Pick<
   readonly prompt?: string
 }
 
-export interface RescueOperatorPromptInput {
+interface RescueOperatorPromptInput {
   failedTaskId: string
   originId: string
   failureSignature: string
