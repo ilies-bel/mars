@@ -215,21 +215,32 @@ describe('mars worker add', () => {
     expect(registry['EffortWorker']?.effort).toBe('medium')
   })
 
-  it('exits 2 with error when --effort has an invalid value', () => {
+  it('exits 2 and names every allowed value when --effort has an invalid value', () => {
     const result = runCli(
-      [
-        'worker',
-        'add',
-        'BadEffort',
-        '--model',
-        'balanced',
-        '--effort',
-        'bogus',
-      ],
+      ['worker', 'add', 'BadEffort', '--model', 'balanced', '--effort', 'turbo'],
       ENV(),
     )
     expect(result.status).toBe(2)
-    expect(result.stderr).toContain('effort')
+    // The bad value should be named.
+    expect(result.stderr).toContain('turbo')
+    // Every allowed value must be present so the user knows what to type.
+    for (const level of ['low', 'medium', 'high', 'xhigh', 'max']) {
+      expect(result.stderr).toContain(level)
+    }
+  })
+
+  it('exits 2 and names every allowed value when --permission-mode has an invalid value', () => {
+    const result = runCli(
+      ['worker', 'add', 'BadPerm', '--model', 'balanced', '--permission-mode', 'superuser'],
+      ENV(),
+    )
+    expect(result.status).toBe(2)
+    // The bad value should be named.
+    expect(result.stderr).toContain('superuser')
+    // Every allowed value must be present so the user knows what to type.
+    for (const mode of ['acceptEdits', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'plan']) {
+      expect(result.stderr).toContain(mode)
+    }
   })
 
   it('stores a single --tag in the registry', () => {

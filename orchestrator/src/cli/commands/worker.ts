@@ -18,8 +18,25 @@ import type { Command } from '../command'
 
 const TIER_NAMES = new Set<string>(['flagship', 'balanced', 'fast'])
 
+const VALID_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+const VALID_PERMS = [
+  'acceptEdits',
+  'auto',
+  'bypassPermissions',
+  'default',
+  'dontAsk',
+  'plan',
+] as const
+
 const WORKER_ADD_USAGE =
-  'usage: mars worker add <name> --model <tier|model> [--effort high|medium|...] [--permission-mode default|bypassPermissions] [--tag <tag> ...]'
+  `usage: mars worker add <name> --model <tier|model> [--effort ${VALID_EFFORTS.join('|')}] [--permission-mode ${VALID_PERMS.join('|')}] [--tag <tag> ...]`
+
+/**
+ * Formats a "bad value for a closed set" diagnostic that names the offending
+ * value and enumerates every accepted one — same shape as the --model message.
+ */
+const invalidClosedSetMsg = (flag: string, bad: string, allowed: readonly string[]): string =>
+  `${flag} '${bad}' is not a recognised value; use one of: ${allowed.join(', ')}.`
 
 const workerList: Command = {
   path: 'worker list',
@@ -88,27 +105,14 @@ const workerAdd: Command = {
     }
 
     const effortRaw = args.flags['--effort'] ?? 'high'
-    const VALID_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
-    if (!VALID_EFFORTS.has(effortRaw)) {
-      deps.err(
-        `effort must be one of low, medium, high, xhigh, max; got '${effortRaw}'`,
-      )
+    if (!(VALID_EFFORTS as readonly string[]).includes(effortRaw)) {
+      deps.err(invalidClosedSetMsg('--effort', effortRaw, VALID_EFFORTS))
       return { code: 2 }
     }
 
     const permRaw = args.flags['--permission-mode'] ?? 'default'
-    const VALID_PERMS = new Set([
-      'acceptEdits',
-      'auto',
-      'bypassPermissions',
-      'default',
-      'dontAsk',
-      'plan',
-    ])
-    if (!VALID_PERMS.has(permRaw)) {
-      deps.err(
-        `permission-mode must be one of acceptEdits, auto, bypassPermissions, default, dontAsk, plan; got '${permRaw}'`,
-      )
+    if (!(VALID_PERMS as readonly string[]).includes(permRaw)) {
+      deps.err(invalidClosedSetMsg('--permission-mode', permRaw, VALID_PERMS))
       return { code: 2 }
     }
 
