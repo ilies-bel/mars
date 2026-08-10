@@ -69,10 +69,30 @@ afterEach(() => {
 })
 
 describe('auto-reflect gate', () => {
-  it('reads autoReflect: off from daemon.json', async () => {
+  it('reads autoReflect: off from daemon.json (migration path)', async () => {
     const { isMemoryCaptureDisabled } = await import('../auto-reflect-gate')
 
     expect(isMemoryCaptureDisabled()).toBe(true)
+  })
+
+  it('reads memoryCapture: off from daemon.json (new key)', async () => {
+    writeFileSync(
+      resolve(repo, '.mars', 'daemon.json'),
+      JSON.stringify({ controlLevers: { memoryCapture: 'off' } }),
+    )
+    const { isMemoryCaptureDisabled } = await import('../auto-reflect-gate')
+
+    expect(isMemoryCaptureDisabled()).toBe(true)
+  })
+
+  it('returns false when memoryCapture is on', async () => {
+    writeFileSync(
+      resolve(repo, '.mars', 'daemon.json'),
+      JSON.stringify({ controlLevers: { memoryCapture: 'on' } }),
+    )
+    const { isMemoryCaptureDisabled } = await import('../auto-reflect-gate')
+
+    expect(isMemoryCaptureDisabled()).toBe(false)
   })
 
   it('skips automatic reflection persistence while preserving task signal capture', async () => {
