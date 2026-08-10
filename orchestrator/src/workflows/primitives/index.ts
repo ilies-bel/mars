@@ -418,7 +418,7 @@ export const resolveTaskId = (ctx: MarsCtx, override?: string): string =>
   override ?? input(ctx).taskId ?? ctx.runId
 
 /** Build the per-phase {@link TraceCtx} a primitive threads into git shell-outs. */
-export const buildPhaseCtx = (
+const buildPhaseCtx = (
   trace: PrimitiveTraceArgs,
   taskId: string,
   phase: 'setup' | 'code' | 'verify' | 'merge',

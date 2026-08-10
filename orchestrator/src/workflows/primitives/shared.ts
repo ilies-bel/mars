@@ -76,7 +76,7 @@ export const MAIN_DIRTY_VERIFY_MESSAGE =
   'integration branch dirty before verify; parked behind main-commiter recovery'
 
 // Thrown by the merge step's dirty-main check.
-export const MAIN_DIRTY_MERGE_MESSAGE =
+const MAIN_DIRTY_MERGE_MESSAGE =
   'integration branch dirty before merge; parked behind main-commiter recovery'
 
 // Thrown by the code step when the context token budget fires.
@@ -633,7 +633,7 @@ export type PostCoderState =
  * signature stops resolving to {@link CODER_UNCOMMITTED_SIGNATURE} and the
  * failure degrades to `unclassified`.
  */
-export const coderUncommittedSummary = (
+const coderUncommittedSummary = (
   taskId: string,
   fileCount: number,
 ): string =>

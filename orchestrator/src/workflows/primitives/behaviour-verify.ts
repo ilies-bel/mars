@@ -102,7 +102,7 @@ export const behaviourUnverifiedFingerprint = (originId: string): string =>
 // Verdict contract (Zod)
 // ---------------------------------------------------------------------------
 
-export const criterionVerdictSchema = z.object({
+const criterionVerdictSchema = z.object({
   /** Zero-based index into the task's doneCriteria list. */
   criterionIndex: z.number().int().nonnegative(),
   /**
@@ -119,7 +119,7 @@ export const criterionVerdictSchema = z.object({
 
 export type CriterionVerdict = z.infer<typeof criterionVerdictSchema>
 
-export const behaviourVerdictReportSchema = z.object({
+const behaviourVerdictReportSchema = z.object({
   verdicts: z.array(criterionVerdictSchema),
 })
 
