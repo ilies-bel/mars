@@ -506,7 +506,13 @@ const proposalList: Command = {
     } = {}
     if (sourceFlag) filter.source = sourceFlag
     if (statusFlag) filter.status = statusFlag
-    const ideas = await listProposals(filter)
+    let ideas
+    try {
+      ideas = await listProposals(filter)
+    } catch (error: unknown) {
+      deps.err(errorMessage(error))
+      return { code: 1 }
+    }
     if (ideas.length === 0) {
       deps.out('no proposals')
       return { code: 0 }

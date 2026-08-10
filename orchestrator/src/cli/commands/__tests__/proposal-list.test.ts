@@ -1,7 +1,21 @@
 /**
- * Tests for `mars proposal list` robustness with legacy DB statuses.
+ * Tests for `mars proposal list` robustness with legacy DB statuses, and
+ * regression coverage for two defects:
  *
- * The writer/reader split: the DB may contain rows with status values that the
+ * 1. Wrong column name: `proposals` has no `state` column; the status column
+ *    is `status`. Any migration that referenced `state` would produce
+ *    `column "state" does not exist` and make the command unusable. The
+ *    regression test below confirms `proposal list` returns exit 0 against a
+ *    freshly initialised schema — catching any future DDL regression that
+ *    introduces a `state` reference on the proposals table.
+ *
+ * 2. Exit-code 0 on error: before the fix, a DB query failure caused
+ *    `listProposals` to throw, the error propagated uncaught through
+ *    `proposalList.run`, and the test adapter surfaced it as an unhandled
+ *    rejection rather than `{ code: 1 }`. The regression test below induces
+ *    a query failure and asserts `code === 1`.
+ *
+ * Writer/reader split: the DB may contain rows with status values that the
  * current TypeScript enum doesn't recognise ('promoted', 'superseded', 'done').
  * An unknown status must not crash the whole listing — it degrades to rendering
  * the raw string value rather than throwing.
@@ -130,5 +144,38 @@ describe('mars proposal list with legacy statuses', () => {
     expect(drafts.code).toBe(0)
     expect(drafts.out.some((l) => l.includes(draft.id.slice(0, 8)))).toBe(true)
     expect(drafts.out.some((l) => l.includes(legacy.id.slice(0, 8)))).toBe(false)
+  })
+})
+
+describe('mars proposal list — regression: schema correctness and error exit code', () => {
+  it('exits 0 against a freshly initialised schema (no state-column error)', async () => {
+    // Regression for: `column "state" does not exist`
+    // proposals.ts had a reference to `state` (a column that does not exist on
+    // the proposals table) somewhere in the read path. A fresh-schema run
+    // exercises every DDL migration and then the SELECT — if any migration
+    // introduces a `state` reference on proposals, this test catches it.
+    const { run } = await loadEnv()
+    const result = await run(['proposal', 'list'])
+    expect(result.code).toBe(0)
+    // Empty DB prints "no proposals" and still exits 0.
+    expect(result.out).toEqual(['no proposals'])
+    expect(result.err).toEqual([])
+  })
+
+  it('exits non-zero and prints an error when the query fails', async () => {
+    // Regression for: error path exiting 0.
+    // Before the fix, listProposals threw and the error propagated uncaught
+    // through proposalList.run, reaching the outer CLI catch instead of being
+    // surfaced as code: 1 from the command itself.
+    const { run, db } = await loadEnv()
+
+    // Drop the proposals table to force a query failure on the next SELECT.
+    await db.execute('DROP TABLE IF EXISTS proposals CASCADE')
+
+    const result = await run(['proposal', 'list'])
+    expect(result.code).toBe(1)
+    // The error message must be printed to stderr, not stdout.
+    expect(result.err.length).toBeGreaterThan(0)
+    expect(result.out).toEqual([])
   })
 })
