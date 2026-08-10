@@ -150,7 +150,7 @@ describe('action-queue reconcile', () => {
     // Item must still be open.
     const open = await aq.listActionQueueItems('open')
     expect(open).toHaveLength(1)
-    expect(open[0].state).toBe('open')
+    expect(open[0].status).toBe('open')
   })
 
   it('closes open items with null origin_task_id whose payload.originTaskId is absent from tasks', async () => {

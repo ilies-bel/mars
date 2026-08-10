@@ -85,7 +85,7 @@ const loadContext = async (repo: string): Promise<TestContext> => {
 
   const countOpenReflectRows = async (): Promise<number> => {
     const r = await store.query({
-      sql: `SELECT COUNT(*) as n FROM action_queue_items WHERE kind = 'reflect-recommended' AND state = 'open'`,
+      sql: `SELECT COUNT(*) as n FROM action_queue_items WHERE kind = 'reflect-recommended' AND status = 'open'`,
       args: [],
     })
     const row = r.rows[0] as unknown as { n: number }
@@ -94,7 +94,7 @@ const loadContext = async (repo: string): Promise<TestContext> => {
 
   const countResolvedReflectRows = async (): Promise<number> => {
     const r = await store.query({
-      sql: `SELECT COUNT(*) as n FROM action_queue_items WHERE kind = 'reflect-recommended' AND state = 'resolved'`,
+      sql: `SELECT COUNT(*) as n FROM action_queue_items WHERE kind = 'reflect-recommended' AND status = 'resolved'`,
       args: [],
     })
     const row = r.rows[0] as unknown as { n: number }

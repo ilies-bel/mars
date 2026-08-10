@@ -78,7 +78,7 @@ describe('step-done closes awaiting-human action-queue row', () => {
 
     // Confirm the row is open before the step-done gesture.
     const before = await actionQueue.getActionQueueItem(itemId)
-    expect(before?.state).toBe('open')
+    expect(before?.status).toBe('open')
 
     // Simulate what handleStepDone now calls (the fix): supersede by signature.
     await actionQueue.supersedeActionQueueItemsBySignature(
@@ -90,7 +90,7 @@ describe('step-done closes awaiting-human action-queue row', () => {
 
     // The row must be resolved — no orphaned open alert for a completed step.
     const after = await actionQueue.getActionQueueItem(itemId)
-    expect(after?.state, 'awaiting-human row must be resolved after step-done').toBe('resolved')
+    expect(after?.status, 'awaiting-human row must be resolved after step-done').toBe('resolved')
   })
 
   it('is idempotent: calling supersede twice does not fail or re-open the row', async () => {
@@ -114,7 +114,7 @@ describe('step-done closes awaiting-human action-queue row', () => {
     await actionQueue.supersedeActionQueueItemsBySignature('awaiting-human', task.id, 'step-done', 'daemon:step-done')
 
     const after = await actionQueue.getActionQueueItem(itemId)
-    expect(after?.state).toBe('resolved')
+    expect(after?.status).toBe('resolved')
   })
 
   it('does not close rows for a different task', async () => {
@@ -152,7 +152,7 @@ describe('step-done closes awaiting-human action-queue row', () => {
     const afterA = await actionQueue.getActionQueueItem(itemIdA)
     const afterB = await actionQueue.getActionQueueItem(itemIdB)
 
-    expect(afterA?.state).toBe('resolved')
-    expect(afterB?.state).toBe('open') // task B's row must remain open
+    expect(afterA?.status).toBe('resolved')
+    expect(afterB?.status).toBe('open') // task B's row must remain open
   })
 })

@@ -748,7 +748,7 @@ describe('ensureSchema', () => {
     const c = await freshSchemaClient()
     const cols = await columnsOf(c, 'action_queue_items')
     for (const name of [
-      'id', 'kind', 'category', 'priority', 'state', 'title', 'body',
+      'id', 'kind', 'category', 'priority', 'status', 'title', 'body',
       'payload', 'context', 'raised_by', 'raised_at', 'resolved_at',
       'resolution', 'resolution_note', 'root_cause', 'fingerprint',
       'signature', 'seen_count', 'last_seen_at', 'resolved_by',
@@ -813,7 +813,7 @@ describe('ensureSchema', () => {
       'idx_trace_events_origin_time', 'idx_trace_events_step_ended_time',
       'idx_proposals_source_fingerprint', 'idx_scorer_results_scorer_task',
       'idx_promotion_ledger_workflow', 'idx_memory_packets_domain_salience',
-      'idx_action_queue_fingerprint_state', 'idx_action_queue_state',
+      'idx_action_queue_fingerprint_status', 'idx_action_queue_status',
       'idx_action_queue_open_snoozed_until',
       'idx_action_queue_history_item', 'idx_kpi_snapshots_taken_at',
       'idx_self_heal_attempts_parent_signature',
@@ -915,22 +915,23 @@ describe('ensureSchema', () => {
     expect(live).toEqual(IDENTITY_COLUMNS)
   })
 
-  // Regression guard: a live-DB rename of action_queue_items.state → status
-  // (without a matching code change) used to surface as a cryptic
-  // "column does not exist" error from a CREATE INDEX statement, giving the
-  // operator nothing to act on. The guard must produce a message that names the
-  // table, both column names, and the ALTER to run.
-  it('rejects with a diagnostic message when action_queue_items.state is named status', async () => {
+  // Regression guard: action_queue_items.state → status column drift used to
+  // surface as a cryptic "column does not exist" error from a CREATE INDEX
+  // statement, giving the operator nothing to act on. 'status' is now the
+  // canonical column, so the drift is reconciled automatically by the
+  // idempotent rename in the DDL batch rather than aborting the boot: a live
+  // database still carrying the legacy 'state' name migrates in place.
+  it('migrates a legacy action_queue_items.state column to status in place', async () => {
     const c = openDb(freshKey())
     try {
-      // Bootstrap a table whose column matches the broken live-DB shape.
+      // Bootstrap a table whose column matches the legacy live-DB shape.
       await __execSchemaBatch(c, [
         `CREATE TABLE action_queue_items (
           id              text   PRIMARY KEY,
           kind            text   NOT NULL,
           category        text   NOT NULL,
           priority        text   NOT NULL,
-          status          text   NOT NULL DEFAULT 'open',
+          state           text   NOT NULL DEFAULT 'open',
           title           text   NOT NULL,
           body            text   NOT NULL DEFAULT '',
           payload         text   NOT NULL DEFAULT '{}',
@@ -949,26 +950,34 @@ describe('ensureSchema', () => {
           origin_task_id  text,
           snoozed_until   bigint
         )`,
+        {
+          sql: `INSERT INTO action_queue_items (id, kind, category, priority, state, title, raised_by, raised_at)
+                VALUES ('legacy', 'failed', 'orchestrator', 'high', 'open', 'Legacy', 'daemon', 1234)`,
+        },
       ])
 
-      // ensureSchema must reject — not with a raw CREATE INDEX error, but
-      // with a message that names table, old column, new column, and remedy.
-      await expect(ensureSchema(c)).rejects.toThrow(/action_queue_items/)
-      await expect(ensureSchema(c)).rejects.toThrow(/status/)
-      await expect(ensureSchema(c)).rejects.toThrow(/state/)
-      await expect(ensureSchema(c)).rejects.toThrow(/RENAME COLUMN/)
+      // ensureSchema must reconcile the drift rather than reject on it.
+      await expect(ensureSchema(c)).resolves.toBeUndefined()
+
+      const cols = await columnsOf(c, 'action_queue_items')
+      expect(cols.has('status')).toBe(true)
+      expect(cols.has('state')).toBe(false)
+
+      // The rename preserves the row's value rather than resetting it.
+      const row = await c.execute(`SELECT status FROM action_queue_items WHERE id = 'legacy'`)
+      expect(row.rows[0].status).toBe('open')
     } finally {
       await c.close()
     }
   })
 
-  it('boots cleanly when action_queue_items.state is already canonical', async () => {
-    // The guard must be a strict no-op on a correctly-shaped database.
+  it('boots cleanly when action_queue_items.status is already canonical', async () => {
+    // The rename must be a strict no-op on a correctly-shaped database.
     const c = await freshSchemaClient()
     try {
       const cols = await columnsOf(c, 'action_queue_items')
-      expect(cols.has('state')).toBe(true)
-      expect(cols.has('status')).toBe(false)
+      expect(cols.has('status')).toBe(true)
+      expect(cols.has('state')).toBe(false)
     } finally {
       await c.close()
     }

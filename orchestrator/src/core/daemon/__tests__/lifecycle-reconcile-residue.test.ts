@@ -86,7 +86,7 @@ describe('reconcileTerminalTasks — purged-task residue (pass c)', () => {
     for (const itemId of itemIds) {
       const item = await actionQueue.getActionQueueItem(itemId)
       expect(item, `item ${itemId} should exist`).not.toBeNull()
-      expect(item!.state, `item ${itemId} should be resolved`).toBe('resolved')
+      expect(item!.status, `item ${itemId} should be resolved`).toBe('resolved')
     }
 
     // Return counts must cover the seeded rows.

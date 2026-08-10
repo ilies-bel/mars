@@ -132,7 +132,7 @@ describe('scorer-suggested action-queue projection', () => {
       kind: 'scorer-suggested',
     })
     expect(all).toHaveLength(1)
-    expect(all[0].state).toBe('resolved')
+    expect(all[0].status).toBe('resolved')
   })
 
   it('evicts the row on scorer.dismissed', async () => {

@@ -198,7 +198,7 @@ export const computeBudgetStatus = async (
   const openRowsResult = await store.query({
     sql: `SELECT id, kind, signature, title, raised_at, last_seen_at, seen_count
           FROM action_queue_items
-          WHERE state = 'open' AND kind IN ('budget-window', 'budget-arc')
+          WHERE status = 'open' AND kind IN ('budget-window', 'budget-arc')
           ORDER BY raised_at DESC`,
     args: [],
   })

@@ -50,7 +50,7 @@ export async function reconcileTerminalTasks(
     FROM tasks t
     JOIN action_queue_items i ON i.origin_task_id = t.id
     WHERE t.status IN ('done', 'dropped')
-      AND i.state = 'open'
+      AND i.status = 'open'
   `)
 
   let rowsResolved = 0
@@ -68,7 +68,7 @@ export async function reconcileTerminalTasks(
   const taskOriginOrphans = await client.execute(`
     SELECT DISTINCT origin_task_id
     FROM action_queue_items
-    WHERE state = 'open'
+    WHERE status = 'open'
       AND kind NOT IN (${proposalKindList}, ${scorerKindList})
       AND origin_task_id IS NOT NULL
       AND origin_task_id NOT IN (SELECT id FROM tasks)
@@ -86,7 +86,7 @@ export async function reconcileTerminalTasks(
   const proposalOriginOrphans = await client.execute(`
     SELECT DISTINCT origin_task_id
     FROM action_queue_items
-    WHERE state = 'open'
+    WHERE status = 'open'
       AND kind IN (${proposalKindList})
       AND origin_task_id IS NOT NULL
       AND origin_task_id NOT IN (SELECT id FROM proposals)
@@ -109,7 +109,7 @@ export async function reconcileTerminalTasks(
   const scorerOriginOrphans = await client.execute(`
     SELECT DISTINCT origin_task_id
     FROM action_queue_items
-    WHERE state = 'open'
+    WHERE status = 'open'
       AND kind IN (${scorerKindList})
       AND origin_task_id IS NOT NULL
       AND origin_task_id NOT IN (SELECT id FROM scorers WHERE status = 'suggested')
@@ -129,7 +129,7 @@ export async function reconcileTerminalTasks(
   const nullOriginOrphans = await client.execute(`
     SELECT i.id
     FROM action_queue_items i
-    WHERE i.state = 'open'
+    WHERE i.status = 'open'
       AND i.kind NOT IN (${proposalKindList}, ${scorerKindList})
       AND i.origin_task_id IS NULL
       AND (i.payload::jsonb ->> 'originTaskId') IS NOT NULL
@@ -157,7 +157,7 @@ export async function reconcileTerminalTasks(
     SELECT i.id
     FROM action_queue_items i
     JOIN tasks t ON t.id = (i.payload::jsonb ->> 'originalTaskId')
-    WHERE i.state = 'open'
+    WHERE i.status = 'open'
       AND i.kind NOT IN (${proposalKindList}, ${scorerKindList})
       AND i.origin_task_id IS NULL
       AND t.status IN ('done', 'dropped')
@@ -190,7 +190,7 @@ export async function reconcileTerminalTasks(
     SELECT DISTINCT (i.payload::jsonb ->> 'taskId') AS task_id, t.status
     FROM action_queue_items i
     JOIN tasks t ON t.id = (i.payload::jsonb ->> 'taskId')
-    WHERE i.state = 'open'
+    WHERE i.status = 'open'
       AND i.kind = 'failed'
       AND t.status IN ('done', 'dropped')
   `)

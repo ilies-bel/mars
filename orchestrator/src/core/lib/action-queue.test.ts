@@ -91,7 +91,7 @@ describe('action-queue', () => {
     expect(item).not.toBeNull()
     expect(item!.id).toBe(id)
     expect(item!.kind).toBe('failed')
-    expect(item!.state).toBe('open')
+    expect(item!.status).toBe('open')
     expect(item!.seenCount).toBe(1)
     expect(item!.raisedBy).toBe('orchestrator:merge-step')
     expect(item!.context).toEqual({ task_id: 'abc123' })
@@ -152,7 +152,7 @@ describe('action-queue', () => {
 
     const open = await actionQueue.listActionQueueItems('open')
     expect(open).toHaveLength(2)
-    expect(open.every((i) => i.state === 'open')).toBe(true)
+    expect(open.every((i) => i.status === 'open')).toBe(true)
 
     const resolved = await actionQueue.listActionQueueItems('resolved')
     expect(resolved).toHaveLength(1)
@@ -203,7 +203,7 @@ describe('action-queue', () => {
       rootCause: 'stale lock from crashed daemon',
     })
     const item = await actionQueue.getActionQueueItem(id)
-    expect(item!.state).toBe('resolved')
+    expect(item!.status).toBe('resolved')
     expect(item!.resolution).toBe('fixed')
     expect(item!.resolutionNote).toBe('manual cleanup ran')
     expect(item!.rootCause).toBe('stale lock from crashed daemon')
@@ -220,7 +220,7 @@ describe('action-queue', () => {
     await new Promise((r) => setTimeout(r, 5))
     await actionQueue.setActionQueueState(id, 'resolved')
     const second = await actionQueue.getActionQueueItem(id)
-    expect(second!.state).toBe('resolved')
+    expect(second!.status).toBe('resolved')
     expect(second!.resolution).toBe('fixed')
     expect(second!.resolvedAt).not.toBeNull()
     expect(second!.resolvedAt! >= firstResolvedAt!).toBe(true)
@@ -451,7 +451,7 @@ describe('action-queue', () => {
     const openAfter = await actionQueue.listActionQueueItems('open')
     expect(openAfter.some((it) => it.id === id)).toBe(false)
     const item = await actionQueue.getActionQueueItem(id)
-    expect(item!.state).toBe('resolved')
+    expect(item!.status).toBe('resolved')
     expect(item!.resolution).toBe('superseded')
     expect(item!.resolutionNote).toBe('superseded: origin-done')
   })
@@ -564,7 +564,7 @@ describe('action-queue', () => {
 
       expect(result.closed).toBe(1)
       const item = await actionQueue.getActionQueueItem(itemId)
-      expect(item!.state).toBe('resolved')
+      expect(item!.status).toBe('resolved')
       expect(item!.resolution).toBe('superseded')
       expect(item!.resolutionNote).toBe('superseded: origin-done')
     })
@@ -582,7 +582,7 @@ describe('action-queue', () => {
 
       expect(result.closed).toBe(1)
       const item = await actionQueue.getActionQueueItem(itemId)
-      expect(item!.state).toBe('resolved')
+      expect(item!.status).toBe('resolved')
       expect(item!.resolutionNote).toBe('superseded: origin-dropped')
     })
 
@@ -598,7 +598,7 @@ describe('action-queue', () => {
 
       expect(result.closed).toBe(0)
       const item = await actionQueue.getActionQueueItem(itemId)
-      expect(item!.state).toBe('open')
+      expect(item!.status).toBe('open')
     })
 
     it('leaves open items whose origin task is still live (running, queued, etc.)', async () => {
@@ -615,7 +615,7 @@ describe('action-queue', () => {
 
       expect(result.closed).toBe(0)
       const item = await actionQueue.getActionQueueItem(itemId)
-      expect(item!.state).toBe('open')
+      expect(item!.status).toBe('open')
     })
 
     it('is idempotent: re-running closes zero additional items', async () => {
@@ -683,7 +683,7 @@ describe('action-queue', () => {
       expect(closed).toContain(id)
 
       const item = await actionQueue.getActionQueueItem(id)
-      expect(item!.state).toBe('resolved')
+      expect(item!.status).toBe('resolved')
       expect(item!.resolution).toBe('superseded')
       expect(item!.resolutionNote).toBe(
         'superseded by slice K: preflight code path retired',
@@ -707,7 +707,7 @@ describe('action-queue', () => {
       expect(closed).toContain(id)
 
       const item = await actionQueue.getActionQueueItem(id)
-      expect(item!.state).toBe('resolved')
+      expect(item!.status).toBe('resolved')
     })
 
     it('supersedes rows whose body literally contains the legacy phrase', async () => {
@@ -740,7 +740,7 @@ describe('action-queue', () => {
       expect(closed).not.toContain(id)
 
       const item = await actionQueue.getActionQueueItem(id)
-      expect(item!.state).toBe('open')
+      expect(item!.status).toBe('open')
     })
 
     it('is idempotent: rerunning closes zero additional rows', async () => {

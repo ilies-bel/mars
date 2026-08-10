@@ -104,7 +104,7 @@ describe('daemon-code-drift action-queue rows', () => {
     const open = await actionQueue.listActionQueueItems('open')
     const driftRows = open.filter((i) => i.kind === 'daemon-code-drift')
     expect(driftRows).toHaveLength(1)
-    expect(driftRows[0]?.state).toBe('open')
+    expect(driftRows[0]?.status).toBe('open')
   })
 
   // ── Idempotent: second staleness tick does NOT create a second row ─────────
@@ -132,14 +132,14 @@ describe('daemon-code-drift action-queue rows', () => {
 
     // Verify the row is open before the simulated restart
     const beforeRestart = await actionQueue.getActionQueueItem(id)
-    expect(beforeRestart?.state).toBe('open')
+    expect(beforeRestart?.status).toBe('open')
 
     // Restart the daemon: its complete startup reconciliation clears stale alerts.
     const summary = await reconcile.runStartupReconcile(startupDeps())
     expect(summary.codeDriftAlertsCleared).toBe(1)
 
     const afterRestart = await actionQueue.getActionQueueItem(id)
-    expect(afterRestart?.state).toBe('resolved')
+    expect(afterRestart?.status).toBe('resolved')
   })
 
   // ── After restart, fresh drift can raise a new row ────────────────────────

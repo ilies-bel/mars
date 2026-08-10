@@ -76,6 +76,31 @@ automatically (worktree → code → verify → merge). Inspect via `mars
 list`. For direct reads, query with `psql "$(cat .mars/pg.dsn)"`
 (tables `tasks`, `task_blockers`, …).
 
+**Querying the database directly — timestamp and column-name pitfalls.**
+Timestamp encodings and lifecycle-column names are mixed across tables.
+Use the correct expression for each table or you get a hard error or a
+silently wrong result:
+
+- `tasks.created_at` / `tasks.updated_at` — **`timestamptz`**.
+  Format: `to_char(created_at, 'MM-DD HH24:MI')`.
+  Example: `SELECT id, to_char(created_at,'MM-DD HH24:MI') FROM tasks LIMIT 5;`
+
+- `chat_threads.created_at` / `chat_threads.updated_at` — **`bigint` epoch-milliseconds**.
+  Format: `to_char(to_timestamp(created_at / 1000.0), 'MM-DD HH24:MI')`.
+  Example: `SELECT id, to_char(to_timestamp(created_at/1000.0),'MM-DD HH24:MI') FROM chat_threads LIMIT 5;`
+
+- `action_queue_items` — creation timestamp is **`raised_at`** (not `created_at`),
+  lifecycle column is **`status`** (not `state`), both `bigint` epoch-milliseconds.
+  Format: `to_char(to_timestamp(raised_at / 1000.0), 'MM-DD HH24:MI')`.
+  Example: `SELECT id, kind, status, to_char(to_timestamp(raised_at/1000.0),'MM-DD HH24:MI') AS raised FROM action_queue_items LIMIT 5;`
+
+- `task_blockers.state` — legitimately named `state` (a distinct domain concept:
+  blocker confirmation state). Do not confuse it with the lifecycle `status` columns.
+
+The full encoding registry lives in
+`orchestrator/src/core/lib/pg-schema.ts` (the leading doc comment) and
+`orchestrator/src/core/lib/timestamp-encodings.ts`.
+
 **All mutations route through the orchestrator.** Direct `Edit`/`Write`
 on the working tree (i.e. on `main`) is a last resort — see Routing
 above. Never assume a blanket "edit mode" is in effect; opt-in is
@@ -463,6 +488,44 @@ current.
 **Consumer-side UX is unchanged.** `mars init` and `mars update` continue
 to work exactly as before — they expand the bundled templates into the
 target repo. Only the maintainer-side refresh mechanism changed.
+
+## Querying the database directly
+
+The embedded PostgreSQL database uses **mixed timestamp encodings** across
+tables. Always use the right expression for the table you are querying:
+
+| Table | Timestamp column(s) | Type | SQL display expression |
+|---|---|---|---|
+| `tasks` | `created_at`, `updated_at` | `timestamptz` | `to_char(created_at, 'MM-DD HH24:MI')` |
+| `chat_threads` | `created_at`, `updated_at` | `bigint` epoch-ms | `to_char(to_timestamp(created_at / 1000.0), 'MM-DD HH24:MI')` |
+| `action_queue_items` | `raised_at` | `bigint` epoch-ms | `to_char(to_timestamp(raised_at / 1000.0), 'MM-DD HH24:MI')` |
+
+Note: `action_queue_items` has **no** `created_at` column — use `raised_at`.
+
+**Column naming conventions:**
+
+- `action_queue_items` uses **`status`** (not `state`) for its lifecycle
+  column: `'open'` or `'resolved'`. This matches the `tasks.status` naming.
+- `task_blockers.state` and `verify_gates.state` are different domain concepts
+  (confirmation state and gate state respectively) — these are NOT renamed.
+- `action_queue_history.from_state` / `to_state` record history transitions —
+  these are also NOT renamed.
+
+Common queries:
+
+```sql
+-- List open action queue items
+SELECT id, kind, priority, title,
+       to_char(to_timestamp(raised_at / 1000.0), 'MM-DD HH24:MI') AS raised
+  FROM action_queue_items WHERE status = 'open' ORDER BY raised_at DESC;
+
+-- List recent tasks
+SELECT id, status, created_at FROM tasks ORDER BY created_at DESC LIMIT 10;
+
+-- List chat threads
+SELECT id, to_char(to_timestamp(created_at / 1000.0), 'MM-DD HH24:MI') AS created
+  FROM chat_threads ORDER BY created_at DESC LIMIT 10;
+```
 
 ## Loose ends
 

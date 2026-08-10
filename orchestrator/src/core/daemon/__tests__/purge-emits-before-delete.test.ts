@@ -140,7 +140,7 @@ describe('corePurgeTask — task.dropped emitted before DELETE', () => {
     // (b) Action-queue row is cleared by drainAlertDismissals consuming the task.dropped event.
     await ad.drainAlertDismissals(client)
     const item = await actionQueue.getActionQueueItem(itemId)
-    expect(item!.state).toBe('resolved')
+    expect(item!.status).toBe('resolved')
   })
 
   it('cascade-deletes the fix task when purging an origin, both rows gone and both task.dropped events emitted', async () => {
@@ -218,8 +218,8 @@ describe('corePurgeTask — task.dropped emitted before DELETE', () => {
     await ad.drainAlertDismissals(client)
     const originItem = await actionQueue.getActionQueueItem(originItemId)
     const fixItem = await actionQueue.getActionQueueItem(fixItemId)
-    expect(originItem!.state).toBe('resolved')
-    expect(fixItem!.state).toBe('resolved')
+    expect(originItem!.status).toBe('resolved')
+    expect(fixItem!.status).toBe('resolved')
   })
 })
 
@@ -265,7 +265,7 @@ describe('corePurgeTask — inline action-queue row resolution (no event drain n
 
     // Confirm the row is open before the purge.
     const before = await actionQueue.getActionQueueItem(itemId)
-    expect(before!.state).toBe('open')
+    expect(before!.status).toBe('open')
 
     // Purge with force=true (no branch exists; git branch -D fails silently).
     await pt.corePurgeTask(task.id, true, 'main', repo)
@@ -274,7 +274,7 @@ describe('corePurgeTask — inline action-queue row resolution (no event drain n
     // the inline resolveAllRowsForTask + supersedeActionQueueItemsForOrigin
     // inside corePurgeTask close it synchronously.
     const after = await actionQueue.getActionQueueItem(itemId)
-    expect(after!.state).toBe('resolved')
+    expect(after!.status).toBe('resolved')
   })
 
   it('resolving rows inline is idempotent with a subsequent event drain', async () => {
@@ -311,7 +311,7 @@ describe('corePurgeTask — inline action-queue row resolution (no event drain n
     await expect(ad.drainAlertDismissals(client)).resolves.toBeDefined()
 
     const after = await actionQueue.getActionQueueItem(itemId)
-    expect(after!.state).toBe('resolved')
+    expect(after!.status).toBe('resolved')
   })
 })
 
@@ -350,7 +350,7 @@ describe('corePurgeTask — non-existent task (already-gone idempotency)', () =>
 
     // Confirm the row is open before the purge.
     const before = await actionQueue.getActionQueueItem(itemId)
-    expect(before!.state).toBe('open')
+    expect(before!.status).toBe('open')
 
     // corePurgeTask on a non-existent task must NOT throw.
     const result = await pt.corePurgeTask(ghostTaskId, false, 'main', repo)
@@ -361,7 +361,7 @@ describe('corePurgeTask — non-existent task (already-gone idempotency)', () =>
 
     // The action-queue row must now be resolved.
     const after = await actionQueue.getActionQueueItem(itemId)
-    expect(after!.state).toBe('resolved')
+    expect(after!.status).toBe('resolved')
 
     // The history must include an open→resolved transition with a non-empty `by`.
     const resolvedEntry = after!.history.find((h) => h.toState === 'resolved')

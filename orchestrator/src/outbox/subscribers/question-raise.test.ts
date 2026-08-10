@@ -35,7 +35,7 @@ function questionEvent(
 /** Count open action-queue rows. */
 async function openRowCount(client: DbClient): Promise<number> {
   const r = await client.execute(
-    `SELECT COUNT(*) AS n FROM action_queue_items WHERE state = 'open'`,
+    `SELECT COUNT(*) AS n FROM action_queue_items WHERE status = 'open'`,
   );
   return Number((r.rows[0] as unknown as { n: number | bigint }).n);
 }
@@ -48,7 +48,7 @@ async function openRowForTask(
   const r = await client.execute({
     sql: `SELECT kind, seen_count, origin_task_id
             FROM action_queue_items
-           WHERE origin_task_id = ? AND state = 'open'
+           WHERE origin_task_id = ? AND status = 'open'
            LIMIT 1`,
     args: [taskId],
   });

@@ -60,7 +60,7 @@ function questionRaiseSubscriber(client: DbClient): Subscriber {
           const id = randomUUID().slice(0, 8);
           await tx.execute({
             sql: `INSERT INTO action_queue_items (
-                   id, kind, category, priority, state,
+                   id, kind, category, priority, status,
                    title, body, payload, context,
                    raised_by, raised_at, last_seen_at, seen_count,
                    fingerprint, signature, origin_task_id

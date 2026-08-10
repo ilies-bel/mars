@@ -225,7 +225,7 @@ describe('detectAndRaiseStaleWorktrees', () => {
     expect(openAfter).toHaveLength(0)
 
     const item = await actionQueue.getActionQueueItem(itemId)
-    expect(item!.state).toBe('resolved')
+    expect(item!.status).toBe('resolved')
   })
 
   it('raises distinct items for two different stale worktrees', async () => {

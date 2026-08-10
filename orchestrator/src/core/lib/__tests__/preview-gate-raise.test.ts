@@ -80,7 +80,7 @@ describe('preview-gate projection — awaiting-validation row raise', () => {
     expect(row, 'awaiting-validation row must be open after successful boot').toBeDefined()
     expect(row!.kind).toBe('awaiting-validation')
     expect(row!.title).toContain(url)
-    expect(row!.state).toBe('open')
+    expect(row!.status).toBe('open')
   })
 
   it('boot-failure path: row is open with "preview failed to boot" in the title', async () => {
@@ -112,7 +112,7 @@ describe('preview-gate projection — awaiting-validation row raise', () => {
     expect(row, 'awaiting-validation row must be open even when dev server fails to boot').toBeDefined()
     expect(row!.kind).toBe('awaiting-validation')
     expect(row!.title).toContain('preview failed to boot')
-    expect(row!.state).toBe('open')
+    expect(row!.status).toBe('open')
     // No URL in the boot-failure row — operator knows not to expect a live server.
     expect(row!.payload['devServerUrl']).toBeNull()
   })

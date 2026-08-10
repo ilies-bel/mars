@@ -1896,7 +1896,7 @@ export const tryCompleteHitlSlice = async (
   const hitlItems = await listActionQueueItems('all', { kind: 'hitl-slice-needs-operator' })
   const actionQueueItem = hitlItems.find((item) => item.signature === signature)
   if (!actionQueueItem) return false
-  if (actionQueueItem.state !== 'resolved') return false
+  if (actionQueueItem.status !== 'resolved') return false
 
   // 4. Both conditions met — flip the HITL slice from 'blocked' to 'done'.
   // Route through updateTask so the lifecycle gate (IllegalTransitionError)

@@ -161,7 +161,7 @@ const retiredPlanGateReconcile: Reconciler = {
       const { updateTask } = await import('../queue')
       const legacyKind = ['plan', 'approval'].join('-')
       const legacyRows = await store.query({
-        sql: `SELECT id FROM action_queue_items WHERE kind = ? AND state = 'open'`,
+        sql: `SELECT id FROM action_queue_items WHERE kind = ? AND status = 'open'`,
         args: [legacyKind],
       })
       for (const row of legacyRows.rows) {

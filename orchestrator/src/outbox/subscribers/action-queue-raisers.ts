@@ -344,7 +344,7 @@ function fixTaskDoneActionQueueResolver(client: DbClient): Subscriber {
       // to be defensive.
       const openRows = await client.execute({
         sql: `SELECT id FROM action_queue_items
-               WHERE kind = 'failed' AND state = 'open' AND origin_task_id = ?`,
+               WHERE kind = 'failed' AND status = 'open' AND origin_task_id = ?`,
         args: [originId],
       });
 
@@ -431,7 +431,7 @@ export async function resolveOutageRowOnBreakerClose(openedAt: number): Promise<
 
   const existing = await c.execute({
     sql: `SELECT id, payload FROM action_queue_items
-           WHERE kind = 'api-outage' AND signature = ? AND state = 'open'
+           WHERE kind = 'api-outage' AND signature = ? AND status = 'open'
            LIMIT 1`,
     args: [signature],
   });

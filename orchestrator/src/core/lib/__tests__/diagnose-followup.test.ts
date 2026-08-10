@@ -288,7 +288,7 @@ describe('runDiagnoseFollowup', () => {
     const itemId = outcome.actionQueueItemId!
 
     // Row is open initially.
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('open')
 
     // Register the alert-dismisser subscriber, then publish a terminal{done}
     // event for the parent — mirrors the daemon lifecycle after mars restart.
@@ -301,7 +301,7 @@ describe('runDiagnoseFollowup', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     expect(processed).toBe(1)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
   })
 
   it('keeps the diagnose-inconclusive row open when parent task stays failed', async () => {
@@ -331,6 +331,6 @@ describe('runDiagnoseFollowup', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     expect(processed).toBe(0)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('open')
   })
 })

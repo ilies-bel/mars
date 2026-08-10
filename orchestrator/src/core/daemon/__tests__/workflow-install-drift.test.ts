@@ -112,7 +112,7 @@ describe('startup workflow installation reconciliation', () => {
     scaffoldWorkflows({ repoRoot: repo })
     await reconcile.runStartupReconcile(startupDeps())
 
-    expect((await actionQueue.getActionQueueItem(alert!.id))?.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(alert!.id))?.status).toBe('resolved')
   })
 
   it('raises no installation alert when every known Workflow is installed', async () => {

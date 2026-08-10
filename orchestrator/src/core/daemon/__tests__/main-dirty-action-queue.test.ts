@@ -208,8 +208,8 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
     const actionQueue = await import('../../lib/action-queue')
     const item1 = await actionQueue.getActionQueueItem(oldId1!)
     const item2 = await actionQueue.getActionQueueItem(oldId2!)
-    expect(item1!.state).toBe('resolved')
-    expect(item2!.state).toBe('resolved')
+    expect(item1!.status).toBe('resolved')
+    expect(item2!.status).toBe('resolved')
   })
 
   it('leaves a failed committer on release-2026-01 untouched when a committer on main succeeds', async () => {
@@ -258,7 +258,7 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
 
     const actionQueue = await import('../../lib/action-queue')
     const releaseItem = await actionQueue.getActionQueueItem(releaseActionQueueId!)
-    expect(releaseItem!.state).toBe('open')
+    expect(releaseItem!.status).toBe('open')
   })
 })
 

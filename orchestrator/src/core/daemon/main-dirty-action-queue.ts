@@ -54,7 +54,7 @@ const FIND_STALE_COMMITTER_ACTION_QUEUE_ROWS_SQL = `
            i.payload::jsonb ->> 'recoveryTaskId',
            i.origin_task_id
          )
-   WHERE i.state = 'open'
+   WHERE i.status = 'open'
      AND t.kind = 'fix'
      AND (t.recovery_payload::jsonb ->> 'recipe') = ?
      AND (t.recovery_payload::jsonb ->> 'integrationBranch') = ?
@@ -431,7 +431,7 @@ export const resolveStaleStructuredWriteDirtyMainRows = async (
   const rows = await c.execute({
     sql: `SELECT id, payload, signature
             FROM action_queue_items
-           WHERE state = 'open'
+           WHERE status = 'open'
              AND raised_by = 'structured-write:dirty-main'`,
     args: [],
   })

@@ -145,7 +145,7 @@ describe('alert-dismisser outbox subscriber', () => {
     expect(processed).toBe(1)
     const item = await actionQueue.getActionQueueItem(itemId)
     expect(item).not.toBeNull()
-    expect(item!.state).toBe('resolved')
+    expect(item!.status).toBe('resolved')
   })
 
   it('KEEPS an open alert on task.terminal{failed} (ADR-0028: failed needs a human)', async () => {
@@ -166,7 +166,7 @@ describe('alert-dismisser outbox subscriber', () => {
     // Neither event is a closing trigger, so nothing is processed and the
     // operator's row survives.
     expect(processed).toBe(0)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('open')
   })
 
   it('clears open alerts on task.terminal{done}, task.terminal{purged}, and task.unblocked', async () => {
@@ -194,9 +194,9 @@ describe('alert-dismisser outbox subscriber', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     expect(processed).toBe(3)
-    expect((await actionQueue.getActionQueueItem(completedId))!.state).toBe('resolved')
-    expect((await actionQueue.getActionQueueItem(purgedId))!.state).toBe('resolved')
-    expect((await actionQueue.getActionQueueItem(unblockedId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(completedId))!.status).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(purgedId))!.status).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(unblockedId))!.status).toBe('resolved')
   })
 
   it('treats an unmapped event as a no-op but still advances the cursor', async () => {
@@ -223,7 +223,7 @@ describe('alert-dismisser outbox subscriber', () => {
 
     // No-op processing: the alert stays open, processed excludes it...
     expect(processed).toBe(0)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('open')
     // ...but the cursor moved past the unmapped event so it never stalls.
     expect(cursorAfter).toBeGreaterThan(cursorBefore)
   })
@@ -268,7 +268,7 @@ describe('alert-dismisser outbox subscriber', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     expect(processed).toBe(1)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
   })
 
   it('resolves open alert on task.dropped (non-purge drop reason)', async () => {
@@ -287,7 +287,7 @@ describe('alert-dismisser outbox subscriber', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     expect(processed).toBe(1)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
   })
 
   it('resolves open alert on task.dropped{purged} (race-condition guard)', async () => {
@@ -307,7 +307,7 @@ describe('alert-dismisser outbox subscriber', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     expect(processed).toBe(1)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
   })
 
   it('resolves open alert on task.queued (task restarted/re-queued)', async () => {
@@ -326,7 +326,7 @@ describe('alert-dismisser outbox subscriber', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     expect(processed).toBe(1)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
   })
 
   // ── Regression: origin_task_id holds proposal id, task id in payload ────────
@@ -368,7 +368,7 @@ describe('alert-dismisser outbox subscriber', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     expect(processed).toBe(1)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
   })
 
   // ── Regression: signature-keyed 'failed'/'diagnose-inconclusive' rows ────────
@@ -418,7 +418,7 @@ describe('alert-dismisser outbox subscriber', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     expect(processed).toBe(1)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
   })
 
   it('resolves a signature-keyed kind=diagnose-inconclusive row (no originTaskId) when task.completed fires', async () => {
@@ -449,7 +449,7 @@ describe('alert-dismisser outbox subscriber', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     expect(processed).toBe(1)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
   })
 
   it('does NOT auto-resolve a signature-keyed failed row on task.failed (ADR-0028 NO-OP preserved)', async () => {
@@ -478,7 +478,7 @@ describe('alert-dismisser outbox subscriber', () => {
 
     // task.failed is a NO-OP: the row must stay open for the operator.
     expect(processed).toBe(0)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('open')
   })
 
   it('resolves a signature-keyed failed row when task is re-queued (task.queued eviction via dismissAlertsOnStatusChange)', async () => {
@@ -507,7 +507,7 @@ describe('alert-dismisser outbox subscriber', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     expect(processed).toBe(1)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
   })
 
   describe('ADR-0054: task.under_investigation does NOT close the alert (level-triggered)', () => {
@@ -547,7 +547,7 @@ describe('alert-dismisser outbox subscriber', () => {
       expect(processed).toBe(0)
       const item = await actionQueue.getActionQueueItem(itemId)
       expect(item).not.toBeNull()
-      expect(item!.state).toBe('open')
+      expect(item!.status).toBe('open')
     })
 
     it('alert DOES close when the entity mutates to done (terminal state clears the row)', async () => {
@@ -566,13 +566,13 @@ describe('alert-dismisser outbox subscriber', () => {
       await publish(pub, client, 'task.under_investigation', { taskId })
       const afterInvestigation = await ad.drainAlertDismissals(client)
       expect(afterInvestigation.processed).toBe(0)
-      expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
+      expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('open')
 
       // Entity mutates to done — NOW the alert clears.
       await publish(pub, client, 'task.completed', { taskId, result: { status: 'done' } })
       const afterDone = await ad.drainAlertDismissals(client)
       expect(afterDone.processed).toBe(1)
-      expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+      expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
     })
   })
 })

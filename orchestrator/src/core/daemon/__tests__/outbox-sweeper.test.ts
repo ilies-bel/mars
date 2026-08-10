@@ -32,7 +32,7 @@ function setupRepo(): string {
 /** Count open action-queue rows. */
 async function openRowCount(client: DbClient): Promise<number> {
   const r = await client.execute(
-    `SELECT COUNT(*) AS n FROM action_queue_items WHERE state = 'open'`,
+    `SELECT COUNT(*) AS n FROM action_queue_items WHERE status = 'open'`,
   )
   return Number((r.rows[0] as unknown as { n: number | bigint }).n)
 }
@@ -120,7 +120,7 @@ describe('sweepOutbox', () => {
     await sweepOutbox(dbPath)
 
     const rows = await client.execute(
-      `SELECT signature, seen_count FROM action_queue_items WHERE state = 'open'`,
+      `SELECT signature, seen_count FROM action_queue_items WHERE status = 'open'`,
     )
     expect(rows.rows).toHaveLength(1)
     const row = rows.rows[0] as unknown as {
@@ -151,7 +151,7 @@ describe('sweepOutbox', () => {
     await sweepOutbox(dbPath)
 
     const rows = await client.execute(
-      `SELECT signature FROM action_queue_items WHERE state = 'open'`,
+      `SELECT signature FROM action_queue_items WHERE status = 'open'`,
     )
     expect(rows.rows).toHaveLength(1)
     expect(

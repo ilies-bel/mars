@@ -113,7 +113,7 @@ describe('reconcileTerminalTasks — draft-proposal rows are not swept as purged
     // The draft-proposal row must remain open — the proposal is live.
     const item = await actionQueue.getActionQueueItem(itemId)
     expect(item).not.toBeNull()
-    expect(item!.state).toBe('open')
+    expect(item!.status).toBe('open')
 
     // Nothing should have been resolved from this row.
     expect(rowsResolved).toBe(0)
@@ -145,7 +145,7 @@ describe('reconcileTerminalTasks — draft-proposal rows are not swept as purged
     // The orphan row for the purged task must be resolved.
     const orphanItem = await actionQueue.getActionQueueItem(orphanItemId)
     expect(orphanItem).not.toBeNull()
-    expect(orphanItem!.state).toBe('resolved')
+    expect(orphanItem!.status).toBe('resolved')
   })
 
   it('leaves draft-proposal open and resolves orphan task row in the same run', async () => {
@@ -189,12 +189,12 @@ describe('reconcileTerminalTasks — draft-proposal rows are not swept as purged
     // Draft-proposal row stays open.
     const draftItem = await actionQueue.getActionQueueItem(draftItemId)
     expect(draftItem).not.toBeNull()
-    expect(draftItem!.state).toBe('open')
+    expect(draftItem!.status).toBe('open')
 
     // Orphan task row is resolved.
     const orphanItem = await actionQueue.getActionQueueItem(orphanItemId)
     expect(orphanItem).not.toBeNull()
-    expect(orphanItem!.state).toBe('resolved')
+    expect(orphanItem!.status).toBe('resolved')
 
     // Only the orphan task row was resolved.
     expect(rowsResolved).toBe(1)
@@ -227,7 +227,7 @@ describe('reconcileTerminalTasks — draft-proposal rows are not swept as purged
     // The orphaned draft-proposal row must be resolved.
     const item = await actionQueue.getActionQueueItem(orphanDraftItemId)
     expect(item).not.toBeNull()
-    expect(item!.state).toBe('resolved')
+    expect(item!.status).toBe('resolved')
 
     expect(rowsResolved).toBe(1)
   })
@@ -262,7 +262,7 @@ describe('reconcileTerminalTasks — draft-proposal rows are not swept as purged
     // The row for the live task must remain open.
     const item = await actionQueue.getActionQueueItem(itemId)
     expect(item).not.toBeNull()
-    expect(item!.state).toBe('open')
+    expect(item!.status).toBe('open')
 
     // Nothing was resolved (task is present in tasks at non-terminal status).
     expect(rowsResolved).toBe(0)

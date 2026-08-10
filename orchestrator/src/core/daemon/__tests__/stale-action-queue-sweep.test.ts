@@ -106,14 +106,14 @@ describe('stale-action-queue-sweep reconciler step', () => {
 
     // Verify the item is open before the reconcile.
     const before = await actionQueue.getActionQueueItem(itemId)
-    expect(before?.state).toBe('open')
+    expect(before?.status).toBe('open')
 
     // Run the full startup-reconcile pass (includes stale-action-queue-sweep).
     const summary = await reconcile.runStartupReconcile(makeDeps())
 
     // Item must be resolved.
     const after = await actionQueue.getActionQueueItem(itemId)
-    expect(after?.state).toBe('resolved')
+    expect(after?.status).toBe('resolved')
 
     // Summary must report the closure.
     expect(summary.staleActionQueueItemsResolved).toBeGreaterThanOrEqual(1)
@@ -143,7 +143,7 @@ describe('stale-action-queue-sweep reconciler step', () => {
 
     // Item must remain open — a 'failed' task still needs operator attention.
     const after = await actionQueue.getActionQueueItem(itemId)
-    expect(after?.state).toBe('open')
+    expect(after?.status).toBe('open')
   })
 
   it('correctly distinguishes done and failed tasks in the same pass', async () => {
@@ -187,8 +187,8 @@ describe('stale-action-queue-sweep reconciler step', () => {
     const doneItem = await actionQueue.getActionQueueItem(doneItemId)
     const failedItem = await actionQueue.getActionQueueItem(failedItemId)
 
-    expect(doneItem?.state).toBe('resolved')
-    expect(failedItem?.state).toBe('open')
+    expect(doneItem?.status).toBe('resolved')
+    expect(failedItem?.status).toBe('open')
     expect(summary.staleActionQueueItemsResolved).toBeGreaterThanOrEqual(1)
   })
 

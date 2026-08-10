@@ -1304,7 +1304,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       const r = await client.execute(
         `SELECT context, payload, last_seen_at, raised_at
            FROM action_queue_items
-          WHERE kind = 'stale-worktree' AND state = 'open'
+          WHERE kind = 'stale-worktree' AND status = 'open'
           ORDER BY raised_at DESC`,
       )
       for (const row of r.rows) {

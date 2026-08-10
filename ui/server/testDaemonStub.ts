@@ -136,7 +136,7 @@ const makeStateStore = (dbPath: string): ActionQueueStateStore => {
       try {
         const r = await client.execute(
           `SELECT id, kind, priority, title, body, payload, context, raised_at, last_seen_at, signature
-             FROM action_queue_items WHERE state = 'open' ORDER BY raised_at DESC`,
+             FROM action_queue_items WHERE status = 'open' ORDER BY raised_at DESC`,
         )
         return r.rows.map((row) => mapRow(row as unknown as Record<string, unknown>))
       } catch {
@@ -150,7 +150,7 @@ const makeStateStore = (dbPath: string): ActionQueueStateStore => {
           sql: `SELECT id, kind, priority, title, body, payload, context, raised_at, last_seen_at, signature,
                        resolved_at, resolution, resolution_note, root_cause, resolved_by
                   FROM action_queue_items
-                 WHERE state = 'resolved'${cursor ? ' AND resolved_at < ?' : ''}
+                 WHERE status = 'resolved'${cursor ? ' AND resolved_at < ?' : ''}
                  ORDER BY resolved_at DESC LIMIT ?`,
           args: cursor ? [cursor, (limit ?? 50) + 1] : [(limit ?? 50) + 1],
         })
@@ -671,7 +671,7 @@ const viewProposals = async (
     const r = await client.execute(
       `SELECT context, payload, last_seen_at, raised_at
          FROM action_queue_items
-        WHERE kind = 'stale-worktree' AND state = 'open'
+        WHERE kind = 'stale-worktree' AND status = 'open'
         ORDER BY raised_at DESC`,
     )
     for (const row of r.rows) {

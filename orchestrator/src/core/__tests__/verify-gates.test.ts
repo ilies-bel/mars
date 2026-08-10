@@ -120,7 +120,7 @@ describe('addVerifyGate', () => {
     await ensureSchema(client)
     await client.execute({
       sql: `INSERT INTO action_queue_items (
-              id, kind, category, priority, state, title, body, payload,
+              id, kind, category, priority, status, title, body, payload,
               context, raised_by, raised_at, fingerprint
             ) VALUES (?, 'verify-uncovered', 'orchestrator', 'normal', 'open', ?, ?, ?, '{}', 'test', ?, ?)`,
       args: [
@@ -141,7 +141,7 @@ describe('addVerifyGate', () => {
     await addVerifyGate({ scope: 'apps/web', name: 'test', cmd: 'npm' })
 
     const row = await client.execute({
-      sql: `SELECT state, resolution_note FROM action_queue_items WHERE id = ?`,
+      sql: `SELECT status, resolution_note FROM action_queue_items WHERE id = ?`,
       args: ['coverage-row'],
     })
     expect(row.rows[0]).toMatchObject({

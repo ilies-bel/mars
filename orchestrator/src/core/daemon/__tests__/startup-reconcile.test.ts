@@ -401,7 +401,7 @@ describe('runStartupReconcile — retired planning gate', { timeout: 120_000 }, 
     const legacyKind = ['plan', 'approval'].join('-')
     await client.execute({
       sql: `INSERT INTO action_queue_items
-              (id, kind, category, priority, state, title, body, payload, context, raised_by)
+              (id, kind, category, priority, status, title, body, payload, context, raised_by)
             VALUES (?, ?, 'orchestrator', 'high', 'open', 'Legacy planning gate', '', '{}', '{}', 'test')`,
       args: ['legacy-gate-row', legacyKind],
     })
@@ -418,7 +418,7 @@ describe('runStartupReconcile — retired planning gate', { timeout: 120_000 }, 
     expect(first.retiredPlanGateRowsCleared).toBe(1)
     expect(first.legacySlicedDraftsReleased).toBe(3)
     const closed = await client.execute({
-      sql: `SELECT state, resolution_note FROM action_queue_items WHERE id = ?`,
+      sql: `SELECT status, resolution_note FROM action_queue_items WHERE id = ?`,
       args: ['legacy-gate-row'],
     })
     expect(closed.rows[0]).toMatchObject({

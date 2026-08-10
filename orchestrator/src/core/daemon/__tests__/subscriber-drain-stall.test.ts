@@ -43,7 +43,7 @@ const SUB = 'test-stall-subscriber'
 
 const openStalledCount = async (client: Client): Promise<number> => {
   const r = await client.execute({
-    sql: `SELECT COUNT(*) AS n FROM action_queue_items WHERE kind = 'subscriber-stalled' AND state = 'open'`,
+    sql: `SELECT COUNT(*) AS n FROM action_queue_items WHERE kind = 'subscriber-stalled' AND status = 'open'`,
   })
   return Number((r.rows[0] as unknown as { n: number | bigint }).n)
 }

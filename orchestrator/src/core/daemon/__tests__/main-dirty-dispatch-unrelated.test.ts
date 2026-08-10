@@ -137,7 +137,7 @@ describe('runMainDirtyDispatchCheck — unrelated dirt path', () => {
 
       // Exactly one open action-queue row with the correct signature.
       const aqRows = await queue.resolveQueueClient().execute({
-        sql: `SELECT id, body, signature, seen_count FROM action_queue_items WHERE signature = ? AND state = 'open'`,
+        sql: `SELECT id, body, signature, seen_count FROM action_queue_items WHERE signature = ? AND status = 'open'`,
         args: ['main-dirty:unrelated:main'],
       })
       expect(aqRows.rows.length).toBe(1)
@@ -203,7 +203,7 @@ describe('runMainDirtyDispatchCheck — unrelated dirt path', () => {
 
       // Exactly one open action-queue row — dedup fired on the second dispatch.
       const aqRows = await queue.resolveQueueClient().execute({
-        sql: `SELECT id, seen_count FROM action_queue_items WHERE signature = ? AND state = 'open'`,
+        sql: `SELECT id, seen_count FROM action_queue_items WHERE signature = ? AND status = 'open'`,
         args: ['main-dirty:unrelated:main'],
       })
       expect(aqRows.rows.length).toBe(1)
@@ -269,11 +269,11 @@ describe('runMainDirtyDispatchCheck — unrelated dirt path', () => {
       expect(cleanResult).toEqual({ parked: false })
 
       const resolvedRows = await queue.resolveQueueClient().execute({
-        sql: `SELECT id, state FROM action_queue_items WHERE signature = ?`,
+        sql: `SELECT id, status FROM action_queue_items WHERE signature = ?`,
         args: ['main-dirty:unrelated:main'],
       })
       expect(resolvedRows.rows).toHaveLength(1)
-      expect((resolvedRows.rows[0] as { state: string }).state).toBe('resolved')
+      expect((resolvedRows.rows[0] as { status: string }).status).toBe('resolved')
 
       await runMainDirtyDispatchCheck({
         task: sourceTask,
@@ -284,7 +284,7 @@ describe('runMainDirtyDispatchCheck — unrelated dirt path', () => {
       })
 
       const rowsAfterSecondCleanPass = await queue.resolveQueueClient().execute({
-        sql: `SELECT id, state FROM action_queue_items WHERE signature = ?`,
+        sql: `SELECT id, status FROM action_queue_items WHERE signature = ?`,
         args: ['main-dirty:unrelated:main'],
       })
       expect(rowsAfterSecondCleanPass.rows).toEqual(resolvedRows.rows)

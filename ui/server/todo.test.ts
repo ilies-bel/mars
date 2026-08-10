@@ -44,7 +44,7 @@ const seedActionQueueItems = async (stateDbPath: string): Promise<void> => {
       kind TEXT NOT NULL,
       category TEXT NOT NULL,
       priority TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'open',
+      status TEXT NOT NULL DEFAULT 'open',
       title TEXT NOT NULL,
       body TEXT NOT NULL DEFAULT '',
       payload TEXT NOT NULL DEFAULT '{}',
@@ -95,7 +95,7 @@ const insertStaleWorktreeItem = async (
   const c = createClient({ url: `file:${stateDbPath}` })
   await c.execute({
     sql: `INSERT INTO action_queue_items (
-      id, kind, category, priority, state, title, body, payload, context,
+      id, kind, category, priority, status, title, body, payload, context,
       raised_by, raised_at, last_seen_at, seen_count, fingerprint, signature
     ) VALUES (?, 'stale-worktree', 'daemon', 'normal', ?, ?, '', ?, ?, ?,  ?, ?, 1, ?, ?)`,
     args: [

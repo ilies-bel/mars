@@ -4781,7 +4781,7 @@ export const startDaemon = async (
           const r = await client.execute(
             `SELECT context, payload
                FROM action_queue_items
-              WHERE kind = 'stale-worktree' AND state = 'open'
+              WHERE kind = 'stale-worktree' AND status = 'open'
               ORDER BY raised_at DESC`,
           )
           for (const row of r.rows) {
@@ -4827,7 +4827,7 @@ export const startDaemon = async (
           const r = await client.execute(
             `SELECT fingerprint, payload
                FROM action_queue_items
-              WHERE kind = 'verify-uncovered' AND state = 'open'
+              WHERE kind = 'verify-uncovered' AND status = 'open'
               ORDER BY raised_at DESC`,
           )
           for (const row of r.rows) {

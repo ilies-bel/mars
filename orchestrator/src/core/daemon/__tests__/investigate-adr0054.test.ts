@@ -106,7 +106,7 @@ describe('ADR-0054: investigate patches the LIVE open alert, not a resolved row'
     // The row is STILL OPEN — investigation is an annotation, not a resolution.
     const item = await actionQueue.getActionQueueItem(itemId)
     expect(item).not.toBeNull()
-    expect(item!.state).toBe('open')
+    expect(item!.status).toBe('open')
     expect(item!.payload.investigation).toEqual({
       text: 'The task was adding a CLI flag.',
       investigatedAt: '2026-01-01T00:00:00.000Z',
@@ -124,7 +124,7 @@ describe('ADR-0054: investigate patches the LIVE open alert, not a resolved row'
 
     // Resolve the row (entity mutated — worktree pruned / task went terminal).
     await actionQueue.resolveAllRowsForTask(taskId)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
 
     // Haiku arrives late and tries to patch — must be a no-op.
     const patched = await actionQueue.patchOpenActionQueuePayload(taskId, {
@@ -135,7 +135,7 @@ describe('ADR-0054: investigate patches the LIVE open alert, not a resolved row'
 
     // The resolved row must NOT have the investigation payload.
     const item = await actionQueue.getActionQueueItem(itemId)
-    expect(item!.state).toBe('resolved')
+    expect(item!.status).toBe('resolved')
     expect(item!.payload.investigation).toBeUndefined()
   })
 
@@ -151,11 +151,11 @@ describe('ADR-0054: investigate patches the LIVE open alert, not a resolved row'
     await actionQueue.patchOpenActionQueuePayload(taskId, {
       investigation: { text: 'investigating…', investigatedAt: '2026-01-01T00:00:00.000Z' },
     })
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('open')
 
     // Entity mutates (task reached terminal state) — NOW the alert clears.
     await actionQueue.dismissAlertsOnStatusChange(taskId, 'done')
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
   })
 
   it('stale-worktree sweep re-detecting the worktree bumps the existing OPEN row (investigation not orphaned)', async () => {
@@ -181,7 +181,7 @@ describe('ADR-0054: investigate patches the LIVE open alert, not a resolved row'
 
     // The investigation annotation is still present on the live row.
     const item = await actionQueue.getActionQueueItem(firstItemId)
-    expect(item!.state).toBe('open')
+    expect(item!.status).toBe('open')
     expect(item!.payload.investigation).toBeDefined()
   })
 })

@@ -91,7 +91,7 @@ function terminalEvent(
 /** Count open action-queue rows. */
 async function openRowCount(client: DbClient): Promise<number> {
   const r = await client.execute(
-    `SELECT COUNT(*) AS n FROM action_queue_items WHERE state = 'open'`,
+    `SELECT COUNT(*) AS n FROM action_queue_items WHERE status = 'open'`,
   );
   return Number((r.rows[0] as unknown as { n: number | bigint }).n);
 }
@@ -104,7 +104,7 @@ async function openRowForTask(
   const r = await client.execute({
     sql: `SELECT kind, seen_count, origin_task_id
             FROM action_queue_items
-           WHERE origin_task_id = ? AND state = 'open'
+           WHERE origin_task_id = ? AND status = 'open'
            LIMIT 1`,
     args: [taskId],
   });
@@ -482,7 +482,7 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
     await subscriber.handler(blockedEvent(600, taskId));
 
     const r = await client.execute({
-      sql: `SELECT payload FROM action_queue_items WHERE origin_task_id = ? AND state = 'open'`,
+      sql: `SELECT payload FROM action_queue_items WHERE origin_task_id = ? AND status = 'open'`,
       args: [taskId],
     });
     expect(r.rows).toHaveLength(1);
@@ -522,7 +522,7 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
     await subscriber.handler(blockedEvent(601, taskId));
 
     const r = await client.execute({
-      sql: `SELECT payload FROM action_queue_items WHERE origin_task_id = ? AND state = 'open'`,
+      sql: `SELECT payload FROM action_queue_items WHERE origin_task_id = ? AND status = 'open'`,
       args: [taskId],
     });
     expect(r.rows).toHaveLength(1);
@@ -572,7 +572,7 @@ describe('action-queue-raiser:fix-task-done subscriber', () => {
   async function insertOpenFailedRow(c: DbClient, id: string, originId: string): Promise<void> {
     await c.execute({
       sql: `INSERT INTO action_queue_items
-              (id, kind, category, priority, state, title, body, raised_by, raised_at, origin_task_id)
+              (id, kind, category, priority, status, title, body, raised_by, raised_at, origin_task_id)
             VALUES (?, 'failed', 'orchestrator', 'high', 'open', 'pre-existing failure', '',
                     'test', ?, ?)`,
       args: [id, Date.now(), originId],
@@ -603,9 +603,9 @@ describe('action-queue-raiser:fix-task-done subscriber', () => {
     // Stale row must be resolved — recovery succeeded, no human action needed.
     expect(await openRowCount(client)).toBe(0);
     const r = await client.execute(
-      `SELECT state FROM action_queue_items WHERE id = 'aq-stale-1'`,
+      `SELECT status FROM action_queue_items WHERE id = 'aq-stale-1'`,
     );
-    expect((r.rows[0] as unknown as { state: string }).state).toBe('resolved');
+    expect((r.rows[0] as unknown as { status: string }).status).toBe('resolved');
   });
 
   it('task.terminal done for a non-fix task (no origin_id) does not modify action-queue rows', async () => {
@@ -734,7 +734,7 @@ describe('api-outage coalescing — circuit-breaker-open failures', () => {
     expect(await openRowCount(client)).toBe(1);
 
     const r = await client.execute(
-      `SELECT kind, seen_count FROM action_queue_items WHERE state = 'open' LIMIT 1`,
+      `SELECT kind, seen_count FROM action_queue_items WHERE status = 'open' LIMIT 1`,
     );
     const row = r.rows[0] as unknown as { kind: string; seen_count: number | bigint };
     expect(row.kind).toBe('api-outage');
@@ -763,13 +763,13 @@ describe('api-outage coalescing — circuit-breaker-open failures', () => {
     expect(await openRowCount(client)).toBe(2);
 
     const outage = await client.execute(
-      `SELECT kind, seen_count FROM action_queue_items WHERE kind = 'api-outage' AND state = 'open'`,
+      `SELECT kind, seen_count FROM action_queue_items WHERE kind = 'api-outage' AND status = 'open'`,
     );
     expect(outage.rows).toHaveLength(1);
     expect(Number((outage.rows[0] as unknown as { seen_count: number | bigint }).seen_count)).toBe(2);
 
     const failed = await client.execute(
-      `SELECT kind FROM action_queue_items WHERE kind = 'failed' AND state = 'open'`,
+      `SELECT kind FROM action_queue_items WHERE kind = 'failed' AND status = 'open'`,
     );
     expect(failed.rows).toHaveLength(1);
   });
@@ -823,9 +823,9 @@ describe('api-outage coalescing — circuit-breaker-open failures', () => {
     expect(await openRowCount(client)).toBe(0);
 
     const r = await client.execute(
-      `SELECT state FROM action_queue_items WHERE kind = 'api-outage' LIMIT 1`,
+      `SELECT status FROM action_queue_items WHERE kind = 'api-outage' LIMIT 1`,
     );
-    expect((r.rows[0] as unknown as { state: string }).state).toBe('resolved');
+    expect((r.rows[0] as unknown as { status: string }).status).toBe('resolved');
   });
 });
 
@@ -1005,7 +1005,7 @@ describe('action-queue-raiser:task.dropped-via-supersede subscriber', () => {
   async function insertOpenFailedRow(c: DbClient, id: string, originId: string): Promise<void> {
     await c.execute({
       sql: `INSERT INTO action_queue_items
-              (id, kind, category, priority, state, title, body, raised_by, raised_at, origin_task_id)
+              (id, kind, category, priority, status, title, body, raised_by, raised_at, origin_task_id)
             VALUES (?, 'failed', 'orchestrator', 'high', 'open', 'task blocked', '',
                     'test', ?, ?)`,
       args: [id, Date.now(), originId],
@@ -1030,10 +1030,10 @@ describe('action-queue-raiser:task.dropped-via-supersede subscriber', () => {
     // Row must be resolved — the superseding task continues the work.
     expect(await openRowCount(client)).toBe(0);
     const r = await client.execute(
-      `SELECT state, resolution FROM action_queue_items WHERE id = 'aq-supersede-1'`,
+      `SELECT status, resolution FROM action_queue_items WHERE id = 'aq-supersede-1'`,
     );
-    const row = r.rows[0] as unknown as { state: string; resolution: string };
-    expect(row.state).toBe('resolved');
+    const row = r.rows[0] as unknown as { status: string; resolution: string };
+    expect(row.status).toBe('resolved');
     expect(row.resolution).toBe('superseded');
   });
 
@@ -1059,9 +1059,9 @@ describe('action-queue-raiser:task.dropped-via-supersede subscriber', () => {
     }
     expect(await openRowCount(client)).toBe(0);
     const r = await client.execute(
-      `SELECT state FROM action_queue_items WHERE id = 'aq-supersede-2'`,
+      `SELECT status FROM action_queue_items WHERE id = 'aq-supersede-2'`,
     );
-    expect((r.rows[0] as unknown as { state: string }).state).toBe('resolved');
+    expect((r.rows[0] as unknown as { status: string }).status).toBe('resolved');
   });
 
   // ── Acceptance criterion 3 ─────────────────────────────────────────────

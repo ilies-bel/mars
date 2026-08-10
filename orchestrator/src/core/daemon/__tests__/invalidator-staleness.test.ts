@@ -104,7 +104,7 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
 
     const { processed } = await ad.drainAlertDismissals(client)
     expect(processed).toBeGreaterThan(0)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
   })
 
   it('clears rows for a task that ended while the daemon was DOWN (events replayed on first drain)', async () => {
@@ -123,7 +123,7 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
     // First drain after "restart" replays the buffered terminal event.
     const { processed } = await ad.drainAlertDismissals(client)
     expect(processed).toBeGreaterThan(0)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
   })
 
   it('a re-queued task (task.queued) evicts its stale failure row', async () => {
@@ -140,7 +140,7 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
 
     const { processed } = await ad.drainAlertDismissals(client)
     expect(processed).toBeGreaterThan(0)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
   })
 
   it('a failed task KEEPS its row even after unblock flips it to failed', async () => {
@@ -157,6 +157,6 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
 
     const { processed } = await ad.drainAlertDismissals(client)
     expect(processed).toBe(0)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('open')
   })
 })

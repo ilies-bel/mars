@@ -99,7 +99,7 @@ describe('dropTask — inline action-queue row resolution (no event drain needed
 
     // Confirm row is open before the drop.
     const before = await actionQueue.getActionQueueItem(itemId)
-    expect(before!.state).toBe('open')
+    expect(before!.status).toBe('open')
 
     // Drop the task. Arc.drop() must close the action-queue row inline,
     // WITHOUT any separate drainAlertDismissals call.
@@ -107,7 +107,7 @@ describe('dropTask — inline action-queue row resolution (no event drain needed
 
     // The row must be resolved immediately — no event drain, no reconcile.
     const after = await actionQueue.getActionQueueItem(itemId)
-    expect(after!.state).toBe('resolved')
+    expect(after!.status).toBe('resolved')
   })
 
   it('(b) closes action-queue rows for both origin and cascaded fix task inline', async () => {
@@ -153,8 +153,8 @@ describe('dropTask — inline action-queue row resolution (no event drain needed
     })
 
     // Confirm both rows are open before the drop.
-    expect((await actionQueue.getActionQueueItem(originItemId))!.state).toBe('open')
-    expect((await actionQueue.getActionQueueItem(fixItemId))!.state).toBe('open')
+    expect((await actionQueue.getActionQueueItem(originItemId))!.status).toBe('open')
+    expect((await actionQueue.getActionQueueItem(fixItemId))!.status).toBe('open')
 
     // Drop the origin. Arc.drop() cascades to delete the fix task and must
     // close BOTH action-queue rows inline — no drainAlertDismissals call.
@@ -163,8 +163,8 @@ describe('dropTask — inline action-queue row resolution (no event drain needed
     // Both rows must be resolved immediately.
     const originItem = await actionQueue.getActionQueueItem(originItemId)
     const fixItem = await actionQueue.getActionQueueItem(fixItemId)
-    expect(originItem!.state).toBe('resolved')
-    expect(fixItem!.state).toBe('resolved')
+    expect(originItem!.status).toBe('resolved')
+    expect(fixItem!.status).toBe('resolved')
 
     // The cascadedFixTaskIds must include the fix task (sanity check).
     expect((result as unknown as { cascadedFixTaskIds: string[] }).cascadedFixTaskIds).toContain(fixId)

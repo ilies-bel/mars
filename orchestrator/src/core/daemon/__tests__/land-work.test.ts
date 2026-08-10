@@ -125,7 +125,7 @@ describe('landWorkForTask', () => {
     const rows = await actionQueue.listActionQueueItems('all', { kind: 'worktree-ahead' })
     const row = rows.find((r) => r.originTaskId === task.id)
     expect(row).toBeDefined()
-    expect(row!.state).toBe('resolved')
+    expect(row!.status).toBe('resolved')
   })
 
   // ── Criterion 2: cherry-pick path ────────────────────────────────────────
@@ -181,7 +181,7 @@ describe('landWorkForTask', () => {
     const rows = await actionQueue.listActionQueueItems('all', { kind: 'worktree-ahead' })
     const row = rows.find((r) => r.originTaskId === task.id)
     expect(row).toBeDefined()
-    expect(row!.state).toBe('resolved')
+    expect(row!.status).toBe('resolved')
   })
 
   // ── Criterion 3: NOT_FOUND error ─────────────────────────────────────────

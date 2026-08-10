@@ -110,7 +110,7 @@ describe('setActionQueueState resolved — task.dropped-derived rows', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row, 'open row must exist after raise').toBeDefined()
-    expect(row!.state).toBe('open')
+    expect(row!.status).toBe('open')
     expect(row!.resolvedAt).toBeNull()
     expect(row!.resolution).toBeNull()
 
@@ -118,7 +118,7 @@ describe('setActionQueueState resolved — task.dropped-derived rows', () => {
     await actionQueue.setActionQueueState(row!.id, 'resolved', { note: 'invalidator-resolved' })
 
     const resolved = await actionQueue.getActionQueueItem(row!.id)
-    expect(resolved?.state).toBe('resolved')
+    expect(resolved?.status).toBe('resolved')
     expect(resolved?.resolvedAt).not.toBeNull()
     expect(typeof resolved?.resolvedAt).toBe('number')
     expect(resolved?.resolution).not.toBeNull()
@@ -157,6 +157,6 @@ describe('setActionQueueState resolved — task.dropped-derived rows', () => {
     expect(rowsResolved).toBe(0)
 
     const after = await actionQueue.getActionQueueItem(row!.id)
-    expect(after?.state).toBe('resolved')
+    expect(after?.status).toBe('resolved')
   })
 })

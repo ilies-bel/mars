@@ -285,7 +285,7 @@ describe('mars workflow approve', () => {
     const all = await aq.listActionQueueItems('all')
     const resolved = all.find((i) => i.kind === 'workflow-draft-pending')
     expect(resolved).toBeDefined()
-    expect(resolved!.state).toBe('resolved')
+    expect(resolved!.status).toBe('resolved')
     expect(resolved!.resolutionNote).toContain('workflow-approved')
   })
 

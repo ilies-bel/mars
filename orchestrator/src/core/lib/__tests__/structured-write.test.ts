@@ -384,7 +384,7 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
     const dirtyMainItem = itemsBefore.find((i) =>
       i.signature?.startsWith('structured-write:dirty-main:'),
     )
-    expect(dirtyMainItem?.state).toBe('open')
+    expect(dirtyMainItem?.status).toBe('open')
 
     // Now clean main — commit the dirty file.
     execFileSync('git', ['add', '-A'], { cwd: repo })
@@ -397,7 +397,7 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
     // The row must now be resolved.
     const itemsAfter = await listActionQueueItems()
     const stillOpen = itemsAfter.filter((i) =>
-      i.signature?.startsWith('structured-write:dirty-main:') && i.state === 'open',
+      i.signature?.startsWith('structured-write:dirty-main:') && i.status === 'open',
     )
     expect(stillOpen).toHaveLength(0)
   }, 30000)
@@ -430,7 +430,7 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
 
     const items = await listActionQueueItems()
     const dirtyMainItems = items.filter((i) =>
-      i.signature?.startsWith('structured-write:dirty-main:') && i.state === 'open',
+      i.signature?.startsWith('structured-write:dirty-main:') && i.status === 'open',
     )
     expect(dirtyMainItems).toHaveLength(1)
     expect(dirtyMainItems[0]!.seenCount).toBeGreaterThanOrEqual(2)

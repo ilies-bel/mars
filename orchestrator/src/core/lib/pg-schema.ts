@@ -32,13 +32,41 @@
  * - `self_heal_attempts.fix_task_id` gains an index: it carries ON DELETE
  *   CASCADE from tasks and would seq-scan on every task purge otherwise
  *   (flagged as a real gap by the migration inventory).
+ *
+ * ── Querying the database directly ──────────────────────────────────────────
+ *
+ * Timestamp encodings are MIXED across tables. Always use the right expression:
+ *
+ *   tasks.created_at / tasks.updated_at
+ *     Type: timestamptz
+ *     Display: to_char(created_at, 'MM-DD HH24:MI')
+ *
+ *   chat_threads.created_at / chat_threads.updated_at
+ *     Type: bigint epoch-milliseconds
+ *     Display: to_char(to_timestamp(created_at / 1000.0), 'MM-DD HH24:MI')
+ *
+ *   action_queue_items — uses raised_at (not created_at) and status (not state):
+ *     Type: bigint epoch-milliseconds
+ *     Display: to_char(to_timestamp(raised_at / 1000.0), 'MM-DD HH24:MI')
+ *     Lifecycle: WHERE status = 'open' / WHERE status = 'resolved'
+ *
+ * The mixed encoding is intentional: tasks.created_at predates the bigint
+ * convention and carries timezone-aware data; migrating it would change the
+ * Task.createdAt TypeScript type and cascade into UI code. The columns
+ * chat_threads.created_at and action_queue_items.raised_at were always
+ * epoch-millisecond integers. See CLAUDE.md "Querying the database directly".
+ *
+ * Note: task_blockers.state, verify_gates.state, and
+ * action_queue_history.from_state/to_state are different domain concepts
+ * (blocker confirmation state, gate activation state, and history records
+ * respectively) — these are NOT renamed.
  */
 
 import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0032'
+export const SCHEMA_VERSION = '0033'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -624,7 +652,7 @@ const DDL: readonly string[] = [
     kind            text   NOT NULL,
     category        text   NOT NULL,
     priority        text   NOT NULL,
-    state           text   NOT NULL DEFAULT 'open',
+    status          text   NOT NULL DEFAULT 'open',
     title           text   NOT NULL,
     body            text   NOT NULL DEFAULT '',
     payload         text   NOT NULL DEFAULT '{}',
@@ -700,37 +728,29 @@ const DDL: readonly string[] = [
    $$`,
   `ALTER TABLE action_queue_items
      ALTER COLUMN raised_at SET DEFAULT ${EPOCH_NOW}`,
-  // Guard: the canonical column is 'state'. If the live table carries 'status'
-  // instead (e.g. a task worktree ran a migration against the shared live DB
-  // and the code was never merged), the CREATE INDEX statements below would
-  // fail with a cryptic "column does not exist" error that names an index
-  // rather than the actual problem. Detect the drift here and surface a HINT
-  // that names both columns and the exact ALTER to run — the same pattern as
-  // the chat_threads evaporated_at/closed_at guard above.
+  // Rename legacy state column to status for consistency with tasks.status.
+  // This supersedes the transitional boot guard that treated 'state' as
+  // canonical and aborted on a live table carrying 'status': 'status' IS the
+  // canonical column now, and this idempotent rename is what reconciles any
+  // installation still on the legacy name.
   `DO $$
    BEGIN
      IF EXISTS (
        SELECT 1 FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = 'action_queue_items'
-          AND column_name = 'status'
-     ) AND NOT EXISTS (
-       SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'action_queue_items'
           AND column_name = 'state'
      ) THEN
-       RAISE EXCEPTION
-         'action_queue_items has column "status" where the canonical schema expects "state"; daemon cannot boot until reconciled'
-         USING HINT = 'A schema change applied to the shared live database (possibly from a task worktree) renamed "state" to "status". '
-                   || 'Fix with: ALTER TABLE action_queue_items RENAME COLUMN status TO state; '
-                   || 'then restart the daemon.';
+       ALTER TABLE action_queue_items RENAME COLUMN state TO status;
      END IF;
    END
    $$`,
-  `CREATE INDEX IF NOT EXISTS idx_action_queue_fingerprint_state
-     ON action_queue_items(fingerprint, state)`,
-  `CREATE INDEX IF NOT EXISTS idx_action_queue_state ON action_queue_items(state)`,
+  `DROP INDEX IF EXISTS idx_action_queue_fingerprint_state`,
+  `DROP INDEX IF EXISTS idx_action_queue_state`,
+  `CREATE INDEX IF NOT EXISTS idx_action_queue_fingerprint_status
+     ON action_queue_items(fingerprint, status)`,
+  `CREATE INDEX IF NOT EXISTS idx_action_queue_status ON action_queue_items(status)`,
   `CREATE INDEX IF NOT EXISTS idx_action_queue_open_snoozed_until
-     ON action_queue_items(snoozed_until, raised_at DESC) WHERE state = 'open'`,
+     ON action_queue_items(snoozed_until, raised_at DESC) WHERE status = 'open'`,
   // "by" is a reserved word in PostgreSQL — quoted here, and call sites must
   // quote it too (all-lowercase, so quoting does not change identity).
   `CREATE TABLE IF NOT EXISTS action_queue_history (

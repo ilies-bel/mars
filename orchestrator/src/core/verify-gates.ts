@@ -141,7 +141,7 @@ export const resolveCoveredVerifyAlerts = async (scope: string): Promise<void> =
     const open = await c.execute({
       sql: `SELECT id, payload
               FROM action_queue_items
-             WHERE kind = 'verify-uncovered' AND state = 'open'`,
+             WHERE kind = 'verify-uncovered' AND status = 'open'`,
       args: [],
     })
     for (const row of open.rows) {
@@ -167,8 +167,8 @@ export const resolveCoveredVerifyAlerts = async (scope: string): Promise<void> =
       if (!covered) continue
       await c.execute({
         sql: `UPDATE action_queue_items
-                 SET state = 'resolved', resolved_at = ?, resolution_note = ?
-               WHERE id = ? AND state = 'open'`,
+                 SET status = 'resolved', resolved_at = ?, resolution_note = ?
+               WHERE id = ? AND status = 'open'`,
         args: [Date.now(), `covered by verify gate for ${scope}`, record.id],
       })
     }

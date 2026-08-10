@@ -105,12 +105,12 @@ describe('reconcileTerminalTasks', () => {
     // Done task's action queue row must be resolved.
     const doneItem = await actionQueue.getActionQueueItem(doneItemId)
     expect(doneItem).not.toBeNull()
-    expect(doneItem!.state).toBe('resolved')
+    expect(doneItem!.status).toBe('resolved')
 
     // Live queued task's row must remain open.
     const queuedItem = await actionQueue.getActionQueueItem(queuedItemId)
     expect(queuedItem).not.toBeNull()
-    expect(queuedItem!.state).toBe('open')
+    expect(queuedItem!.status).toBe('open')
 
     // Return counts must reflect what was processed.
     expect(rowsResolved).toBe(1)
@@ -144,7 +144,7 @@ describe('reconcileTerminalTasks', () => {
     expect(rowsResolved).toBeGreaterThanOrEqual(1)
     const item = await actionQueue.getActionQueueItem(itemId)
     expect(item).not.toBeNull()
-    expect(item!.state).toBe('resolved')
+    expect(item!.status).toBe('resolved')
     expect(item!.resolution).toBe('superseded')
   })
 
@@ -173,7 +173,7 @@ describe('reconcileTerminalTasks', () => {
 
     const item = await actionQueue.getActionQueueItem(itemId)
     expect(item).not.toBeNull()
-    expect(item!.state).toBe('open')
+    expect(item!.status).toBe('open')
   })
 
   it('is idempotent: a second call after everything is already clean is a no-op', async () => {

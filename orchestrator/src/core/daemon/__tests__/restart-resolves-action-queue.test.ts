@@ -138,7 +138,7 @@ describe('restart → done auto-dismisses the failed action-queue row', () => {
     expect(processed).toBeGreaterThanOrEqual(1)
 
     const afterRestart = await actionQueue.getActionQueueItem(itemId)
-    expect(afterRestart!.state).toBe('resolved')
+    expect(afterRestart!.status).toBe('resolved')
   })
 
   it('driving the restarted task to done keeps the action-queue row resolved (not re-raised)', async () => {
@@ -171,7 +171,7 @@ describe('restart → done auto-dismisses the failed action-queue row', () => {
     await ad.drainAlertDismissals(client)
 
     const afterRestart = await actionQueue.getActionQueueItem(itemId)
-    expect(afterRestart!.state).toBe('resolved')
+    expect(afterRestart!.status).toBe('resolved')
 
     // Drive to done: task.completed → Invalidator resolveAllRowsForTask
     // (already resolved — idempotent, no error).
@@ -183,7 +183,7 @@ describe('restart → done auto-dismisses the failed action-queue row', () => {
 
     // Row must remain resolved — not re-opened by any path.
     const afterDone = await actionQueue.getActionQueueItem(itemId)
-    expect(afterDone!.state).toBe('resolved')
+    expect(afterDone!.status).toBe('resolved')
   })
 
   it('reconcileTerminalTasks resolves an open row whose origin task is already done (daemon-boot backstop)', async () => {
@@ -221,7 +221,7 @@ describe('restart → done auto-dismisses the failed action-queue row', () => {
 
     // Confirm the row is still open (the Invalidator didn't run).
     const before = await actionQueue.getActionQueueItem(itemId)
-    expect(before!.state).toBe('open')
+    expect(before!.status).toBe('open')
 
     // Run reconcileTerminalTasks — the daemon-boot backstop.
     const { rowsResolved } = await reconcile.reconcileTerminalTasks(client)
@@ -229,7 +229,7 @@ describe('restart → done auto-dismisses the failed action-queue row', () => {
 
     // The row must be resolved by the reconciler.
     const after = await actionQueue.getActionQueueItem(itemId)
-    expect(after!.state).toBe('resolved')
+    expect(after!.status).toBe('resolved')
   })
 
   it('reconcileTerminalTasks resolves a stranded row for a sliced task whose origin_task_id is a still-running PRD task (payload.taskId leg)', async () => {
@@ -288,7 +288,7 @@ describe('restart → done auto-dismisses the failed action-queue row', () => {
 
     // Confirm the row is open and stored with the PRD's id as origin_task_id.
     const before = await actionQueue.getActionQueueItem(itemId)
-    expect(before!.state).toBe('open')
+    expect(before!.status).toBe('open')
     expect(before!.originTaskId).toBe('prd-task-still-running')
 
     // leg (a) won't find it (PRD task is 'queued', not done/dropped).
@@ -298,6 +298,6 @@ describe('restart → done auto-dismisses the failed action-queue row', () => {
     expect(rowsResolved).toBeGreaterThanOrEqual(1)
 
     const after = await actionQueue.getActionQueueItem(itemId)
-    expect(after!.state).toBe('resolved')
+    expect(after!.status).toBe('resolved')
   })
 })

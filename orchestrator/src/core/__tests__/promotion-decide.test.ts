@@ -379,13 +379,13 @@ describe('runPromotionDecision (integration)', () => {
 
     // Exactly one action_queue_items row with kind='promotion-decision'.
     const rows = await client.execute(
-      `SELECT id, kind, body, payload, state FROM action_queue_items WHERE kind = 'promotion-decision'`,
+      `SELECT id, kind, body, payload, status FROM action_queue_items WHERE kind = 'promotion-decision'`,
     )
     expect(rows.rows).toHaveLength(1)
 
-    const row = rows.rows[0] as unknown as { id: string; kind: string; body: string; payload: string; state: string }
+    const row = rows.rows[0] as unknown as { id: string; kind: string; body: string; payload: string; status: string }
     expect(row.kind).toBe('promotion-decision')
-    expect(row.state).toBe('open')
+    expect(row.status).toBe('open')
 
     // Body is human-readable and mentions the workflow, scores, and decision.
     expect(row.body).toContain('Workflow task:')
@@ -429,12 +429,12 @@ describe('runPromotionDecision (integration)', () => {
     expect(outcome).toBe('retire')
 
     const rows = await client.execute(
-      `SELECT id, kind, body, payload, state FROM action_queue_items WHERE kind = 'promotion-decision'`,
+      `SELECT id, kind, body, payload, status FROM action_queue_items WHERE kind = 'promotion-decision'`,
     )
     expect(rows.rows).toHaveLength(1)
 
-    const row = rows.rows[0] as unknown as { body: string; state: string }
-    expect(row.state).toBe('open')
+    const row = rows.rows[0] as unknown as { body: string; status: string }
+    expect(row.status).toBe('open')
     expect(row.body).toContain('decision: retire')
   })
 

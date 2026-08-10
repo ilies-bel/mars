@@ -98,7 +98,7 @@ export interface ActionQueueItem {
   kind: ActionQueueKind
   category: string
   priority: ActionQueuePriority
-  state: ActionQueueState
+  status: ActionQueueState
   title: string
   body: string
   payload: Record<string, unknown>
@@ -246,7 +246,7 @@ const rowToActionQueueItem = (
   row: Record<string, unknown>,
   history: ActionQueueHistoryEntry[],
 ): ActionQueueItem => {
-  const state = toState(row.state)
+  const state = toState(row.status)
   const resolvedAt = row.resolved_at == null ? null : Number(row.resolved_at)
   const resolution = (row.resolution as string | null) ?? null
   const resolutionNote = (row.resolution_note as string | null) ?? null
@@ -267,7 +267,7 @@ const rowToActionQueueItem = (
     kind: toKind(row.kind),
     category: (row.category as string | null) ?? '',
     priority: toPriority(row.priority),
-    state,
+    status: state,
     title: (row.title as string | null) ?? '',
     body: (row.body as string | null) ?? '',
     payload: parseJsonObject(row.payload as string | null),
@@ -427,7 +427,7 @@ export const raiseActionQueueItem = async (
 
   const existing = await c.execute({
     sql: `SELECT id, payload FROM action_queue_items
-           WHERE fingerprint = ? AND state = 'open'
+           WHERE fingerprint = ? AND status = 'open'
            ORDER BY raised_at ASC
            LIMIT 1`,
     args: [fingerprint],
@@ -466,7 +466,7 @@ export const raiseActionQueueItem = async (
   }
   await c.execute({
     sql: `INSERT INTO action_queue_items (
-             id, kind, category, priority, state, title, body,
+             id, kind, category, priority, status, title, body,
              payload, context, raised_by, raised_at, last_seen_at,
              seen_count, fingerprint, signature, origin_task_id
            ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
@@ -515,7 +515,7 @@ export const setRecoveryFindings = async (
   const fingerprint = await resolvedOriginFingerprint(originTaskId)
   const existing = await c.execute({
     sql: `SELECT id FROM action_queue_items
-           WHERE fingerprint = ? AND state = 'open'
+           WHERE fingerprint = ? AND status = 'open'
            ORDER BY raised_at ASC
            LIMIT 1`,
     args: [fingerprint],
@@ -544,7 +544,7 @@ export const patchOpenActionQueuePayload = async (
   const fingerprint = await resolvedOriginFingerprint(originTaskId)
   const existing = await c.execute({
     sql: `SELECT id, payload FROM action_queue_items
-           WHERE fingerprint = ? AND state = 'open'
+           WHERE fingerprint = ? AND status = 'open'
            ORDER BY raised_at ASC
            LIMIT 1`,
     args: [fingerprint],
@@ -573,7 +573,7 @@ export const demoteAwaitingValidationAction = async (
   const existing = await c.execute({
     sql: `SELECT id, kind, payload FROM action_queue_items
            WHERE fingerprint = ?
-             AND state = 'open'
+             AND status = 'open'
              AND kind IN ('awaiting-validation', 'awaiting-validation-preview-gone')
            ORDER BY raised_at ASC
            LIMIT 1`,
@@ -656,7 +656,7 @@ export const findOpenActionQueueItemIdBySignature = async (
   const c = stateClient()
   const r = await c.execute({
     sql: `SELECT id FROM action_queue_items
-           WHERE kind = ? AND signature = ? AND state = 'open'
+           WHERE kind = ? AND signature = ? AND status = 'open'
            ORDER BY raised_at ASC
            LIMIT 1`,
     args: [kind, signature],
@@ -737,7 +737,7 @@ export const listActionQueueItems = async (
     const wheres: string[] = []
     const args: Array<string> = []
     if (s !== 'all') {
-      wheres.push('state = ?')
+      wheres.push('status = ?')
       args.push(s)
     }
     if (opts.kind !== undefined) {
@@ -770,7 +770,7 @@ export const listActionQueueItems = async (
 export const listVisibleActionQueueItems = async (): Promise<ActionQueueItem[]> => {
   const c = stateClient()
   const r = await c.execute(`SELECT * FROM action_queue_items
-    WHERE state = 'open'
+    WHERE status = 'open'
       AND (snoozed_until IS NULL OR snoozed_until <= ?)
     ORDER BY raised_at DESC`, [Date.now()])
   return r.rows.map((row) =>
@@ -807,15 +807,15 @@ export const setActionQueueState = async (
   if (!resolvedId) return
 
   const cur = await c.execute({
-    sql: `SELECT state FROM action_queue_items WHERE id = ?`,
+    sql: `SELECT status FROM action_queue_items WHERE id = ?`,
     args: [resolvedId],
   })
   const currentState = (
-    cur.rows[0] as unknown as { state: ActionQueueState }
-  ).state
+    cur.rows[0] as unknown as { status: ActionQueueState }
+  ).status
   const now = Date.now()
 
-  const sets: string[] = ['state = ?']
+  const sets: string[] = ['status = ?']
   const args: Array<string | number | null> = [state]
 
   if (isTerminal(state)) {
@@ -935,7 +935,7 @@ export const supersedeActionQueueItemsForOrigin = async (
   // mismatch was baked in by a prior version of the raise path.
   const rows = await c.execute({
     sql: `SELECT id FROM action_queue_items
-           WHERE state = 'open'
+           WHERE status = 'open'
              AND (fingerprint = ? OR origin_task_id = ? OR origin_task_id = ?)`,
     args: [fingerprint, resolvedOriginId, originTaskId],
   })
@@ -967,7 +967,7 @@ export const supersedeActionQueueItemsBySignature = async (
 ): Promise<string[]> => {
   const c = stateClient()
   const rows = await c.execute({
-    sql: `SELECT id FROM action_queue_items WHERE kind = ? AND signature = ? AND state = 'open'`,
+    sql: `SELECT id FROM action_queue_items WHERE kind = ? AND signature = ? AND status = 'open'`,
     args: [kind, signature],
   })
   const ids: string[] = []
@@ -1045,7 +1045,7 @@ export const supersedeObsoletePreflightDirtyMainRows = async (
   // collide with live wording.
   const rows = await c.execute({
     sql: `SELECT id FROM action_queue_items
-           WHERE state = 'open'
+           WHERE status = 'open'
              AND (
                payload ILIKE '%setup:preflight/dirty-main%'
                OR payload ILIKE '%recovery_exhausted:setup:preflight%'
@@ -1091,7 +1091,7 @@ export const supersedeOrphanedHitlActionQueueRows = async (
   // and tasks live in the same database (ADR-0034), so we can JOIN them.
   const openRows = await c.execute({
     sql: `SELECT id, signature FROM action_queue_items
-           WHERE kind = 'hitl-slice-needs-operator' AND state = 'open'`,
+           WHERE kind = 'hitl-slice-needs-operator' AND status = 'open'`,
     args: [],
   })
   const ids: string[] = []
@@ -1158,7 +1158,7 @@ export const dismissAlertsOnStatusChange = async (
                   OR (kind IN ('failed', 'diagnose-inconclusive')
                       AND signature = ?
                       AND origin_task_id IS NULL))
-             AND state = 'open'`,
+             AND status = 'open'`,
     args: [fingerprint, taskId],
   })
   const ids: string[] = []
@@ -1236,7 +1236,7 @@ export const listResolvedActionQueueItems = async ({
 } = {}): Promise<ResolvedActionQueuePage> => {
   const c = stateClient()
 
-  const conditions: string[] = ["state = 'resolved'", 'resolved_at IS NOT NULL']
+  const conditions: string[] = ["status = 'resolved'", 'resolved_at IS NOT NULL']
   const args: Array<string | number> = []
 
   if (cursor) {
@@ -1349,14 +1349,14 @@ export const resolveAllRowsForTask = async (
   const c = stateClient()
   await c.execute({
     sql: `UPDATE action_queue_items
-             SET state = 'resolved',
+             SET status = 'resolved',
                  resolved_at = ?
            WHERE (origin_task_id = ?
                   OR payload::jsonb ->> 'taskId' = ?
                   OR (kind IN ('failed', 'diagnose-inconclusive')
                       AND signature = ?
                       AND origin_task_id IS NULL))
-             AND state = 'open'`,
+             AND status = 'open'`,
     args: [Date.now(), taskId, taskId, taskId],
   })
 }

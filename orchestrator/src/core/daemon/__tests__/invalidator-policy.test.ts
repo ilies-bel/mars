@@ -120,7 +120,7 @@ describe('invalidator policy — discrete lifecycle events', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     expect(processed).toBe(1)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
   })
 
   it('task.dropped: closes all open rows for the task', async () => {
@@ -139,7 +139,7 @@ describe('invalidator policy — discrete lifecycle events', () => {
     const { processed } = await ad.drainAlertDismissals(client)
 
     expect(processed).toBe(1)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('resolved')
   })
 
   it('task.failed: leaves the actionable row open (ADR-0028)', async () => {
@@ -156,6 +156,6 @@ describe('invalidator policy — discrete lifecycle events', () => {
 
     // task.failed is a NO-OP: one actionable row stays open.
     expect(processed).toBe(0)
-    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
+    expect((await actionQueue.getActionQueueItem(itemId))!.status).toBe('open')
   })
 })
