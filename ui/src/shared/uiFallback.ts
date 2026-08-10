@@ -50,8 +50,8 @@ const KIND_COPY: Record<
     severity: 'error',
   },
   'stale-daemon': {
-    headline: 'The daemon is not running.',
-    remedy: 'Start it with `mars daemon start`, or restart with `mars daemon restart`.',
+    headline: 'The daemon has a stale port — the proxy could not connect.',
+    remedy: 'Restart the daemon with `mars daemon restart`.',
     severity: 'warning',
   },
   'stale-daemon-code': {
