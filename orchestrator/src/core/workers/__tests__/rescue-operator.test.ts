@@ -309,10 +309,10 @@ describe('runRescueOperator — integration', () => {
 
   it('reads a Codex stdout stream when onEvent carries no text content', async () => {
     // Worker that emits no assistant events but returns a Codex NDJSON stream.
-    // Pin provider to 'codex' so readWorkerOutputText uses the Codex parser
-    // regardless of the WORKER_PROVIDER env setting.
+    // Pin provider to 'codex' so readWorkerOutputText uses the Codex reader
+    // regardless of the MARS_WORKER_PROVIDER environment variable.
     const worker: Worker = {
-      config: { ...WORKER_CONFIGS.RescueOperator, provider: 'codex' },
+      config: { ...WORKER_CONFIGS.RescueOperator, provider: 'codex' as const },
       runtime: 'headless',
       run: async (): Promise<RunClaudeResult> => ({
         exitCode: 0,
