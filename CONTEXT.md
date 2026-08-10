@@ -409,7 +409,8 @@ Classification on every verify gate: 'task' gates are cheap and run per-task in 
 _Avoid_: verify level, check tier
 
 **Foreground session**:
-An interactive Claude Code session driven by the operator, as opposed to a Session (a Worker's headless execution instance). Identified by the CLAUDE_CODE_SESSION_ID env var that Claude Code exports to its subprocesses; captured at the mars CLI boundary as origin_session_id on the tasks and proposals it enqueues, letting deep reflect join the operator conversation with the downstream slice (enqueue, worker runs, merge).
+A human-owned interactive agent session that holds the Lease on a task's worktree and performs a manual step itself, advancing the pipeline through Mars verbs rather than being driven by the daemon.
+_Avoid_: live session, attached session, interactive session, human session
 
 **Progress journal**:
 Append-only per-task record of mid-flight progress notes and done-criteria check-offs, written by Foreground sessions via mars task note / mars task check through the Arc write funnel (ADR-0052); read via mars task show, the UI, and the attach-time Handoff.
