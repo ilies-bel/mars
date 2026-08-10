@@ -429,8 +429,8 @@ Per-step property declared in a workflow definition naming who executes the step
 _Avoid_: step mode, live flag, manual flag
 
 **Step guide**:
-Per-step brief declared on a manual step in a workflow definition — what the Foreground session should accomplish there; surfaced at park in the action-queue row, at attach, and by the session hooks, so a manual-heavy workflow reads as a runbook for live work.
-_Avoid_: step prompt, manual note, instructions field
+The runbook a Workflow author attaches to a manual step, stating what the step expects, which done-criteria gate its completion, and what the next step will do once completion is signalled.
+_Avoid_: leaseNote, lease note, step note, manual instructions
 
 **Scorer**:
 A per-pipeline quality evaluator attached to a specific Workflow that grades each Workflow instance's output on a normalized scale, suggested by reflection and run automatically on subsequent instances of that Workflow.
