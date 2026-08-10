@@ -5,12 +5,13 @@
  * every useQuery / useMutation call in the UI depends on.  fetch is mocked
  * at the system boundary; everything else is real code.
  */
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, spyOn, vi } from 'bun:test'
 import type { Mock } from 'bun:test'
 import { traceEventSchema } from './schemas'
 import { DAEMON_ERROR } from './daemonErrors'
 import {
   ApiError,
+  SchemaError,
   ackActionQueueItem,
   createChatThread,
   dismissActionQueueItem,
@@ -1180,5 +1181,73 @@ describe('dismissActionQueueItem — ApiError classification', () => {
       expect((err as ApiError).kind).toBe('stale-daemon')
       expect((err as ApiError).status).toBe(502)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SchemaError — thrown when a 200 OK response fails Zod validation
+// ---------------------------------------------------------------------------
+
+describe('fetchJson – SchemaError on schema mismatch', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: Mock<any>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let consoleSpy: Mock<any>
+
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, 'fetch')
+    consoleSpy = spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.stubEnv('DEV', true)
+  })
+
+  afterEach(() => {
+    fetchSpy.mockRestore()
+    consoleSpy.mockRestore()
+    vi.unstubAllEnvs()
+  })
+
+  it('throws SchemaError (not plain Error) when the 200 body fails schema validation', async () => {
+    // Array instead of { tasks: [...] } — shape mismatch
+    fetchSpy.mockResolvedValue(json([minTask()]))
+    try {
+      await fetchTasks()
+      throw new Error('expected fetchTasks to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(SchemaError)
+    }
+  })
+
+  it('SchemaError.issues is a non-empty array of Zod issue objects', async () => {
+    fetchSpy.mockResolvedValue(json([minTask()]))
+    try {
+      await fetchTasks()
+      throw new Error('expected to throw')
+    } catch (err) {
+      const issues = (err as SchemaError).issues
+      expect(Array.isArray(issues)).toBe(true)
+      expect(issues.length).toBeGreaterThan(0)
+      // Each issue must carry at least a code, path, and message
+      expect(typeof issues[0]?.code).toBe('string')
+      expect(Array.isArray(issues[0]?.path)).toBe(true)
+      expect(typeof issues[0]?.message).toBe('string')
+    }
+  })
+
+  it('logs the full Zod issues array to console.error in dev mode', async () => {
+    fetchSpy.mockResolvedValue(json([minTask()]))
+    try { await fetchTasks() } catch { /* expected */ }
+    expect(consoleSpy).toHaveBeenCalled()
+    // Third argument is the issues array
+    const thirdArg = consoleSpy.mock.calls[0]?.[2]
+    expect(Array.isArray(thirdArg)).toBe(true)
+    expect((thirdArg as unknown[]).length).toBeGreaterThan(0)
+  })
+
+  it('does not call console.error in prod mode', async () => {
+    vi.unstubAllEnvs()
+    vi.stubEnv('DEV', false)
+    fetchSpy.mockResolvedValue(json([minTask()]))
+    try { await fetchTasks() } catch { /* expected */ }
+    expect(consoleSpy).not.toHaveBeenCalled()
   })
 })

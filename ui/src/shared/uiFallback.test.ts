@@ -8,7 +8,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'bun:test'
 import { resolveFallback, logFallbackError } from './uiFallback'
-import { ApiError } from '@/shared/api'
+import { ApiError, SchemaError } from '@/shared/api'
 
 describe('resolveFallback', () => {
   afterEach(() => {
@@ -85,6 +85,118 @@ describe('resolveFallback', () => {
     vi.unstubAllEnvs()
     vi.stubEnv('DEV', true)
     expect(resolveFallback(new Error('x'), 'tasks').remedy).not.toBeNull()
+  })
+})
+
+describe('resolveFallback – SchemaError (payload/schema mismatch)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('names the first offending field path in the headline, not the generic sentence', () => {
+    const err = new SchemaError('/api/deep-reflections/abc', [
+      {
+        code: 'invalid_type',
+        expected: 'string',
+        received: 'undefined',
+        path: ['autoRunReflect'],
+        message: 'Required',
+      },
+    ])
+    const fb = resolveFallback(err, 'reflections')
+    expect(fb.headline).toContain('autoRunReflect')
+    // Must NOT fall back to the generic "Couldn't load the reflections."
+    expect(fb.headline).not.toBe("Couldn't load the reflections.")
+  })
+
+  it('uses the surface label and nested path for a deep field mismatch', () => {
+    const err = new SchemaError('/api/deep-reflections/abc', [
+      {
+        code: 'invalid_type',
+        expected: 'string',
+        received: 'undefined',
+        path: ['report', 'suggestions', 2, 'applyState'],
+        message: 'Required',
+      },
+    ])
+    const fb = resolveFallback(err, 'reflection detail')
+    expect(fb.headline).toContain('report.suggestions.2.applyState')
+  })
+
+  it('uses "(root)" when the Zod issue path is empty', () => {
+    const err = new SchemaError('/api/tasks', [
+      {
+        code: 'invalid_type',
+        expected: 'object',
+        received: 'array',
+        path: [],
+        message: 'Expected object, received array',
+      },
+    ])
+    const fb = resolveFallback(err, 'tasks')
+    expect(fb.headline).toContain('(root)')
+  })
+
+  it('suggests mars daemon restart and npm --prefix ui run build in the remedy', () => {
+    const err = new SchemaError('/api/deep-reflections', [
+      {
+        code: 'invalid_type',
+        expected: 'string',
+        received: 'undefined',
+        path: ['autoEnqueue'],
+        message: 'Required',
+      },
+    ])
+    const fb = resolveFallback(err, 'reflections')
+    expect(fb.remedy).toContain('mars daemon restart')
+    expect(fb.remedy).toContain('npm --prefix ui run build')
+  })
+
+  it('includes the full issues JSON in detail in dev mode', () => {
+    vi.stubEnv('DEV', true)
+    const issues = [
+      {
+        code: 'invalid_type',
+        expected: 'string',
+        received: 'undefined',
+        path: ['autoRunReflect'],
+        message: 'Required',
+      },
+    ]
+    const err = new SchemaError('/api/deep-reflections', issues)
+    const fb = resolveFallback(err, 'reflections')
+    expect(fb.detail).not.toBeNull()
+    expect(fb.detail).toContain('autoRunReflect')
+    expect(fb.detail).toContain('Required')
+  })
+
+  it('suppresses detail (null) in prod mode', () => {
+    vi.stubEnv('DEV', false)
+    const err = new SchemaError('/api/deep-reflections', [
+      {
+        code: 'invalid_type',
+        expected: 'string',
+        received: 'undefined',
+        path: ['autoRunReflect'],
+        message: 'Required',
+      },
+    ])
+    const fb = resolveFallback(err, 'reflections')
+    expect(fb.detail).toBeNull()
+  })
+
+  it('severity is error', () => {
+    const err = new SchemaError('/api/tasks', [
+      {
+        code: 'invalid_type',
+        expected: 'string',
+        received: 'undefined',
+        path: ['status'],
+        message: 'Required',
+      },
+    ])
+    const fb = resolveFallback(err, 'tasks')
+    expect(fb.severity).toBe('error')
   })
 })
 

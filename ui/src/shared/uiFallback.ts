@@ -14,7 +14,7 @@
  * - In prod: suppress diagnostics; show only the calm headline + remedy line.
  */
 
-import { ApiError, type ApiErrorKind } from './api'
+import { ApiError, SchemaError, type ApiErrorKind } from './api'
 
 /** How loud a fallback should render. Drives colour at the render seam. */
 export type FallbackSeverity = 'error' | 'warning'
@@ -71,6 +71,14 @@ const KIND_COPY: Record<
 const UNKNOWN_REMEDY = 'Reload the page; if it persists, check the daemon logs.'
 
 /**
+ * Remedy shown when a `SchemaError` is caught — the overwhelmingly common cause
+ * is a version skew between the UI bundle and the running daemon.
+ */
+const SCHEMA_REMEDY =
+  'Likely a version skew between the UI bundle and the daemon. ' +
+  'Fix: `mars daemon restart` then `npm --prefix ui run build`.'
+
+/**
  * Resolve any thrown value into a {@link Fallback}. This is the ONE place that
  * interprets `ApiError.kind` and the ONE place that applies the dev/prod split.
  *
@@ -100,6 +108,22 @@ export function resolveFallback(error: unknown, surfaceLabel: string): Fallback 
     }
     const copy = KIND_COPY[error.kind]
     return { headline: copy.headline, remedy: copy.remedy, detail, severity: copy.severity }
+  }
+
+  if (error instanceof SchemaError) {
+    const first = error.issues[0]
+    const fieldPath =
+      first
+        ? first.path.length > 0
+          ? first.path.join('.')
+          : '(root)'
+        : 'unknown field'
+    return {
+      headline: `Couldn't load the ${surfaceLabel}: response missing or mismatched at \`${fieldPath}\`.`,
+      remedy: SCHEMA_REMEDY,
+      detail: dev ? JSON.stringify(error.issues, null, 2) : null,
+      severity: 'error',
+    }
   }
 
   return {
