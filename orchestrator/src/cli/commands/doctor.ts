@@ -491,20 +491,24 @@ export const runDoctorChecks = async (
   } else {
     for (const gate of gates) {
       const cwd = gate.dir === '.' ? repoRoot : resolve(repoRoot, gate.dir)
+      // Include the scope in the label when it is not the repo root so that
+      // same-named gates at different scopes (e.g. typecheck in orchestrator/
+      // vs ui/) produce distinct, readable output lines.
+      const gateLabel = gate.dir === '.' ? gate.name : `${gate.name} (${gate.dir})`
       const result = probes.runGate(gate.cmd, gate.args, cwd)
       if (!result.passed) {
         results.push({
-          label: `baseline: ${gate.name}`,
+          label: `baseline: ${gateLabel}`,
           status: 'FAIL',
           section: 'health',
-          message: `integration branch fails ${gate.name} — run '${gate.cmd}${gate.args.length > 0 ? ' ' + gate.args.join(' ') : ''}' in '${gate.dir}' to reproduce`,
+          message: `integration branch fails ${gateLabel} — run '${gate.cmd}${gate.args.length > 0 ? ' ' + gate.args.join(' ') : ''}' in '${gate.dir}' to reproduce`,
         })
       } else {
         results.push({
-          label: `baseline: ${gate.name}`,
+          label: `baseline: ${gateLabel}`,
           status: 'PASS',
           section: 'health',
-          message: `${gate.name} passes on integration branch`,
+          message: `${gateLabel} passes on integration branch`,
         })
       }
     }

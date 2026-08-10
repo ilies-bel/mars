@@ -439,7 +439,7 @@ describe('runDoctorChecks — baseline health', () => {
     expect(check?.status).toBe('PASS')
   })
 
-  it('FAIL when gate fails and names the gate in the label and message', async () => {
+  it('FAIL when gate fails and names the gate and scope in the label and message', async () => {
     const probes = passingProbes({
       async baselineGates() {
         return [{ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], dir: 'orchestrator' }]
@@ -447,7 +447,8 @@ describe('runDoctorChecks — baseline health', () => {
       runGate(_cmd, _args, _cwd) { return { passed: false, output: 'TS2345: error' } },
     })
     const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
-    const check = results.find((r) => r.label === 'baseline: typecheck')
+    // A scoped gate (dir != '.') must include the scope in its label.
+    const check = results.find((r) => r.label === 'baseline: typecheck (orchestrator)')
     expect(check?.status).toBe('FAIL')
     expect(check?.message).toContain('typecheck')
     expect(check?.message).toContain('tsc')
@@ -468,6 +469,52 @@ describe('runDoctorChecks — baseline health', () => {
     const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
     expect(results.find((r) => r.label === 'baseline: typecheck')?.status).toBe('PASS')
     expect(results.find((r) => r.label === 'baseline: test')?.status).toBe('FAIL')
+  })
+
+  it('runs each distinct gate exactly once even when names collide across scopes', async () => {
+    const runGateCalls: string[] = []
+    const probes = passingProbes({
+      async baselineGates() {
+        return [
+          { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], dir: '.' },
+          { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], dir: 'orchestrator' },
+          { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], dir: 'ui' },
+        ]
+      },
+      runGate(_cmd, _args, cwd) {
+        runGateCalls.push(cwd)
+        return { passed: true, output: '' }
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    // Each gate must be executed exactly once
+    expect(runGateCalls).toHaveLength(3)
+    // All baseline typecheck labels must be distinct (no duplicates)
+    const baselineLabels = results
+      .filter((r) => r.label.startsWith('baseline: typecheck'))
+      .map((r) => r.label)
+    expect(baselineLabels).toHaveLength(3)
+    expect(new Set(baselineLabels).size).toBe(3)
+  })
+
+  it('produces distinguishable labels when two gates share a name but differ in scope', async () => {
+    const probes = passingProbes({
+      async baselineGates() {
+        return [
+          { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], dir: 'orchestrator' },
+          { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], dir: 'ui' },
+        ]
+      },
+      runGate() { return { passed: true, output: '' } },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const labels = results
+      .filter((r) => r.section === 'health' && r.label.startsWith('baseline: typecheck'))
+      .map((r) => r.label)
+    expect(labels).toHaveLength(2)
+    expect(labels[0]).not.toBe(labels[1])
+    expect(labels[0]).toContain('orchestrator')
+    expect(labels[1]).toContain('ui')
   })
 })
 
