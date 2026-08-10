@@ -265,4 +265,24 @@ describe('detectVerifyGates', () => {
       process.env.PATH = originalPath
     }
   })
+
+  it('detects knip as an advisory (required=false) gate when a knip script is present', () => {
+    const repo = makeRepo()
+    writeFileSync(
+      resolve(repo, 'package.json'),
+      JSON.stringify({
+        scripts: {
+          typecheck: 'tsc --noEmit',
+          knip: 'knip --no-exit-code',
+        },
+      }),
+    )
+
+    const gates = detectVerifyGates(repo)
+    const knipGate = gates.find((g) => g.name === 'knip')
+    expect(knipGate).toBeDefined()
+    expect(knipGate?.required).toBe(false)
+    expect(knipGate?.tier).toBe('task')
+    expect(knipGate?.args).toEqual(['run', 'knip'])
+  })
 })

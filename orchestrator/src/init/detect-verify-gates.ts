@@ -29,6 +29,9 @@ export const normalizeDetectedVerifyGates = (
   })
 
 const NODE_SCRIPTS = ['typecheck', 'lint', 'test', 'test:integration'] as const
+/** Scripts detected as advisory (required=false) because they commonly report
+ * pre-existing violations in established repos and should not block the queue on day one. */
+const NODE_SCRIPTS_ADVISORY = ['knip'] as const
 
 const commandIsRunnable = (command: string): boolean => {
   const suffixes = process.platform === 'win32' ? ['', '.exe', '.cmd', '.bat'] : ['']
@@ -165,6 +168,19 @@ export const detectVerifyGates = (repoRoot: string): DetectedVerifyGate[] => {
         args: ['run', name],
         required: true,
         tier: name === 'test:integration' ? 'integration' : 'task',
+        source: 'detected',
+        evidence: `package.json script "${name}"`,
+      })
+    }
+    for (const name of NODE_SCRIPTS_ADVISORY) {
+      if (typeof scripts[name] !== 'string' || scripts[name].trim() === '') continue
+      byScopeAndName.set(`${pkg.scope}\x00${name}`, {
+        scope: pkg.scope,
+        name,
+        cmd: packageManager,
+        args: ['run', name],
+        required: false,
+        tier: 'task',
         source: 'detected',
         evidence: `package.json script "${name}"`,
       })
