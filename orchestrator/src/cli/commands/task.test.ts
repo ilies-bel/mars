@@ -116,6 +116,47 @@ describe('mars task add --help', () => {
 })
 
 // ---------------------------------------------------------------------------
+// --help Flags block completeness
+// Every flag in the usage line must also appear in the Flags: section.
+// Split on 'Flags:' to isolate the flags section from the usage line so the
+// assertions are not satisfied by the usage-line occurrence of the flag name.
+// ---------------------------------------------------------------------------
+
+describe('mars task add --help Flags block completeness', () => {
+  const getFlagsSection = (): string => {
+    const r = runCli(['task', 'add', '--help'])
+    expect(r.status).toBe(0)
+    return r.stdout.split('Flags:')[1] ?? ''
+  }
+
+  it('includes --priority in the Flags block', () => {
+    expect(getFlagsSection()).toContain('--priority')
+  })
+
+  it('includes --tag in the Flags block', () => {
+    expect(getFlagsSection()).toContain('--tag')
+  })
+
+  it('includes --author in the Flags block', () => {
+    expect(getFlagsSection()).toContain('--author')
+  })
+
+  it('includes --supersede in the Flags block', () => {
+    expect(getFlagsSection()).toContain('--supersede')
+  })
+
+  it('--supersede Flags description states the failed-only constraint', () => {
+    const flagsSection = getFlagsSection()
+    expect(flagsSection).toContain('--supersede')
+    expect(flagsSection).toContain('failed')
+  })
+
+  it('includes --qa in the Flags block', () => {
+    expect(getFlagsSection()).toContain('--qa')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Explicit --intent flag
 // ---------------------------------------------------------------------------
 

@@ -149,12 +149,17 @@ export const taskAdd: Command = {
   usage: TASK_ADD_USAGE,
   flags: [
     { syntax: '--intent <text>', description: 'one-line task summary; derived from the prompt when omitted' },
+    { syntax: '--author <kind:name>', description: 'task author; defaults to the detected session identity' },
+    { syntax: '--priority 0..3', description: 'task priority; 0 = lowest, 3 = highest (default 1)' },
+    { syntax: '--tag <label>', description: 'tag label attached to the task (repeatable)' },
     { syntax: '--files <path>', description: 'focus files for the worker (repeatable)' },
     { syntax: '--verify <cmd>', description: 'verification command run by the orchestrator' },
     { syntax: '--done <criterion>', description: 'acceptance criterion (repeatable)' },
     { syntax: '--merge auto|gated', description: 'merge automatically or pause for review' },
     { syntax: '--blocked-by <id>', description: 'wait for a task to finish (repeatable)' },
     { syntax: '--workflow <name>', description: 'select the dispatch pipeline' },
+    { syntax: '--supersede <task-id>', description: 'replace a task that must already be in status \'failed\'' },
+    { syntax: '--qa auto|manual', description: 'QA mode for the review step; auto (default) or manual' },
   ],
   run: async (args, deps) => {
     const live = hasFlag(args, '--live')
