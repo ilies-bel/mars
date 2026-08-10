@@ -229,4 +229,151 @@ describe('runStaleQueuedSweep', () => {
     expect(summary?.kind).toBe(watchdog.STALE_QUEUED_SUMMARY_KIND)
     expect(summary?.body).toContain('5 additional stale queued task alert(s)')
   })
+
+  it('raises no stale-queued alert while dispatch is paused (operator)', async () => {
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+
+    // A task that is well past the threshold
+    const staleTask = await q.enqueueTask('stale work', undefined, { skipTriage: true })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
+      args: [new Date(nowMs - 30 * 60_000).toISOString(), staleTask.id],
+    })
+
+    const { alerted } = await watchdog.runStaleQueuedSweep({
+      activeWorkerCount: 0,
+      implementCap: 2,
+      queueDepth: 1,
+      dispatchDecisionSummary: [],
+      dispatchPauseState: {
+        paused: true,
+        reason: 'operator',
+        since: new Date(nowMs - 30 * 60_000).toISOString(),
+        detail: null,
+      },
+      nowMs,
+    })
+
+    // Dispatch is deliberately paused — no alert should be raised
+    expect(alerted).toHaveLength(0)
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(0)
+  })
+
+  it('raises no stale-queued alert while dispatch is paused (storm)', async () => {
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+
+    const staleTask = await q.enqueueTask('stale work', undefined, { skipTriage: true })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
+      args: [new Date(nowMs - 20 * 60_000).toISOString(), staleTask.id],
+    })
+
+    const { alerted } = await watchdog.runStaleQueuedSweep({
+      activeWorkerCount: 0,
+      implementCap: 2,
+      queueDepth: 1,
+      dispatchDecisionSummary: [],
+      dispatchPauseState: {
+        paused: true,
+        reason: 'storm',
+        since: new Date(nowMs - 20 * 60_000).toISOString(),
+        detail: 'signature storm detected',
+      },
+      nowMs,
+    })
+
+    expect(alerted).toHaveLength(0)
+    expect(await actionQueue.listActionQueueItems('open')).toHaveLength(0)
+  })
+
+  it('still raises a stale-queued alert when dispatch is running and a task is genuinely stuck', async () => {
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+
+    const staleTask = await q.enqueueTask('stuck work', undefined, { skipTriage: true })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
+      args: [new Date(nowMs - 15 * 60_000).toISOString(), staleTask.id],
+    })
+
+    const { alerted } = await watchdog.runStaleQueuedSweep({
+      activeWorkerCount: 0,
+      implementCap: 2,
+      queueDepth: 1,
+      dispatchDecisionSummary: [],
+      // dispatch is running (no pause state)
+      nowMs,
+    })
+
+    expect(alerted).toHaveLength(1)
+    expect(alerted[0]).toBe(staleTask.id)
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(1)
+    expect(items[0].kind).toBe(watchdog.STALE_QUEUED_KIND)
+  })
+
+  it('restarts the staleness clock on dispatch resume — does not immediately alert for parked time', async () => {
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+
+    // Task was queued 20 min ago (well past the default 10-min threshold by raw age)
+    const task = await q.enqueueTask('parked work', undefined, { skipTriage: true })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
+      args: [new Date(nowMs - 20 * 60_000).toISOString(), task.id],
+    })
+
+    // Dispatch resumed only 5 min ago — the task should not yet be considered stale,
+    // because the staleness clock starts from the resume time
+    const dispatchResumedAt = nowMs - 5 * 60_000
+
+    const { alerted } = await watchdog.runStaleQueuedSweep({
+      activeWorkerCount: 0,
+      implementCap: 2,
+      queueDepth: 1,
+      dispatchDecisionSummary: [],
+      dispatchPauseState: { paused: false, reason: null, since: null, detail: null },
+      dispatchResumedAt,
+      nowMs,
+    })
+
+    // 5 min since resume < 10 min threshold → no alert yet
+    expect(alerted).toHaveLength(0)
+    expect(await actionQueue.listActionQueueItems('open')).toHaveLength(0)
+  })
+
+  it('alerts after the threshold elapses following a dispatch resume', async () => {
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+
+    // Task queued 30 min ago
+    const task = await q.enqueueTask('parked work', undefined, { skipTriage: true })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
+      args: [new Date(nowMs - 30 * 60_000).toISOString(), task.id],
+    })
+
+    // Dispatch resumed 11 min ago — past the 10 min threshold since resume
+    const dispatchResumedAt = nowMs - 11 * 60_000
+
+    const { alerted } = await watchdog.runStaleQueuedSweep({
+      activeWorkerCount: 0,
+      implementCap: 2,
+      queueDepth: 1,
+      dispatchDecisionSummary: [],
+      dispatchPauseState: { paused: false, reason: null, since: null, detail: null },
+      dispatchResumedAt,
+      nowMs,
+    })
+
+    // 11 min since resume > 10 min threshold → alert fires
+    expect(alerted).toHaveLength(1)
+    expect(alerted[0]).toBe(task.id)
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(1)
+    expect(items[0].kind).toBe(watchdog.STALE_QUEUED_KIND)
+  })
 })

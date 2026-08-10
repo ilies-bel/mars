@@ -14,11 +14,17 @@
  * Duplicate suppression: `raiseActionQueueItem` deduplicates on the fingerprint
  * `sha1('stale-queued:<taskId>')`, so repeated sweeps while the task remains
  * queued bump `seen_count` on the existing row rather than spawning siblings.
+ *
+ * Dispatch-pause awareness: when the dispatcher is deliberately paused (operator,
+ * storm, quota, or baseline), queued tasks are expected — the alert is suppressed
+ * entirely. The staleness clock restarts from the moment dispatch resumes, so
+ * tasks do not immediately alert for time spent legitimately parked.
  */
 
 import { listTasks } from '../queue'
 import { raiseActionQueueItem } from '../lib/action-queue'
 import type { ActionQueueKind } from '../lib/action-queue-kinds'
+import type { DispatchPauseState } from './pause-state'
 
 export const STALE_QUEUED_KIND: ActionQueueKind = 'stale-queued'
 export const STALE_QUEUED_SUMMARY_KIND: ActionQueueKind = 'stale-queued-summary'
@@ -48,6 +54,19 @@ export interface StaleQueuedSweepDeps {
    * from the dispatcher). Pass an empty array when no ring buffer is wired up.
    */
   dispatchDecisionSummary: string[]
+  /**
+   * Current dispatch pause state. When paused for any reason (operator, storm,
+   * quota, baseline), queued tasks are expected — no stale-queued alert is raised.
+   * Omit or leave undefined to treat dispatch as running.
+   */
+  dispatchPauseState?: DispatchPauseState
+  /**
+   * Unix timestamp (ms) of the most recent dispatch resume. When provided,
+   * the staleness clock starts from `max(task.updatedAt, dispatchResumedAt)`,
+   * so tasks that spent time legitimately parked during a pause are not
+   * immediately flagged as stale when dispatch resumes.
+   */
+  dispatchResumedAt?: number
   /** Override current timestamp for testing. */
   nowMs?: number
 }
@@ -66,7 +85,20 @@ export const runStaleQueuedSweep = async (
 ): Promise<{ alerted: string[] }> => {
   const now = deps.nowMs ?? Date.now()
   const threshold = resolvedThresholdMs()
-  const { activeWorkerCount, implementCap, queueDepth, dispatchDecisionSummary } = deps
+  const {
+    activeWorkerCount,
+    implementCap,
+    queueDepth,
+    dispatchDecisionSummary,
+    dispatchPauseState,
+    dispatchResumedAt,
+  } = deps
+
+  // When dispatch is deliberately paused (operator, storm, quota, or baseline),
+  // queued tasks are expected — suppress all per-task stale-queued alerts entirely.
+  // The alert surface is the action queue; flooding it during a known, intentional
+  // pause trains operators to ignore it.
+  if (dispatchPauseState?.paused) return { alerted: [] }
 
   // Do not scale the age threshold with a lowered cap: an idle slot is still
   // actionable at any cap. Saturation is the complete distinction between
@@ -76,12 +108,23 @@ export const runStaleQueuedSweep = async (
   const tasks = await listTasks('queued')
   const alerted: string[] = []
   const staleTasks = tasks
-    .map((task) => ({ task, updatedMs: Date.parse(task.updatedAt) }))
-    .filter(({ updatedMs }) => Number.isFinite(updatedMs) && now - updatedMs > threshold)
-    .sort((a, b) => a.updatedMs - b.updatedMs)
+    .map((task) => {
+      const updatedMs = Date.parse(task.updatedAt)
+      // Staleness is measured from max(updatedAt, dispatchResumedAt) so that a
+      // task that was legitimately parked during a pause does not immediately
+      // alert the moment dispatch resumes — it gets a fresh threshold window.
+      const effectiveStartMs =
+        dispatchResumedAt !== undefined ? Math.max(updatedMs, dispatchResumedAt) : updatedMs
+      return { task, updatedMs, effectiveStartMs }
+    })
+    .filter(
+      ({ updatedMs, effectiveStartMs }) =>
+        Number.isFinite(updatedMs) && now - effectiveStartMs > threshold,
+    )
+    .sort((a, b) => a.effectiveStartMs - b.effectiveStartMs)
 
-  for (const { task, updatedMs } of staleTasks.slice(0, MAX_ALERTS_PER_SWEEP)) {
-    const queuedAgeMs = now - updatedMs
+  for (const { task, effectiveStartMs } of staleTasks.slice(0, MAX_ALERTS_PER_SWEEP)) {
+    const queuedAgeMs = now - effectiveStartMs
 
     const ageMinutes = Math.round(queuedAgeMs / 60_000)
     const shortGoal =

@@ -1065,6 +1065,11 @@ export const startDaemon = async (
     })
   }
 
+  // Tracks the moment dispatch last resumed so the stale-queued watchdog can
+  // restart its staleness clock: tasks parked during a deliberate pause should
+  // not fire immediately when dispatch resumes.
+  let dispatchResumedAt: number | undefined = undefined
+
   const pause = createPauseController({
     onChange: (state) => {
       heartbeatHandle?.setDispatchEnabled(acceptingWork && !state.paused)
@@ -1075,6 +1080,12 @@ export const startDaemon = async (
             })`
           : '[pause] dispatch resumed',
       )
+      if (!state.paused) {
+        // Record the resume timestamp so the stale-queued watchdog gives queued
+        // tasks a fresh staleness window rather than immediately alerting for
+        // time spent legitimately parked.
+        dispatchResumedAt = Date.now()
+      }
       // A storm pause means every incoming task is failing the same way, which
       // in practice means the integration branch is broken. That is the one
       // pause the operator must hear about the moment it happens, wherever
@@ -6400,6 +6411,8 @@ export const startDaemon = async (
           implementCap: sems.implement.limit,
           queueDepth,
           dispatchDecisionSummary: [],
+          dispatchPauseState: pause.get(),
+          dispatchResumedAt,
         })
         if (alerted.length > 0) {
           log(
