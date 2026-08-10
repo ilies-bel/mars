@@ -413,8 +413,8 @@ A human-owned interactive agent session that holds the Lease on a task's worktre
 _Avoid_: live session, attached session, interactive session, human session
 
 **Progress journal**:
-Append-only per-task record of mid-flight progress notes and done-criteria check-offs, written by Foreground sessions via mars task note / mars task check through the Arc write funnel (ADR-0052); read via mars task show, the UI, and the attach-time Handoff.
-_Avoid_: progress log, task log, work log, notes field
+The append-only record of observations a Foreground session leaves against a task while it holds the Lease; it is the only mid-flight signal a suspended step emits, since no Worker trace is being written.
+_Avoid_: task notes, notes, worklog, activity log
 
 **Live task**:
 A task routed to a workflow whose code step has Execution mode manual: setup runs auto, the task parks awaiting-human at the manual step, and a Foreground session does the work before verify and merge gate the exit.
