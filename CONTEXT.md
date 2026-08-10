@@ -394,8 +394,8 @@ The task detail drawer's vertical mini-graph of a focused task's lineage — its
 _Avoid_: subgraph, mini-graph, focus subgraph, context subgraph
 
 **Lease**:
-Exclusive human ownership claim on a parked task's worktree. Taken with mars attach, released with mars release; a leased or awaiting-human task is exempt from the phantom watchdog, and lease expiry raises an action-queue row instead of auto-failing.
-_Avoid_: lock, claim, checkout
+Exclusive human ownership of a task's worktree while its Workflow instance is suspended at a manual step; the holder is the only party expected to write in that worktree, and the pipeline resumes only when they signal step completion or abort.
+_Avoid_: attach, claim, checkout, worktree lock
 
 **awaiting-human (task)**:
 TaskStatus: the Workflow instance has reached a manual-mode step and suspended, holding its worktree under a Lease until a human signals completion; the phantom watchdog treats it as alive by design since no Worker process is running.
