@@ -376,4 +376,135 @@ describe('runStaleQueuedSweep', () => {
     expect(items).toHaveLength(1)
     expect(items[0].kind).toBe(watchdog.STALE_QUEUED_KIND)
   })
+
+  // ── Regression: phantom stale-queued rows for non-queued tasks ──────────────
+  // Bug: stale-queued rows raised while a task was queued persisted even after
+  // the task transitioned to failed/done/running. The alert-dismisser
+  // correctly issues a NO-OP on task.failed (ADR-0028), so the stale-queued
+  // row was never closed. The sweep now reconciles open stale-queued rows
+  // against the live queued-task set on every run.
+
+  it('emits no stale-queued rows for tasks already in failed or done status', async () => {
+    // Regression guard: the sweep must filter by live status, not by age alone.
+    // Tasks that were never queued (or already left queued) must not generate alerts.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+
+    // Seed a task directly in 'failed' status with age > threshold.
+    const task = await q.enqueueTask('already failed work', undefined, { skipTriage: true })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed', updated_at = ? WHERE id = ?`,
+      args: [new Date(nowMs - 30 * 60_000).toISOString(), task.id],
+    })
+
+    const { alerted } = await watchdog.runStaleQueuedSweep({
+      activeWorkerCount: 0,
+      implementCap: 2,
+      queueDepth: 0,
+      dispatchDecisionSummary: [],
+      nowMs,
+    })
+
+    expect(alerted).toHaveLength(0)
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items.filter((i) => i.kind === watchdog.STALE_QUEUED_KIND)).toHaveLength(0)
+    expect(items.filter((i) => i.kind === watchdog.STALE_QUEUED_SUMMARY_KIND)).toHaveLength(0)
+  })
+
+  it('closes a stale-queued alert on the next sweep after the task transitions to failed', async () => {
+    // Regression: stale-queued rows were never closed when a task failed.
+    // The alert-dismisser NO-OPs on task.failed (ADR-0028), so the sweep
+    // itself must reconcile open rows against the live queued-task set.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+
+    // Seed a stale queued task
+    const task = await q.enqueueTask('stale then failed', undefined, { skipTriage: true })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
+      args: [new Date(nowMs - 15 * 60_000).toISOString(), task.id],
+    })
+
+    // First sweep: task is queued and stale → alert raised
+    await watchdog.runStaleQueuedSweep({
+      activeWorkerCount: 0,
+      implementCap: 2,
+      queueDepth: 1,
+      dispatchDecisionSummary: [],
+      nowMs,
+    })
+
+    const before = await actionQueue.listActionQueueItems('open')
+    expect(before.filter((i) => i.kind === watchdog.STALE_QUEUED_KIND)).toHaveLength(1)
+
+    // Task transitions to failed (the alert-dismisser issues a NO-OP for task.failed)
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
+      args: [task.id],
+    })
+
+    // Second sweep: task is no longer queued → reconciler closes the stale-queued row
+    await watchdog.runStaleQueuedSweep({
+      activeWorkerCount: 0,
+      implementCap: 2,
+      queueDepth: 0,
+      dispatchDecisionSummary: [],
+      nowMs: nowMs + 5 * 60_000,
+    })
+
+    const after = await actionQueue.listActionQueueItems('open')
+    expect(after.filter((i) => i.kind === watchdog.STALE_QUEUED_KIND)).toHaveLength(0)
+  })
+
+  it('closes the stale-queued-summary on the next sweep after all suppressed tasks drain', async () => {
+    // Regression: the summary row was never closed when the stale-queued backlog
+    // drained. Once suppressedCount drops to 0 the sweep must close any open summary.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+
+    // Create 25 stale queued tasks — enough to overflow into a summary row
+    const taskIds: string[] = []
+    for (let index = 0; index < 25; index += 1) {
+      const task = await q.enqueueTask(`stale task ${index}`, undefined, { skipTriage: true })
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
+        args: [new Date(nowMs - (index + 11) * 60_000).toISOString(), task.id],
+      })
+      taskIds.push(task.id)
+    }
+
+    // First sweep: raises 20 individual alerts + 1 summary for the 5 suppressed ones
+    await watchdog.runStaleQueuedSweep({
+      activeWorkerCount: 0,
+      implementCap: 2,
+      queueDepth: 25,
+      dispatchDecisionSummary: [],
+      nowMs,
+    })
+
+    const before = await actionQueue.listActionQueueItems('open')
+    expect(before.filter((i) => i.kind === watchdog.STALE_QUEUED_SUMMARY_KIND)).toHaveLength(1)
+
+    // All tasks transition to failed
+    for (const taskId of taskIds) {
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
+        args: [taskId],
+      })
+    }
+
+    // Second sweep: no queued tasks remain →
+    // reconciler closes individual rows, summary row is also closed
+    await watchdog.runStaleQueuedSweep({
+      activeWorkerCount: 0,
+      implementCap: 2,
+      queueDepth: 0,
+      dispatchDecisionSummary: [],
+      nowMs: nowMs + 5 * 60_000,
+    })
+
+    const after = await actionQueue.listActionQueueItems('open')
+    expect(after.filter((i) => i.kind === watchdog.STALE_QUEUED_KIND)).toHaveLength(0)
+    expect(after.filter((i) => i.kind === watchdog.STALE_QUEUED_SUMMARY_KIND)).toHaveLength(0)
+  })
 })

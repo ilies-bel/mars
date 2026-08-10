@@ -22,7 +22,7 @@
  */
 
 import { listTasks } from '../queue'
-import { raiseActionQueueItem } from '../lib/action-queue'
+import { listActionQueueItems, raiseActionQueueItem, setActionQueueState } from '../lib/action-queue'
 import type { ActionQueueKind } from '../lib/action-queue-kinds'
 import type { DispatchPauseState } from './pause-state'
 
@@ -106,6 +106,29 @@ export const runStaleQueuedSweep = async (
   if (activeWorkerCount >= implementCap) return { alerted: [] }
 
   const tasks = await listTasks('queued')
+  const queuedIds = new Set(tasks.map((t) => t.id))
+
+  // Reconcile: close any open stale-queued rows for tasks that are no longer in
+  // 'queued' status. When a task fails (or finishes, or is dropped) the
+  // alert-dismisser correctly NO-OPs on task.failed (ADR-0028) and never closes
+  // a stale-queued row — so the reconciliation happens here, reading live task
+  // state in the same pass as the stale-age computation to avoid acting on a
+  // previously-materialised set.
+  const openStaleRows = await listActionQueueItems('open', { kind: STALE_QUEUED_KIND })
+  for (const item of openStaleRows) {
+    const taskId =
+      typeof item.payload.taskId === 'string' ? item.payload.taskId : null
+    if (taskId !== null && !queuedIds.has(taskId)) {
+      await setActionQueueState(item.id, 'resolved', {
+        resolution: 'superseded',
+        note: 'task is no longer queued',
+        by: 'daemon:stale-queued-watchdog',
+      }).catch(() => {
+        // Non-fatal: the action queue row will be reconciled on the next sweep.
+      })
+    }
+  }
+
   const alerted: string[] = []
   const staleTasks = tasks
     .map((task) => {
@@ -210,6 +233,19 @@ export const runStaleQueuedSweep = async (
     }).catch(() => {
       // Non-fatal: individual alerts still identify the oldest stalled tasks.
     })
+  } else {
+    // Queue drained below the suppression ceiling: close any lingering summary row
+    // so it does not mislead operators into thinking there is an active backlog.
+    const openSummaryRows = await listActionQueueItems('open', { kind: STALE_QUEUED_SUMMARY_KIND })
+    for (const item of openSummaryRows) {
+      await setActionQueueState(item.id, 'resolved', {
+        resolution: 'superseded',
+        note: 'no suppressed stale-queued tasks remain',
+        by: 'daemon:stale-queued-watchdog',
+      }).catch(() => {
+        // Non-fatal: individual alerts still identify the oldest stalled tasks.
+      })
+    }
   }
 
   return { alerted }
