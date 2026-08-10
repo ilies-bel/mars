@@ -49,14 +49,30 @@ const leverList: Command = {
     'The wiring column shows: wired (a verified production consumer), no-gesture',
     '(consumer exists but no CLI verb yet), or no-consumer (nothing reads it).',
   ].join('\n'),
-  run: (_args, deps) => {
+  run: async (_args, deps) => {
     const entries = loadLeverRegistry()
+
+    // Resolve current display values for each entry. Entries with readEffective
+    // query the daemon for the live value and render compact drift when they
+    // diverge from the configured value (e.g. "4 → 8 ⚠"). When the daemon is
+    // unreachable or the entry has no readEffective, falls back to readCurrent().
+    const curValues: string[] = await Promise.all(
+      entries.map(async (e) => {
+        const configured = e.readCurrent() ?? '(unknown)'
+        if (!e.readEffective) return configured
+        const effectiveRead = await e.readEffective(deps.daemon as CapQuerier)
+        if (effectiveRead === null || effectiveRead.effective === configured) {
+          return configured
+        }
+        return `${configured} → ${effectiveRead.effective} ⚠`
+      }),
+    )
 
     // Column widths — computed from data for readability
     const idW = Math.max(4, ...entries.map((e) => e.id.length))
     const famW = Math.max(6, ...entries.map((e) => e.family.length))
     const scopeW = Math.max(5, ...entries.map((e) => e.scope.length))
-    const curW = Math.max(7, ...entries.map((e) => (e.readCurrent() ?? '(unknown)').length))
+    const curW = Math.max(7, ...curValues.map((v) => v.length))
     const wiringW = Math.max(6, ...entries.map((e) => getWiringState(e).length))
 
     const pad = (s: string, w: number) => s.padEnd(w)
@@ -68,8 +84,9 @@ const leverList: Command = {
       `${'-'.repeat(idW)}  ${'-'.repeat(famW)}  ${'-'.repeat(scopeW)}  ${'-'.repeat(curW)}  ${'-'.repeat(wiringW)}  ${'-------'}`,
     )
 
-    for (const e of entries) {
-      const cur = e.readCurrent() ?? '(unknown)'
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i]
+      const cur = curValues[i]
       const gesture = e.gesture ?? '(no gesture)'
       const wiring = getWiringState(e)
       deps.out(`${pad(e.id, idW)}  ${pad(e.family, famW)}  ${pad(e.scope, scopeW)}  ${pad(cur, curW)}  ${pad(wiring, wiringW)}  ${gesture}`)

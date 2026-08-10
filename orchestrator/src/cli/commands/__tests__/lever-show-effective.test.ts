@@ -307,3 +307,62 @@ describe('lever list — wiring column', () => {
     expect(output).not.toContain('lack a runtime gesture')
   })
 })
+
+// ── lever list drift rendering ────────────────────────────────────────────────
+
+describe('lever list — drift rendering', () => {
+  it('shows configured → effective ⚠ in the current column when caps.implement is autotuned', async () => {
+    writeFileSync(
+      resolve(repo, '.mars', 'daemon.json'),
+      JSON.stringify({ caps: { implement: 4 } }),
+    )
+    const daemon = await makeFake({
+      implementCap: { configured: 4, effective: 8, reason: 'steward autotune raised implement 6 → 8 on sustained backlog' },
+    })
+
+    const result = await run(['lever', 'list'], daemon)
+
+    expect(result.code).toBe(0)
+    const capsLine = result.out.find((l) => l.includes('caps.implement'))
+    expect(capsLine).toBeDefined()
+    expect(capsLine).toContain('4 → 8 ⚠')
+  })
+
+  it('shows only the configured value when configured == effective (no drift marker)', async () => {
+    writeFileSync(
+      resolve(repo, '.mars', 'daemon.json'),
+      JSON.stringify({ caps: { implement: 4 } }),
+    )
+    const daemon = await makeFake({
+      implementCap: { configured: 4, effective: 4, reason: null },
+    })
+
+    const result = await run(['lever', 'list'], daemon)
+
+    expect(result.code).toBe(0)
+    const capsLine = result.out.find((l) => l.includes('caps.implement'))
+    expect(capsLine).toBeDefined()
+    expect(capsLine).not.toContain('⚠')
+    expect(capsLine).not.toContain('→')
+  })
+
+  it('list and show read the same effective value from the daemon', async () => {
+    writeFileSync(
+      resolve(repo, '.mars', 'daemon.json'),
+      JSON.stringify({ caps: { implement: 4 } }),
+    )
+    const daemon = await makeFake({
+      implementCap: { configured: 4, effective: 8, reason: 'steward autotune' },
+    })
+
+    const listResult = await run(['lever', 'list'], daemon)
+    const showResult = await run(['lever', 'show', 'caps.implement'], daemon)
+
+    const capsListLine = listResult.out.find((l) => l.includes('caps.implement'))
+    const showCurrentLine = showResult.out.find((l) => l.startsWith('current:'))
+
+    // Both surfaces report effective value of 8
+    expect(capsListLine).toContain('8')
+    expect(showCurrentLine).toContain('8')
+  })
+})
