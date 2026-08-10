@@ -1261,6 +1261,15 @@ export const removeWorktree = async (
   keepBranch = false,
   traceCtx?: TraceCtx,
 ): Promise<void> => {
+  // Before removing the worktree, repair any cross-worktree node_modules
+  // symlinks that pnpm may have left in the parent repo. This prevents
+  // dangling symlinks in the parent's ui/node_modules/ after the worktree
+  // (and its node_modules symlink) is deleted.
+  const { repairNodeModulesAfterWorktreeRemoval } = await import('../worktree-deps')
+  await repairNodeModulesAfterWorktreeRemoval(repoRoot(), ref.path).catch((err) =>
+    console.warn(`[removeWorktree] repair-node-modules failed (non-fatal):`, err),
+  )
+
   const args = ['worktree', 'remove']
   if (force) args.push('--force')
   args.push(ref.path)

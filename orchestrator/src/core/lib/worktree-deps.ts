@@ -1,4 +1,4 @@
-import { lstat, mkdir, readlink, rm, symlink } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readlink, rm, symlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { repoRoot } from './git/internal'
 
@@ -48,5 +48,103 @@ export const provisionWorktreeDeps = async ({
 
     await mkdir(resolve(target, '..'), { recursive: true })
     await symlink(source, target, 'dir')
+  }
+}
+
+/**
+ * Remove top-level entries from `nmDir` that are symlinks whose arithmetic
+ * (non-realpath) resolved path starts with `worktreePath`.
+ *
+ * Returns the count of removed entries.
+ *
+ * Background: when pnpm is invoked in a worktree directory whose
+ * `node_modules` is a symlink to the parent repo's `node_modules`,
+ * it creates top-level package symlinks in the PARENT's `node_modules/`
+ * with relative targets that pass through the worktree's symlink.
+ * Those targets become dangling the moment the worktree is removed.
+ * This function finds and removes those cross-worktree entries so that a
+ * subsequent `pnpm install` in the parent can recreate correct, direct links.
+ */
+export const removeStaleWorktreeLinks = async (
+  nmDir: string,
+  worktreePath: string,
+): Promise<number> => {
+  let entries: string[]
+  try {
+    entries = await readdir(nmDir)
+  } catch {
+    return 0
+  }
+
+  const prefix = worktreePath.endsWith('/') ? worktreePath : `${worktreePath}/`
+  let removed = 0
+
+  for (const entry of entries) {
+    const entryPath = resolve(nmDir, entry)
+    try {
+      const st = await lstat(entryPath)
+      if (!st.isSymbolicLink()) continue
+      const raw = await readlink(entryPath)
+      // Arithmetic resolution — does NOT follow symlinks. The raw value is
+      // resolved relative to the directory containing the symlink (nmDir).
+      const arithmeticTarget = resolve(nmDir, raw)
+      if (arithmeticTarget.startsWith(prefix)) {
+        await rm(entryPath, { force: true })
+        removed++
+      }
+    } catch {
+      // Best-effort: skip entries we cannot read or remove.
+    }
+  }
+  return removed
+}
+
+/**
+ * Before a worktree at `worktreePath` is physically removed, clean up any
+ * cross-worktree symlinks it may have left in the parent repo's
+ * `node_modules/` directories, then attempt a `pnpm install --frozen-lockfile`
+ * in each affected workspace so the parent's package tree is self-contained
+ * before the worktree (and its `node_modules` symlink) disappears.
+ *
+ * This is a best-effort operation: failures are caught and logged rather than
+ * propagated so they never block worktree removal.
+ */
+export const repairNodeModulesAfterWorktreeRemoval = async (
+  sourceRoot: string,
+  worktreePath: string,
+  log?: (msg: string) => void,
+): Promise<void> => {
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
+  const execFileAsync = promisify(execFile)
+
+  for (const workspace of WORKTREE_DEPENDENCY_WORKSPACES) {
+    const nmDir = resolve(sourceRoot, workspace, 'node_modules')
+    let removed: number
+    try {
+      removed = await removeStaleWorktreeLinks(nmDir, worktreePath)
+    } catch {
+      continue
+    }
+    if (removed === 0) continue
+
+    const siteDir = resolve(sourceRoot, workspace)
+    log?.(
+      `[worktree-deps] removed ${removed} cross-worktree symlink(s) from ${nmDir}; ` +
+        `running pnpm install in ${siteDir} to restore direct links`,
+    )
+    try {
+      await execFileAsync('pnpm', ['install', '--frozen-lockfile'], {
+        cwd: siteDir,
+        // 5-minute ceiling so a hung pnpm never holds up worktree cleanup.
+        timeout: 5 * 60_000,
+      })
+      log?.(`[worktree-deps] repair install succeeded in ${siteDir}`)
+    } catch (err: unknown) {
+      // Non-fatal: the symlinks are removed; pnpm install is best-effort.
+      log?.(
+        `[worktree-deps] repair install failed in ${siteDir} (best-effort): ${String(err)}`,
+      )
+    }
   }
 }

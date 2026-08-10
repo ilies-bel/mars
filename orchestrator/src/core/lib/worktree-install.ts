@@ -1,4 +1,4 @@
-import { stat, rm, readFile } from 'node:fs/promises'
+import { stat, rm, readFile, lstat, readlink } from 'node:fs/promises'
 import { isAbsolute, resolve, relative } from 'node:path'
 import { acquireLock } from './git/lock'
 import { type RunSubprocessResult } from './git/claude'
@@ -656,6 +656,47 @@ export interface InstallWorktreeDepsOptions {
   traceCtx?: TraceCtx
 }
 
+/**
+ * If the path at `nmDir` is a symbolic link whose resolved target escapes
+ * the `worktreeRoot` boundary, remove the symlink file.
+ *
+ * This prevents pnpm from creating cross-worktree symlinks in the parent
+ * repo's node_modules when it is invoked in a worktree whose node_modules
+ * was pre-linked by {@link provisionWorktreeDeps}.
+ *
+ * Exported for unit-testing purposes only.
+ */
+export const _removeCrossWorktreeNodeModulesSymlink = async (
+  nmDir: string,
+  worktreeRoot: string,
+  log?: (line: string) => void,
+): Promise<void> => {
+  let st: Awaited<ReturnType<typeof lstat>>
+  try {
+    st = await lstat(nmDir)
+  } catch (e: unknown) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw e
+  }
+  if (!st.isSymbolicLink()) return
+
+  const raw = await readlink(nmDir)
+  // Resolve the link value relative to the symlink file's parent directory.
+  const parentDir = resolve(nmDir, '..')
+  const resolved = resolve(parentDir, raw)
+
+  // Escaped if the resolved target is not the worktreeRoot itself nor a
+  // path that starts with worktreeRoot + '/'.
+  const wt = worktreeRoot.endsWith('/') ? worktreeRoot : `${worktreeRoot}/`
+  if (resolved !== worktreeRoot && !resolved.startsWith(wt)) {
+    log?.(
+      `[setup:install] removing cross-worktree node_modules symlink ` +
+        `at ${nmDir} (→ ${resolved}); pnpm will create an isolated install`,
+    )
+    await rm(nmDir, { force: true })
+  }
+}
+
 const makeDefaultInstallRunner = (
   traceCtx: TraceCtx | undefined,
 ): InstallRunner => async (cmd, args, cwd, opts) => {
@@ -706,6 +747,24 @@ export const installWorktreeDeps = async ({
       // only the dependency-install step is serialised up to the cap.
       await _acquireInstallSem()
       try {
+        // Guard: if node_modules is a symlink that escapes the worktree
+        // boundary (created by provisionWorktreeDeps to share the parent
+        // repo's install), remove it before pnpm runs.
+        //
+        // WHY: pnpm computes relative symlink targets for top-level
+        // package links using the symlink's ORIGINAL path (not the real
+        // resolved path), but writes them at the RESOLVED real location.
+        // When node_modules → parent/ui/node_modules, the resulting
+        // top-level symlinks land in parent/ui/node_modules/ with paths
+        // like "../../.mars/worktrees/<id>/ui/node_modules/.pnpm/…"
+        // — valid while the worktree exists, dangling the moment it is
+        // removed. Deleting the symlink first causes pnpm to create a
+        // self-contained, isolated install inside the worktree.
+        await _removeCrossWorktreeNodeModulesSymlink(
+          resolve(site.dir, 'node_modules'),
+          worktreeRoot,
+          log,
+        )
         const [cmd, args] = installCommand(site.manager)
         const rel = relative(worktreeRoot, site.dir) || '.'
         // Build any local workspace `file:`/`workspace:` deps (e.g.

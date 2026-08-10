@@ -130,6 +130,17 @@ export async function reclaimSettledWorktrees(
     }
     if (!exists) continue
 
+    // Before removing the worktree, repair any cross-worktree node_modules
+    // symlinks that pnpm may have created in the parent repo while this
+    // worktree was alive. Must happen BEFORE removeDir so the worktree's
+    // own node_modules symlink is still present for the repair to detect.
+    const { repairNodeModulesAfterWorktreeRemoval } = await import('../lib/worktree-deps')
+    await repairNodeModulesAfterWorktreeRemoval(repoRoot, worktreePath, log).catch((err) =>
+      log?.(
+        `[worktree-reclaim] repair-node-modules for task ${task.id} failed (non-fatal): ${String(err)}`,
+      ),
+    )
+
     const ok = await removeDir(worktreePath)
     if (ok) {
       log?.(`[worktree-reclaim] removed settled (${task.status}) worktree for task ${task.id}`)

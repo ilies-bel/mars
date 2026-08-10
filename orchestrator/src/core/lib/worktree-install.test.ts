@@ -1,8 +1,14 @@
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, rm, symlink, lstat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { buildWorkspaceDepsForSite, type InstallSite, type InstallRunner } from './worktree-install'
+import {
+  buildWorkspaceDepsForSite,
+  installWorktreeDeps,
+  _removeCrossWorktreeNodeModulesSymlink,
+  type InstallSite,
+  type InstallRunner,
+} from './worktree-install'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -247,5 +253,139 @@ describe('buildWorkspaceDepsForSite — failure logging', () => {
     const msg = (err as Error).message
     expect(msg).toContain('pnpm-debug.log')
     expect(msg).toContain(depDir)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Cross-worktree node_modules symlink guard
+// ---------------------------------------------------------------------------
+
+describe('_removeCrossWorktreeNodeModulesSymlink', () => {
+  it('removes a symlink that escapes the worktree boundary', async () => {
+    // Simulate: worktree/ui/node_modules → /some/other/location (outside worktree)
+    const worktreeRoot = resolve(tmpDir, 'worktree')
+    const outsideDir = resolve(tmpDir, 'outside', 'node_modules')
+    await mkdir(outsideDir, { recursive: true })
+    const uiDir = resolve(worktreeRoot, 'ui')
+    await mkdir(uiDir, { recursive: true })
+    const nmLink = resolve(uiDir, 'node_modules')
+    await symlink(outsideDir, nmLink, 'dir')
+
+    await _removeCrossWorktreeNodeModulesSymlink(nmLink, worktreeRoot)
+
+    // Link must be gone
+    await expect(lstat(nmLink)).rejects.toThrow()
+  })
+
+  it('does not remove a symlink that points inside the worktree', async () => {
+    const worktreeRoot = resolve(tmpDir, 'worktree')
+    const internalDir = resolve(worktreeRoot, 'shared', 'node_modules')
+    await mkdir(internalDir, { recursive: true })
+    const uiDir = resolve(worktreeRoot, 'ui')
+    await mkdir(uiDir, { recursive: true })
+    const nmLink = resolve(uiDir, 'node_modules')
+    await symlink(internalDir, nmLink, 'dir')
+
+    await _removeCrossWorktreeNodeModulesSymlink(nmLink, worktreeRoot)
+
+    // Link must still be present
+    const st = await lstat(nmLink)
+    expect(st.isSymbolicLink()).toBe(true)
+  })
+
+  it('does not touch a real directory', async () => {
+    const worktreeRoot = resolve(tmpDir, 'worktree')
+    const nmDir = resolve(worktreeRoot, 'ui', 'node_modules')
+    await mkdir(nmDir, { recursive: true })
+
+    await _removeCrossWorktreeNodeModulesSymlink(nmDir, worktreeRoot)
+
+    const st = await lstat(nmDir)
+    expect(st.isDirectory()).toBe(true)
+    expect(st.isSymbolicLink()).toBe(false)
+  })
+
+  it('is a no-op when node_modules does not exist', async () => {
+    const worktreeRoot = resolve(tmpDir, 'worktree')
+    await mkdir(worktreeRoot, { recursive: true })
+    const missing = resolve(worktreeRoot, 'ui', 'node_modules')
+    // Should resolve without throwing
+    await expect(_removeCrossWorktreeNodeModulesSymlink(missing, worktreeRoot)).resolves.toBeUndefined()
+  })
+})
+
+describe('installWorktreeDeps — cross-worktree symlink guard', () => {
+  it('removes a cross-worktree node_modules symlink before calling the runner', async () => {
+    // Parent repo: has a real node_modules directory
+    const parentDir = resolve(tmpDir, 'parent')
+    const parentNm = resolve(parentDir, 'ui', 'node_modules')
+    await mkdir(parentNm, { recursive: true })
+
+    // Worktree: node_modules is symlinked to the parent's node_modules
+    const worktreeRoot = resolve(tmpDir, 'worktree')
+    const worktreeUi = resolve(worktreeRoot, 'ui')
+    await mkdir(worktreeUi, { recursive: true })
+    // Add a pnpm-lock.yaml so detectInstallSites picks up this site
+    await writeFile(resolve(worktreeUi, 'pnpm-lock.yaml'), 'lockfileVersion: "9.0"\n')
+    await writeFile(
+      resolve(worktreeUi, 'package.json'),
+      JSON.stringify({ dependencies: {} }),
+    )
+    const worktreeNm = resolve(worktreeUi, 'node_modules')
+    // Cross-worktree symlink: worktree/ui/node_modules → parent/ui/node_modules
+    await symlink(parentNm, worktreeNm, 'dir')
+
+    // Runner succeeds; capture calls
+    const calls: Array<{ cmd: string; cwd: string }> = []
+    const runner: InstallRunner = async (cmd, _args, cwd) => {
+      calls.push({ cmd, cwd })
+      // After the first (and only) runner call, create a real node_modules
+      // so requireModuleTrees can pass.
+      await mkdir(resolve(cwd, 'node_modules'), { recursive: true })
+      return { exitCode: 0, stdout: '', stderr: '' }
+    }
+
+    await installWorktreeDeps({ worktreeRoot, runner, requireModuleTrees: true })
+
+    // Runner was called exactly once (the install)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].cwd).toBe(worktreeUi)
+
+    // The cross-worktree symlink must have been removed before the runner ran.
+    // After the runner created a real node_modules, lstat shows a directory.
+    const st = await lstat(worktreeNm)
+    expect(st.isSymbolicLink()).toBe(false)
+    expect(st.isDirectory()).toBe(true)
+
+    // Parent's node_modules must be untouched (still a real directory)
+    const parentSt = await lstat(parentNm)
+    expect(parentSt.isDirectory()).toBe(true)
+    expect(parentSt.isSymbolicLink()).toBe(false)
+  })
+
+  it('does not interfere when node_modules is already a real directory', async () => {
+    const worktreeRoot = resolve(tmpDir, 'worktree')
+    const worktreeUi = resolve(worktreeRoot, 'ui')
+    const worktreeNm = resolve(worktreeUi, 'node_modules')
+    await mkdir(worktreeNm, { recursive: true })
+    await writeFile(resolve(worktreeUi, 'pnpm-lock.yaml'), 'lockfileVersion: "9.0"\n')
+    await writeFile(
+      resolve(worktreeUi, 'package.json'),
+      JSON.stringify({ dependencies: {} }),
+    )
+
+    const calls: Array<{ cmd: string; cwd: string }> = []
+    const runner: InstallRunner = async (cmd, _args, cwd) => {
+      calls.push({ cmd, cwd })
+      return { exitCode: 0, stdout: '', stderr: '' }
+    }
+
+    await installWorktreeDeps({ worktreeRoot, runner, requireModuleTrees: true })
+
+    expect(calls).toHaveLength(1)
+    // Real directory must still be there
+    const st = await lstat(worktreeNm)
+    expect(st.isDirectory()).toBe(true)
+    expect(st.isSymbolicLink()).toBe(false)
   })
 })
