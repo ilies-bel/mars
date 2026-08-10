@@ -12,6 +12,9 @@ import {
   buildWorkspaceDepsForSite,
   waitForFile,
   WorktreeInstallError,
+  WorktreeVirtualStoreBoundaryError,
+  _ensurePnpmWorkspaceYaml,
+  _validateVirtualStoreDir,
   DEFAULT_INSTALL_TIMEOUT_MS,
 } from '../worktree-install'
 import type { InstallSite } from '../worktree-install'
@@ -740,8 +743,10 @@ describe('worktree-install', () => {
         runner,
         log: (line) => lines.push(line),
       })
-      expect(lines).toHaveLength(1)
-      expect(lines[0]).toMatch(/^\[setup:install\] pnpm \(\.\) exit=0 duration=/)
+      // The log now includes the pnpm-workspace.yaml creation message followed
+      // by the per-site duration line.
+      const durationLine = lines.find((l) => l.startsWith('[setup:install] pnpm (.) exit='))
+      expect(durationLine).toMatch(/^\[setup:install\] pnpm \(\.\) exit=0 duration=/)
     })
 
     it('retries once when install fails with ENOTEMPTY and succeeds on retry', async () => {
@@ -1290,5 +1295,214 @@ describe('worktree-install', () => {
       // Both repairs ran, but never at the same time — the file lock serialized them.
       expect(maxConcurrent).toBe(1)
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// _ensurePnpmWorkspaceYaml
+// ---------------------------------------------------------------------------
+
+describe('_ensurePnpmWorkspaceYaml', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-pnpm-ws-yaml-'))
+  })
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('creates pnpm-workspace.yaml at the worktree root when it does not exist', async () => {
+    await _ensurePnpmWorkspaceYaml(tmpDir)
+    const content = require('node:fs').readFileSync(resolve(tmpDir, 'pnpm-workspace.yaml'), 'utf8')
+    expect(content).toContain('packages: []')
+  })
+
+  it('does not overwrite an existing pnpm-workspace.yaml', async () => {
+    const existing = 'packages:\n  - "."\n'
+    writeFileSync(resolve(tmpDir, 'pnpm-workspace.yaml'), existing, 'utf8')
+    await _ensurePnpmWorkspaceYaml(tmpDir)
+    const content = require('node:fs').readFileSync(resolve(tmpDir, 'pnpm-workspace.yaml'), 'utf8')
+    expect(content).toBe(existing)
+  })
+
+  it('is idempotent — a second call with the file present is a no-op', async () => {
+    await _ensurePnpmWorkspaceYaml(tmpDir)
+    const firstContent = require('node:fs').readFileSync(
+      resolve(tmpDir, 'pnpm-workspace.yaml'),
+      'utf8',
+    )
+    await _ensurePnpmWorkspaceYaml(tmpDir)
+    const secondContent = require('node:fs').readFileSync(
+      resolve(tmpDir, 'pnpm-workspace.yaml'),
+      'utf8',
+    )
+    expect(secondContent).toBe(firstContent)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// _validateVirtualStoreDir
+// ---------------------------------------------------------------------------
+
+describe('_validateVirtualStoreDir', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-vsd-validate-'))
+  })
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('returns escaped:false and resolvedPath:null when .modules.yaml does not exist', async () => {
+    const result = await _validateVirtualStoreDir(tmpDir, tmpDir)
+    expect(result).toEqual({ escaped: false, resolvedPath: null })
+  })
+
+  it('returns escaped:false when virtualStoreDir is within the worktree', async () => {
+    // pnpm default: .pnpm is inside node_modules, which is inside the site dir
+    mkdirSync(resolve(tmpDir, 'node_modules'), { recursive: true })
+    writeFileSync(
+      resolve(tmpDir, 'node_modules', '.modules.yaml'),
+      'virtualStoreDir: .pnpm\n',
+    )
+    const result = await _validateVirtualStoreDir(tmpDir, tmpDir)
+    expect(result.escaped).toBe(false)
+    expect(result.resolvedPath).toBe(resolve(tmpDir, 'node_modules', '.pnpm'))
+  })
+
+  it('returns escaped:true when virtualStoreDir resolves outside the worktree', async () => {
+    // Simulate the incident: worktree/orchestrator/node_modules/.modules.yaml
+    // records a virtualStoreDir that resolves into the main checkout (outside worktree).
+    const worktreeRoot = mkdtempSync(resolve(tmpdir(), 'mars-worktree-'))
+    const siteDir = resolve(worktreeRoot, 'orchestrator')
+    mkdirSync(resolve(siteDir, 'node_modules'), { recursive: true })
+    // "../../../../" from worktree/orchestrator/node_modules/ escapes worktreeRoot itself.
+    writeFileSync(
+      resolve(siteDir, 'node_modules', '.modules.yaml'),
+      'virtualStoreDir: ../../../../main-checkout/orchestrator/node_modules/.pnpm\n',
+    )
+    try {
+      const result = await _validateVirtualStoreDir(siteDir, worktreeRoot)
+      expect(result.escaped).toBe(true)
+      expect(result.resolvedPath).not.toContain(worktreeRoot)
+    } finally {
+      rmSync(worktreeRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('returns escaped:false and null when .modules.yaml has no virtualStoreDir field', async () => {
+    mkdirSync(resolve(tmpDir, 'node_modules'), { recursive: true })
+    writeFileSync(
+      resolve(tmpDir, 'node_modules', '.modules.yaml'),
+      'hoistedDependencies: {}\n',
+    )
+    const result = await _validateVirtualStoreDir(tmpDir, tmpDir)
+    expect(result).toEqual({ escaped: false, resolvedPath: null })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// installWorktreeDeps — workspace isolation and boundary guard
+// ---------------------------------------------------------------------------
+
+describe('installWorktreeDeps — pnpm workspace isolation', () => {
+  let workDir: string
+
+  beforeEach(() => {
+    workDir = mkdtempSync(resolve(tmpdir(), 'mars-wt-isolation-'))
+  })
+  afterEach(() => {
+    rmSync(workDir, { recursive: true, force: true })
+  })
+
+  it('writes pnpm-workspace.yaml at worktree root when pnpm sites are detected', async () => {
+    writeFileSync(resolve(workDir, 'pnpm-lock.yaml'), 'lockfileVersion: 1\n')
+    const runner = async () => ok()
+    await installWorktreeDeps({ worktreeRoot: workDir, runner })
+    expect(existsSync(resolve(workDir, 'pnpm-workspace.yaml'))).toBe(true)
+    const content = require('node:fs').readFileSync(
+      resolve(workDir, 'pnpm-workspace.yaml'),
+      'utf8',
+    )
+    expect(content).toContain('packages: []')
+  })
+
+  it('does NOT write pnpm-workspace.yaml when no pnpm lockfiles are present', async () => {
+    mkdirSync(resolve(workDir, 'app'))
+    writeFileSync(resolve(workDir, 'app', 'package-lock.json'), '{}')
+    const runner = async () => ok()
+    await installWorktreeDeps({ worktreeRoot: workDir, runner })
+    expect(existsSync(resolve(workDir, 'pnpm-workspace.yaml'))).toBe(false)
+  })
+
+  it('throws WorktreeVirtualStoreBoundaryError when pnpm virtual store escapes worktree', async () => {
+    writeFileSync(resolve(workDir, 'pnpm-lock.yaml'), 'lockfileVersion: 1\n')
+    const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+      if (cmd === 'pnpm' && args.includes('install')) {
+        // Simulate a corrupted install: write a .modules.yaml whose virtualStoreDir
+        // escapes the worktree boundary.
+        mkdirSync(resolve(cwd, 'node_modules'), { recursive: true })
+        writeFileSync(
+          resolve(cwd, 'node_modules', '.modules.yaml'),
+          'virtualStoreDir: ../../outside/node_modules/.pnpm\n',
+        )
+        return ok()
+      }
+      return ok()
+    }
+    await expect(
+      installWorktreeDeps({ worktreeRoot: workDir, runner }),
+    ).rejects.toMatchObject({
+      name: 'WorktreeVirtualStoreBoundaryError',
+      failureStep: 'setup:virtual-store-escaped',
+    })
+  })
+
+  it('WorktreeVirtualStoreBoundaryError carries site, resolved path, and worktree root', async () => {
+    writeFileSync(resolve(workDir, 'pnpm-lock.yaml'), 'lockfileVersion: 1\n')
+    const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+      if (cmd === 'pnpm' && args.includes('install')) {
+        mkdirSync(resolve(cwd, 'node_modules'), { recursive: true })
+        writeFileSync(
+          resolve(cwd, 'node_modules', '.modules.yaml'),
+          'virtualStoreDir: ../../../escaped/node_modules/.pnpm\n',
+        )
+        return ok()
+      }
+      return ok()
+    }
+    try {
+      await installWorktreeDeps({ worktreeRoot: workDir, runner })
+      expect.fail('expected WorktreeVirtualStoreBoundaryError')
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorktreeVirtualStoreBoundaryError)
+      if (err instanceof WorktreeVirtualStoreBoundaryError) {
+        expect(err.site.dir).toBe(workDir)
+        expect(err.worktreeRoot).toBe(workDir)
+        expect(err.resolvedVirtualStoreDir).not.toContain(workDir)
+        expect(err.message).toContain('CI=true pnpm install --frozen-lockfile')
+      }
+    }
+  })
+
+  it('passes through cleanly when virtualStoreDir is within the worktree', async () => {
+    writeFileSync(resolve(workDir, 'pnpm-lock.yaml'), 'lockfileVersion: 1\n')
+    const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+      if (cmd === 'pnpm' && args.includes('install')) {
+        // Write a compliant .modules.yaml — virtual store inside the worktree.
+        mkdirSync(resolve(cwd, 'node_modules'), { recursive: true })
+        writeFileSync(
+          resolve(cwd, 'node_modules', '.modules.yaml'),
+          'virtualStoreDir: .pnpm\n',
+        )
+        return ok()
+      }
+      return ok()
+    }
+    await expect(
+      installWorktreeDeps({ worktreeRoot: workDir, runner }),
+    ).resolves.toBeDefined()
   })
 })

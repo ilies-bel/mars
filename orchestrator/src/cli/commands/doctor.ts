@@ -647,6 +647,57 @@ export const runDoctorChecks = async (
     }
   }
 
+  // H6. node_modules boundary — detect a corrupted virtualStoreDir in a
+  // workspace's node_modules/.modules.yaml that points outside the checkout.
+  //
+  // Root cause: a dispatched task ran `pnpm install` whose workspace-root
+  // resolution escaped the worktree and resolved to the main checkout.  pnpm
+  // then wrote the link farm into the main checkout's node_modules/ while
+  // recording the virtual store as a path back into the now-deleted worktree,
+  // making the modules directory permanently broken.
+  //
+  // Recovery: CI=true pnpm install --frozen-lockfile in the affected workspace.
+  if (repoRoot !== null) {
+    // The two workspaces managed by provisionWorktreeDeps — the only ones that
+    // receive cross-worktree node_modules symlinks and are therefore at risk.
+    const MANAGED_WORKSPACES = ['orchestrator', 'ui'] as const
+    for (const workspace of MANAGED_WORKSPACES) {
+      const modulesYamlPath = resolve(repoRoot, workspace, 'node_modules', '.modules.yaml')
+      const content = probes.readTextFile(modulesYamlPath)
+      if (content === null) continue // not installed yet — nothing to check
+
+      // pnpm always writes `virtualStoreDir: <value>` on its own unquoted line.
+      const match = /^virtualStoreDir:\s*(.+)$/m.exec(content)
+      if (!match || !match[1]) continue // field absent — no metadata to validate
+
+      const raw = match[1].trim()
+      // virtualStoreDir is relative to the node_modules directory itself.
+      const nmDir = resolve(repoRoot, workspace, 'node_modules')
+      const resolved = resolve(nmDir, raw)
+      const repoWithSep = repoRoot.endsWith('/') ? repoRoot : `${repoRoot}/`
+      const escaped = resolved !== repoRoot && !resolved.startsWith(repoWithSep)
+
+      if (escaped) {
+        results.push({
+          label: `node_modules boundary: ${workspace}`,
+          status: 'FAIL',
+          section: 'health',
+          message:
+            `${workspace}/node_modules/.modules.yaml has virtualStoreDir pointing outside ` +
+            `this checkout (${resolved}) — a worktree install leaked into the main checkout. ` +
+            `Recovery: cd ${resolve(repoRoot, workspace)} && CI=true pnpm install --frozen-lockfile`,
+        })
+      } else {
+        results.push({
+          label: `node_modules boundary: ${workspace}`,
+          status: 'PASS',
+          section: 'health',
+          message: `${workspace}/node_modules is self-contained within the checkout`,
+        })
+      }
+    }
+  }
+
   return results
 }
 

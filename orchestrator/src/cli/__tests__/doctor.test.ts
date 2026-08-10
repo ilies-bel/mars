@@ -905,3 +905,95 @@ describe("doctor gestures — every 'mars ...' command in FAIL/WARN messages is 
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// Health checks — node_modules boundary (H6)
+// ---------------------------------------------------------------------------
+
+describe('runDoctorChecks — node_modules boundary', () => {
+  /** Build probes where .modules.yaml for a given workspace returns the supplied content. */
+  const makeBoundaryProbes = (
+    workspace: 'orchestrator' | 'ui',
+    modulesYamlContent: string | null,
+  ): DoctorProbes =>
+    passingProbes({
+      readTextFile(path) {
+        if (path.endsWith(`${workspace}/node_modules/.modules.yaml`)) {
+          return modulesYamlContent
+        }
+        return JSON.stringify({ tokens: { access_token: 'tok' } })
+      },
+    })
+
+  it('skips all boundary checks when repoRoot is null', async () => {
+    const probes = makeBoundaryProbes('orchestrator', 'virtualStoreDir: .pnpm\n')
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', null)
+    const boundaryResults = results.filter((r) => r.label.startsWith('node_modules boundary'))
+    expect(boundaryResults).toHaveLength(0)
+  })
+
+  it('skips a workspace whose .modules.yaml does not exist (null readTextFile)', async () => {
+    // .modules.yaml doesn't exist → no check result for that workspace.
+    const probes = makeBoundaryProbes('orchestrator', null)
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    expect(results.find((r) => r.label === 'node_modules boundary: orchestrator')).toBeUndefined()
+  })
+
+  it('skips a workspace whose .modules.yaml has no virtualStoreDir field', async () => {
+    const probes = makeBoundaryProbes('orchestrator', 'hoistedDependencies: {}\n')
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    expect(results.find((r) => r.label === 'node_modules boundary: orchestrator')).toBeUndefined()
+  })
+
+  it('PASS when virtualStoreDir resolves inside the checkout', async () => {
+    // ".pnpm" relative to "/repo/orchestrator/node_modules/" resolves to
+    // "/repo/orchestrator/node_modules/.pnpm", which is inside "/repo".
+    const probes = makeBoundaryProbes('orchestrator', 'virtualStoreDir: .pnpm\n')
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'node_modules boundary: orchestrator')
+    expect(check?.status).toBe('PASS')
+  })
+
+  it('FAIL when virtualStoreDir resolves outside the checkout', async () => {
+    // "../../../../worktrees/task-id/orchestrator/node_modules/.pnpm" relative to
+    // "/repo/orchestrator/node_modules/" escapes "/repo".
+    const probes = makeBoundaryProbes(
+      'orchestrator',
+      'virtualStoreDir: ../../../../worktrees/task-id/orchestrator/node_modules/.pnpm\n',
+    )
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'node_modules boundary: orchestrator')
+    expect(check?.status).toBe('FAIL')
+    expect(check?.message).toContain('leaked into the main checkout')
+    expect(check?.message).toContain('CI=true pnpm install --frozen-lockfile')
+  })
+
+  it('FAIL message includes the escaped resolved path for diagnostics', async () => {
+    const probes = makeBoundaryProbes(
+      'ui',
+      'virtualStoreDir: ../../../../.mars/worktrees/mars-abc/ui/node_modules/.pnpm\n',
+    )
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'node_modules boundary: ui')
+    expect(check?.status).toBe('FAIL')
+    // The resolved path must appear so operators know exactly where the store is.
+    expect(check?.message).toMatch(/mars-abc/)
+  })
+
+  it('checks both orchestrator and ui independently', async () => {
+    const probes = passingProbes({
+      readTextFile(path) {
+        if (path.endsWith('orchestrator/node_modules/.modules.yaml')) {
+          return 'virtualStoreDir: .pnpm\n'
+        }
+        if (path.endsWith('ui/node_modules/.modules.yaml')) {
+          return 'virtualStoreDir: ../../../../escaped/node_modules/.pnpm\n'
+        }
+        return JSON.stringify({ tokens: { access_token: 'tok' } })
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    expect(results.find((r) => r.label === 'node_modules boundary: orchestrator')?.status).toBe('PASS')
+    expect(results.find((r) => r.label === 'node_modules boundary: ui')?.status).toBe('FAIL')
+  })
+})

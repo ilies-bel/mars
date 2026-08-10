@@ -1,4 +1,4 @@
-import { stat, rm, readFile, lstat, readlink } from 'node:fs/promises'
+import { stat, rm, readFile, lstat, readlink, writeFile } from 'node:fs/promises'
 import { isAbsolute, resolve, relative } from 'node:path'
 import { acquireLock } from './git/lock'
 import { type RunSubprocessResult } from './git/claude'
@@ -557,6 +557,135 @@ export const buildWorkspaceDepsForSite = async (
   }
 }
 
+// ---------------------------------------------------------------------------
+// pnpm workspace-root isolation
+// ---------------------------------------------------------------------------
+
+/**
+ * Write a minimal `pnpm-workspace.yaml` at `worktreeRoot` if one does not
+ * already exist.
+ *
+ * **Why this is needed.** `.mars/worktrees/<id>/` is a *subdirectory* of the
+ * main checkout.  Without a workspace root marker at the worktree boundary,
+ * pnpm walks up from any sub-package directory until it finds a
+ * `pnpm-workspace.yaml` or reaches the topmost `package.json` — which may be
+ * the main checkout root.  When that happens pnpm writes the virtual store
+ * and link farm in the main checkout's `node_modules/` instead of the
+ * worktree, corrupting shared infrastructure.
+ *
+ * Writing `packages: []` here makes pnpm stop at the worktree root.
+ * Sub-packages that carry their own lockfiles are treated as independent,
+ * non-workspace projects and continue to use their local lockfiles.
+ *
+ * @internal Exported for unit-testing.
+ */
+export const _ensurePnpmWorkspaceYaml = async (
+  worktreeRoot: string,
+  log?: (line: string) => void,
+): Promise<void> => {
+  const yamlPath = resolve(worktreeRoot, 'pnpm-workspace.yaml')
+  try {
+    await stat(yamlPath)
+    return // already exists — do not overwrite
+  } catch {
+    // does not exist — create it below
+  }
+  const content = [
+    '# Pinned by Mars worktree setup to prevent pnpm from resolving the',
+    '# workspace root outside this worktree. Not committed — exists only',
+    '# while this worktree is active. Sub-packages with their own lockfiles',
+    '# are treated as standalone projects and use their local lockfiles.',
+    'packages: []',
+    '',
+  ].join('\n')
+  await writeFile(yamlPath, content, 'utf8')
+  log?.(`[setup:install] wrote pnpm-workspace.yaml at ${worktreeRoot} to pin workspace root`)
+}
+
+// ---------------------------------------------------------------------------
+// Virtual store boundary guard
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when a post-install check finds that pnpm wrote its virtual store
+ * outside the worktree boundary.  This is a fatal setup failure — the
+ * install escaped into the parent checkout's `node_modules/`.
+ *
+ * The `failureStep` field is consumed by the orchestrator's failure
+ * classifier to produce an actionable action-queue item.
+ */
+export class WorktreeVirtualStoreBoundaryError extends Error {
+  readonly site: InstallSite
+  readonly resolvedVirtualStoreDir: string
+  readonly worktreeRoot: string
+  readonly failureStep = 'setup:virtual-store-escaped'
+
+  constructor(site: InstallSite, resolvedVirtualStoreDir: string, worktreeRoot: string) {
+    super(
+      `pnpm wrote virtual store outside the worktree boundary.\n` +
+        `  install site           : ${site.dir}\n` +
+        `  virtualStoreDir        : ${resolvedVirtualStoreDir}\n` +
+        `  worktree boundary      : ${worktreeRoot}\n` +
+        `The install leaked into the main checkout's node_modules.\n` +
+        `Recovery for the main checkout:\n` +
+        `  CI=true pnpm install --frozen-lockfile`,
+    )
+    this.name = 'WorktreeVirtualStoreBoundaryError'
+    this.site = site
+    this.resolvedVirtualStoreDir = resolvedVirtualStoreDir
+    this.worktreeRoot = worktreeRoot
+  }
+}
+
+/**
+ * Read `siteDir/node_modules/.modules.yaml` and verify that its
+ * `virtualStoreDir` value resolves to a path inside `worktreeRoot`.
+ *
+ * Returns `{ escaped: false, resolvedPath: null }` when the file does not
+ * exist (install hasn't materialised `node_modules` yet).  Returns
+ * `{ escaped: true, resolvedPath }` when the resolved path escapes the
+ * worktree boundary.
+ *
+ * @internal Exported for unit-testing.
+ */
+export const _validateVirtualStoreDir = async (
+  siteDir: string,
+  worktreeRoot: string,
+  log?: (line: string) => void,
+): Promise<{ escaped: boolean; resolvedPath: string | null }> => {
+  const modulesYamlPath = resolve(siteDir, 'node_modules', '.modules.yaml')
+  let content: string
+  try {
+    content = await readFile(modulesYamlPath, 'utf8')
+  } catch {
+    return { escaped: false, resolvedPath: null }
+  }
+  // pnpm always writes `virtualStoreDir: <value>` on its own line, no quoting.
+  const match = /^virtualStoreDir:\s*(.+)$/m.exec(content)
+  if (!match || !match[1]) return { escaped: false, resolvedPath: null }
+
+  const raw = match[1].trim()
+  // Resolve the raw value relative to the node_modules directory where
+  // .modules.yaml lives (pnpm stores it as a path relative to node_modules/).
+  const nmDir = resolve(siteDir, 'node_modules')
+  const resolved = resolve(nmDir, raw)
+
+  const wt = worktreeRoot.endsWith('/') ? worktreeRoot : `${worktreeRoot}/`
+  const escaped = resolved !== worktreeRoot && !resolved.startsWith(wt)
+
+  if (escaped) {
+    log?.(
+      `[setup:install] BOUNDARY VIOLATION: pnpm virtual store escapes worktree!\n` +
+        `  site              : ${siteDir}\n` +
+        `  virtualStoreDir   : ${raw}\n` +
+        `  resolved          : ${resolved}\n` +
+        `  worktree root     : ${worktreeRoot}`,
+    )
+  }
+
+  return { escaped, resolvedPath: resolved }
+}
+
 export const installCommand = (
   manager: PackageManager,
 ): readonly [string, readonly string[]] => {
@@ -736,6 +865,13 @@ export const installWorktreeDeps = async ({
     return { sites: [], totalDurationMs: 0 }
   }
 
+  // Pin pnpm's workspace-root detection to this worktree so it cannot walk
+  // up into the parent checkout.  Without this marker pnpm can resolve the
+  // main checkout as the workspace root and write its virtual store there.
+  if (sites.some((s) => s.manager === 'pnpm')) {
+    await _ensurePnpmWorkspaceYaml(worktreeRoot, log)
+  }
+
   const start = Date.now()
   const results = await Promise.all(
     sites.map(async (site) => {
@@ -780,7 +916,10 @@ export const installWorktreeDeps = async ({
           timeoutMs,
         )
         const t0 = Date.now()
-        let r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
+        // CI=true prevents pnpm from interactively asking to delete modules
+        // directories on TTY-less hosts (the same condition that required the
+        // manual `CI=true pnpm install` recovery after the incident).
+        let r = await effectiveRunner(cmd, args, site.dir, { timeoutMs, env: { CI: 'true' } })
 
         // Retry on transient ENOTEMPTY filesystem race (macOS npm ci cleanup race).
         // This occurs when a prior process holds file descriptors open in node_modules
@@ -809,7 +948,7 @@ export const installWorktreeDeps = async ({
             maxRetries: 5,
             retryDelay: 200,
           })
-          r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
+          r = await effectiveRunner(cmd, args, site.dir, { timeoutMs, env: { CI: 'true' } })
         }
 
         const durationMs = Date.now() - t0
@@ -825,6 +964,20 @@ export const installWorktreeDeps = async ({
         }
         if (r.exitCode !== 0) {
           throw new WorktreeInstallError(site, r)
+        }
+        // Boundary guard: assert the virtual store is within the worktree.
+        // A pnpm workspace-root escape writes the store in the main checkout's
+        // node_modules; catching it here fails the task loudly rather than
+        // silently corrupting shared infrastructure.
+        if (site.manager === 'pnpm') {
+          const boundary = await _validateVirtualStoreDir(site.dir, worktreeRoot, log)
+          if (boundary.escaped && boundary.resolvedPath !== null) {
+            throw new WorktreeVirtualStoreBoundaryError(
+              site,
+              boundary.resolvedPath,
+              worktreeRoot,
+            )
+          }
         }
         return result
       } finally {
