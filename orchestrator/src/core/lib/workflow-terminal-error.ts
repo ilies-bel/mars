@@ -39,6 +39,13 @@ export type WorkflowTerminalKind =
   | 'preview-gate'
   | 'await-human'
   | 'committer-still-dirty'
+  /**
+   * The setup step found uncommitted changes on the integration branch before
+   * spawning the coder. The task is parked as blocked and an action-queue item
+   * is raised. The operator must clean the integration branch and then restart
+   * the task.
+   */
+  | 'setup-dirty-integration'
 
 export interface WorkflowTerminalMeta {
   /** Unix epoch seconds at which the provider quota resets. Only set for `quota-rejected`. */

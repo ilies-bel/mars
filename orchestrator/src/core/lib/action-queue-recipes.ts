@@ -961,6 +961,24 @@ const RECIPE_DEFINITIONS = {
       },
     ],
   },
+
+  'dirty-integration': {
+    humanSummary: (ctx) => {
+      const branch = str(ctx.payload['integrationBranch']) || 'integration branch'
+      const taskId = str(ctx.payload['taskId']) || ctx.entityId
+      return `Task ${taskId} parked: integration branch '${branch}' has uncommitted changes — clean the branch then restart the task.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      taskId: str(ctx.payload['taskId']),
+      integrationBranch: str(ctx.payload['integrationBranch']),
+      dirtyPaths: ctx.payload['dirtyPaths'],
+    }),
+    verbs: [
+      { op: 'restart', label: 'Restart task', style: 'primary' },
+    ],
+  },
 } satisfies Record<ActionQueueKind, Omit<Recipe, 'preloadedResponses'>>
 
 /**

@@ -446,6 +446,7 @@ const OPERATIONAL_ALERT_COPY: Record<
   'arc-superseded-on-main': null,
   'e2e-tooling-missing': null,
   'low-disk-space': null,
+  'dirty-integration': null,
   'baseline-broken': (row) => {
     const gateName =
       typeof row.payload.failingGateName === 'string'
