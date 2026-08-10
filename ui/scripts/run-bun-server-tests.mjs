@@ -51,7 +51,26 @@ if (files.length === 0) {
 
 console.log(`run-bun-server-tests: ${files.length} Bun-native file(s) in ui/server/`)
 
-const result = spawnSync('bun', ['test', ...files], {
+// -------------------------------------------------------------------------
+// Timeout: match the vitest 'server' project's testTimeout: 60_000 in
+// ui/vitest.config.ts. Server tests boot a real HTTP server and a PGlite
+// database; a PGlite cold start alone can take 5-25 s under load, causing
+// failures under Bun's 5 s default. `bun test` has no separate hook
+// timeout flag — --timeout covers per-test time only, not beforeAll/afterAll
+// hooks. PGlite setup happens inside beforeAll, so keep the timeout generous
+// enough for the worst-case cold start even on a loaded machine.
+//
+// If you change this value, mirror it in ui/vitest.config.ts (testTimeout
+// and hookTimeout on the 'server' project), and vice-versa.
+// -------------------------------------------------------------------------
+const BUN_TEST_TIMEOUT_MS = 60_000
+
+// Why this runs in addition to vitest's 'server' project (which already
+// covers every server/**/*.test.ts via glob): the server itself runs on Bun
+// (npm run dev:server → bun run server/index.ts), so exercising the
+// bun:test-importing files under the real Bun runtime catches runtime gaps
+// that vitest's compatibility shim can hide. Both runners are intentional.
+const result = spawnSync('bun', ['test', `--timeout=${BUN_TEST_TIMEOUT_MS}`, ...files], {
   cwd: dirname(serverDir),
   stdio: 'inherit',
 })
