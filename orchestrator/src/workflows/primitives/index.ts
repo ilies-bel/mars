@@ -65,6 +65,14 @@ import {
   recordEnrichmentShadowRuns,
 } from '../../core/lib/gate-enrichment'
 import { mergeBranch, checkMergeTargetStatus, isZeroCommitBranch, isBranchTipInIntegration, type MergeResult } from '../../core/lib/git/merge'
+import {
+  captureCheckpoint,
+  discardWorkingTreeChanges,
+  checkpointRefFor,
+  restoreCheckpoint,
+  type Checkpoint,
+} from '../../core/lib/git/checkpoint'
+import { classifyPorcelainLines } from '../../core/lib/git/classify-porcelain'
 import { autoCommitWorktreeIfDeterministic } from '../../core/lib/git/commit-main'
 import {
   createWorker,
@@ -866,40 +874,72 @@ export const setupWorktree = async (
           return { dirty: false, statusOutput: '' }
         })
         if (dirtyCheck.dirty) {
-          const dirtyPaths = dirtyCheck.statusOutput
-            .split('\n')
-            .map((l) => l.trim())
-            .filter((l) => l.length > 0)
-          await updateTask(taskId, { status: 'blocked' }, store)
-          await raiseActionQueueItem({
-            kind: 'dirty-integration',
-            category: 'orchestrator',
-            priority: 'high',
-            title: `merge target ${integrationBranch} has uncommitted changes`,
-            body: [
-              `Task ${taskId} was parked because the integration branch '${integrationBranch}' has uncommitted changes.`,
-              'Merging into a dirty checkout would corrupt the integration branch.',
-              '',
-              'Dirty paths:',
-              ...dirtyPaths.map((p) => `  ${p}`),
-              '',
-              `Resolve: clean the integration branch checkout, then \`mars restart ${taskId}\`.`,
-            ].join('\n'),
-            payload: { taskId, integrationBranch, dirtyPaths, statusOutput: dirtyCheck.statusOutput },
-            context: { repoRoot: integRoot },
-            raisedBy: 'agent:setup-worktree:dirty-integration',
-            signature: `${taskId}:setup:dirty-integration`,
-            originTaskId: taskId,
-          }).catch((raiseErr: unknown) => {
-            console.error(
-              `[setup] task ${taskId} dirty-integration action-queue raise errored:`,
-              raiseErr,
+          const rawLines = dirtyCheck.statusOutput.split('\n').filter((l) => l.length > 0)
+          const { userOwned } = classifyPorcelainLines(rawLines)
+
+          if (userOwned.length === 0) {
+            // All dirty paths are under .mars/ — orchestrator-owned artifacts.
+            // Auto-stash them via a per-task checkpoint ref (never git stash),
+            // discard the working-tree changes, and let setup proceed. The
+            // merge step restores the checkpoint after the fast-forward.
+            const preflightCheckpoint = await captureCheckpoint({
+              cwd: integRoot,
+              key: `${taskId}-preflight`,
+              message: `pre-flight: auto-stash orchestrator artifacts for task ${taskId}`,
+              traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
+            }).catch((err: unknown) => {
+              console.warn(
+                `[setup:dirty-guard] task ${taskId} .mars/ auto-stash errored (proceeding without stash): ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              )
+              return null
+            })
+            if (preflightCheckpoint !== null) {
+              await discardWorkingTreeChanges({
+                cwd: integRoot,
+                traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
+              })
+              console.log(
+                `[setup:dirty-guard] task ${taskId}: auto-stashed ${preflightCheckpoint.files.length} .mars/ ` +
+                  `artifact(s) to ${preflightCheckpoint.ref}; proceeding`,
+              )
+            }
+            // Fall through — setup continues normally
+          } else {
+            // One or more user-owned paths are dirty — park the task.
+            const dirtyPaths = rawLines.map((l) => l.trim()).filter((l) => l.length > 0)
+            await updateTask(taskId, { status: 'blocked' }, store)
+            await raiseActionQueueItem({
+              kind: 'dirty-integration',
+              category: 'orchestrator',
+              priority: 'high',
+              title: `merge target ${integrationBranch} has uncommitted changes`,
+              body: [
+                `Task ${taskId} was parked because the integration branch '${integrationBranch}' has uncommitted changes.`,
+                'Merging into a dirty checkout would corrupt the integration branch.',
+                '',
+                'Dirty paths:',
+                ...dirtyPaths.map((p) => `  ${p}`),
+                '',
+                `Resolve: clean the integration branch checkout, then \`mars restart ${taskId}\`.`,
+              ].join('\n'),
+              payload: { taskId, integrationBranch, dirtyPaths, statusOutput: dirtyCheck.statusOutput },
+              context: { repoRoot: integRoot },
+              raisedBy: 'agent:setup-worktree:dirty-integration',
+              signature: `${taskId}:setup:dirty-integration`,
+              originTaskId: taskId,
+            }).catch((raiseErr: unknown) => {
+              console.error(
+                `[setup] task ${taskId} dirty-integration action-queue raise errored:`,
+                raiseErr,
+              )
+            })
+            throw new WorkflowTerminalError(
+              'setup-dirty-integration',
+              `Task ${taskId}: integration branch '${integrationBranch}' has uncommitted changes — task parked as blocked`,
             )
-          })
-          throw new WorkflowTerminalError(
-            'setup-dirty-integration',
-            `Task ${taskId}: integration branch '${integrationBranch}' has uncommitted changes — task parked as blocked`,
-          )
+          }
         }
       }
 
@@ -3449,6 +3489,57 @@ export const merge = async (
             )
             throw new Error(assertMsg)
           }
+        }
+
+        // Restore the pre-flight checkpoint if one was captured during setup.
+        // When the setup step auto-stashed .mars/ orchestrator artifacts (all
+        // dirt was under .mars/, so setup proceeded transparently), the
+        // checkpoint ref `refs/mars/checkpoint/<taskId>-preflight` holds a
+        // stash commit. Restore it now so the integration checkout returns to
+        // its pre-stash state, then delete the ref. On failure we log and
+        // move on — the ref is preserved so the operator can recover manually.
+        const preflightRef = checkpointRefFor(`${taskId}-preflight`)
+        const refProbe = await runTool(
+          {
+            tool: 'git',
+            argv: ['rev-parse', '--verify', preflightRef],
+            cwd: mergeRepoRoot,
+            taskId,
+            originId: trace.originId,
+            phase: 'merge',
+            expectsFailure: true,
+          },
+          trace.traceStore,
+        ).catch(() => null)
+        if (refProbe !== null && refProbe.exitCode === 0) {
+          const preflightSha = refProbe.stdout.trim()
+          const preflightCheckpoint: Checkpoint = { ref: preflightRef, sha: preflightSha, files: [] }
+          await restoreCheckpoint({
+            cwd: mergeRepoRoot,
+            checkpoint: preflightCheckpoint,
+            traceCtx: buildPhaseCtx(trace, taskId, 'merge'),
+          }).catch((restoreErr: unknown) => {
+            console.warn(
+              `[merge] task ${taskId}: pre-flight checkpoint restore failed ` +
+                `(${preflightRef} preserved for manual recovery): ${
+                  restoreErr instanceof Error ? restoreErr.message : String(restoreErr)
+                }`,
+            )
+          })
+          await runTool(
+            {
+              tool: 'git',
+              argv: ['update-ref', '-d', preflightRef],
+              cwd: mergeRepoRoot,
+              taskId,
+              originId: trace.originId,
+              phase: 'merge',
+            },
+            trace.traceStore,
+          ).catch(() => {
+            // Non-fatal — the ref is cosmetic after the restore succeeds.
+          })
+          console.log(`[merge] task ${taskId}: restored pre-flight .mars/ artifacts from ${preflightRef}`)
         }
 
         // Do NOT reclaim a worktree another live task is standing on. A
