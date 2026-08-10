@@ -220,6 +220,31 @@ const RECIPE_DEFINITIONS = {
     verbs: [{ op: 'restart-daemon', label: 'Restart engine', style: 'primary' }],
   },
 
+  'daemon-outage': {
+    humanSummary: (ctx) => {
+      const outageMs = typeof ctx.payload['outageMs'] === 'number' ? ctx.payload['outageMs'] : null
+      const strandedCount =
+        typeof ctx.payload['strandedTaskCount'] === 'number'
+          ? ctx.payload['strandedTaskCount']
+          : null
+      const outageSummary = outageMs !== null
+        ? `~${Math.round(outageMs / 60_000)} min`
+        : 'an extended period'
+      return strandedCount !== null
+        ? `The background engine was offline for ${outageSummary} — ${strandedCount} task(s) were queued during the outage and will now be dispatched.`
+        : `The background engine was offline for ${outageSummary} — tasks queued during the outage will now be dispatched.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      lastBeatAt: str(ctx.payload['lastBeatAt']),
+      detectedAt: str(ctx.payload['detectedAt']),
+      outageMs: ctx.payload['outageMs'],
+      strandedTaskCount: ctx.payload['strandedTaskCount'],
+    }),
+    verbs: [],
+  },
+
   // ── Worktree issues ────────────────────────────────────────────────────────
 
   'stale-worktree': {

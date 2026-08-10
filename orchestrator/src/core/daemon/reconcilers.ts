@@ -75,7 +75,31 @@ const daemonDiedSweep: Reconciler = {
 }
 
 /**
- * 2b. Orphaned-chat-run sweep — flip any `chat_threads` row still at
+ * 2b. Daemon-outage sweep — if the gap between the last heartbeat and the
+ *     current boot exceeds the configured threshold (default 30 min), raise a
+ *     single `daemon-outage` action-queue row naming the outage window and the
+ *     count of tasks that were queued while the daemon was dead. Alert only —
+ *     does NOT change any task status.
+ */
+const daemonOutageSweep: Reconciler = {
+  name: 'daemon-outage-sweep',
+  async run({ log }) {
+    try {
+      const { detectAndRaiseDaemonOutage } = await import('./daemon-outage-sweep')
+      const raised = await detectAndRaiseDaemonOutage()
+      if (raised !== null) {
+        log('[reconcile] daemon-outage alert raised (daemon was offline for an extended period)')
+      }
+      return { daemonOutageAlerts: raised !== null ? 1 : 0 }
+    } catch (err) {
+      log(`[reconcile] daemon-outage sweep failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
+ * 2c. Orphaned-chat-run sweep — flip any `chat_threads` row still at
  *     `status='running'` to `'idle'` and append an interrupted-run assistant
  *     message. On daemon start the in-memory run map is empty, so any
  *     `'running'` row is by definition an orphan from a prior crash/restart and
@@ -952,6 +976,7 @@ const ghostSubscriberSweep: Reconciler = {
 export const RECONCILERS: readonly Reconciler[] = [
   daemonKilledSweep,
   daemonDiedSweep,
+  daemonOutageSweep,
   orphanedChatRunSweep,
   blockerDriftRepair,
   retiredPlanGateReconcile,

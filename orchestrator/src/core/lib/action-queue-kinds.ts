@@ -51,6 +51,7 @@ export const ACTION_QUEUE_KINDS = [
   'e2e-tooling-missing',
   'low-disk-space',
   'baseline-broken',
+  'daemon-outage',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

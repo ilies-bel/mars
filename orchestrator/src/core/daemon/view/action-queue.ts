@@ -46,6 +46,7 @@ const NON_TASK_FAILURE_KINDS = new Set([
   'scorer-suggested',
   'tool-promotion',
   'hitl-slice-needs-operator',
+  'daemon-outage',
 ])
 
 /** Preserves the former failure-specific enrichment without changing labels. */
@@ -260,6 +261,28 @@ const OPERATIONAL_ALERT_COPY: Record<
       body:
         `The daemon crash was detected at ${detectedAt} and the current daemon has already respawned. ` +
         `There is no task transcript for this daemon-level alert. Inspect \`.mars/watch.log\` for the crash, then run \`mars list\` to find interrupted tasks.`,
+    }
+  },
+  'daemon-outage': (row, _pauseState) => {
+    const outageMs = typeof row.payload.outageMs === 'number' ? row.payload.outageMs : null
+    const strandedCount =
+      typeof row.payload.strandedTaskCount === 'number' ? row.payload.strandedTaskCount : null
+    const detectedAt =
+      typeof row.payload.detectedAt === 'string'
+        ? row.payload.detectedAt
+        : new Date(row.lastSeenAt).toISOString()
+    const outageSummary = outageMs !== null
+      ? `${formatOperationalDuration(outageMs)} outage`
+      : 'an outage of unknown duration'
+    const strandedNote = strandedCount !== null
+      ? `${strandedCount} task(s) were queued when it came back up.`
+      : 'Queued-task count unknown.'
+    return {
+      title: `Daemon was offline (~${outageSummary}) and restarted at ${detectedAt}`,
+      body:
+        `The daemon was offline for ${outageSummary}. ${strandedNote} ` +
+        `Queued tasks will be dispatched automatically. Inspect \`.mars/watch.log\` ` +
+        `and run \`mars list\` to review tasks that accumulated during the outage.`,
     }
   },
   'stale-worktree': null,

@@ -74,6 +74,8 @@ export interface ReconcileSummary {
   daemonKilledAlerts: number
   /** Action-queue items raised (or bumped) for unclean daemon exits. */
   daemonDiedAlerts: number
+  /** Action-queue items raised (or bumped) for extended daemon downtime. */
+  daemonOutageAlerts: number
   blockerDriftRepaired: number
   /**
    * Origins flipped from `blocked` to `failed` because the one recovery Chore
@@ -199,6 +201,7 @@ export interface Reconciler {
 export const emptyReconcileSummary = (): ReconcileSummary => ({
   daemonKilledAlerts: 0,
   daemonDiedAlerts: 0,
+  daemonOutageAlerts: 0,
   blockerDriftRepaired: 0,
   strandedOriginsFailed: 0,
   terminalOriginChoresDropped: 0,
