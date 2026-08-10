@@ -841,6 +841,68 @@ export const setupWorktree = async (
         kind,
         isMainCommiterFix,
       )
+
+      // Integration branch dirty-tree guard: park the task as 'blocked' when
+      // the merge target has uncommitted changes. A dirty integration checkout
+      // cannot be fast-forwarded into cleanly; catching this here (before the
+      // worktree is even created) eliminates the failure class where tasks
+      // reach merge and fail with "merge target has uncommitted changes".
+      //
+      // Main-committer fix tasks are exempt — they exist specifically to clean
+      // a dirty integration branch and must proceed even when main is dirty.
+      if (!isMainCommiterFix) {
+        const { checkIntegrationBranchDirty } = await import('../../core/lib/main-dirty')
+        const { repoRoot: integRoot } = resolveContext()
+        const dirtyCheck = await checkIntegrationBranchDirty({
+          repoRoot: integRoot,
+          integrationBranch,
+          traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
+        }).catch((err: unknown) => {
+          console.warn(
+            `[setup:dirty-guard] task ${taskId} integration dirty check errored, proceeding: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          )
+          return { dirty: false, statusOutput: '' }
+        })
+        if (dirtyCheck.dirty) {
+          const dirtyPaths = dirtyCheck.statusOutput
+            .split('\n')
+            .map((l) => l.trim())
+            .filter((l) => l.length > 0)
+          await updateTask(taskId, { status: 'blocked' }, store)
+          await raiseActionQueueItem({
+            kind: 'dirty-integration',
+            category: 'orchestrator',
+            priority: 'high',
+            title: `merge target ${integrationBranch} has uncommitted changes`,
+            body: [
+              `Task ${taskId} was parked because the integration branch '${integrationBranch}' has uncommitted changes.`,
+              'Merging into a dirty checkout would corrupt the integration branch.',
+              '',
+              'Dirty paths:',
+              ...dirtyPaths.map((p) => `  ${p}`),
+              '',
+              `Resolve: clean the integration branch checkout, then \`mars restart ${taskId}\`.`,
+            ].join('\n'),
+            payload: { taskId, integrationBranch, dirtyPaths, statusOutput: dirtyCheck.statusOutput },
+            context: { repoRoot: integRoot },
+            raisedBy: 'agent:setup-worktree:dirty-integration',
+            signature: `${taskId}:setup:dirty-integration`,
+            originTaskId: taskId,
+          }).catch((raiseErr: unknown) => {
+            console.error(
+              `[setup] task ${taskId} dirty-integration action-queue raise errored:`,
+              raiseErr,
+            )
+          })
+          throw new WorkflowTerminalError(
+            'setup-dirty-integration',
+            `Task ${taskId}: integration branch '${integrationBranch}' has uncommitted changes — task parked as blocked`,
+          )
+        }
+      }
+
       // A main-commiter recovery MUST carry the integration branch's dirty
       // state into its fresh worktree (checkpoint capture on repoRoot → apply
       // by object id in the worktree, see `core/lib/git/checkpoint.ts`) so the
