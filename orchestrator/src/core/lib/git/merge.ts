@@ -12,6 +12,7 @@ import {
 } from './internal'
 import { acquireLock } from './lock'
 import { captureCheckpoint, discardWorkingTreeChanges } from './checkpoint'
+import { repairBranchCommitMessages } from './commit-message'
 import {
   runSubprocessStreaming,
   resolveClaudeBin,
@@ -768,6 +769,29 @@ export const mergeBranch = async ({
         }
         conflictResolved = true
         vegaSessionId = extractSessionIdFromConversation(supervisorConversation)
+      }
+
+      // Commit-message repair: inspect all commits ahead of integrationBranch
+      // and rewrite any non-conforming subject lines BEFORE reading taskSha.
+      // filter-branch advances the branch tip to new SHAs, and the subsequent
+      // rev-parse below picks up the corrected tip automatically.
+      lastStep = 'commit-message-repair'
+      try {
+        const repairResult = await repairBranchCommitMessages(
+          branch,
+          integrationBranch,
+          worktreePath,
+        )
+        if (repairResult.repairedCount > 0) {
+          output += `\n[merge:commit-repair] rewrote ${repairResult.repairedCount} commit message(s) on ${branch}`
+        }
+      } catch (repairErr: unknown) {
+        // Repair is best-effort: a failure here must not abort a valid merge.
+        // Log the error and continue — a malformed subject is cosmetic; losing
+        // the merge would be worse.
+        const msg = repairErr instanceof Error ? repairErr.message : String(repairErr)
+        console.warn(`[merge:commit-repair] repair failed (non-fatal): ${msg}`)
+        output += `\n[merge:commit-repair] repair failed (non-fatal): ${msg}`
       }
 
       // Step 2: fast-forward integration to the (now-rebased) task branch via a
