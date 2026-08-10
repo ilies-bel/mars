@@ -17,18 +17,43 @@ if (argv.includes('--help') || argv.includes('-h')) {
 Start the Mars dashboard server.
 
 Options:
-  --dev           Run in development mode (API + Vite dev server)
-  --repo <path>   Path to the Mars repo (default: auto-detected)
-  --port <n>      HTTP port (default: 7777)
-  --host <addr>   Bind address (default: 127.0.0.1)
-  --help          Show this help`)
+  --dev              Run in development mode (API + Vite dev server)
+  --repo <path>      Path to the Mars repo (default: auto-detected)
+  --port <n>         API server HTTP port (default: 7777)
+  --vite-port <n>    Vite dev server port (default: 5173, --dev only)
+  --host <addr>      Bind address (default: 127.0.0.1)
+  --help             Show this help`)
   process.exit(0)
 }
 
 const isDev = argv.includes('--dev')
 
-// Strip --dev before forwarding args to the server process
-const serverArgv = argv.filter((a) => a !== '--dev')
+// Parse --vite-port (wrapper-only; not forwarded to the server process).
+// Lets users pick a free port when 5173 is already occupied.
+let vitePort = null
+const vitePortIdx = argv.indexOf('--vite-port')
+if (vitePortIdx !== -1) {
+  const rawPort = argv[vitePortIdx + 1]
+  const n = Number(rawPort)
+  if (isNaN(n) || n < 1 || n > 65535) {
+    console.error(`mars-ui: invalid --vite-port "${rawPort}" — must be a number between 1 and 65535`)
+    process.exit(1)
+  }
+  vitePort = n
+}
+
+// Build serverArgv: forward all flags to the server process except --vite-port
+// and its value (which the server does not understand).  In particular, --dev IS
+// forwarded so the server enters development mode (no static-file serving, no
+// stale-bundle check).
+const serverArgv = []
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i] === '--vite-port') {
+    i++ // skip the value too
+    continue
+  }
+  serverArgv.push(argv[i])
+}
 
 if (isDev) {
   // Dev mode: spawn the API server + vite concurrently.
@@ -40,8 +65,10 @@ if (isDev) {
 
   const viteBin = resolve(pkgRoot, 'node_modules/.bin/vite')
   const viteCmd = existsSync(viteBin) ? viteBin : 'npx'
-  const viteArgs = existsSync(viteBin) ? [] : ['vite']
-  const vite = spawn(viteCmd, viteArgs, {
+  const viteBaseArgs = existsSync(viteBin) ? [] : ['vite']
+  // Pass --port when the user requested a non-default Vite port.
+  const vitePortArgs = vitePort !== null ? ['--port', String(vitePort)] : []
+  const vite = spawn(viteCmd, [...viteBaseArgs, ...vitePortArgs], {
     stdio: 'inherit',
     cwd: pkgRoot,
     env: process.env,
