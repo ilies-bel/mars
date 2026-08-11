@@ -597,11 +597,17 @@ export const runDoctorChecks = async (
   //
   // Recovery: CI=true pnpm install --frozen-lockfile in the affected workspace.
   if (repoRoot !== null) {
-    // The two workspaces managed by provisionWorktreeDeps — the only ones that
-    // receive cross-worktree node_modules symlinks and are therefore at risk.
-    const MANAGED_WORKSPACES = ['orchestrator', 'ui'] as const
-    for (const workspace of MANAGED_WORKSPACES) {
-      const modulesYamlPath = resolve(repoRoot, workspace, 'node_modules', '.modules.yaml')
+    // Checked directories: the workspace root (virtual store for single-root
+    // pnpm workspaces lives here) plus the two sub-packages managed by
+    // provisionWorktreeDeps that receive cross-worktree node_modules symlinks.
+    // Each entry is { dir: repo-relative path, label: display name }.
+    const MANAGED_WORKSPACES = [
+      { dir: '.', label: 'workspace root' },
+      { dir: 'orchestrator', label: 'orchestrator' },
+      { dir: 'ui', label: 'ui' },
+    ] as const
+    for (const { dir: wsDir, label: wsLabel } of MANAGED_WORKSPACES) {
+      const modulesYamlPath = resolve(repoRoot, wsDir, 'node_modules', '.modules.yaml')
       const content = probes.readTextFile(modulesYamlPath)
       if (content === null) continue // not installed yet — nothing to check
 
@@ -611,27 +617,27 @@ export const runDoctorChecks = async (
 
       const raw = match[1].trim()
       // virtualStoreDir is relative to the node_modules directory itself.
-      const nmDir = resolve(repoRoot, workspace, 'node_modules')
+      const nmDir = resolve(repoRoot, wsDir, 'node_modules')
       const resolved = resolve(nmDir, raw)
       const repoWithSep = repoRoot.endsWith('/') ? repoRoot : `${repoRoot}/`
       const escaped = resolved !== repoRoot && !resolved.startsWith(repoWithSep)
 
       if (escaped) {
         results.push({
-          label: `node_modules boundary: ${workspace}`,
+          label: `node_modules boundary: ${wsLabel}`,
           status: 'FAIL',
           section: 'health',
           message:
-            `${workspace}/node_modules/.modules.yaml has virtualStoreDir pointing outside ` +
+            `${wsLabel}/node_modules/.modules.yaml has virtualStoreDir pointing outside ` +
             `this checkout (${resolved}) — a worktree install leaked into the main checkout. ` +
-            `Recovery: cd ${resolve(repoRoot, workspace)} && CI=true pnpm install --frozen-lockfile`,
+            `Recovery: cd ${resolve(repoRoot, wsDir)} && CI=true pnpm install --frozen-lockfile`,
         })
       } else {
         results.push({
-          label: `node_modules boundary: ${workspace}`,
+          label: `node_modules boundary: ${wsLabel}`,
           status: 'PASS',
           section: 'health',
-          message: `${workspace}/node_modules is self-contained within the checkout`,
+          message: `${wsLabel}/node_modules is self-contained within the checkout`,
         })
       }
     }
