@@ -1,0 +1,5 @@
+# Pinned by Mars worktree setup to prevent pnpm from resolving the
+# workspace root outside this worktree. Not committed — exists only
+# while this worktree is active. Sub-packages with their own lockfiles
+# are treated as standalone projects and use their local lockfiles.
+packages: []

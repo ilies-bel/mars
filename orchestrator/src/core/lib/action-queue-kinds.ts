@@ -53,6 +53,7 @@ export const ACTION_QUEUE_KINDS = [
   'baseline-broken',
   'daemon-outage',
   'dirty-integration',
+  'health-check-alert',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

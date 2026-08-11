@@ -979,6 +979,31 @@ const RECIPE_DEFINITIONS = {
       { op: 'restart', label: 'Restart task', style: 'primary' },
     ],
   },
+
+  /**
+   * Raised by the Steward's scheduled health pass when a check finds a
+   * condition that requires operator attention and posture is `manual`.
+   * Auto-clears on the next clean pass once the condition is gone.
+   * The `conditionKey` payload field identifies which check raised this row
+   * so the Steward can close it when the condition resolves.
+   */
+  'health-check-alert': {
+    humanSummary: (ctx) => {
+      const checkId = str(ctx.payload['conditionKey']) || ctx.entityId
+      const message = str(ctx.payload['message']) || str(ctx.body)
+      return message
+        ? `Health check '${checkId}' requires attention: ${message}`
+        : `Health check '${checkId}' requires operator action.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      conditionKey: str(ctx.payload['conditionKey']),
+      message: str(ctx.payload['message']),
+      checkDetails: ctx.payload['checkDetails'],
+    }),
+    verbs: [],
+  },
 } satisfies Record<ActionQueueKind, Omit<Recipe, 'preloadedResponses'>>
 
 /**

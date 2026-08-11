@@ -25,6 +25,21 @@ import type { ActionQueueRow } from '../../core/daemon/view/action-queue'
 
 const LEAN_PREVIEW = 3
 
+/**
+ * Operator-configured posture for a single health check.
+ *
+ * - `automatic` — Mars acts on the finding without operator intervention:
+ *   it enqueues the fix and reports afterwards.
+ * - `manual` — the finding surfaces as a `health-check-alert` row in the
+ *   action queue. The operator sees it and decides whether to trigger the
+ *   fix. Nothing happens until they act.
+ * - `off` — the check is silenced; no alerts or tasks are raised for it.
+ *
+ * The router (Steward) reads this value per check before deciding which of
+ * the three routes to take for a given finding.
+ */
+export type HealthCheckPosture = 'automatic' | 'manual' | 'off'
+
 const NO_DAEMON_MSG =
   'action queue: daemon not running — run `mars daemon start` (the action queue view is served by the daemon)'
 
@@ -142,6 +157,10 @@ export const renderActionQueueDetail = (deps: CommandDeps, row: ActionQueueRow):
     deps.out('benchmark:')
     deps.out(`  before   ${JSON.stringify(d.before)}`)
     deps.out(`  after    ${JSON.stringify(d.after)}`)
+  }
+  if (row.kind === 'health-check-alert' && row.conditionKey) {
+    deps.out('')
+    deps.out(`condition: ${row.conditionKey}`)
   }
 }
 

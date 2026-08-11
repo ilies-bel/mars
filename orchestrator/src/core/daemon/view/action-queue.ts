@@ -47,6 +47,7 @@ const NON_TASK_FAILURE_KINDS = new Set([
   'tool-promotion',
   'hitl-slice-needs-operator',
   'daemon-outage',
+  'health-check-alert',
 ])
 
 /** Preserves the former failure-specific enrichment without changing labels. */
@@ -199,6 +200,12 @@ export interface ActionQueueRow {
     blockedCount: number
     recentDispatchDecisions: string[]
   } | null
+  /**
+   * Identifies the health-check condition that raised this `health-check-alert`
+   * row. The Steward uses this key to find and auto-close open rows when the
+   * condition is gone on the next clean pass. Null on every other row kind.
+   */
+  conditionKey?: string | null
 }
 
 /** Raw actionQueue row shape as persisted in `action_queue_items`. */
@@ -447,6 +454,7 @@ const OPERATIONAL_ALERT_COPY: Record<
   'e2e-tooling-missing': null,
   'low-disk-space': null,
   'dirty-integration': null,
+  'health-check-alert': null,
   'baseline-broken': (row) => {
     const gateName =
       typeof row.payload.failingGateName === 'string'
@@ -1109,6 +1117,13 @@ export const buildActionQueueView = async ({
 
     const recipeFields = buildRecipeFields(row, entityId, title, body)
 
+    // Extract conditionKey for health-check-alert rows. Used by the Steward
+    // to auto-close open rows when the associated condition is gone.
+    const conditionKey: string | null =
+      uiKind === 'health-check-alert' && typeof row.payload.conditionKey === 'string'
+        ? row.payload.conditionKey
+        : null
+
     rows.push({
       id: row.id,
       kind: uiKind,
@@ -1132,6 +1147,7 @@ export const buildActionQueueView = async ({
       logPath,
       stallDiagnostics,
       poolSnapshot,
+      conditionKey,
       humanSummary: recipeFields.humanSummary,
       humanDetail: recipeFields.humanDetail,
       verbs: recipeFields.verbs,
