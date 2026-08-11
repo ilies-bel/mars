@@ -22,7 +22,7 @@ export const setupWorktreeDescriptors = {
   recoveryPayload: 'Serialised recovery payload (tasks.recovery_payload); only used when kind is "fix".',
   fixForTaskId: 'The origin task a recovery recovers (tasks.fix_for_task_id). Default null.',
   taskId: 'Override the task id. Defaults to ctx.runId.',
-  onConflict: 'Conflict policy when syncing the worktree — "escalate" (default), "recreate", or "reconcile". Use "reconcile" for remerge workflows to prevent silent data loss.',
+  onConflict: 'Conflict policy for worktree sync — "recreate" (default for a task), "reconcile" (default when the run attaches to an origin), or "escalate" (default for main-committer fixes). An explicit value overrides the kind-derived default; pass "reconcile" for remerge workflows to prevent silent data loss.',
 } satisfies Record<keyof SetupWorktreeOpts, string>
 
 /** One-line descriptions for every {@link RunAgentOpts} field. */
