@@ -288,3 +288,126 @@ describe('launchUi — detached spawn', () => {
     expect(stdoutChunks.join('')).not.toContain('url=')
   })
 })
+
+// ── Vite-port and dev-mode behaviour ─────────────────────────────────────────
+
+describe('launchUi — vite port and dev mode', () => {
+  /**
+   * Test 1 (port fallback, observable at launchUi level):
+   * In dev mode mars-ui.mjs auto-selects the Vite port and reports it in the
+   * "listening on" line. launchUi must record THAT port in the pid entry — not
+   * a hard-coded 7777. Simulate both the happy path (5173) and the fallback path
+   * (e.g. 5432 when 5173 was occupied on 127.0.0.1).
+   *
+   * The IPv4-only probe (ensuring an [::1]:5173 holder does NOT cause a shift) is
+   * behaviour internal to mars-ui.mjs verified by the manual e2e steps in the task
+   * brief — it cannot be exercised through the spawn mock at this level.
+   */
+  it('records the Vite port (not 7777) in the pid entry when dev child signals a non-default port', async () => {
+    const fakeChild = makeFakeChild(11111)
+    spawnMock.mockReturnValue(fakeChild)
+
+    const promise = launchUi({ repo: tmpRepo, dev: true })
+    // Simulate mars-ui.mjs auto-selecting port 5432 (5173 was occupied on 127.0.0.1)
+    signalReady(fakeChild as unknown as FakeChild, 'http://127.0.0.1:5432')
+    await promise
+
+    const entry = readPidEntry(tmpRepo)
+    expect(entry!.port).toBe(5432)
+    expect(entry!.host).toBe('127.0.0.1')
+  })
+
+  it('records the default Vite port (5173) when dev child signals the default port', async () => {
+    const fakeChild = makeFakeChild(22222)
+    spawnMock.mockReturnValue(fakeChild)
+
+    const promise = launchUi({ repo: tmpRepo, dev: true })
+    signalReady(fakeChild as unknown as FakeChild, 'http://127.0.0.1:5173')
+    await promise
+
+    const entry = readPidEntry(tmpRepo)
+    expect(entry!.port).toBe(5173)
+  })
+
+  /** Test 2: --vite-port is forwarded verbatim to the launched child. */
+  it('forwards --vite-port to the launched child args', async () => {
+    const fakeChild = makeFakeChild(33333)
+    spawnMock.mockReturnValue(fakeChild)
+
+    const promise = launchUi({ repo: tmpRepo, vitePort: '5555' })
+    signalReady(fakeChild as unknown as FakeChild)
+    await promise
+
+    const [, launcherArgs] = spawnMock.mock.calls[0]
+    expect((launcherArgs as string[]).join(' ')).toContain('--vite-port 5555')
+  })
+
+  it('does not add --vite-port to child args when vitePort is not set', async () => {
+    const fakeChild = makeFakeChild(44444)
+    spawnMock.mockReturnValue(fakeChild)
+
+    const promise = launchUi({ repo: tmpRepo })
+    signalReady(fakeChild as unknown as FakeChild)
+    await promise
+
+    const [, launcherArgs] = spawnMock.mock.calls[0]
+    expect((launcherArgs as string[]).join(' ')).not.toContain('--vite-port')
+  })
+
+  /** Test 3: In dev mode the banner URL shows the Vite port, not 7777. */
+  it('prints the Vite port (not 7777) in the banner when in dev mode', async () => {
+    const fakeChild = makeFakeChild(55555)
+    spawnMock.mockReturnValue(fakeChild)
+
+    const stdoutChunks: string[] = []
+    const origWrite = process.stdout.write.bind(process.stdout)
+    ;(process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => {
+      stdoutChunks.push(s)
+      return true
+    }
+
+    try {
+      const promise = launchUi({ repo: tmpRepo, dev: true })
+      signalReady(fakeChild as unknown as FakeChild, 'http://127.0.0.1:5432')
+      await promise
+    } finally {
+      ;(process.stdout as unknown as { write: (s: string) => boolean }).write = origWrite
+    }
+
+    const output = stdoutChunks.join('')
+    expect(output).toContain('url=http://127.0.0.1:5432')
+    expect(output).not.toContain('url=http://127.0.0.1:7777')
+  })
+
+  /**
+   * Test 4: MARS_UI_API_BASE / VITE_API_BASE env discipline.
+   *
+   * launchUi passes process.env to the child unchanged — it does not inject
+   * VITE_API_BASE. The child (mars-ui.mjs) is responsible for setting
+   * MARS_UI_API_BASE in vite's env and omitting VITE_API_BASE; that behaviour is
+   * verified by the manual e2e steps in the task brief.
+   *
+   * What we CAN verify here: launchUi never adds VITE_API_BASE to the child env,
+   * even if MARS_UI_API_BASE was requested (e.g. by the user for a second project
+   * talking to a remote API — that is an intentional manual escape hatch, not a
+   * mars-ui launch concern).
+   */
+  it('does not inject VITE_API_BASE into the child env', async () => {
+    const savedVal = process.env['VITE_API_BASE']
+    delete process.env['VITE_API_BASE']
+
+    try {
+      const fakeChild = makeFakeChild(66666)
+      spawnMock.mockReturnValue(fakeChild)
+
+      const promise = launchUi({ repo: tmpRepo })
+      signalReady(fakeChild as unknown as FakeChild)
+      await promise
+
+      const [, , spawnOpts] = spawnMock.mock.calls[0] as [unknown, unknown, { env?: Record<string, string> }]
+      expect(spawnOpts.env?.['VITE_API_BASE']).toBeUndefined()
+    } finally {
+      if (savedVal !== undefined) process.env['VITE_API_BASE'] = savedVal
+    }
+  })
+})

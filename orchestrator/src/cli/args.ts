@@ -54,6 +54,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--kind',
   '--port',
   '--host',
+  '--vite-port',
   '--priority',
   '--tag',
   '--files',

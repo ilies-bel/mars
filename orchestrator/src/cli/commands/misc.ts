@@ -66,11 +66,15 @@ const uiStatus: Command = {
 const uiLaunch: Command = {
   path: 'ui',
   summary: 'launch the read-only Kanban + trace dashboard',
-  usage: 'usage: mars ui [--port <n>] [--host <h>] [--dev]',
+  usage: 'usage: mars ui [--port <n>] [--host <h>] [--dev] [--vite-port <n>]',
   flags: [
-    { syntax: '--port <n>', description: 'HTTP port (default: 7777)' },
+    { syntax: '--port <n>', description: 'API server HTTP port (default: 7777, fixed)' },
     { syntax: '--host <h>', description: 'bind address (default: 127.0.0.1)' },
     { syntax: '--dev', description: 'development mode (API + Vite dev server)' },
+    {
+      syntax: '--vite-port <n>',
+      description: 'Vite dev-server port (--dev only; default: auto-selects from 5173)',
+    },
   ],
   run: async (args, deps) => {
     // Intercept --help / -h before any side effects. This mirrors what
@@ -78,14 +82,17 @@ const uiLaunch: Command = {
     // in-process test adapter (which bypasses cli.ts) exercises the same path.
     if (hasFlag(args, '--help') || hasFlag(args, '-h')) {
       deps.out(
-        'mars ui [--port <n>] [--host <h>] [--dev]\n' +
+        'mars ui [--port <n>] [--host <h>] [--dev] [--vite-port <n>]\n' +
           '\n' +
           'launch the read-only Kanban + trace dashboard\n' +
           '\n' +
           'Flags:\n' +
-          '  --port <n>      HTTP port (default: 7777)\n' +
-          '  --host <h>      bind address (default: 127.0.0.1)\n' +
-          '  --dev           development mode (API + Vite dev server)\n' +
+          '  --port <n>       API server HTTP port (default: 7777, fixed)\n' +
+          '  --host <h>       bind address (default: 127.0.0.1)\n' +
+          '  --dev            development mode (API + Vite dev server)\n' +
+          '  --vite-port <n>  Vite dev-server port (--dev only; default: auto-selects\n' +
+          '                   from 5173 on the --host address — an IPv6-only holder of\n' +
+          '                   [::1]:5173 does not cause a shift)\n' +
           '\n' +
           'Subcommands:\n' +
           '  mars ui stop    stop the read-only UI server\n' +
@@ -100,7 +107,7 @@ const uiLaunch: Command = {
     const unknownFlags = args.positional.filter((t) => t.startsWith('-'))
     if (unknownFlags.length > 0) {
       deps.err(`mars ui: unknown flag: ${unknownFlags[0]!}`)
-      deps.err('usage: mars ui [--port <n>] [--host <h>] [--dev]')
+      deps.err('usage: mars ui [--port <n>] [--host <h>] [--dev] [--vite-port <n>]')
       return { code: 1 }
     }
     const { launchUi } = await import('../ui')
@@ -109,6 +116,7 @@ const uiLaunch: Command = {
       port: args.flags['--port'],
       host: args.flags['--host'],
       dev: hasFlag(args, '--dev'),
+      vitePort: args.flags['--vite-port'],
     })
     return { code: 0 }
   },

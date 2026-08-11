@@ -12,6 +12,8 @@ interface LaunchOptions {
   port?: string
   host?: string
   dev?: boolean
+  /** Vite dev-server port. Forwarded as --vite-port to mars-ui.mjs; null = auto-select. */
+  vitePort?: string
 }
 
 export interface UiPidEntry {
@@ -78,8 +80,6 @@ export const launchUi = async (opts: LaunchOptions): Promise<void> => {
     process.exit(1)
   }
 
-  const port = opts.port ? parseInt(opts.port, 10) : 7777
-  const host = opts.host ?? '127.0.0.1'
   const ctx = resolveContext(opts.repo)
   const logFile = resolve(ctx.stateDir, 'ui.log')
   // Touch the log file so the path shown in the banner always resolves even
@@ -92,6 +92,7 @@ export const launchUi = async (opts: LaunchOptions): Promise<void> => {
   if (opts.port) args.push('--port', opts.port)
   if (opts.host) args.push('--host', opts.host)
   if (opts.dev) args.push('--dev')
+  if (opts.vitePort) args.push('--vite-port', opts.vitePort)
 
   // Readiness signal: we pipe stdout and stderr so the banner is only printed
   // after the child confirms a successful bind ("listening on <url>" on stdout)
@@ -176,12 +177,14 @@ export const launchUi = async (opts: LaunchOptions): Promise<void> => {
     process.exit(1)
   }
 
-  // Only print the success banner after the child has confirmed it is bound.
+  // Parse host and port from the advertised URL so the pid entry always reflects
+  // what is actually reachable — in dev mode this is the Vite port, not 7777.
   const pidFile = getPidFilePath(opts.repo)
+  const parsedUrl = new URL(outcome.url)
   const entry: UiPidEntry = {
     pid: child.pid!,
-    port,
-    host,
+    port: parseInt(parsedUrl.port, 10),
+    host: parsedUrl.hostname,
     startedAt: new Date().toISOString(),
   }
   writeFileSync(pidFile, JSON.stringify(entry, null, 2))
