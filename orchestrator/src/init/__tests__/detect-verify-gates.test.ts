@@ -285,4 +285,29 @@ describe('detectVerifyGates', () => {
     expect(knipGate?.tier).toBe('task')
     expect(knipGate?.args).toEqual(['run', 'knip'])
   })
+
+  it('detects knip as advisory in workspace sub-packages alongside required gates', () => {
+    const repo = makeRepo()
+    writeFileSync(
+      resolve(repo, 'package.json'),
+      JSON.stringify({ workspaces: ['packages/*'] }),
+    )
+    mkdirSync(resolve(repo, 'packages', 'core'), { recursive: true })
+    writeFileSync(
+      resolve(repo, 'packages', 'core', 'package.json'),
+      JSON.stringify({
+        scripts: {
+          typecheck: 'tsc --noEmit',
+          knip: 'knip --no-exit-code',
+        },
+      }),
+    )
+
+    const gates = detectVerifyGates(repo)
+    const typecheckGate = gates.find((g) => g.scope === 'packages/core' && g.name === 'typecheck')
+    const knipGate = gates.find((g) => g.scope === 'packages/core' && g.name === 'knip')
+    expect(typecheckGate?.required).toBe(true)
+    expect(knipGate?.required).toBe(false)
+    expect(knipGate?.source).toBe('detected')
+  })
 })
