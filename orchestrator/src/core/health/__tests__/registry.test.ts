@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   createHealthRegistry,
   type HealthCheck,
@@ -99,5 +99,116 @@ describe('createHealthRegistry', () => {
     }
     registry.register(check)
     expect(registry.get('fragmented-repo-layout')?.descriptor.findingRoute).toBe('fix-task')
+  })
+})
+
+// ─── singleton registry (registerCheck / listChecks / runChecks) ──────────────
+//
+// The module-level registry is reset between tests via vi.resetModules() so
+// each test gets a clean slate.  All imports are dynamic (after the reset).
+
+describe('singleton health-check registry', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  it('listChecks returns every registered check with id, description, requires, and route', async () => {
+    const { registerCheck, listChecks } = await import('../registry.js')
+
+    registerCheck({
+      id: 'test.list',
+      description: 'List test check',
+      requires: ['fs'],
+      route: 'notice',
+      run: async () => ({ ok: true }),
+    })
+
+    const checks = listChecks()
+    expect(checks).toHaveLength(1)
+    expect(checks[0]).toMatchObject({
+      id: 'test.list',
+      description: 'List test check',
+      requires: ['fs'],
+      route: 'notice',
+    })
+  })
+
+  it('runChecks executes a check when all its prereqs are satisfied', async () => {
+    const { registerCheck, runChecks } = await import('../registry.js')
+
+    let ran = false
+    registerCheck({
+      id: 'test.run',
+      description: 'Run test check',
+      requires: ['fs', 'git'],
+      route: 'notice',
+      run: async () => {
+        ran = true
+        return { ok: true }
+      },
+    })
+
+    const results = await runChecks({ prereqs: new Set(['fs', 'git', 'daemon', 'db']) })
+    expect(ran).toBe(true)
+    const r = results.find((x) => x.id === 'test.run')
+    expect(r?.status).toBe('ok')
+  })
+
+  it('runChecks skips a check with a missing prereq and names the reason', async () => {
+    const { registerCheck, runChecks } = await import('../registry.js')
+
+    registerCheck({
+      id: 'test.skip',
+      description: 'Skip test check',
+      requires: ['daemon'],
+      route: 'alert',
+      run: async () => ({ ok: true }),
+    })
+
+    // No prereqs satisfied — daemon is missing
+    const results = await runChecks({ prereqs: new Set([]) })
+    const skipped = results.find((x) => x.id === 'test.skip')
+    expect(skipped?.status).toBe('skipped')
+    expect(skipped?.reason).toBe('prereq:daemon')
+  })
+
+  it('runChecks records status=finding when a check returns ok=false', async () => {
+    const { registerCheck, runChecks } = await import('../registry.js')
+
+    registerCheck({
+      id: 'test.finding',
+      description: 'Finding test check',
+      requires: [],
+      route: 'alert',
+      run: async () => ({ ok: false, findingKey: 'test.broken', detail: 'broken' }),
+    })
+
+    const results = await runChecks({ prereqs: new Set([]) })
+    const r = results.find((x) => x.id === 'test.finding')
+    expect(r?.status).toBe('finding')
+    expect(r?.outcome?.findingKey).toBe('test.broken')
+  })
+
+  it('registerCheck throws when the same id is registered twice', async () => {
+    const { registerCheck } = await import('../registry.js')
+
+    const def: import('../registry.js').CheckDef = {
+      id: 'dup.check',
+      description: 'Dup',
+      requires: [],
+      route: 'notice',
+      run: async () => ({ ok: true }),
+    }
+    registerCheck(def)
+    expect(() => registerCheck({ ...def })).toThrow("'dup.check' is already registered")
+  })
+
+  it("daemon.reachable appears in listChecks() after importing the index module", async () => {
+    // Importing index.js triggers the daemon-reachable side-effect registration.
+    await import('../index.js')
+    const { listChecks } = await import('../registry.js')
+
+    const ids = listChecks().map((c) => c.id)
+    expect(ids).toContain('daemon.reachable')
   })
 })

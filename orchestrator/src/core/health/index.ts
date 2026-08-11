@@ -29,6 +29,22 @@
 
 import type { ActionQueueKind } from '../lib/action-queue-kinds.js'
 
+// ── Singleton registry (prereq/skip API) ──────────────────────────────────────
+// Re-export so callers can import everything from this module.
+export type {
+  CheckId,
+  Prereq,
+  CheckContext,
+  CheckOutcome,
+  CheckDef,
+  CheckResult,
+} from './registry.js'
+export { registerCheck, listChecks, runChecks } from './registry.js'
+
+// Import all check modules so their registerCheck() side-effects fire.
+// Add new check modules here as they are introduced.
+import './checks/daemon-reachable.js'
+
 // ── Routing ───────────────────────────────────────────────────────────────────
 
 /**
