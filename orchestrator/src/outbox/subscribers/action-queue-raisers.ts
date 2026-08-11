@@ -11,10 +11,6 @@ import { registerSubscriberName } from '../registry.js';
 export const ACTION_QUEUE_RAISER_SUBSCRIBER = 'action-queue-raiser:task.blocked';
 registerSubscriberName(ACTION_QUEUE_RAISER_SUBSCRIBER);
 
-/** Unique name for the durable subscriber that resolves stale 'failed' rows when a fix task completes. */
-export const FIX_TASK_DONE_RESOLVER_SUBSCRIBER = 'action-queue-raiser:fix-task-done';
-registerSubscriberName(FIX_TASK_DONE_RESOLVER_SUBSCRIBER);
-
 /**
  * Unique name for the durable subscriber that closes open action-queue rows
  * when a task is dropped via the supersede path (ADR-0048 entity status is
@@ -66,7 +62,6 @@ const GRACE_MS = 60_000
 export function buildActionQueueRaiserSubscribers(client: DbClient): Subscriber[] {
   return [
     taskBlockedActionQueueRaiser(client),
-    fixTaskDoneActionQueueResolver(client),
     droppedViaSupersedeClearer(client),
   ];
 }
@@ -159,35 +154,10 @@ function taskBlockedActionQueueRaiser(client: DbClient): Subscriber {
         return;
       }
 
-      // Non-environmental path: if a fix/recovery task is in flight (or already
-      // completed successfully), automated recovery is handling the failure and
-      // no human action is required. Skip the raise entirely.
-      // Only raise when fixTaskId is null (no recovery task exists) or when the
-      // fix task itself failed/dropped (recovery was exhausted — the separate
-      // orchestrator:recovery-exhausted path in queue-retry.ts is the human-facing
-      // surface for that case, but we also raise here to be conservative).
-      if (p.fixTaskId !== null) {
-        const fixRow = await client.execute({
-          sql: `SELECT status FROM tasks WHERE id = ?`,
-          args: [p.fixTaskId],
-        });
-        if (fixRow.rows.length > 0) {
-          const fixStatus = (fixRow.rows[0] as unknown as { status: string }).status;
-          const isTerminalFailure = fixStatus === 'failed' || fixStatus === 'dropped';
-          if (!isTerminalFailure) {
-            // Fix task is outstanding or completed successfully — no human action needed.
-            return;
-          }
-          // Fix task failed/dropped → fall through and raise.
-        }
-        // Fix task not found in DB → raise (anomaly; conservative default).
-      }
-
       // Learned-recipe auto-run: if the operator has taught a recovery op for
-      // this failure signature, execute it automatically instead of raising a
-      // card. On success, log and publish the auto-run so the continuous
-      // conversation can narrate it and WYWA retains it historically. On error,
-      // fall through and raise the card as normal so the operator can intervene.
+      // this failure signature, execute it automatically instead of requiring
+      // manual intervention. On success, log and publish the auto-run so the
+      // continuous conversation can narrate it and WYWA retains it historically.
       if (p.failureSignature) {
         const { getLearnedRecipe, executeLearnedOp, logAutoRecipeRun } =
           await import('../../core/lib/learned-recipes.js');
@@ -207,154 +177,16 @@ function taskBlockedActionQueueRaiser(client: DbClient): Subscriber {
               targetTaskId: p.taskId,
               at: new Date().toISOString(),
             });
-            // Auto-run succeeded — do NOT raise a card.
+            // Auto-run succeeded.
             return;
           } catch {
-            // Auto-run failed (e.g. unsupported op, wrong status): fall through
-            // and raise the standard card so the operator can act manually.
+            // Auto-run failed — continue (the task is still visibly failed).
           }
         }
       }
 
-      // Slice 6: load stall_diagnostics from the task row (best-effort — null on any error).
-      let stallDiagnostics: unknown | null = null
-      try {
-        const taskDiagRow = await client.execute({
-          sql: `SELECT stall_diagnostics FROM tasks WHERE id = ?`,
-          args: [p.taskId],
-        })
-        if (taskDiagRow.rows.length > 0) {
-          const raw = (taskDiagRow.rows[0] as unknown as { stall_diagnostics: string | null }).stall_diagnostics
-          if (raw) stallDiagnostics = JSON.parse(raw)
-        }
-      } catch {
-        // Non-fatal: proceed without diagnostics.
-      }
-
-      // Slice 6: compute a live pool snapshot from task status counts.
-      let poolSnapshot: {
-        activeWorkerCount: number
-        queuedCount: number
-        runningCount: number
-        blockedCount: number
-        recentDispatchDecisions: string[]
-      } = {
-        activeWorkerCount: 0,
-        queuedCount: 0,
-        runningCount: 0,
-        blockedCount: 0,
-        recentDispatchDecisions: [],
-      }
-      try {
-        const countRows = await client.execute(
-          `SELECT status, COUNT(*) AS n FROM tasks WHERE status IN ('queued', 'running', 'blocked') GROUP BY status`,
-        )
-        const counts: Record<string, number> = {}
-        for (const row of countRows.rows as unknown as Array<{ status: string; n: number | bigint }>) {
-          counts[row.status] = Number(row.n)
-        }
-        const runningCount = counts['running'] ?? 0
-        poolSnapshot = {
-          activeWorkerCount: runningCount,
-          queuedCount: counts['queued'] ?? 0,
-          runningCount,
-          blockedCount: counts['blocked'] ?? 0,
-          recentDispatchDecisions: [],
-        }
-      } catch {
-        // Non-fatal: keep zero-valued snapshot.
-      }
-
-      // Route through the single raise path (ADR-0051).
-      // raiseActionQueueItem calls resolveOriginIdForTask(originTaskId) internally
-      // so fix/descendant tasks collapse onto their arc root. We pass originTaskId
-      // raw and avoid double-resolution at the call site.
-      await raiseActionQueueItem({
-        kind: 'failed',
-        category: 'orchestrator',
-        priority: 'high',
-        title: `Task ${p.taskId} blocked`,
-        body: `Task blocked at ${p.failingStep} with failure signature ${p.failureSignature}.`,
-        payload: {
-          taskId: p.taskId,
-          failureSignature: p.failureSignature,
-          failingStep: p.failingStep,
-          stallDiagnostics,
-          poolSnapshot,
-        },
-        context: {},
-        raisedBy: 'outbox:action-queue-raiser:task.blocked',
-        signature: `task.blocked:${p.taskId}`,
-        originTaskId: p.originId ?? p.taskId,
-      });
-    },
-  };
-}
-
-/**
- * Subscriber that resolves stale open `kind='failed'` action-queue rows when
- * the associated fix/recovery task completes successfully.
- *
- * When a fix task finishes with `reason='done'`, any open 'failed' row for its
- * arc origin is no longer actionable — the failure was handled automatically.
- * This subscriber closes those rows so the action queue only surfaces true
- * dead-ends that require human intervention.
- *
- * Idempotent via `processedOnce`: replaying the same terminal event never
- * resolves a row a second time.
- *
- * A fix task is identified by having a non-null `origin_id` in the tasks
- * table (pointing at its arc origin). Non-fix tasks (no `origin_id`) are
- * ignored.
- */
-function fixTaskDoneActionQueueResolver(client: DbClient): Subscriber {
-  return {
-    name: FIX_TASK_DONE_RESOLVER_SUBSCRIBER,
-    handler: async (event: BusEvent): Promise<void> => {
-      if (event.type !== 'task.terminal') return;
-
-      const p = event.payload as { taskId: string; reason: string };
-      if (p.reason !== 'done') return;
-
-      const { ran } = await processedOnce({
-        client,
-        subscriberId: FIX_TASK_DONE_RESOLVER_SUBSCRIBER,
-        eventId: event.id,
-        sideEffect: async (_tx) => {
-          // Event-level dedup only; the action-queue write happens outside.
-        },
-      });
-      if (!ran) return;
-
-      // Check whether the completed task is a fix/recovery task (i.e. has an
-      // origin_id pointing at its arc origin). Non-fix tasks have no origin_id.
-      const taskRow = await client.execute({
-        sql: `SELECT origin_id FROM tasks WHERE id = ?`,
-        args: [p.taskId],
-      });
-      if (taskRow.rows.length === 0) return;
-
-      const tr = taskRow.rows[0] as unknown as { origin_id: string | null };
-      if (!tr.origin_id) return; // not a fix/recovery task
-
-      const originId = tr.origin_id;
-
-      // Resolve every open 'failed' row for this arc origin. In practice there
-      // is at most one open row per arc (origin-fingerprint dedup), but we loop
-      // to be defensive.
-      const openRows = await client.execute({
-        sql: `SELECT id FROM action_queue_items
-               WHERE kind = 'failed' AND status = 'open' AND origin_task_id = ?`,
-        args: [originId],
-      });
-
-      for (const row of openRows.rows) {
-        const id = (row as unknown as { id: string }).id;
-        await setActionQueueState(id, 'resolved', {
-          note: `fix task ${p.taskId} completed successfully`,
-          by: `outbox:${FIX_TASK_DONE_RESOLVER_SUBSCRIBER}`,
-        });
-      }
+      // `failed` rows are now derived from tasks.status='failed' on every read;
+      // no stored row is written here.
     },
   };
 }

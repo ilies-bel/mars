@@ -21,26 +21,10 @@
  * tasks do not immediately alert for time spent legitimately parked.
  */
 
-import { listTasks } from '../queue'
-import { listActionQueueItems, raiseActionQueueItem, setActionQueueState } from '../lib/action-queue'
-import type { ActionQueueKind } from '../lib/action-queue-kinds'
 import type { DispatchPauseState } from './pause-state'
-
-export const STALE_QUEUED_KIND: ActionQueueKind = 'stale-queued'
-export const STALE_QUEUED_SUMMARY_KIND: ActionQueueKind = 'stale-queued-summary'
 
 /** Default stale-queued threshold: 10 minutes. */
 export const DEFAULT_STALE_QUEUED_MS = 10 * 60_000
-
-/** Keep one sweep from turning a large backlog into an action-queue flood. */
-const MAX_ALERTS_PER_SWEEP = 20
-
-const resolvedThresholdMs = (): number => {
-  const raw = process.env.MARS_STALE_QUEUED_MS
-  if (!raw) return DEFAULT_STALE_QUEUED_MS
-  const parsed = Number(raw)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STALE_QUEUED_MS
-}
 
 export interface StaleQueuedSweepDeps {
   /** Number of worker slots currently occupied (from tracker.inFlightCount()). */
@@ -80,173 +64,13 @@ export interface StaleQueuedSweepDeps {
  *
  * @returns IDs of tasks for which a new or bumped alert was raised.
  */
+/**
+ * No-op sweep: stale-queued rows are now derived on read from
+ * `tasks WHERE status='queued' AND age > threshold`.  This function is kept
+ * as a stub so call sites in server.ts compile without change.
+ */
 export const runStaleQueuedSweep = async (
-  deps: StaleQueuedSweepDeps,
+  _deps: StaleQueuedSweepDeps,
 ): Promise<{ alerted: string[] }> => {
-  const now = deps.nowMs ?? Date.now()
-  const threshold = resolvedThresholdMs()
-  const {
-    activeWorkerCount,
-    implementCap,
-    queueDepth,
-    dispatchDecisionSummary,
-    dispatchPauseState,
-    dispatchResumedAt,
-  } = deps
-
-  // When dispatch is deliberately paused (operator, storm, quota, or baseline),
-  // queued tasks are expected — suppress all per-task stale-queued alerts entirely.
-  // The alert surface is the action queue; flooding it during a known, intentional
-  // pause trains operators to ignore it.
-  if (dispatchPauseState?.paused) return { alerted: [] }
-
-  // Do not scale the age threshold with a lowered cap: an idle slot is still
-  // actionable at any cap. Saturation is the complete distinction between
-  // deliberate steward throttling and a dispatcher that has stopped draining.
-  if (activeWorkerCount >= implementCap) return { alerted: [] }
-
-  const tasks = await listTasks('queued')
-  const queuedIds = new Set(tasks.map((t) => t.id))
-
-  // Reconcile: close any open stale-queued rows for tasks that are no longer in
-  // 'queued' status. When a task fails (or finishes, or is dropped) the
-  // alert-dismisser correctly NO-OPs on task.failed (ADR-0028) and never closes
-  // a stale-queued row — so the reconciliation happens here, reading live task
-  // state in the same pass as the stale-age computation to avoid acting on a
-  // previously-materialised set.
-  const openStaleRows = await listActionQueueItems('open', { kind: STALE_QUEUED_KIND })
-  for (const item of openStaleRows) {
-    const taskId =
-      typeof item.payload.taskId === 'string' ? item.payload.taskId : null
-    if (taskId !== null && !queuedIds.has(taskId)) {
-      await setActionQueueState(item.id, 'resolved', {
-        resolution: 'superseded',
-        note: 'task is no longer queued',
-        by: 'daemon:stale-queued-watchdog',
-      }).catch(() => {
-        // Non-fatal: the action queue row will be reconciled on the next sweep.
-      })
-    }
-  }
-
-  const alerted: string[] = []
-  const staleTasks = tasks
-    .map((task) => {
-      const updatedMs = Date.parse(task.updatedAt)
-      // Staleness is measured from max(updatedAt, dispatchResumedAt) so that a
-      // task that was legitimately parked during a pause does not immediately
-      // alert the moment dispatch resumes — it gets a fresh threshold window.
-      const effectiveStartMs =
-        dispatchResumedAt !== undefined ? Math.max(updatedMs, dispatchResumedAt) : updatedMs
-      return { task, updatedMs, effectiveStartMs }
-    })
-    .filter(
-      ({ updatedMs, effectiveStartMs }) =>
-        Number.isFinite(updatedMs) && now - effectiveStartMs > threshold,
-    )
-    .sort((a, b) => a.effectiveStartMs - b.effectiveStartMs)
-
-  for (const { task, effectiveStartMs } of staleTasks.slice(0, MAX_ALERTS_PER_SWEEP)) {
-    const queuedAgeMs = now - effectiveStartMs
-
-    const ageMinutes = Math.round(queuedAgeMs / 60_000)
-    const shortGoal =
-      task.prompt?.split('\n')[0]?.trim().replace(/[.,:;!?]+$/, '').slice(0, 60) ||
-      `task ${task.id}`
-
-    const idleCapacityNote =
-      activeWorkerCount > 0
-        ? `${activeWorkerCount} worker(s) active below the ${implementCap}-worker cap — dispatcher may be stuck.`
-        : queueDepth > 1
-          ? `No active workers despite ${queueDepth} queued task(s) and a ${implementCap}-worker cap — dispatcher may be stuck.`
-          : `No active workers despite a ${implementCap}-worker cap — dispatcher may be stuck.`
-
-    await raiseActionQueueItem({
-      kind: STALE_QUEUED_KIND,
-      category: 'daemon',
-      priority: 'normal',
-      title: `Stale-queued ${ageMinutes} min: ${shortGoal}`,
-      body:
-        `"${shortGoal}" has been waiting in the dispatch queue for ${ageMinutes} min ` +
-        `(threshold: ${Math.round(threshold / 60_000)} min). ` +
-        idleCapacityNote +
-        ` Queue depth: ${queueDepth}.`,
-      payload: {
-        taskId: task.id,
-        queuedAgeMs,
-        activeWorkerCount,
-        implementCap,
-        queueDepth,
-        dispatchDecisionSummary,
-      },
-      context: { taskId: task.id },
-      raisedBy: 'daemon:stale-queued-watchdog',
-      // Signature-keyed (no originTaskId) so the fingerprint is
-      // sha1('stale-queued:<taskId>'), giving kind-specific deduplication
-      // that does not collide with 'failed' or other per-task kinds.
-      signature: task.id,
-      occurrence: {
-        queuedAgeMs,
-        activeWorkerCount,
-        implementCap,
-        queueDepth,
-        detectedAt: new Date(now).toISOString(),
-      },
-    }).catch(() => {
-      // Non-fatal: the task stays visible via mars list regardless.
-    })
-
-    alerted.push(task.id)
-  }
-
-  const suppressedCount = staleTasks.length - alerted.length
-  if (suppressedCount > 0) {
-    await raiseActionQueueItem({
-      kind: STALE_QUEUED_SUMMARY_KIND,
-      category: 'daemon',
-      priority: 'normal',
-      title: `Stale-queued watchdog suppressed ${suppressedCount} additional alert(s)`,
-      body:
-        `${suppressedCount} additional stale queued task alert(s) were suppressed in this sweep; ` +
-        `only the ${MAX_ALERTS_PER_SWEEP} oldest were raised individually. ` +
-        `Queue depth: ${queueDepth}; active workers: ${activeWorkerCount}/${implementCap}.`,
-      payload: {
-        suppressionSummary: true,
-        suppressedCount,
-        activeWorkerCount,
-        implementCap,
-        queueDepth,
-        dispatchDecisionSummary,
-      },
-      context: {},
-      raisedBy: 'daemon:stale-queued-watchdog',
-      // This is intentionally distinct from the unchanged per-task signature
-      // so one summary row is updated on each overflowing sweep.
-      signature: 'summary',
-      occurrence: {
-        suppressedCount,
-        activeWorkerCount,
-        implementCap,
-        queueDepth,
-        detectedAt: new Date(now).toISOString(),
-      },
-    }).catch(() => {
-      // Non-fatal: individual alerts still identify the oldest stalled tasks.
-    })
-  } else {
-    // Queue drained below the suppression ceiling: close any lingering summary row
-    // so it does not mislead operators into thinking there is an active backlog.
-    const openSummaryRows = await listActionQueueItems('open', { kind: STALE_QUEUED_SUMMARY_KIND })
-    for (const item of openSummaryRows) {
-      await setActionQueueState(item.id, 'resolved', {
-        resolution: 'superseded',
-        note: 'no suppressed stale-queued tasks remain',
-        by: 'daemon:stale-queued-watchdog',
-      }).catch(() => {
-        // Non-fatal: individual alerts still identify the oldest stalled tasks.
-      })
-    }
-  }
-
-  return { alerted }
+  return { alerted: [] }
 }

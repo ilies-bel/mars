@@ -1,4 +1,3 @@
-import { raiseActionQueueItem } from './lib/action-queue'
 import { listStewardLedgerFor } from './steward-ledger'
 
 export interface StewardTarget {
@@ -32,26 +31,12 @@ export const shouldStewardFire = async (
 }
 
 /**
- * Surface an exhausted Steward intervention to the operator. The signature
- * includes the complete versioned target identity, so repeated detections
- * update one row while a changed target version receives a fresh alert.
+ * No-op: `steward-repeat` rows are now a derived kind (ADR-0057).  The
+ * condition — steward already intervened on this target version — is visible
+ * via the steward ledger and the arc's current status without a stored row.
+ * Kept as a stub so callers compile without change.
  */
 export const raiseStewardRepeatActionQueueItem = async (
-  target: StewardTarget,
-  reason: string,
-): Promise<string> =>
-  raiseActionQueueItem({
-    kind: 'steward-repeat',
-    category: 'orchestrator',
-    priority: 'high',
-    title: `Steward already acted on ${target.kind} ${target.id}`,
-    body: `${reason} Review the prior intervention and decide how to proceed.`,
-    payload: {
-      targetKind: target.kind,
-      targetId: target.id,
-      targetVersion: target.version,
-    },
-    context: { repoRoot: process.env.MARS_REPO ?? null },
-    raisedBy: 'steward-guard',
-    signature: `${target.kind}:${target.id}:${target.version}`,
-  })
+  _target: StewardTarget,
+  _reason: string,
+): Promise<string> => ''

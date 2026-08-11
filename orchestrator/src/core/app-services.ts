@@ -199,6 +199,12 @@ export interface AppServicesDeps {
    * renderers that depend on it default to the unpaused branch.
    */
   getPauseState?: () => DispatchPauseState
+  /**
+   * Optional: supplies a `ConditionItemsSource` that derives synthetic action-queue
+   * rows for condition kinds (failed, stale-queued, gate-broken, etc.) from live
+   * system state.  When absent the projection only shows row-backed kinds.
+   */
+  getConditionsSource?: () => import('./daemon/view/action-queue').ConditionItemsSource
 }
 
 /**
@@ -1145,6 +1151,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       filter,
       pauseState: deps.getPauseState?.() ?? null,
       kinds: opts?.kinds,
+      conditionsSource: deps.getConditionsSource?.(),
     })
   }
 

@@ -1874,6 +1874,27 @@ const DDL: readonly string[] = [
     check_id  text PRIMARY KEY,
     posture   text NOT NULL CHECK (posture IN ('automatic', 'manual', 'off'))
   )`,
+
+  // ADR-0057: condition kinds are derived on read; stored rows for these kinds
+  // are stale artifacts from before the derivation refactor. Delete them once at
+  // startup — they carry no operator-authored content, so nothing is lost. The
+  // DELETE is idempotent (rows absent on every subsequent boot).
+  `DELETE FROM action_queue_items
+     WHERE kind IN (
+       'failed',
+       'stale-queued',
+       'gate-broken',
+       'subscriber-stalled',
+       'signature-storm',
+       'daemon-died',
+       'daemon-code-drift',
+       'baseline-broken',
+       'stale-worktree',
+       'phantom-task',
+       'worktree-ahead',
+       'orphaned-origin',
+       'steward-repeat'
+     )`,
 ]
 
 /**

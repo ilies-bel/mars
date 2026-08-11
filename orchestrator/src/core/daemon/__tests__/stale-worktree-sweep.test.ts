@@ -1,252 +1,30 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { resolve } from 'node:path'
+/**
+ * stale-worktree-sweep tests (ADR-0057 update).
+ *
+ * `detectAndRaiseStaleWorktrees` is now a no-op stub: `stale-worktree` rows
+ * are derived on read from the filesystem by `deriveStaleWorktreeConditions`
+ * in the derivation layer.  This suite verifies the stub's no-op contract
+ * and that `buildNextActionBody` (used by the derivation layer) still works.
+ */
 
-interface QueueModule {
-  enqueueTask: typeof import('../../queue').enqueueTask
-  resolveQueueClient: typeof import('../../queue').resolveQueueClient
-  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
-  updateTask: typeof import('../../queue').updateTask
-}
+import { describe, expect, it } from 'vitest'
+import {
+  detectAndRaiseStaleWorktrees,
+  buildNextActionBody,
+} from '../stale-worktree-sweep.js'
 
-interface ActionQueueModule {
-  listActionQueueItems: typeof import('../../lib/action-queue').listActionQueueItems
-  getActionQueueItem: typeof import('../../lib/action-queue').getActionQueueItem
-}
-
-interface SweepModule {
-  detectAndRaiseStaleWorktrees: typeof import('../stale-worktree-sweep').detectAndRaiseStaleWorktrees
-  buildNextActionBody: typeof import('../stale-worktree-sweep').buildNextActionBody
-  STALE_WORKTREE_KIND: typeof import('../stale-worktree-sweep').STALE_WORKTREE_KIND
-}
-
-interface AlertDismisserModule {
-  ensureAlertDismisser: typeof import('../alert-dismisser').ensureAlertDismisser
-  drainAlertDismissals: typeof import('../alert-dismisser').drainAlertDismissals
-}
-
-const setupRepo = (): string => {
-  const repo = mkdtempSync(resolve(tmpdir(), 'mars-stale-sweep-'))
-  execFileSync('git', ['init', '-q'], { cwd: repo })
-  mkdirSync(resolve(repo, '.mars'), { recursive: true })
-  return repo
-}
-
-/** Two days ago — always older than the 24h default threshold. */
-const OLD_UPDATED_AT = new Date(Date.now() - 2 * 24 * 3_600_000).toISOString()
-
-const loadModules = async (
-  repo: string,
-): Promise<{
-  q: QueueModule
-  actionQueue: ActionQueueModule
-  sweep: SweepModule
-  ad: AlertDismisserModule
-}> => {
-  vi.resetModules()
-  process.env.MARS_REPO = repo
-  process.env.MARS_STALE_WORKTREE_HOURS = '24'
-  const q = (await import('../../queue')) as unknown as QueueModule
-  await q.migrateQueueSchema()
-  const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
-  const sweep = (await import('../stale-worktree-sweep')) as unknown as SweepModule
-  const ad = (await import('../alert-dismisser')) as unknown as AlertDismisserModule
-  return { q, actionQueue, sweep, ad }
-}
-
-describe('detectAndRaiseStaleWorktrees', () => {
-  let repo: string
-
-  beforeEach(() => {
-    repo = setupRepo()
+describe('detectAndRaiseStaleWorktrees (ADR-0057 — derived kind)', () => {
+  it('is a no-op that always returns []', async () => {
+    const result = await detectAndRaiseStaleWorktrees('/any/repo/root')
+    expect(result).toEqual([])
   })
+})
 
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    delete process.env.MARS_STALE_WORKTREE_HOURS
-    rmSync(repo, { recursive: true, force: true })
-  })
-
-  it('raises exactly one stale-worktree actionQueue item keyed by origin task id', async () => {
-    const { q, actionQueue, sweep } = await loadModules(repo)
-    const task = await q.enqueueTask('some stale work', undefined, { skipTriage: true })
-
-    // Age the task beyond the threshold
-    await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
-      args: [OLD_UPDATED_AT, task.id],
-    })
-
-    // Create the worktree directory
-    mkdirSync(resolve(repo, '.mars', 'worktrees', task.id), { recursive: true })
-
-    const raised = await sweep.detectAndRaiseStaleWorktrees(repo)
-
-    expect(raised).toHaveLength(1)
-    const items = await actionQueue.listActionQueueItems('open')
-    expect(items).toHaveLength(1)
-    expect(items[0].kind).toBe(sweep.STALE_WORKTREE_KIND)
-    expect(items[0].context).toEqual(expect.objectContaining({ taskId: task.id }))
-  })
-
-  it('re-detecting the same stale worktree updates the existing item, not a sibling', async () => {
-    const { q, actionQueue, sweep } = await loadModules(repo)
-    const task = await q.enqueueTask('some stale work', undefined, { skipTriage: true })
-
-    await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
-      args: [OLD_UPDATED_AT, task.id],
-    })
-
-    mkdirSync(resolve(repo, '.mars', 'worktrees', task.id), { recursive: true })
-
-    const firstRun = await sweep.detectAndRaiseStaleWorktrees(repo)
-    const secondRun = await sweep.detectAndRaiseStaleWorktrees(repo)
-
-    // Same item id returned on every detection
-    expect(firstRun).toHaveLength(1)
-    expect(secondRun[0]).toBe(firstRun[0])
-
-    // Still only one open item — no sibling was created
-    const items = await actionQueue.listActionQueueItems('open')
-    expect(items).toHaveLength(1)
-
-    // seen_count was bumped on the second detection
-    const item = await actionQueue.getActionQueueItem(firstRun[0])
-    expect(item!.seenCount).toBe(2)
-  })
-
-  it('the actionQueue item body describes the stale-worktree state (recovery verbs are buttons, not body text)', async () => {
-    const { q, actionQueue, sweep } = await loadModules(repo)
-    const task = await q.enqueueTask('work', undefined, { skipTriage: true })
-
-    await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
-      args: [OLD_UPDATED_AT, task.id],
-    })
-    mkdirSync(resolve(repo, '.mars', 'worktrees', task.id), { recursive: true })
-
-    await sweep.detectAndRaiseStaleWorktrees(repo)
-
-    const items = await actionQueue.listActionQueueItems('open')
-    expect(items[0].body).toContain(`Task ${task.id} has a stale worktree`)
-    // The button-duplicating command footer is gone.
-    expect(items[0].body).not.toContain(`mars restart ${task.id}`)
-    expect(items[0].body).not.toContain(`mars drop ${task.id}`)
-  })
-
-  it('does not raise an item for tasks in terminal states (done, failed, dropped)', async () => {
-    const { q, actionQueue, sweep } = await loadModules(repo)
-
-    const taskDone = await q.enqueueTask('done task', undefined, { skipTriage: true })
-    const taskFailed = await q.enqueueTask('failed task', undefined, { skipTriage: true })
-    const taskDropped = await q.enqueueTask('dropped task', undefined, { skipTriage: true })
-
-    for (const [id, st] of [
-      [taskDone.id, 'done'],
-      [taskFailed.id, 'failed'],
-      [taskDropped.id, 'dropped'],
-    ] as const) {
-      await q.resolveQueueClient().execute({
-        sql: `UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
-        args: [st, OLD_UPDATED_AT, id],
-      })
-      mkdirSync(resolve(repo, '.mars', 'worktrees', id), { recursive: true })
-    }
-
-    const raised = await sweep.detectAndRaiseStaleWorktrees(repo)
-    expect(raised).toHaveLength(0)
-
-    const items = await actionQueue.listActionQueueItems('open')
-    expect(items).toHaveLength(0)
-  })
-
-  it('does not raise an item when no worktree directory exists on disk', async () => {
-    const { q, actionQueue, sweep } = await loadModules(repo)
-    const task = await q.enqueueTask('no worktree', undefined, { skipTriage: true })
-
-    await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
-      args: [OLD_UPDATED_AT, task.id],
-    })
-    // Intentionally omit creating the worktree directory
-
-    const raised = await sweep.detectAndRaiseStaleWorktrees(repo)
-    expect(raised).toHaveLength(0)
-
-    const items = await actionQueue.listActionQueueItems('open')
-    expect(items).toHaveLength(0)
-  })
-
-  it('does not raise an item for a task updated within the threshold', async () => {
-    const { q, actionQueue, sweep } = await loadModules(repo)
-    const task = await q.enqueueTask('fresh task', undefined, { skipTriage: true })
-
-    // updatedAt stays at creation time (very recent — well within 24h threshold)
-    mkdirSync(resolve(repo, '.mars', 'worktrees', task.id), { recursive: true })
-
-    const raised = await sweep.detectAndRaiseStaleWorktrees(repo)
-    expect(raised).toHaveLength(0)
-
-    const items = await actionQueue.listActionQueueItems('open')
-    expect(items).toHaveLength(0)
-  })
-
-  it('closes the actionQueue item via the Invalidator when the origin task reaches a terminal state', async () => {
-    const { q, actionQueue, sweep, ad } = await loadModules(repo)
-    const client = q.resolveQueueClient()
-    const task = await q.enqueueTask('task to complete', undefined, { skipTriage: true })
-
-    await client.execute({
-      sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
-      args: [OLD_UPDATED_AT, task.id],
-    })
-    mkdirSync(resolve(repo, '.mars', 'worktrees', task.id), { recursive: true })
-
-    // Sweep raises the actionQueue item
-    await sweep.detectAndRaiseStaleWorktrees(repo)
-
-    const openBefore = await actionQueue.listActionQueueItems('open')
-    expect(openBefore).toHaveLength(1)
-    const itemId = openBefore[0].id
-
-    // Status change is no longer cleared inline by updateTask; it emits
-    // task.terminal{done} into the outbox, and the Invalidator (a durable
-    // subscriber) closes the row on drain — the same clear, now off the
-    // outbox so it survives a daemon-down window (ADR-0027/0030).
-    await ad.ensureAlertDismisser(client)
-    await q.updateTask(task.id, { status: 'done' })
-    await ad.drainAlertDismissals(client)
-
-    // Item should now be resolved, not open
-    const openAfter = await actionQueue.listActionQueueItems('open')
-    expect(openAfter).toHaveLength(0)
-
-    const item = await actionQueue.getActionQueueItem(itemId)
-    expect(item!.status).toBe('resolved')
-  })
-
-  it('raises distinct items for two different stale worktrees', async () => {
-    const { q, actionQueue, sweep } = await loadModules(repo)
-    const task1 = await q.enqueueTask('stale work 1', undefined, { skipTriage: true })
-    const task2 = await q.enqueueTask('stale work 2', undefined, { skipTriage: true })
-
-    for (const id of [task1.id, task2.id]) {
-      await q.resolveQueueClient().execute({
-        sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
-        args: [OLD_UPDATED_AT, id],
-      })
-      mkdirSync(resolve(repo, '.mars', 'worktrees', id), { recursive: true })
-    }
-
-    const raised = await sweep.detectAndRaiseStaleWorktrees(repo)
-
-    expect(raised).toHaveLength(2)
-    expect(raised[0]).not.toBe(raised[1])
-
-    const items = await actionQueue.listActionQueueItems('open')
-    expect(items).toHaveLength(2)
+describe('buildNextActionBody', () => {
+  it('returns a plain description of the stale state', () => {
+    const body = buildNextActionBody('mars-abc123', 48, 'queued')
+    expect(body).toContain('mars-abc123')
+    expect(body).toContain('48h')
+    expect(body).toContain('queued')
   })
 })

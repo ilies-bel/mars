@@ -136,17 +136,6 @@ export interface BaselineHealthDeps {
   runGate: (gate: BaselineGate, cwd: string) => Promise<GateResult>
   /** The daemon's shared pause controller. */
   pause: PauseController
-  /**
-   * Raise a `baseline-broken` action-queue item. Implementors should call
-   * `raiseActionQueueItem` with `kind='baseline-broken'` and a fixed signature
-   * so the existing dedup logic ensures exactly one open row.
-   */
-  raiseActionQueueRow: (failingGateName: string, output: string) => Promise<void>
-  /**
-   * Resolve the open `baseline-broken` row, if any.  Called when the baseline
-   * passes all gates again.
-   */
-  resolveActionQueueRow: () => Promise<void>
   /** Optional logger. */
   log?: (msg: string) => void
 }
@@ -155,9 +144,8 @@ export interface BaselineHealthDeps {
 export interface BaselineHealthChecker {
   /**
    * Run all required task-tier gates against the integration branch.
-   * Pauses dispatch (reason=`'baseline'`) and raises one action-queue item on
-   * the first failing required gate; resumes and resolves the item when all
-   * pass.
+   * Pauses dispatch (reason=`'baseline'`) when a required gate fails and
+   * resumes when all pass.
    *
    * @returns `{ poisoned: true }` when at least one required gate failed.
    */
@@ -168,6 +156,12 @@ export interface BaselineHealthChecker {
    * callback to reclassify task verify failures as `verify:poisoned-baseline`.
    */
   isBaselinePoisoned(): boolean
+  /**
+   * Returns the last recorded baseline detection result, or null when no
+   * check has been run yet.  Used by the derivation layer to populate the
+   * `baseline-broken` action-queue row with the failing gate name and output.
+   */
+  getLastDetection(): BaselineDetection | null
 }
 
 /**
@@ -177,13 +171,14 @@ export interface BaselineHealthChecker {
 export const createBaselineHealthChecker = (
   deps: BaselineHealthDeps,
 ): BaselineHealthChecker => {
-  const { repoRoot, loadGates, runGate, pause, raiseActionQueueRow, resolveActionQueueRow, log } =
-    deps
+  const { repoRoot, loadGates, runGate, pause, log } = deps
 
   let _poisoned = false
+  let _lastDetection: BaselineDetection | null = null
 
   return {
     isBaselinePoisoned: () => _poisoned,
+    getLastDetection: () => _lastDetection,
 
     async check(): Promise<{ poisoned: boolean }> {
       const detection = await isBaselineBroken({ repoRoot, loadGates, runGate })
@@ -198,19 +193,14 @@ export const createBaselineHealthChecker = (
         return { poisoned: _poisoned }
       }
 
+      _lastDetection = detection
+
       if (!detection.broken) {
         // No required gates configured, or all required gates passed.
         if (_poisoned) {
           log?.('[baseline-health] all required gates pass — baseline recovered')
           _poisoned = false
           if (pause.get().reason === 'baseline') pause.resume()
-          await resolveActionQueueRow().catch((err) =>
-            log?.(
-              `[baseline-health] resolveActionQueueRow failed (non-fatal): ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            ),
-          )
         } else {
           log?.('[baseline-health] all required gates pass')
         }
@@ -218,7 +208,7 @@ export const createBaselineHealthChecker = (
       }
 
       // At least one required gate failed.
-      const { failingGateName = '(unknown)', output = '' } = detection
+      const { failingGateName = '(unknown)' } = detection
       log?.(
         `[baseline-health] gate "${failingGateName}" FAILED on integration branch`,
       )
@@ -229,16 +219,6 @@ export const createBaselineHealthChecker = (
       // stomp it — but still mark the baseline as poisoned so the override
       // callback re-classifies subsequent task failures.
       pause.pause('baseline', `gate "${failingGateName}" fails on integration branch`)
-
-      try {
-        await raiseActionQueueRow(failingGateName, output)
-      } catch (err) {
-        log?.(
-          `[baseline-health] raiseActionQueueRow failed (non-fatal): ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        )
-      }
 
       return { poisoned: true }
     },

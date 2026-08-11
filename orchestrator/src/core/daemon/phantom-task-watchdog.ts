@@ -62,10 +62,10 @@
 
 import { getTask, listTasks, updateTask } from '../queue'
 import { raiseActionQueueItem } from '../lib/action-queue'
-import type { ActionQueueKind } from '../lib/action-queue-kinds'
 import type { DispatchKind, InFlightEntry } from './task-flight-tracker'
 
-export const PHANTOM_TASK_KIND: ActionQueueKind = 'phantom-task'
+/** @deprecated `phantom-task` is now a derived kind (ADR-0057); no stored rows are written. */
+export const PHANTOM_TASK_KIND = 'phantom-task' as const
 
 /** Default wall-clock ceiling: 30 minutes. */
 export const DEFAULT_CEILING_MS = 30 * 60_000
@@ -295,37 +295,9 @@ export const sweepPhantomTasks = async (
         reclaimSlot(task.id, entry.kind)
       }
 
-      // Raise exactly one action-queue item per phantom; dedup by taskId so
-      // re-detections bump seen_count rather than spawning siblings.
-      const shortGoal =
-        task.prompt?.split('\n')[0]?.trim().replace(/[.,:;!?]+$/, '').slice(0, 60) || task.id
-      await raiseActionQueueItem({
-        kind: PHANTOM_TASK_KIND,
-        category: 'daemon',
-        priority: 'high',
-        title: `Stuck ${ageMinutes} min: ${shortGoal}`,
-        body: buildPhantomBody(task.id, status, phantomReason, ageMinutes, task.prompt),
-        payload: {
-          taskId: task.id,
-          previousStatus: status,
-          failedPhase,
-          reason: phantomReason,
-          ageMinutes,
-          pid: entry?.pid ?? null,
-        },
-        context: { taskId: task.id },
-        raisedBy: 'daemon:phantom-task-watchdog',
-        signature: task.id,
-        originTaskId: task.id,
-        occurrence: {
-          previousStatus: status,
-          reason: phantomReason,
-          ageMinutes,
-          detectedAt: new Date(now).toISOString(),
-        },
-      }).catch(() => {
-        // Non-fatal: task is already marked failed.
-      })
+      // The phantom watchdog sets the task to status='failed'; the derived
+      // action-queue view (ADR-0057) picks it up as a 'failed' row automatically.
+      // No separate 'phantom-task' stored row is written here.
 
       failed.push(task.id)
     }

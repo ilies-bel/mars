@@ -17,6 +17,7 @@ import {
   buildActionQueueView,
   type ActionQueueStateStore,
   type ActionQueueTaskStore,
+  type ConditionItemsSource,
   type PersistedActionQueueRow,
   type TaskForActionQueue,
 } from '../action-queue.js'
@@ -1072,5 +1073,96 @@ describe('buildActionQueueView — signature-storm pause-state projection', () =
     })
     expect(runningRows.find((r) => r.id === 'storm')!.title).toContain('3 tasks failed with `verify:typecheck/unclassified`')
     expect(pausedRows.find((r) => r.id === 'storm')!.title).toContain('3 tasks failed with `verify:typecheck/unclassified`')
+  })
+})
+
+// ── Condition-derived items ────────────────────────────────────────────────────
+// Condition kinds are computed on read from live state; no row need be stored.
+// buildActionQueueView accepts an optional conditionsSource that contributes
+// synthetic PersistedActionQueueRow items alongside the persisted rows so the
+// enrichment pipeline treats them identically.
+
+const makeConditionsSource = (rows: PersistedActionQueueRow[]): ConditionItemsSource => ({
+  derive: async (_opts) => rows,
+})
+
+describe('buildActionQueueView — condition-derived items', () => {
+  it('includes a synthetic condition row from conditionsSource in the result', async () => {
+    const syntheticStorm: PersistedActionQueueRow = {
+      id: 'derived:sig-storm:verify:typecheck/unclassified',
+      kind: 'signature-storm',
+      priority: 'urgent',
+      title: '', // overridden by OPERATIONAL_ALERT_COPY renderer
+      body: '',
+      payload: { signature: 'verify:typecheck/unclassified', streak: 3, stewardAttempts: 0 },
+      context: {},
+      raisedAt: Date.parse('2024-01-01T00:00:00.000Z'),
+      lastSeenAt: Date.parse('2024-01-01T00:00:00.000Z'),
+    }
+
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([]),                    // no stored rows
+      taskStore: makeTaskStore([]),
+      conditionsSource: makeConditionsSource([syntheticStorm]),
+    })
+
+    expect(rows.some((r) => r.id === syntheticStorm.id)).toBe(true)
+    const row = rows.find((r) => r.id === syntheticStorm.id)!
+    expect(row.kind).toBe('signature-storm')
+    // Title is derived from the OPERATIONAL_ALERT_COPY renderer (not the empty stored title).
+    expect(row.title).toContain('verify:typecheck/unclassified')
+  })
+
+  it('omits condition rows for kinds excluded by the kinds filter', async () => {
+    const syntheticStorm: PersistedActionQueueRow = {
+      id: 'derived:sig-storm:x',
+      kind: 'signature-storm',
+      priority: 'urgent',
+      title: '',
+      body: '',
+      payload: { signature: 'x', streak: 1, stewardAttempts: 0 },
+      context: {},
+      raisedAt: Date.parse('2024-01-01T00:00:00.000Z'),
+      lastSeenAt: Date.parse('2024-01-01T00:00:00.000Z'),
+    }
+
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([]),
+      taskStore: makeTaskStore([]),
+      conditionsSource: makeConditionsSource([syntheticStorm]),
+      kinds: new Set(['failed']),          // filter excludes signature-storm
+    })
+
+    expect(rows.some((r) => r.kind === 'signature-storm')).toBe(false)
+  })
+
+  it('derived-kind rows via conditionsSource produce the same output as the same kind via stateStore (no conditionsSource)', async () => {
+    // When conditionsSource IS provided, stored derived-kind rows are filtered
+    // (they're stale artifacts); the authoritative rows come from conditionsSource.
+    // When conditionsSource is ABSENT (test/CLI contexts), stored derived-kind
+    // rows pass through unchanged — so both paths produce the same enriched output.
+    const row = makeRow({ id: 'r1', kind: 'failed' })
+
+    // Path A: derived-kind row supplied via conditionsSource (daemon path)
+    const rowsViaSource = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([]),          // no stored rows
+      taskStore: makeTaskStore([makeTask()]),
+      conditionsSource: makeConditionsSource([row]),
+    })
+
+    // Path B: same row supplied via stateStore, no conditionsSource (test/CLI path)
+    const rowsViaStore = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([row]),
+      taskStore: makeTaskStore([makeTask()]),
+      // No conditionsSource → stored derived-kind rows pass through
+    })
+
+    // Both paths must produce the same row id and kind.
+    expect(rowsViaSource.map((r) => r.id)).toEqual(rowsViaStore.map((r) => r.id))
+    expect(rowsViaSource.map((r) => r.kind)).toEqual(rowsViaStore.map((r) => r.kind))
   })
 })

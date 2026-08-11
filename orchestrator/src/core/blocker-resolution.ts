@@ -6,7 +6,6 @@ import {
   raiseRecoveryExhaustedActionQueue,
 } from './queue-retry'
 import { getTask } from './queue'
-import { raiseActionQueueItem } from './lib/action-queue'
 import type { ActionQueueKind } from './lib/action-queue-kinds'
 import {
   WORKTREE_AHEAD_FAILURE_REASON,
@@ -158,65 +157,19 @@ const computeOnMainLean = async (
   }
 }
 
+/**
+ * No-op: `worktree-ahead` is now a derived kind (ADR-0057). The task's worktree
+ * state is visible via `mars list` and the log messages at unblock time; no stored
+ * action-queue row is needed. Kept as a stub so callers compile without change.
+ */
 export const raiseWorktreeAheadActionQueue = async (
-  taskId: string,
-  worktreePath: string,
-  aheadCount: number,
-  integrationBranch: string,
-  opts?: { leaseOwned?: boolean },
+  _taskId: string,
+  _worktreePath: string,
+  _aheadCount: number,
+  _integrationBranch: string,
+  _opts?: { leaseOwned?: boolean },
 ): Promise<void> => {
-  const lean = await computeOnMainLean(worktreePath, integrationBranch)
-  const leanLine =
-    lean === 'on-main'
-      ? '\n\nThis work appears to already be on main — lean PURGE.'
-      : lean === 'not-on-main'
-        ? '\n\nThis work is NOT on main — lean RESTART.'
-        : ''
-
-  const repoRoot = process.env.MARS_REPO ?? process.cwd()
-  const branch = `task/${taskId}`
-  const commitsAhead = await listUniqueCommitsAhead(branch, integrationBranch, repoRoot).catch(
-    () => [] as OrphanCommit[],
-  )
-
-  const payload: WorktreeAheadPayload = WorktreeAheadPayloadSchema.parse({
-    taskId,
-    branch,
-    worktreePath,
-    integrationBranch,
-    commitsAhead,
-    onMainLean: lean,
-    leaseOwned: opts?.leaseOwned ?? false,
-    failureReason: WORKTREE_AHEAD_FAILURE_REASON,
-  })
-
-  try {
-    await raiseActionQueueItem({
-      kind: WORKTREE_AHEAD_ACTION_QUEUE_KIND,
-      category: 'orchestrator',
-      priority: 'normal',
-      title: `Task ${taskId} worktree is ahead of ${integrationBranch} at unblock`,
-      body:
-        `Task ${taskId} was about to be re-dispatched after its blocker(s) resolved, ` +
-        `but its worktree at ${worktreePath} is ${aheadCount} commit(s) ahead of ` +
-        `${integrationBranch}. Mars refuses to auto-rebase a dependent that has ` +
-        `its own work on the branch.\n\n` +
-        `Resolve manually: inspect the worktree and decide whether to land or drop ` +
-        `those commits before retrying.` +
-        leanLine,
-      payload,
-      context: { repoRoot },
-      raisedBy: 'agent:blocker-resolution',
-      signature: `${taskId}:worktree-ahead`,
-      originTaskId: taskId,
-      occurrence: {
-        at: new Date().toISOString(),
-        aheadCount,
-      },
-    })
-  } catch {
-    /* best-effort: actionQueue failure must not block the cascade */
-  }
+  // worktree-ahead is a derived kind; no stored row written here.
 }
 
 export const PREREQUISITE_FAILED_ACTION_QUEUE_KIND: ActionQueueKind = 'prerequisite-failed'
@@ -299,38 +252,16 @@ export const composeOriginRecoveryFailedReason = (recoveryTaskId: string): strin
 export const ORPHANED_ORIGIN_FAILURE_REASON = 'orphaned_origin_at_unblock'
 export const ORPHANED_ORIGIN_ACTION_QUEUE_KIND: ActionQueueKind = 'orphaned-origin'
 
+/**
+ * No-op: `orphaned-origin` is now a derived kind (ADR-0057). The task is set
+ * to `status='failed'` before this is called, so it appears in the derived
+ * `failed` rows automatically. Kept as a stub so callers compile without change.
+ */
 export const raiseOrphanedOriginActionQueue = async (
-  taskId: string,
-  originId: string,
+  _taskId: string,
+  _originId: string,
 ): Promise<void> => {
-  try {
-    await raiseActionQueueItem({
-      kind: ORPHANED_ORIGIN_ACTION_QUEUE_KIND,
-      category: 'orchestrator',
-      priority: 'normal',
-      title: `Task ${taskId} unblocked but its origin ${originId} no longer exists`,
-      body:
-        `Task ${taskId} was about to be re-dispatched after its blocker(s) resolved, ` +
-        `but its origin_id points at ${originId} which no longer exists in the tasks table. ` +
-        `The dependent has been failed to prevent running a coder against a vanished target.\n\n` +
-        `Resolve manually: decide whether to drop the task or restart it with a valid origin.`,
-      payload: {
-        taskId,
-        originId,
-        failureReason: ORPHANED_ORIGIN_FAILURE_REASON,
-      },
-      context: { repoRoot: process.env.MARS_REPO ?? null },
-      raisedBy: 'agent:blocker-resolution',
-      signature: `${taskId}:orphaned-origin`,
-      originTaskId: taskId,
-      occurrence: {
-        at: new Date().toISOString(),
-        originId,
-      },
-    })
-  } catch {
-    /* best-effort: actionQueue failure must not block the cascade */
-  }
+  // orphaned-origin is derived from tasks.status='failed'; no stored row needed.
 }
 
 export const raiseActionQueueForBlockedTask = async (taskId: string): Promise<void> => {

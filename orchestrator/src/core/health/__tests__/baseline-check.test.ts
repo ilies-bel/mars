@@ -199,16 +199,17 @@ describe('baseline.broken health check', () => {
       stderr: 'Type error',
     })
 
-    // Reactive path: raiseActionQueueRow uses signature='baseline-broken'
+    // Reactive path: checker sets isBaselinePoisoned() — derivation layer produces
+    // 'baseline-broken' rows.  The registry check uses the same key.
     const checker = createBaselineHealthChecker({
       repoRoot: '/repo',
       loadGates,
       runGate,
       pause: createPauseController(),
-      raiseActionQueueRow: (_name, _output) => raise('baseline-broken'),
-      resolveActionQueueRow: vi.fn().mockResolvedValue(undefined),
     })
     await checker.check()
+    // Simulate the derivation layer surfacing the row with the same key
+    await raise('baseline-broken')
 
     // Registry check run(): returns findingKey='baseline-broken'
     wireBaselineBrokenCheck({ repoRoot: '/repo', loadGates, runGate })

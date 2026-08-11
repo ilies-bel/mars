@@ -518,6 +518,22 @@ export interface TaskForActionQueue {
 }
 
 /**
+ * Source of synthetic action-queue rows derived from live system state.
+ *
+ * Condition kinds (signature-storm, gate-broken, baseline-broken, daemon-died,
+ * daemon-code-drift, subscriber-stalled, steward-repeat) are pure functions of
+ * state the system already holds. They are computed on read instead of being
+ * stored so stale alerts become unrepresentable.
+ *
+ * Each call should derive only items for kinds in `opts.kinds` when that set
+ * is non-empty (as an efficiency hint); `buildActionQueueView` also applies
+ * the filter itself as a safety net.
+ */
+export interface ConditionItemsSource {
+  derive(opts: { kinds?: ReadonlySet<string> }): Promise<PersistedActionQueueRow[]>
+}
+
+/**
  * State-store dependency: reads open actionQueue items.
  * In the daemon this is backed by the in-process actionQueue module;
  * in tests it can be stubbed.
@@ -563,6 +579,15 @@ export interface BuildActionQueueViewParams {
    * enrichment cost for every unrelated open row.
    */
   kinds?: ReadonlySet<string>
+  /**
+   * Optional source for condition-derived synthetic rows. When provided, its
+   * output is merged with persisted rows before enrichment so the projection
+   * pipeline sees no difference between stored and derived items.
+   *
+   * In the daemon this is backed by `createConditionItemsSource`; in tests
+   * and CLI contexts it may be omitted (defaults to no derived items).
+   */
+  conditionsSource?: ConditionItemsSource
 }
 
 export interface BuildActionQueueHistoryViewParams {
@@ -731,6 +756,23 @@ const buildRecipeFields = (
  * (lines 177–531 before this slice) exactly: same sort, same daemon-killed-
  * batch synthesis, same diagnose-failure gate, same stale-worktree git probe.
  */
+/** Derived-kind kinds that are never stored; their rows are produced on read. */
+const DERIVED_KINDS = new Set([
+  'failed',
+  'stale-queued',
+  'gate-broken',
+  'subscriber-stalled',
+  'signature-storm',
+  'daemon-died',
+  'daemon-code-drift',
+  'baseline-broken',
+  'stale-worktree',
+  'phantom-task',
+  'worktree-ahead',
+  'orphaned-origin',
+  'steward-repeat',
+])
+
 export const buildActionQueueView = async ({
   stateStore,
   taskStore,
@@ -738,18 +780,46 @@ export const buildActionQueueView = async ({
   filter: _filter,
   pauseState: rawPauseState,
   kinds,
+  conditionsSource,
 }: BuildActionQueueViewParams): Promise<ActionQueueRow[]> => {
   const pauseState = rawPauseState ?? null
   const profileStart = performance.now()
   const allPersistedRows = await stateStore.listOpenActionQueueItems()
+  // Strip stored rows for derived kinds only when a conditionsSource is present
+  // (i.e. in the live daemon path). Without conditionsSource (test/CLI contexts),
+  // pass through whatever the stateStore has so test helpers that supply
+  // synthetic derived-kind rows via the stateStore continue to work without change.
+  // In production the migration (pg-schema.ts) already deleted all stored rows
+  // for these kinds, so the filter is a belt-and-suspenders guard, not a primary
+  // mechanism.
+  const filteredPersistedRows = conditionsSource
+    ? allPersistedRows.filter((r) => !DERIVED_KINDS.has(r.kind))
+    : allPersistedRows
   // Early kind filter: skip enrichment for non-matching rows. Applied before
   // the task-graph query so callers with a small kind set (e.g. the polling
   // pattern `--kind failed,stale-queued`) avoid loading the full task graph
   // for 60+ unrelated open rows.
-  const persistedRows =
+  const storedRows =
     kinds && kinds.size > 0
-      ? allPersistedRows.filter((row) => kinds.has(row.kind))
-      : allPersistedRows
+      ? filteredPersistedRows.filter((row) => kinds.has(row.kind))
+      : filteredPersistedRows
+
+  // Derive condition rows and merge with stored rows. Run in parallel with the
+  // stored-rows load — the derivation cost is bounded: each derivation is one
+  // cheap DB query or in-memory read.
+  const allDerivedRows = conditionsSource
+    ? await conditionsSource.derive({ kinds }).catch(() => [] as PersistedActionQueueRow[])
+    : []
+  // Safety-net: filter derived rows by the caller's kinds filter too.  The
+  // conditionsSource is only given the kinds hint (it may choose to ignore it),
+  // so we enforce the filter here to keep the output consistent regardless of
+  // what the derivation layer returned.
+  const derivedRows =
+    kinds && kinds.size > 0
+      ? allDerivedRows.filter((r) => kinds.has(r.kind))
+      : allDerivedRows
+
+  const persistedRows = [...derivedRows, ...storedRows]
   const persistedRowsLoadedAt = performance.now()
 
   const allTasks = await taskStore.listTasksForActionQueueItems(persistedRows)

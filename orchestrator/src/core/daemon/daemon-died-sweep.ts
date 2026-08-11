@@ -13,10 +13,6 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs'
-import { raiseActionQueueItem } from '../lib/action-queue'
-import type { ActionQueueKind } from '../lib/action-queue-kinds'
-
-export const DAEMON_DIED_ACTION_QUEUE_KIND: ActionQueueKind = 'daemon-died'
 
 export interface DaemonCrashInfo {
   /** PID of the daemon that exited uncleanly. */
@@ -54,43 +50,10 @@ export const readCrashMarker = (crashMarkerPath: string): DaemonCrashInfo | null
 }
 
 /**
- * If a crash marker file is present, raise a `daemon-died` action-queue item.
- * Returns the item id that was raised (or bumped on re-detection), or `null`
- * when no crash marker exists.
- *
- * Does NOT delete the crash marker — that is the responsibility of `shutdown()`
- * on the next clean exit, so the info is preserved for post-mortem inspection
- * between the crash and the next operator-initiated stop.
+ * No-op: `daemon-died` rows are now derived on read from the crash marker file.
+ * The marker is written at startup and read by the derivation layer on every
+ * action-queue list.  Kept as a stub so call sites in server.ts compile without change.
  */
-export const detectAndRaiseDaemonDied = async (crashMarkerPath: string): Promise<string | null> => {
-  const crashInfo = readCrashMarker(crashMarkerPath)
-  if (crashInfo === null) return null
-
-  const id = await raiseActionQueueItem({
-    kind: DAEMON_DIED_ACTION_QUEUE_KIND,
-    category: 'daemon',
-    priority: 'high',
-    title: 'Daemon exited unexpectedly',
-    body: [
-      `The daemon (pid ${crashInfo.pid}) exited without a clean shutdown.`,
-      `Started:         ${crashInfo.startedAt}`,
-      `Crash detected:  ${crashInfo.crashDetectedAt}`,
-      '',
-      'Recovery:',
-      '  • Daemon has already restarted — check `.mars/watch.log` for errors',
-      '  • Run `mars list` to review any tasks that may need attention',
-      '  • Run `mars restart <id>` to re-run any tasks that were interrupted',
-    ].join('\n'),
-    payload: {
-      pid: crashInfo.pid,
-      startedAt: crashInfo.startedAt,
-      crashDetectedAt: crashInfo.crashDetectedAt,
-    },
-    context: {},
-    raisedBy: 'daemon:daemon-died-sweep',
-    signature: 'daemon-died',
-    occurrence: { detectedAt: crashInfo.crashDetectedAt },
-  })
-
-  return id
+export const detectAndRaiseDaemonDied = async (_crashMarkerPath: string): Promise<string | null> => {
+  return null
 }

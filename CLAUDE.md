@@ -165,7 +165,26 @@ stopped on after exhausting retries (kind `failed`), and draft proposals
 waiting to be shaped (kind `draft-proposal`) — appears as an action queue
 message. Pick one via `mars action-queue list` or `/mars:action-queue`; the action queue
 dispatches to the right resolver (`/mars:unblock`, `/mars:grill`, or
-terminal restart/purge — the queue is a pure projection, no operator gesture closes a row). To see pending work, run `/mars:chat` or `/mars:action-queue`.
+terminal restart/purge). To see pending work, run `/mars:chat` or `/mars:action-queue`.
+
+**Action queue architecture (ADR-0057).** The queue has two distinct row
+kinds:
+
+- **Condition kinds** (`failed`, `stale-queued`, `gate-broken`,
+  `baseline-broken`, `daemon-died`, `daemon-code-drift`,
+  `subscriber-stalled`, `signature-storm`, `stale-worktree`,
+  `phantom-task`, `worktree-ahead`, `orphaned-origin`, `steward-repeat`)
+  are **derived on read** from live system state — no stored row, no
+  raiser, no sweep. A condition that does not hold is unrepresentable;
+  stale alerts cannot accumulate.
+- **Operator-decision kinds** (`draft-proposal`, `plan-approval`,
+  `awaiting-human`, `gate-enrichment`, `scorer-suggested`,
+  `reflect-recommended`) carry operator-authored content. Each is
+  stored as a row and closed atomically in the same transaction as the
+  mutation that resolves it — no sweep, no reconcile.
+
+The rule is: **a row exists only when it carries content that cannot be
+recomputed from live state.**
 
 **Watch for alerts; don't wait to be asked.** Alerts (kinds `failed`
 and `stale-queued`) arrive on their own schedule — a background task can

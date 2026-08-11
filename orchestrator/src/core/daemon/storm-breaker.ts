@@ -101,8 +101,12 @@ export interface StormBreakerDeps {
   runSteward: (trip: StormTrip) => Promise<StormStewardReport>
   /** Append the terminal outcome to `steward_ledger`. */
   recordLedger: (entry: StewardLedgerEntry) => Promise<unknown>
-  /** Raise the urgent operator row for a signature whose Steward budget is spent. */
-  raiseEscalation: (escalation: StormEscalation) => Promise<void>
+  /**
+   * Optional: raise the urgent operator row for a signature whose Steward
+   * budget is spent. Omit when using the derivation-based action queue (the
+   * `signature-storm` row is derived from pause state and disappears on resume).
+   */
+  raiseEscalation?: (escalation: StormEscalation) => Promise<void>
   /** Override the crash/hang fallback bound (tests). Defaults to the resolved value. */
   fallbackResumeMs?: number
 }
@@ -318,6 +322,7 @@ export const createStormBreaker = (deps: StormBreakerDeps): StormBreaker => {
   }
 
   const escalate = async (trip: StormTrip, episode: EpisodeState): Promise<void> => {
+    if (!deps.raiseEscalation) return
     try {
       await deps.raiseEscalation({
         ...trip,

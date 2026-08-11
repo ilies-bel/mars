@@ -391,41 +391,8 @@ export const recoverPhase = async (
             `branch NOT deleted during phase-recovery. ` +
             `Use 'mars purge --force ${t.id}' to remove explicitly.`,
         )
-        // Raise an action-queue item so the operator knows about the preserved branch.
-        // Best-effort: a failure here must not block the phase-recovery loop.
-        const { raiseActionQueueItem } = await import('../lib/action-queue')
-        const { WorktreeAheadPayloadSchema, WORKTREE_AHEAD_FAILURE_REASON } = await import(
-          '../lib/worktree-ahead-payload'
-        )
-        const typedPayload = WorktreeAheadPayloadSchema.parse({
-          taskId: t.id,
-          branch,
-          worktreePath: t.worktreePath ?? null,
-          integrationBranch,
-          commitsAhead,
-          onMainLean: 'unknown',
-          leaseOwned: false,
-          failureReason: WORKTREE_AHEAD_FAILURE_REASON,
-        })
-        await raiseActionQueueItem({
-          kind: 'worktree-ahead',
-          category: 'orchestrator',
-          priority: 'high',
-          title: `Branch ${branch} has ${commitsAhead.length} unmerged commit(s) — preserved by phase-recovery`,
-          body:
-            `Task ${t.id} was recovered after a daemon restart, but its branch ${branch} ` +
-            `has ${commitsAhead.length} commit(s) ahead of ${integrationBranch}. ` +
-            `The branch has been preserved to avoid losing committed work.\n\n` +
-            `Resolve manually: inspect the commits and either cherry-pick them onto ` +
-            `${integrationBranch} or remove with 'mars purge --force ${t.id}'.\n\n` +
-            `Commits:\n` +
-            commitsAhead.map((c) => `  ${c.shortSha} ${c.subject}`).join('\n'),
-          payload: typedPayload,
-          context: { repoRoot },
-          raisedBy: 'phase-recovery',
-          signature: `phase-recovery-ahead:${t.id}`,
-          originTaskId: t.id,
-        }).catch(() => {}) // best-effort
+        // worktree-ahead is now a derived kind (ADR-0057) — no stored row raised.
+        // The log message above already surfaces the preserved branch to the operator.
       } else {
         await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})
       }

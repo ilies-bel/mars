@@ -8,7 +8,6 @@ import {
 } from './agents/steward.js'
 import { withTransaction } from './lib/db.js'
 import { ensureSchema } from './lib/pg-schema.js'
-import { raiseActionQueueItem } from './lib/action-queue.js'
 import { resolveStateClient } from './store/state-client.js'
 
 /** The only response shape accepted from a quarantined-gate diagnosis. */
@@ -164,22 +163,17 @@ export interface GateFixStewardDiagnostic {
   reason: string
 }
 
-export const raiseGateFixStewardDiagnostic = async ({
-  gateId,
-  quarantineSignature,
-  reason,
-}: GateFixStewardDiagnostic): Promise<void> => {
-  await raiseActionQueueItem({
-    kind: 'gate-broken',
-    category: 'verify',
-    priority: 'high',
-    title: `Steward could not propose a repair for quarantined gate ${gateId}`,
-    body: `${reason} The gate remains quarantined; inspect its captured evidence and submit a replacement definition for operator validation.`,
-    payload: { gateId, quarantineSignature, reason },
-    context: {},
-    raisedBy: 'gate-fix-steward',
-    signature: `gate-fix-steward:${gateId}:${quarantineSignature}`,
-  })
+/**
+ * No-op: `gate-broken` is now a derived kind (ADR-0057) computed from
+ * `verify_gates WHERE state='quarantined'`. The gate remains quarantined and
+ * the operator will see a `gate-broken` row via the derivation layer without
+ * a stored row being written here. Kept as a stub so callers compile without
+ * change.
+ */
+export const raiseGateFixStewardDiagnostic = async (
+  _diagnostic: GateFixStewardDiagnostic,
+): Promise<void> => {
+  // gate-broken is derived; no stored row written here.
 }
 
 export type GateFixStewardOutcome =

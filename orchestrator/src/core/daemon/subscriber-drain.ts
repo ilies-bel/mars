@@ -2,10 +2,6 @@ import type { DbClient } from '../lib/db.js'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { advanceCursor, fetchPending } from '../../bus/subscribers.js'
 import { processedOnce } from '../../bus/processed-once.js'
-import {
-  raiseActionQueueItem,
-  supersedeActionQueueItemsBySignature,
-} from '../lib/action-queue.js'
 
 /**
  * Shared drain loop for durable outbox Subscribers, implementing the
@@ -16,12 +12,11 @@ import {
  *     breaks the loop; the next drain retries from the same event. There is
  *     no dead-letter queue — Mars events are causally dependent, so skipping
  *     a poison terminal would strand every downstream task.
- *   - After K consecutive failures on the SAME event id, a
- *     `subscriber-stalled` actionQueue row is raised so the otherwise-silent stall
- *     gets an operator surface (the actionQueue is the single human-facing work
- *     surface).
- *   - When a previously-blocked event finally processes, the stalled row is
- *     superseded (the lightweight `subscriber.unstalled` recovery).
+ *   - After K consecutive failures on the SAME event id, the in-memory
+ *     {@link failureCounts} counter crosses {@link STALL_THRESHOLD} and a log
+ *     line is emitted. The operator-visible `subscriber-stalled` alert is
+ *     derived on read from the `subscriber_stalls` table (written by
+ *     `outbox/stall.ts`); no stored action-queue row is written here.
  *
  * Side effects run at-most-once per (subscriber, event) via `processedOnce`.
  * The dedup row is claimed BEFORE the handler runs, so the claim is exclusive
@@ -38,15 +33,15 @@ import {
  * this claim is the correctness guarantee, that gate is the pressure relief.
  */
 
-/** Consecutive-failure threshold before a stalled actionQueue row is raised. */
+/** Consecutive-failure threshold before the stall-threshold log line fires. */
 export const STALL_THRESHOLD = 3
 
 /**
  * In-memory per-(subscriber,event) consecutive-failure counter. The cursor
  * itself is the durable record of progress; this counter only gates WHEN to
- * raise the stalled actionQueue row, so losing it across a restart simply resets
- * the K-count (the row is re-raised after K more failures, and dedup on
- * (kind, signature) collapses repeats). Keyed `subscriberId:eventId`.
+ * log the stall-threshold notice. Losing it across a restart simply resets
+ * the K-count (the log is emitted again after K more failures).
+ * Keyed `subscriberId:eventId`.
  */
 const failureCounts = new Map<string, number>()
 
@@ -72,9 +67,6 @@ async function releaseClaim(
     args: [subscriberId, eventId],
   })
 }
-
-const stallSignature = (subscriberId: string, eventId: number): string =>
-  `${subscriberId}:${eventId}`
 
 export interface DrainWithStallArgs {
   client: DbClient
@@ -137,25 +129,12 @@ export async function drainWithStall(
           throw err
         }
       }
-      // Success — clear any stall counter and close a stalled row if one was
-      // raised for this event (subscriber.unstalled recovery).
-      // supersedeActionQueueItemsBySignature is called unconditionally because
-      // failureCounts is in-memory and is lost across daemon restarts. The
-      // most common fix for a real stall is a daemon restart (so the subscriber
-      // re-binds to corrected code), which clears failureCounts. Without this
-      // unconditional call, a persisted subscriber-stalled row opened in the
-      // previous process would never be closed by the restarted daemon even
-      // after the event processes successfully. The call is a no-op when no
-      // matching open row exists, so calling it on every success is safe.
+      // Success — clear any stall counter.
+      // subscriber-stalled rows are derived on read from subscriber_stalls;
+      // once the event processes, the stall entry disappears automatically
+      // (the DB write from stall.ts is absent for a succeeded event), so no
+      // stored row needs closing here.
       failureCounts.delete(key)
-      await supersedeActionQueueItemsBySignature(
-        'subscriber-stalled',
-        stallSignature(subscriberId, event.id),
-        'subscriber-unstalled',
-        `subscriber:${subscriberId}`,
-      ).catch(() => {
-        // best-effort: failing to close the stalled row must not re-stall
-      })
     } catch (err) {
       const lastError = (err as Error).message
       const count = (failureCounts.get(key) ?? 0) + 1
@@ -164,18 +143,14 @@ export async function drainWithStall(
         `[${subscriberId}] event ${event.id} (${event.type}) failed ` +
           `(${count} consecutive): ${lastError}`,
       )
+      // subscriber-stalled rows are now derived on read from subscriber_stalls;
+      // no stored row is written here. The failureCounts counter still gates
+      // logging so the daemon log shows when a stall threshold is crossed.
       if (count >= STALL_THRESHOLD) {
-        await raiseSubscriberStalled({
-          subscriberId,
-          eventId: event.id,
-          eventName: event.type,
-          lastError,
-        }).catch((raiseErr) => {
-          log?.(
-            `[${subscriberId}] failed to raise subscriber-stalled item: ` +
-              `${(raiseErr as Error).message}`,
-          )
-        })
+        log?.(
+          `[${subscriberId}] stall threshold crossed (${count} consecutive failures on event ${event.id}); ` +
+            `condition is visible in the derived action-queue view`,
+        )
       }
       // Cursor stays put on the failing event; the next drain retries here.
       break
@@ -184,42 +159,4 @@ export async function drainWithStall(
   }
 
   return { processed }
-}
-
-interface SubscriberStalledInput {
-  subscriberId: string
-  eventId: number
-  eventName: string
-  lastError: string
-}
-
-async function raiseSubscriberStalled(
-  input: SubscriberStalledInput,
-): Promise<void> {
-  const signature = stallSignature(input.subscriberId, input.eventId)
-  await raiseActionQueueItem({
-    kind: 'subscriber-stalled',
-    category: 'orchestrator',
-    priority: 'high',
-    title: `Subscriber ${input.subscriberId} stalled on event ${input.eventId} (${input.eventName})`,
-    body:
-      `The durable subscriber '${input.subscriberId}' has failed to process ` +
-      `event ${input.eventId} (${input.eventName}) ${STALL_THRESHOLD}+ times in a row. ` +
-      `Its cursor is blocked on this event and will not advance until the ` +
-      `handler succeeds — every later event for this subscriber is waiting ` +
-      `behind it. There is no dead-letter queue (ADR-0032): the block is ` +
-      `deliberate so a poison event cannot silently strand downstream work.\n\n` +
-      `Last error:\n\`\`\`\n${input.lastError}\n\`\`\``,
-    payload: {
-      subscriberId: input.subscriberId,
-      eventId: input.eventId,
-      eventName: input.eventName,
-      lastError: input.lastError,
-    },
-    context: {},
-    raisedBy: `subscriber:${input.subscriberId}`,
-    // Dedup on (kind, signature) collapses repeat raises onto one row and
-    // lets the unstall path close it by the same signature.
-    signature,
-  })
 }

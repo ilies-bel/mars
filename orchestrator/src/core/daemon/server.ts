@@ -1028,6 +1028,7 @@ export const startDaemon = async (
   }
   let currentSha: string | null = sourceSha
   let isStale = false
+  let lastDependencyDrift = false
 
   let shuttingDown = false
   // When false, `drain()` is a no-op, new bus events skip enqueue, and
@@ -2769,42 +2770,6 @@ export const startDaemon = async (
     }
   }
 
-  /**
-   * Raise the urgent operator row for a signature whose Steward budget is
-   * spent. Reuses the `signature-storm` kind (so it lands in the same triage
-   * lane) under a distinct dedup key, so repeats bump `seen_count` instead of
-   * inserting a sibling per re-trip.
-   */
-  const raiseStormEscalation = async (escalation: StormEscalation): Promise<void> => {
-    const { raiseActionQueueItem } = await import('../lib/action-queue')
-    await raiseActionQueueItem({
-      kind: 'signature-storm',
-      category: 'daemon',
-      priority: 'urgent',
-      title: `Signature storm UNRESOLVED — ${escalation.attempts} Steward attempts failed on ${escalation.signature}`,
-      body:
-        `The failure signature '${escalation.signature}' keeps tripping the circuit breaker and ` +
-        `${escalation.attempts} write-capable Steward dispatch(es) produced no fix ` +
-        `(last outcome: ${escalation.lastOutcome}).\n\n` +
-        `Mars has stopped auto-dispatching Stewards for this signature and will NOT pause dispatch ` +
-        `for it again — cycling pause/Steward/resume against a cause the Steward cannot reach only ` +
-        `burns worktrees. Tasks keep dispatching and will keep failing with this signature until you ` +
-        `fix the shared cause.\n\n` +
-        `Last Steward rationale:\n${escalation.lastRationale.slice(0, 2_000)}\n\n` +
-        `Inspect \`.mars/watch.log\` and the steward_ledger rows for target '${escalation.signature}'.`,
-      payload: {
-        signature: escalation.signature,
-        streak: escalation.streak,
-        stewardAttempts: escalation.attempts,
-        stewardOutcome: escalation.lastOutcome,
-        lastTaskId: escalation.lastTaskId,
-      },
-      context: {},
-      raisedBy: 'daemon:signature-storm-steward',
-      signature: stormEscalationSignature(escalation.signature),
-    })
-  }
-
   const stormBreaker = createStormBreaker({
     log,
     pause,
@@ -2822,7 +2787,8 @@ export const startDaemon = async (
       const { recordStewardIntervention } = await import('../steward-ledger')
       return recordStewardIntervention(entry)
     },
-    raiseEscalation: (escalation) => raiseStormEscalation(escalation),
+    // raiseEscalation omitted: signature-storm is derived from dispatch pause
+    // state on every action-queue read; stored rows are no longer written.
   })
 
   const handleSignatureStorm = (trip: {
@@ -4862,6 +4828,10 @@ export const startDaemon = async (
     }
   }
 
+  // Hoisted reference so the conditionsSource getter below can refer to the
+  // baseline health checker before it is created further down in startDaemon.
+  let _baselineHealthChecker: import('./baseline-health').BaselineHealthChecker | null = null
+
   // The in-process application-service layer (ADR-0055). Every read use-case the
   // HTTP routes serve now lives in `createAppServices`; the daemon constructs it
   // once over its trace store and arc-derived alert sources, and the HTTP server
@@ -4891,6 +4861,26 @@ export const startDaemon = async (
         m.set(s.name, s.resultJson)
       }
       return m
+    },
+    getConditionsSource: () => {
+      const { createConditionItemsSource } = require('./view/derived-conditions') as typeof import('./view/derived-conditions')
+      const { resolveStateClient } = require('../store/state-client') as typeof import('../store/state-client')
+      return createConditionItemsSource({
+        getClient: resolveStateClient,
+        getPauseState: () => pause.get(),
+        crashMarkerPath: crashMarker,
+        getCodeDrift: () => isStale && sourceSha && currentSha && sourceSha !== currentSha
+          ? { sourceSha, currentSha, dependencyDrift: lastDependencyDrift }
+          : null,
+        isBaselinePoisoned: () => _baselineHealthChecker?.isBaselinePoisoned() ?? false,
+        baselineDetail: () => {
+          const d = _baselineHealthChecker?.getLastDetection()
+          return d ?? null
+        },
+        repoRoot: resolveContext().repoRoot,
+        getActiveWorkerCount: () => tracker.inFlightCount(),
+        getImplementCap: () => sems.implement.limit,
+      })
     },
   })
 
@@ -5248,35 +5238,11 @@ export const startDaemon = async (
       return { gate, exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr }
     },
     pause,
-    raiseActionQueueRow: async (failingGateName, output) => {
-      await raiseActionQueueItem({
-        kind: 'baseline-broken',
-        category: 'orchestrator',
-        priority: 'urgent',
-        title: `Integration branch fails required gate: ${failingGateName}`,
-        body:
-          `The integration branch (${integrationBranch}) fails a required verify gate ` +
-          `("${failingGateName}"). Dispatch is paused until the baseline is fixed. ` +
-          `Fix the integration branch and run \`mars operator set dispatch on\` to resume. ` +
-          `Tasks that fail this gate while the baseline is broken are classified as ` +
-          `\`verify:poisoned-baseline\` and do not count toward the signature-storm streak.\n\n` +
-          `Gate output:\n\`\`\`\n${output}\n\`\`\``,
-        payload: { failingGateName, output },
-        context: { failingGateName },
-        raisedBy: 'baseline-health-checker',
-        signature: 'baseline-broken',
-      })
-    },
-    resolveActionQueueRow: async () => {
-      await supersedeActionQueueItemsBySignature(
-        'baseline-broken',
-        'baseline-broken',
-        'condition-cleared',
-        'baseline-health-checker',
-      )
-    },
     log,
   })
+  // Publish to the hoisted reference so the getConditionsSource callback
+  // (wired into appServices above) can access it once it is ready.
+  _baselineHealthChecker = baselineHealthChecker
 
   // Run the baseline check at startup — before reconcile() triggers the first
   // drain() — so a broken baseline is detected before any task is dispatched.
@@ -5640,6 +5606,7 @@ export const startDaemon = async (
         stableDevDriftChecks = head === lastDevDriftHead ? stableDevDriftChecks + 1 : 1
         lastDevDriftHead = head
         const dependencyDrift = await hasDevDependencyDrift(sourceSha, head, sourceRepoDir)
+        lastDependencyDrift = dependencyDrift
         const action = decideDevStalenessAction({
           sourceSha,
           currentSha: head,
@@ -5654,45 +5621,18 @@ export const startDaemon = async (
           const shortSrc = sourceSha?.slice(0, 7) ?? '?'
           const shortHead = head?.slice(0, 7) ?? '?'
           log(`[dev-autorestart] HEAD ${shortSrc} -> ${shortHead}, restarting daemon`)
-          // Mirror the restartDaemon RPC handler. The replacement startup
-          // reconciler clears any pre-existing daemon-code-drift row.
+          // Mirror the restartDaemon RPC handler.
           await spawnReplacementDaemon()
           setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100)
           return
         }
 
         if (action === 'nudge') {
-          // Raise a level-triggered action-queue row so operators see the drift
-          // without having to poll `mars daemon status`. Idempotent: if a row
-          // with signature 'daemon-code-drift' is already open, raiseActionQueueItem
-          // bumps its seen_count instead of inserting a duplicate.
-          try {
-            const { raiseActionQueueItem } = await import('../lib/action-queue')
-            const shortSrc = sourceSha?.slice(0, 7) ?? '?'
-            const shortHead = head?.slice(0, 7) ?? '?'
-            await raiseActionQueueItem({
-              kind: 'daemon-code-drift',
-              category: 'daemon',
-              priority: 'high',
-              title: `Daemon running stale code — ${shortSrc} → ${shortHead}`,
-              body:
-                dependencyDrift
-                  ? `daemon running ${shortSrc}, main is at ${shortHead}; dependencies changed — ` +
-                    `run your package install, then \`mars daemon restart\``
-                  : `daemon running ${shortSrc}, main is at ${shortHead} — ` +
-                    `run \`mars daemon restart\` to load current verify/dispatch code`,
-              payload: { sourceSha, currentSha: head },
-              context: {},
-              raisedBy: 'daemon:dev-staleness-check',
-              // Singleton signature: one open row per daemon lifetime.
-              signature: 'daemon-code-drift',
-              occurrence: { detectedAt: new Date().toISOString() },
-            })
-          } catch (aqErr) {
-            log(
-              `[dev-staleness] failed to raise action-queue item: ${(aqErr as Error).message}`,
-            )
-          }
+          // Drift is now surfaced as a derived condition on every action-queue
+          // read (daemon-code-drift kind); no stored row needed.
+          const shortSrc = sourceSha?.slice(0, 7) ?? '?'
+          const shortHead = head?.slice(0, 7) ?? '?'
+          log(`[dev-staleness] code drift detected: ${shortSrc} → ${shortHead}`)
         }
       } catch {
         // git unavailable — leave isStale unchanged

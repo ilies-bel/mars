@@ -16,7 +16,6 @@ import {
 } from '../../core/lib/failure-signature.js'
 import { assessStormExcerpt } from '../../core/agents/steward.js'
 import { registerSubscriberName } from '../registry.js'
-import { raiseActionQueueItem } from '../../core/lib/action-queue.js'
 import { loadSpendControl } from '../../core/daemon/spend-control/store.js'
 import { decideDispatchControl } from '../../core/daemon/spend-control/decide.js'
 import { probeSpendWindow } from '../spend-control-inputs.js'
@@ -299,22 +298,8 @@ export async function drainRecoverySpawner(
           status: 'failed',
           failureReason: suppressionReason,
         })
-        await raiseActionQueueItem({
-          kind: 'failed',
-          category: 'orchestrator',
-          priority: 'high',
-          title: `Task ${taskId} recovery suppressed by spend controller`,
-          body:
-            `Recovery for task ${taskId} was suppressed by the dispatch spend controller. ` +
-            `Reason: ${decision.reason}. ` +
-            `The task is left in a failed/restartable state — restart it once spend pressure clears ` +
-            `or after adjusting the controller levers (\`mars spend-control set\`).`,
-          payload: { taskId, suppressedBy: 'spend-control', reason: decision.reason },
-          context: { suppressedBy: 'spend-control', reason: decision.reason },
-          raisedBy: 'recovery-spawn:spend-control-gate',
-          signature: `spend-control-suppressed:${taskId}`,
-          originTaskId: taskId,
-        })
+        // `failed` rows are derived from tasks.status='failed' on read;
+        // the task will appear in the action queue automatically.
         log?.(`recovery suppressed by spend controller: ${decision.reason}`)
         return true
       }

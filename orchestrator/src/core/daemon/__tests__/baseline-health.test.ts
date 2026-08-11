@@ -37,8 +37,6 @@ type Deps = {
   pause: ReturnType<typeof createPauseController>
   loadGates: ReturnType<typeof vi.fn>
   runGate: ReturnType<typeof vi.fn>
-  raiseActionQueueRow: ReturnType<typeof vi.fn>
-  resolveActionQueueRow: ReturnType<typeof vi.fn>
   log: ReturnType<typeof vi.fn>
 }
 
@@ -46,8 +44,6 @@ const makeDeps = (overrides?: Partial<BaselineHealthDeps>): { deps: BaselineHeal
   const pause = createPauseController()
   const loadGates = vi.fn()
   const runGate = vi.fn()
-  const raiseActionQueueRow = vi.fn().mockResolvedValue(undefined)
-  const resolveActionQueueRow = vi.fn().mockResolvedValue(undefined)
   const log = vi.fn()
 
   const deps: BaselineHealthDeps = {
@@ -55,12 +51,10 @@ const makeDeps = (overrides?: Partial<BaselineHealthDeps>): { deps: BaselineHeal
     loadGates: loadGates as () => Promise<BaselineGate[]>,
     runGate: runGate as (gate: BaselineGate, cwd: string) => Promise<GateResult>,
     pause,
-    raiseActionQueueRow: raiseActionQueueRow as (failingGateName: string, output: string) => Promise<void>,
-    resolveActionQueueRow: resolveActionQueueRow as () => Promise<void>,
     log,
     ...overrides,
   }
-  return { deps, mocks: { pause, loadGates, runGate, raiseActionQueueRow, resolveActionQueueRow, log } }
+  return { deps, mocks: { pause, loadGates, runGate, log } }
 }
 
 // ─── tests ────────────────────────────────────────────────────────────────────
@@ -78,10 +72,9 @@ describe('createBaselineHealthChecker', () => {
 
       expect(result.poisoned).toBe(false)
       expect(mocks.pause.isPaused()).toBe(false)
-      expect(mocks.raiseActionQueueRow).not.toHaveBeenCalled()
     })
 
-    it('returns poisoned=true, pauses with reason=baseline, and raises exactly one action-queue row when a required gate fails', async () => {
+    it('returns poisoned=true and pauses with reason=baseline when a required gate fails', async () => {
       const gate = makeGate()
       const { deps, mocks } = makeDeps()
       mocks.loadGates.mockResolvedValue([gate])
@@ -93,8 +86,7 @@ describe('createBaselineHealthChecker', () => {
       expect(result.poisoned).toBe(true)
       expect(mocks.pause.isPaused()).toBe(true)
       expect(mocks.pause.get().reason).toBe('baseline')
-      expect(mocks.raiseActionQueueRow).toHaveBeenCalledTimes(1)
-      expect(mocks.raiseActionQueueRow).toHaveBeenCalledWith('typecheck', expect.stringContaining('TSC error'))
+      // baseline-broken is now derived on read; no action-queue row is raised here
     })
 
     it('isBaselinePoisoned() reflects the poisoned state after check()', async () => {
@@ -145,7 +137,7 @@ describe('createBaselineHealthChecker', () => {
       expect(result.poisoned).toBe(false)
       expect(checker.isBaselinePoisoned()).toBe(false)
       expect(mocks.pause.isPaused()).toBe(false)
-      expect(mocks.resolveActionQueueRow).toHaveBeenCalledTimes(1)
+      // baseline-broken row is derived on read; no stored row to resolve here
     })
 
     it('does NOT resume dispatch when paused for a different reason (first-cause-wins)', async () => {
