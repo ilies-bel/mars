@@ -598,3 +598,7 @@ _Avoid_: subthread, spam
 **closed subthread breadcrumb**:
 The single collapsed row left in the main transcript for a closed subthread. It prevents replaying the closed subthread's full contents while preserving navigable context.
 _Avoid_: replay, transcript-dump
+
+**Alert**:
+The operational subset of action queue rows — those raised by the framework observing its own execution — as distinct from draft proposals awaiting shaping.
+_Avoid_: notification, warning, inbox alert, operational alert
