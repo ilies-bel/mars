@@ -45,6 +45,7 @@ export { registerCheck, listChecks, runChecks } from './registry.js'
 // Add new check modules here as they are introduced.
 import './checks/daemon-reachable.js'
 import './checks/baseline-broken.js'
+import './checks/repo-layout-fragmented.js'
 
 // ── Routing ───────────────────────────────────────────────────────────────────
 
