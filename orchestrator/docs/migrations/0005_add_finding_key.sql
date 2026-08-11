@@ -1,0 +1,39 @@
+-- Migration 0005: add finding_key column + partial unique index to tasks
+--
+-- WHY
+-- The Steward's scheduled health pass enqueues a fix task for each health
+-- finding with route='fix'. Without a stable key, consecutive passes over
+-- the same unfixed condition would enqueue a new task on every tick.
+--
+-- `finding_key` stores the stable dedup key emitted by each check's
+-- CheckOutcome (e.g. 'daemon.unreachable'). The partial unique index
+-- enforces that at most one *active* task exists per findingKey: a second
+-- pass attempting to INSERT while the first fix task is still queued/running
+-- hits the constraint even if the application-level hasActiveTaskForFinding
+-- guard races.
+--
+-- STATUS: DDL only — no data migration needed. The column defaults to NULL
+-- for all existing task rows (the health-pass fix route is new).
+--
+-- HOW IT IS APPLIED
+-- pg-schema.ts (SCHEMA_VERSION '0031') runs the statements below idempotently
+-- at every daemon startup via ensureSchema(). There is no separate operator
+-- step for this migration.
+--
+-- Statements (also in pg-schema.ts DDL array):
+--
+--   ALTER TABLE tasks ADD COLUMN IF NOT EXISTS finding_key text;
+--
+--   CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_active_finding_key
+--     ON tasks(finding_key)
+--     WHERE finding_key IS NOT NULL
+--       AND status NOT IN ('done', 'dropped', 'failed');
+--
+-- ROLLBACK
+-- If the health-pass scheduler is disabled before any tasks carry a
+-- finding_key value, the index and column can be dropped safely:
+--
+--   DROP INDEX IF EXISTS uq_tasks_active_finding_key;
+--   ALTER TABLE tasks DROP COLUMN IF EXISTS finding_key;
+--
+-- No other tables or application paths reference finding_key.

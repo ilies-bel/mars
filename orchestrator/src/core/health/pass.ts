@@ -25,6 +25,8 @@
  */
 
 import type { HealthCheck, HealthCheckResult } from './index.js'
+import { listChecks, runChecks, type CheckContext } from './registry.js'
+import { routeFixFinding, type FixRouteDeps } from './routes/fix.js'
 
 // ── Posture ───────────────────────────────────────────────────────────────────
 
@@ -265,5 +267,102 @@ export const createInMemoryAlertStore = (): AlertStore => {
     async clearAlert(checkId) {
       open.delete(checkId)
     },
+  }
+}
+
+// ── Scheduled health pass ─────────────────────────────────────────────────────
+
+/**
+ * Injectable dependencies for a full scheduled health pass.
+ *
+ * Keeping these injected makes the pass runner testable without a live DB or
+ * daemon: tests supply in-memory stubs; the production scheduler builds the
+ * same interface from a DB client and `enqueueTask`.
+ */
+export interface HealthPassDeps {
+  /**
+   * Runtime prerequisites the calling context can satisfy. Passed directly to
+   * runChecks() — checks whose `requires` list contains a prereq absent from
+   * this Set are skipped (status='skipped', reason='prereq:<name>').
+   */
+  ctx: CheckContext
+
+  /**
+   * Dependencies for the fix route handler. Required; checks with route='fix'
+   * are dispatched through routeFixFinding() which calls into these.
+   */
+  fix: FixRouteDeps
+}
+
+/**
+ * Aggregate output of one scheduled health pass.
+ *
+ * `checked`         — checks that ran (ok + finding; does NOT include skipped).
+ * `skippedByPrereq` — checks whose prereqs were not met and were not run.
+ * `findings`        — count of checks that returned a finding.
+ * `enqueued`        — task ids created by the fix route during this pass.
+ * `alreadyActive`   — findingKeys that already had an active fix task (skipped).
+ */
+export interface PassSummary {
+  readonly checked: number
+  readonly skippedByPrereq: number
+  readonly findings: number
+  readonly enqueued: readonly string[]
+  readonly alreadyActive: readonly string[]
+}
+
+/**
+ * Run every registered check (via the singleton registry) and dispatch findings
+ * through their declared route handlers.
+ *
+ * Currently only the fix route is handled here. Notice and alert routes are
+ * dispatched by the same scheduled pass in later slices; for now they are
+ * counted but not acted upon so the pass is safe to run at any time.
+ *
+ * Never throws: individual check errors are caught by runChecks(); route
+ * handler errors are logged and the pass continues.
+ */
+export const healthPass = async (deps: HealthPassDeps): Promise<PassSummary> => {
+  const defs = listChecks()
+  const results = await runChecks(deps.ctx)
+
+  const enqueued: string[] = []
+  const alreadyActive: string[] = []
+  let skippedByPrereq = 0
+  let findings = 0
+
+  for (const result of results) {
+    if (result.status === 'skipped') {
+      skippedByPrereq++
+      continue
+    }
+    if (result.status !== 'finding') continue
+    findings++
+
+    const def = defs.find((d) => d.id === result.id)
+    if (def?.route !== 'fix') continue
+
+    const outcome = await routeFixFinding(
+      {
+        findingKey: result.outcome?.findingKey,
+        detail: result.outcome?.detail,
+        checkId: result.id,
+      },
+      deps.fix,
+    )
+
+    if (outcome.action === 'enqueued' && outcome.taskId !== undefined) {
+      enqueued.push(outcome.taskId)
+    } else if (outcome.action === 'already-active' && outcome.findingKey !== undefined) {
+      alreadyActive.push(outcome.findingKey)
+    }
+  }
+
+  return {
+    checked: results.filter((r) => r.status !== 'skipped').length,
+    skippedByPrereq,
+    findings,
+    enqueued,
+    alreadyActive,
   }
 }

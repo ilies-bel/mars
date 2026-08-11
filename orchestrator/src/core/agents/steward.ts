@@ -20,6 +20,7 @@
 
 import { z } from 'zod'
 import { terminalVerdictEchoPattern } from '../lib/failure-signature.js'
+import { healthPass, type HealthPassDeps } from '../health/pass.js'
 
 /** One task's failure context, handed to the Steward so it can diagnose. */
 export const StormFailureExcerptSchema = z.object({
@@ -348,4 +349,76 @@ export const stewardAgent = {
   allowedTools: readonly string[]
   deniedTools: readonly string[]
   inputSchema: typeof StewardEventSchema
+}
+
+// ── Scheduled health pass ─────────────────────────────────────────────────────
+
+/** Default scheduled health-pass interval: 5 minutes. */
+const DEFAULT_HEALTH_INTERVAL_MS = 5 * 60_000
+
+export interface HealthSchedulerHandle {
+  /** Stop the recurring timer. In-progress passes complete naturally. */
+  stop(): void
+}
+
+export interface HealthSchedulerOptions {
+  /**
+   * How often to run a health pass. Defaults to 5 minutes.
+   * Read from `.mars/daemon.json` key `health.intervalMs` by the daemon
+   * bootstrap; overrideable per-daemon without a code change.
+   */
+  intervalMs?: number
+  /**
+   * Dependencies forwarded to healthPass() on each tick. The daemon bootstrap
+   * builds these from the live DB client and enqueueTask.
+   */
+  deps: HealthPassDeps
+  /**
+   * Optional logger; defaults to console.log. The daemon passes its own
+   * structured logger so health-pass events appear in the daemon log file.
+   */
+  log?: (msg: string) => void
+}
+
+/**
+ * Start the Steward's recurring health pass.
+ *
+ * Each tick calls healthPass() with the given deps. The timer is .unref()'d so
+ * it does not prevent a clean Node.js shutdown when no other work is in flight.
+ * Single-flight: a tick that is still running when the interval fires is skipped
+ * rather than stacked, preventing thundering-herd on a slow DB.
+ *
+ * Called from the daemon bootstrap once the DB client is ready. The returned
+ * handle's stop() is called during daemon shutdown.
+ */
+export function startHealthScheduler(opts: HealthSchedulerOptions): HealthSchedulerHandle {
+  const intervalMs = opts.intervalMs ?? DEFAULT_HEALTH_INTERVAL_MS
+  const log = opts.log ?? ((msg: string) => console.log(msg))
+
+  let running: Promise<void> | null = null
+
+  const tick = (): void => {
+    if (running !== null) return // single-flight guard
+    running = healthPass(opts.deps)
+      .then((summary) => {
+        log(
+          `[health-scheduler] checked=${summary.checked} skipped=${summary.skippedByPrereq}` +
+            ` findings=${summary.findings} enqueued=${summary.enqueued.length}` +
+            ` alreadyActive=${summary.alreadyActive.length}`,
+        )
+      })
+      .catch((err: unknown) => {
+        log(`[health-scheduler] pass error: ${err instanceof Error ? err.message : String(err)}`)
+      })
+      .finally(() => {
+        running = null
+      })
+  }
+
+  const timer = setInterval(tick, intervalMs)
+  timer.unref()
+
+  return {
+    stop: () => clearInterval(timer),
+  }
 }

@@ -38,7 +38,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0030'
+export const SCHEMA_VERSION = '0031'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -222,6 +222,7 @@ const DDL: readonly string[] = [
     sub_deliverable_json text,
     integration_head_sha text,
     followup_dedup_key   text,
+    finding_key          text,
     intent               text   NOT NULL DEFAULT '',
     lease_owner          text,
     leased_at            timestamptz,
@@ -271,6 +272,15 @@ const DDL: readonly string[] = [
   // downtime without refunding previously accumulated progress time.
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS requeue_dispatch_uptime_ms bigint`,
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS stall_diagnostics jsonb`,
+  // Stable key for health-check findings (added in migration 0005). Used by the
+  // Steward's scheduled health pass to deduplicate fix tasks: only one task per
+  // findingKey may be active at any time (enforced by the partial unique index
+  // below). Null for tasks not originating from a health-pass fix route.
+  `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS finding_key text`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_active_finding_key
+     ON tasks(finding_key)
+     WHERE finding_key IS NOT NULL
+       AND status NOT IN ('done', 'dropped', 'failed')`,
   // Terminal task states are absorbing.  The application preflights this
   // invariant for a typed error, while this trigger protects every other SQL
   // writer (including future code paths and operational scripts).

@@ -1068,6 +1068,14 @@ export interface EnqueueTaskOptions {
    */
   followupDedupKey?: string
   /**
+   * Stable health-check finding key stored in `finding_key`. Set by the
+   * Steward's scheduled health pass when enqueuing a fix task for a specific
+   * finding. The database enforces uniqueness across active tasks (status NOT
+   * IN ('done','dropped','failed')) via a partial unique index, preventing
+   * duplicate fix tasks from concurrent passes.
+   */
+  findingKey?: string
+  /**
    * When set, this enqueue supersedes the named existing task. The supersede
    * sequence (executed by `Arc.createOrigin`):
    *   1. Loads the superseded task; derives `originId` from it.

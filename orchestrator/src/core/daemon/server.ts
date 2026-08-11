@@ -136,8 +136,10 @@ import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket, waitForPr
 import {
   applyControlLevers,
   loadDaemonConfig,
+  readDaemonConfigFile,
   readPersistedPaused,
 } from './config'
+import { startHealthScheduler } from '../agents/steward'
 import { createPauseController } from './pause-state'
 import {
   createStormBreaker,
@@ -5322,6 +5324,55 @@ export const startDaemon = async (
   const stopEndpointProbe = startApiEndpointProbe({ intervalMs: ENDPOINT_PROBE_INTERVAL_MS })
   log(`[api-probe] started (intervalMs=${ENDPOINT_PROBE_INTERVAL_MS})`)
 
+  // ── Steward scheduled health pass ─────────────────────────────────────────
+  // Walk every registered health check on a timer. For findings with
+  // route='fix', enqueue a repair task if none is already active for that
+  // findingKey (deduped by application-level check + DB partial unique index).
+  //
+  // intervalMs is read from daemon.json key `health.intervalMs`; missing or
+  // non-positive values fall back to the module default (5 minutes).
+  const rawHealthInterval = (() => {
+    const cfg = readDaemonConfigFile()
+    const health = cfg.health
+    if (health !== null && typeof health === 'object' && !Array.isArray(health)) {
+      const ms = (health as Record<string, unknown>).intervalMs
+      if (typeof ms === 'number' && Number.isFinite(ms) && ms > 0) return ms
+    }
+    return undefined
+  })()
+  const healthScheduler = startHealthScheduler({
+    intervalMs: rawHealthInterval,
+    deps: {
+      ctx: { prereqs: new Set(['daemon', 'git', 'fs', 'db']) },
+      fix: {
+        hasActiveTaskForFinding: async (findingKey: string) => {
+          const res = await dbClient.execute({
+            sql: `SELECT 1 FROM tasks WHERE finding_key = ? AND status NOT IN ('done', 'dropped', 'failed') LIMIT 1`,
+            args: [findingKey],
+          })
+          return res.rows.length > 0
+        },
+        enqueueFixTask: async (params: { findingKey: string; checkId: string; detail: string | undefined }) => {
+          const detail = params.detail ?? 'No detail provided.'
+          const prompt =
+            `Health check '${params.checkId}' found a condition Mars can fix automatically.\n\n` +
+            `Detail: ${detail}\n\n` +
+            `Finding key: ${params.findingKey}\n\n` +
+            `Investigate the reported condition and apply the minimum fix needed to resolve it. ` +
+            `Verify the fix resolves the condition, then commit.`
+          const task = await enqueueTask(prompt, undefined, {
+            findingKey: params.findingKey,
+            intent: `Fix health finding: ${params.checkId}`,
+            skipTriage: true,
+          })
+          return task.id
+        },
+      },
+    },
+    log,
+  })
+  log(`[health-scheduler] started (intervalMs=${rawHealthInterval ?? 'default'})`)
+
   // Boot drain for the alert-dismisser outbox subscriber: register it (no
   // replay — chokepoint already reconciles history) and clear alerts for any
   // status changes published while the daemon was down.
@@ -6848,6 +6899,7 @@ export const startDaemon = async (
     clearInterval(worktreeReclaimDrain)
     clearInterval(usageSamplerInterval)
     deferralWakeSweeper.stop()
+    healthScheduler.stop()
     // Drop the dispatch hint before the tracker is torn down, so a writer that
     // creates a task during shutdown does not fan out into a dead tracker.
     unregisterDispatchHint()
