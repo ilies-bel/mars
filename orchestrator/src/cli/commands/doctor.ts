@@ -20,6 +20,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, statfsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import type { Command } from '../command'
+import { detectInstallSites, type InstallSite } from '../../core/lib/worktree-install'
 import {
   probeProvider,
   realProviderProbeDeps,
@@ -102,6 +103,12 @@ export interface DoctorProbes {
    * Returns null when the measurement is unavailable.
    */
   systemLoad(): { loadAvg1: number; cpuCount: number } | null
+  /**
+   * Discover all install sites (lockfile locations) in the repo tree.
+   * Delegates to `detectInstallSites`; tests stub this to avoid touching
+   * the real filesystem during the fragmentation health check.
+   */
+  installSites(root: string): Promise<InstallSite[]>
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +196,9 @@ export const realProbes: DoctorProbes = {
     } catch {
       return null
     }
+  },
+  installSites(root) {
+    return detectInstallSites(root)
   },
 }
 
@@ -641,6 +651,76 @@ export const runDoctorChecks = async (
         })
       }
     }
+  }
+
+  // H7. Install-site fragmentation — warn when the repo has multiple independent
+  // lockfiles with no workspace config unifying them.  Each dispatched worktree
+  // runs one install per site, so N independent sites = N full installs per task.
+  //
+  // PASS: 0 or 1 sites (no fragmentation).
+  // PASS: >1 sites unified by a root pnpm-workspace.yaml or a `workspaces`
+  //       field in the root package.json (multiple packages under one lockfile).
+  // WARN: >1 independent sites with no workspace — each worktree over-installs.
+  if (repoRoot !== null) {
+    const sites = await probes.installSites(repoRoot)
+    if (sites.length === 1) {
+      results.push({
+        label: 'install-site fragmentation',
+        status: 'PASS',
+        section: 'health',
+        message: '1 install site — no fragmentation',
+      })
+    } else if (sites.length > 1) {
+      // Determine whether a workspace config unifies the lockfiles.
+      const hasWorkspaceYaml =
+        probes.readTextFile(resolve(repoRoot, 'pnpm-workspace.yaml')) !== null
+      let hasWorkspacesField = false
+      if (!hasWorkspaceYaml) {
+        const pkgJson = probes.readTextFile(resolve(repoRoot, 'package.json'))
+        if (pkgJson !== null) {
+          try {
+            const parsed = JSON.parse(pkgJson) as Record<string, unknown>
+            hasWorkspacesField =
+              Array.isArray(parsed['workspaces']) &&
+              (parsed['workspaces'] as unknown[]).length > 0
+          } catch {
+            // Malformed package.json — treat workspaces as absent.
+          }
+        }
+      }
+
+      if (hasWorkspaceYaml || hasWorkspacesField) {
+        results.push({
+          label: 'install-site fragmentation',
+          status: 'PASS',
+          section: 'health',
+          message: `${sites.length} lockfiles unified under a workspace — one install per worktree`,
+        })
+      } else {
+        const managers = [...new Set(sites.map((s) => s.manager))]
+        const primaryManager = managers[0] ?? 'npm'
+        const isMixed = managers.length > 1
+        const managerLabel = isMixed
+          ? `mixed (${managers.join(', ')})`
+          : primaryManager
+        const mixedNote = isMixed
+          ? ' Multiple package managers compound the problem.'
+          : ''
+        const fixGesture =
+          !isMixed && primaryManager === 'pnpm'
+            ? 'add a root `pnpm-workspace.yaml` listing all packages'
+            : 'add a `workspaces` field to the root `package.json`'
+        results.push({
+          label: 'install-site fragmentation',
+          status: 'WARN',
+          section: 'health',
+          message:
+            `${sites.length} independent ${managerLabel} lockfiles — each worktree installs ` +
+            `${sites.length} times; ${fixGesture} to consolidate to one install per worktree.${mixedNote}`,
+        })
+      }
+    }
+    // 0 sites → no row; nothing to check when no lockfiles are present.
   }
 
   return results

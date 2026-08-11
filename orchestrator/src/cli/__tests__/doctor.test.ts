@@ -80,6 +80,9 @@ const passingProbes = (overrides?: Partial<DoctorProbes>): DoctorProbes => ({
   systemLoad() {
     return { loadAvg1: 1.0, cpuCount: 4 } // 0.25× per core → PASS
   },
+  async installSites(_root) {
+    return [] // 0 sites → no H7 row; safe default for tests not targeting H7
+  },
   ...overrides,
 })
 
@@ -1032,5 +1035,159 @@ describe('runDoctorChecks — node_modules boundary', () => {
     expect(check?.message).toContain('leaked into the main checkout')
     expect(check?.message).toContain('CI=true pnpm install --frozen-lockfile')
     expect(check?.message).toMatch(/mars-abc/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Health checks — install-site fragmentation (H7)
+// ---------------------------------------------------------------------------
+
+describe('runDoctorChecks — install-site fragmentation', () => {
+  it('emits no row when the repo has no lockfile', async () => {
+    const probes = passingProbes({
+      installSites: async () => [],
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    expect(results.find((r) => r.label === 'install-site fragmentation')).toBeUndefined()
+  })
+
+  it('skips the check entirely when repoRoot is null', async () => {
+    const probes = passingProbes({
+      installSites: async () => [
+        { dir: '/repo', manager: 'pnpm', lockfile: 'pnpm-lock.yaml' },
+        { dir: '/repo/sub', manager: 'pnpm', lockfile: 'pnpm-lock.yaml' },
+      ],
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', null)
+    expect(results.find((r) => r.label === 'install-site fragmentation')).toBeUndefined()
+  })
+
+  it('PASS for a single install site', async () => {
+    const probes = passingProbes({
+      installSites: async () => [
+        { dir: '/repo', manager: 'pnpm', lockfile: 'pnpm-lock.yaml' },
+      ],
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'install-site fragmentation')
+    expect(check?.status).toBe('PASS')
+    expect(check?.message).toContain('1 install site')
+  })
+
+  it('PASS for multiple lockfiles unified by a root pnpm-workspace.yaml', async () => {
+    const probes = passingProbes({
+      installSites: async () => [
+        { dir: '/repo', manager: 'pnpm', lockfile: 'pnpm-lock.yaml' },
+        { dir: '/repo/packages/foo', manager: 'pnpm', lockfile: 'pnpm-lock.yaml' },
+        { dir: '/repo/packages/bar', manager: 'pnpm', lockfile: 'pnpm-lock.yaml' },
+      ],
+      readTextFile(path) {
+        if (path.endsWith('pnpm-workspace.yaml')) return 'packages:\n  - packages/*\n'
+        return JSON.stringify({ tokens: { access_token: 'tok' } })
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'install-site fragmentation')
+    expect(check?.status).toBe('PASS')
+    expect(check?.message).toContain('unified under a workspace')
+  })
+
+  it('PASS for multiple lockfiles unified by workspaces field in package.json', async () => {
+    const probes = passingProbes({
+      installSites: async () => [
+        { dir: '/repo', manager: 'npm', lockfile: 'package-lock.json' },
+        { dir: '/repo/packages/bar', manager: 'npm', lockfile: 'package-lock.json' },
+      ],
+      readTextFile(path) {
+        if (path.endsWith('pnpm-workspace.yaml')) return null
+        if (path.endsWith('package.json')) return JSON.stringify({ workspaces: ['packages/*'] })
+        return JSON.stringify({ tokens: { access_token: 'tok' } })
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'install-site fragmentation')
+    expect(check?.status).toBe('PASS')
+    expect(check?.message).toContain('unified under a workspace')
+  })
+
+  it('WARN for multiple independent pnpm lockfiles with no workspace config', async () => {
+    const probes = passingProbes({
+      installSites: async () => [
+        { dir: '/repo', manager: 'pnpm', lockfile: 'pnpm-lock.yaml' },
+        { dir: '/repo/sub', manager: 'pnpm', lockfile: 'pnpm-lock.yaml' },
+        { dir: '/repo/other', manager: 'pnpm', lockfile: 'pnpm-lock.yaml' },
+      ],
+      readTextFile(path) {
+        if (path.endsWith('pnpm-workspace.yaml')) return null
+        if (path.endsWith('package.json')) return null
+        return JSON.stringify({ tokens: { access_token: 'tok' } })
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'install-site fragmentation')
+    expect(check?.status).toBe('WARN')
+    expect(check?.message).toContain('3')
+    expect(check?.message).toContain('pnpm')
+    expect(check?.message).toContain('pnpm-workspace.yaml')
+  })
+
+  it('WARN message names the manager and fix gesture for npm', async () => {
+    const probes = passingProbes({
+      installSites: async () => [
+        { dir: '/repo', manager: 'npm', lockfile: 'package-lock.json' },
+        { dir: '/repo/backend', manager: 'npm', lockfile: 'package-lock.json' },
+      ],
+      readTextFile(path) {
+        if (path.endsWith('pnpm-workspace.yaml')) return null
+        // package.json exists but has no workspaces field
+        if (path.endsWith('package.json')) return JSON.stringify({ name: 'root' })
+        return JSON.stringify({ tokens: { access_token: 'tok' } })
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'install-site fragmentation')
+    expect(check?.status).toBe('WARN')
+    expect(check?.message).toContain('2')
+    expect(check?.message).toContain('npm')
+    expect(check?.message).toContain('workspaces')
+  })
+
+  it('WARN message mentions mixed managers when lockfiles use different package managers', async () => {
+    const probes = passingProbes({
+      installSites: async () => [
+        { dir: '/repo', manager: 'pnpm', lockfile: 'pnpm-lock.yaml' },
+        { dir: '/repo/sub', manager: 'npm', lockfile: 'package-lock.json' },
+      ],
+      readTextFile(path) {
+        if (path.endsWith('pnpm-workspace.yaml')) return null
+        if (path.endsWith('package.json')) return null
+        return JSON.stringify({ tokens: { access_token: 'tok' } })
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'install-site fragmentation')
+    expect(check?.status).toBe('WARN')
+    expect(check?.message).toContain('mixed')
+  })
+
+  it('mars doctor exits 0 when the only finding is this WARN', async () => {
+    // This test verifies the WARN does not cause a non-zero exit by confirming
+    // no FAIL is returned from runDoctorChecks alongside the WARN.
+    const probes = passingProbes({
+      installSites: async () => [
+        { dir: '/repo', manager: 'pnpm', lockfile: 'pnpm-lock.yaml' },
+        { dir: '/repo/sub', manager: 'pnpm', lockfile: 'pnpm-lock.yaml' },
+      ],
+      readTextFile(path) {
+        if (path.endsWith('pnpm-workspace.yaml')) return null
+        if (path.endsWith('package.json')) return null
+        return JSON.stringify({ tokens: { access_token: 'tok' } })
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const fragCheck = results.find((r) => r.label === 'install-site fragmentation')
+    expect(fragCheck?.status).toBe('WARN')
+    // The WARN must not be the only FAIL — the command exits 0 when hasFail is false.
+    expect(results.filter((r) => r.status === 'FAIL')).toHaveLength(0)
   })
 })
