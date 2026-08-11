@@ -1878,7 +1878,29 @@ const DDL: readonly string[] = [
   // ADR-0057: condition kinds are derived on read; stored rows for these kinds
   // are stale artifacts from before the derivation refactor. Delete them once at
   // startup — they carry no operator-authored content, so nothing is lost. The
-  // DELETE is idempotent (rows absent on every subsequent boot).
+  // DELETEs are idempotent (rows absent on every subsequent boot).
+  //
+  // action_queue_history has a FK on action_queue_items.id (no CASCADE), so
+  // history rows must be removed before the parent rows can be deleted.
+  `DELETE FROM action_queue_history
+     WHERE item_id IN (
+       SELECT id FROM action_queue_items
+        WHERE kind IN (
+          'failed',
+          'stale-queued',
+          'gate-broken',
+          'subscriber-stalled',
+          'signature-storm',
+          'daemon-died',
+          'daemon-code-drift',
+          'baseline-broken',
+          'stale-worktree',
+          'phantom-task',
+          'worktree-ahead',
+          'orphaned-origin',
+          'steward-repeat'
+        )
+     )`,
   `DELETE FROM action_queue_items
      WHERE kind IN (
        'failed',

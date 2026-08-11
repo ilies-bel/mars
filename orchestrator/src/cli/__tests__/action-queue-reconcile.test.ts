@@ -74,7 +74,7 @@ describe('action-queue reconcile', () => {
     await queue.updateTask(task.id, { status: 'done' })
 
     await aq.raiseActionQueueItem({
-      kind: 'failed',
+      kind: 'awaiting-human',
       category: 'orchestrator',
       priority: 'normal',
       title: 'Some item',
@@ -103,7 +103,7 @@ describe('action-queue reconcile', () => {
     await queue.updateTask(task.id, { status: 'dropped' })
 
     await aq.raiseActionQueueItem({
-      kind: 'failed',
+      kind: 'awaiting-human',
       category: 'orchestrator',
       priority: 'normal',
       title: 'Dropped item',
@@ -129,10 +129,10 @@ describe('action-queue reconcile', () => {
     await queue.updateTask(task.id, { status: 'failed' })
 
     await aq.raiseActionQueueItem({
-      kind: 'failed',
+      kind: 'awaiting-human',
       category: 'orchestrator',
       priority: 'normal',
-      title: 'Failed item',
+      title: 'Stuck task item',
       body: 'Body',
       payload: {},
       context: {},
@@ -161,7 +161,7 @@ describe('action-queue reconcile', () => {
     // purged from the DB entirely.
     const purgedTaskId = 'mars-purged-orphan'
     await aq.raiseActionQueueItem({
-      kind: 'failed',
+      kind: 'awaiting-human',
       category: 'orchestrator',
       priority: 'normal',
       title: 'Orphaned item',
@@ -195,7 +195,7 @@ describe('action-queue reconcile', () => {
     await queue.updateTask(task.id, { status: 'failed' })
 
     await aq.raiseActionQueueItem({
-      kind: 'failed',
+      kind: 'awaiting-human',
       category: 'orchestrator',
       priority: 'normal',
       title: 'Item for live task',
