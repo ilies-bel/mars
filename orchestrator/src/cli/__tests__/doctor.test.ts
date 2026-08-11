@@ -990,4 +990,45 @@ describe('runDoctorChecks — node_modules boundary', () => {
     expect(results.find((r) => r.label === 'node_modules boundary: orchestrator')?.status).toBe('PASS')
     expect(results.find((r) => r.label === 'node_modules boundary: ui')?.status).toBe('FAIL')
   })
+
+  // Workspace root checks (single-root pnpm workspace: virtual store lives in
+  // the root node_modules/.pnpm, so the root must also be validated).
+
+  it('PASS when workspace root virtualStoreDir resolves inside the checkout', async () => {
+    // After a single-root pnpm workspace install, pnpm writes the virtual
+    // store at <root>/node_modules/.pnpm. The boundary check should confirm
+    // the store is self-contained.
+    const probes = passingProbes({
+      readTextFile(path) {
+        // Match the root node_modules/.modules.yaml (not under a sub-package).
+        if (path.match(/\/node_modules\/\.modules\.yaml$/) && !path.match(/\/(orchestrator|ui)\/node_modules/)) {
+          return 'virtualStoreDir: .pnpm\n'
+        }
+        return null
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'node_modules boundary: workspace root')
+    expect(check?.status).toBe('PASS')
+    expect(check?.message).toContain('workspace root/node_modules is self-contained')
+  })
+
+  it('FAIL when workspace root virtualStoreDir resolves outside the checkout', async () => {
+    // The virtual store in the root node_modules points back into a worktree —
+    // the classic "install escaped" corruption scenario for a workspace setup.
+    const probes = passingProbes({
+      readTextFile(path) {
+        if (path.match(/\/node_modules\/\.modules\.yaml$/) && !path.match(/\/(orchestrator|ui)\/node_modules/)) {
+          return 'virtualStoreDir: ../../../.mars/worktrees/mars-abc/node_modules/.pnpm\n'
+        }
+        return null
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'node_modules boundary: workspace root')
+    expect(check?.status).toBe('FAIL')
+    expect(check?.message).toContain('leaked into the main checkout')
+    expect(check?.message).toContain('CI=true pnpm install --frozen-lockfile')
+    expect(check?.message).toMatch(/mars-abc/)
+  })
 })

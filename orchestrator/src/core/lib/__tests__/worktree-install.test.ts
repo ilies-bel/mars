@@ -390,6 +390,105 @@ describe('worktree-install', () => {
       expect(orchInstallsFromRoot).toHaveLength(1)
     })
 
+    it('skips workspace: deps in a real pnpm workspace (symlinked, not packed — no pre-build needed)', async () => {
+      // Regression guard: after converting to a single-root pnpm workspace,
+      // "workspace:*" deps are symlinked by pnpm instead of packed from dist/.
+      // The pre-build (tsup) must NOT run — the dep ships source and pnpm links
+      // directly into its src/. The detection: pnpm-workspace.yaml at the
+      // worktree root has actual package entries (not the synthetic `packages: []`
+      // stub written by _ensurePnpmWorkspaceYaml).
+      //
+      // Topology mirrors the post-conversion mars framework:
+      //   root                    pnpm-workspace.yaml (committed, lists packages)
+      //   root/pnpm-lock.yaml     single workspace lockfile
+      //   orchestrator/           consumer with `"@mars/workflow": "workspace:*"`
+      //   packages/workflow/      dep that ships src (no dist)
+      writeFileSync(resolve(workDir, 'pnpm-lock.yaml'), 'lockfileVersion: 1\n')
+      writeFileSync(
+        resolve(workDir, 'pnpm-workspace.yaml'),
+        'packages:\n  - orchestrator\n  - packages/*\n',
+      )
+      mkdirSync(resolve(workDir, 'orchestrator'))
+      writeFileSync(resolve(workDir, 'orchestrator', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'orchestrator', 'package.json'),
+        JSON.stringify({
+          name: 'orch',
+          dependencies: { '@mars/workflow': 'workspace:*' },
+        }),
+      )
+      mkdirSync(resolve(workDir, 'packages', 'workflow'), { recursive: true })
+      writeFileSync(resolve(workDir, 'packages', 'workflow', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'packages', 'workflow', 'package.json'),
+        JSON.stringify({
+          name: '@mars/workflow',
+          scripts: { build: 'tsup' },
+          files: ['src'],
+          main: './src/index.ts',
+          types: './src/index.ts',
+        }),
+      )
+
+      const calls: RecordedCall[] = []
+      const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+        calls.push({ cmd, args, cwd })
+        return ok()
+      }
+      await installWorktreeDeps({ worktreeRoot: workDir, runner })
+
+      // No `pnpm run build` should fire — workspace: dep is symlinked.
+      const buildCalls = calls.filter((c) => c.args[0] === 'run' && c.args[1] === 'build')
+      expect(buildCalls).toEqual([])
+
+      // packages/workflow is its own install site (has pnpm-lock.yaml), so it
+      // gets exactly ONE install — the site's own frozen install. The pre-build
+      // path must NOT add a second install for it.
+      const wfInstalls = calls.filter(
+        (c) => c.cwd === resolve(workDir, 'packages', 'workflow') && c.args[0] === 'install',
+      )
+      expect(wfInstalls).toHaveLength(1)
+    })
+
+    it('still pre-builds file: deps in a real pnpm workspace (packed, may need dist)', async () => {
+      // file: deps are always packed, even in a real pnpm workspace. A dep that
+      // has a build script still needs its dist built before pnpm packs it.
+      // This guards the backward-compatible path for consumer repos that mix
+      // file: and workspace: deps.
+      writeFileSync(resolve(workDir, 'pnpm-lock.yaml'), 'lockfileVersion: 1\n')
+      writeFileSync(
+        resolve(workDir, 'pnpm-workspace.yaml'),
+        'packages:\n  - orchestrator\n  - packages/*\n',
+      )
+      mkdirSync(resolve(workDir, 'orchestrator'))
+      writeFileSync(resolve(workDir, 'orchestrator', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'orchestrator', 'package.json'),
+        JSON.stringify({
+          name: 'orch',
+          dependencies: { '@mars/local-lib': 'file:../packages/local-lib' },
+        }),
+      )
+      mkdirSync(resolve(workDir, 'packages', 'local-lib'), { recursive: true })
+      writeFileSync(resolve(workDir, 'packages', 'local-lib', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'packages', 'local-lib', 'package.json'),
+        JSON.stringify({ name: '@mars/local-lib', scripts: { build: 'tsup' } }),
+      )
+
+      const calls: RecordedCall[] = []
+      const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+        calls.push({ cmd, args, cwd })
+        return ok()
+      }
+      await installWorktreeDeps({ worktreeRoot: workDir, runner })
+
+      // file: dep should still get a pre-build (install + build).
+      const libDir = resolve(workDir, 'packages', 'local-lib')
+      expect(calls.some((c) => c.cwd === libDir && c.args[0] === 'install')).toBe(true)
+      expect(calls.some((c) => c.cwd === libDir && c.args[0] === 'run' && c.args[1] === 'build')).toBe(true)
+    })
+
     it('handles the canonical mars graph (root link:->orch + orch file:->workflow) without ever building orch', async () => {
       // This is the exact install topology this repo dogfoods on:
       //   root         → link:./orchestrator                       (must skip pre-build)

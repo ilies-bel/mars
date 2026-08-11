@@ -13,10 +13,14 @@ export const DECLARATION_WAIT_TIMEOUT_MS = 30_000
 // ---------------------------------------------------------------------------
 // Install concurrency semaphore
 //
-// Limits how many worktree dependency installs run concurrently. The prepare
-// script (tsup / esbuild + DTS) in packages/workflow is the per-install
-// memory peak; allowing unlimited parallel installs OOM-kills the process
-// (SIGKILL / exit 137) on memory-constrained hosts.
+// Limits how many worktree dependency installs run concurrently. On repos
+// where `file:` workspace deps still trigger a pre-build (tsup / esbuild +
+// DTS), that build is the per-install memory peak; allowing unlimited parallel
+// installs OOM-kills the process (SIGKILL / exit 137) on memory-constrained
+// hosts. Repos that use a committed `pnpm-workspace.yaml` (single-root pnpm
+// workspace) skip the pre-build for `workspace:` deps — the peak is lower in
+// that configuration, but the default of 2 is kept as a conservative guard
+// since the memory profile depends on which consumer repos are in play.
 //
 // Initialized from MARS_MAX_SETUP_INSTALL env var (default 2). The daemon
 // calls setInstallSemCap() at startup and on `mars daemon reload` to keep
@@ -250,18 +254,27 @@ export const parseInstallRoots = (raw: string | undefined): readonly string[] | 
 }
 
 /**
- * Build any local `file:` / `workspace:` workspace dependency that ships a
- * built `dist/` (i.e. declares a `build` script) BEFORE the site is installed.
+ * Build any local `file:` workspace dependency that ships a built `dist/`
+ * (i.e. declares a `build` script) BEFORE the site is installed.
  *
- * Why this is required: a `file:` dependency such as `@mars/workflow`
- * (`"@mars/workflow": "file:../packages/workflow"`) is packed by pnpm at
- * install time from whatever files match the package's `files` whitelist
- * (here `["dist"]`). In a freshly-created worktree the workspace package's
- * `dist/` has not been built yet, so pnpm materialises a `dist`-less copy into
- * the store. TypeScript then follows `node_modules/@mars/workflow` → that
- * `dist`-less copy → `TS2307 Cannot find module '@mars/workflow'`, and every
- * task fails `verify:typecheck`. Building `dist/` first means the subsequent
- * `pnpm install` packs a copy that carries the type declarations.
+ * Why this is required: a `file:` dependency is packed by pnpm at install
+ * time from whatever files match the package's `files` whitelist. In a
+ * freshly-created worktree the workspace package's `dist/` has not been built
+ * yet, so pnpm materialises a `dist`-less copy into the store. TypeScript then
+ * follows `node_modules/<dep>` → that `dist`-less copy → `TS2307 Cannot find
+ * module`, and every task fails `verify:typecheck`. Building `dist/` first
+ * means the subsequent `pnpm install` packs a copy that carries the type
+ * declarations.
+ *
+ * **`workspace:` protocol in a real pnpm workspace**: when the worktree root
+ * carries a committed `pnpm-workspace.yaml` with actual package entries, pnpm
+ * *symlinks* `workspace:` deps rather than packing them. The packing rationale
+ * does not apply — pre-building is both pointless (nothing gets packed) and
+ * actively harmful (it races with the dep's own install site). These deps are
+ * skipped for the same reason `link:` is skipped; see the `link:` comment
+ * below. A worktree that carries only the synthetic `packages: []` stub
+ * written by {@link _ensurePnpmWorkspaceYaml} is NOT treated as a real
+ * workspace for this purpose — pnpm still packs `workspace:path` deps there.
  *
  * Only same-worktree workspace packages are built; registry deps and `file:`
  * targets that escape the worktree root are ignored. A package with no `build`
@@ -312,20 +325,41 @@ export const buildWorkspaceDepsForSite = async (
   }
   const deps = { ...manifest.dependencies, ...manifest.devDependencies }
   const built = new Set<string>()
+
+  // Detect whether the worktree root has a committed (non-synthetic) pnpm
+  // workspace yaml. In a real workspace pnpm symlinks `workspace:` deps rather
+  // than packing them, so the pre-build rationale does not apply — skip those
+  // deps for the same reason we skip `link:` (see comment below).
+  //
+  // "Synthetic" means the `packages: []` stub written by
+  // `_ensurePnpmWorkspaceYaml`. A committed yaml carries actual package globs
+  // on separate lines and does not match `packages: []`.
+  let isRealPnpmWorkspace = false
+  try {
+    const wsYaml = await readFile(resolve(worktreeRoot, 'pnpm-workspace.yaml'), 'utf8')
+    isRealPnpmWorkspace = !/^packages:\s*\[\s*\]$/m.test(wsYaml)
+  } catch {
+    // No pnpm-workspace.yaml at the worktree root — not a real workspace.
+  }
+
   for (const spec of Object.values(deps)) {
-    // Only `file:` and `workspace:` specs pack a copy into the consumer's
-    // node_modules — those are the ones that need a built `dist/` on disk
-    // before the consumer's install runs. `link:` deps are symlinks (pnpm
-    // does no packing), so pre-building is pointless and actively harmful:
-    // the linked package is typically its OWN install site, and running
+    // Only `file:` specs pack a copy into the consumer's node_modules —
+    // those are the ones that need a built `dist/` on disk before the
+    // consumer's install runs. `link:` deps are symlinks (pnpm does no
+    // packing), so pre-building is pointless and actively harmful: the linked
+    // package is typically its OWN install site, and running
     // `pnpm install` + `pnpm run build` against it from here races with the
-    // linked package's own setup that's running in parallel — and worse,
-    // the linked package's build (e.g. `tsc --noEmit`) routinely depends on
+    // linked package's own setup that's running in parallel — and worse, the
+    // linked package's build (e.g. `tsc --noEmit`) routinely depends on
     // workspace deps whose dist won't exist until that other site finishes.
     // Skip `link:` entirely; the linked package's own install site owns its
     // install+build.
+    //
+    // `workspace:` deps in a real pnpm workspace (committed yaml with package
+    // entries) are symlinked by pnpm — same reasoning applies, so skip them.
     const m = /^(?:file:|workspace:)(.+)$/.exec(spec)
     if (!m) continue
+    if (spec.startsWith('workspace:') && isRealPnpmWorkspace) continue
     const depDir = resolve(site.dir, m[1].replace(/^workspace:/, ''))
     // Stay inside the worktree; ignore deps that escape the checkout.
     const rootWithSep = worktreeRoot.endsWith('/') ? worktreeRoot : `${worktreeRoot}/`
@@ -576,6 +610,14 @@ export const buildWorkspaceDepsForSite = async (
  * Writing `packages: []` here makes pnpm stop at the worktree root.
  * Sub-packages that carry their own lockfiles are treated as independent,
  * non-workspace projects and continue to use their local lockfiles.
+ *
+ * **No-op for repos with a committed `pnpm-workspace.yaml`.** When the
+ * project already ships a `pnpm-workspace.yaml` (e.g. after converting to a
+ * single-root pnpm workspace), the worktree inherits that file and this
+ * function is a no-op — it never overwrites an existing file. The committed
+ * yaml already provides the workspace root boundary guarantee. In that setup
+ * {@link buildWorkspaceDepsForSite} additionally skips `workspace:` deps
+ * because pnpm symlinks them rather than packing them.
  *
  * @internal Exported for unit-testing.
  */
