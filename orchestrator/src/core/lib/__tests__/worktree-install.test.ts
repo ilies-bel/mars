@@ -266,6 +266,68 @@ describe('worktree-install', () => {
       })
     })
 
+    it('still reports a missing module tree when the site declares dependencies', async () => {
+      const packageDir = resolve(workDir, 'orchestrator')
+      mkdirSync(packageDir)
+      writeFileSync(resolve(packageDir, 'package-lock.json'), '{}')
+      writeFileSync(
+        resolve(packageDir, 'package.json'),
+        JSON.stringify({ name: 'orch', dependencies: { zod: '^3.0.0' } }),
+      )
+
+      await expect(
+        installWorktreeDeps({
+          worktreeRoot: workDir,
+          requireModuleTrees: true,
+          runner: async () => ok(),
+        }),
+      ).rejects.toMatchObject({
+        name: 'WorktreeModulesMissingError',
+        site: expect.objectContaining({ dir: packageDir }),
+      })
+    })
+
+    it('does not demand a module tree from a site that declares no dependencies', async () => {
+      // A napi-rs crate: the lockfile makes it an install site, but the
+      // package.json exists to carry the build key and the loader entry point.
+      // Its dependencies live in Cargo.toml, so npm installs nothing and
+      // creates no node_modules — there is no module tree to assert.
+      const nativeDir = resolve(workDir, 'native-module')
+      mkdirSync(nativeDir)
+      writeFileSync(resolve(nativeDir, 'package-lock.json'), '{}')
+      writeFileSync(
+        resolve(nativeDir, 'package.json'),
+        JSON.stringify({
+          name: 'notetaker-audio',
+          main: 'index.js',
+          napi: { binaryName: 'index', targets: ['defaults'] },
+        }),
+      )
+
+      await expect(
+        installWorktreeDeps({
+          worktreeRoot: workDir,
+          requireModuleTrees: true,
+          runner: async () => ok(),
+        }),
+      ).resolves.toMatchObject({ sites: expect.any(Array) })
+    })
+
+    it('keeps the assertion for a lockfile whose package.json is unparseable', async () => {
+      const packageDir = resolve(workDir, 'orchestrator')
+      mkdirSync(packageDir)
+      writeFileSync(resolve(packageDir, 'package-lock.json'), '{}')
+      writeFileSync(resolve(packageDir, 'package.json'), '{ this is not json')
+
+      await expect(
+        installWorktreeDeps({
+          worktreeRoot: workDir,
+          requireModuleTrees: true,
+          runner: async () => ok(),
+        }),
+      ).rejects.toMatchObject({ name: 'WorktreeModulesMissingError' })
+    })
+
     it('installs then builds a local file: workspace dep BEFORE installing the site (so dist is packed)', async () => {
       // Site = orchestrator with a pnpm lockfile and a file: dep on a sibling
       // workspace package that has a build script. The dep's own deps install

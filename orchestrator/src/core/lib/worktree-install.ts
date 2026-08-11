@@ -801,6 +801,46 @@ export class WorktreeInstallError extends Error {
 }
 
 /**
+ * Dependency maps whose emptiness decides whether an install can produce a
+ * module tree at all. `peerDependencies` is deliberately absent: a peer is
+ * declared for the *consumer* to satisfy, so a package declaring only peers
+ * still installs nothing of its own.
+ */
+const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies'] as const
+
+/**
+ * Whether a site's `package.json` asks for anything to be installed.
+ *
+ * A **lockfile** is what makes a directory an install site (`detectInDir`), and
+ * npm writes `package-lock.json` even for a package that declares no
+ * dependencies at all. napi-rs crates are the common case: the `package.json`
+ * carries the `napi` build key and points `main` at the generated loader, while
+ * the real dependency list lives in `Cargo.toml`.
+ *
+ * No package manager creates `node_modules` for such a site — npm does not
+ * materialise an empty directory — so asserting a module tree there asserts
+ * something unsatisfiable, and the task dies at setup having done nothing wrong.
+ *
+ * Only the provably-empty case is relaxed. A missing or unparseable
+ * `package.json` keeps the assertion: that is not the "install silently did
+ * nothing" case this check exists to catch, and staying strict reports it at
+ * setup rather than as a puzzling verify failure later.
+ */
+const _declaresDependencies = async (dir: string): Promise<boolean> => {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(await readFile(resolve(dir, 'package.json'), 'utf8'))
+  } catch {
+    return true
+  }
+  if (typeof parsed !== 'object' || parsed === null) return true
+  return DEPENDENCY_FIELDS.some((field) => {
+    const map = (parsed as Record<string, unknown>)[field]
+    return typeof map === 'object' && map !== null && Object.keys(map).length > 0
+  })
+}
+
+/**
  * A package manager reported a successful install but did not leave a usable
  * module tree for a package that setup must make runnable. This is a setup
  * environment failure, never a later typecheck failure.
@@ -1048,9 +1088,15 @@ export const installWorktreeDeps = async ({
   )
   if (requireModuleTrees) {
     for (const site of sites) {
-      if (!(await dirExists(resolve(site.dir, 'node_modules')))) {
-        throw new WorktreeModulesMissingError(site)
+      if (await dirExists(resolve(site.dir, 'node_modules'))) continue
+      if (!(await _declaresDependencies(site.dir))) {
+        log?.(
+          `[setup:install] ${relative(worktreeRoot, site.dir) || '.'} declares no dependencies — ` +
+            'no module tree to assert',
+        )
+        continue
       }
+      throw new WorktreeModulesMissingError(site)
     }
   }
   return { sites: results, totalDurationMs: Date.now() - start }
