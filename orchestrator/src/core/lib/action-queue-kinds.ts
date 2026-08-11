@@ -54,6 +54,7 @@ export const ACTION_QUEUE_KINDS = [
   'daemon-outage',
   'dirty-integration',
   'health-check-alert',
+  'fragmented-repo-layout',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

@@ -1004,6 +1004,20 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [],
   },
+
+  'fragmented-repo-layout': {
+    humanSummary: (ctx) => {
+      const workspace = str(ctx.payload['workspace']) || 'a workspace'
+      return `Fragmented repo layout detected in ${workspace}: node_modules virtual store escaped the checkout — a fix task has been enqueued.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      workspace: ctx.payload['workspace'],
+      virtualStoreDir: ctx.payload['virtualStoreDir'],
+    }),
+    verbs: [],
+  },
 } satisfies Record<ActionQueueKind, Omit<Recipe, 'preloadedResponses'>>
 
 /**

@@ -465,6 +465,14 @@ const OPERATIONAL_ALERT_COPY: Record<
       body: typeof row.payload.output === 'string' ? row.payload.output : '',
     }
   },
+  'fragmented-repo-layout': (row) => {
+    const workspace =
+      typeof row.payload.workspace === 'string' ? row.payload.workspace : 'a workspace'
+    return {
+      title: `Fragmented repo layout detected in ${workspace}`,
+      body: `The node_modules virtual store for ${workspace} escaped the checkout boundary. A fix task has been enqueued to reinstall dependencies in the correct location.`,
+    }
+  },
 }
 
 const renderOperationalAlertCopy = (
