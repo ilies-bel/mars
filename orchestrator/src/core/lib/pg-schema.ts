@@ -1981,9 +1981,13 @@ export const SCHEMA_ADVISORY_LOCK_KEY = 20260726
  */
 const schemaSeedStatements = (appliedAt: string): DbStatement[] => [
   {
+    // alert_resolved is NOT NULL even on legacy schemas (those created before
+    // the DEFAULT 0 was added to the CREATE TABLE above). Provide the value
+    // explicitly so this INSERT succeeds against both canonical and legacy
+    // tables that lack the column default.
     sql: `INSERT INTO chat_threads
-            (id, title, status, posture, created_at, updated_at)
-          VALUES ('main', '', 'idle', 'triage', 0, 0)
+            (id, title, status, posture, alert_resolved, created_at, updated_at)
+          VALUES ('main', '', 'idle', 'triage', 0, 0, 0)
           ON CONFLICT (id) DO NOTHING`,
   },
   {

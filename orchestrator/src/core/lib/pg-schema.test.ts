@@ -469,7 +469,7 @@ describe('ensureSchema', () => {
     for (const name of [
       'id', 'prompt', 'status', 'plan_functional', 'plan_technical', 'branch',
       'worktree_path', 'claude_session_id', 'error', 'drop_reason',
-      'retry_count', 'author_kind', 'author_name', 'failure_reason',
+      'recovery_spawned_count', 'author_kind', 'author_name', 'failure_reason',
       'failure_reason_code', 'recovery_payload', 'fix_for_task_id',
       'failure_signature', 'kind', 'priority', 'tag', 'tags_json', 'origin_id',
       'parent_proposal_id', 'slice_index', 'failed_phase', 'resume_from',
@@ -484,7 +484,7 @@ describe('ensureSchema', () => {
       expect(cols.has(name), `tasks.${name} missing`).toBe(true)
     }
     expect(cols.get('id')).toBe('text')
-    expect(cols.get('retry_count')).toBe('bigint')
+    expect(cols.get('recovery_spawned_count')).toBe('bigint')
     expect(cols.get('priority')).toBe('bigint')
     expect(cols.get('leased_at')).toBe('timestamp with time zone')
     expect(cols.get('created_at')).toBe('timestamp with time zone')
