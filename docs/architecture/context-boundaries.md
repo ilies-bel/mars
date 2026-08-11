@@ -214,8 +214,7 @@ constrained slice.
 - `core/lib/git/**` (8 files / 4,718 LOC **measured**) — but see Q6: `git`
   arguably splits between `runtime` (mechanics) and `execution` (policy)
 - `workflows/`: `implement-workflow.ts`, `queue-workflow-store.ts`,
-  `validate-workflow.ts`, `triage-workflow.ts`, `context-gathering-brief.ts`,
-  `tdd-brief.ts`
+  `validate-workflow.ts`, `triage-workflow.ts`, `context-gathering-brief.ts`
 - `core/daemon/`: `continue-task.ts`, `restart-task.ts`, `remerge-task.ts`,
   `purge-task.ts`, `arc-purge.ts`, `validate-task.ts`, `merge-worker.ts`,
   `land-work.ts`, `dispatch-hint.ts`, `requeue-{ceiling,diagnostics}.ts`,

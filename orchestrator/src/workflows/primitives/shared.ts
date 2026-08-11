@@ -22,7 +22,6 @@ import {
 import { resolveTaskCwd } from '../../core/lib/resolve-task-cwd'
 import { readWorkerPromptOverride } from '../../core/daemon/config'
 import { composeCodexPrompt } from '../../core/workers/providers/codex-headless'
-import { TDD_WORKER_BRIEF } from '../tdd-brief'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
 import type { WorkerName } from '../../core/workers'
 import type { VerifyStepSpec } from '../../core/lib/git/verify'
@@ -278,7 +277,7 @@ export const CODING_DISCIPLINE = [
 
 // Build the Coder Worker's standing Session instructions.
 const defaultCoderSystemPrompt = (): string =>
-  [TDD_WORKER_BRIEF, CONTEXT_GATHERING_BRIEF, DEVIATION_RULES].join('\n\n')
+  [CONTEXT_GATHERING_BRIEF, DEVIATION_RULES].join('\n\n')
 
 // This is the production composition seam for the persistent Steward
 // override. It applies only to Mars-owned standing instructions, never to a

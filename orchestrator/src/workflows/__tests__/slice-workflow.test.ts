@@ -24,7 +24,6 @@ import {
   resolveWorkerSystemPrompt,
   CODER_SYSTEM_PROMPT,
 } from '../primitives/shared'
-import { TDD_WORKER_BRIEF } from '../tdd-brief'
 
 describe('slicerOutputSchema: readFirst + prescriptiveAction', () => {
   // These two fields are required and non-empty for every slicer-produced
@@ -407,7 +406,7 @@ describe('slicer prompt: anti-hallucination guidance', () => {
     expect(brief).toMatch(/subdirectory/i)
   })
 
-  it('does not redundantly redescribe vertical slices (TDD_WORKER_BRIEF carries that)', () => {
+  it('emits the condensed vertical-slice one-liner, not the old multi-line section', () => {
     const brief = buildSlicerPrompt(sampleProposal)
     // The old multi-line "Vertical-slice rules" section is gone; only the
     // condensed one-liner remains.
@@ -3066,33 +3065,32 @@ describe('enqueueTask round-trip: slicer intent lands on emitted task row', () =
   })
 })
 
-describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Task text', () => {
-  // The coder Worker used to re-absorb the ~150-line TDD brief at the top
-  // of every per-Task prompt, and a retry replayed it verbatim — burning
-  // token budget on boilerplate. It now arrives once, as the
-  // Worker's standing Session instructions, and never inside the per-Task
-  // prompt.
+describe('coder prompt composition is stable across dispatches', () => {
+  // Per-Task prompts must be byte-identical across retries so the coder
+  // worker receives the same instruction set on every attempt. Standing
+  // instructions (system prompt) must not vary between dispatches either.
+  // Neither surface should carry a test-first prescription.
   const proposal = {
-    id: 'idea-tdd',
-    title: 'Move the TDD brief out of per-task prompts',
-    problem: 'The brief is replayed verbatim on every retry.',
-    solution: 'Carry it in the Session standing instructions instead.',
-    outOfScope: 'Retuning the read budget.',
-    notes: 'Slice 1 of the TDD brief refactor.',
-    userStories: ['As a coder I do not re-absorb the brief each task.'],
+    id: 'idea-prompt-stability',
+    title: 'Verify coder prompt stability across retries',
+    problem: 'Retried tasks must produce byte-identical prompts.',
+    solution: 'Prompt composition must be deterministic and stateless.',
+    outOfScope: 'Token-budget tuning.',
+    notes: 'Invariant guard for the prompt composition pipeline.',
+    userStories: ['As a coder I receive a consistent prompt on every dispatch.'],
   }
   const slice = {
-    title: 'Drop the brief from the per-task prompt',
+    title: 'Confirm per-task prompt is stable',
     type: 'AFK' as const,
     kind: 'coder' as const,
-    whatToBuild: 'Stop prepending the TDD brief to the slice prompt.',
-    acceptanceCriteria: ['per-task prompt has zero copies of the brief'],
+    whatToBuild: 'Verify composeTaskPrompt is idempotent.',
+    acceptanceCriteria: ['per-task prompt is byte-identical across calls'],
     blockedBy: [] as number[],
     readFirst: [
-      'orchestrator/src/core/workflows/slice-workflow.ts',
+      'orchestrator/src/workflows/primitives/shared.ts',
     ] as string[],
     prescriptiveAction:
-      'In composeTaskPrompt (slice-workflow.ts), remove any reference to TDD_WORKER_BRIEF from the returned template string.',
+      'In composeTaskPrompt (slice-workflow.ts), ensure the result is deterministic.',
     modifies: [] as string[],
     creates: [] as string[],
     verifyCmd: null,    mergeMode: 'auto' as const,
@@ -3102,49 +3100,38 @@ describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Tas
     verifyCmd: null,    doneCriteria: ['a'],
     mergeMode: 'auto' as const,
   }
-  // A sentence that appears verbatim only in the TDD operating philosophy.
-  const TDD_SIGNATURE =
-    'using test-driven development with vertical tracer bullets'
 
-  it('composes a coder per-Task prompt with zero copies of the TDD philosophy', () => {
-    const prompt = composeTaskPrompt(proposal, slice, 1, 1)
-    expect(prompt).not.toContain(TDD_WORKER_BRIEF)
-    expect(prompt).not.toContain(TDD_SIGNATURE)
-    expect(prompt).not.toContain('Anti-pattern: horizontal slices')
-
-    // It also stays out of the fully-composed dispatched prompt.
-    const dispatched = composePrompt(prompt, null, 'coder', spec, 'mars-x')
-    expect(dispatched).not.toContain(TDD_WORKER_BRIEF)
-    expect(dispatched).not.toContain(TDD_SIGNATURE)
-  })
-
-  it('gives a dispatched coder Worker the TDD philosophy in its standing Session instructions', () => {
-    expect(resolveWorkerSystemPrompt('coder')).toContain(TDD_WORKER_BRIEF)
-    expect(CODER_SYSTEM_PROMPT).toContain(TDD_WORKER_BRIEF)
-  })
-
-  it('produces a byte-identical, brief-free per-Task prompt when a coder Task is retried', () => {
+  it('produces a byte-identical per-Task prompt when a coder Task is retried', () => {
     const original = composeTaskPrompt(proposal, slice, 1, 1)
     const retried = composeTaskPrompt(proposal, slice, 1, 1)
     expect(retried).toBe(original)
-    expect(retried).not.toContain(TDD_WORKER_BRIEF)
 
     // A re-dispatch wraps the stored prompt through composePrompt again;
-    // that surface must also be stable and brief-free.
+    // that surface must also be stable.
     const first = composePrompt(original, null, 'coder', spec, 'mars-x')
     const second = composePrompt(original, null, 'coder', spec, 'mars-x')
     expect(second).toBe(first)
-    expect(second).not.toContain(TDD_WORKER_BRIEF)
   })
 
-  it('standing instructions do not vary between dispatches — same prompt, no brief in per-Task body', () => {
+  it('standing instructions do not vary between dispatches', () => {
     // After ADR 0019 every tag resolves to the Coder standing instructions.
-    // The TDD brief is in the standing instructions (system prompt), not the
-    // per-Task prompt body — composePrompt must not embed it.
+    // composePrompt must not embed standing-instruction content in the per-Task body.
     const p1 = composePrompt('task body', null, 'coder', spec, 'mars-t')
     const p2 = composePrompt('task body', null, 'coder', spec, 'mars-t')
     expect(p2).toBe(p1)
-    expect(p1).not.toContain(TDD_WORKER_BRIEF)
+  })
+
+  it('coder standing instructions contain CONTEXT_GATHERING_BRIEF and DEVIATION_RULES but no test-first prescription', () => {
+    const systemPrompt = resolveWorkerSystemPrompt('coder')
+    expect(systemPrompt).toContain('Context-gathering discipline')
+    expect(systemPrompt).toContain('Deviation rules')
+    expect(CODER_SYSTEM_PROMPT).toContain('Context-gathering discipline')
+    expect(CODER_SYSTEM_PROMPT).toContain('Deviation rules')
+    // A future reintroduction of a test-first mandate is caught here.
+    expect(systemPrompt).not.toContain('test-driven development')
+    expect(systemPrompt).not.toContain('Anti-pattern: horizontal slices')
+    expect(CODER_SYSTEM_PROMPT).not.toContain('test-driven development')
+    expect(CODER_SYSTEM_PROMPT).not.toContain('Anti-pattern: horizontal slices')
   })
 })
 

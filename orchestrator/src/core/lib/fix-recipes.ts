@@ -408,7 +408,7 @@ const typecheckMissingExportRecipe: FixRecipe = {
     return [
       `TypeScript reported TS2694 ("Namespace has no exported member") during the typecheck step. This means a source or test file imports a named export that does not exist in the target module.`,
       '',
-      `The most common cause is TDD work where tests were written before the implementation was added — the failing task wrote tests that reference a function which was never implemented in the module.`,
+      `The most common cause is a file importing a symbol that was never implemented in the target module — for example a test referencing a function that does not exist yet, or an import that was not updated after a rename.`,
       '',
       ...renderReproSection(ctx.reproCommand),
       `## How to fix`,
