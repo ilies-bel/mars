@@ -38,7 +38,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0031'
+export const SCHEMA_VERSION = '0032'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -1837,6 +1837,14 @@ const DDL: readonly string[] = [
      END IF;
    END
    $$`,
+
+  // mars-de0e1642: health_silences — permanent per-findingKey silences for the
+  // notice route. Rows inserted by `mars notice silence <finding-key>`; read by
+  // the DB-backed NoticeStore.isSilenced() during each scheduled health pass.
+  `CREATE TABLE IF NOT EXISTS health_silences (
+    finding_key text PRIMARY KEY,
+    silenced_at text NOT NULL
+  )`,
 ]
 
 /**
@@ -1918,6 +1926,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'main_thread_entries',
   'archive_entries',
   'cards',
+  'health_silences',
 ]
 
 /**

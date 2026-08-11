@@ -28,6 +28,7 @@ import type { HealthCheck, HealthCheckResult } from './index.js'
 import { listChecks, runChecks, type CheckContext } from './registry.js'
 import { routeFixFinding, type FixRouteDeps } from './routes/fix.js'
 import { routeAlert, clearHealthAlert, type AlertRouteDeps } from './routes/alert.js'
+import { routeNotice, type NoticeRouteDeps } from './routes/notice.js'
 
 // ── Posture ───────────────────────────────────────────────────────────────────
 
@@ -301,6 +302,13 @@ export interface HealthPassDeps {
    * condition clears.
    */
   alert?: AlertRouteDeps
+
+  /**
+   * Dependencies for the notice route handler. Optional; when provided, checks
+   * with route='notice' are dispatched through routeNotice(). When absent,
+   * notice findings are counted but not acted upon.
+   */
+  notice?: NoticeRouteDeps
 }
 
 /**
@@ -314,6 +322,9 @@ export interface HealthPassDeps {
  * `alertsRaised`    — AQ item ids raised by the alert route this pass.
  * `alertsCleared`   — AQ item ids resolved by the alert route this pass
  *                     (condition was gone and the open row was auto-closed).
+ * `noticed`         — findingKeys for which a new notice was filed this pass.
+ * `alreadyStated`   — findingKeys whose notice was already stated (deduped).
+ * `silenced`        — findingKeys that are silenced and therefore skipped.
  */
 export interface PassSummary {
   readonly checked: number
@@ -323,15 +334,17 @@ export interface PassSummary {
   readonly alreadyActive: readonly string[]
   readonly alertsRaised: readonly string[]
   readonly alertsCleared: readonly string[]
+  readonly noticed: readonly string[]
+  readonly alreadyStated: readonly string[]
+  readonly silenced: readonly string[]
 }
 
 /**
  * Run every registered check (via the singleton registry) and dispatch findings
  * through their declared route handlers.
  *
- * Currently only the fix route is handled here. Notice and alert routes are
- * dispatched by the same scheduled pass in later slices; for now they are
- * counted but not acted upon so the pass is safe to run at any time.
+ * Fix, alert, and notice routes are all handled here. A route whose deps are
+ * absent is counted but not acted upon, so the pass is safe to run at any time.
  *
  * Never throws: individual check errors are caught by runChecks(); route
  * handler errors are logged and the pass continues.
@@ -344,6 +357,9 @@ export const healthPass = async (deps: HealthPassDeps): Promise<PassSummary> => 
   const alreadyActive: string[] = []
   const alertsRaised: string[] = []
   const alertsCleared: string[] = []
+  const noticed: string[] = []
+  const alreadyStated: string[] = []
+  const silenced: string[] = []
   let skippedByPrereq = 0
   let findings = 0
 
@@ -387,12 +403,38 @@ export const healthPass = async (deps: HealthPassDeps): Promise<PassSummary> => 
         if (outcome.action === 'raised' && outcome.aqItemId !== undefined) {
           alertsRaised.push(outcome.aqItemId)
         }
+      } else if (def?.route === 'notice' && deps.notice !== undefined) {
+        const outcome = await routeNotice(
+          {
+            findingKey: result.outcome?.findingKey,
+            detail: result.outcome?.detail,
+            checkId: result.id,
+          },
+          deps.notice,
+        )
+
+        if (outcome.action === 'stated' && outcome.findingKey !== undefined) {
+          noticed.push(outcome.findingKey)
+        } else if (outcome.action === 'already-stated' && outcome.findingKey !== undefined) {
+          alreadyStated.push(outcome.findingKey)
+        } else if (outcome.action === 'silenced' && outcome.findingKey !== undefined) {
+          silenced.push(outcome.findingKey)
+        }
       }
-    } else if (result.status === 'ok' && def?.route === 'alert' && deps.alert !== undefined) {
-      // Condition cleared — auto-resolve any open alert for this check.
-      const clearedId = await clearHealthAlert(result.id, deps.alert)
-      if (clearedId !== null) {
-        alertsCleared.push(clearedId)
+    } else if (result.status === 'ok') {
+      if (def?.route === 'alert' && deps.alert !== undefined) {
+        // Condition cleared — auto-resolve any open alert for this check.
+        const clearedId = await clearHealthAlert(result.id, deps.alert)
+        if (clearedId !== null) {
+          alertsCleared.push(clearedId)
+        }
+      } else if (def?.route === 'notice' && deps.notice !== undefined) {
+        // Condition cleared — reset the stated flag so the notice can re-file
+        // if the condition recurs.
+        const findingKey = result.outcome?.findingKey
+        if (findingKey) {
+          await deps.notice.noticeStore.resetStated(findingKey)
+        }
       }
     }
   }
@@ -405,5 +447,8 @@ export const healthPass = async (deps: HealthPassDeps): Promise<PassSummary> => 
     alreadyActive,
     alertsRaised,
     alertsCleared,
+    noticed,
+    alreadyStated,
+    silenced,
   }
 }

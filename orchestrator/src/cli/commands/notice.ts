@@ -1,8 +1,9 @@
 /**
  * `notice add` posts a template-authored, zero-token conversation entry.
+ * `notice silence` / `notice unsilence` manage permanent findingKey silences.
  */
 
-import { createNotice } from '../../core/lib/notice-store'
+import { createNotice, silenceFinding, unsilenceFinding } from '../../core/lib/notice-store'
 import { isActionQueueKind } from '../../core/lib/action-queue-kinds'
 import type { Command } from '../command'
 import { errorMessage } from './shared'
@@ -46,6 +47,50 @@ const noticeAdd: Command = {
   },
 }
 
+const noticeSilence: Command = {
+  path: 'notice silence',
+  summary: 'permanently silence a health finding by its findingKey',
+  usage: 'usage: mars notice silence <finding-key>',
+  run: async (args, deps) => {
+    const findingKey = args.positional[0]
+    if (!findingKey) {
+      deps.err('usage: mars notice silence <finding-key>')
+      return { code: 2 }
+    }
+    try {
+      await silenceFinding(findingKey)
+      deps.out(`silenced: ${findingKey}`)
+    } catch (err) {
+      deps.err(`notice silence: ${errorMessage(err)}`)
+      return { code: 1 }
+    }
+    return { code: 0 }
+  },
+}
+
+const noticeUnsilence: Command = {
+  path: 'notice unsilence',
+  summary: 'remove a permanent silence for a health finding',
+  usage: 'usage: mars notice unsilence <finding-key>',
+  run: async (args, deps) => {
+    const findingKey = args.positional[0]
+    if (!findingKey) {
+      deps.err('usage: mars notice unsilence <finding-key>')
+      return { code: 2 }
+    }
+    try {
+      await unsilenceFinding(findingKey)
+      deps.out(`unsilenced: ${findingKey}`)
+    } catch (err) {
+      deps.err(`notice unsilence: ${errorMessage(err)}`)
+      return { code: 1 }
+    }
+    return { code: 0 }
+  },
+}
+
 export const noticeCommands: readonly Command[] = [
   noticeAdd,
+  noticeSilence,
+  noticeUnsilence,
 ]

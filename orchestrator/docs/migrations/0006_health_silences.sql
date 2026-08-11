@@ -1,0 +1,31 @@
+-- Migration 0006: health_silences table for notice-route permanent silences
+--
+-- WHY
+-- The Steward's scheduled health pass files a notice for each health finding
+-- with route='notice'. Without a silence mechanism, a standing condition the
+-- operator chooses to live with would emit the same notice on every pass.
+--
+-- health_silences stores permanent per-findingKey silences written by the
+-- operator via `mars notice silence <finding-key>`. Each scheduled pass
+-- consults this table (via NoticeStore.isSilenced()) before filing; a silenced
+-- findingKey is skipped for every future pass until explicitly unsilenced.
+--
+-- STATUS: DDL only — no data migration needed. The table is new and empty.
+--
+-- HOW IT IS APPLIED
+-- pg-schema.ts (SCHEMA_VERSION '0032') runs the statement below idempotently
+-- at every daemon startup via ensureSchema(). There is no separate operator
+-- step for this migration.
+--
+-- Statements (also in pg-schema.ts DDL array):
+--
+--   CREATE TABLE IF NOT EXISTS health_silences (
+--     finding_key text PRIMARY KEY,
+--     silenced_at text NOT NULL
+--   );
+--
+-- ROLLBACK
+-- The table can be dropped safely if the notice-route feature is disabled.
+-- No other tables reference health_silences.
+--
+--   DROP TABLE IF EXISTS health_silences;
