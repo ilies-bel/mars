@@ -34,7 +34,7 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",
-    "@mars/workflow": "file:../packages/workflow",
+    "@mars/workflow": "workspace:*",
     "embedded-postgres": "18.4.0-beta.17",
     "ink": "^7.0.2",
     "js-yaml": "^4.1.1",
@@ -53,16 +53,5 @@
     "knip": "^6.14.0",
     "typescript": "^6.0.3",
     "vitest": "^2.1.9"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@embedded-postgres/darwin-arm64",
-      "@embedded-postgres/darwin-x64",
-      "@embedded-postgres/linux-arm64",
-      "@embedded-postgres/linux-x64",
-      "@embedded-postgres/windows-x64",
-      "embedded-postgres",
-      "node-pty"
-    ]
   }
 }
