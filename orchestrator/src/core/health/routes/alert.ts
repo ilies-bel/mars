@@ -30,12 +30,20 @@ export interface AlertRouteDeps {
   /**
    * Raise a 'health-check-alert' action-queue item and return its id.
    * Called only when no open alert exists for this checkId.
+   *
+   * When `offerPayload` is present the item is an offer: the operator can
+   * enact it (via `mars action-queue take <id>`) to enqueue the fix task
+   * described by the payload. This is used when posture='manual' on a
+   * fix-route check — the finding surfaces as a one-click offer rather than
+   * an immediately-enacted task.
    */
   raiseAlertItem(params: {
     checkId: string
     findingKey: string
     detail: string | undefined
     label: string
+    /** Present when the alert is an offer (posture='manual' on a fix-route check). */
+    offerPayload?: { findingKey: string; checkId: string; detail: string | undefined }
   }): Promise<string>
 
   /**
@@ -75,10 +83,12 @@ export async function routeAlert(
     detail: string | undefined
     checkId: string
     label: string
+    /** Present when the alert is an offer (posture='manual' on a fix-route check). */
+    offerPayload?: { findingKey: string; checkId: string; detail: string | undefined }
   },
   deps: AlertRouteDeps,
 ): Promise<AlertRouteResult> {
-  const { findingKey, detail, checkId, label } = params
+  const { findingKey, detail, checkId, label, offerPayload } = params
 
   if (!findingKey) {
     return { action: 'no-finding-key' }
@@ -89,7 +99,7 @@ export async function routeAlert(
     return { action: 'already-open', aqItemId: existingId, findingKey }
   }
 
-  const aqItemId = await deps.raiseAlertItem({ checkId, findingKey, detail, label })
+  const aqItemId = await deps.raiseAlertItem({ checkId, findingKey, detail, label, offerPayload })
   await deps.alertStore.setOpenAlertId(checkId, aqItemId)
   return { action: 'raised', aqItemId, findingKey }
 }

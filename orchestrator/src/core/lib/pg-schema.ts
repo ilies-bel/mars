@@ -66,7 +66,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0033'
+export const SCHEMA_VERSION = '0034'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -1865,6 +1865,14 @@ const DDL: readonly string[] = [
     finding_key text PRIMARY KEY,
     silenced_at text NOT NULL
   )`,
+
+  // migration 0007: per-check operator posture (automatic|manual|off).
+  // A row is present only when the operator has explicitly changed the default.
+  // Checks with no row behave as 'automatic'.
+  `CREATE TABLE IF NOT EXISTS health_postures (
+    check_id  text PRIMARY KEY,
+    posture   text NOT NULL CHECK (posture IN ('automatic', 'manual', 'off'))
+  )`,
 ]
 
 /**
@@ -1947,6 +1955,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'archive_entries',
   'cards',
   'health_silences',
+  'health_postures',
 ]
 
 /**

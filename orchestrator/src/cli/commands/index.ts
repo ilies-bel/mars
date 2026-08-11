@@ -49,6 +49,7 @@ import { worktreeCommands } from './worktree'
 import { stewardCommands } from './steward'
 import { previewValidationCommands } from './preview-validation'
 import { leverCommands } from './lever'
+import { healthCommands } from './health'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
@@ -93,6 +94,7 @@ export const allCommands: readonly Command[] = [
   ...worktreeCommands,
   ...stewardCommands,
   ...leverCommands,
+  ...healthCommands,
 ]
 
 export const registry: CommandRegistry = buildRegistry(allCommands)

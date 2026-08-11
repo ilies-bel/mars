@@ -29,6 +29,7 @@ import { listChecks, runChecks, type CheckContext } from './registry.js'
 import { routeFixFinding, type FixRouteDeps } from './routes/fix.js'
 import { routeAlert, clearHealthAlert, type AlertRouteDeps } from './routes/alert.js'
 import { routeNotice, type NoticeRouteDeps } from './routes/notice.js'
+import type { PostureStore } from './posture.js'
 
 // ── Posture ───────────────────────────────────────────────────────────────────
 
@@ -300,6 +301,10 @@ export interface HealthPassDeps {
    * route findings are counted but not acted upon. Checks with route='alert'
    * call routeAlert() to raise/dedup and clearHealthAlert() when the
    * condition clears.
+   *
+   * Also required when posture='manual' is set on a fix-route check — in
+   * that case the finding is routed as an offer via this alert route rather
+   * than directly enqueuing a task.
    */
   alert?: AlertRouteDeps
 
@@ -309,6 +314,16 @@ export interface HealthPassDeps {
    * notice findings are counted but not acted upon.
    */
   notice?: NoticeRouteDeps
+
+  /**
+   * Posture store for per-check operator posture. Optional; when absent all
+   * checks use 'automatic' (the default).
+   *
+   * - 'automatic' — acts immediately (enqueue fix, raise alert). Default.
+   * - 'manual'    — fix-route check: raises an offer row (no task until taken).
+   * - 'off'       — skips routing for this check; others are unaffected.
+   */
+  posture?: PostureStore
 }
 
 /**
@@ -374,7 +389,35 @@ export const healthPass = async (deps: HealthPassDeps): Promise<PassSummary> => 
     if (result.status === 'finding') {
       findings++
 
-      if (def?.route === 'fix') {
+      // Consult posture before routing: 'off' suppresses all routing for this
+      // check; 'manual' on a fix-route check routes as an offer via the alert
+      // route instead of immediately enqueuing a task.
+      const posture = deps.posture ? await deps.posture.getPosture(result.id) : 'automatic'
+
+      if (posture === 'off') {
+        // Suppressed — no routing fires for this check. Other checks continue.
+      } else if (posture === 'manual' && def?.route === 'fix' && deps.alert !== undefined) {
+        // Offer path: surface as an action-queue offer with the fix spec
+        // embedded so the operator can enact it with one click.
+        const offerPayload = {
+          findingKey: result.outcome?.findingKey ?? '',
+          checkId: result.id,
+          detail: result.outcome?.detail,
+        }
+        const outcome = await routeAlert(
+          {
+            findingKey: result.outcome?.findingKey,
+            detail: result.outcome?.detail,
+            checkId: result.id,
+            label: def.description,
+            offerPayload,
+          },
+          deps.alert,
+        )
+        if (outcome.action === 'raised' && outcome.aqItemId !== undefined) {
+          alertsRaised.push(outcome.aqItemId)
+        }
+      } else if (def?.route === 'fix') {
         const outcome = await routeFixFinding(
           {
             findingKey: result.outcome?.findingKey,

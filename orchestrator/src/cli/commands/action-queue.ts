@@ -22,6 +22,7 @@ import { hasFlag } from '../args'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, readDaemonPort } from './shared'
 import type { ActionQueueRow } from '../../core/daemon/view/action-queue'
+import { routeFixFinding, type FixRouteDeps, type FixRouteResult } from '../../core/health/routes/fix.js'
 
 const LEAN_PREVIEW = 3
 
@@ -363,6 +364,42 @@ const actionQueueReconcile: Command = {
     return { code: 0 }
   },
 }
+
+// ── Health-offer resolver ─────────────────────────────────────────────────────
+
+/**
+ * Enact a health-check offer, enqueueing the fix task the automatic path would
+ * have created.
+ *
+ * When the Steward routes a fix-route finding under posture='manual', it raises
+ * a 'health-check-alert' action-queue row with an `offerPayload` embedded in
+ * the row's payload. This function reads that payload and calls the fix route —
+ * it is the single place where "operator takes the offer" translates to a task.
+ *
+ * Used by tests to simulate taking the offer without a live daemon, and by any
+ * future `mars action-queue take <id>` command.
+ *
+ * @param offerPayload  The offer spec embedded by the Steward:
+ *   { findingKey, checkId, detail }
+ * @param fixDeps       Fix route dependencies (hasActiveTaskForFinding,
+ *   enqueueFixTask) — same interface as the automatic path.
+ * @returns The FixRouteResult from routeFixFinding.
+ */
+export async function enactHealthOffer(
+  offerPayload: { findingKey: string; checkId: string; detail: string | undefined },
+  fixDeps: FixRouteDeps,
+): Promise<FixRouteResult> {
+  return routeFixFinding(
+    {
+      findingKey: offerPayload.findingKey,
+      detail: offerPayload.detail,
+      checkId: offerPayload.checkId,
+    },
+    fixDeps,
+  )
+}
+
+export type { FixRouteDeps, FixRouteResult }
 
 export const actionQueueCommands: readonly Command[] = [
   actionQueueList,
