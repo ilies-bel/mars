@@ -39,6 +39,13 @@ import { registerSubscriberName } from '../../outbox/registry.js'
  * operations are idempotent, so the rare crash between dedup-commit and
  * actionQueue-write is benign (at-most-once is preserved; the actionQueue
  * write is simply skipped on restart).
+ *
+ * Note — 'health-check-alert' rows (ADR-0048 projection): these are raised
+ * and resolved directly by the scheduled health pass (healthPass() in
+ * core/health/pass.ts), NOT through the outbox event stream. They use a
+ * signature-based fingerprint (sha1('health-check-alert:<findingKey>')) and
+ * carry no origin_task_id, so none of the task-raise / task-evict handlers
+ * below will ever touch them. This subscriber does not need to handle them.
  */
 export const ACTION_QUEUE_REPOPULATOR_SUBSCRIBER = 'action-queue-repopulator'
 registerSubscriberName(ACTION_QUEUE_REPOPULATOR_SUBSCRIBER)

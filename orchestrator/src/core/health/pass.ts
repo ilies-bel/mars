@@ -27,6 +27,7 @@
 import type { HealthCheck, HealthCheckResult } from './index.js'
 import { listChecks, runChecks, type CheckContext } from './registry.js'
 import { routeFixFinding, type FixRouteDeps } from './routes/fix.js'
+import { routeAlert, clearHealthAlert, type AlertRouteDeps } from './routes/alert.js'
 
 // ── Posture ───────────────────────────────────────────────────────────────────
 
@@ -292,6 +293,14 @@ export interface HealthPassDeps {
    * are dispatched through routeFixFinding() which calls into these.
    */
   fix: FixRouteDeps
+
+  /**
+   * Dependencies for the alert route handler. Optional; when absent, alert-
+   * route findings are counted but not acted upon. Checks with route='alert'
+   * call routeAlert() to raise/dedup and clearHealthAlert() when the
+   * condition clears.
+   */
+  alert?: AlertRouteDeps
 }
 
 /**
@@ -302,6 +311,9 @@ export interface HealthPassDeps {
  * `findings`        — count of checks that returned a finding.
  * `enqueued`        — task ids created by the fix route during this pass.
  * `alreadyActive`   — findingKeys that already had an active fix task (skipped).
+ * `alertsRaised`    — AQ item ids raised by the alert route this pass.
+ * `alertsCleared`   — AQ item ids resolved by the alert route this pass
+ *                     (condition was gone and the open row was auto-closed).
  */
 export interface PassSummary {
   readonly checked: number
@@ -309,6 +321,8 @@ export interface PassSummary {
   readonly findings: number
   readonly enqueued: readonly string[]
   readonly alreadyActive: readonly string[]
+  readonly alertsRaised: readonly string[]
+  readonly alertsCleared: readonly string[]
 }
 
 /**
@@ -328,6 +342,8 @@ export const healthPass = async (deps: HealthPassDeps): Promise<PassSummary> => 
 
   const enqueued: string[] = []
   const alreadyActive: string[] = []
+  const alertsRaised: string[] = []
+  const alertsCleared: string[] = []
   let skippedByPrereq = 0
   let findings = 0
 
@@ -336,25 +352,48 @@ export const healthPass = async (deps: HealthPassDeps): Promise<PassSummary> => 
       skippedByPrereq++
       continue
     }
-    if (result.status !== 'finding') continue
-    findings++
 
     const def = defs.find((d) => d.id === result.id)
-    if (def?.route !== 'fix') continue
 
-    const outcome = await routeFixFinding(
-      {
-        findingKey: result.outcome?.findingKey,
-        detail: result.outcome?.detail,
-        checkId: result.id,
-      },
-      deps.fix,
-    )
+    if (result.status === 'finding') {
+      findings++
 
-    if (outcome.action === 'enqueued' && outcome.taskId !== undefined) {
-      enqueued.push(outcome.taskId)
-    } else if (outcome.action === 'already-active' && outcome.findingKey !== undefined) {
-      alreadyActive.push(outcome.findingKey)
+      if (def?.route === 'fix') {
+        const outcome = await routeFixFinding(
+          {
+            findingKey: result.outcome?.findingKey,
+            detail: result.outcome?.detail,
+            checkId: result.id,
+          },
+          deps.fix,
+        )
+
+        if (outcome.action === 'enqueued' && outcome.taskId !== undefined) {
+          enqueued.push(outcome.taskId)
+        } else if (outcome.action === 'already-active' && outcome.findingKey !== undefined) {
+          alreadyActive.push(outcome.findingKey)
+        }
+      } else if (def?.route === 'alert' && deps.alert !== undefined) {
+        const outcome = await routeAlert(
+          {
+            findingKey: result.outcome?.findingKey,
+            detail: result.outcome?.detail,
+            checkId: result.id,
+            label: def.description,
+          },
+          deps.alert,
+        )
+
+        if (outcome.action === 'raised' && outcome.aqItemId !== undefined) {
+          alertsRaised.push(outcome.aqItemId)
+        }
+      }
+    } else if (result.status === 'ok' && def?.route === 'alert' && deps.alert !== undefined) {
+      // Condition cleared — auto-resolve any open alert for this check.
+      const clearedId = await clearHealthAlert(result.id, deps.alert)
+      if (clearedId !== null) {
+        alertsCleared.push(clearedId)
+      }
     }
   }
 
@@ -364,5 +403,7 @@ export const healthPass = async (deps: HealthPassDeps): Promise<PassSummary> => 
     findings,
     enqueued,
     alreadyActive,
+    alertsRaised,
+    alertsCleared,
   }
 }
