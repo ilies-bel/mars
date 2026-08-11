@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { __execSchemaBatch, __resetDbRegistryForTests, openDb, type DbClient } from './db.js'
 import {
   ensureSchema,
@@ -980,6 +980,45 @@ describe('ensureSchema', () => {
       expect(cols.has('state')).toBe(false)
     } finally {
       await c.close()
+    }
+  })
+
+  it('is a no-op when the process cwd is inside a task worktree', async () => {
+    // Regression: a task worker running new schema code must not be able to
+    // mutate the live database schema before its branch merges.
+    //
+    // The guard fires when BOTH:
+    //   1. cwd contains "/.mars/worktrees/" — the orchestrator always sets a
+    //      worker's cwd to its worktree directory.
+    //   2. MARS_DB_BACKEND is not 'pglite' — PGlite is always an isolated
+    //      in-memory instance; it is never the shared live database.
+    //
+    // Strategy: open a PGlite client (isolated, won't affect any live DB),
+    // then temporarily simulate a real-Postgres worker environment by setting
+    // MARS_DB_BACKEND to a non-pglite value and mocking cwd.  The assertion
+    // runs while those conditions are active so that any lazy schema bootstrap
+    // triggered by c.execute() also hits the worktree guard.
+    const c = openDb(freshKey())
+    const savedBackend = process.env.MARS_DB_BACKEND
+    const cwdSpy = vi
+      .spyOn(process, 'cwd')
+      .mockReturnValue('/repo/.mars/worktrees/mars-abc12345/orchestrator')
+
+    try {
+      // Simulate a real worker: cwd in worktree + live Postgres backend
+      process.env.MARS_DB_BACKEND = 'postgres'
+      await ensureSchema(c)
+
+      // Assert while guard conditions are still active: no user tables should
+      // exist because the guard blocked all DDL.  information_schema is a
+      // system catalog and does not require user-defined tables to query.
+      const r = await c.execute(
+        `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`,
+      )
+      expect(r.rows).toHaveLength(0)
+    } finally {
+      process.env.MARS_DB_BACKEND = savedBackend
+      cwdSpy.mockRestore()
     }
   })
 })

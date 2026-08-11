@@ -62,6 +62,7 @@
  * respectively) — these are NOT renamed.
  */
 
+import { sep } from 'path'
 import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
@@ -2034,6 +2035,30 @@ export async function __reseedSchemaForTests(client: DbClient): Promise<void> {
  * transaction.
  */
 export async function ensureSchema(client: DbClient): Promise<void> {
+  // Guard: never apply DDL migrations from inside a task worktree that is
+  // using the live shared Postgres database.
+  //
+  // Every worktree resolves the same .mars/pg.dsn and therefore connects to
+  // the same live database. If a worker process executes new schema code
+  // before its branch merges it mutates the canonical schema mid-flight —
+  // and leaves it mutated if the task later fails or is dropped.
+  //
+  // The two-part condition prevents false positives in the test suite, which
+  // also runs inside a worktree cwd but uses PGlite (an isolated in-memory
+  // instance that cannot affect the live database):
+  //
+  //   1. cwd is inside .mars/worktrees/ — the orchestrator always sets a
+  //      worker's cwd to its worktree directory. Separator-normalized so
+  //      the check is correct on Windows paths too.
+  //   2. MARS_DB_BACKEND is not 'pglite' — PGlite is always an isolated
+  //      in-memory instance; it is never the shared live database.
+  const cwd = process.cwd()
+  if (
+    cwd.split(sep).join('/').includes('/.mars/worktrees/') &&
+    process.env.MARS_DB_BACKEND !== 'pglite'
+  ) {
+    return
+  }
   await __execSchemaBatch(client, [
     // Serialize concurrent callers: DDL takes AccessExclusiveLock on
     // `tasks`, so two interleaved ensureSchema batches deadlock. This
