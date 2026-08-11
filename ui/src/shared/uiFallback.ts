@@ -79,6 +79,20 @@ const SCHEMA_REMEDY =
   'Fix: `mars daemon restart` then `npm --prefix ui run build`.'
 
 /**
+ * Project context supplied to {@link resolveFallback} so stale-daemon remedies
+ * can name the exact repo the operator must act on.
+ */
+export interface FallbackContext {
+  /**
+   * Absolute path to the focused project's repo root (e.g.
+   * `/Users/alice/project/my-app`). When present, stale-daemon remedy copy
+   * includes `--repo <repoRoot>` so `mars daemon restart` targets the right
+   * project rather than whichever CWD the operator happens to be in.
+   */
+  repoRoot?: string
+}
+
+/**
  * Resolve any thrown value into a {@link Fallback}. This is the ONE place that
  * interprets `ApiError.kind` and the ONE place that applies the dev/prod split.
  *
@@ -86,12 +100,23 @@ const SCHEMA_REMEDY =
  * @param surfaceLabel - A human-readable name for the section that failed to
  *   load (e.g. 'trace events', 'origin tasks'). Woven into the headline when
  *   the error is not a classified `ApiError`.
+ * @param ctx - Optional project context. When `ctx.repoRoot` is supplied,
+ *   stale-daemon remedies include `--repo <repoRoot>` so the restart command
+ *   targets the right project regardless of the operator's shell CWD.
  */
-export function resolveFallback(error: unknown, surfaceLabel: string): Fallback {
+export function resolveFallback(
+  error: unknown,
+  surfaceLabel: string,
+  ctx?: FallbackContext,
+): Fallback {
   const dev = import.meta.env.DEV
   const detail = dev ? stringifyError(error) : null
 
   if (error instanceof ApiError) {
+    // Build the repo-aware restart command once; included in all stale-daemon
+    // remedies so the operator never has to guess which project to restart.
+    const repoFlag = ctx?.repoRoot ? ` --repo ${ctx.repoRoot}` : ''
+
     // stale-daemon-code: show the specific SHA comparison so the operator can
     // verify the message is not a guess ("abc1234 vs def9876" pinpoints the drift).
     if (
@@ -101,11 +126,32 @@ export function resolveFallback(error: unknown, surfaceLabel: string): Fallback 
     ) {
       return {
         headline: `This Mars daemon is running older code than the UI (\`${error.sourceSha}\` vs \`${error.currentSha}\`).`,
-        remedy: 'Run `mars daemon restart` to pick up the latest code.',
+        remedy: `Run \`mars daemon restart${repoFlag}\` to pick up the latest code.`,
         detail,
         severity: 'warning',
       }
     }
+
+    if (error.kind === 'stale-daemon') {
+      const copy = KIND_COPY['stale-daemon']
+      return {
+        headline: copy.headline,
+        remedy: `Restart the daemon with \`mars daemon restart${repoFlag}\`.`,
+        detail,
+        severity: copy.severity,
+      }
+    }
+
+    if (error.kind === 'stale-daemon-code') {
+      const copy = KIND_COPY['stale-daemon-code']
+      return {
+        headline: copy.headline,
+        remedy: `Run \`mars daemon restart${repoFlag}\` to pick up the latest code.`,
+        detail,
+        severity: copy.severity,
+      }
+    }
+
     const copy = KIND_COPY[error.kind]
     return { headline: copy.headline, remedy: copy.remedy, detail, severity: copy.severity }
   }

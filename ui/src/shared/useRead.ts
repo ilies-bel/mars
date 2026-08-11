@@ -37,6 +37,12 @@ interface UseReadOptions<T> {
    * array should render the empty-state, not a "ready" view of nothing.
    */
   isEmpty?: (data: T) => boolean
+  /**
+   * Absolute path to the focused project's repo root. When supplied, stale-
+   * daemon remedy copy includes `--repo <repoRoot>` so `mars daemon restart`
+   * targets the right project regardless of the operator's shell CWD.
+   */
+  repoRoot?: string
 }
 
 /**
@@ -62,7 +68,7 @@ export function useRead<T>(
 
   if (query.isError) {
     logFallbackError(query.error)
-    const fallback = resolveFallback(query.error, opts.of)
+    const fallback = resolveFallback(query.error, opts.of, { repoRoot: opts.repoRoot })
     if (query.data !== undefined) {
       // Background refetch failed but prior data is still available — keep
       // data visible and surface a thin strip rather than a full-pane takeover.

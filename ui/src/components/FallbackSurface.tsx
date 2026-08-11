@@ -21,6 +21,12 @@ interface FallbackSurfaceProps {
    * `inline` — a compact two-line block for sub-sections (traces, origins).
    */
   variant?: FallbackVariant
+  /**
+   * Absolute path to the focused project's repo root. When supplied, stale-
+   * daemon remedy copy includes `--repo <repoRoot>` so `mars daemon restart`
+   * targets the right project regardless of the operator's shell CWD.
+   */
+  repoRoot?: string
 }
 
 const isResolved = (e: unknown): e is Fallback =>
@@ -35,8 +41,8 @@ const isResolved = (e: unknown): e is Fallback =>
  * EventsPage error markup — every error surface now flows through here, so copy,
  * remedy, the dev/prod split, and logging live in exactly one place.
  */
-export const FallbackSurface = ({ error, of, variant = 'pane' }: FallbackSurfaceProps) => {
-  const fb = isResolved(error) ? error : resolveFallback(error, of)
+export const FallbackSurface = ({ error, of, variant = 'pane', repoRoot }: FallbackSurfaceProps) => {
+  const fb = isResolved(error) ? error : resolveFallback(error, of, { repoRoot })
 
   useEffect(() => {
     logFallbackError(error)

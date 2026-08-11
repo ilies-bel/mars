@@ -23,15 +23,25 @@ describe('resolveFallback', () => {
   })
 
   it('maps an ApiError of kind "stale-daemon" to the daemon-not-running remedy as a warning', () => {
-    const fb = resolveFallback(new ApiError('boom', 'stale-daemon'), 'tasks')
-    expect(fb.remedy).toContain('mars daemon')
+    const fb = resolveFallback(
+      new ApiError('boom', 'stale-daemon'),
+      'tasks',
+      { repoRoot: '/repos/my-project' },
+    )
+    expect(fb.remedy).toContain('mars daemon restart')
+    expect(fb.remedy).toContain('--repo /repos/my-project')
     expect(fb.severity).toBe('warning')
   })
 
   it('maps an ApiError of kind "stale-daemon-code" without SHAs to the generic restart copy', () => {
-    const fb = resolveFallback(new ApiError('boom', 'stale-daemon-code'), 'tasks')
+    const fb = resolveFallback(
+      new ApiError('boom', 'stale-daemon-code'),
+      'tasks',
+      { repoRoot: '/repos/my-project' },
+    )
     expect(fb.headline).toContain('older code')
     expect(fb.remedy).toContain('mars daemon restart')
+    expect(fb.remedy).toContain('--repo /repos/my-project')
     expect(fb.severity).toBe('warning')
   })
 
@@ -40,10 +50,11 @@ describe('resolveFallback', () => {
       sourceSha: 'abc1234',
       currentSha: 'def9876',
     })
-    const fb = resolveFallback(err, 'tasks')
+    const fb = resolveFallback(err, 'tasks', { repoRoot: '/repos/my-project' })
     expect(fb.headline).toContain('abc1234')
     expect(fb.headline).toContain('def9876')
     expect(fb.remedy).toContain('mars daemon restart')
+    expect(fb.remedy).toContain('--repo /repos/my-project')
     expect(fb.severity).toBe('warning')
   })
 
@@ -51,6 +62,29 @@ describe('resolveFallback', () => {
     const fbDown = resolveFallback(new ApiError('boom', 'stale-daemon'), 'tasks')
     const fbCode = resolveFallback(new ApiError('boom', 'stale-daemon-code', 405, { sourceSha: 'abc1234', currentSha: 'def9876' }), 'tasks')
     expect(fbDown.headline).not.toBe(fbCode.headline)
+  })
+
+  it('two different focused projects produce different stale-daemon remedy strings', () => {
+    const fbA = resolveFallback(
+      new ApiError('boom', 'stale-daemon'),
+      'tasks',
+      { repoRoot: '/repos/project-alpha' },
+    )
+    const fbB = resolveFallback(
+      new ApiError('boom', 'stale-daemon'),
+      'tasks',
+      { repoRoot: '/repos/project-beta' },
+    )
+    expect(fbA.remedy).toContain('--repo /repos/project-alpha')
+    expect(fbB.remedy).toContain('--repo /repos/project-beta')
+    expect(fbA.remedy).not.toBe(fbB.remedy)
+  })
+
+  it('stale-daemon remedy omits --repo flag when no project context is supplied', () => {
+    const fb = resolveFallback(new ApiError('boom', 'stale-daemon'), 'tasks')
+    expect(fb.remedy).toContain('mars daemon restart')
+    expect(fb.remedy).not.toContain('--repo')
+    expect(fb.severity).toBe('warning')
   })
 
   it('maps an ApiError of kind "other" to the generic server-error remedy', () => {
