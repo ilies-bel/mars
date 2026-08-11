@@ -690,11 +690,12 @@ describe('mars doctor command (in-process)', () => {
       daemon: makeFakeDaemon(),
     })
     // Doctor uses realProbes, so it will actually exec 'claude --version',
-    // 'git --version', etc. The test just asserts the exit code matches the
-    // presence of any FAIL in the output (FAIL lines go to err, so r.err
-    // non-empty → r.code should be 1).
+    // 'git --version', etc. The test asserts the exit code is consistent with
+    // the output: FAIL lines go to err (code 1), skipped registry checks go to
+    // out (code 2), and a fully-passing run returns code 0.
     const hasFail = r.err.some((line) => line.startsWith('FAIL'))
-    expect(r.code).toBe(hasFail ? 1 : 0)
+    const hasSkipped = r.out.some((line) => line.startsWith('skipped'))
+    expect(r.code).toBe(hasFail ? 1 : hasSkipped ? 2 : 0)
   })
 
   it('section headers appear in output when results have sections', async () => {
