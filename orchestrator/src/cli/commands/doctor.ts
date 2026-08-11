@@ -7,6 +7,8 @@
  *
  * **Tools** — binary/credential checks (provider CLI, git, Node.js, …)
  * **Health** — system-state checks (baseline typecheck, disk, load, config)
+ * **Checks** — registry-backed checks from core/health (one ok/finding/skipped
+ *              line per registered check; exit 2 when any check is skipped).
  *
  * The check logic lives in `runDoctorChecks(probes, pgDsnPath)` so tests can
  * inject a stubbed `DoctorProbes` without spawning real binaries or touching
@@ -30,6 +32,9 @@ import {
 } from '../../core/workers/providers'
 import type { ProviderName } from '../../core/workers/provider-types'
 import { loadLeverRegistry } from '../../core/lib/lever-registry'
+// Import from health/index triggers daemon-reachable registration as a side effect.
+import { runChecks } from '../../core/health/index.js'
+import type { CheckContext, Prereq } from '../../core/health/index.js'
 
 // ---------------------------------------------------------------------------
 // Public types (exported for tests)
@@ -70,18 +75,6 @@ export interface DoctorProbes {
    * simulate old runtimes without spinning up a new process.
    */
   nodeVersion: string
-  /**
-   * Daemon liveness — wraps `isDaemonAlive()` and, when the daemon is up,
-   * fetches `{ op: 'status' }` to surface the stale-dev-install warning.
-   */
-  daemonLiveness(): Promise<{
-    alive: boolean
-    pid?: number
-    reason?: string
-    isStale?: boolean
-    sourceSha?: string | null
-    currentSha?: string | null
-  }>
   /** Whether `path` exists and is readable. */
   fileReadable(path: string): boolean
   /** Read a UTF-8 text file, or return null when it cannot be read. */
@@ -130,32 +123,6 @@ export const realProbes: DoctorProbes = {
     return result.status ?? null
   },
   nodeVersion: process.version,
-  async daemonLiveness() {
-    const { isDaemonAlive } = await import('../../core/daemon/paths')
-    const liveness = await isDaemonAlive()
-    if (!liveness.alive) {
-      return { alive: false, reason: liveness.reason }
-    }
-    try {
-      const { sendRequest } = await import('../../core/daemon/client')
-      const data = (await sendRequest({ op: 'status' })) as {
-        pid?: number
-        isStale?: boolean
-        sourceSha?: string | null
-        currentSha?: string | null
-      }
-      return {
-        alive: true,
-        pid: data.pid ?? liveness.pid,
-        isStale: data.isStale,
-        sourceSha: data.sourceSha ?? null,
-        currentSha: data.currentSha ?? null,
-      }
-    } catch {
-      // Daemon is alive but status RPC failed — report alive without stale info.
-      return { alive: true, pid: liveness.pid }
-    }
-  },
   fileReadable(path) {
     return existsSync(path)
   },
@@ -385,35 +352,7 @@ export const runDoctorChecks = async (
     results.push({ label: 'codegraph', status: 'PASS', section: 'tools', message: 'found' })
   }
 
-  // 6. Daemon status — WARN if not running (auto-starts on first task add);
-  //    WARN if running but stale (dev install drifted from HEAD).
-  const dl = await probes.daemonLiveness()
-  if (!dl.alive) {
-    results.push({
-      label: 'daemon',
-      status: 'WARN',
-      section: 'tools',
-      message: `not running (${dl.reason ?? 'no-pid'}) — will auto-start on first use`,
-    })
-  } else if (dl.isStale && dl.sourceSha && dl.currentSha) {
-    const src = dl.sourceSha.slice(0, 7)
-    const cur = dl.currentSha.slice(0, 7)
-    results.push({
-      label: 'daemon',
-      status: 'WARN',
-      section: 'tools',
-      message: `stale: running ${src}, HEAD is ${cur} — run 'mars daemon restart'`,
-    })
-  } else {
-    results.push({
-      label: 'daemon',
-      status: 'PASS',
-      section: 'tools',
-      message: `running (pid ${dl.pid ?? '?'})`,
-    })
-  }
-
-  // 7. database — the daemon provisions the embedded PostgreSQL server and
+  // 6. database — the daemon provisions the embedded PostgreSQL server and
   //    publishes its DSN to `.mars/pg.dsn`; WARN when the DSN is not
   //    published (daemon down / repo never started). Skip entirely when
   //    pgDsnPath is null (called from init).
@@ -710,12 +649,13 @@ const doctor: Command = {
   summary: 'preflight check: verify runtime prerequisites',
   usage: 'usage: mars doctor',
   run: async (_args, deps) => {
+    const pgDsnPath = resolve(deps.ctx.stateDir, 'pg.dsn')
     const selectedProvider = resolveProviderName(
       process.env.MARS_WORKER_PROVIDER ?? loadDaemonConfig().defaultProvider,
     )
     const results = await runDoctorChecks(
       realProbes,
-      resolve(deps.ctx.stateDir, 'pg.dsn'),
+      pgDsnPath,
       realProviderProbeDeps,
       selectedProvider,
       deps.ctx.repoRoot,
@@ -741,7 +681,43 @@ const doctor: Command = {
         deps.out(line)
       }
     }
-    return { code: hasFail ? 1 : 0 }
+
+    // ── Registry walk ───────────────────────────────────────────────────────
+    // Build CheckContext by probing which prerequisites the current environment
+    // can satisfy.  Checks whose prereqs are absent are printed as skipped.
+    const prereqs = new Set<Prereq>()
+    if (existsSync(deps.ctx.stateDir)) prereqs.add('fs')
+    const gitArgs = deps.ctx.repoRoot
+      ? ['-C', deps.ctx.repoRoot, 'rev-parse', '--show-toplevel']
+      : ['rev-parse', '--show-toplevel']
+    if (spawnSync('git', gitArgs, { stdio: 'ignore', timeout: 3_000 }).status === 0) prereqs.add('git')
+    if (existsSync(pgDsnPath)) prereqs.add('db')
+    const httpPortPath = resolve(deps.ctx.stateDir, 'http.port')
+    if (existsSync(httpPortPath)) {
+      try {
+        const port = readFileSync(httpPortPath, 'utf8').trim()
+        await fetch(`http://127.0.0.1:${port}/`)
+        prereqs.add('daemon')
+      } catch { /* daemon not reachable */ }
+    }
+    const ctx: CheckContext = { prereqs }
+    const registryResults = await runChecks(ctx)
+
+    if (registryResults.length > 0) {
+      deps.out('\n── Checks ────────────────────────────────────────')
+      for (const r of registryResults) {
+        if (r.status === 'ok') {
+          deps.out(`ok      ${r.id}`)
+        } else if (r.status === 'finding') {
+          deps.out(`finding ${r.id}${r.outcome?.detail ? ': ' + r.outcome.detail : ''}`)
+        } else {
+          deps.out(`skipped ${r.id} (${r.reason ?? 'unknown'})`)
+        }
+      }
+    }
+
+    const hasSkippedRegistryChecks = registryResults.some((r) => r.status === 'skipped')
+    return { code: hasFail ? 1 : hasSkippedRegistryChecks ? 2 : 0 }
   },
 }
 

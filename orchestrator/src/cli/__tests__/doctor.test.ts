@@ -62,9 +62,6 @@ const passingProbes = (overrides?: Partial<DoctorProbes>): DoctorProbes => ({
     return 0
   },
   nodeVersion: 'v22.13.0',
-  async daemonLiveness() {
-    return { alive: false, reason: 'no-pid' }
-  },
   fileReadable(_path) {
     return true
   },
@@ -323,52 +320,6 @@ describe('runDoctorChecks — codegraph (WARN-only)', () => {
     const results = await runDoctorChecks(passingProbes(), null)
     const check = results.find((r) => r.label === 'codegraph')
     expect(check?.status).toBe('PASS')
-  })
-})
-
-describe('runDoctorChecks — daemon', () => {
-  it('WARN when daemon is not running', async () => {
-    const probes = passingProbes({
-      async daemonLiveness() {
-        return { alive: false, reason: 'no-pid' }
-      },
-    })
-    const results = await runDoctorChecks(probes, null)
-    const check = results.find((r) => r.label === 'daemon')
-    expect(check?.status).toBe('WARN')
-    expect(check?.message).toContain('auto-start')
-  })
-
-  it('WARN when daemon is stale (dev install drifted from HEAD)', async () => {
-    const probes = passingProbes({
-      async daemonLiveness() {
-        return {
-          alive: true,
-          pid: 42,
-          isStale: true,
-          sourceSha: 'aabbccdd1234567',
-          currentSha: 'deadbeef9876543',
-        }
-      },
-    })
-    const results = await runDoctorChecks(probes, null)
-    const check = results.find((r) => r.label === 'daemon')
-    expect(check?.status).toBe('WARN')
-    expect(check?.message).toContain('aabbccd')
-    expect(check?.message).toContain('deadbee')
-    expect(check?.message).toContain('daemon restart')
-  })
-
-  it('PASS when daemon is running and not stale', async () => {
-    const probes = passingProbes({
-      async daemonLiveness() {
-        return { alive: true, pid: 99, isStale: false }
-      },
-    })
-    const results = await runDoctorChecks(probes, null)
-    const check = results.find((r) => r.label === 'daemon')
-    expect(check?.status).toBe('PASS')
-    expect(check?.message).toContain('99')
   })
 })
 
@@ -779,6 +730,60 @@ describe('mars doctor command (in-process)', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Doctor registry walk — registry checks appear as ok/finding/skipped lines
+// ---------------------------------------------------------------------------
+
+describe('doctor registry walk', () => {
+  it('runChecks returns skipped with prereq reason when fs prereq is absent', async () => {
+    // After vi.resetModules(), importing health/index triggers daemon-reachable
+    // registration in a fresh registry.  Calling runChecks with no prereqs
+    // causes daemon-reachable (requires ['fs']) to be skipped.
+    const { vi } = await import('vitest')
+    vi.resetModules()
+    const { runChecks: freshRunChecks } = await import('../../core/health/index.js')
+    const results = await freshRunChecks({ prereqs: new Set() })
+    const check = results.find((r) => r.id === 'daemon.reachable')
+    expect(check?.status).toBe('skipped')
+    expect(check?.reason).toBe('prereq:fs')
+  })
+
+  it('skipped lines carry a prereq: reason', async () => {
+    const { vi } = await import('vitest')
+    vi.resetModules()
+    const { runChecks: freshRunChecks } = await import('../../core/health/index.js')
+    const results = await freshRunChecks({ prereqs: new Set() })
+    const skipped = results.filter((r) => r.status === 'skipped')
+    expect(skipped.length).toBeGreaterThan(0)
+    for (const s of skipped) {
+      expect(s.reason).toMatch(/^prereq:/)
+    }
+  })
+
+  it('doctor command output includes a Checks section with one line per registered check', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['doctor'], { store, ctx, daemon: makeFakeDaemon() })
+    const allLines = [...r.out, ...r.err]
+    // The Checks section header must appear
+    expect(allLines.some((l) => l.includes('── Checks'))).toBe(true)
+    // daemon.reachable must have exactly one line
+    const daemonLines = allLines.filter((l) => l.includes('daemon.reachable'))
+    expect(daemonLines).toHaveLength(1)
+    // That line must start with ok, finding, or skipped
+    expect(daemonLines[0]).toMatch(/^(?:ok|finding|skipped)\s/)
+  })
+
+  it('doctor output marks daemon.reachable as finding when daemon is not running', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['doctor'], { store, ctx, daemon: makeFakeDaemon() })
+    const allLines = [...r.out, ...r.err]
+    const daemonLine = allLines.find((l) => l.includes('daemon.reachable'))
+    // Daemon is not running in tests, so finding (not ok, not skipped)
+    expect(daemonLine).toMatch(/^finding\s/)
+    expect(daemonLine).toContain('daemon.reachable')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Gesture validity — every 'mars X Y' command in doctor messages is a known
 // CLI path. This prevents a class of defect where a FAIL message names a
 // command that does not exist.
@@ -812,17 +817,6 @@ describe("doctor gestures — every 'mars ...' command in FAIL/WARN messages is 
         probes: passingProbes({ freeDiskBytes: () => 2 * 1024 * 1024 * 1024 }),
         pgDsnPath: null,
         repoRoot: '/repo',
-      },
-      {
-        label: 'daemon stale',
-        probes: passingProbes({
-          daemonLiveness: async () => ({
-            alive: true, pid: 42, isStale: true,
-            sourceSha: 'aabbccdd1234567', currentSha: 'deadbeef9876543',
-          }),
-        }),
-        pgDsnPath: null,
-        repoRoot: null,
       },
       {
         label: 'baseline gates db unavailable',
