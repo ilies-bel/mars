@@ -51,7 +51,13 @@ describe('worktree-install', () => {
 
   describe('installCommand', () => {
     it('maps each manager to its frozen install command', () => {
-      expect(installCommand('pnpm')).toEqual(['pnpm', ['install', '--frozen-lockfile']])
+      // pnpm carries --ignore-workspace so an install in a sub-package resolves
+      // to that package rather than the `packages: []` worktree-root pin, which
+      // would otherwise exit 0 having installed nothing.
+      expect(installCommand('pnpm')).toEqual([
+        'pnpm',
+        ['install', '--frozen-lockfile', '--ignore-workspace'],
+      ])
       expect(installCommand('npm')).toEqual(['npm', ['ci']])
       expect(installCommand('yarn')).toEqual(['yarn', ['install', '--frozen-lockfile']])
       expect(installCommand('bun')).toEqual(['bun', ['install', '--frozen-lockfile']])
@@ -178,7 +184,7 @@ describe('worktree-install', () => {
       expect(summary.sites).toHaveLength(3)
 
       const pnpmCall = calls.find((c) => c.cmd === 'pnpm')
-      expect(pnpmCall?.args).toEqual(['install', '--frozen-lockfile'])
+      expect(pnpmCall?.args).toEqual(['install', '--frozen-lockfile', '--ignore-workspace'])
       expect(pnpmCall?.cwd).toBe(workDir)
 
       const npmCalls = calls.filter((c) => c.cmd === 'npm')
@@ -1093,6 +1099,44 @@ describe('worktree-install', () => {
       expect(depInstallCall!.args[0]).toBe('ci')
     })
 
+    it('pnpm workspace-dep install passes --ignore-workspace so it is not swallowed by the worktree-root pin', async () => {
+      // Regression: `_ensurePnpmWorkspaceYaml` writes `packages: []` at the
+      // worktree root. Without --ignore-workspace, pnpm resolves this nested
+      // install to that empty workspace root, exits 0, and installs nothing —
+      // the dep's build then dies with `tsup: command not found`.
+      const siteDir = resolve(workDir, 'consumer')
+      const depDir = resolve(workDir, 'packages', 'shared')
+      mkdirSync(siteDir)
+      writeFileSync(resolve(siteDir, 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(siteDir, 'package.json'),
+        JSON.stringify({
+          name: 'consumer',
+          dependencies: { '@acme/shared': 'file:../packages/shared' },
+        }),
+      )
+      mkdirSync(depDir, { recursive: true })
+      writeFileSync(resolve(depDir, 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(depDir, 'package.json'),
+        JSON.stringify({ name: '@acme/shared', scripts: { build: 'tsc' } }),
+      )
+      const site: InstallSite = { dir: siteDir, manager: 'pnpm', lockfile: 'pnpm-lock.yaml' }
+
+      const calls: RecordedCall[] = []
+      const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+        calls.push({ cmd, args, cwd })
+        return ok()
+      }
+      await buildWorkspaceDepsForSite(site, workDir, runner, undefined, DEFAULT_INSTALL_TIMEOUT_MS)
+
+      const depInstallCall = calls.find(
+        (c) => c.cwd === depDir && c.cmd === 'pnpm' && c.args[0] === 'install',
+      )
+      expect(depInstallCall).toBeDefined()
+      expect(depInstallCall!.args).toContain('--ignore-workspace')
+    })
+
     it('npm install failure error message does not contain pnpm-debug.log', async () => {
       const { site } = makeNonPnpmSetup('npm', 'package-lock.json')
 
@@ -1161,7 +1205,7 @@ describe('worktree-install', () => {
     it('maps each manager to its NON-frozen (lockfile-rewriting) command', () => {
       expect(regenInstallCommand('pnpm')).toEqual([
         'pnpm',
-        ['install', '--no-frozen-lockfile'],
+        ['install', '--no-frozen-lockfile', '--ignore-workspace'],
       ])
       expect(regenInstallCommand('npm')).toEqual(['npm', ['install']])
       expect(regenInstallCommand('yarn')).toEqual(['yarn', ['install']])

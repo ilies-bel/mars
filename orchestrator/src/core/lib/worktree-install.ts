@@ -686,12 +686,31 @@ export const _validateVirtualStoreDir = async (
   return { escaped, resolvedPath: resolved }
 }
 
+/**
+ * `--ignore-workspace` is required for every pnpm invocation inside a worktree.
+ * {@link _ensurePnpmWorkspaceYaml} writes `packages: []` at the worktree root to
+ * stop pnpm walking up into the main checkout. That pin works, but it also makes
+ * pnpm resolve an install run in a SUB-directory (orchestrator/, ui/,
+ * packages/workflow/) to that empty workspace root: the install exits 0, reports
+ * "Done in 308ms", and writes nothing into the sub-package's node_modules. The
+ * next step then dies with `tsup: command not found` — an exit-0 silent failure
+ * that surfaces only as a downstream build error.
+ *
+ * `--ignore-workspace` makes pnpm treat the invocation directory as its own
+ * project root, which is exactly what the workspace pin's docstring already
+ * promises ("sub-packages … are treated as standalone projects and use their
+ * local lockfiles"). It also preserves the pin's original purpose: the resolved
+ * `virtualStoreDir` stays `.pnpm`, relative to the sub-package, so nothing
+ * escapes the worktree boundary.
+ */
+const PNPM_WORKSPACE_ISOLATION_FLAG = '--ignore-workspace'
+
 export const installCommand = (
   manager: PackageManager,
 ): readonly [string, readonly string[]] => {
   switch (manager) {
     case 'pnpm':
-      return ['pnpm', ['install', '--frozen-lockfile']]
+      return ['pnpm', ['install', '--frozen-lockfile', PNPM_WORKSPACE_ISOLATION_FLAG]]
     case 'npm':
       return ['npm', ['ci']]
     case 'yarn':
@@ -712,7 +731,7 @@ export const regenInstallCommand = (
 ): readonly [string, readonly string[]] => {
   switch (manager) {
     case 'pnpm':
-      return ['pnpm', ['install', '--no-frozen-lockfile']]
+      return ['pnpm', ['install', '--no-frozen-lockfile', PNPM_WORKSPACE_ISOLATION_FLAG]]
     case 'npm':
       return ['npm', ['install']]
     case 'yarn':
