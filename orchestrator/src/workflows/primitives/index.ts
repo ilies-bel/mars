@@ -987,22 +987,49 @@ export const setupWorktree = async (
       //
       // A main-commiter worktree is carved off the integration tip and is
       // therefore current by construction; it keeps the conservative default.
+
+      // Compute the effective conflict policy. An explicit `onConflict` in opts
+      // always wins. This lets remerge workflows pass `'reconcile'` to prevent a
+      // diverged branch from being silently recreated (which would zero its
+      // commits, trigger the `isZeroCommitBranch` short-circuit, and mark the
+      // task done while the commits were never in integration — the root cause
+      // of the silent data-loss bug this option was added to fix).
+      //
+      // Safety guard for the remerge workflow: when the caller did NOT set
+      // onConflict explicitly and the resolved default would be 'recreate',
+      // check whether this is a remerge task. Remerge tasks run on the
+      // task.workflow='remerge' pipeline; their branch commits are the final
+      // product waiting to be merged and must NEVER be silently parked-and-reset.
+      // An old .mars/workflows/remerge-workflow.js (before the explicit
+      // { onConflict: 'reconcile' } opt was added to the template) would
+      // otherwise default to 'recreate', zeroing those commits on a conflicting
+      // rebase. The guard auto-promotes to 'reconcile' so no commit is lost even
+      // with a stale template.
+      const _resolvedOnConflict: WorktreeConflictPolicy = opts.onConflict ?? (
+        isMainCommiterFix ? 'escalate'
+        : attachesToOrigin ? 'reconcile'
+        : 'recreate'
+      )
+      let _effectiveOnConflict: WorktreeConflictPolicy = _resolvedOnConflict
+      if (opts.onConflict === undefined && _resolvedOnConflict === 'recreate') {
+        const _taskRow = await store.getTask(taskId).catch(() => null)
+        if (_taskRow?.workflow === 'remerge') {
+          console.warn(
+            `[setup] task ${taskId}: workflow=remerge but onConflict was not set; ` +
+              `promoting to 'reconcile' to protect committed work. ` +
+              `Upgrade .mars/workflows/remerge-workflow.js to pass ` +
+              `{ onConflict: 'reconcile' } to suppress this warning.`,
+          )
+          _effectiveOnConflict = 'reconcile'
+        }
+      }
+
       await ensureWorktreeCurrent({
         taskId,
         ref,
         integrationBranch,
         phase: 'setup',
-        // An explicit `onConflict` in opts always wins. This lets remerge
-        // workflows pass `'reconcile'` to prevent a diverged branch from being
-        // silently recreated (which would zero its commits, trigger the
-        // `isZeroCommitBranch` short-circuit, and mark the task done while the
-        // commits were never in integration — the root cause of the silent
-        // data-loss bug this option was added to fix).
-        onConflict: opts.onConflict ?? (isMainCommiterFix
-          ? 'escalate'
-          : attachesToOrigin
-            ? 'reconcile'
-            : 'recreate'),
+        onConflict: _effectiveOnConflict,
         traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
         store,
       })

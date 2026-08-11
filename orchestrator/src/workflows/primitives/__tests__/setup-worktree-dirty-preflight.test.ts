@@ -532,6 +532,62 @@ describe('setup-worktree auto-stash of .mars/ preflight artifacts', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Regression tests: remerge-workflow onConflict guard (mars-38bc5ac3)
+// ---------------------------------------------------------------------------
+
+describe('setup-worktree remerge-workflow guard', () => {
+  it('promotes onConflict to reconcile for a remerge task when opts.onConflict is unset', async () => {
+    // Arrange: the store reveals this is a remerge workflow task.
+    // No explicit onConflict is passed — the default would be 'recreate' for a
+    // kind:'task', which would park and reset the branch (data loss). The guard
+    // must detect workflow='remerge' and promote the policy to 'reconcile'.
+    const ctx = makeCtx('test-remerge-guard')
+    ;(ctx as unknown as { services: { store: { getTask: ReturnType<typeof vi.fn> } } })
+      .services.store.getTask.mockResolvedValue({ workflow: 'remerge' })
+
+    // Act
+    await setupWorktree(ctx)
+
+    // Assert: syncWorktreeToIntegration called with onConflict='reconcile'
+    expect(mockSyncWorktreeToIntegration).toHaveBeenCalled()
+    const callArgs = mockSyncWorktreeToIntegration.mock.calls[0][0] as { onConflict: string }
+    expect(callArgs.onConflict).toBe('reconcile')
+  })
+
+  it('respects an explicit onConflict=recreate even for remerge tasks', async () => {
+    // Arrange: store reports remerge, but the caller deliberately passes
+    // onConflict:'recreate'. An explicit opt always wins over the guard.
+    const ctx = makeCtx('test-remerge-explicit-recreate')
+    ;(ctx as unknown as { services: { store: { getTask: ReturnType<typeof vi.fn> } } })
+      .services.store.getTask.mockResolvedValue({ workflow: 'remerge' })
+
+    // Act: explicit onConflict='recreate' — guard must not override
+    await setupWorktree(ctx, { onConflict: 'recreate' })
+
+    // Assert: recreate is preserved; guard did not promote
+    expect(mockSyncWorktreeToIntegration).toHaveBeenCalled()
+    const callArgs = mockSyncWorktreeToIntegration.mock.calls[0][0] as { onConflict: string }
+    expect(callArgs.onConflict).toBe('recreate')
+  })
+
+  it('keeps onConflict=recreate for regular tasks (null workflow)', async () => {
+    // Arrange: store returns a task with no remerge workflow.
+    // Guard must not fire — regular tasks use the default recreate policy.
+    const ctx = makeCtx('test-regular-null-workflow')
+    ;(ctx as unknown as { services: { store: { getTask: ReturnType<typeof vi.fn> } } })
+      .services.store.getTask.mockResolvedValue({ workflow: null })
+
+    // Act
+    await setupWorktree(ctx)
+
+    // Assert: default recreate policy is preserved for non-remerge tasks
+    expect(mockSyncWorktreeToIntegration).toHaveBeenCalled()
+    const callArgs = mockSyncWorktreeToIntegration.mock.calls[0][0] as { onConflict: string }
+    expect(callArgs.onConflict).toBe('recreate')
+  })
+})
+
 describe('merge — restores preflight checkpoint after fast-forward', () => {
   it('(a) calls restoreCheckpoint and deletes the ref when a preflight ref exists', async () => {
     // Arrange: runTool returns exitCode:0 for the git rev-parse --verify probe

@@ -736,4 +736,57 @@ describe('syncWorktreeToIntegration — reconcile-on-conflict (recovery / resume
     expect(outcome.kind).toBe('rebased')
     expect(calls).toHaveLength(0)
   })
+
+  // Regression for mars-38bc5ac3:
+  // `mars remerge` removes the worktree but preserves the branch, then
+  // re-queues the task. On the next setup, createWorktree re-attaches to the
+  // existing branch. If the integration branch has advanced and the rebase
+  // conflicts, the OLD default of `onConflict:'recreate'` would park the
+  // task's commits and reset the branch to the integration tip — data loss.
+  //
+  // The fix: the setup guard detects `task.workflow='remerge'` and promotes
+  // the policy to `'reconcile'`, preserving the branch even when the rebase
+  // fails. This test verifies that the `reconcile` policy DOES preserve every
+  // commit on the branch when the supervisor cannot resolve the conflict (the
+  // worst case — branch tip is kept intact, task fails loudly instead of
+  // silently zero-ing commits).
+  it('remerge regression: branch commits survive a conflicting rebase under reconcile policy', async () => {
+    // Stage a scenario that mirrors a remerge task after `coreRemergeTask`
+    // has removed the worktree: the branch has coding commits ahead of main,
+    // the worktree is gone, and main has since advanced with a conflicting change.
+    await withStubbedSupervisor(() => {
+      // Supervisor "succeeds" but does nothing — rebase stays in progress.
+      // This simulates the worst-case: Vega cannot resolve the conflict.
+    })
+
+    const { syncWorktreeToIntegration } = await import('../worktree')
+    const ref = await stageRestartedTaskOnStaleBranch({
+      taskId: 'mars-recon-remerge',
+      mainCommits: 2,
+      conflicting: true,
+    })
+
+    // Record the branch tip BEFORE syncing — this is the coding commit that
+    // must survive regardless of what happens to the rebase.
+    const tipBefore = git(['rev-parse', ref.branch], repoRoot).trim()
+    const commitsBefore = countAhead('main', ref.branch)
+    expect(commitsBefore).toBeGreaterThan(0)
+
+    // syncWorktreeToIntegration with 'reconcile' must NOT reset the branch.
+    // It may throw (escalate) if vega fails, but the branch tip must be intact.
+    await syncWorktreeToIntegration({
+      taskId: 'mars-recon-remerge',
+      ref,
+      integrationBranch: 'main',
+      onConflict: 'reconcile',
+    }).catch(() => {
+      // Expected: supervisor failed → WorktreeRebaseConflictError thrown.
+      // The critical invariant is asserted BELOW the catch.
+    })
+
+    // Invariant: the branch tip is the coding commit, not the integration tip.
+    // `recreate` would have reset it to `main`; `reconcile` must never do that.
+    expect(git(['rev-parse', ref.branch], repoRoot).trim()).toBe(tipBefore)
+    expect(countAhead('main', ref.branch)).toBe(commitsBefore)
+  })
 })
