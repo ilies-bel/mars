@@ -969,6 +969,47 @@ const ghostSubscriberSweep: Reconciler = {
 }
 
 /**
+ * 5d. Orphaned-failed scan — raise an open action-queue row for every task
+ *     in status='failed' that currently has none.
+ *
+ *     The invariant "every failed task has an open action-queue row" holds for
+ *     the normal pipeline (task.blocked → taskBlockedActionQueueRaiser), but
+ *     several routes write status='failed' directly:
+ *
+ *       - diagnose Chore failures
+ *       - MARS_RECOVERY_DISABLED=1 early return
+ *       - failStrandedOriginOnRecoveryFailure (blocker-resolution drain)
+ *       - strandedOriginRecoveryRepair (this same reconcile pass)
+ *       - any crash between a status='failed' write and the subscriber raise
+ *
+ *     This sweep is idempotent: raiseActionQueueItem bumps seen_count on an
+ *     existing open row rather than inserting a duplicate.
+ *
+ *     Must run AFTER all reconcilers that can transition tasks into 'failed'
+ *     (strandedOriginRecoveryRepair, terminalOriginChoreRepair,
+ *     recoveryDonePropagation, failedCommitterActionQueue) so that any rows
+ *     those steps would have raised on their own do not appear here as orphans.
+ */
+const orphanedFailedScan: Reconciler = {
+  name: 'orphaned-failed-scan',
+  async run({ log }) {
+    try {
+      const { raiseOrphanedFailedTaskRows } = await import('./reconcile-orphaned-failed')
+      const raised = await raiseOrphanedFailedTaskRows()
+      if (raised > 0) {
+        log(
+          `[reconcile] orphaned-failed-scan: raised action-queue rows for ${raised} failed task(s) that had none`,
+        )
+      }
+      return { orphanedFailedRaised: raised }
+    } catch (err) {
+      log(`[reconcile] orphaned-failed-scan failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
  * The ordered startup-reconcile registry. Order is load-bearing and matches
  * the historical hand-called sequence 1→10. To add a step, insert a
  * `Reconciler` at the correct position; the boot path iterates this array.
@@ -986,6 +1027,7 @@ export const RECONCILERS: readonly Reconciler[] = [
   orphanedBlockedScan,
   recoveryDonePropagation,
   failedCommitterActionQueue,
+  orphanedFailedScan,
   queuedCommitterReseed,
   requeueStaleRunning,
   reseedDispatch,

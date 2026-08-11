@@ -534,8 +534,7 @@ export const handleTaskFailureWithFixTask = async (
   // Diagnose Chores are terminal: a failing diagnose Chore must never
   // spawn a fix task or investigator — that would re-introduce the
   // unbounded recursion the Chore was created to break. Mark it failed
-  // directly; the daemon's failure callback (slice 6) raises the operator
-  // actionQueue item for explicit resolution.
+  // directly and raise an action-queue row so the operator can act on it.
   if (task.kind === 'diagnose') {
     const failureSignature = computeFailureSignature(
       input.failingStep,
@@ -547,6 +546,36 @@ export const handleTaskFailureWithFixTask = async (
       undefined,
       { error: input.errorOutput, failureSignature },
     )
+    // Raise an action-queue row: diagnose Chores go directly to 'failed'
+    // (no task.blocked event), so the outbox subscriber never fires.
+    await raiseActionQueueItem({
+      kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
+      category: 'orchestrator',
+      priority: 'high',
+      title: capTitle(`Diagnose task ${input.taskId} failed at ${input.failingStep}`),
+      body: [
+        `Diagnose task ${input.taskId} failed during ${input.failingStep}.`,
+        '',
+        'Diagnose Chores are terminal: no recovery task is spawned.',
+        `Restart the origin task to retry: \`mars restart ${task.originId}\`.`,
+        '',
+        truncateFailure(input.errorOutput),
+      ].join('\n'),
+      payload: {
+        taskId: input.taskId,
+        failingStep: input.failingStep,
+        failureSignature,
+      },
+      context: { repoRoot: process.env.MARS_REPO ?? null },
+      raisedBy: 'agent:fail-fix-handler',
+      signature: `task.blocked:${input.taskId}`,
+      originTaskId: task.originId,
+      occurrence: {
+        at: new Date().toISOString(),
+        taskId: input.taskId,
+        failingStep: input.failingStep,
+      },
+    })
     return {
       outcome: 'failed',
       failureSignature,
@@ -577,6 +606,36 @@ export const handleTaskFailureWithFixTask = async (
       undefined,
       { error: truncatedError, failureSignature },
     )
+    // Raise an action-queue row: MARS_RECOVERY_DISABLED goes directly to
+    // 'failed' (no task.blocked event), so the outbox subscriber never fires.
+    await raiseActionQueueItem({
+      kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
+      category: 'orchestrator',
+      priority: 'high',
+      title: capTitle(`Task ${input.taskId} failed (recovery disabled)`),
+      body: [
+        `Task ${input.taskId} failed at ${input.failingStep} (signature: ${failureSignature}).`,
+        '',
+        'Recovery is disabled (MARS_RECOVERY_DISABLED=1). No fix task was spawned.',
+        `Enable recovery and restart: \`mars restart ${input.taskId}\`.`,
+        '',
+        truncatedError,
+      ].join('\n'),
+      payload: {
+        taskId: input.taskId,
+        failingStep: input.failingStep,
+        failureSignature,
+      },
+      context: { repoRoot: process.env.MARS_REPO ?? null },
+      raisedBy: 'agent:fail-fix-handler',
+      signature: `task.blocked:${input.taskId}`,
+      originTaskId: task.originId,
+      occurrence: {
+        at: new Date().toISOString(),
+        taskId: input.taskId,
+        failingStep: input.failingStep,
+      },
+    })
     return {
       outcome: 'failed',
       failureSignature,

@@ -176,6 +176,14 @@ export interface ReconcileSummary {
    * inserting the merge_jobs row.
    */
   mergeJobsRebuilt: number
+  /**
+   * Failed tasks that had no open action-queue row and received one from the
+   * boot-time orphaned-failed sweep. A non-zero count indicates that at least
+   * one task transitioned to 'failed' via a path that does not emit task.blocked
+   * (e.g. diagnose Chore failure, MARS_RECOVERY_DISABLED kill-switch, or a
+   * crash between the status write and the subscriber raise).
+   */
+  orphanedFailedRaised: number
 }
 
 /**
@@ -229,4 +237,5 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   queuedCommittersReseeded: 0,
   mergeJobsReset: 0,
   mergeJobsRebuilt: 0,
+  orphanedFailedRaised: 0,
 })
