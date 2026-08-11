@@ -39,6 +39,74 @@
 
 import type { PauseController } from './pause-state.js'
 
+// ── Pure detection helper ─────────────────────────────────────────────────────
+
+/**
+ * Result of running the baseline detection logic without side effects.
+ *
+ * Returned by {@link isBaselineBroken}. The reactive
+ * {@link createBaselineHealthChecker} and the scheduled registry check both
+ * call this helper so the detection logic lives in exactly one place.
+ */
+export interface BaselineDetection {
+  /** True when at least one required gate fails on the integration branch. */
+  broken: boolean
+  /** Name of the first failing gate (present only when broken=true). */
+  failingGateName?: string
+  /** Trimmed combined stdout/stderr of the failing gate (present when broken=true). */
+  output?: string
+  /**
+   * Set when the gate list itself could not be loaded.
+   * Callers should treat the baseline state as unknown and preserve existing state.
+   */
+  loadError?: Error
+}
+
+/**
+ * Pure baseline-broken predicate — runs the required task-tier gates and
+ * returns a structured result with no side effects (no pause, no AQ raise).
+ *
+ * Two production callers share this implementation:
+ *   1. {@link createBaselineHealthChecker}.check() — the reactive path.
+ *   2. The `baseline.broken` registry check's `run()` — the scheduled pass.
+ *
+ * @param deps - Subset of {@link BaselineHealthDeps} needed for detection.
+ */
+export async function isBaselineBroken(deps: {
+  repoRoot: string
+  loadGates: () => Promise<BaselineGate[]>
+  runGate: (gate: BaselineGate, cwd: string) => Promise<GateResult>
+}): Promise<BaselineDetection> {
+  const { repoRoot, loadGates, runGate } = deps
+
+  let gates: BaselineGate[]
+  try {
+    gates = await loadGates()
+  } catch (err) {
+    return { broken: false, loadError: err instanceof Error ? err : new Error(String(err)) }
+  }
+
+  const required = gates.filter((g) => g.required)
+  if (required.length === 0) return { broken: false }
+
+  for (const gate of required) {
+    const cwd = gate.scope === '.' ? repoRoot : `${repoRoot}/${gate.scope}`
+    let result: GateResult
+    try {
+      result = await runGate(gate, cwd)
+    } catch {
+      // An unexpected execution error (e.g. binary not found) is not the
+      // same as a gate failure — treat as pass (conservative).
+      continue
+    }
+    if (result.exitCode !== 0) {
+      const output = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(0, 2000)
+      return { broken: true, failingGateName: gate.name, output }
+    }
+  }
+  return { broken: false }
+}
+
 /** A single gate to probe on the integration branch. */
 export interface BaselineGate {
   id: string
@@ -118,14 +186,11 @@ export const createBaselineHealthChecker = (
     isBaselinePoisoned: () => _poisoned,
 
     async check(): Promise<{ poisoned: boolean }> {
-      let gates: BaselineGate[]
-      try {
-        gates = await loadGates()
-      } catch (err) {
+      const detection = await isBaselineBroken({ repoRoot, loadGates, runGate })
+
+      if (detection.loadError) {
         log?.(
-          `[baseline-health] could not load gates (non-fatal): ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `[baseline-health] could not load gates (non-fatal): ${detection.loadError.message}`,
         )
         // When we cannot even read the gate list, conservatively do not change
         // the current poison state — avoid a transient DB hiccup clearing a
@@ -133,13 +198,10 @@ export const createBaselineHealthChecker = (
         return { poisoned: _poisoned }
       }
 
-      // Only required task-tier gates are relevant: those are the gates that
-      // fail a task during the verify phase.
-      const required = gates.filter((g) => g.required)
-      if (required.length === 0) {
-        // No gates configured yet.  Treat baseline as healthy and clear any
-        // stale poison state from a prior run.
+      if (!detection.broken) {
+        // No required gates configured, or all required gates passed.
         if (_poisoned) {
+          log?.('[baseline-health] all required gates pass — baseline recovered')
           _poisoned = false
           if (pause.get().reason === 'baseline') pause.resume()
           await resolveActionQueueRow().catch((err) =>
@@ -149,70 +211,36 @@ export const createBaselineHealthChecker = (
               }`,
             ),
           )
+        } else {
+          log?.('[baseline-health] all required gates pass')
         }
         return { poisoned: false }
       }
 
-      for (const gate of required) {
-        const cwd = gate.scope === '.' ? repoRoot : `${repoRoot}/${gate.scope}`
-        let result: GateResult
-        try {
-          result = await runGate(gate, cwd)
-        } catch (err) {
-          log?.(
-            `[baseline-health] gate "${gate.name}" errored (treating as pass): ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          )
-          // An unexpected execution error (e.g. binary not found) is not the
-          // same as a gate failure — don't pause dispatch over it.
-          continue
-        }
+      // At least one required gate failed.
+      const { failingGateName = '(unknown)', output = '' } = detection
+      log?.(
+        `[baseline-health] gate "${failingGateName}" FAILED on integration branch`,
+      )
 
-        if (result.exitCode !== 0) {
-          const output = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(0, 2000)
-          log?.(
-            `[baseline-health] gate "${gate.name}" FAILED on integration branch (exit ${result.exitCode})`,
-          )
+      _poisoned = true
 
-          _poisoned = true
+      // First-cause-wins: if another reason already holds the pause, don't
+      // stomp it — but still mark the baseline as poisoned so the override
+      // callback re-classifies subsequent task failures.
+      pause.pause('baseline', `gate "${failingGateName}" fails on integration branch`)
 
-          // First-cause-wins: if another reason already holds the pause, don't
-          // stomp it — but still mark the baseline as poisoned so the override
-          // callback re-classifies subsequent task failures.
-          pause.pause('baseline', `gate "${gate.name}" fails on integration branch`)
-
-          try {
-            await raiseActionQueueRow(gate.name, output)
-          } catch (err) {
-            log?.(
-              `[baseline-health] raiseActionQueueRow failed (non-fatal): ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            )
-          }
-
-          return { poisoned: true }
-        }
-      }
-
-      // All required gates passed — baseline is healthy.
-      if (_poisoned) {
-        log?.('[baseline-health] all required gates pass — baseline recovered')
-        _poisoned = false
-        if (pause.get().reason === 'baseline') pause.resume()
-        await resolveActionQueueRow().catch((err) =>
-          log?.(
-            `[baseline-health] resolveActionQueueRow failed (non-fatal): ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          ),
+      try {
+        await raiseActionQueueRow(failingGateName, output)
+      } catch (err) {
+        log?.(
+          `[baseline-health] raiseActionQueueRow failed (non-fatal): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
         )
-      } else {
-        log?.('[baseline-health] all required gates pass')
       }
 
-      return { poisoned: false }
+      return { poisoned: true }
     },
   }
 }

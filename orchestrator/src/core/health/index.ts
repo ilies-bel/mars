@@ -44,6 +44,7 @@ export { registerCheck, listChecks, runChecks } from './registry.js'
 // Import all check modules so their registerCheck() side-effects fire.
 // Add new check modules here as they are introduced.
 import './checks/daemon-reachable.js'
+import './checks/baseline-broken.js'
 
 // ── Routing ───────────────────────────────────────────────────────────────────
 
