@@ -767,8 +767,6 @@ describe('mergeBranch — working-tree-free fast-forward (update-ref)', () => {
     const execP = promisify(execFileCb)
     const { mergeBranch } = await import('../git/merge')
 
-    const taskTip = (await execP('git', ['rev-parse', 'task/ff-test'], { cwd: repo })).stdout.trim()
-
     const result = await mergeBranch({
       branch: 'task/ff-test',
       worktreePath: worktreeDir,
@@ -777,8 +775,15 @@ describe('mergeBranch — working-tree-free fast-forward (update-ref)', () => {
     })
     expect(result.merged).toBe(true)
 
+    // The integration branch must equal the task-branch tip AFTER the merge
+    // (not a pre-merge snapshot): commit-message repair may rewrite commit
+    // objects before the fast-forward, changing the SHA. Comparing against
+    // the post-merge task tip guards the actual behaviour — "integration was
+    // advanced to where the task branch now points" — without being fragile
+    // to which SHAs repair produced.
     const mainTipAfter = (await execP('git', ['rev-parse', 'main'], { cwd: repo })).stdout.trim()
-    expect(mainTipAfter).toBe(taskTip)
+    const taskTipAfter = (await execP('git', ['rev-parse', 'task/ff-test'], { cwd: repo })).stdout.trim()
+    expect(mainTipAfter).toBe(taskTipAfter)
   })
 
   it('leaves the integration checkout CLEAN when the main repo is on the integration branch', async () => {

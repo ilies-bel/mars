@@ -125,13 +125,19 @@ export function repairCommitMessage(rawMessage: string): CommitMessageRepairResu
     }
   }
 
-  if (reasons.length === 0) {
-    return { message: rawMessage, repaired: false }
-  }
-
   const message = normalizedBody
     ? `${newSubject}\n${normalizedBody}`
     : newSubject
+
+  // Return repaired:false when the message text is unchanged. A
+  // pattern-violation note is informational (the comment above says "logged
+  // but not auto-repaired") and must not trigger filter-branch: running it
+  // with an unchanged message causes git to write a commit object without a
+  // trailing newline (the parsed %B body is trimmed before writing), which
+  // produces a different SHA even though the content is semantically identical.
+  if (message === raw) {
+    return { message: rawMessage, repaired: false }
+  }
 
   return { message, repaired: true, reason: reasons.join('; ') }
 }
@@ -215,7 +221,13 @@ export async function repairBranchCommitMessages(
   const tmpDir = await mkdtemp(join(tmpdir(), 'mars-msg-repair-'))
   try {
     for (const { sha, repairedMessage } of repairs) {
-      await writeFile(join(tmpDir, sha), repairedMessage, 'utf8')
+      // Ensure the file ends with a newline: git commit objects always store
+      // messages with a trailing newline, and filter-branch's --msg-filter
+      // writes the output verbatim. Without the trailing newline the resulting
+      // commit object differs from a normally-created one, causing an
+      // unnecessary SHA change for otherwise-identical messages.
+      const msgContent = repairedMessage.endsWith('\n') ? repairedMessage : repairedMessage + '\n'
+      await writeFile(join(tmpDir, sha), msgContent, 'utf8')
     }
 
     const filterScript =
