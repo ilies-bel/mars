@@ -67,7 +67,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0035'
+export const SCHEMA_VERSION = '0036'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -310,6 +310,57 @@ const DDL: readonly string[] = [
      ON tasks(finding_key)
      WHERE finding_key IS NOT NULL
        AND status NOT IN ('done', 'dropped', 'failed')`,
+  // Branch-keyed main-committer singleton (ADR-0071, migration 0008).
+  // Enforces "one active main-commiter per integration branch at a time" at the
+  // database level. The partial predicate mirrors ACTIVE_COMMITTER_STATUSES so
+  // done/failed/dropped committers (which are terminal and never accept new
+  // sources) fall outside the index and do not block a fresh spawn on the same
+  // branch.
+  //
+  // Before creating the index, reap any pre-existing duplicates left from
+  // earlier runs that had no constraint. Only the newest active committer per
+  // branch is kept; the rest are moved to 'failed' so their dependents are not
+  // stranded. This mirrors what reapZombieCommitter does at runtime — we cannot
+  // call the TypeScript seam from DDL, but the SQL effect is identical.
+  `DO $$
+   DECLARE dup_id text;
+   BEGIN
+     FOR dup_id IN
+       SELECT t.id
+         FROM tasks t
+        WHERE t.kind = 'fix'
+          AND t.status IN ('queued','running','verifying','merging','vega-reconciling','blocked')
+          AND t.recovery_payload::jsonb ->> 'recipe' = 'main-commiter'
+          AND t.id NOT IN (
+            SELECT DISTINCT ON (recovery_payload::jsonb ->> 'integrationBranch') id
+              FROM tasks
+             WHERE kind = 'fix'
+               AND status IN ('queued','running','verifying','merging','vega-reconciling','blocked')
+               AND recovery_payload::jsonb ->> 'recipe' = 'main-commiter'
+             ORDER BY recovery_payload::jsonb ->> 'integrationBranch', created_at DESC
+          )
+     LOOP
+       UPDATE tasks
+          SET status               = 'failed',
+              failed_phase         = 'code',
+              failure_reason       = 'main-commiter:duplicate-singleton',
+              failure_reason_code  = 'main-commiter:duplicate-singleton',
+              failure_signature    = 'main-commiter:duplicate-singleton',
+              error                = 'Duplicate active main-commiter reaped at schema migration 0008: ' ||
+                                     'only one active committer per branch is permitted (ADR-0071 now ' ||
+                                     'enforced by DB constraint uq_tasks_active_main_committer). ' ||
+                                     'The newest active committer for this branch was kept; this one was retired.',
+              updated_at           = NOW()
+        WHERE id = dup_id;
+     END LOOP;
+   END $$`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_active_main_committer
+     ON tasks(
+       (recovery_payload::jsonb ->> 'recipe'),
+       (recovery_payload::jsonb ->> 'integrationBranch')
+     )
+     WHERE kind = 'fix'
+       AND status IN ('queued','running','verifying','merging','vega-reconciling','blocked')`,
   // Terminal task states are absorbing.  The application preflights this
   // invariant for a typed error, while this trigger protects every other SQL
   // writer (including future code paths and operational scripts).

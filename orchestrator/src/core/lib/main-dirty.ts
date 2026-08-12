@@ -26,6 +26,39 @@ import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store
 import { Arc } from '../arc'
 import type { TraceEventStore } from './trace-events-store'
 
+/**
+ * Narrow check: is `err` a PostgreSQL unique-violation (SQLSTATE 23505) on the
+ * `uq_tasks_active_main_committer` index specifically?
+ *
+ * Matching on both the SQLSTATE code AND the constraint name avoids swallowing
+ * unrelated unique violations that may occur on other columns in the same
+ * INSERT batch (e.g. the `task_blockers` ON CONFLICT DO NOTHING site).
+ *
+ * The DB wrapper (db.ts) re-wraps PGlite errors as:
+ *   `db: PGlite query failed: <original message>\nSQL: ...\nargs: ...`
+ * with `{ cause: originalError }`. The original error carries `code: '23505'`
+ * (for PGlite) or is surfaced directly (for the embedded pg backend). We check:
+ *   1. The wrapper message or the direct message contains the constraint name.
+ *   2. Either the direct error code or the cause code equals '23505'.
+ */
+function isActiveCommitterUniqueViolation(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const e = err as Error & { code?: string; cause?: unknown }
+  const mentionsConstraint = /uq_tasks_active_main_committer/i.test(e.message)
+  if (!mentionsConstraint) return false
+  // Direct code (embedded pg) or wrapped cause code (PGlite).
+  if (e.code === '23505') return true
+  const cause = e.cause
+  if (cause instanceof Error) {
+    const c = cause as Error & { code?: string }
+    if (c.code === '23505') return true
+  }
+  // Final fallback: the message already includes the constraint name, which is
+  // only emitted by Postgres for unique violations, so the mention alone is
+  // sufficient to narrow the error to the right index.
+  return true
+}
+
 // ---------------------------------------------------------------------------
 // Shared guard: stranded-checkout detection
 // ---------------------------------------------------------------------------
@@ -785,15 +818,58 @@ export const spawnOrAttachMainCommitter = async (
   // intentionally NOT reused: a done committer proves main was clean when it
   // verified, but re-detecting dirt means a genuinely new dirty episode that
   // needs a fresh committer.
+  //
+  // Optimistic insert: if a concurrent caller wins the same race and inserts
+  // first, the DB-level uq_tasks_active_main_committer partial unique index
+  // aborts the whole batch (atomically — no orphan rows). We catch the narrow
+  // 23505 violation on that specific constraint, re-resolve to find the winner,
+  // and attach to it. One retry is enough: if the second resolve also returns
+  // `none`, that is a genuine anomaly we surface rather than loop.
   const arc = Arc.load(input.sourceOriginId, s)
-  const { fixTaskId } = await arc.spawnMainCommitterRecovery({
-    sourceTaskId: input.sourceTaskId,
-    integrationBranch: input.integrationBranch,
-    dispatchPhase: input.dispatchPhase,
-    recipePrompt: input.recipePrompt,
-    sourceOriginId: input.sourceOriginId,
-    traceStore: input.traceStore,
-  })
+  let fixTaskId: string
+  try {
+    const spawned = await arc.spawnMainCommitterRecovery({
+      sourceTaskId: input.sourceTaskId,
+      integrationBranch: input.integrationBranch,
+      dispatchPhase: input.dispatchPhase,
+      recipePrompt: input.recipePrompt,
+      sourceOriginId: input.sourceOriginId,
+      traceStore: input.traceStore,
+    })
+    fixTaskId = spawned.fixTaskId
+  } catch (err) {
+    if (!isActiveCommitterUniqueViolation(err)) throw err
+    // A concurrent caller inserted a committer for the same branch and won the
+    // race. The batch rolled back atomically; re-resolve to find the winner and
+    // fall through to the attach path.
+    const winner = await resolveActiveMainCommitter(input.integrationBranch, s)
+    if (winner.kind !== 'alive') {
+      // Genuine anomaly: the unique violation guarantees a row is present in the
+      // index's active set, so a second resolve that returns non-alive means
+      // something unexpected happened between the violation and the re-read.
+      throw new Error(
+        `spawnOrAttachMainCommitter: unique violation on uq_tasks_active_main_committer ` +
+          `for branch ${input.integrationBranch} but re-resolve returned kind=${winner.kind}. ` +
+          `This should not happen — the index guarantees an active row exists.`,
+        { cause: err as Error },
+      )
+    }
+    await attachToExistingFixTask({
+      sourceTaskId: input.sourceTaskId,
+      fixTaskId: winner.id,
+      errorSummary: SOURCE_ERROR_SUMMARY(
+        input.integrationBranch,
+        input.dispatchPhase,
+      ),
+      store: s,
+    })
+    return {
+      fixTaskId: winner.id,
+      spawned: false,
+      attachedToStatus: winner.status,
+      reapedZombieCommitterId,
+    }
+  }
   // Moves every dependent still `blocked` on a FAILED committer for this branch
   // — including the zombie just reaped — onto the replacement.
   await Arc.reparentStrandedDependentsOntoNewCommitter(
