@@ -885,4 +885,106 @@ describe('continue degrades to restart for pre-setup failures', () => {
     const after = await queue.getTask(task.id)
     expect(after?.status).toBe('failed')
   })
+
+  // ── Regression: worktree missing + failedPhase='code' + commits ahead ────
+  // The operator ran `mars continue` and got "failed_phase was not recorded"
+  // even though tasks.failed_phase was 'code'. Root cause: the worktree was
+  // deleted (e.g. by a failed recovery task's cleanup), making isPreSetup=true.
+  // The error must name the actual cause, never claim the column is unset.
+
+  it('names worktree-missing cause when failedPhase is set but worktree is gone and branch has commits', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const task = await queue.enqueueTask('add feature Z', undefined, { skipTriage: true })
+    const branch = `task/${task.id}`
+    const worktreePath = resolve(repo, '.mars', 'worktrees', task.id)
+
+    // Create a worktree with a commit (e.g. the salvage checkpoint from a prior
+    // recovery attempt) so the branch has work that must not be silently discarded.
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    writeFileSync(resolve(worktreePath, 'feature-z.ts'), 'export const z = 1\n')
+    execFileSync('git', ['add', 'feature-z.ts'], { cwd: worktreePath })
+    execFileSync('git', ['commit', '-qm', 'wip: salvage checkpoint'], { cwd: worktreePath })
+
+    // Now delete the worktree directory (simulating cleanup after a failed
+    // recovery task), but keep the DB row and branch intact.
+    execFileSync('git', ['worktree', 'remove', '--force', worktreePath], { cwd: repo })
+
+    // Stamp the task row: failedPhase IS recorded but worktree is gone.
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'coder exited non-zero',
+      failedPhase: 'code',
+      branch,
+      worktreePath,
+    })
+
+    let thrown: Error | null = null
+    try {
+      await continueTask.coreContinueTask(task.id)
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    // Must NOT claim "failed_phase was not recorded" — it IS recorded.
+    expect(thrown!.message).not.toContain('failed_phase was not recorded')
+    // Must name the actual cause: the worktree is missing.
+    expect(thrown!.message).toContain('missing from disk')
+    // Must name failed_phase='code' so the operator knows the column is set.
+    expect(thrown!.message).toContain("failed_phase is 'code'")
+    // Must suggest mars remerge (the committed work is recoverable).
+    expect(thrown!.message).toContain('mars remerge')
+    expect(thrown!.message).toContain(task.id)
+    // Branch must be mentioned so the operator knows what to remerge.
+    expect(thrown!.message).toContain(branch)
+
+    // Task must remain failed — no restart was performed.
+    const after = await queue.getTask(task.id)
+    expect(after?.status).toBe('failed')
+    expect(after?.branch).toBe(branch)
+  })
+
+  // ── Regression: settled failed recovery task must not block code-phase resume
+  // Scenario: the origin task (failedPhase='code') has an arc whose recovery
+  // task also failed (status='failed', fix_for_task_id=origin). The settled
+  // (failed) recovery must not block `mars continue` on the origin — only
+  // IN-FLIGHT recoveries block it.
+
+  it('resolves to code-phase resume when a settled failed recovery task is in the arc', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const origin = await queue.enqueueTask('implement the thing', undefined, { skipTriage: true })
+    // Origin failed in code phase with an intact worktree.
+    await queue.updateTask(origin.id, {
+      status: 'failed',
+      error: 'coder exited non-zero',
+      failedPhase: 'code',
+      branch: `task/${origin.id}`,
+      worktreePath: repo,   // repo dir exists on disk — intact worktree
+    })
+
+    // Insert a FAILED recovery task for the origin. Its status='failed' means
+    // it has settled and must not be treated as in-flight.
+    const { getDefaultTaskStore } = (await import('../../store/task-store')) as typeof import('../../store/task-store')
+    const store = await getDefaultTaskStore()
+    const recoveryId = `mars-fix-settled`
+    const now = new Date().toISOString()
+    await store.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, origin_id, priority, tag, kind, created_at, updated_at)
+            VALUES (?, ?, 'failed', ?, ?, 0, 'coder', 'fix', ?, ?)`,
+      args: [recoveryId, 'recover the thing', origin.id, origin.id, now, now],
+    })
+
+    // continue must succeed: the settled failed recovery does not block it.
+    const result = await continueTask.coreContinueTask(origin.id)
+
+    expect(result.degradedToRestart).toBe(false)
+    expect(result.coderResume).toBe(true)
+
+    const after = await queue.getTask(origin.id)
+    expect(after?.status).toBe('queued')
+    expect(after?.failedPhase).toBe('code')       // preserved for the coder banner
+    expect(after?.branch).toBe(`task/${origin.id}`)
+  })
 })
