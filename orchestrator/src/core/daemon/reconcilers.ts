@@ -700,6 +700,73 @@ const vegaReconcilingRecovery: Reconciler = {
 }
 
 /**
+ * 9c. Stale-queued merge-job cancel — cancel any `queued` merge_jobs rows
+ *     whose task is no longer in `merging` status.
+ *
+ *     Race scenario (see mars-0c5ffe82 post-mortem):
+ *
+ *       1. Task enters `merging`; merge job is enqueued as `queued`.
+ *       2. Daemon dies before the merge worker claims the job.
+ *       3. On restart, `mergeJobsStartupReconcile` (step 3a) runs first: the
+ *          task is still `merging` so the job looks valid — no action.
+ *       4. `mergingRecovery` (step 9) runs: FF not landed → removes worktree,
+ *          sets task to `queued` (requeue from setup).
+ *       5. The old merge_jobs row is now STALE — `queued` status, pointing at
+ *          the deleted worktree — but `mergeJobsStartupReconcile` already ran.
+ *       6. Merge worker claims the stale job and crashes trying to spawn git
+ *          in the non-existent worktree.
+ *
+ *     This reconciler runs AFTER `mergingRecovery` (and `vegaReconcilingRecovery`)
+ *     to catch exactly that window: any `queued` merge job whose task is no
+ *     longer in `merging` status is stale and must be canceled so the merge
+ *     worker never picks it up. Errors are swallowed (log + continue).
+ */
+const staleQueuedMergeJobCancel: Reconciler = {
+  name: 'stale-queued-merge-job-cancel',
+  async run({ log }) {
+    try {
+      const { getDefaultDomainTaskStore } = await import('../store/task-store')
+      const taskStore = getDefaultDomainTaskStore()
+
+      // Queued merge jobs for tasks that are no longer in 'merging' status.
+      const staleResult = await taskStore.query(`
+        SELECT mj.id, mj.task_id
+        FROM   merge_jobs mj
+        JOIN   tasks t ON t.id = mj.task_id
+        WHERE  mj.status = 'queued'
+        AND    t.status != 'merging'
+      `)
+
+      if (staleResult.rows.length === 0) return { staleQueuedMergeJobsCanceled: 0 }
+
+      let canceled = 0
+      for (const row of staleResult.rows) {
+        const jobId = row.id as string
+        const taskId = row.task_id as string
+        await taskStore.execute({
+          sql: `UPDATE merge_jobs
+                SET status      = 'canceled',
+                    error       = 'stale: task status changed from merging during startup reconciliation',
+                    finished_at = NOW(),
+                    updated_at  = NOW()
+                WHERE id = ?`,
+          args: [jobId],
+        })
+        log(
+          `[reconcile] stale-queued-merge-job-cancel: canceled stale queued merge job ${jobId} for task ${taskId} (task no longer in merging status)`,
+        )
+        canceled++
+      }
+
+      return { staleQueuedMergeJobsCanceled: canceled }
+    } catch (err) {
+      log(`[reconcile] stale-queued-merge-job-cancel failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
  * 10. Stranded-slicing proposal recovery — return claims held by a prior
  * daemon to prd-ready. A live daemon may run this through `mars sync`, so
  * preserve a claim while that same daemon has the proposal's slice workflow
@@ -1035,6 +1102,7 @@ export const RECONCILERS: readonly Reconciler[] = [
   verifyingRecovery,
   mergingRecovery,
   vegaReconcilingRecovery,
+  staleQueuedMergeJobCancel,
   strandedSlicingProposalReconcile,
   stalledProposalSlice,
   staleActionQueueSweep,

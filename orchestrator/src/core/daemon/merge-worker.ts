@@ -180,6 +180,17 @@ async function runMergeJob(
 
   let result: MergeJobResult
   try {
+    // Pre-flight: fail fast with a diagnosable message if the worktree is gone.
+    // A startup reconciler (merging-recovery) may have deleted the worktree
+    // between daemon boot and this job being claimed.  Throwing here produces
+    // the "working directory no longer exists" pattern that
+    // computeFailureSignature classifies as merge:crashed/worktree-vanished
+    // (an environmental failure) so the arc's single recovery slot is not
+    // consumed and remerge is triggered automatically.
+    const { existsSync } = await import('node:fs')
+    if (!existsSync(job.worktreePath)) {
+      throw new Error(`working directory no longer exists: ${job.worktreePath}`)
+    }
     const mergeResult = await mergeFn({
       branch: job.branch,
       worktreePath: job.worktreePath,

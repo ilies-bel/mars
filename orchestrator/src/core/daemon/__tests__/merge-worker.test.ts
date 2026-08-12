@@ -83,7 +83,7 @@ const makeFakeStore = (
       error: null,
       errorCode: null,
       integrationBranch: 'main',
-      worktreePath: '/tmp/wt',
+      worktreePath: '/tmp',
       branch: 'task/test',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -352,5 +352,63 @@ describe('startMergeWorker — serial job processing', () => {
     expect(calls).toContain(`markFailed:${job.id}`)
     // markDone must NOT have been called because markRunning threw.
     expect(calls).not.toContain(`markDone:${job.id}`)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Regression: worktree-vanished pre-flight check (mars-0c5ffe82)
+//
+// A startup reconciler (merging-recovery) can delete the task worktree after
+// the daemon boots but before the merge worker claims the stale queued job.
+// Without the pre-flight check, git would be spawned into a non-existent
+// directory, producing an opaque crash classified as merge:crashed/unclassified
+// which consumed the arc's single recovery slot.
+//
+// With the pre-flight check, the worker detects the missing directory BEFORE
+// calling mergeFn and fails with "working directory no longer exists: <path>".
+// computeFailureSignature classifies this as merge:crashed/worktree-vanished
+// (an environmental signature) — the recovery slot is not consumed and
+// remerge is triggered automatically.
+// ---------------------------------------------------------------------------
+
+describe('startMergeWorker — worktree-vanished pre-flight', () => {
+  it('produces a diagnosable error and skips mergeFn when the worktree does not exist', async () => {
+    // A path that is guaranteed not to exist on any test machine.
+    const missingPath = '/tmp/mars-test-nonexistent-worktree-abc123xyz'
+    const { store, calls, jobs, enqueueJob } = makeFakeStore()
+    const job = enqueueJob({ id: 'j-vanished', worktreePath: missingPath })
+
+    let mergeFnCalled = false
+    const guardedMergeFn = async () => {
+      mergeFnCalled = true
+      throw new Error('mergeFn must not be reached when worktree is absent')
+    }
+
+    const { startMergeWorker } = await import('../merge-worker.js')
+    const ac = new AbortController()
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus: new EventEmitter(),
+      signal: ac.signal,
+      pollIntervalMs: 10,
+      mergeFn: guardedMergeFn,
+    })
+
+    // The pre-flight check fires and causes markFailed — not markDone.
+    await waitFor(() => calls.includes(`markFailed:${job.id}`))
+    ac.abort()
+    await handle.stop()
+
+    // mergeFn was never called — the pre-flight check short-circuited first.
+    expect(mergeFnCalled).toBe(false)
+    expect(calls).toContain(`markRunning:${job.id}`)
+    expect(calls).toContain(`markFailed:${job.id}`)
+    expect(calls).not.toContain(`markDone:${job.id}`)
+
+    // The error message must contain the pattern that computeFailureSignature
+    // maps to merge:crashed/worktree-vanished (not /unclassified).
+    const failedJob = jobs.get(job.id)
+    expect(failedJob?.error).toMatch(/working directory no longer exists/)
   })
 })

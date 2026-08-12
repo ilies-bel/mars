@@ -184,6 +184,14 @@ export interface ReconcileSummary {
    * crash between the status write and the subscriber raise).
    */
   orphanedFailedRaised: number
+  /**
+   * Stale `queued` merge_jobs rows canceled because their task was no longer in
+   * `merging` status after startup reconciliation. A non-zero count indicates
+   * the daemon restarted while a task was in `merging` and `mergingRecovery`
+   * re-queued it from setup, leaving a stale merge job row that would have caused
+   * the merge worker to spawn git into a non-existent worktree.
+   */
+  staleQueuedMergeJobsCanceled: number
 }
 
 /**
@@ -238,4 +246,5 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   mergeJobsReset: 0,
   mergeJobsRebuilt: 0,
   orphanedFailedRaised: 0,
+  staleQueuedMergeJobsCanceled: 0,
 })
