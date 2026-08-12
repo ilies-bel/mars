@@ -4,6 +4,8 @@ import { registerSubscriber } from '../../bus/subscribers.js'
 import { Arc } from '../../core/arc.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
 import { registerSubscriberName } from '../registry.js'
+import { updateTask } from '../../core/queue.js'
+import { RESCUE_OPERATOR_TAG } from '../../core/rescue-operator-spawn.js'
 
 /**
  * Durable Outbox Subscriber: drives blocked-task unblocking in response to
@@ -34,6 +36,91 @@ export async function ensureBlockerResolutionSubscriber(client: DbClient): Promi
 }
 
 /**
+ * Cancel any queued or running fix/rescue tasks that were spawned for
+ * `originId` now that the origin has reached `done`.
+ *
+ * - Queued tasks are dropped immediately (status → 'dropped', dropReason →
+ *   'origin-succeeded'). This removes them from the dispatch queue before the
+ *   drain loop can pick them up.
+ * - Running tasks cannot be stopped from within the subscriber (stopping
+ *   requires the in-memory `tracker.abort()` in server.ts). Their IDs are
+ *   passed to `onCancelInFlight` so the caller can abort them.
+ *
+ * Best-effort: a failure to drop/report one task is logged but does not block
+ * the others. The dispatch-time guard in the drain loop is the primary
+ * correctness gate; this function is belt-and-suspenders for tasks that were
+ * queued or dispatched concurrently.
+ */
+async function cancelStaleRecoveriesForOrigin(
+  client: DbClient,
+  originId: string,
+  onCancelInFlight: ((taskId: string) => void) | undefined,
+  log: ((msg: string) => void) | undefined,
+): Promise<void> {
+  // Active (non-terminal) statuses split into those we can drop here vs those
+  // that need an in-memory abort signal.
+  const DROPPABLE_STATUSES = ['queued', 'blocked']
+  const IN_FLIGHT_STATUSES = ['running', 'verifying', 'merging', 'vega-reconciling']
+  const ACTIVE_STATUSES = [...DROPPABLE_STATUSES, ...IN_FLIGHT_STATUSES]
+
+  const placeholders = ACTIVE_STATUSES.map(() => '?').join(', ')
+
+  // Find all active fix tasks and rescue tasks for this origin.
+  // Fix tasks: kind='fix', fix_for_task_id = originId
+  // Rescue tasks: origin_id = originId, tagged 'rescue-operator' (kind='task')
+  //
+  // The tags_json column stores a JSON array as text; use LIKE to detect the
+  // rescue-operator tag (consistent with arc.ts listArcMembers query at line 1925).
+  const tagPattern = `%${RESCUE_OPERATOR_TAG}%`
+  const { rows } = await client.execute({
+    sql: `
+      SELECT t.id, t.status
+        FROM tasks t
+       WHERE t.status IN (${placeholders})
+         AND (
+               (t.kind = 'fix' AND t.fix_for_task_id = ?)
+               OR
+               (t.origin_id = ? AND t.id != ? AND t.tags_json LIKE ?)
+             )`,
+    args: [...ACTIVE_STATUSES, originId, originId, originId, tagPattern],
+  })
+
+  for (const row of rows) {
+    const taskId = (row as unknown as { id: string; status: string }).id
+    const status = (row as unknown as { id: string; status: string }).status
+
+    if (DROPPABLE_STATUSES.includes(status)) {
+      try {
+        await updateTask(taskId, {
+          status: 'dropped',
+          dropReason: 'origin-succeeded',
+          error: `Origin ${originId} reached done; stale recovery cancelled`,
+        })
+        log?.(
+          `[blocker-resolution] dropped stale recovery ${taskId} (status=${status}): origin ${originId} done`,
+        )
+      } catch (err) {
+        // Best-effort: a concurrent transition (e.g., the dispatch loop
+        // dropping it simultaneously) is benign. Log and continue.
+        log?.(
+          `[blocker-resolution] could not drop stale recovery ${taskId}: ${
+            (err as Error).message
+          }`,
+        )
+      }
+    } else if (IN_FLIGHT_STATUSES.includes(status)) {
+      // The task is already running — signal the daemon's tracker to abort it.
+      // The daemon will mark it failed with failureReason='cancelled' so that
+      // handleTaskFailureWithFixTask skips re-spawning a new recovery.
+      onCancelInFlight?.(taskId)
+      log?.(
+        `[blocker-resolution] signalling abort for in-flight recovery ${taskId} (status=${status}): origin ${originId} done`,
+      )
+    }
+  }
+}
+
+/**
  * Drain all pending `task.terminal` events and settle whatever was waiting on
  * the completing task:
  *
@@ -57,6 +144,10 @@ export async function ensureBlockerResolutionSubscriber(client: DbClient): Promi
  *    `mars restart` would accept it. Only the origin↔its-own-recovery edge is
  *    settled here: an ordinary failed blocker still leaves its dependents
  *    waiting in `blocked` (unchanged behaviour).
+ *  - `reason: 'done'` on an ORIGIN task → any queued or running fix/rescue tasks
+ *    that were spawned for that origin are cancelled. Queued tasks are dropped
+ *    immediately; running tasks are passed to `opts.onCancelInFlightRecovery` so
+ *    the daemon can abort them via `tracker.abort()`.
  *
  * Implements the ADR-0032 stall contract via {@link drainWithStall}: a handler
  * failure blocks the cursor on the failing event and raises a
@@ -67,6 +158,17 @@ export async function ensureBlockerResolutionSubscriber(client: DbClient): Promi
 export async function drainBlockerResolution(
   client: DbClient,
   log?: (msg: string) => void,
+  opts?: {
+    /**
+     * Called for each in-flight (running/verifying/merging) fix or rescue task
+     * whose origin just reached `done`. The daemon passes `(id) => tracker.abort(id)`
+     * here so those tasks are stopped immediately rather than running to completion
+     * against an arc that no longer needs recovery.
+     *
+     * No-op when omitted (e.g. in tests that only exercise the drop path).
+     */
+    onCancelInFlightRecovery?: (taskId: string) => void
+  },
 ): Promise<{ processed: number }> {
   return drainWithStall({
     client,
@@ -90,6 +192,31 @@ export async function drainBlockerResolution(
       if (payload.reason !== 'done' && payload.reason !== 'dropped') return false
 
       const result = await Arc.unblockByCompletion(payload.taskId)
+
+      // When an origin itself reaches `done`, cancel any queued or running
+      // fix/rescue tasks that were spawned for it. This handles the race where
+      // the origin succeeds (e.g. via auto-remerge) between when the recovery
+      // was enqueued/dispatched and when it actually starts coding.
+      //
+      // Runs best-effort: errors are logged but do not block the cursor.
+      // The dispatch-time guard in server.ts drain() is the primary gate;
+      // this subscriber-side cancellation is belt-and-suspenders for tasks
+      // that were already past the dispatch check.
+      if (payload.reason === 'done') {
+        await cancelStaleRecoveriesForOrigin(
+          client,
+          payload.taskId,
+          opts?.onCancelInFlightRecovery,
+          log,
+        ).catch((err) => {
+          log?.(
+            `[blocker-resolution] cancelStaleRecoveriesForOrigin(${payload.taskId}) threw (non-fatal): ${
+              (err as Error).message
+            }`,
+          )
+        })
+      }
+
       return result.outcomes.some(
         (o) => o.outcome === 'queued' || o.outcome === 'failed' || o.outcome === 'done-via-recovery',
       )

@@ -950,3 +950,216 @@ describe('blocker-resolution: late recovery success must resurrect failed origin
     },
   )
 })
+
+// Regression: mars-7c2918e1 — recovery and rescue tasks must be cancelled when
+// their origin reaches `done` (e.g. via auto-remerge after a transient merge crash).
+//
+// Observed incident: origin mars-66454c77 merged successfully at 19:45 but two
+// tasks spawned at 19:44:47 (a fix task and a rescue-operator task) continued
+// running against the completed arc until stopped by hand. The auto-remerge
+// introduced in 3d6d5acc made this race MORE frequent by healing transient merge
+// failures, increasing the probability that the origin succeeds between recovery
+// enqueue and dispatch.
+//
+// Fix: two-part guard —
+//  1. Subscriber-side: when task.terminal{done} fires for an origin, drop any
+//     queued fix/rescue tasks and signal running ones for abort.
+//  2. Dispatch-side (server.ts drain()): before dispatching a fix/rescue task,
+//     re-check the origin's status and drop it if the origin is already done.
+// ---------------------------------------------------------------------------
+describe('blocker-resolution: cancel stale recoveries when origin reaches done (mars-7c2918e1)', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-stale-recovery-cancel-test-'))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_FIX_RETRY_BUDGET
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('drops a queued fix task when its origin reaches done', async () => {
+    // AC: when origin flips to done and task.terminal{done} is drained, any
+    // queued fix task (fix_for_task_id = originId) is dropped with
+    // dropReason='origin-succeeded'. The dispatch loop must not run it.
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+
+    const origin = await q.enqueueTask('implement-feature', undefined, { skipTriage: true })
+    // Fix task queued for the origin (simulates what handleTaskFailureWithFixTask does)
+    const fixId = `fix-${origin.id.slice(0, 8)}`
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, recovery_spawned_count, origin_id, priority, created_at, updated_at)
+            VALUES (?, 'fix it', 'queued', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, ?, ?)`,
+      args: [fixId, origin.id, origin.id, new Date().toISOString(), new Date().toISOString()],
+    })
+
+    // Origin succeeds (e.g. auto-remerge lands).
+    await qc.execute({ sql: `UPDATE tasks SET status = 'done' WHERE id = ?`, args: [origin.id] })
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: origin.id, reason: 'done' })
+    await sub.drainBlockerResolution(qc)
+
+    const fixAfter = await q.getTask(fixId)
+    // Critical: the fix task must be dropped, not left queued for dispatch.
+    expect(fixAfter?.status).toBe('dropped')
+    expect(fixAfter?.dropReason).toBe('origin-succeeded')
+  })
+
+  it('does not drop a fix task that targets a different origin', async () => {
+    // Sanity: a fix task for a DIFFERENT origin must not be affected when
+    // unrelated origin A reaches done.
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+
+    const originA = await q.enqueueTask('origin-a', undefined, { skipTriage: true })
+    const originB = await q.enqueueTask('origin-b', undefined, { skipTriage: true })
+
+    // Fix task is for originB, not originA.
+    const fixId = `fix-${originB.id.slice(0, 8)}`
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, recovery_spawned_count, origin_id, priority, created_at, updated_at)
+            VALUES (?, 'fix b', 'queued', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, ?, ?)`,
+      args: [fixId, originB.id, originB.id, new Date().toISOString(), new Date().toISOString()],
+    })
+
+    // originA reaches done — must NOT affect originB's fix task.
+    await qc.execute({ sql: `UPDATE tasks SET status = 'done' WHERE id = ?`, args: [originA.id] })
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: originA.id, reason: 'done' })
+    await sub.drainBlockerResolution(qc)
+
+    // originB's fix task untouched.
+    expect((await q.getTask(fixId))?.status).toBe('queued')
+  })
+
+  it('signals onCancelInFlightRecovery for a running fix task when its origin reaches done', async () => {
+    // AC: a fix task already dispatched (status='running') cannot be dropped via
+    // updateTask; the subscriber must call onCancelInFlightRecovery(taskId) so
+    // the daemon can invoke tracker.abort().
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+
+    const origin = await q.enqueueTask('implement-feature', undefined, { skipTriage: true })
+    const fixId = `fix-${origin.id.slice(0, 8)}`
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, recovery_spawned_count, origin_id, priority, created_at, updated_at)
+            VALUES (?, 'fix it', 'running', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, ?, ?)`,
+      args: [fixId, origin.id, origin.id, new Date().toISOString(), new Date().toISOString()],
+    })
+
+    await qc.execute({ sql: `UPDATE tasks SET status = 'done' WHERE id = ?`, args: [origin.id] })
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: origin.id, reason: 'done' })
+
+    const aborted: string[] = []
+    await sub.drainBlockerResolution(qc, undefined, {
+      onCancelInFlightRecovery: (taskId) => { aborted.push(taskId) },
+    })
+
+    // The running fix task must be signalled for abort (not dropped — the
+    // daemon transitions it to failed via tracker.abort() + updateTask).
+    expect(aborted).toContain(fixId)
+    // Running task status is NOT changed by the subscriber itself — that's the
+    // daemon's responsibility after receiving the abort signal.
+    expect((await q.getTask(fixId))?.status).toBe('running')
+  })
+
+  it('drops a queued rescue-operator task when its origin reaches done', async () => {
+    // AC: a rescue task (kind='task', tags=['rescue-operator'], origin_id=originId)
+    // that is queued must be dropped when its origin reaches done.
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+
+    const origin = await q.enqueueTask('implement-feature', undefined, { skipTriage: true })
+
+    // Rescue task: kind='task', tagged 'rescue-operator', origin_id = origin.id
+    const rescueId = `rescue-${origin.id.slice(0, 6)}`
+    const tagsJson = JSON.stringify(['rescue-operator'])
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, recovery_spawned_count, origin_id, priority, tags_json, created_at, updated_at)
+            VALUES (?, 'rescue arc', 'queued', 'task', 'agent', 'rescue-operator-spawn', 0, ?, 3, ?, ?, ?)`,
+      args: [rescueId, origin.id, tagsJson, new Date().toISOString(), new Date().toISOString()],
+    })
+
+    await qc.execute({ sql: `UPDATE tasks SET status = 'done' WHERE id = ?`, args: [origin.id] })
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: origin.id, reason: 'done' })
+    await sub.drainBlockerResolution(qc)
+
+    const rescueAfter = await q.getTask(rescueId)
+    expect(rescueAfter?.status).toBe('dropped')
+    expect(rescueAfter?.dropReason).toBe('origin-succeeded')
+  })
+
+  it('leaves fix tasks with done/failed/dropped status untouched when origin done fires', async () => {
+    // Guard: a fix task that already reached a terminal status must not be
+    // re-processed (IllegalTransitionError would fire). Best-effort means we
+    // simply skip it.
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+
+    const origin = await q.enqueueTask('implement-feature', undefined, { skipTriage: true })
+    const fixId = `fix-${origin.id.slice(0, 8)}`
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, recovery_spawned_count, origin_id, priority, created_at, updated_at)
+            VALUES (?, 'fix it', 'done', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, ?, ?)`,
+      args: [fixId, origin.id, origin.id, new Date().toISOString(), new Date().toISOString()],
+    })
+
+    await qc.execute({ sql: `UPDATE tasks SET status = 'done' WHERE id = ?`, args: [origin.id] })
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: origin.id, reason: 'done' })
+    // Must not throw even though the fix task is already done.
+    await expect(sub.drainBlockerResolution(qc)).resolves.not.toThrow()
+
+    // Fix task still done — not re-processed.
+    expect((await q.getTask(fixId))?.status).toBe('done')
+  })
+
+  it('existing dependent-unblocking behaviour still works alongside stale-recovery cancel', async () => {
+    // Regression guard: adding the stale-recovery cancel must not break the
+    // primary unblocking logic that re-queues blocked dependents.
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+
+    const blocker = await q.enqueueTask('blocker', undefined, { skipTriage: true })
+    const dep = await q.enqueueTask('dependent', undefined, { skipTriage: true })
+    await q.addBlockers(dep.id, [blocker.id])
+    await qc.execute({
+      sql: `UPDATE tasks SET status = 'blocked', recovery_spawned_count = 0 WHERE id = ?`,
+      args: [dep.id],
+    })
+    await qc.execute({ sql: `UPDATE tasks SET status = 'done' WHERE id = ?`, args: [blocker.id] })
+
+    // Also add a stale fix task for the blocker (to verify both paths run together).
+    const fixId = `fix-${blocker.id.slice(0, 8)}`
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, recovery_spawned_count, origin_id, priority, created_at, updated_at)
+            VALUES (?, 'fix it', 'queued', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, ?, ?)`,
+      args: [fixId, blocker.id, blocker.id, new Date().toISOString(), new Date().toISOString()],
+    })
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: blocker.id, reason: 'done' })
+    const { processed } = await sub.drainBlockerResolution(qc)
+
+    // Dependent must be unblocked.
+    expect((await q.getTask(dep.id))?.status).toBe('queued')
+    // Stale fix task must be dropped.
+    expect((await q.getTask(fixId))?.status).toBe('dropped')
+    // Something was processed.
+    expect(processed).toBeGreaterThan(0)
+  })
+})

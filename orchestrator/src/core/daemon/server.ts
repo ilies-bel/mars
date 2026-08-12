@@ -2453,6 +2453,42 @@ export const startDaemon = async (
               tracker.unclaim(id, 'implement')
               continue
             }
+            // Stale-recovery guard: if this is a fix or rescue task whose
+            // origin has already reached 'done', drop it without dispatching.
+            // Handles the race where the origin succeeds (e.g. via auto-remerge
+            // after a transient merge crash) between when the recovery was
+            // enqueued and when the dispatch loop picks it up.
+            //
+            // - Fix tasks:    kind='fix', fixForTaskId is the origin
+            // - Rescue tasks: tagged 'rescue-operator', originId != self
+            {
+              const recoveryOriginId =
+                t.kind === 'fix' && t.fixForTaskId != null
+                  ? t.fixForTaskId
+                  : t.tags.includes('rescue-operator') && t.originId !== t.id
+                    ? t.originId
+                    : null
+              if (recoveryOriginId !== null) {
+                const origin = await getTask(recoveryOriginId)
+                if (origin?.status === 'done') {
+                  log(
+                    `[dispatch] dropping stale recovery ${t.id} (kind=${t.kind ?? 'task'}): origin ${recoveryOriginId} already done`,
+                  )
+                  await updateTask(t.id, {
+                    status: 'dropped',
+                    dropReason: 'origin-succeeded',
+                    error: `Origin ${recoveryOriginId} reached done; stale recovery dropped at dispatch`,
+                  }).catch((err) =>
+                    log(
+                      `[dispatch] drop stale recovery ${t.id}: ${(err as Error).message}`,
+                    ),
+                  )
+                  tracker.unclaim(id, 'implement')
+                  void drain()
+                  continue
+                }
+              }
+            }
             void dispatchImplement(t)
           }
         } catch (err) {
@@ -5447,7 +5483,22 @@ export const startDaemon = async (
   void (async () => {
     try {
       await ensureBlockerResolutionSubscriber(getCompositionRootClient())
-      const { processed } = await drainBlockerResolution(getCompositionRootClient(), log)
+      const { processed } = await drainBlockerResolution(getCompositionRootClient(), log, {
+        onCancelInFlightRecovery: (taskId) => {
+          if (tracker.abort(taskId)) {
+            void updateTask(taskId, {
+              status: 'failed',
+              error: 'origin succeeded; in-flight recovery cancelled',
+              failureReason: CANCELLED_FAILURE_REASON,
+              failureReasonCode: 'origin-succeeded-cancel',
+            }).catch((err) =>
+              log(
+                `[blocker-resolution] cancel in-flight recovery ${taskId}: ${(err as Error).message}`,
+              ),
+            )
+          }
+        },
+      })
       if (processed > 0) {
         log(`[blocker-resolution] unblocked ${processed} dependent(s) on boot`)
         // Surface newly queued tasks to the dispatch loop.
@@ -6627,7 +6678,22 @@ export const startDaemon = async (
   const blockerResolutionDrain = setInterval(
     singleFlight(async () => {
       try {
-        const { processed } = await drainBlockerResolution(getCompositionRootClient(), log)
+        const { processed } = await drainBlockerResolution(getCompositionRootClient(), log, {
+          onCancelInFlightRecovery: (taskId) => {
+            if (tracker.abort(taskId)) {
+              void updateTask(taskId, {
+                status: 'failed',
+                error: 'origin succeeded; in-flight recovery cancelled',
+                failureReason: CANCELLED_FAILURE_REASON,
+                failureReasonCode: 'origin-succeeded-cancel',
+              }).catch((err) =>
+                log(
+                  `[blocker-resolution] cancel in-flight recovery ${taskId}: ${(err as Error).message}`,
+                ),
+              )
+            }
+          },
+        })
         if (processed > 0) {
           const queued = await listTasks('queued')
           for (const t of queued) {

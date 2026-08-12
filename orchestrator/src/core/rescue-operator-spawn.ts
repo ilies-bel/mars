@@ -24,6 +24,13 @@
  * strands the row (see the comments at each call).
  */
 
+/**
+ * The tag applied to every rescue-operator task. Used by the dispatch loop and
+ * blocker-resolution subscriber to identify rescue tasks when checking whether
+ * a stale recovery should be cancelled after its origin reaches `done`.
+ */
+export const RESCUE_OPERATOR_TAG = 'rescue-operator' as const
+
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/task-store'
 import type { Task } from './queue'
 import type { FixRecipeContext } from './lib/fix-recipes'
@@ -214,7 +221,7 @@ export const maybeSpawnRescueOperator = async (
   // recovery fix tasks this module sits beside already rely on.
   const rescueTask = await store.enqueueTask(prompt, undefined, {
     skipTriage: true,
-    tags: ['rescue-operator'],
+    tags: [RESCUE_OPERATOR_TAG],
     originId,
   })
   await recordStewardIntervention({
