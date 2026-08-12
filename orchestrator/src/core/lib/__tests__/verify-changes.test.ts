@@ -1021,3 +1021,156 @@ describe('has-diff appears in gate outcomes when it passes', () => {
     expect(r.steps[0].passed).toBe(true)
   })
 })
+
+describe('verifyChanges — typecheck infra-retry', () => {
+  // Integration tests for the infra-retry path.
+  //
+  // The existing verify-changes tests use a fake `tsc` placed at
+  // `node_modules/.bin/tsc` so that `npx tsc` resolves the local binary.
+  // These tests follow the same pattern.
+  //
+  // Pre-flight guard requires ALL of:
+  //   - tsconfig.json present (hasTsconfig)
+  //   - node_modules/.bin/tsc present (hasBin)
+  //   - node_modules/ present (hasWorkspaceModules) — else "deps not provisioned"
+  //
+  // Without tsconfig.json OR hasBin the guard skips the step (passed=true).
+  // We need all three so the step actually runs and hits the infra-retry logic.
+
+  /** Create a temp dir with tsconfig.json + fake tsc in node_modules/.bin/ */
+  const makeTscDir = (): { dir: string; binDir: string } => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'mars-infra-retry-'))
+    writeFileSync(resolve(dir, 'tsconfig.json'), '{}')
+    const binDir = resolve(dir, 'node_modules', '.bin')
+    mkdirSync(binDir, { recursive: true })
+    return { dir, binDir }
+  }
+
+  const typecheckStep = {
+    name: 'typecheck',
+    cmd: 'npx' as const,
+    args: ['tsc', '--noEmit'],
+    required: true,
+  }
+
+  it('retries on infra failure and marks passed=true when retry succeeds', async () => {
+    // Scenario: first tsc call → infra error (no TS code); second call → exits 0.
+    // Expected: retry fires, result.passed=true with one step entry.
+    const { dir, binDir } = makeTscDir()
+    try {
+      const callFile = resolve(tmpdir(), `mars-infra-calls-${process.pid}.txt`)
+      writeFileSync(
+        resolve(binDir, 'tsc'),
+        [
+          '#!/bin/sh',
+          `COUNT=$(cat "${callFile}" 2>/dev/null || echo 0)`,
+          `printf '%d' "$((COUNT + 1))" > "${callFile}"`,
+          'if [ "$COUNT" = "0" ]; then',
+          '  printf "Error: Cannot find module" >&2; exit 1',
+          'fi',
+          'exit 0',
+        ].join('\n') + '\n',
+      )
+      chmodSync(resolve(binDir, 'tsc'), 0o755)
+      const result = await verifyChanges({ cwd: dir, steps: [typecheckStep] })
+      expect(result.passed).toBe(true)
+      expect(result.steps).toHaveLength(1)
+      expect(result.steps[0].name).toBe('typecheck')
+      expect(result.steps[0].passed).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('marks passed=false with typecheck-infra sentinel when retry also fails infra', async () => {
+    // Scenario: both tsc calls → infra error (no TS code, e.g. ENOENT/OOM).
+    // Expected: result.passed=false, output contains the typecheck-infra sentinel,
+    // so the failure signature lands as verify:typecheck/typecheck-infra.
+    const { dir, binDir } = makeTscDir()
+    try {
+      writeFileSync(
+        resolve(binDir, 'tsc'),
+        '#!/bin/sh\nprintf "Error: Cannot find module" >&2; exit 1\n',
+      )
+      chmodSync(resolve(binDir, 'tsc'), 0o755)
+      const result = await verifyChanges({ cwd: dir, steps: [typecheckStep] })
+      expect(result.passed).toBe(false)
+      const step = result.steps.find((s) => s.name === 'typecheck')
+      expect(step).toBeDefined()
+      expect(step!.output).toContain('typecheck-infra:')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('does NOT retry on a real TypeScript error (error TS\\d+:)', async () => {
+    // Scenario: tsc exits 1 with a real TS error code.
+    // Expected: no retry, result.passed=false, no typecheck-infra sentinel.
+    const { dir, binDir } = makeTscDir()
+    try {
+      writeFileSync(
+        resolve(binDir, 'tsc'),
+        `#!/bin/sh\nprintf "src/foo.ts(1,1): error TS2304: Cannot find name 'bar'." >&2; exit 1\n`,
+      )
+      chmodSync(resolve(binDir, 'tsc'), 0o755)
+      const result = await verifyChanges({ cwd: dir, steps: [typecheckStep] })
+      expect(result.passed).toBe(false)
+      const step = result.steps.find((s) => s.name === 'typecheck')
+      expect(step).toBeDefined()
+      expect(step!.output).not.toContain('typecheck-infra:')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('performs dep-refresh via npm ci when package-lock.json is present', async () => {
+    // Scenario: package-lock.json present → dep-refresh runs 'npm ci';
+    // first tsc call → infra error; npm ci → 0; second tsc call → 0.
+    // Expected: result.passed=true and npm call file exists.
+    const { dir, binDir } = makeTscDir()
+    const fakeBinDir = mkdtempSync(resolve(tmpdir(), 'mars-fake-pm-bin-'))
+    try {
+      writeFileSync(resolve(dir, 'package-lock.json'), '{"name":"test","lockfileVersion":2}')
+      const tscCallFile = resolve(tmpdir(), `mars-tsc-calls-${process.pid}.txt`)
+      const npmCallFile = resolve(tmpdir(), `mars-npm-calls-${process.pid}.txt`)
+      // Fake tsc: infra failure on first call, passes on second
+      writeFileSync(
+        resolve(binDir, 'tsc'),
+        [
+          '#!/bin/sh',
+          `COUNT=$(cat "${tscCallFile}" 2>/dev/null || echo 0)`,
+          `printf '%d' "$((COUNT + 1))" > "${tscCallFile}"`,
+          'if [ "$COUNT" = "0" ]; then',
+          '  printf "Error: Cannot find module" >&2; exit 1',
+          'fi',
+          'exit 0',
+        ].join('\n') + '\n',
+      )
+      chmodSync(resolve(binDir, 'tsc'), 0o755)
+      // Fake npm: records invocations and exits 0
+      writeFileSync(
+        resolve(fakeBinDir, 'npm'),
+        [
+          '#!/bin/sh',
+          `COUNT=$(cat "${npmCallFile}" 2>/dev/null || echo 0)`,
+          `printf '%d' "$((COUNT + 1))" > "${npmCallFile}"`,
+          'exit 0',
+        ].join('\n') + '\n',
+      )
+      chmodSync(resolve(fakeBinDir, 'npm'), 0o755)
+      const prevPath = process.env.PATH
+      process.env.PATH = `${fakeBinDir}:${prevPath}`
+      try {
+        const result = await verifyChanges({ cwd: dir, steps: [typecheckStep] })
+        expect(result.passed).toBe(true)
+        // npm was invoked (the dep-refresh call)
+        expect(existsSync(npmCallFile)).toBe(true)
+      } finally {
+        process.env.PATH = prevPath
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+      rmSync(fakeBinDir, { recursive: true, force: true })
+    }
+  })
+})

@@ -82,7 +82,14 @@ export function classifyFailure(failureSignature: string): FailureCategory {
     failureSignature.endsWith('/git-metadata-denied') ||
     // The provider CLI could not be executed (spawn ENOENT / exit 127) — the
     // daemon's PATH, not the task's code. A fixer would never even start.
-    failureSignature.endsWith('/provider-binary-missing')
+    failureSignature.endsWith('/provider-binary-missing') ||
+    // verify:typecheck/typecheck-infra — the typecheck step could not execute
+    // tsc at all (missing node_modules, ENOENT, OOM, or any other env failure
+    // without a TypeScript error code). The infra-retry path in verifyChanges
+    // already attempted one dep-refresh + retry; this class means the retry
+    // also failed. No code fix can repair an environment problem; the operator
+    // should run `mars restart <task-id>`.
+    failureSignature.endsWith('/typecheck-infra')
   ) {
     return 'infra'
   }

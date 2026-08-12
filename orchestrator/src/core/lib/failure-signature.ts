@@ -522,6 +522,31 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     matchFull: /\bTS\d{4}:/,
   },
   {
+    // The verify:typecheck step could not execute tsc at all — the failure is
+    // environmental/infrastructure, not a code defect the coding agent should
+    // attempt to fix.  Two conditions produce this class:
+    //
+    //   (a) The pre-flight tsc guard detected that node_modules is absent even
+    //       though tsconfig.json and package.json are present: the worktree's
+    //       dependencies were never provisioned.  verifyChanges() sets
+    //       `stderr: "worktree deps not provisioned: ..."` on the VerifyStep so
+    //       the message survives the structured firstFailedOutput assembly in
+    //       primitives/index.ts and is visible here via matchFull.
+    //
+    //   (b) The infra-retry path ran a dep refresh and retried tsc, but the
+    //       second run ALSO produced no TypeScript error codes (meaning the
+    //       failure is still environmental — ENOENT, OOM, missing binary, etc.).
+    //       verifyChanges() adds the sentinel `typecheck-infra: <reason>\n` as
+    //       the first line of the retry VerifyStep's stderr so classifyError
+    //       can distinguish it from a genuine type-error failure.
+    //
+    // The class routes to FailureCategory 'infra' in failure-class.ts, which
+    // suppresses the fix-task recovery slot.  The operator sees the task failed
+    // because of the environment and runs `mars restart <task-id>`.
+    errorClass: 'typecheck-infra',
+    matchFull: /worktree deps not provisioned|typecheck-infra: /,
+  },
+  {
     // File-system path not found.  Covers the Node.js ENOENT error code and
     // the POSIX "no such file or directory" message that both npm and git emit.
     // Fires from the body (matchFull) because the ENOENT marker commonly
@@ -565,6 +590,30 @@ export const classifyError = (errorOutput: string): string => {
   }
   return UNCLASSIFIED_ERROR_CLASS
 }
+
+/**
+ * Classify a tsc verify-step output as a real TypeScript type error or an
+ * infrastructure/environment failure.
+ *
+ * The distinction drives the infra-retry logic in {@link verifyChanges}:
+ *
+ * - `'type-error'` — the output contains at least one TypeScript diagnostic
+ *   code (`error TS\d+:`).  This is a real code defect the coding agent can
+ *   and should fix; no retry is attempted.
+ *
+ * - `'infra'` — the output contains NO TypeScript diagnostic codes.  This
+ *   covers: `Cannot find module` (Node.js prose, not TS2307), ENOENT,
+ *   signal-terminated prefixes added by runVerifyStep (`verify child killed
+ *   by SIG…`), empty output, or any other non-TypeScript failure.  The caller
+ *   should attempt a single dep-refresh + retry before treating the failure as
+ *   final.
+ *
+ * A real type error fails both the first run AND a retry (no amount of dep
+ * refresh changes the compiled code), so the single retry cannot mask a
+ * genuine bug.  Do NOT add a retry budget beyond one.
+ */
+export const classifyTypecheckOutput = (output: string): 'type-error' | 'infra' =>
+  /\berror TS\d+:/.test(output) ? 'type-error' : 'infra'
 
 /**
  * The one prefix a recovery-task escalation stamps onto `failure_reason` /

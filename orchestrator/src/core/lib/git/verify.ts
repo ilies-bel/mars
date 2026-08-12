@@ -8,6 +8,7 @@ import {
   type TraceCtx,
 } from './internal'
 import { assertWorktreeHygieneForVerify } from '../verify'
+import { classifyTypecheckOutput } from '../failure-signature'
 
 /**
  * The output marker emitted by the npm decoy `tsc` placeholder when
@@ -706,14 +707,21 @@ export const verifyChanges = async (
       // dependencies were never provisioned. Fail before invoking tsc so the
       // operator sees the repair rather than TS2688 / TS2307 noise.
       if (hasTsconfig && hasWorkspaceManifest && !hasWorkspaceModules) {
+        // Set stderr (not just output) so the message survives the structured
+        // firstFailedOutput assembly in primitives/index.ts (which reads stderr
+        // and stdout, not the combined output field, for steps that have a cmd).
+        // Without this, classifyError sees only the step name as the first line
+        // and falls through to `unclassified` instead of `typecheck-infra`.
+        const _depMsg =
+          `worktree deps not provisioned: ${stepCwd}/node_modules is missing — ` +
+          'run mars restart <task-id> to recreate the worktree with dependencies'
         results.push({
           name: spec.name,
           ...(spec.gateId !== undefined ? { gateId: spec.gateId } : {}),
           tier: 'task',
           passed: false,
-          output:
-            `worktree deps not provisioned: ${stepCwd}/node_modules is missing — ` +
-            'run mars restart <task-id> to recreate the worktree with dependencies',
+          output: _depMsg,
+          stderr: _depMsg,
           cmd: spec.cmd,
           args: [...spec.args],
           stepDir: stepCwd,
@@ -761,6 +769,72 @@ export const verifyChanges = async (
         passed: true,
         output: `typecheck skipped (decoy tsc detected — TypeScript not installed): ${result.output}`,
       })
+      continue
+    }
+
+    // Infra-retry for tsc steps: if the failure contains no TypeScript error
+    // codes, the environment is likely the culprit (missing modules, ENOENT,
+    // OOM, etc.).  Attempt a dep refresh and retry once.  A real type error
+    // fails both runs (dep refresh cannot change compiled code), so one retry
+    // cannot mask a genuine bug.  Do NOT add a retry budget beyond one.
+    if (isNpxTscStep(spec) && !result.passed && classifyTypecheckOutput(result.output) === 'infra') {
+      // Best-effort dep refresh: detect the package manager from the lockfile
+      // and run the frozen install command.  Failure is silently ignored — the
+      // retry below will fail for the same reason and be recorded as infra.
+      {
+        const _dirs = [stepCwd, resolve(stepCwd, '..')]
+        let _pm: string | undefined
+        let _installArgs: string[] | undefined
+        for (const _d of _dirs) {
+          if (existsSync(resolve(_d, 'pnpm-lock.yaml'))) { _pm = 'pnpm'; _installArgs = ['install', '--frozen-lockfile']; break }
+          if (existsSync(resolve(_d, 'package-lock.json'))) { _pm = 'npm'; _installArgs = ['ci']; break }
+          if (existsSync(resolve(_d, 'yarn.lock'))) { _pm = 'yarn'; _installArgs = ['install', '--frozen-lockfile']; break }
+          if (existsSync(resolve(_d, 'bun.lockb'))) { _pm = 'bun'; _installArgs = ['install', '--frozen-lockfile']; break }
+        }
+        if (_pm && _installArgs) {
+          try {
+            await execProbe(_pm, _installArgs, { cwd: stepCwd }, verifyCtx)
+          } catch {
+            // best-effort: ignore refresh failures; the retry decides the outcome
+          }
+        }
+      }
+      const _retryStart = performance.now()
+      const _retryResult = await runVerifyStep(
+        spec.name,
+        spec.gateId,
+        spec.cmd,
+        spec.args,
+        stepCwd,
+        verifyCtx,
+        args.signal,
+      )
+      const _retryDuration = Math.round(performance.now() - _retryStart)
+      if (_retryResult.passed) {
+        // Retry succeeded: the infra condition was transient.  Record as passed.
+        results.push({ ..._retryResult, tier: 'task', duration: _retryDuration })
+        continue
+      }
+      // Retry also failed.  Distinguish infra (no TS codes) from a real type
+      // error revealed by the dep refresh (dep refresh fixed the environment
+      // and now tsc can run and reports real TS errors).
+      if (classifyTypecheckOutput(_retryResult.output) === 'infra') {
+        // Still infra after retry: add the sentinel so classifyError produces
+        // `typecheck-infra` rather than `unclassified`.
+        const _infraSentinel = `typecheck-infra: infra failure persisted after dep-refresh retry (exit ${_retryResult.exitCode ?? 'null'})`
+        results.push({
+          ..._retryResult,
+          tier: 'task',
+          duration: _retryDuration,
+          stderr: _infraSentinel + (_retryResult.stderr ? '\n' + _retryResult.stderr : ''),
+          output: _infraSentinel + '\n' + _retryResult.output,
+        })
+      } else {
+        // Retry revealed a real type error: record as-is so the fix-task recipe
+        // can address the actual TypeScript defect.
+        results.push({ ..._retryResult, tier: 'task', duration: _retryDuration })
+      }
+      if (spec.required) stoppedOnRequired = true
       continue
     }
 

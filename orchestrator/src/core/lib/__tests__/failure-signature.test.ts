@@ -3,6 +3,7 @@ import {
   asStepId,
   causeForSignature,
   classifyError,
+  classifyTypecheckOutput,
   composeRecoveryFailureReason,
   computeFailureSignature,
   errorClassRules,
@@ -1077,5 +1078,139 @@ describe('fallback sub-buckets (coarse classifiers when no specific rule matches
       expect(result).toContain('at suite.ts:42:5')
       expect(result.startsWith('[…truncated')).toBe(true)
     })
+  })
+})
+
+describe('classifyTypecheckOutput', () => {
+  // Unit tests covering all classifier cases from the task spec.
+
+  it('returns type-error for real tsc output containing a TS error code', () => {
+    expect(
+      classifyTypecheckOutput("src/foo.ts(1,1): error TS2304: Cannot find name 'bar'."),
+    ).toBe('type-error')
+  })
+
+  it('returns type-error for various TS error codes (TS2339, TS2345, TS2741)', () => {
+    expect(
+      classifyTypecheckOutput(
+        "src/foo.ts(5,3): error TS2339: Property 'x' does not exist on type 'Y'.",
+      ),
+    ).toBe('type-error')
+    expect(
+      classifyTypecheckOutput(
+        "src/bar.ts(12,8): error TS2345: Argument of type 'string' is not assignable.",
+      ),
+    ).toBe('type-error')
+    expect(
+      classifyTypecheckOutput(
+        "src/index.ts(3,1): error TS2741: Property 'id' is missing in type '{}'.",
+      ),
+    ).toBe('type-error')
+  })
+
+  it('returns infra for Node.js Cannot find module prose (no TS error code)', () => {
+    // Node.js module resolution error prose — NOT "error TS2307:" which is the
+    // TypeScript compiler's own error code for the same concept.
+    expect(
+      classifyTypecheckOutput(
+        "Error: Cannot find module '/path/to/node_modules/@mars/workflow/dist/index.js'",
+      ),
+    ).toBe('infra')
+    expect(
+      classifyTypecheckOutput(
+        "Cannot find module '../lib/something' from 'src/index.ts'",
+      ),
+    ).toBe('infra')
+  })
+
+  it('returns infra for ENOENT errors', () => {
+    expect(
+      classifyTypecheckOutput(
+        "Error: ENOENT: no such file or directory, open '/path/to/tsconfig.json'",
+      ),
+    ).toBe('infra')
+    expect(classifyTypecheckOutput('open: no such file or directory')).toBe('infra')
+  })
+
+  it('returns infra for empty output (OOM / clean process crash)', () => {
+    expect(classifyTypecheckOutput('')).toBe('infra')
+    expect(classifyTypecheckOutput('   \n\n  ')).toBe('infra')
+  })
+
+  it('returns infra for signal-terminated output (SIGTERM/SIGKILL)', () => {
+    expect(
+      classifyTypecheckOutput(
+        'verify child killed by SIGTERM (exit 143)\nnpm warn something\nKilled',
+      ),
+    ).toBe('infra')
+    expect(
+      classifyTypecheckOutput('verify child killed by SIGKILL (exit 137)\n'),
+    ).toBe('infra')
+  })
+
+  it('does NOT mistake TS2307 (TypeScript module error code) for an infra failure', () => {
+    // TS2307 is a real TypeScript type error: the compiler ran and found missing
+    // type declarations.  This is a code defect, not an infra failure.
+    expect(
+      classifyTypecheckOutput(
+        "src/foo.ts(3,20): error TS2307: Cannot find module 'lodash' or its corresponding type declarations.",
+      ),
+    ).toBe('type-error')
+  })
+
+  it('returns type-error even when TS code appears late in multi-line output', () => {
+    const multiLine =
+      'npm warn ...\nsome preamble\n' +
+      "src/index.ts(10,5): error TS2741: Property 'x' is missing in type '{}'."
+    expect(classifyTypecheckOutput(multiLine)).toBe('type-error')
+  })
+})
+
+describe('typecheck-infra error class rule', () => {
+  // Tests verify the end-to-end signature from a structured failure body
+  // that mirrors what primitives/index.ts assembles as firstFailedOutput.
+
+  it('classifies the worktree-deps-not-provisioned sentinel as typecheck-infra', () => {
+    const structuredOutput = [
+      'typecheck',
+      'cmd: npx tsc --noEmit',
+      'cwd: /path/to/worktree  exitCode: null',
+      'stderr:',
+      'worktree deps not provisioned: /path/to/worktree/node_modules is missing — ' +
+        'run mars restart <task-id> to recreate the worktree with dependencies',
+    ].join('\n')
+    expect(classifyError(structuredOutput)).toBe('typecheck-infra')
+    expect(computeFailureSignature('verify:typecheck', structuredOutput)).toBe(
+      'verify:typecheck/typecheck-infra',
+    )
+  })
+
+  it('classifies the infra-retry-failed sentinel as typecheck-infra', () => {
+    const structuredOutput = [
+      'typecheck',
+      'cmd: npx tsc --noEmit',
+      'cwd: /path/to/worktree  exitCode: 1',
+      'stderr:',
+      'typecheck-infra: infra failure persisted after dep-refresh retry (exit 1)',
+    ].join('\n')
+    expect(classifyError(structuredOutput)).toBe('typecheck-infra')
+    expect(computeFailureSignature('verify:typecheck', structuredOutput)).toBe(
+      'verify:typecheck/typecheck-infra',
+    )
+  })
+
+  it('does NOT fire when the output contains a real TS error code', () => {
+    // The typecheck-error rule (matching \bTS\d{4}:) comes BEFORE typecheck-infra
+    // in the rule list, so a real TS error always wins.
+    const realTypeError =
+      "src/foo.ts(1,1): error TS2304: Cannot find name 'bar'.\n" +
+      'worktree deps not provisioned: should not appear with real errors'
+    expect(classifyError(realTypeError)).toBe('typecheck-cannot-find-name')
+  })
+
+  it('is registered exactly once in the rule table', () => {
+    expect(
+      errorClassRules.filter((r) => r.errorClass === 'typecheck-infra'),
+    ).toHaveLength(1)
   })
 })
