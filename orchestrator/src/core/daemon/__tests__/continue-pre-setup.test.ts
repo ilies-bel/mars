@@ -886,6 +886,84 @@ describe('continue degrades to restart for pre-setup failures', () => {
     expect(after?.status).toBe('failed')
   })
 
+  // ── Recovery-budget exhaustion guard ─────────────────────────────────────
+  // A task whose failureReason starts with 'recovery_exhausted:' has spent its
+  // single recovery arc. Re-queuing it would be immediately re-terminated by
+  // the anti-loop gate in the recovery-spawner, producing a silent
+  // "success → immediate re-failure" outcome. mars continue must refuse
+  // non-zero and name the settled recovery tasks that consumed the budget.
+
+  it('refuses non-zero on recovery-exhausted task without changing task status', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const origin = await queue.enqueueTask('exhausted origin task', undefined, { skipTriage: true })
+    // Stamp the task as recovery_exhausted (the budget gate writes this prefix).
+    await queue.updateTask(origin.id, {
+      status: 'failed',
+      error: 'coder exited non-zero',
+      failedPhase: 'code',
+      failureReason: 'recovery_exhausted:code:coder-exit-nonzero/unclassified',
+      branch: `task/${origin.id}`,
+      worktreePath: repo, // exists on disk
+    })
+
+    // Insert a settled failed recovery task for the origin.
+    const { getDefaultTaskStore } = (await import('../../store/task-store')) as typeof import('../../store/task-store')
+    const store = await getDefaultTaskStore()
+    const recoveryId = `mars-fix-exhausted-00`
+    const now = new Date().toISOString()
+    await store.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, origin_id, priority, tag, kind, created_at, updated_at)
+            VALUES (?, ?, 'failed', ?, ?, 0, 'coder', 'fix', ?, ?)`,
+      args: [recoveryId, 'recover exhausted origin', origin.id, origin.id, now, now],
+    })
+
+    let thrown: Error | null = null
+    try {
+      await continueTask.coreContinueTask(origin.id)
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    // Error must describe the exhaustion
+    expect(thrown!.message).toContain('recovery budget is exhausted')
+    // Must name the recovery task that consumed the budget
+    expect(thrown!.message).toContain(recoveryId)
+    // Must provide at least one escape verb
+    expect(thrown!.message).toMatch(/mars restart|mars remerge/)
+    // Task must remain failed — nothing was queued
+    const after = await queue.getTask(origin.id)
+    expect(after?.status).toBe('failed')
+  })
+
+  it('names mars restart as escape when exhausted task has no branch', async () => {
+    // A recovery-exhausted task whose branch is null: only mars restart applies.
+    const { queue, continueTask } = await loadModules(repo)
+
+    const origin = await queue.enqueueTask('exhausted no-branch task', undefined, { skipTriage: true })
+    await queue.updateTask(origin.id, {
+      status: 'failed',
+      error: 'coder exited non-zero',
+      failureReason: 'recovery_exhausted:code:coder-exit-nonzero/unclassified',
+      // branch remains null — no commits possible
+    })
+
+    let thrown: Error | null = null
+    try {
+      await continueTask.coreContinueTask(origin.id)
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    expect(thrown!.message).toContain('recovery budget is exhausted')
+    expect(thrown!.message).toContain('mars restart')
+    // Task must remain failed — nothing was queued
+    const after = await queue.getTask(origin.id)
+    expect(after?.status).toBe('failed')
+  })
+
   // ── Regression: worktree missing + failedPhase='code' + commits ahead ────
   // The operator ran `mars continue` and got "failed_phase was not recorded"
   // even though tasks.failed_phase was 'code'. Root cause: the worktree was

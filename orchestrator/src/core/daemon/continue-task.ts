@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { getTask, updateTask } from '../queue'
 import { getDefaultTaskStore } from '../store/task-store'
 import { raiseActionQueueItem } from '../lib/action-queue'
-import { computeFailureSignature } from '../lib/failure-signature'
+import { computeFailureSignature, RECOVERY_EXHAUSTED_PREFIX } from '../lib/failure-signature'
 import { coreRestartTask } from './restart-task'
 import { createQueueWorkflowStore } from '../../workflows/queue-workflow-store'
 
@@ -79,6 +79,8 @@ export interface ContinueResult {
  * Refusal set:
  *   - task is not in `'failed'` status
  *   - in-flight recovery exists                — wait for it to complete first
+ *   - recovery budget exhausted (`recovery_exhausted:` prefix on failureReason)
+ *                                             — use `mars remerge` (real commits) or `mars restart`
  *   - branch has commits ahead of main AND:
  *       • failedPhase unrecorded               — use `mars remerge` instead
  *       • worktree missing on disk             — use `mars remerge` instead
@@ -122,6 +124,68 @@ export const coreContinueTask = async (
   if (task.status !== 'failed') {
     throw new Error(
       `task ${id} is ${task.status}; only failed tasks can be continued (use 'mars restart' instead)`,
+    )
+  }
+
+  // Guard: refuse if the recovery budget for this arc is exhausted.
+  //
+  // A task whose failureReason starts with RECOVERY_EXHAUSTED_PREFIX was
+  // marked terminal by the budget gate in queue-fix-tasks.ts — the
+  // exactly-one-recovery-per-origin rule has already been spent. Re-queuing
+  // it would be immediately reversed by the anti-loop gate in the
+  // recovery-spawner, producing a silent "success → immediate re-failure"
+  // outcome that is impossible to distinguish from a genuine continue on the
+  // caller side. We detect this before reopenTerminalTask so we never enter
+  // an inconsistent state.
+  if (task.failureReason?.startsWith(RECOVERY_EXHAUSTED_PREFIX)) {
+    const settledRows = await store.query({
+      sql: `SELECT id FROM tasks
+             WHERE fix_for_task_id = ?
+               AND status IN ('failed', 'done', 'dropped')
+             ORDER BY created_at ASC`,
+      args: [id],
+    })
+    const settledIds = (settledRows.rows as unknown as Array<{ id: string }>).map((r) => r.id)
+    const recoveryList =
+      settledIds.length > 0
+        ? `Recovery task(s) that consumed the budget:\n${settledIds.map((rid) => `  ${rid}`).join('\n')}\n`
+        : ''
+
+    // Determine the right escape verb based on branch state.
+    // If the branch has real (non-checkpoint) commits the work is recoverable
+    // via `mars remerge`; otherwise only `mars restart` applies.
+    let escapeVerb: string
+    if (task.branch) {
+      const { listUniqueCommitsAhead } = await import('../lib/sweep')
+      const { getRepoRoot } = await import('../context')
+      const { SALVAGE_CHECKPOINT_SUBJECT_PREFIX } = await import('../lib/git/checkpoint')
+      const integrationBranch = process.env.INTEGRATION_BRANCH ?? 'main'
+      const repoRoot = getRepoRoot()
+      let commitsAhead: Awaited<ReturnType<typeof listUniqueCommitsAhead>> = []
+      try {
+        commitsAhead = await listUniqueCommitsAhead(task.branch, integrationBranch, repoRoot)
+      } catch {
+        // Branch may not exist on disk; fall through to the restart verb.
+      }
+      const realCommits = commitsAhead.filter(
+        (c) => !c.subject.startsWith(SALVAGE_CHECKPOINT_SUBJECT_PREFIX),
+      )
+      escapeVerb =
+        realCommits.length > 0
+          ? `mars remerge ${id}   # re-verify and merge the committed work without re-running the coder`
+          : `mars restart ${id}   # discard the branch and re-run from setup`
+    } else {
+      escapeVerb = `mars restart ${id}   # discard and re-run from setup`
+    }
+
+    throw new Error(
+      `mars continue: task ${id} recovery budget is exhausted — re-queuing would be immediately re-terminated.\n` +
+        `Failure reason: ${task.failureReason}\n` +
+        `${recoveryList}` +
+        `To proceed:\n` +
+        `  ${escapeVerb}\n` +
+        `Or to drop the task entirely:\n` +
+        `  mars drop ${id}`,
     )
   }
 
