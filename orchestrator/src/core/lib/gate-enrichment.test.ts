@@ -78,6 +78,7 @@ const baseObserveInput = (
       args: ['tsc', '--noEmit'],
       stepDir: '/wt/orchestrator',
       passed: false,
+      exitCode: 1,
     },
   ],
   worktreePath: '/wt',

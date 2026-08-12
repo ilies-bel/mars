@@ -327,7 +327,7 @@ describe('buildVerifyReproHint', () => {
 
   it('shows the command and directory for a single failing non-JavaScript step', () => {
     const steps: RanVerifyStep[] = [
-      { name: 'test', cmd: 'pytest', args: ['src/'], stepDir: '/repo/api', passed: false },
+      { name: 'test', cmd: 'pytest', args: ['src/'], stepDir: '/repo/api', passed: false, exitCode: 1 },
     ]
     expect(buildVerifyReproHint(steps)).toBe(
       'cd /repo/api && pytest src/  # test (FAILED)',
@@ -342,8 +342,9 @@ describe('buildVerifyReproHint', () => {
         args: ['tsc', '--noEmit'],
         stepDir: '/repo/frontend',
         passed: true,
+        exitCode: 0,
       },
-      { name: 'test', cmd: 'pytest', args: [], stepDir: '/repo/api', passed: false },
+      { name: 'test', cmd: 'pytest', args: [], stepDir: '/repo/api', passed: false, exitCode: 2 },
     ]
     expect(buildVerifyReproHint(steps)).toBe(
       'cd /repo/frontend && npx tsc --noEmit  # typecheck (passed)\n' +
@@ -353,7 +354,7 @@ describe('buildVerifyReproHint', () => {
 
   it('keeps the failing step identifiable via the FAILED annotation', () => {
     const steps: RanVerifyStep[] = [
-      { name: 'build', cmd: 'cargo', args: ['build'], stepDir: '/repo', passed: false },
+      { name: 'build', cmd: 'cargo', args: ['build'], stepDir: '/repo', passed: false, exitCode: 1 },
     ]
     const hint = buildVerifyReproHint(steps)
     expect(hint).toContain('FAILED')
@@ -363,7 +364,7 @@ describe('buildVerifyReproHint', () => {
 
   it('uses no hardcoded JavaScript commands when the declared steps use a different toolchain', () => {
     const steps: RanVerifyStep[] = [
-      { name: 'test', cmd: 'pytest', args: ['tests/'], stepDir: '/repo', passed: false },
+      { name: 'test', cmd: 'pytest', args: ['tests/'], stepDir: '/repo', passed: false, exitCode: 1 },
     ]
     const hint = buildVerifyReproHint(steps)
     expect(hint).not.toContain('npx')
@@ -380,6 +381,7 @@ describe('buildVerifyReproHint', () => {
         args: [],
         stepDir: '/worktree/apps/api',
         passed: false,
+        exitCode: 1,
       },
     ]
     const hint = buildVerifyReproHint(steps)

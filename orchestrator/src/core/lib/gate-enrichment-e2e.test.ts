@@ -99,6 +99,7 @@ const makeObserveInput = (db: DbClient): ObserveFailureForEnrichmentInput => ({
       args: ['-c', 'echo regression-reintroduced; exit 1'],
       stepDir: WORKTREE_PATH,
       passed: false,
+      exitCode: 1,
     },
   ],
   worktreePath: WORKTREE_PATH,
