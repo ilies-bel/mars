@@ -87,6 +87,13 @@ export interface RanVerifyStep {
   /** Absolute directory the step ran in. */
   stepDir: string
   passed: boolean
+  /**
+   * Raw exit code from the subprocess. `null` when the abort signal killed
+   * the process before it could exit normally. Mirrors `VerifyStep.exitCode`.
+   * Consumer slices use this to record the faithful exit code in verifyOutput
+   * and in recovery prompts so fixers know the exact failure signal.
+   */
+  exitCode: number | null
 }
 
 /**

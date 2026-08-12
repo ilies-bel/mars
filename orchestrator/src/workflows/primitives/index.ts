@@ -2168,6 +2168,34 @@ export interface ReviewOpts {
   reviewType?: 'auto' | 'manual' | 'full-review'
   /** Step guide for a `'manual'` step. Reserved for future use. */
   guide?: string
+  /**
+   * Structured task spec. Default null (falls back to `ctx.input.spec`).
+   * When `spec.verifyCmd` is non-null, it is executed verbatim as a
+   * required verify step before the configured gate steps, so the
+   * acceptance command from the task brief is always exercised.
+   */
+  spec?: TaskSpec | null
+}
+
+/**
+ * Structured outcome for a single verify gate step, recorded in the
+ * `=== gate outcomes ===` JSON block of `capturedVerifyOutput`. Includes
+ * the raw exit code and the full command line so failure diagnostics and
+ * recovery prompts can show the exact command that ran without parsing the
+ * free-form step output.
+ *
+ * Used by both the task-tier `review` primitive and the merge-time
+ * integration-gate runner.
+ */
+export interface VerifyGateOutcome {
+  name: string
+  tier: 'task' | 'integration'
+  passed: boolean
+  duration?: number
+  /** Raw subprocess exit code. Absent on built-in gates that do not shell out. */
+  exitCode?: number | null
+  /** Full command line as a single string (`cmd args…`). Absent on built-in gates. */
+  commandLine?: string
 }
 
 export interface ReviewResult {

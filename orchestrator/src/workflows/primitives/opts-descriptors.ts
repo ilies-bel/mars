@@ -49,6 +49,7 @@ export const reviewDescriptors = {
   worktree: 'Override the worktree. Defaults to the one stashed by setupWorktree.',
   reviewType: 'Review type — "auto" (default) runs typecheck/tests/lint; "manual" boots the stack and parks for human QA; "full-review" spawns a review agent and produces a ReviewPacket.',
   guide: 'Step guide for a "manual" step. Displayed in the action-queue row body alongside the preview URL and log path.',
+  spec: 'Structured task spec. When spec.verifyCmd is non-null, it is executed verbatim as a required verify step before the configured gate steps.',
 } satisfies Record<keyof ReviewOpts, string>
 
 /** One-line descriptions for every {@link MergeOpts} field. */
