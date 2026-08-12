@@ -154,7 +154,7 @@ export const runSubprocessStreaming = (
           stderr + (stderr.endsWith('\n') || stderr.length === 0 ? '' : '\n') + diagnosis,
       })
     })
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       if (typeof child.pid === 'number') liveChildPids.delete(child.pid)
       if (onLine) {
         for (const stream of ['stdout', 'stderr'] as const) {
@@ -169,7 +169,17 @@ export const runSubprocessStreaming = (
           }
         }
       }
-      settle({ exitCode: code ?? 1, stdout, stderr })
+      // When the process is killed by a signal, `code` is null and `signal`
+      // names the signal. Map to the conventional Unix exit codes (128+N) so
+      // callers can distinguish a SIGKILL watchdog kill (137) from a natural
+      // exit(1). Without this, `code ?? 1` silently made SIGKILL
+      // indistinguishable from `process.exit(1)`.
+      let exitCode = code ?? 1
+      if (code === null) {
+        if (signal === 'SIGKILL') exitCode = 137
+        else if (signal === 'SIGTERM') exitCode = 143
+      }
+      settle({ exitCode, stdout, stderr })
     })
   })
 

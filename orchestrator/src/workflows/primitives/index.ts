@@ -148,6 +148,7 @@ import {
   type ReviewPacket,
 } from '../../core/lib/review-packet'
 import { randomUUID } from 'node:crypto'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 
@@ -1577,15 +1578,58 @@ export const runAgent = async (
   // before doing any work. Treat it as a code-phase failure: stamp the task,
   // spawn exactly one recovery fix-task, and throw to stop before verify/merge.
   if (r.exitCode !== 0) {
-    const stderrTail = r.stderr.trim().slice(-1000)
+    // --- Termination cause ---------------------------------------------------
+    // Map well-known exit codes to a human-readable cause. SIGKILL (137) and
+    // SIGTERM (143) come from `runSubprocessStreaming`'s fixed close handler
+    // (which now maps `signal` to the conventional 128+N codes). 124 is the
+    // timeout sentinel. 138 is context-budget exhaustion / external abort.
+    const terminationCause =
+      r.exitCode === 137
+        ? 'killed-by-SIGKILL'
+        : r.exitCode === 143
+          ? 'killed-by-SIGTERM'
+          : r.exitCode === 124
+            ? 'timed-out'
+            : r.exitCode === 138
+              ? 'aborted (context-budget or external cancel)'
+              : `natural-exit-or-unclassified (exit ${r.exitCode})`
+
+    // --- Zero-message detection ----------------------------------------------
+    // When the coder did not exchange even one message with the provider it
+    // did not attempt the work — the exit was a startup, auth, or
+    // recursion-guard failure. Name it explicitly so operators are not left
+    // guessing why the worktree is clean and the stderr is sparse.
+    const messageCount = r.conversation.length
+    const zeroMessageNote =
+      messageCount === 0
+        ? ' ZERO MESSAGES EXCHANGED WITH PROVIDER (coder did not attempt the work — likely a startup, auth, or recursion-guard failure).'
+        : ''
+
+    // --- Bounded head + tail capture -----------------------------------------
+    // Head matters: auth / startup failures print early and scroll away before
+    // the tail. Keep the first 2 kB AND the last 2 kB of each stream so that
+    // both early errors and final-state messages are always preserved.
+    const HEAD_CHARS = 2000
+    const TAIL_CHARS = 2000
+    const stdoutLen = r.stdout.length
+    const stderrLen = r.stderr.length
+    const stdoutHead = r.stdout.slice(0, HEAD_CHARS)
+    const stdoutTail = stdoutLen > HEAD_CHARS ? r.stdout.slice(-TAIL_CHARS) : ''
+    const stderrHead = r.stderr.slice(0, HEAD_CHARS)
+    const stderrTail = stderrLen > HEAD_CHARS ? r.stderr.slice(-TAIL_CHARS) : ''
+
+    // diagText drives the task `error` column and the failure signature. It
+    // uses the stderr tail (last chunk) for compat with existing signature
+    // recipes and tests; the full head+tail are in the artifact file.
+    const stderrTailForDiag = r.stderr.trim().slice(-1000)
     // When the claude CLI dies from an API-level rejection (e.g. monthly spend
     // limit, auth error) it exits non-zero but writes nothing to stderr — the
     // actual cause arrives in the event stream as a `result` event or a final
     // assistant message. Fall back to that text so the task `error` field is
     // diagnosable without reading the raw transcript.
     const diagText =
-      stderrTail.length > 0
-        ? `stderr tail:\n${stderrTail}`
+      stderrTailForDiag.length > 0
+        ? `stderr tail:\n${stderrTailForDiag}`
         : (() => {
             const streamText = extractLastStreamText(r.conversation)
             return streamText
@@ -1723,6 +1767,49 @@ export const runAgent = async (
         ? `worktree had ${checkpointFiles.length} uncommitted path(s); preserved as wip(checkpoint) commit on branch ${branch}`
         : 'worktree was clean at exit (no uncommitted work found)'
 
+    // --- Per-run artifact file -----------------------------------------------
+    // Write a bounded head+tail of both stdout and stderr to a named file
+    // under .mars/coder-failures/ so `mars diagnose` can find it without
+    // having to reconstruct from the truncated `tasks.error` string.
+    // Written AFTER the checkpoint so the artifact itself never appears as a
+    // dirty file that the checkpoint would commit.
+    let artifactPath: string | null = null
+    try {
+      const failureDir = join(worktreePath, '.mars', 'coder-failures')
+      mkdirSync(failureDir, { recursive: true })
+      artifactPath = join(failureDir, `${sessionKey}.log`)
+      const artifactLines: string[] = [
+        `=== coder-failure: task=${taskId} session=${sessionKey} ===`,
+        `exit-code: ${r.exitCode}`,
+        `termination-cause: ${terminationCause}`,
+        `messages-exchanged: ${messageCount}`,
+        `worktree: ${worktreeNote}`,
+        '',
+        `--- stdout (${stdoutLen} chars total; head=${Math.min(HEAD_CHARS, stdoutLen)}) ---`,
+        stdoutHead,
+        ...(stdoutTail.length > 0
+          ? [`--- stdout tail (last ${stdoutTail.length} chars) ---`, stdoutTail]
+          : []),
+        '',
+        `--- stderr (${stderrLen} chars total; head=${Math.min(HEAD_CHARS, stderrLen)}) ---`,
+        stderrHead,
+        ...(stderrTail.length > 0
+          ? [`--- stderr tail (last ${stderrTail.length} chars) ---`, stderrTail]
+          : []),
+        '',
+        '=== end ===',
+      ]
+      writeFileSync(artifactPath, artifactLines.join('\n'))
+    } catch (artifactWriteErr) {
+      console.warn(
+        `[code] task ${taskId}: failed to write coder-failure artifact:`,
+        artifactWriteErr,
+      )
+      artifactPath = null
+    }
+    const artifactNote =
+      artifactPath !== null ? ` Diagnostic artifact: ${artifactPath}` : ''
+
     // When the coder exits by SIGTERM (143) or SIGKILL (137) — a process kill,
     // not a code defect — prepend a sentinel line that mirrors the pattern
     // `runVerifyStep` uses for verify:killed. `computeFailureSignature` detects
@@ -1738,12 +1825,12 @@ export const runAgent = async (
     // failure handler computes. Deriving both from the same text keeps the
     // stamped signature identical to the one the handler mints, so
     // `upsertFixTask`'s (taskId, signature) dedup agrees across the two paths.
-    const coderExitOutput = `${signalMarker}coder process exited ${r.exitCode}. ${worktreeNote}. ${diagText}`
+    const coderExitOutput = `${signalMarker}coder process exited ${r.exitCode}.${zeroMessageNote} ${worktreeNote}. ${diagText}${artifactNote}`
     await updateTask(
       taskId,
       {
         status: 'failed',
-        error: `coder exited ${r.exitCode} before completing; ${diagText}`,
+        error: `coder exited ${r.exitCode} before completing; termination: ${terminationCause};${zeroMessageNote} ${diagText}${artifactNote}`,
         failedPhase: 'code',
         failureReason: 'coder-exit-nonzero',
         failureReasonCode: 'coder-exit-nonzero',
