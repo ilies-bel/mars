@@ -1360,3 +1360,90 @@ export const resolveAllRowsForTask = async (
     args: [Date.now(), taskId, taskId, taskId],
   })
 }
+
+// ── Notice-class helpers ──────────────────────────────────────────────────────
+
+/**
+ * Check whether a Notice-kind item has been durably dismissed.
+ *
+ * Raisers of Notice kinds call this before inserting a new row: if the
+ * notice was dismissed, they skip the raise so the same logical notice does
+ * not reappear on the next read.
+ *
+ * @param noticeKey  Stable identity of the notice
+ *                   (e.g. `'spend-control-notice'`, `'arc-superseded-on-main:<sha>'`).
+ */
+export const isNoticeDismissed = async (noticeKey: string): Promise<boolean> => {
+  const c = stateClient()
+  const result = await c.execute({
+    sql: `SELECT 1 FROM notice_dismissals WHERE notice_key = ? LIMIT 1`,
+    args: [noticeKey],
+  })
+  return result.rows.length > 0
+}
+
+/**
+ * Dismiss a Notice-kind action-queue item.
+ *
+ * Two things happen atomically in sequence:
+ *  1. The action_queue_items row is resolved with resolution `'dismissed'`.
+ *  2. A durable `notice_dismissals` record is written so the raiser will not
+ *     re-create the same logical notice on the next occurrence.
+ *
+ * Idempotent: a second call with the same `noticeKey` updates `dismissed_at`
+ * and `dismissed_by` in the dismissals table (upsert) and leaves the already-
+ * resolved row untouched.
+ *
+ * @param id         The action_queue_items row id (or a unique prefix).
+ * @param noticeKey  Stable identity of the notice — used as the durable key.
+ * @param by         Optional identifier of who dismissed it (e.g. `'cli:operator'`).
+ */
+export const dismissNoticeItem = async (
+  id: string,
+  noticeKey: string,
+  by?: string,
+): Promise<void> => {
+  // 1. Resolve the action-queue row.
+  await setActionQueueState(id, 'resolved', { resolution: 'dismissed', by })
+  // 2. Write the durable dismissal record so re-raises are suppressed.
+  const c = stateClient()
+  await c.execute({
+    sql: `INSERT INTO notice_dismissals (notice_key, dismissed_at, dismissed_by)
+          VALUES (?, ?, ?)
+          ON CONFLICT (notice_key)
+          DO UPDATE SET dismissed_at = excluded.dismissed_at,
+                        dismissed_by = excluded.dismissed_by`,
+    args: [noticeKey, Date.now(), by ?? null],
+  })
+}
+
+export interface NoticeDismissal {
+  noticeKey: string
+  dismissedAt: number
+  dismissedBy: string | null
+}
+
+/**
+ * Return all durable dismissal records, ordered newest-first.
+ * Useful for auditing which notices have been dismissed and when.
+ */
+export const listDismissedNotices = async (): Promise<NoticeDismissal[]> => {
+  const c = stateClient()
+  const result = await c.execute(
+    `SELECT notice_key, dismissed_at, dismissed_by
+       FROM notice_dismissals
+       ORDER BY dismissed_at DESC`,
+  )
+  return result.rows.map((r) => {
+    const row = r as unknown as {
+      notice_key: string
+      dismissed_at: number | bigint
+      dismissed_by: string | null
+    }
+    return {
+      noticeKey: row.notice_key,
+      dismissedAt: typeof row.dismissed_at === 'bigint' ? Number(row.dismissed_at) : row.dismissed_at,
+      dismissedBy: row.dismissed_by,
+    }
+  })
+}

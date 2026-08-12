@@ -24,7 +24,7 @@ import {
   type RecipeHumanDetail,
   type RecipeVerb,
 } from '../../lib/action-queue-recipes'
-import { isActionQueueKind, type ActionQueueKind } from '../../lib/action-queue-kinds'
+import { isActionQueueKind, classifyKind, NOTICE_KINDS, type ActionQueueKind, type ActionQueueClass } from '../../lib/action-queue-kinds'
 import type { DispatchPauseState } from '../pause-state'
 
 /**
@@ -206,6 +206,22 @@ export interface ActionQueueRow {
    * condition is gone on the next clean pass. Null on every other row kind.
    */
   conditionKey?: string | null
+  /**
+   * Structural class of this item (three-class model):
+   *   - `condition` — derived view of live state; cannot be dismissed.
+   *   - `decision`  — row-backed; closed atomically by a resolving mutation; has verbs.
+   *   - `notice`    — row-backed; closed by the user saying "I have read this."
+   *
+   * The UI renders a Dismiss control ONLY when class === 'notice'.
+   */
+  class: ActionQueueClass
+  /**
+   * For Notice items: the stable identity key used for durable dismissal.
+   * The raiser uses this to check `isNoticeDismissed(noticeKey)` before
+   * re-raising the same logical notice.
+   * Null for Condition and Decision items.
+   */
+  noticeKey: string | null
 }
 
 /** Raw actionQueue row shape as persisted in `action_queue_items`. */
@@ -1203,6 +1219,18 @@ export const buildActionQueueView = async ({
         ? row.payload.conditionKey
         : null
 
+    // Structural class and notice key for the three-class model.
+    const itemClass: ActionQueueClass = isActionQueueKind(row.kind)
+      ? classifyKind(row.kind)
+      : 'decision'
+    // noticeKey: for notice items, read from the payload (set by the raiser),
+    // falling back to the kind itself for notice kinds without a per-instance key.
+    const noticeKey: string | null = itemClass === 'notice'
+      ? (typeof row.payload.noticeKey === 'string'
+          ? row.payload.noticeKey
+          : (NOTICE_KINDS.has(row.kind as ActionQueueKind) ? row.kind : null))
+      : null
+
     rows.push({
       id: row.id,
       kind: uiKind,
@@ -1227,6 +1255,8 @@ export const buildActionQueueView = async ({
       stallDiagnostics,
       poolSnapshot,
       conditionKey,
+      class: itemClass,
+      noticeKey,
       humanSummary: recipeFields.humanSummary,
       humanDetail: recipeFields.humanDetail,
       verbs: recipeFields.verbs,
@@ -1301,6 +1331,8 @@ export const buildActionQueueView = async ({
       leaseState: null,
       diagnosis: null,
       failureReasonCode: null,
+      class: 'decision',
+      noticeKey: null,
       humanSummary: daemonKilledRecipe.humanSummary(batchRecipeCtx),
       humanDetail: daemonKilledRecipe.humanDetail(batchRecipeCtx),
       verbs: getRecipeVerbs(daemonKilledRecipe, batchRecipeCtx),
@@ -1582,6 +1614,15 @@ export const buildActionQueueHistoryView = async ({
 
     const historyRecipeFields = buildRecipeFields(row, entityId, title, body)
 
+    const historyItemClass: ActionQueueClass = isActionQueueKind(row.kind)
+      ? classifyKind(row.kind)
+      : 'decision'
+    const historyNoticeKey: string | null = historyItemClass === 'notice'
+      ? (typeof row.payload.noticeKey === 'string'
+          ? row.payload.noticeKey
+          : (NOTICE_KINDS.has(row.kind as ActionQueueKind) ? row.kind : null))
+      : null
+
     rows.push({
       id: row.id,
       kind: uiKind,
@@ -1604,6 +1645,8 @@ export const buildActionQueueHistoryView = async ({
       fixForTaskId,
       arcGoal,
       resolution,
+      class: historyItemClass,
+      noticeKey: historyNoticeKey,
       humanSummary: historyRecipeFields.humanSummary,
       humanDetail: historyRecipeFields.humanDetail,
       verbs: [], // Resolved rows are read-only; no action verbs.

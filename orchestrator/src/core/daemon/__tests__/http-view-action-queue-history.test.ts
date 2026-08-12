@@ -298,6 +298,8 @@ describe('GET /view/action-queue/history via HTTP server', () => {
         rootCause: null,
         resolvedBy: 'daemon:auto-supersede',
       },
+      class: 'decision',
+      noticeKey: null,
     }
 
     httpServer = await startHttpServer({

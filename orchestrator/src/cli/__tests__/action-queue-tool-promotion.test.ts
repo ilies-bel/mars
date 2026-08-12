@@ -279,6 +279,8 @@ const makeToolPromotionRow = (
   humanDetail: { helperKey: detail.helperKey },
   verbs: [],
   toolPromotionDetail: detail,
+  class: 'decision',
+  noticeKey: null,
 })
 
 describe('action-queue show — tool-promotion rendering', () => {

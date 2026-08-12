@@ -67,7 +67,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0034'
+export const SCHEMA_VERSION = '0035'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -1875,10 +1875,23 @@ const DDL: readonly string[] = [
     posture   text NOT NULL CHECK (posture IN ('automatic', 'manual', 'off'))
   )`,
 
-  // ADR-0057: condition kinds are derived on read; stored rows for these kinds
-  // are stale artifacts from before the derivation refactor. Delete them once at
-  // startup — they carry no operator-authored content, so nothing is lost. The
-  // DELETEs are idempotent (rows absent on every subsequent boot).
+  // Notice dismissals — durable per-notice dismissal records (three-class model).
+  // A Notice item is hidden from the default listing and not re-raised once its
+  // notice_key appears here. Keyed by a stable identity string specific to each
+  // Notice-kind instance (e.g. 'spend-control-notice', 'arc-superseded-on-main:<sha>').
+  // Dismissal is terminal: once written, the raiser must not re-create the same
+  // logical notice (enforced by checking isNoticeDismissed before raising).
+  `CREATE TABLE IF NOT EXISTS notice_dismissals (
+    notice_key   text PRIMARY KEY,
+    dismissed_at bigint NOT NULL,
+    dismissed_by text
+  )`,
+
+  // ADR-0057 (now ADR-0094): condition kinds are derived on read; stored rows
+  // for these kinds are stale artifacts from before the derivation refactor.
+  // Delete them once at startup — they carry no operator-authored content, so
+  // nothing is lost. The DELETEs are idempotent (rows absent on every
+  // subsequent boot).
   //
   // action_queue_history has a FK on action_queue_items.id (no CASCADE), so
   // history rows must be removed before the parent rows can be deleted.
@@ -2000,6 +2013,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'cards',
   'health_silences',
   'health_postures',
+  'notice_dismissals',
 ]
 
 /**

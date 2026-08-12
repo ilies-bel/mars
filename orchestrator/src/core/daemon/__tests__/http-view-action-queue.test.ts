@@ -605,6 +605,8 @@ describe('GET /view/action-queue via HTTP server', () => {
             humanSummary: 'Test alert',
             humanDetail: {},
             verbs: [],
+            class: 'decision',
+            noticeKey: null,
           }
           return [row]
         },
