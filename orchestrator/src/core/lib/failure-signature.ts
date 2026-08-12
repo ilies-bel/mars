@@ -469,6 +469,18 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     matchFull: /40P01|deadlock detected/,
   },
 
+  {
+    // merge:crashed/watchdog-timeout fires when mergeBranch is killed by its
+    // internal watchdog timer. The error message always includes the pattern
+    // "mergeBranch aborted (watchdog) ... during step". This textual rule
+    // ensures callers that receive the error as a plain string (e.g. after
+    // the merge-worker wraps MergeAbortedError into a MergeJobResult and
+    // the primitive re-throws it as a plain Error) classify to a stable slug
+    // rather than falling through to /unclassified.
+    errorClass: 'watchdog-timeout',
+    matchFull: /mergeBranch aborted \(watchdog\).*during step/i,
+  },
+
   // ── Fallback sub-buckets ────────────────────────────────────────────────────
   //
   // These rules sit at the END of the list so they fire only when every

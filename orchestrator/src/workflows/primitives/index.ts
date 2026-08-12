@@ -64,7 +64,7 @@ import {
   appendEnrichmentScopes,
   recordEnrichmentShadowRuns,
 } from '../../core/lib/gate-enrichment'
-import { mergeBranch, checkMergeTargetStatus, isZeroCommitBranch, isBranchTipInIntegration, type MergeResult } from '../../core/lib/git/merge'
+import { mergeBranch, checkMergeTargetStatus, isZeroCommitBranch, isBranchTipInIntegration, MergeAbortedError, type MergeResult } from '../../core/lib/git/merge'
 import {
   captureCheckpoint,
   discardWorkingTreeChanges,
@@ -3623,7 +3623,12 @@ export const merge = async (
         const message = error instanceof Error ? error.message : String(error)
         console.error(`[merge] task ${taskId} crashed:`, error)
         const crashMsg = `merge step crashed: ${message}`.slice(0, 1000)
-        const crashSignature = computeFailureSignature('merge:crashed', crashMsg)
+        let crashSignature: string
+        if (error instanceof MergeAbortedError && error.reason === 'watchdog') {
+          crashSignature = 'merge:crashed/watchdog-' + error.lastStep.replace(/[^a-z0-9-]/gi, '-')
+        } else {
+          crashSignature = computeFailureSignature('merge:crashed', crashMsg)
+        }
         await updateTask(
           taskId,
           {
