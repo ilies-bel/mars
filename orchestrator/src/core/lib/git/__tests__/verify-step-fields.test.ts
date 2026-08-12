@@ -15,7 +15,7 @@ import { afterEach, describe, it, expect } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { verifyChanges } from '../verify'
+import { verifyChanges, SPEC_VERIFY_CMD_STEP } from '../verify'
 import { computeFailureSignature } from '../../failure-signature'
 
 describe('VerifyStep — exitCode / stdout / stderr fields', () => {
@@ -220,5 +220,102 @@ describe('VerifyStep — zero-step behavior (gates are optional)', () => {
     const step = result.steps.find((s) => s.name === 'pass-gate')
     expect(step).toBeDefined()
     expect(step!.passed).toBe(true)
+  })
+})
+
+describe('VerifyArgs.verifyCmd — spec-verify-cmd step contract', () => {
+  let tmpDir: string
+
+  afterEach(() => {
+    if (tmpDir) rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('runs the verifyCmd before registry steps and records it as SPEC_VERIFY_CMD_STEP', async () => {
+    tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-verify-cmd-pass-'))
+
+    const result = await verifyChanges({
+      cwd: tmpDir,
+      verifyCmd: 'echo spec-cmd-ran',
+      steps: [
+        {
+          name: 'registry-gate',
+          cmd: 'sh',
+          args: ['-c', 'echo registry-ran'],
+          required: true,
+        },
+      ],
+    })
+
+    expect(result.passed).toBe(true)
+    // spec-verify-cmd step must appear before the registry step
+    const specStep = result.steps.find((s) => s.name === SPEC_VERIFY_CMD_STEP)
+    const registryStep = result.steps.find((s) => s.name === 'registry-gate')
+    expect(specStep).toBeDefined()
+    expect(registryStep).toBeDefined()
+    expect(result.steps.indexOf(specStep!)).toBeLessThan(result.steps.indexOf(registryStep!))
+    // spec step passed
+    expect(specStep!.passed).toBe(true)
+    expect(specStep!.exitCode).toBe(0)
+  })
+
+  it('commandLine on the spec-verify-cmd step is the raw command, not "sh -c <cmd>"', async () => {
+    tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-verify-cmd-cmdline-'))
+
+    const rawCmd = 'echo hello-from-spec'
+    const result = await verifyChanges({
+      cwd: tmpDir,
+      verifyCmd: rawCmd,
+      steps: [],
+    })
+
+    const specStep = result.steps.find((s) => s.name === SPEC_VERIFY_CMD_STEP)
+    expect(specStep).toBeDefined()
+    // commandLine must be the raw command string the task author wrote
+    expect(specStep!.commandLine).toBe(rawCmd)
+    // must NOT expose the sh -c shell wrapper as the displayable command
+    expect(specStep!.commandLine).not.toMatch(/^sh -c/)
+  })
+
+  it('records exitCode faithfully when verifyCmd fails', async () => {
+    tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-verify-cmd-fail-'))
+
+    const result = await verifyChanges({
+      cwd: tmpDir,
+      verifyCmd: 'exit 42',
+      steps: [
+        {
+          name: 'should-not-run',
+          cmd: 'sh',
+          args: ['-c', 'echo registry'],
+          required: true,
+        },
+      ],
+    })
+
+    expect(result.passed).toBe(false)
+    expect(result.verdict).toBe('FAIL')
+
+    const specStep = result.steps.find((s) => s.name === SPEC_VERIFY_CMD_STEP)
+    expect(specStep).toBeDefined()
+    expect(specStep!.passed).toBe(false)
+    expect(specStep!.exitCode).toBe(42)
+
+    // registry step must NOT have run — verifyCmd failure is a hard stop
+    const registryStep = result.steps.find((s) => s.name === 'should-not-run')
+    expect(registryStep).toBeUndefined()
+  })
+
+  it('skips the spec-verify-cmd step when verifyCmd is null or empty', async () => {
+    tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-verify-cmd-empty-'))
+
+    for (const verifyCmd of [null, '', '   ']) {
+      const result = await verifyChanges({
+        cwd: tmpDir,
+        verifyCmd,
+        steps: [],
+      })
+      const specStep = result.steps.find((s) => s.name === SPEC_VERIFY_CMD_STEP)
+      expect(specStep).toBeUndefined()
+    }
   })
 })
