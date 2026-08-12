@@ -1405,6 +1405,64 @@ const behaviourDodUnmetRecipe: FixRecipe = {
   },
 }
 
+/**
+ * `merge:crashed/watchdog-*` — the merge step was terminated by the watchdog
+ * before it could complete. The coding work on the task branch is fully
+ * committed and has already passed the verify gate — this is a merge-side
+ * timeout, not a code or verify failure. The recovery is a single
+ * `mars continue <taskId>` invocation; no application code must be touched.
+ *
+ * The wildcard suffix (`*`) matches every lastStep value the watchdog records
+ * (e.g. `vega-supervisor`, `integration-gate`, `fast-forward-lock`, etc.) so
+ * the recipe handles any watchdog-killed merge regardless of which merge sub-step
+ * was running at kill time. `getRecipe` / `hasRecipe` / `getRecipeOrGeneric`
+ * perform wildcard suffix matching for recipe keys ending with `*`.
+ */
+const mergeWatchdogContinueRecipe: FixRecipe = {
+  signature: 'merge:crashed/watchdog-*',
+  title: (ctx) => {
+    const taskId = ctx.targetBranch.replace(/^task\//, '')
+    return `Continue watchdog-killed merge: run mars continue ${taskId}`
+  },
+  buildPrompt: (ctx) => {
+    const taskId = ctx.targetBranch.replace(/^task\//, '')
+    return [
+      `# Recovery run — watchdog-killed merge`,
+      '',
+      `The merge step for branch \`${ctx.targetBranch}\` was terminated by the watchdog before it could complete. **The coding work on \`${ctx.targetBranch}\` is fully committed and correct** — this is a merge-side timeout, not a code or verify failure. Do NOT touch application code.`,
+      '',
+      `Your single action is:`,
+      '',
+      '```bash',
+      `mars continue ${taskId}`,
+      '```',
+      '',
+      `This resumes the origin task on its existing worktree at \`${ctx.targetPath}\`, reusing every commit already landed on \`${ctx.targetBranch}\`. The orchestrator re-runs the merge step from where it left off.`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `## What you MUST NOT do`,
+      '',
+      ` - Do NOT edit any application source file — the implementation is complete and has already passed verify.`,
+      ` - Do NOT stage, commit, or otherwise modify any file in the worktree at \`${ctx.targetPath}\`.`,
+      ` - Do NOT attempt to run the merge manually — \`mars continue\` drives the correct pipeline.`,
+      ` - Do NOT spawn a follow-up coder task — the code is done.`,
+      '',
+      `## If mars continue fails`,
+      '',
+      `If \`mars continue ${taskId}\` is rejected (e.g. the task is not in \`failed\` status, or it already has an in-flight recovery), check the current state:`,
+      '',
+      '```bash',
+      `mars list`,
+      '```',
+      '',
+      `Then raise a high-priority action-queue item via \`mars action-queue raise --from -\` naming the task ID, the current status, and the error from \`mars continue\`. Do not make any worktree changes.`,
+      '',
+      `Origin branch: \`${ctx.targetBranch}\``,
+      `Origin worktree: \`${ctx.targetPath}\``,
+    ].join('\n')
+  },
+}
+
 const recipeList: readonly FixRecipe[] = [
   codeCommitContractRecipe,
   dirtyMergeTargetRecipe,
@@ -1422,6 +1480,7 @@ const recipeList: readonly FixRecipe[] = [
   testAssertionErrorRecipe,
   testNoSuiteFoundRecipe,
   coderLeftUncommittedRecipe,
+  mergeWatchdogContinueRecipe,
 ]
 
 /**
@@ -1433,11 +1492,35 @@ export const recipes: Record<string, FixRecipe> = Object.fromEntries(
   recipeList.map((r) => [r.signature, r]),
 )
 
+/**
+ * Find the best-matching recipe for `signature`.
+ *
+ * Lookup order:
+ *  1. Exact key match — always preferred.
+ *  2. Wildcard suffix match — a recipe whose key ends with `*` acts as a
+ *     prefix matcher: the key (minus the trailing `*`) must be a prefix of
+ *     the query signature. This enables the `merge:crashed/watchdog-*` family
+ *     to match every `lastStep` variant without enumerating them all.
+ *
+ * Returns `undefined` when no match is found.
+ */
+const findRecipe = (signature: string): FixRecipe | undefined => {
+  if (Object.prototype.hasOwnProperty.call(recipes, signature)) {
+    return recipes[signature]
+  }
+  for (const key of Object.keys(recipes)) {
+    if (key.endsWith('*') && signature.startsWith(key.slice(0, -1))) {
+      return recipes[key]
+    }
+  }
+  return undefined
+}
+
 export const hasRecipe = (signature: string): boolean =>
-  Object.prototype.hasOwnProperty.call(recipes, signature)
+  findRecipe(signature) !== undefined
 
 export const getRecipe = (signature: string): FixRecipe => {
-  const recipe = recipes[signature]
+  const recipe = findRecipe(signature)
   if (!recipe) {
     throw new Error(`Unknown fix recipe signature: ${signature}`)
   }
@@ -1452,6 +1535,6 @@ export const getRecipe = (signature: string): FixRecipe => {
  * dead-end (ADR: uniform failure→fix spawn supersedes ADR-0002).
  */
 export const getRecipeOrGeneric = (signature: string): FixRecipe =>
-  recipes[signature] ?? genericRecoveryRecipe
+  findRecipe(signature) ?? genericRecoveryRecipe
 
 export const listRecipes = (): readonly FixRecipe[] => recipeList

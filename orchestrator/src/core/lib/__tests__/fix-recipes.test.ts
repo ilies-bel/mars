@@ -87,6 +87,14 @@ const RECIPE_CONTRACT_TABLE = [
     signature: 'code/uncommitted-changes',
     expectedTitle: 'Commit the work the coder left uncommitted on task/recipe-contract',
   },
+  {
+    signature: 'merge:crashed/watchdog-*',
+    expectedTitle: 'Continue watchdog-killed merge: run mars continue recipe-contract',
+    // The origin's code is already committed; inlining the original prompt would
+    // mislead the recovery into thinking it needs to re-implement committed work.
+    originalPromptExemption:
+      'watchdog-killed merge recovery runs mars continue only — the origin prompt is irrelevant and inlining it could mislead the recovery into touching committed code',
+  },
 ].map((recipe) => ({ ...recipe, ctx: RECIPE_CONTRACT_CONTEXT }))
 
 describe('registered recipe contracts', () => {
@@ -1525,6 +1533,70 @@ describe('verify:test/test-assertion-error recipe registration', () => {
     expect(hasRecipe('verify:test/test-assertion-error')).toBe(true)
     expect(getRecipeOrGeneric('verify:test/test-assertion-error')).not.toBe(
       genericRecoveryRecipe,
+    )
+  })
+})
+
+describe('merge:crashed/watchdog-* recipe (wildcard family)', () => {
+  // Acceptance criteria: the wildcard recipe must match every lastStep variant
+  // produced by the merge watchdog, regardless of which sub-step was running
+  // when the watchdog killed the merge process.
+  const ctx = {
+    targetPath: '/tmp/worktrees/task-mars-abc',
+    statusOutput: 'watchdog killed merge step after 120s (lastStep: vega-supervisor)',
+    targetBranch: 'task/mars-abc123',
+    integrationBranch: 'main',
+    originalPrompt: '',
+  }
+
+  it('hasRecipe returns true for merge:crashed/watchdog-vega-supervisor', () => {
+    expect(hasRecipe('merge:crashed/watchdog-vega-supervisor')).toBe(true)
+  })
+
+  it('hasRecipe returns true for merge:crashed/watchdog-integration-gate', () => {
+    expect(hasRecipe('merge:crashed/watchdog-integration-gate')).toBe(true)
+  })
+
+  it('getRecipeOrGeneric resolves to the purpose-built recipe, not the generic fallback', () => {
+    expect(getRecipeOrGeneric('merge:crashed/watchdog-vega-supervisor')).not.toBe(
+      genericRecoveryRecipe,
+    )
+    expect(getRecipeOrGeneric('merge:crashed/watchdog-integration-gate')).not.toBe(
+      genericRecoveryRecipe,
+    )
+  })
+
+  it('watchdog-vega-supervisor prompt contains mars continue and no code-editing directives', () => {
+    const recipe = getRecipe('merge:crashed/watchdog-vega-supervisor')
+    const prompt = recipe.buildPrompt(ctx)
+    // Must instruct the agent to run mars continue with the derived task ID
+    expect(prompt).toContain('mars continue')
+    expect(prompt).toContain('mars-abc123') // task ID extracted from branch
+    // Must document that the code is already committed and correct
+    expect(prompt).toMatch(/committed and correct|fully committed/i)
+    // Must NOT contain any code-editing or patch-applying directives —
+    // the recovery is a single CLI invocation, not a code change
+    expect(prompt).not.toMatch(/git apply/i)
+    expect(prompt).not.toMatch(/implement the (original|following|task)/i)
+    expect(prompt).not.toMatch(/write.*(code|function|implementation)/i)
+    // Must embed the failing branch and worktree path
+    expect(prompt).toContain(ctx.targetBranch)
+    expect(prompt).toContain(ctx.targetPath)
+  })
+
+  it('watchdog-integration-gate prompt contains mars continue', () => {
+    const recipe = getRecipe('merge:crashed/watchdog-integration-gate')
+    const prompt = recipe.buildPrompt(ctx)
+    expect(prompt).toContain('mars continue')
+    expect(prompt).toMatch(/committed and correct|fully committed/i)
+    // No code-editing directives for the integration-gate variant either
+    expect(prompt).not.toMatch(/git apply/i)
+    expect(prompt).not.toMatch(/implement the (original|following|task)/i)
+  })
+
+  it('both watchdog variants resolve to the same recipe object', () => {
+    expect(getRecipe('merge:crashed/watchdog-vega-supervisor')).toBe(
+      getRecipe('merge:crashed/watchdog-integration-gate'),
     )
   })
 })
