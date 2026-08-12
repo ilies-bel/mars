@@ -2899,7 +2899,11 @@ export const review = async (
         }
       }
 
-      // Enrich each step header with tier and duration for the run-timeline view.
+      // Enrich each step header with tier, duration, exit code, and invocation
+      // for the run-timeline view. Operators and coders reading verifyOutput
+      // can tell which command failed, its true exit code, and the exact
+      // invocation to re-run to reproduce — without correlating back to the
+      // original recipe.
       const verifyOutput = r.steps
         .map((s) => {
           const tierBadge =
@@ -2910,7 +2914,16 @@ export const review = async (
                 : ''
           const durationBadge =
             s.duration !== undefined ? ` ${s.duration}ms` : ''
-          return `=== ${s.name} (${s.passed ? 'pass' : 'fail'})${tierBadge}${durationBadge} ===\n${s.output}`
+          // exitCode is present (number or null) when a subprocess actually ran.
+          // null means the abort signal killed the process before it could exit.
+          const exitBadge =
+            s.exitCode !== undefined ? ` exit=${s.exitCode ?? 'killed'}` : ''
+          // Show the raw invocation so the reader can reproduce locally.
+          const cmdLine =
+            s.cmd !== undefined
+              ? `$ ${s.cmd}${s.args?.length ? ' ' + s.args.join(' ') : ''}\n`
+              : ''
+          return `=== ${s.name} (${s.passed ? 'pass' : 'fail'})${tierBadge}${durationBadge}${exitBadge} ===\n${cmdLine}${s.output}`
         })
         .join('\n\n')
       // Append a structured gate-outcomes block so the run-timeline view can
@@ -2924,6 +2937,7 @@ export const review = async (
         name: s.name,
         tier: s.tier ?? 'task',
         passed: s.passed,
+        exitCode: s.exitCode ?? null,
         ...(s.duration !== undefined ? { duration: s.duration } : {}),
       }))
       const gateOutcomesBlock =
