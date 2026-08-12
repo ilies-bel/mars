@@ -52,6 +52,10 @@ import {
   ensureRecoverySpawner,
 } from '../../outbox/subscribers/recovery-spawn'
 import {
+  drainRecoveryAbandoned,
+  ensureRecoveryAbandonedSubscriber,
+} from '../../outbox/subscribers/recovery-abandoned'
+import {
   drainSubthreadCloser,
   ensureSubthreadCloser,
 } from '../../outbox/subscribers/subthread-closer'
@@ -5477,6 +5481,19 @@ export const startDaemon = async (
     }
   })()
 
+  // Boot drain for the recovery-abandoned outbox subscriber: raise action-queue
+  // items for any fix tasks that were manually dropped while the daemon was down.
+  void (async () => {
+    try {
+      await ensureRecoveryAbandonedSubscriber(getCompositionRootClient())
+      const { processed } = await drainRecoveryAbandoned(getCompositionRootClient(), log)
+      if (processed > 0)
+        log(`[recovery-abandoned] raised alert(s) for ${processed} manually-dropped fix task(s) on boot`)
+    } catch (err) {
+      log(`[recovery-abandoned] boot drain failed: ${(err as Error).message}`)
+    }
+  })()
+
   // A Subthread's terminal event is a durable domain boundary. Register and
   // drain on boot so events published while the daemon was down still close
   // their matching Subthread after restart.
@@ -6636,6 +6653,25 @@ export const startDaemon = async (
     RECOVERY_SPAWNER_DRAIN_MS,
   )
   recoverySpawnerDrain.unref()
+
+  // ── Recovery-abandoned drain ──────────────────────────────────────────────
+  // Polls for task.terminal { reason: 'dropped' } events on fix tasks and
+  // raises a recovery-abandoned action-queue item against the origin so the
+  // operator knows the recovery was manually cancelled.
+  const RECOVERY_ABANDONED_DRAIN_MS = Number(
+    process.env.MARS_RECOVERY_ABANDONED_DRAIN_MS ?? 30_000,
+  )
+  const recoveryAbandonedDrain = setInterval(
+    singleFlight(async () => {
+      try {
+        await drainRecoveryAbandoned(getCompositionRootClient(), log)
+      } catch (err) {
+        log(`[recovery-abandoned] drain errored: ${(err as Error).message}`)
+      }
+    }),
+    RECOVERY_ABANDONED_DRAIN_MS,
+  )
+  recoveryAbandonedDrain.unref()
 
   // ── Subthread terminal-event drain ────────────────────────────────────────
   const CLOSE_SUBTHREAD_ON_TERMINAL_EVENT_DRAIN_MS = Number(

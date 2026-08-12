@@ -1018,6 +1018,23 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [],
   },
+
+  'recovery-abandoned': {
+    humanSummary: (ctx) => {
+      const fixTaskId = str(ctx.payload['fixTaskId']) || 'unknown'
+      return `Recovery task ${fixTaskId} was manually dropped before it could run — the origin task needs manual resolution.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      fixTaskId: str(ctx.payload['fixTaskId']),
+      originTaskId: str(ctx.payload['originTaskId']),
+    }),
+    verbs: [
+      { op: 'restart', label: 'Restart (wipe & re-run)', style: 'primary' },
+      { op: 'purge', label: 'Discard task', style: 'danger' },
+    ],
+  },
 } satisfies Record<ActionQueueKind, Omit<Recipe, 'preloadedResponses'>>
 
 /**

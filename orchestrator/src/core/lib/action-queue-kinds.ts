@@ -55,6 +55,7 @@ export const ACTION_QUEUE_KINDS = [
   'dirty-integration',
   'health-check-alert',
   'fragmented-repo-layout',
+  'recovery-abandoned',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

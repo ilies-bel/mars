@@ -473,6 +473,7 @@ const OPERATIONAL_ALERT_COPY: Record<
       body: `The node_modules virtual store for ${workspace} escaped the checkout boundary. A fix task has been enqueued to reinstall dependencies in the correct location.`,
     }
   },
+  'recovery-abandoned': null,
 }
 
 const renderOperationalAlertCopy = (
