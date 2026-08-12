@@ -790,7 +790,9 @@ export const promoteProposal = async (
   const missing = validateProposalShaped(proposal)
   if (missing.length > 0) {
     throw new Error(
-      `proposal ${proposal.id} is not fully shaped; missing: ${missing.join(', ')}`,
+      `proposal ${proposal.id} is not fully shaped; missing: ${missing.join(', ')}. ` +
+        `Shape it with 'mars proposal set ${proposal.id} <field> <value>' and ` +
+        `'mars proposal add-user-story ${proposal.id} <story>'.`,
     )
   }
   const c = stateClient()

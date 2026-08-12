@@ -167,6 +167,42 @@ describe('proposal take — creates one task with workflow=live and proposal lin
     expect(reverted?.status).toBe('prd-ready')
   })
 
+  it('a shaped draft can be promoted inline and then claimed (simulating take-from-draft)', async () => {
+    const { p, q } = await loadMods(repo)
+
+    // Create a shaped draft (all required fields present) but do NOT promote it.
+    const proposal = await p.createProposal('Draft take feature', {
+      source: 'reflection',
+      problem: 'There is a concrete problem to solve',
+      solution: 'Here is the solution',
+    })
+    await p.addProposalUserStory(proposal.id, 'As a user I can do the draft thing')
+
+    // The proposal must be in draft status.
+    const draft = await p.getProposal(proposal.id)
+    expect(draft?.status).toBe('draft')
+    // The shaping gate must pass (all required fields present).
+    const { validateProposalShaped } = await import('../proposals')
+    expect(validateProposalShaped(draft!)).toEqual([])
+
+    // Simulate handleProposalTake's inline promote: draft → prd-ready (no auto-slice).
+    const promoted = await p.promoteProposal(proposal.id)
+    expect(promoted.status).toBe('prd-ready')
+
+    // Claim and complete the take flow.
+    const claimed = await p.claimProposalForSlicing(proposal.id)
+    expect(claimed).toBe(true)
+    await q.enqueueTask('PRD prompt for draft take', undefined, {
+      originId: proposal.id,
+      parentProposalId: proposal.id,
+      workflow: 'live',
+    })
+    await p.markProposalSliced(proposal.id, 1)
+
+    const after = await p.getProposal(proposal.id)
+    expect(after?.status).toBe('sliced')
+  })
+
   it('slicer (runSlice) is never called during the take flow', async () => {
     const { p, q } = await loadMods(repo)
     const proposalId = await seedPrdReady(p)

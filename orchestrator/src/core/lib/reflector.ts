@@ -3,6 +3,7 @@ import { getRepoRoot } from '../context'
 import { createHash } from 'node:crypto'
 import {
   createProposal,
+  addProposalUserStory,
   findOpenReflectionDraftByFingerprint,
   appendProposalNotes,
   findOpenTasksMatchingTitle,
@@ -715,11 +716,13 @@ const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<string | n
   const proposal = await createProposal(s.title, {
     source: 'reflection',
     author: { kind: 'agent', name: 'reflector' },
+    problem: s.rationale ?? '',
     solution: s.prompt,
     notes: proposalNotes,
     fingerprint,
     suggestionOutcome: s.outcome,
   })
+  await addProposalUserStory(proposal.id, s.title)
   return proposal.id
 }
 

@@ -346,4 +346,38 @@ describe('reflector persist dedup', () => {
     // The proposal exists in the store and its id matches the suggestion's targetId.
     expect(await countProposals()).toBe(1)
   })
+
+  it('persistSuggestions populates problem from rationale and adds a user story so the draft is promotable', async () => {
+    const { persistSuggestions } = await import('../reflector')
+    const { listProposals, validateProposalShaped } = await import('../../proposals')
+
+    const title = 'Fix typecheck failures'
+    const rationale = 'Tasks task-a and task-b both failed with TS2345; a typecheck gate would catch this earlier.'
+
+    await persistSuggestions(
+      [
+        {
+          title,
+          prompt: 'Add a typecheck verify gate. Save your work.',
+          rationale,
+          rootCauseKey: 'typecheck_failure',
+          affectedTaskIds: ['task-a', 'task-b'],
+          frequency: 2,
+          confidence: 0.9,
+          kind: 'mechanical' as const,
+          outcome: baseOutcome,
+        },
+      ],
+      'source-task-1',
+    )
+
+    const proposals = await listProposals()
+    expect(proposals).toHaveLength(1)
+    const [p] = proposals
+    expect(p.problem).toBe(rationale)
+    expect(p.userStories).toHaveLength(1)
+    expect(p.userStories[0]).toBe(title)
+    // Gate must pass — the draft is promotable without hand-writing fields.
+    expect(validateProposalShaped(p)).toEqual([])
+  })
 })

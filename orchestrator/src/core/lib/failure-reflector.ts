@@ -3,6 +3,7 @@ import { getRepoRoot } from '../context'
 import { createHash } from 'node:crypto'
 import {
   createProposal,
+  addProposalUserStory,
   recordFailureReflectionOccurrence,
 } from '../proposals'
 import { getDefaultTaskStore } from '../store/task-store'
@@ -178,13 +179,15 @@ const persistSuggestion = async (
     .filter(Boolean)
     .join('\n')
 
-  await createProposal(s.title, {
+  const proposal = await createProposal(s.title, {
     source: 'failure-reflector',
     author: { kind: 'agent', name: 'failure-reflector' },
+    problem: s.rationale,
     solution: s.action,
     notes,
     fingerprint,
   })
+  await addProposalUserStory(proposal.id, s.title)
 }
 
 /**

@@ -3816,6 +3816,7 @@ export const startDaemon = async (
     const {
       claimProposalForSlicing,
       markProposalTaken,
+      promoteProposal,
       resolveProposalId,
       getProposal,
       validateProposalShaped,
@@ -3846,10 +3847,14 @@ export const startDaemon = async (
       )
     }
 
-    if (proposal.status !== 'prd-ready') {
+    // A shaped draft can be taken directly: inline-promote it to prd-ready
+    // without firing the auto-slicer, making `take` reachable without
+    // `promote` as an intermediary.
+    if (proposal.status === 'draft') {
+      await promoteProposal(resolved.id)
+    } else if (proposal.status !== 'prd-ready') {
       throw new Error(
-        `proposal ${proposal.id} is '${proposal.status}'; only 'prd-ready' proposals can be taken. ` +
-          `Run 'mars proposal promote ${proposal.id}' to promote it first.`,
+        `proposal ${proposal.id} is '${proposal.status}'; only 'draft' or 'prd-ready' proposals can be taken.`,
       )
     }
 

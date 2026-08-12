@@ -294,4 +294,35 @@ describe('spawnFailureReflector', () => {
     const proposals = await listProposals({ source: 'failure-reflector' })
     expect(proposals).toHaveLength(0)
   })
+
+  it('populates problem from rationale and adds a user story so the draft can be promoted', async () => {
+    const { runHeadlessProvider } = await import('../../workers/providers')
+    const rationale = 'Tasks failed with TS errors that a typecheck gate would have caught.'
+    const title = 'Add TypeScript typecheck gate'
+    vi.mocked(runHeadlessProvider).mockResolvedValueOnce(
+      makeClaudeResult([
+        {
+          recipe: 'add-typecheck',
+          title,
+          rationale,
+          action: 'mars verify add typecheck --cmd npx --args "tsc --noEmit"',
+        },
+      ]),
+    )
+
+    const { spawnFailureReflector } = await import('../failure-reflector')
+    const { initProposals, listProposals, validateProposalShaped } = await import('../../proposals')
+    await initProposals()
+
+    await spawnFailureReflector(opts)
+
+    const proposals = await listProposals({ source: 'failure-reflector' })
+    expect(proposals).toHaveLength(1)
+    const [p] = proposals
+    expect(p.problem).toBe(rationale)
+    expect(p.userStories).toHaveLength(1)
+    expect(p.userStories[0]).toBe(title)
+    // Gate must pass — the draft is now promotable without hand-writing fields.
+    expect(validateProposalShaped(p)).toEqual([])
+  })
 })
