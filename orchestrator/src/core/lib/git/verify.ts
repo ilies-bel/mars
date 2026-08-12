@@ -114,6 +114,14 @@ export interface VerifyStep {
    * layer. Absent on deferred integration-tier steps and built-in gates.
    */
   stderr?: string
+  /**
+   * The command as a single displayable string. For registry steps this is
+   * `[cmd, ...args].join(' ')`. For spec verifyCmd steps ({@link SPEC_VERIFY_CMD_STEP})
+   * this is the raw command string from the task spec (e.g. `"npm test"`),
+   * not `sh -c npm test`. Absent on deferred integration-tier steps and
+   * built-in gates that do not shell out.
+   */
+  commandLine?: string
 }
 
 export interface VerifyStepSpec {
@@ -186,6 +194,16 @@ export interface VerifyArgs {
    * fast instead of occupying `.merge.lock` for the full 300s merge watchdog.
    */
   signal?: AbortSignal
+  /**
+   * Raw shell command string from the task spec (e.g. `"npm test"` or
+   * `"cd orchestrator && npm run typecheck"`). When non-empty, executed
+   * verbatim via `sh -c` as a required verify step immediately after the
+   * has-diff / worktree-hygiene gates and before any registry gate steps.
+   * A non-zero exit fails the verify phase and prevents registry steps from
+   * running. Its exit code and the raw command string are both recorded on
+   * the resulting {@link VerifyStep} (step name: {@link SPEC_VERIFY_CMD_STEP}).
+   */
+  verifyCmd?: string | null
 }
 
 export type VerifyVerdict = 'PASS' | 'FAIL' | "CAN'T-VERIFY"
@@ -214,6 +232,7 @@ const runVerifyStep = async (
     ? { ...traceCtx, phase: traceCtx.phase ?? 'verify' }
     : undefined
   const r = await execProbe(cmd, [...args], { cwd, signal }, verifyCtx)
+  const commandLine = [cmd, ...args].join(' ')
   if (r.exitCode === 0) {
     return {
       name,
@@ -226,6 +245,7 @@ const runVerifyStep = async (
       cmd,
       args,
       stepDir: cwd,
+      commandLine,
     }
   }
   // When the abort signal fired and killed the subprocess, prefix the output
@@ -252,6 +272,7 @@ const runVerifyStep = async (
     cmd,
     args,
     stepDir: cwd,
+    commandLine,
   }
 }
 
@@ -309,6 +330,14 @@ const captureHasDiffDiagnostics = async (
  * hygiene problem read as a diff problem.
  */
 export const WORKTREE_HYGIENE_STEP = 'worktree-hygiene'
+
+/**
+ * Step name for the required verify step that executes `spec.verifyCmd`
+ * verbatim (via `sh -c`) during the per-task verify phase. Distinct from
+ * registry gate steps so post-mortems can identify it without parsing the
+ * command string.
+ */
+export const SPEC_VERIFY_CMD_STEP = 'spec-verify-cmd'
 
 export const checkBranchHasDiff = async (
   cwd: string,
@@ -545,10 +574,54 @@ export const verifyChanges = async (
     results.push(diffStep)
   }
 
+  // Execute spec.verifyCmd verbatim as a required step when present. Runs
+  // after the has-diff / worktree-hygiene gates and before registry gate steps
+  // so a failing focused test blocks the task immediately without running
+  // heavier package-wide gates on top of it.
+  //
+  // The command is passed to `sh -c` verbatim to support shell features such
+  // as `cd subdir && npm test`. The raw command string (not `sh -c …`) is
+  // stored on the VerifyStep as `commandLine` so reproduce hints show exactly
+  // what the task author wrote.
+  const verifyCmdRaw = args.verifyCmd?.trim() ?? ''
+  if (verifyCmdRaw.length > 0) {
+    if (args.signal?.aborted) {
+      results.push({
+        name: SPEC_VERIFY_CMD_STEP,
+        tier: 'task',
+        passed: false,
+        output: 'step not started: abort signal already fired',
+        commandLine: verifyCmdRaw,
+        stepDir: args.cwd,
+      })
+      return { passed: false, verdict: 'FAIL', steps: results }
+    }
+    const cmdStart = performance.now()
+    const cmdResult = await runVerifyStep(
+      SPEC_VERIFY_CMD_STEP,
+      undefined,
+      'sh',
+      ['-c', verifyCmdRaw],
+      args.cwd,
+      verifyCtx,
+      args.signal,
+    )
+    const cmdDuration = Math.round(performance.now() - cmdStart)
+    // Override commandLine to show the raw spec command, not 'sh -c <cmd>',
+    // so callers see what the task author wrote rather than the implementation detail.
+    results.push({ ...cmdResult, tier: 'task', duration: cmdDuration, commandLine: verifyCmdRaw })
+    if (!cmdResult.passed) {
+      return { passed: false, verdict: 'FAIL', steps: results }
+    }
+  }
+
   // A non-empty task diff without a selected task-tier gate must be visible,
   // but must not wedge the pipeline. Integration gates are intentionally
   // deferred and do not count as task-tier coverage.
-  const hasTaskTierGate = args.steps.some((spec) => spec.tier !== 'integration')
+  // spec.verifyCmd also counts as task-tier coverage when present — it ran
+  // above and is a real gate, not a deferred one.
+  const hasTaskTierGate =
+    args.steps.some((spec) => spec.tier !== 'integration') || verifyCmdRaw.length > 0
   const lacksTaskTierCoverage =
     (args.changedFiles?.length ?? 0) > 0 && !hasTaskTierGate
   if (lacksTaskTierCoverage) {
