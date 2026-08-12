@@ -7,12 +7,6 @@ import {
 } from './queue-retry'
 import { getTask } from './queue'
 import type { ActionQueueKind } from './lib/action-queue-kinds'
-import {
-  WORKTREE_AHEAD_FAILURE_REASON,
-  WorktreeAheadPayloadSchema,
-  type WorktreeAheadPayload,
-} from './lib/worktree-ahead-payload'
-import { type OrphanCommit, listUniqueCommitsAhead } from './lib/sweep'
 import { ORIGIN_RECOVERY_FAILED_PREFIX } from './lib/failure-signature'
 
 const execFileP = promisify(execFile)
@@ -113,48 +107,6 @@ export const resetDependentWorktreeToIntegration = async (
     cwd: worktreePath,
   })
   return { reset: true, reason: 'reset' }
-}
-
-/**
- * Best-effort check: is the worktree's current HEAD commit reachable from the
- * integration branch (i.e. already landed on main)?
- *
- * Returns:
- *  - 'on-main'     — HEAD is an ancestor of integrationBranch (git exit 0)
- *  - 'not-on-main' — HEAD is NOT an ancestor (git exit 1)
- *  - 'unknown'     — worktree missing, rev-parse failed, or unexpected git error
- *
- * Never throws. Fetch failure is silently swallowed (same as
- * resetDependentWorktreeToIntegration) so local-only test repos work.
- */
-const computeOnMainLean = async (
-  worktreePath: string,
-  integrationBranch: string,
-): Promise<'on-main' | 'not-on-main' | 'unknown'> => {
-  try {
-    if (!(await worktreeExists(worktreePath))) return 'unknown'
-    try {
-      await execFileP('git', ['fetch', 'origin', integrationBranch], { cwd: worktreePath })
-    } catch {
-      /* local-only repo / transient remote error — proceed with local ref */
-    }
-    const { stdout } = await execFileP('git', ['rev-parse', 'HEAD'], { cwd: worktreePath })
-    const tipSha = stdout.trim()
-    try {
-      await execFileP(
-        'git',
-        ['merge-base', '--is-ancestor', tipSha, integrationBranch],
-        { cwd: worktreePath },
-      )
-      return 'on-main'
-    } catch (err) {
-      // exit 1 → definitive "not an ancestor"; anything else is an error
-      if ((err as { code?: unknown }).code === 1) return 'not-on-main'
-      return 'unknown'
-    }
-  } catch {
-    return 'unknown'
-  }
 }
 
 /**
