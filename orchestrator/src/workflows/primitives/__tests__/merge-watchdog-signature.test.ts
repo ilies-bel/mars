@@ -169,6 +169,41 @@ const worktreeOpts = (taskId: string) => ({
 // Tests
 // ---------------------------------------------------------------------------
 
+// Import the environmental-signature predicate (loaded after vi.mock() hoisting).
+const { isEnvironmentalSignature } = await import('../../../core/lib/failure-kinds')
+
+// ---------------------------------------------------------------------------
+// Regression tests — worktree-vanished signature
+// ---------------------------------------------------------------------------
+//
+// Regression for task mars-0c5ffe82: the stale-merging sweep deleted the task
+// worktree while the merge job was still running. git spawned inside mergeBranch
+// received ENOENT on its cwd; run-tool.ts emitted:
+//   "runTool: spawn <tool> failed (working directory no longer exists: <path>)"
+// The merge-worker wrapped it into a crash MergeJobResult; the merge primitive
+// re-threw it and called computeFailureSignature('merge:crashed', ...). Without
+// the worktree-vanished errorClassRule the error fell through to /unclassified,
+// which consumed the arc's single recovery slot rather than auto-remerging.
+
+describe('merge — worktree-vanished crash signature', () => {
+  it('classifies "working directory no longer exists" as merge:crashed/worktree-vanished', () => {
+    // Exact shape produced by run-tool.ts → merge-worker → merge primitive.
+    const runToolError =
+      'runTool: spawn /usr/bin/git failed (working directory no longer exists: /repo/.mars/worktrees/mars-0c5ffe82)'
+    const crashMsg = `merge step crashed: merge job failed (crash): ${runToolError}`.slice(0, 1000)
+    const sig = computeFailureSignature('merge:crashed', crashMsg)
+    expect(sig).toBe('merge:crashed/worktree-vanished')
+    expect(sig).not.toContain('unclassified')
+  })
+
+  it('merge:crashed/worktree-vanished is environmental (arc recovery budget is not consumed)', () => {
+    // isEnvironmentalSignature drives the "don't spawn a fix-task" code path in
+    // handleTaskFailureWithFixTask. If this returns false, the signature triggers
+    // the normal recovery path and consumes the arc's single recovery slot.
+    expect(isEnvironmentalSignature('merge:crashed/worktree-vanished')).toBe(true)
+  })
+})
+
 describe('merge — watchdog crash signature', () => {
   it('produces merge:crashed/watchdog-<lastStep> via instanceof branch when MergeAbortedError is thrown directly', async () => {
     const taskId = 'mars-watchdog-01'

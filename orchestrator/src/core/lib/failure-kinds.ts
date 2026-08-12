@@ -705,6 +705,25 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
           'The merge step was aborted by the VCS supervisor with an unrecognised error; inspect the transcript for details.',
         actions: DEFAULT_ACTIONS,
       },
+
+      // ── merge:crashed/worktree-vanished ──────────────────────────────────────
+      // Fires when a git subprocess inside mergeBranch fails because the task
+      // worktree was deleted while the merge job was in flight (e.g. by the
+      // stale-merging sweep recovering a wider set of tasks than intended).
+      // The task's commits survive on its branch; the worktree is simply gone.
+      //
+      // Environmental: the auto-restart routes through the remerge workflow
+      // (setup+verify+merge) — keeping the branch intact so no coding work is
+      // lost — rather than through the full implement workflow. This ensures the
+      // arc's single recovery slot is NOT consumed by an infra condition.
+      {
+        signature: 'merge:crashed/worktree-vanished',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: 'The merge step failed: task worktree disappeared during merging',
+        verboseReason:
+          'A git subprocess inside the merge step could not start because the task worktree directory was removed while the merge job was in flight. This is an infrastructure condition, not a code defect — the task commits survive on the branch. The task is automatically retried through the remerge workflow.',
+        actions: WORKTREE_MISSING_ACTIONS,
+      },
     ] satisfies ReadonlyArray<Omit<FailureKind, 'recipe'>>
   )
     .map((k) => ({ ...k, recipe: recipeRef(k.signature) }))

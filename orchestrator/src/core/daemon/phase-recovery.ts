@@ -168,6 +168,14 @@ export interface RecoverPhaseOptions {
   repoRoot: string
   /** Suppress the in-loop requeue/blocked log lines (running drives its own). */
   silent?: boolean
+  /**
+   * When provided, only tasks whose id appears in this set are processed.
+   * Used by the stale-merging sweep so it recovers ONLY the specific stale
+   * tasks it identified — never every task in the phase — preventing the sweep
+   * from touching a legitimately in-progress merge that happens to share the
+   * same `merging` status alongside a stale one.
+   */
+  taskIds?: readonly string[]
 }
 
 /** The cleared-in-flight patch applied on both requeue and restore-to-blocked. */
@@ -236,7 +244,14 @@ export const recoverPhase = async (
     finalized: 0,
   }
 
-  const tasks = await listTasks(policy.status)
+  const allTasks = await listTasks(policy.status)
+  // When the caller provides a task-id filter (e.g. the stale-merging sweep
+  // passing only the specific stale ids it found), restrict the loop to those
+  // tasks. Without this guard, a sweep that finds ONE stale task in 'merging'
+  // would inadvertently recover EVERY 'merging' task — including a legitimately
+  // in-progress merge running in parallel — deleting its worktree mid-flight.
+  const taskIdSet = opts.taskIds !== undefined ? new Set(opts.taskIds) : null
+  const tasks = taskIdSet !== null ? allTasks.filter((t) => taskIdSet.has(t.id)) : allTasks
   for (const t of tasks) {
     const verdict = policy.classify
       ? await policy.classify(t, probeCtx)

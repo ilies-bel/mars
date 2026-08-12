@@ -481,6 +481,25 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     matchFull: /mergeBranch aborted \(watchdog\).*during step/i,
   },
 
+  {
+    // merge:crashed/worktree-vanished fires when a git subprocess inside
+    // mergeBranch fails because its working directory was deleted while the
+    // merge job was in flight. The error message produced by run-tool.ts when
+    // the cwd does not exist at spawn time is:
+    //   "runTool: spawn <tool> failed (working directory no longer exists: <path>)"
+    // The merge-worker wraps this into a crash MergeJobResult; the merge
+    // primitive re-throws it as a plain Error. The full errorOutput is a
+    // single-line string that contains this phrase.
+    //
+    // This is an infrastructure condition, not a code defect: the task's commits
+    // survive on its branch. The environmental registration in failure-kinds.ts
+    // routes the auto-restart through the remerge workflow (setup+verify+merge)
+    // so the arc's single recovery slot is NOT consumed.
+    errorClass: 'worktree-vanished',
+    match: /working directory no longer exists/i,
+    matchFull: /working directory no longer exists/i,
+  },
+
   // ── Fallback sub-buckets ────────────────────────────────────────────────────
   //
   // These rules sit at the END of the list so they fire only when every

@@ -147,6 +147,20 @@ const setupReplayPatchFor = async (
   taskId: string,
   failureSignature: string,
 ): Promise<Parameters<typeof updateTask>[1]> => {
+  // merge:crashed/worktree-vanished: the worktree was deleted while the merge
+  // job was in flight. The task branch still has commits; route the retry
+  // through the remerge workflow (setup+verify+merge) rather than the full
+  // implement workflow (setup+code+verify+merge) so no coding work is lost
+  // and the arc's single recovery slot is NOT consumed.
+  //
+  // Clear worktreePath (gone) and claudeSessionId; keep branch (commits
+  // intact). Delete the prior workflow run journal so the remerge workflow
+  // starts cleanly from step 0 rather than resuming the old implement run.
+  if (failureSignature.endsWith('/worktree-vanished')) {
+    const { createQueueWorkflowStore } = await import('../workflows/queue-workflow-store')
+    await createQueueWorkflowStore().deleteRun(taskId).catch(() => {})
+    return { workflow: 'remerge', worktreePath: null, claudeSessionId: null }
+  }
   if (!requiresWorktreeRebuild(failureSignature)) return {}
   const [{ resetForSetupReplay }, { createQueueWorkflowStore }] = await Promise.all([
     import('./daemon/restart-task'),
