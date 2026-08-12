@@ -164,6 +164,8 @@ import {
   type DaemonStatusPayload,
 } from './protocol'
 import { ViewStreamHub } from './view/stream-hub'
+import { createConditionItemsSource } from './view/derived-conditions'
+import { resolveStateClient } from '../store/state-client'
 import {
   createTaskFlightTracker,
   type DispatchKind,
@@ -4863,8 +4865,6 @@ export const startDaemon = async (
       return m
     },
     getConditionsSource: () => {
-      const { createConditionItemsSource } = require('./view/derived-conditions') as typeof import('./view/derived-conditions')
-      const { resolveStateClient } = require('../store/state-client') as typeof import('../store/state-client')
       return createConditionItemsSource({
         getClient: resolveStateClient,
         getPauseState: () => pause.get(),

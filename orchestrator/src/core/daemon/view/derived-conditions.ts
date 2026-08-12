@@ -14,7 +14,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PersistedActionQueueRow, ConditionItemsSource } from './action-queue'
 import type { DispatchPauseState } from '../pause-state'
@@ -308,7 +308,6 @@ function deriveDaemonDiedConditions(
   let startedAt = ''
   let crashDetectedAt = new Date(nowMs).toISOString()
   try {
-    const { readFileSync } = require('node:fs') as typeof import('node:fs')
     const parsed = JSON.parse(readFileSync(crashMarkerPath, 'utf8')) as Record<string, unknown>
     if (typeof parsed.pid === 'number') pid = parsed.pid
     if (typeof parsed.startedAt === 'string') startedAt = parsed.startedAt
