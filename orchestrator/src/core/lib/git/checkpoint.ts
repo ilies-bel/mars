@@ -65,6 +65,18 @@ import { exec, execProbe, resolveGitBin, type TraceCtx } from './internal'
 export const CHECKPOINT_REF_PREFIX = 'refs/mars/checkpoint'
 
 /**
+ * Subject-line prefix written by the workflow's code-phase failure handler
+ * when the coder exits non-zero with uncommitted paths. Any commit whose
+ * subject starts with this prefix is a salvage snapshot produced by the
+ * orchestrator — not reviewed, human-authored work — and must not be treated
+ * as a finished diff ready to merge.
+ *
+ * Reuse this constant wherever the subject is read back (e.g. `mars continue`
+ * branch-classification) so the two sites cannot drift apart.
+ */
+export const SALVAGE_CHECKPOINT_SUBJECT_PREFIX = 'wip(checkpoint):'
+
+/**
  * Identity used for the checkpoint commit object. Pinned via env so a repo
  * (or CI container) without `user.name` / `user.email` configured cannot make
  * `git commit-tree` fail and lose the work it was asked to preserve.

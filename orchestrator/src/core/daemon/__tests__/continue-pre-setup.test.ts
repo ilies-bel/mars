@@ -737,4 +737,152 @@ describe('continue degrades to restart for pre-setup failures', () => {
     expect(after?.failedPhase).toBe('code')     // preserved for the coder resume banner
     expect(after?.branch).toBe(`task/${task.id}`)  // branch preserved
   })
+
+  // ── Salvage-checkpoint branch detection ───────────────────────────────────
+  // The three shapes the branch-ahead guard must handle when failedPhase is
+  // null and the branch has commits ahead of main:
+  //
+  //  A. checkpoint-only  → no remerge offered; restart with discard warning
+  //  B. real-only        → remerge offered (existing behaviour, regression guard)
+  //  C. mixed            → remerge offered with checkpoint called out at tip
+
+  it('checkpoint-only: does not offer remerge and names restart when every commit is a salvage checkpoint', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const task = await queue.enqueueTask('checkpoint-only task', undefined, { skipTriage: true })
+    const branch = `task/${task.id}`
+    const worktreePath = resolve(repo, '.mars', 'worktrees', task.id)
+
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    // Write a file to give the checkpoint something to capture
+    writeFileSync(resolve(worktreePath, 'wip.ts'), 'export const x = 1\n')
+    execFileSync('git', ['add', '-A'], { cwd: worktreePath })
+    // Commit with the salvage checkpoint subject (mirrors what the workflow does)
+    execFileSync('git', [
+      '-c', 'user.email=mars@test', '-c', 'user.name=Mars',
+      'commit', '-m', 'wip(checkpoint): coder killed (exit 1) with 1 uncommitted path(s) — do not merge as-is',
+    ], { cwd: worktreePath })
+
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'killed',
+      failedPhase: null,
+      branch,
+      worktreePath,
+    })
+
+    let thrown: Error | null = null
+    try {
+      await continueTask.coreContinueTask(task.id)
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    // Must describe the checkpoint situation
+    expect(thrown!.message).toContain('salvage checkpoint')
+    // Must NOT offer mars remerge — there is no reviewed work
+    expect(thrown!.message).not.toContain('mars remerge')
+    // Must offer restart as the escape hatch
+    expect(thrown!.message).toContain('mars restart')
+    expect(thrown!.message).toContain(task.id)
+    // Must name the branch so the operator knows what is at risk
+    expect(thrown!.message).toContain(branch)
+    // Task remains failed — no restart was performed
+    const after = await queue.getTask(task.id)
+    expect(after?.status).toBe('failed')
+  })
+
+  it('real-commits-only: still offers mars remerge when no commit is a salvage checkpoint', async () => {
+    // Regression guard: the existing behaviour must be preserved for branches
+    // that contain only real, human-reviewed commits.
+    const { queue, continueTask } = await loadModules(repo)
+
+    const task = await queue.enqueueTask('real-only task', undefined, { skipTriage: true })
+    const branch = `task/${task.id}`
+    const worktreePath = resolve(repo, '.mars', 'worktrees', task.id)
+
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    writeFileSync(resolve(worktreePath, 'feature.ts'), 'export const feature = true\n')
+    execFileSync('git', ['add', 'feature.ts'], { cwd: worktreePath })
+    execFileSync('git', [
+      '-c', 'user.email=coder@test', '-c', 'user.name=Coder',
+      'commit', '-m', 'feat: add feature',
+    ], { cwd: worktreePath })
+
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'daemon killed mid-flight',
+      failedPhase: null,
+      branch,
+      worktreePath,
+    })
+
+    let thrown: Error | null = null
+    try {
+      await continueTask.coreContinueTask(task.id)
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    // Must offer mars remerge — there is reviewed work to re-verify
+    expect(thrown!.message).toContain('mars remerge')
+    expect(thrown!.message).toContain(task.id)
+    // Task remains failed
+    const after = await queue.getTask(task.id)
+    expect(after?.status).toBe('failed')
+  })
+
+  it('mixed: offers mars remerge but calls out the trailing salvage checkpoint', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const task = await queue.enqueueTask('mixed task', undefined, { skipTriage: true })
+    const branch = `task/${task.id}`
+    const worktreePath = resolve(repo, '.mars', 'worktrees', task.id)
+
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+
+    // First: a real commit
+    writeFileSync(resolve(worktreePath, 'feature.ts'), 'export const feature = true\n')
+    execFileSync('git', ['add', 'feature.ts'], { cwd: worktreePath })
+    execFileSync('git', [
+      '-c', 'user.email=coder@test', '-c', 'user.name=Coder',
+      'commit', '-m', 'feat: implement feature',
+    ], { cwd: worktreePath })
+
+    // Then: a trailing salvage checkpoint at the tip
+    writeFileSync(resolve(worktreePath, 'wip.ts'), 'export const wip = 1\n')
+    execFileSync('git', ['add', '-A'], { cwd: worktreePath })
+    execFileSync('git', [
+      '-c', 'user.email=mars@test', '-c', 'user.name=Mars',
+      'commit', '-m', 'wip(checkpoint): coder killed (exit 1) with 1 uncommitted path(s) — do not merge as-is',
+    ], { cwd: worktreePath })
+
+    await queue.updateTask(task.id, {
+      status: 'failed',
+      error: 'killed',
+      failedPhase: null,
+      branch,
+      worktreePath,
+    })
+
+    let thrown: Error | null = null
+    try {
+      await continueTask.coreContinueTask(task.id)
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    // Must offer mars remerge — there is at least one real commit
+    expect(thrown!.message).toContain('mars remerge')
+    // Must also call out the trailing checkpoint so the operator knows verify
+    // will see incomplete work
+    expect(thrown!.message).toContain('salvage checkpoint')
+    expect(thrown!.message).toContain(task.id)
+    // Task remains failed
+    const after = await queue.getTask(task.id)
+    expect(after?.status).toBe('failed')
+  })
 })

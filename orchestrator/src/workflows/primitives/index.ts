@@ -70,6 +70,7 @@ import {
   discardWorkingTreeChanges,
   checkpointRefFor,
   restoreCheckpoint,
+  SALVAGE_CHECKPOINT_SUBJECT_PREFIX,
   type Checkpoint,
 } from '../../core/lib/git/checkpoint'
 import { classifyPorcelainLines } from '../../core/lib/git/classify-porcelain'
@@ -1692,7 +1693,7 @@ export const runAgent = async (
             trace.traceStore,
           )
           if (addR.exitCode === 0) {
-            const commitMsg = `wip(checkpoint): coder killed (exit ${r.exitCode}) with ${postState.dirtyFiles.length} uncommitted path(s) — do not merge as-is`
+            const commitMsg = `${SALVAGE_CHECKPOINT_SUBJECT_PREFIX} coder killed (exit ${r.exitCode}) with ${postState.dirtyFiles.length} uncommitted path(s) — do not merge as-is`
             const commitR = await runTool(
               {
                 tool: 'git',
