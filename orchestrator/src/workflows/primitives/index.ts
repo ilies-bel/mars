@@ -2526,6 +2526,7 @@ export const review = async (
     opts.integrationBranch ?? input(ctx).integrationBranch ?? 'main'
   const recoveryPayload =
     opts.recoveryPayload ?? input(ctx).recoveryPayload ?? null
+  const spec = opts.spec ?? input(ctx).spec ?? null
   const store: TaskStore = ctx.services.store
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
   const trace = await resolveTrace(ctx, taskId)
@@ -2816,7 +2817,22 @@ export const review = async (
         branch,
         buildPhaseCtx(trace, taskId, 'verify'),
       )
-      const steps = isMainCommitter ? [] : selectVerifySteps(scopes, changedFiles)
+      const gateSteps = isMainCommitter ? [] : selectVerifySteps(scopes, changedFiles)
+      // Append the operator-declared acceptance command as a required task-tier
+      // step so it runs verbatim with its true exit code.  bash -o pipefail
+      // propagates the leftmost non-zero exit from any pipeline in the command.
+      // Main-committer recoveries skip all gate steps (including this one).
+      const specVerifyCmdRaw = !isMainCommitter ? (spec?.verifyCmd?.trim() ?? '') : ''
+      const specVerifyStep: VerifyStepSpec | null = specVerifyCmdRaw
+        ? {
+            name: 'spec.verifyCmd',
+            required: true,
+            tier: 'task',
+            cmd: 'bash',
+            args: ['-o', 'pipefail', '-c', specVerifyCmdRaw],
+          }
+        : null
+      const steps = specVerifyStep ? [...gateSteps, specVerifyStep] : gateSteps
 
       let r = await verifyChanges({
         cwd: verifyCwd,

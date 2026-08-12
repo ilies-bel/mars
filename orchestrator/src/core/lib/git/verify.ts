@@ -202,6 +202,17 @@ export interface VerifyArgs {
    * A non-zero exit fails the verify phase and prevents registry steps from
    * running. Its exit code and the raw command string are both recorded on
    * the resulting {@link VerifyStep} (step name: {@link SPEC_VERIFY_CMD_STEP}).
+   *
+   * **Synthetic-step alternative**: consumers may instead append a
+   * `VerifyStepSpec` with `name: 'spec.verifyCmd'`, `cmd: 'bash'`,
+   * `args: ['-o', 'pipefail', '-c', <cmd>]`, `required: true`, and
+   * `tier: 'task'` directly to `args.steps`. The `bash -o pipefail` shell
+   * propagates the leftmost non-zero exit from any pipeline and the step
+   * counts as task-tier coverage for the `cant-verify:no-gate-coverage` check.
+   * This is the preferred form when the consumer controls step ordering —
+   * e.g. the `review` primitive (primitives/index.ts) appends it after
+   * registry gate steps so the operator-declared command is always the last
+   * gate visible in `verifyOutput`.
    */
   verifyCmd?: string | null
 }
