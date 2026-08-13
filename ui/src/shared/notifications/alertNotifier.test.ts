@@ -24,13 +24,21 @@ describe('diffNotifiable', () => {
 
   it('fires for a newly-appearing notifiable item', () => {
     const prev = new Set(['a'])
-    const items = [item('a', 'failed'), item('b', 'stale-worktree')]
+    const items = [item('a', 'arc-failed'), item('b', 'stale-worktree')]
     const { toNotify } = diffNotifiable(prev, items, false)
     expect(toNotify.map((i) => i.id)).toEqual(['b'])
   })
 
   it('does not fire for non-notifiable kinds', () => {
     const items = [item('p', 'draft-proposal'), item('v', 'awaiting-validation')]
+    const { toNotify } = diffNotifiable(new Set(), items, false)
+    expect(toNotify).toEqual([])
+  })
+
+  it('does not fire for task-failure kinds outside the NOTIFY_KINDS set', () => {
+    // Only arc-failed and stale-worktree notify; broad failure kinds like
+    // 'failed' do not — the operator should pull from the action queue.
+    const items = [item('f', 'failed'), item('s', 'stale-queued')]
     const { toNotify } = diffNotifiable(new Set(), items, false)
     expect(toNotify).toEqual([])
   })
@@ -48,10 +56,10 @@ describe('diffNotifiable', () => {
 
   it('prunes resolved ids so the same id can notify again if re-raised', () => {
     // 'a' resolved (gone from the list) -> dropped from nextSeen.
-    const { nextSeen } = diffNotifiable(new Set(['a']), [item('b', 'failed')], false)
+    const { nextSeen } = diffNotifiable(new Set(['a']), [item('b', 'arc-failed')], false)
     expect(nextSeen.has('a')).toBe(false)
     // It re-appears later: with 'a' no longer in the seen-set, it notifies.
-    const second = diffNotifiable(nextSeen, [item('a', 'failed')], false)
+    const second = diffNotifiable(nextSeen, [item('a', 'arc-failed')], false)
     expect(second.toNotify.map((i) => i.id)).toEqual(['a'])
   })
 

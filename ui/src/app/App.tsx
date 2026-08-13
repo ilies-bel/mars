@@ -32,8 +32,6 @@ import {
   resolvePageRoute,
 } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
-import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import { isAlertQueueItem } from '@/widgets/chat/queueThreads'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { useProgress } from '@/hooks/useProgress'
 import { FocusedProjectProvider } from '@/shared/useFocusedProject'
@@ -127,10 +125,6 @@ const AppInner = () => {
     }
   }, [rawHash])
 
-  // Live action queue count for the tab title badge. React Query deduplicates
-  // this against the identical call inside ChatPage — no extra request.
-  const { items: aqItems } = useActionQueue()
-
   // For rendering, treat unknown hashes as #/chat (the default) so the nav
   // highlight and page selection are correct even on the first render before
   // the redirect effect fires.
@@ -163,12 +157,12 @@ const AppInner = () => {
     : undefined
   const route = resolvePageRoute(hash)
 
-  // Update the browser tab title whenever the route or AQ item count changes
-  // so multiple mars tabs are distinguishable in the tab bar and history.
+  // Update the browser tab title whenever the route changes so multiple mars
+  // tabs are distinguishable in the tab bar and history.
   useEffect(() => {
     if (typeof document === 'undefined') return
-    document.title = pageTitle(route, aqItems.filter(isAlertQueueItem).length)
-  }, [route, aqItems])
+    document.title = pageTitle(route)
+  }, [route])
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">

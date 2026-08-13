@@ -45,9 +45,6 @@ export const BellMenu = () => {
     [startThread],
   )
 
-  const total = alerts.length
-  const badge = total === 0 ? null : total > 9 ? '9+' : String(total)
-
   // Close on outside-click and Escape while open.
   useEffect(() => {
     if (!open) return
@@ -70,19 +67,11 @@ export const BellMenu = () => {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-label={total > 0 ? `Bell, ${total} items` : 'Bell'}
+        aria-label="Bell"
         aria-expanded={open}
         className="relative rounded px-2 py-1 text-primary hover:text-foreground"
       >
         <BellIcon size={14} aria-hidden="true" />
-        {badge !== null && (
-          <span
-            aria-hidden="true"
-            className="absolute -top-1 -right-1 rounded-full bg-primary/60 px-1 font-mono text-[9px] leading-none text-foreground"
-          >
-            {badge}
-          </span>
-        )}
       </button>
 
       {open && (

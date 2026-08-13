@@ -43,6 +43,7 @@ mock.module('@/shared/routing', () => ({
   // asserted in routing.test.ts, where the function is not mocked.
   resolvePageRoute: () => 'progress',
   actionQueueCount: () => 3,
+  releaseNotesHash: () => '#/release-notes',
 }))
 
 // useNotificationsPreference is a vi.fn() so each test can call mockReturnValue

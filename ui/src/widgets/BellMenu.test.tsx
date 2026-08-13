@@ -1,10 +1,9 @@
 // @vitest-environment happy-dom
 /**
- * BellMenu badge tests.
+ * BellMenu tests.
  *
- * Slice 2 (ADR-0054) re-sources the Alerts half of the bell from the arc-rooted
- * `useAlerts()` aggregate. Conversation Notices stay out of the badge, while
- * each Alert still renders its goal + reason. Provider-free: the alert hook is
+ * The bell is now a plain pull surface — no badge count. Clicking it opens a
+ * popover listing alerts (goal + reason). Provider-free: the alert hook is
  * mocked, so the component renders under `renderToStaticMarkup`.
  */
 
@@ -29,11 +28,18 @@ mock.module('@/entities/alerts', () => ({
 const { renderToStaticMarkup } = await import('react-dom/server')
 const { BellMenu } = await import('./BellMenu')
 
-describe('BellMenu – badge count', () => {
-  it('counts alerts without adding conversation Notices to the badge', () => {
+describe('BellMenu – plain bell icon', () => {
+  it('renders the bell trigger without a numeric badge', () => {
     const html = renderToStaticMarkup(<BellMenu />)
-    expect(html).toContain('aria-label="Bell, 2 items"')
-    expect(html).toContain('>2<')
+    // No numeric badge span — the count is intentionally gone
+    expect(html).not.toContain('>2<')
+    expect(html).not.toContain('>9+<')
+    // aria-label is always plain 'Bell', never "Bell, N items"
+    expect(html).toContain('aria-label="Bell"')
+  })
+
+  it('does not expose Notices in the badge (still no badge)', () => {
+    const html = renderToStaticMarkup(<BellMenu />)
     expect(html).not.toContain('Notices')
   })
 })

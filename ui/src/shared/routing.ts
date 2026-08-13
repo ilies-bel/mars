@@ -414,15 +414,11 @@ export const actionQueueCount = (payload: StaleWorktreesPayload): number =>
 
 /**
  * Returns the document.title string for the given page route.
- *
- * When the route is 'chat' and `aqCount` is positive, the live action-queue
- * item count is appended in parentheses so multiple mars tabs are
- * distinguishable in the browser tab bar and history (e.g. "mars — chat (3)").
  */
-export const pageTitle = (route: RouteName, aqCount = 0): string => {
+export const pageTitle = (route: RouteName): string => {
   switch (route) {
     case 'chat':
-      return aqCount > 0 ? `mars — chat (${aqCount})` : 'mars — chat'
+      return 'mars — chat'
     case 'progress':
       return 'mars — progress'
     case 'events':

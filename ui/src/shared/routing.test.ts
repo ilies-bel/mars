@@ -440,16 +440,7 @@ describe('parseReleaseNotesRoute', () => {
 // ---------------------------------------------------------------------------
 
 describe('pageTitle', () => {
-  it('returns "mars — chat" for the chat route with no items', () => {
-    expect(pageTitle('chat', 0)).toBe('mars — chat')
-  })
-
-  it('returns "mars — chat (N)" when there are N action queue items', () => {
-    expect(pageTitle('chat', 3)).toBe('mars — chat (3)')
-    expect(pageTitle('chat', 12)).toBe('mars — chat (12)')
-  })
-
-  it('defaults aqCount to 0 when omitted', () => {
+  it('returns "mars — chat" for the chat route', () => {
     expect(pageTitle('chat')).toBe('mars — chat')
   })
 

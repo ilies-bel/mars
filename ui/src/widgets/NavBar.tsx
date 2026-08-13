@@ -1,5 +1,5 @@
 import { useStaleWorktrees } from '@/entities/stale-worktrees/useStaleWorktrees'
-import { resolvePageRoute, actionQueueCount } from '@/shared/routing'
+import { resolvePageRoute, actionQueueCount, releaseNotesHash } from '@/shared/routing'
 import { useProgress } from '@/hooks/useProgress'
 import { useNotificationsPreference } from '@/entities/notifications'
 import { ProjectSelector } from './ProjectSelector'
@@ -110,7 +110,14 @@ export const NavBar = ({ hash }: NavBarProps) => {
           Reflections
         </a>
       </span>
-      <span className="ml-auto">
+      <span className="ml-auto flex items-center gap-2">
+        <a
+          href={releaseNotesHash()}
+          className={linkClass(false)}
+          aria-label="Release notes"
+        >
+          Release notes
+        </a>
         <NotificationsToggle />
       </span>
       <BellMenu />

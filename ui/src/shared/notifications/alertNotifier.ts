@@ -1,9 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import {
-  isTaskFailureActionQueueKind,
-  type ActionQueueItem,
-} from '@/shared/schemas'
+import type { ActionQueueItem } from '@/shared/schemas'
 import { getNotificationsEnabled, notificationsSupported } from './notificationPrefs'
 
 /**
@@ -57,10 +54,7 @@ export const diffNotifiable = (
   for (const item of items) {
     nextSeen.add(item.id)
     if (seed) continue
-    if (
-      !prevSeen.has(item.id) &&
-      (isTaskFailureActionQueueKind(item.kind) || NOTIFY_KINDS.has(item.kind))
-    ) {
+    if (!prevSeen.has(item.id) && NOTIFY_KINDS.has(item.kind)) {
       toNotify.push(item)
     }
   }
