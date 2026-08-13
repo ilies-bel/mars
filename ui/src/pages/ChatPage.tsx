@@ -3097,7 +3097,15 @@ export const ChatPage = () => {
               >
                 <span className="font-mono text-[11px] text-primary">mars</span>
                 {!selectedThreadId ? (
-                  <ChatGreeting {...greetingCounts} />
+                  <ChatGreeting
+                    {...greetingCounts}
+                    nextMove={
+                      openWork[0]?.source === 'alert' && openWork[0].item.kind === 'arc-failed'
+                        ? openWork[0]
+                        : null
+                    }
+                    onNextMove={handleOpenWork}
+                  />
                 ) : (
                   <p className="font-mono text-[14px] text-foreground">
                     Nothing&apos;s pressing right now — what would you like to
