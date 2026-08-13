@@ -1,18 +1,20 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ProposalDetailDrawer } from './ProposalDetailDrawer'
-import type { DraftFeature, ProgressTask } from '@/shared/schemas'
+import type { ProposalDetail, ProgressTask } from '@/shared/schemas'
 
-const draftProposal = (overrides: Partial<DraftFeature> = {}): DraftFeature => ({
+const draftProposal = (overrides: Partial<ProposalDetail> = {}): ProposalDetail => ({
   id: 'prop-1',
   title: 'Fill in the Proposal drawer content',
   problem: '',
   solution: '',
+  outOfScope: '',
+  notes: '',
   status: 'draft',
   source: 'reflection',
+  author: null,
   createdAt: Date.now(),
   updatedAt: Date.now(),
-  acceptanceCount: 3,
   userStories: [],
   ...overrides,
 })
@@ -69,6 +71,28 @@ describe('ProposalDetailDrawer', () => {
 
     expect(html).toContain('prd-ready')
     expect(html).toContain('planner')
+  })
+
+  it('shows author name when author is present', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ author: { kind: 'agent', name: 'reflector' } })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="proposal-detail-author"')
+    expect(html).toContain('reflector')
+  })
+
+  it('shows created date when createdAt is present', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ createdAt: new Date('2024-06-01').getTime() })}
+        onClose={() => {}}
+      />,
+    )
+    // The date is rendered via toLocaleDateString — just check the testid exists
+    expect(html).toContain('data-testid="proposal-detail-created"')
   })
 })
 
@@ -157,20 +181,75 @@ describe('ProposalDetailDrawer – CLI commands section', () => {
     const copyCount = (html.match(/data-testid="copy-cli-cmd"/g) ?? []).length
     expect(copyCount).toBe(2)
   })
+})
 
-  it('no mutation buttons appear in the drawer for any status', () => {
-    const statuses = ['draft', 'prd-ready', 'sliced', 'dismissed']
-    for (const status of statuses) {
-      const html = renderToStaticMarkup(
-        <ProposalDetailDrawer
-          proposal={draftProposal({ status })}
-          onClose={() => {}}
-        />,
-      )
-      expect(html).not.toContain('data-testid="btn-promote"')
-      expect(html).not.toContain('data-testid="btn-reject"')
-      expect(html).not.toContain('data-testid="btn-slice"')
-    }
+// ── Action buttons ───────────────────────────────────────────────────────────
+
+describe('ProposalDetailDrawer – action buttons', () => {
+  it('draft proposal shows Promote, Grill and Dismiss buttons', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ status: 'draft' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="btn-promote"')
+    expect(html).toContain('data-testid="btn-grill"')
+    expect(html).toContain('data-testid="btn-dismiss"')
+  })
+
+  it('prd-ready proposal does NOT show action buttons (status not actionable)', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ status: 'prd-ready' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('data-testid="btn-promote"')
+    expect(html).not.toContain('data-testid="btn-grill"')
+    expect(html).not.toContain('data-testid="btn-dismiss"')
+  })
+
+  it('sliced proposal does NOT show action buttons', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ status: 'sliced' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('data-testid="btn-promote"')
+    expect(html).not.toContain('data-testid="btn-dismiss"')
+  })
+
+  it('dismissed proposal does NOT show action buttons', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ status: 'dismissed' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('data-testid="btn-promote"')
+    expect(html).not.toContain('data-testid="btn-dismiss"')
+  })
+
+  it('action row container has correct testid for draft', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ status: 'draft' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="proposal-action-row"')
+  })
+
+  it('action row is absent for sliced proposals', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ status: 'sliced' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('data-testid="proposal-action-row"')
   })
 })
 
@@ -297,7 +376,7 @@ describe('ProposalDetailDrawer – sliced-tasks list', () => {
   })
 })
 
-// ── Body sections: problem, solution, user stories ───────────────────────────
+// ── Body sections: problem, solution, user stories, outOfScope, notes ────────
 
 describe('ProposalDetailDrawer – body sections', () => {
   it('renders the problem statement when non-empty', () => {
@@ -334,6 +413,28 @@ describe('ProposalDetailDrawer – body sections', () => {
     expect(html).toContain('Story beta')
   })
 
+  it('renders the outOfScope section when non-empty', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ outOfScope: 'No i18n in this slice.' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="proposal-detail-out-of-scope"')
+    expect(html).toContain('No i18n in this slice.')
+  })
+
+  it('renders the notes section when non-empty', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ notes: 'Follow-up in next sprint.' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="proposal-detail-notes"')
+    expect(html).toContain('Follow-up in next sprint.')
+  })
+
   it('omits the problem section when problem is empty', () => {
     const html = renderToStaticMarkup(
       <ProposalDetailDrawer
@@ -362,6 +463,26 @@ describe('ProposalDetailDrawer – body sections', () => {
       />,
     )
     expect(html).not.toContain('data-testid="proposal-detail-stories"')
+  })
+
+  it('omits outOfScope when empty', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ outOfScope: '' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('data-testid="proposal-detail-out-of-scope"')
+  })
+
+  it('omits notes when empty', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ notes: '' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('data-testid="proposal-detail-notes"')
   })
 
   it('renders all three sections when all content is present', () => {

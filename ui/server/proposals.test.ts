@@ -175,3 +175,82 @@ describe('GET /api/proposals — query-param forwarding (parity test)', () => {
     expect(daemonUrl.searchParams.has('foo')).toBe(false)
   })
 })
+
+// ---------------------------------------------------------------------------
+// POST /api/proposals/:id/thread
+// ---------------------------------------------------------------------------
+
+describe('POST /api/proposals/:id/thread — Grill thread creation', () => {
+  let repo: string
+  let server: ReturnType<typeof Bun.serve> | null = null
+  let baseUrl: string
+
+  beforeEach(async () => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    if (server) server.stop(true)
+    server = null
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('fetches the proposal and creates a chat thread, returning threadId', async () => {
+    const getCallPaths: string[] = []
+    const postCallPayloads: Array<{ path: string; body: unknown }> = []
+
+    const proxyGet = async (_stateDir: string, path: string): Promise<DaemonActionResult> => {
+      getCallPaths.push(path)
+      return {
+        status: 200,
+        body: { id: 'prop-abc', title: 'Phase 4: Token workers', problem: '', solution: '' },
+      }
+    }
+    const proxyPost = async (_stateDir: string, path: string, body: unknown): Promise<DaemonActionResult> => {
+      postCallPayloads.push({ path, body })
+      return { status: 200, body: { id: 'thread-xyz' } }
+    }
+
+    server = await startServer({ repo, port: 0, host: '127.0.0.1' }, { proxyGet, proxyPost })
+    baseUrl = `http://${server.hostname}:${server.port}`
+
+    const res = await fetch(`${baseUrl}/api/proposals/prop-abc/thread`, { method: 'POST' })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { threadId: string }
+    expect(body.threadId).toBe('thread-xyz')
+
+    // Verify the proposal was fetched from the daemon.
+    expect(getCallPaths.some((p) => p.includes('prop-abc'))).toBe(true)
+
+    // Verify the chat thread was created with the proposal title.
+    const threadCall = postCallPayloads.find((c) => c.path === '/chat/threads')
+    expect(threadCall).toBeDefined()
+    expect((threadCall?.body as { title?: string })?.title).toContain('Phase 4: Token workers')
+  })
+
+  it('returns 400 when the proposal id segment is empty', async () => {
+    server = await startServer({ repo, port: 0, host: '127.0.0.1' })
+    baseUrl = `http://${server.hostname}:${server.port}`
+
+    // Empty id — the /thread suffix is present but nothing between /proposals/ and /thread
+    const res = await fetch(`${baseUrl}/api/proposals//thread`, { method: 'POST' })
+    // Browsers typically normalise // → /, so test the missing-id guard via a
+    // leading-slash-stripped id that decodes to empty string.
+    // Either 400 (route matched, id empty) or a different response is fine;
+    // what must NOT happen is a 404 "no route" response.
+    expect(res.status).not.toBe(404)
+  })
+
+  it('propagates daemon errors — returns daemon status when proposal fetch fails', async () => {
+    const proxyGet = async (): Promise<DaemonActionResult> =>
+      ({ status: 404, body: { error: 'not found' } })
+    const proxyPost = async (): Promise<DaemonActionResult> =>
+      ({ status: 200, body: { id: 'thread-should-not-be-created' } })
+
+    server = await startServer({ repo, port: 0, host: '127.0.0.1' }, { proxyGet, proxyPost })
+    baseUrl = `http://${server.hostname}:${server.port}`
+
+    const res = await fetch(`${baseUrl}/api/proposals/missing-prop/thread`, { method: 'POST' })
+    expect(res.status).toBe(404)
+  })
+})

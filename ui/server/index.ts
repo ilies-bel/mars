@@ -537,6 +537,42 @@ export const startServer = async (
           })
         }
 
+        // POST /api/proposals/:id/thread — open a Grill chat thread seeded for
+        // this proposal. Checked before the GET handler so the `/thread` suffix
+        // matches before the bare `/:id` form. Following the same pattern as
+        // POST /api/alerts/:id/thread: fetch the proposal, create a chat thread
+        // with the proposal title, return { threadId }.
+        if (
+          path.startsWith('/api/proposals/') &&
+          path.endsWith('/thread') &&
+          req.method === 'POST'
+        ) {
+          const rawId = path.slice('/api/proposals/'.length, -'/thread'.length)
+          const proposalId = decodeURIComponent(rawId)
+          if (!proposalId) {
+            return jsonResponse(400, { error: 'proposal id is required' })
+          }
+          try {
+            const proposalResult = await proxyGet(
+              ctx.stateDir,
+              `/view/proposal/${encodeURIComponent(proposalId)}`,
+            )
+            if (proposalResult.status !== 200) {
+              return jsonResponse(proposalResult.status, proposalResult.body)
+            }
+            const proposal = proposalResult.body as { title?: string }
+            const threadTitle = `Grill: ${String(proposal.title ?? proposalId)}`
+            const threadResult = await proxyPost(ctx.stateDir, '/chat/threads', { title: threadTitle })
+            if (threadResult.status !== 200) {
+              return jsonResponse(threadResult.status, threadResult.body)
+            }
+            const thread = threadResult.body as { id?: string }
+            return jsonResponse(200, { threadId: String(thread.id ?? '') })
+          } catch (err) {
+            return jsonResponse(500, { error: (err as Error).message })
+          }
+        }
+
         // GET /api/proposals/:id — proxy the daemon's by-id proposal endpoint.
         if (path.startsWith('/api/proposals/') && req.method === 'GET') {
           const proposalId = decodeURIComponent(path.slice('/api/proposals/'.length))

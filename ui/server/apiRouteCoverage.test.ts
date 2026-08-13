@@ -87,6 +87,8 @@ const FRONTEND_ROUTES: Array<{ method: string; path: string }> = [
   // Alerts
   { method: 'GET',  path: '/api/alerts' },
   { method: 'POST', path: '/api/alerts/x/thread' },
+  // Proposal Grill thread
+  { method: 'POST', path: '/api/proposals/x/thread' },
   // Levers
   { method: 'POST', path: '/api/levers/x' },
 ]

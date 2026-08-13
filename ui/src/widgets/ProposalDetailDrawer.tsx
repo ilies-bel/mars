@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DraftFeature, ProgressTask } from '@/shared/schemas'
+import type { ProposalDetail, ProgressTask } from '@/shared/schemas'
 import { CopyButton } from '@/components/CopyButton'
 
 interface ProposalDetailDrawerProps {
-  /** Proposal sourced from the `/api/proposals` fetch. */
-  proposal: DraftFeature
+  /** Full proposal record sourced from GET /api/proposals/:id. */
+  proposal: ProposalDetail
   /** Clears the `#/proposal/<id>` hash so the drawer closes. */
   onClose: () => void
   /**
@@ -32,7 +32,7 @@ const badgeClass = (status: string): string =>
 
 /**
  * Copy-pasteable CLI commands shown in the drawer for each proposal status.
- * Only informational — no mutation buttons.
+ * Informational only — separate action buttons handle mutations.
  */
 const STATUS_CLI_VERBS: Record<string, string[]> = {
   draft: ['promote', 'show'],
@@ -41,13 +41,40 @@ const STATUS_CLI_VERBS: Record<string, string[]> = {
   dismissed: ['show'],
 }
 
+/** Navigate to a chat thread by writing the `#/chat?thread=<id>` hash. */
+const navigateToThread = (threadId: string): void => {
+  if (typeof window === 'undefined') return
+  window.location.hash = `#/chat?thread=${encodeURIComponent(threadId)}`
+}
+
+const BASE = typeof import.meta !== 'undefined' && import.meta.env
+  ? (import.meta.env.VITE_API_BASE ?? '')
+  : ''
+
+async function postAction(op: string, entityId: string): Promise<{ taskId?: string }> {
+  const r = await fetch(`${BASE}/api/actions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op, entityId }),
+  })
+  if (!r.ok) throw new Error(`POST /api/actions → ${r.status}`)
+  return r.json() as Promise<{ taskId?: string }>
+}
+
+async function startThreadFromProposal(proposalId: string): Promise<{ threadId: string }> {
+  const r = await fetch(`${BASE}/api/proposals/${encodeURIComponent(proposalId)}/thread`, {
+    method: 'POST',
+  })
+  if (!r.ok) throw new Error(`POST /api/proposals/${proposalId}/thread → ${r.status}`)
+  return r.json() as Promise<{ threadId: string }>
+}
+
 /**
- * Slice 1 of the Proposal drawer: renders the proposal-specific header —
- * title, a status badge matching the Progress status legend, and the source
- * label (reflection / human / planner). Read-only; mutation surfaces and the
- * body sections land in later slices.
+ * Proposal detail drawer — renders at `#/proposal/<id>`.
  *
- * Slice 3 adds: CLI commands section with copy-to-clipboard affordance.
+ * Shows the full proposal body (title, problem, solution, user stories,
+ * outOfScope, notes) plus an action row with Promote, Grill, and Dismiss
+ * buttons wired to the existing server surfaces.
  */
 export const ProposalDetailDrawer = ({
   proposal,
@@ -61,6 +88,14 @@ export const ProposalDetailDrawer = ({
   const [closing, setClosing] = useState(false)
   // Synchronous guard — prevents double-scheduling the close timer.
   const closingRef = useRef(false)
+
+  const [promoteState, setPromoteState] = useState<
+    { kind: 'idle' } | { kind: 'pending' } | { kind: 'done'; taskId?: string } | { kind: 'error'; message: string }
+  >({ kind: 'idle' })
+  const [grillPending, setGrillPending] = useState(false)
+  const [dismissState, setDismissState] = useState<
+    { kind: 'idle' } | { kind: 'pending' } | { kind: 'done' } | { kind: 'error'; message: string }
+  >({ kind: 'idle' })
 
   /**
    * Initiates the exit animation (180 ms) then calls the onClose prop.
@@ -125,6 +160,48 @@ export const ProposalDetailDrawer = ({
     }
   }, [handleClose])
 
+  const handlePromote = useCallback(async () => {
+    if (promoteState.kind === 'pending') return
+    setPromoteState({ kind: 'pending' })
+    try {
+      const result = await postAction('promote', proposal.id)
+      setPromoteState({ kind: 'done', taskId: result.taskId })
+    } catch (err) {
+      setPromoteState({ kind: 'error', message: (err as Error).message })
+    }
+  }, [proposal.id, promoteState.kind])
+
+  const handleGrill = useCallback(async () => {
+    if (grillPending) return
+    setGrillPending(true)
+    try {
+      const { threadId } = await startThreadFromProposal(proposal.id)
+      navigateToThread(threadId)
+      handleClose()
+    } catch (err) {
+      setGrillPending(false)
+      console.error('Grill failed:', err)
+    }
+  }, [proposal.id, grillPending, handleClose])
+
+  const handleDismiss = useCallback(async () => {
+    if (dismissState.kind === 'pending') return
+    setDismissState({ kind: 'pending' })
+    try {
+      await postAction('dismiss', proposal.id)
+      setDismissState({ kind: 'done' })
+    } catch (err) {
+      setDismissState({ kind: 'error', message: (err as Error).message })
+    }
+  }, [proposal.id, dismissState.kind])
+
+  const isDraft = proposal.status === 'draft'
+
+  // Format createdAt timestamp as a locale date string.
+  const createdLabel = proposal.createdAt
+    ? new Date(proposal.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+    : null
+
   return (
     <>
       {/* Scrim — sits at z-40 (below the drawer's z-50) so clicks outside dismiss the panel */}
@@ -153,7 +230,7 @@ export const ProposalDetailDrawer = ({
           >
             {proposal.title}
           </h2>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span
               data-testid="proposal-detail-status"
               aria-label={`status ${proposal.status}`}
@@ -169,6 +246,22 @@ export const ProposalDetailDrawer = ({
             >
               {proposal.source}
             </span>
+            {proposal.author && (
+              <span
+                data-testid="proposal-detail-author"
+                className="font-mono text-[9px] text-muted-foreground"
+              >
+                {proposal.author.name}
+              </span>
+            )}
+            {createdLabel && (
+              <span
+                data-testid="proposal-detail-created"
+                className="font-mono text-[9px] text-muted-foreground"
+              >
+                {createdLabel}
+              </span>
+            )}
           </div>
         </div>
         <button
@@ -182,7 +275,66 @@ export const ProposalDetailDrawer = ({
         </button>
       </header>
 
-      {/* Scrollable body — problem, solution, user stories, sliced tasks */}
+      {/* Action row — Promote / Grill / Dismiss — visible for actionable statuses */}
+      {(isDraft) && (
+        <div
+          data-testid="proposal-action-row"
+          className="flex items-center gap-2 border-b border-primary/40 px-4 py-2"
+        >
+          {/* Promote */}
+          {promoteState.kind === 'done' ? (
+            <span className="font-mono text-[10px] text-primary">
+              {promoteState.taskId
+                ? <>Promoted → <a href={`#/task/${encodeURIComponent(promoteState.taskId)}`} className="underline">{promoteState.taskId}</a></>
+                : 'Promoted'}
+            </span>
+          ) : (
+            <button
+              type="button"
+              data-testid="btn-promote"
+              onClick={() => { void handlePromote() }}
+              disabled={promoteState.kind === 'pending'}
+              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10 disabled:opacity-50"
+            >
+              {promoteState.kind === 'pending' ? 'Promoting…' : 'Promote'}
+            </button>
+          )}
+          {promoteState.kind === 'error' && (
+            <span className="font-mono text-[9px] text-destructive">{promoteState.message}</span>
+          )}
+
+          {/* Grill */}
+          <button
+            type="button"
+            data-testid="btn-grill"
+            onClick={() => { void handleGrill() }}
+            disabled={grillPending}
+            className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10 disabled:opacity-50"
+          >
+            {grillPending ? 'Opening…' : 'Grill'}
+          </button>
+
+          {/* Dismiss */}
+          {dismissState.kind === 'done' ? (
+            <span className="font-mono text-[10px] text-muted-foreground">Dismissed</span>
+          ) : (
+            <button
+              type="button"
+              data-testid="btn-dismiss"
+              onClick={() => { void handleDismiss() }}
+              disabled={dismissState.kind === 'pending'}
+              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-muted-foreground hover:bg-primary/5 disabled:opacity-50"
+            >
+              {dismissState.kind === 'pending' ? 'Dismissing…' : 'Dismiss'}
+            </button>
+          )}
+          {dismissState.kind === 'error' && (
+            <span className="font-mono text-[9px] text-destructive">{dismissState.message}</span>
+          )}
+        </div>
+      )}
+
+      {/* Scrollable body — problem, solution, user stories, outOfScope, notes, sliced tasks */}
       <div className="flex flex-1 flex-col overflow-y-auto">
         {proposal.problem.trim() ? (
           <section
@@ -224,6 +376,30 @@ export const ProposalDetailDrawer = ({
                 </li>
               ))}
             </ol>
+          </section>
+        ) : null}
+
+        {proposal.outOfScope.trim() ? (
+          <section
+            data-testid="proposal-detail-out-of-scope"
+            className="border-b border-primary/40 px-4 py-3"
+          >
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+              Out of scope
+            </p>
+            <p className="whitespace-pre-wrap font-mono text-xs text-foreground">{proposal.outOfScope}</p>
+          </section>
+        ) : null}
+
+        {proposal.notes.trim() ? (
+          <section
+            data-testid="proposal-detail-notes"
+            className="border-b border-primary/40 px-4 py-3"
+          >
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+              Notes
+            </p>
+            <p className="whitespace-pre-wrap font-mono text-xs text-foreground">{proposal.notes}</p>
           </section>
         ) : null}
 

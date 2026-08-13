@@ -33,6 +33,7 @@ import {
 } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
 import { useProposals } from '@/entities/proposals/useProposals'
+import { useProposalDetail } from '@/entities/proposals/useProposalDetail'
 import { useProgress } from '@/hooks/useProgress'
 import { FocusedProjectProvider } from '@/shared/useFocusedProject'
 import { ProgressPage } from '@/pages/ProgressPage'
@@ -145,15 +146,15 @@ const AppInner = () => {
   const studioTaskId = parseStudioRoute(hash)
   const activeStepName = parseTaskStep(hash) ?? undefined
 
-  // Proposal fields come from the `/api/proposals` fetch — no new
-  // endpoint is introduced for the drawer.
+  // Proposal list: used only for ProposalNodeDrawer (DAG canvas overlay).
   const { proposals: drafts } = useProposals()
   // Graph data for the task drawer's subgraph.  React Query deduplicates this
   // against the identical call inside ProgressPage — no extra network request.
   const { tasks, proposals } = useProgress()
-  const proposal = proposalId
-    ? (drafts.find((d) => d.id === proposalId) ?? null)
-    : null
+  // Fetch the full proposal detail by id when a #/proposal/<id> hash is present.
+  // This avoids the limit-50 / status-filter miss of the list endpoint and works
+  // for any proposal regardless of status or pagination position.
+  const { proposal } = useProposalDetail(proposalId)
   const proposalNodeDraft = proposalNodeId
     ? (drafts.find((d) => d.id === proposalNodeId) ?? undefined)
     : undefined
