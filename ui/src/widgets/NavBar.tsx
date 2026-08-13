@@ -101,13 +101,8 @@ export const NavBar = ({ hash }: NavBarProps) => {
         </a>
       </span>
       <span className="relative">
-        <a className={linkClass(route === 'steward')} href="#/steward">
-          Steward
-        </a>
-      </span>
-      <span className="relative">
-        <a className={linkClass(route === 'reflections')} href="#/reflections">
-          Reflections
+        <a className={linkClass(route === 'control')} href="#/control">
+          Control
         </a>
       </span>
       <span className="ml-auto flex items-center gap-2">
