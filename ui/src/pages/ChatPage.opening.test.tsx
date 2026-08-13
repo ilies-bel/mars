@@ -4,14 +4,12 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ChatPage } from './ChatPage'
-import type { ActionQueueItem, DraftFeature } from '@/shared/schemas'
-
-let largeScreen = true
+import type { ActionQueueItem } from '@/shared/schemas'
 
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
   value: (query: string) => ({
-    matches: query.includes('1280') ? largeScreen : true,
+    matches: query.includes('1280') ? true : true,
     media: query,
     onchange: null,
     addListener: vi.fn(),
@@ -89,44 +87,10 @@ const alert = (id: string, title: string, priority: ActionQueueItem['priority'])
   decisions: [],
 })
 
-const blockedTask = (id: string, title: string) => ({
-  id,
-  title,
-  status: 'blocked',
-  role: 'orchestrator' as const,
-  failed: false,
-  dropReason: null,
-  recoverySpawnedCount: 0,
-  priority: 2,
-  blockerTaskId: null,
-  spec: null,
-  createdAt: '2026-01-01T00:00:00.000Z',
-  updatedAt: '2026-01-01T00:00:00.000Z',
-})
-
-const proposal = (id: string): DraftFeature => ({
-  id,
-  title: `Proposal ${id}`,
-  problem: '',
-  solution: '',
-  status: 'draft',
-  source: 'human',
-  createdAt: 1,
-  updatedAt: 1,
-  acceptanceCount: 0,
-  userStories: [],
-})
-
-const snapshot = (tasks: ReturnType<typeof blockedTask>[]) => ({
-  columns: { backlog: [], in_progress: tasks, done: [] },
-  counts: { inProgress: tasks.length, todo: 0, done: 0 },
-})
-
 let container: HTMLDivElement
 let root: ReturnType<typeof createRoot>
 
 beforeEach(() => {
-  largeScreen = true
   window.location.hash = '#/chat'
   createChatThread.mockResolvedValue({ id: 'subject-1' })
   mockUseActionQueue.mockReturnValue({ items: [], error: null, projectsError: null, projectsEmpty: false })
@@ -150,50 +114,37 @@ const renderPage = async () => {
 }
 
 describe('ChatPage opening greeting', () => {
-  it('shows the seeded feed and terse all-clear fallback when no open work or drafts exist', async () => {
+  it('shows the seeded feed and the all-quiet greeting when no open work exists', async () => {
     await renderPage()
 
     expect(container.querySelector('[data-testid="seeded-feed"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="hero-headline"]')).toBeNull()
-    expect(container.querySelector('[data-testid="mars-opening-message"]')?.textContent).toContain('All clear \u2014 nothing needs you right now.')
+    expect(container.querySelector('[data-testid="mars-opening-message"]')?.textContent).toContain('All quiet.')
     expect(container.querySelector('[data-testid="chat-greeting"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="preloaded-responses"]')).toBeNull()
   })
 
-  it('opens a Subject for one supplied draft from the all-clear Grill response', async () => {
-    const drafts = [proposal('1'), proposal('2')]
-    mockUseProposals.mockReturnValue({ proposals: drafts, isPending: false, error: null, connected: true })
-    await renderPage()
-
-    await act(async () => (container.querySelector('[data-testid^="preloaded-response-"]') as HTMLButtonElement).click())
-
-    expect(createChatThread).toHaveBeenCalledTimes(1)
-    const request = createChatThread.mock.calls[0]?.[0]
-    expect(drafts.map(({ title }) => `Grill: ${title}`)).toContain(request.title)
-    expect(drafts.map(({ id }) => `Grill proposal ${id}`)).toContain(request.objective)
-    expect(request.origin).toBe('proposal')
-  })
-
-  it('briefs on the ranked subjects and summarises drafts without inlining any inventory', async () => {
+  it('shows aggregate "N need you" count and Open-the-board link without naming individual alerts', async () => {
     mockUseActionQueue.mockReturnValue({
       items: [alert('normal', 'Later alert', 'normal'), alert('urgent', 'Repair deployment', 'high')],
       error: null,
       projectsError: null,
       projectsEmpty: false,
     })
-    mockUseProposals.mockReturnValue({ proposals: [proposal('1')], isPending: false, error: null, connected: true })
 
     await renderPage()
 
     const opening = container.querySelector('[data-testid="mars-opening-message"]')
-    expect(opening?.textContent).toContain('2 subjects need you.')
-    expect(opening?.textContent).toContain('Start with Repair deployment')
-    expect(opening?.textContent).toContain('After that, Later alert.')
-    expect(opening?.textContent).toContain('1 draft is also waiting to be shaped.')
-    expect(opening?.querySelector('[data-testid="opening-next-moves"]')).toBeNull()
-    expect(opening?.querySelector('[data-testid="queue-group-header"]')).toBeNull()
-    // next move + one follow-up + the drafts link — no inventory rows.
-    expect(opening?.querySelectorAll('button')).toHaveLength(3)
+    expect(opening?.textContent).toContain('2 need you')
+    expect(opening?.textContent).not.toContain('Start with')
+    expect(opening?.textContent).not.toContain('After that')
+    expect(opening?.textContent).not.toContain('Repair deployment')
+    expect(opening?.textContent).not.toContain('Later alert')
+    // The board link is present; no per-alert buttons.
+    const link = opening?.querySelector('[data-testid="chat-greeting-board-link"]') as HTMLAnchorElement | null
+    expect(link).not.toBeNull()
+    expect(link?.getAttribute('href')).toBe('#/progress')
+    expect(link?.textContent).toBe('Open the board')
   })
 
   it('keeps open alerts out of the seeded feed', async () => {
@@ -229,41 +180,18 @@ describe('ChatPage opening greeting', () => {
       .toBe('alert-subject-1')
   })
 
-  it('opens the named alert through the existing Subject handler', async () => {
-    mockUseActionQueue.mockReturnValue({ items: [alert('urgent', 'Repair deployment', 'high')], error: null, projectsError: null, projectsEmpty: false })
-    await renderPage()
-
-    await act(async () => (container.querySelector('[data-testid="chat-greeting-next-move"]') as HTMLButtonElement).click())
-    expect(createChatThread).toHaveBeenCalledWith({ projectId: undefined })
-  })
-
-  it('opens the named blocked task in task detail', async () => {
-    mockUseTasks.mockReturnValue({ snapshot: snapshot([blockedTask('task-1', 'Release is blocked')]), error: null, connected: true })
-    await renderPage()
-
-    await act(async () => (container.querySelector('[data-testid="chat-greeting-next-move"]') as HTMLButtonElement).click())
-    expect(window.location.hash).toBe('#/task/task-1?from=chat')
-  })
-
-  it('expands and focuses the context rail when the remaining count is activated', async () => {
-    largeScreen = false
+  it('shows the Open-the-board link when there is an alert needing attention', async () => {
     mockUseActionQueue.mockReturnValue({
-      items: [
-        alert('urgent', 'Repair deployment', 'high'),
-        alert('normal', 'Later alert', 'normal'),
-        alert('third', 'Rebuild index', 'normal'),
-        alert('fourth', 'Rotate credentials', 'low'),
-      ],
+      items: [alert('urgent', 'Repair deployment', 'high')],
       error: null,
       projectsError: null,
       projectsEmpty: false,
     })
     await renderPage()
 
-    expect(container.querySelector('[aria-label="Context rail (collapsed)"]')).not.toBeNull()
-    await act(async () => (container.querySelector('[data-testid="chat-greeting-remaining"]') as HTMLButtonElement).click())
-    const openWork = container.querySelector('[data-testid="context-rail-open-work"]')
-    expect(container.querySelector('[aria-label="Context rail"]')).not.toBeNull()
-    expect(document.activeElement).toBe(openWork)
+    const link = container.querySelector('[data-testid="chat-greeting-board-link"]') as HTMLAnchorElement | null
+    expect(link).not.toBeNull()
+    expect(link?.getAttribute('href')).toBe('#/progress')
+    expect(container.querySelector('[data-testid="chat-greeting"]')?.textContent).toContain('1 need you')
   })
 })

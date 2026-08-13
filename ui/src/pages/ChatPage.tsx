@@ -76,7 +76,7 @@ import { PaperclipIcon, MicIcon, SquareIcon, XIcon, PauseIcon } from 'lucide-rea
 import { AgentConfigPanel } from '@/widgets/chat/AgentConfigPanel'
 import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
-import { buildRankedOpenWork, type OpenWorkItem } from '@/widgets/chat/openWork'
+import { buildRankedOpenWork, buildStatusCounts, type OpenWorkItem } from '@/widgets/chat/openWork'
 import { ChatHero, type HeroDelta } from '@/widgets/chat/ChatHero'
 import { priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
 import { PROCESS_LEVEL_OPS, QueueThreadDetail } from '@/widgets/chat/QueueThreadDetail'
@@ -2587,16 +2587,9 @@ export const ChatPage = () => {
   // session override that resets whenever the viewport crosses the xl boundary.
   const [railCollapsed, setRailCollapsed] = useState(!isXlScreen)
   const openWorkRegionRef = useRef<HTMLDivElement>(null)
-  const [focusRailOpenWork, setFocusRailOpenWork] = useState(false)
   useEffect(() => {
     setRailCollapsed(!isXlScreen)
   }, [isXlScreen])
-  useEffect(() => {
-    if (focusRailOpenWork && !railCollapsed) {
-      openWorkRegionRef.current?.focus()
-      setFocusRailOpenWork(false)
-    }
-  }, [focusRailOpenWork, railCollapsed])
 
   // Mobile sidebar sheet
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -2663,6 +2656,17 @@ export const ChatPage = () => {
   const openWork = useMemo(
     () => buildRankedOpenWork(queueItems, taskSnapshot?.columns.in_progress ?? []),
     [queueItems, taskSnapshot],
+  )
+
+  const greetingCounts = useMemo(
+    () =>
+      buildStatusCounts(
+        openWork,
+        taskSnapshot?.columns.in_progress ?? [],
+        taskSnapshot?.columns.done ?? [],
+        new Date().toISOString().slice(0, 10),
+      ),
+    [openWork, taskSnapshot],
   )
 
   // Threads at the root so a deep-linked queue item can resolve to its merged
@@ -2916,11 +2920,6 @@ export const ChatPage = () => {
     void handleOpenSubthread(item.item)
   }, [handleOpenSubthread])
 
-  const handleShowRail = useCallback(() => {
-    setRailCollapsed(false)
-    setFocusRailOpenWork(true)
-  }, [])
-
   const openProposalSubject = useCallback(async (proposal: DraftFeature) => {
     const thread = await createChatThread({
       projectId,
@@ -3098,13 +3097,7 @@ export const ChatPage = () => {
               >
                 <span className="font-mono text-[11px] text-primary">mars</span>
                 {!selectedThreadId ? (
-                  <ChatGreeting
-                    rankedOpenWork={openWork}
-                    proposals={proposals}
-                    onOpenWork={handleOpenWork}
-                    onShowRail={handleShowRail}
-                    onOpenProposal={(proposal) => { void openProposalSubject(proposal) }}
-                  />
+                  <ChatGreeting {...greetingCounts} />
                 ) : (
                   <p className="font-mono text-[14px] text-foreground">
                     Nothing&apos;s pressing right now — what would you like to
