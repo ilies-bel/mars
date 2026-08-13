@@ -116,8 +116,7 @@ const WELCOME_CHIPS = [
   { label: 'Groom the action queue', prompt: 'Groom the action queue' },
   { label: 'Grill an idea', prompt: 'Grill this idea into a PRD: ' },
   { label: 'Enqueue a task', prompt: 'Enqueue a task: ' },
-  // 'What happened today?' streams a canned release-notes reply client-side
-  // (see WhatHappenedTodayView) instead of prefilling the composer.
+  // 'What happened today?' shows the ChatHero delta view instead of prefilling the composer.
   { label: "What happened today?", prompt: 'What happened today?', action: 'what-happened' },
 ] as const
 

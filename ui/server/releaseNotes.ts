@@ -211,7 +211,7 @@ export interface EvaporatedEntry {
  *   - evaporated    — projection Threads whose alert was resolved
  *
  * The `entries` field is kept for backward compatibility with consumers that
- * read only the recipe auto-run feed (e.g. WhatHappenedTodayView).
+ * read only the recipe auto-run feed.
  */
 export interface HeroDelta {
   merges: MergeEntry[]

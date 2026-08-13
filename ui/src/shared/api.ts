@@ -7,7 +7,6 @@ import {
   agentToolCallsResponseSchema,
   autoRecipeRunsResponseSchema,
   stewardLedgerResponseSchema,
-  wywaDeltaResponseSchema,
   deepReflectionsListResponseSchema,
   deepReflectionDetailSchema,
   chatConfigSchema,
@@ -39,7 +38,6 @@ import {
   type AgentToolCall,
   type AutoRecipeRun,
   type StewardLedgerEntry,
-  type WywaDeltaResponse,
   type ChatConfig,
   type ChatConversationResponse,
   type ChatThread,
@@ -1309,22 +1307,6 @@ export const fetchStewardLedger = async (
 }
 
 /**
- * Fetch the unified "while you were away" delta from the daemon — merges,
- * recoveries, auto-recipes, throttle events, and evaporated threads — all
- * since the given cursor, newest first and capped at `limit` (default 30).
- */
-export const fetchWywaDelta = async (opts?: {
-  since?: string
-  limit?: number
-}): Promise<WywaDeltaResponse> => {
-  const params: string[] = []
-  if (opts?.since) params.push(`since=${encodeURIComponent(opts.since)}`)
-  if (opts?.limit !== undefined) params.push(`limit=${opts.limit}`)
-  const qs = params.length > 0 ? `?${params.join('&')}` : ''
-  return fetchJson(`/api/wywa-delta${qs}`, wywaDeltaResponseSchema)
-}
-
-/**
  * Fetch the list of arc reflection reports, newest-first.
  * Each entry has headline counts but not the full report body.
  */
@@ -1413,8 +1395,6 @@ export type {
   StaleWorktreesPayload,
   TraceEvent,
   WorkerSession,
-  WywaDeltaResponse,
-  WywaEvent,
   DeepReflectionSummary,
   DeepReflectionDetail,
   DeepReflectionsListResponse,

@@ -81,10 +81,9 @@ const FRONTEND_ROUTES: Array<{ method: string; path: string }> = [
   { method: 'GET',    path: '/api/failure-kinds/learned-recipes' },
   { method: 'POST',   path: '/api/failure-kinds/x/recipe' },
   { method: 'DELETE', path: '/api/failure-kinds/x/recipe' },
-  // Steward / wywa / auto-recipe
+  // Steward / auto-recipe
   { method: 'GET', path: '/api/auto-recipe-runs' },
   { method: 'GET', path: '/api/steward-ledger' },
-  { method: 'GET', path: '/api/wywa-delta' },
   // Alerts
   { method: 'GET',  path: '/api/alerts' },
   { method: 'POST', path: '/api/alerts/x/thread' },

@@ -1511,33 +1511,6 @@ export const stewardLedgerResponseSchema = z.object({
 
 export type StewardLedgerEntry = z.infer<typeof stewardLedgerEntrySchema>
 
-// ── While-you-were-away delta ─────────────────────────────────────────────────
-
-/** One activity item returned by GET /view/wywa-delta. */
-export const wywaEventSchema = z.object({
-  kind: z.enum([
-    'merge',
-    'failure-recovered',
-    'auto-recipe',
-    'throttle',
-    'evaporated-thread',
-  ]),
-  /** Plain-English, human-readable description. */
-  summary: z.string(),
-  /** ISO-8601 timestamp used for newest-first ordering. */
-  at: z.string(),
-})
-
-export const wywaDeltaResponseSchema = z.object({
-  ok: z.boolean(),
-  events: z.array(wywaEventSchema),
-  /** Count of events truncated beyond the cap. */
-  andMore: z.number().int().nonnegative(),
-})
-
-export type WywaEvent = z.infer<typeof wywaEventSchema>
-export type WywaDeltaResponse = z.infer<typeof wywaDeltaResponseSchema>
-
 // ----------------------------------------------------------------------------
 // Deep reflection reports (GET /api/deep-reflections and
 // GET /api/deep-reflections/:originId). Arc-level analyses produced by
