@@ -375,7 +375,8 @@ describe('BoardView – Arc summaries', () => {
       <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
-    expect(html).toMatch(/data-tab="Queued"[^>]*>Queued<span[^>]*>1<\/span>/)
+    // Both tasks share an origin and collapse into one arc → Running tab shows count 1
+    expect(html).toMatch(/data-tab="Running"[^>]*>Running<span[^>]*>1<\/span>/)
   })
 })
 
@@ -667,16 +668,16 @@ describe('BoardView – proposal-filter empty state', () => {
 })
 
 describe('BoardView – mobile responsive tab strip (single-column below breakpoint)', () => {
-  it('renders a tab strip with a button for each cluster status', () => {
+  it('renders a tab strip with a button for each lifecycle column', () => {
     const html = renderToStaticMarkup(
       <BoardView byCluster={emptyByCluster()} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toContain('data-testid="board-tab-strip"')
-    expect(html).toContain('data-tab="Queued"')
-    expect(html).toContain('data-tab="In progress"')
-    expect(html).toContain('data-tab="Blocked"')
-    expect(html).toContain('data-tab="Failed"')
+    expect(html).toContain('data-tab="Running"')
+    expect(html).toContain('data-tab="Recovering"')
+    expect(html).toContain('data-tab="Needs you"')
+    expect(html).toContain('data-tab="Done"')
   })
 
   it('never renders a Proposals tab (proposals are not part of the board)', () => {
@@ -688,7 +689,7 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
     expect(html).not.toContain('data-cluster="Proposals"')
   })
 
-  it('defaults the active tab to Failed when failed tasks are present', () => {
+  it('defaults the active tab to "Needs you" when failed tasks are present', () => {
     const t = task({ id: 'f1', cluster: 'Failed', status: 'failed' })
     const byCluster = { ...emptyByCluster(), Failed: [t] }
 
@@ -696,12 +697,12 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
       <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
-    // The Failed tab button carries aria-selected=true; Queued does not
-    expect(html).toMatch(/data-tab="Failed"[^>]*aria-selected="true"/)
-    expect(html).toMatch(/data-tab="Queued"[^>]*aria-selected="false"/)
+    // Failed tasks surface in "Needs you" — that tab should be active
+    expect(html).toMatch(/data-tab="Needs you"[^>]*aria-selected="true"/)
+    expect(html).toMatch(/data-tab="Running"[^>]*aria-selected="false"/)
   })
 
-  it('defaults to In progress when no failures but in-progress tasks exist', () => {
+  it('defaults to Running when no failures but in-progress tasks exist', () => {
     const t = task({ id: 'r1', cluster: 'In progress', status: 'running' })
     const byCluster = { ...emptyByCluster(), 'In progress': [t] }
 
@@ -709,19 +710,21 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
       <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
-    expect(html).toMatch(/data-tab="In progress"[^>]*aria-selected="true"/)
-    expect(html).toMatch(/data-tab="Failed"[^>]*aria-selected="false"/)
+    // Running task with no failed member → "Running" lifecycle column is the active tab
+    expect(html).toMatch(/data-tab="Running"[^>]*aria-selected="true"/)
+    expect(html).toMatch(/data-tab="Needs you"[^>]*aria-selected="false"/)
   })
 
-  it('defaults to Queued when board is empty (no failed, no in-progress)', () => {
+  it('defaults to Running when board is empty (no failed, no in-progress)', () => {
     const html = renderToStaticMarkup(
       <BoardView byCluster={emptyByCluster()} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
-    expect(html).toMatch(/data-tab="Queued"[^>]*aria-selected="true"/)
+    // All columns empty → fallback to "Running"
+    expect(html).toMatch(/data-tab="Running"[^>]*aria-selected="true"/)
   })
 
-  it('marks non-active cluster column wrappers as hidden on mobile (class starts with "hidden")', () => {
+  it('marks non-active lifecycle column wrappers as hidden on mobile (class starts with "hidden")', () => {
     const t = task({ id: 'f1', cluster: 'Failed', status: 'failed' })
     const byCluster = { ...emptyByCluster(), Failed: [t] }
 
@@ -729,12 +732,12 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
       <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
-    // Active column wrapper (Failed) should NOT start with hidden
-    expect(html).toMatch(/data-cluster="Failed"[^>]*class="flex/)
-    // Inactive column wrappers should start with hidden
-    expect(html).toMatch(/data-cluster="Queued"[^>]*class="hidden/)
-    expect(html).toMatch(/data-cluster="In progress"[^>]*class="hidden/)
-    expect(html).toMatch(/data-cluster="Blocked"[^>]*class="hidden/)
+    // Failed task surfaces in "Needs you" → that wrapper must be visible (flex)
+    expect(html).toMatch(/data-cluster="Needs you"[^>]*class="flex/)
+    // Other lifecycle column wrappers must be hidden on mobile
+    expect(html).toMatch(/data-cluster="Running"[^>]*class="hidden/)
+    expect(html).toMatch(/data-cluster="Recovering"[^>]*class="hidden/)
+    expect(html).toMatch(/data-cluster="Done"[^>]*class="hidden/)
   })
 
   it('shows count badges for tabs with tasks', () => {
@@ -745,7 +748,7 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
       <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
-    // Count "1" should appear near the Failed tab
+    // Failed task creates one "Needs you" group → count "1" appears near the tab
     expect(html).toContain('>1<')
   })
 })

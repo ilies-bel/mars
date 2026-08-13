@@ -4,17 +4,47 @@ import type { Role, UITask } from '@/shared/types'
 import { taskTitle } from '@/shared/promptTitle'
 import { arcPlacementCluster, resolveArcLabel, taskArcKey } from '@/widgets/topologyFlowModel'
 import { ArcColumn, type BoardArc } from '@/widgets/Column'
+import { humanizeFailureCode } from '@/shared/actionQueueDetail'
+import { invokeAction } from '@/shared/api'
 
 // ---------------------------------------------------------------------------
 // Types and constants
 // ---------------------------------------------------------------------------
 
-// Display order in the tab strip (mirrors column order — lifecycle-first: blocked → queued → in progress → failed)
-const ALL_TABS: readonly Cluster[] = ['Blocked', 'Queued', 'In progress', 'Failed']
+/** The four lifecycle columns on the reworked board. */
+type LifecycleCol = 'Running' | 'Recovering' | 'Needs you' | 'Done'
 
-// Priority for the default tab: leftmost non-empty of Blocked, Queued, In progress, Failed.
-// Same story as ALL_TABS and CLUSTERS — the lifecycle order determines which column is shown first.
-const DEFAULT_TAB_PRIORITY: readonly Cluster[] = ['Blocked', 'Queued', 'In progress', 'Failed']
+/**
+ * A group of failed arcs sharing the same root-cause failure signature.
+ * Arcs with the same signature collapse into one card on the "Needs you" column.
+ * Arcs with no signature each get their own group.
+ */
+interface FailureGroup {
+  /** Unique group key: 'sig:<signature>' for shared-sig groups, 'arc:<id>' otherwise. */
+  id: string
+  signature: string | null
+  /** Human-readable title — humanized signature or the arc's own title. */
+  title: string
+  /** Number of arcs in this group — shown as the badge count when > 1. */
+  count: number
+  /** Member arcs whose tasks drive the Continue/Restart actions. */
+  arcs: BoardArc[]
+}
+
+// Display order for lifecycle column tabs and wrappers
+const LIFECYCLE_COLS: readonly LifecycleCol[] = ['Running', 'Recovering', 'Needs you', 'Done']
+
+// Default active tab: most-attention-needed column first
+const DEFAULT_LIFECYCLE_PRIORITY: readonly LifecycleCol[] = ['Needs you', 'Recovering', 'Running', 'Done']
+
+// Internal cluster order used by buildArcsByCluster (unchanged from v1)
+const CLUSTERS: readonly Cluster[] = ['Blocked', 'Queued', 'In progress', 'Failed']
+
+// Queued arcs collapse to a count header in the Running column when above this threshold
+const QUEUED_COLLAPSE_THRESHOLD = 3
+
+const compareNewestFirst = (a: ProgressTask, b: ProgressTask): number =>
+  b.updatedAt.localeCompare(a.updatedAt)
 
 const roleFromStatus = (status: ProgressTask['status']): Role => {
   switch (status) {
@@ -55,13 +85,9 @@ const toUI = (t: ProgressTask): UITask => ({
   updatedAt: t.updatedAt,
 })
 
-// Column order — lifecycle-first (Blocked / Queued leftmost) so the pipeline flows
-// left-to-right from waiting → active → terminal. Matches DEFAULT_TAB_PRIORITY
-// and ALL_TABS so desktop and mobile tell the same story.
-const CLUSTERS: readonly Cluster[] = ['Blocked', 'Queued', 'In progress', 'Failed']
-
-const compareNewestFirst = (a: ProgressTask, b: ProgressTask): number =>
-  b.updatedAt.localeCompare(a.updatedAt)
+// ---------------------------------------------------------------------------
+// buildArcsByCluster — unchanged from v1; exported for tests and TopologyView
+// ---------------------------------------------------------------------------
 
 /**
  * Collapse the open task projection into its durable Arc roots. An Arc that
@@ -142,7 +168,167 @@ export const buildArcsByCluster = (
 }
 
 // ---------------------------------------------------------------------------
-// BoardView component
+// Lifecycle reclassification helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * True when an In-progress arc has a failed task member — meaning the system
+ * spawned a fix task that is actively running. The arc belongs in "Recovering".
+ * Arcs without a failed member are plain "Running".
+ */
+const isRecoveryArc = (arc: BoardArc): boolean =>
+  arc.tasks.some((t) => t.failed)
+
+/**
+ * Group failed arcs by failure signature.
+ * Arcs sharing the same non-null signature → one FailureGroup card.
+ * Arcs with no signature → each gets its own group (titled by the arc title).
+ */
+const groupBySignature = (arcs: BoardArc[]): FailureGroup[] => {
+  const bySig = new Map<string, BoardArc[]>()
+  const noSig: BoardArc[] = []
+
+  for (const arc of arcs) {
+    const sig = arc.failureSignature ?? null
+    if (sig !== null) {
+      const existing = bySig.get(sig)
+      if (existing) existing.push(arc)
+      else bySig.set(sig, [arc])
+    } else {
+      noSig.push(arc)
+    }
+  }
+
+  const groups: FailureGroup[] = []
+
+  for (const [sig, sigArcs] of bySig) {
+    groups.push({
+      id: `sig:${sig}`,
+      signature: sig,
+      title: humanizeFailureCode(sig),
+      count: sigArcs.length,
+      arcs: sigArcs,
+    })
+  }
+
+  for (const arc of noSig) {
+    groups.push({
+      id: `arc:${arc.id}`,
+      signature: null,
+      title: arc.title,
+      count: 1,
+      arcs: [arc],
+    })
+  }
+
+  return groups
+}
+
+// ---------------------------------------------------------------------------
+// FailureGroupCard — "Needs you" column card
+// ---------------------------------------------------------------------------
+
+const FailureGroupCard = ({ group }: { group: FailureGroup }) => {
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  // Collect the IDs of failed tasks across all member arcs for Continue/Restart
+  const failedTaskIds = group.arcs.flatMap((arc) =>
+    arc.tasks.filter((t) => t.failed).map((t) => t.id),
+  )
+
+  const handleContinue = () => {
+    const ids = failedTaskIds.length > 0 ? failedTaskIds : group.arcs.flatMap((arc) => arc.tasks.map((t) => t.id))
+    for (const taskId of ids) {
+      invokeAction('continue', taskId).catch(() => {
+        // Continue not available for this task — surface the failure via action queue
+      })
+    }
+  }
+
+  const handleRestart = () => {
+    setMenuOpen(false)
+    const ids = failedTaskIds.length > 0 ? failedTaskIds : group.arcs.flatMap((arc) => arc.tasks.map((t) => t.id))
+    for (const taskId of ids) {
+      invokeAction('restart', taskId).catch(() => {
+        // ignore individual restart failures
+      })
+    }
+  }
+
+  const arcIds = group.arcs.map((arc) => arc.id)
+
+  return (
+    <div
+      data-failure-group={group.id}
+      data-group-count={group.count}
+      className="mars-card rounded-lg bg-card p-3 flex flex-col gap-2"
+    >
+      {/* Title row: failure label + count badge */}
+      <div className="flex items-start gap-2">
+        <span className="min-w-0 flex-1 line-clamp-2 text-body font-medium leading-snug text-foreground">
+          {group.title}
+        </span>
+        {group.count > 1 ? (
+          <span
+            data-testid="group-count-badge"
+            className="shrink-0 rounded bg-status-failed/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-status-failed"
+          >
+            {group.count}
+          </span>
+        ) : null}
+      </div>
+      {/* Member arc IDs */}
+      <div className="font-mono text-meta text-muted-foreground truncate">
+        {arcIds.join(' · ')}
+      </div>
+      {/* Action row: primary Continue + secondary overflow */}
+      <div className="flex items-center gap-2">
+        <button
+          data-testid="group-continue"
+          type="button"
+          onClick={handleContinue}
+          className="flex-1 rounded bg-primary px-3 py-1 font-mono text-[11px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+        >
+          Continue
+        </button>
+        <div className="relative">
+          <button
+            data-testid="group-overflow-menu"
+            type="button"
+            onClick={() => setMenuOpen((o) => !o)}
+            className="rounded border border-border px-2 py-1 font-mono text-[11px] text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+            aria-label="More actions"
+          >
+            ⋯
+          </button>
+          {menuOpen ? (
+            <div className="absolute right-0 top-full z-20 mt-1 flex flex-col gap-0.5 rounded border border-border bg-popover p-1 shadow-md">
+              <button
+                data-testid="group-restart"
+                type="button"
+                onClick={handleRestart}
+                className="rounded px-3 py-1 text-left font-mono text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                Restart
+              </button>
+              <button
+                data-testid="group-open"
+                type="button"
+                onClick={() => setMenuOpen(false)}
+                className="rounded px-3 py-1 text-left font-mono text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                Open
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// BoardView component props (stable contract — callers unchanged)
 // ---------------------------------------------------------------------------
 
 export interface BoardViewProps {
@@ -165,6 +351,10 @@ export interface BoardViewProps {
   onClearProposalFilter?: () => void
 }
 
+// ---------------------------------------------------------------------------
+// BoardView — four lifecycle columns: Running / Recovering / Needs you / Done
+// ---------------------------------------------------------------------------
+
 export const BoardView = ({
   byCluster,
   proposals,
@@ -175,41 +365,65 @@ export const BoardView = ({
   purgeArchive,
   onClearProposalFilter,
 }: BoardViewProps) => {
-  // Filter active (non-Done) tasks by proposal + search before grouping so an
-  // Arc spanning a failure and its recovery is represented exactly once, in the
-  // status that describes its current work.
+  // Filter active (non-Done) tasks by proposal + search before arc grouping so
+  // an arc spanning a failure and its recovery is represented exactly once.
   const activeTasks = CLUSTERS.flatMap((cluster) => byCluster[cluster]).filter((task) => {
     if (selectedProposalId !== null && task.parentProposalId !== selectedProposalId) return false
     return searchMatchIds == null || searchMatchIds.has(task.id)
   })
-  // Done tasks are arc metadata — they are always passed to arc grouping so a
-  // completed origin can provide its prompt as the arc title and prevent a false
-  // "Abandoned arc / origin force-purged" display. They bypass search and
-  // proposal filtering because they are not visible items on the board.
+
+  // Done tasks are arc metadata — they bypass proposal/search filtering because
+  // they are not visible items on the board; they exist so done origins can
+  // supply arc titles and prevent false "Abandoned arc" displays.
   const doneTasks = byCluster['Done'] ?? []
+
   const arcsByCluster = buildArcsByCluster([...activeTasks, ...doneTasks], proposals)
 
-  // Total active tasks visible after proposal + search filtering.
-  // Used to detect the search zero-state (active query that matches nothing).
-  // Done tasks are excluded since they are not rendered on the board.
+  // ── Lifecycle reclassification ─────────────────────────────────────────────
+  //
+  // Running   = Blocked + Queued + non-recovery In-progress arcs
+  // Recovering = In-progress arcs that have a failed task member (fix in flight)
+  // Needs you  = Failed arcs, grouped by failure signature
+  // Done       = today's done tasks (collapsed list)
+
+  const queuedArcs = arcsByCluster.Queued
+  const collapseQueued = queuedArcs.length > QUEUED_COLLAPSE_THRESHOLD
+
+  // Active arcs that show as individual cards in Running column
+  const activeRunningArcs: BoardArc[] = [
+    ...arcsByCluster.Blocked,
+    ...arcsByCluster['In progress'].filter((arc) => !isRecoveryArc(arc)),
+  ]
+
+  // When queued count is small enough, expand them as individual cards too
+  const runningArcsToRender: BoardArc[] = collapseQueued
+    ? activeRunningArcs
+    : [...queuedArcs, ...activeRunningArcs]
+
+  // Total running arcs (for tab count)
+  const totalRunningArcs = queuedArcs.length + activeRunningArcs.length
+
+  const recoveringArcs = arcsByCluster['In progress'].filter(isRecoveryArc)
+  const needsYouArcs = arcsByCluster.Failed
+  const failureGroups = groupBySignature(needsYouArcs)
+
+  // ── Total matched tasks (for zero-state detection) ─────────────────────────
+  // Done tasks excluded — they are not visible board items.
   const totalMatchedTasks = activeTasks.length
 
-  // Arc count per tab (for the mobile strip badges)
-  const tabCounts: Record<Cluster, number> = {
-    Queued: arcsByCluster.Queued.length,
-    'In progress': arcsByCluster['In progress'].length,
-    Blocked: arcsByCluster.Blocked.length,
-    Failed: arcsByCluster.Failed.length,
-    Done: 0, // arcs never resolve to Done; tab does not appear in ALL_TABS
+  // ── Tab counts ─────────────────────────────────────────────────────────────
+  const tabCounts: Record<LifecycleCol, number> = {
+    Running: totalRunningArcs,
+    Recovering: recoveringArcs.length,
+    'Needs you': failureGroups.length,
+    Done: doneTasks.length,
   }
 
-  // Default to the leftmost non-empty of Blocked → Queued → In progress → Failed; else Queued
-  const defaultTab = DEFAULT_TAB_PRIORITY.find((t) => tabCounts[t] > 0) ?? 'Queued'
+  // Default: leftmost non-empty from priority list; fallback to 'Running'
+  const defaultTab = DEFAULT_LIFECYCLE_PRIORITY.find((t) => tabCounts[t] > 0) ?? 'Running'
 
-  // Active tab controls which single column is visible on mobile
-  const [activeTab, setActiveTab] = useState<Cluster>(defaultTab)
-
-  const visibleTabs = ALL_TABS
+  // Active tab — controls which single column is visible on mobile
+  const [activeTab, setActiveTab] = useState<LifecycleCol>(defaultTab)
 
   return (
     <>
@@ -222,7 +436,7 @@ export const BoardView = ({
         data-testid="board-tab-strip"
         className="flex min-h-[44px] shrink-0 items-center overflow-x-auto border-b border-border bg-background px-2 md:hidden"
       >
-        {visibleTabs.map((tab) => {
+        {LIFECYCLE_COLS.map((tab) => {
           const count = tabCounts[tab]
           return (
             <button
@@ -247,14 +461,13 @@ export const BoardView = ({
       </div>
 
       {/* ------------------------------------------------------------------ */}
-      {/* Board layout                                                         */}
+      {/* Board layout (four lifecycle columns)                               */}
       {/*   mobile  (<768px):   flex-col, one column at a time (tab-driven)   */}
       {/*   tablet  (768–1024px): CSS grid, 2–3 fluid columns, vertical scroll */}
-      {/*   desktop (>1024px):  flex-row, original 5 equal columns            */}
+      {/*   desktop (>1024px):  flex-row, four equal columns                  */}
       {/* ------------------------------------------------------------------ */}
       <main className="relative flex flex-col min-h-0 flex-1 gap-3 overflow-hidden bg-background p-4 md:grid md:grid-cols-[repeat(auto-fit,minmax(280px,1fr))] md:auto-rows-[400px] md:overflow-y-auto lg:flex lg:flex-row lg:overflow-hidden">
-        {/* Zero-state proposal pill — shown when the proposal filter yields no active tasks.
-            Only shown when there is no active text search (search zero-state takes precedence). */}
+        {/* Zero-state proposal pill */}
         {selectedProposalId !== null && searchMatchIds == null && totalMatchedTasks === 0 && (
           <div
             data-testid="proposal-zero-state"
@@ -274,8 +487,7 @@ export const BoardView = ({
             </div>
           </div>
         )}
-        {/* Zero-state search pill — shown when a non-empty search matches no tasks.
-            pointer-events:none so it never blocks column scroll interaction. */}
+        {/* Zero-state search pill */}
         {searchMatchIds != null && totalMatchedTasks === 0 && (
           <div
             data-testid="search-zero-state"
@@ -286,29 +498,116 @@ export const BoardView = ({
             </span>
           </div>
         )}
-        {CLUSTERS.map((cluster) => {
-          const arcsForCluster = arcsByCluster[cluster]
-          const accent: 'highlight' | 'muted' =
-            cluster === 'In progress' ? 'highlight' : 'muted'
-          // Mobile: show only the active tab's column. Tablet+: show all.
-          const isActiveOnMobile = activeTab === cluster
-          return (
-            <div
-              key={cluster}
-              data-cluster={cluster}
-              className={`${isActiveOnMobile ? 'flex' : 'hidden'} flex-col flex-1 min-h-0 md:flex lg:flex-1 lg:basis-0`}
-            >
-              <ArcColumn
-                label={cluster}
-                accent={accent}
-                arcs={arcsForCluster}
-                expandAll={searchMatchIds != null}
-                purgeArchive={purgeArchive}
-              />
+
+        {/* ── Running column ─────────────────────────────────────────────── */}
+        <div
+          data-cluster="Running"
+          className={`${activeTab === 'Running' ? 'flex' : 'hidden'} flex-col flex-1 min-h-0 md:flex lg:flex-1 lg:basis-0`}
+        >
+          <ArcColumn
+            label="Running"
+            accent="highlight"
+            arcs={runningArcsToRender}
+            expandAll={searchMatchIds != null}
+            purgeArchive={purgeArchive}
+            collapsedQueuedCount={collapseQueued ? queuedArcs.length : undefined}
+          />
+        </div>
+
+        {/* ── Recovering column ──────────────────────────────────────────── */}
+        <div
+          data-cluster="Recovering"
+          className={`${activeTab === 'Recovering' ? 'flex' : 'hidden'} flex-col flex-1 min-h-0 md:flex lg:flex-1 lg:basis-0`}
+        >
+          <ArcColumn
+            label="Recovering"
+            accent="amber"
+            arcs={recoveringArcs}
+            expandAll={searchMatchIds != null}
+            purgeArchive={purgeArchive}
+          />
+        </div>
+
+        {/* ── Needs you column ───────────────────────────────────────────── */}
+        <div
+          data-cluster="Needs you"
+          className={`${activeTab === 'Needs you' ? 'flex' : 'hidden'} flex-col flex-1 min-h-0 md:flex lg:flex-1 lg:basis-0`}
+        >
+          <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-2 bg-secondary p-3">
+            <header className="flex items-center justify-between border-b border-border/50 px-1 pb-2">
+              <span className="font-sans text-[11px] font-semibold tracking-[0.1em] text-muted-foreground">
+                Needs you
+              </span>
+              <span className="font-mono text-[11px] font-semibold text-muted-foreground">
+                {failureGroups.length}
+              </span>
+            </header>
+            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+              {failureGroups.length === 0 ? (
+                <div className="px-1 py-2 font-mono text-[11px] text-muted-foreground/70">
+                  empty
+                </div>
+              ) : (
+                failureGroups.map((group) => (
+                  <FailureGroupCard key={group.id} group={group} />
+                ))
+              )}
             </div>
-          )
-        })}
+          </section>
+        </div>
+
+        {/* ── Done column ────────────────────────────────────────────────── */}
+        <div
+          data-cluster="Done"
+          className={`${activeTab === 'Done' ? 'flex' : 'hidden'} flex-col flex-1 min-h-0 md:flex lg:flex-1 lg:basis-0`}
+        >
+          <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-2 bg-secondary p-3">
+            <header className="flex items-center justify-between border-b border-border/50 px-1 pb-2">
+              <span className="font-sans text-[11px] font-semibold tracking-[0.1em] text-muted-foreground">
+                Done
+              </span>
+              <span className="font-mono text-[11px] font-semibold text-muted-foreground">
+                {doneTasks.length}
+              </span>
+            </header>
+            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+              {doneTasks.length === 0 ? (
+                <div className="px-1 py-2 font-mono text-[11px] text-muted-foreground/70">
+                  empty
+                </div>
+              ) : (
+                <details className="mars-card group rounded-lg bg-card hover:bg-secondary">
+                  <summary
+                    className="flex cursor-pointer list-none items-center gap-2 p-3 [&::-webkit-details-marker]:hidden"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="text-muted-foreground transition-transform duration-150 group-open:rotate-180 motion-reduce:transition-none"
+                    >
+                      ▾
+                    </span>
+                    <span className="text-body font-medium text-foreground">
+                      {doneTasks.length} done today
+                    </span>
+                  </summary>
+                  <div className="border-t border-border/60 p-2">
+                    <div className="flex flex-col gap-1">
+                      {doneTasks.map((t) => (
+                        <div key={t.id} className="py-1">
+                          <span className="font-mono text-meta text-muted-foreground">
+                            {t.id}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </details>
+              )}
+            </div>
+          </section>
+        </div>
       </main>
+
       {error ? (
         <div className="border-t border-primary/40 bg-primary/10 px-6 py-1.5 font-mono text-[11px] text-primary">
           {error.message}

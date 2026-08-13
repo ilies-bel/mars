@@ -36,10 +36,16 @@ export interface BoardArc {
 interface Props {
   label: string
   arcs: BoardArc[]
-  accent?: 'highlight' | 'muted'
+  accent?: 'highlight' | 'muted' | 'amber'
   /** Search results should be immediately visible inside their matching arcs. */
   expandAll?: boolean
   purgeArchive?: Map<string, PurgeArchiveEntry>
+  /**
+   * When > 0, a muted "N queued" sub-row header is prepended to the arc list.
+   * Used by the Running column to show the queued backlog count without
+   * individual cards when the queue depth exceeds the collapse threshold.
+   */
+  collapsedQueuedCount?: number
 }
 
 const STATUS_CLASS: Record<Cluster, string> = {
@@ -55,7 +61,7 @@ const STATUS_CLASS: Record<Cluster, string> = {
  * Opening an Arc exposes its constituent task cards, preserving the existing
  * task drawer affordance without making the board itself misleadingly verbose.
  */
-export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, purgeArchive }: Props) => {
+export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, purgeArchive, collapsedQueuedCount }: Props) => {
   let taskIndex = 0
 
   return (
@@ -63,21 +69,33 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, pu
       <header className="flex items-center justify-between border-b border-border/50 px-1 pb-2">
         <span
           className={`font-sans text-[11px] font-semibold tracking-[0.1em] ${
-            accent === 'highlight' ? 'text-highlight' : 'text-muted-foreground'
+            accent === 'highlight'
+              ? 'text-highlight'
+              : accent === 'amber'
+                ? 'text-warn'
+                : 'text-muted-foreground'
           }`}
         >
           {label}
         </span>
         <span className="font-mono text-[11px] font-semibold text-muted-foreground">
-          {arcs.length}
+          {arcs.length + (collapsedQueuedCount ?? 0)}
         </span>
       </header>
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-        {arcs.length === 0 ? (
+        {collapsedQueuedCount ? (
+          <div
+            data-testid="queued-count-header"
+            className="px-1 py-1 font-mono text-[11px] text-muted-foreground/60"
+          >
+            {collapsedQueuedCount} queued
+          </div>
+        ) : null}
+        {arcs.length === 0 && !collapsedQueuedCount ? (
           <div className="px-1 py-2 font-mono text-[11px] text-muted-foreground/70">
             empty
           </div>
-        ) : (
+        ) : arcs.length === 0 ? null : (
           arcs.map((arc) => {
             const startIndex = taskIndex
             taskIndex += arc.tasks.length
