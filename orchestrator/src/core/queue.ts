@@ -235,7 +235,7 @@ export const isTaskTag = (value: unknown): value is TaskTag =>
  * before any verifiable artefact exists (e.g. install errors): such tasks
  * cannot be continued and must be restarted from scratch.
  */
-export type FailedPhase = 'code' | 'verify' | 'merge'
+export type FailedPhase = 'setup' | 'code' | 'verify' | 'merge'
 
 /**
  * Structured-task contract (gsd-executor-style). When a task ships with a
@@ -939,7 +939,7 @@ const parseQaReport = (raw: unknown): QaReport | null => {
 }
 
 const coerceFailedPhase = (raw: unknown): FailedPhase | null => {
-  if (raw === 'code' || raw === 'verify' || raw === 'merge') return raw
+  if (raw === 'setup' || raw === 'code' || raw === 'verify' || raw === 'merge') return raw
   return null
 }
 

@@ -563,10 +563,7 @@ const ensureWorktreeCurrent = async (args: {
       {
         status: 'failed',
         error: summary,
-        // `FailedPhase` has no 'setup' member; the setup step's own
-        // origin-worktree-missing escalation reports 'code' for the same
-        // reason. The phase-specific detail lives in `failureReason`.
-        failedPhase: 'code',
+        failedPhase: phase,
         failureReason: reason,
         failureSignature: signature,
         failureReasonCode: signature,

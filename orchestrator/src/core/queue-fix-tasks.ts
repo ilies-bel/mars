@@ -1031,11 +1031,11 @@ export const handleTaskFailureWithFixTask = async (
         const stepPrefix = input.failingStep.includes(':')
           ? input.failingStep.split(':')[0]
           : input.failingStep
-        // FailedPhase is 'code' | 'verify' | 'merge' — map step prefix to it
-        // or leave null for gates not in the union (e.g. setup).
+        // FailedPhase is 'setup' | 'code' | 'verify' | 'merge' — map step prefix to it
+        // or leave null for unrecognised step prefixes.
         const failedPhase =
-          stepPrefix === 'code' || stepPrefix === 'verify' || stepPrefix === 'merge'
-            ? (stepPrefix as 'code' | 'verify' | 'merge')
+          stepPrefix === 'setup' || stepPrefix === 'code' || stepPrefix === 'verify' || stepPrefix === 'merge'
+            ? (stepPrefix as 'setup' | 'code' | 'verify' | 'merge')
             : null
         await updateTask(
           input.taskId,
