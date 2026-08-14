@@ -48,7 +48,7 @@ const makeDeps = (
   purgeTask: async () => {},
   pruneWorktree: async () => {},
   dismissProposal: async () => {},
-  promoteProposal: async () => {},
+  promoteProposal: async () => ({ taskIds: [] }),
   validateTask: async () => {},
   rejectTask: async () => {},
   landWork: async () => {},
@@ -85,7 +85,7 @@ describe('POST /actions/promote/:id', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('calls promoteProposal with the correct id and returns { ok: true }', async () => {
+  it('calls promoteProposal with the correct id and returns { ok: true, taskIds }', async () => {
     const { httpServer } = await loadModules(repo)
 
     const promoted: string[] = []
@@ -93,6 +93,7 @@ describe('POST /actions/promote/:id', () => {
       makeDeps({
         promoteProposal: async (id) => {
           promoted.push(id)
+          return { taskIds: ['mars-task-1', 'mars-task-2'] }
         },
       }),
     )
@@ -104,8 +105,9 @@ describe('POST /actions/promote/:id', () => {
       )
 
       expect(res.status).toBe(200)
-      const body = (await res.json()) as { ok: boolean }
+      const body = (await res.json()) as { ok: boolean; taskIds: string[] }
       expect(body.ok).toBe(true)
+      expect(body.taskIds).toEqual(['mars-task-1', 'mars-task-2'])
       expect(promoted).toEqual(['prop-abc123'])
     } finally {
       await close()
@@ -154,6 +156,9 @@ describe('POST /actions/promote/:id', () => {
       makeDeps({
         promoteProposal: async (id) => {
           await proposals.promoteProposal(id)
+          // In production, handleProposalSlice creates real tasks; the stub
+          // returns an empty list so tests stay fast and DB-free.
+          return { taskIds: [] }
         },
       }),
     )
@@ -165,8 +170,9 @@ describe('POST /actions/promote/:id', () => {
       )
 
       expect(res.status).toBe(200)
-      const body = (await res.json()) as { ok: boolean }
+      const body = (await res.json()) as { ok: boolean; taskIds: string[] }
       expect(body.ok).toBe(true)
+      expect(body.taskIds).toEqual([])
 
       // Verify the proposal is actually promoted to prd-ready.
       const updated = await proposals.getProposal(proposal.id)

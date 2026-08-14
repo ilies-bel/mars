@@ -42,7 +42,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   purgeTask: async () => {},
   pruneWorktree: async () => {},
   dismissProposal: async () => {},
-  promoteProposal: async () => {},
+  promoteProposal: async () => ({ taskIds: [] }),
   validateTask: async () => {},
   rejectTask: async () => {},
   landWork: async () => {},

@@ -51,14 +51,21 @@ const BASE = typeof import.meta !== 'undefined' && import.meta.env
   ? (import.meta.env.VITE_API_BASE ?? '')
   : ''
 
-async function postAction(op: string, entityId: string): Promise<{ taskId?: string }> {
+async function postAction(op: string, entityId: string): Promise<{ taskIds?: string[] }> {
   const r = await fetch(`${BASE}/api/actions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ op, entityId }),
   })
-  if (!r.ok) throw new Error(`POST /api/actions → ${r.status}`)
-  return r.json() as Promise<{ taskId?: string }>
+  if (!r.ok) {
+    let message = `POST /api/actions → ${r.status}`
+    try {
+      const body = await r.json() as { error?: string }
+      if (typeof body.error === 'string' && body.error.length > 0) message = body.error
+    } catch { /* ignore JSON parse errors */ }
+    throw new Error(message)
+  }
+  return r.json() as Promise<{ taskIds?: string[] }>
 }
 
 async function startThreadFromProposal(proposalId: string): Promise<{ threadId: string }> {
@@ -90,7 +97,10 @@ export const ProposalDetailDrawer = ({
   const closingRef = useRef(false)
 
   const [promoteState, setPromoteState] = useState<
-    { kind: 'idle' } | { kind: 'pending' } | { kind: 'done'; taskId?: string } | { kind: 'error'; message: string }
+    | { kind: 'idle' }
+    | { kind: 'pending' }
+    | { kind: 'done'; taskId?: string }
+    | { kind: 'error'; message: string }
   >({ kind: 'idle' })
   const [grillPending, setGrillPending] = useState(false)
   const [dismissState, setDismissState] = useState<
@@ -165,7 +175,8 @@ export const ProposalDetailDrawer = ({
     setPromoteState({ kind: 'pending' })
     try {
       const result = await postAction('promote', proposal.id)
-      setPromoteState({ kind: 'done', taskId: result.taskId })
+      // Surface the first created task ID so the user can navigate to it.
+      setPromoteState({ kind: 'done', taskId: result.taskIds?.[0] })
     } catch (err) {
       setPromoteState({ kind: 'error', message: (err as Error).message })
     }

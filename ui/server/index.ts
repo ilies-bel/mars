@@ -12,7 +12,7 @@ import {
   fetchKpiSeries,
   type KpiSeries,
   type DaemonActionResult,
-  proxyAction,
+  proxyAction as realProxyAction,
   proxyDelete,
   proxyGet as realProxyGet,
   proxyPost as realProxyPost,
@@ -111,6 +111,12 @@ interface CliArgs {
 export interface ServerDeps {
   proxyGet?: (stateDir: string, path: string) => Promise<DaemonActionResult>
   proxyPost?: (stateDir: string, path: string, body: unknown, method?: 'POST' | 'PUT') => Promise<DaemonActionResult>
+  /**
+   * Injectable seam for the POST /api/actions endpoint. Defaults to the real
+   * {@link realProxyAction} which forwards to the running daemon. Tests inject
+   * a stub to control daemon responses without starting a real daemon.
+   */
+  proxyAction?: (stateDir: string, op: string, entityId?: string) => Promise<DaemonActionResult>
   /** SSE heartbeat interval in ms. Defaults to 15 000. Override in tests to avoid slow polls. */
   sseHeartbeatMs?: number
   /**
@@ -234,6 +240,7 @@ export const startServer = async (
   const rawProxyGet = deps.proxyGet ?? realProxyGet
   const proxyGet = withSkewDetection(rawProxyGet)
   const proxyPost = deps.proxyPost ?? realProxyPost
+  const proxyAction = deps.proxyAction ?? realProxyAction
   const sseHeartbeatMs = deps.sseHeartbeatMs ?? 15_000
   // Resolve the default context once for startup logging and healthz.
   const defaultCtx = resolveRepo(args.repo)

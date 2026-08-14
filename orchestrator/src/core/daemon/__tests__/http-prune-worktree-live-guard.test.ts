@@ -52,7 +52,7 @@ const makeDeps = (
   purgeTask: async () => {},
   pruneWorktree,
   dismissProposal: async () => {},
-  promoteProposal: async () => {},
+  promoteProposal: async () => ({ taskIds: [] }),
   validateTask: async () => {},
   rejectTask: async () => {},
   landWork: async () => {},

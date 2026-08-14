@@ -477,12 +477,12 @@ export interface HttpServerDeps {
   dismissProposal: (id: string) => Promise<void>
   /**
    * Promote a fully-shaped draft proposal: flip its status from `draft` →
-   * `queued` and enqueue it as a task. Throws when the proposal is not fully
-   * shaped (missing title/problem/solution/user-stories) or not in `draft`
-   * status — let the error propagate to the existing `sendError` path so the
-   * UI surfaces it.
+   * `prd-ready`, run the slicer to create tasks, and return the resulting
+   * task IDs. Throws when the proposal is not in `draft` status or the
+   * slicer fails — let the error propagate to the existing `sendError` path
+   * so the UI surfaces the message instead of swallowing it.
    */
-  promoteProposal: (id: string) => Promise<void>
+  promoteProposal: (id: string) => Promise<{ taskIds: string[] }>
   /**
    * Validate a task parked at the preview gate (status 'awaiting-validation'):
    * kill its dev server, mark it validated, and re-queue so the merge
@@ -711,7 +711,6 @@ type EntityOp =
   | 'purge'
   | 'prune-worktree'
   | 'dismiss'
-  | 'promote'
   | 'validate'
   | 'reject'
   | 'land-work'
@@ -819,6 +818,7 @@ const handleEventsRequest = async (
  *   POST /actions/purge/:id      → drop a task + worktree
  *   POST /actions/prune-worktree/:id → remove a stale worktree
  *   POST /actions/dismiss/:id    → dismiss a draft proposal (draft → dismissed)
+ *   POST /actions/promote/:id    → promote a draft → prd-ready + slice → { ok, taskIds }
  *   POST /actions/validate/:id   → approve a preview-gated task (→ merge)
  *   POST /actions/reject/:id     → reject a preview-gated task (→ failed)
  *   POST /actions/restart-daemon       → re-exec the daemon
@@ -841,7 +841,6 @@ export const startHttpServer = async (
     purge: deps.purgeTask,
     'prune-worktree': deps.pruneWorktree,
     dismiss: deps.dismissProposal,
-    promote: deps.promoteProposal,
     validate: deps.validateTask,
     reject: deps.rejectTask,
     'land-work': deps.landWork,
@@ -3193,6 +3192,17 @@ export const startHttpServer = async (
       deps
         .diagnoseFailure(id)
         .then(({ diagnosis }) => sendJson(res, 200, { ok: true, diagnosis }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // promote returns task ids — handled separately so the ids are surfaced in
+    // the response body. Errors propagate via sendError so the UI drawer shows
+    // them instead of silently swallowing them.
+    if (op === 'promote') {
+      deps
+        .promoteProposal(id)
+        .then(({ taskIds }) => sendJson(res, 200, { ok: true, taskIds }))
         .catch((err: unknown) => sendError(res, err))
       return
     }

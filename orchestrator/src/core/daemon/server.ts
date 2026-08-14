@@ -4993,7 +4993,14 @@ export const startDaemon = async (
       await dismissProposal(id)
     },
     promoteProposal: async (id) => {
+      // Flip draft → prd-ready, then await the slicer so the HTTP caller
+      // receives the created task IDs. Unlike the socket-RPC path
+      // (handleProposalPromote, which fires the slicer fire-and-forget to
+      // keep the RPC fast), the HTTP path awaits the slice so the UI Promote
+      // button can surface the task IDs in its confirmation state.
       await promoteProposal(id)
+      const sliceResult = await handleProposalSlice(id)
+      return { taskIds: sliceResult.taskIds }
     },
     validateTask: async (id) => {
       const { coreValidateTask } = await import('./validate-task')
