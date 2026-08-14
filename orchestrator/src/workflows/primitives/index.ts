@@ -1554,6 +1554,11 @@ export const runAgent = async (
     originId,
     taskId,
     phase: 'code',
+    // Fix (recovery) tasks run flagship so high-risk repair has the
+    // strongest model available. Regular coder tasks inherit whatever
+    // modelTier the caller declared (opts.modelTier); when absent the
+    // Worker's own pinned tier applies.
+    modelTier: kind === 'fix' ? 'flagship' : undefined,
   })
 
   // A task stop is an operator decision, not a coder failure. Bail out before
@@ -2389,6 +2394,9 @@ export const review = async (
       originId: trace.originId,
       taskId: frTaskId,
       phase: 'verify',
+      // Verify-judgment always runs on flagship: review reasoning is the
+      // highest-risk step and must not be degraded by a Worker's default tier.
+      modelTier: 'flagship',
     })
 
     const rawOutput =
