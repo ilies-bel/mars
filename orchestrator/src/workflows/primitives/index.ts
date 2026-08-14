@@ -912,16 +912,36 @@ export const setupWorktree = async (
             }
             // Fall through — setup continues normally
           } else {
-            // One or more user-owned paths are dirty — park the task.
+            // One or more user-owned paths are dirty — fail the task.
+            //
+            // Per the edgeless-blocked invariant (blocker-invariant.ts), 'blocked'
+            // requires at least one task_blockers edge pointing at a concrete blocker
+            // task.  A dirty integration branch has no blocker task to wait on, so
+            // 'blocked' is the wrong terminal — it violates the invariant and leaves
+            // the task unrecoverable without `mars unblock` + `mars restart`.
+            //
+            // 'failed' + actionQueue item is the correct pattern:
+            //   - the operator sees an actionable alert to clean the branch
+            //   - `mars restart` (or the self-heal recovery spawner) retries the task
+            //   - no orphaned 'blocked' row with zero edges can accumulate
             const dirtyPaths = rawLines.map((l) => l.trim()).filter((l) => l.length > 0)
-            await updateTask(taskId, { status: 'blocked' }, store)
+            const dirtyMsg = `integration branch '${integrationBranch}' has uncommitted changes`
+            const dirtySignature = computeFailureSignature('setup:dirty-integration', dirtyMsg)
+            await updateTask(taskId, {
+              status: 'failed',
+              error: dirtyMsg,
+              failedPhase: 'setup',
+              failureReason: dirtyMsg,
+              failureSignature: dirtySignature,
+              failureReasonCode: dirtySignature,
+            }, store)
             await raiseActionQueueItem({
               kind: 'dirty-integration',
               category: 'orchestrator',
               priority: 'high',
               title: `merge target ${integrationBranch} has uncommitted changes`,
               body: [
-                `Task ${taskId} was parked because the integration branch '${integrationBranch}' has uncommitted changes.`,
+                `Task ${taskId} was stopped because the integration branch '${integrationBranch}' has uncommitted changes.`,
                 'Merging into a dirty checkout would corrupt the integration branch.',
                 '',
                 'Dirty paths:',
@@ -942,7 +962,7 @@ export const setupWorktree = async (
             })
             throw new WorkflowTerminalError(
               'setup-dirty-integration',
-              `Task ${taskId}: integration branch '${integrationBranch}' has uncommitted changes — task parked as blocked`,
+              `Task ${taskId}: ${dirtyMsg} — task failed`,
             )
           }
         }

@@ -41,9 +41,10 @@ export type WorkflowTerminalKind =
   | 'committer-still-dirty'
   /**
    * The setup step found uncommitted changes on the integration branch before
-   * spawning the coder. The task is parked as blocked and an action-queue item
-   * is raised. The operator must clean the integration branch and then restart
-   * the task.
+   * spawning the coder. The task is marked failed (NOT blocked — zero edges would
+   * violate the edgeless-blocked invariant) and a dirty-integration action-queue
+   * item is raised. The operator must clean the integration branch and then
+   * restart the task (`mars restart <id>`).
    */
   | 'setup-dirty-integration'
 

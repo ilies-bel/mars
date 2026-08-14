@@ -21,6 +21,7 @@ import { startEmbeddedPg, type EmbeddedPgHandle } from '../lib/pg-server'
 import { importLegacySqlite } from '../../init/import-sqlite'
 import {
   addBlockers,
+  blockTaskIfIncomplete,
   dropTask,
   enqueueTask,
   getTask,
@@ -1837,6 +1838,14 @@ export const startDaemon = async (
             log(`[implement] ${task.id} failed: origin worktree missing; recovery cannot attach (action-queue item raised)`)
             return
 
+          case 'setup-dirty-integration':
+            // The setup step detected uncommitted user-owned changes in the integration
+            // branch and already marked the task failed + raised a dirty-integration
+            // action-queue item. Suppress the generic task.completed emit so there is
+            // no misleading 'status=failed' broadcast on top of the already-persisted state.
+            log(`[implement] ${task.id} failed: integration branch dirty at setup; task marked failed, action-queue item raised`)
+            return
+
           case 'origin-terminal':
             log(`[implement] ${task.id} dropped: its Chore origin already reached a terminal state`)
             return
@@ -1919,6 +1928,10 @@ export const startDaemon = async (
           case 'origin-worktree-missing':
             // The setup step already marked this fix task failed and raised an item.
             log(`[implement] ${task.id} origin-worktree-missing abort (exception path); task already marked failed, item raised`)
+            break
+          case 'setup-dirty-integration':
+            // The setup step already marked this task failed and raised a dirty-integration item.
+            log(`[implement] ${task.id} setup-dirty-integration abort (exception path); task already marked failed, item raised`)
             break
           case 'resume-worktree-missing':
             // The code step's resume preflight already marked this task failed
@@ -3173,12 +3186,13 @@ export const startDaemon = async (
         // prerequisite is outstanding.  The blocker-resolution drain (outbox
         // subscriber) flips it to 'queued' when the last blocker completes and
         // the periodic interval emits task.queued to trigger drain().
-        if (
-          (task.status === 'queued' || task.status === 'draft') &&
-          (await hasIncompleteBlockers(task.id))
-        ) {
-          await updateTask(task.id, { status: 'blocked' })
-          blockedByIncomplete = true
+        //
+        // blockTaskIfIncomplete closes the race where a concurrent Arc.drop of
+        // the blocker can wipe edges between the hasIncompleteBlockers check
+        // and the updateTask write, landing the task as 'blocked' with zero
+        // edges (the stranded-blocked state).
+        if (task.status === 'queued' || task.status === 'draft') {
+          blockedByIncomplete = await blockTaskIfIncomplete(task.id)
         }
       } catch (err) {
         // ADR-0052 (Arc = sole writer): route the error-recovery cleanup

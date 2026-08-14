@@ -41,12 +41,16 @@ export interface StatementRunner {
  * that way a missing edge surfaces immediately instead of silently parking a
  * task with no recovery path.
  *
- * Two previously identified edgeless-blocked violations have been resolved:
+ * Three previously identified edgeless-blocked violations have been resolved:
  *
  *  - `implement-workflow.ts` dirty-main preflight routes through
  *    `handleTaskFailureWithFixTask`, which inserts a real `task_blockers` edge.
  *  - `queue-fix-tasks.ts` no-recipe investigator path now sets `status='failed'`
  *    instead of `status='blocked'`, eliminating the edgeless-blocked state.
+ *  - `primitives/index.ts` setup-dirty-integration preflight now sets
+ *    `status='failed'` instead of `status='blocked'`: a dirty integration branch
+ *    has no concrete blocker task to wait on, so 'failed' + actionQueue item is
+ *    the correct terminal (task mars-ba9f3af0).
  *
  */
 
