@@ -428,8 +428,21 @@ const isRebaseInProgress = async (
 // — matches the repo's no-retry-knob ethos.
 const MAX_MERGE_ATTEMPTS = 3 // 1 initial attempt + 2 retries
 
-/** Default watchdog budget: a merge may hold the lock for at most 5 minutes. */
-const DEFAULT_WATCHDOG_MS = 300_000
+/**
+ * Wall-clock headroom for the git work that surrounds one vcs-supervisor
+ * session inside a single merge (rebase, post-supervisor verification, the
+ * fast-forward ref update, and the Step 3 re-sync). Added on top of
+ * {@link VCS_SUPERVISOR_TIMEOUT_MS} so the watchdog cannot expire mid-session.
+ */
+const MERGE_GIT_BUDGET_MS = 5 * 60 * 1000
+
+/**
+ * Default watchdog budget for one {@link mergeBranch} call holding the
+ * `.merge.lock`. Sized to comfortably contain a full vcs-supervisor session
+ * plus the git work around it — enforced by the
+ * `merge-watchdog-budget.test.ts` invariants.
+ */
+export const DEFAULT_WATCHDOG_MS = VCS_SUPERVISOR_TIMEOUT_MS + MERGE_GIT_BUDGET_MS
 
 /**
  * Short, self-contained timeout for the abort-cleanup git calls. These run
@@ -1173,6 +1186,31 @@ export const mergeBranch = async ({
   } finally {
     clearTimeout(watchdogTimer)
   }
+}
+
+/**
+ * Returns `true` when `branchTipSha` is reachable from `integrationBranch`
+ * (i.e. the fast-forward ref update landed). The single
+ * `merge-base --is-ancestor` probe is sufficient: if the update succeeded, the
+ * integration branch now points AT `branchTipSha` or has it as an ancestor; if
+ * the update was silently skipped or a no-op misclassified, `branchTipSha` is
+ * NOT reachable from the integration tip.
+ *
+ * Called by the `merge` primitive immediately after `mergeBranch` returns
+ * `merged: true` with a `mergePostSha` to guard against the silent-data-loss
+ * path where the task is marked `done` and the branch deleted even though
+ * the ref update never happened.
+ */
+export const isBranchTipInIntegration = async (
+  branchTipSha: string,
+  integrationBranch: string,
+): Promise<boolean> => {
+  const probe = await execProbe(
+    resolveGitBin(),
+    ['merge-base', '--is-ancestor', branchTipSha, integrationBranch],
+    { cwd: repoRoot() },
+  )
+  return probe.exitCode === 0
 }
 
 export const isBranchMergedIntoMain = async (
