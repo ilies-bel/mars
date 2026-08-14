@@ -21,6 +21,7 @@ import {
 } from './claude-usage'
 import { resolveUsage } from './usage-sources'
 import { usageSemanticsOf } from '../workers/providers'
+import { PROVIDER_MODELS, type ProviderModelTier } from '../workers/provider-types'
 import { recordUsageEvent } from '../daemon/usage-accumulator'
 import { isReflectDisabled } from './reflect-signals'
 import { evaluateStep } from './step-evaluators'
@@ -60,6 +61,18 @@ export interface RunWorkerWithSpanOptions {
    * read the caller-supplied fields. Returning an empty object is a no-op.
    */
   getExtraPayload?: () => Record<string, unknown>
+  /**
+   * Optional semantic model tier for this invocation. When set,
+   * `runWorkerWithSpan` resolves it to the provider-native model id via
+   * `PROVIDER_MODELS[worker.config.provider][modelTier]` and threads the
+   * resolved id into `runOptions.model` before calling `worker.run`. The
+   * Worker's `config.model` is NOT mutated. When absent, the Worker's
+   * pinned `config.model` is used unchanged.
+   *
+   * Both `declaredTier` and `resolvedModel` are stamped on the
+   * `step_started` trace event so the routing decision is auditable.
+   */
+  readonly modelTier?: ProviderModelTier
 }
 
 const safeRecord = async (
@@ -104,7 +117,27 @@ export const runWorkerWithSpan = async (
     taskId,
     phase,
     getExtraPayload,
+    modelTier,
   } = options
+
+  // Resolve the model to dispatch with. When the caller declares a modelTier
+  // override, translate it to the provider-native model id via PROVIDER_MODELS
+  // and verify the tier is known (a JS caller bypassing TypeScript could pass
+  // an arbitrary string). When no override is given, use the Worker's pinned
+  // config.model unchanged. worker.config.model is NEVER mutated.
+  if (modelTier !== undefined && !(modelTier in PROVIDER_MODELS[worker.config.provider])) {
+    throw new Error(
+      `runWorkerWithSpan: unknown modelTier '${modelTier}' for provider '${worker.config.provider}'. ` +
+        `Valid tiers: ${Object.keys(PROVIDER_MODELS[worker.config.provider]).join(', ')}`,
+    )
+  }
+  const resolvedModel = modelTier
+    ? PROVIDER_MODELS[worker.config.provider][modelTier]
+    : worker.config.model
+
+  // The tier recorded on the span: the caller's override when present,
+  // otherwise the Worker's own configured tier (or null if unset).
+  const declaredTier: ProviderModelTier | null = modelTier ?? worker.config.modelTier ?? null
 
   // How this Worker's Provider reports usage, and therefore whether its
   // maxContextTokens ceiling can be enforced in-run at all. Both are stamped on
@@ -135,6 +168,13 @@ export const runWorkerWithSpan = async (
       // a killed/crashed run still has its prompt on record. Read lazily via
       // GET /view/step-prompt — never inlined into span/timeline lists.
       promptText: prompt,
+      // Tier routing audit fields. Always populated so the routing decision
+      // is visible on every span regardless of whether an override was used.
+      // declaredTier: the caller's override tier, or the Worker's configured
+      //   tier (worker.config.modelTier), or null when neither is set.
+      // resolvedModel: the provider-native model id actually dispatched.
+      declaredTier,
+      resolvedModel,
     },
   })
 
@@ -172,6 +212,9 @@ export const runWorkerWithSpan = async (
     // Thread the task id so buildWorkerEnv stamps MARS_MCP_TASK_ID and the
     // mars-worker MCP server is injected into the dispatched session.
     taskId: taskId ?? undefined,
+    // Thread the resolved model so buildWorker uses it in place of the
+    // Worker's pinned config.model when a tier override was declared.
+    model: resolvedModel,
     onEvent: async (event) => {
       accumulatedEvents.push(event)
       pendingChunkEvents.push(event)
@@ -185,16 +228,18 @@ export const runWorkerWithSpan = async (
       }
       // Spawn-time model guard: the claude CLI emits a system/init event at
       // the start of every run containing the model it actually selected.
-      // Compare against the Worker's pinned model; a mismatch means the
-      // subprocess is using a different (possibly more expensive) model than
-      // intended — emit a warn trace event so the drift is visible in reflect.
-      // This converts silent budget drift (e.g. opus running where sonnet was
-      // pinned) into a queryable signal without blocking the run.
+      // Compare against the resolved model (which equals the Worker's pinned
+      // config.model when no tier override is given, or the tier-resolved model
+      // when one was declared). A mismatch means the subprocess is using a
+      // different model than intended — emit a warn trace event so the drift is
+      // visible in reflect. This converts silent budget drift (e.g. opus running
+      // where sonnet was dispatched) into a queryable signal without blocking
+      // the run.
       if (
         event.type === 'system' &&
         (event.subtype as string | undefined) === 'init' &&
         typeof event.model === 'string' &&
-        event.model !== worker.config.model
+        event.model !== resolvedModel
       ) {
         await safeRecord(traceStore, {
           kind: 'worker-model-mismatch',
@@ -202,7 +247,7 @@ export const runWorkerWithSpan = async (
           originId,
           phase: phase ?? null,
           payload: {
-            expected: worker.config.model,
+            expected: resolvedModel,
             actual: event.model as string,
             worker: worker.config.name,
             taskId,

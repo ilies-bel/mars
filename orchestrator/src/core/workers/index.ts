@@ -286,6 +286,14 @@ export interface RunOptions {
   readonly onEvent?: (event: ClaudeEvent) => void | Promise<void>
   readonly systemPrompt?: string
   /**
+   * Optional per-invocation model override. When set, the Worker dispatches
+   * with this model instead of its pinned `config.model`. Populated by
+   * `runWorkerWithSpan` when the caller declares a `modelTier` override so
+   * the resolved provider-native model id is threaded through to dispatch
+   * without mutating `worker.config.model`.
+   */
+  readonly model?: string
+  /**
    * Caller-supplied abort signal. Forwarded to {@link runClaudeCode} so the
    * read/grep span watcher can terminate a stalled session. When fired the
    * Worker returns exitCode 138.
@@ -608,7 +616,7 @@ const buildWorker = (config: WorkerConfig): Worker => {
             cwd: options.cwd,
             sessionId: options.sessionId,
             onEvent: options.onEvent,
-            model: config.model,
+            model: options.model ?? config.model,
             systemPrompt: options.systemPrompt ?? config.systemPrompt ?? config.appendSystemPrompt,
             effort: config.effort,
             permissionMode: config.permissionMode,
