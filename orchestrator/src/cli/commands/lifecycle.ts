@@ -665,9 +665,12 @@ const update: Command = {
       return { code: 2 }
     }
 
-    // Update mutates these repository-owned harness files. Check before the
-    // daemon-routed init or workflow reconciliation so a missing --force never
-    // leaves the repository half-updated.
+    // Phase 1: refresh framework-owned files (CLAUDE.md, …) via the
+    // daemon-routed init workflow. Without --force, refuse to overwrite
+    // existing harness files. We record the refusal but do NOT return early so
+    // Phase 2 still runs — newly-shipped workflow templates must be additively
+    // scaffolded even when the harness-file guard fires.
+    let phase1Blocked = false
     if (!force) {
       const existingHarnesses = ['CLAUDE.md', '.mcp.json', '.gitignore'].filter(
         (rel) => existsSync(resolve(deps.ctx.repoRoot, rel)),
@@ -678,39 +681,42 @@ const update: Command = {
             .map((rel) => `  - ${rel}`)
             .join('\n')}`,
         )
-        return { code: 1 }
+        phase1Blocked = true
       }
     }
 
-    // Phase 1: refresh the framework-owned files (CLAUDE.md, …) via the
-    // daemon-routed init workflow. `--force` is the only authorization for an
-    // existing harness; a fresh harness needs no overwrite permission. Its
-    // scaffold-workflows step never clobbers user-owned workflows (it runs
-    // force:false) — those are reconciled in phase 2. Running init through the
-    // daemon preserves the single-writer guard so the manifest is never
-    // corrupted by a concurrent write.
-    type InitResult = Awaited<
-      ReturnType<typeof import('../../workflows/init-workflow').runInit>
-    >
-    const initResult = (await deps.daemon.sendRequest({
-      op: 'init',
-      opts: { force, dryRun: false, verbose },
-    })) as InitResult
+    if (!phase1Blocked) {
+      // `--force` is the only authorisation for an existing harness; a fresh
+      // harness needs no overwrite permission. The init workflow's own
+      // scaffold-workflows step runs force:false, so it never clobbers
+      // user-owned workflows — those are reconciled in phase 2. Routing
+      // through the daemon preserves the single-writer guard so the manifest
+      // is never corrupted by a concurrent write.
+      type InitResult = Awaited<
+        ReturnType<typeof import('../../workflows/init-workflow').runInit>
+      >
+      const initResult = (await deps.daemon.sendRequest({
+        op: 'init',
+        opts: { force, dryRun: false, verbose },
+      })) as InitResult
 
-    if (
-      initResult.status === 'aborted-existing' ||
-      initResult.status === 'aborted-conflict'
-    ) {
-      deps.err(initResult.message)
-      return { code: 1 }
+      if (
+        initResult.status === 'aborted-existing' ||
+        initResult.status === 'aborted-conflict'
+      ) {
+        deps.err(initResult.message)
+        return { code: 1 }
+      }
+
+      deps.out('refreshed framework files:')
+      for (const w of initResult.written ?? []) deps.out(`  ${w}`)
     }
 
-    deps.out('refreshed framework files:')
-    for (const w of initResult.written ?? []) deps.out(`  ${w}`)
-
-    // Phase 2: reconcile user-owned workflows. Identical files refresh
-    // silently; diverged owned files show a unified diff and prompt accept/skip
-    // (--yes / --no-edit defaults to skip-on-conflict for CI).
+    // Phase 2: reconcile user-owned workflows. Runs even when Phase 1 was
+    // blocked so that newly-shipped workflow templates are additively
+    // scaffolded (the fix for dispatch:workflow-load 'no workflow file').
+    // Identical files refresh silently; diverged owned files show a unified
+    // diff and prompt accept/skip (--yes defaults to skip-on-conflict for CI).
     const { updateWorkflows, realLineReader } = await import(
       '../../init/update'
     )
@@ -728,7 +734,7 @@ const update: Command = {
       `workflows: ${created} created, ${updated} updated, ` +
         `${kept} kept, ${unowned} unowned`,
     )
-    return { code: 0 }
+    return { code: phase1Blocked ? 1 : 0 }
   },
 }
 

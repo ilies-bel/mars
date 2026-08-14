@@ -461,7 +461,7 @@ describe('mars update — command wiring (in-process)', () => {
 
   const stubStore = {} as unknown as DomainTaskStore
 
-  it('refuses to overwrite an existing harness before reconciling workflows', async () => {
+  it('refuses to overwrite an existing harness but still scaffolds missing workflows', async () => {
     const harness = resolve(repoRoot, 'CLAUDE.md')
     writeFileSync(harness, '# local harness\n', 'utf8')
     writeFileSync(resolve(repoRoot, '.mcp.json'), '{"local":true}\n', 'utf8')
@@ -474,14 +474,45 @@ describe('mars update — command wiring (in-process)', () => {
       daemon: fake,
     })
 
+    // Harness guard fires: non-zero exit and descriptive error.
     expect(r.code).toBe(1)
     expect(r.err.join('\n')).toContain('CLAUDE.md')
     expect(r.err.join('\n')).toContain('.mcp.json')
     expect(r.err.join('\n')).toContain('.gitignore')
     expect(r.err.join('\n')).toContain('--force')
     expect(readFileSync(harness, 'utf8')).toBe('# local harness\n')
+    // Phase 1 is skipped entirely — daemon is not called.
     expect(fake.calls).toEqual([])
-    expect(existsSync(destOf('task-workflow.js'))).toBe(false)
+    // Phase 2 still runs: absent workflow templates are created additively.
+    expect(existsSync(destOf('task-workflow.js'))).toBe(true)
+    expect(r.out.join('\n')).toContain('created')
+  })
+
+  it('new workflow template appears after update even when harness files exist', async () => {
+    // Simulate a repo that already has all templates EXCEPT one that was
+    // newly shipped (e.g. mockup-workflow.js added in a framework release).
+    const copies = planWorkflowCopies(repoRoot)
+    const newTemplate = copies.find((c) => c.rel.endsWith('mockup-workflow.js'))
+    expect(newTemplate).toBeDefined()
+    mkdirSync(resolve(repoRoot, WORKFLOWS_DEST_REL), { recursive: true })
+    // Pre-populate every template except the new one.
+    for (const c of copies.filter((c) => c !== newTemplate)) {
+      copyFileSync(c.src, c.dest)
+    }
+    // Harness files exist → Phase 1 would need --force.
+    writeFileSync(resolve(repoRoot, 'CLAUDE.md'), '# harness\n', 'utf8')
+    const fake = makeFakeDaemon()
+
+    const r = await runCommandInProcess(['update'], {
+      store: stubStore,
+      ctx: fakeCtx(),
+      daemon: fake,
+    })
+
+    // Exit 1 because harness guard fired, but the new workflow is present.
+    expect(r.code).toBe(1)
+    expect(existsSync(newTemplate!.dest)).toBe(true)
+    expect(r.out.join('\n')).toMatch(/1 created/)
   })
 
   it('treats --yes as non-interactive rather than permission to overwrite', async () => {
