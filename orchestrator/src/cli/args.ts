@@ -104,6 +104,9 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // mars verify add — repeated gate args (--args tsc --args --noEmit)
   '--args',
   '--surface-form',
+  // mars kpi compare — window boundaries (ISO timestamp or task id)
+  '--before',
+  '--after',
   // mars credentials set — human-readable description of the credential
   '--description',
   // mars task add --supersede <task-id>: declare this task as a manual

@@ -160,9 +160,9 @@ const kpiShow: Command = {
 const kpiGroup: Command = {
   path: 'kpi',
   summary: 'kpi subcommands',
-  usage: 'usage: mars kpi <snapshot|show>',
+  usage: 'usage: mars kpi <snapshot|show|compare>',
   run: (_args, deps) => {
-    deps.err('usage: mars kpi <snapshot|show>')
+    deps.err('usage: mars kpi <snapshot|show|compare>')
     return { code: 1 }
   },
 }
