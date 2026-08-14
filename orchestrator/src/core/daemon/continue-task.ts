@@ -191,6 +191,7 @@ export const coreContinueTask = async (
 
   // A pre-setup failure leaves no worktree worth preserving. Indicators:
   //   - failedPhase null  → failure before any phase was recorded (e.g. dirty-main guard)
+  //   - failedPhase 'setup' → dirty-integration or similar; no coder work started
   //   - no branch/worktreePath on the row → worktree was never created
   //   - worktree path missing on disk → worktree was created but is gone
   // Note: failedPhase === 'code' is intentionally NOT in this set. A code-
@@ -204,6 +205,7 @@ export const coreContinueTask = async (
 
   const isPreSetup =
     task.failedPhase === null ||
+    task.failedPhase === 'setup' ||
     !task.branch ||
     !task.worktreePath ||
     worktreeMissingOnDisk

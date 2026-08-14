@@ -1031,10 +1031,13 @@ export const handleTaskFailureWithFixTask = async (
         const stepPrefix = input.failingStep.includes(':')
           ? input.failingStep.split(':')[0]
           : input.failingStep
-        // FailedPhase is 'setup' | 'code' | 'verify' | 'merge' — map step prefix to it
-        // or leave null for unrecognised step prefixes.
+        // FailedPhase is 'setup' | 'code' | 'verify' | 'merge' — map step prefix
+        // to it, or leave null for any prefix not in the union.
         const failedPhase =
-          stepPrefix === 'setup' || stepPrefix === 'code' || stepPrefix === 'verify' || stepPrefix === 'merge'
+          stepPrefix === 'setup' ||
+          stepPrefix === 'code' ||
+          stepPrefix === 'verify' ||
+          stepPrefix === 'merge'
             ? (stepPrefix as 'setup' | 'code' | 'verify' | 'merge')
             : null
         await updateTask(

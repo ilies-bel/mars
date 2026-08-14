@@ -231,9 +231,16 @@ export const isTaskTag = (value: unknown): value is TaskTag =>
 /**
  * The phase that stamped a `'failed'` task. Set on the failure transition
  * by the implement workflow and consumed by `mars continue <id>` to decide
- * which step to resume from. `'code'` is reserved for failures that occur
- * before any verifiable artefact exists (e.g. install errors): such tasks
- * cannot be continued and must be restarted from scratch.
+ * which step to resume from.
+ *
+ * - `'setup'` — failure during worktree setup before any coder work began
+ *   (e.g. dirty-integration branch). `mars continue` treats this as a
+ *   pre-setup failure and degrades to restart.
+ * - `'code'` — failure during the coder phase (including install errors).
+ *   When the worktree exists, `mars continue` resumes; otherwise degrades.
+ * - `'verify'` — failure during the verify phase. `mars continue` re-enters
+ *   the coder with the recorded verify output.
+ * - `'merge'` — failure during the merge phase. `mars continue` re-attempts.
  */
 export type FailedPhase = 'setup' | 'code' | 'verify' | 'merge'
 
