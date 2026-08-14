@@ -38,6 +38,7 @@ export const runAgentDescriptors = {
   taskId: 'Override the task id. Defaults to ctx.runId.',
   worktree: 'Override the worktree. Defaults to the one stashed by setupWorktree.',
   model: 'Override the model for this step. Precedence: opts > MARS_WORKER_MODEL > Worker default.',
+  modelTier: 'Model tier for this step ("fast" | "balanced" | "flagship"). Translated to a native model id via the Worker\'s Provider tier map. Precedence: model > MARS_WORKER_MODEL > modelTier > Worker default.',
 } satisfies Record<keyof RunAgentOpts, string>
 
 /** One-line descriptions for every {@link ReviewOpts} field. */
@@ -50,6 +51,7 @@ export const reviewDescriptors = {
   reviewType: 'Review type — "auto" (default) runs typecheck/tests/lint; "manual" boots the stack and parks for human QA; "full-review" spawns a review agent and produces a ReviewPacket.',
   guide: 'Step guide for a "manual" step. Displayed in the action-queue row body alongside the preview URL and log path.',
   spec: 'Structured task spec. When spec.verifyCmd is non-null, it is executed verbatim as a required verify step before the configured gate steps.',
+  modelTier: 'Model tier for the "full-review" agent ("fast" | "balanced" | "flagship"). Translated to a native model id via the Worker\'s Provider tier map. Omit to use the Worker\'s pinned default.',
 } satisfies Record<keyof ReviewOpts, string>
 
 /** One-line descriptions for every {@link MergeOpts} field. */

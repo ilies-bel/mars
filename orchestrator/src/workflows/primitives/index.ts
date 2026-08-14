@@ -110,6 +110,7 @@ import {
   buildContextTokenSignals,
 } from '../../core/lib/claude-usage'
 import { usageSemanticsOf } from '../../core/workers/providers'
+import { PROVIDER_MODELS, type ProviderModelTier } from '../../core/workers/provider-types'
 import { recordSignals } from '../../core/lib/reflect-signals'
 import {
   resolveTaskDomains,
@@ -1242,6 +1243,16 @@ export interface RunAgentOpts {
    * so a step can run on a heavier model without editing Worker configs.
    */
   model?: string
+  /**
+   * Model tier for this step. When set and `model` is not explicitly provided,
+   * the tier is translated to a native model id via the selected Worker's
+   * Provider tier map (`PROVIDER_MODELS[provider][tier]`). Precedence:
+   * `opts.model` > `MARS_WORKER_MODEL` (Coder only) > `opts.modelTier` > the
+   * Worker's pinned default. Mechanical steps should pass `'fast'`; coding
+   * defaults to `'balanced'` per Worker policy; recovery should stay on
+   * `'flagship'` unless explicitly downgraded.
+   */
+  modelTier?: ProviderModelTier
 }
 
 export interface RunAgentResult {
@@ -1485,10 +1496,17 @@ export const runAgent = async (
     kind === 'fix' ? Workers.Fixer : pickWorkerForTags(tags, allWorkers)
   // Per-step model override (Agent-SDK parity): rebuild the chosen Worker with
   // the requested model so it threads through buildWorker to both the headless
-  // and pty spawn paths. Undefined ⇒ keep the Worker's pinned default.
+  // and pty spawn paths. Precedence: explicit `model` > tier-resolved model >
+  // Worker's pinned default. `modelTier` translates to a native model id via
+  // the Worker's Provider tier map; `model` always wins when both are set.
+  const _tierResolvedModel =
+    opts.modelTier !== undefined
+      ? PROVIDER_MODELS[selectedWorker.config.provider][opts.modelTier]
+      : undefined
+  const _effectiveModel = model ?? _tierResolvedModel
   const worker =
-    model !== undefined && model !== selectedWorker.config.model
-      ? createWorker({ ...selectedWorker.config, model })
+    _effectiveModel !== undefined && _effectiveModel !== selectedWorker.config.model
+      ? createWorker({ ...selectedWorker.config, model: _effectiveModel, modelTier: opts.modelTier ?? selectedWorker.config.modelTier })
       : selectedWorker
   // How the selected Worker's Provider reports usage. Every token read below
   // (post-coder telemetry, reflect signals) goes through it — the assistant
@@ -2244,6 +2262,15 @@ export interface ReviewOpts {
    * acceptance command from the task brief is always exercised.
    */
   spec?: TaskSpec | null
+  /**
+   * Model tier for this review step. Meaningful for `reviewType:'full-review'`
+   * only — the auto and manual paths do not dispatch an LLM. When set, the
+   * tier is translated to a native model id via the review worker's Provider
+   * tier map (`PROVIDER_MODELS[provider][tier]`). Verification judgment should
+   * stay on `'flagship'` unless explicitly downgraded; omitting this field
+   * inherits the worker's pinned default.
+   */
+  modelTier?: ProviderModelTier
 }
 
 /**
@@ -2331,7 +2358,19 @@ export const review = async (
       'Output ONLY the JSON object.',
     ].join('\n')
 
-    const worker = Workers.Coder
+    // Apply modelTier for the review worker: translate tier to native model id
+    // so verify-judgment (full-review) can be routed at 'flagship' without
+    // editing Worker configs. Falls back to the Coder's pinned default when
+    // modelTier is absent.
+    const _frBaseWorker = Workers.Coder
+    const _frTierModel =
+      opts.modelTier !== undefined
+        ? PROVIDER_MODELS[_frBaseWorker.config.provider][opts.modelTier]
+        : undefined
+    const worker =
+      _frTierModel !== undefined && _frTierModel !== _frBaseWorker.config.model
+        ? createWorker({ ..._frBaseWorker.config, model: _frTierModel, modelTier: opts.modelTier })
+        : _frBaseWorker
     const sessionKey = buildSessionKey(frTaskId)
     const trace = await resolveTrace(ctx, frTaskId)
 
