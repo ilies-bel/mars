@@ -32,6 +32,7 @@ const {
   mockListMergedWorkers,
   mockRecordSignals,
   mockSyncWorktreeToIntegration,
+  mockRestoreWorktreeIfMissing,
 } = vi.hoisted(() => ({
   mockUpdateTask: vi.fn().mockResolvedValue(undefined),
   mockHandleTaskFailureWithFixTask: vi.fn().mockResolvedValue({ outcome: 'fix-task-spawned' }),
@@ -44,6 +45,7 @@ const {
   mockListMergedWorkers: vi.fn().mockReturnValue([]),
   mockRecordSignals: vi.fn().mockResolvedValue(undefined),
   mockSyncWorktreeToIntegration: vi.fn().mockResolvedValue({ kind: 'already-current' }),
+  mockRestoreWorktreeIfMissing: vi.fn().mockResolvedValue('present'),
 }))
 
 // `runAgent`'s preflight replays the task branch onto the integration tip
@@ -52,9 +54,18 @@ const {
 // these tests build — every run aborted with a rebase conflict before reaching
 // the coder-exit handler under test. Worktree currency has its own cover in
 // `core/lib/git/__tests__/worktree-integration-currency.test.ts`.
+//
+// `restoreWorktreeIfMissing` is also stubbed: since c31edf02 it calls
+// `provisionWorktreeDeps`, which creates an `orchestrator/node_modules` symlink
+// inside the temp repo. That symlink shows up as a dirty path in `git status`
+// and contaminates the wip(checkpoint) commit test assertions.
 vi.mock('../../../core/lib/git/worktree', async (importOriginal) => {
   const orig = await importOriginal<typeof import('../../../core/lib/git/worktree')>()
-  return { ...orig, syncWorktreeToIntegration: mockSyncWorktreeToIntegration }
+  return {
+    ...orig,
+    syncWorktreeToIntegration: mockSyncWorktreeToIntegration,
+    restoreWorktreeIfMissing: mockRestoreWorktreeIfMissing,
+  }
 })
 
 vi.mock('../../../core/queue', async (importOriginal) => {
@@ -197,6 +208,7 @@ describe('coder-exit checkpoint — dirty worktree', () => {
     mockFetchLessonsForTask.mockResolvedValue([])
     mockListMergedWorkers.mockReturnValue([])
     mockRecordSignals.mockResolvedValue(undefined)
+    mockRestoreWorktreeIfMissing.mockResolvedValue('present')
   })
 
   afterEach(() => {
@@ -277,6 +289,7 @@ describe('coder-exit checkpoint — clean worktree', () => {
     mockFetchLessonsForTask.mockResolvedValue([])
     mockListMergedWorkers.mockReturnValue([])
     mockRecordSignals.mockResolvedValue(undefined)
+    mockRestoreWorktreeIfMissing.mockResolvedValue('present')
   })
 
   afterEach(() => {

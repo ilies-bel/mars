@@ -20,6 +20,7 @@ const {
   mockRecordSignals,
   mockRaiseActionQueueItem,
   mockSyncWorktreeToIntegration,
+  mockRestoreWorktreeIfMissing,
 } = vi.hoisted(() => ({
   mockUpdateTask: vi.fn().mockResolvedValue(undefined),
   mockHandleTaskFailureWithFixTask: vi.fn().mockResolvedValue({ outcome: 'fix-task-spawned' }),
@@ -33,6 +34,7 @@ const {
   mockRecordSignals: vi.fn().mockResolvedValue(undefined),
   mockRaiseActionQueueItem: vi.fn().mockResolvedValue(undefined),
   mockSyncWorktreeToIntegration: vi.fn().mockResolvedValue({ kind: 'already-current' }),
+  mockRestoreWorktreeIfMissing: vi.fn().mockResolvedValue('present'),
 }))
 
 // `runAgent`'s preflight replays the task branch onto the integration tip
@@ -41,9 +43,22 @@ const {
 // tests build, so it is stubbed to the already-current no-op. Worktree currency
 // has its own cover in `core/lib/git/__tests__/worktree-integration-currency.test.ts`;
 // this file is about the post-coder commit contract.
+//
+// `restoreWorktreeIfMissing` is also stubbed: since c31edf02 it calls
+// `provisionWorktreeDeps`, which creates an `orchestrator/node_modules` symlink
+// inside the temp repo. That symlink shows up as a dirty path in `git status`,
+// trips the `/node_modules` guard in `checkSecretPath`, and makes
+// `autoCommitWorktreeIfDeterministic` return `committed: false` — breaking every
+// test that relies on the auto-commit net. The stub returns 'present' (the
+// overwhelmingly common production outcome) so worktree-provisioning has its own
+// cover in the worktree-specific test files.
 vi.mock('../../../core/lib/git/worktree', async (importOriginal) => {
   const orig = await importOriginal<typeof import('../../../core/lib/git/worktree')>()
-  return { ...orig, syncWorktreeToIntegration: mockSyncWorktreeToIntegration }
+  return {
+    ...orig,
+    syncWorktreeToIntegration: mockSyncWorktreeToIntegration,
+    restoreWorktreeIfMissing: mockRestoreWorktreeIfMissing,
+  }
 })
 
 vi.mock('../../../core/queue', async (importOriginal) => {
@@ -181,6 +196,7 @@ describe('auto-commit fast path for coder-left-uncommitted', () => {
     mockListMergedWorkers.mockReturnValue([])
     mockRecordSignals.mockResolvedValue(undefined)
     mockRaiseActionQueueItem.mockResolvedValue(undefined)
+    mockRestoreWorktreeIfMissing.mockResolvedValue('present')
   })
 
   afterEach(() => {
@@ -303,7 +319,14 @@ describe('auto-commit fast path for coder-left-uncommitted', () => {
     execFileSync('git', ['commit', '-q', '-m', 'feat: done'], { cwd: repo })
     mockRunWorkerWithSpan.mockResolvedValue({
       ...cleanCoderResult(),
-      conversation: [{ type: 'result', usage: { input_tokens: 1234 } }],
+      // Supply both event shapes so the token assertion holds regardless of
+      // which provider MARS_WORKER_PROVIDER selects at test-run time:
+      //   - 'assistant' event → getLatestContextSize returns 1234 (per-request / claude)
+      //   - 'result' event   → getCumulativeTokenSpend returns 1234 (cumulative / codex)
+      conversation: [
+        { type: 'assistant', message: { usage: { input_tokens: 1234 } } },
+        { type: 'result', usage: { input_tokens: 1234 } },
+      ],
     })
     const traceStore = { record: vi.fn().mockResolvedValue(undefined) }
 
@@ -316,12 +339,15 @@ describe('auto-commit fast path for coder-left-uncommitted', () => {
       payload: expect.objectContaining({
         provider: expect.any(String),
         commitSource: 'self',
-        // The default provider (Codex) reports CUMULATIVE spend, not
-        // per-request context occupancy, so `buildContextTokenSignals` emits
-        // `cumulativeTokens` — never a fabricated `contextTokens`.
-        cumulativeTokens: 1234,
       }),
     }))
+    // The token field name depends on the active provider's semantics:
+    // 'cumulative' (codex) → cumulativeTokens; 'per-request' (claude) → contextTokens.
+    // Both branches carry 1234 from the conversation above.
+    const commitRecord = traceStore.record.mock.calls.find(
+      (c: unknown[]) => (c[0] as { kind?: string })?.kind === 'post-coder-commit',
+    )![0] as { payload: { cumulativeTokens?: number; contextTokens?: number } }
+    expect(commitRecord.payload.cumulativeTokens ?? commitRecord.payload.contextTokens).toBe(1234)
   })
 })
 
@@ -343,6 +369,7 @@ describe('auto-commit failure path', () => {
     mockListMergedWorkers.mockReturnValue([])
     mockRecordSignals.mockResolvedValue(undefined)
     mockRaiseActionQueueItem.mockResolvedValue(undefined)
+    mockRestoreWorktreeIfMissing.mockResolvedValue('present')
   })
 
   afterEach(() => {
@@ -411,6 +438,7 @@ describe('coder commit contract (code step post-condition)', () => {
     mockListMergedWorkers.mockReturnValue([])
     mockRecordSignals.mockResolvedValue(undefined)
     mockRaiseActionQueueItem.mockResolvedValue(undefined)
+    mockRestoreWorktreeIfMissing.mockResolvedValue('present')
     mockRunWorkerWithSpan.mockResolvedValue(cleanCoderResult())
   })
 
