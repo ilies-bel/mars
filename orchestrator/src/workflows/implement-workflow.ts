@@ -15,6 +15,7 @@ import {
   runAgent,
   review,
   merge as mergePrimitive,
+  awaitHuman,
   type MarsServices,
 } from './primitives'
 import { behaviourVerify as behaviourVerifyPrimitive } from './primitives/behaviour-verify'
@@ -113,6 +114,21 @@ export const implementWorkflow = defineWorkflow<
     // — so reaching merge also means no DoD criterion was observed
     // contradicted on a reached live surface.
     await ctx.step('behaviour-verify', () => behaviourVerifyPrimitive(ctx))
+    // Gate: if the task's merge_mode is 'gated', park for human approval
+    // before the merge step. The awaitHuman primitive transitions the task to
+    // 'awaiting-human', raises an action-queue row, and throws a
+    // WorkflowTerminalError so the pipeline suspends. On re-dispatch after the
+    // operator runs `mars step done <id>`, the engine short-circuits the
+    // 'completed' merge-gate step and falls straight through to merge.
+    if ((ctx.input.spec?.mergeMode ?? 'auto') === 'gated') {
+      await ctx.step('merge-gate', () =>
+        awaitHuman(ctx, {
+          note:
+            'Task is merge_mode=gated. Review the changes in the worktree, ' +
+            'then `mars step done <id>` to approve and merge.',
+        }),
+      )
+    }
     return await ctx.step('merge', () => mergePrimitive(ctx))
   },
 })
