@@ -1400,6 +1400,31 @@ export const startServer = async (
         return jsonResponse(404, { error: `no route for ${path}` })
       }
 
+      // GET /mockups/<id>.html — serve a generated mockup file from
+      // <stateDir>/mockups/<id>.html. The mockup workflow writes the HTML here
+      // via finalizeMockup; the ProposalDetailDrawer links to this route.
+      // Uses the default project's stateDir (mockup IDs are globally unique
+      // proposal IDs so no per-project routing is needed).
+      if (req.method === 'GET' && path.startsWith('/mockups/') && path.endsWith('.html')) {
+        const fileName = path.slice('/mockups/'.length)
+        const mockupsDir = resolve(defaultCtx.stateDir, 'mockups')
+        const mockupPath = resolve(mockupsDir, fileName)
+        // Safety: prevent path-traversal outside stateDir/mockups/.
+        if (!mockupPath.startsWith(mockupsDir + '/') && mockupPath !== mockupsDir) {
+          return jsonResponse(400, { error: 'invalid mockup path' })
+        }
+        if (!existsSync(mockupPath)) {
+          return new Response('mockup not found', {
+            status: 404,
+            headers: { 'Content-Type': 'text/plain' },
+          })
+        }
+        return new Response(Bun.file(mockupPath), {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        })
+      }
+
       if (distDir) {
         const r = staticResponse(distDir, path)
         if (r) return r

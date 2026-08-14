@@ -492,6 +492,14 @@ export interface HttpServerDeps {
    */
   promoteProposal: (id: string) => Promise<{ taskIds: string[] }>
   /**
+   * Enqueue a mockup task for a proposal: creates a task with `workflow:
+   * 'mockup'` and `parentProposalId: id`. Returns the created task ID.
+   * Any proposal status is accepted (unlike promote which requires draft).
+   * Optional for backwards compatibility with test stubs; defaults to a
+   * `not implemented` error when absent.
+   */
+  mockupProposal?: (id: string) => Promise<{ taskId: string }>
+  /**
    * Validate a task parked at the preview gate (status 'awaiting-validation'):
    * kill its dev server, mark it validated, and re-queue so the merge
    * continuation runs. Throws when the task is not awaiting validation.
@@ -3240,6 +3248,19 @@ export const startHttpServer = async (
       deps
         .promoteProposal(id)
         .then(({ taskIds }) => sendJson(res, 200, { ok: true, taskIds }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // proposal.mockup enqueues a read-only mockup task and returns the task id.
+    if (op === 'proposal.mockup') {
+      if (!deps.mockupProposal) {
+        sendJson(res, 501, { ok: false, error: 'proposal.mockup not implemented' })
+        return
+      }
+      deps
+        .mockupProposal(id)
+        .then(({ taskId }) => sendJson(res, 200, { ok: true, taskId }))
         .catch((err: unknown) => sendError(res, err))
       return
     }

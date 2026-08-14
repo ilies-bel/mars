@@ -177,16 +177,16 @@ describe('ProposalDetailDrawer – CLI commands section', () => {
         onClose={() => {}}
       />,
     )
-    // draft has 2 commands → 2 copy buttons
+    // draft has 3 commands: promote, mockup, show → 3 copy buttons
     const copyCount = (html.match(/data-testid="copy-cli-cmd"/g) ?? []).length
-    expect(copyCount).toBe(2)
+    expect(copyCount).toBe(3)
   })
 })
 
 // ── Action buttons ───────────────────────────────────────────────────────────
 
 describe('ProposalDetailDrawer – action buttons', () => {
-  it('draft proposal shows Promote, Grill and Dismiss buttons', () => {
+  it('draft proposal shows Promote, Grill, Mockup and Dismiss buttons', () => {
     const html = renderToStaticMarkup(
       <ProposalDetailDrawer
         proposal={draftProposal({ status: 'draft' })}
@@ -195,6 +195,7 @@ describe('ProposalDetailDrawer – action buttons', () => {
     )
     expect(html).toContain('data-testid="btn-promote"')
     expect(html).toContain('data-testid="btn-grill"')
+    expect(html).toContain('data-testid="btn-mockup"')
     expect(html).toContain('data-testid="btn-dismiss"')
   })
 

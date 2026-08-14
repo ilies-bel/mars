@@ -3973,6 +3973,62 @@ export const startDaemon = async (
     return { proposalId: resolved.id, taskId: task.id }
   }
 
+  const handleProposalMockup = async (
+    proposalId: string,
+  ): Promise<{ proposalId: string; taskId: string }> => {
+    const {
+      resolveProposalId,
+      getProposal,
+    } = await import('../proposals')
+
+    const resolved = await resolveProposalId(proposalId)
+    if (resolved.kind === 'ambiguous') {
+      throw new Error(
+        `ambiguous prefix '${proposalId}' matches ${resolved.count} proposals`,
+      )
+    }
+    if (resolved.kind === 'none') {
+      throw new Error(`proposal ${proposalId} not found`)
+    }
+
+    const proposal = await getProposal(resolved.id)
+    if (!proposal) throw new Error(`proposal ${resolved.id} not found`)
+
+    // Compose a prompt asking the agent to generate a self-contained HTML mockup.
+    const parts: string[] = [
+      `# Visual mockup: ${proposal.title}`,
+      `\nGenerate a self-contained HTML mockup for the following proposal.`,
+      `Write your output as a single HTML file named \`mockup.html\` at the root of the worktree.`,
+      `The file must be self-contained (no external URLs) and render a realistic wireframe of the proposed UI.`,
+    ]
+    if (proposal.problem.trim().length > 0) {
+      parts.push(`\n## Problem\n\n${proposal.problem.trim()}`)
+    }
+    if (proposal.solution.trim().length > 0) {
+      parts.push(`\n## Solution\n\n${proposal.solution.trim()}`)
+    }
+    if (proposal.userStories.length > 0) {
+      const storiesBody = proposal.userStories.map((s) => `- ${s}`).join('\n')
+      parts.push(`\n## User stories\n\n${storiesBody}`)
+    }
+    if (proposal.notes.trim().length > 0) {
+      parts.push(`\n## Notes\n\n${proposal.notes.trim()}`)
+    }
+    const prompt = parts.join('\n')
+
+    const task = await enqueueTask(prompt, undefined, {
+      author: proposal.author ?? undefined,
+      originId: resolved.id,
+      parentProposalId: resolved.id,
+      workflow: 'mockup',
+    })
+
+    // Notify the dispatch loop that the task is ready to run.
+    bus.emit('task.queued', { taskId: task.id })
+
+    return { proposalId: resolved.id, taskId: task.id }
+  }
+
   const handleInit = async (
     opts: import('../../workflows/init-workflow').RunInitOptions,
   ): Promise<import('../../workflows/init-workflow').RunInitResult> => {
@@ -4570,6 +4626,7 @@ export const startDaemon = async (
     handleProposalSlice,
     handleProposalReslice,
     handleProposalTake,
+    handleProposalMockup,
     handleRefine,
     dispatchGlossaryWrite,
     dispatchAdrAdd,
@@ -4908,6 +4965,10 @@ export const startDaemon = async (
       await promoteProposal(id)
       const sliceResult = await handleProposalSlice(id)
       return { taskIds: sliceResult.taskIds }
+    },
+    mockupProposal: async (id) => {
+      const r = await handleProposalMockup(id)
+      return { taskId: r.taskId }
     },
     validateTask: async (id) => {
       const { coreValidateTask } = await import('./validate-task')

@@ -490,6 +490,7 @@ const OPERATIONAL_ALERT_COPY: Record<
     }
   },
   'recovery-abandoned': null,
+  'mockup-ready': null,
 }
 
 const renderOperationalAlertCopy = (

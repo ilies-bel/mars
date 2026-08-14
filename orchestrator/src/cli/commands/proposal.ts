@@ -872,6 +872,46 @@ const proposalTake: Command = {
   },
 }
 
+const proposalMockup: Command = {
+  path: 'proposal mockup',
+  summary: 'enqueue a cheap visual HTML mockup for a proposal (read-only, no merge)',
+  usage: 'usage: mars proposal mockup <id>',
+  run: async (args, deps) => {
+    const id = args.positional[0]
+    if (!id) {
+      deps.err('usage: mars proposal mockup <id>')
+      return { code: 1 }
+    }
+
+    const resolved = await resolveProposalId(id)
+    if (resolved.kind === 'ambiguous') {
+      deps.err(`ambiguous prefix '${id}' matches ${resolved.count} proposals`)
+      return { code: 1 }
+    }
+    if (resolved.kind === 'none') {
+      deps.err(`proposal ${id} not found`)
+      return { code: 1 }
+    }
+    const proposal = await getProposal(resolved.id)
+    if (!proposal) {
+      deps.err(`proposal ${id} not found`)
+      return { code: 1 }
+    }
+
+    try {
+      const r = (await deps.daemon.sendRequest(
+        { op: 'proposal.mockup', proposalId: resolved.id },
+        { onSpawnNotice: spawnNoticeErr(deps.err) },
+      )) as { proposalId: string; taskId: string }
+      deps.out(`mockup task ${r.taskId} enqueued for proposal ${r.proposalId}`)
+    } catch (error: unknown) {
+      deps.err(errorMessage(error))
+      return { code: 1 }
+    }
+    return { code: 0 }
+  },
+}
+
 const proposalReslice: Command = {
   path: 'proposal reslice',
   summary: 'discard current slices and re-run the Slicer with operator feedback',
@@ -914,7 +954,7 @@ const proposalGroupUsage = `usage: mars proposal <subcommand>
 
   CRUD:      add  list  show  set  delete
   PRD:       add-user-story  remove-user-story
-  Lifecycle: promote  slice  take  reslice  dismiss
+  Lifecycle: promote  slice  take  reslice  dismiss  mockup
   Blockers:  block  unblock  blockers  block-task  unblock-task  task-blockers
   Reports:   ship-summary`
 
@@ -937,6 +977,7 @@ export const proposalCommands: readonly Command[] = [
   proposalPromote,
   proposalSlice,
   proposalTake,
+  proposalMockup,
   proposalReslice,
   proposalDismiss,
   proposalDelete,

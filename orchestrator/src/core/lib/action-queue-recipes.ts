@@ -1035,6 +1035,20 @@ const RECIPE_DEFINITIONS = {
       { op: 'purge', label: 'Discard task', style: 'danger' },
     ],
   },
+
+  'mockup-ready': {
+    humanSummary: (ctx) => {
+      const proposalId = str(ctx.payload['proposalId']) || 'unknown'
+      return `Visual mockup ready for proposal ${proposalId}.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      proposalId: str(ctx.payload['proposalId']),
+      taskId: str(ctx.payload['taskId']),
+    }),
+    verbs: [],
+  },
 } satisfies Record<ActionQueueKind, Omit<Recipe, 'preloadedResponses'>>
 
 /**

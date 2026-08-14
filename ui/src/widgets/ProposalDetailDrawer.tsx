@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import type { ProposalDetail, ProgressTask } from '@/shared/schemas'
 import { CopyButton } from '@/components/CopyButton'
@@ -37,7 +37,7 @@ const badgeClass = (status: string): string =>
  * Informational only — separate action buttons handle mutations.
  */
 const STATUS_CLI_VERBS: Record<string, string[]> = {
-  draft: ['promote', 'show'],
+  draft: ['promote', 'mockup', 'show'],
   'prd-ready': ['slice', 'show'],
   sliced: ['show'],
   dismissed: ['show'],
@@ -162,9 +162,20 @@ export const ProposalDetailDrawer = ({
     | { kind: 'done'; taskId?: string }
     | { kind: 'error'; message: string }
   >({ kind: 'idle' })
+<<<<<<< HEAD
   const [grillState, setGrillState] = useState<
     { kind: 'idle' } | { kind: 'pending' } | { kind: 'error'; message: string }
   >({ kind: 'idle' })
+=======
+  const [grillPending, setGrillPending] = useState(false)
+  const [mockupState, setMockupState] = useState<
+    | { kind: 'idle' }
+    | { kind: 'pending' }
+    | { kind: 'done'; taskId: string }
+    | { kind: 'error'; message: string }
+  >({ kind: 'idle' })
+  const [mockupExists, setMockupExists] = useState<boolean>(false)
+>>>>>>> 67c3f3cb (feat(mockup): proposal mockup workflow and gate)
   const [dismissState, setDismissState] = useState<
     { kind: 'idle' } | { kind: 'pending' } | { kind: 'done' } | { kind: 'error'; message: string }
   >({ kind: 'idle' })
@@ -270,6 +281,28 @@ export const ProposalDetailDrawer = ({
       setDismissState({ kind: 'error', message: (err as Error).message })
     }
   }, [proposal.id, dismissState.kind])
+
+  const handleMockup = useCallback(async () => {
+    if (mockupState.kind === 'pending') return
+    setMockupState({ kind: 'pending' })
+    try {
+      const result = await postAction('proposal.mockup', proposal.id)
+      const taskId = (result as { taskId?: string }).taskId ?? ''
+      setMockupState({ kind: 'done', taskId })
+    } catch (err) {
+      setMockupState({ kind: 'error', message: (err as Error).message })
+    }
+  }, [proposal.id, mockupState.kind])
+
+  // Check whether a mockup file has been generated for this proposal.
+  const mockupUrl = useMemo(() => `${BASE}/mockups/${encodeURIComponent(proposal.id)}.html`, [proposal.id])
+  useEffect(() => {
+    let cancelled = false
+    fetch(mockupUrl, { method: 'HEAD' }).then((r) => {
+      if (!cancelled) setMockupExists(r.ok)
+    }).catch(() => { /* file does not exist */ })
+    return () => { cancelled = true }
+  }, [mockupUrl])
 
   const isDraft = proposal.status === 'draft'
 
@@ -400,6 +433,42 @@ export const ProposalDetailDrawer = ({
           </button>
           {grillState.kind === 'error' && (
             <span data-testid="grill-error" className="font-mono text-[9px] text-destructive">{grillState.message}</span>
+          )}
+
+          {/* Mockup */}
+          {mockupState.kind === 'done' ? (
+            <span className="font-mono text-[10px] text-primary">
+              Mockup queued →{' '}
+              <a href={`#/task/${encodeURIComponent(mockupState.taskId)}`} className="underline">
+                {mockupState.taskId}
+              </a>
+            </span>
+          ) : (
+            <button
+              type="button"
+              data-testid="btn-mockup"
+              onClick={() => { void handleMockup() }}
+              disabled={mockupState.kind === 'pending'}
+              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10 disabled:opacity-50"
+            >
+              {mockupState.kind === 'pending' ? 'Queuing…' : 'Mockup'}
+            </button>
+          )}
+          {mockupState.kind === 'error' && (
+            <span className="font-mono text-[9px] text-destructive">{mockupState.message}</span>
+          )}
+
+          {/* View mockup link — shown when .mars/mockups/<id>.html exists */}
+          {mockupExists && (
+            <a
+              href={mockupUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="link-view-mockup"
+              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10"
+            >
+              View mockup ↗
+            </a>
           )}
 
           {/* Dismiss */}

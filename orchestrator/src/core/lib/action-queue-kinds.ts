@@ -56,6 +56,7 @@ export const ACTION_QUEUE_KINDS = [
   'health-check-alert',
   'fragmented-repo-layout',
   'recovery-abandoned',
+  'mockup-ready',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]
@@ -113,6 +114,7 @@ export const NOTICE_KINDS: ReadonlySet<ActionQueueKind> = new Set<ActionQueueKin
   'scheduling-decision',
   'requeue-warning',
   'arc-superseded-on-main',
+  'mockup-ready',
 ])
 
 /**
