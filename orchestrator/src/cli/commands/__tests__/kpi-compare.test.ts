@@ -507,4 +507,14 @@ describe('mars kpi — root command and help', () => {
     expect(registry.has('kpi')).toBe(true)
     expect(registry.has('kpi compare')).toBe(true)
   })
+
+  it('exits 1 and shows usage when called with no subcommand', async () => {
+    const deps = await loadDeps(db)
+    const fake = await makeFake()
+
+    const result = await run(['kpi'], { ...deps, daemon: fake })
+
+    expect(result.code).toBe(1)
+    expect(result.err.join('\n')).toContain('kpi')
+  })
 })
