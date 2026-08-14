@@ -2295,6 +2295,131 @@ describe('TaskDetailDrawer – SSE live-update via React Query', () => {
   })
 })
 
+// ── Done-task and not-found rendering ─────────────────────────────────────
+
+/**
+ * Core regression: #/task/<id> must render the full drawer body (title, status,
+ * meta, OriginTree) for ANY task status — including 'done' — fetched by id,
+ * regardless of whether the task appears in the board/progress dataset.
+ *
+ * The board (useProgress) prunes fully-completed arcs from the tasks array, so
+ * a done task may be absent from the `tasks` prop even while it exists in the
+ * database and is fetchable via /api/tasks/:id.  The drawer must NOT rely on
+ * `tasks` prop membership to decide whether to render the body.
+ *
+ * See: ProposalDetailDrawer fix in commit 10a52ade for the same pattern.
+ */
+describe('TaskDetailDrawer – done-task and not-found', () => {
+  it('renders title and step timeline for a done task fetched by id', () => {
+    // Pre-seed the ['task', id] query (simulates /api/tasks/:id returning the task).
+    const doneTask = fullTask({ id: 'done-t1', status: 'done' })
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['task', 'done-t1'], { kind: 'found', task: doneTask })
+    qc.setQueryData(['origins', null, 'done-t1'], SINGLE_NODE_ORIGINS('done-t1'))
+
+    // A completed workflow run with two steps — the visual-first primitives
+    // landed in commit 987a143a should render for done tasks.
+    const timeline = makeRunTimeline({
+      taskId: 'done-t1',
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({ stepName: 'setup', status: 'completed' }),
+            makeRTStep({ stepName: 'merge', status: 'completed' }),
+          ],
+        }),
+      ],
+    })
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <TaskDetailDrawer
+          taskId="done-t1"
+          onClose={() => {}}
+          runTimeline={timeline}
+          // No `tasks` prop — simulates the done task being pruned from the
+          // board dataset (pruneCompletedArcs removes it, but it still exists
+          // in the DB and is returned by /api/tasks/:id).
+        />
+      </QueryClientProvider>,
+    )
+
+    // Body renders with the task title and status.
+    expect(html).toContain('data-testid="task-detail-body"')
+    expect(html).toContain('data-testid="task-detail-status"')
+    expect(html).toContain('done')
+
+    // Step timeline renders (visual-first primitives work for done tasks).
+    expect(html).toContain('data-testid="step-card-list"')
+    expect(html).toContain('setup')
+    expect(html).toContain('merge')
+
+    // No not-found or error panels.
+    expect(html).not.toContain('data-testid="task-detail-not-found"')
+    expect(html).not.toContain('data-testid="task-detail-error"')
+  })
+
+  it('renders not-found state when the task id genuinely does not exist', () => {
+    // Pre-seed the cache with a not-found result — simulates /api/tasks/:id
+    // returning 404 for an id that was purged or never existed.
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['task', 'gone-t2'], { kind: 'not-found' })
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <TaskDetailDrawer
+          taskId="gone-t2"
+          onClose={() => {}}
+          tasks={[]}
+          proposals={[]}
+        />
+      </QueryClientProvider>,
+    )
+
+    // Not-found panel is shown — never a silent empty drawer.
+    expect(html).toContain('data-testid="task-detail-not-found"')
+    // Body and step timeline are absent when the task does not exist.
+    expect(html).not.toContain('data-testid="task-detail-body"')
+    expect(html).not.toContain('data-testid="step-card-list"')
+  })
+
+  it('renders done task body even when the task is absent from the tasks prop (pruned from board)', () => {
+    // Done tasks that belong to fully-completed arcs are dropped by
+    // pruneCompletedArcs from the board dataset.  The drawer must still render
+    // the body by fetching the task by id from /api/tasks/:id.
+    const doneTask = fullTask({ id: 'pruned-done', status: 'done', prompt: 'Implement feature X' })
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['task', 'pruned-done'], { kind: 'found', task: doneTask })
+    qc.setQueryData(['origins', null, 'pruned-done'], SINGLE_NODE_ORIGINS('pruned-done'))
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <TaskDetailDrawer
+          taskId="pruned-done"
+          onClose={() => {}}
+          tasks={[]}      // empty — task not in board dataset
+          proposals={[]}
+        />
+      </QueryClientProvider>,
+    )
+
+    // Body renders: task was fetched by id, not from the board dataset.
+    expect(html).toContain('data-testid="task-detail-body"')
+    // Status is shown as 'done'.
+    expect(html).toContain('data-testid="task-detail-status"')
+    // Subgraph is absent (task not in tasks prop) — that's expected.
+    expect(html).not.toContain('data-testid="task-detail-subgraph"')
+    // Not-found panel is absent.
+    expect(html).not.toContain('data-testid="task-detail-not-found"')
+  })
+})
+
 // ── Agent tool calls in step cards ──────────────────────────────────────────
 
 /**

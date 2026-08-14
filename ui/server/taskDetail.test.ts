@@ -84,4 +84,17 @@ describe('GET /api/tasks/:id — proxies daemon /view/tasks/:id', () => {
     expect(body.task.id).toBe('task-1')
     expect(body.task.status).toBe('queued')
   })
+
+  it('returns 200 with the task when the id exists and status is done', async () => {
+    // Done tasks are pruned from the board/progress dataset by pruneCompletedArcs
+    // when they have no active siblings, but /api/tasks/:id must return them
+    // regardless of status so the TaskDetailDrawer can render the full body.
+    await seedTask(dbPath, 'done-task-1', 'done')
+
+    const res = await fetch(`${baseUrl}/api/tasks/done-task-1`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { task: { id: string; status: string } }
+    expect(body.task.id).toBe('done-task-1')
+    expect(body.task.status).toBe('done')
+  })
 })
