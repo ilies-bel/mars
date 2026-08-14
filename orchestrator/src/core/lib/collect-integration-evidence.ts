@@ -3,7 +3,7 @@ import { promisify } from 'node:util'
 
 const exec = promisify(execFile)
 
-export interface IntegratedCommit {
+interface IntegratedCommit {
   sha: string
   shortSha: string
   subject: string
