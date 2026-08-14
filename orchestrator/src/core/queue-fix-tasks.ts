@@ -220,6 +220,21 @@ export const getMaxNonCodeRetries = (): number => {
   return Math.floor(n)
 }
 
+const DEFAULT_MAX_FIX_ATTEMPTS = 2
+
+/**
+ * Cap on the number of fix-task inserts for a given (sourceTaskId,
+ * failureSignature) pair before escalating to a fix-fail-loop action queue
+ * item. Defaults to 2; override via `MARS_MAX_FIX_ATTEMPTS`.
+ */
+export const getMaxFixAttempts = (): number => {
+  const raw = process.env.MARS_MAX_FIX_ATTEMPTS
+  if (!raw) return DEFAULT_MAX_FIX_ATTEMPTS
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_MAX_FIX_ATTEMPTS
+  return Math.floor(n)
+}
+
 /**
  * Count non-code re-queue attempts for a given (taskId, failureSignature)
  * pair by reading the `non_code_requeue_attempts` ledger.
@@ -410,6 +425,7 @@ export interface HandleTaskFailureViaTaskResult {
     | 'blocked'
     | 'failed'
     | 'escalated'
+    | 'fix-fail-loop'
     | 'noop'
     | 'non-code-retry-exhausted'
     | 'requeued'
