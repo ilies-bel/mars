@@ -16,6 +16,7 @@ import {
   eventsResponseSchema,
   frameworkUpdateSchema,
   glossaryResponseSchema,
+  costPerMergedTaskResponseSchema,
   kpiArcsResponseSchema,
   kpisResponseSchema,
   learnedRecipesResponseSchema,
@@ -46,6 +47,7 @@ import {
   type EventsResponse,
   type FrameworkUpdate,
   type GlossaryTerm,
+  type CostPerMergedTaskResponse,
   type Kpi,
   type KpiArcsResponse,
   type KpiKey,
@@ -495,6 +497,20 @@ export const fetchKpiArcs = async (
   return fetchJson(
     appendProject(`/api/kpis/${encodeURIComponent(key)}/arcs`, projectId),
     kpiArcsResponseSchema,
+  )
+}
+
+/**
+ * Fetch the 30-day (or N-day) cost-per-merged-task trend.
+ * Returns a trend array of daily averages plus the excluded-cost-null count.
+ */
+export const fetchCostPerMergedTask = async (
+  days: number,
+  projectId?: string,
+): Promise<CostPerMergedTaskResponse> => {
+  return fetchJson(
+    appendProject(`/api/kpi/cost-per-merged-task?days=${days}`, projectId),
+    costPerMergedTaskResponseSchema,
   )
 }
 
@@ -1370,6 +1386,7 @@ export type {
   AutoRecipeRun,
   ChatThread,
   ChatThreadDetail,
+  CostPerMergedTaskResponse,
   DaemonHealth,
   Decision,
   EventsResponse,

@@ -1,5 +1,6 @@
 /**
- * Behaviour tests for KpiDetailPage band indicator and navigation.
+ * Behaviour tests for KpiDetailPage band indicator, navigation, and the
+ * cost-per-merged-task detail section.
  *
  * The band cue in the summary card must:
  *   - show a glyph + text label readable without colour (accessibility)
@@ -17,17 +18,20 @@
 
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { Kpi, KpiArc } from '@/shared/schemas'
+import type { Kpi, KpiArc, CostPerMergedTaskResponse } from '@/shared/schemas'
 import { KpiDetailPage } from './KpiDetailPage'
 
 vi.mock('@/entities/kpi/useKpis')
 vi.mock('@/entities/kpi/useKpiArcs')
+vi.mock('@/entities/kpi/useCostPerMergedTask')
 
 import { useKpis } from '@/entities/kpi/useKpis'
 import { useKpiArcs } from '@/entities/kpi/useKpiArcs'
+import { useCostPerMergedTask } from '@/entities/kpi/useCostPerMergedTask'
 
 const mockUseKpis = vi.mocked(useKpis)
 const mockUseKpiArcs = vi.mocked(useKpiArcs)
+const mockUseCostPerMergedTask = vi.mocked(useCostPerMergedTask)
 
 const makeKpi = (overrides: Partial<Kpi> & { key: Kpi['key'] }): Kpi => ({
   key: overrides.key,
@@ -44,6 +48,7 @@ const makeKpi = (overrides: Partial<Kpi> & { key: Kpi['key'] }): Kpi => ({
 // ---------------------------------------------------------------------------
 
 const noArcs = { arcs: [], isLoading: false, error: null }
+const noCostData = { data: undefined, isLoading: false, error: null }
 
 function renderPage(key: Kpi['key'], currentValue: number) {
   mockUseKpis.mockReturnValue({
@@ -52,6 +57,7 @@ function renderPage(key: Kpi['key'], currentValue: number) {
     error: null,
   } as ReturnType<typeof useKpis>)
   mockUseKpiArcs.mockReturnValue(noArcs as ReturnType<typeof useKpiArcs>)
+  mockUseCostPerMergedTask.mockReturnValue(noCostData as ReturnType<typeof useCostPerMergedTask>)
   return renderToStaticMarkup(<KpiDetailPage kpiKey={key} />)
 }
 
@@ -66,6 +72,7 @@ function renderPageWithArcs(key: Kpi['key'], arcs: KpiArc[]) {
     isLoading: false,
     error: null,
   } as ReturnType<typeof useKpiArcs>)
+  mockUseCostPerMergedTask.mockReturnValue(noCostData as ReturnType<typeof useCostPerMergedTask>)
   return renderToStaticMarkup(<KpiDetailPage kpiKey={key} />)
 }
 
@@ -294,5 +301,117 @@ describe('KpiDetailPage — drift indicator', () => {
     const html = renderToStaticMarkup(<KpiDetailPage kpiKey="failure_rate" />)
     expect(html).not.toContain('Improved')
     expect(html).not.toContain('Regressed')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// cost-per-merged-task detail page
+// ---------------------------------------------------------------------------
+
+const makeCostResponse = (trend: CostPerMergedTaskResponse['trend'], excludedCostNullCount = 0): CostPerMergedTaskResponse => ({
+  trend,
+  excludedCostNullCount,
+})
+
+describe('KpiDetailPage — cost-per-merged-task detail section', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    mockUseKpis.mockReturnValue({ data: [], isLoading: false, error: null } as ReturnType<typeof useKpis>)
+    mockUseKpiArcs.mockReturnValue(noArcs as ReturnType<typeof useKpiArcs>)
+  })
+
+  it('renders the "Cost / merged task" heading', () => {
+    mockUseCostPerMergedTask.mockReturnValue({
+      data: makeCostResponse([]),
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useCostPerMergedTask>)
+    const html = renderToStaticMarkup(<KpiDetailPage kpiKey="cost-per-merged-task" />)
+    expect(html).toContain('Cost / merged task')
+  })
+
+  it('renders the KPI description text', () => {
+    mockUseCostPerMergedTask.mockReturnValue({
+      data: makeCostResponse([]),
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useCostPerMergedTask>)
+    const html = renderToStaticMarkup(<KpiDetailPage kpiKey="cost-per-merged-task" />)
+    expect(html).toContain('USD cost per merged task')
+  })
+
+  it('renders a sparkline when trend data is available', () => {
+    const trend = [
+      { day: '2024-01-01', mergedCount: 5, avgCostPerMerge: 1.25 },
+      { day: '2024-01-02', mergedCount: 4, avgCostPerMerge: 1.10 },
+      { day: '2024-01-03', mergedCount: 6, avgCostPerMerge: 0.95 },
+    ]
+    mockUseCostPerMergedTask.mockReturnValue({
+      data: makeCostResponse(trend),
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useCostPerMergedTask>)
+    const html = renderToStaticMarkup(<KpiDetailPage kpiKey="cost-per-merged-task" />)
+    expect(html).toContain('<svg')
+  })
+
+  it('renders the trend table with day, mergedCount, and avgCostPerMerge columns', () => {
+    const trend = [
+      { day: '2024-01-15', mergedCount: 3, avgCostPerMerge: 2.50 },
+    ]
+    mockUseCostPerMergedTask.mockReturnValue({
+      data: makeCostResponse(trend),
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useCostPerMergedTask>)
+    const html = renderToStaticMarkup(<KpiDetailPage kpiKey="cost-per-merged-task" />)
+    expect(html).toContain('2024-01-15')
+    // mergedCount
+    expect(html).toContain('>3<')
+    // USD-formatted avgCostPerMerge
+    expect(html).toContain('$2.50')
+  })
+
+  it('surfaces the excluded-cost-null count when it is non-zero', () => {
+    const trend = [
+      { day: '2024-01-01', mergedCount: 5, avgCostPerMerge: 1.0 },
+      { day: '2024-01-02', mergedCount: 3, avgCostPerMerge: 1.5 },
+    ]
+    mockUseCostPerMergedTask.mockReturnValue({
+      data: makeCostResponse(trend, 7),
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useCostPerMergedTask>)
+    const html = renderToStaticMarkup(<KpiDetailPage kpiKey="cost-per-merged-task" />)
+    expect(html).toContain('7')
+    expect(html).toContain('excluded')
+  })
+
+  it('does not surface the excluded count notice when it is zero', () => {
+    const trend = [
+      { day: '2024-01-01', mergedCount: 5, avgCostPerMerge: 1.0 },
+      { day: '2024-01-02', mergedCount: 3, avgCostPerMerge: 1.5 },
+    ]
+    mockUseCostPerMergedTask.mockReturnValue({
+      data: makeCostResponse(trend, 0),
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useCostPerMergedTask>)
+    const html = renderToStaticMarkup(<KpiDetailPage kpiKey="cost-per-merged-task" />)
+    // The excluded-count notice ("no cost data recorded") must not appear when count=0.
+    // (The description text mentions "excluded" in a different context — that's fine.)
+    expect(html).not.toContain('no cost data recorded')
+    expect(html).not.toContain('data-testid="excluded-cost-null-count"')
+  })
+
+  it('does not render the arc-list diagnostic section for cost-per-merged-task', () => {
+    mockUseCostPerMergedTask.mockReturnValue({
+      data: makeCostResponse([]),
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useCostPerMergedTask>)
+    const html = renderToStaticMarkup(<KpiDetailPage kpiKey="cost-per-merged-task" />)
+    // The diagnostic button is only on the old arc-based detail pages
+    expect(html).not.toContain('Run diagnostic')
   })
 })

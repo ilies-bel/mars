@@ -756,6 +756,7 @@ export const kpiKeySchema = z.enum([
   'failure_rate',
   'autonomous_completion_rate',
   'recovery_success_rate',
+  'cost-per-merged-task',
 ])
 
 export const kpiSeriesPointSchema = z.object({
@@ -820,6 +821,28 @@ export const kpiArcsResponseSchema = z.object({
 
 export type KpiArc = z.infer<typeof kpiArcSchema>
 export type KpiArcsResponse = z.infer<typeof kpiArcsResponseSchema>
+
+// ----------------------------------------------------------------------------
+// Cost-per-merged-task KPI (GET /api/kpi/cost-per-merged-task?days=N).
+// A 30-day trend of average USD cost per merged task. Separate from the
+// existing /api/kpis vector because the data shape is fundamentally different:
+// it groups by calendar day and includes the merged-task denominator.
+// ----------------------------------------------------------------------------
+
+export const costPerMergedTaskTrendPointSchema = z.object({
+  day: z.string(),
+  mergedCount: z.number(),
+  avgCostPerMerge: z.number().nullable(),
+})
+
+export const costPerMergedTaskResponseSchema = z.object({
+  trend: z.array(costPerMergedTaskTrendPointSchema),
+  /** Number of merged tasks excluded because their cost field was null. */
+  excludedCostNullCount: z.number(),
+})
+
+export type CostPerMergedTaskTrendPoint = z.infer<typeof costPerMergedTaskTrendPointSchema>
+export type CostPerMergedTaskResponse = z.infer<typeof costPerMergedTaskResponseSchema>
 
 // ----------------------------------------------------------------------------
 // Projects (GET /api/projects). Multi-project dashboard — each entry is one

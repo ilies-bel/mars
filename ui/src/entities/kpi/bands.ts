@@ -85,5 +85,11 @@ export function kpiBand(key: KpiKey, value: number): KpiBand {
       if (value < 50_000) return 'good'
       if (value <= 150_000) return 'warn'
       return 'bad'
+
+    case 'cost-per-merged-task':
+      // lower-is-better (USD per merged task)
+      if (value < 1.0) return 'good'
+      if (value <= 5.0) return 'warn'
+      return 'bad'
   }
 }

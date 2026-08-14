@@ -81,6 +81,7 @@ export const parseKpiRoute = (hash: string): KpiKey | null => {
     'failure_rate',
     'autonomous_completion_rate',
     'recovery_success_rate',
+    'cost-per-merged-task',
   ]
   return valid.includes(key) ? key : null
 }
@@ -219,6 +220,7 @@ export const parseTaskKpiKey = (hash: string): KpiKey | null => {
       'failure_rate',
       'autonomous_completion_rate',
       'recovery_success_rate',
+      'cost-per-merged-task',
     ]
     return valid.includes(value as KpiKey) ? (value as KpiKey) : null
   }

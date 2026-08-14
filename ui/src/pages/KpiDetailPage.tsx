@@ -4,6 +4,7 @@ import { FallbackSurface } from '@/components/FallbackSurface'
 import { SkeletonList } from '@/components/Skeleton'
 import { useKpis } from '@/entities/kpi/useKpis'
 import { useKpiArcs } from '@/entities/kpi/useKpiArcs'
+import { useCostPerMergedTask } from '@/entities/kpi/useCostPerMergedTask'
 import { kpiBand, kpiBandCue } from '@/entities/kpi/bands'
 import { kpiDriftDirection } from '@/entities/kpi/types'
 import { formatKpiValue, KPI_DESCRIPTIONS } from '@/widgets/KpiTile'
@@ -15,6 +16,7 @@ const KPI_LABELS: Record<KpiKey, string> = {
   failure_rate: 'Failure Rate',
   autonomous_completion_rate: 'Autonomous Completion',
   recovery_success_rate: 'Recovery Success',
+  'cost-per-merged-task': 'Cost / merged task',
 }
 
 
@@ -138,6 +140,75 @@ function runDiagnostic(key: KpiKey, arcs: KpiArc[], currentValue: number): Diagn
   }
 }
 
+// ---------------------------------------------------------------------------
+// Cost-per-merged-task detail section
+// ---------------------------------------------------------------------------
+
+const usdFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
+
+/**
+ * Detail view for the cost-per-merged-task KPI. Renders as a child component
+ * so its hook (useCostPerMergedTask) is only called when this component mounts,
+ * not on every KpiDetailPage render regardless of kpiKey.
+ */
+const CostPerMergedTaskDetailSection = () => {
+  const { data, isLoading, error } = useCostPerMergedTask(30)
+
+  if (isLoading) {
+    return <SkeletonList rows={6} rowClassName="h-8 w-full mb-0.5" label="Loading cost data" />
+  }
+
+  if (error) {
+    return <FallbackSurface error={error} of="cost-per-merged-task data" variant="inline" />
+  }
+
+  if (!data || data.trend.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">No cost data available for this period.</p>
+    )
+  }
+
+  const trend = data.trend
+  const sparklinePoints = trend.map((t) => t.avgCostPerMerge)
+  const excluded = data.excludedCostNullCount
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="rounded border border-primary/20 bg-card p-4">
+        <Sparkline points={sparklinePoints} width={320} height={48} />
+        {excluded > 0 && (
+          <p
+            className="mt-2 font-mono text-[11px] text-muted-foreground"
+            data-testid="excluded-cost-null-count"
+          >
+            {excluded} task{excluded !== 1 ? 's' : ''} excluded — no cost data recorded
+          </p>
+        )}
+      </div>
+
+      <div>
+        <div className="mb-1 flex items-center border-b border-primary/20 pb-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+          <span className="w-32 shrink-0">Day</span>
+          <span className="w-24 shrink-0 text-right">Merged</span>
+          <span className="min-w-0 flex-1 text-right">Avg cost / merge</span>
+        </div>
+        {trend.map((row) => (
+          <div
+            key={row.day}
+            className="flex items-center border-b border-primary/10 py-1 font-mono text-sm hover:bg-primary/5"
+          >
+            <span className="w-32 shrink-0 text-muted-foreground">{row.day}</span>
+            <span className="w-24 shrink-0 text-right text-foreground">{row.mergedCount}</span>
+            <span className="min-w-0 flex-1 text-right text-foreground">
+              {row.avgCostPerMerge !== null ? usdFormatter.format(row.avgCostPerMerge) : '—'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 type ArcFilter = 'all' | 'pass' | 'fail'
 
 interface KpiDetailPageProps {
@@ -149,6 +220,24 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
   const { arcs, isLoading: arcsLoading, error: arcsError } = useKpiArcs(kpiKey)
   const [arcFilter, setArcFilter] = useState<ArcFilter>('all')
   const [diagnostic, setDiagnostic] = useState<DiagnosticState>({ status: 'idle' })
+
+  // cost-per-merged-task has a completely different data model — hand off to its
+  // own section component which holds the useCostPerMergedTask hook.
+  if (kpiKey === 'cost-per-merged-task') {
+    return (
+      <div className="flex h-full flex-col overflow-hidden bg-background">
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          <h2 className="mb-2 font-mono text-[11px] uppercase tracking-wide text-primary">
+            Cost / merged task
+          </h2>
+          <p className="mb-4 font-mono text-[11px] text-muted-foreground">
+            {KPI_DESCRIPTIONS['cost-per-merged-task']}
+          </p>
+          <CostPerMergedTaskDetailSection />
+        </div>
+      </div>
+    )
+  }
 
   const kpi = kpis?.find((k) => k.key === kpiKey)
   const label = KPI_LABELS[kpiKey]

@@ -7,6 +7,7 @@ export const KPI_IMPROVEMENT_DIRECTION: Record<KpiKey, 'lower-is-better' | 'high
   failure_rate: 'lower-is-better',
   autonomous_completion_rate: 'higher-is-better',
   recovery_success_rate: 'higher-is-better',
+  'cost-per-merged-task': 'lower-is-better',
 }
 
 /**

@@ -8,6 +8,7 @@ const KPI_LABELS: Record<KpiKey, string> = {
   failure_rate: 'Failure Rate',
   autonomous_completion_rate: 'Autonomous Completion',
   recovery_success_rate: 'Recovery Success',
+  'cost-per-merged-task': 'Cost / merged task',
 }
 
 export const KPI_DESCRIPTIONS: Record<KpiKey, string> = {
@@ -19,6 +20,8 @@ export const KPI_DESCRIPTIONS: Record<KpiKey, string> = {
     'Percentage of recovery attempts where both the recovery and its origin task completed successfully. Higher is better. Target: > 90%.',
   cost_per_arc:
     'Median cache-weighted token cost across completed arcs (p50). Lower is better. Target: < 50k tokens.',
+  'cost-per-merged-task':
+    'Average USD cost per merged task over the selected window. Lower is better. Tasks with no cost data are excluded from the average.',
 }
 
 /**
@@ -30,7 +33,12 @@ export const KPI_DESCRIPTIONS: Record<KpiKey, string> = {
  *   '1.2k tok', 1500000 becomes '1.5M tok'. The stored value is the p50 cost
  *   in cache-weighted tokens (see orchestrator/src/core/lib/kpi-compute.ts).
  */
+const usdFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
+
 export function formatKpiValue(key: KpiKey, value: number): string {
+  if (key === 'cost-per-merged-task') {
+    return usdFormatter.format(value)
+  }
   if (key === 'cost_per_arc') {
     if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M tok`
     if (value >= 1000) return `${(value / 1000).toFixed(1)}k tok`

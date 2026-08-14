@@ -19,6 +19,7 @@ const KPI_LABELS: Record<KpiKey, string> = {
   failure_rate: 'Failure Rate',
   autonomous_completion_rate: 'Autonomous Completion',
   recovery_success_rate: 'Recovery Success',
+  'cost-per-merged-task': 'Cost / merged task',
 }
 
 const truncateId = (id: string): string =>

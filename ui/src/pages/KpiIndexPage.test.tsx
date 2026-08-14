@@ -16,6 +16,10 @@ vi.mock('@/entities/kpi/useKpis', () => ({
   useKpis: vi.fn(() => ({ data: [], isLoading: false, error: null })),
 }))
 
+vi.mock('@/entities/kpi/useCostPerMergedTask', () => ({
+  useCostPerMergedTask: vi.fn(() => ({ data: undefined, isLoading: false, error: null })),
+}))
+
 // WatchtowerSection renders LoopLedgerPanel, PromotionLedgerTable, and ScoreTrends
 // — mock all three hooks so this test doesn't need a QueryClientProvider.
 vi.mock('@/entities/watchtower/useLoopLedger', () => ({

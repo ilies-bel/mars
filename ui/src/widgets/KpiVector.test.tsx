@@ -77,6 +77,10 @@ vi.mock('@/entities/kpi/useKpis', () => ({
   useKpis: vi.fn(() => ({ data: FOUR_KPIS, isLoading: false, error: null })),
 }))
 
+vi.mock('@/entities/kpi/useCostPerMergedTask', () => ({
+  useCostPerMergedTask: vi.fn(() => ({ data: undefined, isLoading: false, error: null })),
+}))
+
 import { useKpis } from '@/entities/kpi/useKpis'
 
 describe('KpiVector', () => {
