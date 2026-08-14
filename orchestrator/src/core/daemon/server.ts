@@ -4668,15 +4668,19 @@ export const startDaemon = async (
   const buildAlertSources = async () => {
     const { listTasks: qListTasks } = await import('../queue')
     const { getDefaultDomainTaskStore } = await import('../store/task-store')
-    const { resolveOriginIdForTask } = await import('../lib/origin')
     return {
       listFailedArcs: async () => {
         const tasks = await qListTasks()
         const store = getDefaultDomainTaskStore()
         // Group tasks by their resolved arc (origin_id).
+        // `t.originId` is already populated by listTasks() / rowToTask():
+        //   `origin_id ?? id`, the same expression resolveOriginIdForTask
+        // executes with an extra per-task DB round-trip. Using the field
+        // directly eliminates an O(N) sequential query storm that caused
+        // GET /alerts to time out (504) on projects with many tasks.
         const byArc = new Map<string, typeof tasks>()
         for (const t of tasks) {
-          const arcId = await resolveOriginIdForTask(t.id)
+          const arcId = t.originId
           const bucket = byArc.get(arcId) ?? []
           bucket.push(t)
           byArc.set(arcId, bucket)
