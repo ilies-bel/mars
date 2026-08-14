@@ -68,6 +68,8 @@ interface StepSpanRow {
   durationMs: number | null
   taskId: string | null
   originId: string | null
+  declaredTier?: 'fast' | 'balanced' | 'flagship' | null
+  resolvedModel?: string | null
 }
 
 interface StepSpansBody {
@@ -452,5 +454,31 @@ describe('GET /api/step-spans', () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as StepSpansBody
     expect(body.spans[0]!.durationMs).toBe(1234)
+  })
+
+  it('propagates declaredTier and resolvedModel from step_started payload', async () => {
+    await seedTraceEvents(async (store) => {
+      await store.record({
+        kind: 'step_started',
+        taskId: 'task-tier',
+        originId: 'task-tier',
+        phase: 'code',
+        payload: {
+          stepName: 'code',
+          workflowInstanceId: 'wf-tier',
+          workerName: 'Coder',
+          declaredTier: 'fast',
+          resolvedModel: 'gpt-5.6-luna',
+        },
+      })
+    })
+
+    const res = await fetch(`${baseUrl}/api/step-spans?originId=task-tier`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as StepSpansBody
+    expect(body.spans).toHaveLength(1)
+    const span = body.spans[0]!
+    expect(span.declaredTier).toBe('fast')
+    expect(span.resolvedModel).toBe('gpt-5.6-luna')
   })
 })

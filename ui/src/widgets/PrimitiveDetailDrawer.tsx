@@ -68,6 +68,8 @@ export const primitiveRunToCard = (run: PrimitiveRun, idx: number): StepCardEntr
     claudeSessionId: run.claudeSessionId,
     failureReason: null,
     resultJson: null,
+    declaredTier: run.declaredTier,
+    resolvedModel: run.resolvedModel,
   }
   return runStepToCard(step, run.workflowInstanceId, idx)
 }

@@ -741,6 +741,11 @@ const viewStepSpans = async (
             ? `${wfId}\0${stepName}`
             : null
         const endEvent = key ? endedMap.get(key) : undefined
+        const rawTier = s.payload.declaredTier
+        const declaredTier: 'fast' | 'balanced' | 'flagship' | null =
+          rawTier === 'fast' || rawTier === 'balanced' || rawTier === 'flagship'
+            ? rawTier
+            : null
         return {
           stepName: typeof stepName === 'string' ? stepName : '',
           phase: s.phase,
@@ -763,6 +768,9 @@ const viewStepSpans = async (
           evalResults: Array.isArray(endEvent?.payload.evalResults)
             ? (endEvent.payload.evalResults as StepSpan['evalResults'])
             : undefined,
+          declaredTier,
+          resolvedModel:
+            typeof s.payload.resolvedModel === 'string' ? s.payload.resolvedModel : null,
         }
       })
       .sort((a, b) => a.startedAt.localeCompare(b.startedAt))

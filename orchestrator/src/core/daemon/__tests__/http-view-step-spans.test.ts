@@ -115,6 +115,8 @@ describe('GET /view/step-spans', () => {
         durationMs: 60000,
         taskId: 'task-1',
         originId: 'origin-abc',
+        declaredTier: null,
+        resolvedModel: null,
       },
       {
         stepName: 'code',
@@ -127,6 +129,8 @@ describe('GET /view/step-spans', () => {
         durationMs: null,
         taskId: 'task-1',
         originId: 'origin-abc',
+        declaredTier: null,
+        resolvedModel: null,
       },
     ]
 

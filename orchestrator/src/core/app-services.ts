@@ -519,6 +519,11 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
             : null
         const endEvent = key ? endedMap.get(key)?.shift() : undefined
 
+        const rawTier = s.payload.declaredTier
+        const declaredTier: 'fast' | 'balanced' | 'flagship' | null =
+          rawTier === 'fast' || rawTier === 'balanced' || rawTier === 'flagship'
+            ? rawTier
+            : null
         return {
           stepName: typeof stepName === 'string' ? stepName : '',
           phase: s.phase,
@@ -543,6 +548,11 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
           evalResults: Array.isArray(endEvent?.payload.evalResults)
             ? (endEvent.payload.evalResults as Array<{ label: string; value: number | string | null; warn: boolean }>)
             : undefined,
+          declaredTier,
+          resolvedModel:
+            typeof s.payload.resolvedModel === 'string'
+              ? s.payload.resolvedModel
+              : null,
         }
       })
       // Ascending by startedAt — preserves workflow execution order.
@@ -609,6 +619,11 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
           ? (endEvent.payload.usageSignals as Record<string, unknown>)
           : null
 
+      const rawTierRts = s.payload.declaredTier
+      const declaredTierRts: 'fast' | 'balanced' | 'flagship' | null =
+        rawTierRts === 'fast' || rawTierRts === 'balanced' || rawTierRts === 'flagship'
+          ? rawTierRts
+          : null
       const step: RunTimelineStep = {
         stepName,
         phase: s.phase,
@@ -645,6 +660,11 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         summary:
           endEvent && typeof endEvent.payload.summary === 'string'
             ? endEvent.payload.summary
+            : null,
+        declaredTier: declaredTierRts,
+        resolvedModel:
+          typeof s.payload.resolvedModel === 'string'
+            ? s.payload.resolvedModel
             : null,
       }
 
@@ -961,6 +981,12 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
               endEvent && typeof endEvent.payload.sessionId === 'string'
                 ? endEvent.payload.sessionId
                 : null,
+            declaredTier: (() => {
+              const t = s.payload.declaredTier
+              return t === 'fast' || t === 'balanced' || t === 'flagship' ? t : null
+            })(),
+            resolvedModel:
+              typeof s.payload.resolvedModel === 'string' ? s.payload.resolvedModel : null,
           }
         })
       // Store order is newest-first — kept as-is: recent history reads top-down.

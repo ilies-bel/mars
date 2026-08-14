@@ -63,6 +63,10 @@ export interface PrimitiveRun {
   originId: string | null
   workerName: string | null
   claudeSessionId: string | null
+  /** Declared model tier for this step (populated by Phase 4B slice 1). */
+  declaredTier?: 'fast' | 'balanced' | 'flagship' | null
+  /** Resolved native model id for this step (populated by Phase 4B slice 1). */
+  resolvedModel?: string | null
 }
 
 /** One awaiting-human park — awaitHuman's honest history rows (never spans). */

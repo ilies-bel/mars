@@ -120,6 +120,10 @@ export interface StepSpan {
   taskId: string | null
   originId: string | null
   evalResults?: Array<{ label: string; value: number | string | null; warn: boolean }>
+  /** Declared model tier for this step (populated by Phase 4B slice 1). */
+  declaredTier: 'fast' | 'balanced' | 'flagship' | null
+  /** Resolved native model id for this step (populated by Phase 4B slice 1). */
+  resolvedModel: string | null
 }
 
 /** A single step within a run timeline, returned by GET /view/runs/:taskId. */
@@ -145,6 +149,10 @@ export interface RunTimelineStep {
   resultJson: string | null
   /** Human-readable one-line summary produced by non-LLM steps (e.g. reflect). */
   summary: string | null
+  /** Declared model tier for this step (populated by Phase 4B slice 1). */
+  declaredTier: 'fast' | 'balanced' | 'flagship' | null
+  /** Resolved native model id for this step (populated by Phase 4B slice 1). */
+  resolvedModel: string | null
 }
 
 /**

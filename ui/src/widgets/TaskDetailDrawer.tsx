@@ -50,6 +50,10 @@ export interface StepSpan {
   taskId: string | null
   originId: string | null
   evalResults?: Array<{ label: string; value: number | string | null; warn: boolean }>
+  /** Declared model tier for this step (populated by Phase 4B slice 1). */
+  declaredTier?: 'fast' | 'balanced' | 'flagship' | null
+  /** Resolved native model id for this step (populated by Phase 4B slice 1). */
+  resolvedModel?: string | null
 }
 
 /** A single step within a workflow run entry. */
@@ -74,6 +78,10 @@ export interface RunTimelineStep {
   inputJson?: string | null
   /** Human-readable one-line summary produced by non-LLM steps (e.g. reflect). */
   summary?: string | null
+  /** Declared model tier for this step (populated by Phase 4B slice 1). */
+  declaredTier?: 'fast' | 'balanced' | 'flagship' | null
+  /** Resolved native model id for this step (populated by Phase 4B slice 1). */
+  resolvedModel?: string | null
 }
 
 /** One workflow run with its ordered step list. */
@@ -119,6 +127,10 @@ export interface StepCardEntry {
   inputJson?: string | null
   /** Human-readable one-line summary produced by non-LLM steps (e.g. reflect). */
   summary?: string | null
+  /** Declared model tier for this step (populated by Phase 4B slice 1). */
+  declaredTier?: 'fast' | 'balanced' | 'flagship' | null
+  /** Resolved native model id for this step (populated by Phase 4B slice 1). */
+  resolvedModel?: string | null
 }
 
 // ── Drill-in trail helpers ────────────────────────────────────────────────────
@@ -413,6 +425,8 @@ const spanToCard = (s: StepSpan, i: number): StepCardEntry => ({
   durationMs: s.durationMs,
   workerName: s.workerName,
   evalResults: s.evalResults,
+  declaredTier: s.declaredTier,
+  resolvedModel: s.resolvedModel,
 })
 
 /** Normalises a RunTimelineStep into the unified StepCardEntry format.
@@ -441,6 +455,8 @@ export const runStepToCard = (
   resultJson: step.resultJson,
   inputJson: step.inputJson,
   summary: step.summary,
+  declaredTier: step.declaredTier,
+  resolvedModel: step.resolvedModel,
 })
 
 // ── Detail body ───────────────────────────────────────────────────────────────
@@ -1030,6 +1046,14 @@ const StepCard = ({
             <span className="font-semibold text-sm text-foreground">{entry.stepName}</span>
             {entry.workerName != null ? (
               <span className="font-mono text-[10px] text-muted-foreground">{entry.workerName}</span>
+            ) : null}
+            {(entry.declaredTier != null || entry.resolvedModel != null) ? (
+              <span
+                data-testid="step-tier-model"
+                className="font-mono text-[10px] text-muted-foreground"
+              >
+                {entry.declaredTier ?? '—'} ({entry.resolvedModel ?? '—'})
+              </span>
             ) : null}
           </div>
           {summary ? (
