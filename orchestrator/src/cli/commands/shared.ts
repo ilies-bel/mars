@@ -17,16 +17,7 @@ export const isDaemonDownError = (msg: string): boolean =>
 
 /**
  * The standard daemon spawn-notice handler used by mutation commands: prints
- * a one-line started-daemon notice to stdout via `out`.
- */
-export const spawnNoticeOut =
-  (out: (s: string) => void) =>
-  (pid: number, logFile: string): void => {
-    out(`[mars] started daemon (pid ${pid}, log: ${logFile})`)
-  }
-
-/**
- * Variant that prints the spawn notice to stderr (glossary/adr use this).
+ * a one-line started-daemon notice to stderr via `err`.
  */
 export const spawnNoticeErr =
   (err: (s: string) => void) =>
