@@ -4039,6 +4039,7 @@ export const startDaemon = async (
       originId: resolved.id,
       parentProposalId: resolved.id,
       workflow: 'mockup',
+      skipTriage: true,
     })
 
     // Notify the dispatch loop that the task is ready to run.
