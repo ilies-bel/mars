@@ -247,13 +247,17 @@ export const ProposalDetailDrawer = ({
     setGrillPending(true)
     try {
       const { threadId } = await startThreadFromProposal(proposal.id)
+      // Navigate to the created thread. Do NOT call handleClose() here —
+      // handleClose schedules onClose() for 180 ms later, which would call
+      // navigateReplace('#/progress') and overwrite the #/chat?thread=<id>
+      // destination. The hash change itself causes App.tsx to re-render, setting
+      // proposalId → null, which unmounts this drawer without any explicit close.
       navigateToThread(threadId)
-      handleClose()
     } catch (err) {
       setGrillPending(false)
       console.error('Grill failed:', err)
     }
-  }, [proposal.id, grillPending, handleClose])
+  }, [proposal.id, grillPending])
 
   const handleDismiss = useCallback(async () => {
     if (dismissState.kind === 'pending') return

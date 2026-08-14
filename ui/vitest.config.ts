@@ -85,6 +85,7 @@ export default defineConfig({
             // require a real DOM environment (happy-dom) and createRoot+act.
             'src/widgets/TopologyView.test.tsx',
             'src/pages/ProgressPage.test.tsx',
+            'src/widgets/ProposalDetailDrawer.grill.test.tsx',
           ],
         },
       },
@@ -154,6 +155,8 @@ export default defineConfig({
             // Interactive click tests that require a real DOM environment.
             'src/widgets/TopologyView.test.tsx',
             'src/pages/ProgressPage.test.tsx',
+            // Grill-button navigation: tests window.location.hash mutation.
+            'src/widgets/ProposalDetailDrawer.grill.test.tsx',
           ],
         },
       },
