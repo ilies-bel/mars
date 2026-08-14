@@ -38,6 +38,7 @@ export const TRACE_EVENT_KINDS = [
   'post-coder-commit',
   'cli-invocation',
   'scorer_result',
+  'distill.applied',
 ] as const
 
 export type TraceEventKind = (typeof TRACE_EVENT_KINDS)[number]

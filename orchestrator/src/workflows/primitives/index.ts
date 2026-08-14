@@ -152,6 +152,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
+import { distillObservation } from '../../core/lib/distill/observation'
 
 // ---------------------------------------------------------------------------
 // Session-key construction (exported for regression tests)
@@ -1397,8 +1398,44 @@ export const runAgent = async (
 
   const originId = await resolveOriginIdForTask(taskId)
   const primaryTag: TaskTag = tags.find(isTaskTag) ?? 'coder'
+
+  // Distill noisy verify output before embedding it in the resume banner.
+  // Raw vitest / tsc output can exceed 200 000 chars; the distilled form
+  // strips progress bars and timing lines, keeping only signal (FAIL lines,
+  // Error:, TS diagnostics, diff hunks). A <verify_full_log_ref> element
+  // points the coder at the persisted full log so nothing is truly lost.
+  let verifyBlock = ''
+  if (verifyFailureOutput !== null) {
+    const verifyLogRef = `arc://task/${taskId}/verify-output`
+    const distilled = distillObservation({
+      text: verifyFailureOutput,
+      ref: verifyLogRef,
+      kind: 'verify',
+    })
+    verifyBlock =
+      `\n\n<verify_full_log_ref>${verifyLogRef}</verify_full_log_ref>\n` +
+      `The previous verification failed. Fix the task diff using this recorded output:\n\n` +
+      `\`\`\`text\n${distilled.text}\n\`\`\``
+    // Emit telemetry — best-effort, must never affect dispatch.
+    trace.traceStore
+      .record({
+        kind: 'distill.applied',
+        taskId,
+        originId,
+        phase: 'code',
+        payload: {
+          ref: verifyLogRef,
+          originalBytes: distilled.originalBytes,
+          distilledBytes: distilled.distilledBytes,
+        },
+      })
+      .catch(() => {
+        // Telemetry must never change the completion result.
+      })
+  }
+
   const basePrompt = resumeFromPriorAttempt
-    ? `## Resume prior work\n\nPrior progress is already in this worktree. Run \`git log -p\` first to review what was already completed, then continue from where the last coder stopped. Do NOT restart from scratch.${verifyFailureOutput === null ? '' : `\n\nThe previous verification failed. Fix the task diff using this recorded output:\n\n\`\`\`text\n${verifyFailureOutput}\n\`\`\``}\n\n${prompt}`
+    ? `## Resume prior work\n\nPrior progress is already in this worktree. Run \`git log -p\` first to review what was already completed, then continue from where the last coder stopped. Do NOT restart from scratch.${verifyBlock}\n\n${prompt}`
     : prompt
   const fullTask = await store.getTask(taskId).catch(() => null)
   const domains = resolveTaskDomains({
