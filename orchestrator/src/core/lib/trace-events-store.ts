@@ -39,6 +39,7 @@ export const TRACE_EVENT_KINDS = [
   'cli-invocation',
   'scorer_result',
   'distill.applied',
+  'index-card.attached',
 ] as const
 
 export type TraceEventKind = (typeof TRACE_EVENT_KINDS)[number]

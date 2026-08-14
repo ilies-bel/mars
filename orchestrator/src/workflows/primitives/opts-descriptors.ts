@@ -39,6 +39,7 @@ export const runAgentDescriptors = {
   worktree: 'Override the worktree. Defaults to the one stashed by setupWorktree.',
   model: 'Override the model for this step. Precedence: opts > MARS_WORKER_MODEL > Worker default.',
   modelTier: 'Model tier for this step ("fast" | "balanced" | "flagship"). Translated to a native model id via the Worker\'s Provider tier map. Precedence: model > MARS_WORKER_MODEL > modelTier > Worker default.',
+  indexCard: 'Index-card text to inject into the prompt. Omit to use the card stashed by setupWorktree; pass null to suppress the card.',
 } satisfies Record<keyof RunAgentOpts, string>
 
 /** One-line descriptions for every {@link ReviewOpts} field. */

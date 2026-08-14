@@ -157,6 +157,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { distillObservation } from '../../core/lib/distill/observation'
+import { loadOrBuildIndexCard } from '../../core/lib/index-card/cache.js'
 
 // ---------------------------------------------------------------------------
 // Session-key construction (exported for regression tests)
@@ -351,6 +352,10 @@ export const resolveTrace = (ctx: MarsCtx, taskId: string): Promise<PrimitiveTra
 // `verify`/`merge` can read it without the user threading it between steps
 // ("magic"). An explicit `opts.worktree` override always wins.
 const worktreeCache = new WeakMap<object, WorktreeRef>()
+
+// Per-ctx memoised index card text. `setupWorktree` stashes the built card here
+// so `runAgent` can inject it into the composed prompt without re-threading it.
+const indexCardCache = new WeakMap<object, string | null>()
 
 /**
  * Resolve the worktree ref. Precedence:
@@ -660,6 +665,8 @@ export interface SetupWorktreeOpts {
 export interface SetupWorktreeResult {
   path: string
   branch: string
+  /** Index-card text to inject into the worker prompt, or null when unavailable. */
+  indexCard: string | null
 }
 
 /**
@@ -698,7 +705,7 @@ export const setupWorktree = async (
       mode: 'auto',
       guide: null,
     })
-    const inert = { path: '(validation dry-run)', branch: 'validate' }
+    const inert = { path: '(validation dry-run)', branch: 'validate', indexCard: null }
     worktreeCache.set(ctx, inert)
     return inert
   }
@@ -720,6 +727,9 @@ export const setupWorktree = async (
   // Memoise so verify/merge can read the worktree without re-threading it.
   // WorktreeRef and SetupWorktreeResult are the same { path, branch } shape.
   worktreeCache.set(ctx, { path: result.path, branch: result.branch })
+  // Stash the index card so runAgent can inject it into the prompt without
+  // re-threading it through the step boundary.
+  indexCardCache.set(ctx, result.indexCard)
   return result
 
   async function runSetupWorktree(): Promise<SetupWorktreeResult> {
@@ -1060,6 +1070,7 @@ export const setupWorktree = async (
       })
 
       // Capture the integration HEAD sha at setup time (non-fatal).
+      let integrationHeadSha = ''
       try {
         const { repoRoot } = resolveContext()
         const r = await runTool(
@@ -1074,11 +1085,44 @@ export const setupWorktree = async (
           trace.traceStore,
         )
         if (r.exitCode !== 0) throw new Error(`rev-parse exit ${r.exitCode}`)
-        const headSha = r.stdout.trim()
-        handle?.setSha(headSha)
-        await updateTask(taskId, { integrationHeadSha: headSha }, store)
+        integrationHeadSha = r.stdout.trim()
+        handle?.setSha(integrationHeadSha)
+        await updateTask(taskId, { integrationHeadSha }, store)
       } catch {
         // Non-fatal: leave integration_head_sha as null.
+      }
+
+      // Build or load the index card for this task (best-effort, non-fatal).
+      // The card is keyed on (integrationHeadSha, spec.files) so a warm disk
+      // cache hit (same commit, same file shortlist) is free — no I/O beyond
+      // a single stat(). An empty file list or missing SHA skips the card.
+      const spec = input(ctx).spec ?? null
+      let setupIndexCard: string | null = null
+      if (integrationHeadSha && spec !== null && spec.files.length > 0) {
+        try {
+          const cardResult = loadOrBuildIndexCard({
+            taskId,
+            commitSha: integrationHeadSha,
+            files: spec.files,
+          })
+          setupIndexCard = cardResult.text
+          await trace.traceStore.record({
+            kind: 'index-card.attached',
+            taskId,
+            originId: trace.originId,
+            phase: 'setup',
+            payload: {
+              cacheKey: cardResult.cacheKey,
+              tokens: cardResult.tokens,
+              cacheHit: cardResult.cacheHit,
+            },
+          })
+        } catch (cardErr) {
+          console.warn(
+            `[setup] task ${taskId}: index-card build failed (non-fatal):`,
+            cardErr instanceof Error ? cardErr.message : String(cardErr),
+          )
+        }
       }
 
       try {
@@ -1169,7 +1213,7 @@ export const setupWorktree = async (
                   `[setup:install] task ${taskId} install recovered in place (no lockfile change); continuing`,
                 )
               }
-              return { path: ref.path, branch: ref.branch }
+              return { path: ref.path, branch: ref.branch, indexCard: setupIndexCard }
             }
             console.log(
               `[setup:install] task ${taskId} in-place repair did not reconcile; escalating to fix-task`,
@@ -1219,7 +1263,7 @@ export const setupWorktree = async (
         throw error instanceof Error ? error : new Error(errorOutput)
       }
 
-      return { path: ref.path, branch: ref.branch }
+      return { path: ref.path, branch: ref.branch, indexCard: setupIndexCard }
     },
   })
   }
@@ -1273,6 +1317,13 @@ export interface RunAgentOpts {
    * `'flagship'` unless explicitly downgraded.
    */
   modelTier?: ProviderModelTier
+  /**
+   * Index-card text to inject into the composed prompt. When omitted, the cache
+   * stashed by `setupWorktree` is used automatically — explicit injection is only
+   * needed when calling `runAgent` without a preceding `setupWorktree` step.
+   * Pass `null` to suppress the card even when one is cached.
+   */
+  indexCard?: string | null
 }
 
 export interface RunAgentResult {
@@ -1522,6 +1573,11 @@ export const runAgent = async (
       return []
     }
   })()
+  // Resolve the index card: explicit opts.indexCard wins; otherwise fall back
+  // to the card stashed by setupWorktree. When opts.indexCard is explicitly
+  // null, suppress the card even if one is cached.
+  const indexCard =
+    'indexCard' in opts ? opts.indexCard ?? null : (indexCardCache.get(ctx) ?? null)
   const fullPrompt = composePrompt(
     basePrompt,
     plan,
@@ -1532,6 +1588,7 @@ export const runAgent = async (
     kind,
     lessons,
     gateSteps,
+    indexCard,
   )
 
   // Registry workers: merge operator-declared Workers so their tag sets are

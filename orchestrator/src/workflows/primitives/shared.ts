@@ -468,6 +468,17 @@ export const composePrompt = (
    * scorer runtime, metrics helpers — are unaffected).
    */
   gateSteps: ReadonlyArray<VerifyStepSpec> = [],
+  /**
+   * Pre-built index card for the task's relevant files. When non-null, it is
+   * injected as a `<index_card>` section immediately after the worktree
+   * orientation block and before the structured-task spec block, giving the
+   * coder a compact per-task glossary/ADR/co-change snapshot without
+   * expanding the full project CONTEXT.md.
+   *
+   * Defaults to `null` (backward-compatible; callers that do not populate
+   * an index card receive an unchanged prompt).
+   */
+  indexCard: string | null = null,
 ): string => {
   // Diagnose Chore short-circuit: the prompt arrives fully composed.
   if (kind === 'diagnose') return prompt.trim()
@@ -478,10 +489,14 @@ export const composePrompt = (
   if (plan?.technical?.trim()) {
     sections.push(`## Technical plan\n\n${plan.technical.trim()}`)
   }
-  // Orientation must come BEFORE the structured-task spec block.
+  // Orientation must come BEFORE the index card and the structured-task spec block.
   if (worktreeRoot.length > 0) {
     const taskCwd = resolveTaskCwd(worktreeRoot, spec?.files ?? [])
     sections.push(renderOrientation(worktreeRoot, taskCwd))
+  }
+  // Index card immediately after orientation, before the structured-task spec.
+  if (indexCard !== null && indexCard.trim().length > 0) {
+    sections.push('## Index card\n\n<index_card>\n' + indexCard.trim() + '\n</index_card>')
   }
   const specBlock = renderSpec(spec, taskId, gateSteps)
   if (specBlock !== null) sections.push(specBlock)
