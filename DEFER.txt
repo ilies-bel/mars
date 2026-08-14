@@ -1,2 +1,5 @@
 Deferred: mars-274afebd not yet merged.
 Follow-up task mars-c53c995a queued, blocked-by mars-274afebd.
+
+Rescue arc mars-033de638 (2026-08-14): fix-50666ffb committed promoteProposal stub
+signature fix (2c17675a); typecheck + knip pass; task is in verifying — action: continue.
