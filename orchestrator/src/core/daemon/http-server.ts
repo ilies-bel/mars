@@ -636,6 +636,13 @@ export interface HttpServerDeps {
    * This keeps the behaviour safe on test setups that build a minimal deps object.
    */
   getDaemonShas?: () => { sourceSha: string | null; currentSha: string | null; isStale: boolean }
+  /**
+   * Return cost-per-merged-task KPI data for a given window.
+   * Optional — when absent the `GET /kpi/cost-per-merged-task` endpoint
+   * returns 503 Service Unavailable (daemon not wired up yet or running in
+   * read-only test mode).
+   */
+  getCostPerMergedTaskKpi?: (opts: { windowDays: number }) => Promise<import('../lib/kpi/cost-per-merged-task').CostPerMergedTaskKpi>
 }
 
 export interface HttpServerHandle {
@@ -1070,6 +1077,28 @@ export const startHttpServer = async (
       deps.appServices
         .listKpis()
         .then((kpis) => sendJson(res, 200, { kpis }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /kpi/cost-per-merged-task?days=30 — cache-weighted token usage and
+    // provider cost aggregated per completed (status='done') task for the
+    // given rolling window (Phase 4A, PRD 74d76a78). Returns current aggregate
+    // plus a 30-day trend series. Pure read; no draining gate.
+    // Returns 503 when the dep is not wired up (test / read-only environments).
+    if (req.method === 'GET' && req.url && req.url.startsWith('/kpi/cost-per-merged-task')) {
+      if (!deps.getCostPerMergedTaskKpi) {
+        sendJson(res, 503, { ok: false, error: 'getCostPerMergedTaskKpi not available' })
+        return
+      }
+      const parsed = new URL(req.url, 'http://localhost')
+      const daysRaw = parsed.searchParams.get('days')
+      const windowDays =
+        daysRaw !== null && Number.isFinite(Number.parseInt(daysRaw, 10)) && Number.parseInt(daysRaw, 10) > 0
+          ? Number.parseInt(daysRaw, 10)
+          : 30
+      deps.getCostPerMergedTaskKpi({ windowDays })
+        .then((kpi) => sendJson(res, 200, kpi))
         .catch((err: unknown) => sendError(res, err))
       return
     }
