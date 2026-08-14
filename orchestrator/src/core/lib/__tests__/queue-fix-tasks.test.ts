@@ -21,7 +21,6 @@ import { execFileSync } from 'node:child_process'
 
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
-  listTasks: typeof import('../../queue').listTasks
   updateTask: typeof import('../../queue').updateTask
   getTask: typeof import('../../queue').getTask
   resolveQueueClient: typeof import('../../queue').resolveQueueClient
@@ -166,6 +165,7 @@ describe('queue-fix-tasks', () => {
   afterEach(() => {
     delete process.env.MARS_REPO
     delete process.env.MARS_FIX_RETRY_BUDGET
+    delete process.env.MARS_MAX_FIX_ATTEMPTS
     delete process.env.MARS_SIGNATURE_STORM_THRESHOLD
     rmSync(repo, { recursive: true, force: true })
   })
@@ -211,7 +211,7 @@ describe('queue-fix-tasks', () => {
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('blocked')
-    expect(reloaded?.recoverySpawnedCount).toBe(1)
+    expect(reloaded?.retryCount).toBe(1)
     cleanup()
   })
 
@@ -255,7 +255,7 @@ describe('queue-fix-tasks', () => {
     cleanup()
   })
 
-  it('handleTaskFailureWithFixTask transitions source to blocked with recovery_spawned_count++ when a recipe is registered', async () => {
+  it('handleTaskFailureWithFixTask transitions source to blocked with retry_count++ when a recipe is registered', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft, rc } = await loadModules(repo)
     // The classifier maps `TS2304:` to typecheck-cannot-find-name, so
@@ -273,65 +273,23 @@ describe('queue-fix-tasks', () => {
     expect(r.outcome).toBe('blocked')
     expect(r.failureSignature).toBe(sig)
     expect(r.fixTaskId).toBeTruthy()
-    expect(r.recoverySpawnedCount).toBe(1)
+    expect(r.retryCount).toBe(1)
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('blocked')
-    expect(reloaded?.recoverySpawnedCount).toBe(1)
+    expect(reloaded?.retryCount).toBe(1)
     cleanup()
   })
 
-  it('dispatches exactly one recovery when an origin has already failed verification', async () => {
-    process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, ft, rc } = await loadModules(repo)
-    const sig = 'verify:typecheck/typecheck-cannot-find-name'
-    const cleanup = registerTestRecipe(rc, sig)
-    const origin = await q.enqueueTask('do thing', undefined, { skipTriage: true })
-    const worktreePath = resolve(repo, '.mars', 'worktrees', origin.id)
-    mkdirSync(worktreePath, { recursive: true })
-
-    await q.updateTask(origin.id, {
-      status: 'failed',
-      branch: 'task/failed-origin',
-      worktreePath,
-      failedPhase: 'verify',
-      failureReason: 'verify:typecheck',
-      failureSignature: sig,
-      failureReasonCode: sig,
-      error: 'TS2304: cannot find name foo',
-    })
-
-    const first = await ft.handleTaskFailureWithFixTask({
-      taskId: origin.id,
-      failingStep: 'verify:typecheck',
-      errorOutput: 'TS2304: cannot find name foo',
-      branch: 'task/failed-origin',
-    })
-    const second = await ft.handleTaskFailureWithFixTask({
-      taskId: origin.id,
-      failingStep: 'verify:typecheck',
-      errorOutput: 'TS2304: cannot find name foo',
-      branch: 'task/failed-origin',
-    })
-
-    expect(first.outcome).toBe('blocked')
-    expect(second.outcome).toBe('noop')
-    expect((await q.getTask(origin.id))?.status).toBe('blocked')
-    expect(
-      (await q.listTasks()).filter((task) => task.fixForTaskId === origin.id),
-    ).toHaveLength(1)
-    cleanup()
-  })
-
-  it('fails source task and creates no fix task when recovery_spawned_count > MARS_FIX_RETRY_BUDGET (post-recovery failure)', async () => {
+  it('fails source task and creates no fix task when retry_count > MARS_FIX_RETRY_BUDGET (post-recovery failure)', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '0'
     const { q, ft } = await loadModules(repo)
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
-    // Simulate a prior recovery attempt having already incremented recoverySpawnedCount to 1.
-    // With budget=0, recoverySpawnedCount=1 → 1 > 0 = true → mark failed (budget reached).
+    // Simulate a prior recovery attempt having already incremented retryCount to 1.
+    // With budget=0, retryCount=1 → 1 > 0 = true → mark failed (budget reached).
     const now = new Date().toISOString()
     await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET recovery_spawned_count = 1, updated_at = ? WHERE id = ?`,
+      sql: `UPDATE tasks SET retry_count = 1, updated_at = ? WHERE id = ?`,
       args: [now, t.id],
     })
 
@@ -355,10 +313,10 @@ describe('queue-fix-tasks', () => {
   it('duplicate task.failed for a blocked origin does not mark origin failed or raise a recovery-exhausted alert', async () => {
     // Regression for incident mars-c37f2cbb (2026-07-19): a second task.failed
     // event for the same origin while its fix task was still queued triggered
-    // the recoverySpawnedCount > budget exhaustion branch, marked the origin terminal
+    // the retryCount > budget exhaustion branch, marked the origin terminal
     // `failed`, and raised a false recovery-exhausted action-queue row —
     // all while the fix task was still pending and had never run.
-    process.env.MARS_FIX_RETRY_BUDGET = '0' // budget=0; recoverySpawnedCount=1 after first fix → 1>0 = true (exhaustion) without the guard
+    process.env.MARS_FIX_RETRY_BUDGET = '0' // budget=0; retryCount=1 after first fix → 1>0 = true (exhaustion) without the guard
     const { q, ft, rc } = await loadModules(repo)
     const sig = 'verify:typecheck/typecheck-cannot-find-name'
     const cleanup = registerTestRecipe(rc, sig)
@@ -367,7 +325,7 @@ describe('queue-fix-tasks', () => {
     }
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
 
-    // First failure: spawns fix task, transitions origin to blocked, recoverySpawnedCount→1.
+    // First failure: spawns fix task, transitions origin to blocked, retryCount→1.
     const r1 = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:typecheck',
@@ -379,10 +337,10 @@ describe('queue-fix-tasks', () => {
 
     const afterFirst = await q.getTask(t.id)
     expect(afterFirst?.status).toBe('blocked')
-    expect(afterFirst?.recoverySpawnedCount).toBe(1)
+    expect(afterFirst?.retryCount).toBe(1)
 
     // Second (duplicate) task.failed for the SAME origin while fix is still
-    // queued. Without the guard, recoverySpawnedCount=1 > budget=0 fires exhaustion.
+    // queued. Without the guard, retryCount=1 > budget=0 fires exhaustion.
     const r2 = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:typecheck',
@@ -394,7 +352,7 @@ describe('queue-fix-tasks', () => {
     // Origin must remain blocked — NOT failed.
     const afterDuplicate = await q.getTask(t.id)
     expect(afterDuplicate?.status).toBe('blocked')
-    expect(afterDuplicate?.recoverySpawnedCount).toBe(1)
+    expect(afterDuplicate?.retryCount).toBe(1)
 
     // No additional fix task was spawned for the duplicate event.
     const fixTasks = await q.resolveQueueClient().execute({
@@ -421,7 +379,7 @@ describe('queue-fix-tasks', () => {
     const sig = 'merge:preflight/uncommitted-changes'
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
 
-    // First failure: recovery_spawned_count=0, budget=0 (default). With ">": 0 > 0 = false → recipe path.
+    // First failure: retry_count=0, budget=0 (default). With ">": 0 > 0 = false → recipe path.
     // Regression guard for the 20-task pile-up where >= short-circuited to 'failed' on first try.
     const r = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
@@ -441,10 +399,7 @@ describe('queue-fix-tasks', () => {
     expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(1)
   })
 
-  it('daemon trigger: when a fix task lands done, the source task it blocks transitions to done via propagateRecoveryDone', async () => {
-    // mars-f2034bb9: a recovery completing its origin's work must flip the
-    // origin to 'done' (not re-queue it). unblockByCompletion now detects the
-    // own-recovery edge and routes through propagateRecoveryDone.
+  it('daemon trigger: when a fix task lands done, the source task it blocks transitions back to queued', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft, br, rc } = await loadModules(repo)
     const cleanup = registerTestRecipe(rc, 'verify:typecheck/unclassified')
@@ -456,17 +411,15 @@ describe('queue-fix-tasks', () => {
     })
     expect(f.outcome).toBe('blocked')
 
-    // Fix task lands done (recovery succeeded — it ran and merged the work).
+    // Fix task lands done.
     await q.updateTask(f.fixTaskId!, { status: 'done' })
 
     const result = await br.onBlockerTaskCompleted(f.fixTaskId!)
     expect(result.outcomes).toHaveLength(1)
-    // Own-recovery path: outcome is 'done-via-recovery', not 'queued'.
-    expect(result.outcomes[0].outcome).toBe('done-via-recovery')
+    expect(result.outcomes[0].outcome).toBe('queued')
 
     const reloaded = await q.getTask(t.id)
-    // Origin is done — the recovery delivered its work.
-    expect(reloaded?.status).toBe('done')
+    expect(reloaded?.status).toBe('queued')
     cleanup()
   })
 
@@ -491,32 +444,25 @@ describe('queue-fix-tasks', () => {
       },
     })
     // Manually wire t2 to the same fix task to simulate a shared blocker.
-    // Two different time encodings are in play: `task_blockers.created_at` is
-    // a bigint of epoch millis, while `tasks.updated_at` is a timestamptz that
-    // takes the ISO form. One `now` cannot serve both.
     const now = new Date().toISOString()
-    const nowMs = Date.now()
     await q.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
-      args: [t2.id, f1.fixTaskId, nowMs],
+      args: [t2.id, f1.fixTaskId, now],
     })
     await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET status = 'blocked', recovery_spawned_count = 1, updated_at = ? WHERE id = ?`,
+      sql: `UPDATE tasks SET status = 'blocked', retry_count = 1, updated_at = ? WHERE id = ?`,
       args: [now, t2.id],
     })
 
     await q.updateTask(f1.fixTaskId, { status: 'done' })
     const result = await br.onBlockerTaskCompleted(f1.fixTaskId)
+    const queuedIds = result.outcomes
+      .filter((o) => o.outcome === 'queued')
+      .map((o) => o.taskId)
+      .sort()
+    expect(queuedIds).toEqual([t1.id, t2.id].sort())
 
-    // mars-f2034bb9: t1 is the fix task's own origin (fixForTaskId=t1.id) →
-    // propagateRecoveryDone flips it to 'done', not 'queued'.
-    // t2 is a piggybacking dependent (fixForTaskId≠t2.id) → normal re-queue.
-    const doneViaRecovery = result.outcomes.filter((o) => o.outcome === 'done-via-recovery')
-    const queued = result.outcomes.filter((o) => o.outcome === 'queued')
-    expect(doneViaRecovery.map((o) => o.taskId)).toEqual([t1.id])
-    expect(queued.map((o) => o.taskId)).toEqual([t2.id])
-
-    expect((await q.getTask(t1.id))?.status).toBe('done')
+    expect((await q.getTask(t1.id))?.status).toBe('queued')
     expect((await q.getTask(t2.id))?.status).toBe('queued')
     cleanup()
   })
@@ -569,21 +515,20 @@ describe('queue-fix-tasks', () => {
     const fix = await q.getTask(r1.fixTaskId)
     expect(fix?.priority).toBe(3)
 
-    // Completing the shared fix: t1 is the fix's own origin → done via recovery;
-    // t2 is a piggybacker → re-queued to retry on the fixed codebase.
-    // (mars-f2034bb9: unblockByCompletion now detects own-recovery edges.)
+    // Completing the shared fix flips both sources back to queued.
     await q.updateTask(r1.fixTaskId, { status: 'done' })
     const result = await br.onBlockerTaskCompleted(r1.fixTaskId)
-    const doneViaRecovery = result.outcomes.filter((o) => o.outcome === 'done-via-recovery')
-    const queued = result.outcomes.filter((o) => o.outcome === 'queued')
-    expect(doneViaRecovery.map((o) => o.taskId)).toEqual([t1.id])
-    expect(queued.map((o) => o.taskId)).toEqual([t2.id])
+    const queuedIds = result.outcomes
+      .filter((o) => o.outcome === 'queued')
+      .map((o) => o.taskId)
+      .sort()
+    expect(queuedIds).toEqual([t1.id, t2.id].sort())
     delete rc.recipes['shared-sig']
   })
 
   it('reconciles origin to done when its recovery task reaches done (propagateRecoveryDone)', async () => {
     // The retry-budget silent-fail gate was removed (mars-3d63fe52), so a
-    // recovery_spawned_count=1 origin is never failed at unblock. A successful recovery
+    // retry_count=1 origin is never failed at unblock. A successful recovery
     // counts as its origin reaching done (CLAUDE.md one-recovery contract);
     // reconciliation is driven by propagateRecoveryDone, exactly as the daemon
     // does when a fix task lands done.
@@ -597,7 +542,7 @@ describe('queue-fix-tasks', () => {
       errorOutput: 'err',
     })
     expect(f.outcome).toBe('blocked')
-    expect(f.recoverySpawnedCount).toBe(1)
+    expect(f.retryCount).toBe(1)
 
     await q.updateTask(f.fixTaskId!, { status: 'done' })
     const propagation = await Arc.load(t.id).propagateRecoveryDone()
@@ -611,7 +556,7 @@ describe('queue-fix-tasks', () => {
 
   it('reconciles origin to done and unblocks dependents when its recovery reaches done (default budget path)', async () => {
     // Reproduces the observed incident shape (mars-63196f8e) under the NEW
-    // contract: one failure → recoverySpawnedCount=1, but the retry-budget silent-fail
+    // contract: one failure → retryCount=1, but the retry-budget silent-fail
     // gate is gone (mars-3d63fe52), so the origin is never failed with
     // recovery_exhausted_at_unblock. When its recovery reaches done, the origin
     // is reconciled to done via propagateRecoveryDone and downstream tasks
@@ -625,24 +570,24 @@ describe('queue-fix-tasks', () => {
     // A downstream task blocked on the origin — should be unblocked when the
     // origin reaches done through propagateRecoveryDone.
     const downstream = await q.enqueueTask('downstream', undefined, { skipTriage: true })
-    // `task_blockers.created_at` is a bigint of epoch millis, not a timestamp.
+    const now = new Date().toISOString()
     await q.resolveQueueClient().execute({
       sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-      args: [downstream.id, origin.id, Date.now()],
+      args: [downstream.id, origin.id, now],
     })
     await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
       args: [downstream.id],
     })
 
-    // Fail origin once — recoverySpawnedCount becomes 1, fix task spawned.
+    // Fail origin once — retryCount becomes 1, fix task spawned.
     const f = await ft.handleTaskFailureWithFixTask({
       taskId: origin.id,
       failingStep: 'verify:typecheck',
       errorOutput: 'err',
     })
     expect(f.outcome).toBe('blocked')
-    expect(f.recoverySpawnedCount).toBe(1)
+    expect(f.retryCount).toBe(1)
 
     // Recovery fix task completes; the daemon calls propagateRecoveryDone.
     await q.updateTask(f.fixTaskId!, { status: 'done' })
@@ -670,7 +615,7 @@ describe('queue-fix-tasks', () => {
 
     // First failure: classifier maps "merge target ... has uncommitted
     // changes" to merge:preflight/uncommitted-changes (a registered
-    // recipe). Bumps recovery_spawned_count to 1, transitions to blocked, inserts
+    // recipe). Bumps retry_count to 1, transitions to blocked, inserts
     // a task_blockers row pointing at the new fix-task.
     const errorLine =
       'merge target /repo has uncommitted changes blocking fast-forward'
@@ -696,7 +641,7 @@ describe('queue-fix-tasks', () => {
     // Here we specifically test the post-recovery-completion exhaustion path.
     await q.updateTask(first.fixTaskId!, { status: 'done' })
 
-    // Second failure: no outstanding fix, recovery_spawned_count=1 > budget=0 -> failed.
+    // Second failure: no outstanding fix, retry_count=1 > budget=0 -> failed.
     // The failure must remove every task_blockers row pointing from this task.
     const second = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
@@ -806,7 +751,7 @@ describe('queue-fix-tasks', () => {
     await retry.raiseRecoveryExhaustedActionQueue({
       taskId: t.id,
       lastStep: 'merge:preflight',
-      recoverySpawnedCount: 1,
+      retryCount: 1,
       lastErrorSignature: 'merge:preflight/uncommitted-changes',
       lastErrorSummary: errorLine,
       branch: 'task/x',
@@ -1219,14 +1164,9 @@ describe('queue-fix-tasks', () => {
     expect(rescueRows).toHaveLength(1)
   })
 
-  // The Steward guard (core/steward-guard.ts) allows exactly ONE intervention
-  // per (target, version) — here (task, failureSignature). That is the
-  // documented contract: exactly one recovery attempt per origin failure, no
-  // retry budget and no tunable knob. These tests assert no second fix task,
-  // source stays blocked with its original error, and repeats dedupe onto one
-  // action-queue row.
-  it('steward guard: allows exactly one fix task per (sourceTaskId, failureSignature) and refuses the second dispatch', async () => {
+  it('fix-fail loop: caps fix-task inserts per (sourceTaskId, failureSignature) at MARS_MAX_FIX_ATTEMPTS (default 2) and escalates to a fix-fail-loop actionQueue item', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '10'
+    delete process.env.MARS_MAX_FIX_ATTEMPTS
     const { q, ft, rc } = await loadModules(repo)
     const sig = 'verify:typecheck/typecheck-cannot-find-name'
     const cleanup = registerTestRecipe(rc, sig)
@@ -1248,6 +1188,17 @@ describe('queue-fix-tasks', () => {
     // the existing-open-fix-task short-circuit.
     await q.updateTask(r1.fixTaskId!, { status: 'done' })
 
+    // 2nd dispatch (prior attempt finished): still inserts a fix task.
+    const r2 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    expect(r2.outcome).toBe('blocked')
+    expect(r2.fixTaskId).toBeTruthy()
+    expect(r2.fixTaskId).not.toBe(r1.fixTaskId)
+    await q.updateTask(r2.fixTaskId!, { status: 'done' })
+
     // Use self_heal_attempts (not tasks) to count prior fix attempts: updating
     // a fix task to 'done' clears its failure_signature column (updateTask
     // scrubs stale failure metadata on done transitions), so a tasks-table
@@ -1260,40 +1211,40 @@ describe('queue-fix-tasks', () => {
     })
     expect(
       Number((fixCountBefore.rows[0] as unknown as { n: number }).n),
-    ).toBe(1)
+    ).toBe(2)
 
-    // 2nd dispatch for the same signature: the Steward already intervened for
-    // this (task, signature), so no second fix task is inserted and the repeat
-    // is surfaced to the operator instead.
-    const r2 = await ft.handleTaskFailureWithFixTask({
+    // 3rd dispatch hits the cap: no new task row, raises a fix-fail-loop
+    // actionQueue item with the failure signature as its dedupe signature.
+    const r3 = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:typecheck',
       errorOutput: 'TS2304: cannot find name foo',
     })
-    expect(r2.outcome).toBe('steward-repeat')
-    expect(r2.fixTaskId).toBeUndefined()
-    expect(r2.failureSignature).toBe(sig)
-    expect(r2.actionQueueItemId).toBeTruthy()
+    expect(r3.outcome).toBe('fix-fail-loop')
+    expect(r3.fixTaskId).toBeUndefined()
+    expect(r3.failureSignature).toBe(sig)
+    expect(r3.actionQueueItemId).toBeTruthy()
 
-    // No new attempt was recorded — the ledger still shows the single fix task.
     const fixCountAfter = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM self_heal_attempts WHERE parent_task_id = ? AND failure_signature = ?`,
       args: [t.id, sig],
     })
     expect(
       Number((fixCountAfter.rows[0] as unknown as { n: number }).n),
-    ).toBe(1)
+    ).toBe(2)
 
-    const item2 = await actionQueue.getActionQueueItem(r2.actionQueueItemId!)
-    expect(item2?.kind).toBe('steward-repeat')
-    expect(item2?.category).toBe('orchestrator')
-    expect(item2?.priority).toBe('high')
-    expect(item2?.seenCount).toBe(1)
+    const item3 = await actionQueue.getActionQueueItem(r3.actionQueueItemId!)
+    expect(item3?.kind).toBe('failed')
+    expect(item3?.category).toBe('orchestrator')
+    expect(item3?.priority).toBe('high')
+    expect(item3?.signature).toBe(sig)
+    expect(item3?.seenCount).toBe(1)
     cleanup()
   })
 
-  it('steward guard: source task remains blocked with its prior error summary on a refused repeat; not flipped back to queued', async () => {
+  it('fix-fail loop: source task remains blocked with its prior error summary on escalation; not flipped back to queued', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '10'
+    delete process.env.MARS_MAX_FIX_ATTEMPTS
     const { q, ft, rc } = await loadModules(repo)
     const sig = 'verify:typecheck/typecheck-cannot-find-name'
     const cleanup = registerTestRecipe(rc, sig)
@@ -1306,33 +1257,40 @@ describe('queue-fix-tasks', () => {
     })
     await q.updateTask(r1.fixTaskId!, { status: 'done' })
 
-    // Capture the source task's error summary right before the refusal —
-    // it must survive untouched.
+    const r2 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    await q.updateTask(r2.fixTaskId!, { status: 'done' })
+
+    // Capture the source task's error summary right before escalation —
+    // it must survive the escalation untouched.
     const beforeEscalation = await q.getTask(t.id)
     expect(beforeEscalation?.status).toBe('blocked')
     const priorError = beforeEscalation?.error
     expect(priorError).toBeTruthy()
 
-    // A different message body that still classifies to the same
-    // typecheck-cannot-find-name signature, so the Steward guard sees the
-    // same (task, version) target and refuses.
-    const r2 = await ft.handleTaskFailureWithFixTask({
+    // Use a different message body but still classified to the same
+    // typecheck-cannot-find-name signature, so the cap check fires.
+    const r3 = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:typecheck',
       errorOutput: 'TS2304: cannot find name BAR (later, different output)',
     })
-    expect(r2.outcome).toBe('steward-repeat')
+    expect(r3.outcome).toBe('fix-fail-loop')
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('blocked')
-    // The earlier error survives — the refusal must not overwrite it
+    // The earlier error survives — the escalation must not overwrite it
     // with the latest dispatch's error summary.
     expect(reloaded?.error).toBe(priorError)
     cleanup()
   })
 
-  it('steward guard: 3rd and subsequent dispatches dedupe onto the same actionQueue row and bump seenCount, no new task or actionQueue row', async () => {
+  it('fix-fail loop: 4th and subsequent dispatches dedupe onto the same actionQueue row and bump seenCount, no new task or actionQueue row', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '10'
+    delete process.env.MARS_MAX_FIX_ATTEMPTS
     const { q, ft, rc } = await loadModules(repo)
     const sig = 'verify:typecheck/typecheck-cannot-find-name'
     const cleanup = registerTestRecipe(rc, sig)
@@ -1348,52 +1306,102 @@ describe('queue-fix-tasks', () => {
       errorOutput: 'TS2304: cannot find name foo',
     })
     await q.updateTask(r1.fixTaskId!, { status: 'done' })
-
-    // 2nd dispatch: Steward refuses and opens the repeat row.
     const r2 = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:typecheck',
       errorOutput: 'TS2304: cannot find name foo',
     })
-    expect(r2.outcome).toBe('steward-repeat')
-    expect(r2.fixTaskId).toBeUndefined()
-
-    // 3rd and 4th dedupe onto that same row rather than opening siblings.
+    await q.updateTask(r2.fixTaskId!, { status: 'done' })
     const r3 = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:typecheck',
       errorOutput: 'TS2304: cannot find name foo',
     })
-    expect(r3.outcome).toBe('steward-repeat')
-    expect(r3.actionQueueItemId).toBe(r2.actionQueueItemId)
-    expect(r3.fixTaskId).toBeUndefined()
+    expect(r3.outcome).toBe('fix-fail-loop')
 
     const r4 = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:typecheck',
       errorOutput: 'TS2304: cannot find name foo',
     })
-    expect(r4.outcome).toBe('steward-repeat')
-    expect(r4.actionQueueItemId).toBe(r2.actionQueueItemId)
+    expect(r4.outcome).toBe('fix-fail-loop')
+    // Same actionQueue row, no new fix-task row.
+    expect(r4.actionQueueItemId).toBe(r3.actionQueueItemId)
+    expect(r4.fixTaskId).toBeUndefined()
 
-    // No new self_heal_attempts rows beyond the original one — the guard
-    // blocked the 2nd, 3rd and 4th from creating fix-task rows. Use
-    // self_heal_attempts (not tasks): updating a fix-task to 'done' clears
+    const r5 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    expect(r5.outcome).toBe('fix-fail-loop')
+    expect(r5.actionQueueItemId).toBe(r3.actionQueueItemId)
+
+    // No new self_heal_attempts rows beyond the original two (the cap fired
+    // and blocked the 3rd, 4th, and 5th from creating new fix-task rows).
+    // Use self_heal_attempts (not tasks): updating a fix-task to 'done' clears
     // its failure_signature on that row; the ledger is append-only and reliable.
     const fixCount = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM self_heal_attempts WHERE parent_task_id = ? AND failure_signature = ?`,
       args: [t.id, sig],
     })
-    expect(Number((fixCount.rows[0] as unknown as { n: number }).n)).toBe(1)
+    expect(Number((fixCount.rows[0] as unknown as { n: number }).n)).toBe(2)
 
-    // Exactly one steward-repeat actionQueue row exists; seenCount tracks
-    // every refusal after the first (3 refusals -> seenCount 3).
+    // Exactly one fix-fail-loop actionQueue row exists; seenCount tracks
+    // every escalation after the first (3 escalations -> seenCount 3).
     const loopItems = (await actionQueue.listActionQueueItems('open')).filter(
-      (i) => i.kind === 'steward-repeat',
+      (i) => i.kind === 'failed',
     )
     expect(loopItems).toHaveLength(1)
-    expect(loopItems[0].id).toBe(r2.actionQueueItemId)
+    expect(loopItems[0].id).toBe(r3.actionQueueItemId)
     expect(loopItems[0].seenCount).toBe(3)
+    cleanup()
+  })
+
+  it('fix-fail loop: MARS_MAX_FIX_ATTEMPTS overrides the default cap and the helper counts attempts across all task statuses', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '10'
+    process.env.MARS_MAX_FIX_ATTEMPTS = '1'
+    const { q, ft, rc } = await loadModules(repo)
+    const sig = 'verify:typecheck/typecheck-cannot-find-name'
+    const cleanup = registerTestRecipe(rc, sig)
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+
+    const r1 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    expect(r1.outcome).toBe('blocked')
+    expect(r1.fixTaskId).toBeTruthy()
+
+    // Drive the fix-task into a terminal-but-non-open status. The cap
+    // counter MUST still see it — it counts every historical row
+    // regardless of status, not just open ones.
+    await q.updateTask(r1.fixTaskId!, { status: 'failed' })
+
+    // Helper-level check: counts across all statuses without a schema
+    // change.
+    const ftMod = (await import(
+      '../../queue-fix-tasks'
+    )) as unknown as {
+      countFixTaskAttempts: typeof import('../../queue-fix-tasks').countFixTaskAttempts
+      getMaxFixAttempts: typeof import('../../queue-fix-tasks').getMaxFixAttempts
+    }
+    expect(await ftMod.countFixTaskAttempts(t.id, sig)).toBe(1)
+    expect(ftMod.getMaxFixAttempts()).toBe(1)
+
+    const r2 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    expect(r2.outcome).toBe('fix-fail-loop')
+    expect(r2.fixTaskId).toBeUndefined()
+    expect(r2.actionQueueItemId).toBeTruthy()
+
+    // The override took effect: cap=1 means the 2nd dispatch already
+    // escalates, even though only one fix-task was ever inserted.
+    delete process.env.MARS_MAX_FIX_ATTEMPTS
     cleanup()
   })
 
@@ -1403,10 +1411,7 @@ describe('queue-fix-tasks', () => {
     const cleanup = registerTestRecipe(rc, 'sig-attempt')
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
 
-    // `self_heal_attempts.created_at` is a bigint of epoch millis, so the
-    // lower bound has to be a number too. Comparing it against an ISO string
-    // coerces the string to NaN and every `>=` silently returns false.
-    const before = Date.now()
+    const before = new Date().toISOString()
     const r = await ft.upsertFixTask({
       sourceTaskId: t.id,
       failureSignature: 'sig-attempt',
@@ -1434,12 +1439,12 @@ describe('queue-fix-tasks', () => {
       parent_task_id: string
       failure_signature: string
       fix_task_id: string
-      created_at: number | bigint
+      created_at: string
     }
     expect(row.parent_task_id).toBe(t.id)
     expect(row.failure_signature).toBe('sig-attempt')
     expect(row.fix_task_id).toBe(r.fixTaskId)
-    expect(Number(row.created_at) >= before).toBe(true)
+    expect(row.created_at >= before).toBe(true)
     cleanup()
   })
 
@@ -1505,7 +1510,7 @@ describe('phantom-kill routing', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('re-queues the origin WITHOUT consuming recoverySpawnedCount when phantom-killed with no worktree (first kill)', async () => {
+  it('re-queues the origin WITHOUT consuming retryCount when phantom-killed with no worktree (first kill)', async () => {
     const { q, ft } = await loadModules(repo)
     const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
 
@@ -1528,15 +1533,15 @@ describe('phantom-kill routing', () => {
     })
 
     expect(r.outcome).toBe('requeued')
-    // recoverySpawnedCount must stay 0 — phantom kills use the non-code retry counter,
+    // retryCount must stay 0 — phantom kills use the non-code retry counter,
     // so the code recovery slot is preserved for a real code failure.
-    expect(r.recoverySpawnedCount).toBe(0)
+    expect(r.retryCount).toBe(0)
     expect(r.fixTaskId).toBeUndefined()
 
-    // Origin is back to queued; recoverySpawnedCount unchanged.
+    // Origin is back to queued; retryCount unchanged.
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('queued')
-    expect(reloaded?.recoverySpawnedCount).toBe(0)
+    expect(reloaded?.retryCount).toBe(0)
     // Failure markers cleared.
     expect(reloaded?.failureSignature).toBeNull()
     expect(reloaded?.failedPhase).toBeNull()
@@ -1578,7 +1583,7 @@ describe('phantom-kill routing', () => {
       errorOutput: 'Task auto-failed by phantom-task watchdog (reason: ceiling, age: 31 min)',
     })
     expect(r1.outcome).toBe('requeued')
-    expect(r1.recoverySpawnedCount).toBe(0)
+    expect(r1.retryCount).toBe(0)
 
     // Kill 2: count=2, 2 > cap=1 is true → escalate
     await stamp()
@@ -1589,8 +1594,8 @@ describe('phantom-kill routing', () => {
     })
     expect(r2.outcome).toBe('non-code-retry-exhausted')
     expect(r2.fixTaskId).toBeUndefined()
-    // recoverySpawnedCount never changed — code recovery slot intact
-    expect(r2.recoverySpawnedCount).toBe(0)
+    // retryCount never changed — code recovery slot intact
+    expect(r2.retryCount).toBe(0)
 
     // Task is marked failed (escalated, not re-queued).
     const reloaded = await q.getTask(t.id)
@@ -1721,12 +1726,12 @@ describe('non-code failure re-queue routing', () => {
     expect(r.failureSignature).toBe(
       'merge:vcs-supervisor-aborted/rebase-no-in-progress-state',
     )
-    // recoverySpawnedCount must stay 0 — non-code re-queues no longer consume the code recovery slot
-    expect(r.recoverySpawnedCount).toBe(0)
+    // retryCount must stay 0 — non-code re-queues no longer consume the code recovery slot
+    expect(r.retryCount).toBe(0)
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('queued')
-    expect(reloaded?.recoverySpawnedCount).toBe(0)
+    expect(reloaded?.retryCount).toBe(0)
     expect(reloaded?.failureSignature).toBeNull()
     expect(reloaded?.failedPhase).toBeNull()
 
@@ -1762,12 +1767,12 @@ describe('non-code failure re-queue routing', () => {
     // classifyFailure → 'connectivity' → not 'code' → re-queue
     expect(r.outcome).toBe('requeued')
     expect(r.failureSignature).toBe('verify:test/test-pg-connection-refused')
-    // recoverySpawnedCount must stay 0 — non-code re-queues no longer consume the code recovery slot
-    expect(r.recoverySpawnedCount).toBe(0)
+    // retryCount must stay 0 — non-code re-queues no longer consume the code recovery slot
+    expect(r.retryCount).toBe(0)
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('queued')
-    expect(reloaded?.recoverySpawnedCount).toBe(0)
+    expect(reloaded?.retryCount).toBe(0)
     expect(reloaded?.failureSignature).toBeNull()
     expect(reloaded?.failedPhase).toBeNull()
 
@@ -1806,12 +1811,12 @@ describe('non-code failure re-queue routing', () => {
     // classifyFailure → 'connectivity' → not 'code' → re-queue (generalised path)
     expect(r.outcome).toBe('requeued')
     expect(r.failureSignature).toBe('code:api-proxy/api-unreachable')
-    // recoverySpawnedCount must stay 0 — non-code re-queues no longer consume the code recovery slot
-    expect(r.recoverySpawnedCount).toBe(0)
+    // retryCount must stay 0 — non-code re-queues no longer consume the code recovery slot
+    expect(r.retryCount).toBe(0)
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('queued')
-    expect(reloaded?.recoverySpawnedCount).toBe(0)
+    expect(reloaded?.retryCount).toBe(0)
     expect(reloaded?.failureSignature).toBeNull()
 
     // No fix-task rows were inserted.
@@ -1820,140 +1825,6 @@ describe('non-code failure re-queue routing', () => {
       args: [t.id],
     })
     expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
-  })
-
-  it('code:killed/sigterm (coder exit 143) re-queues the origin and inserts no fix-task row', async () => {
-    // Reproduces the mars-33fe7311 incident: a SIGTERM-killed coder was treated
-    // as a code defect and spawned a recovery Chore. The correct behaviour is to
-    // re-queue the origin so the retried coder can resume from the checkpoint.
-    const { q, ft } = await loadModules(repo)
-    const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
-
-    // The coder step prepends a "code child killed by SIGTERM (exit 143)" marker
-    // when the exit code is 143; simulate the full coderExitOutput the code step
-    // produces for that case.
-    const errorOutput = [
-      'code child killed by SIGTERM (exit 143)',
-      'coder process exited 143. worktree had 5 uncommitted path(s); preserved as wip(checkpoint) commit on branch task/mars-33fe7311. stderr empty; last stream text: Now add the composer form ...',
-    ].join('\n')
-
-    await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET status = 'failed',
-              failure_reason = 'coder-exit-nonzero',
-              failed_phase = 'code',
-              error = 'coder exited 143 before completing'
-            WHERE id = ?`,
-      args: [t.id],
-    })
-
-    const r = await ft.handleTaskFailureWithFixTask({
-      taskId: t.id,
-      failingStep: 'code:coder-exit-nonzero',
-      errorOutput,
-    })
-
-    // Signature = code:killed/sigterm (overrides code:coder-exit-nonzero via marker)
-    // classifyFailure → 'infra' → not 'code' → re-queue
-    expect(r.outcome).toBe('requeued')
-    expect(r.failureSignature).toBe('code:killed/sigterm')
-    // recoverySpawnedCount must stay 0 — non-code re-queues never consume the code recovery slot
-    expect(r.recoverySpawnedCount).toBe(0)
-
-    const reloaded = await q.getTask(t.id)
-    expect(reloaded?.status).toBe('queued')
-    expect(reloaded?.recoverySpawnedCount).toBe(0)
-    expect(reloaded?.failureSignature).toBeNull()
-    expect(reloaded?.failedPhase).toBeNull()
-
-    // No fix-task rows were inserted
-    const fixTasks = await q.resolveQueueClient().execute({
-      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
-      args: [t.id],
-    })
-    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
-  })
-
-  it('code:killed/sigkill (coder exit 137) re-queues the origin and inserts no fix-task row', async () => {
-    const { q, ft } = await loadModules(repo)
-    const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
-
-    const errorOutput = [
-      'code child killed by SIGKILL (exit 137)',
-      'coder process exited 137. worktree was clean at exit (no uncommitted work found). stderr empty; no stream text captured',
-    ].join('\n')
-
-    await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET status = 'failed',
-              failure_reason = 'coder-exit-nonzero',
-              failed_phase = 'code',
-              error = 'coder exited 137 before completing'
-            WHERE id = ?`,
-      args: [t.id],
-    })
-
-    const r = await ft.handleTaskFailureWithFixTask({
-      taskId: t.id,
-      failingStep: 'code:coder-exit-nonzero',
-      errorOutput,
-    })
-
-    // Signature = code:killed/sigkill
-    // classifyFailure → 'infra' → not 'code' → re-queue
-    expect(r.outcome).toBe('requeued')
-    expect(r.failureSignature).toBe('code:killed/sigkill')
-    expect(r.recoverySpawnedCount).toBe(0)
-
-    const reloaded = await q.getTask(t.id)
-    expect(reloaded?.status).toBe('queued')
-    expect(reloaded?.recoverySpawnedCount).toBe(0)
-
-    // No fix-task rows were inserted
-    const fixTasks = await q.resolveQueueClient().execute({
-      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
-      args: [t.id],
-    })
-    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
-  })
-
-  it('code:killed/sigterm increments envRestartCount so the environmental budget is real', async () => {
-    // Criterion 3: the re-queue is budgeted. The env restart counter must be
-    // incremented on each re-queue so the cap (MAX_ENV_RESTART_ATTEMPTS) can
-    // actually fire. If the counter is not persisted the cap never fires and the
-    // task re-queues forever (the mars-6cf9774f incident: env_restart_count was
-    // omitted from TASK_SEL so every read resolved it to 0).
-    const { q, ft } = await loadModules(repo)
-    const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
-
-    await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET status = 'failed',
-              failure_reason = 'coder-exit-nonzero',
-              failed_phase = 'code',
-              error = 'coder exited 143 before completing'
-            WHERE id = ?`,
-      args: [t.id],
-    })
-
-    const errorOutput = [
-      'code child killed by SIGTERM (exit 143)',
-      'coder process exited 143. worktree had 2 uncommitted path(s); preserved as wip(checkpoint) commit on branch task/t-abc.',
-    ].join('\n')
-
-    const r = await ft.handleTaskFailureWithFixTask({
-      taskId: t.id,
-      failingStep: 'code:coder-exit-nonzero',
-      errorOutput,
-    })
-
-    // First kill: env restart (re-queue).
-    expect(r.outcome).toBe('requeued')
-    expect(r.failureSignature).toBe('code:killed/sigterm')
-
-    const reloaded = await q.getTask(t.id)
-    // envRestartCount must advance 0 → 1, proving the budget counter is persisted
-    // and will eventually reach MAX_ENV_RESTART_ATTEMPTS instead of looping forever.
-    expect(reloaded?.envRestartCount).toBe(1)
-    // Code recovery slot must remain untouched.
-    expect(reloaded?.recoverySpawnedCount).toBe(0)
   })
 
   it('preflight:no-gates-configured marks task failed without spawning a fix-task', async () => {
@@ -1974,7 +1845,7 @@ describe('non-code failure re-queue routing', () => {
 
     expect(r.outcome).toBe('failed')
     expect(r.failureSignature).toMatch(/^config-failure:preflight:/)
-    expect(r.recoverySpawnedCount).toBe(0)
+    expect(r.retryCount).toBe(0)
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('failed')
@@ -1995,7 +1866,7 @@ describe('non-code failure re-queue routing', () => {
 // Non-code re-queues (connectivity, orchestration, infra) must NOT consume the
 // code recovery slot. A per-(taskId, failureSignature) counter gates further
 // re-queues; after MAX_NON_CODE_RETRIES (default 3) the task escalates to the
-// action queue without ever touching recoverySpawnedCount.
+// action queue without ever touching retryCount.
 
 describe('non-code retry cap', () => {
   let repo: string
@@ -2027,8 +1898,8 @@ describe('non-code retry cap', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  // (a) Three consecutive rebase-no-in-progress-state failures re-queue with recoverySpawnedCount staying at 0.
-  it('(a) three consecutive non-code failures re-queue without incrementing recoverySpawnedCount', async () => {
+  // (a) Three consecutive rebase-no-in-progress-state failures re-queue with retryCount staying at 0.
+  it('(a) three consecutive non-code failures re-queue without incrementing retryCount', async () => {
     process.env.MARS_MAX_NON_CODE_RETRIES = '3'
     const { q, ft } = await loadModules(repo)
     const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
@@ -2052,11 +1923,11 @@ describe('non-code retry cap', () => {
         errorOutput: 'rebase produced no in-progress state',
       })
       expect(r.outcome).toBe('requeued')
-      expect(r.recoverySpawnedCount).toBe(0)
+      expect(r.retryCount).toBe(0)
 
       const task = await q.getTask(t.id)
       expect(task?.status).toBe('queued')
-      expect(task?.recoverySpawnedCount).toBe(0)
+      expect(task?.retryCount).toBe(0)
     }
 
     // Non-code retry counter is at 3; code recovery slot untouched.
@@ -2114,8 +1985,8 @@ describe('non-code retry cap', () => {
     })
     expect(r4.outcome).toBe('non-code-retry-exhausted')
     expect(r4.fixTaskId).toBeUndefined()
-    // recoverySpawnedCount still 0 — code recovery slot was never consumed
-    expect(r4.recoverySpawnedCount).toBe(0)
+    // retryCount still 0 — code recovery slot was never consumed
+    expect(r4.retryCount).toBe(0)
 
     // Task is now failed
     const reloaded = await q.getTask(t.id)
@@ -2135,15 +2006,15 @@ describe('non-code retry cap', () => {
   })
 
   // (c) After a non-code re-queue, a subsequent CODE failure gets its one recovery fix-task
-  //     (recoverySpawnedCount transitions 0→1 exactly once and the fix task is spawned).
-  it('(c) code failure after non-code re-queue still gets one code recovery (recoverySpawnedCount 0→1)', async () => {
+  //     (retryCount transitions 0→1 exactly once and the fix task is spawned).
+  it('(c) code failure after non-code re-queue still gets one code recovery (retryCount 0→1)', async () => {
     process.env.MARS_MAX_NON_CODE_RETRIES = '3'
     const { q, ft, rc } = await loadModules(repo)
     const sig = 'verify:typecheck/typecheck-cannot-find-name'
     const cleanup = registerTestRecipe(rc, sig)
     const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
 
-    // Step 1: one non-code failure → requeue, recoverySpawnedCount stays 0
+    // Step 1: one non-code failure → requeue, retryCount stays 0
     await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'failed',
               failure_reason = 'merge step aborted: rebase could not start',
@@ -2158,9 +2029,9 @@ describe('non-code retry cap', () => {
       errorOutput: 'rebase produced no in-progress state',
     })
     expect(rNonCode.outcome).toBe('requeued')
-    expect(rNonCode.recoverySpawnedCount).toBe(0)
+    expect(rNonCode.retryCount).toBe(0)
 
-    // Step 2: code failure → spawns fix task, recoverySpawnedCount 0→1
+    // Step 2: code failure → spawns fix task, retryCount 0→1
     const rCode = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:typecheck',
@@ -2169,12 +2040,12 @@ describe('non-code retry cap', () => {
     })
     expect(rCode.outcome).toBe('blocked')
     expect(rCode.fixTaskId).toBeTruthy()
-    // recoverySpawnedCount transitions 0→1 exactly once
-    expect(rCode.recoverySpawnedCount).toBe(1)
+    // retryCount transitions 0→1 exactly once
+    expect(rCode.retryCount).toBe(1)
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('blocked')
-    expect(reloaded?.recoverySpawnedCount).toBe(1)
+    expect(reloaded?.retryCount).toBe(1)
 
     // One fix-task was spawned
     const fixTasks = await q.resolveQueueClient().execute({
