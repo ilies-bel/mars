@@ -2125,6 +2125,47 @@ export const hasIncompleteBlockers = async (taskId: string, store?: TaskStore): 
 }
 
 /**
+ * Atomically flip `taskId` from 'queued'/'draft' to 'blocked' IF AND ONLY IF
+ * at least one confirmed-or-pending-review blocker edge still points to an
+ * unsettled blocker at the moment of the write.
+ *
+ * ### Why this exists — the race in handleAdd
+ *
+ * The two-step pattern this replaces:
+ *   1. hasIncompleteBlockers(dep) → true
+ *   2. updateTask(dep, { status: 'blocked' })  ← RACE HERE
+ *
+ * Between steps 1 and 2, a concurrent Arc.drop(blocker) can delete the edge
+ * while dep is still 'queued'. Arc.drop's re-queue guard fires only on tasks
+ * already in 'blocked', so it misses dep. When step 2 then runs, dep lands as
+ * 'blocked' with ZERO edges — the illegal stranded-blocked state that required
+ * operator intervention via `mars unblock + mars restart`.
+ *
+ * This function closes that window with a secondary check-after-write guard:
+ * if the edge vanished between the first check and the write, it restores dep
+ * to 'queued' (emitting task.queued so drain() picks it up) before returning
+ * false. The residual window between the secondary check and the restore write
+ * is covered by the orphanedBlockedScan startup reconciler as a backstop.
+ *
+ * @returns true when dep was parked as 'blocked' with at least one live edge,
+ *          false when it was left in (or restored to) 'queued'.
+ */
+export const blockTaskIfIncomplete = async (taskId: string): Promise<boolean> => {
+  if (!(await hasIncompleteBlockers(taskId))) return false
+  await updateTask(taskId, { status: 'blocked' })
+  // Secondary guard: re-check after the write. If a concurrent Arc.drop of
+  // the blocker deleted the edge between the check above and the write above,
+  // the edge is now gone but dep is 'blocked'. Restore 'queued' (emits
+  // task.queued → daemon drain picks it up) to prevent the stranded-blocked
+  // state.
+  if (!(await hasIncompleteBlockers(taskId))) {
+    await updateTask(taskId, { status: 'queued' })
+    return false
+  }
+  return true
+}
+
+/**
  * Polymorphic Blocker reader: returns every Blocker row that gates `taskId`,
  * folding `task_blockers` (cause=task) and `task_proposal_blockers`
  * (cause=idea) into a single uniform list. Rejected rows are excluded.
