@@ -84,12 +84,15 @@ describe('GET /mockups/<id>.html — serve generated mockup file', () => {
       '/mockups/%2e%2e/secret.html',
     ]
     const { connect } = await import('node:net')
+    const port = server!.port
+    const hostname = server!.hostname
+    if (port === undefined || hostname === undefined) throw new Error('server not listening')
     for (const rawPath of rawPaths) {
       const body = await new Promise<string>((resolvePromise, reject) => {
         let buf = ''
-        const socket = connect(server!.port, server!.hostname, () => {
+        const socket = connect(port, hostname, () => {
           socket.write(
-            `GET ${rawPath} HTTP/1.1\r\nHost: ${server!.hostname}\r\nConnection: close\r\n\r\n`,
+            `GET ${rawPath} HTTP/1.1\r\nHost: ${hostname}\r\nConnection: close\r\n\r\n`,
           )
         })
         socket.on('data', (chunk) => {
