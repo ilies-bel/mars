@@ -61,16 +61,37 @@ export interface AlertsState {
   error: Error | null
 }
 
+/** Base polling interval in milliseconds. */
+const BASE_POLL_INTERVAL_MS = 15_000
+
+/** Maximum backoff: 5 minutes. */
+const MAX_POLL_INTERVAL_MS = 5 * 60_000
+
 /**
  * Hook that syncs the arc-rooted Alert list with the daemon. Mount inside a
  * `QueryClientProvider`. Polls every ~15 s so an Alert that clears (via an
  * entity mutation) or a newly derived one surfaces without a manual refresh.
+ *
+ * On repeated fetch failures (e.g. the daemon is temporarily unreachable or
+ * the route returns 504) the interval backs off exponentially:
+ *   - 1st failure  → 30 s
+ *   - 2nd failure  → 60 s
+ *   - 3rd failure  → 120 s  (and so on, capped at 5 min)
+ * A single success resets the interval back to 15 s.
  */
 export function useAlerts(): AlertsState {
   const query = useQuery({
     queryKey: QUERY_KEY,
     queryFn: fetchAlerts,
-    refetchInterval: 15000,
+    refetchInterval: (q) => {
+      const failureCount = q.state.fetchFailureCount ?? 0
+      if (failureCount === 0) return BASE_POLL_INTERVAL_MS
+      // Exponential backoff: 15 s × 2^N, capped at MAX_POLL_INTERVAL_MS.
+      return Math.min(
+        BASE_POLL_INTERVAL_MS * Math.pow(2, failureCount),
+        MAX_POLL_INTERVAL_MS,
+      )
+    },
   })
 
   return {

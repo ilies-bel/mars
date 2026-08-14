@@ -4665,126 +4665,15 @@ export const startDaemon = async (
   // 'arc-failed'); each arc's failing signal comes from the terminal task that
   // never succeeded. Stale-worktree alerts come from the open stale-worktree
   // action-queue rows. Nothing here writes — every call recomputes from the DB.
+  //
+  // listFailedArcs is delegated to lib/failed-arc-sources.ts, which batches
+  // all DB queries so the route answers in O(1) round-trips regardless of how
+  // many failed arcs exist (fixes the 504 that appeared with 15+ open arcs).
   const buildAlertSources = async () => {
-    const { listTasks: qListTasks } = await import('../queue')
-    const { getDefaultDomainTaskStore } = await import('../store/task-store')
     return {
       listFailedArcs: async () => {
-        const tasks = await qListTasks()
-        const store = getDefaultDomainTaskStore()
-        // Group tasks by their resolved arc (origin_id).
-        // `t.originId` is already populated by listTasks() / rowToTask():
-        //   `origin_id ?? id`, the same expression resolveOriginIdForTask
-        // executes with an extra per-task DB round-trip. Using the field
-        // directly eliminates an O(N) sequential query storm that caused
-        // GET /alerts to time out (504) on projects with many tasks.
-        const byArc = new Map<string, typeof tasks>()
-        for (const t of tasks) {
-          const arcId = t.originId
-          const bucket = byArc.get(arcId) ?? []
-          bucket.push(t)
-          byArc.set(arcId, bucket)
-        }
-        const { getProposal: fetchProposal } = await import('../proposals')
-        const truncateLabel = (prompt: string) => {
-          const flat = prompt.replace(/\s+/g, ' ').trim()
-          return flat.length <= 80 ? flat : `${flat.slice(0, 79)}…`
-        }
-        const records = []
-        for (const [arcId, arcTasks] of byArc) {
-          const rollup = await store.arcStatus(arcId)
-          if (rollup.status !== 'arc-failed') continue
-          const origin = arcTasks.find((t) => t.id === arcId) ?? arcTasks[0]!
-          // Pick the terminal task carrying the failure signal: prefer a
-          // 'failed' task with a structured signature, else any failed/dropped.
-          const failing =
-            arcTasks.find(
-              (t) => t.status === 'failed' && t.failureSignature !== null,
-            ) ??
-            arcTasks.find((t) => t.status === 'failed') ??
-            arcTasks.find((t) => t.status === 'dropped') ??
-            origin
-          const capturedError = failing.error ?? ''
-          const descendants = arcTasks
-            .filter((t) => t.id !== arcId)
-            .map((t) => ({ id: t.id, status: t.status }))
-
-          // Build the arc chain: optional proposal head → origin attempt (1) →
-          // operator-initiated restarts (2, 3, …) → automatic recovery tasks.
-          const proposalRow = await store.query({
-            sql: `SELECT parent_proposal_id FROM tasks WHERE id = ? LIMIT 1`,
-            args: [arcId],
-          })
-          const parentProposalId: string | null =
-            (proposalRow.rows[0] as unknown as { parent_proposal_id: string | null } | undefined)
-              ?.parent_proposal_id ?? null
-          const proposal = parentProposalId ? await fetchProposal(parentProposalId) : null
-          // Operator restarts: non-fix, non-origin tasks (same arc but distinct runs).
-          // Recovery tasks: fix tasks (fixForTaskId set or kind === 'fix').
-          const restartTasks = arcTasks.filter(
-            (t) => t.id !== arcId && t.fixForTaskId === null && t.kind !== 'fix',
-          )
-          const recoveryTasks = arcTasks.filter(
-            (t) => t.id !== arcId && (t.fixForTaskId !== null || t.kind === 'fix'),
-          )
-          const chain = [
-            ...(proposal
-              ? [{ kind: 'proposal' as const, id: proposal.id, status: proposal.status, label: proposal.title || proposal.id }]
-              : []),
-            { kind: 'task' as const, id: arcId, status: origin.status, label: truncateLabel(origin.prompt), attemptIndex: 1 },
-            ...restartTasks.map((t, i) => ({
-              kind: 'task' as const,
-              id: t.id,
-              status: t.status,
-              label: truncateLabel(t.prompt),
-              attemptIndex: i + 2,
-            })),
-            ...recoveryTasks.map((t) => ({
-              kind: 'task' as const,
-              id: t.id,
-              status: t.status,
-              label: truncateLabel(t.prompt),
-            })),
-          ]
-
-          // Count tasks blocked behind this arc: tasks whose blocker_task_id
-          // is any task in the arc AND whose status is 'blocked'.
-          const arcTaskIds = arcTasks.map((t) => t.id)
-          let blockedCount = 0
-          try {
-            const placeholders = arcTaskIds.map(() => '?').join(', ')
-            const blockedResult = await store.query({
-              sql: `SELECT COUNT(DISTINCT tb.task_id) AS cnt
-                      FROM task_blockers tb
-                      JOIN tasks t ON t.id = tb.task_id
-                     WHERE tb.blocker_task_id IN (${placeholders})
-                       AND t.status = 'blocked'`,
-              args: arcTaskIds,
-            })
-            const row = blockedResult.rows[0] as
-              | Record<string, unknown>
-              | undefined
-            blockedCount =
-              typeof row?.cnt === 'number'
-                ? row.cnt
-                : parseInt(String(row?.cnt ?? '0'), 10) || 0
-          } catch {
-            // Non-fatal: blocked count unavailable — omit it by leaving 0.
-          }
-
-          records.push({
-            arcId,
-            goal: origin.intent || origin.prompt,
-            failureSignature: failing.failureSignature,
-            capturedError,
-            traceTail: capturedError,
-            descendants,
-            chain,
-            failedPhase: failing.failedPhase ?? null,
-            blockedCount,
-          })
-        }
-        return records
+        const { listFailedArcs: doListFailedArcs } = await import('../lib/failed-arc-sources')
+        return doListFailedArcs()
       },
       listStaleWorktrees: async () => {
         const client = getCompositionRootClient()
