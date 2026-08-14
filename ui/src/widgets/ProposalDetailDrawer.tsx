@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import type { ProposalDetail, ProgressTask } from '@/shared/schemas'
 import { CopyButton } from '@/components/CopyButton'
+import { CollapsibleSection } from '@/components/CollapsibleSection'
 
 interface ProposalDetailDrawerProps {
   /** Full proposal record sourced from GET /api/proposals/:id. */
@@ -39,6 +41,64 @@ const STATUS_CLI_VERBS: Record<string, string[]> = {
   'prd-ready': ['slice', 'show'],
   sliced: ['show'],
   dismissed: ['show'],
+}
+
+/**
+ * A collapsible proposal body section with optional "Read more / Show less"
+ * clamping for long text. Open by default so the content is visible on first
+ * paint — operators can close a section they don't need.
+ *
+ * Called four times (problem / solution / outOfScope / notes), satisfying the
+ * multi-caller requirement and keeping clamp logic in one place.
+ */
+const BodySection = ({
+  label,
+  text,
+  testId,
+  maxLines = 8,
+}: {
+  label: string
+  text: string
+  testId: string
+  maxLines?: number
+  children?: ReactNode
+}) => {
+  const [expanded, setExpanded] = useState(false)
+  const lineCount = text.split('\n').length
+  const isLong = lineCount > maxLines
+
+  return (
+    <section data-testid={testId} className="border-b border-primary/40 px-4 py-3">
+      <CollapsibleSection label={label} defaultOpen>
+        <div>
+          <p
+            className="whitespace-pre-wrap font-mono text-xs text-foreground"
+            style={
+              isLong && !expanded
+                ? {
+                    display: '-webkit-box',
+                    WebkitLineClamp: maxLines,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                  }
+                : undefined
+            }
+          >
+            {text}
+          </p>
+          {isLong ? (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-1.5 font-mono text-[10px] text-primary underline hover:text-foreground"
+            >
+              {expanded ? 'Show less' : 'Read more'}
+            </button>
+          ) : null}
+        </div>
+      </CollapsibleSection>
+    </section>
+  )
 }
 
 /** Navigate to a chat thread by writing the `#/chat?thread=<id>` hash. */
@@ -273,6 +333,15 @@ export const ProposalDetailDrawer = ({
                 {createdLabel}
               </span>
             )}
+            {proposal.userStories.length > 0 && (
+              <span
+                data-testid="proposal-detail-story-count"
+                className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground"
+              >
+                {proposal.userStories.length}{' '}
+                {proposal.userStories.length === 1 ? 'story' : 'stories'}
+              </span>
+            )}
           </div>
         </div>
         <button
@@ -348,27 +417,19 @@ export const ProposalDetailDrawer = ({
       {/* Scrollable body — problem, solution, user stories, outOfScope, notes, sliced tasks */}
       <div className="flex flex-1 flex-col overflow-y-auto">
         {proposal.problem.trim() ? (
-          <section
-            data-testid="proposal-detail-problem"
-            className="border-b border-primary/40 px-4 py-3"
-          >
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-              Problem
-            </p>
-            <p className="whitespace-pre-wrap font-mono text-xs text-foreground">{proposal.problem}</p>
-          </section>
+          <BodySection
+            label="Problem"
+            text={proposal.problem}
+            testId="proposal-detail-problem"
+          />
         ) : null}
 
         {proposal.solution.trim() ? (
-          <section
-            data-testid="proposal-detail-solution"
-            className="border-b border-primary/40 px-4 py-3"
-          >
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-              Solution
-            </p>
-            <p className="whitespace-pre-wrap font-mono text-xs text-foreground">{proposal.solution}</p>
-          </section>
+          <BodySection
+            label="Solution"
+            text={proposal.solution}
+            testId="proposal-detail-solution"
+          />
         ) : null}
 
         {proposal.userStories.length > 0 ? (
@@ -376,42 +437,33 @@ export const ProposalDetailDrawer = ({
             data-testid="proposal-detail-stories"
             className="border-b border-primary/40 px-4 py-3"
           >
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-              User stories
-            </p>
-            <ol className="flex flex-col gap-1.5">
-              {proposal.userStories.map((story, idx) => (
-                <li key={idx} className="flex gap-2 font-mono text-xs text-foreground">
-                  <span className="shrink-0 text-muted-foreground">{idx + 1}.</span>
-                  <span>{story}</span>
-                </li>
-              ))}
-            </ol>
+            <CollapsibleSection label="User stories" defaultOpen>
+              <ol className="flex flex-col gap-1.5">
+                {proposal.userStories.map((story, idx) => (
+                  <li key={idx} className="flex gap-2 font-mono text-xs text-foreground">
+                    <span className="shrink-0 text-muted-foreground">{idx + 1}.</span>
+                    <span>{story}</span>
+                  </li>
+                ))}
+              </ol>
+            </CollapsibleSection>
           </section>
         ) : null}
 
         {proposal.outOfScope.trim() ? (
-          <section
-            data-testid="proposal-detail-out-of-scope"
-            className="border-b border-primary/40 px-4 py-3"
-          >
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-              Out of scope
-            </p>
-            <p className="whitespace-pre-wrap font-mono text-xs text-foreground">{proposal.outOfScope}</p>
-          </section>
+          <BodySection
+            label="Out of scope"
+            text={proposal.outOfScope}
+            testId="proposal-detail-out-of-scope"
+          />
         ) : null}
 
         {proposal.notes.trim() ? (
-          <section
-            data-testid="proposal-detail-notes"
-            className="border-b border-primary/40 px-4 py-3"
-          >
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-              Notes
-            </p>
-            <p className="whitespace-pre-wrap font-mono text-xs text-foreground">{proposal.notes}</p>
-          </section>
+          <BodySection
+            label="Notes"
+            text={proposal.notes}
+            testId="proposal-detail-notes"
+          />
         ) : null}
 
         {childTasks.length > 0 ? (

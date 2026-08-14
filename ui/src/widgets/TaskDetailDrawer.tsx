@@ -32,6 +32,7 @@ import { humanizeFailureCode } from '@/shared/actionQueueDetail'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { CopyButton } from '@/components/CopyButton'
 import { SkeletonBlock } from '@/components/Skeleton'
+import { ErrorFirstLog } from '@/components/ErrorFirstLog'
 import { OriginTree } from './OriginTree'
 import { StewardLedgerPanel } from './StewardLedgerPanel'
 
@@ -850,8 +851,20 @@ const AgentToolCallRow = ({ call }: { call: AgentToolCall }) => {
  * Renders the humanized command line (basename + argv), an exit-code badge
  * (green ✓ for 0; red for unexpected non-zero; amber for expectsFailure), the
  * duration, and expandable stdout/stderr blocks.
+ *
+ * When `errorFirst` is true (verify steps) the stdout/stderr is rendered
+ * immediately via ErrorFirstLog — errors surface at a glance without an extra
+ * "output" disclosure click, and passing lines collapse to a count badge.
  */
-const ToolInvocationRow = ({ event }: { event: TraceEvent }) => {
+const ToolInvocationRow = ({
+  event,
+  errorFirst = false,
+}: {
+  event: TraceEvent
+  /** When true, render stdout/stderr inline using ErrorFirstLog instead of behind
+   * a <details> disclosure. Set for verify steps so failures are visible on expand. */
+  errorFirst?: boolean
+}) => {
   const p = event.payload
   const cmd = humanizeCmd(p)
   const exitCode = typeof p.exitCode === 'number' ? p.exitCode : null
@@ -900,29 +913,37 @@ const ToolInvocationRow = ({ event }: { event: TraceEvent }) => {
         )}
       </div>
 
-      {/* stdout / stderr — expandable via native <details> */}
+      {/* stdout / stderr output */}
       {(stdout || stderr) && (
-        <details className="mt-1">
-          <summary className="cursor-pointer font-mono text-[10px] text-muted-foreground">
-            output
-          </summary>
-          <div className="mt-1 space-y-1">
-            {stdout ? (
-              <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-[10px] text-primary">
-                {stdout}
-              </pre>
-            ) : null}
-            {stderr ? (
-              <pre
-                className={`max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded p-1.5 font-mono text-[10px] ${
-                  isActualFail ? 'bg-error/5 text-error/80' : 'bg-secondary/60 text-primary'
-                }`}
-              >
-                {stderr}
-              </pre>
-            ) : null}
+        errorFirst ? (
+          /* Verify steps: render inline, errors-first, no extra click needed */
+          <div className="mt-1.5">
+            <ErrorFirstLog log={[stdout, stderr].filter(Boolean).join('\n')} />
           </div>
-        </details>
+        ) : (
+          /* Other steps: hide behind a disclosure to keep the card compact */
+          <details className="mt-1">
+            <summary className="cursor-pointer font-mono text-[10px] text-muted-foreground">
+              output
+            </summary>
+            <div className="mt-1 space-y-1">
+              {stdout ? (
+                <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-[10px] text-primary">
+                  {stdout}
+                </pre>
+              ) : null}
+              {stderr ? (
+                <pre
+                  className={`max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded p-1.5 font-mono text-[10px] ${
+                    isActualFail ? 'bg-error/5 text-error/80' : 'bg-secondary/60 text-primary'
+                  }`}
+                >
+                  {stderr}
+                </pre>
+              ) : null}
+            </div>
+          </details>
+        )
       )}
     </div>
   )
@@ -1056,7 +1077,11 @@ const StepCard = ({
         {toolEvents.length > 0 ? (
           <div className="mt-2">
             {toolEvents.map((t) => (
-              <ToolInvocationRow key={t.id} event={t} />
+              <ToolInvocationRow
+                key={t.id}
+                event={t}
+                errorFirst={entry.stepName === 'verify'}
+              />
             ))}
           </div>
         ) : null}
