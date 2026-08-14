@@ -1,8 +1,42 @@
 # Claude Code user-level hooks
 
 The PreToolUse Bash hooks live at `~/.claude/hooks/` (outside this repo,
-per-user). Two of them are transparent rewriters that swap legacy tools for
-their faster modern equivalents instead of denying the call:
+per-user). Several of them are transparent rewriters that swap legacy tools
+for their faster modern equivalents instead of denying the call, and one
+enforces commit-message hygiene:
+
+## enforce-one-line-commit.sh (2026-08-14)
+
+`~/.claude/hooks/enforce-one-line-commit.sh` is a PreToolUse hook on
+`Bash(git commit*)`. It normalises multi-line commit messages by stripping
+trailers (Co-Authored-By, generated-with, etc.) and rewriting the command
+to use only the subject line.
+
+**Multi-line body exception (added 2026-08-14):** if the subject line is
+already a valid conventional commit (`type(scope): description`, ≤72 chars)
+and is followed by a blank-line body separator, the commit is allowed
+through **unchanged**. This lets the vcs-supervisor and any agent that
+follows the CLAUDE.md heredoc form write commits with a proper body:
+
+```bash
+git commit -m "$(cat <<'EOF'
+fix(merge): resolve conflict in resolver.ts
+
+Reconciled both sides keeping the intent of each branch.
+EOF
+)"
+```
+
+Previously, any multi-line message triggered a rewrite even when the
+subject was perfectly valid — blocking the vcs-supervisor mid-merge with
+the opaque "No stderr output" error.
+
+**Rejection message fix:** when the hook cannot normalise a command and
+exits 2 (block), the rejection reason is now written to **stderr**. Claude
+Code displays stderr on exit 2; writing only to stdout produced the
+unhelpful "No stderr output" message that obscured the rule.
+
+
 
 | Wrapper | Rewriter | Effect |
 | --- | --- | --- |
