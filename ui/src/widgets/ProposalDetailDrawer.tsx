@@ -162,12 +162,9 @@ export const ProposalDetailDrawer = ({
     | { kind: 'done'; taskId?: string }
     | { kind: 'error'; message: string }
   >({ kind: 'idle' })
-<<<<<<< HEAD
   const [grillState, setGrillState] = useState<
     { kind: 'idle' } | { kind: 'pending' } | { kind: 'error'; message: string }
   >({ kind: 'idle' })
-=======
-  const [grillPending, setGrillPending] = useState(false)
   const [mockupState, setMockupState] = useState<
     | { kind: 'idle' }
     | { kind: 'pending' }
@@ -175,7 +172,6 @@ export const ProposalDetailDrawer = ({
     | { kind: 'error'; message: string }
   >({ kind: 'idle' })
   const [mockupExists, setMockupExists] = useState<boolean>(false)
->>>>>>> 67c3f3cb (feat(mockup): proposal mockup workflow and gate)
   const [dismissState, setDismissState] = useState<
     { kind: 'idle' } | { kind: 'pending' } | { kind: 'done' } | { kind: 'error'; message: string }
   >({ kind: 'idle' })
