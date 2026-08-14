@@ -572,7 +572,7 @@ export const runReflector = async (
   // The only way to stop it is Ctrl-C.
   const r = await runHeadlessProvider(buildPrompt(corpus), {
     cwd: getRepoRoot(),
-    modelTier: 'balanced',
+    modelTier: 'fast',
     disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
   })
 

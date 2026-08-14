@@ -1019,7 +1019,7 @@ export const runDeepReflectorArc = async (
     cwd: getRepoRoot(),
     timeoutMs,
     ...(model !== undefined ? { model } : {}),
-    modelTier: 'flagship',
+    modelTier: 'fast',
     disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
   })
   const text = collectAssistantText(r.conversation) || r.stdout
@@ -1278,7 +1278,7 @@ export const runSessionReflector = async (
     cwd: getRepoRoot(),
     timeoutMs,
     ...(model !== undefined ? { model } : {}),
-    modelTier: 'flagship',
+    modelTier: 'fast',
     disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
   })
   const text = collectAssistantText(r.conversation) || r.stdout

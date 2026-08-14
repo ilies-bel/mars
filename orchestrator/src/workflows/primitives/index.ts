@@ -2053,6 +2053,7 @@ export const runAgent = async (
       originId,
       taskId,
       phase: 'code',
+      modelTier: 'fast',
     })
 
     if (ctx.signal.aborted) throw new Error(`task ${taskId} stopped by operator`)

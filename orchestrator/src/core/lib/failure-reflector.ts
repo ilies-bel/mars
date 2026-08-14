@@ -236,7 +236,7 @@ export const spawnFailureReflector = async (
 
     const r = await runHeadlessProvider(prompt, {
       cwd: getRepoRoot(),
-      modelTier: 'balanced',
+      modelTier: 'fast',
       disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
     })
 
