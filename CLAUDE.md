@@ -252,6 +252,19 @@ invoking — this CLAUDE.md note may lag the CLI. The inline `"<prompt>"`
 form is for genuinely single-line prompts only; use `--prompt-file <path>`
 or `-` (stdin) for multi-line prompts.
 
+**`--verify` must use relative paths.** The verify step runs inside the
+task's git worktree, not the main checkout. An absolute path like
+`(cd /abs/path/to/repo/orchestrator && npm test)` escapes worktree
+isolation: it runs against `main`'s tree, not the task branch, producing
+false-green verifies or verifies that can never pass (the fix lives in the
+worktree, not in main). `mars task add` rejects such specs at enqueue time.
+Use a path relative to the worktree root instead:
+
+```
+--verify 'cd orchestrator && npm test'          # ✓ relative
+--verify '(cd /abs/path/to/repo && npm test)'  # ✗ rejected — absolute repo path
+```
+
 ## Blockers
 
 Blocker edges live in the `task_blockers` junction table (`task_id` waits

@@ -18,6 +18,7 @@ import { readWorkflowProvenance } from '../../workflows/agent-draft'
 import {
   parsePriority,
   parseTaskSpec,
+  containsAbsoluteRepoPath,
   parseBlockedBy,
   parseTags,
   hasFlag,
@@ -234,6 +235,24 @@ export const taskAdd: Command = {
     if (!specResult.ok) {
       deps.err(specResult.message)
       return { code: 2 }
+    }
+    // Reject --verify values that embed absolute repo-root paths. Such commands
+    // bypass worktree isolation: when the orchestrator's verify step runs them,
+    // they operate on the integration branch (main's tree), not on the task
+    // branch — producing false-green verifies or verifies that can never pass.
+    if (specResult.value?.verifyCmd) {
+      if (containsAbsoluteRepoPath(specResult.value.verifyCmd, deps.ctx.repoRoot)) {
+        deps.err(
+          `[mars] --verify contains an absolute path under the repo root (${deps.ctx.repoRoot}).`,
+        )
+        deps.err(
+          `[mars] absolute paths in --verify run against the integration branch, not the task worktree — use relative paths instead.`,
+        )
+        deps.err(
+          `[mars] example: --verify 'cd orchestrator && npm test'  (not --verify 'cd ${deps.ctx.repoRoot}/orchestrator && npm test')`,
+        )
+        return { code: 2 }
+      }
     }
     const intentFlag = args.flags['--intent']?.trim()
     const intent = intentFlag

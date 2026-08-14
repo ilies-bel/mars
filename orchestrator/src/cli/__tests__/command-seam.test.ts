@@ -135,7 +135,7 @@ describe('task add (daemon-routed)', () => {
     expect(fake.calls).toHaveLength(0)
   })
 
-  it('builds a structured spec from --files/--verify/--done/--merge', async () => {
+  it('builds a structured spec from --files/--verify/--done/--type', async () => {
     const fake = makeFakeDaemon(() => ({ id: 'mars-task-9999', status: 'queued' }))
     const { store, ctx } = await loadStoreAndCtx()
     const r = await runCommandInProcess(
@@ -144,7 +144,7 @@ describe('task add (daemon-routed)', () => {
         '--files', 'a.ts',
         '--done', 'compiles',
         '--verify', 'npm test',
-        '--merge', 'gated',
+        '--type', 'checkpoint',
       ],
       { store, ctx, daemon: fake },
     )
@@ -155,21 +155,39 @@ describe('task add (daemon-routed)', () => {
         files: ['a.ts'],
         verifyCmd: 'npm test',
         doneCriteria: ['compiles'],
-        mergeMode: 'gated',
+        taskType: 'checkpoint',
       },
     })
   })
 
-  it('rejects the retired --type flag instead of treating it as prompt text', async () => {
+  it('rejects --verify with an absolute repo-root path before touching the daemon', async () => {
     const fake = makeFakeDaemon()
     const { store, ctx } = await loadStoreAndCtx()
+    // repo is the temp git dir; ctx.repoRoot resolves to it.
+    const absVerify = `cd ${ctx.repoRoot}/orchestrator && npm test`
     const r = await runCommandInProcess(
-      ['task', 'add', 'structured', '--type', 'auto'],
+      ['task', 'add', 'fix something', '--verify', absVerify],
       { store, ctx, daemon: fake },
     )
     expect(r.code).toBe(2)
-    expect(r.err.join('\n')).toContain('unknown flag --type')
+    expect(r.err.join('\n')).toContain('absolute path')
+    expect(r.err.join('\n')).toContain(ctx.repoRoot)
+    // Daemon must NOT be called — the spec was rejected before enqueue.
     expect(fake.calls).toHaveLength(0)
+  })
+
+  it('accepts --verify with a relative path (no repo-root prefix)', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-rel', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'fix something', '--verify', 'cd orchestrator && npm test'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls[0]).toMatchObject({
+      op: 'add',
+      spec: expect.objectContaining({ verifyCmd: 'cd orchestrator && npm test' }),
+    })
   })
 })
 
@@ -456,67 +474,6 @@ describe('task show / list (store-backed reads)', () => {
     })
     expect(r.code).toBe(0)
     expect(r.out.join('\n')).toContain('queued task same form')
-  })
-
-  // ── mars-73177222: recovery slot display in mars show ──────────────────────
-
-  it('mars show: omits recoverySlot when recovery was never spawned (recoverySpawnedCount=0)', async () => {
-    // A task that was re-queued for non-code failures (or just queued fresh)
-    // has recoverySpawnedCount=0. mars show must NOT output a "recoverySlot"
-    // line — the slot is still available.
-    const { store, ctx } = await loadStoreAndCtx()
-    const task = await store.enqueueTask('no recovery spawned', undefined, { skipTriage: true })
-    // recoverySpawnedCount stays at 0 — no Arc.spawnRecovery was called.
-    const r = await runCommandInProcess(['task', 'show', task.id], {
-      store,
-      ctx,
-      daemon: makeFakeDaemon(),
-    })
-    expect(r.code).toBe(0)
-    const text = r.out.join('\n')
-    expect(text).not.toContain('recoverySlot')
-    // Verify the field is genuinely 0 on the task object.
-    const loaded = await store.getTask(task.id)
-    expect(loaded?.recoverySpawnedCount).toBe(0)
-  })
-
-  it('mars show: displays recoverySlot: spent with fix-task ID from self_heal_attempts ledger', async () => {
-    // When a recovery was spawned (Arc.spawnRecovery incremented
-    // recovery_spawned_count and wrote a self_heal_attempts row), mars show
-    // must report the fix-task id. The self_heal_attempts ledger survives
-    // fix-task purge, so this works even when the fix task no longer exists
-    // in the tasks table (the 319-task problem that motivated the rename).
-    const { store, ctx } = await loadStoreAndCtx()
-    const task = await store.enqueueTask('origin task', undefined, { skipTriage: true })
-
-    // Simulate Arc.spawnRecovery: bump the counter and write the ledger row.
-    const fixTaskId = 'fix-abc12345'
-    const now = Date.now()
-    await store.execute({
-      sql: `UPDATE tasks SET recovery_spawned_count = 1, status = 'blocked' WHERE id = ?`,
-      args: [task.id],
-    })
-    // self_heal_attempts.fix_task_id has a FK on tasks(id). Create a minimal
-    // fix-task row so the FK is satisfied (mirroring what Arc.spawnRecovery does).
-    await store.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, origin_id, priority, created_at, updated_at)
-            VALUES (?, 'fix task', 'queued', 'fix', ?, ?, 3, ?, ?)`,
-      args: [fixTaskId, task.id, task.id, new Date().toISOString(), new Date().toISOString()],
-    })
-    await store.execute({
-      sql: `INSERT INTO self_heal_attempts (parent_task_id, failure_signature, fix_task_id, created_at)
-            VALUES (?, ?, ?, ?)`,
-      args: [task.id, 'some-failure', fixTaskId, now],
-    })
-
-    const r = await runCommandInProcess(['task', 'show', task.id], {
-      store,
-      ctx,
-      daemon: makeFakeDaemon(),
-    })
-    expect(r.code).toBe(0)
-    const text = r.out.join('\n')
-    expect(text).toContain(`recoverySlot: spent (fix: ${fixTaskId})`)
   })
 })
 

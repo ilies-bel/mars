@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { hasFlag, parseArgs } from '../args'
+import { containsAbsoluteRepoPath, hasFlag, parseArgs } from '../args'
 
 describe('boolean flags', () => {
   it('reports a supplied boolean flag even though it is not positional', () => {
@@ -154,5 +154,56 @@ describe('parseArgs — bare -- separator', () => {
     const result = parseArgs(['--args', 'tsc', '--', '--noEmit'])
     expect(result.multiFlags['--args']).toEqual(['tsc'])
     expect(result.rest).toEqual(['--noEmit'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// containsAbsoluteRepoPath
+// ---------------------------------------------------------------------------
+
+describe('containsAbsoluteRepoPath', () => {
+  it('returns true when verifyCmd contains the repo root as a literal substring', () => {
+    expect(
+      containsAbsoluteRepoPath(
+        '(cd /home/user/my-project/orchestrator && npm test)',
+        '/home/user/my-project',
+      ),
+    ).toBe(true)
+  })
+
+  it('returns true for a partial-subdir path that still starts with repoRoot', () => {
+    expect(
+      containsAbsoluteRepoPath(
+        'cd /home/user/my-project/ui && npm run build',
+        '/home/user/my-project',
+      ),
+    ).toBe(true)
+  })
+
+  it('returns false when verifyCmd uses only relative paths', () => {
+    expect(
+      containsAbsoluteRepoPath(
+        'cd orchestrator && npm test',
+        '/home/user/my-project',
+      ),
+    ).toBe(false)
+  })
+
+  it('returns false when repoRoot is an empty string', () => {
+    expect(containsAbsoluteRepoPath('cd /abs/path && npm test', '')).toBe(false)
+  })
+
+  it('returns false when an absolute path in verifyCmd does NOT start with repoRoot', () => {
+    // An absolute path to a different location should not trigger the guard.
+    expect(
+      containsAbsoluteRepoPath(
+        'cd /tmp/scratch && npm test',
+        '/home/user/my-project',
+      ),
+    ).toBe(false)
+  })
+
+  it('returns false when verifyCmd is empty', () => {
+    expect(containsAbsoluteRepoPath('', '/home/user/my-project')).toBe(false)
   })
 })

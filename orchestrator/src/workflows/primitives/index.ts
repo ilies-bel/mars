@@ -2907,13 +2907,22 @@ export const review = async (
       // propagates the leftmost non-zero exit from any pipeline in the command.
       // Main-committer recoveries skip all gate steps (including this one).
       const specVerifyCmdRaw = !isMainCommitter ? (spec?.verifyCmd?.trim() ?? '') : ''
-      const specVerifyStep: VerifyStepSpec | null = specVerifyCmdRaw
+      // Safety: rewrite any absolute repo-root path in verifyCmd to the task
+      // worktree path so the acceptance command always runs against the task
+      // branch, not main's tree. This guards against absolute-path specs that
+      // slipped through the CLI validation gate (e.g. in tests or via the daemon
+      // RPC directly).
+      const specVerifyCmd =
+        specVerifyCmdRaw && verifyCtx.repoRoot
+          ? specVerifyCmdRaw.replaceAll(verifyCtx.repoRoot, worktreePath)
+          : specVerifyCmdRaw
+      const specVerifyStep: VerifyStepSpec | null = specVerifyCmd
         ? {
             name: 'spec.verifyCmd',
             required: true,
             tier: 'task',
             cmd: 'bash',
-            args: ['-o', 'pipefail', '-c', specVerifyCmdRaw],
+            args: ['-o', 'pipefail', '-c', specVerifyCmd],
           }
         : null
       const steps = specVerifyStep ? [...gateSteps, specVerifyStep] : gateSteps

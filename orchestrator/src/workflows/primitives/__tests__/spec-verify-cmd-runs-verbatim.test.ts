@@ -335,3 +335,80 @@ describe('spec.verifyCmd counts as task-tier gate coverage', () => {
     )
   })
 })
+
+// ---------------------------------------------------------------------------
+// 5. Absolute-path translation — repoRoot → worktreePath
+// ---------------------------------------------------------------------------
+
+describe('absolute repo-root paths in verifyCmd are rewritten to the task worktree', () => {
+  it('translates a repoRoot prefix in verifyCmd to the task worktreePath', async () => {
+    const taskId = 'mars-specvcmd-abs01'
+    const worktreePath = mkdtempSync(join(tmpdir(), 'mars-specvcmd-abs-wt-'))
+
+    // verifyCmd contains an absolute path under MARS_REPO (tmpRepo)
+    const verifyCmd = `(cd ${tmpRepo}/orchestrator && npm test)`
+    await expect(
+      review(makeCtx(taskId), {
+        kind: 'fix',
+        worktree: { path: worktreePath, branch: `task/${taskId}` },
+        spec: { verifyCmd, files: [], doneCriteria: [], mergeMode: 'auto' },
+      }),
+    ).resolves.toEqual({ verified: true })
+
+    const [args] = mockVerifyChanges.mock.calls[0]
+    const specStep = args.steps.find((s: { name: string }) => s.name === 'spec.verifyCmd')
+    // The absolute repoRoot prefix must be replaced with the worktreePath.
+    expect(specStep?.args).toEqual([
+      '-o',
+      'pipefail',
+      '-c',
+      `(cd ${worktreePath}/orchestrator && npm test)`,
+    ])
+    // The original repoRoot must NOT appear in the translated command.
+    expect(specStep?.args[3]).not.toContain(tmpRepo)
+  })
+
+  it('does not modify verifyCmd that contains no repoRoot prefix', async () => {
+    const taskId = 'mars-specvcmd-abs02'
+    const worktreePath = mkdtempSync(join(tmpdir(), 'mars-specvcmd-abs-wt-'))
+
+    const verifyCmd = 'cd orchestrator && npm test'
+    await expect(
+      review(makeCtx(taskId), {
+        kind: 'fix',
+        worktree: { path: worktreePath, branch: `task/${taskId}` },
+        spec: { verifyCmd, files: [], doneCriteria: [], mergeMode: 'auto' },
+      }),
+    ).resolves.toEqual({ verified: true })
+
+    const [args] = mockVerifyChanges.mock.calls[0]
+    const specStep = args.steps.find((s: { name: string }) => s.name === 'spec.verifyCmd')
+    expect(specStep?.args[3]).toBe('cd orchestrator && npm test')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 6. Regression — verify cwd is the task worktree, not the repo root
+// ---------------------------------------------------------------------------
+
+describe('verify cwd is the task worktree (not the repo root)', () => {
+  it('calls verifyChanges with cwd=worktreePath, not cwd=repoRoot', async () => {
+    const taskId = 'mars-specvcmd-cwd01'
+    const worktreePath = mkdtempSync(join(tmpdir(), 'mars-specvcmd-cwd-wt-'))
+
+    await expect(
+      review(makeCtx(taskId), {
+        kind: 'fix',
+        worktree: { path: worktreePath, branch: `task/${taskId}` },
+        spec: { verifyCmd: 'npm test', files: [], doneCriteria: [], mergeMode: 'auto' },
+      }),
+    ).resolves.toEqual({ verified: true })
+
+    expect(mockVerifyChanges).toHaveBeenCalledOnce()
+    const [callArgs] = mockVerifyChanges.mock.calls[0]
+
+    // cwd must be the per-task worktree path, not the repo root (tmpRepo).
+    expect(callArgs.cwd).toBe(worktreePath)
+    expect(callArgs.cwd).not.toBe(tmpRepo)
+  })
+})

@@ -470,6 +470,20 @@ export const parseTaskSpec = (
   }
 }
 
+/**
+ * Returns true when `verifyCmd` contains `repoRoot` as a literal substring.
+ *
+ * A verifyCmd like `(cd /abs/path/to/repo/orchestrator && npm test)` uses an
+ * absolute path that resolves to the integration branch (`main`'s tree), not
+ * the task worktree under verify. Such commands can silently produce
+ * false-green verifies (tests pass on main but not the task branch) or can
+ * never pass (the fix lives in the worktree, not in main).
+ *
+ * Use relative paths instead: `cd orchestrator && npm test`.
+ */
+export const containsAbsoluteRepoPath = (verifyCmd: string, repoRoot: string): boolean =>
+  repoRoot.length > 0 && verifyCmd.includes(repoRoot)
+
 /** `--blocked-by`: the repeatable blocker-id list (possibly empty). */
 export const parseBlockedBy = (
   args: Pick<ParsedArgs, 'multiFlags'>,
