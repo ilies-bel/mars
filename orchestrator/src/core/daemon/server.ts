@@ -1768,6 +1768,24 @@ export const startDaemon = async (
                 store: getDefaultMergeJobStore(),
                 bus,
                 ...args,
+                // Belt-and-suspenders: if the outer watchdog fires while the
+                // calling workflow has already exited (daemon restart mid-merge),
+                // directly fail the task in the DB so it does not stay stuck in
+                // status='merging' forever. When the workflow IS alive, the
+                // returned {status:'failed'} result is sufficient — the primitive
+                // re-throws and the crash handler transitions the task.
+                onWatchdogTimeout: async (timedOutTaskId: string) => {
+                  await updateTask(timedOutTaskId, {
+                    status: 'failed',
+                    failedPhase: 'merge',
+                    failureReason: 'merge:timeout — outer watchdog fired; the merge job was not resolved in time',
+                    failureReasonCode: 'merge:timeout',
+                    error: 'merge:timeout — the merge job was not resolved; the merge worker may have lost this job or the daemon was restarted mid-merge',
+                  }).catch(() => {
+                    // Non-fatal: the phantom-task watchdog will eventually
+                    // detect the stuck 'merging' row via its no-merge-job path.
+                  })
+                },
               })
               releaseMergeTracking?.()
               releaseMergeTracking = null
@@ -6394,6 +6412,7 @@ export const startDaemon = async (
   const phantomWatchdog = setInterval(() => {
     void (async () => {
       try {
+        const { getDefaultMergeJobStore } = await import('../store/merge-job-store')
         const { failed, requeued } = await sweepPhantomTasks(
           tracker.inFlightSnapshot(),
           (id, _kind) => {
@@ -6412,6 +6431,12 @@ export const startDaemon = async (
             tracker.forceRelease(id)
             void drain()
           },
+          undefined,
+          undefined,
+          // Provide the merge-job checker so the phantom watchdog can immediately
+          // detect tasks stuck in 'merging' with no live merge_jobs row (the merge
+          // worker has no job to process and cannot self-heal).
+          (taskId) => getDefaultMergeJobStore().getActiveMergeJob(taskId).then((j) => j !== null),
         )
         if (failed.length > 0) {
           log(

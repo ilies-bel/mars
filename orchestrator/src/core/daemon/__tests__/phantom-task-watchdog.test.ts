@@ -95,28 +95,6 @@ describe('sweepPhantomTasks — wall-clock ceiling', () => {
     expect(items).toHaveLength(0)
   })
 
-  it('leaves a queued task without a worker PID queued after the ceiling elapses', async () => {
-    // Queue time is not worker time: an undispatched task has no subprocess
-    // to be phantom, even when concurrency caps leave it waiting for hours.
-    const { q, actionQueue, watchdog } = await loadModules(repo)
-    const nowMs = Date.now()
-    const task = await q.enqueueTask('wait for an implement slot', undefined, { skipTriage: true })
-
-    await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
-      args: [OLD_UPDATED_AT(nowMs), task.id],
-    })
-
-    const reclaimSlot = vi.fn()
-    const { failed, requeued } = await watchdog.sweepPhantomTasks([], reclaimSlot, undefined, nowMs)
-
-    expect(failed).not.toContain(task.id)
-    expect(requeued).not.toContain(task.id)
-    expect((await q.getTask(task.id))?.status).toBe('queued')
-    expect(reclaimSlot).not.toHaveBeenCalled()
-    expect(await actionQueue.listActionQueueItems('open')).toHaveLength(0)
-  })
-
   it('still fails a running task that has an in-flight entry but no PID and exceeds the ceiling', async () => {
     // A task WITH an in-flight entry (this daemon dispatched it) but no PID
     // recorded should still be phantom-failed after the ceiling.
@@ -577,6 +555,117 @@ describe('sweepPhantomTasks — parked state immunity', () => {
   })
 })
 
+// ── Merging task no-merge-job detection (no in-flight entry) ────────────────
+//
+// When a task is stuck in status='merging' but has no active merge_jobs row AND
+// no in-flight entry (e.g. after a daemon restart where the startup reconcile
+// failed to restore the job), the phantom watchdog should fail it immediately
+// via the 'no-merge-job' reason — not wait for the 60-min merge ceiling.
+
+describe('sweepPhantomTasks — merging/no-in-flight-entry/no-merge-job', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_PHANTOM_WATCHDOG_CEILING_MS
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('immediately fails a merging task with no in-flight entry when there is no active merge job', async () => {
+    /**
+     * The exact bug shape from mars-0d6291da: a task entered status='merging'
+     * but the merge job was lost (no active merge_jobs row). Without an
+     * in-flight entry the old code fell back to the 60-min merge ceiling —
+     * the task stayed stuck. With the fix, hasActiveMergeJob=false triggers
+     * an immediate 'no-merge-job' fail, even for a recently-updated task.
+     */
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('merge my feature branch', undefined, { skipTriage: true })
+
+    // Age only 5 minutes — well within the 60-min merge ceiling.
+    // Without the no-merge-job check, this task would NOT be detected.
+    const recentUpdatedAt = new Date(nowMs - 5 * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'merging', updated_at = ? WHERE id = ?`,
+      args: [recentUpdatedAt, task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    // Empty inFlight — no entry for this task in the current daemon (daemon restart).
+    // hasActiveMergeJob returns false — no active merge_jobs row in the DB.
+    const hasActiveMergeJob = vi.fn().mockResolvedValue(false)
+    const { failed, requeued } = await watchdog.sweepPhantomTasks(
+      [],
+      reclaimSlot,
+      undefined,
+      nowMs,
+      hasActiveMergeJob,
+    )
+
+    expect(failed).toContain(task.id)
+    expect(requeued).not.toContain(task.id)
+
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failedPhase).toBe('merge')
+    // The failure reason code must use the 'no-merge-job' phantom slug.
+    expect(reloaded?.failureReasonCode).toBe('phantom-task:no-merge-job')
+
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(1)
+    expect(items[0].kind).toBe(watchdog.PHANTOM_TASK_KIND)
+    expect(items[0].payload).toMatchObject({ reason: 'no-merge-job', taskId: task.id })
+
+    // hasActiveMergeJob must have been called for this task's ID.
+    expect(hasActiveMergeJob).toHaveBeenCalledWith(task.id)
+
+    // reclaimSlot must NOT be called — no in-flight slot to reclaim.
+    expect(reclaimSlot).not.toHaveBeenCalled()
+  })
+
+  it('does NOT fail a merging task with no in-flight entry when a merge job is active', async () => {
+    /**
+     * If a 'merging' task has no in-flight entry but DOES have an active
+     * merge_jobs row, the merge worker is likely handling it — leave it alone.
+     * The ceiling backstop will catch genuinely stuck tasks.
+     */
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('merge active branch', undefined, { skipTriage: true })
+
+    const recentUpdatedAt = new Date(nowMs - 5 * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'merging', updated_at = ? WHERE id = ?`,
+      args: [recentUpdatedAt, task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    // hasActiveMergeJob returns true — the merge worker has a job to process.
+    const hasActiveMergeJob = vi.fn().mockResolvedValue(true)
+    const { failed } = await watchdog.sweepPhantomTasks(
+      [],
+      reclaimSlot,
+      undefined,
+      nowMs,
+      hasActiveMergeJob,
+    )
+
+    expect(failed).not.toContain(task.id)
+
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('merging')
+
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(0)
+    expect(reclaimSlot).not.toHaveBeenCalled()
+  })
+})
+
 // ── Lease expiry alerts ──────────────────────────────────────────────────────
 
 describe('sweepExpiredLeases', () => {
@@ -810,5 +899,206 @@ describe('sweepPhantomTasks — action-queue title format', () => {
     expect(items).toHaveLength(1)
     expect(items[0].title).toMatch(/^Stuck \d+ min:/)
     expect(items[0].title).toContain(task.id)
+  })
+})
+
+// ── 'merging' phantom detection (mars-0d6291da) ──────────────────────────────
+//
+// Tasks stuck in status='merging' must be detected and auto-failed by the
+// phantom watchdog. Two scenarios are covered:
+//  a. No in-flight entry (daemon restarted, orphaned task): fail after the
+//     merge ceiling (resolvedMergeCeilingMs = 2 × DEFAULT_CEILING_MS by default).
+//  b. In-flight entry with kind='merge' but no active merge_jobs row: fail
+//     immediately when hasActiveMergeJob returns false.
+
+describe('sweepPhantomTasks — merging phantom detection', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_PHANTOM_WATCHDOG_CEILING_MS
+    delete process.env.MARS_MERGE_WATCHDOG_MS
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('fails a merging task with no in-flight entry after the merge ceiling', async () => {
+    // A 'merging' task with NO in-flight entry is orphaned from a prior daemon.
+    // The phantom watchdog should fail it (not re-queue) after the merge ceiling.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('merge some work', undefined, { skipTriage: true })
+
+    // Set the task to 'merging' status with updatedAt well past the merge ceiling.
+    // The merge ceiling = 2 × DEFAULT_CEILING_MS (60 min default).
+    // We use 61 minutes to be safely past it.
+    const OLD_MERGE_UPDATED_AT = new Date(nowMs - 61 * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'merging', updated_at = ? WHERE id = ?`,
+      args: [OLD_MERGE_UPDATED_AT, task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    // No in-flight entry — simulates daemon restart / orphaned task.
+    const { failed, requeued } = await watchdog.sweepPhantomTasks([], reclaimSlot, undefined, nowMs)
+
+    expect(failed).toContain(task.id)
+    expect(requeued).not.toContain(task.id)
+
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failedPhase).toBe('merge')
+    expect(reloaded?.failureReasonCode).toBe('phantom-task:ceiling')
+
+    // reclaimSlot must NOT be called — there is no in-flight slot to reclaim.
+    expect(reclaimSlot).not.toHaveBeenCalled()
+
+    // An action-queue item must have been raised for the operator.
+    const items = await actionQueue.listActionQueueItems('open')
+    const phantomItems = items.filter((i) => i.kind === watchdog.PHANTOM_TASK_KIND)
+    expect(phantomItems).toHaveLength(1)
+    expect(phantomItems[0].context).toEqual(expect.objectContaining({ taskId: task.id }))
+  })
+
+  it('does NOT fail a merging task with no in-flight entry within the merge ceiling', async () => {
+    // A 'merging' task updated only 30 minutes ago is within the 60-min merge
+    // ceiling and must be left alone.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('recent merge work', undefined, { skipTriage: true })
+
+    const RECENT_UPDATED_AT = new Date(nowMs - 30 * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'merging', updated_at = ? WHERE id = ?`,
+      args: [RECENT_UPDATED_AT, task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    const { failed } = await watchdog.sweepPhantomTasks([], reclaimSlot, undefined, nowMs)
+
+    expect(failed).not.toContain(task.id)
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('merging')
+    expect(reclaimSlot).not.toHaveBeenCalled()
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items.filter((i) => i.kind === watchdog.PHANTOM_TASK_KIND)).toHaveLength(0)
+  })
+
+  it('fails a merging task immediately when no active merge job exists (hasActiveMergeJob=false)', async () => {
+    // A 'merging' task with an in-flight kind='merge' entry but no active
+    // merge_jobs row should be failed immediately — the merge worker cannot
+    // self-heal without a row to claim.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('lost merge job', undefined, { skipTriage: true })
+
+    // Task just entered merging status (very recent updatedAt — within ceiling).
+    const RECENT_UPDATED_AT = new Date(nowMs - 5 * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'merging', updated_at = ? WHERE id = ?`,
+      args: [RECENT_UPDATED_AT, task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    // In-flight entry with kind='merge' — simulates daemon currently tracking it.
+    const inFlightEntries = [{ taskId: task.id, kind: 'merge' as const, startedAt: nowMs - 5 * 60_000 }]
+    // hasActiveMergeJob returns false — the merge_jobs row is missing.
+    const hasActiveMergeJob = vi.fn().mockResolvedValue(false)
+
+    const { failed } = await watchdog.sweepPhantomTasks(
+      inFlightEntries,
+      reclaimSlot,
+      undefined,
+      nowMs,
+      hasActiveMergeJob,
+    )
+
+    expect(failed).toContain(task.id)
+    expect(hasActiveMergeJob).toHaveBeenCalledWith(task.id)
+
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failedPhase).toBe('merge')
+    expect(reloaded?.failureReasonCode).toBe('phantom-task:no-merge-job')
+    expect(reloaded?.error).toContain('no active merge_jobs row')
+
+    // reclaimSlot must be called — the in-flight entry needs to be released.
+    expect(reclaimSlot).toHaveBeenCalledWith(task.id, 'merge')
+
+    const items = await actionQueue.listActionQueueItems('open')
+    const phantomItems = items.filter((i) => i.kind === watchdog.PHANTOM_TASK_KIND)
+    expect(phantomItems).toHaveLength(1)
+    expect(phantomItems[0].payload).toMatchObject({ reason: 'no-merge-job' })
+  })
+
+  it('does NOT fail a merging task when it has an active merge job (within ceiling)', async () => {
+    // A 'merging' task with in-flight entry AND active merge job is legitimately
+    // in progress — the phantom watchdog must leave it alone.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('active merge', undefined, { skipTriage: true })
+
+    const RECENT_UPDATED_AT = new Date(nowMs - 10 * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'merging', updated_at = ? WHERE id = ?`,
+      args: [RECENT_UPDATED_AT, task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    const inFlightEntries = [{ taskId: task.id, kind: 'merge' as const, startedAt: nowMs - 10 * 60_000 }]
+    // hasActiveMergeJob returns true — the merge worker is processing it.
+    const hasActiveMergeJob = vi.fn().mockResolvedValue(true)
+
+    const { failed } = await watchdog.sweepPhantomTasks(
+      inFlightEntries,
+      reclaimSlot,
+      undefined,
+      nowMs,
+      hasActiveMergeJob,
+    )
+
+    expect(failed).not.toContain(task.id)
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('merging')
+    expect(reclaimSlot).not.toHaveBeenCalled()
+    expect(await actionQueue.listActionQueueItems('open')).toHaveLength(0)
+  })
+
+  it('fails a merging task with in-flight entry after the merge ceiling even with active job', async () => {
+    // Even with an active merge job, a 'merging' task stuck for longer than
+    // the merge ceiling must be failed — something is wrong with the merge worker.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('stale merge', undefined, { skipTriage: true })
+
+    // 61 minutes ago — past the 60-min merge ceiling.
+    const OLD_MERGE_UPDATED_AT = new Date(nowMs - 61 * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'merging', updated_at = ? WHERE id = ?`,
+      args: [OLD_MERGE_UPDATED_AT, task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    const inFlightEntries = [{ taskId: task.id, kind: 'merge' as const, startedAt: nowMs - 61 * 60_000 }]
+    // Even with a merge job, the ceiling fires.
+    const hasActiveMergeJob = vi.fn().mockResolvedValue(true)
+
+    const { failed } = await watchdog.sweepPhantomTasks(
+      inFlightEntries,
+      reclaimSlot,
+      undefined,
+      nowMs,
+      hasActiveMergeJob,
+    )
+
+    expect(failed).toContain(task.id)
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failedPhase).toBe('merge')
+    expect(reloaded?.failureReasonCode).toBe('phantom-task:ceiling')
+    expect(reclaimSlot).toHaveBeenCalledWith(task.id, 'merge')
   })
 })

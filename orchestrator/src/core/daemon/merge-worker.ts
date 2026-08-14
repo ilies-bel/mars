@@ -125,6 +125,18 @@ export async function enqueueMergeJobAndAwait(args: {
   branch: string
   worktreePath: string
   integrationBranch: string
+  /**
+   * Optional callback invoked when the outer watchdog fires. Call this to
+   * directly fail the task in the DB so it exits status='merging' even if
+   * the calling workflow has already exited (e.g. after a daemon restart).
+   * Without this callback, the task relies on the phantom-task watchdog
+   * (which has a longer ceiling for merge tasks) to eventually detect it.
+   * When the workflow IS alive, the returned {status:'failed',
+   * errorCode:'watchdog'} result is sufficient — the caller re-throws and
+   * the crash handler transitions the task. This callback is the
+   * belt-and-suspenders for the "calling workflow is gone" case.
+   */
+  onWatchdogTimeout?: (taskId: string) => Promise<void>
 }): Promise<MergeJobResult> {
   // Register BEFORE enqueue so we can never miss the termination event.
   const resultPromise = awaitMergeJobDone(args.taskId)
@@ -135,10 +147,64 @@ export async function enqueueMergeJobAndAwait(args: {
     integrationBranch: args.integrationBranch,
   } satisfies EnqueueMergeJobInput)
   args.bus.emit('merge-job.enqueued')
-  return resultPromise
+
+  // Belt-and-suspenders outer watchdog: if the merge worker never resolves
+  // this promise (e.g. the job was lost, the worker crashed without calling
+  // resolveMergeJob, or the daemon restarted mid-merge), fail after
+  // watchdogMs + OUTER_WATCHDOG_GRACE_MS so the calling workflow never parks
+  // in status='merging' forever.
+  //
+  // The internal per-job watchdog (passed to mergeFn as watchdogMs) fires at
+  // watchdogMs; the grace period ensures the internal one always fires first
+  // under normal conditions — this outer timeout is the last resort.
+  const watchdogMs = Number(process.env.MARS_MERGE_WATCHDOG_MS ?? DEFAULT_WATCHDOG_MS)
+  const graceMs = Number(process.env.MARS_MERGE_OUTER_WATCHDOG_GRACE_MS ?? DEFAULT_OUTER_WATCHDOG_GRACE_MS)
+  const outerMs = watchdogMs + graceMs
+
+  let outerTimer!: ReturnType<typeof setTimeout>
+  const outerTimeoutPromise = new Promise<MergeJobResult>((resolve) => {
+    outerTimer = setTimeout(() => {
+      // Remove the pending resolver before resolving so that if resolveMergeJob
+      // is called after the timeout it is a harmless no-op (key already absent).
+      pendingMergeJobs.delete(args.taskId)
+      // Belt-and-suspenders: directly fail the task in the DB so it leaves
+      // status='merging' even if the calling workflow has already exited (e.g.
+      // the daemon restarted mid-merge and the workflow promise was abandoned).
+      // The onWatchdogTimeout callback is intentionally fire-and-forget here —
+      // we resolve the outer promise immediately so the caller gets the result.
+      if (args.onWatchdogTimeout) {
+        args.onWatchdogTimeout(args.taskId).catch(() => {
+          // Non-fatal: if the DB write fails, the phantom-task watchdog will
+          // eventually detect the stuck 'merging' row via its no-merge-job check.
+        })
+      }
+      resolve({
+        status: 'failed',
+        error: `merge:timeout — merge job for task ${args.taskId} was not resolved within ${Math.round(outerMs / 60_000)} min; the merge worker may have lost this job`,
+        errorCode: 'watchdog',
+      })
+    }, outerMs)
+  })
+
+  try {
+    return await Promise.race([resultPromise, outerTimeoutPromise])
+  } finally {
+    clearTimeout(outerTimer)
+  }
 }
 
 // ── Implementation ────────────────────────────────────────────────────────────
+
+/**
+ * Default extra grace time added on top of the internal per-job merge watchdog
+ * (`MARS_MERGE_WATCHDOG_MS`) for the outer promise-level timeout inside
+ * `enqueueMergeJobAndAwait`. Override with `MARS_MERGE_OUTER_WATCHDOG_GRACE_MS`
+ * for testing. The inner watchdog fires at `watchdogMs`; this grace period
+ * ensures the inner one always fires first under normal conditions. The outer
+ * timeout is the last resort: it fires if the merge worker itself dies or the
+ * job is lost without `resolveMergeJob` ever being called.
+ */
+export const DEFAULT_OUTER_WATCHDOG_GRACE_MS = 10 * 60_000 // 10 minutes
 
 /**
  * Execute a single merge job. Calls `mergeFn` with the job's stored args and

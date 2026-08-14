@@ -17,7 +17,7 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { MergeJob, MergeJobStore } from '../../store/merge-job-store.js'
 
 // ── Fast no-op merge function (avoids real git in unit tests) ─────────────────
@@ -353,6 +353,258 @@ describe('startMergeWorker — serial job processing', () => {
     // markDone must NOT have been called because markRunning threw.
     expect(calls).not.toContain(`markDone:${job.id}`)
   })
+})
+
+// ---------------------------------------------------------------------------
+// Outer watchdog (mars-0d6291da)
+//
+// If the merge worker never calls resolveMergeJob for a given taskId (e.g.
+// the merge job was lost, the worker crashed without resolving the promise,
+// or the daemon lost the merge_jobs row), enqueueMergeJobAndAwait must not
+// park forever — it must time out and return a 'failed' result so the
+// calling workflow can transition the task out of status='merging'.
+// ---------------------------------------------------------------------------
+
+describe('enqueueMergeJobAndAwait — outer watchdog', () => {
+  it('returns a failed result with errorCode=watchdog when the merge promise is never resolved', async () => {
+    /**
+     * Simulates a "lost job" scenario: enqueueMergeJobAndAwait enqueues a row
+     * in the store and emits the bus event, but resolveMergeJob is never called
+     * (mimicking a merge worker that loses the job). The outer watchdog must
+     * fire and return a 'failed' result so the calling workflow can exit.
+     *
+     * We shrink both MARS_MERGE_WATCHDOG_MS and MARS_MERGE_OUTER_WATCHDOG_GRACE_MS
+     * to tiny values (10 ms each) so the outer timeout fires within ~20 ms.
+     */
+    const { EventEmitter: EE } = await import('node:events')
+    // Each test call goes through vi.resetModules()-based isolation, but here
+    // we directly import without resetting to keep the test simple.
+    const { enqueueMergeJobAndAwait } = await import('../merge-worker.js')
+
+    const savedWatchdog = process.env.MARS_MERGE_WATCHDOG_MS
+    const savedGrace = process.env.MARS_MERGE_OUTER_WATCHDOG_GRACE_MS
+    // Total outer budget = 10 + 10 = 20 ms — the promise will time out quickly.
+    process.env.MARS_MERGE_WATCHDOG_MS = '10'
+    process.env.MARS_MERGE_OUTER_WATCHDOG_GRACE_MS = '10'
+
+    // Build a minimal store that accepts the enqueue but never delivers a job
+    // (simulating a lost merge job that the worker cannot claim).
+    let enqueued = false
+    const idleStore = {
+      async enqueue() {
+        enqueued = true
+        return {
+          id: 'idle-job',
+          taskId: 'task-idle-watchdog',
+          status: 'queued' as const,
+          attempts: 0,
+          claimedAt: null,
+          startedAt: null,
+          finishedAt: null,
+          error: null,
+          errorCode: null,
+          integrationBranch: 'main',
+          worktreePath: '/tmp',
+          branch: 'task/idle-watchdog',
+          mergedSha: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
+      },
+      async claimNext() { return null },
+      async markRunning() { return null },
+      async markDone() { return null },
+      async markFailed() { return null },
+      async markCanceled() { return null },
+      async getByTaskId() { return null },
+      async listActive() { return [] },
+      async listByStatus() { return [] },
+      async getActiveMergeJob() { return null },
+    }
+
+    let result: Awaited<ReturnType<typeof enqueueMergeJobAndAwait>>
+    try {
+      result = await enqueueMergeJobAndAwait({
+        store: idleStore,
+        bus: new EE(),
+        taskId: 'task-idle-watchdog',
+        branch: 'task/idle-watchdog',
+        worktreePath: '/tmp',
+        integrationBranch: 'main',
+      })
+    } finally {
+      // Restore env regardless of success/failure.
+      if (savedWatchdog === undefined) delete process.env.MARS_MERGE_WATCHDOG_MS
+      else process.env.MARS_MERGE_WATCHDOG_MS = savedWatchdog
+      if (savedGrace === undefined) delete process.env.MARS_MERGE_OUTER_WATCHDOG_GRACE_MS
+      else process.env.MARS_MERGE_OUTER_WATCHDOG_GRACE_MS = savedGrace
+    }
+
+    // The row was enqueued before the timeout.
+    expect(enqueued).toBe(true)
+    // The outer watchdog fired: result must be a failed watchdog outcome.
+    expect(result!.status).toBe('failed')
+    if (result!.status === 'failed') {
+      expect(result!.errorCode).toBe('watchdog')
+      expect(result!.error).toMatch(/merge:timeout/)
+    }
+  }, 5_000) // generous test timeout — actual wait is <100 ms
+
+  it('calls onWatchdogTimeout with the taskId when the outer watchdog fires', async () => {
+    /**
+     * When the outer watchdog fires, the optional `onWatchdogTimeout` callback
+     * must be invoked so the caller can fail the task directly in the DB.
+     * This is the belt-and-suspenders for the case where the calling workflow
+     * has already exited (daemon restart mid-merge) and cannot handle the
+     * returned failure result itself.
+     */
+    const { EventEmitter: EE } = await import('node:events')
+    const { enqueueMergeJobAndAwait } = await import('../merge-worker.js')
+
+    const savedWatchdog = process.env.MARS_MERGE_WATCHDOG_MS
+    const savedGrace = process.env.MARS_MERGE_OUTER_WATCHDOG_GRACE_MS
+    process.env.MARS_MERGE_WATCHDOG_MS = '10'
+    process.env.MARS_MERGE_OUTER_WATCHDOG_GRACE_MS = '10'
+
+    const taskId = 'task-watchdog-callback'
+    const onWatchdogTimeout = vi.fn().mockResolvedValue(undefined)
+
+    const idleStore = {
+      async enqueue() {
+        return {
+          id: 'idle-callback-job',
+          taskId,
+          status: 'queued' as const,
+          attempts: 0,
+          claimedAt: null,
+          startedAt: null,
+          finishedAt: null,
+          error: null,
+          errorCode: null,
+          integrationBranch: 'main',
+          worktreePath: '/tmp',
+          branch: 'task/idle-callback',
+          mergedSha: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
+      },
+      async claimNext() { return null },
+      async markRunning() { return null },
+      async markDone() { return null },
+      async markFailed() { return null },
+      async markCanceled() { return null },
+      async getByTaskId() { return null },
+      async listActive() { return [] },
+      async listByStatus() { return [] },
+      async getActiveMergeJob() { return null },
+    }
+
+    try {
+      const result = await enqueueMergeJobAndAwait({
+        store: idleStore,
+        bus: new EE(),
+        taskId,
+        branch: 'task/idle-callback',
+        worktreePath: '/tmp',
+        integrationBranch: 'main',
+        onWatchdogTimeout,
+      })
+
+      // The outer watchdog fired — result must indicate failure.
+      expect(result.status).toBe('failed')
+      if (result.status === 'failed') {
+        expect(result.errorCode).toBe('watchdog')
+      }
+
+      // The onWatchdogTimeout callback must have been called with the taskId.
+      expect(onWatchdogTimeout).toHaveBeenCalledOnce()
+      expect(onWatchdogTimeout).toHaveBeenCalledWith(taskId)
+    } finally {
+      if (savedWatchdog === undefined) delete process.env.MARS_MERGE_WATCHDOG_MS
+      else process.env.MARS_MERGE_WATCHDOG_MS = savedWatchdog
+      if (savedGrace === undefined) delete process.env.MARS_MERGE_OUTER_WATCHDOG_GRACE_MS
+      else process.env.MARS_MERGE_OUTER_WATCHDOG_GRACE_MS = savedGrace
+    }
+  }, 5_000)
+
+  it('cleans up the pending promise so a late resolveMergeJob call is a no-op', async () => {
+    /**
+     * After the outer watchdog fires, the pendingMergeJobs map entry is deleted.
+     * A subsequent call to resolveMergeJob for the same taskId must return false
+     * (key absent) and must not cause any observable side effect.
+     */
+    const { EventEmitter: EE } = await import('node:events')
+    const { enqueueMergeJobAndAwait, resolveMergeJob } = await import('../merge-worker.js')
+
+    const savedWatchdog = process.env.MARS_MERGE_WATCHDOG_MS
+    const savedGrace = process.env.MARS_MERGE_OUTER_WATCHDOG_GRACE_MS
+    process.env.MARS_MERGE_WATCHDOG_MS = '10'
+    process.env.MARS_MERGE_OUTER_WATCHDOG_GRACE_MS = '10'
+
+    const idleStore = {
+      async enqueue() {
+        return {
+          id: 'idle-cleanup-job',
+          taskId: 'task-idle-cleanup',
+          status: 'queued' as const,
+          attempts: 0,
+          claimedAt: null,
+          startedAt: null,
+          finishedAt: null,
+          error: null,
+          errorCode: null,
+          integrationBranch: 'main',
+          worktreePath: '/tmp',
+          branch: 'task/idle-cleanup',
+          mergedSha: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
+      },
+      async claimNext() { return null },
+      async markRunning() { return null },
+      async markDone() { return null },
+      async markFailed() { return null },
+      async markCanceled() { return null },
+      async getByTaskId() { return null },
+      async listActive() { return [] },
+      async listByStatus() { return [] },
+      async getActiveMergeJob() { return null },
+    }
+
+    try {
+      // Let the outer watchdog fire.
+      await enqueueMergeJobAndAwait({
+        store: idleStore,
+        bus: new EE(),
+        taskId: 'task-idle-cleanup',
+        branch: 'task/idle-cleanup',
+        worktreePath: '/tmp',
+        integrationBranch: 'main',
+      })
+    } finally {
+      if (savedWatchdog === undefined) delete process.env.MARS_MERGE_WATCHDOG_MS
+      else process.env.MARS_MERGE_WATCHDOG_MS = savedWatchdog
+      if (savedGrace === undefined) delete process.env.MARS_MERGE_OUTER_WATCHDOG_GRACE_MS
+      else process.env.MARS_MERGE_OUTER_WATCHDOG_GRACE_MS = savedGrace
+    }
+
+    // After the timeout, the pending promise was removed — a late resolve is a no-op.
+    const resolved = resolveMergeJob('task-idle-cleanup', {
+      status: 'done',
+      result: {
+        merged: true,
+        conflictResolved: false,
+        aborted: false,
+        output: '',
+        supervisorConversation: [],
+        vegaSessionId: null,
+        retriesAttempted: 0,
+      },
+    })
+    expect(resolved).toBe(false)
+  }, 5_000)
 })
 
 // ---------------------------------------------------------------------------

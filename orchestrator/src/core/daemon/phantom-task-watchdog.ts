@@ -62,10 +62,10 @@
 
 import { getTask, listTasks, updateTask } from '../queue'
 import { raiseActionQueueItem } from '../lib/action-queue'
+import type { ActionQueueKind } from '../lib/action-queue-kinds'
 import type { DispatchKind, InFlightEntry } from './task-flight-tracker'
 
-/** @deprecated `phantom-task` is now a derived kind (ADR-0057); no stored rows are written. */
-export const PHANTOM_TASK_KIND = 'phantom-task' as const
+export const PHANTOM_TASK_KIND: ActionQueueKind = 'phantom-task'
 
 /** Default wall-clock ceiling: 30 minutes. */
 export const DEFAULT_CEILING_MS = 30 * 60_000
@@ -124,7 +124,7 @@ const resolvedLeaseExpiryMs = (): number => {
 export const buildPhantomBody = (
   taskId: string,
   status: string,
-  reason: 'dead-pid' | 'ceiling',
+  reason: 'dead-pid' | 'ceiling' | 'no-merge-job',
   ageMinutes: number,
   prompt?: string,
 ): string => {
@@ -133,7 +133,9 @@ export const buildPhantomBody = (
   const reasonDetail =
     reason === 'dead-pid'
       ? `its worker process was not alive when checked`
-      : `the worker made no progress for ${ageMinutes} min (ceiling: ${Math.round(resolvedCeilingMs() / 60_000)} min)`
+      : reason === 'no-merge-job'
+        ? `it is stuck in the merge phase with no active merge job (the merge worker lost this job)`
+        : `the worker made no progress for ${ageMinutes} min (ceiling: ${Math.round(resolvedCeilingMs() / 60_000)} min)`
   return (
     `"${goal}" stalled — ${reasonDetail}, so Mars stopped it. ` +
     `Restart to try again, or drop it if the work is no longer needed.`
@@ -141,33 +143,42 @@ export const buildPhantomBody = (
 }
 
 /** The in-flight statuses the watchdog scans. */
-const PHANTOM_STATUSES = ['running', 'verifying'] as const
+const PHANTOM_STATUSES = ['running', 'verifying', 'merging'] as const
 
 /** failedPhase to record per status. */
-const FAILED_PHASE_FOR_STATUS: Record<(typeof PHANTOM_STATUSES)[number], 'code' | 'verify'> = {
+const FAILED_PHASE_FOR_STATUS: Record<(typeof PHANTOM_STATUSES)[number], 'code' | 'verify' | 'merge'> = {
   running: 'code',
   verifying: 'verify',
+  merging: 'merge',
 }
 
 /**
- * Sweep for tasks stuck in 'running' or 'verifying' whose subprocess is gone.
+ * Sweep for tasks stuck in 'running', 'verifying', or 'merging' whose
+ * subprocess is gone or whose merge job no longer exists.
  *
- * @param inFlightEntries  Point-in-time snapshot of the daemon's inFlight map
- *                         (from `tracker.inFlightSnapshot()`).
- * @param reclaimSlot      Called for each phantom that held an in-flight slot —
- *                         must clear the tracker entry AND release the semaphore.
- * @param isAlive          PID liveness predicate (default: `isProcessAlive` from
- *                         `./paths`). Pass a stub in tests.
- * @param nowMs            Current timestamp override for testing.
- * @returns                IDs of every task that was auto-failed, and IDs of
- *                         every orphaned 'running' task that was re-queued as a
- *                         safety net (no in-flight entry from this daemon).
+ * @param inFlightEntries    Point-in-time snapshot of the daemon's inFlight map
+ *                           (from `tracker.inFlightSnapshot()`).
+ * @param reclaimSlot        Called for each phantom that held an in-flight slot —
+ *                           must clear the tracker entry AND release the semaphore.
+ * @param isAlive            PID liveness predicate (default: `isProcessAlive` from
+ *                           `./paths`). Pass a stub in tests.
+ * @param nowMs              Current timestamp override for testing.
+ * @param hasActiveMergeJob  Optional predicate: given a taskId, returns true if
+ *                           an active (queued/claimed/running) merge_jobs row
+ *                           exists. When provided, a 'merging' task whose in-flight
+ *                           entry has kind='merge' but no active merge job is
+ *                           failed immediately (before the ceiling fires) because
+ *                           the merge worker has no job to process.
+ * @returns                  IDs of every task that was auto-failed, and IDs of
+ *                           every orphaned 'running' task that was re-queued as a
+ *                           safety net (no in-flight entry from this daemon).
  */
 export const sweepPhantomTasks = async (
   inFlightEntries: readonly InFlightEntry[],
   reclaimSlot: (taskId: string, kind: DispatchKind) => void,
   isAlive?: (pid: number) => boolean,
   nowMs?: number,
+  hasActiveMergeJob?: (taskId: string) => Promise<boolean>,
 ): Promise<{ failed: string[]; requeued: string[] }> => {
   const { isProcessAlive } = await import('./paths')
   const alive = isAlive ?? isProcessAlive
@@ -187,7 +198,7 @@ export const sweepPhantomTasks = async (
     for (const task of tasks) {
       const entry = inFlightByTask.get(task.id)
 
-      let phantomReason: 'dead-pid' | 'ceiling' | null = null
+      let phantomReason: 'dead-pid' | 'ceiling' | 'no-merge-job' | null = null
 
       if (entry?.pid !== undefined) {
         // Belt: PID is known — check liveness. Dead PID ⟹ phantom immediately.
@@ -208,11 +219,23 @@ export const sweepPhantomTasks = async (
         // Merge-parked tasks (kind='merge') use a longer ceiling because they
         // are legitimately idle while the single-consumer merge worker processes
         // their job; the merge worker's own watchdog self-heals them first.
-        const updatedMs = Date.parse(task.updatedAt)
-        const effectiveCeiling =
-          entry.kind === 'merge' ? resolvedMergeCeilingMs() : ceiling
-        if (!Number.isFinite(updatedMs) || now - updatedMs <= effectiveCeiling) continue
-        phantomReason = 'ceiling'
+        //
+        // Fast path for 'merging' tasks: if the caller can tell us whether an
+        // active merge_jobs row exists and it does NOT, fail immediately —
+        // the merge worker has no job to process and cannot self-heal.
+        if (status === 'merging' && entry.kind === 'merge' && hasActiveMergeJob !== undefined) {
+          const hasJob = await hasActiveMergeJob(task.id)
+          if (!hasJob) {
+            phantomReason = 'no-merge-job'
+          }
+        }
+        if (phantomReason === null) {
+          const updatedMs = Date.parse(task.updatedAt)
+          const effectiveCeiling =
+            entry.kind === 'merge' ? resolvedMergeCeilingMs() : ceiling
+          if (!Number.isFinite(updatedMs) || now - updatedMs <= effectiveCeiling) continue
+          phantomReason = 'ceiling'
+        }
       } else if (status === 'running') {
         // No in-flight entry AND task is 'running': this task is orphaned from
         // a prior daemon. The startup reconcile (requeue-stale-running) should
@@ -255,12 +278,34 @@ export const sweepPhantomTasks = async (
         if (recheckd?.status === 'queued') requeued.push(task.id)
         continue
       } else {
-        // 'verifying' (or any future status) with no in-flight entry: fall back
-        // to the wall-clock ceiling backstop. The startup reconcile's
-        // verifying-recovery step handles this case; this is the safety net.
-        const updatedMs = Date.parse(task.updatedAt)
-        if (!Number.isFinite(updatedMs) || now - updatedMs <= ceiling) continue
-        phantomReason = 'ceiling'
+        // 'verifying' or 'merging' (or any future status) with no in-flight
+        // entry: fall back to the wall-clock ceiling backstop. The startup
+        // reconcile handles these cases on daemon boot; this is the safety net.
+        //
+        // 'merging' tasks use the longer merge ceiling (resolvedMergeCeilingMs)
+        // so a legitimately slow merge that straddled a daemon restart is not
+        // prematurely killed. Unlike 'running', 'merging' tasks are NOT
+        // re-queued here — re-queuing is handled by the startup reconcile's
+        // orphan-merging-task path; the phantom watchdog's job is to fail any
+        // task that has been stuck beyond the merge ceiling.
+        //
+        // Fast path for 'merging' tasks with no in-flight entry: if the caller
+        // can check for an active merge_jobs row and there is none, fail
+        // immediately — the merge worker has no job to process and the task
+        // can never leave status='merging' on its own. This fires even before
+        // the ceiling, matching the behaviour of the in-flight-entry path.
+        if (status === 'merging' && hasActiveMergeJob !== undefined) {
+          const hasJob = await hasActiveMergeJob(task.id)
+          if (!hasJob) {
+            phantomReason = 'no-merge-job'
+          }
+        }
+        if (phantomReason === null) {
+          const updatedMs = Date.parse(task.updatedAt)
+          const effectiveCeiling = status === 'merging' ? resolvedMergeCeilingMs() : ceiling
+          if (!Number.isFinite(updatedMs) || now - updatedMs <= effectiveCeiling) continue
+          phantomReason = 'ceiling'
+        }
       }
 
       if (phantomReason === null) continue
@@ -270,9 +315,11 @@ export const sweepPhantomTasks = async (
       const observation =
         phantomReason === 'dead-pid'
           ? `worker PID ${entry?.pid ?? 'unrecorded'} was not alive when checked; last event: ${entry?.lastActivityMs === undefined ? 'none recorded' : new Date(entry.lastActivityMs).toISOString()}`
-          : entry?.lastActivityMs !== undefined
-            ? `worker PID ${entry.pid} was alive but its event stream was silent for ${Math.round((now - entry.lastActivityMs) / 60_000)} min (ceiling: ${Math.round(ceiling / 60_000)} min)`
-            : `no worker PID was recorded and the task row was unchanged for ${ageMinutes} min (ceiling: ${Math.round(ceiling / 60_000)} min)`
+          : phantomReason === 'no-merge-job'
+            ? `task is stuck in status='merging' but has no active merge_jobs row; the merge worker cannot process it and it will never leave 'merging' without intervention`
+            : entry?.lastActivityMs !== undefined
+              ? `worker PID ${entry.pid} was alive but its event stream was silent for ${Math.round((now - entry.lastActivityMs) / 60_000)} min (ceiling: ${Math.round(ceiling / 60_000)} min)`
+              : `no worker PID was recorded and the task row was unchanged for ${ageMinutes} min (ceiling: ${Math.round(ceiling / 60_000)} min)`
 
       // Mark the task failed BEFORE reclaiming the slot so there is never a
       // window where the slot is free but the task is still 'running'.
@@ -295,9 +342,37 @@ export const sweepPhantomTasks = async (
         reclaimSlot(task.id, entry.kind)
       }
 
-      // The phantom watchdog sets the task to status='failed'; the derived
-      // action-queue view (ADR-0057) picks it up as a 'failed' row automatically.
-      // No separate 'phantom-task' stored row is written here.
+      // Raise exactly one action-queue item per phantom; dedup by taskId so
+      // re-detections bump seen_count rather than spawning siblings.
+      const shortGoal =
+        task.prompt?.split('\n')[0]?.trim().replace(/[.,:;!?]+$/, '').slice(0, 60) || task.id
+      await raiseActionQueueItem({
+        kind: PHANTOM_TASK_KIND,
+        category: 'daemon',
+        priority: 'high',
+        title: `Stuck ${ageMinutes} min: ${shortGoal}`,
+        body: buildPhantomBody(task.id, status, phantomReason, ageMinutes, task.prompt),
+        payload: {
+          taskId: task.id,
+          previousStatus: status,
+          failedPhase,
+          reason: phantomReason,
+          ageMinutes,
+          pid: entry?.pid ?? null,
+        },
+        context: { taskId: task.id },
+        raisedBy: 'daemon:phantom-task-watchdog',
+        signature: task.id,
+        originTaskId: task.id,
+        occurrence: {
+          previousStatus: status,
+          reason: phantomReason,
+          ageMinutes,
+          detectedAt: new Date(now).toISOString(),
+        },
+      }).catch(() => {
+        // Non-fatal: task is already marked failed.
+      })
 
       failed.push(task.id)
     }
