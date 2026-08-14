@@ -1,0 +1,18 @@
+## Index Card
+task: mars-test-task
+commit: abc1234567890abcdef1234567890abcdef123456
+
+files (3):
+  - orchestrator/src/core/lib/index-card/build.ts
+  - orchestrator/src/core/queue.ts
+  - orchestrator/src/workflows/primitives/shared.ts
+
+pointers (5):
+  [adr] adr-0001: The task queue uses PostgreSQL.
+  [adr] adr-0056: ADR-0056: step-primitive surface for git operations.
+  [glossary] arc-digest: Mechanical LLM-free digest of task conversations.
+  [glossary] task: A unit of work tracked in the queue.
+  [glossary] worker: A headless coding agent process.
+
+co-changes:
+  orchestrator/src/core/queue.ts ↔ orchestrator/src/core/lib/db.ts
