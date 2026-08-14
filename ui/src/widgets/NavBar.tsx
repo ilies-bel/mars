@@ -1,7 +1,6 @@
 import { useStaleWorktrees } from '@/entities/stale-worktrees/useStaleWorktrees'
-import { resolvePageRoute, actionQueueCount, releaseNotesHash } from '@/shared/routing'
+import { resolvePageRoute, actionQueueCount } from '@/shared/routing'
 import { useProgress } from '@/hooks/useProgress'
-import { useNotificationsPreference } from '@/entities/notifications'
 import { ProjectSelector } from './ProjectSelector'
 import { BellMenu } from './BellMenu'
 
@@ -11,7 +10,7 @@ interface NavBarProps {
 
 const linkClass = (active: boolean): string =>
   [
-    'rounded px-2 py-1 font-mono text-[11px] uppercase tracking-wide',
+    'rounded px-2 py-1 font-mono text-[11px]',
     active ? 'bg-primary/30 text-foreground' : 'text-primary hover:text-foreground',
   ].join(' ')
 
@@ -25,31 +24,6 @@ const CountBadge = ({ count }: CountBadgeProps) =>
       {count > 99 ? '99+' : count}
     </span>
   )
-
-/**
- * Toggle for native desktop notifications sent by the daemon on new
- * task-failure / stale-worktree alerts. The preference is persisted by the
- * daemon so it survives restarts and is shared across every connected client.
- */
-const NotificationsToggle = () => {
-  const { enabled, setEnabled } = useNotificationsPreference()
-
-  return (
-    <button
-      type="button"
-      onClick={() => setEnabled(!enabled)}
-      aria-pressed={enabled}
-      title={
-        enabled
-          ? 'Desktop notifications on for new alerts — click to turn off'
-          : 'Click to enable desktop notifications for new alerts'
-      }
-      className={linkClass(enabled)}
-    >
-      Desktop notifications
-    </button>
-  )
-}
 
 export const NavBar = ({ hash }: NavBarProps) => {
   // `resolvePageRoute`, not `detectRoute`: overlay hashes like `#/task/<id>`
@@ -105,16 +79,7 @@ export const NavBar = ({ hash }: NavBarProps) => {
           Control
         </a>
       </span>
-      <span className="ml-auto flex items-center gap-2">
-        <a
-          href={releaseNotesHash()}
-          className={linkClass(false)}
-          aria-label="Release notes"
-        >
-          Release notes
-        </a>
-        <NotificationsToggle />
-      </span>
+      <span className="ml-auto" />
       <BellMenu />
     </nav>
   )

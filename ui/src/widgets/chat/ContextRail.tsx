@@ -354,9 +354,6 @@ const RailSection = ({ title, children }: RailSectionProps) => (
   </section>
 )
 
-const emptyArtifacts = (text: string) => (
-  <p className="font-mono text-[10px] text-muted-foreground/50">{text}</p>
-)
 
 interface RailPileProps {
   title: string
@@ -420,12 +417,11 @@ interface AlertsPileProps {
   onOpenWork?: (item: OpenWorkItem) => void
 }
 
-const AlertsPile = ({ items, onOpenWork }: AlertsPileProps) => (
-  <RailPile title="Alerts" count={items.length}>
-    {(visibleCount) =>
-      items.length === 0 ? (
-        emptyArtifacts('No alerts')
-      ) : (
+const AlertsPile = ({ items, onOpenWork }: AlertsPileProps) => {
+  if (items.length === 0) return null
+  return (
+    <RailPile title="Alerts" count={items.length}>
+      {(visibleCount) => (
         <ul className="flex flex-col gap-0.5">
           {items.slice(0, visibleCount).map((item) => (
             <li key={`${item.source}:${item.id}`}>
@@ -464,10 +460,10 @@ const AlertsPile = ({ items, onOpenWork }: AlertsPileProps) => (
             </li>
           ))}
         </ul>
-      )
-    }
-  </RailPile>
-)
+      )}
+    </RailPile>
+  )
+}
 
 interface ProposalsPileProps {
   proposals: DraftFeature[]
@@ -480,41 +476,38 @@ const ProposalsPile = ({ proposals, onOpenProposal }: ProposalsPileProps) => {
     [proposals],
   )
 
+  if (drafts.length === 0) return null
   return (
     <RailPile title="Proposals" count={drafts.length} pageSize={25}>
-      {(visibleCount) =>
-        drafts.length === 0 ? (
-          emptyArtifacts('No proposals')
-        ) : (
-          <ul className="flex flex-col gap-0.5">
-            {drafts.slice(0, visibleCount).map((draft) =>
-              onOpenProposal ? (
-                <li key={draft.id}>
-                  <button
-                    type="button"
-                    title={draft.title}
-                    className="block w-full truncate text-left font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
-                    onClick={() => onOpenProposal(draft)}
-                    data-testid="context-rail-proposal-row"
-                  >
-                    {draft.title}
-                  </button>
-                </li>
-              ) : (
-                <li key={draft.id}>
-                  <span
-                    title={draft.title}
-                    className="block w-full truncate font-mono text-[10px] text-foreground/80"
-                    data-testid="context-rail-proposal-row"
-                  >
-                    {draft.title}
-                  </span>
-                </li>
-              ),
-            )}
-          </ul>
-        )
-      }
+      {(visibleCount) => (
+        <ul className="flex flex-col gap-0.5">
+          {drafts.slice(0, visibleCount).map((draft) =>
+            onOpenProposal ? (
+              <li key={draft.id}>
+                <button
+                  type="button"
+                  title={draft.title}
+                  className="block w-full truncate text-left font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
+                  onClick={() => onOpenProposal(draft)}
+                  data-testid="context-rail-proposal-row"
+                >
+                  {draft.title}
+                </button>
+              </li>
+            ) : (
+              <li key={draft.id}>
+                <span
+                  title={draft.title}
+                  className="block w-full truncate font-mono text-[10px] text-foreground/80"
+                  data-testid="context-rail-proposal-row"
+                >
+                  {draft.title}
+                </span>
+              </li>
+            ),
+          )}
+        </ul>
+      )}
     </RailPile>
   )
 }
@@ -531,33 +524,30 @@ const AdrsPile = ({ adrs, projectId }: AdrsPileProps) => {
     [adrs],
   )
 
+  if (sortedAdrs.length === 0) return null
   return (
     <RailPile title="ADRs" count={sortedAdrs.length}>
-      {(visibleCount) =>
-        sortedAdrs.length === 0 ? (
-          emptyArtifacts('No ADRs')
-        ) : (
-          <ul className="flex flex-col gap-0.5">
-            {sortedAdrs.slice(0, visibleCount).map((adr) => {
-              const path = `docs/knowledge/decisions/${String(adr.number).padStart(4, '0')}-${adr.slug}.md`
-              return (
-                <li key={path}>
-                  <a
-                    href={`/api/project/adrs/${encodeURIComponent(path)}${projectQuery}`}
-                    title={`ADR ${adr.number}: ${adr.title}`}
-                    className="block truncate font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    data-testid="context-rail-adr-row"
-                  >
-                    ADR {adr.number}: {adr.title}
-                  </a>
-                </li>
-              )
-            })}
-          </ul>
-        )
-      }
+      {(visibleCount) => (
+        <ul className="flex flex-col gap-0.5">
+          {sortedAdrs.slice(0, visibleCount).map((adr) => {
+            const path = `docs/knowledge/decisions/${String(adr.number).padStart(4, '0')}-${adr.slug}.md`
+            return (
+              <li key={path}>
+                <a
+                  href={`/api/project/adrs/${encodeURIComponent(path)}${projectQuery}`}
+                  title={`ADR ${adr.number}: ${adr.title}`}
+                  className="block truncate font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-testid="context-rail-adr-row"
+                >
+                  ADR {adr.number}: {adr.title}
+                </a>
+              </li>
+            )
+          })}
+        </ul>
+      )}
     </RailPile>
   )
 }
@@ -572,10 +562,8 @@ export const ArtifactsRail = ({ tasks, files, meta, projectId }: ArtifactsRailPr
 
   return (
     <div data-testid="artifacts-rail">
-      <RailSection title="Tasks">
-        {tasks.length === 0 ? (
-          emptyArtifacts('No tasks created in this thread')
-        ) : (
+      {tasks.length > 0 && (
+        <RailSection title="Tasks">
           <ul className="flex flex-col gap-0.5">
             {tasks.map((id) => (
               <li key={id}>
@@ -589,13 +577,11 @@ export const ArtifactsRail = ({ tasks, files, meta, projectId }: ArtifactsRailPr
               </li>
             ))}
           </ul>
-        )}
-      </RailSection>
+        </RailSection>
+      )}
 
-      <RailSection title="Files">
-        {files.length === 0 ? (
-          emptyArtifacts('No files shared in this thread')
-        ) : (
+      {files.length > 0 && (
+        <RailSection title="Files">
           <ul className="flex flex-col gap-0.5">
             {files.map((file, index) => (
               <li key={`${file.path}-${index}`}>
@@ -610,13 +596,13 @@ export const ArtifactsRail = ({ tasks, files, meta, projectId }: ArtifactsRailPr
               </li>
             ))}
           </ul>
-        )}
-      </RailSection>
+        </RailSection>
+      )}
 
       <AdrsPile adrs={adrs} projectId={projectId} />
 
-      <RailSection title="Meta">
-        {meta.vision || meta.theme ? (
+      {(meta.vision || meta.theme) && (
+        <RailSection title="Meta">
           <ul className="flex flex-col gap-0.5">
             {meta.vision && (
               <li>
@@ -643,10 +629,8 @@ export const ArtifactsRail = ({ tasks, files, meta, projectId }: ArtifactsRailPr
               </li>
             )}
           </ul>
-        ) : (
-          emptyArtifacts('No project vision or theme recorded')
-        )}
-      </RailSection>
+        </RailSection>
+      )}
     </div>
   )
 }

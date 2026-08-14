@@ -2583,9 +2583,9 @@ export const ChatPage = () => {
   // with a hamburger/sheet toggle.
   const isMdScreen = useMediaQuery('(min-width: 769px)')
 
-  // Rail collapse: viewport drives the default; the toggle provides a per-
-  // session override that resets whenever the viewport crosses the xl boundary.
-  const [railCollapsed, setRailCollapsed] = useState(!isXlScreen)
+  // Rail collapse: starts collapsed by default; auto-expands at xl (≥1280px)
+  // and resets whenever the viewport crosses the xl boundary.
+  const [railCollapsed, setRailCollapsed] = useState(true)
   const openWorkRegionRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     setRailCollapsed(!isXlScreen)

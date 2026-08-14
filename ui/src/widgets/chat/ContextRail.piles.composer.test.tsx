@@ -171,7 +171,7 @@ describe('ContextRail piles', () => {
     state.proposals = []
   })
 
-  it('renders an empty proposal state and forwards the selected draft', async () => {
+  it('hides the proposals section when empty and forwards the selected draft', async () => {
     const onOpenProposal = vi.fn()
     const container = document.createElement('div')
     const root = createRoot(container)
@@ -179,7 +179,9 @@ describe('ContextRail piles', () => {
     await act(async () => {
       root.render(rail(undefined, onOpenProposal))
     })
-    expect(container.textContent).toContain('No proposals')
+    // Empty proposals section is hidden — no placeholder text rendered
+    expect(container.textContent).not.toContain('No proposals')
+    expect(container.querySelectorAll('[data-testid="context-rail-proposal-row"]')).toHaveLength(0)
 
     const selected = proposal('open', 1)
     state.proposals = [selected]
@@ -260,7 +262,7 @@ describe('ContextRail piles', () => {
     await act(async () => root.unmount())
   })
 
-  it('renders an empty alert state without queue rows', async () => {
+  it('hides the alerts section when queue is empty', async () => {
     state.items = []
     const container = document.createElement('div')
     const root = createRoot(container)
@@ -269,7 +271,9 @@ describe('ContextRail piles', () => {
       root.render(rail())
     })
 
-    expect(container.textContent).toContain('No alerts')
+    // Empty alerts section is hidden — no placeholder text rendered
+    expect(container.textContent).not.toContain('No alerts')
+    expect(container.querySelectorAll('[data-testid="context-rail-alert-row"]')).toHaveLength(0)
     await act(async () => root.unmount())
   })
 

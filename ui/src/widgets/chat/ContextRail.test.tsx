@@ -104,11 +104,25 @@ const renderRail = () => {
 // ---------------------------------------------------------------------------
 
 describe('ContextRail – thread context panels are present', () => {
-  it('renders the four artifact section headers', () => {
+  it('hides empty artifact sections (Tasks, Files, ADRs, Meta) when data is absent', () => {
     const html = renderRail()
+    // Empty sections are not rendered at all — no placeholder stacks.
+    expect(html).not.toContain('No tasks created in this thread')
+    expect(html).not.toContain('No files shared in this thread')
+    expect(html).not.toContain('No ADRs')
+    expect(html).not.toContain('No project vision or theme recorded')
+  })
+
+  it('renders artifact section headers when data is present', () => {
+    const html = renderToStaticMarkup(
+      <ArtifactsRail
+        tasks={['mars-test-task']}
+        files={[{ type: 'attachment', path: 'test/file.png', mimeType: 'image/png', name: 'file.png' }]}
+        meta={{ vision: 'some vision', theme: 'some theme' }}
+      />,
+    )
     expect(html).toContain('Tasks')
     expect(html).toContain('Files')
-    expect(html).toContain('ADRs')
     expect(html).toContain('Meta')
   })
 
@@ -213,7 +227,9 @@ describe('ContextRail – artifact rail', () => {
     expect(linkedHtml.match(/data-testid="context-rail-task-row"/g)).toHaveLength(2)
     expect(linkedHtml).toContain('mars-linked-one')
     expect(linkedHtml).toContain('mars-linked-two')
-    expect(emptyHtml).toContain('No tasks created in this thread')
+    // Empty thread: no task rows and no placeholder text
+    expect(emptyHtml).not.toContain('context-rail-task-row')
+    expect(emptyHtml).not.toContain('No tasks created in this thread')
   })
 
   it('renders linked task, file, and project-meta sections', () => {
@@ -241,20 +257,24 @@ describe('ContextRail – artifact rail', () => {
   )
 
   describe('Tasks section', () => {
-    it('keeps a subdued placeholder when no tasks were created', () => {
-      expect(renderEmptyArtifactRail()).toContain('No tasks created in this thread')
+    it('hides the section entirely when no tasks were created', () => {
+      const html = renderEmptyArtifactRail()
+      expect(html).not.toContain('No tasks created in this thread')
+      expect(html).not.toContain('context-rail-task-row')
     })
   })
 
   describe('Files section', () => {
-    it('keeps a subdued placeholder when the thread has no attachments', () => {
-      expect(renderEmptyArtifactRail()).toContain('No files shared in this thread')
+    it('hides the section entirely when the thread has no attachments', () => {
+      const html = renderEmptyArtifactRail()
+      expect(html).not.toContain('No files shared in this thread')
     })
   })
 
   describe('Meta section', () => {
-    it('keeps a subdued placeholder when the project has no vision or theme', () => {
-      expect(renderEmptyArtifactRail()).toContain('No project vision or theme recorded')
+    it('hides the section entirely when the project has no vision or theme', () => {
+      const html = renderEmptyArtifactRail()
+      expect(html).not.toContain('No project vision or theme recorded')
     })
   })
 

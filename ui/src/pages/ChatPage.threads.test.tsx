@@ -766,7 +766,7 @@ describe('ArtifactsRail – TASKS panel rendering', () => {
     expect(html).not.toContain('No tasks created in this thread')
   })
 
-  it('shows the empty state when no tasks are linked to the thread', () => {
+  it('hides the tasks section when no tasks are linked to the thread', () => {
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity } },
     })
@@ -781,7 +781,9 @@ describe('ArtifactsRail – TASKS panel rendering', () => {
         }),
       ),
     )
-    expect(html).toContain('No tasks created in this thread')
+    // Empty sections are hidden — no placeholder text rendered
+    expect(html).not.toContain('No tasks created in this thread')
+    expect(html).not.toContain('context-rail-task-row')
   })
 })
 
