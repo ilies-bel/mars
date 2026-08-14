@@ -162,7 +162,9 @@ export const ProposalDetailDrawer = ({
     | { kind: 'done'; taskId?: string }
     | { kind: 'error'; message: string }
   >({ kind: 'idle' })
-  const [grillPending, setGrillPending] = useState(false)
+  const [grillState, setGrillState] = useState<
+    { kind: 'idle' } | { kind: 'pending' } | { kind: 'error'; message: string }
+  >({ kind: 'idle' })
   const [dismissState, setDismissState] = useState<
     { kind: 'idle' } | { kind: 'pending' } | { kind: 'done' } | { kind: 'error'; message: string }
   >({ kind: 'idle' })
@@ -243,8 +245,8 @@ export const ProposalDetailDrawer = ({
   }, [proposal.id, promoteState.kind])
 
   const handleGrill = useCallback(async () => {
-    if (grillPending) return
-    setGrillPending(true)
+    if (grillState.kind === 'pending') return
+    setGrillState({ kind: 'pending' })
     try {
       const { threadId } = await startThreadFromProposal(proposal.id)
       // Navigate to the created thread. Do NOT call handleClose() here —
@@ -254,10 +256,9 @@ export const ProposalDetailDrawer = ({
       // proposalId → null, which unmounts this drawer without any explicit close.
       navigateToThread(threadId)
     } catch (err) {
-      setGrillPending(false)
-      console.error('Grill failed:', err)
+      setGrillState({ kind: 'error', message: (err as Error).message })
     }
-  }, [proposal.id, grillPending])
+  }, [proposal.id, grillState.kind])
 
   const handleDismiss = useCallback(async () => {
     if (dismissState.kind === 'pending') return
@@ -392,11 +393,14 @@ export const ProposalDetailDrawer = ({
             type="button"
             data-testid="btn-grill"
             onClick={() => { void handleGrill() }}
-            disabled={grillPending}
+            disabled={grillState.kind === 'pending'}
             className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10 disabled:opacity-50"
           >
-            {grillPending ? 'Opening…' : 'Grill'}
+            {grillState.kind === 'pending' ? 'Opening…' : 'Grill'}
           </button>
+          {grillState.kind === 'error' && (
+            <span data-testid="grill-error" className="font-mono text-[9px] text-destructive">{grillState.message}</span>
+          )}
 
           {/* Dismiss */}
           {dismissState.kind === 'done' ? (

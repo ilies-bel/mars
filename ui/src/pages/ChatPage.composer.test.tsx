@@ -532,3 +532,76 @@ describe('Composer – send-error recovery', () => {
     expect(container.querySelector('[data-testid="composer-send-error"]')).toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Grill-seeded thread — posting a message to a thread opened via the
+// proposal-drawer Grill button.
+//
+// A grill-seeded thread is structurally identical to any other thread from the
+// Composer's perspective: the thread already has an initial situation message
+// (role=assistant, kind=situation) and the user sends the first user turn.
+// The Composer must forward the text to `onSend`, clear it on success, and
+// surface any error when the send path rejects — regardless of thread origin.
+// ---------------------------------------------------------------------------
+
+describe('Composer – grill-seeded thread: posting the first user message', () => {
+  it('calls onSend with the typed text and clears the composer on success', async () => {
+    // Simulate the onSend provided by ChatConversation.handleSend for a
+    // grill-seeded thread. The thread was created via POST /api/proposals/:id/thread;
+    // the Composer does not know or care — it just calls onSend.
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    await act(() => {
+      renderComposer(container, {
+        threadId: '17887eb9-80d2-4f55-979b-4fb517d2a7da', // grill thread id
+        onSend,
+      })
+    })
+
+    await typeText(container, 'What are the risks of this approach?')
+    await clickSend(container)
+
+    // onSend must be called with the typed text.
+    await vi.waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1)
+    })
+    expect(onSend).toHaveBeenCalledWith('What are the risks of this approach?', undefined)
+
+    // Text is cleared after a successful send.
+    await vi.waitFor(() => {
+      const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+      expect(textarea.value).toBe('')
+    })
+
+    // No error banner on success.
+    expect(container.querySelector('[data-testid="composer-send-error"]')).toBeNull()
+  })
+
+  it('preserves text and surfaces an error banner when the send path rejects', async () => {
+    // Simulate a send failure: e.g. the daemon is not running or the grill
+    // thread is in a non-postable state. The error must never be swallowed —
+    // the operator needs to see why the message was not delivered.
+    const sendErr = new MockApiError(
+      'POST /api/chat/threads/17887eb9-80d2-4f55-979b-4fb517d2a7da/message → 503',
+      'unreachable',
+      503,
+    )
+    await act(() => {
+      renderComposer(container, {
+        threadId: '17887eb9-80d2-4f55-979b-4fb517d2a7da',
+        onSend: vi.fn().mockRejectedValue(sendErr),
+      })
+    })
+
+    await typeText(container, 'My first grill question')
+    await clickSend(container)
+
+    // Error banner must be rendered — never swallowed.
+    await vi.waitFor(() => {
+      expect(container.querySelector('[data-testid="composer-send-error"]')).not.toBeNull()
+    })
+
+    // Text must be preserved so the operator can retry.
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    expect(textarea.value).toBe('My first grill question')
+  })
+})

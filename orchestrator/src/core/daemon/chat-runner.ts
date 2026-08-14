@@ -971,7 +971,13 @@ export class ChatRunner {
       const threadData = await getThread(threadId)
       if (!threadData) {
         this.activeRuns.delete(threadId)
-        this.chatStreamHub?.finishRun(threadId)
+        // Publish an error segment before sealing so connected clients can
+        // surface the failure rather than seeing a silent empty response.
+        this.chatStreamHub?.publish(threadId, {
+          type: 'error',
+          message: `Thread ${threadId} not found — it may have been deleted.`,
+        })
+        this.chatStreamHub?.finishRun(threadId, 'error')
         return
       }
       posture = threadData.thread.posture
