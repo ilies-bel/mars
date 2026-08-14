@@ -1,5 +1,6 @@
 import { runHeadlessProvider } from '../workers/providers'
 import { getRepoRoot } from '../context'
+import { distillObservation } from './distill/observation'
 import {
   collectAssistantText,
   extractFirstJsonDocument,
@@ -572,7 +573,18 @@ export const buildArcPrompt = (arc: DeepReflectArc): string => {
     const metaJson = JSON.stringify(meta, null, 2)
 
     const verifyBlock = t.verifyOutput
-      ? `\n\nVerify output (raw) for ${t.taskId}:\n\`\`\`\n${truncateText(t.verifyOutput, VERIFY_OUTPUT_CAP_CHARS)}\n\`\`\``
+      ? (() => {
+          const verifyRef = `arc://${arc.originId}/${t.taskId}/verify-output`
+          const distilled = distillObservation({ text: t.verifyOutput, ref: verifyRef, kind: 'verify' })
+          // Hard cap after distillation: pathological content with no signal lines
+          // (e.g. 200k identical chars) passes through distillation unchanged; the
+          // cap ensures the prompt budget stays bounded regardless.
+          const displayText =
+            distilled.text.length > VERIFY_OUTPUT_CAP_CHARS
+              ? truncateText(distilled.text, VERIFY_OUTPUT_CAP_CHARS)
+              : distilled.text
+          return `\n\nVerify output for ${t.taskId} [full log: ${verifyRef}]:\n\`\`\`\n${displayText}\n\`\`\``
+        })()
       : `\n\n(verify output for ${t.taskId}: none recorded)`
     const transcriptNotes =
       t.transcriptNotes.length > 0
