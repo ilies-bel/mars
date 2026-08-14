@@ -12,7 +12,6 @@ import {
 } from './internal'
 import { acquireLock } from './lock'
 import { captureCheckpoint, discardWorkingTreeChanges } from './checkpoint'
-import { repairBranchCommitMessages } from './commit-message'
 import {
   runSubprocessStreaming,
   resolveClaudeBin,
@@ -46,8 +45,8 @@ export interface CheckMergeTargetArgs {
 //   - 'needs-rebase' : integrationBranch is NOT an ancestor of taskBranch
 //                      (diverged or behind). Recoverable — mergeBranch
 //                      Step 1 rebases before the ff. Preflight proceeds.
-//   - 'dirty'        : the integration checkout has tracked, uncommitted work.
-//                      Blocking: an orchestrator merge must never reset it.
+//   - 'dirty'        : a tracked, uncommitted change in the merge target
+//                      sits on a path the ff would update. Blocking.
 //   - 'clean'        : ff is feasible and the target is pristine.
 // Untracked files are deliberately ignored: an untracked .idea/ or editor
 // scratch file in the merge target cannot block `git merge --ff-only`.
@@ -100,9 +99,26 @@ export const checkMergeTargetStatus = async (
       }
     }
 
+    const diff = await exec(
+      resolveGitBin(),
+      ['diff', '--name-only', `${integrationBranch}..${taskBranch}`],
+      { cwd: targetPath },
+      mergeCtx,
+    )
+    const changedPaths = diff.stdout.split('\n').filter((p) => p.length > 0)
+    if (changedPaths.length === 0) return { kind: 'clean' }
+
+    // Cap pathspec argv to avoid blowing past ARG_MAX on huge diffs; if we
+    // exceed it, fall back to a tracked-only global status. Untracked files
+    // are still ignored — they cannot block an ff.
+    const PATH_CAP = 500
+    const statusArgs = ['status', '--porcelain', '--untracked-files=no']
+    if (changedPaths.length <= PATH_CAP) {
+      statusArgs.push('--', ...changedPaths)
+    }
     const status = await exec(
       resolveGitBin(),
-      ['status', '--porcelain', '--untracked-files=no'],
+      statusArgs,
       { cwd: targetPath },
       mergeCtx,
     )
@@ -110,7 +126,7 @@ export const checkMergeTargetStatus = async (
     return {
       kind: 'dirty',
       targetPath,
-      statusOutput: `tracked operator changes in the integration checkout:\n${status.stdout}`,
+      statusOutput: `tracked changes on paths the fast-forward would update:\n${status.stdout}`,
     }
     // TODO(merge_target_missing): also surface a 'missing' kind when the
     // merge target branch has been deleted/renamed; for now any unexpected
@@ -412,26 +428,8 @@ const isRebaseInProgress = async (
 // — matches the repo's no-retry-knob ethos.
 const MAX_MERGE_ATTEMPTS = 3 // 1 initial attempt + 2 retries
 
-/**
- * Budget for every part of a merge that is NOT the vcs-supervisor session:
- * the preflight probes, the rebase itself, the post-supervisor verification,
- * and the fast-forward ref update. All of these are plain git spawns.
- */
-const MERGE_GIT_BUDGET_MS = 5 * 60 * 1000
-
-/**
- * Default watchdog budget: the wall-clock ceiling on a single merge holding
- * the .merge.lock.
- *
- * This MUST stay above `VCS_SUPERVISOR_TIMEOUT_MS`. The watchdog spans the
- * whole merge, and a rebase conflict dispatches Vega *inside* that span with
- * its own 30-minute budget. When the watchdog was a flat 5 minutes it always
- * fired first, so every conflict-resolving merge died mid-session with
- * `merge:crashed/unclassified — aborted (watchdog) during step
- * 'vega-supervisor'` and the supervisor could never finish. Deriving the
- * default from the supervisor budget keeps the two from inverting again.
- */
-export const DEFAULT_WATCHDOG_MS = VCS_SUPERVISOR_TIMEOUT_MS + MERGE_GIT_BUDGET_MS
+/** Default watchdog budget: a merge may hold the lock for at most 5 minutes. */
+const DEFAULT_WATCHDOG_MS = 300_000
 
 /**
  * Short, self-contained timeout for the abort-cleanup git calls. These run
@@ -669,24 +667,45 @@ export const mergeBranch = async ({
       // replays the already-committed (including any Vega-reconciled) work onto
       // the new integration tip cleanly. Vega is NOT re-invoked unless a
       // genuinely NEW conflict appears in this iteration's rebase.
-      // Guard: abort immediately when the worktree is dirty BEFORE the rebase
-      // starts. A dirty worktree (uncommitted tracked changes or untracked
-      // files) causes `git rebase` to exit non-zero without creating a
-      // rebase-in-progress state on disk, which would otherwise fall through
-      // to the "rebase-no-in-progress-state" path and surface a misleading
-      // error. By detecting this condition upfront, we return a specific
-      // sentinel that routes to the `rebase-dirty-worktree` failure signature
-      // and a restart-first action menu rather than a code-fix recovery.
+      // Guard: if the worktree is dirty BEFORE the rebase starts, auto-commit
+      // any outstanding changes as a salvage checkpoint. This is the common
+      // case after `mars continue` on a merge-phase failure caused by a verify
+      // step that dirtied the worktree (e.g. `npm install` updating
+      // package-lock.json). Without the salvage commit, `git rebase` would exit
+      // non-zero without creating a rebase-in-progress state, falling through to
+      // the confusing "rebase-no-in-progress-state" path — or, before that guard
+      // existed, producing a `rebase-dirty-worktree` abort that required manual
+      // `git add && git commit` inside the worktree.
+      //
+      // Salvage strategy: `git add -A` + `git commit`. If the commit itself
+      // fails (e.g. nothing to commit after `add`, or a hook rejection), we fall
+      // back to the original abort with a diagnostic message.
       const statusResult = await gprobe(['status', '--porcelain'], worktreePath)
       if (statusResult.stdout.trim().length > 0) {
-        return {
-          merged: false,
-          conflictResolved: false,
-          aborted: true,
-          output: `worktree dirty before rebase: cannot start rebase with uncommitted/untracked files\n${statusResult.stdout}${output}`,
-          supervisorConversation,
-          vegaSessionId: null,
-          retriesAttempted,
+        lastStep = 'salvage-commit'
+        try {
+          await gexec(['add', '-A'], worktreePath)
+          await gexec(
+            [
+              'commit',
+              '-m',
+              'chore(mars): salvage uncommitted verify artifacts',
+            ],
+            worktreePath,
+          )
+          output += `\n[merge:salvage] auto-committed dirty worktree before rebase:\n${statusResult.stdout}`
+        } catch (salvageErr: unknown) {
+          const msg =
+            salvageErr instanceof Error ? salvageErr.message : String(salvageErr)
+          return {
+            merged: false,
+            conflictResolved: false,
+            aborted: true,
+            output: `worktree dirty before rebase and salvage commit failed: ${msg}\n${statusResult.stdout}${output}`,
+            supervisorConversation,
+            vegaSessionId: null,
+            retriesAttempted,
+          }
         }
       }
 
@@ -769,29 +788,6 @@ export const mergeBranch = async ({
         }
         conflictResolved = true
         vegaSessionId = extractSessionIdFromConversation(supervisorConversation)
-      }
-
-      // Commit-message repair: inspect all commits ahead of integrationBranch
-      // and rewrite any non-conforming subject lines BEFORE reading taskSha.
-      // filter-branch advances the branch tip to new SHAs, and the subsequent
-      // rev-parse below picks up the corrected tip automatically.
-      lastStep = 'commit-message-repair'
-      try {
-        const repairResult = await repairBranchCommitMessages(
-          branch,
-          integrationBranch,
-          worktreePath,
-        )
-        if (repairResult.repairedCount > 0) {
-          output += `\n[merge:commit-repair] rewrote ${repairResult.repairedCount} commit message(s) on ${branch}`
-        }
-      } catch (repairErr: unknown) {
-        // Repair is best-effort: a failure here must not abort a valid merge.
-        // Log the error and continue — a malformed subject is cosmetic; losing
-        // the merge would be worse.
-        const msg = repairErr instanceof Error ? repairErr.message : String(repairErr)
-        console.warn(`[merge:commit-repair] repair failed (non-fatal): ${msg}`)
-        output += `\n[merge:commit-repair] repair failed (non-fatal): ${msg}`
       }
 
       // Step 2: fast-forward integration to the (now-rebased) task branch via a
@@ -1177,31 +1173,6 @@ export const mergeBranch = async ({
   } finally {
     clearTimeout(watchdogTimer)
   }
-}
-
-/**
- * Returns `true` when `branchTipSha` is reachable from `integrationBranch`
- * (i.e. the fast-forward ref update landed). The single
- * `merge-base --is-ancestor` probe is sufficient: if the update succeeded, the
- * integration branch now points AT `branchTipSha` or has it as an ancestor; if
- * the update was silently skipped or a no-op misclassified, `branchTipSha` is
- * NOT reachable from the integration tip.
- *
- * Called by the `merge` primitive immediately after `mergeBranch` returns
- * `merged: true` with a `mergePostSha` to guard against the silent-data-loss
- * path where the task is marked `done` and the branch deleted even though
- * the ref update never happened.
- */
-export const isBranchTipInIntegration = async (
-  branchTipSha: string,
-  integrationBranch: string,
-): Promise<boolean> => {
-  const probe = await execProbe(
-    resolveGitBin(),
-    ['merge-base', '--is-ancestor', branchTipSha, integrationBranch],
-    { cwd: repoRoot() },
-  )
-  return probe.exitCode === 0
 }
 
 export const isBranchMergedIntoMain = async (
