@@ -85,7 +85,9 @@ export const taskSchema = z.object({
   error: z.string().nullable(),
   dropReason: z.string().nullable(),
   recoverySpawnedCount: z.number(),
-  priority: z.number(),
+  /** Defaults to 0 so legacy daemon responses and test stubs that omit the
+   * field still parse cleanly; the real daemon always sends it. */
+  priority: z.number().optional().default(0),
   blockerTaskId: z.string().nullable().optional(),
   /**
    * Machine-readable failure signature stamped at failure time (e.g.

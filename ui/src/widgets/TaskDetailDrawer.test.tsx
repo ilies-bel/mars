@@ -663,6 +663,7 @@ const fullTask = (overrides: Partial<Task> & { id: string }): Task => ({
   failureSignature: overrides.failureSignature ?? null,
   dropReason: overrides.dropReason ?? null,
   recoverySpawnedCount: overrides.recoverySpawnedCount ?? 0,
+  priority: overrides.priority ?? 0,
   blockerTaskId: overrides.blockerTaskId ?? null,
   blockedBy: overrides.blockedBy ?? [],
   parentProposalId: overrides.parentProposalId ?? null,
