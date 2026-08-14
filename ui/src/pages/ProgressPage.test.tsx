@@ -1,10 +1,9 @@
 /**
  * Unit tests for the ProgressPage proposal-filter control.
  *
- * The control is conditional on the presence of in-scope proposals and is the
- * only page-level concern for this slice.  Filtering behaviour downstream
- * (ghosting in TopologyView, card removal in BoardView) is covered by the
- * widget-level tests.
+ * The control is conditional on the presence of active-arc proposals (those
+ * with at least one non-terminal task).  When a proposal is selected the
+ * full-width control collapses to a dismissible chip.
  *
  * Hooks that make network requests are mocked at the module boundary so this
  * file has no runtime dependencies on React Query or SSE.
@@ -25,8 +24,36 @@ const emptyByCluster = (): Record<Cluster, ProgressTask[]> => ({
   Failed: [],
 })
 
-const baseState = (proposals: ProgressProposalNode[]) => ({
-  tasks: [],
+/**
+ * Create a minimal ProgressTask for testing.  parentProposalId defaults to
+ * null so callers that only care about counts can omit it.
+ */
+const makeTask = (
+  id: string,
+  status: ProgressTask['status'],
+  parentProposalId: string | null = null,
+): ProgressTask =>
+  ({
+    id,
+    status,
+    prompt: 'p',
+    branch: null,
+    parentProposalId,
+    plan: null,
+    worktreePath: null,
+    error: null,
+    dropReason: null,
+    recoverySpawnedCount: 0,
+    priority: 0,
+    blockedBy: [],
+    spec: null,
+    createdAt: '2024-01-01T00:00:00Z',
+    updatedAt: '2024-01-01T00:00:00Z',
+    cluster: 'Queued' as Cluster,
+  }) as unknown as ProgressTask
+
+const baseState = (proposals: ProgressProposalNode[], tasks: ProgressTask[] = []) => ({
+  tasks,
   proposals,
   byCluster: emptyByCluster(),
   aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 0 },
@@ -34,11 +61,19 @@ const baseState = (proposals: ProgressProposalNode[]) => ({
   connected: true,
 })
 
+// Canonical proposal fixtures
+const p1: ProgressProposalNode = { id: 'p1', title: 'Feature Alpha', source: 'human', status: 'draft' }
+const p2: ProgressProposalNode = { id: 'p2', title: 'Feature Beta', source: 'human', status: 'draft' }
+
+// Default mock: two proposals each with an active (non-terminal) task
+const defaultState = () =>
+  baseState(
+    [p1, p2],
+    [makeTask('t1', 'queued', 'p1'), makeTask('t2', 'running', 'p2')],
+  )
+
 // mock.fn allows per-test overrides via mockImplementation
-const mockUseProgress = mock(baseState([
-  { id: 'p1', title: 'Feature Alpha', source: 'human' as const, status: 'draft' },
-  { id: 'p2', title: 'Feature Beta', source: 'human' as const, status: 'draft' },
-]))
+const mockUseProgress = mock(defaultState())
 
 mock.module('@/hooks/useProgress', () => ({
   useProgress: mockUseProgress,
@@ -59,20 +94,40 @@ const { ProgressPage } = await import('./ProgressPage')
 // ---------------------------------------------------------------------------
 
 describe('ProgressPage – proposal filter control', () => {
-  it('renders the proposal-filter control when in-scope proposals are present', () => {
+  it('renders the proposal-filter control when active-arc proposals are present', () => {
     const html = renderToStaticMarkup(<ProgressPage />)
     expect(html).toContain('data-testid="proposal-filter"')
   })
 
-  it('lists each proposal title as an option in the filter dropdown', () => {
+  it('lists each active proposal title in the combobox options', () => {
+    // The options list is always in the DOM (hidden attribute when closed) so
+    // renderToStaticMarkup includes the text regardless of open/closed state.
     const html = renderToStaticMarkup(<ProgressPage />)
     expect(html).toContain('Feature Alpha')
     expect(html).toContain('Feature Beta')
   })
 
-  it('includes an "All" option so the filter can be cleared', () => {
-    const html = renderToStaticMarkup(<ProgressPage />)
-    expect(html).toContain('>All<')
+  it('shows only active-arc proposals by default — finished arcs are excluded', () => {
+    const finishedProposal: ProgressProposalNode = {
+      id: 'p3',
+      title: 'Historical Arc',
+      source: 'human',
+      status: 'done',
+    }
+    // p1 has an active task; p3 has no tasks so it is a finished arc
+    mockUseProgress.mockImplementation(() =>
+      baseState([p1, finishedProposal], [makeTask('t1', 'queued', 'p1')]),
+    )
+    try {
+      const html = renderToStaticMarkup(<ProgressPage />)
+      expect(html).toContain('Feature Alpha')
+      // Finished arc title must NOT appear as a selectable option
+      expect(html).not.toContain('Historical Arc')
+      // A "N finished arcs" toggle affordance must be present
+      expect(html).toContain('1 finished arc')
+    } finally {
+      mockUseProgress.mockImplementation(defaultState)
+    }
   })
 
   it('hides the proposal-filter control when there are no in-scope proposals', () => {
@@ -81,13 +136,41 @@ describe('ProgressPage – proposal filter control', () => {
       const html = renderToStaticMarkup(<ProgressPage />)
       expect(html).not.toContain('data-testid="proposal-filter"')
     } finally {
-      // Restore the default implementation for subsequent tests
-      mockUseProgress.mockImplementation(() =>
-        baseState([
-          { id: 'p1', title: 'Feature Alpha', source: 'human', status: 'draft' },
-          { id: 'p2', title: 'Feature Beta', source: 'human', status: 'draft' },
-        ]),
-      )
+      mockUseProgress.mockImplementation(defaultState)
+    }
+  })
+
+  it('hides the filter when proposals exist but all their tasks are terminal', () => {
+    // done and dropped are terminal — no active arc remains
+    mockUseProgress.mockImplementation(() =>
+      baseState(
+        [p1, p2],
+        [makeTask('t1', 'done', 'p1'), makeTask('t2', 'dropped', 'p2')],
+      ),
+    )
+    try {
+      const html = renderToStaticMarkup(<ProgressPage />)
+      expect(html).not.toContain('data-testid="proposal-filter"')
+    } finally {
+      mockUseProgress.mockImplementation(defaultState)
+    }
+  })
+
+  it('renders a dismissible chip when a proposal is pre-selected via URL', () => {
+    const prevHash = window.location.hash
+    window.location.hash = '#/progress?proposal=p1'
+    mockUseProgress.mockImplementation(defaultState)
+    try {
+      const html = renderToStaticMarkup(<ProgressPage />)
+      // Chip replaces the combobox input row
+      expect(html).toContain('data-testid="proposal-filter-chip"')
+      // Chip displays the selected proposal title
+      expect(html).toContain('Feature Alpha')
+      // Chip carries a clear button
+      expect(html).toContain('data-testid="proposal-filter-chip-clear"')
+    } finally {
+      window.location.hash = prevHash
+      mockUseProgress.mockImplementation(defaultState)
     }
   })
 })
@@ -140,18 +223,13 @@ describe('ProgressPage – SSE connection indicator', () => {
   })
 
   it('shows the "offline" indicator when the daemon bus is disconnected', () => {
-    mockUseProgress.mockImplementation(() => ({ ...baseState([]), connected: false }))
+    mockUseProgress.mockImplementation(() => ({ ...defaultState(), connected: false }))
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
       expect(html).toContain('>offline<')
       expect(html).not.toContain('>live<')
     } finally {
-      mockUseProgress.mockImplementation(() =>
-        baseState([
-          { id: 'p1', title: 'Feature Alpha', source: 'human', status: 'draft' },
-          { id: 'p2', title: 'Feature Beta', source: 'human', status: 'draft' },
-        ]),
-      )
+      mockUseProgress.mockImplementation(defaultState)
     }
   })
 })
@@ -179,9 +257,6 @@ function from(html: string, startId: string): string {
 }
 
 describe('ProgressPage – header stats', () => {
-  const makeTask = (id: string, status: ProgressTask['status']): ProgressTask =>
-    ({ id, status, prompt: 'p', branch: null, parentProposalId: null }) as unknown as ProgressTask
-
   it('DONE stat reflects tasks whose status is "done", not the failed count', () => {
     const doneTasks = [makeTask('d1', 'done'), makeTask('d2', 'done')]
     const failedTasks = [makeTask('f1', 'failed')]
@@ -325,12 +400,7 @@ describe('ProgressPage – stale proposal URL fallback', () => {
       expect(html).toContain('role="img"')
     } finally {
       window.location.hash = prevHash
-      mockUseProgress.mockImplementation(() =>
-        baseState([
-          { id: 'p1', title: 'Feature Alpha', source: 'human', status: 'draft' },
-          { id: 'p2', title: 'Feature Beta', source: 'human', status: 'draft' },
-        ]),
-      )
+      mockUseProgress.mockImplementation(defaultState)
     }
   })
 })
@@ -401,12 +471,7 @@ describe('ProgressPage – board first paint without SSE', () => {
       expect(html).toContain('Implement the dashboard feature')
     } finally {
       window.location.hash = prevHash
-      mockUseProgress.mockImplementation(() =>
-        baseState([
-          { id: 'p1', title: 'Feature Alpha', source: 'human', status: 'draft' },
-          { id: 'p2', title: 'Feature Beta', source: 'human', status: 'draft' },
-        ]),
-      )
+      mockUseProgress.mockImplementation(defaultState)
     }
   })
 })

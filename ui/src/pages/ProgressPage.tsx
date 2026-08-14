@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { useProgress } from '@/hooks/useProgress'
+import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import {
   readExplicitViewFromUrl,
   readProgressStateFromUrl,
@@ -14,6 +15,174 @@ import { Footer } from '@/widgets/Footer'
 import { TabStrip } from '@/widgets/TabStrip'
 import { TopologyView } from '@/widgets/TopologyView'
 import { TopStripe } from '@/widgets/TopStripe'
+
+// ---------------------------------------------------------------------------
+// Terminal task statuses — proposals whose only tasks are all terminal are
+// considered "finished arcs" and hidden from the combobox by default.
+// ---------------------------------------------------------------------------
+const TERMINAL_TASK_STATUSES = new Set<string>(['done', 'dropped'])
+
+// ---------------------------------------------------------------------------
+// ProposalCombobox — searchable typeahead that replaces the native <select>.
+//
+// Active-arc behaviour: only proposals that have at least one non-terminal
+// task appear in the list by default.  A "N finished arcs" affordance lets
+// the user expand to the full set.  When a proposal is selected the control
+// collapses to a dismissible chip; clicking × clears the filter.
+// ---------------------------------------------------------------------------
+
+interface ProposalComboboxProps {
+  proposals: ProgressProposalNode[]
+  tasks: ProgressTask[] | null
+  selectedProposalId: string | null
+  onSelect: (id: string | null) => void
+}
+
+function ProposalCombobox({ proposals, tasks, selectedProposalId, onSelect }: ProposalComboboxProps) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [includeFinished, setIncludeFinished] = useState(false)
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(
+    () => () => {
+      if (blurTimer.current !== null) clearTimeout(blurTimer.current)
+    },
+    [],
+  )
+
+  const isLoading = tasks === null
+
+  // Proposals that have at least one non-terminal task in the current view.
+  const activeProposalIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const t of tasks ?? []) {
+      if (t.parentProposalId && !TERMINAL_TASK_STATUSES.has(t.status)) {
+        ids.add(t.parentProposalId)
+      }
+    }
+    return ids
+  }, [tasks])
+
+  const activeProposals = proposals.filter((p) => activeProposalIds.has(p.id))
+  const finishedProposals = proposals.filter((p) => !activeProposalIds.has(p.id))
+
+  const visibleProposals = includeFinished ? proposals : activeProposals
+  const filteredProposals = query.trim()
+    ? visibleProposals.filter((p) =>
+        p.title.toLowerCase().includes(query.trim().toLowerCase()),
+      )
+    : visibleProposals
+
+  const selectedProposal = proposals.find((p) => p.id === selectedProposalId) ?? null
+
+  // ── Chip mode: a proposal is selected ────────────────────────────────────
+  if (selectedProposal) {
+    return (
+      <div
+        className="flex items-center gap-2 border-b border-border px-4 py-1.5"
+        data-testid="proposal-filter"
+      >
+        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">Proposal</span>
+        <div
+          className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 font-mono text-[11px] text-foreground"
+          data-testid="proposal-filter-chip"
+        >
+          <span className="max-w-[320px] truncate">{selectedProposal.title}</span>
+          <button
+            onClick={() => onSelect(null)}
+            aria-label="Clear proposal filter"
+            className="ml-0.5 leading-none text-muted-foreground hover:text-foreground"
+            data-testid="proposal-filter-chip-clear"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Hidden: data settled, no active proposals ─────────────────────────────
+  if (!isLoading && activeProposals.length === 0) return null
+
+  // ── Combobox mode ─────────────────────────────────────────────────────────
+  return (
+    <div
+      className="relative flex items-center gap-2 border-b border-border px-4 py-1.5"
+      data-testid="proposal-filter"
+    >
+      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">Proposal</span>
+      <input
+        type="text"
+        data-testid="proposal-filter-input"
+        aria-label="Search proposals"
+        placeholder="Search proposals…"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value)
+          setOpen(true)
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => {
+          blurTimer.current = setTimeout(() => setOpen(false), 150)
+        }}
+        disabled={isLoading}
+        className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border disabled:opacity-50"
+      />
+      {/*
+       * The options list is always in the DOM (hidden attribute, not unmounted)
+       * so that SSR-based tests can locate proposal titles in the HTML string.
+       */}
+      <ul
+        hidden={!open}
+        data-testid="proposal-filter-options"
+        className="absolute left-0 top-full z-50 mt-px max-h-60 w-full overflow-auto rounded border border-border bg-card py-1 shadow-md"
+      >
+        {filteredProposals.map((p) => (
+          <li key={p.id}>
+            <button
+              onMouseDown={(e) => {
+                e.preventDefault()
+                if (blurTimer.current !== null) clearTimeout(blurTimer.current)
+                onSelect(p.id)
+                setOpen(false)
+                setQuery('')
+              }}
+              className="w-full px-3 py-1.5 text-left font-mono text-[11px] text-foreground hover:bg-muted/50"
+            >
+              {p.title}
+            </button>
+          </li>
+        ))}
+        {filteredProposals.length === 0 && !isLoading && (
+          <li className="px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
+            No proposals match
+          </li>
+        )}
+        {finishedProposals.length > 0 && !includeFinished && (
+          <li>
+            <button
+              onMouseDown={(e) => {
+                e.preventDefault()
+                if (blurTimer.current !== null) clearTimeout(blurTimer.current)
+                setIncludeFinished(true)
+              }}
+              className="w-full border-t border-border px-3 py-1.5 text-left font-mono text-[11px] text-muted-foreground hover:bg-muted/50"
+              data-testid="proposal-filter-include-finished"
+            >
+              + {finishedProposals.length} finished arc
+              {finishedProposals.length !== 1 ? 's' : ''}
+            </button>
+          </li>
+        )}
+      </ul>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ProgressPage
+// ---------------------------------------------------------------------------
 
 export const ProgressPage = () => {
   // Initialise query and proposal filter dimensions from the URL on first render.
@@ -129,36 +298,14 @@ export const ProgressPage = () => {
             className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border"
           />
         </div>
-        {/* Proposal filter — shown while loading (tasks===null) to reserve the
-            slot height, and whenever there are in-scope proposals to filter by.
-            Hidden only when data has settled and no proposals exist. */}
-        {(tasks === null || proposals.length > 0) ? (
-          <div
-            className="flex items-center gap-2 border-b border-border px-4 py-2"
-            data-testid="proposal-filter"
-          >
-            <label
-              htmlFor="proposal-filter-select"
-              className="shrink-0 font-mono text-[11px] text-muted-foreground"
-            >
-              Proposal
-            </label>
-            <select
-              id="proposal-filter-select"
-              value={effectiveProposalId ?? ''}
-              onChange={(e) => setSelectedProposalId(e.target.value || null)}
-              disabled={tasks === null}
-              className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-border disabled:opacity-50"
-            >
-              <option value="">All</option>
-              {proposals.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.title.length > 60 ? `${p.title.slice(0, 59)}…` : p.title}
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : null}
+        {/* Proposal filter — searchable combobox with chip UX.
+            Hidden when data is settled and no active-arc proposals exist. */}
+        <ProposalCombobox
+          proposals={proposals}
+          tasks={tasks}
+          selectedProposalId={effectiveProposalId}
+          onSelect={setSelectedProposalId}
+        />
         {error && tasks === null ? (
           <main className="flex min-h-0 flex-1 overflow-hidden bg-background">
             <FallbackSurface error={error} of="tasks" variant="pane" />
