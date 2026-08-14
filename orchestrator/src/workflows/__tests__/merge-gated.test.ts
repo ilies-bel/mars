@@ -79,7 +79,7 @@ vi.mock('../../core/lib/action-queue', () => ({
 // ---------------------------------------------------------------------------
 
 const { runWorkflow } = await import('@mars/workflow')
-const { implementWorkflow } = await import('../implement-workflow')
+const { implementWorkflow, implementInputSchema } = await import('../implement-workflow')
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -179,8 +179,13 @@ const makeTaskStoreStub = () => ({
   batch: vi.fn().mockResolvedValue([]),
 })
 
-/** Minimal valid workflow input with merge_mode='gated'. */
-const gatedInput = {
+/** Minimal valid workflow input with merge_mode='gated'.
+ *
+ * Parsed through implementInputSchema so schema-provided defaults (plan, tags,
+ * kind, integrationBranch, resumeFromPriorAttempt, verifyFailureOutput,
+ * recoveryPayload, fixForTaskId, qa, and spec.readFirst / spec.prescriptiveAction)
+ * are filled in — otherwise the object is not assignable to ImplementInput. */
+const gatedInput = implementInputSchema.parse({
   taskId: 'gated-task-id',
   prompt: 'implement the gated feature',
   spec: {
@@ -189,10 +194,10 @@ const gatedInput = {
     doneCriteria: [],
     mergeMode: 'gated' as const,
   },
-}
+})
 
 /** Minimal valid workflow input with merge_mode='auto'. */
-const autoInput = {
+const autoInput = implementInputSchema.parse({
   taskId: 'auto-task-id',
   prompt: 'implement the auto feature',
   spec: {
@@ -201,7 +206,7 @@ const autoInput = {
     doneCriteria: [],
     mergeMode: 'auto' as const,
   },
-}
+})
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -346,11 +351,11 @@ describe('merge_mode=gated gate', () => {
     const store = makeMemStore()
     const taskStore = makeTaskStoreStub()
 
-    const noSpecInput = {
+    const noSpecInput = implementInputSchema.parse({
       taskId: 'no-spec-task-id',
       prompt: 'implement without spec',
       // spec omitted → defaults to null inside implementInputSchema
-    }
+    })
 
     const result = await runWorkflow(
       implementWorkflow,
