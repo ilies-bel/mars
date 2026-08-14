@@ -204,7 +204,7 @@ export async function enqueueMergeJobAndAwait(args: {
  * timeout is the last resort: it fires if the merge worker itself dies or the
  * job is lost without `resolveMergeJob` ever being called.
  */
-export const DEFAULT_OUTER_WATCHDOG_GRACE_MS = 10 * 60_000 // 10 minutes
+const DEFAULT_OUTER_WATCHDOG_GRACE_MS = 10 * 60_000 // 10 minutes
 
 /**
  * Execute a single merge job. Calls `mergeFn` with the job's stored args and
