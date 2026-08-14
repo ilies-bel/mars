@@ -69,13 +69,37 @@ describe('GET /mockups/<id>.html — serve generated mockup file', () => {
     expect(res.status).toBe(404)
   })
 
-  it('returns 400 (or 404) on a path-traversal attempt', async () => {
-    // A path like /mockups/../../etc/passwd.html must not escape the mockupsDir.
-    const res = await fetch(`${baseUrl}/mockups/../../etc/passwd.html`, {
-      redirect: 'manual',
-    })
-    // Could be 400 (invalid path) or 404 (normalised path not found).
-    expect([400, 404]).toContain(res.status)
+  it('never serves a file outside the mockups dir on a path-traversal attempt', async () => {
+    // Plant a sentinel file one level above mockupsDir and try to reach it
+    // via `..` segments. fetch() normalises `..` client-side and Bun's URL
+    // parsing normalises it server-side too, so send the raw path over a
+    // plain TCP socket; whatever the server answers (400, 404, or the SPA
+    // catch-all's 200 index.html), the sentinel content must never leak.
+    const SENTINEL = 'TOP-SECRET-outside-mockups-dir'
+    writeFileSync(resolve(repo, '.mars', 'secret.html'), SENTINEL, 'utf8')
+
+    const rawPaths = [
+      '/mockups/../secret.html',
+      '/mockups/..%2fsecret.html',
+      '/mockups/%2e%2e/secret.html',
+    ]
+    const { connect } = await import('node:net')
+    for (const rawPath of rawPaths) {
+      const body = await new Promise<string>((resolvePromise, reject) => {
+        let buf = ''
+        const socket = connect(server!.port, server!.hostname, () => {
+          socket.write(
+            `GET ${rawPath} HTTP/1.1\r\nHost: ${server!.hostname}\r\nConnection: close\r\n\r\n`,
+          )
+        })
+        socket.on('data', (chunk) => {
+          buf += chunk.toString()
+        })
+        socket.on('close', () => resolvePromise(buf))
+        socket.on('error', reject)
+      })
+      expect(body).not.toContain(SENTINEL)
+    }
   })
 
   it('serves different proposals from the same directory', async () => {
