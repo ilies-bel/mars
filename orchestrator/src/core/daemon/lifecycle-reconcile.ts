@@ -203,5 +203,43 @@ export async function reconcileTerminalTasks(
     rowsResolved += closed.length
   }
 
+  // (d) recovery-abandoned rows whose origin task (embedded in the
+  //     'recovery-abandoned:<originId>' signature) is now terminal. This
+  //     sweeps stale rows from before auto-close on status-change was robust
+  //     and any row that slipped through the live path. Rows already closed
+  //     by legs (a)–(c) are excluded by the status='open' filter.
+  const abandonedRows = await client.execute(`
+    SELECT i.id, i.signature
+    FROM action_queue_items i
+    WHERE i.status = 'open'
+      AND i.kind = 'recovery-abandoned'
+      AND i.signature IS NOT NULL
+      AND i.signature LIKE 'recovery-abandoned:%'
+  `)
+
+  for (const row of abandonedRows.rows) {
+    const id = (row as unknown as { id: string; signature: string }).id
+    const sig = (row as unknown as { id: string; signature: string }).signature
+    const prefix = 'recovery-abandoned:'
+    if (!sig.startsWith(prefix)) continue
+    const originId = sig.slice(prefix.length)
+    if (!originId) continue
+
+    const taskCheck = await client.execute({
+      sql: `SELECT status FROM tasks WHERE id = ? AND status IN ('done', 'dropped') LIMIT 1`,
+      args: [originId],
+    })
+    if (taskCheck.rows.length === 0) continue
+
+    const taskStatus = (taskCheck.rows[0] as unknown as { status: string }).status
+    const reason: SupersedeReason = taskStatus === 'done' ? 'origin-done' : 'origin-dropped'
+    await setActionQueueState(id, 'resolved', {
+      resolution: 'superseded',
+      note: `superseded: ${reason}`,
+      by: 'reconcile:recovery-abandoned',
+    })
+    rowsResolved++
+  }
+
   return { rowsResolved }
 }

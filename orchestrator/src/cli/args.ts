@@ -124,6 +124,8 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--suppress-recovery',
   '--ramp-back-step',
   '--surface-form',
+  // mars action-queue resolve --reason <text>: human-readable note for the resolution.
+  '--reason',
 ])
 
 /**

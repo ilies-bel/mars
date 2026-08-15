@@ -11,10 +11,12 @@ interface QueueModule {
 
 interface ActionQueueModule {
   listActionQueueItems: typeof import('../../lib/action-queue').listActionQueueItems
+  getActionQueueItem: typeof import('../../lib/action-queue').getActionQueueItem
 }
 
 interface SweepModule {
   detectAndRaiseDaemonOutage: typeof import('../daemon-outage-sweep').detectAndRaiseDaemonOutage
+  closeOpenDaemonOutageRows: typeof import('../daemon-outage-sweep').closeOpenDaemonOutageRows
   DAEMON_OUTAGE_KIND: typeof import('../daemon-outage-sweep').DAEMON_OUTAGE_KIND
   DEFAULT_DAEMON_OUTAGE_THRESHOLD_MS: typeof import('../daemon-outage-sweep').DEFAULT_DAEMON_OUTAGE_THRESHOLD_MS
 }
@@ -212,5 +214,58 @@ describe('daemon-outage-sweep', () => {
     const items = await actionQueue.listActionQueueItems()
     const ours = items.filter((i) => i.kind === sweep.DAEMON_OUTAGE_KIND)
     expect(ours).toHaveLength(0)
+  })
+})
+
+describe('closeOpenDaemonOutageRows', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('closes an open daemon-outage row and records history', async () => {
+    const { actionQueue, sweep, stateClient } = await loadModules(repo)
+    const THRESHOLD_MS = sweep.DEFAULT_DAEMON_OUTAGE_THRESHOLD_MS
+
+    // Raise a daemon-outage row (simulates a prior startup with an outage).
+    await seedHeartbeat(stateClient, THRESHOLD_MS * 2)
+    const raised = await sweep.detectAndRaiseDaemonOutage()
+    expect(raised).not.toBeNull()
+
+    // Confirm the row is open.
+    const before = await actionQueue.listActionQueueItems('open')
+    const openBefore = before.filter((i) => i.kind === sweep.DAEMON_OUTAGE_KIND)
+    expect(openBefore).toHaveLength(1)
+
+    // Now simulate the daemon coming up: close the outage rows.
+    const closed = await sweep.closeOpenDaemonOutageRows()
+    expect(closed).toHaveLength(1)
+
+    // The row must now be resolved.
+    const after = await actionQueue.listActionQueueItems('open')
+    const openAfter = after.filter((i) => i.kind === sweep.DAEMON_OUTAGE_KIND)
+    expect(openAfter).toHaveLength(0)
+
+    // History must record the transition.
+    const item = await actionQueue.getActionQueueItem(raised!)
+    expect(item).not.toBeNull()
+    expect(item!.status).toBe('resolved')
+    expect(item!.history.length).toBeGreaterThanOrEqual(2) // open + resolved
+    const lastEntry = item!.history[item!.history.length - 1]!
+    expect(lastEntry.fromState).toBe('open')
+    expect(lastEntry.toState).toBe('resolved')
+  })
+
+  it('is a no-op when no open daemon-outage rows exist', async () => {
+    const { sweep } = await loadModules(repo)
+
+    const closed = await sweep.closeOpenDaemonOutageRows()
+    expect(closed).toHaveLength(0)
   })
 })

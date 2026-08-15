@@ -202,4 +202,64 @@ describe('reconcileTerminalTasks', () => {
     // After the first pass the row is resolved, so the second pass finds nothing.
     expect(second.rowsResolved).toBe(0)
   })
+
+  it('closes recovery-abandoned rows whose origin task is done (signature-based sweep)', async () => {
+    const { q, actionQueue, reconcile } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+
+    // Origin task is terminal (done).
+    const originId = 'T-origin-done'
+    await insertTask(client, originId, 'done')
+
+    // Raise a recovery-abandoned row with NULL origin_task_id (simulates a
+    // legacy row raised before origin_task_id was populated), relying only on
+    // the signature to identify the origin.
+    const itemId = await actionQueue.raiseActionQueueItem({
+      kind: 'recovery-abandoned',
+      category: 'orchestrator',
+      priority: 'high',
+      title: 'Recovery task dropped',
+      body: `Run mars continue ${originId}`,
+      payload: { fixTaskId: 'fix-xxxx', originTaskId: originId },
+      context: {},
+      raisedBy: 'test',
+      signature: `recovery-abandoned:${originId}`,
+      // intentionally no originTaskId — simulates the NULL origin_task_id case
+    })
+
+    const { rowsResolved } = await reconcile.reconcileTerminalTasks(client)
+
+    expect(rowsResolved).toBeGreaterThanOrEqual(1)
+    const item = await actionQueue.getActionQueueItem(itemId)
+    expect(item).not.toBeNull()
+    expect(item!.status).toBe('resolved')
+    expect(item!.resolution).toBe('superseded')
+  })
+
+  it('leaves recovery-abandoned rows open when origin task is still failed', async () => {
+    const { q, actionQueue, reconcile } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+
+    // Origin task is still failed (not terminal).
+    const originId = 'T-origin-failed'
+    await insertTask(client, originId, 'failed')
+
+    const itemId = await actionQueue.raiseActionQueueItem({
+      kind: 'recovery-abandoned',
+      category: 'orchestrator',
+      priority: 'high',
+      title: 'Recovery task dropped',
+      body: `Run mars continue ${originId}`,
+      payload: { fixTaskId: 'fix-yyyy', originTaskId: originId },
+      context: {},
+      raisedBy: 'test',
+      signature: `recovery-abandoned:${originId}`,
+    })
+
+    await reconcile.reconcileTerminalTasks(client)
+
+    const item = await actionQueue.getActionQueueItem(itemId)
+    expect(item).not.toBeNull()
+    expect(item!.status).toBe('open')
+  })
 })

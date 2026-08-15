@@ -227,3 +227,87 @@ describe('action-queue reconcile', () => {
     expect(r.unknown).toBeUndefined()
   })
 })
+
+describe('action-queue resolve', () => {
+  it('resolves an open item by id, prints confirmation, and records history', async () => {
+    const { store, ctx, aq } = await loadModules()
+
+    const itemId = await aq.raiseActionQueueItem({
+      kind: 'awaiting-human',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: 'Waiting for human',
+      body: 'some body',
+      payload: {},
+      context: {},
+      raisedBy: 'test',
+      signature: 'sig-resolve-test',
+    })
+
+    const opts: InProcessOptions = { store, ctx, daemon: makeFakeDaemon() }
+    const r = await runCommandInProcess(
+      ['action-queue', 'resolve', itemId, '--reason', 'stale row, closing manually'],
+      opts,
+    )
+
+    expect(r.code).toBe(0)
+    expect(r.out.join('\n')).toContain(`resolved ${itemId}`)
+
+    // The item must now be resolved.
+    const item = await aq.getActionQueueItem(itemId)
+    expect(item).not.toBeNull()
+    expect(item!.status).toBe('resolved')
+    expect(item!.resolution).toBe('manual')
+    expect(item!.resolutionNote).toBe('stale row, closing manually')
+    // History must record the transition.
+    const history = item!.history
+    expect(history.length).toBeGreaterThanOrEqual(2)
+    const closeEntry = history[history.length - 1]!
+    expect(closeEntry.fromState).toBe('open')
+    expect(closeEntry.toState).toBe('resolved')
+    expect(closeEntry.by).toBe('operator:cli')
+  })
+
+  it('returns code 1 when the id does not match any item', async () => {
+    const { store, ctx } = await loadModules()
+
+    const opts: InProcessOptions = { store, ctx, daemon: makeFakeDaemon() }
+    const r = await runCommandInProcess(['action-queue', 'resolve', 'nonexistent'], opts)
+
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('no action queue item matching nonexistent')
+  })
+
+  it('returns code 1 when the item is already resolved', async () => {
+    const { store, ctx, aq } = await loadModules()
+
+    const itemId = await aq.raiseActionQueueItem({
+      kind: 'awaiting-human',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: 'Already resolved',
+      body: 'already done',
+      payload: {},
+      context: {},
+      raisedBy: 'test',
+      signature: 'sig-already-resolved',
+    })
+    await aq.setActionQueueState(itemId, 'resolved', { resolution: 'manual', by: 'test' })
+
+    const opts: InProcessOptions = { store, ctx, daemon: makeFakeDaemon() }
+    const r = await runCommandInProcess(['action-queue', 'resolve', itemId], opts)
+
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('already resolved')
+  })
+
+  it('returns code 2 when no id is given', async () => {
+    const { store, ctx } = await loadModules()
+
+    const opts: InProcessOptions = { store, ctx, daemon: makeFakeDaemon() }
+    const r = await runCommandInProcess(['action-queue', 'resolve'], opts)
+
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain('usage:')
+  })
+})

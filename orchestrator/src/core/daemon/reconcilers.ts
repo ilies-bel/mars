@@ -85,14 +85,59 @@ const daemonOutageSweep: Reconciler = {
   name: 'daemon-outage-sweep',
   async run({ log }) {
     try {
-      const { detectAndRaiseDaemonOutage } = await import('./daemon-outage-sweep')
+      const { detectAndRaiseDaemonOutage, closeOpenDaemonOutageRows } = await import('./daemon-outage-sweep')
       const raised = await detectAndRaiseDaemonOutage()
       if (raised !== null) {
         log('[reconcile] daemon-outage alert raised (daemon was offline for an extended period)')
       }
-      return { daemonOutageAlerts: raised !== null ? 1 : 0 }
+      // Close any open daemon-outage rows. The outage is over by definition when
+      // the daemon boots; history preserves the outage window for audit.
+      const closed = await closeOpenDaemonOutageRows()
+      if (closed.length > 0) {
+        log(`[reconcile] closed ${closed.length} stale daemon-outage alert(s) — daemon is up`)
+      }
+      return { daemonOutageAlerts: raised !== null ? 1 : 0, daemonOutageClosed: closed.length }
     } catch (err) {
       log(`[reconcile] daemon-outage sweep failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
+ * 2c-extra. E2E-tooling-missing reconcile — if the E2E tooling is present at
+ * daemon start, close any open `e2e-tooling-missing` rows that accumulated
+ * while the tooling was absent. The arc-verifier already auto-resolves these
+ * when a new arc runs, but if the tooling was installed between arc runs the
+ * alert would linger until the next arc. This sweep eliminates that window.
+ * Errors are swallowed so a filesystem hiccup does not abort the boot pass.
+ */
+const e2eToolingMissingReconcile: Reconciler = {
+  name: 'e2e-tooling-missing-reconcile',
+  async run({ log }) {
+    try {
+      const { probeE2eTooling } = await import('../lib/e2e-tooling')
+      const { resolveContext } = await import('../context')
+      const { listActionQueueItems, setActionQueueState } = await import('../lib/action-queue')
+      const ctx = resolveContext()
+      const report = probeE2eTooling(ctx.repoRoot)
+      if (!report.available) return {}
+      const openItems = await listActionQueueItems('open', { kind: 'e2e-tooling-missing' })
+      let closed = 0
+      for (const item of openItems) {
+        await setActionQueueState(item.id, 'resolved', {
+          resolution: 'condition-cleared',
+          note: 'E2E tooling detected as available at daemon start — stale alert closed',
+          by: 'daemon:startup-reconcile',
+        }).catch(() => { /* Non-fatal */ })
+        closed++
+      }
+      if (closed > 0) {
+        log(`[reconcile] closed ${closed} stale e2e-tooling-missing alert(s) — tooling is available`)
+      }
+      return {}
+    } catch (err) {
+      log(`[reconcile] e2e-tooling-missing reconcile failed: ${(err as Error).message}`)
       return {}
     }
   },
@@ -1085,6 +1130,7 @@ export const RECONCILERS: readonly Reconciler[] = [
   daemonKilledSweep,
   daemonDiedSweep,
   daemonOutageSweep,
+  e2eToolingMissingReconcile,
   orphanedChatRunSweep,
   blockerDriftRepair,
   retiredPlanGateReconcile,

@@ -341,6 +341,39 @@ const actionQueueWatch: Command = {
   },
 }
 
+const actionQueueResolve: Command = {
+  path: 'action-queue resolve',
+  summary: 'manually resolve (close) an open action queue item',
+  usage: 'usage: mars action-queue resolve <id> [--reason <text>]',
+  run: async (args, deps) => {
+    const id = args.positional[0]
+    if (!id) {
+      deps.err('usage: mars action-queue resolve <id> [--reason <text>]')
+      return { code: 2 }
+    }
+    const reason = args.flags['--reason'] ?? null
+    const { migrateQueueSchema } = await import('../../core/queue')
+    await migrateQueueSchema()
+    const { getActionQueueItem, setActionQueueState } = await import('../../core/lib/action-queue')
+    const item = await getActionQueueItem(id)
+    if (!item) {
+      deps.err(`no action queue item matching ${id}`)
+      return { code: 1 }
+    }
+    if (item.status === 'resolved') {
+      deps.err(`item ${item.id} is already resolved`)
+      return { code: 1 }
+    }
+    await setActionQueueState(item.id, 'resolved', {
+      resolution: 'manual',
+      note: typeof reason === 'string' ? reason : 'operator closed via CLI',
+      by: 'operator:cli',
+    })
+    deps.out(`resolved ${item.id}`)
+    return { code: 0 }
+  },
+}
+
 const actionQueueReconcile: Command = {
   path: 'action-queue reconcile',
   summary: 'one-time pass: close every open action queue item for terminal tasks',
@@ -406,6 +439,7 @@ export const actionQueueCommands: readonly Command[] = [
   actionQueueShow,
   actionQueueRaise,
   actionQueueWatch,
+  actionQueueResolve,
   actionQueueReconcile,
   actionQueueDefault,
 ]

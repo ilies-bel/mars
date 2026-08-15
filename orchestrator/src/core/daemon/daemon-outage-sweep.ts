@@ -23,7 +23,7 @@
 
 import { resolveStateClient } from '../store/state-client'
 import { listTasks } from '../queue'
-import { raiseActionQueueItem } from '../lib/action-queue'
+import { raiseActionQueueItem, supersedeActionQueueItemsBySignature } from '../lib/action-queue'
 import type { ActionQueueKind } from '../lib/action-queue-kinds'
 
 export const DAEMON_OUTAGE_KIND: ActionQueueKind = 'daemon-outage'
@@ -136,4 +136,24 @@ export const detectAndRaiseDaemonOutage = async (): Promise<string | null> => {
   })
 
   return id
+}
+
+/**
+ * Close every open `daemon-outage` action-queue row.
+ *
+ * Called at daemon startup after {@link detectAndRaiseDaemonOutage} so that
+ * the action queue never shows a stale outage row from a prior daemon
+ * lifetime. By definition the outage is over the moment the daemon boots —
+ * the row's content is preserved in `action_queue_history` for audit.
+ *
+ * Returns the ids of the rows that were closed (possibly empty when no
+ * open rows exist, which is the common case after a clean restart).
+ */
+export const closeOpenDaemonOutageRows = async (): Promise<string[]> => {
+  return supersedeActionQueueItemsBySignature(
+    DAEMON_OUTAGE_KIND,
+    'daemon-outage',
+    'daemon-restarted',
+    'daemon:startup-reconcile',
+  )
 }
