@@ -26,6 +26,7 @@ import {
   enqueueTask,
   getTask,
   hasIncompleteBlockers,
+  isWorktreeSharedWithLiveTask,
   listTasks,
   removeBlocker,
   setTaskPriority,
@@ -3714,8 +3715,18 @@ export const startDaemon = async (
       }
     }
 
+    // Guard: skip worktree+branch removal when another non-terminal task shares
+    // the same path or branch. Fix/rescue tasks that operate on their origin's
+    // worktree store the same worktree_path/branch as the origin; dropping the
+    // fix task must not destroy filesystem resources still in use by the origin
+    // (e.g. an in-flight verify run). See mars-330d72e2.
+    const worktreeOrBranchShared = await isWorktreeSharedWithLiveTask(
+      task.worktreePath ?? null,
+      branch,
+      id,
+    )
     let worktreeRemoved = false
-    if (task.worktreePath && exists(task.worktreePath)) {
+    if (!worktreeOrBranchShared && task.worktreePath && exists(task.worktreePath)) {
       try {
         await removeWorktree({ path: task.worktreePath, branch }, true)
         worktreeRemoved = true
@@ -3723,11 +3734,13 @@ export const startDaemon = async (
         // best-effort — the row still gets dropped; logged below
       }
     }
-    const branchDeleteResult = await exec('git', ['branch', '-D', branch], {
-      cwd: repoRoot,
-    })
-      .then(() => true)
-      .catch(() => false)
+    const branchDeleteResult = !worktreeOrBranchShared
+      ? await exec('git', ['branch', '-D', branch], {
+          cwd: repoRoot,
+        })
+          .then(() => true)
+          .catch(() => false)
+      : false
 
     const result = await dropTask(id)
     // Action-queue rows are closed by Arc.drop() inline (belt-and-suspenders

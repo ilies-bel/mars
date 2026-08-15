@@ -5,6 +5,7 @@ import {
   getTask,
   dropTask,
   enqueueTask,
+  isWorktreeSharedWithLiveTask,
   type DropTaskResult,
 } from '../queue'
 import { Arc } from '../arc'
@@ -172,10 +173,18 @@ export const corePurgeTask = async (
 
   const { removeWorktree } = await import('../lib/git/worktree')
 
-  if (task.worktreePath && existsSync(task.worktreePath)) {
-    await removeWorktree({ path: task.worktreePath, branch }, true).catch(() => {})
+  // Guard: skip worktree+branch removal when another non-terminal task shares
+  // the same path or branch. Fix/rescue tasks that operate on their origin's
+  // worktree store the same worktree_path/branch as the origin; purging the
+  // origin must not destroy filesystem resources still in use by a live fix
+  // task (or vice-versa). See mars-330d72e2.
+  const originShared = await isWorktreeSharedWithLiveTask(task.worktreePath ?? null, branch, id)
+  if (!originShared) {
+    if (task.worktreePath && existsSync(task.worktreePath)) {
+      await removeWorktree({ path: task.worktreePath, branch }, true).catch(() => {})
+    }
+    await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})
   }
-  await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})
 
   // Clean up git artifacts for every cascade fix task before the DB drop.
   // dropTask will delete the fix task rows atomically; we handle the on-disk
@@ -183,10 +192,13 @@ export const corePurgeTask = async (
   const fixTasks = await getDefaultDomainTaskStore().listFixTasksByOrigin(id)
   for (const r of fixTasks) {
     const fixBranch = r.branch ?? `task/${r.id}`
-    if (r.worktreePath && existsSync(r.worktreePath)) {
-      await removeWorktree({ path: r.worktreePath, branch: fixBranch }, true).catch(() => {})
+    const fixShared = await isWorktreeSharedWithLiveTask(r.worktreePath ?? null, fixBranch, r.id)
+    if (!fixShared) {
+      if (r.worktreePath && existsSync(r.worktreePath)) {
+        await removeWorktree({ path: r.worktreePath, branch: fixBranch }, true).catch(() => {})
+      }
+      await exec('git', ['branch', '-D', fixBranch], { cwd: repoRoot }).catch(() => {})
     }
-    await exec('git', ['branch', '-D', fixBranch], { cwd: repoRoot }).catch(() => {})
   }
 
   // Belt-and-suspenders: close action-queue rows for this task inline, before

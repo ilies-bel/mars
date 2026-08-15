@@ -1817,6 +1817,50 @@ export const dropTask = async (id: string): Promise<DropTaskResult> => {
 }
 
 /**
+ * Returns `true` when at least one **non-terminal** task other than
+ * `excludeTaskId` references the same `worktreePath` (if non-null) **or**
+ * the same `branch`.
+ *
+ * Fix/rescue tasks that operate on their origin's branch and worktree store
+ * the *same* `worktree_path` and `branch` values as the origin row.  Callers
+ * that are about to remove a worktree directory or delete a branch ref must
+ * call this guard first and skip cleanup when it returns `true`, so that a
+ * stale-recovery drop never destroys filesystem resources still owned by a
+ * live origin.
+ *
+ * Non-terminal statuses are all statuses NOT in
+ * {@link TERMINAL_TASK_STATUSES} (`done | failed | dropped`).
+ */
+export const isWorktreeSharedWithLiveTask = async (
+  worktreePath: string | null,
+  branch: string,
+  excludeTaskId: string,
+): Promise<boolean> => {
+  await ensureQueueSchema()
+  const args: string[] = []
+  let whereClauses: string
+
+  if (worktreePath !== null) {
+    whereClauses = '(worktree_path = ? OR branch = ?)'
+    args.push(worktreePath, branch)
+  } else {
+    whereClauses = 'branch = ?'
+    args.push(branch)
+  }
+  args.push(excludeTaskId)
+
+  const r = await resolveQueueClient().execute({
+    sql: `SELECT 1 FROM tasks
+           WHERE ${whereClauses}
+             AND id != ?
+             AND status NOT IN ('done', 'failed', 'dropped')
+           LIMIT 1`,
+    args,
+  })
+  return r.rows.length > 0
+}
+
+/**
  * Insert a self-arc reflection task. Thin wrapper over
  * {@link Arc.insertReflection} (ADR-0052): the `INSERT INTO tasks`
  * (`origin_id = self`, status `'done'`) lives on the Arc aggregate now.
