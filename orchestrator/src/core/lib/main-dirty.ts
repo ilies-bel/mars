@@ -483,6 +483,15 @@ export interface MainCommiterPayload {
    * of what files are dirty or where HEAD is.
    */
   integrationBranch: string
+  /**
+   * Dirty paths the committer was checkpointed to clean, parsed from
+   * `git status --porcelain` at spawn time. Optional — absent on legacy rows.
+   *
+   * Used by the verify post-check to scope the still-dirty invariant: only
+   * paths in this set count as a genuine committer failure; dirt that appeared
+   * after the checkpoint is handled by the next dispatch-time dirty-main check.
+   */
+  checkpointedPaths?: string[]
 }
 
 /**
@@ -498,9 +507,15 @@ export const parseMainCommiterPayload = (
     const parsed = JSON.parse(raw) as Partial<MainCommiterPayload>
     if (parsed.recipe !== MAIN_COMMITER_RECIPE) return null
     if (typeof parsed.integrationBranch !== 'string') return null
+    const checkpointedPaths =
+      Array.isArray(parsed.checkpointedPaths) &&
+      parsed.checkpointedPaths.every((p) => typeof p === 'string')
+        ? (parsed.checkpointedPaths as string[])
+        : undefined
     return {
       recipe: MAIN_COMMITER_RECIPE,
       integrationBranch: parsed.integrationBranch,
+      ...(checkpointedPaths !== undefined ? { checkpointedPaths } : {}),
     }
   } catch {
     return null
@@ -826,6 +841,15 @@ export const spawnOrAttachMainCommitter = async (
   // and attach to it. One retry is enough: if the second resolve also returns
   // `none`, that is a genuine anomaly we surface rather than loop.
   const arc = Arc.load(input.sourceOriginId, s)
+  // Parse dirty paths from the detection snapshot so the committer's
+  // recovery_payload records exactly what it is responsible for cleaning.
+  // At verify time these are compared against the live dirty state so the
+  // still-dirty invariant fires only on paths the committer was given, not
+  // on new dirt that arrived while the committer was running.
+  const checkpointedPaths = input.detection.statusOutput
+    .split('\n')
+    .map((l) => l.slice(3).trim())
+    .filter(Boolean)
   let fixTaskId: string
   try {
     const spawned = await arc.spawnMainCommitterRecovery({
@@ -835,6 +859,7 @@ export const spawnOrAttachMainCommitter = async (
       recipePrompt: input.recipePrompt,
       sourceOriginId: input.sourceOriginId,
       traceStore: input.traceStore,
+      checkpointedPaths,
     })
     fixTaskId = spawned.fixTaskId
   } catch (err) {

@@ -1522,6 +1522,8 @@ export class Arc {
     recipePrompt: string
     sourceOriginId: string
     traceStore: TraceEventStore
+    /** Dirty paths parsed from the detection snapshot (see spawnOrAttachMainCommitter). */
+    checkpointedPaths?: string[]
   }): Promise<{ fixTaskId: string }> {
     const s = this.store
     const fixTaskId = `fix-${randomUUID().slice(0, 8)}`
@@ -1530,6 +1532,9 @@ export class Arc {
     const payload: MainCommiterPayload = {
       recipe: MAIN_COMMITER_RECIPE,
       integrationBranch: input.integrationBranch,
+      ...(input.checkpointedPaths !== undefined && input.checkpointedPaths.length > 0
+        ? { checkpointedPaths: input.checkpointedPaths }
+        : {}),
     }
     await s.batch(
       [

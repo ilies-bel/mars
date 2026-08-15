@@ -3075,25 +3075,52 @@ export const review = async (
           traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
         })
         if (postClean.dirty) {
-          // Orchestration failure: the committer ran and passed its own verify
-          // steps but left the integration branch dirty. This is NOT a code
-          // defect — no fix task must be spawned. Stamp the task failed with an
-          // orchestration code, raise a dedicated action-queue alert, and throw
-          // a terminal error so the pipeline aborts. The _verifyFailedRecorded
-          // flag prevents the outer catch from double-stamping.
+          // Orchestration invariant: the integration checkout must be clean after
+          // the committer ran. However, we scope this to paths the committer was
+          // explicitly checkpointed to clean — dirt that appeared AFTER the
+          // checkpoint was captured is normal concurrent work and already handled
+          // by the dispatch-time dirty-main check that will spawn a fresh
+          // committer on the next cycle. Failing the committer on post-checkpoint
+          // dirt would incorrectly penalise it for work it never saw.
           const { handleCommitterStillDirty } = await import(
             '../../core/daemon/main-dirty-action-queue'
           )
-          const contaminatedPaths = postClean.statusOutput
+          const allDirtyPaths = postClean.statusOutput
             .split('\n')
             .map((l) => l.slice(3).trim())
             .filter(Boolean)
-          await handleCommitterStillDirty(taskId, integrationBranch, contaminatedPaths, store)
-          _verifyFailedRecorded = true
-          throw new WorkflowTerminalError(
-            'committer-still-dirty',
-            `task ${taskId} orchestration:main-committer-still-dirty: integration branch ${integrationBranch} still dirty after committer ran`,
-          )
+          const checkpointedPaths = commiterPayload.checkpointedPaths
+          if (checkpointedPaths !== undefined && checkpointedPaths.length > 0) {
+            const checkpointedSet = new Set(checkpointedPaths)
+            const stillDirty = allDirtyPaths.filter((p) => checkpointedSet.has(p))
+            if (stillDirty.length > 0) {
+              // Checkpointed paths still dirty → genuine committer failure.
+              // The _verifyFailedRecorded flag prevents the outer catch from
+              // double-stamping.
+              await handleCommitterStillDirty(taskId, integrationBranch, stillDirty, store)
+              _verifyFailedRecorded = true
+              throw new WorkflowTerminalError(
+                'committer-still-dirty',
+                `task ${taskId} orchestration:main-committer-still-dirty: integration branch ${integrationBranch} still dirty after committer ran`,
+              )
+            }
+            // All checkpointed paths were cleaned; new dirt appeared post-checkpoint.
+            // Let the committer succeed; the dispatch-time check will spawn a fresh
+            // committer for the new dirt on the next cycle.
+            console.log(
+              `[main-dirty] verify-time: ${allDirtyPaths.length} new dirty path(s) appeared after ` +
+                `checkpoint; a fresh committer cycle will handle them`,
+            )
+          } else {
+            // Legacy row (no checkpointedPaths recorded): keep the original strict
+            // behaviour so pre-existing rows don't silently pass a dirty tree.
+            await handleCommitterStillDirty(taskId, integrationBranch, allDirtyPaths, store)
+            _verifyFailedRecorded = true
+            throw new WorkflowTerminalError(
+              'committer-still-dirty',
+              `task ${taskId} orchestration:main-committer-still-dirty: integration branch ${integrationBranch} still dirty after committer ran`,
+            )
+          }
         }
       }
 

@@ -305,6 +305,120 @@ describe('main-committer-still-dirty — verify primitive', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Scoped invariant: checkpointedPaths in the payload
+// ---------------------------------------------------------------------------
+
+describe('main-committer-still-dirty — checkpointedPaths scoping', () => {
+  it('passes when only new (non-checkpointed) paths are dirty at verify time', async () => {
+    const taskId = 'mars-mc-scoped-pass-01'
+    // The committer was checkpointed for 'src/original.ts'
+    mockParseMainCommiterPayload.mockReturnValue({
+      recipe: MOCK_RECIPE,
+      checkpointedPaths: ['src/original.ts'],
+    })
+    // verifyChanges passes
+    mockVerifyChanges.mockResolvedValue({
+      passed: true,
+      steps: [{ name: 'has-diff', passed: true, output: 'ok', tier: 'task' }],
+    })
+    // Post-clean check: only a new file that was not checkpointed is dirty
+    mockCheckIntegrationBranchDirty.mockResolvedValue({
+      dirty: true,
+      statusOutput: '?? docs/screenshots/api-reference.png\n?? docs/screenshots/docs-home.png\n',
+    })
+    // Branch-contamination guard: 1 ahead commit, not an ancestor
+    mockRunTool.mockImplementation(async (input: { argv: string[] }) => {
+      if (input.argv[0] === 'rev-list' && input.argv[1] === '--count') {
+        return { exitCode: 0, stdout: '1\n', stderr: '', durationMs: 1, traceEventId: 'x' }
+      }
+      if (input.argv[0] === 'merge-base') {
+        return { exitCode: 1, stdout: '', stderr: '', durationMs: 1, traceEventId: 'x' }
+      }
+      return { exitCode: 0, stdout: '', stderr: '', durationMs: 1, traceEventId: 'x' }
+    })
+
+    const result = await review(makeCtx(taskId), {
+      kind: 'fix',
+      worktree: worktree(taskId),
+      recoveryPayload: JSON.stringify({
+        recipe: MOCK_RECIPE,
+        integrationBranch: 'main',
+        checkpointedPaths: ['src/original.ts'],
+      }),
+    })
+
+    // Committer succeeds — new post-checkpoint dirt does not fail it
+    expect(result).toEqual({ verified: true })
+    expect(mockRaiseActionQueueItem).not.toHaveBeenCalled()
+    expect(mockHandleTaskFailureWithFixTask).not.toHaveBeenCalled()
+  })
+
+  it('fails when a checkpointed path remains dirty at verify time', async () => {
+    const taskId = 'mars-mc-scoped-fail-01'
+    // The committer was checkpointed for 'src/dirty.ts'
+    mockParseMainCommiterPayload.mockReturnValue({
+      recipe: MOCK_RECIPE,
+      checkpointedPaths: ['src/dirty.ts'],
+    })
+    mockVerifyChanges.mockResolvedValue({
+      passed: true,
+      steps: [{ name: 'has-diff', passed: true, output: 'ok', tier: 'task' }],
+    })
+    // Post-clean check: the checkpointed path is still dirty
+    mockCheckIntegrationBranchDirty.mockResolvedValue({
+      dirty: true,
+      statusOutput: ' M src/dirty.ts\n?? docs/screenshots/new-image.png\n',
+    })
+
+    await expect(
+      review(makeCtx(taskId), {
+        kind: 'fix',
+        worktree: worktree(taskId),
+        recoveryPayload: JSON.stringify({
+          recipe: MOCK_RECIPE,
+          integrationBranch: 'main',
+          checkpointedPaths: ['src/dirty.ts'],
+        }),
+      }),
+    ).rejects.toThrow(/main-committer-still-dirty|committer-still-dirty/)
+
+    // Only the checkpointed path should be reported as contaminated
+    expect(mockRaiseActionQueueItem).toHaveBeenCalledTimes(1)
+    const [aqOpts] = mockRaiseActionQueueItem.mock.calls[0] as [Record<string, unknown>]
+    expect(aqOpts.signature).toBe(`main-committer-still-dirty:${taskId}`)
+    // Only 'src/dirty.ts' is in the contaminated list, not the new screenshot
+    const payload = aqOpts.payload as { contaminatedPaths: string[] }
+    expect(payload.contaminatedPaths).toContain('src/dirty.ts')
+    expect(payload.contaminatedPaths).not.toContain('docs/screenshots/new-image.png')
+  })
+
+  it('falls back to strict behaviour for legacy rows with no checkpointedPaths', async () => {
+    const taskId = 'mars-mc-legacy-01'
+    // Legacy row: parseMainCommiterPayload returns payload without checkpointedPaths
+    mockParseMainCommiterPayload.mockReturnValue({ recipe: MOCK_RECIPE })
+    mockVerifyChanges.mockResolvedValue({
+      passed: true,
+      steps: [{ name: 'has-diff', passed: true, output: 'ok', tier: 'task' }],
+    })
+    mockCheckIntegrationBranchDirty.mockResolvedValue({
+      dirty: true,
+      statusOutput: '?? docs/screenshots/new-file.png\n',
+    })
+
+    await expect(
+      review(makeCtx(taskId), {
+        kind: 'fix',
+        worktree: worktree(taskId),
+        recoveryPayload: JSON.stringify({ recipe: MOCK_RECIPE, integrationBranch: 'main' }),
+      }),
+    ).rejects.toThrow(/main-committer-still-dirty|committer-still-dirty/)
+
+    // Strict fallback: any dirt causes the committer to fail
+    expect(mockRaiseActionQueueItem).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Existing verify() behaviour is unchanged for normal (non-committer) tasks
 // ---------------------------------------------------------------------------
 
