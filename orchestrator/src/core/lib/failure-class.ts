@@ -89,7 +89,13 @@ export function classifyFailure(failureSignature: string): FailureCategory {
     // already attempted one dep-refresh + retry; this class means the retry
     // also failed. No code fix can repair an environment problem; the operator
     // should run `mars restart <task-id>`.
-    failureSignature.endsWith('/typecheck-infra')
+    failureSignature.endsWith('/typecheck-infra') ||
+    // verify:*/missing-manifest — npm (or a manifest-reading tool) could not
+    // read package.json because the worktree checkout is incomplete. A code-fix
+    // recovery agent cannot create a missing manifest; the operator must
+    // restart. Analogous to typecheck-infra: the failure is environmental, not
+    // a code defect.
+    failureSignature.endsWith('/missing-manifest')
   ) {
     return 'infra'
   }

@@ -737,6 +737,7 @@ describe('syncWorktreeToIntegration — reconcile-on-conflict (recovery / resume
     expect(calls).toHaveLength(0)
   })
 
+
   // Regression for mars-38bc5ac3:
   // `mars remerge` removes the worktree but preserves the branch, then
   // re-queues the task. On the next setup, createWorktree re-attaches to the
@@ -788,5 +789,107 @@ describe('syncWorktreeToIntegration — reconcile-on-conflict (recovery / resume
     // `recreate` would have reset it to `main`; `reconcile` must never do that.
     expect(git(['rev-parse', ref.branch], repoRoot).trim()).toBe(tipBefore)
     expect(countAhead('main', ref.branch)).toBe(commitsBefore)
+  })
+})
+
+/**
+ * Regression for mars-caae60e2 (remerge path):
+ *
+ * `coreRemergeTask` tried to remove the worktree but the call silently swallowed
+ * the error — the worktree directory persisted on disk as a partial checkout
+ * (only `orchestrator/` present, no root `package.json`, HEAD at a stale SHA).
+ * `createWorktree` found the worktree registered on the right branch, took the
+ * "reuse" path, and handed the husk to verify.  Verify failed with npm ENOENT
+ * on `package.json` and the task was classified as `unknown/unclassified` — a
+ * pure infrastructure failure misrouted as a code defect.
+ *
+ * The fix: `createWorktree` now validates the worktree before reusing it.
+ * Criteria (checked concurrently):
+ *   - `git rev-parse HEAD` exits 0 and equals the branch tip.
+ *   - If `package.json` is tracked in the branch's index, it must exist on disk.
+ *
+ * These tests drive real git in the temp repo set up by the top-level beforeEach,
+ * then augment it with a `package.json` commit so the manifest check has a signal.
+ */
+describe('createWorktree — worktree-integrity check', () => {
+  // Augment the base repo (shared.txt + app.ts) with package.json so the
+  // manifest-completeness check has a tracked file to verify.
+  beforeEach(() => {
+    writeFileSync(resolve(repoRoot, 'package.json'), '{"name":"integrity-test"}\n')
+    git(['add', 'package.json'], repoRoot)
+    git(['commit', '-m', 'chore: add package.json for integrity tests'], repoRoot)
+  })
+
+  it('rebuilds a worktree where package.json is tracked but missing on disk (incomplete checkout)', async () => {
+    const { createWorktree } = await import('../worktree')
+    const taskId = 'mars-integ1'
+    const worktreePath = resolve(repoRoot, `.mars/worktrees/${taskId}`)
+    mkdirSync(resolve(worktreePath, '..'), { recursive: true })
+
+    // 1. Create the worktree normally — package.json is checked out.
+    await createWorktree({ taskId, integrationBranch: 'main' })
+    const branchTip = git(['rev-parse', `task/${taskId}`], repoRoot).trim()
+    expect(existsSync(resolve(worktreePath, 'package.json'))).toBe(true)
+
+    // 2. Simulate an incomplete/interrupted checkout: strip package.json from
+    //    the working tree.  The branch's index still tracks the file (git ls-files
+    //    returns it), so `createWorktree` should detect the mismatch.
+    rmSync(resolve(worktreePath, 'package.json'))
+    expect(existsSync(resolve(worktreePath, 'package.json'))).toBe(false)
+
+    // 3. createWorktree must detect the incomplete checkout and rebuild the worktree.
+    const ref = await createWorktree({ taskId, integrationBranch: 'main' })
+
+    // 4. After rebuild: package.json is restored and HEAD is still on the branch tip.
+    expect(ref.path).toBe(worktreePath)
+    expect(ref.branch).toBe(`task/${taskId}`)
+    expect(existsSync(resolve(ref.path, 'package.json'))).toBe(true)
+    expect(git(['rev-parse', 'HEAD'], ref.path).trim()).toBe(branchTip)
+  })
+
+  it('does NOT rebuild when the coder committed a package.json deletion (no false positive)', async () => {
+    const { createWorktree } = await import('../worktree')
+    const taskId = 'mars-integ2'
+    const worktreePath = resolve(repoRoot, `.mars/worktrees/${taskId}`)
+    mkdirSync(resolve(worktreePath, '..'), { recursive: true })
+
+    // 1. Create the worktree and let the "coder" delete package.json via a commit.
+    await createWorktree({ taskId, integrationBranch: 'main' })
+    git(['rm', 'package.json'], worktreePath)
+    git(['commit', '-m', 'refactor: remove package.json (deliberate)'], worktreePath)
+
+    // The branch now tracks package.json as deleted — it no longer appears in
+    // the index for this commit.
+    const tipAfterDeletion = git(['rev-parse', `task/${taskId}`], repoRoot).trim()
+    expect(existsSync(resolve(worktreePath, 'package.json'))).toBe(false)
+
+    // 2. createWorktree a second time — must reuse without rebuilding.
+    const ref = await createWorktree({ taskId, integrationBranch: 'main' })
+
+    // The worktree is intact: still on the same tip, package.json absent (as
+    // the commit intended), coder's work preserved.
+    expect(ref.path).toBe(worktreePath)
+    expect(ref.branch).toBe(`task/${taskId}`)
+    expect(git(['rev-parse', 'HEAD'], ref.path).trim()).toBe(tipAfterDeletion)
+    expect(existsSync(resolve(ref.path, 'package.json'))).toBe(false)
+  })
+
+  it('reuses a fully intact worktree without rebuilding (no-op on healthy state)', async () => {
+    const { createWorktree } = await import('../worktree')
+    const taskId = 'mars-integ3'
+    const worktreePath = resolve(repoRoot, `.mars/worktrees/${taskId}`)
+    mkdirSync(resolve(worktreePath, '..'), { recursive: true })
+
+    // Two consecutive createWorktree calls on a healthy worktree must both
+    // succeed and leave the worktree at the same tip with all files intact.
+    await createWorktree({ taskId, integrationBranch: 'main' })
+    const tipBefore = git(['rev-parse', `task/${taskId}`], repoRoot).trim()
+
+    const ref = await createWorktree({ taskId, integrationBranch: 'main' })
+
+    expect(ref.path).toBe(worktreePath)
+    expect(ref.branch).toBe(`task/${taskId}`)
+    expect(git(['rev-parse', 'HEAD'], ref.path).trim()).toBe(tipBefore)
+    expect(existsSync(resolve(ref.path, 'package.json'))).toBe(true)
   })
 })

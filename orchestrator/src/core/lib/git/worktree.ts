@@ -76,15 +76,87 @@ export const createWorktree = async ({
   const existingForPath = registered.find((w) => w.path === path)
 
   // Already-registered worktree at the expected path on the expected branch:
-  // reuse it as-is. This is the "skip if it already exists" path.
+  // validate its integrity before reusing it. A partial checkout — e.g.
+  // from an interrupted `git worktree add` or a prior crash (observed on
+  // mars-caae60e2: remerge path produced a husk with no package.json and a
+  // HEAD SHA that mismatched the branch tip) — leaves the worktree registered
+  // on the right branch but unusable. Verify runs in that husk, fails with
+  // npm ENOENT, and the task is classified as `unknown/unclassified` — a pure
+  // infrastructure failure reported as a code failure.
+  //
+  // Integrity criteria (checked concurrently):
+  //   1. `git rev-parse HEAD` in the worktree exits 0 and equals the branch
+  //      tip SHA (guards against gitdir corruption / missing .git link).
+  //   2. package.json is present on disk when the branch's index tracks it
+  //      (guards against a partial/interrupted `git worktree add` that left
+  //      tracked files absent without touching the HEAD ref).
+  //
+  // On any failure, drop the worktree and fall through to the
+  // `git worktree add <path> <branch>` recreate path.
   if (
     existingForBranch &&
     existingForPath &&
     existingForBranch.path === existingForPath.path &&
     (await pathExists(path))
   ) {
-    await provisionWorktreeDeps({ worktreeRoot: path })
-    return { path, branch }
+    let worktreeIntact = false
+    try {
+      // Run HEAD-SHA check and manifest check concurrently.
+      //
+      // 1. HEAD SHA: `git rev-parse HEAD` in the worktree must succeed and
+      //    equal the branch tip.  A missing or corrupt `.git` file (e.g. an
+      //    aborted `git worktree add`) makes the command exit non-zero, which
+      //    is enough to declare the worktree unusable.  For a normally-linked
+      //    worktree HEAD is a symbolic ref → always equals branch tip; this
+      //    check primarily guards against gitdir corruption.
+      //
+      // 2. Manifest completeness: if `package.json` is a tracked file in the
+      //    branch's index (`git ls-files package.json` returns it), it must
+      //    exist on disk.  A partial or interrupted checkout can leave tracked
+      //    files absent without changing the HEAD ref.  We use `ls-files`
+      //    rather than a bare `pathExists` so a coder who deliberately deleted
+      //    package.json via a commit does NOT trigger a false rebuild (the file
+      //    would no longer appear in `git ls-files` output once removed from
+      //    the index).
+      const [headResult, branchResult, lsResult] = await Promise.all([
+        execProbe(resolveGitBin(), ['rev-parse', 'HEAD'], { cwd: path }, setupCtx),
+        execProbe(resolveGitBin(), ['rev-parse', branch], { cwd }, setupCtx),
+        execProbe(resolveGitBin(), ['ls-files', 'package.json'], { cwd: path }, setupCtx),
+      ])
+      const headSha = headResult.stdout.trim()
+      const branchSha = branchResult.stdout.trim()
+      const packageJsonTracked = lsResult.exitCode === 0 && lsResult.stdout.trim().length > 0
+      const packageJsonPresent = packageJsonTracked
+        ? await pathExists(resolve(path, 'package.json'))
+        : true
+      worktreeIntact =
+        headResult.exitCode === 0 &&
+        branchResult.exitCode === 0 &&
+        headSha.length > 0 &&
+        headSha === branchSha &&
+        packageJsonPresent
+    } catch {
+      // Any error → treat as corrupt; fall through to recreate.
+    }
+
+    if (worktreeIntact) {
+      await provisionWorktreeDeps({ worktreeRoot: path })
+      return { path, branch }
+    }
+
+    // Corrupt or HEAD-mismatched: remove the worktree so the subsequent
+    // `git worktree add <path> <branch>` path recreates it from the branch tip.
+    // The `existingForPath.branch === branch` condition means the wrong-branch
+    // cleanup block below is a no-op; the `existingForBranch.path === path`
+    // condition means the wrong-path cleanup block is also a no-op. The
+    // subsequent re-prune and `branchAlreadyExists → git worktree add` path
+    // then reconstitute the worktree correctly.
+    await execProbe(
+      resolveGitBin(),
+      ['worktree', 'remove', '--force', path],
+      { cwd },
+      setupCtx,
+    ).catch(() => {})
   }
 
   // Worktree registered at our path but on a different branch (or detached).

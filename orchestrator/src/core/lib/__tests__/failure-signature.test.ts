@@ -18,6 +18,7 @@ import {
   UNCLASSIFIED_ERROR_CLASS,
   UNKNOWN_STEP_ID,
 } from '../failure-signature'
+import { classifyFailure } from '../failure-class'
 import { truncateFailure } from '../truncate-failure'
 
 describe('recovery-failure reason composition', () => {
@@ -1212,5 +1213,84 @@ describe('typecheck-infra error class rule', () => {
     expect(
       errorClassRules.filter((r) => r.errorClass === 'typecheck-infra'),
     ).toHaveLength(1)
+  })
+})
+
+describe('missing-manifest error class rule', () => {
+  // Regression for mars-caae60e2 (remerge path):
+  //
+  // The task's worktree was a partial checkout — it contained only the
+  // `orchestrator/` directory with no root `package.json`.  Verify ran
+  //   `cd orchestrator && npm run typecheck && npm test`
+  // and npm failed with ENOENT on package.json, producing output like:
+  //   "npm error code ENOENT\nnpm error path /…/worktrees/mars-caae60e2/package.json"
+  //
+  // Before this rule was added, that output fell through to the generic `enoent`
+  // class (infra not set → classified as 'code'), which sent a recovery agent
+  // to fix a code defect that didn't exist.  The `missing-manifest` rule produces
+  // an infra-category signature, consistent with `typecheck-infra`, so the
+  // operator sees `mars restart <id>` instead of a dead-end recovery.
+
+  // Real npm ENOENT output shapes for a missing package.json:
+  const NPM_ENOENT_OUTPUT = [
+    'npm error code ENOENT',
+    'npm error syscall open',
+    'npm error path /Users/dev/.mars/worktrees/mars-caae60e2/package.json',
+    'npm error errno -2',
+    "npm error enoent ENOENT: no such file or directory, open '/…/package.json'",
+  ].join('\n')
+
+  it('classifies npm ENOENT on package.json as missing-manifest', () => {
+    expect(classifyError(NPM_ENOENT_OUTPUT)).toBe('missing-manifest')
+  })
+
+  it('takes precedence over the generic enoent rule', () => {
+    // The generic `enoent` rule would also match; `missing-manifest` must win.
+    expect(classifyError(NPM_ENOENT_OUTPUT)).not.toBe('enoent')
+  })
+
+  it('computeFailureSignature produces a named signature instead of unknown/unclassified', () => {
+    // The original incident had rawFailingStep='unknown' (not a valid step-id).
+    // The refix uses 'verify:spec-verify-cmd' (the structured verify step name).
+    const sig = computeFailureSignature('verify:spec-verify-cmd', NPM_ENOENT_OUTPUT)
+    expect(sig).toBe('verify:spec-verify-cmd/missing-manifest')
+    expect(isUnclassifiedSignature(sig)).toBe(false)
+  })
+
+  it('classifyFailure routes missing-manifest to infra, suppressing a code-fix recovery', () => {
+    // An infra classification means the orchestrator does NOT dispatch a recovery
+    // coding agent — the operator must restart the task instead.
+    expect(classifyFailure('verify:spec-verify-cmd/missing-manifest')).toBe('infra')
+    expect(classifyFailure('verify:test/missing-manifest')).toBe('infra')
+    expect(classifyFailure('verify:typecheck/missing-manifest')).toBe('infra')
+  })
+
+  it('matches lowercase enoent on package.json (case-insensitive)', () => {
+    // Some npm/yarn versions emit lowercase "enoent"
+    expect(
+      classifyError("enoent: no such file or directory, open 'package.json'"),
+    ).toBe('missing-manifest')
+  })
+
+  it('does NOT fire on ENOENT for an unrelated file', () => {
+    // ENOENT on a source file must stay in the generic `enoent` bucket, not
+    // get misclassified as a missing manifest.
+    expect(
+      classifyError("Error: ENOENT: no such file or directory, open 'src/index.ts'"),
+    ).toBe('enoent')
+  })
+
+  it('is registered exactly once in the rule table', () => {
+    expect(
+      errorClassRules.filter((r) => r.errorClass === 'missing-manifest'),
+    ).toHaveLength(1)
+  })
+
+  it('is registered BEFORE the generic enoent rule', () => {
+    const missingManifestIdx = errorClassRules.findIndex(
+      (r) => r.errorClass === 'missing-manifest',
+    )
+    const enoentIdx = errorClassRules.findIndex((r) => r.errorClass === 'enoent')
+    expect(missingManifestIdx).toBeLessThan(enoentIdx)
   })
 })

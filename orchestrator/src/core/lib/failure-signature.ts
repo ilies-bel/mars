@@ -555,6 +555,25 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     matchFull: /worktree deps not provisioned|typecheck-infra: /,
   },
   {
+    // npm (or any manifest-reading tool) could not read package.json because
+    // the file does not exist in the working directory. The canonical cause is
+    // a corrupt or partial worktree checkout — observed on mars-caae60e2
+    // (remerge path): the worktree was a husk containing only `orchestrator/`
+    // with no root package.json. Verify ran `cd orchestrator && npm run
+    // typecheck && npm test` in that husk, npm errored with ENOENT on
+    // package.json, and the task was classified as `unknown/unclassified`.
+    //
+    // This rule produces `verify:infra` (error class `missing-manifest`) so
+    // the failure routes to the infra category, consistent with
+    // `typecheck-infra`. A code-fix recovery agent cannot create a missing
+    // manifest; the operator must restart the task.
+    //
+    // Must be placed BEFORE the generic `enoent` fallback so this named class
+    // wins over the broader path-not-found bucket.
+    errorClass: 'missing-manifest',
+    matchFull: /ENOENT[^\n]*package\.json|enoent[^\n]*package\.json/i,
+  },
+  {
     // File-system path not found.  Covers the Node.js ENOENT error code and
     // the POSIX "no such file or directory" message that both npm and git emit.
     // Fires from the body (matchFull) because the ENOENT marker commonly
