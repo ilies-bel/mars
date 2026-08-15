@@ -5,7 +5,15 @@ const stripUsagePrefix = (usage: string): string => usage.replace(/^usage:\s*/, 
 
 /** Render detailed help for one registered command from its owned metadata. */
 export const renderCommandHelp = (registry: CommandRegistry, command: Command): string => {
-  if (command.helpBody) return command.helpBody
+  const usage = stripUsagePrefix(command.usage)
+  if (command.helpBody) {
+    // Compose the owned header (usage + summary) with the body so every
+    // command's help renders its registered metadata; drop a leading usage
+    // line from bodies that repeat it.
+    let body = command.helpBody
+    if (body.startsWith(`${usage}\n`)) body = body.slice(usage.length).replace(/^\n+/, '')
+    return `${usage}\n\n${command.summary}\n\n${body}`
+  }
 
   const children = command.path.includes(' ')
     ? []
@@ -28,7 +36,7 @@ export const renderCommandHelp = (registry: CommandRegistry, command: Command): 
       .join('\n')}`
   }
 
-  return `${stripUsagePrefix(command.usage)}\n\n${command.summary}${subcommands}${flags}`
+  return `${usage}\n\n${command.summary}${subcommands}${flags}`
 }
 
 /** Render the top-level discovery screen from the registry's insertion order. */
