@@ -11,6 +11,7 @@ to source — they live in the database.
 |-------|------|-----|------|----------|-----------|
 | `ui` | `lint-tokens` | `npm` | `["run","lint:tokens"]` | `true` | Enforces ADR-0083: UI components must only reference semantic tokens. Raw palette classes (`bg-iron`, `text-flame`, …) are forbidden in `src/**/*.tsx`. Any coder that introduces a raw palette class during a visual pass is caught at verify time with the `verify/lint-tokens` signature instead of `verify/unclassified`. |
 | `ui` | `build` | `npm` | `["run","build"]` | `true` | Runs `tsc -b && vite build && tsc -p tsconfig.server.json` inside `ui/`. Catches production-build failures (missing CSS variables, broken `@apply`, unknown Tailwind tokens, composite-ref breakage) that `tsc --noEmit` alone misses. A build failure surfaces as `verify/build` instead of `verify/unclassified`. |
+| `ui` | `e2e-smoke` | `npm` | `["run","test:e2e"]` | `true` | Runs the Playwright SPA smoke test (`ui/e2e/spa-smoke.spec.ts`) against the Vite dev server. Boots the SPA, navigates to the board view (`#/progress?view=board`) and the chat page (`#/chat`), then asserts both surfaces render non-empty DOM. Any coder that crashes the SPA, hides the kanban board, or blanks the seeded feed will fail with a `verify/e2e-smoke` signature. Defined in `ui/playwright.config.ts`; invoked via `npm run test:e2e` from `ui/`. |
 | `e2e` | `smoke` | `npm` | `["run","test:e2e"]` | `true` | Runs the Playwright SPA smoke test suite (`ui/e2e/`) against the production build. Catches routing, hydration, and critical-path regressions that unit tests cannot observe. The consumer slice adds `playwright.config.ts` and the `test:e2e` npm script in `ui/package.json` before this gate is registered. |
 
 ## Rehydrating in a fresh checkout
@@ -31,6 +32,13 @@ mars verify-gate add \
   --name build \
   --cmd npm \
   -- run build
+
+# e2e-smoke — Playwright SPA smoke test (boots dev server, checks board + chat)
+mars verify-gate add \
+  --scope ui \
+  --name e2e-smoke \
+  --cmd npm \
+  -- run test:e2e
 
 # smoke — Playwright SPA smoke tests (run from ui/; requires playwright.config.ts)
 mars verify-gate add \

@@ -2,11 +2,15 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
     "src/**/*.{test,spec}.{ts,tsx}",
-    "server/**/*.{test,spec}.ts"
+    "server/**/*.{test,spec}.ts",
+    "e2e/**/*.spec.ts",
+    "playwright.config.ts"
   ],
   "project": [
     "src/**/*.{ts,tsx,mts,cts,js,mjs,cjs,jsx}",
     "server/**/*.{ts,mts,cts,js,mjs,cjs}",
-    "bin/**/*.{js,mjs,cjs}"
+    "bin/**/*.{js,mjs,cjs}",
+    "e2e/**/*.ts",
+    "playwright.config.ts"
   ]
 }
