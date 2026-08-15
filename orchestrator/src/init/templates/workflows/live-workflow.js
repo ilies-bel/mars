@@ -35,7 +35,7 @@
 import {
   defineWorkflow,
   setupWorktree,
-  runAgent,
+  awaitHuman,
   review,
   merge,
 } from 'mars/workflow'
@@ -47,13 +47,11 @@ export default defineWorkflow({
     // setup → auto: provision the worktree on `task/<id>` and install deps.
     await ctx.step('setup', () => setupWorktree(ctx))
 
-    // code → MANUAL: a Foreground session implements this step. The guide is
+    // code → MANUAL: a Foreground session implements this step. The note is
     // what the action queue and the session hooks show you.
     await ctx.step('code', () =>
-      runAgent(ctx, {
-        mode: 'manual',
-        guide:
-          'Implement the task in this worktree. Journal decisions with `mars task note`, tick done-criteria with `mars task check`, commit as you go, then run `mars step done` to hand off to verify+merge, or `mars release --abort` to exit without merging.',
+      awaitHuman(ctx, {
+        note: 'Implement the task in this worktree. Journal decisions with `mars task note`, tick done-criteria with `mars task check`, commit as you go, then run `mars step done` to hand off to verify+merge, or `mars release --abort` to exit without merging.',
       }),
     )
 

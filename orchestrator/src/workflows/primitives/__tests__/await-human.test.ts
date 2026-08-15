@@ -457,3 +457,96 @@ describe('awaitHuman idempotency via step-completion patch', () => {
     expect(parkCallCount).toBe(1)
   })
 })
+
+// ---------------------------------------------------------------------------
+// 4. Live pipeline: code step uses awaitHuman (parks) not runAgent (coder)
+// ---------------------------------------------------------------------------
+
+describe('live pipeline code step transitions task to awaiting-human', () => {
+  beforeEach(() => {
+    mockUpdateTask.mockClear()
+    mockRaiseActionQueueItem.mockClear()
+  })
+
+  it('awaitHuman in the code step parks the task to awaiting-human, not a worker span', async () => {
+    // Replicate the fixed live-workflow code step shape: awaitHuman, not runAgent.
+    // If runAgent were called here instead, it would not throw WorkflowTerminalError
+    // and would not set status=awaiting-human — it would dispatch a worker span.
+    const ctx = makeCtx('code')
+    await expect(
+      awaitHuman(ctx as never, {
+        note: 'Implement the task in this worktree. Journal decisions with `mars task note`, tick done-criteria with `mars task check`, commit as you go, then run `mars step done`.',
+      }),
+    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+    // The task was parked — not dispatched to a headless coder.
+    expect(mockUpdateTask).toHaveBeenCalledWith(
+      'test-task-id',
+      expect.objectContaining({ status: 'awaiting-human' }),
+      expect.anything(),
+    )
+    // An action-queue row was raised so the operator sees the manual step.
+    expect(mockRaiseActionQueueItem).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'awaiting-human', originTaskId: 'test-task-id' }),
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 5. runAgent unknown-option rejection
+// ---------------------------------------------------------------------------
+
+describe('runAgent unknown-option rejection', () => {
+  beforeEach(() => {
+    mockUpdateTask.mockClear()
+    mockRaiseActionQueueItem.mockClear()
+  })
+
+  it("throws when passed mode:'manual' (the former live-workflow anti-pattern)", async () => {
+    const ctx = makeCtx('code')
+    await expect(
+      runAgent(ctx as never, { mode: 'manual' } as never),
+    ).rejects.toThrow(/runAgent: unknown option\(s\) 'mode'/)
+  })
+
+  it("throws when passed guide (unknown key formerly used alongside mode:'manual')", async () => {
+    const ctx = makeCtx('code')
+    await expect(
+      runAgent(ctx as never, { guide: 'Implement in worktree.' } as never),
+    ).rejects.toThrow(/runAgent: unknown option\(s\) 'guide'/)
+  })
+
+  it('throws listing all unknown keys when multiple are passed', async () => {
+    const ctx = makeCtx('code')
+    const err = await runAgent(ctx as never, { mode: 'manual', guide: 'Implement.' } as never).catch(
+      (e: unknown) => e,
+    )
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toMatch(/'mode'/)
+    expect((err as Error).message).toMatch(/'guide'/)
+  })
+
+  it('suggests awaitHuman as the remedy in the error message', async () => {
+    const ctx = makeCtx('code')
+    await expect(
+      runAgent(ctx as never, { mode: 'manual' } as never),
+    ).rejects.toThrow(/awaitHuman/)
+  })
+
+  it('does not throw for valid known options (dry-run mode returns inert result)', async () => {
+    // Inject a validateRecorder so runAgent short-circuits after the unknown-key
+    // guard — avoids real coder dispatch without a live daemon or worktree.
+    const entries: unknown[] = []
+    const ctx = {
+      ...makeCtx('code'),
+      services: {
+        ...makeCtx('code').services,
+        validateRecorder: { record: (e: unknown) => entries.push(e) },
+      },
+    }
+    const result = await runAgent(ctx as never, { model: 'gpt-5-test' })
+    expect(result).toEqual({ sessionId: null })
+    // The recorder captured the runAgent declaration (auto mode, no guide).
+    expect(entries.length).toBe(1)
+    expect(entries[0]).toMatchObject({ primitive: 'runAgent', mode: 'auto', guide: null })
+  })
+})

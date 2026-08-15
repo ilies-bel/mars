@@ -2,7 +2,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InMemoryStore, runWorkflow } from '@mars/workflow'
+import { defineWorkflow, InMemoryStore, runWorkflow } from '@mars/workflow'
+import type { WorkflowCtx } from '@mars/workflow'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   isWorkflowLoadError,
@@ -10,6 +11,8 @@ import {
   userWorkflowPath,
   workflowFileName,
 } from '../queue-workflow-store'
+import { awaitHuman, merge, review, setupWorktree } from '../primitives'
+import { dryRunWorkflow } from '../validate-workflow'
 
 /**
  * The daemon dispatch loads the user-owned `.mars/workflows/<name>-workflow.js`
@@ -137,7 +140,7 @@ describe('user-owned workflow loading (no fallback)', () => {
     // A simplified live workflow stub that simulates the awaiting-human manual
     // step by writing task state through services.store — the same Arc seam
     // the real live-workflow.js uses at dispatch time. The stub avoids the
-    // real setupWorktree/runAgent/review/merge imports so the test runs
+    // real setupWorktree/awaitHuman/review/merge imports so the test runs
     // without a live daemon.
     writeUserWorkflow(
       'live',
@@ -150,8 +153,8 @@ describe('user-owned workflow loading (no fallback)', () => {
         '      return { ok: true }',
         '    })',
         "    await ctx.step('code', async () => {",
-        '      // In production this step parks the task awaiting-human via runAgent',
-        '      // mode:manual. The stub writes a sentinel status to prove the step ran.',
+        '      // In production this step parks the task awaiting-human via awaitHuman().',
+        '      // The stub writes a sentinel status to prove the step ran.',
         '      await ctx.services.store.updateTask(input.taskId, { status: "awaiting-human" })',
         '      return { ok: true }',
         '    })',
@@ -293,5 +296,48 @@ describe('user-owned workflow loading (no fallback)', () => {
     const steps = await engineStore.listSteps('task-789')
     expect(steps.map((s) => s.name)).toEqual(['only-step'])
     expect(steps.every((s) => s.status === 'completed')).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Live pipeline: code step uses awaitHuman, not runAgent
+// ---------------------------------------------------------------------------
+// These tests verify the fixed live-workflow shape: the manual code step
+// records as awaitHuman/manual in a dry-run, proving it would park the task
+// 'awaiting-human' instead of dispatching a headless coder worker span.
+// ---------------------------------------------------------------------------
+
+describe('live pipeline code step: awaitHuman/manual (not runAgent/auto)', () => {
+  // Use WorkflowCtx type alias so the in-memory live workflow mirrors the
+  // scaffolded template shape without the @mars/workflow import in the test body.
+  type Ctx = WorkflowCtx<never, never>
+
+  it('dry-run records code step as primitive=awaitHuman mode=manual', async () => {
+    const livePipeline = defineWorkflow({
+      id: 'live',
+      async fn(ctx: Ctx) {
+        await ctx.step('setup', () => setupWorktree(ctx as never))
+        await ctx.step('code', () =>
+          awaitHuman(ctx as never, {
+            note: 'Implement the task in this worktree. Journal decisions with `mars task note`, tick done-criteria with `mars task check`, commit as you go, then run `mars step done`.',
+          }),
+        )
+        await ctx.step('verify', () => review(ctx as never))
+        return ctx.step('merge', () => merge(ctx as never))
+      },
+    })
+
+    const r = await dryRunWorkflow(livePipeline as never, 'live')
+    expect(r.errors).toEqual([])
+    // The code step must be recorded as awaitHuman/manual, not runAgent/auto.
+    // If runAgent were mistakenly called here, mode would be 'auto'.
+    expect(r.steps.find(s => s.step === 'code')).toEqual({
+      step: 'code',
+      primitive: 'awaitHuman',
+      mode: 'manual',
+      guide: expect.stringContaining('mars task note'),
+    })
+    // The dry-run must have walked PAST the code step and enumerated verify+merge.
+    expect(r.steps.map(s => s.step)).toEqual(['setup', 'code', 'verify', 'merge'])
   })
 })

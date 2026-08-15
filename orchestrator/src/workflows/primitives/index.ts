@@ -1281,6 +1281,27 @@ export interface RunAgentResult {
 }
 
 /**
+ * All valid option keys for {@link runAgent}. Unknown keys indicate a mis-wired
+ * template (e.g. `mode:'manual'` — use {@link awaitHuman} instead) and are
+ * caught at runtime so a plain-JS workflow file cannot silently degrade a
+ * manual step into a headless coder dispatch.
+ */
+const KNOWN_RUN_AGENT_KEYS: ReadonlySet<string> = new Set<keyof RunAgentOpts>([
+  'prompt',
+  'plan',
+  'tags',
+  'kind',
+  'spec',
+  'integrationBranch',
+  'resumeFromPriorAttempt',
+  'verifyFailureOutput',
+  'taskId',
+  'worktree',
+  'model',
+  'modelTier',
+])
+
+/**
  * Run the coder through the selected headless provider inside the worktree. Mirrors the former
  * `run-claude-code` step body: sweeps stray debris from a prior failed attempt
  * (gated on 0 commits ahead), composes the full prompt, picks the worker
@@ -1302,6 +1323,18 @@ export const runAgent = async (
   ctx: MarsCtx,
   opts: RunAgentOpts = {},
 ): Promise<RunAgentResult> => {
+  // Unknown option keys are silently dropped at the TypeScript type level when
+  // the caller is a plain-JS workflow file. Detect them loudly here so a
+  // template bug (e.g. `{ mode: 'manual', guide: '...' }`) cannot silently
+  // degrade a manual step into a headless coder dispatch. Use
+  // `awaitHuman(ctx, { note })` to park a step for human implementation.
+  const unknownKeys = Object.keys(opts).filter(k => !KNOWN_RUN_AGENT_KEYS.has(k))
+  if (unknownKeys.length > 0) {
+    throw new Error(
+      `runAgent: unknown option(s) ${unknownKeys.map(k => `'${k}'`).join(', ')} — ` +
+        `did you mean awaitHuman(ctx, { note }) for a manual step?`,
+    )
+  }
   const recorder = validationRecorder(ctx)
   if (recorder) {
     recorder.record({
