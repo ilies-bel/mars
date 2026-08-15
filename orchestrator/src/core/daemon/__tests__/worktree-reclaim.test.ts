@@ -397,3 +397,142 @@ describe('writeFileSync in worktree dir creates measurable size', () => {
     expect(fp1.totalBytes).toBeGreaterThanOrEqual(0) // at least non-negative
   })
 })
+
+// ── Shared-worktree guard tests ───────────────────────────────────────────────
+//
+// Regression coverage for the periodic sweep bypassing isWorktreeSharedWithLiveTask
+// (mars-caae60e2 incident): a settled or excess-failed task whose worktree_path
+// is shared with a live (non-terminal) task must be SKIPPED, not removed.
+//
+// The guard was already applied in the drop handler (server.ts) and purge path
+// (purge-task.ts) by mars-330d72e2, but the periodic reclaim sweep was missed.
+
+describe('reclaimSettledWorktrees — shared-worktree guard', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('does NOT remove the worktree when a dropped task shares its path with a live task', async () => {
+    const { q, r } = await loadModules(repo)
+
+    // Live (running) origin task whose worktree is the shared directory.
+    const origin = await q.enqueueTask('live origin', undefined, { skipTriage: true })
+    const sharedPath = makeWorktreeDir(repo, origin.id)
+    await q.updateTask(origin.id, { status: 'running', worktreePath: sharedPath })
+
+    // Fix task (dropped) pointing at the same worktree path.
+    const fix = await q.enqueueTask('fix task', undefined, { skipTriage: true })
+    await q.updateTask(fix.id, { status: 'dropped', worktreePath: sharedPath })
+
+    const result = await r.reclaimSettledWorktrees(repo)
+
+    // The sweep must skip the shared path — the live origin is still using it.
+    expect(result.removed).not.toContain(fix.id)
+    expect(existsSync(sharedPath)).toBe(true)
+  })
+
+  it('does NOT remove the worktree when a done fix task shares its path with a verifying origin', async () => {
+    const { q, r } = await loadModules(repo)
+
+    // Origin in non-terminal status (verifying) — the exact scenario from mars-caae60e2.
+    const origin = await q.enqueueTask('verifying origin', undefined, { skipTriage: true })
+    const sharedPath = makeWorktreeDir(repo, origin.id)
+    await q.updateTask(origin.id, { status: 'verifying', worktreePath: sharedPath })
+
+    // Fix task that completed (done) but still has the shared worktree_path.
+    const fix = await q.enqueueTask('done fix', undefined, { skipTriage: true })
+    await q.updateTask(fix.id, { status: 'done', worktreePath: sharedPath })
+
+    const result = await r.reclaimSettledWorktrees(repo)
+
+    expect(result.removed).not.toContain(fix.id)
+    expect(existsSync(sharedPath)).toBe(true)
+  })
+
+  it('DOES remove the worktree when the sharing task has since settled (no longer live)', async () => {
+    const { q, r } = await loadModules(repo)
+
+    // Origin is now done (terminal) — the path is no longer actively used.
+    const origin = await q.enqueueTask('done origin', undefined, { skipTriage: true })
+    const sharedPath = makeWorktreeDir(repo, origin.id)
+    await q.updateTask(origin.id, { status: 'done', worktreePath: sharedPath })
+
+    // Fix task also done, pointing at the same path.
+    const fix = await q.enqueueTask('done fix', undefined, { skipTriage: true })
+    await q.updateTask(fix.id, { status: 'done', worktreePath: sharedPath })
+
+    const result = await r.reclaimSettledWorktrees(repo)
+
+    // Both are terminal; the path is cleaned up (at least one of them removes it).
+    expect(existsSync(sharedPath)).toBe(false)
+    // At least the first settled task in the sweep removes the path.
+    expect(result.removed.length).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('reclaimExcessFailedWorktrees — shared-worktree guard', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_FAILED_WORKTREE_CAP
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('does NOT remove a failed worktree that is shared with a live task even when over cap', async () => {
+    const { q, r } = await loadModules(repo)
+    const cap = 1
+
+    // Three failed tasks → over cap=1 by 2, the two oldest should be removed.
+    // Make t0 shared so the guard protects it; t1 is unprotected and gets removed.
+    const t0 = await q.enqueueTask('failed 0 (shared)', undefined, { skipTriage: true })
+    await q.updateTask(t0.id, { status: 'failed', error: 'boom' })
+    const wt0 = makeWorktreeDir(repo, t0.id)
+    const oldestTime = new Date(Date.now() - 30_000)
+    utimesSync(wt0, oldestTime, oldestTime)
+
+    const t1 = await q.enqueueTask('failed 1 (not shared)', undefined, { skipTriage: true })
+    await q.updateTask(t1.id, { status: 'failed', error: 'boom' })
+    const wt1 = makeWorktreeDir(repo, t1.id)
+    const middleTime = new Date(Date.now() - 20_000)
+    utimesSync(wt1, middleTime, middleTime)
+
+    const t2 = await q.enqueueTask('failed 2 (newest, kept)', undefined, { skipTriage: true })
+    await q.updateTask(t2.id, { status: 'failed', error: 'boom' })
+    const wt2 = makeWorktreeDir(repo, t2.id)
+    const newestTime = new Date(Date.now() - 10_000)
+    utimesSync(wt2, newestTime, newestTime)
+
+    // A live task that shares t0's worktree path — triggers the guard.
+    const live = await q.enqueueTask('live origin', undefined, { skipTriage: true })
+    await q.updateTask(live.id, { status: 'running', worktreePath: wt0 })
+
+    // Also record t0's worktreePath so isWorktreeSharedWithLiveTask matches it.
+    await q.updateTask(t0.id, { worktreePath: wt0 })
+
+    const result = await r.reclaimExcessFailedWorktrees(repo, undefined, cap)
+
+    // t0 is oldest (would be evicted) but the guard skips it — live origin uses it.
+    expect(result.removed).not.toContain(t0.id)
+    expect(existsSync(wt0)).toBe(true)
+
+    // t1 is second-oldest, NOT shared → removed.
+    expect(result.removed).toContain(t1.id)
+    expect(existsSync(wt1)).toBe(false)
+
+    // t2 is the newest (within the cap=1 retained set) → kept.
+    expect(result.removed).not.toContain(t2.id)
+    expect(existsSync(wt2)).toBe(true)
+  })
+})

@@ -31,7 +31,7 @@
 
 import { readdir, rm, stat, statfs } from 'node:fs/promises'
 import { join } from 'node:path'
-import { listTasks } from '../queue'
+import { isWorktreeSharedWithLiveTask, listTasks } from '../queue'
 
 /** Default cap for retained `failed` worktrees. */
 export const FAILED_WORKTREE_CAP_DEFAULT = 10
@@ -130,6 +130,21 @@ export async function reclaimSettledWorktrees(
     }
     if (!exists) continue
 
+    // Guard: skip removal when another non-terminal task shares the same
+    // worktree_path or branch. Fix/rescue tasks store the origin's path/branch
+    // on their own row; a settled fix task must not destroy filesystem resources
+    // still owned by a live origin (or vice-versa). See mars-330d72e2 and
+    // mars-caae60e2 (periodic sweep bypassed the guard that drop applied).
+    const branch = task.branch ?? `task/${task.id}`
+    const shared = await isWorktreeSharedWithLiveTask(task.worktreePath ?? null, branch, task.id)
+    if (shared) {
+      log?.(
+        `[worktree-reclaim] skipping ${task.status} task ${task.id}: ` +
+          `worktree ${worktreePath} is still referenced by a live task`,
+      )
+      continue
+    }
+
     // Before removing the worktree, repair any cross-worktree node_modules
     // symlinks that pnpm may have created in the parent repo while this
     // worktree was alive. Must happen BEFORE removeDir so the worktree's
@@ -189,6 +204,16 @@ export async function sweepOrphanWorktrees(
     }
 
     const path = join(worktreesDir(repoRoot), name)
+
+    // Guard: skip if any live task references this directory by worktree_path.
+    // Orphan dirs have no task row, so we perform a path-only check (no branch
+    // to pass; the empty-string branch never matches any real task row).
+    const shared = await isWorktreeSharedWithLiveTask(path, '', '')
+    if (shared) {
+      log?.(`[worktree-reclaim] skipping orphan dir ${name}: path is referenced by a live task`)
+      continue
+    }
+
     const ok = await removeDir(path)
     if (ok) {
       log?.(`[worktree-reclaim] removed orphan worktree dir: ${name}`)
@@ -233,8 +258,8 @@ export async function reclaimExcessFailedWorktrees(
   const failedTasks = await listTasks('failed')
   const baseDir = worktreesDir(repoRoot)
 
-  // Build (taskId, path, mtime) for failed tasks that have a worktree on disk.
-  const withMtime: Array<{ id: string; path: string; mtimeMs: number }> = []
+  // Build (taskId, path, mtime, branch) for failed tasks that have a worktree on disk.
+  const withMtime: Array<{ id: string; path: string; mtimeMs: number; branch: string | null }> = []
   for (const task of failedTasks) {
     const path = task.worktreePath ?? join(baseDir, task.id)
     let mtime: number
@@ -244,7 +269,7 @@ export async function reclaimExcessFailedWorktrees(
     } catch {
       continue // No worktree on disk — skip.
     }
-    withMtime.push({ id: task.id, path, mtimeMs: mtime })
+    withMtime.push({ id: task.id, path, mtimeMs: mtime, branch: task.branch ?? null })
   }
 
   if (withMtime.length <= effectiveCap) return result
@@ -253,6 +278,16 @@ export async function reclaimExcessFailedWorktrees(
   withMtime.sort((a, b) => a.mtimeMs - b.mtimeMs)
   const excess = withMtime.slice(0, withMtime.length - effectiveCap)
   for (const entry of excess) {
+    // Guard: skip if any live task still shares this worktree path or branch.
+    const branch = entry.branch ?? `task/${entry.id}`
+    const shared = await isWorktreeSharedWithLiveTask(entry.path, branch, entry.id)
+    if (shared) {
+      log?.(
+        `[worktree-reclaim] cap=${effectiveCap}: skipping failed task ${entry.id}: ` +
+          `worktree ${entry.path} is still referenced by a live task`,
+      )
+      continue
+    }
     const ok = await removeDir(entry.path)
     if (ok) {
       log?.(
