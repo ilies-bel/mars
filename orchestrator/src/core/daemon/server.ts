@@ -1967,6 +1967,7 @@ export const startDaemon = async (
             break
           case 'coder-exit-nonzero':
           case 'coder-uncommitted':
+          case 'coder-empty-diff':
             // The code step already marked this task failed and spawned recovery.
             log(`[implement] ${task.id} coder self-handled abort (exception path); task already marked failed, recovery spawned`)
             break

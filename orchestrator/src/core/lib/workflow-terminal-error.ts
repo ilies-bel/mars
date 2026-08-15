@@ -33,6 +33,7 @@ export type WorkflowTerminalKind =
   | 'origin-terminal'
   | 'coder-exit-nonzero'
   | 'coder-uncommitted'
+  | 'coder-empty-diff'
   | 'quota-rejected'
   | 'main-dirty-verify'
   | 'main-dirty-merge'
