@@ -96,6 +96,16 @@ vi.mock('../../../core/lib/origin', () => ({
   resolveOriginIdForTask: vi.fn().mockImplementation(async (id: string) => id),
 }))
 
+// Stub restoreWorktreeIfMissing so the verify-step preflight passes for
+// synthetic task ids that never had real worktrees or branches.
+vi.mock('../../../core/lib/git/worktree', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../../../core/lib/git/worktree')>()
+  return {
+    ...orig,
+    restoreWorktreeIfMissing: vi.fn().mockResolvedValue('present'),
+  }
+})
+
 // Import the primitive AFTER vi.mock() calls are hoisted.
 const { review } = await import('../index')
 

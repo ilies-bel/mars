@@ -317,11 +317,12 @@ describe('setup-worktree dirty-integration preflight guard', () => {
     // Act
     await expect(setupWorktree(ctx)).rejects.toThrow(WorkflowTerminalError)
 
-    // Assert: task is blocked
-    const blockedCall = mockUpdateTask.mock.calls.find(
-      (call) => call[1]?.status === 'blocked',
+    // Assert: task is failed (dirty-integration uses 'failed', not 'blocked',
+    // to satisfy the edgeless-blocked invariant)
+    const failedCall = mockUpdateTask.mock.calls.find(
+      (call) => call[1]?.status === 'failed',
     )
-    expect(blockedCall).toBeDefined()
+    expect(failedCall).toBeDefined()
 
     // Assert: worktree was NOT created
     expect(mockCreateWorktree).not.toHaveBeenCalled()
@@ -498,11 +499,11 @@ describe('setup-worktree auto-stash of .mars/ preflight artifacts', () => {
     // Act: should throw WorkflowTerminalError
     await expect(setupWorktree(ctx)).rejects.toThrow(WorkflowTerminalError)
 
-    // Assert: task blocked
-    const blockedCall = mockUpdateTask.mock.calls.find(
-      (call) => (call[1] as Record<string, unknown>)?.status === 'blocked',
+    // Assert: task failed (dirty-integration uses 'failed', not 'blocked')
+    const failedCall = mockUpdateTask.mock.calls.find(
+      (call) => (call[1] as Record<string, unknown>)?.status === 'failed',
     )
-    expect(blockedCall).toBeDefined()
+    expect(failedCall).toBeDefined()
 
     // Assert: NO checkpoint was written
     expect(mockCaptureCheckpoint).not.toHaveBeenCalled()
@@ -513,18 +514,18 @@ describe('setup-worktree auto-stash of .mars/ preflight artifacts', () => {
   })
 
   it('(c) parks the task as blocked when only user-owned files are dirty (regression)', async () => {
-    // Regression guard for slice 1: pure user-owned dirty paths must still block.
+    // Regression guard for slice 1: pure user-owned dirty paths must still fail.
     const statusOutput = ' M README.md\n?? scratch.txt'
     mockCheckIntegrationBranchDirty.mockResolvedValue({ dirty: true, statusOutput })
     const ctx = makeCtx('test-user-only')
 
     await expect(setupWorktree(ctx)).rejects.toThrow(WorkflowTerminalError)
 
-    // Task parked as blocked
-    const blockedCall = mockUpdateTask.mock.calls.find(
-      (call) => (call[1] as Record<string, unknown>)?.status === 'blocked',
+    // Task set to failed (dirty-integration uses 'failed', not 'blocked')
+    const failedCall = mockUpdateTask.mock.calls.find(
+      (call) => (call[1] as Record<string, unknown>)?.status === 'failed',
     )
-    expect(blockedCall).toBeDefined()
+    expect(failedCall).toBeDefined()
 
     // No checkpoint captured, no worktree created
     expect(mockCaptureCheckpoint).not.toHaveBeenCalled()

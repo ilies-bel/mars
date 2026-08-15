@@ -18,6 +18,9 @@
  * This test confirms both ends of the pipe are connected.
  */
 import { EventEmitter } from 'node:events'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { MergeJob, MergeJobStore, EnqueueMergeJobInput } from '../../core/store/merge-job-store.js'
 
@@ -35,6 +38,8 @@ vi.mock('../../core/lib/git/merge', () => ({
   // module shape is valid.
   mergeBranch: async () => { throw new Error('mergeBranch should not be called in queue path') },
   MergeAbortedError: class MergeAbortedError extends Error {},
+  // DEFAULT_WATCHDOG_MS is imported by merge-worker for the enqueueMergeJobAndAwait timeout.
+  DEFAULT_WATCHDOG_MS: 5_000,
 }))
 
 vi.mock('../../core/queue', async (importOriginal) => {
@@ -92,6 +97,10 @@ vi.mock('../../core/lib/reflect-signals', () => ({
 vi.mock('../../core/store/memory-packet-store', () => ({
   resolveTaskDomains: async () => [],
   fetchLessonsForTask: async () => null,
+}))
+
+vi.mock('../../core/lib/worktree-dependents', () => ({
+  findLiveWorktreeDependents: async () => [],
 }))
 
 // ── In-memory merge-job store ─────────────────────────────────────────────────
@@ -279,25 +288,36 @@ describe('merge primitive — strict sequential execution via durable queue', ()
     const taskId1 = 'e2e-task-1'
     const taskId2 = 'e2e-task-2'
 
-    const ctx1 = makeCtx(taskId1, '/fake/wt1', `task/${taskId1}`, enqueueFn)
-    const ctx2 = makeCtx(taskId2, '/fake/wt2', `task/${taskId2}`, enqueueFn)
+    // Create real temp directories — the merge-worker preflights existsSync(worktreePath).
+    const wt1 = mkdtempSync(join(tmpdir(), 'mars-merge-e2e-wt1-'))
+    const wt2 = mkdtempSync(join(tmpdir(), 'mars-merge-e2e-wt2-'))
 
-    // Both merge calls start concurrently — the queue serialises their worker
-    // execution even though they arrive simultaneously.
-    const [result1, result2] = await Promise.all([
-      merge(ctx1 as never, { worktree: { path: '/fake/wt1', branch: `task/${taskId1}` } }),
-      merge(ctx2 as never, { worktree: { path: '/fake/wt2', branch: `task/${taskId2}` } }),
-    ])
+    let result1: Awaited<ReturnType<typeof merge>>
+    let result2: Awaited<ReturnType<typeof merge>>
+    try {
+      const ctx1 = makeCtx(taskId1, wt1, `task/${taskId1}`, enqueueFn)
+      const ctx2 = makeCtx(taskId2, wt2, `task/${taskId2}`, enqueueFn)
 
-    // Stop the worker.
-    ac.abort()
-    await worker.stop()
+      // Both merge calls start concurrently — the queue serialises their worker
+      // execution even though they arrive simultaneously.
+      ;[result1, result2] = await Promise.all([
+        merge(ctx1 as never, { worktree: { path: wt1, branch: `task/${taskId1}` } }),
+        merge(ctx2 as never, { worktree: { path: wt2, branch: `task/${taskId2}` } }),
+      ])
+    } finally {
+      // Stop the worker.
+      ac.abort()
+      await worker.stop()
+      // Clean up temp dirs.
+      try { rmSync(wt1, { recursive: true }) } catch {}
+      try { rmSync(wt2, { recursive: true }) } catch {}
+    }
 
     // Both calls must succeed.
-    expect(result1.success).toBe(true)
-    expect(result2.success).toBe(true)
-    expect(result1.taskId).toBe(taskId1)
-    expect(result2.taskId).toBe(taskId2)
+    expect(result1!.success).toBe(true)
+    expect(result2!.success).toBe(true)
+    expect(result1!.taskId).toBe(taskId1)
+    expect(result2!.taskId).toBe(taskId2)
 
     // Sequential invariant: exactly two invocations, one after the other.
     expect(mergeStarts).toHaveLength(2)
