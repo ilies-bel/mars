@@ -131,6 +131,9 @@ import {
   BLOCKERS_ABORT_MESSAGE,
   coderUncommittedFailure,
   CODER_EXIT_NONZERO_ABORT_MESSAGE,
+  CODER_EMPTY_DIFF_ABORT_MESSAGE,
+  CODER_EMPTY_DIFF_SIGNATURE,
+  CODER_EMPTY_DIFF_STEP,
   CODER_UNCOMMITTED_ABORT_MESSAGE,
   CODER_UNCOMMITTED_SIGNATURE,
   CODER_UNCOMMITTED_STEP,
@@ -1978,6 +1981,49 @@ export const runAgent = async (
     )
   }
 
+  // --- Empty-diff guard -------------------------------------------------------
+  // `clean-no-work` (0 commits ahead, worktree clean) after a coder exit 0
+  // almost always means the worker bailed silently — it printed something,
+  // decided it was done, and exited without touching a single file. That is
+  // never correct for a real coding task: the task appears 'done' in the UI
+  // but produced zero work (the mars-f2a5d4ea incident). Detect it here,
+  // before the dirty-check, and fail with a named signature so recovery can
+  // re-run the prompt.
+  //
+  // Exception: main-committer recovery tasks. Their correct success state IS
+  // zero commits — they exist specifically to handle the case where the
+  // integration branch self-healed before the task ran. parseMainCommiterPayload
+  // returns a non-null value for those tasks; we let them fall through.
+  if (postState?.kind === 'clean-no-work') {
+    const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
+      '../../core/lib/main-dirty'
+    )
+    const isMainCommitter =
+      parseMainCommiterPayload(fullTask?.recoveryPayload ?? null)?.recipe === MAIN_COMMITER_RECIPE
+    if (!isMainCommitter) {
+      const errorMsg = CODER_EMPTY_DIFF_ABORT_MESSAGE(taskId, integrationBranch)
+      console.log(
+        `[post-coder] task ${taskId}: clean-no-work — coder produced zero commits, failing with ${CODER_EMPTY_DIFF_SIGNATURE}`,
+      )
+      await updateTask(
+        taskId,
+        {
+          status: 'failed',
+          error: errorMsg,
+          failedPhase: 'code',
+          failureReason: CODER_EMPTY_DIFF_STEP,
+          failureSignature: CODER_EMPTY_DIFF_SIGNATURE,
+          failureReasonCode: CODER_EMPTY_DIFF_SIGNATURE,
+        },
+        store,
+      )
+      throw new WorkflowTerminalError('coder-empty-diff', errorMsg)
+    }
+    console.log(
+      `[post-coder] task ${taskId}: clean-no-work on main-committer recovery — no-op accepted`,
+    )
+  }
+
   // --- Coder commit contract -----------------------------------------------
   // Post-condition on the `code` step: the coder must hand over a CLEAN
   // worktree. TWO shapes violate it and they are the SAME defect, so they get
@@ -2010,14 +2056,6 @@ export const runAgent = async (
   // (pre-commit hook, nothing stageable). That case keeps the registered
   // `code/uncommitted-changes` signature, which failure-kinds.ts and
   // fix-recipes.ts both know how to name and recover.
-  //
-  // Deliberately NOT asserted here: that the branch is ahead of
-  // `integrationBranch`. Zero commits ahead is a legitimate terminal state —
-  // verify's has-diff gate passes it on purpose (a task that correctly
-  // concluded there was nothing to do, or whose work already landed upstream;
-  // see the 2026-05-29 main-committer incident documented in
-  // `core/lib/git/verify.ts`). The clean-tree assertion has no such exemption
-  // and applies to every path.
   if (postState?.kind === 'dirty-no-commits' || postState?.kind === 'dirty-with-commits') {
     const dirtyList = postState.dirtyFiles.join('\n  ')
     const committedNote =

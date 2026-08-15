@@ -291,7 +291,15 @@ describe('auto-commit fast path for coder-left-uncommitted', () => {
   })
 
   it('gives a resumed coder the verify failure that needs fixing', async () => {
-    mockRunWorkerWithSpan.mockResolvedValue(cleanCoderResult())
+    // Simulate a coder that commits its fix so the empty-diff guard does not
+    // fire. The test is checking that the PROMPT contains the verify failure —
+    // the coder's commit behaviour is incidental to that assertion.
+    mockRunWorkerWithSpan.mockImplementation(async () => {
+      writeFileSync(resolve(repo, 'fix.ts'), 'export const fix = true\n')
+      execFileSync('git', ['add', 'fix.ts'], { cwd: repo })
+      execFileSync('git', ['commit', '-q', '-m', 'fix: address verify failure'], { cwd: repo })
+      return cleanCoderResult()
+    })
     const ctx = makeCtx('test-auto', makeStore()) as {
       input: Record<string, unknown>
     }

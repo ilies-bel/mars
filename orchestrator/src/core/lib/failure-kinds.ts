@@ -628,6 +628,20 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: DEFAULT_ACTIONS,
       },
 
+      // ── code/empty-diff ──────────────────────────────────────────────────
+      // The coder exited cleanly (exit 0) but produced zero commits — the
+      // worktree is clean and 0 commits ahead of the integration branch. The
+      // worker bailed silently without touching any files. A recovery task
+      // re-runs the original prompt so the work actually gets done.
+      {
+        signature: 'code/empty-diff',
+        staticEncodable: notEncodable('orchestration'),
+        warmTitle: 'The coder exited without producing any commits',
+        verboseReason:
+          'The code step finished with zero commits and a clean worktree — the worker bailed silently without touching any files. A recovery task re-runs the original prompt.',
+        actions: DEFAULT_ACTIONS,
+      },
+
       // ── code/uncommitted-changes ─────────────────────────────────────────
       // The coder exited cleanly but left real work uncommitted in the
       // worktree AND the orchestrator's deterministic auto-commit

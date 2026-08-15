@@ -152,6 +152,14 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     match: /no commits ahead of integration branch/i,
   },
   {
+    // code phase fires this when the coder exits code 0 but produced zero
+    // commits — `clean-no-work` state. The abort message always contains the
+    // phrase below, so computeFailureSignature('code', task.error) resolves to
+    // 'code/empty-diff' in the recovery-spawn subscriber.
+    errorClass: 'empty-diff',
+    match: /produced zero commits — empty diff/i,
+  },
+  {
     // verify:has-diff fires this when the git spawn's working directory is
     // absent — the worktree was pruned (e.g. daemon restart / recover sweep)
     // while the task was still in flight. Distinguishable from a genuine

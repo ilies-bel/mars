@@ -911,6 +911,48 @@ const coderLeftUncommittedRecipe: FixRecipe = {
   },
 }
 
+/**
+ * `code/empty-diff` — the coder exited cleanly (exit 0) with a clean
+ * worktree and zero commits ahead of the integration branch. The worker
+ * bailed silently without touching any files. Recovery re-runs the original
+ * prompt from a FRESH recovery worktree (same pattern as fix recipes that
+ * run on a fresh branch, since the task branch is pristine).
+ */
+const coderEmptyDiffRecipe: FixRecipe = {
+  signature: 'code/empty-diff',
+  title: (ctx) =>
+    `Implement the task that the coder abandoned without committing on ${ctx.targetBranch || 'the task branch'}`,
+  buildPrompt: (ctx) => {
+    const integration = ctx.integrationBranch ?? 'main'
+    const countCmd = `git rev-list --count ${integration}..HEAD`
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-query the Mars DB via psql "$(cat .mars/pg.dsn)")`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `# Recovery run — the coder exited without committing anything`,
+      '',
+      `The coder for branch ${ctx.targetBranch} exited with code 0 but produced ZERO commits — the tree was clean and nothing changed. The task appeared to succeed but delivered no work at all. You are here to actually implement it.`,
+      '',
+      `You are running in a FRESH recovery worktree on a FRESH branch. Your job is to implement the original task and leave at least one commit here — in your own cwd, on your own branch. Do NOT \`cd\` into ${ctx.targetPath}: that is the failed tree (clean but empty).`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      ...sourcePromptSection,
+      `Integration branch: ${integration}`,
+      `Failed branch (do NOT modify): ${ctx.targetBranch}`,
+      '',
+      `When you are done, run \`${countCmd}\` — it MUST print a non-zero integer before you exit.`,
+      '',
+      `Save your work: the commit IS the deliverable. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
 const testNoSuiteFoundRecipe: FixRecipe = {
   signature: 'verify:test/test-no-suite-found',
   title: (ctx) =>
@@ -1479,6 +1521,7 @@ const recipeList: readonly FixRecipe[] = [
   typecheckTypeMismatchRecipe,
   testAssertionErrorRecipe,
   testNoSuiteFoundRecipe,
+  coderEmptyDiffRecipe,
   coderLeftUncommittedRecipe,
   mergeWatchdogContinueRecipe,
 ]

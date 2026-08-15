@@ -135,6 +135,30 @@ export const CODER_UNCOMMITTED_STEP = 'code'
 // failure and self-heal knows how to fix it.
 export const CODER_UNCOMMITTED_SIGNATURE = `${CODER_UNCOMMITTED_STEP}/uncommitted-changes`
 
+// ── code/empty-diff ──────────────────────────────────────────────────────────
+// Failing path for a coder that exits code 0 with a clean worktree AND zero
+// commits ahead of the integration branch — the worker bailed silently without
+// touching any files. Distinct from `code/uncommitted-changes` (dirty tree),
+// and registered in both `failure-kinds.ts` and `fix-recipes.ts` so the action
+// queue can name the failure and self-heal knows how to re-run the prompt.
+// Exception: main-committer recovery tasks are exempt (their correct success
+// state IS zero commits — the integration branch self-healed before they ran).
+
+/** Abort message for the empty-diff guard. Must contain the phrase that
+ * `failure-signature.ts` matches so `computeFailureSignature('code', error)`
+ * always resolves back to `CODER_EMPTY_DIFF_SIGNATURE`. */
+export const CODER_EMPTY_DIFF_ABORT_MESSAGE = (
+  taskId: string,
+  integrationBranch: string,
+): string =>
+  `coder for task ${taskId} produced zero commits — empty diff against ${integrationBranch}`
+
+/** The failing-step id for the empty-diff path (must be the bare step id). */
+export const CODER_EMPTY_DIFF_STEP = 'code'
+
+/** Structured failure signature stamped on the task for the empty-diff path. */
+export const CODER_EMPTY_DIFF_SIGNATURE = `${CODER_EMPTY_DIFF_STEP}/empty-diff`
+
 // Thrown by the code step when the provider rejects the run due to a rate or
 // spend limit (NOT a code failure). The task is re-queued with its worktree
 // intact; no recovery fix-task is spawned. The daemon catches this sentinel to
