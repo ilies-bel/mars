@@ -4508,6 +4508,33 @@ export const startDaemon = async (
         ...(note !== undefined ? { note } : {}),
       })
     } else {
+      // Patch the parked step to 'completed' before re-queuing so the engine
+      // short-circuits it on re-dispatch (same logic as handleStepDone Path 2).
+      // Without this, a daemon restart between park and release leaves the step
+      // as 'running' or 'failed', causing the engine to re-execute it and re-park.
+      const releaseStepName = task.currentStepName ?? null
+      if (releaseStepName !== null) {
+        try {
+          const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
+          const wfStore = createQueueWorkflowStore()
+          const releasePrior = await wfStore.getStep(id, releaseStepName)
+          if (releasePrior !== undefined && releasePrior.status !== 'completed') {
+            await wfStore.putStep({
+              ...releasePrior,
+              status: 'completed',
+              finishedAt: Date.now(),
+              resultJson: releasePrior.resultJson ?? JSON.stringify({ parkedForHuman: true }),
+            })
+            log(`[release] ${id}: patched step '${releaseStepName}' to completed for engine re-entry`)
+          }
+        } catch (patchErr) {
+          log(
+            `[release] ${id}: step-completion patch errored (non-fatal): ${
+              patchErr instanceof Error ? patchErr.message : String(patchErr)
+            }`,
+          )
+        }
+      }
       await Arc.load(id).releaseLease(id)
       bus.emit('task.queued', { taskId: id })
     }
@@ -4553,6 +4580,38 @@ export const startDaemon = async (
       return
     }
     // Path 2: sentinel fallback — re-queue for engine re-entry.
+    // Patch the step record to 'completed' before re-queuing so the engine
+    // short-circuits it on re-dispatch. This covers two cases:
+    //   (a) Promise path with daemon restart: step status is 'running' (the
+    //       in-process workflow was suspended but the daemon died before it
+    //       resumed to write 'completed').
+    //   (b) Sentinel path with daemon crash: the daemon died between runWorkflow
+    //       returning and the 'await-human' result-handler patch at ~server.ts:1871,
+    //       leaving step status as 'failed'.
+    // Without this patch the engine re-executes the step on re-dispatch, calling
+    // awaitHuman again and creating an infinite re-park loop.
+    if (stepName !== 'unknown') {
+      try {
+        const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
+        const wfStore = createQueueWorkflowStore()
+        const prior = await wfStore.getStep(id, stepName)
+        if (prior !== undefined && prior.status !== 'completed') {
+          await wfStore.putStep({
+            ...prior,
+            status: 'completed',
+            finishedAt: Date.now(),
+            resultJson: prior.resultJson ?? JSON.stringify({ parkedForHuman: true }),
+          })
+          log(`[step-done] ${id}: patched step '${stepName}' to completed for engine re-entry`)
+        }
+      } catch (patchErr) {
+        log(
+          `[step-done] ${id}: step-completion patch errored (non-fatal): ${
+            patchErr instanceof Error ? patchErr.message : String(patchErr)
+          }`,
+        )
+      }
+    }
     await Arc.load(id).releaseLease(id, { keepLease: true })
     bus.emit('task.queued', { taskId: id })
   }
