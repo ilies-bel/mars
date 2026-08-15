@@ -169,6 +169,16 @@ const FAILED_PHASE_FOR_STATUS: Record<(typeof PHANTOM_STATUSES)[number], 'code' 
  *                           entry has kind='merge' but no active merge job is
  *                           failed immediately (before the ceiling fires) because
  *                           the merge worker has no job to process.
+ * @param isVerifyRunning    Optional predicate: given a taskId, returns true if
+ *                           this daemon is currently running the verify phase for
+ *                           that task (i.e. the task has called acquireVerifySlot
+ *                           but not yet releaseVerifySlot). When this returns true
+ *                           for a 'verifying' task with no in-flight entry, the
+ *                           task is skipped — it is live and may legitimately run
+ *                           beyond the default ceiling (e.g. a 30+ min test suite
+ *                           on a remerge re-verify). Only tasks orphaned from a
+ *                           prior daemon (not tracked by this predicate) fall
+ *                           through to the wall-clock ceiling backstop.
  * @returns                  IDs of every task that was auto-failed, and IDs of
  *                           every orphaned 'running' task that was re-queued as a
  *                           safety net (no in-flight entry from this daemon).
@@ -179,6 +189,7 @@ export const sweepPhantomTasks = async (
   isAlive?: (pid: number) => boolean,
   nowMs?: number,
   hasActiveMergeJob?: (taskId: string) => Promise<boolean>,
+  isVerifyRunning?: (taskId: string) => boolean,
 ): Promise<{ failed: string[]; requeued: string[] }> => {
   const { isProcessAlive } = await import('./paths')
   const alive = isAlive ?? isProcessAlive
@@ -289,6 +300,17 @@ export const sweepPhantomTasks = async (
         // orphan-merging-task path; the phantom watchdog's job is to fail any
         // task that has been stuck beyond the merge ceiling.
         //
+        // Live-verify exemption: a 'verifying' task with no in-flight entry
+        // is normal — the implement slot is released by acquireVerifySlot
+        // before the verify subprocess runs. If the caller confirms this task
+        // is actively verifying in this daemon (isVerifyRunning), it cannot be
+        // a phantom. Remerge re-verifies legitimately exceed the 30-min ceiling
+        // (e.g. `npm test` on a large suite); exempting them here prevents the
+        // watchdog from killing a live verify just because its wall-clock age
+        // crossed the threshold. Tasks orphaned from a prior daemon (not
+        // tracked by isVerifyRunning) still fall through to the ceiling backstop.
+        if (status === 'verifying' && isVerifyRunning?.(task.id)) continue
+
         // Fast path for 'merging' tasks with no in-flight entry: if the caller
         // can check for an active merge_jobs row and there is none, fail
         // immediately — the merge worker has no job to process and the task

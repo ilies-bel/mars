@@ -151,6 +151,82 @@ describe('sweepPhantomTasks — wall-clock ceiling', () => {
     expect(items[0].kind).toBe(watchdog.PHANTOM_TASK_KIND)
   })
 
+  it('does NOT phantom-fail a verifying task while isVerifyRunning returns true, even after 35+ min', async () => {
+    // This is the remerge re-verify scenario: the task has been in 'verifying'
+    // for 35 minutes (past the 30-min default ceiling), but the daemon's
+    // acquireVerifySlot / releaseVerifySlot bracket tells us the verify is
+    // still alive. The watchdog must skip it rather than killing a live verify.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('remerge: run full test suite', undefined, { skipTriage: true })
+
+    // Age is 35 minutes — past the 30-min ceiling, would normally trigger a kill.
+    const stalledUpdatedAt = new Date(nowMs - 35 * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'verifying', updated_at = ? WHERE id = ?`,
+      args: [stalledUpdatedAt, task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    // isVerifyRunning returns true — this daemon is actively verifying this task.
+    const isVerifyRunning = vi.fn().mockReturnValue(true)
+    const { failed } = await watchdog.sweepPhantomTasks(
+      [],
+      reclaimSlot,
+      undefined,
+      nowMs,
+      undefined,
+      isVerifyRunning,
+    )
+
+    // Must NOT be failed: the verify is live, just slow.
+    expect(failed).not.toContain(task.id)
+    expect(isVerifyRunning).toHaveBeenCalledWith(task.id)
+
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('verifying')
+
+    // No action-queue item raised — the task is healthy.
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(0)
+    expect(reclaimSlot).not.toHaveBeenCalled()
+  })
+
+  it('still fails a verifying task past the ceiling when isVerifyRunning returns false (orphaned)', async () => {
+    // When the daemon cannot confirm the verify is live (isVerifyRunning=false),
+    // the ceiling backstop still applies — this covers tasks orphaned from a
+    // prior daemon restart.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('some work', undefined, { skipTriage: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'verifying', updated_at = ? WHERE id = ?`,
+      args: [OLD_UPDATED_AT(nowMs), task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    // isVerifyRunning returns false — this task is not tracked by this daemon.
+    const isVerifyRunning = vi.fn().mockReturnValue(false)
+    const { failed } = await watchdog.sweepPhantomTasks(
+      [],
+      reclaimSlot,
+      undefined,
+      nowMs,
+      undefined,
+      isVerifyRunning,
+    )
+
+    expect(failed).toContain(task.id)
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failedPhase).toBe('verify')
+
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(1)
+    expect(items[0].kind).toBe(watchdog.PHANTOM_TASK_KIND)
+  })
+
   it('does NOT fail a running task whose updatedAt is within the ceiling', async () => {
     const { q, actionQueue, watchdog } = await loadModules(repo)
     const nowMs = Date.now()

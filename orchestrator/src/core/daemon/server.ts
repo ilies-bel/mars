@@ -1158,6 +1158,13 @@ export const startDaemon = async (
   // Acquired inside the review primitive; the implement slot is released first
   // so other tasks can continue coding while this one waits for a verify slot.
   const verifySem = makeSem(initialCaps.verify)
+  // Set of task IDs actively running through the verify phase in this daemon
+  // instance. Populated by acquireVerifySlot (after the verify semaphore slot is
+  // acquired) and cleared by releaseVerifySlot. Passed to sweepPhantomTasks as
+  // the isVerifyRunning predicate so the phantom-task watchdog skips tasks that
+  // are genuinely verifying in this daemon, even if their wall-clock age exceeds
+  // the default ceiling (remerge re-verifies can legitimately take 30+ min).
+  const activeVerifyingTaskIds = new Set<string>()
   // Install concurrency semaphore: caps parallel worktree dep-installs to
   // prevent concurrent tsup/esbuild prepare scripts from OOM-killing the process.
   // Lives in worktree-install.ts as a module-level semaphore; the daemon
@@ -1737,8 +1744,16 @@ export const startDaemon = async (
                 void drain()
               }
               await acquire(verifySem)
+              // Register this task as actively verifying in this daemon so the
+              // phantom-task watchdog's isVerifyRunning predicate can exempt it
+              // from the wall-clock ceiling (long verify commands — npm test on a
+              // large suite — can legitimately exceed the default 30-min limit).
+              activeVerifyingTaskIds.add(task.id)
             },
             releaseVerifySlot: (): void => {
+              // Deregister before releasing the semaphore so the watchdog cannot
+              // see the task as "live" after the verify slot is freed.
+              activeVerifyingTaskIds.delete(task.id)
               release(verifySem)
             },
             // Durable merge-queue hook. The merge primitive always routes git
@@ -6569,6 +6584,11 @@ export const startDaemon = async (
           // detect tasks stuck in 'merging' with no live merge_jobs row (the merge
           // worker has no job to process and cannot self-heal).
           (taskId) => getDefaultMergeJobStore().getActiveMergeJob(taskId).then((j) => j !== null),
+          // Exempt tasks actively verifying in this daemon from the wall-clock
+          // ceiling so a long remerge re-verify (or any slow test suite) is not
+          // killed just because its updatedAt has grown stale. Orphaned tasks
+          // from a prior daemon are not in this set and still hit the ceiling.
+          (taskId) => activeVerifyingTaskIds.has(taskId),
         )
         if (failed.length > 0) {
           log(
