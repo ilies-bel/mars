@@ -133,6 +133,57 @@ describe('user-owned workflow loading (no fallback)', () => {
     expect((await loadWorkflowByName('live', repoRoot)).id).toBe('user-live')
   })
 
+  it('loads a live-named workflow and routes writes through services.store (live pipeline Arc seam)', async () => {
+    // A simplified live workflow stub that simulates the awaiting-human manual
+    // step by writing task state through services.store — the same Arc seam
+    // the real live-workflow.js uses at dispatch time. The stub avoids the
+    // real setupWorktree/runAgent/review/merge imports so the test runs
+    // without a live daemon.
+    writeUserWorkflow(
+      'live',
+      [
+        'export default {',
+        "  id: 'live',",
+        '  async fn(ctx, input) {',
+        "    await ctx.step('setup', async () => {",
+        '      await ctx.services.store.updateTask(input.taskId, { status: "running" })',
+        '      return { ok: true }',
+        '    })',
+        "    await ctx.step('code', async () => {",
+        '      // In production this step parks the task awaiting-human via runAgent',
+        '      // mode:manual. The stub writes a sentinel status to prove the step ran.',
+        '      await ctx.services.store.updateTask(input.taskId, { status: "awaiting-human" })',
+        '      return { ok: true }',
+        '    })',
+        '    return { taskId: input.taskId }',
+        '  },',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const wf = await loadWorkflowByName('live', repoRoot)
+    expect(wf.id).toBe('live')
+
+    const store = makeRecordingStore()
+    const result = await runWorkflow(
+      wf,
+      { taskId: 'live-task-1' },
+      {
+        store: new InMemoryStore(),
+        services: { store },
+        runId: 'live-task-1',
+      },
+    )
+
+    expect(result.status).toBe('completed')
+    // Both steps funnelled writes through services.store (Arc seam).
+    expect(store.writes).toEqual([
+      { id: 'live-task-1', patch: { status: 'running' } },
+      { id: 'live-task-1', patch: { status: 'awaiting-human' } },
+    ])
+  })
+
   it('picks up edits on the next load without a process restart (mtime cache-bust)', () => {
     // vite-node (the vitest module runner) normalizes away import query
     // strings, so the reload guarantee cannot be asserted in-process here — a

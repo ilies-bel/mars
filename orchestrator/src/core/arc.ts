@@ -1002,7 +1002,7 @@ export class Arc {
         options.stepGuide ??
         `Task ${taskId} is parked in its worktree. ` +
         `Lease holder: ${options.leaseOwner}. ` +
-        `Work in the worktree interactively, then release the lease to resume the pipeline.` +
+        `Work in the worktree, then run \`mars step done ${taskId}\` to hand off to verify+merge, or \`mars release --abort ${taskId}\` to exit without merging.` +
         (options.leaseNote ? ` Note: ${options.leaseNote}` : ''),
       payload: {
         taskId,

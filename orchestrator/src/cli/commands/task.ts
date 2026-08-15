@@ -30,7 +30,7 @@ import type { Command, CommandDeps, CommandResult } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
 
 const TASK_ADD_USAGE =
-  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag <label>] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--merge auto|gated] [--workflow <name>] [--live (disabled)] [--supersede <task-id>] [--qa auto|manual] [plan flags]'
+  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag <label>] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--merge auto|gated] [--workflow <name>] [--live] [--supersede <task-id>] [--qa auto|manual] [plan flags]'
 
 interface EnqueueParams {
   prompt: string
@@ -179,12 +179,6 @@ export const taskAdd: Command = {
       return { code: 1 }
     }
     const workflow = workflowFlag ?? (live ? 'live' : undefined)
-    if (workflow === 'live') {
-      deps.err(
-        'the live pipeline is disabled while HITL is being refined; enqueue without --live/--workflow live',
-      )
-      return { code: 2 }
-    }
     // Validate --workflow against the registry — same source as `mars workflow list`.
     // Bundled template names are always valid; user-defined custom workflows in
     // .mars/workflows/ are valid when not pending operator approval (agent-draft).
@@ -206,7 +200,7 @@ export const taskAdd: Command = {
         }
       }
       if (!validKinds.has(workflow)) {
-        const sorted = [...validKinds].filter((k) => k !== 'live').sort().join(', ')
+        const sorted = [...validKinds].sort().join(', ')
         deps.err(`workflow must be one of ${sorted}; got '${workflow}'`)
         return { code: 2 }
       }

@@ -59,6 +59,7 @@ const WORK_SPAWNING_OPS: ReadonlySet<DaemonRequest['op']> = new Set([
   'proposal.reslice',
   'proposal.take',
   'proposal.mockup',
+  'proposal.implement-live',
   'glossary-write',
   'adr-add',
   'vision-write',

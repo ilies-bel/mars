@@ -500,6 +500,13 @@ export interface HttpServerDeps {
    */
   mockupProposal?: (id: string) => Promise<{ taskId: string }>
   /**
+   * Enqueue the proposal's work as a live task (`workflow: 'live'`), parking
+   * it awaiting-human for the operator to implement directly in the worktree.
+   * Optional for backwards compatibility with test stubs; defaults to a
+   * `not implemented` error when absent.
+   */
+  implementLiveProposal?: (id: string) => Promise<{ taskId: string }>
+  /**
    * Validate a task parked at the preview gate (status 'awaiting-validation'):
    * kill its dev server, mark it validated, and re-queue so the merge
    * continuation runs. Throws when the task is not awaiting validation.
@@ -3260,6 +3267,19 @@ export const startHttpServer = async (
       }
       deps
         .mockupProposal(id)
+        .then(({ taskId }) => sendJson(res, 200, { ok: true, taskId }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // proposal.implement-live enqueues the proposal as a live task and returns the task id.
+    if (op === 'proposal.implement-live') {
+      if (!deps.implementLiveProposal) {
+        sendJson(res, 501, { ok: false, error: 'proposal.implement-live not implemented' })
+        return
+      }
+      deps
+        .implementLiveProposal(id)
         .then(({ taskId }) => sendJson(res, 200, { ok: true, taskId }))
         .catch((err: unknown) => sendError(res, err))
       return

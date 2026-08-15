@@ -186,7 +186,7 @@ describe('ProposalDetailDrawer – CLI commands section', () => {
 // ── Action buttons ───────────────────────────────────────────────────────────
 
 describe('ProposalDetailDrawer – action buttons', () => {
-  it('draft proposal shows Promote, Grill, Mockup and Dismiss buttons', () => {
+  it('draft proposal shows Promote, Grill, Mockup, Implement live and Dismiss buttons', () => {
     const html = renderToStaticMarkup(
       <ProposalDetailDrawer
         proposal={draftProposal({ status: 'draft' })}
@@ -196,7 +196,18 @@ describe('ProposalDetailDrawer – action buttons', () => {
     expect(html).toContain('data-testid="btn-promote"')
     expect(html).toContain('data-testid="btn-grill"')
     expect(html).toContain('data-testid="btn-mockup"')
+    expect(html).toContain('data-testid="btn-implement-live"')
     expect(html).toContain('data-testid="btn-dismiss"')
+  })
+
+  it('draft proposal "Implement live" button renders with correct label', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ status: 'draft' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('Implement live')
   })
 
   it('prd-ready proposal does NOT show action buttons (status not actionable)', () => {

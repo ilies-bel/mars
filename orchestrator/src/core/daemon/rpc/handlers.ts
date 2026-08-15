@@ -170,6 +170,14 @@ const proposalMockupHandler = handler('proposal.mockup', async (req, deps) => {
   return { ok: true, data: r }
 })
 
+const proposalImplementLiveHandler = handler('proposal.implement-live', async (req, deps) => {
+  if (!deps.handleProposalImplementLive) {
+    return { ok: false, error: 'proposal.implement-live not implemented' }
+  }
+  const r = await deps.handleProposalImplementLive(req.proposalId)
+  return { ok: true, data: r }
+})
+
 const refineHandler = handler('refine', async (req, deps) => {
   await deps.handleRefine(req.id, req.refresh ?? false)
   return { ok: true }
@@ -682,6 +690,7 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   proposalResliceHandler,
   proposalTakeHandler,
   proposalMockupHandler,
+  proposalImplementLiveHandler,
   refineHandler,
   glossaryWriteHandler,
   adrAddHandler,

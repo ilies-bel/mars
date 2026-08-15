@@ -171,6 +171,12 @@ export const ProposalDetailDrawer = ({
     | { kind: 'done'; taskId: string }
     | { kind: 'error'; message: string }
   >({ kind: 'idle' })
+  const [implementLiveState, setImplementLiveState] = useState<
+    | { kind: 'idle' }
+    | { kind: 'pending' }
+    | { kind: 'done'; taskId: string }
+    | { kind: 'error'; message: string }
+  >({ kind: 'idle' })
   const [mockupExists, setMockupExists] = useState<boolean>(false)
   const [dismissState, setDismissState] = useState<
     { kind: 'idle' } | { kind: 'pending' } | { kind: 'done' } | { kind: 'error'; message: string }
@@ -289,6 +295,18 @@ export const ProposalDetailDrawer = ({
       setMockupState({ kind: 'error', message: (err as Error).message })
     }
   }, [proposal.id, mockupState.kind])
+
+  const handleImplementLive = useCallback(async () => {
+    if (implementLiveState.kind === 'pending') return
+    setImplementLiveState({ kind: 'pending' })
+    try {
+      const result = await postAction('proposal.implement-live', proposal.id)
+      const taskId = (result as { taskId?: string }).taskId ?? ''
+      setImplementLiveState({ kind: 'done', taskId })
+    } catch (err) {
+      setImplementLiveState({ kind: 'error', message: (err as Error).message })
+    }
+  }, [proposal.id, implementLiveState.kind])
 
   // Check whether a mockup file has been generated for this proposal.
   const mockupUrl = useMemo(() => `${BASE}/mockups/${encodeURIComponent(proposal.id)}.html`, [proposal.id])
@@ -452,6 +470,29 @@ export const ProposalDetailDrawer = ({
           )}
           {mockupState.kind === 'error' && (
             <span className="font-mono text-[9px] text-destructive">{mockupState.message}</span>
+          )}
+
+          {/* Implement live */}
+          {implementLiveState.kind === 'done' ? (
+            <span className="font-mono text-[10px] text-primary">
+              Live task →{' '}
+              <a href={`#/task/${encodeURIComponent(implementLiveState.taskId)}`} className="underline">
+                {implementLiveState.taskId}
+              </a>
+            </span>
+          ) : (
+            <button
+              type="button"
+              data-testid="btn-implement-live"
+              onClick={() => { void handleImplementLive() }}
+              disabled={implementLiveState.kind === 'pending'}
+              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10 disabled:opacity-50"
+            >
+              {implementLiveState.kind === 'pending' ? 'Queuing…' : 'Implement live'}
+            </button>
+          )}
+          {implementLiveState.kind === 'error' && (
+            <span className="font-mono text-[9px] text-destructive">{implementLiveState.message}</span>
           )}
 
           {/* View mockup link — shown when .mars/mockups/<id>.html exists */}

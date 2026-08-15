@@ -186,6 +186,9 @@ export interface DaemonDeps {
   handleProposalMockup?(
     proposalId: string,
   ): Promise<{ proposalId: string; taskId: string }>
+  handleProposalImplementLive?(
+    proposalId: string,
+  ): Promise<{ proposalId: string; taskId: string }>
   handleRefine(id: string, refresh: boolean): Promise<void>
   dispatchGlossaryWrite(req: {
     kind: 'set' | 'remove'

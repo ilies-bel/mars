@@ -4049,6 +4049,59 @@ export const startDaemon = async (
     return { proposalId: resolved.id, taskId: task.id }
   }
 
+  const handleProposalImplementLive = async (
+    proposalId: string,
+  ): Promise<{ proposalId: string; taskId: string }> => {
+    const {
+      resolveProposalId,
+      getProposal,
+    } = await import('../proposals')
+
+    const resolved = await resolveProposalId(proposalId)
+    if (resolved.kind === 'ambiguous') {
+      throw new Error(
+        `ambiguous prefix '${proposalId}' matches ${resolved.count} proposals`,
+      )
+    }
+    if (resolved.kind === 'none') {
+      throw new Error(`proposal ${proposalId} not found`)
+    }
+
+    const proposal = await getProposal(resolved.id)
+    if (!proposal) throw new Error(`proposal ${resolved.id} not found`)
+
+    // Build a prompt from the proposal content so the operator has full context
+    // in the worktree's brief.
+    const parts: string[] = [`# ${proposal.title}`]
+    if (proposal.problem.trim().length > 0) {
+      parts.push(`\n## Problem\n\n${proposal.problem.trim()}`)
+    }
+    if (proposal.solution.trim().length > 0) {
+      parts.push(`\n## Solution\n\n${proposal.solution.trim()}`)
+    }
+    if (proposal.userStories.length > 0) {
+      const storiesBody = proposal.userStories.map((s) => `- ${s}`).join('\n')
+      parts.push(`\n## User stories\n\n${storiesBody}`)
+    }
+    if (proposal.notes.trim().length > 0) {
+      parts.push(`\n## Notes\n\n${proposal.notes.trim()}`)
+    }
+    const prompt = parts.join('\n')
+
+    const task = await enqueueTask(prompt, undefined, {
+      author: proposal.author ?? undefined,
+      originId: resolved.id,
+      parentProposalId: resolved.id,
+      workflow: 'live',
+      skipTriage: true,
+    })
+
+    // Notify the dispatch loop that the task is ready to run.
+    bus.emit('task.queued', { taskId: task.id })
+
+    return { proposalId: resolved.id, taskId: task.id }
+  }
+
   const handleInit = async (
     opts: import('../../workflows/init-workflow').RunInitOptions,
   ): Promise<import('../../workflows/init-workflow').RunInitResult> => {
@@ -4647,6 +4700,7 @@ export const startDaemon = async (
     handleProposalReslice,
     handleProposalTake,
     handleProposalMockup,
+    handleProposalImplementLive,
     handleRefine,
     dispatchGlossaryWrite,
     dispatchAdrAdd,
@@ -4988,6 +5042,10 @@ export const startDaemon = async (
     },
     mockupProposal: async (id) => {
       const r = await handleProposalMockup(id)
+      return { taskId: r.taskId }
+    },
+    implementLiveProposal: async (id) => {
+      const r = await handleProposalImplementLive(id)
       return { taskId: r.taskId }
     },
     validateTask: async (id) => {

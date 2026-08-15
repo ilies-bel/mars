@@ -479,32 +479,33 @@ describe('task add output verb matches landing status', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Live pipeline disabled guard
+// Live pipeline routing
 // ---------------------------------------------------------------------------
 
-describe('task add --live / --workflow live disabled guard', () => {
-  it('--live exits 2 with the disabled message', async () => {
+describe('task add --live / --workflow live', () => {
+  it('--live enqueues (no disabled error) and routes workflow:live to the daemon', async () => {
     const fake = makeFakeDaemon(() => ({ id: 'mars-task-live', status: 'queued' }))
     const { store, ctx } = await loadStoreAndCtx()
     const r = await runCommandInProcess(
       ['task', 'add', '--live', 'some prompt'],
       { store, ctx, daemon: fake },
     )
-    expect(r.code).toBe(2)
-    expect(r.err.join('\n')).toContain('live pipeline is disabled')
-    expect(fake.calls).toHaveLength(0)
+    expect(r.code).toBe(0)
+    expect(r.err.join('\n')).not.toContain('disabled')
+    expect(fake.calls).toHaveLength(1)
+    expect((fake.calls[0] as { workflow?: string }).workflow).toBe('live')
   })
 
-  it('--workflow live exits 2 with the disabled message', async () => {
+  it('--workflow live enqueues and reaches the daemon with workflow:live', async () => {
     const fake = makeFakeDaemon(() => ({ id: 'mars-task-live2', status: 'queued' }))
     const { store, ctx } = await loadStoreAndCtx()
     const r = await runCommandInProcess(
       ['task', 'add', '--workflow', 'live', 'some prompt'],
       { store, ctx, daemon: fake },
     )
-    expect(r.code).toBe(2)
-    expect(r.err.join('\n')).toContain('live pipeline is disabled')
-    expect(fake.calls).toHaveLength(0)
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+    expect((fake.calls[0] as { workflow?: string }).workflow).toBe('live')
   })
 
   it('plain task add (no --live / --workflow) still succeeds', async () => {
@@ -518,7 +519,7 @@ describe('task add --live / --workflow live disabled guard', () => {
     expect(fake.calls).toHaveLength(1)
   })
 
-  it('--workflow report is not blocked by the live guard', async () => {
+  it('--workflow report routes correctly (live re-enable does not affect other workflows)', async () => {
     const fake = makeFakeDaemon(() => ({ id: 'mars-task-report', status: 'queued' }))
     const { store, ctx } = await loadStoreAndCtx()
     const r = await runCommandInProcess(

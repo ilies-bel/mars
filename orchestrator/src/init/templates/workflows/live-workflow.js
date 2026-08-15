@@ -53,7 +53,7 @@ export default defineWorkflow({
       runAgent(ctx, {
         mode: 'manual',
         guide:
-          'Implement the task in this worktree. Journal decisions with `mars task note`, tick done-criteria with `mars task check`, commit as you go, then run `mars step done`.',
+          'Implement the task in this worktree. Journal decisions with `mars task note`, tick done-criteria with `mars task check`, commit as you go, then run `mars step done` to hand off to verify+merge, or `mars release --abort` to exit without merging.',
       }),
     )
 
