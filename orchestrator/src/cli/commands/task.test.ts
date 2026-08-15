@@ -910,3 +910,87 @@ describe('task add no-commit guard: structural evidence bypass', () => {
     expect(fake.calls).toHaveLength(1)
   })
 })
+
+// ---------------------------------------------------------------------------
+// task set-verify — update the verify command for a task
+// ---------------------------------------------------------------------------
+
+describe('task set-verify', () => {
+  it('sends task.set-verify op with the supplied id and cmd', async () => {
+    const fake = makeFakeDaemon(() => ({
+      id: 'mars-abc123',
+      verifyCmd: 'cd orchestrator && npm run typecheck && npm test',
+    }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'set-verify', 'mars-abc123', 'cd orchestrator && npm run typecheck && npm test'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+    const req = fake.calls[0] as { op: string; id: string; verifyCmd: string | null }
+    expect(req.op).toBe('task.set-verify')
+    expect(req.id).toBe('mars-abc123')
+    expect(req.verifyCmd).toBe('cd orchestrator && npm run typecheck && npm test')
+  })
+
+  it('prints the updated verifyCmd on stdout', async () => {
+    const fake = makeFakeDaemon(() => ({
+      id: 'mars-abc123',
+      verifyCmd: 'cd orchestrator && npm test',
+    }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'set-verify', 'mars-abc123', 'cd orchestrator && npm test'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(r.out.join('\n')).toContain('mars-abc123')
+    expect(r.out.join('\n')).toContain('cd orchestrator && npm test')
+  })
+
+  it('exits code 2 when id is missing', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['task', 'set-verify'], { store, ctx, daemon: fake })
+    expect(r.code).toBe(2)
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('exits code 2 when cmd is missing', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'set-verify', 'mars-abc123'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(2)
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('rejects an absolute repo-root path in cmd', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    // ctx.repoRoot is `repo` (the temp dir)
+    const r = await runCommandInProcess(
+      ['task', 'set-verify', 'mars-abc123', `cd ${repo}/orchestrator && npm test`],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(2)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join('\n')).toContain('absolute path')
+  })
+
+  it('forwards daemon errors to stderr and exits code 1', async () => {
+    const fake = makeFakeDaemon(() => {
+      throw new Error('task not found: mars-xyz')
+    })
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'set-verify', 'mars-xyz', 'cd orchestrator && npm test'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('mars-xyz')
+  })
+})

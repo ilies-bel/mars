@@ -95,7 +95,15 @@ export function classifyFailure(failureSignature: string): FailureCategory {
     // recovery agent cannot create a missing manifest; the operator must
     // restart. Analogous to typecheck-infra: the failure is environmental, not
     // a code defect.
-    failureSignature.endsWith('/missing-manifest')
+    failureSignature.endsWith('/missing-manifest') ||
+    // verify:spec-verify-cmd/missing-script — npm reports "Missing script: X"
+    // when the verify spec references a script that does not exist in the
+    // working directory's package.json. This is a spec authoring error, not a
+    // code defect: the verify command points at the wrong directory (e.g. runs
+    // `npm run typecheck` at the repo root while the script lives under
+    // `orchestrator/`). A code-fix recovery cannot repair a mispointed spec;
+    // the operator should use `mars task set-verify` to correct the command.
+    failureSignature.endsWith('/missing-script')
   ) {
     return 'infra'
   }

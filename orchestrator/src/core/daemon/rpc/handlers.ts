@@ -546,6 +546,18 @@ const taskCheckHandler = handler('task.check', async (req, deps) => {
   return { ok: true, data: entry }
 })
 
+const taskSetVerifyHandler = handler('task.set-verify', async (req, deps) => {
+  const result = await deps.setTaskVerifyCmd(req.id, req.verifyCmd)
+  // Journal the change as a task note for audit trail.
+  await deps.appendProgress({
+    taskId: req.id,
+    author: 'cli',
+    kind: 'note',
+    body: `set-verify: ${req.verifyCmd === null ? '(cleared)' : req.verifyCmd}`,
+  })
+  return { ok: true, data: result }
+})
+
 const mcpAuditAppendHandler = handler('mcp.audit.append', async (req, deps) => {
   await deps.appendMcpWorkerAudit({
     toolName: req.toolName,
@@ -710,6 +722,7 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   killHandler,
   taskNoteHandler,
   taskCheckHandler,
+  taskSetVerifyHandler,
   mcpAuditAppendHandler,
   taskContextForWorkerHandler,
   previewSpawnHandler,

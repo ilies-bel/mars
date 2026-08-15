@@ -1777,6 +1777,43 @@ export const setTaskPriority = async (
   priority: number,
 ): Promise<Task> => Arc.load(id).reprioritize(priority)
 
+/**
+ * Update the verify command for a task.
+ *
+ * Allowed for all non-done, non-dropped tasks (including failed tasks, which
+ * need their spec repaired before they can be re-tried). Rejects done and
+ * dropped tasks — those rows are immutable.
+ *
+ * The caller is responsible for validating that `verifyCmd` uses relative
+ * paths (i.e. does not embed the repo root as an absolute prefix). That check
+ * lives at the CLI layer, mirroring the guard on `task add --verify`.
+ */
+export const setTaskVerifyCmd = async (
+  id: string,
+  verifyCmd: string | null,
+): Promise<{ id: string; verifyCmd: string | null }> => {
+  await ensureQueueSchema()
+  const client = resolveQueueClient()
+  const sel = await client.execute({
+    sql: `SELECT status FROM tasks WHERE id = ?`,
+    args: [id],
+  })
+  if (sel.rows.length === 0) {
+    throw new Error(`task not found: ${id}`)
+  }
+  const status = (sel.rows[0] as Record<string, unknown>)['status'] as string
+  if (status === 'done' || status === 'dropped') {
+    throw new Error(
+      `set-verify is not allowed for ${status} tasks — the row is immutable`,
+    )
+  }
+  await client.execute({
+    sql: `UPDATE tasks SET verify_cmd = ?, updated_at = NOW() WHERE id = ?`,
+    args: [verifyCmd, id],
+  })
+  return { id, verifyCmd }
+}
+
 export interface DropTaskResult {
   taskId: string
   previousStatus: TaskStatus

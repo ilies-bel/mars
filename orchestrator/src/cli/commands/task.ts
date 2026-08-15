@@ -667,13 +667,66 @@ export const taskAsk: Command = {
   },
 }
 
+export const taskSetVerify: Command = {
+  path: 'task set-verify',
+  summary: 'update the verify command for a task',
+  usage: 'usage: mars task set-verify <id> "<cmd>"',
+  helpBody: `mars task set-verify <id> "<cmd>"
+
+Update the verify command stored for a task. Applies the same relative-path
+validation as 'mars task add --verify': absolute repo-root paths are rejected
+because they bypass worktree isolation.
+
+Allowed for non-done, non-dropped tasks (including failed tasks whose verify
+spec needs repair before re-try). The change is journaled as a task note.
+
+Use this to fix legacy specs that fail with "npm error Missing script" because
+the command was authored without a 'cd <subdir> &&' prefix:
+
+  mars task set-verify <id> 'cd orchestrator && npm run typecheck && npm test'`,
+  run: async (args, deps) => {
+    const id = args.positional[0]
+    const cmd = args.positional[1]
+    if (!id || cmd === undefined) {
+      deps.err('usage: mars task set-verify <id> "<cmd>"')
+      return { code: 2 }
+    }
+    if (containsAbsoluteRepoPath(cmd, deps.ctx.repoRoot)) {
+      deps.err(
+        `[mars] --verify contains an absolute path under the repo root (${deps.ctx.repoRoot}).`,
+      )
+      deps.err(
+        `[mars] absolute paths in --verify run against the integration branch, not the task worktree — use relative paths instead.`,
+      )
+      deps.err(
+        `[mars] example: mars task set-verify ${id} 'cd orchestrator && npm test'`,
+      )
+      return { code: 2 }
+    }
+    try {
+      const result = (await deps.daemon.sendRequest({
+        op: 'task.set-verify',
+        id,
+        verifyCmd: cmd || null,
+      })) as { id: string; verifyCmd: string | null }
+      deps.out(
+        `updated verify for ${result.id}: ${result.verifyCmd === null ? '(cleared)' : result.verifyCmd}`,
+      )
+    } catch (error: unknown) {
+      deps.err(errorMessage(error))
+      return { code: 1 }
+    }
+    return { code: 0 }
+  },
+}
+
 /** `task` with no/unknown subcommand. */
 export const taskGroup: Command = {
   path: 'task',
   summary: 'task subcommands',
-  usage: 'usage: mars task <add|ask|show|priority|note|check|stop> ...',
+  usage: 'usage: mars task <add|ask|show|priority|note|check|set-verify|stop> ...',
   run: (_args, deps) => {
-    deps.err('usage: mars task <add|ask|show|priority|note|check|stop> ...')
+    deps.err('usage: mars task <add|ask|show|priority|note|check|set-verify|stop> ...')
     return { code: 2 }
   },
 }
@@ -685,6 +738,7 @@ export const taskCommands: readonly Command[] = [
   taskPriority,
   taskNote,
   taskCheck,
+  taskSetVerify,
   taskStop,
   taskGroup,
 ]

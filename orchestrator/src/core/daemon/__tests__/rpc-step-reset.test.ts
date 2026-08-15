@@ -55,6 +55,7 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): DaemonDeps => ({
   paths: { socketPath: '/tmp/x.sock', pidFile: '/tmp/x.pid', httpPortFile: '/tmp/x.port' },
   handleAdd: notImpl('handleAdd') as DaemonDeps['handleAdd'],
   setTaskPriority: notImpl('setTaskPriority') as DaemonDeps['setTaskPriority'],
+  setTaskVerifyCmd: notImpl('setTaskVerifyCmd') as DaemonDeps['setTaskVerifyCmd'],
   handleUpdate: notImpl('handleUpdate') as DaemonDeps['handleUpdate'],
   handleContinue: notImpl('handleContinue') as DaemonDeps['handleContinue'],
   handleStop: notImpl('handleStop') as DaemonDeps['handleStop'],

@@ -555,6 +555,24 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     matchFull: /worktree deps not provisioned|typecheck-infra: /,
   },
   {
+    // npm (or yarn/pnpm) reports "Missing script: <name>" when the `scripts`
+    // section of the nearest package.json does not contain the script name the
+    // verify command references. The canonical form is:
+    //
+    //   npm error Missing script: "typecheck"
+    //
+    // This fires when the verify spec was authored to run from the repo root
+    // while the script lives under a sub-package (e.g. `orchestrator/`).
+    // The fix is to update the verify spec so it cd's into the right directory
+    // first — not to edit source code. Use `mars task set-verify <id> '...'`
+    // to repair the spec.
+    //
+    // Routes to FailureCategory 'infra' so no code-fix recovery agent is
+    // spawned. Must be placed BEFORE the generic `enoent` fallback.
+    errorClass: 'missing-script',
+    matchFull: /npm error Missing script:|Missing script: "[^"]+"/,
+  },
+  {
     // npm (or any manifest-reading tool) could not read package.json because
     // the file does not exist in the working directory. The canonical cause is
     // a corrupt or partial worktree checkout — observed on mars-caae60e2
@@ -983,6 +1001,10 @@ const causeSentencesBySignature: Readonly<Record<string, CauseRenderer>> = {
   // Operator-owned: the daemon cannot write the repo's shared git metadata.
   'code:coder-exit-nonzero/git-metadata-denied': (taskId) =>
     `the daemon cannot write into <repo>/.git/worktrees — every coder will fail at the commit gate. Restart the daemon from a shell with write access to that directory, then mars restart ${taskId}`,
+  // Spec error: the verify command references a script not found in the
+  // working-directory package.json. Repair with set-verify; no code fix needed.
+  'verify:spec-verify-cmd/missing-script': (taskId) =>
+    `verify spec references a script not found in the working directory — repair the command (e.g. add a 'cd orchestrator &&' prefix): mars task set-verify ${taskId} 'cd orchestrator && npm run typecheck && npm test'`,
 }
 
 /**

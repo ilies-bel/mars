@@ -95,6 +95,7 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     paths: { socketPath: '/tmp/x.sock', pidFile: '/tmp/x.pid', httpPortFile: '/tmp/x.port' },
     handleAdd: notImpl('handleAdd') as DaemonDeps['handleAdd'],
     setTaskPriority: notImpl('setTaskPriority') as DaemonDeps['setTaskPriority'],
+    setTaskVerifyCmd: notImpl('setTaskVerifyCmd') as DaemonDeps['setTaskVerifyCmd'],
     handleUpdate: notImpl('handleUpdate') as DaemonDeps['handleUpdate'],
     handleContinue: notImpl('handleContinue') as DaemonDeps['handleContinue'],
     handleStop: notImpl('handleStop') as DaemonDeps['handleStop'],
@@ -145,8 +146,8 @@ describe('RPC registry', () => {
     // (35 + preview.spawn + preview.status + preview.teardown + merge.cancel
     //  + spend-control.show + spend-control.set + apply-lever + task.contextForWorker
     //  + mcp.audit.append + set-dispatch + reset-breaker + vision-write
-    //  + adr-supersede).
-    expect(rpcRegistry.size).toBe(48)
+    //  + adr-supersede + task.set-verify).
+    expect(rpcRegistry.size).toBe(51)
   })
 
   it('rejects duplicate ops', () => {

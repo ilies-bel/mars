@@ -118,6 +118,13 @@ export type DaemonRequest =
   | { op: 'step-reset'; id: string; stepName: string }
   | { op: 'task.note'; id: string; body: string; author?: string }
   | { op: 'task.check'; id: string; criterionIndex: number; uncheck?: boolean; author?: string }
+  /**
+   * Update the verify command for a task. Applies the same relative-path
+   * validation as `task add --verify`. Allowed for non-done, non-dropped tasks
+   * (including failed tasks whose spec needs repair). Journals the change as a
+   * task note so the operator has an audit trail.
+   */
+  | { op: 'task.set-verify'; id: string; verifyCmd: string | null }
   /** Append an evidence row for a mutation made through the worker MCP server. */
   | {
       op: 'mcp.audit.append'

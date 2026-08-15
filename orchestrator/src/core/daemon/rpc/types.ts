@@ -138,6 +138,11 @@ export interface DaemonDeps {
     deferrable?: boolean,
   ): Promise<Task>
   setTaskPriority(id: string, priority: number): Promise<Task>
+  /**
+   * Update the verify command for a task. Allowed for non-done, non-dropped
+   * tasks (including failed tasks). Returns the updated id + verifyCmd.
+   */
+  setTaskVerifyCmd(id: string, verifyCmd: string | null): Promise<{ id: string; verifyCmd: string | null }>
   handleUpdate(id: string, patch: DaemonUpdatePatch): Promise<void>
   handleContinue(id: string): Promise<ContinueResult>
   handleStop(id: string): Promise<void>
