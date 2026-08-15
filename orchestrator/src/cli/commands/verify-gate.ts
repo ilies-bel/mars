@@ -129,9 +129,9 @@ const verifyGateAdd: Command = {
     }
     const tier = tierRaw as 'task' | 'integration'
 
-    // Gate args follow the '--' separator in positionals.
-    const dashIdx = args.positional.indexOf('--')
-    const gateArgs = dashIdx === -1 ? [] : args.positional.slice(dashIdx + 1)
+    // Gate args are the tokens that appeared after the bare '--' separator.
+    // parseArgs puts them in args.rest (never in args.positional).
+    const gateArgs = args.rest
 
     // --optional makes required=false; --required is the default.
     const required = args.flags['--optional'] === undefined
