@@ -464,7 +464,7 @@ export const runStepToCard = (
 // drawer shell so it renders synchronously in unit tests (the drawer's own
 // fetch effect never fires under renderToStaticMarkup).
 
-const SECTION_LABEL = 'font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground'
+const SECTION_LABEL = 'font-mono text-label uppercase tracking-[0.1em] text-muted-foreground'
 
 /** A section header in the drawer body, matching the existing "Context" style. */
 const SectionLabel = ({ children }: { children: ReactNode }) => (
@@ -476,7 +476,7 @@ const StringList = ({ items }: { items: string[] }) =>
   items.length > 0 ? (
     <ul className="flex flex-col gap-0.5">
       {items.map((s) => (
-        <li key={s} className="break-all font-mono text-[11px] text-primary">
+        <li key={s} className="break-all font-mono text-label text-primary">
           {s}
         </li>
       ))}
@@ -486,10 +486,10 @@ const StringList = ({ items }: { items: string[] }) =>
 /** One labelled cell in the compact meta grid. */
 const MetaCell = ({ label, value }: { label: string; value: ReactNode }) => (
   <div className="flex flex-col gap-0.5">
-    <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+    <span className="font-mono text-micro uppercase tracking-[0.08em] text-muted-foreground">
       {label}
     </span>
-    <span className="break-all font-mono text-[11px] text-foreground">{value}</span>
+    <span className="break-all font-mono text-label text-foreground">{value}</span>
   </div>
 )
 
@@ -537,18 +537,18 @@ export const TaskDetailBody = ({
     <div className="flex flex-col gap-4">
       {/* a. Header tier — always present. */}
       <div>
-        <p className="break-words text-sm font-medium text-foreground">{title}</p>
+        <p className="break-words text-title font-medium text-foreground">{title}</p>
         <div className="mt-1 flex items-baseline gap-2">
           <span
             data-testid="task-detail-status"
-            className="font-mono text-xs uppercase tracking-wide text-primary"
+            className="font-mono text-body uppercase tracking-wide text-primary"
           >
             {task.status}
           </span>
           {task.failureSignature != null ? (
             <span
               data-testid="task-detail-failure-reason"
-              className="font-mono text-xs text-error"
+              className="font-mono text-body text-error"
               title={task.failureSignature}
             >
               · {humanizeFailureCode(task.failureSignature)}
@@ -559,7 +559,7 @@ export const TaskDetailBody = ({
             label={task.id}
             data-testid="copy-task-id"
             aria-label={`Copy task id: ${task.id}`}
-            className="break-all cursor-pointer font-mono text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+            className="break-all cursor-pointer font-mono text-micro text-muted-foreground hover:text-foreground transition-colors"
           />
         </div>
       </div>
@@ -570,11 +570,11 @@ export const TaskDetailBody = ({
           data-testid="task-detail-error"
           className="rounded border border-error/50 bg-error/5 px-3 py-2"
         >
-          <p className="font-mono text-[11px] uppercase tracking-[0.1em] text-error">
+          <p className="font-mono text-label uppercase tracking-[0.1em] text-error">
             {task.status === 'failed' ? 'Failure' : isBlocked ? 'Blocked' : 'Error'}
           </p>
           {isBlocked ? (
-            <p className="mt-1 text-[11px] text-primary">
+            <p className="mt-1 text-label text-primary">
               Waiting on {task.blockedBy.length} blocker
               {task.blockedBy.length === 1 ? '' : 's'}.
             </p>
@@ -584,7 +584,7 @@ export const TaskDetailBody = ({
             <div className="mt-1 flex items-center gap-2">
               <p
                 data-testid="task-detail-failure-cause"
-                className="flex-1 text-[11px] text-error"
+                className="flex-1 text-label text-error"
               >
                 {humanizeFailureCode(task.failureSignature)}
               </p>
@@ -592,23 +592,23 @@ export const TaskDetailBody = ({
                 text={task.failureSignature}
                 data-testid="copy-failure-signature"
                 aria-label={`Copy failure signature: ${task.failureSignature}`}
-                className="shrink-0 rounded border border-error/30 px-1.5 py-0.5 font-mono text-[10px] text-error/60 hover:bg-error/10"
+                className="shrink-0 rounded border border-error/30 px-1.5 py-0.5 font-mono text-micro text-error/60 hover:bg-error/10"
               />
             </div>
           ) : null}
           {/* Raw error and signature demoted to a secondary technical detail. */}
           {(task.error != null || task.failureSignature != null) ? (
             <details className="mt-1">
-              <summary className="cursor-pointer font-mono text-[10px] text-muted-foreground">
+              <summary className="cursor-pointer font-mono text-micro text-muted-foreground">
                 Technical details
               </summary>
               {task.error != null ? (
-                <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-error/80">
+                <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-label text-error/80">
                   {task.error}
                 </pre>
               ) : null}
               {task.failureSignature != null ? (
-                <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em] text-error/50">
+                <p className="mt-1 font-mono text-micro uppercase tracking-[0.08em] text-error/50">
                   {task.failureSignature}
                 </p>
               ) : null}
@@ -619,7 +619,7 @@ export const TaskDetailBody = ({
             <div className="mt-2 flex items-center gap-2">
               <code
                 data-testid="task-restart-cmd"
-                className="flex-1 truncate rounded bg-error/10 px-2 py-1 font-mono text-[11px] text-error/80"
+                className="flex-1 truncate rounded bg-error/10 px-2 py-1 font-mono text-label text-error/80"
               >
                 {`mars restart ${task.id}`}
               </code>
@@ -627,7 +627,7 @@ export const TaskDetailBody = ({
                 text={`mars restart ${task.id}`}
                 data-testid="copy-restart-cmd"
                 aria-label={`Copy: mars restart ${task.id}`}
-                className="shrink-0 rounded border border-error/30 px-2 py-0.5 font-mono text-xs text-error/60 hover:bg-error/10"
+                className="shrink-0 rounded border border-error/30 px-2 py-0.5 font-mono text-body text-error/60 hover:bg-error/10"
               />
             </div>
           ) : null}
@@ -639,10 +639,10 @@ export const TaskDetailBody = ({
         promptIsLong ? (
           <div>
             <details>
-              <summary className="cursor-pointer select-none font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+              <summary className="cursor-pointer select-none font-mono text-micro uppercase tracking-[0.08em] text-muted-foreground">
                 Prompt · {promptLineCount} lines
               </summary>
-              <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-foreground">
+              <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-label text-foreground">
                 {task.prompt}
               </pre>
             </details>
@@ -650,7 +650,7 @@ export const TaskDetailBody = ({
         ) : (
           <div>
             <SectionLabel>Prompt</SectionLabel>
-            <pre className="whitespace-pre-wrap break-words font-mono text-[11px] text-foreground">
+            <pre className="whitespace-pre-wrap break-words font-mono text-label text-foreground">
               {task.prompt}
             </pre>
           </div>
@@ -661,7 +661,7 @@ export const TaskDetailBody = ({
       {currentStep != null ? (
         <div data-testid="task-detail-current-step">
           <SectionLabel>Step</SectionLabel>
-          <p className="font-mono text-[11px] text-foreground">
+          <p className="font-mono text-label text-foreground">
             {currentStep.stepName}
             <span className="text-muted-foreground"> · {relativeTime(currentStep.startedAt)}</span>
           </p>
@@ -669,7 +669,7 @@ export const TaskDetailBody = ({
       ) : null}
 
       {/* f. Origins — drill-in capable when the drawer passes onNavigate. */}
-      <div className="text-[11px]">
+      <div className="text-label">
         <OriginTree taskId={task.id} onNavigate={onNavigate} currentId={currentId} />
       </div>
 
@@ -682,34 +682,34 @@ export const TaskDetailBody = ({
           <MetaCell label="Created" value={relativeTime(task.createdAt) || task.createdAt} />
           <MetaCell label="Updated" value={relativeTime(task.updatedAt) || task.updatedAt} />
         </div>
-        <p className="font-mono text-[10px] text-primary">recovery: {task.recoverySpawnedCount}</p>
+        <p className="font-mono text-micro text-primary">recovery: {task.recoverySpawnedCount}</p>
       </div>
 
       {/* h. Diagnostics — collapsed by default. */}
-      <details data-testid="task-detail-diagnostics" className="text-[11px]">
+      <details data-testid="task-detail-diagnostics" className="text-label">
         <summary className={`cursor-pointer ${SECTION_LABEL}`}>Diagnostics</summary>
         <dl className="mt-2 flex flex-col gap-1.5">
           <div>
-            <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+            <dt className="font-mono text-micro uppercase tracking-[0.08em] text-muted-foreground">
               Worktree
             </dt>
-            <dd className="break-all font-mono text-[11px] text-primary">
+            <dd className="break-all font-mono text-label text-primary">
               {task.worktreePath ?? '—'}
             </dd>
           </div>
           {task.blockerTaskId != null ? (
             <div>
-              <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+              <dt className="font-mono text-micro uppercase tracking-[0.08em] text-muted-foreground">
                 Blocker task id
               </dt>
-              <dd className="break-all font-mono text-[11px] text-primary">
+              <dd className="break-all font-mono text-label text-primary">
                 {task.blockerTaskId}
               </dd>
             </div>
           ) : null}
           {task.blockedBy.length > 0 ? (
             <div>
-              <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+              <dt className="font-mono text-micro uppercase tracking-[0.08em] text-muted-foreground">
                 Blocked by
               </dt>
               <dd>
@@ -742,7 +742,7 @@ const EvalChip = ({ label, value, warn }: { label: string; value: number | strin
     <span
       title={desc}
       aria-label={desc != null ? `${label} ${String(value)}: ${desc}` : undefined}
-      className={`rounded border px-1 py-0.5 font-mono text-[10px] ${
+      className={`rounded border px-1 py-0.5 font-mono text-micro ${
         warn
           ? 'border-warn/40 bg-warn/5 text-warn'
           : 'border-primary/30 text-muted-foreground'
@@ -834,7 +834,7 @@ const AgentToolCallRow = ({ call }: { call: AgentToolCall }) => {
       <div className="flex flex-wrap items-center gap-2">
         {/* Success / error badge */}
         <span
-          className={`shrink-0 rounded border px-1 py-0.5 font-mono text-[10px] ${
+          className={`shrink-0 rounded border px-1 py-0.5 font-mono text-micro ${
             call.isError
               ? 'border-error/40 bg-error/10 text-error'
               : 'border-done/30 bg-done/5 text-done'
@@ -846,14 +846,14 @@ const AgentToolCallRow = ({ call }: { call: AgentToolCall }) => {
         {/* Tool name */}
         <code
           data-testid="agent-tool-name"
-          className="shrink-0 font-mono text-[11px] text-foreground"
+          className="shrink-0 font-mono text-label text-foreground"
         >
           {call.toolName}
         </code>
 
         {/* Truncated input preview */}
         {inputPreview ? (
-          <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground">
+          <span className="min-w-0 truncate font-mono text-micro text-muted-foreground">
             {inputPreview.slice(0, 120)}
           </span>
         ) : null}
@@ -902,7 +902,7 @@ const ToolInvocationRow = ({
         <span
           data-testid="exit-code-badge"
           aria-label={exitCode !== null ? `exit ${exitCode}` : undefined}
-          className={`shrink-0 rounded border px-1 py-0.5 font-mono text-[10px] ${
+          className={`shrink-0 rounded border px-1 py-0.5 font-mono text-micro ${
             isActualFail
               ? 'border-error/40 bg-error/10 text-error'
               : isExpectedFail
@@ -916,14 +916,14 @@ const ToolInvocationRow = ({
         {/* Humanized command */}
         <code
           data-testid="tool-cmd"
-          className="flex-1 break-all font-mono text-[11px] text-foreground"
+          className="flex-1 break-all font-mono text-label text-foreground"
         >
           {cmd}
         </code>
 
         {/* Duration */}
         {durationMs !== null && (
-          <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
+          <span className="ml-auto shrink-0 font-mono text-micro text-muted-foreground">
             {formatDuration(durationMs)}
           </span>
         )}
@@ -939,18 +939,18 @@ const ToolInvocationRow = ({
         ) : (
           /* Other steps: hide behind a disclosure to keep the card compact */
           <details className="mt-1">
-            <summary className="cursor-pointer font-mono text-[10px] text-muted-foreground">
+            <summary className="cursor-pointer font-mono text-micro text-muted-foreground">
               output
             </summary>
             <div className="mt-1 space-y-1">
               {stdout ? (
-                <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-[10px] text-primary">
+                <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-primary">
                   {stdout}
                 </pre>
               ) : null}
               {stderr ? (
                 <pre
-                  className={`max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded p-1.5 font-mono text-[10px] ${
+                  className={`max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded p-1.5 font-mono text-micro ${
                     isActualFail ? 'bg-error/5 text-error/80' : 'bg-secondary/60 text-primary'
                   }`}
                 >
@@ -1043,21 +1043,21 @@ const StepCard = ({
         {/* Step info */}
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-sm text-foreground">{entry.stepName}</span>
+            <span className="font-semibold text-title text-foreground">{entry.stepName}</span>
             {entry.workerName != null ? (
-              <span className="font-mono text-[10px] text-muted-foreground">{entry.workerName}</span>
+              <span className="font-mono text-micro text-muted-foreground">{entry.workerName}</span>
             ) : null}
             {(entry.declaredTier != null || entry.resolvedModel != null) ? (
               <span
                 data-testid="step-tier-model"
-                className="font-mono text-[10px] text-muted-foreground"
+                className="font-mono text-micro text-muted-foreground"
               >
                 {entry.declaredTier ?? '—'} ({entry.resolvedModel ?? '—'})
               </span>
             ) : null}
           </div>
           {summary ? (
-            <p className="font-mono text-[11px] text-muted-foreground">{summary}</p>
+            <p className="font-mono text-label text-muted-foreground">{summary}</p>
           ) : null}
           {entry.evalResults && entry.evalResults.length > 0 ? (
             <div className="mt-0.5 flex flex-wrap gap-1">
@@ -1070,7 +1070,7 @@ const StepCard = ({
 
         {/* Duration badge (right) */}
         {entry.durationMs != null ? (
-          <span className="shrink-0 font-mono text-xs text-muted-foreground">
+          <span className="shrink-0 font-mono text-body text-muted-foreground">
             {formatDuration(entry.durationMs)}
           </span>
         ) : null}
@@ -1080,7 +1080,7 @@ const StepCard = ({
       <div data-testid="step-card-expanded" className="border-t border-primary/15 px-3 pb-3">
         {/* Token counts (LLM-backed steps) */}
         {(entry.inputTokens != null || entry.outputTokens != null) ? (
-          <p className="pt-2 font-mono text-[10px] text-muted-foreground">
+          <p className="pt-2 font-mono text-micro text-muted-foreground">
             {entry.inputTokens != null ? `in:${entry.inputTokens}` : null}
             {entry.outputTokens != null ? ` out:${entry.outputTokens}` : null}
             {entry.cacheReadTokens != null && entry.cacheReadTokens > 0
@@ -1090,7 +1090,7 @@ const StepCard = ({
         ) : null}
         {entry.claudeSessionId != null ? (
           <p
-            className="pt-1 font-mono text-[10px] text-muted-foreground"
+            className="pt-1 font-mono text-micro text-muted-foreground"
             title={entry.claudeSessionId}
           >
             session:{entry.claudeSessionId.slice(0, 8)}
@@ -1118,7 +1118,7 @@ const StepCard = ({
             ))}
           </div>
         ) : toolEvents.length === 0 && entry.claudeSessionId == null ? (
-          <p className="pt-2 font-mono text-[11px] text-muted-foreground/60">
+          <p className="pt-2 font-mono text-label text-muted-foreground/60">
             No tool invocations recorded
           </p>
         ) : null}
@@ -1128,7 +1128,7 @@ const StepCard = ({
           <details className="mt-2 border-t border-primary/10 pt-1.5">
             <summary
               tabIndex={0}
-              className="cursor-pointer font-mono text-[10px] text-muted-foreground [&::-webkit-details-marker]:hidden"
+              className="cursor-pointer font-mono text-micro text-muted-foreground [&::-webkit-details-marker]:hidden"
               onKeyDown={(e) => {
                 if (e.key === ' ') {
                   e.preventDefault()
@@ -1141,7 +1141,7 @@ const StepCard = ({
             </summary>
             <pre
               data-testid="step-result-input"
-              className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-[10px] text-primary"
+              className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-primary"
             >
               {(() => {
                 try {
@@ -1159,7 +1159,7 @@ const StepCard = ({
           <details className="mt-2 border-t border-primary/10 pt-1.5">
             <summary
               tabIndex={0}
-              className="cursor-pointer font-mono text-[10px] text-muted-foreground [&::-webkit-details-marker]:hidden"
+              className="cursor-pointer font-mono text-micro text-muted-foreground [&::-webkit-details-marker]:hidden"
               onKeyDown={(e) => {
                 if (e.key === ' ') {
                   e.preventDefault()
@@ -1172,7 +1172,7 @@ const StepCard = ({
             </summary>
             <pre
               data-testid="step-result-output"
-              className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-[10px] text-primary"
+              className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-primary"
             >
               {(() => {
                 try {
@@ -1231,21 +1231,21 @@ const StepCardList = ({
     className="border-b border-primary/20 px-4 py-3"
   >
     <div className="mb-3 flex items-baseline justify-between">
-      <h3 className="font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+      <h3 className="font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
         Steps
       </h3>
       {studioHref !== undefined ? (
         <a
           href={studioHref}
           data-testid="open-in-studio"
-          className="font-mono text-[11px] text-primary hover:text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          className="font-mono text-label text-primary hover:text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
         >
           Open in Studio →
         </a>
       ) : null}
     </div>
     {cards.length === 0 ? (
-      <p className="font-mono text-xs text-primary">No steps recorded yet</p>
+      <p className="font-mono text-body text-primary">No steps recorded yet</p>
     ) : (
       <div className="flex flex-col">
         {cards.map((card, i) => {
@@ -1347,7 +1347,7 @@ const ProposalStepTimeline = ({
         data-testid="step-timeline-row"
         data-outcome={s.outcome}
         data-active={isActive}
-        className={`relative flex items-start gap-2 rounded pl-5 pr-2 py-1 font-mono text-xs ${rowTextClass}${isActive ? ' ring-1 ring-warn bg-warn/5' : ''}`}
+        className={`relative flex items-start gap-2 rounded pl-5 pr-2 py-1 font-mono text-body ${rowTextClass}${isActive ? ' ring-1 ring-warn bg-warn/5' : ''}`}
       >
         <span className="absolute left-0 top-0 flex h-full flex-col items-center" aria-hidden="true">
           <span
@@ -1381,7 +1381,7 @@ const ProposalStepTimeline = ({
     <div className="border-b border-primary/20">
       {/* ── Proposal steps group ─────────────────────────────────────────── */}
       <section data-testid="step-group-proposal" className="px-4 py-3">
-        <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+        <h3 className="mb-2 font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
           Proposal steps
         </h3>
         {otherProposalSpans.length > 0 ? (
@@ -1391,7 +1391,7 @@ const ProposalStepTimeline = ({
         ) : null}
         {autoLinkerSpans.length > 0 ? (
           <details className="mt-1">
-            <summary className="cursor-pointer font-mono text-[11px] text-muted-foreground">
+            <summary className="cursor-pointer font-mono text-label text-muted-foreground">
               auto-linker-direction &times; {autoLinkerSpans.length} ({formatDuration(autoLinkerTotalMs)})
             </summary>
             <ol className="mt-1 flex flex-col">
@@ -1400,7 +1400,7 @@ const ProposalStepTimeline = ({
           </details>
         ) : null}
         {proposalSpans.length === 0 ? (
-          <p className="font-mono text-xs text-primary">No proposal-level steps recorded</p>
+          <p className="font-mono text-body text-primary">No proposal-level steps recorded</p>
         ) : null}
       </section>
 
@@ -1411,7 +1411,7 @@ const ProposalStepTimeline = ({
           data-testid={`step-group-${taskId}`}
           className="border-t border-primary/20 px-4 py-3"
         >
-          <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+          <h3 className="mb-2 font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
             {taskId} &middot; {taskSpans.length} steps
           </h3>
           <ol className="flex flex-col">
@@ -1786,7 +1786,7 @@ export const TaskDetailDrawer = ({
         className="drawer-panel fixed inset-0 z-50 flex w-full flex-col border-primary/40 bg-background outline-none xl:inset-y-0 xl:left-auto xl:right-0 xl:w-[min(560px,100vw)] xl:border-l xl:shadow-2xl"
       >
       <header className="flex items-center justify-between border-b border-primary/40 px-4 py-3">
-        <h2 className="font-mono text-sm uppercase tracking-wide text-primary">
+        <h2 className="font-mono text-title uppercase tracking-wide text-primary">
           Task {currentId}
         </h2>
         <button
@@ -1794,7 +1794,7 @@ export const TaskDetailDrawer = ({
           onClick={handleClose}
           aria-label="Close task detail"
           data-testid="task-detail-close"
-          className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10"
+          className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
         >
           Close
         </button>
@@ -1805,7 +1805,7 @@ export const TaskDetailDrawer = ({
         <nav
           data-testid="task-detail-breadcrumb"
           aria-label="Task drill-in trail"
-          className="flex flex-wrap items-center gap-1 border-b border-primary/20 px-4 py-2 font-mono text-[11px]"
+          className="flex flex-wrap items-center gap-1 border-b border-primary/20 px-4 py-2 font-mono text-label"
         >
           {trail.map((id, i) => {
             const isCurrent = i === trail.length - 1
@@ -1837,7 +1837,7 @@ export const TaskDetailDrawer = ({
           data-testid="task-detail-subgraph"
           className="border-b border-primary/20 px-4 py-3"
         >
-          <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+          <h3 className="mb-2 font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
             Context
           </h3>
           {/* Flex-wrap chip layout — each node is an HTML anchor chip so labels
@@ -1859,7 +1859,7 @@ export const TaskDetailDrawer = ({
                   data-node-id={node.id}
                   data-node-kind={node.kind}
                   {...(node.kind === 'task' ? { 'data-cluster': node.cluster } : {})}
-                  className="flex min-w-0 items-center gap-1.5 rounded border border-border bg-secondary px-2 py-1 font-mono text-[10px] text-foreground hover:bg-secondary/80"
+                  className="flex min-w-0 items-center gap-1.5 rounded border border-border bg-secondary px-2 py-1 font-mono text-micro text-foreground hover:bg-secondary/80"
                 >
                   {/* Status dot — uses the dag cluster fill token so cluster
                       identity is preserved on the light surface without painting
@@ -1949,7 +1949,7 @@ export const TaskDetailDrawer = ({
           data-testid="task-detail-not-found"
           className="flex flex-1 items-center justify-center p-6"
         >
-          <p className="max-w-[40ch] text-center font-mono text-sm text-primary">
+          <p className="max-w-[40ch] text-center font-mono text-title text-primary">
             Task not found. It may have been purged.
           </p>
         </div>

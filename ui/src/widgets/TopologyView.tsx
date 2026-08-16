@@ -140,7 +140,7 @@ const TaskNode = memo(({ data }: NodeProps<Node<TaskNodeData>>) => {
     >
       <FlowHandles />
       <span
-        className="line-clamp-2 font-sans text-[10.5px] leading-tight"
+        className="line-clamp-2 font-sans text-label leading-tight"
         style={{ color: style.text }}
       >
         {data.label}
@@ -164,12 +164,12 @@ const ArcCardNode = memo(({ data }: NodeProps<Node<ArcCardNodeData>>) => {
     >
       <FlowHandles />
       <span
-        className="line-clamp-2 font-sans text-[11px] font-semibold leading-tight"
+        className="line-clamp-2 font-sans text-label font-semibold leading-tight"
         style={{ color: data.isProposal ? PROPOSAL_TEXT : style.text }}
       >
         {data.label}
       </span>
-      <span className="font-mono text-[9.5px]" style={{ color: style.text, opacity: 0.7 }}>
+      <span className="font-mono text-micro" style={{ color: style.text, opacity: 0.7 }}>
         {countDisplay} · {data.dom.toLowerCase()}
       </span>
     </div>
@@ -196,11 +196,11 @@ const ArcGroupNode = memo(({ data, width, height }: NodeProps<Node<ArcGroupNodeD
     >
       <FlowHandles />
       <div
-        className="flex items-center gap-2 truncate px-3 font-sans text-[11px] font-semibold"
+        className="flex items-center gap-2 truncate px-3 font-sans text-label font-semibold"
         style={{ color: data.isProposal ? PROPOSAL_TEXT : style.text, height: GROUP_HEADER_H }}
       >
         <span className="truncate">{data.label}</span>
-        <span className="shrink-0 font-mono text-[9.5px] font-normal opacity-60">
+        <span className="shrink-0 font-mono text-micro font-normal opacity-60">
           {countDisplay}
         </span>
       </div>
@@ -221,10 +221,10 @@ const FanoutBundleNode = memo(({ data }: NodeProps<Node<FanoutBundleNodeData>>) 
     aria-label={`${data.count} linked tasks · click to expand`}
   >
     <FlowHandles />
-    <span className="font-mono text-[10.5px] text-muted-dark">
+    <span className="font-mono text-label text-muted-dark">
       {data.count} linked tasks
     </span>
-    <span className="text-[10px] text-muted-dark opacity-60">▸</span>
+    <span className="text-micro text-muted-dark opacity-60">▸</span>
   </div>
 ))
 FanoutBundleNode.displayName = 'FanoutBundleNode'
@@ -523,17 +523,17 @@ const TopologyViewInner = ({
       <main className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-background">
         {selectedProposalId != null ? (
           <div className="flex flex-col items-center gap-3">
-            <p className="font-mono text-[13px] text-primary">No active tasks for this proposal</p>
+            <p className="font-mono text-body text-primary">No active tasks for this proposal</p>
             <button
               data-testid="clear-proposal-filter"
               onClick={() => onSelectProposal?.(null)}
-              className="rounded border border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+              className="rounded border border-border px-3 py-1.5 font-mono text-label text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
             >
               Clear filter
             </button>
           </div>
         ) : (
-          <p className="font-mono text-[13px] text-primary">No active tasks</p>
+          <p className="font-mono text-body text-primary">No active tasks</p>
         )}
       </main>
     )
@@ -586,20 +586,20 @@ const TopologyViewInner = ({
           data-testid="search-zero-state"
           className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center"
         >
-          <span className="rounded bg-foreground/90 px-3 py-1.5 font-mono text-[11px] text-muted-dark ring-1 ring-border-dark/60">
+          <span className="rounded bg-foreground/90 px-3 py-1.5 font-mono text-label text-muted-dark ring-1 ring-border-dark/60">
             {`0 tasks match '${(searchQuery ?? '').trim()}'`}
           </span>
         </div>
       )}
       {/* Breadcrumb chip — visible while an arc is drilled-in. */}
       {openArcLabel && (
-        <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[260px] items-center gap-1.5 truncate rounded bg-foreground/80 px-2 py-1 font-mono text-[10.5px] text-muted-dark ring-1 ring-border-dark/60">
+        <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[260px] items-center gap-1.5 truncate rounded bg-foreground/80 px-2 py-1 font-mono text-label text-muted-dark ring-1 ring-border-dark/60">
           <span className="truncate">{openArcLabel}</span>
           <span className="shrink-0 opacity-50">· Esc to collapse</span>
         </div>
       )}
       {/* Navigation hint — quiet, top-left under the breadcrumb spot when free. */}
-      <div className="pointer-events-none absolute bottom-10 right-3 z-10 text-right font-mono text-[11px] leading-relaxed text-muted-foreground">
+      <div className="pointer-events-none absolute bottom-10 right-3 z-10 text-right font-mono text-label leading-relaxed text-muted-foreground">
         scroll = zoom · drag = pan
         <br />
         {hintText ? (
@@ -609,7 +609,7 @@ const TopologyViewInner = ({
         )}
       </div>
       {/* Status legend — bottom, over the canvas */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex items-center justify-end gap-3 px-4 py-2 font-mono text-[11px] text-muted-dark">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex items-center justify-end gap-3 px-4 py-2 font-mono text-label text-muted-dark">
         {LEGEND_ITEMS.map((item) => (
           <span key={item.label} className="inline-flex items-center gap-1.5">
             <i className="inline-block h-[9px] w-[9px] rounded-[2px]" style={{ background: item.color }} />

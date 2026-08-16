@@ -127,7 +127,7 @@ export const WatchtowerTrendChart = ({
 
   return (
     <div className="flex flex-col gap-1 min-h-[104px]">
-      <span className="font-mono text-[11px] text-primary">{workflow}</span>
+      <span className="font-mono text-label text-primary">{workflow}</span>
 
       {/* Version chips — one per version visible in the window */}
       {chips.length > 0 && (
@@ -140,7 +140,7 @@ export const WatchtowerTrendChart = ({
             return (
               <span
                 key={version}
-                className="inline-flex items-center rounded px-1 py-0.5 font-mono text-[10px]"
+                className="inline-flex items-center rounded px-1 py-0.5 font-mono text-micro"
               >
                 {`v${version}${deltaStr}`}
               </span>
@@ -150,7 +150,7 @@ export const WatchtowerTrendChart = ({
       )}
 
       {scores.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No scores yet</p>
+        <p className="text-body text-muted-foreground">No scores yet</p>
       ) : (
         <svg
           width={CHART_W}

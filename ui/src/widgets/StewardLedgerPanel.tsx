@@ -30,15 +30,15 @@ export const StewardLedgerPanel = ({ targetKind, targetId }: StewardLedgerPanelP
       data-target-id={targetId}
       className="border-t border-primary/20 px-4 py-3"
     >
-      <h3 className="font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+      <h3 className="font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
         Steward timeline · {targetLabel}
       </h3>
       {isPending ? (
-        <p className="mt-2 font-mono text-[11px] text-muted-foreground">Loading Steward timeline…</p>
+        <p className="mt-2 font-mono text-label text-muted-foreground">Loading Steward timeline…</p>
       ) : isError ? (
-        <p className="mt-2 font-mono text-[11px] text-error/80">Could not load Steward interventions.</p>
+        <p className="mt-2 font-mono text-label text-error/80">Could not load Steward interventions.</p>
       ) : entries.length === 0 ? (
-        <p data-testid="steward-ledger-empty" className="mt-2 font-mono text-[11px] text-muted-foreground">
+        <p data-testid="steward-ledger-empty" className="mt-2 font-mono text-label text-muted-foreground">
           No Steward interventions recorded.
         </p>
       ) : (
@@ -49,11 +49,11 @@ export const StewardLedgerPanel = ({ targetKind, targetId }: StewardLedgerPanelP
               data-testid="steward-ledger-row"
               className="rounded border border-primary/20 bg-card px-3 py-2"
             >
-              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 font-mono text-[11px]">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 font-mono text-label">
                 <span className="font-semibold text-foreground">{entry.targetKind} {entry.targetId}</span>
                 <time dateTime={entry.ts} className="text-muted-foreground">{entry.ts}</time>
               </div>
-              <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 font-mono text-[10px] leading-relaxed">
+              <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 font-mono text-micro leading-relaxed">
                 <dt className="text-muted-foreground">Recipe</dt><dd className="break-all text-foreground">{entry.recipeId}</dd>
                 <dt className="text-muted-foreground">Version</dt><dd className="break-all text-foreground">{entry.targetVersion}</dd>
                 <dt className="text-muted-foreground">Rationale</dt><dd className="text-foreground">{entry.rationale}</dd>

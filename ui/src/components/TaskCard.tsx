@@ -74,7 +74,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
       <div className="relative z-10 flex min-w-0 items-start justify-between gap-2">
         <a
           href={`#/task/${encodeURIComponent(task.id)}`}
-          className="block min-w-0 truncate font-mono text-meta text-muted-foreground hover:text-foreground hover:underline"
+          className="block min-w-0 truncate font-mono text-label text-muted-foreground hover:text-foreground hover:underline"
         >
           {task.id}
         </a>
@@ -109,19 +109,19 @@ export const TaskCard = memo(({ task, index }: Props) => {
         type="button"
         aria-label={task.title}
         onClick={openDrawer}
-        className={`w-full text-left line-clamp-3 text-body font-medium leading-snug text-foreground focus-visible:outline-none before:absolute before:inset-0 before:content-['']${task.status === 'dropped' ? ' line-through' : ''}`}
+        className={`w-full text-left line-clamp-3 text-title font-medium leading-snug text-foreground focus-visible:outline-none before:absolute before:inset-0 before:content-['']${task.status === 'dropped' ? ' line-through' : ''}`}
       >
         {task.title}
       </button>
 
       {failureLabel ? (
-        <div className="font-mono text-meta text-error/80">
+        <div className="font-mono text-label text-error/80">
           {failureLabel}
         </div>
       ) : null}
 
       {task.status === 'dropped' && task.dropReason ? (
-        <div className="font-mono text-meta text-muted-foreground">
+        <div className="font-mono text-label text-muted-foreground">
           {truncate(task.dropReason, 120)}
         </div>
       ) : null}
@@ -129,7 +129,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
       {/* Blocked section: raised above the stretched button so the anchor link
           receives its own pointer events. */}
       {task.status === 'blocked' ? (
-        <div className="relative z-10 font-mono text-meta text-status-blocked">
+        <div className="relative z-10 font-mono text-label text-status-blocked">
           {task.blockerTaskId ? (
             <a
               href={`#/task/${task.blockerTaskId}`}
@@ -152,7 +152,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
         >
           <summary className="flex cursor-pointer list-none select-none items-center gap-1.5 py-0.5 font-mono text-micro font-semibold text-muted-foreground/80 hover:text-foreground">
             <span className="text-foreground/60">spec</span>
-            <span className="opacity-40 text-[9px]">▾</span>
+            <span className="opacity-40 text-micro">▾</span>
           </summary>
           <div className="flex flex-col gap-1 pt-1 font-mono text-micro text-muted-foreground">
             {spec.files.length > 0 ? (
@@ -199,7 +199,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
 
       <div className="flex items-center justify-between gap-2">
         <RoleTag role={task.role} />
-        <span className="font-mono text-meta text-muted-foreground">
+        <span className="font-mono text-label text-muted-foreground">
           upd {relativeTime(task.updatedAt)}
         </span>
       </div>

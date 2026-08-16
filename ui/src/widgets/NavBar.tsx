@@ -10,7 +10,7 @@ interface NavBarProps {
 
 const linkClass = (active: boolean): string =>
   [
-    'rounded px-2 py-1 font-mono text-[11px]',
+    'rounded px-2 py-1 font-mono text-label',
     active ? 'bg-primary/30 text-foreground' : 'text-primary hover:text-foreground',
   ].join(' ')
 
@@ -20,7 +20,7 @@ interface CountBadgeProps {
 
 const CountBadge = ({ count }: CountBadgeProps) =>
   count === 0 ? null : (
-    <span aria-hidden="true" className="absolute -top-1 -right-1 rounded-full bg-primary/60 px-1 py-0.5 font-mono text-[9px] leading-none text-foreground">
+    <span aria-hidden="true" className="absolute -top-1 -right-1 rounded-full bg-primary/60 px-1 py-0.5 font-mono text-micro leading-none text-foreground">
       {count > 99 ? '99+' : count}
     </span>
   )

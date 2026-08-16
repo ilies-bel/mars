@@ -119,13 +119,13 @@ export const QueueThreadRow = memo(({
       <div className="min-w-0 flex-1 px-3 py-2">
         {/* Sender band: all queue rows read like the first message from Mars. */}
         <div className="flex items-baseline gap-2">
-          <span aria-hidden="true" className="shrink-0 text-[11px] text-primary">{KIND_ICON[item.kind]}</span>
-          <span className="shrink-0 font-mono text-[10px] text-foreground">Mars</span>
+          <span aria-hidden="true" className="shrink-0 text-label text-primary">{KIND_ICON[item.kind]}</span>
+          <span className="shrink-0 font-mono text-micro text-foreground">Mars</span>
           <span aria-hidden="true" className="text-muted-foreground">·</span>
-          <span className="shrink-0 font-mono text-[9px] uppercase text-muted-foreground">{kindBadgeLabel(item.kind)}</span>
+          <span className="shrink-0 font-mono text-micro uppercase text-muted-foreground">{kindBadgeLabel(item.kind)}</span>
           {kindChip === 'alert' && (
             <span
-              className="shrink-0 rounded-sm border border-primary/30 bg-primary/10 px-1 font-mono text-[9px] uppercase text-primary"
+              className="shrink-0 rounded-sm border border-primary/30 bg-primary/10 px-1 font-mono text-micro uppercase text-primary"
               data-testid="kind-chip-alert"
             >
               alert
@@ -133,7 +133,7 @@ export const QueueThreadRow = memo(({
           )}
           {kindChip === 'decision' && (
             <span
-              className="shrink-0 rounded-sm border border-status-blocked/30 bg-status-blocked/10 px-1 font-mono text-[9px] uppercase text-status-blocked"
+              className="shrink-0 rounded-sm border border-status-blocked/30 bg-status-blocked/10 px-1 font-mono text-micro uppercase text-status-blocked"
               data-testid="kind-chip-decision"
             >
               decision
@@ -141,7 +141,7 @@ export const QueueThreadRow = memo(({
           )}
           {hasConversation && (
             <span
-              className="shrink-0 font-mono text-[9px] text-muted-foreground"
+              className="shrink-0 font-mono text-micro text-muted-foreground"
               title="Conversation started"
               data-testid="projection-has-conversation"
             >
@@ -149,14 +149,14 @@ export const QueueThreadRow = memo(({
             </span>
           )}
           <span
-            className={`ml-auto shrink-0 font-mono text-[9px] uppercase ${priorityBadgeClass(item.priority)}`}
+            className={`ml-auto shrink-0 font-mono text-micro uppercase ${priorityBadgeClass(item.priority)}`}
           >
             {item.priority}
           </span>
         </div>
 
         {/* Entity ID — monospace, ≥11px for legibility */}
-        <span className="break-all font-mono text-[11px] text-primary">
+        <span className="break-all font-mono text-label text-primary">
           {item.entityId}
         </span>
 
@@ -164,8 +164,8 @@ export const QueueThreadRow = memo(({
         <div
           className={
             item.kind === 'draft-proposal'
-              ? 'mt-1 line-clamp-2 break-words font-mono text-[12px] text-foreground'
-              : 'mt-1 line-clamp-4 break-words font-mono text-[12px] text-foreground'
+              ? 'mt-1 line-clamp-2 break-words font-mono text-body text-foreground'
+              : 'mt-1 line-clamp-4 break-words font-mono text-body text-foreground'
           }
           title={item.kind === 'draft-proposal' ? item.title : undefined}
         >
@@ -176,14 +176,14 @@ export const QueueThreadRow = memo(({
 
         {/* "Why now" subtitle — explains why the operator must act */}
         {why !== null && (
-          <div className="mt-0.5 line-clamp-1 font-mono text-[10px] text-muted-foreground" title={why}>
+          <div className="mt-0.5 line-clamp-1 font-mono text-micro text-muted-foreground" title={why}>
             {why}
           </div>
         )}
 
         {/* Timestamp + restart button */}
         <div className="mt-1 flex items-center justify-between gap-2">
-          <span className="font-mono text-[10px] text-muted-foreground" title={formatTime(item.at)}>
+          <span className="font-mono text-micro text-muted-foreground" title={formatTime(item.at)}>
             {relativeTime(item.at)}
           </span>
           {onRestart !== null && (
@@ -195,7 +195,7 @@ export const QueueThreadRow = memo(({
                 e.stopPropagation()
                 onRestart(item.entityId)
               }}
-              className="shrink-0 border border-foreground/60 px-2 py-0.5 font-mono text-[10px] uppercase text-foreground transition hover:bg-primary/20 active:scale-[0.97] disabled:opacity-50"
+              className="shrink-0 border border-foreground/60 px-2 py-0.5 font-mono text-micro uppercase text-foreground transition hover:bg-primary/20 active:scale-[0.97] disabled:opacity-50"
             >
               {restartPending ? 'Restarting…' : 'Restart'}
             </button>
@@ -203,7 +203,7 @@ export const QueueThreadRow = memo(({
         </div>
 
         {restartError !== null && (
-          <div className="mt-1 font-mono text-[10px] text-error">
+          <div className="mt-1 font-mono text-micro text-error">
             {restartError}
           </div>
         )}
@@ -214,13 +214,13 @@ export const QueueThreadRow = memo(({
             {nonRestartActions.slice(0, 3).map((a) => (
               <span
                 key={a.id}
-                className="border border-primary/20 px-1 font-mono text-[9px] uppercase text-muted-foreground"
+                className="border border-primary/20 px-1 font-mono text-micro uppercase text-muted-foreground"
               >
                 {a.label}
               </span>
             ))}
             {nonRestartActions.length > 3 && (
-              <span className="font-mono text-[9px] text-muted-foreground">
+              <span className="font-mono text-micro text-muted-foreground">
                 +{nonRestartActions.length - 3}
               </span>
             )}
@@ -239,7 +239,7 @@ export const QueueThreadRow = memo(({
                   onAction?.(action, item)
                 }}
                 className={[
-                  'border px-2 py-0.5 font-mono text-[10px] uppercase transition active:scale-[0.97]',
+                  'border px-2 py-0.5 font-mono text-micro uppercase transition active:scale-[0.97]',
                   DESTRUCTIVE_OPS_INLINE.has(action.op)
                     ? 'border-error/50 text-error hover:bg-error/10'
                     : 'border-primary/40 text-foreground hover:bg-primary/20',
@@ -253,18 +253,18 @@ export const QueueThreadRow = memo(({
 
         {/* Kind-specific detail blocks — active only */}
         {active && isTaskFailureActionQueueKind(item.kind) && item.diagnosis?.text && (
-          <div className="mt-1 line-clamp-2 font-mono text-[10px] text-muted-foreground">
+          <div className="mt-1 line-clamp-2 font-mono text-micro text-muted-foreground">
             {item.diagnosis.text}
           </div>
         )}
         {active && item.kind === 'stale-worktree' && (
-          <div className="mt-1 truncate font-mono text-[10px] text-muted-foreground">
+          <div className="mt-1 truncate font-mono text-micro text-muted-foreground">
             {item.staleWorktreeDetail.branch ??
               item.staleWorktreeDetail.prompt?.split('\n')[0]}
           </div>
         )}
         {active && item.kind === 'draft-proposal' && item.body && (
-          <div className="mt-1 line-clamp-2 font-mono text-[10px] text-muted-foreground">
+          <div className="mt-1 line-clamp-2 font-mono text-micro text-muted-foreground">
             {item.body.split('\n')[0]}
           </div>
         )}
@@ -274,7 +274,7 @@ export const QueueThreadRow = memo(({
             target="_blank"
             rel="noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="mt-1 block truncate font-mono text-[10px] text-foreground underline underline-offset-2"
+            className="mt-1 block truncate font-mono text-micro text-foreground underline underline-offset-2"
           >
             {item.devServerUrl}
           </a>

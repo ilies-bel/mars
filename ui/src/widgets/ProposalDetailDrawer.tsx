@@ -79,7 +79,7 @@ const BodySection = ({
       <CollapsibleSection label={label} defaultOpen>
         <div>
           <p
-            className="whitespace-pre-wrap font-mono text-xs text-foreground"
+            className="whitespace-pre-wrap font-mono text-body text-foreground"
             style={
               isLong && !expanded
                 ? {
@@ -97,7 +97,7 @@ const BodySection = ({
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}
-              className="mt-1.5 font-mono text-[10px] text-primary underline hover:text-foreground"
+              className="mt-1.5 font-mono text-micro text-primary underline hover:text-foreground"
             >
               {expanded ? 'Show less' : 'Read more'}
             </button>
@@ -357,7 +357,7 @@ export const ProposalDetailDrawer = ({
         <div className="flex min-w-0 flex-col gap-2">
           <h2
             data-testid="proposal-detail-title"
-            className="break-words font-mono text-sm text-foreground"
+            className="break-words font-mono text-title text-foreground"
           >
             {proposal.title}
           </h2>
@@ -365,7 +365,7 @@ export const ProposalDetailDrawer = ({
             <span
               data-testid="proposal-detail-status"
               aria-label={`status ${proposal.status}`}
-              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide ${badgeClass(
+              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-micro font-semibold uppercase tracking-wide ${badgeClass(
                 proposal.status,
               )}`}
             >
@@ -373,14 +373,14 @@ export const ProposalDetailDrawer = ({
             </span>
             <span
               data-testid="proposal-detail-source"
-              className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground"
+              className="font-mono text-micro uppercase tracking-wide text-muted-foreground"
             >
               {proposal.source}
             </span>
             {proposal.author && (
               <span
                 data-testid="proposal-detail-author"
-                className="font-mono text-[9px] text-muted-foreground"
+                className="font-mono text-micro text-muted-foreground"
               >
                 {proposal.author.name}
               </span>
@@ -388,7 +388,7 @@ export const ProposalDetailDrawer = ({
             {createdLabel && (
               <span
                 data-testid="proposal-detail-created"
-                className="font-mono text-[9px] text-muted-foreground"
+                className="font-mono text-micro text-muted-foreground"
               >
                 {createdLabel}
               </span>
@@ -396,7 +396,7 @@ export const ProposalDetailDrawer = ({
             {proposal.userStories.length > 0 && (
               <span
                 data-testid="proposal-detail-story-count"
-                className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground"
+                className="font-mono text-micro uppercase tracking-wide text-muted-foreground"
               >
                 {proposal.userStories.length}{' '}
                 {proposal.userStories.length === 1 ? 'story' : 'stories'}
@@ -412,7 +412,7 @@ export const ProposalDetailDrawer = ({
               target="_blank"
               rel="noopener noreferrer"
               data-testid="link-view-mockup"
-              className="inline-flex w-fit items-center gap-1 rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10"
+              className="inline-flex w-fit items-center gap-1 rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
             >
               View mockup ↗
             </a>
@@ -423,7 +423,7 @@ export const ProposalDetailDrawer = ({
           onClick={handleClose}
           aria-label="Close proposal detail"
           data-testid="proposal-detail-close"
-          className="shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10"
+          className="shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
         >
           Close
         </button>
@@ -437,7 +437,7 @@ export const ProposalDetailDrawer = ({
         >
           {/* Promote */}
           {promoteState.kind === 'done' ? (
-            <span className="font-mono text-[10px] text-primary">
+            <span className="font-mono text-micro text-primary">
               {promoteState.taskId
                 ? <>Promoted → <a href={`#/task/${encodeURIComponent(promoteState.taskId)}`} className="underline">{promoteState.taskId}</a></>
                 : 'Promoted'}
@@ -448,13 +448,13 @@ export const ProposalDetailDrawer = ({
               data-testid="btn-promote"
               onClick={() => { void handlePromote() }}
               disabled={promoteState.kind === 'pending'}
-              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10 disabled:opacity-50"
+              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
             >
               {promoteState.kind === 'pending' ? 'Promoting…' : 'Promote'}
             </button>
           )}
           {promoteState.kind === 'error' && (
-            <span className="font-mono text-[9px] text-destructive">{promoteState.message}</span>
+            <span className="font-mono text-micro text-destructive">{promoteState.message}</span>
           )}
 
           {/* Grill */}
@@ -463,17 +463,17 @@ export const ProposalDetailDrawer = ({
             data-testid="btn-grill"
             onClick={() => { void handleGrill() }}
             disabled={grillState.kind === 'pending'}
-            className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10 disabled:opacity-50"
+            className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
           >
             {grillState.kind === 'pending' ? 'Opening…' : 'Grill'}
           </button>
           {grillState.kind === 'error' && (
-            <span data-testid="grill-error" className="font-mono text-[9px] text-destructive">{grillState.message}</span>
+            <span data-testid="grill-error" className="font-mono text-micro text-destructive">{grillState.message}</span>
           )}
 
           {/* Mockup */}
           {mockupState.kind === 'done' ? (
-            <span className="font-mono text-[10px] text-primary">
+            <span className="font-mono text-micro text-primary">
               Mockup queued →{' '}
               <a href={`#/task/${encodeURIComponent(mockupState.taskId)}`} className="underline">
                 {mockupState.taskId}
@@ -485,18 +485,18 @@ export const ProposalDetailDrawer = ({
               data-testid="btn-mockup"
               onClick={() => { void handleMockup() }}
               disabled={mockupState.kind === 'pending'}
-              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10 disabled:opacity-50"
+              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
             >
               {mockupState.kind === 'pending' ? 'Queuing…' : 'Mockup'}
             </button>
           )}
           {mockupState.kind === 'error' && (
-            <span className="font-mono text-[9px] text-destructive">{mockupState.message}</span>
+            <span className="font-mono text-micro text-destructive">{mockupState.message}</span>
           )}
 
           {/* Implement live */}
           {implementLiveState.kind === 'done' ? (
-            <span className="font-mono text-[10px] text-primary">
+            <span className="font-mono text-micro text-primary">
               Live task →{' '}
               <a href={`#/task/${encodeURIComponent(implementLiveState.taskId)}`} className="underline">
                 {implementLiveState.taskId}
@@ -508,31 +508,31 @@ export const ProposalDetailDrawer = ({
               data-testid="btn-implement-live"
               onClick={() => { void handleImplementLive() }}
               disabled={implementLiveState.kind === 'pending'}
-              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10 disabled:opacity-50"
+              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
             >
               {implementLiveState.kind === 'pending' ? 'Queuing…' : 'Implement live'}
             </button>
           )}
           {implementLiveState.kind === 'error' && (
-            <span className="font-mono text-[9px] text-destructive">{implementLiveState.message}</span>
+            <span className="font-mono text-micro text-destructive">{implementLiveState.message}</span>
           )}
 
           {/* Dismiss */}
           {dismissState.kind === 'done' ? (
-            <span className="font-mono text-[10px] text-muted-foreground">Dismissed</span>
+            <span className="font-mono text-micro text-muted-foreground">Dismissed</span>
           ) : (
             <button
               type="button"
               data-testid="btn-dismiss"
               onClick={() => { void handleDismiss() }}
               disabled={dismissState.kind === 'pending'}
-              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-muted-foreground hover:bg-primary/5 disabled:opacity-50"
+              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-primary/5 disabled:opacity-50"
             >
               {dismissState.kind === 'pending' ? 'Dismissing…' : 'Dismiss'}
             </button>
           )}
           {dismissState.kind === 'error' && (
-            <span className="font-mono text-[9px] text-destructive">{dismissState.message}</span>
+            <span className="font-mono text-micro text-destructive">{dismissState.message}</span>
           )}
         </div>
       )}
@@ -563,7 +563,7 @@ export const ProposalDetailDrawer = ({
             <CollapsibleSection label="User stories" defaultOpen>
               <ol className="flex flex-col gap-1.5">
                 {proposal.userStories.map((story, idx) => (
-                  <li key={idx} className="flex gap-2 font-mono text-xs text-foreground">
+                  <li key={idx} className="flex gap-2 font-mono text-body text-foreground">
                     <span className="shrink-0 text-muted-foreground">{idx + 1}.</span>
                     <span>{story}</span>
                   </li>
@@ -594,7 +594,7 @@ export const ProposalDetailDrawer = ({
             data-testid="sliced-tasks"
             className="flex flex-col gap-2 border-b border-primary/40 px-4 py-3"
           >
-            <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+            <h3 className="font-mono text-micro uppercase tracking-wide text-muted-foreground">
               Sliced tasks
             </h3>
             <ul className="flex flex-col gap-1.5">
@@ -602,11 +602,11 @@ export const ProposalDetailDrawer = ({
                 <li key={task.id}>
                   <a
                     href={`#/task/${encodeURIComponent(task.id)}`}
-                    className="flex items-center gap-2 rounded border border-primary/20 px-2 py-1.5 font-mono text-xs transition-colors hover:bg-primary/5"
+                    className="flex items-center gap-2 rounded border border-primary/20 px-2 py-1.5 font-mono text-body transition-colors hover:bg-primary/5"
                   >
                     <span className="shrink-0 text-primary">{task.id}</span>
                     <span
-                      className={`inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${badgeClass(task.status)}`}
+                      className={`inline-flex shrink-0 items-center rounded px-1 py-0.5 text-micro font-semibold uppercase tracking-wide ${badgeClass(task.status)}`}
                     >
                       {task.status}
                     </span>
@@ -623,14 +623,14 @@ export const ProposalDetailDrawer = ({
 
       {/* CLI commands — read-only, status-appropriate, copy-to-clipboard */}
       <section className="border-t border-primary/40 px-4 py-3">
-        <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+        <p className="mb-2 font-mono text-micro uppercase tracking-wide text-muted-foreground">
           CLI
         </p>
         {(STATUS_CLI_VERBS[proposal.status] ?? ['show']).map((verb) => {
           const cmd = `mars proposal ${verb} ${proposal.id}`
           return (
             <div key={verb} className="mb-1.5 flex items-center gap-2">
-              <code className="flex-1 truncate rounded bg-primary/10 px-2 py-1 font-mono text-xs text-foreground">
+              <code className="flex-1 truncate rounded bg-primary/10 px-2 py-1 font-mono text-body text-foreground">
                 {cmd}
               </code>
               <CopyButton

@@ -195,21 +195,21 @@ export const ArcTree = ({ dag, entityId, entityStatus, onOpenTask }: ArcTreeProp
                 style={{ backgroundColor: statusColor }}
               />
               {/* Kind label */}
-              <span className="font-mono text-[9px] uppercase text-primary">
+              <span className="font-mono text-micro uppercase text-primary">
                 {row.kind}
               </span>
               {/* Task ID — selectable, copyable, break-all per OriginTree */}
-              <span className="break-all font-mono text-[10px] text-muted-foreground">
+              <span className="break-all font-mono text-micro text-muted-foreground">
                 {row.id}
               </span>
               {/* Summary — body text colour for ≥4.5:1 contrast, truncated */}
               {truncatedSummary && (
-                <span className="break-words text-[11px] text-foreground">
+                <span className="break-words text-label text-foreground">
                   {truncatedSummary}
                 </span>
               )}
               {/* Status — right-aligned, muted secondary metadata */}
-              <span className="ml-auto font-mono text-[10px] uppercase text-muted-foreground">
+              <span className="ml-auto font-mono text-micro uppercase text-muted-foreground">
                 {row.status}
               </span>
             </button>

@@ -39,9 +39,9 @@ export const ChatGreeting = ({
 
   return (
     <div data-testid="chat-greeting">
-      <p className="font-mono text-[14px] leading-relaxed text-foreground">{statusLine}</p>
+      <p className="font-mono text-title leading-relaxed text-foreground">{statusLine}</p>
       {nextMove != null && onNextMove != null ? (
-        <p className="font-mono text-[14px] leading-relaxed text-foreground">
+        <p className="font-mono text-title leading-relaxed text-foreground">
           <button
             type="button"
             className={linkClass}
@@ -52,7 +52,7 @@ export const ChatGreeting = ({
           </button>
         </p>
       ) : needYou > 0 ? (
-        <p className="font-mono text-[14px] leading-relaxed text-foreground">
+        <p className="font-mono text-title leading-relaxed text-foreground">
           <a href="#/progress" className={linkClass} data-testid="chat-greeting-board-link">
             Open the board
           </a>

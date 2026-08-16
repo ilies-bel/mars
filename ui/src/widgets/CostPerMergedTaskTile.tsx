@@ -30,7 +30,7 @@ export const CostPerMergedTaskTile = () => {
     return (
       <a
         href={kpiHash('cost-per-merged-task')}
-        className="kpi-tile--low-confidence flex w-[180px] min-h-[120px] flex-col items-center justify-center rounded border border-primary/20 bg-card px-4 py-2 font-mono text-muted-foreground text-xs no-underline hover:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-primary/40"
+        className="kpi-tile--low-confidence flex w-[180px] min-h-[120px] flex-col items-center justify-center rounded border border-primary/20 bg-card px-4 py-2 font-mono text-muted-foreground text-body no-underline hover:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-primary/40"
         aria-label="View Cost / merged task details"
       >
         Cost / merged task: insufficient data
@@ -54,7 +54,7 @@ export const CostPerMergedTaskTile = () => {
       className="flex w-[180px] min-h-[120px] flex-col items-center justify-between rounded border border-primary/20 bg-card px-4 py-2 font-mono no-underline hover:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-primary/40"
       aria-label="View Cost / merged task details"
     >
-      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+      <span className="text-micro uppercase tracking-wide text-muted-foreground">
         Cost / merged task
       </span>
       <Sparkline points={sparklinePoints} />
@@ -63,7 +63,7 @@ export const CostPerMergedTaskTile = () => {
           {usdFormatter.format(currentValue)}
         </span>
         {showArrow && (
-          <span className={`flex items-center gap-1 text-[10px] ${deltaClass}`}>
+          <span className={`flex items-center gap-1 text-micro ${deltaClass}`}>
             <span aria-hidden="true">{deltaArrow}</span>
             <span>{usdFormatter.format(Math.abs(delta))}</span>
           </span>

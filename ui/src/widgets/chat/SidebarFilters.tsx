@@ -40,7 +40,7 @@ export const SidebarFilters = ({ value, onChange, onFastAction }: SidebarFilters
         placeholder="Search open threads…"
         aria-label="Search threads"
         data-testid="thread-search"
-        className="w-full border border-primary/30 bg-background px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+        className="w-full border border-primary/30 bg-background px-2 py-1 font-mono text-body text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
       />
       <div className="flex items-center gap-1">
         <select
@@ -48,7 +48,7 @@ export const SidebarFilters = ({ value, onChange, onFastAction }: SidebarFilters
           data-testid="sidebar-filter-origin"
           value={value.origin}
           onChange={(e) => onChange({ ...value, origin: e.target.value as 'all' | 'alerts' | 'operator' })}
-          className="flex-1 border border-primary/30 bg-background px-1.5 py-0.5 font-mono text-[10px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+          className="flex-1 border border-primary/30 bg-background px-1.5 py-0.5 font-mono text-micro text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
         >
           <option value="all">Any origin</option>
           <option value="alerts">Alerts</option>
@@ -59,7 +59,7 @@ export const SidebarFilters = ({ value, onChange, onFastAction }: SidebarFilters
             type="button"
             data-testid="restart-selected"
             title={restartContext ? `Restart: ${restartContext}` : 'Restart selected thread'}
-            className="border border-highlight/50 px-1.5 py-0.5 font-mono text-[10px] uppercase text-highlight hover:bg-highlight/10"
+            className="border border-highlight/50 px-1.5 py-0.5 font-mono text-micro uppercase text-highlight hover:bg-highlight/10"
             onClick={() => onFastAction('restart')}
           >
             Restart selected

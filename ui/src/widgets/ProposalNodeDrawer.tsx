@@ -225,7 +225,7 @@ export const ProposalNodeDrawer = ({
             <div className="flex min-w-0 flex-col gap-2">
               <h2
                 data-testid="proposal-node-title"
-                className="break-words font-mono text-sm text-foreground"
+                className="break-words font-mono text-title text-foreground"
               >
                 {proposal.title}
               </h2>
@@ -233,20 +233,20 @@ export const ProposalNodeDrawer = ({
                 <span
                   data-testid="proposal-node-status"
                   aria-label={`status ${proposal.status}`}
-                  className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide ${badgeClass(proposal.status)}`}
+                  className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-micro font-semibold uppercase tracking-wide ${badgeClass(proposal.status)}`}
                 >
                   {proposal.status}
                 </span>
                 <span
                   data-testid="proposal-node-source"
-                  className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground"
+                  className="font-mono text-micro uppercase tracking-wide text-muted-foreground"
                 >
                   {proposal.source}
                 </span>
               </div>
             </div>
           ) : (
-            <h2 className="font-mono text-sm uppercase tracking-wide text-primary">
+            <h2 className="font-mono text-title uppercase tracking-wide text-primary">
               Proposal {proposalId}
             </h2>
           )}
@@ -255,7 +255,7 @@ export const ProposalNodeDrawer = ({
             onClick={handleClose}
             aria-label="Close proposal detail"
             data-testid="proposal-node-close"
-            className="shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10"
+            className="shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
           >
             Close
           </button>
@@ -268,10 +268,10 @@ export const ProposalNodeDrawer = ({
               data-testid="proposal-node-problem"
               className="border-b border-primary/40 px-4 py-3"
             >
-              <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+              <p className="mb-2 font-mono text-micro uppercase tracking-wide text-muted-foreground">
                 Problem
               </p>
-              <p className="whitespace-pre-wrap font-mono text-xs text-foreground">{proposal.problem}</p>
+              <p className="whitespace-pre-wrap font-mono text-body text-foreground">{proposal.problem}</p>
             </section>
           ) : null}
 
@@ -280,10 +280,10 @@ export const ProposalNodeDrawer = ({
               data-testid="proposal-node-solution"
               className="border-b border-primary/40 px-4 py-3"
             >
-              <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+              <p className="mb-2 font-mono text-micro uppercase tracking-wide text-muted-foreground">
                 Solution
               </p>
-              <p className="whitespace-pre-wrap font-mono text-xs text-foreground">{proposal.solution}</p>
+              <p className="whitespace-pre-wrap font-mono text-body text-foreground">{proposal.solution}</p>
             </section>
           ) : null}
 
@@ -292,12 +292,12 @@ export const ProposalNodeDrawer = ({
               data-testid="proposal-node-stories"
               className="border-b border-primary/40 px-4 py-3"
             >
-              <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+              <p className="mb-2 font-mono text-micro uppercase tracking-wide text-muted-foreground">
                 User stories
               </p>
               <ol className="flex flex-col gap-1.5">
                 {proposal!.userStories.map((story, idx) => (
-                  <li key={idx} className="flex gap-2 font-mono text-xs text-foreground">
+                  <li key={idx} className="flex gap-2 font-mono text-body text-foreground">
                     <span className="shrink-0 text-muted-foreground">{idx + 1}.</span>
                     <span>{story}</span>
                   </li>
@@ -311,7 +311,7 @@ export const ProposalNodeDrawer = ({
             data-testid="proposal-node-subgraph"
             className="border-b border-primary/20 px-4 py-3"
           >
-            <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+            <h3 className="mb-2 font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
               Sliced tasks
             </h3>
             <div className="overflow-x-auto">
@@ -398,12 +398,12 @@ export const ProposalNodeDrawer = ({
         {/* CLI commands — shown when DraftFeature is available */}
         {proposal ? (
           <section className="border-t border-primary/40 px-4 py-3">
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">CLI</p>
+            <p className="mb-2 font-mono text-micro uppercase tracking-wide text-muted-foreground">CLI</p>
             {(STATUS_CLI_VERBS[proposal.status] ?? ['show']).map((verb) => {
               const cmd = `mars proposal ${verb} ${proposal.id}`
               return (
                 <div key={verb} className="mb-1.5 flex items-center gap-2">
-                  <code className="flex-1 truncate rounded bg-primary/10 px-2 py-1 font-mono text-xs text-foreground">
+                  <code className="flex-1 truncate rounded bg-primary/10 px-2 py-1 font-mono text-body text-foreground">
                     {cmd}
                   </code>
                   <CopyButton

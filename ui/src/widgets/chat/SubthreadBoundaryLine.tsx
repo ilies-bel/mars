@@ -9,7 +9,7 @@ export const SubthreadBoundaryLine = ({
 }) => (
   <div
     aria-label={position === 'start' ? 'Subthread started' : 'Subthread complete'}
-    className="flex items-center gap-3 font-mono text-[10px] text-muted-foreground"
+    className="flex items-center gap-3 font-mono text-micro text-muted-foreground"
     data-testid={`subthread-boundary-${position}`}
     data-subthread-id={boundary.subthreadId}
     role="separator"

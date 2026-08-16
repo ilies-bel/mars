@@ -133,18 +133,18 @@ const ProposalCard = ({ proposal }: { proposal: ProgressProposalNode }) => (
   >
     {/* Row 1: source badge + id */}
     <div className="flex items-center justify-between gap-1 min-w-0">
-      <span className="font-mono text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <span className="font-mono text-micro font-semibold uppercase tracking-wide text-muted-foreground">
         {proposal.source}
       </span>
-      <span className="font-mono text-meta text-muted-foreground truncate">{proposal.id}</span>
+      <span className="font-mono text-label text-muted-foreground truncate">{proposal.id}</span>
     </div>
     {/* Row 2: title */}
-    <p className="line-clamp-2 text-[12px] font-medium leading-snug text-foreground">
+    <p className="line-clamp-2 text-body font-medium leading-snug text-foreground">
       {proposal.title}
     </p>
     {/* Row 3: mockup-ready chip (conditional) */}
     {proposal.mockupReady ? (
-      <span className="self-start rounded bg-status-done/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-status-done">
+      <span className="self-start rounded bg-status-done/15 px-1.5 py-0.5 font-mono text-micro font-semibold text-status-done">
         mockup ready ↗
       </span>
     ) : null}
@@ -222,13 +222,13 @@ export const BoardView = ({
           className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
         >
           <div className="pointer-events-auto flex flex-col items-center gap-3">
-            <span className="rounded border border-border bg-card px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
+            <span className="rounded border border-border bg-card px-3 py-1.5 font-mono text-label text-muted-foreground">
               No active tasks for this proposal
             </span>
             <button
               data-testid="clear-proposal-filter"
               onClick={onClearProposalFilter}
-              className="rounded border border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+              className="rounded border border-border px-3 py-1.5 font-mono text-label text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
             >
               Clear filter
             </button>
@@ -240,7 +240,7 @@ export const BoardView = ({
           data-testid="search-zero-state"
           className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
         >
-          <span className="rounded border border-border bg-card px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
+          <span className="rounded border border-border bg-card px-3 py-1.5 font-mono text-label text-muted-foreground">
             {`0 tasks match '${(searchQuery ?? '').trim()}'`}
           </span>
         </div>
@@ -278,7 +278,7 @@ export const BoardView = ({
       </main>
 
       {error ? (
-        <div className="border-t border-primary/40 bg-primary/10 px-6 py-1.5 font-mono text-[11px] text-primary">
+        <div className="border-t border-primary/40 bg-primary/10 px-6 py-1.5 font-mono text-label text-primary">
           {error.message}
         </div>
       ) : null}

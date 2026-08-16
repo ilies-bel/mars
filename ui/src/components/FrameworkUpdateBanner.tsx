@@ -45,7 +45,7 @@ export const FrameworkUpdateBannerInner = ({
   <div
     role="region"
     aria-label="Framework update notification"
-    className="flex items-center justify-between gap-3 bg-highlight/10 px-4 py-2 text-sm text-foreground"
+    className="flex items-center justify-between gap-3 bg-highlight/10 px-4 py-2 text-title text-foreground"
   >
     <span>
       Mars v{latest} available (you&apos;re on v{installed})
@@ -62,7 +62,7 @@ export const FrameworkUpdateBannerInner = ({
         </a>
       ) : null}
       {updateError ? (
-        <span className="text-xs text-error">
+        <span className="text-body text-error">
           Couldn&apos;t start the update — try again, or update manually.
           {import.meta.env.DEV && (
             <span className="ml-1 opacity-60">({updateError})</span>
@@ -84,7 +84,7 @@ export const FrameworkUpdateBannerInner = ({
           {isUpdating ? 'Updating…' : 'Update now'}
         </button>
       ) : (
-        <span className="text-xs opacity-60">dev install — update via git pull</span>
+        <span className="text-body opacity-60">dev install — update via git pull</span>
       )}
       <button
         type="button"
@@ -123,7 +123,7 @@ export const FrameworkUpdateBanner = () => {
 
   // While the query is in flight, reserve the banner slot so NavBar and
   // Breadcrumbs don't shift when data arrives. h-9 matches the banner's
-  // natural height (py-2 padding + text-sm line height ≈ 36px).
+  // natural height (py-2 padding + text-title line height ≈ 36px).
   if (isPending) {
     return <div className="h-9 shrink-0" aria-hidden="true" />
   }

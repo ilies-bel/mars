@@ -236,7 +236,7 @@ describe('TopologyView – navigation hint overlay', () => {
     const match = html.match(/class="([^"]*)"[^>]*>[^<]*scroll = zoom/)
     expect(match).not.toBeNull()
     const cls = match?.[1] ?? ''
-    expect(cls).toContain('text-[11px]')
+    expect(cls).toContain('text-label')
     expect(cls).not.toContain('text-[10.5px]')
     expect(cls).toContain('text-muted-foreground')
     expect(cls).not.toContain('text-muted-dark')

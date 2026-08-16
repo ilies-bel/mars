@@ -159,38 +159,38 @@ const TriageRow = ({ item }: TriageRowProps) => {
       <div className="mb-1.5 flex items-center gap-2">
         <span
           className={[
-            'rounded border px-1.5 py-0.5 font-mono text-[9px] leading-none',
+            'rounded border px-1.5 py-0.5 font-mono text-micro leading-none',
             chipClass,
           ].join(' ')}
         >
           {kindIcon} {kindLabel}
         </span>
         {item.priority === 'high' && (
-          <span className="rounded bg-error/10 px-1.5 py-0.5 font-mono text-[9px] leading-none text-error">
+          <span className="rounded bg-error/10 px-1.5 py-0.5 font-mono text-micro leading-none text-error">
             high
           </span>
         )}
-        <span className="ml-auto font-mono text-[10px] text-muted-foreground">
+        <span className="ml-auto font-mono text-micro text-muted-foreground">
           {age}
         </span>
       </div>
 
       {/* Headline */}
       {headline && (
-        <p className="mb-0.5 text-[12px] font-medium leading-snug text-foreground">
+        <p className="mb-0.5 text-body font-medium leading-snug text-foreground">
           {headline}
         </p>
       )}
 
       {/* Arc goal (task intent) — shown when it differs from the headline */}
       {goal && goal !== headline && (
-        <p className="mb-1 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
+        <p className="mb-1 line-clamp-2 text-label leading-snug text-muted-foreground">
           {goal}
         </p>
       )}
 
       {/* Entity ID */}
-      <p className="mb-2 font-mono text-[10px] text-muted-dark">
+      <p className="mb-2 font-mono text-micro text-muted-dark">
         {item.entityId}
       </p>
 
@@ -202,7 +202,7 @@ const TriageRow = ({ item }: TriageRowProps) => {
             key={d.label}
             disabled={pending !== null}
             onClick={() => void handleDecision(d)}
-            className="rounded border border-primary/40 px-2 py-1 font-mono text-[10px] text-foreground transition-colors hover:bg-primary/20 disabled:opacity-50"
+            className="rounded border border-primary/40 px-2 py-1 font-mono text-micro text-foreground transition-colors hover:bg-primary/20 disabled:opacity-50"
           >
             {pending === d.label ? '…' : d.label}
           </button>
@@ -214,14 +214,14 @@ const TriageRow = ({ item }: TriageRowProps) => {
             <button
               disabled={pending !== null}
               onClick={() => void handleVerb('continue')}
-              className="rounded border border-primary/40 px-2 py-1 font-mono text-[10px] text-foreground transition-colors hover:bg-primary/20 disabled:opacity-50"
+              className="rounded border border-primary/40 px-2 py-1 font-mono text-micro text-foreground transition-colors hover:bg-primary/20 disabled:opacity-50"
             >
               {pending === 'continue' ? '…' : 'Continue'}
             </button>
             <button
               disabled={pending !== null}
               onClick={() => void handleVerb('restart')}
-              className="rounded border border-error/40 px-2 py-1 font-mono text-[10px] text-error transition-colors hover:bg-error/10 disabled:opacity-50"
+              className="rounded border border-error/40 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/10 disabled:opacity-50"
             >
               {pending === 'restart' ? '…' : 'Restart'}
             </button>
@@ -230,7 +230,7 @@ const TriageRow = ({ item }: TriageRowProps) => {
 
         <a
           href="#/chat"
-          className="ml-auto font-mono text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+          className="ml-auto font-mono text-micro text-muted-foreground transition-colors hover:text-foreground"
         >
           Chat →
         </a>
@@ -249,14 +249,14 @@ interface EmptyStateProps {
 const EmptyState = ({ running, doneToday }: EmptyStateProps) => (
   <div className="flex flex-col items-center justify-center py-24 text-center">
     <span
-      className="mb-3 text-[32px] opacity-20"
+      className="mb-3 text-4xl opacity-20"
       style={{ color: 'var(--color-amber)' }}
       aria-hidden="true"
     >
       ◆
     </span>
-    <p className="mb-1 text-[14px] font-medium text-foreground">All quiet</p>
-    <p className="font-mono text-[11px] text-muted-foreground">
+    <p className="mb-1 text-title font-medium text-foreground">All quiet</p>
+    <p className="font-mono text-label text-muted-foreground">
       {running > 0 ? `${running} running` : 'nothing running'}
       {doneToday > 0 ? ` · ${doneToday} done today` : ''}
     </p>
@@ -277,7 +277,7 @@ export const TriagePage = () => {
   if (error) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="font-mono text-[11px] text-error">
+        <p className="font-mono text-label text-error">
           Failed to load action queue
         </p>
       </div>
@@ -288,20 +288,20 @@ export const TriagePage = () => {
     <div className="flex h-full flex-col overflow-hidden bg-background">
       {/* Header strip */}
       <div className="flex shrink-0 items-center border-b border-border px-5 py-3">
-        <h1 className="font-mono text-[13px] font-semibold text-foreground">
+        <h1 className="font-mono text-body font-semibold text-foreground">
           Needs you
         </h1>
         {sorted.length > 0 && (
           <span
             aria-label={`${sorted.length} items need attention`}
-            className="ml-2 rounded-full bg-primary/20 px-2 py-0.5 font-mono text-[9px] leading-none text-primary"
+            className="ml-2 rounded-full bg-primary/20 px-2 py-0.5 font-mono text-micro leading-none text-primary"
           >
             {sorted.length}
           </span>
         )}
         <a
           href="#/chat"
-          className="ml-auto font-mono text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+          className="ml-auto font-mono text-micro text-muted-foreground transition-colors hover:text-foreground"
         >
           Chat →
         </a>

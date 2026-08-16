@@ -2,7 +2,7 @@
 export const MemoryBoundaryLine = () => (
   <div
     aria-label="Mars can read from here"
-    className="flex items-center gap-3 font-mono text-[10px] text-muted-foreground"
+    className="flex items-center gap-3 font-mono text-micro text-muted-foreground"
     data-testid="memory-boundary-line"
     role="separator"
   >

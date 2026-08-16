@@ -174,21 +174,21 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
           data-testid="hero-alert-preview"
           aria-label="Most important conversation"
         >
-          <div className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
-            <span aria-hidden="true" className="text-[13px]">{KIND_ICON[topAlert.kind] ?? '🔔'}</span>
+          <div className="flex items-center gap-2 font-mono text-micro text-muted-foreground">
+            <span aria-hidden="true" className="text-body">{KIND_ICON[topAlert.kind] ?? '🔔'}</span>
             <span>Mars</span>
             <span aria-hidden="true">·</span>
             <span>{kindBadgeLabel(topAlert.kind)}</span>
             <span className={`ml-auto uppercase ${priorityBadgeClass(topAlert.priority)}`}>{topAlert.priority}</span>
           </div>
-          <h2 className="mt-2 font-mono text-[14px] font-semibold text-foreground">{topAlert.title}</h2>
-          <p className="mt-1 line-clamp-2 font-mono text-[12px] leading-relaxed text-primary">{topAlert.body}</p>
+          <h2 className="mt-2 font-mono text-title font-semibold text-foreground">{topAlert.title}</h2>
+          <p className="mt-1 line-clamp-2 font-mono text-body leading-relaxed text-primary">{topAlert.body}</p>
           <div className="mt-3 flex items-center justify-between gap-3">
-            <span className="truncate font-mono text-[10px] text-muted-foreground">{topAlert.entityId}</span>
+            <span className="truncate font-mono text-micro text-muted-foreground">{topAlert.entityId}</span>
             <button
               type="button"
               data-testid="hero-alert-open"
-              className="shrink-0 rounded-md border border-primary/40 px-3 py-1.5 font-mono text-[10px] uppercase text-foreground transition-colors hover:bg-primary/10 active:scale-[0.98]"
+              className="shrink-0 rounded-md border border-primary/40 px-3 py-1.5 font-mono text-micro uppercase text-foreground transition-colors hover:bg-primary/10 active:scale-[0.98]"
               onClick={() => onAlertClick(topAlert)}
             >
               Open conversation
@@ -210,7 +210,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
                 type="button"
                 data-testid="hero-alert-option"
                 title={alert.title}
-                className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-primary/25 px-3 py-1.5 font-mono text-[11px] text-primary transition-colors hover:bg-primary/10 hover:text-foreground active:scale-[0.98]"
+                className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-primary/25 px-3 py-1.5 font-mono text-label text-primary transition-colors hover:bg-primary/10 hover:text-foreground active:scale-[0.98]"
                 onClick={() => onAlertClick(alert)}
               >
                 <span aria-hidden="true">{KIND_ICON[alert.kind] ?? '🔔'}</span>
@@ -226,7 +226,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
           <button
             key={chip.label}
             type="button"
-            className="rounded-full border border-primary/25 px-3.5 py-1.5 font-mono text-[11px] text-primary transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-foreground active:scale-[0.98]"
+            className="rounded-full border border-primary/25 px-3.5 py-1.5 font-mono text-label text-primary transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-foreground active:scale-[0.98]"
             onClick={() =>
               'action' in chip && chip.action === 'what-happened'
                 ? onWhatHappened()
@@ -249,7 +249,7 @@ type UIPart = MarsUIMessage['parts'][number]
 
 /** Render an arbitrary tool output value inside the AI-Elements ToolOutput. */
 const ToolResultBox = ({ value }: { value: unknown }) => (
-  <pre className="max-h-60 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed">
+  <pre className="max-h-60 overflow-auto whitespace-pre-wrap font-mono text-label leading-relaxed">
     {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
   </pre>
 )
@@ -525,7 +525,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
         </button>
         {localNote && localRating === 'down' && (
           <span
-            className="max-w-[200px] truncate font-mono text-[10px] text-primary/50"
+            className="max-w-[200px] truncate font-mono text-micro text-primary/50"
             title={localNote}
           >
             {localNote}
@@ -538,7 +538,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
           type="text"
           aria-label="What went wrong? (optional)"
           placeholder="What went wrong? (optional)"
-          className="w-full max-w-xs rounded border border-primary/30 bg-card px-2 py-1 font-mono text-[11px] text-foreground placeholder:text-primary/40 focus:border-primary/60 focus:outline-none"
+          className="w-full max-w-xs rounded border border-primary/30 bg-card px-2 py-1 font-mono text-label text-foreground placeholder:text-primary/40 focus:border-primary/60 focus:outline-none"
           value={noteInput}
           onChange={(e) => setNoteInput(e.target.value)}
           onKeyDown={(e) => {
@@ -549,7 +549,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
         />
       )}
       {error && (
-        <p className="font-mono text-[10px] text-error">{error}</p>
+        <p className="font-mono text-micro text-error">{error}</p>
       )}
     </div>
   )
@@ -588,7 +588,7 @@ export const AttachmentDisplay = ({ attachment }: { attachment: ChatSegmentAttac
       <div className="my-1" data-testid="attachment-audio">
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <audio controls src={src} className="w-full max-w-sm" />
-        <p className="mt-0.5 font-mono text-[10px] text-primary/60 truncate">{attachment.name}</p>
+        <p className="mt-0.5 font-mono text-micro text-primary/60 truncate">{attachment.name}</p>
       </div>
     )
   }
@@ -597,7 +597,7 @@ export const AttachmentDisplay = ({ attachment }: { attachment: ChatSegmentAttac
       <div className="my-1" data-testid="attachment-video">
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <video controls src={src} className="max-h-64 w-full rounded border border-primary/20 object-contain" />
-        <p className="mt-0.5 font-mono text-[10px] text-primary/60 truncate">{attachment.name}</p>
+        <p className="mt-0.5 font-mono text-micro text-primary/60 truncate">{attachment.name}</p>
       </div>
     )
   }
@@ -607,7 +607,7 @@ export const AttachmentDisplay = ({ attachment }: { attachment: ChatSegmentAttac
       target="_blank"
       rel="noopener noreferrer"
       data-testid="attachment-other"
-      className="my-1 flex items-center gap-1.5 font-mono text-[11px] text-accent underline"
+      className="my-1 flex items-center gap-1.5 font-mono text-label text-accent underline"
     >
       📎 {attachment.name}
     </a>
@@ -618,11 +618,11 @@ export const AttachmentDisplay = ({ attachment }: { attachment: ChatSegmentAttac
 const ChatResponseError = ({ onTryAgain, message }: { onTryAgain: () => void; message?: string }) => (
   <div
     role="alert"
-    className="my-2 flex items-start gap-3 rounded-md border border-error/25 bg-error/5 px-3 py-2.5 text-[13px] text-foreground"
+    className="my-2 flex items-start gap-3 rounded-md border border-error/25 bg-error/5 px-3 py-2.5 text-body text-foreground"
   >
     <span
       aria-hidden="true"
-      className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-error text-[10px] font-bold leading-none text-white"
+      className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-error text-micro font-bold leading-none text-white"
     >
       !
     </span>
@@ -631,7 +631,7 @@ const ChatResponseError = ({ onTryAgain, message }: { onTryAgain: () => void; me
       <p className="text-muted-foreground">{message || 'Codex could not finish this reply. Send another message to try again.'}</p>
       <button
         type="button"
-        className="mt-1.5 text-[12px] font-medium text-error underline decoration-error/40 underline-offset-2 transition-colors hover:text-foreground"
+        className="mt-1.5 text-body font-medium text-error underline decoration-error/40 underline-offset-2 transition-colors hover:text-foreground"
         onClick={onTryAgain}
       >
         Try again
@@ -647,7 +647,7 @@ const ResultFooter = ({ usage, turnTokens }: { usage: NonNullable<MarsUIMessage[
   if (durationMs != null) parts.push(formatDuration(durationMs))
   parts.push(`${turnTokens.toLocaleString()} tokens`)
   if (cost != null && cost > 0) parts.push(`$${cost.toFixed(4)}`)
-  return <div className="mt-2 font-mono text-[10px] text-muted-foreground">{parts.join(' · ')}</div>
+  return <div className="mt-2 font-mono text-micro text-muted-foreground">{parts.join(' · ')}</div>
 }
 
 // ---------------------------------------------------------------------------
@@ -825,14 +825,14 @@ const renderPart = (
       <div
         key={key}
         data-testid="proposed-tool-call"
-        className="my-2 rounded-md border border-highlight/30 bg-highlight/5 px-3 py-2 font-mono text-[12px]"
+        className="my-2 rounded-md border border-highlight/30 bg-highlight/5 px-3 py-2 font-mono text-body"
       >
-        <p className="font-semibold text-highlight uppercase tracking-wide text-[10px]">
+        <p className="font-semibold text-highlight uppercase tracking-wide text-micro">
           Proposed — awaiting your confirmation
         </p>
         <p className="mt-1 text-foreground">{part.data.toolName}</p>
         {part.data.input != null && (
-          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-[11px] text-muted-foreground leading-relaxed">
+          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-label text-muted-foreground leading-relaxed">
             {JSON.stringify(part.data.input, null, 2)}
           </pre>
         )}
@@ -1012,7 +1012,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
       {editing ? (
         <input
           ref={inputRef}
-          className="flex-1 rounded bg-primary/10 px-1 font-mono text-[11px] text-foreground outline-none"
+          className="flex-1 rounded bg-primary/10 px-1 font-mono text-label text-foreground outline-none"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commitEdit}
@@ -1026,7 +1026,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
         <>
           <span
             className={[
-              'flex-none text-[11px]',
+              'flex-none text-label',
               iconDimmed ? 'opacity-30' : '',
             ].join(' ')}
             title={
@@ -1040,10 +1040,10 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
           >
             {typeIcon}
           </span>
-          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{title}</span>
+          <span className="min-w-0 flex-1 truncate font-mono text-label">{title}</span>
           {kindChip === 'alert' && (
             <span
-              className="shrink-0 rounded-sm border border-primary/30 bg-primary/10 px-1 font-mono text-[9px] uppercase text-primary"
+              className="shrink-0 rounded-sm border border-primary/30 bg-primary/10 px-1 font-mono text-micro uppercase text-primary"
               data-testid="thread-kind-chip-alert"
             >
               alert
@@ -1051,14 +1051,14 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
           )}
           {kindChip === 'decision' && (
             <span
-              className="shrink-0 rounded-sm border border-status-blocked/30 bg-status-blocked/10 px-1 font-mono text-[9px] uppercase text-status-blocked"
+              className="shrink-0 rounded-sm border border-status-blocked/30 bg-status-blocked/10 px-1 font-mono text-micro uppercase text-status-blocked"
               data-testid="thread-kind-chip-decision"
             >
               decision
             </span>
           )}
           {thread.updatedAt && (
-            <span className="ml-1 flex-none font-mono text-[10px] text-muted-foreground">
+            <span className="ml-1 flex-none font-mono text-micro text-muted-foreground">
               {formatRelative(new Date(thread.updatedAt).getTime())}
             </span>
           )}
@@ -1082,7 +1082,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
         <p
           data-testid="subthread-objective"
           title={objective}
-          className="mt-0.5 truncate pl-[18px] font-mono text-[9px] text-muted-foreground"
+          className="mt-0.5 truncate pl-[18px] font-mono text-micro text-muted-foreground"
         >
           {objective}
         </p>
@@ -1110,7 +1110,7 @@ export const ThinkingIndicator = () => (
       <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-primary/50 [animation-delay:150ms]" />
       <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-primary/50 [animation-delay:300ms]" />
     </span>
-    <span className="font-mono text-[11px] text-primary/50">Thinking…</span>
+    <span className="font-mono text-label text-primary/50">Thinking…</span>
   </div>
 )
 
@@ -1162,7 +1162,7 @@ export const LiveAssistantBubble = ({ buffer, terms = [] }: { buffer: LiveBuffer
         })
       )}
       {buffer.error && (
-        <div role="alert" className="my-2 rounded border border-error/40 bg-error/10 px-3 py-2 font-mono text-[12px] text-error">
+        <div role="alert" className="my-2 rounded border border-error/40 bg-error/10 px-3 py-2 font-mono text-body text-error">
           <span className="font-semibold">Codex could not respond.</span>{' '}{buffer.error}
         </div>
       )}
@@ -1434,7 +1434,7 @@ const ChatConversation = ({
         <ConversationContent>
           {showWelcome ? (
             <ConversationEmptyState>
-              <p className="font-mono text-[13px] text-muted-foreground">
+              <p className="font-mono text-body text-muted-foreground">
                 What would you like to do?
               </p>
               <Suggestions className="justify-center">
@@ -1476,7 +1476,7 @@ const ChatConversation = ({
           <button
             type="button"
             data-testid="end-subthread"
-            className="font-mono text-[10px] text-muted-foreground hover:text-foreground"
+            className="font-mono text-micro text-muted-foreground hover:text-foreground"
             disabled={isEndingSubthread || isBusy || serverRunning}
             onClick={() => endSubthread()}
           >
@@ -1543,7 +1543,7 @@ const SlashPalette = ({ matches, activeIndex, onSelect, onActivate }: SlashPalet
           role="option"
           aria-selected={index === activeIndex}
           type="button"
-          className={`flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] ${
+          className={`flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-label ${
             index === activeIndex
               ? 'bg-primary/20 text-foreground'
               : 'text-primary hover:bg-primary/20 hover:text-foreground'
@@ -1732,18 +1732,18 @@ export const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: 
       {/* Voice-note CTA — shown after mic stops */}
       {voiceBlob && !micActive && (
         <div className="mb-2 flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground">Voice note recorded</span>
+          <span className="text-micro text-muted-foreground">Voice note recorded</span>
           <PromptInputButton
             size="sm"
             variant="outline"
-            className="h-7 text-[10px]"
+            className="h-7 text-micro"
             onClick={handleAttachVoiceNote}
           >
             Send as voice note
           </PromptInputButton>
           <button
             type="button"
-            className="text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+            className="text-micro text-muted-foreground transition-colors hover:text-foreground"
             onClick={() => setVoiceBlob(null)}
           >
             Discard
@@ -1773,7 +1773,7 @@ export const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: 
               <div
                 key={a.localId}
                 data-testid="attachment-chip"
-                className="group relative flex items-center gap-2 rounded-md border bg-accent/50 py-1 pr-1 pl-2 text-xs"
+                className="group relative flex items-center gap-2 rounded-md border bg-accent/50 py-1 pr-1 pl-2 text-body"
               >
                 {a.previewUrl ? (
                   <img
@@ -1782,7 +1782,7 @@ export const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: 
                     className="size-8 rounded object-cover"
                   />
                 ) : (
-                  <span className="text-sm">
+                  <span className="text-title">
                     {fileMediaKind(a.file) === 'audio' ? '🎵' : '🎬'}
                   </span>
                 )}
@@ -1806,7 +1806,7 @@ export const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: 
         <PromptInputTextarea
           ref={textareaRef}
           data-testid="hero-composer"
-          className="min-h-24 text-[14px]"
+          className="min-h-24 text-title"
           placeholder={isPending ? 'Creating thread…' : 'Message mars… (Enter to send, Shift+Enter for newline)'}
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -2250,18 +2250,18 @@ export const Composer = ({
       {/* Voice-note CTA — shown after mic stops */}
       {voiceBlob && !micActive && (
         <div className="mb-2 flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground">Voice note recorded</span>
+          <span className="text-micro text-muted-foreground">Voice note recorded</span>
           <PromptInputButton
             size="sm"
             variant="outline"
-            className="h-7 text-[10px]"
+            className="h-7 text-micro"
             onClick={handleAttachVoiceNote}
           >
             Send as voice note
           </PromptInputButton>
           <button
             type="button"
-            className="text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+            className="text-micro text-muted-foreground transition-colors hover:text-foreground"
             onClick={() => setVoiceBlob(null)}
           >
             Discard
@@ -2296,11 +2296,11 @@ export const Composer = ({
         {queuedNext && (
           <div
             data-testid="queued-next-chip"
-            className="flex items-center gap-2 border-b border-border px-3 py-2 text-[11px] text-muted-foreground"
+            className="flex items-center gap-2 border-b border-border px-3 py-2 text-label text-muted-foreground"
           >
             <span className="flex-1 truncate font-mono opacity-70">{queuedNext.text}</span>
             {queuedNext.attachmentCount > 0 && (
-              <span className="font-mono text-[10px] opacity-60">{queuedNext.attachmentCount} att.</span>
+              <span className="font-mono text-micro opacity-60">{queuedNext.attachmentCount} att.</span>
             )}
             <button
               type="button"
@@ -2320,7 +2320,7 @@ export const Composer = ({
               <div
                 key={a.localId}
                 data-testid="attachment-chip"
-                className="group relative flex items-center gap-2 rounded-md border bg-accent/50 py-1 pr-1 pl-2 text-xs"
+                className="group relative flex items-center gap-2 rounded-md border bg-accent/50 py-1 pr-1 pl-2 text-body"
               >
                 {a.previewUrl ? (
                   <img
@@ -2329,7 +2329,7 @@ export const Composer = ({
                     className="size-8 rounded object-cover"
                   />
                 ) : (
-                  <span className="text-sm">
+                  <span className="text-title">
                     {fileMediaKind(a.file) === 'audio' ? '🎵' : '🎬'}
                   </span>
                 )}
@@ -2434,7 +2434,7 @@ export const Composer = ({
       {threadTokens != null && threadTokens > 0 && (
         <p
           data-testid="thread-token-count"
-          className="mt-1 font-mono text-[10px] text-muted-foreground"
+          className="mt-1 font-mono text-micro text-muted-foreground"
         >
           {threadTokens.toLocaleString()} tokens
         </p>
@@ -2444,7 +2444,7 @@ export const Composer = ({
         <p
           role="alert"
           data-testid="composer-send-error"
-          className="mt-1 text-[10px] text-destructive"
+          className="mt-1 text-micro text-destructive"
         >
           {sendError ?? localSendError}
         </p>
@@ -2533,7 +2533,7 @@ export const ThreadSidebar = ({
       <div className="border-b border-primary/30 px-2 py-2">
         <button
           type="button"
-          className="w-full rounded border border-primary/30 px-2 py-1 font-mono text-[11px] text-primary hover:bg-primary/20 hover:text-foreground"
+          className="w-full rounded border border-primary/30 px-2 py-1 font-mono text-label text-primary hover:bg-primary/20 hover:text-foreground"
           onClick={() => create()}
         >
           + New thread
@@ -2556,7 +2556,7 @@ export const ThreadSidebar = ({
       />
       <div className="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-0.5">
         {liveThreads.length > 0 && (
-          <p className="px-2 pb-1 font-mono text-[9px] uppercase tracking-wide text-primary/50">
+          <p className="px-2 pb-1 font-mono text-micro uppercase tracking-wide text-primary/50">
             Subthreads
           </p>
         )}
@@ -2568,7 +2568,7 @@ export const ThreadSidebar = ({
           />
         ) : allThreads.length === 0 ? (
           <p
-            className="px-2 py-3 font-mono text-[10px] text-primary/40"
+            className="px-2 py-3 font-mono text-micro text-primary/40"
             data-testid="empty-rail"
           >
             {filters.query.trim() ? 'No matches' : "You're all clear"}
@@ -2590,7 +2590,7 @@ export const ThreadSidebar = ({
             <button
               type="button"
               data-testid="stale-untitled-toggle"
-              className="w-full px-2 py-1 text-left font-mono text-[9px] uppercase tracking-wide text-muted-foreground hover:text-foreground"
+              className="w-full px-2 py-1 text-left font-mono text-micro uppercase tracking-wide text-muted-foreground hover:text-foreground"
               onClick={() => setStaleUntitledOpen((v) => !v)}
               aria-expanded={staleUntitledOpen}
             >
@@ -2614,7 +2614,7 @@ export const ThreadSidebar = ({
             <button
               type="button"
               data-testid="archived-toggle"
-              className="w-full px-2 py-1 text-left font-mono text-[9px] uppercase tracking-wide text-muted-foreground hover:text-foreground"
+              className="w-full px-2 py-1 text-left font-mono text-micro uppercase tracking-wide text-muted-foreground hover:text-foreground"
               onClick={() => setArchivedOpen((v) => !v)}
               aria-expanded={archivedOpen}
             >
@@ -2640,7 +2640,7 @@ export const ThreadSidebar = ({
             data-testid="forks-of-thread-filter"
             aria-pressed={forkFilter.parentThreadId === selectedId}
             disabled={selectedId === null}
-            className="mr-1 rounded-full border border-primary/25 px-2 py-1 font-mono text-[9px] text-primary disabled:cursor-not-allowed disabled:opacity-40 hover:bg-primary/10"
+            className="mr-1 rounded-full border border-primary/25 px-2 py-1 font-mono text-micro text-primary disabled:cursor-not-allowed disabled:opacity-40 hover:bg-primary/10"
             onClick={() => onForkFilterChange(
               forkFilter.parentThreadId === selectedId ? {} : { parentThreadId: selectedId ?? undefined },
             )}
@@ -2651,7 +2651,7 @@ export const ThreadSidebar = ({
             type="button"
             data-testid="forked-only-filter"
             aria-pressed={forkFilter.hasParent === true}
-            className="rounded-full border border-primary/25 px-2 py-1 font-mono text-[9px] text-primary hover:bg-primary/10"
+            className="rounded-full border border-primary/25 px-2 py-1 font-mono text-micro text-primary hover:bg-primary/10"
             onClick={() => onForkFilterChange(forkFilter.hasParent ? {} : { hasParent: true })}
           >
             Forked only
@@ -3095,12 +3095,12 @@ export const ChatPage = () => {
       {codexAuthState?.needsAuth && (
         <div
           data-testid="codex-auth-banner"
-          className="flex items-center gap-3 border-b border-warn/40 bg-warn/10 px-4 py-2 font-mono text-[11px] text-warn"
+          className="flex items-center gap-3 border-b border-warn/40 bg-warn/10 px-4 py-2 font-mono text-label text-warn"
         >
           <span>Chat credentials are unavailable — run codex login in your terminal. After completing the terminal login, retry.</span>
           <button
             type="button"
-            className="ml-auto border border-warn/40 px-2 py-0.5 text-[10px] uppercase hover:bg-warn/10 active:scale-[0.97]"
+            className="ml-auto border border-warn/40 px-2 py-0.5 text-micro uppercase hover:bg-warn/10 active:scale-[0.97]"
             onClick={() => retryCodexAuth()}
           >
             Retry
@@ -3166,7 +3166,7 @@ export const ChatPage = () => {
               type="button"
               aria-label="Open sidebar"
               onClick={() => setSidebarOpen(true)}
-              className="mr-3 font-mono text-[16px] text-primary hover:text-foreground"
+              className="mr-3 font-mono text-base text-primary hover:text-foreground"
             >
               ☰
             </button>
@@ -3176,7 +3176,7 @@ export const ChatPage = () => {
             type="button"
             aria-expanded={contextPanelOpen}
             aria-label={contextPanelOpen ? 'Close context panel' : 'Open context panel'}
-            className="ml-auto font-mono text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+            className="ml-auto font-mono text-micro text-muted-foreground transition-colors hover:text-foreground"
             onClick={() => setContextPanelOpen((v) => !v)}
           >
             context {contextPanelOpen ? '◂' : '▸'}
@@ -3187,14 +3187,14 @@ export const ChatPage = () => {
             data-testid="resolved-pane"
             className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center"
           >
-            <p className="font-mono text-[13px] text-foreground">This item has been resolved.</p>
-            <p className="font-mono text-[11px] text-primary">
+            <p className="font-mono text-body text-foreground">This item has been resolved.</p>
+            <p className="font-mono text-label text-primary">
               It was removed from the action queue.
             </p>
             <div className="flex gap-3">
               <button
                 type="button"
-                className="border border-primary/40 px-3 py-1 font-mono text-[11px] text-primary hover:bg-primary/10"
+                className="border border-primary/40 px-3 py-1 font-mono text-label text-primary hover:bg-primary/10"
                 onClick={() => {
                   const id = selectedQueueItemId!
                   window.location.hash = taskHash(
@@ -3207,7 +3207,7 @@ export const ChatPage = () => {
               </button>
               <button
                 type="button"
-                className="border border-primary/40 px-3 py-1 font-mono text-[11px] text-primary hover:bg-primary/10"
+                className="border border-primary/40 px-3 py-1 font-mono text-label text-primary hover:bg-primary/10"
                 onClick={() => setSelectedQueueItemId(null)}
               >
                 ← Back to chat
@@ -3261,7 +3261,7 @@ export const ChatPage = () => {
                 data-testid="mars-opening-message"
                 className="flex flex-col gap-1"
               >
-                <span className="font-mono text-[11px] text-primary">mars</span>
+                <span className="font-mono text-label text-primary">mars</span>
                 {!selectedThreadId ? (
                   <ChatGreeting
                     {...greetingCounts}
@@ -3273,7 +3273,7 @@ export const ChatPage = () => {
                     onNextMove={handleOpenWork}
                   />
                 ) : (
-                  <p className="font-mono text-[14px] text-foreground">
+                  <p className="font-mono text-title text-foreground">
                     Nothing&apos;s pressing right now — what would you like to
                     work on?
                   </p>
@@ -3333,7 +3333,7 @@ export const ChatPage = () => {
               aria-hidden={!isScrolledUp}
               tabIndex={isScrolledUp ? 0 : -1}
               className={[
-                'mx-auto mb-1 flex items-center gap-1 rounded-full border border-primary/30 px-3 py-1 font-mono text-[10px] text-primary transition-opacity',
+                'mx-auto mb-1 flex items-center gap-1 rounded-full border border-primary/30 px-3 py-1 font-mono text-micro text-primary transition-opacity',
                 isScrolledUp ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none',
               ].join(' ')}
               onClick={scrollToBottom}
@@ -3363,7 +3363,7 @@ export const ChatPage = () => {
               <p
                 role="alert"
                 data-testid="hero-send-error"
-                className="pb-2 text-center font-mono text-[11px] text-error"
+                className="pb-2 text-center font-mono text-label text-error"
               >
                 {sendError}
               </p>

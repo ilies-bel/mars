@@ -36,7 +36,7 @@ export const ReconnectingStrip = ({ fallback }: ReconnectingStripProps) => {
     <div
       role="alert"
       data-testid="reconnecting-strip"
-      className={`flex shrink-0 items-center gap-2 border-b px-4 py-1.5 font-mono text-[11px] ${colorClass}`}
+      className={`flex shrink-0 items-center gap-2 border-b px-4 py-1.5 font-mono text-label ${colorClass}`}
     >
       <span>{fallback.headline}</span>
       {fallback.remedy !== null && (

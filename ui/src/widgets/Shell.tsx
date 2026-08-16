@@ -78,7 +78,7 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
     <header className="col-span-2 flex h-10 items-center gap-3 border-b border-border-dark bg-surface-dark px-4">
       {/* Wordmark */}
       <span
-        className="shrink-0 font-mono text-[13px] font-bold tracking-wide"
+        className="shrink-0 font-mono text-body font-bold tracking-wide"
         style={{ color: 'var(--color-amber)' }}
       >
         ◆ mars
@@ -99,19 +99,19 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
             {crumbs.map((crumb, i) => (
               <span key={i} className="flex shrink-0 items-center gap-1.5">
                 {i > 0 && (
-                  <span className="font-mono text-[11px] text-muted-dark" aria-hidden="true">
+                  <span className="font-mono text-label text-muted-dark" aria-hidden="true">
                     ›
                   </span>
                 )}
                 {crumb.href ? (
                   <a
                     href={crumb.href}
-                    className="font-mono text-[11px] text-muted-dark hover:text-fg-dark"
+                    className="font-mono text-label text-muted-dark hover:text-fg-dark"
                   >
                     {crumb.label}
                   </a>
                 ) : (
-                  <span className="font-mono text-[11px] text-fg-dark">{crumb.label}</span>
+                  <span className="font-mono text-label text-fg-dark">{crumb.label}</span>
                 )}
               </span>
             ))}
@@ -129,7 +129,7 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
           aria-hidden="true"
           data-testid="shell-live-dot"
         />
-        <span className="font-mono text-[10px] text-muted-dark">
+        <span className="font-mono text-micro text-muted-dark">
           {connected ? 'Live' : 'Reconnecting'}
         </span>
       </div>
@@ -171,7 +171,7 @@ export const ShellSidebar = ({ activeRoute, decisionBadge, isProposalsActive }: 
   >
     {SHELL_NAV_GROUPS.map((group) => (
       <div key={group.label} className="mb-1">
-        <p className="px-3 pb-1 pt-2 font-mono text-[10px] uppercase tracking-widest text-muted-dark">
+        <p className="px-3 pb-1 pt-2 font-mono text-micro uppercase tracking-widest text-muted-dark">
           {group.label}
         </p>
         {group.entries.map((entry) => {
@@ -198,21 +198,21 @@ export const ShellSidebar = ({ activeRoute, decisionBadge, isProposalsActive }: 
               href={entry.href}
               aria-current={isActive ? 'page' : undefined}
               className={[
-                'relative flex items-center gap-2 px-3 py-[5px] font-mono text-[11px] transition-colors hover:bg-surface-dark hover:text-fg-dark',
+                'relative flex items-center gap-2 px-3 py-[5px] font-mono text-label transition-colors hover:bg-surface-dark hover:text-fg-dark',
                 isActive
                   ? 'border-r-2 border-highlight bg-highlight/20'
                   : 'text-muted-dark',
               ].join(' ')}
               style={isActive ? { color: 'var(--color-amber)' } : undefined}
             >
-              <span className="w-3.5 text-center text-[12px] opacity-70" aria-hidden="true">
+              <span className="w-3.5 text-center text-body opacity-70" aria-hidden="true">
                 {entry.icon}
               </span>
               {entry.label}
               {showBadge && (
                 <span
                   aria-label={`${decisionBadge > 99 ? '99+' : decisionBadge} decisions pending`}
-                  className="ml-auto rounded-full bg-primary/60 px-1 py-0.5 font-mono text-[9px] leading-none text-foreground"
+                  className="ml-auto rounded-full bg-primary/60 px-1 py-0.5 font-mono text-micro leading-none text-foreground"
                 >
                   {decisionBadge > 99 ? '99+' : decisionBadge}
                 </span>

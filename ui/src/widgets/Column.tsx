@@ -121,14 +121,14 @@ export const BoardCard = ({ task }: { task: ProgressTask }) => {
         <a
           href={`#/task/${encodeURIComponent(task.id)}`}
           onClick={(e) => e.stopPropagation()}
-          className="card-id block truncate font-mono text-meta text-muted-foreground hover:text-foreground hover:underline"
+          className="card-id block truncate font-mono text-label text-muted-foreground hover:text-foreground hover:underline"
         >
           {task.id}
         </a>
         <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
       </div>
       {/* Row 2: title */}
-      <p className="line-clamp-2 text-[12px] font-medium leading-snug text-foreground">{title}</p>
+      <p className="line-clamp-2 text-body font-medium leading-snug text-foreground">{title}</p>
       {/* Row 3: step rail + optional failure chip */}
       <div className="card-foot flex items-center justify-between gap-1.5">
         <div className="step-rail flex items-center gap-0.5" aria-label="Pipeline steps">
@@ -147,7 +147,7 @@ export const BoardCard = ({ task }: { task: ProgressTask }) => {
           ))}
         </div>
         {failureSig ? (
-          <span className="chip-fail shrink-0 rounded bg-status-failed/15 px-1 py-0.5 font-mono text-[9px] font-semibold text-status-failed truncate max-w-[80px]">
+          <span className="chip-fail shrink-0 rounded bg-status-failed/15 px-1 py-0.5 font-mono text-micro font-semibold text-status-failed truncate max-w-[80px]">
             {failureSig}
           </span>
         ) : null}
@@ -172,19 +172,19 @@ export const DenseColumn = ({ label, count, children }: DenseColumnProps) => (
     className="flex flex-col gap-2 min-w-0 min-h-0"
   >
     <header className="flex items-center justify-between border-b border-border pb-2">
-      <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+      <span className="font-mono text-micro font-semibold uppercase tracking-[0.1em] text-muted-foreground">
         {label.toUpperCase()}
       </span>
       <span
         data-column-count={label}
-        className="font-mono text-[10px] font-semibold tabular-nums text-muted-foreground"
+        className="font-mono text-micro font-semibold tabular-nums text-muted-foreground"
       >
         {count}
       </span>
     </header>
     <div className="flex flex-col gap-2 overflow-y-auto">
       {count === 0 ? (
-        <div className="px-1 py-2 font-mono text-[11px] text-muted-foreground/70">empty</div>
+        <div className="px-1 py-2 font-mono text-label text-muted-foreground/70">empty</div>
       ) : (
         children
       )}
@@ -204,7 +204,7 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, pu
     <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-2 bg-secondary p-3">
       <header className="flex items-center justify-between border-b border-border/50 px-1 pb-2">
         <span
-          className={`font-sans text-[11px] font-semibold tracking-[0.1em] ${
+          className={`font-sans text-label font-semibold tracking-[0.1em] ${
             accent === 'highlight'
               ? 'text-highlight'
               : accent === 'amber'
@@ -214,7 +214,7 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, pu
         >
           {label}
         </span>
-        <span className="font-mono text-[11px] font-semibold text-muted-foreground">
+        <span className="font-mono text-label font-semibold text-muted-foreground">
           {arcs.length + (collapsedQueuedCount ?? 0)}
         </span>
       </header>
@@ -222,13 +222,13 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, pu
         {collapsedQueuedCount ? (
           <div
             data-testid="queued-count-header"
-            className="px-1 py-1 font-mono text-[11px] text-muted-foreground/60"
+            className="px-1 py-1 font-mono text-label text-muted-foreground/60"
           >
             {collapsedQueuedCount} queued
           </div>
         ) : null}
         {arcs.length === 0 && !collapsedQueuedCount ? (
-          <div className="px-1 py-2 font-mono text-[11px] text-muted-foreground/70">
+          <div className="px-1 py-2 font-mono text-label text-muted-foreground/70">
             empty
           </div>
         ) : arcs.length === 0 ? null : (
@@ -293,10 +293,10 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, pu
                   <span className="min-w-0 flex-1">
                     {/* Title: muted for orphaned arcs (origin force-purged, recovery live).
                         No line-through — the recovery is active, not abandoned. */}
-                    <span className={`block line-clamp-2 text-body font-medium leading-snug ${isOrphaned ? 'text-muted-foreground/70' : 'text-foreground'}`}>
+                    <span className={`block line-clamp-2 text-title font-medium leading-snug ${isOrphaned ? 'text-muted-foreground/70' : 'text-foreground'}`}>
                       {arc.title}
                     </span>
-                    <span className="mt-1 block font-mono text-meta text-muted-foreground">
+                    <span className="mt-1 block font-mono text-label text-muted-foreground">
                       arc {arc.id}
                     </span>
                     {substep ? (
@@ -305,18 +305,18 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, pu
                       </span>
                     ) : null}
                     {isCompensation ? (
-                      <span className="mt-1 block font-mono text-[10px] text-warn">
+                      <span className="mt-1 block font-mono text-micro text-warn">
                         ↩ compensates arc {arc.compensatesArcId}
                       </span>
                     ) : null}
                     {isOrphaned ? (
-                      <span className="mt-1 block font-mono text-[10px] text-muted-foreground/70" data-arc-state="orphaned-origin">
+                      <span className="mt-1 block font-mono text-micro text-muted-foreground/70" data-arc-state="orphaned-origin">
                         ↱ recovery in progress · origin force-purged
                       </span>
                     ) : null}
                     {arc.failureSignature != null ? (
                       <span
-                        className="mt-1 block font-mono text-[10px] text-error/80"
+                        className="mt-1 block font-mono text-micro text-error/80"
                         title={arc.failureSignature}
                       >
                         {humanizeFailureCode(arc.failureSignature)}
@@ -324,13 +324,13 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, pu
                     ) : null}
                   </span>
                   <span className="flex shrink-0 flex-col items-end gap-1">
-                    <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wide ${STATUS_CLASS[arc.cluster]}`}>
+                    <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-micro font-semibold tracking-wide ${STATUS_CLASS[arc.cluster]}`}>
                       {isLive ? (
                         <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current motion-safe:animate-mars-pulse" />
                       ) : null}
                       {arc.cluster}
                     </span>
-                    <span className="font-mono text-meta text-muted-foreground">
+                    <span className="font-mono text-label text-muted-foreground">
                       {countDisplay}
                     </span>
                   </span>

@@ -7,7 +7,7 @@ interface TabStripProps {
 
 const tabClass = (active: boolean): string =>
   [
-    'rounded px-2 py-1 font-mono text-[11px] uppercase tracking-wide transition-colors',
+    'rounded px-2 py-1 font-mono text-label uppercase tracking-wide transition-colors',
     active ? 'bg-primary/30 text-foreground' : 'text-primary hover:text-foreground',
   ].join(' ')
 

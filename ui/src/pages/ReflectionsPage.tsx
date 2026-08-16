@@ -137,10 +137,10 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
     return (
       <div
         data-testid="outcome-unbound"
-        className="mt-2 border border-primary/20 bg-card px-2 py-1 font-mono text-[10px] text-muted-foreground inline-flex items-center gap-1"
+        className="mt-2 border border-primary/20 bg-card px-2 py-1 font-mono text-micro text-muted-foreground inline-flex items-center gap-1"
       >
         <span className="uppercase tracking-wide">No lever binding</span>
-        <span className="text-[9px]">(predates binding feature)</span>
+        <span className="text-micro">(predates binding feature)</span>
       </div>
     )
   }
@@ -149,12 +149,12 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
     return (
       <div
         data-testid="outcome-lever"
-        className="mt-2 border border-primary/30 bg-primary/5 px-2 py-1 font-mono text-[10px]"
+        className="mt-2 border border-primary/30 bg-primary/5 px-2 py-1 font-mono text-micro"
       >
         <div className="flex items-center gap-2 flex-wrap">
           <span className="uppercase tracking-wide text-muted-foreground">Lever</span>
           <span className="text-primary font-semibold">{id}</span>
-          <span className="text-muted-foreground text-[9px] uppercase">{family}</span>
+          <span className="text-muted-foreground text-micro uppercase">{family}</span>
           {currentValue !== null && (
             <>
               <span className="text-muted-foreground">{currentValue}</span>
@@ -164,8 +164,8 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
           <span className="text-foreground">{proposedValue}</span>
         </div>
         {gesture && (
-          <div className="mt-1 text-[10px] text-foreground">
-            <span className="text-muted-foreground uppercase tracking-wide text-[9px]">Gesture: </span>
+          <div className="mt-1 text-micro text-foreground">
+            <span className="text-muted-foreground uppercase tracking-wide text-micro">Gesture: </span>
             <code className="text-primary">{gesture}</code>
           </div>
         )}
@@ -177,14 +177,14 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
   return (
     <div
       data-testid="outcome-lever-gap"
-      className="mt-2 border border-warn/30 bg-warn/5 px-2 py-1 font-mono text-[10px]"
+      className="mt-2 border border-warn/30 bg-warn/5 px-2 py-1 font-mono text-micro"
     >
       <div className="flex items-center gap-2 flex-wrap">
         <span className="uppercase tracking-wide text-warn">Lever Gap</span>
         <span className="text-foreground font-semibold">{proposedLeverId}</span>
-        <span className="text-muted-foreground text-[9px] uppercase">{family}</span>
+        <span className="text-muted-foreground text-micro uppercase">{family}</span>
       </div>
-      <div className="mt-1 text-[10px] text-muted-foreground">{whatItWouldControl}</div>
+      <div className="mt-1 text-micro text-muted-foreground">{whatItWouldControl}</div>
     </div>
   )
 }
@@ -230,17 +230,17 @@ export const LeverChangeCard = ({
   return (
     <div
       data-testid={`lever-change-${index}`}
-      className="border border-primary/30 bg-primary/5 p-2 font-mono text-[11px]"
+      className="border border-primary/30 bg-primary/5 p-2 font-mono text-label"
     >
       {/* Header: id + family + optional proposal link */}
       <div className="flex items-center gap-2 mb-1">
         <span data-testid={`lever-change-id-${index}`} className="text-primary font-semibold">{lever.id}</span>
-        <span className="text-muted-foreground text-[9px] uppercase">{lever.family}</span>
-        <span className="text-muted-foreground text-[9px]">{lever.scope}</span>
+        <span className="text-muted-foreground text-micro uppercase">{lever.family}</span>
+        <span className="text-muted-foreground text-micro">{lever.scope}</span>
         {proposalTargetId && (
           <a
             href={proposalHash(proposalTargetId, 'reflections')}
-            className="ml-auto text-[10px] text-muted-foreground hover:text-primary transition-colors"
+            className="ml-auto text-micro text-muted-foreground hover:text-primary transition-colors"
           >
             → proposal {proposalTargetId}
           </a>
@@ -248,7 +248,7 @@ export const LeverChangeCard = ({
       </div>
 
       {/* Transition */}
-      <div className="flex items-center gap-2 text-[10px] mt-1">
+      <div className="flex items-center gap-2 text-micro mt-1">
         <span className="text-muted-foreground">{lever.currentValue ?? '(unset)'}</span>
         <span className="text-muted-foreground">→</span>
         <span data-testid={`lever-change-proposed-${index}`} className="text-foreground font-semibold">{lever.proposedValue}</span>
@@ -257,7 +257,7 @@ export const LeverChangeCard = ({
       {/* Gesture (read-only reference) */}
       {lever.gesture && (
         <div className="mt-1">
-          <span className="text-[9px] uppercase tracking-wide text-muted-foreground">CLI: </span>
+          <span className="text-micro uppercase tracking-wide text-muted-foreground">CLI: </span>
           <code data-testid={`lever-change-gesture-${index}`} className="text-primary select-all">{lever.gesture}</code>
         </div>
       )}
@@ -270,7 +270,7 @@ export const LeverChangeCard = ({
             <button
               data-testid={`lever-apply-btn-${index}`}
               onClick={onRequestConfirm}
-              className="border border-primary/50 bg-primary/10 px-2 py-1 text-[10px] text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+              className="border border-primary/50 bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
               aria-label={`Apply ${transitionLabel} (requires confirmation)`}
             >
               {transitionLabel}
@@ -280,7 +280,7 @@ export const LeverChangeCard = ({
             <button
               data-testid={`lever-apply-btn-${index}`}
               onClick={onApply}
-              className="border border-primary/50 bg-primary/10 px-2 py-1 text-[10px] text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+              className="border border-primary/50 bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
               aria-label={`Apply ${transitionLabel}`}
             >
               {transitionLabel}
@@ -293,7 +293,7 @@ export const LeverChangeCard = ({
       {applyState.status === 'idle' && showConfirm && (
         <div
           data-testid={`lever-confirm-${index}`}
-          className="mt-2 border border-warn/40 bg-warn/5 p-2 text-[10px]"
+          className="mt-2 border border-warn/40 bg-warn/5 p-2 text-micro"
           role="alertdialog"
           aria-label={`Confirm applying ${lever.id} globally`}
         >
@@ -306,7 +306,7 @@ export const LeverChangeCard = ({
           {needsRestart && (
             <div
               data-testid={`lever-confirm-blast-radius-${index}`}
-              className="text-error text-[10px] mb-1"
+              className="text-error text-micro mb-1"
             >
               ⚠ Requires daemon reload — this will hard-stop{' '}
               <strong>{inFlightCount} in-flight task{inFlightCount !== 1 ? 's' : ''}</strong>{' '}
@@ -314,7 +314,7 @@ export const LeverChangeCard = ({
             </div>
           )}
           {!needsRestart && (
-            <div className="text-muted-foreground text-[10px] mb-1">
+            <div className="text-muted-foreground text-micro mb-1">
               Takes effect without a daemon restart.
             </div>
           )}
@@ -322,7 +322,7 @@ export const LeverChangeCard = ({
             <button
               data-testid={`lever-confirm-apply-btn-${index}`}
               onClick={onApply}
-              className="border border-warn/50 bg-warn/10 px-2 py-1 text-[10px] text-warn hover:bg-warn/20 focus:outline-none focus:ring-1 focus:ring-warn transition-colors"
+              className="border border-warn/50 bg-warn/10 px-2 py-1 text-micro text-warn hover:bg-warn/20 focus:outline-none focus:ring-1 focus:ring-warn transition-colors"
               aria-label={`Confirm: ${transitionLabel}`}
             >
               Confirm: {transitionLabel}
@@ -330,7 +330,7 @@ export const LeverChangeCard = ({
             <button
               data-testid={`lever-confirm-cancel-btn-${index}`}
               onClick={onCancelConfirm}
-              className="border border-primary/20 px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+              className="border border-primary/20 px-2 py-1 text-micro text-muted-foreground hover:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
               aria-label="Cancel"
             >
               Cancel
@@ -343,7 +343,7 @@ export const LeverChangeCard = ({
       {applyState.status === 'applying' && (
         <div
           data-testid={`lever-applying-${index}`}
-          className="mt-2 border-t border-primary/10 pt-2 text-[10px] text-muted-foreground"
+          className="mt-2 border-t border-primary/10 pt-2 text-micro text-muted-foreground"
           aria-live="polite"
         >
           Applying…
@@ -354,7 +354,7 @@ export const LeverChangeCard = ({
       {applyState.status === 'applied' && (
         <div
           data-testid={`lever-applied-${index}`}
-          className="mt-2 border-t border-success/20 pt-2 text-[10px] text-success"
+          className="mt-2 border-t border-success/20 pt-2 text-micro text-success"
           aria-live="polite"
         >
           ✓ Applied: {applyState.appliedValue} at {fmt(applyState.appliedAt)}
@@ -365,7 +365,7 @@ export const LeverChangeCard = ({
       {applyState.status === 'error' && (
         <div
           data-testid={`lever-apply-error-${index}`}
-          className="mt-2 border border-error/30 bg-error/5 p-2 text-[10px]"
+          className="mt-2 border border-error/30 bg-error/5 p-2 text-micro"
           role="alert"
           aria-live="assertive"
         >
@@ -376,7 +376,7 @@ export const LeverChangeCard = ({
               <button
                 data-testid={`lever-retry-btn-${index}`}
                 onClick={onRequestConfirm}
-                className="border border-primary/50 bg-primary/10 px-2 py-1 text-[10px] text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+                className="border border-primary/50 bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
               >
                 Try again: {transitionLabel}
               </button>
@@ -384,7 +384,7 @@ export const LeverChangeCard = ({
               <button
                 data-testid={`lever-retry-btn-${index}`}
                 onClick={onApply}
-                className="border border-primary/50 bg-primary/10 px-2 py-1 text-[10px] text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+                className="border border-primary/50 bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
               >
                 Try again: {transitionLabel}
               </button>
@@ -397,7 +397,7 @@ export const LeverChangeCard = ({
       {lever.history.length > 0 && applyState.status !== 'applied' && (
         <div
           data-testid={`lever-history-${index}`}
-          className="mt-2 border-t border-primary/10 pt-1 text-[9px] text-muted-foreground"
+          className="mt-2 border-t border-primary/10 pt-1 text-micro text-muted-foreground"
         >
           Last applied: {fmtRelative(lever.history[0].appliedAt)}
           {lever.history[0].fromValue !== null && (
@@ -423,19 +423,19 @@ export interface LeverGapCardProps {
 export const LeverGapCard = ({ gap, index }: LeverGapCardProps) => (
   <div
     data-testid={`lever-gap-${index}`}
-    className="border border-warn/30 bg-warn/5 p-2 font-mono text-[11px]"
+    className="border border-warn/30 bg-warn/5 p-2 font-mono text-label"
     aria-label={`Lever gap: no parameter controls ${gap.proposedLeverId}`}
   >
     <div className="flex items-center gap-2">
-      <span className="uppercase font-semibold text-warn text-[9px] tracking-wide">Lever Gap</span>
+      <span className="uppercase font-semibold text-warn text-micro tracking-wide">Lever Gap</span>
       <span className="text-foreground font-semibold">{gap.proposedLeverId}</span>
-      <span className="text-muted-foreground text-[9px] uppercase">{gap.family}</span>
+      <span className="text-muted-foreground text-micro uppercase">{gap.family}</span>
     </div>
-    <div className="mt-1 text-[10px] text-muted-foreground">{gap.whatItWouldControl}</div>
+    <div className="mt-1 text-micro text-muted-foreground">{gap.whatItWouldControl}</div>
     {/* Explicit "no apply control" statement — cannot be confused with a bound finding */}
     <div
       data-testid={`lever-gap-no-control-${index}`}
-      className="mt-1 border border-warn/20 bg-warn/5 px-2 py-1 text-[9px] text-warn"
+      className="mt-1 border border-warn/20 bg-warn/5 px-2 py-1 text-micro text-warn"
       role="note"
     >
       No parameter controls this yet — this is a documented gap, not a lever you can set.
@@ -465,7 +465,7 @@ const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt }: RunSta
   return (
     <div
       data-testid="run-state-banner"
-      className="border border-primary/20 bg-card p-3 font-mono text-[11px]"
+      className="border border-primary/20 bg-card p-3 font-mono text-label"
     >
       <span className="text-muted-foreground">{lastRan}</span>
       {' · '}
@@ -497,14 +497,14 @@ const ReflectionRow = ({ report }: ReflectionRowProps) => (
     className="flex flex-col gap-1 border border-primary/20 bg-card p-3 hover:border-primary/50 hover:bg-card/80 transition-colors"
   >
     <div className="flex items-center gap-2">
-      <span className="font-mono text-[11px] text-foreground truncate flex-1">
+      <span className="font-mono text-label text-foreground truncate flex-1">
         {report.originId}
       </span>
-      <span className={`font-mono text-[10px] uppercase ${statusClass(report.status)}`}>
+      <span className={`font-mono text-micro uppercase ${statusClass(report.status)}`}>
         {report.status}
       </span>
     </div>
-    <div className="flex items-center gap-4 font-mono text-[10px] text-muted-foreground">
+    <div className="flex items-center gap-4 font-mono text-micro text-muted-foreground">
       <span>{fmt(report.recordedAt)}</span>
       {report.dissonantCallCount > 0 && (
         <span className="text-error">{report.dissonantCallCount} dissonant</span>
@@ -535,7 +535,7 @@ interface DissonantCallCardProps {
 const DissonantCallCard = ({ call, index }: DissonantCallCardProps) => (
   <div
     data-testid={`dissonant-call-${index}`}
-    className="border border-primary/20 bg-card p-3 font-mono text-[11px]"
+    className="border border-primary/20 bg-card p-3 font-mono text-label"
   >
     <div className="flex items-center gap-2 mb-1">
       <span className={`uppercase font-semibold ${severityClass(call.severity)}`}>
@@ -552,16 +552,16 @@ const DissonantCallCard = ({ call, index }: DissonantCallCardProps) => (
     </div>
     <div className="grid grid-cols-2 gap-2 mt-2">
       <div>
-        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Stated intent</div>
+        <div className="text-micro uppercase tracking-wide text-muted-foreground mb-1">Stated intent</div>
         <div className="text-foreground">{call.statedIntent}</div>
       </div>
       <div>
-        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Actual outcome</div>
+        <div className="text-micro uppercase tracking-wide text-muted-foreground mb-1">Actual outcome</div>
         <div className="text-foreground">{call.actualOutcome}</div>
       </div>
     </div>
     {call.evidence && (
-      <div className="mt-2 text-[10px] text-muted-foreground border-t border-primary/10 pt-2">
+      <div className="mt-2 text-micro text-muted-foreground border-t border-primary/10 pt-2">
         <span className="uppercase tracking-wide">Evidence:</span>{' '}
         {call.evidence}
       </div>
@@ -644,20 +644,20 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
       <div className="border border-primary/20 bg-card p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
-            <div className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Arc</div>
-            <div className="font-mono text-[12px] text-foreground break-all">{detail.originId}</div>
+            <div className="font-mono text-micro uppercase tracking-wide text-muted-foreground mb-1">Arc</div>
+            <div className="font-mono text-body text-foreground break-all">{detail.originId}</div>
           </div>
           <div className="text-right shrink-0">
-            <div className={`font-mono text-[11px] uppercase font-semibold ${statusClass(detail.status)}`}>
+            <div className={`font-mono text-label uppercase font-semibold ${statusClass(detail.status)}`}>
               {detail.status}
             </div>
-            <div className="font-mono text-[10px] text-muted-foreground">{fmt(detail.recordedAt)}</div>
+            <div className="font-mono text-micro text-muted-foreground">{fmt(detail.recordedAt)}</div>
           </div>
         </div>
         {detail.status !== 'complete' && (
           <div
             data-testid="non-complete-notice"
-            className="mt-3 border border-warn/30 bg-warn/5 p-2 font-mono text-[11px] text-warn"
+            className="mt-3 border border-warn/30 bg-warn/5 p-2 font-mono text-label text-warn"
           >
             This report has status <strong>{detail.status}</strong> — the full report body is not yet available.
           </div>
@@ -669,14 +669,14 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
           {/* Summary + root cause — the headline, not buried */}
           <section>
             <div className="mb-2"><SectionLabel>Summary</SectionLabel></div>
-            <p className="font-mono text-[12px] text-foreground leading-relaxed border border-primary/20 bg-card p-3">
+            <p className="font-mono text-body text-foreground leading-relaxed border border-primary/20 bg-card p-3">
               {detail.report.summary}
             </p>
           </section>
 
           <section>
             <div className="mb-2"><SectionLabel>Root Cause</SectionLabel></div>
-            <p className="font-mono text-[11px] text-primary border border-primary/30 bg-primary/5 p-3 leading-relaxed">
+            <p className="font-mono text-label text-primary border border-primary/30 bg-primary/5 p-3 leading-relaxed">
               {detail.report.rootCause}
             </p>
           </section>
@@ -702,7 +702,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
                   <div
                     key={i}
                     data-testid={`verify-mismatch-${i}`}
-                    className="border border-warn/30 bg-warn/5 p-3 font-mono text-[11px]"
+                    className="border border-warn/30 bg-warn/5 p-3 font-mono text-label"
                   >
                     <div className="flex items-center gap-2 mb-1">
                       <span className={`uppercase font-semibold ${severityClass(mm.severity)}`}>
@@ -713,11 +713,11 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
                     </div>
                     <div className="grid grid-cols-2 gap-2 mt-1">
                       <div>
-                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Claimed</div>
+                        <div className="text-micro uppercase tracking-wide text-muted-foreground mb-1">Claimed</div>
                         <div className="text-foreground">{mm.claimed}</div>
                       </div>
                       <div>
-                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Actual</div>
+                        <div className="text-micro uppercase tracking-wide text-muted-foreground mb-1">Actual</div>
                         <div className="text-foreground">{mm.actual}</div>
                       </div>
                     </div>
@@ -736,13 +736,13 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
                   <div
                     key={i}
                     data-testid={`thrashing-pattern-${i}`}
-                    className="border border-primary/20 bg-card p-3 font-mono text-[11px]"
+                    className="border border-primary/20 bg-card p-3 font-mono text-label"
                   >
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-foreground">{p.pattern}</span>
                       <span className="text-muted-foreground shrink-0">× {p.occurrences}</span>
                     </div>
-                    <div className="text-[10px] text-muted-foreground">{p.evidence}</div>
+                    <div className="text-micro text-muted-foreground">{p.evidence}</div>
                   </div>
                 ))}
               </div>
@@ -756,7 +756,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
               {byNameEntries.map(([tool, count]) => (
                 <div
                   key={tool}
-                  className="border border-primary/20 bg-card px-2 py-1 font-mono text-[11px]"
+                  className="border border-primary/20 bg-card px-2 py-1 font-mono text-label"
                 >
                   <span className="text-primary">{tool}</span>
                   <span className="text-muted-foreground"> {count}</span>
@@ -774,14 +774,14 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
                   <div
                     key={i}
                     data-testid={`filed-proposal-${i}`}
-                    className="border border-primary/20 bg-card p-2 font-mono text-[11px]"
+                    className="border border-primary/20 bg-card p-2 font-mono text-label"
                   >
                     <a
                       href={proposalHash(s.targetId!, 'reflections')}
                       className="flex items-center gap-2 hover:text-primary transition-colors"
                     >
                       <span className="text-primary flex-1">{s.title}</span>
-                      <span className="text-muted-foreground text-[10px]">→ proposal {s.targetId}</span>
+                      <span className="text-muted-foreground text-micro">→ proposal {s.targetId}</span>
                     </a>
                     <OutcomeTag outcome={s.outcome as SuggestionOutcome} />
                   </div>
@@ -904,7 +904,7 @@ export const ReflectionsPage = () => {
             <div className="flex items-center gap-2">
               <a
                 href="#/reflections"
-                className="font-mono text-[11px] text-primary hover:text-foreground"
+                className="font-mono text-label text-primary hover:text-foreground"
               >
                 ← Reflections
               </a>
@@ -913,7 +913,7 @@ export const ReflectionsPage = () => {
             {detailError ? (
               <FallbackSurface error={detailError} of="reflection detail" variant="inline" />
             ) : detailLoading || detailData === undefined ? (
-              <div className="font-mono text-[11px] text-muted-foreground" data-testid="detail-loading">
+              <div className="font-mono text-label text-muted-foreground" data-testid="detail-loading">
                 Loading…
               </div>
             ) : (
@@ -927,7 +927,7 @@ export const ReflectionsPage = () => {
               title="Reflections"
               right={
                 listData ? (
-                  <span className="font-mono text-[10px] text-muted-foreground" data-testid="report-count">
+                  <span className="font-mono text-micro text-muted-foreground" data-testid="report-count">
                     {listData.totalDiscovered > listData.reports.length
                       ? `${listData.reports.length} of ${listData.totalDiscovered} reports`
                       : `${listData.reports.length} report${listData.reports.length !== 1 ? 's' : ''}`}
@@ -950,13 +950,13 @@ export const ReflectionsPage = () => {
             )}
 
             {listLoading && listData === undefined ? (
-              <div className="font-mono text-[11px] text-muted-foreground" data-testid="list-loading">
+              <div className="font-mono text-label text-muted-foreground" data-testid="list-loading">
                 Loading…
               </div>
             ) : listData?.reports.length === 0 ? (
               <div
                 data-testid="empty-state"
-                className="font-mono text-[11px] text-muted-foreground border border-primary/20 bg-card p-4 text-center"
+                className="font-mono text-label text-muted-foreground border border-primary/20 bg-card p-4 text-center"
               >
                 No reflection reports yet. Run <code>mars arc reflect {'<originId>'}</code> to generate one.
               </div>

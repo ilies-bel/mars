@@ -27,7 +27,7 @@ export const CompactionNotice = ({ segment }: CompactionNoticeProps) => {
   return (
     <div className="flex flex-col gap-2" data-testid="compaction-notice">
       <div
-        className="flex items-center gap-3 font-mono text-[10px] text-muted-foreground"
+        className="flex items-center gap-3 font-mono text-micro text-muted-foreground"
         role="separator"
       >
         <span className="h-px flex-1 bg-border" />
@@ -51,11 +51,11 @@ export const CompactionNotice = ({ segment }: CompactionNoticeProps) => {
           className="rounded-md border border-border bg-muted/30 px-3 py-2"
           data-testid="compaction-notice-summary"
         >
-          <p className="whitespace-pre-wrap font-mono text-[12px] text-foreground">
+          <p className="whitespace-pre-wrap font-mono text-body text-foreground">
             {segment.summary}
           </p>
           {refs.length > 0 && (
-            <p className="mt-2 font-mono text-[10px] text-muted-foreground">
+            <p className="mt-2 font-mono text-micro text-muted-foreground">
               {/* Refs are carried forward across checkpoints precisely so they
                   survive compaction; surfacing them here is what makes the
                   claim "nothing was lost" checkable rather than a promise. */}

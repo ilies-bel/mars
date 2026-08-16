@@ -106,7 +106,7 @@ export const ProjectSelectorInner = ({
         aria-expanded={open}
         onClick={onToggle}
         data-testid="project-selector-trigger"
-        className="flex items-center gap-1.5 rounded px-2 py-0.5 font-mono text-[11px] text-foreground transition-colors hover:bg-primary/20"
+        className="flex items-center gap-1.5 rounded px-2 py-0.5 font-mono text-label text-foreground transition-colors hover:bg-primary/20"
       >
         <span
           role="img"
@@ -155,7 +155,7 @@ export const ProjectSelectorInner = ({
                 data-testid={`project-item-${p.projectId}`}
                 onClick={() => onSelect(p.projectId)}
                 className={[
-                  'flex flex-col cursor-pointer px-2 py-1.5 font-mono text-[11px] transition-colors',
+                  'flex flex-col cursor-pointer px-2 py-1.5 font-mono text-label transition-colors',
                   isFocused
                     ? 'bg-primary/30 text-foreground'
                     : isActive
@@ -182,7 +182,7 @@ export const ProjectSelectorInner = ({
                           disabled={isStarting}
                           onClick={(e) => onStart(p.projectId, e)}
                           data-testid={`start-btn-${p.projectId}`}
-                          className="rounded border border-primary/40 px-1.5 py-0.5 font-mono text-[9px] uppercase text-foreground hover:bg-primary/20 disabled:opacity-50"
+                          className="rounded border border-primary/40 px-1.5 py-0.5 font-mono text-micro uppercase text-foreground hover:bg-primary/20 disabled:opacity-50"
                         >
                           {isStarting ? '…' : 'Start'}
                         </button>
@@ -193,7 +193,7 @@ export const ProjectSelectorInner = ({
                           disabled={isRestarting}
                           onClick={(e) => onRestart(p.projectId, e)}
                           data-testid={`restart-btn-${p.projectId}`}
-                          className="rounded border border-primary/40 px-1.5 py-0.5 font-mono text-[9px] uppercase text-foreground hover:bg-primary/20 disabled:opacity-50"
+                          className="rounded border border-primary/40 px-1.5 py-0.5 font-mono text-micro uppercase text-foreground hover:bg-primary/20 disabled:opacity-50"
                         >
                           {isRestarting ? '…' : 'Restart'}
                         </button>
@@ -204,7 +204,7 @@ export const ProjectSelectorInner = ({
                 {startError?.projectId === p.projectId && (
                   <p
                     data-testid={`start-error-${p.projectId}`}
-                    className="mt-1 font-mono text-[10px] text-error"
+                    className="mt-1 font-mono text-micro text-error"
                   >
                     {startError.message}
                   </p>
@@ -212,7 +212,7 @@ export const ProjectSelectorInner = ({
                 {restartError?.projectId === p.projectId && (
                   <p
                     data-testid={`restart-error-${p.projectId}`}
-                    className="mt-1 font-mono text-[10px] text-error"
+                    className="mt-1 font-mono text-micro text-error"
                   >
                     {restartError.message}
                   </p>
@@ -298,7 +298,7 @@ export const ProjectSelector = () => {
   if (projects.length === 0) {
     // While the initial fetch is in flight, hold the trigger's width so nav
     // links don't shift horizontally when projects arrive. w-[140px] matches
-    // the resting trigger width (font-mono text-[11px] name + glyphs + px-2).
+    // the resting trigger width (font-mono text-label name + glyphs + px-2).
     // Once settled with no projects, collapse entirely.
     if (!projectsSettled) {
       return <div className="w-[140px] shrink-0" aria-hidden="true" />

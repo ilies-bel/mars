@@ -38,13 +38,13 @@ function TaskTracePanel({ taskId }: { taskId: string }) {
     return <SkeletonList rows={3} rowClassName="h-4 w-full mb-1" label="Loading traces" />
   }
   if (!data || data.events.length === 0) {
-    return <p className="font-mono text-[11px] text-muted-foreground">No trace events for this task.</p>
+    return <p className="font-mono text-label text-muted-foreground">No trace events for this task.</p>
   }
 
   return (
     <ul className="flex flex-col gap-0.5">
       {data.events.map((e) => (
-        <li key={e.id} className={`font-mono text-[10px] ${traceEventRowClass(e.severity)}`}>
+        <li key={e.id} className={`font-mono text-micro ${traceEventRowClass(e.severity)}`}>
           <span className="text-muted-foreground">{relativeTime(e.timestamp)}</span>{' '}
           <span className={`uppercase ${severityColor(e.severity)}`}>
             [{e.severity}]
@@ -99,12 +99,12 @@ export default function ArcChainRail({
               data-node-rail-id={node.id}
               onClick={() => handleNodeClick(node)}
               className={[
-                'flex w-full items-baseline gap-1.5 rounded px-2 py-1 text-left font-mono text-[11px]',
+                'flex w-full items-baseline gap-1.5 rounded px-2 py-1 text-left font-mono text-label',
                 'transition-colors hover:bg-primary/10',
                 selectedId === node.id ? 'bg-primary/15 font-bold text-foreground' : 'text-foreground/80',
               ].join(' ')}
             >
-              <span className="shrink-0 text-[9px] uppercase text-primary">
+              <span className="shrink-0 text-micro uppercase text-primary">
                 {node.kind === 'proposal'
                   ? 'Proposal'
                   : node.attemptIndex !== undefined
@@ -113,7 +113,7 @@ export default function ArcChainRail({
               </span>
               <span className="break-words">{node.label}</span>
               {node.status ? (
-                <span className="ml-auto shrink-0 text-[9px] uppercase text-muted-foreground">
+                <span className="ml-auto shrink-0 text-micro uppercase text-muted-foreground">
                   {node.status}
                 </span>
               ) : null}
@@ -129,13 +129,13 @@ export default function ArcChainRail({
           data-node-id={selectedNode.id}
         >
           <div>
-            <p className="mb-1 text-[10px] uppercase tracking-wider text-primary">Prompt</p>
-            <p className="whitespace-pre-wrap font-mono text-[12px] text-foreground">
+            <p className="mb-1 text-micro uppercase tracking-wider text-primary">Prompt</p>
+            <p className="whitespace-pre-wrap font-mono text-body text-foreground">
               {selectedNode.label}
             </p>
           </div>
           <div>
-            <p className="mb-1 text-[10px] uppercase tracking-wider text-primary">Traces</p>
+            <p className="mb-1 text-micro uppercase tracking-wider text-primary">Traces</p>
             <TaskTracePanel taskId={selectedNode.id} />
           </div>
         </aside>

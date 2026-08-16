@@ -89,17 +89,17 @@ export const Breadcrumbs = ({ hash }: BreadcrumbsProps) => {
       {crumbs.map((crumb, i) => (
         <span key={i} className="flex items-center gap-1.5">
           {i > 0 && (
-            <span className="text-[10px] text-muted-foreground" aria-hidden="true">›</span>
+            <span className="text-micro text-muted-foreground" aria-hidden="true">›</span>
           )}
           {crumb.href ? (
             <a
               href={crumb.href}
-              className="font-mono text-[10px] text-muted-foreground hover:text-foreground"
+              className="font-mono text-micro text-muted-foreground hover:text-foreground"
             >
               {crumb.label}
             </a>
           ) : (
-            <span className="font-mono text-[10px] font-semibold text-foreground">
+            <span className="font-mono text-micro font-semibold text-foreground">
               {crumb.label}
             </span>
           )}

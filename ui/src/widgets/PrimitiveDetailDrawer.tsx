@@ -101,7 +101,7 @@ export const executorLabel = (executor: PrimitiveDetail['primitive']['executor']
 // ── Section chrome ────────────────────────────────────────────────────────────
 
 const SectionLabel = ({ children }: { children: ReactNode }) => (
-  <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+  <p className="mb-2 font-mono text-micro uppercase tracking-wide text-muted-foreground">
     {children}
   </p>
 )
@@ -114,27 +114,27 @@ const WorkerProfileCard = ({ profile }: { profile: PrimitiveWorkerProfile }) => 
     className="rounded border border-primary/20 px-2 py-1.5"
   >
     <div className="flex flex-wrap items-baseline gap-2">
-      <span className="font-mono text-xs font-semibold text-foreground">{profile.workerName}</span>
+      <span className="font-mono text-body font-semibold text-foreground">{profile.workerName}</span>
       {profile.source === 'registry' ? (
-        <span className="rounded border border-warn/40 bg-warn/5 px-1 font-mono text-[9px] uppercase tracking-wide text-warn">
+        <span className="rounded border border-warn/40 bg-warn/5 px-1 font-mono text-micro uppercase tracking-wide text-warn">
           registry
         </span>
       ) : null}
-      <span className="font-mono text-[10px] text-muted-foreground">{profile.model}</span>
+      <span className="font-mono text-micro text-muted-foreground">{profile.model}</span>
     </div>
-    <p className="mt-1 font-mono text-[10px] text-primary">
+    <p className="mt-1 font-mono text-micro text-primary">
       effort:{profile.effort} · permissions:{profile.permissionMode}
     </p>
     {profile.forfeitedTools.length > 0 ? (
       <div className="mt-1 flex flex-col gap-0.5">
-        <span className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground">
+        <span className="font-mono text-micro uppercase tracking-wide text-muted-foreground">
           Forfeited tools
         </span>
         <ul className="flex flex-wrap gap-1">
           {profile.forfeitedTools.map((tool) => (
             <li
               key={tool}
-              className="rounded border border-error/30 bg-error/5 px-1 font-mono text-[10px] text-error/80"
+              className="rounded border border-error/30 bg-error/5 px-1 font-mono text-micro text-error/80"
             >
               {tool}
             </li>
@@ -144,7 +144,7 @@ const WorkerProfileCard = ({ profile }: { profile: PrimitiveWorkerProfile }) => 
     ) : (
       <p
         data-testid="primitive-full-surface"
-        className="mt-1 font-mono text-[10px] text-done"
+        className="mt-1 font-mono text-micro text-done"
       >
         Full tool surface — no forfeited tools.
       </p>
@@ -164,20 +164,20 @@ const RunRow = ({ run, idx }: { run: PrimitiveRun; idx: number }) => {
       <StepStatusIcon outcome={entry.outcome} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex flex-wrap items-baseline gap-2">
-          <span className="font-mono text-xs font-semibold text-foreground">{entry.stepName}</span>
+          <span className="font-mono text-body font-semibold text-foreground">{entry.stepName}</span>
           {entry.workerName != null ? (
-            <span className="font-mono text-[10px] text-muted-foreground">{entry.workerName}</span>
+            <span className="font-mono text-micro text-muted-foreground">{entry.workerName}</span>
           ) : null}
           {entry.claudeSessionId != null ? (
             <span
-              className="font-mono text-[10px] text-muted-foreground"
+              className="font-mono text-micro text-muted-foreground"
               title={entry.claudeSessionId}
             >
               session:{entry.claudeSessionId.slice(0, 8)}
             </span>
           ) : null}
         </div>
-        <p className="font-mono text-[10px] text-muted-foreground">
+        <p className="font-mono text-micro text-muted-foreground">
           {relativeTime(entry.startedAt)}
           {entry.durationMs != null ? ` · ${formatDuration(entry.durationMs)}` : ''}
         </p>
@@ -187,14 +187,14 @@ const RunRow = ({ run, idx }: { run: PrimitiveRun; idx: number }) => {
           <a
             href={taskHash(run.taskId)}
             data-testid="primitive-run-task-link"
-            className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-[10px] text-primary hover:bg-primary/10"
+            className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-micro text-primary hover:bg-primary/10"
           >
             task →
           </a>
           <a
             href={studioHash(run.taskId)}
             data-testid="primitive-run-studio-link"
-            className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-[10px] text-primary hover:bg-primary/10"
+            className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-micro text-primary hover:bg-primary/10"
           >
             studio →
           </a>
@@ -317,7 +317,7 @@ export const PrimitiveDetailDrawer = ({
           <div className="flex min-w-0 flex-col gap-2">
             <h2
               data-testid="primitive-detail-title"
-              className="break-words font-mono text-sm font-semibold text-foreground"
+              className="break-words font-mono text-title font-semibold text-foreground"
             >
               {name}
             </h2>
@@ -325,14 +325,14 @@ export const PrimitiveDetailDrawer = ({
               <div className="flex flex-wrap items-center gap-2">
                 <span
                   data-testid="primitive-detail-executor"
-                  className="inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-primary"
+                  className="inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 font-mono text-micro font-semibold uppercase tracking-wide text-primary"
                 >
                   {executorLabel(detail.primitive.executor)}
                 </span>
                 {detail.primitive.phase !== null ? (
                   <span
                     data-testid="primitive-detail-phase"
-                    className="rounded border border-primary/30 px-1 font-mono text-[10px] text-muted-foreground"
+                    className="rounded border border-primary/30 px-1 font-mono text-micro text-muted-foreground"
                   >
                     phase:{detail.primitive.phase}
                   </span>
@@ -345,7 +345,7 @@ export const PrimitiveDetailDrawer = ({
             onClick={handleClose}
             aria-label="Close primitive detail"
             data-testid="primitive-detail-close"
-            className="shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10"
+            className="shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
           >
             Close
           </button>
@@ -357,7 +357,7 @@ export const PrimitiveDetailDrawer = ({
               {query.error !== null ? (
                 <p
                   data-testid="primitive-detail-error"
-                  className="font-mono text-xs text-error/80"
+                  className="font-mono text-body text-error/80"
                 >
                   Could not load the primitive ({query.error.message}).
                 </p>
@@ -372,7 +372,7 @@ export const PrimitiveDetailDrawer = ({
                 data-testid="primitive-detail-description"
                 className="border-b border-primary/40 px-4 py-3"
               >
-                <p className="font-mono text-xs leading-relaxed text-foreground">
+                <p className="font-mono text-body leading-relaxed text-foreground">
                   {detail.primitive.description}
                 </p>
               </section>
@@ -403,7 +403,7 @@ export const PrimitiveDetailDrawer = ({
                             key={t.tool}
                             data-testid="primitive-observed-tool"
                             title={`last invoked ${relativeTime(t.lastInvokedAt)}`}
-                            className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-[11px] text-primary"
+                            className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-label text-primary"
                           >
                             {t.tool} ×{t.count}
                           </li>
@@ -412,7 +412,7 @@ export const PrimitiveDetailDrawer = ({
                     ) : (
                       <p
                         data-testid="primitive-no-observed-tools"
-                        className="font-mono text-[11px] text-muted-foreground"
+                        className="font-mono text-label text-muted-foreground"
                       >
                         No shell tools observed in the trace window yet.
                       </p>
@@ -421,7 +421,7 @@ export const PrimitiveDetailDrawer = ({
                 ) : (
                   <p
                     data-testid="primitive-human-surface"
-                    className="font-mono text-xs text-foreground"
+                    className="font-mono text-body text-foreground"
                   >
                     Human step — no tool surface. It writes task state and raises an
                     action-queue row; nothing executes.
@@ -433,7 +433,7 @@ export const PrimitiveDetailDrawer = ({
                     {detail.caveats.map((caveat) => (
                       <li
                         key={caveat}
-                        className="rounded border border-warn/40 bg-warn/5 px-2 py-1 font-mono text-[10px] leading-relaxed text-warn"
+                        className="rounded border border-warn/40 bg-warn/5 px-2 py-1 font-mono text-micro leading-relaxed text-warn"
                       >
                         {caveat}
                       </li>
@@ -463,20 +463,20 @@ export const PrimitiveDetailDrawer = ({
                                 {park.taskId !== null ? (
                                   <a
                                     href={taskHash(park.taskId)}
-                                    className="font-mono text-xs font-semibold text-foreground hover:underline"
+                                    className="font-mono text-body font-semibold text-foreground hover:underline"
                                   >
                                     {park.taskId}
                                   </a>
                                 ) : (
-                                  <span className="font-mono text-xs text-muted-foreground">unknown task</span>
+                                  <span className="font-mono text-body text-muted-foreground">unknown task</span>
                                 )}
                                 {park.stepName !== null ? (
-                                  <span className="font-mono text-[10px] text-muted-foreground">
+                                  <span className="font-mono text-micro text-muted-foreground">
                                     step:{park.stepName}
                                   </span>
                                 ) : null}
                               </div>
-                              <p className="font-mono text-[10px] text-muted-foreground">
+                              <p className="font-mono text-micro text-muted-foreground">
                                 parked {relativeTime(park.parkedAt)}
                                 {park.leaseOwner !== null ? ` · lease:${park.leaseOwner}` : ''}
                               </p>
@@ -487,7 +487,7 @@ export const PrimitiveDetailDrawer = ({
                     ) : (
                       <p
                         data-testid="primitive-no-parks"
-                        className="font-mono text-[11px] text-muted-foreground"
+                        className="font-mono text-label text-muted-foreground"
                       >
                         No parks recorded.
                       </p>
@@ -500,7 +500,7 @@ export const PrimitiveDetailDrawer = ({
                       <>
                         <p
                           data-testid="primitive-history-aggregates"
-                          className="mb-2 font-mono text-[10px] text-muted-foreground"
+                          className="mb-2 font-mono text-micro text-muted-foreground"
                         >
                           {detail.runs.length} run{detail.runs.length !== 1 ? 's' : ''} in window
                           {successRate !== null ? ` · ${successRate}% success` : ''} — last{' '}
@@ -519,7 +519,7 @@ export const PrimitiveDetailDrawer = ({
                     ) : (
                       <p
                         data-testid="primitive-no-runs"
-                        className="font-mono text-[11px] text-muted-foreground"
+                        className="font-mono text-label text-muted-foreground"
                       >
                         No Step spans recorded in the trace window yet.
                       </p>
@@ -544,7 +544,7 @@ export const PrimitiveDetailDrawer = ({
                 <li
                   key={sibling}
                   aria-current="page"
-                  className="rounded border border-primary/60 bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-foreground"
+                  className="rounded border border-primary/60 bg-primary/10 px-1.5 py-0.5 font-mono text-micro font-semibold text-foreground"
                 >
                   {sibling}
                 </li>
@@ -553,7 +553,7 @@ export const PrimitiveDetailDrawer = ({
                   <a
                     href={primitiveHash(sibling)}
                     data-testid="primitive-sibling-link"
-                    className="block rounded border border-primary/30 px-1.5 py-0.5 font-mono text-[10px] text-primary hover:bg-primary/10"
+                    className="block rounded border border-primary/30 px-1.5 py-0.5 font-mono text-micro text-primary hover:bg-primary/10"
                   >
                     {sibling}
                   </a>

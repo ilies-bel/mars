@@ -200,14 +200,14 @@ const VerifyExcerpt = ({ tail }: { tail: string }) => {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="font-mono text-[10px] text-primary/60 hover:text-primary transition-colors select-none"
+        className="font-mono text-micro text-primary/60 hover:text-primary transition-colors select-none"
         data-testid="alert-verify-output-toggle"
       >
         Output {open ? '▾' : '▸'}
       </button>
       {open && (
         <pre
-          className="mt-1 max-h-28 overflow-y-auto rounded bg-primary/10 p-1.5 font-mono text-[10px] text-primary/80 whitespace-pre-wrap break-all"
+          className="mt-1 max-h-28 overflow-y-auto rounded bg-primary/10 p-1.5 font-mono text-micro text-primary/80 whitespace-pre-wrap break-all"
           data-testid="alert-verify-output-panel"
         >
           {tail}
@@ -239,7 +239,7 @@ const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="font-mono text-[10px] text-primary/60 hover:text-primary transition-colors select-none"
+        className="font-mono text-micro text-primary/60 hover:text-primary transition-colors select-none"
         data-testid="alert-detail-toggle"
       >
         Details {open ? '▾' : '▸'}
@@ -252,28 +252,28 @@ const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
         >
           {detail.failureSignature && (
             <div>
-              <dt className="font-mono text-[9px] uppercase text-primary/40">Failure</dt>
-              <dd className="font-mono text-[10px] text-primary">{detail.failureSignature}</dd>
+              <dt className="font-mono text-micro uppercase text-primary/40">Failure</dt>
+              <dd className="font-mono text-micro text-primary">{detail.failureSignature}</dd>
             </div>
           )}
           {detail.branch && (
             <div>
-              <dt className="font-mono text-[9px] uppercase text-primary/40">Branch</dt>
-              <dd className="font-mono text-[10px] text-primary">{detail.branch}</dd>
+              <dt className="font-mono text-micro uppercase text-primary/40">Branch</dt>
+              <dd className="font-mono text-micro text-primary">{detail.branch}</dd>
             </div>
           )}
           {detail.worktree && (
             <div>
-              <dt className="font-mono text-[9px] uppercase text-primary/40">Worktree</dt>
-              <dd className="font-mono text-[10px] text-primary break-all">{detail.worktree}</dd>
+              <dt className="font-mono text-micro uppercase text-primary/40">Worktree</dt>
+              <dd className="font-mono text-micro text-primary break-all">{detail.worktree}</dd>
             </div>
           )}
           {detail.rawError && (
             <div>
-              <dt className="font-mono text-[9px] uppercase text-primary/40">Error</dt>
+              <dt className="font-mono text-micro uppercase text-primary/40">Error</dt>
               <dd>
                 <pre
-                  className="mt-0.5 max-h-32 overflow-y-auto rounded bg-primary/10 p-1.5 font-mono text-[10px] text-primary/80 whitespace-pre-wrap break-all"
+                  className="mt-0.5 max-h-32 overflow-y-auto rounded bg-primary/10 p-1.5 font-mono text-micro text-primary/80 whitespace-pre-wrap break-all"
                   data-testid="alert-detail-raw-error"
                 >
                   {detail.rawError}
@@ -283,8 +283,8 @@ const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
           )}
           {detail.changelog && (
             <div>
-              <dt className="font-mono text-[9px] uppercase text-primary/40">Changelog</dt>
-              <dd className="mt-0.5 chat-markdown prose prose-sm prose-invert max-w-none text-[11px]">
+              <dt className="font-mono text-micro uppercase text-primary/40">Changelog</dt>
+              <dd className="mt-0.5 chat-markdown prose prose-sm prose-invert max-w-none text-label">
                 <Response>{detail.changelog}</Response>
               </dd>
             </div>
@@ -316,7 +316,7 @@ const SnoozeMenu = ({ onSelect, onClose, disabled }: SnoozeMenuProps) => (
         type="button"
         disabled={disabled}
         onClick={() => onSelect(value)}
-        className="block w-full px-4 py-1.5 text-left font-mono text-[11px] text-primary hover:bg-primary/20 disabled:opacity-40 transition-colors"
+        className="block w-full px-4 py-1.5 text-left font-mono text-label text-primary hover:bg-primary/20 disabled:opacity-40 transition-colors"
         data-testid={`snooze-preset-${value}`}
       >
         {label}
@@ -325,7 +325,7 @@ const SnoozeMenu = ({ onSelect, onClose, disabled }: SnoozeMenuProps) => (
     <button
       type="button"
       onClick={onClose}
-      className="block w-full border-t border-primary/20 px-4 py-1.5 text-left font-mono text-[10px] text-primary/50 hover:bg-primary/10 transition-colors"
+      className="block w-full border-t border-primary/20 px-4 py-1.5 text-left font-mono text-micro text-primary/50 hover:bg-primary/10 transition-colors"
     >
       Cancel
     </button>
@@ -446,13 +446,13 @@ export const AlertCard = ({
   if (isSnoozed) {
     return (
       <div
-        className={`my-2 rounded-lg border border-primary/20 border-l-4 ${accentClass} bg-card p-3 text-[12px] opacity-50`}
+        className={`my-2 rounded-lg border border-primary/20 border-l-4 ${accentClass} bg-card p-3 text-body opacity-50`}
         data-testid="alert-card-snoozed"
       >
         <div className="flex items-center gap-2">
-          <span className="text-[13px]" aria-hidden="true">{KIND_ICON[kind] ?? '🔔'}</span>
-          <span className="flex-1 font-mono text-[11px] text-primary/60 line-clamp-1">{goal?.split('\n')[0] ?? summary}</span>
-          <span className="font-mono text-[10px] text-primary/40">
+          <span className="text-body" aria-hidden="true">{KIND_ICON[kind] ?? '🔔'}</span>
+          <span className="flex-1 font-mono text-label text-primary/60 line-clamp-1">{goal?.split('\n')[0] ?? summary}</span>
+          <span className="font-mono text-micro text-primary/40">
             reappears in {reappearsIn(snoozedUntil)}
           </span>
         </div>
@@ -461,13 +461,13 @@ export const AlertCard = ({
             type="button"
             disabled={pendingOp !== null}
             onClick={() => void handleRestore()}
-            className="rounded border border-primary/30 px-2 py-0.5 font-mono text-[10px] text-primary hover:bg-primary/20 disabled:opacity-40 transition-colors"
+            className="rounded border border-primary/30 px-2 py-0.5 font-mono text-micro text-primary hover:bg-primary/20 disabled:opacity-40 transition-colors"
             data-testid="alert-card-restore"
           >
             {pendingOp === 'restore' ? '…' : 'Restore'}
           </button>
           {actionError && (
-            <span className="font-mono text-[10px] text-error">{actionError}</span>
+            <span className="font-mono text-micro text-error">{actionError}</span>
           )}
         </div>
       </div>
@@ -477,7 +477,7 @@ export const AlertCard = ({
   return (
     <div
       className={[
-        'my-2 rounded-lg border border-l-4 p-3 text-[12px]',
+        'my-2 rounded-lg border border-l-4 p-3 text-body',
         accentClass,
         resolved
           ? 'border-primary/20 bg-card opacity-60'
@@ -487,27 +487,27 @@ export const AlertCard = ({
     >
       {/* Header: icon + headline + resolved badge */}
       <div className="mb-1 flex items-start gap-2">
-        <span className="text-[13px] shrink-0 mt-0.5" aria-hidden="true">{KIND_ICON[kind] ?? '🔔'}</span>
+        <span className="text-body shrink-0 mt-0.5" aria-hidden="true">{KIND_ICON[kind] ?? '🔔'}</span>
         <div className="flex-1 min-w-0">
           {goal ? (
             <>
               {/* Primary headline: prompt excerpt (what the task was doing) */}
               <p
-                className="font-mono text-[11px] font-semibold text-foreground line-clamp-2"
+                className="font-mono text-label font-semibold text-foreground line-clamp-2"
                 data-testid="alert-card-goal"
               >
                 {goal.split('\n')[0]?.trim()}
               </p>
               {/* Cause: plain-language failure reason */}
               {cause && (
-                <p className="mt-0.5 font-mono text-[10px] text-primary/70" data-testid="alert-card-cause">
+                <p className="mt-0.5 font-mono text-micro text-primary/70" data-testid="alert-card-cause">
                   {cause}
                 </p>
               )}
               {/* humanSummary demoted to secondary/muted text */}
               {summary && (
                 <p
-                  className="mt-0.5 font-mono text-[10px] text-primary/50 line-clamp-1"
+                  className="mt-0.5 font-mono text-micro text-primary/50 line-clamp-1"
                   data-testid="alert-card-summary"
                 >
                   {summary}
@@ -517,7 +517,7 @@ export const AlertCard = ({
           ) : (
             /* No goal: summary is the primary headline (backward compat) */
             <span
-              className="font-mono text-[11px] font-semibold text-foreground line-clamp-3"
+              className="font-mono text-label font-semibold text-foreground line-clamp-3"
               data-testid="alert-card-summary"
             >
               {summary}
@@ -525,7 +525,7 @@ export const AlertCard = ({
           )}
         </div>
         {resolved && (
-          <span className="ml-auto shrink-0 rounded bg-primary/20 px-1.5 py-0.5 font-mono text-[10px] text-primary/60">
+          <span className="ml-auto shrink-0 rounded bg-primary/20 px-1.5 py-0.5 font-mono text-micro text-primary/60">
             Resolved
           </span>
         )}
@@ -534,7 +534,7 @@ export const AlertCard = ({
       {/* Entity id — metadata row: smaller, muted mono */}
       <a
         href={entityHash}
-        className="mb-1.5 block font-mono text-[9px] text-primary/40 truncate hover:text-primary/60 hover:underline transition-colors"
+        className="mb-1.5 block font-mono text-micro text-primary/40 truncate hover:text-primary/60 hover:underline transition-colors"
         data-testid="alert-card-entity-id"
         aria-label={`Open details for ${entityId}`}
       >
@@ -543,7 +543,7 @@ export const AlertCard = ({
 
       {/* Resolution success message */}
       {resolvedOp !== null && (
-        <p className="mb-2 font-mono text-[10px] text-success" data-testid="alert-card-resolved-state">
+        <p className="mb-2 font-mono text-micro text-success" data-testid="alert-card-resolved-state">
           ✓ {resolvedOp} completed
         </p>
       )}
@@ -602,7 +602,7 @@ export const AlertCard = ({
           {bulkContinue && (
             <button
               type="button"
-              className="rounded px-3 py-1 font-mono text-[11px] border border-primary/20 text-primary/60 hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="rounded px-3 py-1 font-mono text-label border border-primary/20 text-primary/60 hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               disabled={bulkPending || pendingOp !== null}
               onClick={() => void handleBulkContinue()}
               data-testid="alert-card-bulk-continue"
@@ -657,7 +657,7 @@ export const AlertCard = ({
           className="mb-2 rounded border border-primary/20 bg-primary/5 p-2"
           data-testid="teach-recipe-prompt"
         >
-          <p className="font-mono text-[11px] text-primary/80 mb-1.5">
+          <p className="font-mono text-label text-primary/80 mb-1.5">
             Apply this automatically next time?
           </p>
           <div className="flex gap-1.5">
@@ -696,7 +696,7 @@ export const AlertCard = ({
 
       {/* Action error */}
       {actionError && (
-        <p className="mb-2 font-mono text-[10px] text-error" data-testid="alert-card-error">
+        <p className="mb-2 font-mono text-micro text-error" data-testid="alert-card-error">
           {actionError}
         </p>
       )}

@@ -165,7 +165,7 @@ const CostPerMergedTaskDetailSection = () => {
 
   if (!data || data.trend.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">No cost data available for this period.</p>
+      <p className="text-title text-muted-foreground">No cost data available for this period.</p>
     )
   }
 
@@ -179,7 +179,7 @@ const CostPerMergedTaskDetailSection = () => {
         <Sparkline points={sparklinePoints} width={320} height={48} />
         {excluded > 0 && (
           <p
-            className="mt-2 font-mono text-[11px] text-muted-foreground"
+            className="mt-2 font-mono text-label text-muted-foreground"
             data-testid="excluded-cost-null-count"
           >
             {excluded} task{excluded !== 1 ? 's' : ''} excluded — no cost data recorded
@@ -188,7 +188,7 @@ const CostPerMergedTaskDetailSection = () => {
       </div>
 
       <div>
-        <div className="mb-1 flex items-center border-b border-primary/20 pb-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+        <div className="mb-1 flex items-center border-b border-primary/20 pb-1 font-mono text-micro uppercase tracking-wide text-muted-foreground">
           <span className="w-32 shrink-0">Day</span>
           <span className="w-24 shrink-0 text-right">Merged</span>
           <span className="min-w-0 flex-1 text-right">Avg cost / merge</span>
@@ -196,7 +196,7 @@ const CostPerMergedTaskDetailSection = () => {
         {trend.map((row) => (
           <div
             key={row.day}
-            className="flex items-center border-b border-primary/10 py-1 font-mono text-sm hover:bg-primary/5"
+            className="flex items-center border-b border-primary/10 py-1 font-mono text-title hover:bg-primary/5"
           >
             <span className="w-32 shrink-0 text-muted-foreground">{row.day}</span>
             <span className="w-24 shrink-0 text-right text-foreground">{row.mergedCount}</span>
@@ -229,7 +229,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
       <div className="flex h-full flex-col overflow-hidden bg-background">
         <PageHeader title="Cost / merged task" />
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-          <p className="mb-4 font-mono text-[11px] text-muted-foreground">
+          <p className="mb-4 font-mono text-label text-muted-foreground">
             {KPI_DESCRIPTIONS['cost-per-merged-task']}
           </p>
           <CostPerMergedTaskDetailSection />
@@ -286,13 +286,13 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                 <span className="font-mono text-3xl font-bold text-foreground">
                   {formatKpiValue(kpiKey, kpi.currentValue)}
                 </span>
-                <span className={`flex items-center gap-1 text-sm ${cue.colorClass}`}>
+                <span className={`flex items-center gap-1 text-title ${cue.colorClass}`}>
                   <span aria-hidden="true">{cue.glyph}</span>
                   <span>{cue.label}</span>
                 </span>
                 {drift && drift !== 'flat' && (
                   <span
-                    className={`flex items-center gap-1 text-sm ${
+                    className={`flex items-center gap-1 text-title ${
                       drift === 'improved' ? 'text-success' : 'text-error'
                     }`}
                   >
@@ -307,21 +307,21 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                     </span>
                   </span>
                 )}
-                <span className="ml-auto text-xs text-muted-foreground">
+                <span className="ml-auto text-body text-muted-foreground">
                   {kpi.sampleCount} sample{kpi.sampleCount !== 1 ? 's' : ''}
                 </span>
               </div>
               <Sparkline points={(kpi.series ?? []).map((p) => p.value)} width={240} height={32} />
             </div>
           ) : kpi?.lowConfidence ? (
-            <div className="rounded border border-primary/20 bg-card p-4 text-sm text-muted-foreground">
+            <div className="rounded border border-primary/20 bg-card p-4 text-title text-muted-foreground">
               {label}: insufficient samples
             </div>
           ) : null}
         </div>
 
         {/* Description */}
-        <p className="mb-4 font-mono text-[11px] text-muted-foreground">
+        <p className="mb-4 font-mono text-label text-muted-foreground">
           {KPI_DESCRIPTIONS[kpiKey]}
         </p>
 
@@ -333,7 +333,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
               type="button"
               disabled={diagnostic.status === 'running' || arcsLoading || arcs.length === 0}
               onClick={onRunDiagnostic}
-              className="rounded border border-primary/40 px-3 py-1 font-mono text-[10px] uppercase tracking-wide text-foreground transition-colors hover:bg-primary/15 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="rounded border border-primary/40 px-3 py-1 font-mono text-micro uppercase tracking-wide text-foreground transition-colors hover:bg-primary/15 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {diagnostic.status === 'running'
                 ? 'Analyzing…'
@@ -344,7 +344,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
           </div>
           {diagnostic.status === 'done' && (
             <div className="border-t border-primary/20 px-4 py-3">
-              <p className="mb-3 font-mono text-[11px] text-muted-foreground">
+              <p className="mb-3 font-mono text-label text-muted-foreground">
                 {diagnostic.report.summary}
               </p>
               <div className="flex flex-col gap-2">
@@ -359,25 +359,25 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                           : 'border-primary/20 bg-primary/[0.03]'
                     }`}
                   >
-                    <p className={`font-mono text-[11px] font-semibold ${
+                    <p className={`font-mono text-label font-semibold ${
                       f.severity === 'action' ? 'text-warn' : f.severity === 'warn' ? 'text-error' : 'text-foreground'
                     }`}>
                       {f.severity === 'action' ? '→ ' : ''}{f.label}
                     </p>
-                    <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">
+                    <p className="mt-0.5 font-mono text-micro text-muted-foreground">
                       {f.detail}
                     </p>
                   </div>
                 ))}
               </div>
-              <p className="mt-2 font-mono text-[9px] text-muted-foreground">
+              <p className="mt-2 font-mono text-micro text-muted-foreground">
                 Run at {new Date(diagnostic.report.runAt).toLocaleTimeString()}
               </p>
             </div>
           )}
           {diagnostic.status === 'error' && (
             <div className="border-t border-primary/20 px-4 py-2">
-              <p className="font-mono text-[10px] text-error">{diagnostic.message}</p>
+              <p className="font-mono text-micro text-error">{diagnostic.message}</p>
             </div>
           )}
         </div>
@@ -394,7 +394,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                     type="button"
                     onClick={() => setArcFilter(f)}
                     className={[
-                      'rounded px-2 py-0.5 font-mono text-[10px] uppercase transition-colors',
+                      'rounded px-2 py-0.5 font-mono text-micro uppercase transition-colors',
                       arcFilter === f
                         ? 'bg-primary/30 text-foreground'
                         : 'text-muted-foreground hover:text-foreground',
@@ -416,7 +416,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
           )}
 
           {!isLoading && !error && filteredArcs.length === 0 && (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-title text-muted-foreground">
               {arcs.length === 0
                 ? 'No arcs in this window.'
                 : 'No arcs match this filter.'}
@@ -426,7 +426,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
           {!isLoading && filteredArcs.length > 0 && (
             <div className="flex flex-col gap-0.5" role="list">
               {/* Header */}
-              <div className="flex items-center border-b border-primary/20 pb-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+              <div className="flex items-center border-b border-primary/20 pb-1 font-mono text-micro uppercase tracking-wide text-muted-foreground">
                 <span className="w-16 shrink-0">Status</span>
                 <span className="w-24 shrink-0">
                   {kpiKey === 'cost_per_arc' ? 'Cost' : 'Result'}
@@ -441,7 +441,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                   role="listitem"
                   title={arc.arcId}
                   data-testid={`arc-row-${arc.arcId}`}
-                  className={`flex items-center rounded px-1 py-1.5 font-mono text-sm no-underline transition-colors cursor-pointer ${arcRowClass(arc.passed)}`}
+                  className={`flex items-center rounded px-1 py-1.5 font-mono text-title no-underline transition-colors cursor-pointer ${arcRowClass(arc.passed)}`}
                 >
                   <span className="w-16 shrink-0 text-muted-foreground">{arc.status}</span>
                   {kpiKey === 'cost_per_arc' ? (

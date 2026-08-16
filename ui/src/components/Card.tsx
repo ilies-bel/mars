@@ -46,18 +46,18 @@ export function Card({ card, onSilenced }: Props) {
       className="flex flex-col gap-2 rounded-md border border-border bg-card p-3"
     >
       <div className="flex items-start justify-between gap-2">
-        <span className="font-mono text-[11px] text-muted-foreground">{card.producer_key}</span>
-        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-primary">
+        <span className="font-mono text-label text-muted-foreground">{card.producer_key}</span>
+        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-micro font-semibold text-primary">
           {card.autonomy_level}
         </span>
       </div>
-      <p className="text-[14px] leading-snug text-foreground">{card.body}</p>
+      <p className="text-title leading-snug text-foreground">{card.body}</p>
       <div className="flex justify-end">
         <button
           type="button"
           disabled={silencing || silenced}
           onClick={handleSilence}
-          className="rounded px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded px-2 py-1 text-label text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           aria-label={`Silence ${card.producer_key}`}
         >
           {silenced ? 'Silenced' : silencing ? 'Silencing…' : 'Silence'}

@@ -75,9 +75,9 @@ export const BellMenu = () => {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded border border-primary/30 bg-background p-2 text-[11px] shadow-lg">
+        <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded border border-primary/30 bg-background p-2 text-label shadow-lg">
           <section>
-            <h2 className="px-1 pb-1 font-mono text-[9px] uppercase tracking-wide text-primary">
+            <h2 className="px-1 pb-1 font-mono text-micro uppercase tracking-wide text-primary">
               Alerts
             </h2>
             {alerts.length === 0 ? (

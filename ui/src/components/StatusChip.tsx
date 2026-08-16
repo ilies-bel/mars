@@ -31,7 +31,7 @@ export const StatusChip = ({ status }: { status: TaskStatus }) => {
   return (
     <Badge
       aria-label={v.label.toLowerCase()}
-      className={`gap-1 rounded border-transparent px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wide ${v.className}`}
+      className={`gap-1 rounded border-transparent px-1.5 py-0.5 font-mono text-micro font-semibold tracking-wide ${v.className}`}
     >
       <span aria-hidden="true">{v.icon}</span>
       {v.label}

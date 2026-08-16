@@ -44,19 +44,19 @@ export const ProposalCard = memo(({ proposal }: Props) => {
       <div className="flex items-start justify-between gap-2">
         <a
           href={`#/proposal/${encodeURIComponent(proposal.id)}`}
-          className="break-all font-mono text-[11px] text-muted-foreground hover:text-foreground hover:underline"
+          className="break-all font-mono text-label text-muted-foreground hover:text-foreground hover:underline"
         >
           {proposal.id}
         </a>
-        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-primary">
+        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-micro font-semibold text-primary">
           {proposal.status}
         </span>
       </div>
-      <div className="text-[14px] font-medium leading-snug text-foreground">
+      <div className="text-title font-medium leading-snug text-foreground">
         {truncate(proposal.title, 120)}
       </div>
       <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-[11px] text-muted-foreground">{proposal.source}</span>
+        <span className="font-mono text-label text-muted-foreground">{proposal.source}</span>
         {mockupExists && (
           <a
             href={mockupUrl}
@@ -64,7 +64,7 @@ export const ProposalCard = memo(({ proposal }: Props) => {
             rel="noopener noreferrer"
             data-testid="proposal-card-mockup-chip"
             onClick={(e) => e.stopPropagation()}
-            className="rounded border border-primary/40 px-1.5 py-0.5 font-mono text-[10px] text-primary hover:bg-primary/10"
+            className="rounded border border-primary/40 px-1.5 py-0.5 font-mono text-micro text-primary hover:bg-primary/10"
           >
             mockup ready ↗
           </a>

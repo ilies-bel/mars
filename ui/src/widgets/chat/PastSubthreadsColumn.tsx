@@ -17,7 +17,7 @@ const PastSubthreadMessages = ({ threadId, projectId }: { threadId: string; proj
   })
 
   if (isLoading) {
-    return <p className="px-3 pb-3 font-mono text-[11px] text-muted-foreground">Loading messages…</p>
+    return <p className="px-3 pb-3 font-mono text-label text-muted-foreground">Loading messages…</p>
   }
 
   return (
@@ -25,7 +25,7 @@ const PastSubthreadMessages = ({ threadId, projectId }: { threadId: string; proj
       {(detail?.messages ?? []).map((message) => (
         <p
           key={message.id}
-          className="whitespace-pre-wrap font-mono text-[12px] leading-relaxed text-foreground"
+          className="whitespace-pre-wrap font-mono text-body leading-relaxed text-foreground"
         >
           {message.segments
             .filter((segment) => segment.type === 'text')
@@ -50,10 +50,10 @@ const PastSubthreadBlock = ({ thread, projectId }: { thread: ThreadSummary; proj
         aria-controls={panelId}
         onClick={() => setExpanded((value) => !value)}
       >
-        <span aria-hidden="true" className="font-mono text-[10px] text-muted-foreground">
+        <span aria-hidden="true" className="font-mono text-micro text-muted-foreground">
           {expanded ? '−' : '+'}
         </span>
-        <span className="min-w-0 truncate font-mono text-[12px] text-muted-foreground">
+        <span className="min-w-0 truncate font-mono text-body text-muted-foreground">
           {thread.title || 'Untitled Subthread'}
         </span>
       </button>

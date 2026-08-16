@@ -66,7 +66,7 @@ export const PreloadedResponses = ({
             type="button"
             disabled={disabled}
             onClick={() => { void choose(response) }}
-            className="rounded border border-primary/30 px-3 py-1 font-mono text-[11px] text-primary transition-colors hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded border border-primary/30 px-3 py-1 font-mono text-label text-primary transition-colors hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-40"
             data-testid={`preloaded-response-${response.id}`}
           >
             {resolved
@@ -77,7 +77,7 @@ export const PreloadedResponses = ({
           </button>
         )
       })}
-      {error && <span role="alert" className="font-mono text-[11px] text-error">{error}</span>}
+      {error && <span role="alert" className="font-mono text-label text-error">{error}</span>}
     </div>
   )
 }

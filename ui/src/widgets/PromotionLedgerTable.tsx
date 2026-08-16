@@ -35,7 +35,7 @@ export const PromotionLedgerTable = ({ workflow }: Props) => {
     })
 
   return (
-    <table className="w-full text-xs">
+    <table className="w-full text-body">
       <thead>
         <tr className="text-left text-primary">
           <th className="pb-1 pr-2 font-normal">Timestamp</th>
@@ -70,7 +70,7 @@ export const PromotionLedgerTable = ({ workflow }: Props) => {
                 <td className="py-0.5 pr-2 font-mono">{formatTs(entry.createdAt)}</td>
                 <td className="py-0.5 pr-2">{entry.workflow}</td>
                 <td className="py-0.5 pr-2">{entry.decision}</td>
-                <td className="py-0.5 pr-2 font-mono text-[10px]">
+                <td className="py-0.5 pr-2 font-mono text-micro">
                   {entry.candidateVersionId} → {entry.incumbentVersionId}
                 </td>
                 <td className="py-0.5">
@@ -80,7 +80,7 @@ export const PromotionLedgerTable = ({ workflow }: Props) => {
               {expanded.has(entry.id) && (
                 <tr>
                   <td colSpan={5}>
-                    <pre className="overflow-auto rounded bg-card p-2 text-[10px]">
+                    <pre className="overflow-auto rounded bg-card p-2 text-micro">
                       {JSON.stringify(entry, null, 2)}
                     </pre>
                   </td>

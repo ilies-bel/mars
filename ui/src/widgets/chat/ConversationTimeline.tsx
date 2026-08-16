@@ -57,7 +57,7 @@ const ClosedSubthreadBreadcrumb = ({
 }) => (
   <div
     data-testid="closed-subthread-breadcrumb"
-    className="rounded border border-muted px-3 py-2 font-mono text-[11px] text-muted-foreground"
+    className="rounded border border-muted px-3 py-2 font-mono text-label text-muted-foreground"
   >
     <span>{title}</span>
     <span> · {messageCount} {messageCount === 1 ? 'message' : 'messages'}</span>
@@ -145,7 +145,7 @@ export const ConversationTimeline = ({
                   data-testid={isNotice ? `notice-card-${entry.id}` : undefined}
                   className={isNotice ? 'rounded-md border border-primary/20 bg-primary/5 p-3' : undefined}
                 >
-                  <header className="mb-1 flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
+                  <header className="mb-1 flex items-center gap-2 font-mono text-micro text-muted-foreground">
                     {isNotice ? (
                       <span className="text-primary">Mars</span>
                     ) : (
@@ -162,10 +162,10 @@ export const ConversationTimeline = ({
                     <TypedBody
                       id={entry.id}
                       text={body}
-                      className="whitespace-pre-wrap font-mono text-[13px] text-foreground"
+                      className="whitespace-pre-wrap font-mono text-body text-foreground"
                     />
                   ) : (
-                    <p className="whitespace-pre-wrap font-mono text-[13px] text-foreground">{body}</p>
+                    <p className="whitespace-pre-wrap font-mono text-body text-foreground">{body}</p>
                   )}
                 </article>
                 {hasMemoryCut && <MemoryBoundaryLine />}
@@ -205,7 +205,7 @@ export const ConversationTimeline = ({
                 data-testid={isNotice ? `notice-card-${entry.id}` : undefined}
                 className={isNotice ? 'rounded-md border border-primary/20 bg-primary/5 p-3' : undefined}
               >
-                <header className="mb-1 flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
+                <header className="mb-1 flex items-center gap-2 font-mono text-micro text-muted-foreground">
                   {isNotice ? (
                     <span className="text-primary">Mars</span>
                   ) : (
@@ -222,10 +222,10 @@ export const ConversationTimeline = ({
                   <TypedBody
                     id={entry.id}
                     text={body}
-                    className="whitespace-pre-wrap font-mono text-[13px] text-foreground"
+                    className="whitespace-pre-wrap font-mono text-body text-foreground"
                   />
                 ) : (
-                  <p className="whitespace-pre-wrap font-mono text-[13px] text-foreground">{body}</p>
+                  <p className="whitespace-pre-wrap font-mono text-body text-foreground">{body}</p>
                 )}
                 {entry.segments.filter(isOfferSegment).map((segment) => (
                   <PreloadedResponses

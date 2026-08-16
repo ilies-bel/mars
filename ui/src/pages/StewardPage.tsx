@@ -46,7 +46,7 @@ const laneCardClass = (active: boolean): string =>
 
 const laneHeaderClass = (active: boolean): string =>
   [
-    'flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-wider',
+    'flex items-center gap-2 font-mono text-label font-semibold uppercase tracking-wider',
     active ? 'text-success' : 'text-muted-foreground',
   ].join(' ')
 
@@ -132,7 +132,7 @@ const CapRatchet = ({
 
   return (
     <div className="mb-4">
-      <div className="mb-1 flex items-center justify-between font-mono text-[9px] text-muted-foreground">
+      <div className="mb-1 flex items-center justify-between font-mono text-micro text-muted-foreground">
         <span>baseline {baseline}</span>
         <span>ceiling {ceiling}</span>
       </div>
@@ -162,7 +162,7 @@ const CapRatchet = ({
           />
         ))}
         <span
-          className="absolute top-0 flex h-full items-center pl-1 font-mono text-[10px] font-semibold text-success"
+          className="absolute top-0 flex h-full items-center pl-1 font-mono text-micro font-semibold text-success"
           style={{ left: toPercent(liveCap) }}
         >
           {liveCap}
@@ -239,10 +239,10 @@ const CapRatchet = ({
       {/* Raw transitions — collapsed by default, available for exact sequence inspection */}
       {entries.length > 0 && (
         <details className="mt-1">
-          <summary className="cursor-pointer font-mono text-[9px] text-muted-foreground/40 hover:text-muted-foreground/70 select-none">
+          <summary className="cursor-pointer font-mono text-micro text-muted-foreground/40 hover:text-muted-foreground/70 select-none">
             ▸ raw transitions
           </summary>
-          <div className="mt-1 flex flex-wrap items-center gap-1 font-mono text-[10px] text-muted-foreground">
+          <div className="mt-1 flex flex-wrap items-center gap-1 font-mono text-micro text-muted-foreground">
             <span className="text-primary">{baseline}</span>
             {entries.map((e) => (
               <span key={e.timestamp} className="flex items-center gap-1">
@@ -275,9 +275,9 @@ const RuntimeTuningLane = ({ data }: { data: StewardView['runtimeTuning'] }) => 
         <div className={laneHeaderClass(true)}>
           <StatusDot active={true} />
           <span>Runtime tuning</span>
-          <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-[9px] text-success">executing</span>
+          <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-micro text-success">executing</span>
         </div>
-        <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+        <p className="mt-1 font-mono text-micro text-muted-foreground">
           Trigger: backlog sustained {'>'} {Math.floor(liveCap * thresholdFactor)} tasks for {sustainMs / 1000}s —
           bump cap by ×{bumpFactor} up to ceiling {ceiling}. Checked every {checkMs / 1000}s.
         </p>
@@ -293,11 +293,11 @@ const RuntimeTuningLane = ({ data }: { data: StewardView['runtimeTuning'] }) => 
 
       {/* Acks — Steward's own first-person voice, newest first */}
       <div className="space-y-2">
-        <div className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground/70">
+        <div className="font-mono text-micro uppercase tracking-wide text-muted-foreground/70">
           Steward acknowledgments ({acks.length})
         </div>
         {acks.length === 0 ? (
-          <p className="font-mono text-[10px] text-muted-foreground">No acknowledgments yet.</p>
+          <p className="font-mono text-micro text-muted-foreground">No acknowledgments yet.</p>
         ) : (
           acks.map((ack, i) => (
             <div
@@ -305,8 +305,8 @@ const RuntimeTuningLane = ({ data }: { data: StewardView['runtimeTuning'] }) => 
               className="rounded border border-success/20 bg-success/[0.03] px-3 py-2"
               data-testid={i === 0 ? 'steward-ack-latest' : undefined}
             >
-              <p className="font-mono text-[11px] text-foreground">{ack.text}</p>
-              <time className="font-mono text-[9px] text-muted-foreground">
+              <p className="font-mono text-label text-foreground">{ack.text}</p>
+              <time className="font-mono text-micro text-muted-foreground">
                 {new Date(ack.timestamp).toLocaleString()}
               </time>
             </div>
@@ -344,16 +344,16 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
           <StatusDot active={true} />
           <span>Signature storm</span>
           {tripped ? (
-            <span className="ml-auto rounded bg-error/20 px-1.5 py-0.5 text-[9px] text-error">
+            <span className="ml-auto rounded bg-error/20 px-1.5 py-0.5 text-micro text-error">
               breaker tripped
             </span>
           ) : (
-            <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-[9px] text-success">
+            <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-micro text-success">
               breaker clear
             </span>
           )}
         </div>
-        <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+        <p className="mt-1 font-mono text-micro text-muted-foreground">
           Trigger: {tripThreshold} consecutive tasks with the same failure signature. Pauses dispatch.
         </p>
       </header>
@@ -365,10 +365,10 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
           role="alert"
           data-testid="storm-disagree-banner"
         >
-          <p className="font-mono text-[11px] font-semibold text-warn">
+          <p className="font-mono text-label font-semibold text-warn">
             State disagreement detected
           </p>
-          <p className="mt-0.5 font-mono text-[10px] text-warn/80">
+          <p className="mt-0.5 font-mono text-micro text-warn/80">
             Breaker is {tripped ? 'tripped' : 'clear'} in Postgres, but dispatch is{' '}
             {isPaused ? 'paused' : 'running'} in memory. The daemon was likely restarted while the
             breaker was {tripped ? 'tripped' : 'clear'}. Run{' '}
@@ -379,52 +379,52 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
 
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded border border-border/50 bg-muted/20 p-3">
-          <div className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground/70">
+          <div className="font-mono text-micro uppercase tracking-wide text-muted-foreground/70">
             Breaker (Postgres)
           </div>
           <div
-            className={`mt-1 font-mono text-[13px] font-semibold ${tripped ? 'text-error' : 'text-success'}`}
+            className={`mt-1 font-mono text-body font-semibold ${tripped ? 'text-error' : 'text-success'}`}
             data-testid="storm-tripped"
           >
             {tripped ? 'Tripped' : 'Clear'}
           </div>
           {updated_at && (
-            <time className="font-mono text-[9px] text-muted-foreground">
+            <time className="font-mono text-micro text-muted-foreground">
               {new Date(updated_at).toLocaleString()}
             </time>
           )}
         </div>
         <div className="rounded border border-border/50 bg-muted/20 p-3">
-          <div className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground/70">
+          <div className="font-mono text-micro uppercase tracking-wide text-muted-foreground/70">
             Dispatch (in-memory)
           </div>
           <div
-            className={`mt-1 font-mono text-[13px] font-semibold ${isPaused ? 'text-error' : 'text-success'}`}
+            className={`mt-1 font-mono text-body font-semibold ${isPaused ? 'text-error' : 'text-success'}`}
             data-testid="storm-is-paused"
           >
             {isPaused ? 'Paused' : 'Running'}
           </div>
-          <p className="font-mono text-[9px] text-muted-foreground">resets on daemon restart</p>
+          <p className="font-mono text-micro text-muted-foreground">resets on daemon restart</p>
         </div>
       </div>
 
       <div className="mt-3 space-y-1">
         <div className="flex items-baseline gap-2">
-          <span className="font-mono text-[9px] text-muted-foreground/70 uppercase tracking-wide w-28">
+          <span className="font-mono text-micro text-muted-foreground/70 uppercase tracking-wide w-28">
             Streak count
           </span>
-          <span className="font-mono text-[12px] font-semibold text-foreground" data-testid="storm-streak">
+          <span className="font-mono text-body font-semibold text-foreground" data-testid="storm-streak">
             {streak_count}
           </span>
-          <span className="font-mono text-[9px] text-muted-foreground">/ {tripThreshold} to trip</span>
+          <span className="font-mono text-micro text-muted-foreground">/ {tripThreshold} to trip</span>
         </div>
         {current_signature !== null && (
           <div className="flex items-baseline gap-2">
-            <span className="font-mono text-[9px] text-muted-foreground/70 uppercase tracking-wide w-28">
+            <span className="font-mono text-micro text-muted-foreground/70 uppercase tracking-wide w-28">
               Signature
             </span>
             <code
-              className="font-mono text-[10px] text-foreground break-all"
+              className="font-mono text-micro text-foreground break-all"
               data-testid="storm-signature"
             >
               {current_signature}
@@ -433,18 +433,18 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
         )}
         {last_task_id !== null && (
           <div className="flex items-baseline gap-2">
-            <span className="font-mono text-[9px] text-muted-foreground/70 uppercase tracking-wide w-28">
+            <span className="font-mono text-micro text-muted-foreground/70 uppercase tracking-wide w-28">
               Last task
             </span>
-            <code className="font-mono text-[10px] text-muted-foreground">{last_task_id}</code>
+            <code className="font-mono text-micro text-muted-foreground">{last_task_id}</code>
           </div>
         )}
         {signatureStormAqCount > 0 && (
           <div className="flex items-baseline gap-2">
-            <span className="font-mono text-[9px] text-muted-foreground/70 uppercase tracking-wide w-28">
+            <span className="font-mono text-micro text-muted-foreground/70 uppercase tracking-wide w-28">
               AQ items
             </span>
-            <span className="font-mono text-[11px] text-error" data-testid="storm-aq-count">
+            <span className="font-mono text-label text-error" data-testid="storm-aq-count">
               {signatureStormAqCount} signature-storm item{signatureStormAqCount !== 1 ? 's' : ''}
             </span>
           </div>
@@ -469,17 +469,17 @@ const WorkflowPatchesLane = ({ data }: { data: StewardView['workflowPatches'] })
           <div className={laneHeaderClass(false)}>
             <StatusDot active={false} />
             <span>Workflow patches</span>
-            <span className="ml-auto rounded bg-muted/30 px-1.5 py-0.5 text-[9px] text-muted-foreground">
+            <span className="ml-auto rounded bg-muted/30 px-1.5 py-0.5 text-micro text-muted-foreground">
               built — no callers
             </span>
           </div>
-          <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+          <p className="mt-1 font-mono text-micro text-muted-foreground">
             stewardProposeWorkflowPatch, applyWorkflowPatch, and rejectWorkflowPatch are implemented
             but have no call sites outside their own module and tests. This lane cannot execute.
           </p>
         </header>
         <p
-          className="font-mono text-[10px] text-muted-foreground"
+          className="font-mono text-micro text-muted-foreground"
           data-testid="patches-empty-state"
         >
           No proposals in workflow_patch_proposals. This lane has no callers — it is inert, not
@@ -497,11 +497,11 @@ const WorkflowPatchesLane = ({ data }: { data: StewardView['workflowPatches'] })
         <div className={laneHeaderClass(true)}>
           <StatusDot active={true} />
           <span>Workflow patches</span>
-          <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-[9px] text-success">
+          <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-micro text-success">
             arc-verifier
           </span>
         </div>
-        <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+        <p className="mt-1 font-mono text-micro text-muted-foreground">
           Trigger: N consecutive arc E2E passes end CAN'T-VERIFY because E2E tooling is missing.
           The arc-verifier proposes removing the behaviour-verify step so the operator can decide
           whether to fix the environment or drop the step.
@@ -509,7 +509,7 @@ const WorkflowPatchesLane = ({ data }: { data: StewardView['workflowPatches'] })
       </header>
       {rows.length === 0 ? (
         <p
-          className="font-mono text-[10px] text-muted-foreground"
+          className="font-mono text-micro text-muted-foreground"
           data-testid="patches-empty-state"
         >
           No pending workflow-patch proposals.
@@ -519,7 +519,7 @@ const WorkflowPatchesLane = ({ data }: { data: StewardView['workflowPatches'] })
           {rows.map((row) => (
             <li
               key={row.id}
-              className="rounded border border-border/40 px-3 py-2 font-mono text-[10px]"
+              className="rounded border border-border/40 px-3 py-2 font-mono text-micro"
             >
               <div className="flex items-center justify-between">
                 <span className="text-foreground">{row.workflow_path}</span>
@@ -552,26 +552,26 @@ const GateHealthLane = ({
       <div className={laneHeaderClass(true)}>
         <StatusDot active={true} />
         <span>Verify gates</span>
-        <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-[9px] text-success">
+        <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-micro text-success">
           standing registry
         </span>
       </div>
-      <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+      <p className="mt-1 font-mono text-micro text-muted-foreground">
         Read-only health of the registered verification gates. Repair approval remains in chat or the CLI.
       </p>
     </header>
 
     {isLoading ? (
-      <p className="font-mono text-[10px] text-muted-foreground" role="status">
+      <p className="font-mono text-micro text-muted-foreground" role="status">
         Loading verify gates…
       </p>
     ) : error !== null ? (
       <div role="alert">
-        <p className="font-mono text-[10px] text-error">Daemon error while loading verify gates.</p>
+        <p className="font-mono text-micro text-error">Daemon error while loading verify gates.</p>
         <FallbackSurface error={error} of="verify gates" variant="pane" />
       </div>
     ) : data === undefined || data.scopes.length === 0 ? (
-      <p className="font-mono text-[10px] text-muted-foreground" data-testid="gate-health-empty-state">
+      <p className="font-mono text-micro text-muted-foreground" data-testid="gate-health-empty-state">
         No verify gates are registered.
       </p>
     ) : (
@@ -583,22 +583,22 @@ const GateHealthLane = ({
               {scope.gates.map((gate) => (
                 <li key={gate.id} className="rounded border border-border/40 bg-muted/10 px-3 py-2">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <span className="font-mono text-[11px] font-semibold text-foreground">{gate.name}</span>
+                    <span className="font-mono text-label font-semibold text-foreground">{gate.name}</span>
                     <span
-                      className={`rounded px-1.5 py-0.5 font-mono text-[9px] ${gate.state === 'active' ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}
+                      className={`rounded px-1.5 py-0.5 font-mono text-micro ${gate.state === 'active' ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}
                       aria-label={`Gate status: ${gate.state === 'active' ? 'Active' : 'Quarantined'}`}
                     >
                       {gate.state === 'active' ? 'Active' : 'Quarantined'}
                     </span>
-                    <span className="font-mono text-[9px] text-muted-foreground">
+                    <span className="font-mono text-micro text-muted-foreground">
                       {gate.tier} · {gate.required ? 'required' : 'optional'}
                     </span>
                   </div>
-                  <code className="mt-1 block break-all font-mono text-[10px] text-foreground">
+                  <code className="mt-1 block break-all font-mono text-micro text-foreground">
                     {gate.command.cmd}{gate.command.args.length > 0 ? ` ${gate.command.args.join(' ')}` : ''}
                   </code>
                   {gate.state === 'quarantined' && (
-                    <div className="mt-2 space-y-1 font-mono text-[9px] text-error">
+                    <div className="mt-2 space-y-1 font-mono text-micro text-error">
                       <p>Quarantine signature: {gate.quarantineSignature ?? 'Unavailable'}</p>
                       <p>
                         Quarantined at:{' '}
@@ -607,7 +607,7 @@ const GateHealthLane = ({
                     </div>
                   )}
                   {(gate.lastFailureSignature !== null || gate.lastFailureOriginId !== null || gate.lastFailureAt !== null) && (
-                    <div className="mt-2 space-y-1 border-t border-border/30 pt-2 font-mono text-[9px] text-muted-foreground">
+                    <div className="mt-2 space-y-1 border-t border-border/30 pt-2 font-mono text-micro text-muted-foreground">
                       <p className="uppercase tracking-wide">Latest failure</p>
                       {gate.lastFailureSignature !== null && <p>Signature: {gate.lastFailureSignature}</p>}
                       {gate.lastFailureOriginId !== null && <p>Origin: {gate.lastFailureOriginId}</p>}
@@ -634,7 +634,7 @@ const StewardStatusNote = () => (
     role="note"
     data-testid="steward-status-note"
   >
-    <p className="font-mono text-[10px] text-warn/90">
+    <p className="font-mono text-micro text-warn/90">
       The Steward is not wired up in this build — the runtime-tuning entries below are produced by
       a different path. Nothing on this page acts on the queue.
     </p>
@@ -683,7 +683,7 @@ export const StewardPage = () => {
         title="Steward"
         subtitle="What the Steward is wired to do and what it has actually done."
         right={
-          <div className="flex items-center gap-3 font-mono text-[9px] text-muted-foreground">
+          <div className="flex items-center gap-3 font-mono text-micro text-muted-foreground">
             <span className="flex items-center gap-1">
               <span className="inline-block h-1.5 w-6 rounded bg-success" />
               executing
@@ -725,10 +725,10 @@ export const StewardPage = () => {
 
       {/* Agent spec footer */}
       <footer className="mt-2 rounded border border-border/30 bg-muted/10 px-4 py-3">
-        <div className="mb-1 font-mono text-[9px] uppercase tracking-wide text-muted-foreground/70">
+        <div className="mb-1 font-mono text-micro uppercase tracking-wide text-muted-foreground/70">
           Agent spec — {data.agentSpec.name} ({data.agentSpec.dispatchSites} dispatch site{data.agentSpec.dispatchSites !== 1 ? 's' : ''})
         </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10px] text-muted-foreground">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-micro text-muted-foreground">
           <span>model: <span className="text-foreground">{data.agentSpec.model}</span></span>
           <span>tools: <span className="text-foreground">{data.agentSpec.allowedTools.join(', ')}</span></span>
           <span>events: <span className="text-foreground">{data.agentSpec.eventVariants.join(', ')}</span></span>

@@ -3,18 +3,23 @@
  * Token gate — components speak semantic tokens only (ADR: "UI components
  * speak semantic tokens only; Mars palette confined to stylesheet").
  *
- * Fails when any .tsx file under src/ references:
+ * Gate 1 — raw Mars palette classes:
+ *   Fails when any .tsx file under src/ references a raw Mars palette class
+ *   (bg-iron, text-flame, border-panel/40, ...). The palette lives solely in
+ *   src/styles/index.css behind the semantic aliases.
  *
- *   1. A raw Mars palette class (bg-iron, text-flame, border-panel/40, ...)
- *      The palette lives solely in src/styles/index.css behind the semantic
- *      aliases.
+ * Gate 2 — raw Tailwind numeric-scale palette classes:
+ *   Fails on text-red-400, bg-green-500, border-neutral-800, … Use the
+ *   semantic tokens instead:
+ *     red/error states  → text-error / bg-error / border-error (+ opacity)
+ *     green/success     → text-success / bg-success / border-success
+ *     yellow/warn       → text-warn / bg-warn / border-warn
+ *     neutral/muted     → text-muted / text-muted-dark / text-fg-dark / …
  *
- *   2. A raw Tailwind numeric-scale palette class (text-red-400, bg-green-500,
- *      border-neutral-800, ...).  Use the semantic tokens instead:
- *        red/error states  → text-error / bg-error / border-error (+ opacity)
- *        green/success     → text-success / bg-success / border-success
- *        yellow/warn       → text-warn / bg-warn / border-warn
- *        neutral/muted     → text-muted / text-muted-dark / text-fg-dark / …
+ * Gate 3 — arbitrary type-scale px classes:
+ *   Fails when any .tsx file under src/ uses an arbitrary pixel font-size
+ *   utility (text-[10px], text-[11.5px], …). All type-scale values must use
+ *   the four design tokens: text-micro / text-label / text-body / text-title.
  */
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -39,12 +44,17 @@ const BANNED_SCALE = new RegExp(
   'g',
 )
 
+// Rule 3 — arbitrary px font-size utilities, with or without responsive/state
+// prefixes:  text-[10px]  text-[10.5px]  sm:text-[9px]  hover:text-[11px]
+const BANNED_PX_TEXT = /\b(?:[a-z-]+:)*text-\[\d+(?:\.\d+)?px\]/g
+
 const walk = (dir) =>
   readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = join(dir, e.name)
     if (e.isDirectory()) return walk(p)
-    // Exclude test files — they legitimately reference palette class names in
-    // assertion strings (e.g. expect(html).not.toContain('text-red-400')).
+    // Exclude test files — they legitimately reference palette / old type-scale
+    // class names in assertion strings (e.g.
+    // expect(html).not.toContain('text-red-400')).
     if (e.name.endsWith('.test.tsx') || e.name.endsWith('.spec.tsx')) return []
     return e.name.endsWith('.tsx') ? [p] : []
   })
@@ -55,18 +65,23 @@ for (const file of walk(ROOT)) {
   lines.forEach((line, i) => {
     const marsHits = line.match(BANNED_MARS)
     const scaleHits = line.match(BANNED_SCALE)
-    const hits = [...(marsHits ?? []), ...(scaleHits ?? [])]
-    if (hits.length > 0)
-      violations.push(`${relative(process.cwd(), file)}:${i + 1}  ${hits.join(' ')}`)
+    const paletteHits = [...(marsHits ?? []), ...(scaleHits ?? [])]
+    if (paletteHits.length > 0)
+      violations.push(`${relative(process.cwd(), file)}:${i + 1}  [palette] ${paletteHits.join(' ')}`)
+    const pxText = line.match(BANNED_PX_TEXT)
+    if (pxText)
+      violations.push(
+        `${relative(process.cwd(), file)}:${i + 1}  [px-text] ${pxText.join(' ')} — use text-micro/label/body/title`,
+      )
   })
 }
 
 if (violations.length > 0) {
-  console.error(`lint:tokens — ${violations.length} raw palette class usage(s) in component code:`)
+  console.error(`lint:tokens — ${violations.length} violation(s) in component code:`)
   for (const v of violations) console.error(`  ${v}`)
   console.error(
-    'Use semantic tokens instead (error, success, warn, muted-dark, fg-dark, status-*, highlight, …).',
+    'Use semantic tokens instead — type scale: text-micro/label/body/title; colors: error, success, warn, muted-dark, fg-dark, status-*, highlight, …',
   )
   process.exit(1)
 }
-console.error('lint:tokens — OK (no raw palette classes in src/**/*.tsx)')
+console.error('lint:tokens — OK (no raw palette classes or arbitrary px text sizes in src/**/*.tsx)')

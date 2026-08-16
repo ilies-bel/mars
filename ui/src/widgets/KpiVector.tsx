@@ -24,7 +24,7 @@ export const KpiVector = () => {
   return (
     <div className="flex flex-wrap gap-3">
       {kpis.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-label text-muted-foreground">
           No KPI data yet — KPIs appear after arcs complete.
         </p>
       ) : (

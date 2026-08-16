@@ -13,7 +13,7 @@ import type { AlertVerb } from '@/shared/schemas'
 
 export const verbButtonClass = (style: AlertVerb['style']): string => {
   const base =
-    'rounded px-3 py-1 font-mono text-[11px] border transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
+    'rounded px-3 py-1 font-mono text-label border transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
   if (style === 'primary')
     return `${base} border-highlight/60 bg-highlight/10 text-highlight hover:bg-highlight/20`
   if (style === 'destructive')

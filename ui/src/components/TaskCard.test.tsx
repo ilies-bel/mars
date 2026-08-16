@@ -225,15 +225,15 @@ describe('TaskCard – activity detail label', () => {
 })
 
 describe('TaskCard – type scale', () => {
-  it('uses text-body scale class for the task title', () => {
+  it('uses text-title scale class for the task title', () => {
     const html = renderToStaticMarkup(<TaskCard task={minTask('t-scale-1')} index={0} />)
-    expect(html).toContain('text-body')
+    expect(html).toContain('text-title')
     expect(html).not.toContain('text-[14px]')
   })
 
-  it('uses text-meta scale class for secondary labels', () => {
+  it('uses text-label scale class for secondary labels', () => {
     const html = renderToStaticMarkup(<TaskCard task={minTask('t-scale-2')} index={0} />)
-    expect(html).toContain('text-meta')
+    expect(html).toContain('text-label')
     expect(html).not.toContain('text-[11px]')
   })
 

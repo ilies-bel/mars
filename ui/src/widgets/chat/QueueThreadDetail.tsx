@@ -45,28 +45,28 @@ interface ResolutionBlockProps {
 
 const ResolutionBlock = ({ resolution }: ResolutionBlockProps) => (
   <div data-testid="resolution-block">
-    <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+    <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
       Resolution
     </dt>
     <dd className="flex flex-col gap-1">
-      <span className="font-mono text-[11px] text-foreground">
+      <span className="font-mono text-label text-foreground">
         {resolution.resolution ?? '(closed)'}
       </span>
-      <span className="font-mono text-[10px] text-muted-foreground" title={formatTime(resolution.resolvedAt)}>
+      <span className="font-mono text-micro text-muted-foreground" title={formatTime(resolution.resolvedAt)}>
         {relativeTime(resolution.resolvedAt)}
         {resolution.resolvedBy ? ` · ${resolution.resolvedBy}` : null}
       </span>
       {resolution.resolutionNote ? (
-        <p className="whitespace-pre-wrap font-mono text-[11px] text-primary">
+        <p className="whitespace-pre-wrap font-mono text-label text-primary">
           {resolution.resolutionNote}
         </p>
       ) : null}
       {resolution.rootCause ? (
         <div className="mt-1">
-          <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+          <span className="font-mono text-micro uppercase tracking-wider text-muted-foreground">
             Root cause:{' '}
           </span>
-          <span className="font-mono text-[11px] text-primary">
+          <span className="font-mono text-label text-primary">
             {resolution.rootCause}
           </span>
         </div>
@@ -260,7 +260,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
         }
       }}
     >
-      <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+      <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
         Move forward
       </dt>
       <dd className="flex flex-wrap gap-2">
@@ -270,7 +270,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
               key={action.id}
               text={action.hint ?? action.label}
               label={action.label}
-              className="rounded-md border border-primary/30 px-3 py-1.5 font-mono text-[11px] text-primary transition hover:bg-primary/10 active:scale-[0.97]"
+              className="rounded-md border border-primary/30 px-3 py-1.5 font-mono text-label text-primary transition hover:bg-primary/10 active:scale-[0.97]"
             />
           ) : (
             <button
@@ -281,7 +281,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
               data-testid={action.needsConfirm ? `confirm-step-${action.id}` : undefined}
               data-confirm-pending={pendingConfirmId === action.id ? 'true' : undefined}
               className={[
-                'rounded-md border px-3 py-1.5 font-mono text-[11px] uppercase transition active:scale-[0.97] disabled:opacity-50',
+                'rounded-md border px-3 py-1.5 font-mono text-label uppercase transition active:scale-[0.97] disabled:opacity-50',
                 pendingConfirmId === action.id
                   ? 'border-error bg-error/10 text-error'
                   : action.needsConfirm
@@ -301,14 +301,14 @@ export const ActionBar = ({ item }: ActionBarProps) => {
         )}
       </dd>
       {errorMsg ? (
-        <p className="mt-2 font-mono text-[10px] text-error">{errorMsg}</p>
+        <p className="mt-2 font-mono text-micro text-error">{errorMsg}</p>
       ) : null}
       {teachPromptOp && item.failureReasonCode ? (
         <div
           className="mt-3 rounded-md border border-primary/30 bg-card px-3 py-2"
           data-testid="teach-prompt"
         >
-          <p className="font-mono text-[11px] text-foreground">
+          <p className="font-mono text-label text-foreground">
             Apply <span className="uppercase">{teachPromptOp}</span> automatically next time?
           </p>
           <div className="mt-2 flex gap-2">
@@ -317,7 +317,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
               disabled={teachStatus === 'saving'}
               onClick={() => { void handleTeachYes() }}
               data-testid="teach-yes"
-              className="rounded-md border border-primary/40 px-3 py-1 font-mono text-[10px] uppercase text-foreground transition hover:bg-primary/20 disabled:opacity-50"
+              className="rounded-md border border-primary/40 px-3 py-1 font-mono text-micro uppercase text-foreground transition hover:bg-primary/20 disabled:opacity-50"
             >
               {teachStatus === 'saving' ? 'Saving…' : 'Yes'}
             </button>
@@ -325,7 +325,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
               type="button"
               onClick={() => setTeachPromptOp(null)}
               data-testid="teach-dismiss"
-              className="font-mono text-[10px] uppercase text-muted-foreground transition hover:text-foreground"
+              className="font-mono text-micro uppercase text-muted-foreground transition hover:text-foreground"
             >
               No thanks
             </button>
@@ -334,7 +334,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
       ) : null}
       {teachStatus === 'saved' && !teachPromptOp ? (
         <p
-          className="mt-2 font-mono text-[10px] text-foreground"
+          className="mt-2 font-mono text-micro text-foreground"
           data-testid="teach-saved"
         >
           ✓ Mars will auto-apply this next time.
@@ -372,11 +372,11 @@ const LearnedRecipeSection = ({ failureSignature }: { failureSignature: string }
 
   return (
     <div data-testid="learned-recipe-section">
-      <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+      <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
         Auto-run rule
       </dt>
       <dd className="flex items-center gap-3">
-        <span className="font-mono text-[11px] text-foreground">
+        <span className="font-mono text-label text-foreground">
           Mars will auto-<span className="uppercase">{stored.actionOp}</span> on next occurrence
         </span>
         <button
@@ -384,7 +384,7 @@ const LearnedRecipeSection = ({ failureSignature }: { failureSignature: string }
           disabled={unlearnMutation.isPending}
           onClick={() => unlearnMutation.mutate()}
           data-testid="unlearn-recipe"
-          className="border border-primary/40 px-2 py-0.5 font-mono text-[10px] uppercase text-muted-foreground transition hover:border-error/50 hover:text-error disabled:opacity-50"
+          className="border border-primary/40 px-2 py-0.5 font-mono text-micro uppercase text-muted-foreground transition hover:border-error/50 hover:text-error disabled:opacity-50"
         >
           {unlearnMutation.isPending ? 'Removing…' : 'Un-teach'}
         </button>
@@ -418,10 +418,10 @@ const TaskWorkflowStepSection = ({ taskId }: { taskId: string }) => {
 
   return (
     <div>
-      <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+      <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
         Step
       </dt>
-      <dd data-testid="task-workflow-step" className="font-mono text-[11px] text-foreground">
+      <dd data-testid="task-workflow-step" className="font-mono text-label text-foreground">
         <span>{step.stepName}</span>
         <span className="text-muted-foreground"> · {relativeTime(step.startedAt)}</span>
       </dd>
@@ -462,7 +462,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
   if (initial.isPending) {
     return (
       <div>
-        <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
           Traces
         </dt>
         <dd className="text-muted-foreground">Loading…</dd>
@@ -472,7 +472,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
   if (initial.isError || !initial.data) {
     return (
       <div>
-        <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
           Traces
         </dt>
         <FallbackSurface error={initial.error} of="trace events" variant="inline" />
@@ -487,7 +487,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
   if (events.length === 0) {
     return (
       <div>
-        <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
           Traces
         </dt>
         <dd className="text-muted-foreground">No trace events for this task yet.</dd>
@@ -497,7 +497,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
 
   return (
     <div>
-      <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+      <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
         Traces
       </dt>
       <dd>
@@ -506,12 +506,12 @@ const TracesSection = ({ taskId }: TracesProps) => {
             {events.map((e) => (
               <li key={e.id} className={`rounded border ${severityRowClass(e.severity)} px-2 py-1 text-foreground`}>
                 <span className="text-muted-foreground">{relativeTime(e.timestamp)}</span>{' '}
-                <span className={`font-mono text-[10px] uppercase ${e.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(e.severity)}`}>
+                <span className={`font-mono text-micro uppercase ${e.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(e.severity)}`}>
                   [{e.severity}]
                 </span>{' '}
-                <span className="font-mono text-[10px] text-primary">{e.kind}</span>
+                <span className="font-mono text-micro text-primary">{e.kind}</span>
                 {e.phase ? (
-                  <span className="font-mono text-[10px] text-muted-foreground">
+                  <span className="font-mono text-micro text-muted-foreground">
                     {' '}
                     ·{' '}
                     {e.phase}
@@ -527,7 +527,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
             type="button"
             disabled={more.isPending}
             onClick={() => more.mutate(nextCursor)}
-            className="mt-1 inline-flex min-h-[24px] items-center px-2 py-1 font-mono text-[10px] uppercase text-foreground underline disabled:opacity-50"
+            className="mt-1 inline-flex min-h-[24px] items-center px-2 py-1 font-mono text-micro uppercase text-foreground underline disabled:opacity-50"
           >
             {more.isPending ? 'Loading…' : 'Load more'}
           </button>
@@ -552,7 +552,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
   if (query.isPending) {
     return (
       <div>
-        <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
           Proposal
         </dt>
         <dd className="text-muted-foreground">Loading…</dd>
@@ -563,7 +563,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
   if (query.isError || !query.data) {
     return (
       <div>
-        <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
           Proposal
         </dt>
         <dd className="text-muted-foreground">(could not load proposal)</dd>
@@ -577,7 +577,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
     <>
       {p.problem ? (
         <div>
-          <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+          <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
             Problem
           </dt>
           <dd className="whitespace-pre-wrap text-foreground">{p.problem}</dd>
@@ -585,7 +585,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
       ) : null}
       {p.solution ? (
         <div>
-          <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+          <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
             Solution
           </dt>
           <dd className="whitespace-pre-wrap text-foreground">{p.solution}</dd>
@@ -593,13 +593,13 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
       ) : null}
       {p.userStories.length > 0 ? (
         <div>
-          <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+          <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
             User stories
           </dt>
           <dd>
             <ol className="list-decimal pl-4 text-foreground">
               {p.userStories.map((story, i) => (
-                <li key={i} className="mb-0.5 text-[12px]">{story}</li>
+                <li key={i} className="mb-0.5 text-body">{story}</li>
               ))}
             </ol>
           </dd>
@@ -607,7 +607,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
       ) : null}
       {p.outOfScope ? (
         <div>
-          <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+          <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
             Out of scope
           </dt>
           <dd className="whitespace-pre-wrap text-foreground">{p.outOfScope}</dd>
@@ -615,14 +615,14 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
       ) : null}
       {p.notes ? (
         <div>
-          <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+          <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
             Notes
           </dt>
           <dd className="whitespace-pre-wrap text-foreground">{p.notes}</dd>
         </div>
       ) : null}
       <div>
-        <dd className="text-[10px] text-muted-foreground">
+        <dd className="text-micro text-muted-foreground">
           Status: {p.status} · from {p.source} · {new Date(p.createdAt).toLocaleDateString()}
         </dd>
       </div>
@@ -664,8 +664,8 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           data-testid="queue-opening-message"
           aria-label="Opening alert message from Mars"
         >
-          <div className="mb-3 flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
-            <span aria-hidden="true" className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-[11px] text-primary">M</span>
+          <div className="mb-3 flex items-center gap-2 font-mono text-micro text-muted-foreground">
+            <span aria-hidden="true" className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-label text-primary">M</span>
             <span className="text-foreground">Mars</span>
             <span aria-hidden="true">·</span>
             <span>{relativeTime(item.at)}</span>
@@ -673,14 +673,14 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           </div>
           {/* Headline: original task id, kind badge, priority */}
           <div className="flex items-baseline gap-3">
-            <span className="break-all font-mono text-[11px] uppercase text-primary">
+            <span className="break-all font-mono text-label uppercase text-primary">
               {item.entityId}
             </span>
-            <span className="shrink-0 font-mono text-[10px] uppercase text-muted-foreground">
+            <span className="shrink-0 font-mono text-micro uppercase text-muted-foreground">
               {kindBadgeLabel(item.kind)}
             </span>
           <span
-            className={`ml-auto font-mono text-[10px] uppercase ${priorityBadgeClass(item.priority)}`}
+            className={`ml-auto font-mono text-micro uppercase ${priorityBadgeClass(item.priority)}`}
           >
             {item.priority}
           </span>
@@ -689,21 +689,21 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           {/* For all other kinds: title is the headline, body shown for failed-task. */}
           {item.kind === 'arc-failed' ? (
           <>
-            <h2 className="mt-2 break-all font-mono text-[15px] text-foreground">
+            <h2 className="mt-2 break-all font-mono text-title text-foreground">
               {item.goal || '(no goal)'}
             </h2>
-            <p className="mt-1 whitespace-pre-wrap font-mono text-[12px] text-foreground/80">
+            <p className="mt-1 whitespace-pre-wrap font-mono text-body text-foreground/80">
               {item.reason}
             </p>
           </>
           ) : (
           <>
-            <h2 className="mt-2 break-all font-mono text-[15px] text-foreground">
+            <h2 className="mt-2 break-all font-mono text-title text-foreground">
               {item.title || '(no title)'}
             </h2>
             {(isTaskFailureActionQueueKind(item.kind) || item.kind === 'awaiting-validation') &&
             item.body ? (
-              <p className="mt-2 whitespace-pre-wrap font-mono text-[12px] text-foreground/80">
+              <p className="mt-2 whitespace-pre-wrap font-mono text-body text-foreground/80">
                 {item.body}
               </p>
             ) : null}
@@ -714,7 +714,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
             type="button"
             data-testid="aq-open-task-detail"
             onClick={() => openTask(item.entityId)}
-            className="mt-3 border border-primary/40 px-3 py-1.5 font-mono text-[10px] uppercase text-foreground transition-colors hover:bg-primary/20"
+            className="mt-3 border border-primary/40 px-3 py-1.5 font-mono text-micro uppercase text-foreground transition-colors hover:bg-primary/20"
           >
             Open task detail
           </button>
@@ -723,7 +723,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
       </div>
 
       <main className="flex-1 px-6 py-4">
-        <dl className="flex flex-col gap-4 font-mono text-[12px] max-w-[75ch]">
+        <dl className="flex flex-col gap-4 font-mono text-body max-w-[75ch]">
           {/* Resolution block — shown for resolved history rows; suppresses ActionBar. */}
           {item.resolution ? (
             <ResolutionBlock resolution={item.resolution} />
@@ -739,7 +739,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           {item.kind === 'stale-worktree' && (
             <>
               <div>
-                <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+                <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
                   Task prompt
                 </dt>
                 <dd className="whitespace-pre-wrap text-foreground">
@@ -749,7 +749,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 </dd>
               </div>
               <div>
-                <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+                <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
                   Status · Age · Branch
                 </dt>
                 <dd className="text-foreground">
@@ -761,13 +761,13 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 </dd>
               </div>
               <div>
-                <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+                <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
                   Investigation
                 </dt>
                 <dd>
                   {item.staleWorktreeDetail.investigation ? (
                     <>
-                      <p className="mb-1 text-[10px] text-muted-foreground" title={formatTime(item.staleWorktreeDetail.updatedAt)}>
+                      <p className="mb-1 text-micro text-muted-foreground" title={formatTime(item.staleWorktreeDetail.updatedAt)}>
                         {relativeTime(item.staleWorktreeDetail.updatedAt)}
                       </p>
                       <p className="whitespace-pre-wrap text-foreground">
@@ -787,7 +787,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
               before clicking Validate / Reject in the action bar above. */}
           {item.kind === 'awaiting-validation' && item.devServerUrl ? (
             <div>
-              <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+              <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
                 Live preview
               </dt>
               <dd>
@@ -796,11 +796,11 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
                   target="_blank"
                   rel="noreferrer"
                   data-testid="aq-preview-url"
-                  className="break-all font-mono text-[12px] text-foreground underline decoration-primary/50 underline-offset-2 transition-colors hover:text-foreground hover:decoration-foreground"
+                  className="break-all font-mono text-body text-foreground underline decoration-primary/50 underline-offset-2 transition-colors hover:text-foreground hover:decoration-foreground"
                 >
                   {item.devServerUrl}
                 </a>
-                <p className="mt-1 text-[10px] text-muted-foreground">
+                <p className="mt-1 text-micro text-muted-foreground">
                   Opens in a new tab. Validate to merge, or Reject to stop the
                   merge and fail the task (its worktree is kept).
                 </p>
@@ -810,11 +810,11 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           {/* Diagnosis before the origin chain so context is established first. */}
           {item.diagnosis ? (
             <div>
-              <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+              <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
                 Diagnosis
               </dt>
               <dd>
-                <p className="mb-1 text-[10px] text-muted-foreground" title={formatTime(item.diagnosis.diagnosedAt)}>
+                <p className="mb-1 text-micro text-muted-foreground" title={formatTime(item.diagnosis.diagnosedAt)}>
                   {relativeTime(item.diagnosis.diagnosedAt)}
                 </p>
                 <p className="whitespace-pre-wrap text-foreground">
@@ -849,7 +849,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           {/* Details — shown for stale-worktree rows (body text). */}
           {item.kind === 'stale-worktree' ? (
             <div>
-              <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+              <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
                 Details
               </dt>
               <dd className="whitespace-pre-wrap text-foreground">
@@ -864,7 +864,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
             <>
               {item.dag.proposalId && (
                 <div>
-                  <dt className="mb-2 border-b border-primary/20 pb-1 text-[10px] uppercase tracking-wider text-primary">
+                  <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
                     From proposal
                   </dt>
                   <dd className="text-foreground">{item.dag.proposalId}</dd>
@@ -885,7 +885,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           ) : null}
         </dl>
       </main>
-      <footer className="border-t border-primary/30 px-6 py-3 font-mono text-[10px] text-muted-foreground">
+      <footer className="border-t border-primary/30 px-6 py-3 font-mono text-micro text-muted-foreground">
         {isRealFailedTask ? 'Failed' : 'Last activity'}: {relativeTime(item.at)}
       </footer>
     </div>

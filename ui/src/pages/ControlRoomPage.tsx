@@ -62,7 +62,7 @@ const RulesSection = () => {
               <span
                 key={t.term}
                 title={t.definition}
-                className="rounded border border-primary/20 px-2 py-0.5 font-mono text-[11px] text-foreground/80 hover:border-primary/50 hover:text-foreground"
+                className="rounded border border-primary/20 px-2 py-0.5 font-mono text-label text-foreground/80 hover:border-primary/50 hover:text-foreground"
               >
                 {t.term}
               </span>
@@ -77,10 +77,10 @@ const RulesSection = () => {
           <ul className="space-y-0.5">
             {adrs.map((adr) => (
               <li key={adr.slug} className="flex items-baseline gap-2">
-                <span className="w-10 shrink-0 font-mono text-[10px] text-primary/40">
+                <span className="w-10 shrink-0 font-mono text-micro text-primary/40">
                   {String(adr.number).padStart(4, '0')}
                 </span>
-                <span className="font-mono text-[11px] text-foreground/70">{adr.title}</span>
+                <span className="font-mono text-label text-foreground/70">{adr.title}</span>
               </li>
             ))}
           </ul>
@@ -88,7 +88,7 @@ const RulesSection = () => {
       )}
 
       {terms.length === 0 && adrs.length === 0 && (
-        <p className="font-mono text-[11px] text-primary/40">
+        <p className="font-mono text-label text-primary/40">
           No glossary terms or ADRs found.
         </p>
       )}
@@ -119,7 +119,7 @@ const NowSection = () => {
           ].join(' ')}
           aria-hidden="true"
         />
-        <span className="font-mono text-[11px] text-foreground/70">
+        <span className="font-mono text-label text-foreground/70">
           {connected ? 'Live' : 'Connecting…'}
         </span>
       </div>
@@ -151,7 +151,7 @@ const Stat = ({ label, value, highlight }: StatProps) => (
     >
       {value}
     </span>
-    <span className="mt-0.5 font-mono text-[10px] uppercase tracking-wide text-primary/50">
+    <span className="mt-0.5 font-mono text-micro uppercase tracking-wide text-primary/50">
       {label}
     </span>
   </div>
@@ -178,20 +178,20 @@ const AdvisorySection = () => {
       <div className="mb-4 flex gap-3">
         <a
           href="#/steward"
-          className="rounded border border-primary/30 px-3 py-1.5 font-mono text-[11px] text-primary hover:border-primary/60 hover:text-foreground"
+          className="rounded border border-primary/30 px-3 py-1.5 font-mono text-label text-primary hover:border-primary/60 hover:text-foreground"
         >
           → Steward ledgers
         </a>
         <a
           href="#/reflections"
-          className="rounded border border-primary/30 px-3 py-1.5 font-mono text-[11px] text-primary hover:border-primary/60 hover:text-foreground"
+          className="rounded border border-primary/30 px-3 py-1.5 font-mono text-label text-primary hover:border-primary/60 hover:text-foreground"
         >
           → Deep reflections
         </a>
       </div>
 
       {advisories.length === 0 ? (
-        <p className="font-mono text-[11px] text-primary/40">No pending advisories.</p>
+        <p className="font-mono text-label text-primary/40">No pending advisories.</p>
       ) : (
         <ul className="space-y-2">
           {advisories.map((item) => (
@@ -200,13 +200,13 @@ const AdvisorySection = () => {
               className="rounded border border-primary/20 px-3 py-2"
             >
               <div className="flex items-start gap-2">
-                <span className="mt-0.5 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-primary/60">
+                <span className="mt-0.5 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-micro uppercase tracking-wide text-primary/60">
                   {ADVISORY_LABELS[item.kind] ?? item.kind}
                 </span>
-                <span className="font-mono text-[11px] text-foreground/80">{item.title}</span>
+                <span className="font-mono text-label text-foreground/80">{item.title}</span>
               </div>
               {item.body && (
-                <p className="mt-1 font-mono text-[11px] text-foreground/50 leading-snug">
+                <p className="mt-1 font-mono text-label text-foreground/50 leading-snug">
                   {item.body}
                 </p>
               )}

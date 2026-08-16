@@ -33,7 +33,7 @@ export const LoopLedgerPanel = () => {
       <select
         value={workflow ?? ''}
         onChange={(e) => setSelected(e.target.value || null)}
-        className="self-start rounded border border-border bg-card px-2 py-0.5 text-xs"
+        className="self-start rounded border border-border bg-card px-2 py-0.5 text-body"
       >
         {(workflows ?? []).map((kind) => (
           <option key={kind} value={kind}>
@@ -44,11 +44,11 @@ export const LoopLedgerPanel = () => {
       {isLoading ? (
         <SkeletonList rows={3} rowClassName="h-5 w-full mb-1" label="Loading loop ledger" />
       ) : error ? (
-        <p role="alert" className="text-error text-xs">Couldn't load loop ledger</p>
+        <p role="alert" className="text-error text-body">Couldn't load loop ledger</p>
       ) : entries.length === 0 ? (
-        <p className="text-primary text-xs">No loop runs yet</p>
+        <p className="text-primary text-body">No loop runs yet</p>
       ) : (
-        <table className="w-full text-xs">
+        <table className="w-full text-body">
           <thead>
             <tr className="text-left text-primary">
               <th className="pb-1 pr-2 font-normal">Run</th>

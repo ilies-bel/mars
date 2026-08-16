@@ -84,9 +84,9 @@ function ProposalCombobox({ proposals, tasks, selectedProposalId, onSelect }: Pr
         className="flex items-center gap-2 border-b border-border px-4 py-1.5"
         data-testid="proposal-filter"
       >
-        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">Proposal</span>
+        <span className="shrink-0 font-mono text-label text-muted-foreground">Proposal</span>
         <div
-          className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 font-mono text-[11px] text-foreground"
+          className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 font-mono text-label text-foreground"
           data-testid="proposal-filter-chip"
         >
           <span className="max-w-[320px] truncate">{selectedProposal.title}</span>
@@ -112,7 +112,7 @@ function ProposalCombobox({ proposals, tasks, selectedProposalId, onSelect }: Pr
       className="relative flex items-center gap-2 border-b border-border px-4 py-1.5"
       data-testid="proposal-filter"
     >
-      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">Proposal</span>
+      <span className="shrink-0 font-mono text-label text-muted-foreground">Proposal</span>
       <input
         type="text"
         data-testid="proposal-filter-input"
@@ -128,7 +128,7 @@ function ProposalCombobox({ proposals, tasks, selectedProposalId, onSelect }: Pr
           blurTimer.current = setTimeout(() => setOpen(false), 150)
         }}
         disabled={isLoading}
-        className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border disabled:opacity-50"
+        className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-label text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border disabled:opacity-50"
       />
       {/*
        * The options list is always in the DOM (hidden attribute, not unmounted)
@@ -149,14 +149,14 @@ function ProposalCombobox({ proposals, tasks, selectedProposalId, onSelect }: Pr
                 setOpen(false)
                 setQuery('')
               }}
-              className="w-full px-3 py-1.5 text-left font-mono text-[11px] text-foreground hover:bg-muted/50"
+              className="w-full px-3 py-1.5 text-left font-mono text-label text-foreground hover:bg-muted/50"
             >
               {p.title}
             </button>
           </li>
         ))}
         {filteredProposals.length === 0 && !isLoading && (
-          <li className="px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
+          <li className="px-3 py-1.5 font-mono text-label text-muted-foreground">
             No proposals match
           </li>
         )}
@@ -168,7 +168,7 @@ function ProposalCombobox({ proposals, tasks, selectedProposalId, onSelect }: Pr
                 if (blurTimer.current !== null) clearTimeout(blurTimer.current)
                 setIncludeFinished(true)
               }}
-              className="w-full border-t border-border px-3 py-1.5 text-left font-mono text-[11px] text-muted-foreground hover:bg-muted/50"
+              className="w-full border-t border-border px-3 py-1.5 text-left font-mono text-label text-muted-foreground hover:bg-muted/50"
               data-testid="proposal-filter-include-finished"
             >
               + {finishedProposals.length} finished arc
@@ -311,7 +311,7 @@ export const ProgressPage = () => {
             placeholder="Search id, prompt, branch…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border"
+            className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-label text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border"
           />
         </div>
         {/* Proposal filter — searchable combobox with chip UX.

@@ -65,12 +65,12 @@ export const FallbackSurface = ({ error, of, variant = 'pane', repoRoot }: Fallb
       className="flex h-full flex-col items-center justify-center px-6 text-center"
     >
       <div className="max-w-lg border border-primary/40 bg-primary/10 p-6 font-mono text-left">
-        <p className="text-[13px] uppercase tracking-wide text-foreground">{fb.headline}</p>
+        <p className="text-body uppercase tracking-wide text-foreground">{fb.headline}</p>
         {fb.remedy !== null && (
-          <p className="mt-4 text-[11px] text-muted-foreground">{fb.remedy}</p>
+          <p className="mt-4 text-label text-muted-foreground">{fb.remedy}</p>
         )}
         {fb.detail !== null && (
-          <p className="mt-3 whitespace-pre-wrap break-all text-[11px] text-primary">
+          <p className="mt-3 whitespace-pre-wrap break-all text-label text-primary">
             {fb.detail}
           </p>
         )}

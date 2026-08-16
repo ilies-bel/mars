@@ -62,10 +62,10 @@ export const MainThreadRow = ({
       ].join(' ')}
     >
       <span className="flex items-center gap-1.5">
-        <span aria-hidden="true" className="text-[12px]">◆</span>
-        <span className="font-mono text-[12px] font-semibold tracking-wide">Main thread</span>
+        <span aria-hidden="true" className="text-body">◆</span>
+        <span className="font-mono text-body font-semibold tracking-wide">Main thread</span>
       </span>
-      <span className="mt-0.5 block font-mono text-[9px] text-muted-foreground">
+      <span className="mt-0.5 block font-mono text-micro text-muted-foreground">
         {subtitle}
       </span>
     </button>

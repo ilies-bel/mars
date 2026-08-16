@@ -75,7 +75,7 @@ export const ErrorFirstLog = ({
     return (
       <pre
         data-testid={testId}
-        className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-[10px] text-primary"
+        className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-primary"
       >
         {log}
       </pre>
@@ -89,7 +89,7 @@ export const ErrorFirstLog = ({
         {errorLines.length > 0 ? (
           <span
             data-testid="error-first-log-error-count"
-            className="rounded border border-error/40 bg-error/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-error"
+            className="rounded border border-error/40 bg-error/10 px-1.5 py-0.5 font-mono text-micro font-semibold text-error"
           >
             {errorLines.length} error{errorLines.length !== 1 ? 's' : ''}
           </span>
@@ -100,10 +100,10 @@ export const ErrorFirstLog = ({
             data-testid="error-first-log-passing-toggle"
             onClick={() => setShowPassing((v) => !v)}
             aria-expanded={showPassing}
-            className="rounded border border-done/30 bg-done/5 px-1.5 py-0.5 font-mono text-[10px] text-done hover:bg-done/10"
+            className="rounded border border-done/30 bg-done/5 px-1.5 py-0.5 font-mono text-micro text-done hover:bg-done/10"
           >
             {passingLines.length} passing
-            <span className="ml-1 text-[8px]" aria-hidden="true">
+            <span className="ml-1 text-micro" aria-hidden="true">
               {showPassing ? '▾' : '▸'}
             </span>
           </button>
@@ -114,7 +114,7 @@ export const ErrorFirstLog = ({
       {errorLines.length > 0 ? (
         <pre
           data-testid="error-first-log-errors"
-          className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-error/5 p-1.5 font-mono text-[10px] text-error/90"
+          className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-error/5 p-1.5 font-mono text-micro text-error/90"
         >
           {errorLines.join('\n')}
         </pre>
@@ -124,7 +124,7 @@ export const ErrorFirstLog = ({
       {neutralLines.length > 0 ? (
         <pre
           data-testid="error-first-log-neutral"
-          className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-[10px] text-primary"
+          className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-primary"
         >
           {neutralLines.join('\n')}
         </pre>
@@ -134,7 +134,7 @@ export const ErrorFirstLog = ({
       {showPassing && passingLines.length > 0 ? (
         <pre
           data-testid="error-first-log-passing"
-          className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-done/5 p-1.5 font-mono text-[10px] text-done/80"
+          className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-done/5 p-1.5 font-mono text-micro text-done/80"
         >
           {passingLines.join('\n')}
         </pre>

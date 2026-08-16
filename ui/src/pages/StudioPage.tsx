@@ -44,7 +44,7 @@ export const StudioPage = ({ taskId, fetchImpl }: StudioPageProps) => {
           <a
             href={taskHash(taskId)}
             data-testid="studio-back-to-task"
-            className="text-sm text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="text-title text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
             aria-label={`Back to task ${taskId}`}
           >
             ← Task
