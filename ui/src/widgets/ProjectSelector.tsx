@@ -106,7 +106,7 @@ export const ProjectSelectorInner = ({
         aria-expanded={open}
         onClick={onToggle}
         data-testid="project-selector-trigger"
-        className="flex items-center gap-1.5 rounded px-2 py-0.5 font-mono text-label text-foreground transition-colors hover:bg-primary/20"
+        className="flex items-center gap-1.5 rounded px-2 py-0.5 font-mono text-label text-fg-dark transition-colors hover:bg-primary/20"
       >
         <span
           role="img"
@@ -118,7 +118,7 @@ export const ProjectSelectorInner = ({
         </span>
         <span aria-hidden="true">{focusedIcon}</span>
         {focusedName}
-        <span aria-hidden="true" className="ml-1 text-primary">
+        <span aria-hidden="true" className="ml-1 text-muted-dark">
           {open ? '▲' : '▼'}
         </span>
       </button>

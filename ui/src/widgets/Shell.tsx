@@ -72,8 +72,28 @@ interface ShellTopbarProps {
 }
 
 const ShellTopbar = ({ hash }: ShellTopbarProps) => {
-  const crumbs = deriveBreadcrumbs(hash)
   const connected = useDaemonConnected()
+  const derivedCrumbs = deriveBreadcrumbs(hash)
+
+  // For top-level nav routes, deriveBreadcrumbs returns []; fall back to group › page crumbs
+  // derived from SHELL_NAV_GROUPS so the topbar always shows a location trail.
+  const crumbs =
+    derivedCrumbs.length > 0
+      ? derivedCrumbs
+      : (() => {
+          const route = resolvePageRoute(hash)
+          for (const group of SHELL_NAV_GROUPS) {
+            const entry = group.entries.find(
+              (e) => e.route !== 'proposals' && e.route === route,
+            )
+            if (entry)
+              return [
+                { label: group.label, href: null },
+                { label: entry.label, href: null },
+              ]
+          }
+          return []
+        })()
 
   return (
     <header className="col-span-2 flex h-10 items-center gap-3 border-b border-border-dark bg-surface-dark px-4">
@@ -111,8 +131,12 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
                   >
                     {crumb.label}
                   </a>
-                ) : (
+                ) : i === crumbs.length - 1 ? (
+                  // Terminal (active page): brightest on-dark text so it reads as the current location
                   <span className="font-mono text-label text-fg-dark">{crumb.label}</span>
+                ) : (
+                  // Non-terminal without href (e.g. group label): muted
+                  <span className="font-mono text-label text-muted-dark">{crumb.label}</span>
                 )}
               </span>
             ))}

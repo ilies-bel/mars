@@ -228,6 +228,34 @@ describe('ShellSidebar — Needs you badge', () => {
   })
 })
 
+// ── Shell — topbar breadcrumb ─────────────────────────────────────────────────
+
+describe('Shell — topbar breadcrumb', () => {
+  it('renders a Breadcrumb nav for #/chat (top-level nav route)', () => {
+    const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
+    expect(html).toContain('aria-label="Breadcrumb"')
+  })
+
+  it('renders a Breadcrumb nav for #/events (Developer group route)', () => {
+    const html = renderToStaticMarkup(<Shell hash="#/events">page</Shell>)
+    expect(html).toContain('aria-label="Breadcrumb"')
+  })
+
+  it('active (terminal) breadcrumb segment uses the brightest on-dark token', () => {
+    const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
+    expect(html).toContain('text-fg-dark')
+    // and the non-terminal group label stays muted, so the two are distinguishable
+    expect(html).toContain('text-muted-dark')
+  })
+
+  it('renders separator › in the breadcrumb for nav routes', () => {
+    const html = renderToStaticMarkup(<Shell hash="#/progress">page</Shell>)
+    // Must contain both breadcrumb nav and the separator glyph
+    expect(html).toContain('aria-label="Breadcrumb"')
+    expect(html).toContain('›')
+  })
+})
+
 // ── Shell — structure ─────────────────────────────────────────────────────────
 
 describe('Shell', () => {
