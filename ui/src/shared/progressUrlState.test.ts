@@ -161,12 +161,14 @@ describe('encode → decode round-trip', () => {
       view: 'board',
       query: 'test search',
       proposal: 'p-abc',
+      col: null,
     }
     const hash = `#/progress${encodeProgressState(state)}`
     const restored = decodeProgressState(hash)
     expect(restored.view).toBe('board')
     expect(restored.query).toBe('test search')
     expect(restored.proposal).toBe('p-abc')
+    expect(restored.col).toBeNull()
   })
 })
 
@@ -246,5 +248,68 @@ describe('readExplicitViewFromUrl', () => {
     } finally {
       teardownWindow()
     }
+  })
+
+  it('returns board when col=proposals is present (sidebar shortcut)', () => {
+    setupWindow('#/progress?col=proposals')
+    try {
+      expect(readExplicitViewFromUrl()).toBe('board')
+    } finally {
+      teardownWindow()
+    }
+  })
+
+  it('view param takes precedence over col=proposals', () => {
+    setupWindow('#/progress?view=topology&col=proposals')
+    try {
+      expect(readExplicitViewFromUrl()).toBe('topology')
+    } finally {
+      teardownWindow()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// col=proposals — sidebar shortcut param round-trip
+// ---------------------------------------------------------------------------
+
+describe('col=proposals — sidebar shortcut param', () => {
+  it('decodes col=proposals from hash', () => {
+    const state = decodeProgressState('#/progress?col=proposals')
+    expect(state.col).toBe('proposals')
+  })
+
+  it('infers board view from col=proposals', () => {
+    const state = decodeProgressState('#/progress?col=proposals')
+    expect(state.view).toBe('board')
+  })
+
+  it('returns null col for bare #/progress', () => {
+    expect(decodeProgressState('#/progress').col).toBeNull()
+  })
+
+  it('returns null col for an unknown col value', () => {
+    expect(decodeProgressState('#/progress?col=other').col).toBeNull()
+  })
+
+  it('encodes col=proposals in output', () => {
+    const state: ProgressUrlState = { ...defaultProgressUrlState(), col: 'proposals' }
+    expect(encodeProgressState(state)).toContain('col=proposals')
+  })
+
+  it('omits view=board when col=proposals is set (col implies board)', () => {
+    const state: ProgressUrlState = { ...defaultProgressUrlState(), col: 'proposals' }
+    expect(encodeProgressState(state)).not.toContain('view=board')
+  })
+
+  it('omits col param when col is null', () => {
+    expect(encodeProgressState(defaultProgressUrlState())).not.toContain('col=')
+  })
+
+  it('round-trips col=proposals', () => {
+    const state: ProgressUrlState = { ...defaultProgressUrlState(), col: 'proposals' }
+    const restored = decodeProgressState(`#/progress${encodeProgressState(state)}`)
+    expect(restored.col).toBe('proposals')
+    expect(restored.view).toBe('board')
   })
 })

@@ -195,6 +195,7 @@ export const ProgressPage = () => {
 
   // Resolve the initial active tab with the following precedence:
   //   1. Explicit ?view= param in the URL (shareable links are always honoured)
+  //      — also includes col=proposals (sidebar shortcut → board view)
   //   2. Last persisted view from localStorage (remembered across sessions)
   //   3. DEFAULT_TAB ('topology') as the final fallback
   const [activeTab, setActiveTab] = useState<Tab>(() => {
@@ -202,6 +203,11 @@ export const ProgressPage = () => {
     if (explicit !== null) return explicit
     return readPersistedView() ?? DEFAULT_TAB
   })
+
+  // col=proposals: tracks whether the Proposals sidebar shortcut is the
+  // current navigation origin. Preserved in the URL so the sidebar Proposals
+  // entry stays highlighted. Cleared when the user explicitly switches tabs.
+  const [colMode, setColMode] = useState<'proposals' | null>(() => initialUrlState.col)
 
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(
     initialUrlState.proposal,
@@ -268,10 +274,11 @@ export const ProgressPage = () => {
         view: activeTab,
         query: searchQuery,
         proposal: selectedProposalId,
+        col: colMode,
       })
     }, 300)
     return () => clearTimeout(id)
-  }, [activeTab, searchQuery, selectedProposalId])
+  }, [activeTab, searchQuery, selectedProposalId, colMode])
 
   // inProgressFromCounts and failedCount/doneToday come from useStatusCounts()
   // (server-side single query) so every surface shows the same numbers.
@@ -286,7 +293,16 @@ export const ProgressPage = () => {
           failed={failedCount}
           connected={connected}
         />
-        <TabStrip active={activeTab} onSelect={setActiveTab} />
+        <TabStrip
+          active={activeTab}
+          onSelect={(tab) => {
+            setActiveTab(tab)
+            // Clear the proposals column shortcut when the user explicitly
+            // switches tabs — they are no longer in the sidebar-navigated
+            // proposals view, so the Proposals sidebar entry should unhighlight.
+            setColMode(null)
+          }}
+        />
         {/* Text search — always visible */}
         <div className="flex items-center gap-2 border-b border-primary/20 bg-background px-4 py-1.5">
           <input

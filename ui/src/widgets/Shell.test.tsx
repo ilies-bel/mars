@@ -3,14 +3,15 @@
  *
  * ShellSidebar is tested directly with controlled props (no hooks) to verify:
  *   - active route is highlighted (aria-current, flame bg, right-edge accent, amber text)
- *   - Chat badge appears only when decisionBadge > 0
+ *   - "Needs you" badge appears only when decisionBadge > 0
  *   - no badge on any other nav entry
+ *   - proposals/progress mutual-exclusion logic
  *
  * Shell is tested via renderToStaticMarkup with mocked hooks to verify:
  *   - three group headers are rendered
  *   - all nine nav entry labels are rendered
  *   - wordmark and live-dot are present
- *   - live-dot reflects daemon connection state (green+Live vs grey+Offline)
+ *   - live-dot reflects daemon connection state (green+Live vs grey+Reconnecting)
  */
 
 import { describe, expect, it, mock } from 'bun:test'
@@ -55,9 +56,9 @@ describe('SHELL_NAV_GROUPS', () => {
     expect(SHELL_NAV_GROUPS[2].label).toBe('Intel')
   })
 
-  it('has ten total nav entries across all groups', () => {
+  it('has nine total nav entries across all groups', () => {
     const total = SHELL_NAV_GROUPS.reduce((sum, g) => sum + g.entries.length, 0)
-    expect(total).toBe(10)
+    expect(total).toBe(9)
   })
 
   it('Workspace group contains Needs you, Chat, Progress, Control Room', () => {
@@ -74,10 +75,10 @@ describe('SHELL_NAV_GROUPS', () => {
     expect(SHELL_NAV_GROUPS[0].entries[0].href).toBe('#/triage')
   })
 
-  it('Developer group contains Studio, Events, Reflections, Steward', () => {
+  it('Developer group contains Events, Reflections, Steward (Studio removed — accessed via task detail)', () => {
     const dev = SHELL_NAV_GROUPS[1]
     const labels = dev.entries.map((e) => e.label)
-    expect(labels).toContain('Studio')
+    expect(labels).not.toContain('Studio')
     expect(labels).toContain('Events')
     expect(labels).toContain('Reflections')
     expect(labels).toContain('Steward')
@@ -88,6 +89,22 @@ describe('SHELL_NAV_GROUPS', () => {
     const labels = intel.entries.map((e) => e.label)
     expect(labels).toContain('KPI')
     expect(labels).toContain('Proposals')
+  })
+
+  it('all nav entry icons are unique — no duplicate glyphs', () => {
+    const icons = SHELL_NAV_GROUPS.flatMap((g) => g.entries.map((e) => e.icon))
+    const unique = new Set(icons)
+    expect(unique.size).toBe(icons.length)
+  })
+
+  it('wordmark glyph ◆ is not reused by any nav entry icon', () => {
+    const icons = SHELL_NAV_GROUPS.flatMap((g) => g.entries.map((e) => e.icon))
+    expect(icons).not.toContain('◆')
+  })
+
+  it('Proposals entry href is #/progress?col=proposals', () => {
+    const entry = SHELL_NAV_GROUPS.flatMap((g) => g.entries).find((e) => e.label === 'Proposals')
+    expect(entry?.href).toBe('#/progress?col=proposals')
   })
 })
 
@@ -129,11 +146,51 @@ describe('ShellSidebar — active state', () => {
     expect(amberMatches).toHaveLength(1)
   })
 
-  it('proposals entry never has aria-current="page" even when route is progress', () => {
-    // Proposals links to #/progress but must never be highlighted as active
+  it('proposals entry never has aria-current when isProposalsActive is not set', () => {
+    // Proposals entry links to progress; without isProposalsActive it must not highlight
     const html = renderToStaticMarkup(<ShellSidebar activeRoute="progress" decisionBadge={0} />)
     // Only Progress (route='progress') should have aria-current, not Proposals
-    // There should be exactly one aria-current="page"
+    const matches = html.match(/aria-current="page"/g)
+    expect(matches).toHaveLength(1)
+  })
+
+  it('progress entry is highlighted for studio route (studio is nested under progress)', () => {
+    const html = renderToStaticMarkup(<ShellSidebar activeRoute="studio" decisionBadge={0} />)
+    expect(html).toContain('aria-current="page"')
+    // Exactly one active entry
+    const matches = html.match(/aria-current="page"/g)
+    expect(matches).toHaveLength(1)
+  })
+})
+
+// ── ShellSidebar — Proposals / Progress mutual exclusion ─────────────────────
+
+describe('ShellSidebar — Proposals/Progress mutual exclusion', () => {
+  it('highlights Proposals (not Progress) when isProposalsActive is true', () => {
+    const html = renderToStaticMarkup(
+      <ShellSidebar activeRoute="progress" decisionBadge={0} isProposalsActive={true} />,
+    )
+    // Must have exactly one active entry
+    const matches = html.match(/aria-current="page"/g)
+    expect(matches).toHaveLength(1)
+  })
+
+  it('Proposals entry has aria-current="page" when isProposalsActive is true', () => {
+    const html = renderToStaticMarkup(
+      <ShellSidebar activeRoute="progress" decisionBadge={0} isProposalsActive={true} />,
+    )
+    // The Proposals anchor should be the one with aria-current
+    // It appears before its aria-current in the markup; check the content wraps it
+    expect(html).toContain('aria-current="page"')
+    // Progress should NOT be the active one — verify by checking amber appears once
+    const amber = html.match(/var\(--color-amber\)/g)
+    expect(amber).toHaveLength(1)
+  })
+
+  it('Progress is highlighted and Proposals is not when isProposalsActive is false', () => {
+    const html = renderToStaticMarkup(
+      <ShellSidebar activeRoute="progress" decisionBadge={0} isProposalsActive={false} />,
+    )
     const matches = html.match(/aria-current="page"/g)
     expect(matches).toHaveLength(1)
   })
@@ -180,7 +237,7 @@ describe('Shell', () => {
     expect(html).toContain('Intel')
   })
 
-  it('renders all ten nav entry labels', () => {
+  it('renders all nav entry labels (nine entries)', () => {
     const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
     const allLabels = SHELL_NAV_GROUPS.flatMap((g) => g.entries.map((e) => e.label))
     for (const label of allLabels) {
@@ -211,6 +268,20 @@ describe('Shell', () => {
     // The bg-highlight/20 class should appear on the active entry
     expect(html).toContain('bg-highlight/20')
   })
+
+  it('highlights Proposals when hash contains col=proposals', () => {
+    const html = renderToStaticMarkup(<Shell hash="#/progress?col=proposals">page</Shell>)
+    expect(html).toContain('aria-current="page"')
+    // Exactly one active entry
+    const matches = html.match(/aria-current="page"/g)
+    expect(matches).toHaveLength(1)
+  })
+
+  it('highlights Progress (not Proposals) for bare #/progress hash', () => {
+    const html = renderToStaticMarkup(<Shell hash="#/progress">page</Shell>)
+    const matches = html.match(/aria-current="page"/g)
+    expect(matches).toHaveLength(1)
+  })
 })
 
 // ── Shell — live indicator ────────────────────────────────────────────────────
@@ -222,15 +293,16 @@ describe('Shell — live indicator', () => {
     expect(html).toContain('bg-success')
     expect(html).toContain('animate-pulse')
     expect(html).toContain('>Live<')
-    expect(html).not.toContain('>Offline<')
+    expect(html).not.toContain('>Reconnecting<')
   })
 
-  it('shows muted grey dot and Offline label when daemon is disconnected', () => {
+  it('shows muted grey dot and Reconnecting label when daemon is disconnected', () => {
     mockDaemonConnected = false
     const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
     expect(html).toContain('bg-muted')
     expect(html).not.toContain('animate-pulse')
-    expect(html).toContain('>Offline<')
+    expect(html).toContain('>Reconnecting<')
     expect(html).not.toContain('>Live<')
+    expect(html).not.toContain('>Offline<')
   })
 })

@@ -24,16 +24,24 @@ interface NavGroup {
 
 /**
  * Three-group sidebar navigation matching the mockup layout.
- * Workspace → Developer → Intel, ten entries total.
- * 'proposals' is a special route that links to '#/progress' but never
- * highlights as active (it is a filter shortcut, not a distinct page).
+ * Workspace → Developer → Intel, nine entries total.
+ *
+ * Glyph rules:
+ *   - Every icon is unique; the wordmark glyph (◆) is not reused here.
+ *   - 'proposals' is a shortcut that links to #/progress?col=proposals.
+ *     It highlights when the URL contains col=proposals; Progress highlights
+ *     for bare #/progress visits. The two states are mutually exclusive.
+ *   - 'studio' has no top-level entry — it is accessed via #/studio/<taskId>
+ *     from the task detail UI; while on that route the Progress entry highlights.
+ *   - 'triage' ("Needs you") is the default landing page and carries the
+ *     pending-decision badge.
  */
 export const SHELL_NAV_GROUPS: NavGroup[] = [
   {
     label: 'Workspace',
     entries: [
       { route: 'triage', label: 'Needs you', href: '#/triage', icon: '◉' },
-      { route: 'chat', label: 'Chat', href: '#/chat', icon: '◆' },
+      { route: 'chat', label: 'Chat', href: '#/chat', icon: '⊙' },
       { route: 'progress', label: 'Progress', href: '#/progress', icon: '◈' },
       { route: 'control', label: 'Control Room', href: '#/control', icon: '⌂' },
     ],
@@ -41,9 +49,6 @@ export const SHELL_NAV_GROUPS: NavGroup[] = [
   {
     label: 'Developer',
     entries: [
-      // Studio requires a taskId — the entry links to Progress, its mother page;
-      // it highlights only when a task Studio view is actually open (route=studio).
-      { route: 'studio', label: 'Studio', href: '#/progress', icon: '⬡' },
       { route: 'events', label: 'Events', href: '#/events', icon: '⌬' },
       { route: 'reflections', label: 'Reflections', href: '#/reflections', icon: '⚑' },
       { route: 'steward', label: 'Steward', href: '#/steward', icon: '✦' },
@@ -52,9 +57,9 @@ export const SHELL_NAV_GROUPS: NavGroup[] = [
   {
     label: 'Intel',
     entries: [
-      { route: 'kpi', label: 'KPI', href: '#/kpi', icon: '◈' },
-      // Proposals is a filter shortcut onto the Progress board; no distinct page.
-      { route: 'proposals', label: 'Proposals', href: '#/progress', icon: '⌥' },
+      { route: 'kpi', label: 'KPI', href: '#/kpi', icon: '◧' },
+      // Proposals is a filter shortcut onto the Progress board (col=proposals).
+      { route: 'proposals', label: 'Proposals', href: '#/progress?col=proposals', icon: '⌥' },
     ],
   },
 ]
@@ -114,7 +119,10 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
         </>
       )}
 
-      {/* Live indicator — reflects daemon SSE connection state */}
+      {/* Live indicator — reflects daemon SSE connection state.
+          When connected the dot pulses green and shows 'Live'.
+          When disconnected it shows 'Reconnecting' (EventSource always retries;
+          'Offline' is never shown while data may still be rendering from cache). */}
       <div className="ml-auto flex shrink-0 items-center gap-2">
         <span
           className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-success animate-pulse' : 'bg-muted'}`}
@@ -122,7 +130,7 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
           data-testid="shell-live-dot"
         />
         <span className="font-mono text-[10px] text-neutral-400">
-          {connected ? 'Live' : 'Offline'}
+          {connected ? 'Live' : 'Reconnecting'}
         </span>
       </div>
     </header>
@@ -134,6 +142,13 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
 interface ShellSidebarProps {
   activeRoute: RouteName
   decisionBadge: number
+  /**
+   * True when the current URL is #/progress?col=proposals (or any
+   * #/progress hash that contains col=proposals). When set, the
+   * Proposals entry is highlighted and Progress is not, since the two
+   * are mutually exclusive views of the same underlying page.
+   */
+  isProposalsActive?: boolean
 }
 
 /**
@@ -142,8 +157,14 @@ interface ShellSidebarProps {
  * Exported for direct testing with controlled props — the badge count and
  * active route are passed in rather than fetched inside the component, keeping
  * it a pure render function suitable for `renderToStaticMarkup` tests.
+ *
+ * Active-route rules:
+ *   - 'proposals' entry: active iff isProposalsActive === true.
+ *   - 'progress' entry: active when activeRoute === 'progress' or 'studio'
+ *     (studio is nested under Progress) AND isProposalsActive is not set.
+ *   - All other entries: active when entry.route === activeRoute.
  */
-export const ShellSidebar = ({ activeRoute, decisionBadge }: ShellSidebarProps) => (
+export const ShellSidebar = ({ activeRoute, decisionBadge, isProposalsActive }: ShellSidebarProps) => (
   <nav
     aria-label="Main navigation"
     className="flex flex-col overflow-y-auto border-r border-neutral-800 bg-neutral-900 pt-2"
@@ -154,8 +175,21 @@ export const ShellSidebar = ({ activeRoute, decisionBadge }: ShellSidebarProps) 
           {group.label}
         </p>
         {group.entries.map((entry) => {
-          // 'proposals' is a link shortcut, never highlighted as its own active state.
-          const isActive = entry.route !== 'proposals' && entry.route === activeRoute
+          // Proposals entry highlights only when col=proposals is active.
+          // Progress entry highlights for bare progress visits AND studio
+          // sub-pages (studio is nested under Progress in the nav).
+          // All other entries highlight when their route matches activeRoute.
+          let isActive: boolean
+          if (entry.route === 'proposals') {
+            isActive = isProposalsActive === true
+          } else if (entry.route === 'progress') {
+            isActive =
+              (activeRoute === 'progress' || activeRoute === 'studio') &&
+              isProposalsActive !== true
+          } else {
+            isActive = entry.route === activeRoute
+          }
+
           const showBadge = entry.route === 'triage' && decisionBadge > 0
 
           return (
@@ -212,11 +246,15 @@ export const Shell = ({ hash, children }: ShellProps) => {
   const { staleWorktrees } = useStaleWorktrees()
   const activeRoute = resolvePageRoute(hash)
   const decisionBadge = actionQueueCount({ staleWorktrees })
+  // Proposals shortcut: #/progress?col=proposals highlights the Proposals entry
+  // instead of Progress. Mutually exclusive: Progress only highlights for bare
+  // #/progress visits (without col=proposals).
+  const isProposalsActive = hash.startsWith('#/progress') && hash.includes('col=proposals')
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[200px_1fr] grid-rows-[40px_1fr]">
       <ShellTopbar hash={hash} />
-      <ShellSidebar activeRoute={activeRoute} decisionBadge={decisionBadge} />
+      <ShellSidebar activeRoute={activeRoute} decisionBadge={decisionBadge} isProposalsActive={isProposalsActive} />
       <div className="min-h-0 overflow-hidden">{children}</div>
     </div>
   )

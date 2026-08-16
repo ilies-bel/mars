@@ -1,20 +1,30 @@
 /**
  * URL state encoding/decoding for the Progress tab's filter controls.
  *
- * Three filter dimensions are encoded as query parameters appended to the
+ * Four dimensions are encoded as query parameters appended to the
  * `#/progress` hash:
  *
  *   view        'topology' (default, omitted) | 'board'
  *   q           search text (omitted when empty)
  *   proposal    proposal id to filter by (omitted when null)
+ *   col         sidebar shortcut origin: 'proposals' (omitted when null)
  *
  * Example: `#/progress?view=board&q=deploy`
+ * Example: `#/progress?col=proposals`  (sidebar Proposals entry shortcut)
  *
  * Default values are omitted to keep URLs clean. Absent parameters decode as
  * defaults, so a bare `#/progress` hash produces the full-default state.
  *
  * URL updates use `history.replaceState` — no hashchange event is emitted, so
  * the app-level hash router is not disturbed by filter-state updates.
+ *
+ * The `col=proposals` parameter serves a dual purpose:
+ *   1. It tells the sidebar that the Proposals entry should be highlighted
+ *      (mutually exclusive with bare Progress).
+ *   2. It causes the board view to be activated on initial load (the board
+ *      view is where proposal arcs surface most clearly).
+ *   When the user explicitly changes the tab, `col` is cleared and the URL
+ *   normalises to the selected view.
  */
 
 import type { Tab } from './tabs'
@@ -24,6 +34,10 @@ export type ProgressUrlState = {
   view: Tab
   query: string
   proposal: string | null
+  /** Sidebar shortcut origin — 'proposals' when navigated via the Proposals
+   *  sidebar entry; null for all other Progress visits. Cleared when the
+   *  user explicitly changes the view tab. */
+  col: 'proposals' | null
 }
 
 /** Returns a fresh default state (new object per call — not a shared reference). */
@@ -31,17 +45,23 @@ export const defaultProgressUrlState = (): ProgressUrlState => ({
   view: DEFAULT_TAB,
   query: '',
   proposal: null,
+  col: null,
 })
 
 /**
  * Encode filter state as a query string suitable for appending to `#/progress`.
  *
  * Default values are omitted so an all-default state returns `''`.
+ *
+ * When `col === 'proposals'` the `view` param is omitted (the sidebar
+ * shortcut always activates the board view; the `col` param is sufficient
+ * to imply it). This keeps URLs like `#/progress?col=proposals` clean.
  */
 export const encodeProgressState = (state: ProgressUrlState): string => {
   const parts: string[] = []
 
-  if (state.view !== DEFAULT_TAB) {
+  // col=proposals implies board view — skip redundant view=board when col is set.
+  if (state.col === null && state.view !== DEFAULT_TAB) {
     parts.push(`view=${encodeURIComponent(state.view)}`)
   }
   if (state.query) {
@@ -49,6 +69,9 @@ export const encodeProgressState = (state: ProgressUrlState): string => {
   }
   if (state.proposal !== null) {
     parts.push(`proposal=${encodeURIComponent(state.proposal)}`)
+  }
+  if (state.col !== null) {
+    parts.push(`col=${encodeURIComponent(state.col)}`)
   }
 
   return parts.length > 0 ? `?${parts.join('&')}` : ''
@@ -74,7 +97,11 @@ export const decodeProgressState = (hash: string): ProgressUrlState => {
   }
 
   const rawView = params.get('view')
-  const view: Tab = rawView === 'board' ? 'board' : DEFAULT_TAB
+  const rawCol = params.get('col')
+  const col: 'proposals' | null = rawCol === 'proposals' ? 'proposals' : null
+
+  // col=proposals implies board view (the sidebar shortcut activates the board).
+  const view: Tab = rawView === 'board' ? 'board' : col !== null ? 'board' : DEFAULT_TAB
 
   const query = params.get('q') ?? ''
 
@@ -82,7 +109,7 @@ export const decodeProgressState = (hash: string): ProgressUrlState => {
   const proposal =
     rawProposal !== undefined && rawProposal.length > 0 ? rawProposal : null
 
-  return { view, query, proposal }
+  return { view, query, proposal, col }
 }
 
 /**
@@ -139,7 +166,9 @@ export const decodeProgressStateFromTaskHash = (hash: string): ProgressUrlState 
   const proposal =
     rawProposal !== undefined && rawProposal.length > 0 ? rawProposal : null
 
-  return { view, query, proposal }
+  // col is not encoded in task overlay params — task overlay restores the progress
+  // filter state but does not restore the sidebar shortcut origin.
+  return { view, query, proposal, col: null }
 }
 
 /**
@@ -181,11 +210,16 @@ export const writeProgressStateToUrl = (state: ProgressUrlState): void => {
  * from "view=topology", so callers can fall through to a persisted preference
  * when the hash is bare.
  *
+ * Returns 'board' when `col=proposals` is present (the sidebar shortcut
+ * always activates the board view and takes precedence over a missing view
+ * param). This ensures ProgressPage initialises into board mode when
+ * navigated via the Proposals sidebar entry.
+ *
  * Returns null when:
  *  - not in a browser (typeof window === 'undefined')
  *  - the hash does not start with '#/progress'
  *  - there is no '?' in the hash (no query string at all)
- *  - the 'view' param is absent from the query string
+ *  - neither 'view' nor 'col=proposals' is present in the query string
  *  - the 'view' param value is not a recognised Tab
  */
 export const readExplicitViewFromUrl = (): Tab | null => {
@@ -195,13 +229,19 @@ export const readExplicitViewFromUrl = (): Tab | null => {
   const qIdx = hash.indexOf('?')
   if (qIdx === -1) return null
   const queryStr = hash.slice(qIdx + 1)
+  let hasColProposals = false
   for (const pair of queryStr.split('&')) {
     const eqIdx = pair.indexOf('=')
     if (eqIdx === -1) continue
-    if (pair.slice(0, eqIdx) === 'view') {
-      const raw = decodeURIComponent(pair.slice(eqIdx + 1))
-      return raw === 'board' || raw === 'topology' ? (raw as Tab) : null
+    const key = pair.slice(0, eqIdx)
+    const val = decodeURIComponent(pair.slice(eqIdx + 1))
+    if (key === 'view') {
+      return val === 'board' || val === 'topology' ? (val as Tab) : null
+    }
+    if (key === 'col' && val === 'proposals') {
+      hasColProposals = true
     }
   }
-  return null
+  // col=proposals without an explicit view param → activate board view.
+  return hasColProposals ? 'board' : null
 }
