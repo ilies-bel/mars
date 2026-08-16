@@ -11,7 +11,7 @@ import {
   userWorkflowPath,
   workflowFileName,
 } from '../queue-workflow-store'
-import { awaitHuman, merge, review, setupWorktree } from '../primitives'
+import { awaitHuman, merge, review, runAgent, setupWorktree } from '../primitives'
 import { dryRunWorkflow } from '../validate-workflow'
 
 /**
@@ -339,5 +339,98 @@ describe('live pipeline code step: awaitHuman/manual (not runAgent/auto)', () =>
     })
     // The dry-run must have walked PAST the code step and enumerated verify+merge.
     expect(r.steps.map(s => s.step)).toEqual(['setup', 'code', 'verify', 'merge'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// runAgent unknown-key guard: stamp before throw (silent-loop prevention)
+// ---------------------------------------------------------------------------
+// 2026-08-16 incident root cause: when runAgent received unknown opts (e.g.
+// { mode: 'auto' }), it threw a plain Error without stamping the DB. The
+// dispatch loop therefore emitted task.completed without a preceding
+// task.failed write, leaving the task in status='running'. The phantom-task
+// watchdog re-queued it every ~30 min — a silent loop with no operator alert.
+//
+// Fix: runAgent now stamps status='failed' in the store BEFORE throwing so
+// the outbox emits task.failed, the recovery-spawner fires an alert, and the
+// phantom watchdog finds the task already failed rather than stuck running.
+//
+// This suite verifies the stamp contract:
+//   1. updateTask(failed) is called with the right fields before the throw.
+//   2. The thrown error names the unknown key and suggests awaitHuman.
+//   3. In a validation dry-run (validateRecorder present) no stamp is written.
+// ---------------------------------------------------------------------------
+
+describe('runAgent unknown-key guard: stamp before throw', () => {
+  /** Minimal MarsCtx stub — only the fields runAgent touches before it throws. */
+  const makeStubCtx = (
+    store: { updateTask(id: string, patch: Record<string, unknown>): Promise<void> },
+    opts: { validateRecorder?: { record(e: unknown): void } } = {},
+  ) => {
+    const services: Record<string, unknown> = { store }
+    if (opts.validateRecorder) services.validateRecorder = opts.validateRecorder
+    return {
+      runId: 'task-stub-id',
+      workflowId: 'task',
+      input: { taskId: 'task-stub-id', prompt: 'hello' },
+      logger: { info() {}, error() {}, debug() {}, warn() {}, child() { return this } },
+      signal: new AbortController().signal,
+      services,
+      step: async (_name: string, fn: () => Promise<unknown>) => fn(),
+      emit: () => {},
+      currentStep: null,
+    }
+  }
+
+  it('stamps status=failed in the store before throwing when unknown opts are passed', async () => {
+    const writes: Array<{ id: string; patch: Record<string, unknown> }> = []
+    const store = { async updateTask(id: string, patch: Record<string, unknown>) { writes.push({ id, patch }) } }
+    const ctx = makeStubCtx(store)
+
+    await expect(
+      runAgent(ctx as never, { mode: 'auto' } as never),
+    ).rejects.toThrow("runAgent: unknown option(s) 'mode'")
+
+    // The stamp must have fired before the throw so the phantom-task watchdog
+    // finds the task already failed rather than stuck in status='running'.
+    expect(writes).toHaveLength(1)
+    expect(writes[0]).toMatchObject({
+      id: 'task-stub-id',
+      patch: {
+        status: 'failed',
+        failureReason: 'dispatch:bad-primitive-opts',
+        failureReasonCode: 'dispatch:bad-primitive-opts',
+      },
+    })
+  })
+
+  it('error message names the unknown key and suggests awaitHuman', async () => {
+    const store = { async updateTask() {} }
+    const ctx = makeStubCtx(store)
+
+    await expect(
+      runAgent(ctx as never, { mode: 'manual', guide: 'do the thing' } as never),
+    ).rejects.toThrow("did you mean awaitHuman(ctx, { note }) for a manual step?")
+  })
+
+  it('does NOT write to the store during a validation dry-run (validateRecorder present)', async () => {
+    const writes: unknown[] = []
+    const store = { async updateTask(_id: string, patch: unknown) { writes.push(patch) } }
+    const recorder = { record() {} }
+    const ctx = makeStubCtx(store, { validateRecorder: recorder })
+
+    // In a dry-run context, runAgent still throws (the recorder is only checked
+    // AFTER the unknown-key guard), so we use a regular try/catch.
+    let thrown: Error | null = null
+    try {
+      await runAgent(ctx as never, { mode: 'auto' } as never)
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    expect(thrown!.message).toContain("unknown option(s) 'mode'")
+    // The stamp must be SKIPPED in a dry-run — the store should not have been called.
+    expect(writes).toHaveLength(0)
   })
 })
