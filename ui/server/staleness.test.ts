@@ -1,15 +1,18 @@
 /**
- * Tests for staleness detection and bundle provenance in the UI server.
+ * Tests for staleness detection, auto-rebuild, and bundle provenance in the UI server.
  *
- * These tests verify the behaviours required by mars-06ea190f:
+ * These tests verify the behaviours required by mars-06ea190f and mars-db03253f:
  *
- *   - When ui/dist is older than ui/src, startServer throws a "stale" error
- *     rather than silently serving the outdated bundle.
+ *   - When ui/dist is older than ui/src, startServer auto-rebuilds and serves
+ *     the new bundle rather than refusing to start.
+ *   - When the auto-rebuild fails, startServer rejects with a "stale" error.
  *   - When ui/dist is newer than ui/src, startServer starts normally.
  *   - Omitting srcDir skips the staleness check (backward-compatible for tests
  *     that do not care about freshness).
  *   - /healthz reports bundleBuiltAt and servedFrom:'dist' when serving from dist.
  *   - /healthz reports servedFrom:'vite-dev' in dev mode.
+ *   - /rebuild returns { ok: true, action: 'fresh' } when the bundle is up to date.
+ *   - /rebuild returns { ok: true, action: 'rebuilt' } and invokes the build when stale.
  *   - vite.config.ts has strictPort:true so a port collision causes a non-zero
  *     exit instead of a silent fallback to the stale prebuilt bundle.
  */
@@ -69,7 +72,27 @@ const minimalDeps = {
 // ── staleness detection ───────────────────────────────────────────────────────
 
 describe('staleness detection', () => {
-  it('refuses to start when dist/index.html is older than src/main.ts', async () => {
+  it('auto-rebuilds when stale and build succeeds', async () => {
+    // dist/index.html has an old build timestamp
+    writeFileSync(join(tmpDist, 'index.html'), '<html>stale</html>')
+    utimesSync(join(tmpDist, 'index.html'), OLD_TIME, OLD_TIME)
+
+    // src/main.ts was modified after the build
+    mkdirSync(join(tmpSrc, 'src'), { recursive: true })
+    writeFileSync(join(tmpSrc, 'src', 'main.ts'), 'export const x = 1')
+    utimesSync(join(tmpSrc, 'src', 'main.ts'), NEW_TIME, NEW_TIME)
+
+    let buildCalled = false
+    const server = await startServer(
+      { port: 0, host: '127.0.0.1', distDir: tmpDist, srcDir: tmpSrc },
+      { ...minimalDeps, _runBuild: async () => { buildCalled = true } },
+    )
+    server.stop()
+    // Resolving without throwing is the assertion — and the build was invoked.
+    expect(buildCalled).toBe(true)
+  })
+
+  it('rejects with a stale error when auto-rebuild fails', async () => {
     // dist/index.html has an old build timestamp
     writeFileSync(join(tmpDist, 'index.html'), '<html>stale</html>')
     utimesSync(join(tmpDist, 'index.html'), OLD_TIME, OLD_TIME)
@@ -82,7 +105,7 @@ describe('staleness detection', () => {
     await expect(
       startServer(
         { port: 0, host: '127.0.0.1', distDir: tmpDist, srcDir: tmpSrc },
-        minimalDeps,
+        { ...minimalDeps, _runBuild: async () => { throw new Error('npm run build exited with code 1') } },
       ),
     ).rejects.toThrow(/stale/i)
   })
@@ -129,12 +152,14 @@ describe('staleness detection', () => {
     writeFileSync(join(tmpDist, 'index.html'), '<html></html>')
     utimesSync(join(tmpDist, 'index.html'), OLD_TIME, OLD_TIME)
 
-    await expect(
-      startServer(
-        { port: 0, host: '127.0.0.1', distDir: tmpDist, srcDir: tmpSrc },
-        minimalDeps,
-      ),
-    ).rejects.toThrow(/stale/i)
+    let buildCalled = false
+    const server = await startServer(
+      { port: 0, host: '127.0.0.1', distDir: tmpDist, srcDir: tmpSrc },
+      { ...minimalDeps, _runBuild: async () => { buildCalled = true } },
+    )
+    server.stop()
+    // The build was triggered for the deeply-nested changed file.
+    expect(buildCalled).toBe(true)
   })
 })
 
@@ -182,6 +207,68 @@ describe('bundle provenance on /healthz', () => {
       expect(body.ok).toBe(true)
       expect(body.servedFrom).toBe('vite-dev')
       expect(body.bundleBuiltAt).toBeUndefined()
+    } finally {
+      server.stop()
+    }
+  })
+})
+
+// ── /rebuild admin route ──────────────────────────────────────────────────────
+
+describe('/rebuild admin route', () => {
+  it('returns { action: "fresh" } when the bundle is up to date', async () => {
+    mkdirSync(join(tmpSrc, 'src'), { recursive: true })
+    writeFileSync(join(tmpSrc, 'src', 'main.ts'), 'export const x = 1')
+    utimesSync(join(tmpSrc, 'src', 'main.ts'), OLD_TIME, OLD_TIME)
+
+    writeFileSync(join(tmpDist, 'index.html'), '<html>fresh</html>')
+    utimesSync(join(tmpDist, 'index.html'), NEW_TIME, NEW_TIME)
+
+    const server = await startServer(
+      { port: 0, host: '127.0.0.1', distDir: tmpDist, srcDir: tmpSrc },
+      minimalDeps,
+    )
+    try {
+      const resp = await fetch(`http://127.0.0.1:${server.port}/rebuild`, { method: 'POST' })
+      expect(resp.status).toBe(200)
+      const body = (await resp.json()) as { ok: boolean; action: string }
+      expect(body.ok).toBe(true)
+      expect(body.action).toBe('fresh')
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('returns { action: "rebuilt" } and invokes the build when stale', async () => {
+    mkdirSync(join(tmpSrc, 'src'), { recursive: true })
+    writeFileSync(join(tmpSrc, 'src', 'main.ts'), 'export const x = 1')
+    utimesSync(join(tmpSrc, 'src', 'main.ts'), NEW_TIME, NEW_TIME)
+
+    // dist is older than src so the rebuild should trigger
+    writeFileSync(join(tmpDist, 'index.html'), '<html>stale</html>')
+    utimesSync(join(tmpDist, 'index.html'), OLD_TIME, OLD_TIME)
+
+    let buildCalled = false
+    const server = await startServer(
+      // srcDir omitted at startup so the server boots without a build;
+      // the /rebuild route still uses it when it's provided via server rebuild.
+      // Use a fresh dist that is newer than src at startup to avoid boot rebuild.
+      { port: 0, host: '127.0.0.1', distDir: tmpDist, srcDir: tmpSrc },
+      { ...minimalDeps, _runBuild: async () => { buildCalled = true } },
+    )
+    // At startup src is stale → build called once already; reset for the route test.
+    buildCalled = false
+
+    // Rewind dist/index.html so the route sees staleness.
+    utimesSync(join(tmpDist, 'index.html'), OLD_TIME, OLD_TIME)
+
+    try {
+      const resp = await fetch(`http://127.0.0.1:${server.port}/rebuild`, { method: 'POST' })
+      expect(resp.status).toBe(200)
+      const body = (await resp.json()) as { ok: boolean; action: string }
+      expect(body.ok).toBe(true)
+      expect(body.action).toBe('rebuilt')
+      expect(buildCalled).toBe(true)
     } finally {
       server.stop()
     }

@@ -125,6 +125,13 @@ export interface ServerDeps {
    * or observe registration without touching the real filesystem.
    */
   _registerProject?: (repoRoot: string) => void
+  /**
+   * Called when a stale bundle is detected at boot, on SIGHUP, or via the
+   * /rebuild admin route. Defaults to spawning `npm run build` in the ui
+   * directory, streaming output to the parent process. Override in tests to
+   * avoid running a real build.
+   */
+  _runBuild?: (uiDir: string) => Promise<void>
 }
 
 const parseArgs = (argv: string[]): CliArgs => {
@@ -242,6 +249,21 @@ export const startServer = async (
   const proxyPost = deps.proxyPost ?? realProxyPost
   const proxyAction = deps.proxyAction ?? realProxyAction
   const sseHeartbeatMs = deps.sseHeartbeatMs ?? 15_000
+
+  // Build runner: spawn npm run build in the ui directory.
+  // Overridden in tests via deps._runBuild to avoid running a real build.
+  const runBuild = deps._runBuild ?? (async (uiDir: string): Promise<void> => {
+    console.log('mars-ui: bundle is stale — rebuilding (npm run build)…')
+    const proc = Bun.spawn(['npm', 'run', 'build'], {
+      cwd: uiDir,
+      stdout: 'inherit',
+      stderr: 'inherit',
+    })
+    const exitCode = await proc.exited
+    if (exitCode !== 0) {
+      throw new Error(`npm run build exited with code ${exitCode}`)
+    }
+  })
   // Resolve the default context once for startup logging and healthz.
   const defaultCtx = resolveRepo(args.repo)
 
@@ -291,14 +313,21 @@ export const startServer = async (
     } catch { /* missing dist — handled by the not-built check above */ }
 
     if (newestSrc > distBuiltAtMs) {
+      // Bundle is stale — auto-rebuild before serving so the operator doesn't
+      // have to run a manual build step. Hard error only if the build fails.
       const srcDate = newestSrc > 0 ? new Date(newestSrc).toISOString() : 'unknown'
       const distDate = distBuiltAtMs > 0 ? new Date(distBuiltAtMs).toISOString() : 'never built'
-      throw new Error(
-        `mars-ui: frontend bundle is stale — source is newer than the last build.\n` +
-        `  dist built: ${distDate}\n` +
-        `  src newest: ${srcDate}\n` +
-        `  Run \`npm --prefix <ui-dir> run build\` to rebuild, then retry.`,
-      )
+      try {
+        await runBuild(srcDir)
+      } catch (buildErr) {
+        throw new Error(
+          `mars-ui: frontend bundle is stale — source is newer than the last build.\n` +
+          `  dist built: ${distDate}\n` +
+          `  src newest: ${srcDate}\n` +
+          `  Build failed: ${(buildErr as Error).message}\n` +
+          `  Run \`npm --prefix <ui-dir> run build\` to rebuild, then retry.`,
+        )
+      }
     }
   }
 
@@ -309,6 +338,31 @@ export const startServer = async (
     try {
       bundleBuiltAt = new Date(statSync(join(distDir, 'index.html')).mtimeMs).toISOString()
     } catch { /* dist not present — the not-built check above will surface this */ }
+  }
+
+  // Re-check staleness and rebuild if needed. Called by SIGHUP handler and
+  // /rebuild admin route (2 callers). Serialised by `rebuilding` so concurrent
+  // requests don't spawn parallel builds.
+  let rebuilding = false
+  const rebuildIfStale = async (): Promise<'fresh' | 'rebuilt' | 'in-progress'> => {
+    if (!distDir || !args.srcDir) return 'fresh'
+    if (rebuilding) return 'in-progress'
+    const uiDir = resolve(args.srcDir)
+    let newestSrc = maxMtimeMs(join(uiDir, 'src'))
+    for (const f of ['index.html', 'package.json', 'vite.config.ts']) {
+      try { newestSrc = Math.max(newestSrc, statSync(join(uiDir, f)).mtimeMs) } catch {}
+    }
+    let distMs = 0
+    try { distMs = statSync(join(distDir, 'index.html')).mtimeMs } catch {}
+    if (newestSrc <= distMs) return 'fresh'
+    rebuilding = true
+    try {
+      await runBuild(uiDir)
+      try { bundleBuiltAt = new Date(statSync(join(distDir, 'index.html')).mtimeMs).toISOString() } catch {}
+      return 'rebuilt'
+    } finally {
+      rebuilding = false
+    }
   }
 
   let server: Awaited<ReturnType<typeof Bun.serve>>
@@ -341,6 +395,19 @@ export const startServer = async (
           healthBody.servedFrom = 'dist'
         }
         return jsonResponse(200, healthBody)
+      }
+
+      // POST|GET /rebuild — admin trigger: re-check bundle freshness and rebuild
+      // if dist is older than src. Lets a long-running server pick up merges
+      // without a manual bounce. Idempotent and serialised (concurrent requests
+      // return 'in-progress').
+      if (path === '/rebuild' && (req.method === 'GET' || req.method === 'POST')) {
+        try {
+          const action = await rebuildIfStale()
+          return jsonResponse(200, { ok: true, action })
+        } catch (err) {
+          return jsonResponse(500, { ok: false, error: (err as Error).message })
+        }
       }
 
       // All API routes and the SSE endpoint need a per-project context.
@@ -1521,6 +1588,18 @@ export const startServer = async (
   } else if (bundleBuiltAt) {
     console.log(`         serving dist (built ${bundleBuiltAt})`)
   }
+
+  // On SIGHUP, re-check bundle freshness and rebuild if src has advanced.
+  // Lets an operator trigger a pick-up of merged UI changes without a full
+  // server bounce: `kill -HUP $(lsof -ti TCP:7777)`.
+  process.on('SIGHUP', () => {
+    rebuildIfStale().then((action) => {
+      console.log(`mars-ui: SIGHUP rebuild — ${action}`)
+    }).catch((err: unknown) => {
+      console.error(`mars-ui: rebuild failed (SIGHUP): ${(err as Error).message}`)
+    })
+  })
+
   return server
 }
 
