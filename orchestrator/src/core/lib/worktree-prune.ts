@@ -5,6 +5,7 @@ import { type TraceCtx } from './run-tool'
 import {
   discoverAllWorktrees,
   removeWorktreeAt,
+  worktreeRemovalGuard,
   DEFAULT_WORKTREE_REMOVE_TIMEOUT_MS,
   type DiscoveredWorktree,
 } from './worktree-clean'
@@ -101,6 +102,10 @@ export interface PruneRunSummary {
   keptFailed: number
   keptDesync: number
   keptOther: number
+  /** Worktrees skipped because {@link worktreeRemovalGuard} blocked the delete
+   *  (recent mtime or uncommitted changes).  These are NOT counted in
+   *  `keptOther` so callers can distinguish them. */
+  keptByGuard: number
   errors: number
 }
 
@@ -110,6 +115,14 @@ export interface PruneRunOptions {
   /** Optional trace context. Populated when called from a workflow phase;
    *  omitted by the CLI admin entry point. */
   traceCtx?: TraceCtx
+  /**
+   * Injectable safety guard called before each sweeper-initiated removal.
+   * Return a non-null string (the block reason) to prevent the deletion.
+   * Defaults to {@link worktreeRemovalGuard}.
+   *
+   * Provided primarily for testing without real filesystem / git calls.
+   */
+  guardCheck?: (wtPath: string) => Promise<string | null>
 }
 
 export const runWorktreePrune = async (
@@ -117,12 +130,14 @@ export const runWorktreePrune = async (
 ): Promise<PruneRunSummary> => {
   const ctx = resolveContext()
   const log = opts.log ?? ((line) => console.log(line))
+  const guard = opts.guardCheck ?? worktreeRemovalGuard
   const summary: PruneRunSummary = {
     removed: 0,
     keptInFlight: 0,
     keptFailed: 0,
     keptDesync: 0,
     keptOther: 0,
+    keptByGuard: 0,
     errors: 0,
   }
 
@@ -184,6 +199,19 @@ export const runWorktreePrune = async (
         continue
       }
 
+      // Safety guard: never silently remove a worktree with recent mtime or
+      // uncommitted changes.  Loud log on block so the refusal is auditable.
+      const guardReason = await guard(wt.path)
+      if (guardReason) {
+        summary.keptByGuard += 1
+        const msg =
+          `[GUARD] ⚠ removal of ${wt.branch} blocked` +
+          ` (classification: ${reason}): ${guardReason}`
+        log(msg)
+        console.error(`[worktree-prune] ${msg}`)
+        continue
+      }
+
       try {
         await removeWorktreeAt(
           wt,
@@ -201,7 +229,7 @@ export const runWorktreePrune = async (
   }
 
   log(
-    `summary: removed=${summary.removed}, kept-in-flight=${summary.keptInFlight}, kept-failed=${summary.keptFailed}, kept-desync=${summary.keptDesync}, kept-other=${summary.keptOther}, errors=${summary.errors}`,
+    `summary: removed=${summary.removed}, kept-in-flight=${summary.keptInFlight}, kept-failed=${summary.keptFailed}, kept-desync=${summary.keptDesync}, kept-other=${summary.keptOther}, kept-by-guard=${summary.keptByGuard}, errors=${summary.errors}`,
   )
   return summary
 }

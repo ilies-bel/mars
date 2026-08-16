@@ -185,7 +185,8 @@ const worktreePrune: Command = {
       summary.removed === 0 &&
       summary.keptInFlight === 0 &&
       summary.keptFailed === 0 &&
-      summary.keptOther === 0
+      summary.keptOther === 0 &&
+      summary.keptByGuard === 0
     ) {
       return { code: 1 }
     }
@@ -212,7 +213,8 @@ const worktreeClean: Command = {
       summary.keptInFlight === 0 &&
       summary.keptDesync === 0 &&
       summary.keptOrphan === 0 &&
-      summary.keptOther === 0
+      summary.keptOther === 0 &&
+      summary.keptByGuard === 0
     ) {
       return { code: 1 }
     }

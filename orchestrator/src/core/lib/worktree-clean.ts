@@ -8,6 +8,83 @@ import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
 
 export const DEFAULT_WORKTREE_REMOVE_TIMEOUT_MS = 60_000
 
+/**
+ * Minimum age (in ms) a worktree directory must have before the sweeper is
+ * allowed to delete it.  Prevents a race where a task's status flips to
+ * terminal while an agent or operator is still actively writing to the
+ * worktree (as observed in incident mars-eb04bbda, where the directory was
+ * silently emptied twice mid-recovery).
+ */
+export const RECENT_MTIME_GUARD_MS = 30 * 60 * 1_000 // 30 minutes
+
+/**
+ * Safety guard run before every sweeper-initiated worktree removal.
+ *
+ * Returns a non-null human-readable reason when removal MUST be blocked;
+ * returns `null` when it is safe to proceed.
+ *
+ * Two conditions block removal:
+ *   (a) The worktree directory's mtime is younger than {@link RECENT_MTIME_GUARD_MS} —
+ *       the agent or an operator may still be actively writing to it.
+ *   (b) The worktree has uncommitted changes per `git status --porcelain` —
+ *       deleting it would silently destroy work that has not been committed.
+ *
+ * @param wtPath  Absolute path to the worktree directory.
+ * @param nowMs   Current timestamp in ms (injectable for testing; defaults to
+ *                `Date.now()`).  Pass a fixed value in tests to exercise the
+ *                mtime branch without real filesystem timing dependencies.
+ */
+export const worktreeRemovalGuard = async (
+  wtPath: string,
+  nowMs = Date.now(),
+): Promise<string | null> => {
+  // (a) Directory-mtime guard: a recently-touched worktree is probably still
+  //     in use even if the task row says otherwise.
+  try {
+    const s = statSync(wtPath)
+    const ageMs = nowMs - s.mtimeMs
+    if (ageMs < RECENT_MTIME_GUARD_MS) {
+      const ageMin = Math.round(ageMs / 60_000)
+      const thresholdMin = Math.round(RECENT_MTIME_GUARD_MS / 60_000)
+      return `directory mtime is ${ageMin}m old (threshold: ${thresholdMin}m — use explicit purge to override)`
+    }
+  } catch {
+    // Cannot stat the path — skip this guard; the git check below covers the
+    // non-existent-path case implicitly (git will fail → guard passes).
+  }
+
+  // (b) Uncommitted-changes guard: refuse to wipe a dirty worktree regardless
+  //     of how the task is classified, because committed=false means data loss.
+  //
+  //     runTool throws (rather than returning non-zero) when the cwd does not
+  //     exist on disk — that is the "already-gone" case and is safe to allow,
+  //     so we catch and skip the guard.
+  try {
+    const result = await runTool(
+      {
+        tool: 'git',
+        argv: ['status', '--porcelain'],
+        cwd: wtPath,
+        timeoutMs: 10_000,
+        expectsFailure: true,
+        taskId: null,
+        originId: null,
+        phase: null,
+      },
+      nullTraceStore,
+    )
+    if (result.exitCode === 0 && result.stdout.trim().length > 0) {
+      const lineCount = result.stdout.trim().split('\n').length
+      return `worktree has ${lineCount} uncommitted change(s) — use explicit purge to override`
+    }
+  } catch {
+    // cwd missing or git not found — directory is already gone or not a git
+    // worktree; nothing to protect, so allow removal.
+  }
+
+  return null
+}
+
 const IN_FLIGHT_STATUSES: ReadonlySet<TaskStatus> = new Set([
   'queued',
   'running',
@@ -97,6 +174,10 @@ export interface RunSummary {
   keptDesync: number
   keptOrphan: number
   keptOther: number
+  /** Worktrees skipped because {@link worktreeRemovalGuard} blocked the delete
+   *  (recent mtime or uncommitted changes).  These are NOT counted in
+   *  `keptOther` so callers can distinguish them. */
+  keptByGuard: number
   errors: number
 }
 
@@ -107,6 +188,14 @@ export interface RunOptions {
   /** Optional trace context. Populated when called from a workflow phase;
    *  omitted by the CLI admin entry point. */
   traceCtx?: TraceCtx
+  /**
+   * Injectable safety guard called before each sweeper-initiated removal.
+   * Return a non-null string (the block reason) to prevent the deletion.
+   * Defaults to {@link worktreeRemovalGuard}.
+   *
+   * Provided primarily for testing without real filesystem / git calls.
+   */
+  guardCheck?: (wtPath: string) => Promise<string | null>
 }
 
 export const discoverWorktreesIn = (root: string): DiscoveredWorktree[] => {
@@ -204,12 +293,14 @@ export const runWorktreeClean = async (
 ): Promise<RunSummary> => {
   const ctx = resolveContext()
   const log = opts.log ?? ((line) => console.log(line))
+  const guard = opts.guardCheck ?? worktreeRemovalGuard
   const summary: RunSummary = {
     removed: 0,
     keptInFlight: 0,
     keptDesync: 0,
     keptOrphan: 0,
     keptOther: 0,
+    keptByGuard: 0,
     errors: 0,
   }
 
@@ -280,6 +371,19 @@ export const runWorktreeClean = async (
         continue
       }
 
+      // Safety guard: never silently remove a worktree with recent mtime or
+      // uncommitted changes.  Loud log on block so the refusal is auditable.
+      const guardReason = await guard(wt.path)
+      if (guardReason) {
+        summary.keptByGuard += 1
+        const msg =
+          `[GUARD] ⚠ removal of ${wt.branch} blocked` +
+          ` (classification: ${reason}): ${guardReason}`
+        log(msg)
+        console.error(`[worktree-clean] ${msg}`)
+        continue
+      }
+
       try {
         await removeWorktreeAt(
           wt,
@@ -297,7 +401,7 @@ export const runWorktreeClean = async (
   }
 
   log(
-    `summary: removed=${summary.removed}, kept-in-flight=${summary.keptInFlight}, kept-desync=${summary.keptDesync}, kept-orphan=${summary.keptOrphan}, kept-other=${summary.keptOther}, errors=${summary.errors}`,
+    `summary: removed=${summary.removed}, kept-in-flight=${summary.keptInFlight}, kept-desync=${summary.keptDesync}, kept-orphan=${summary.keptOrphan}, kept-other=${summary.keptOther}, kept-by-guard=${summary.keptByGuard}, errors=${summary.errors}`,
   )
   return summary
 }
