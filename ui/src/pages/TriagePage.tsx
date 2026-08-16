@@ -19,20 +19,14 @@
 import { useState, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
+import { sortItems, buildRenderedRows } from '@/entities/actionQueue/clusterRows'
 import { useProgress } from '@/hooks/useProgress'
 import { postDecision, invokeAction } from '@/shared/api'
 import { relativeTime } from '@/shared/time'
 import { isTaskFailureActionQueueKind } from '@/shared/schemas'
+import { deriveCause } from '@/shared/alertCause'
 import type { ActionQueueItem } from '@/shared/schemas'
 import type { Decision } from '@/shared/schemas'
-
-// ── Priority ranking ──────────────────────────────────────────────────────────
-
-const PRIORITY_ORDER: Record<ActionQueueItem['priority'], number> = {
-  high: 0,
-  normal: 1,
-  low: 2,
-}
 
 // ── Kind display ──────────────────────────────────────────────────────────────
 
@@ -87,81 +81,6 @@ const KIND_CHIP_CLASS: Record<string, string> = {
   'stale-worktree': 'text-warn border-warn/40',
   'awaiting-validation': 'text-trace-mars border-trace-mars/40',
   'draft-proposal': 'text-success border-success/40',
-}
-
-// ── Sort ──────────────────────────────────────────────────────────────────────
-
-function sortItems(items: ActionQueueItem[]): ActionQueueItem[] {
-  return [...items].sort((a, b) => {
-    const pa = PRIORITY_ORDER[a.priority] ?? 1
-    const pb = PRIORITY_ORDER[b.priority] ?? 1
-    if (pa !== pb) return pa - pb
-    // Within same priority, most-recent first
-    return b.at.localeCompare(a.at)
-  })
-}
-
-// ── Clustering ────────────────────────────────────────────────────────────────
-
-/**
- * Threshold above which a decision kind collapses into a single cluster row.
- * draft-proposal is always clustered regardless of count (see below).
- */
-const CLUSTER_THRESHOLD = 5
-
-/**
- * Kinds that represent per-entity conditions or per-arc failures requiring
- * individual attention. Never collapsed into a summary cluster row even when
- * their count is high — each row is a distinct, separately-actionable alert.
- */
-const NEVER_CLUSTER_KINDS: ReadonlySet<string> = new Set([
-  'stale-worktree',
-  'arc-failed',
-])
-
-type RenderedRow =
-  | { type: 'item'; item: ActionQueueItem }
-  | { type: 'cluster'; kind: string; count: number; latestAt: string }
-
-/**
- * Collapses high-cardinality decision kinds into one cluster row per kind.
- *
- * Rules:
- * - Condition kinds (task failures, stale-worktree, arc-failed) → always individual.
- * - draft-proposal → always one cluster row (the proposals backlog can reach 900+).
- * - Any other decision kind whose count exceeds CLUSTER_THRESHOLD → one cluster row.
- *
- * The cluster row is inserted at the position of the first (highest-priority,
- * most-recent) item of that kind within the already-sorted list.
- */
-function buildRenderedRows(sorted: ActionQueueItem[]): RenderedRow[] {
-  const kindCounts = new Map<string, number>()
-  for (const item of sorted) {
-    kindCounts.set(item.kind, (kindCounts.get(item.kind) ?? 0) + 1)
-  }
-
-  const emittedClusters = new Set<string>()
-  const result: RenderedRow[] = []
-
-  for (const item of sorted) {
-    const count = kindCounts.get(item.kind) ?? 1
-    const isCondition =
-      isTaskFailureActionQueueKind(item.kind) || NEVER_CLUSTER_KINDS.has(item.kind)
-    const shouldCluster =
-      !isCondition && (item.kind === 'draft-proposal' || count > CLUSTER_THRESHOLD)
-
-    if (shouldCluster) {
-      if (!emittedClusters.has(item.kind)) {
-        emittedClusters.add(item.kind)
-        result.push({ type: 'cluster', kind: item.kind, count, latestAt: item.at })
-      }
-      // Drop individual rows for this kind — they're represented by the cluster.
-    } else {
-      result.push({ type: 'item', item })
-    }
-  }
-
-  return result
 }
 
 // ── TriageClusterRow ──────────────────────────────────────────────────────────
@@ -239,8 +158,12 @@ const TriageRow = ({ item }: TriageRowProps) => {
   // Use relativeTime so timestamps are handled via the existing helper
   // (avoids hand-dividing epoch-ms values which can silently land at 1970).
   const age = relativeTime(item.at)
-  const headline = item.humanSummary || item.title
+  // Narrative hierarchy matching AlertCard: when arcGoal (prompt excerpt) is
+  // present it becomes the primary headline; humanSummary is demoted to
+  // secondary/muted text so the operator sees WHAT the task was trying to do.
   const goal = item.arcGoal ?? null
+  const cause = goal ? deriveCause(item.humanDetail) : undefined
+  const headline = !goal ? (item.humanSummary || item.title) : null
   const accentClass = KIND_ACCENT[item.kind] ?? 'border-l-muted'
   const kindLabel = KIND_LABEL[item.kind] ?? item.kind
   const kindIcon = KIND_ICON[item.kind] ?? '•'
@@ -307,18 +230,27 @@ const TriageRow = ({ item }: TriageRowProps) => {
         </span>
       </div>
 
-      {/* Headline */}
-      {headline && (
-        <p className="mb-0.5 text-body font-medium leading-snug text-foreground">
-          {headline}
-        </p>
-      )}
-
-      {/* Arc goal (task intent) — shown when it differs from the headline */}
-      {goal && goal !== headline && (
-        <p className="mb-1 line-clamp-2 text-label leading-snug text-muted-foreground">
-          {goal}
-        </p>
+      {/* Headline — narrative treatment mirrors AlertCard:
+           - When goal (prompt excerpt) is present: goal is primary, cause + humanSummary secondary.
+           - Otherwise: humanSummary || title is the headline. */}
+      {goal ? (
+        <>
+          <p className="mb-0.5 text-body font-medium leading-snug text-foreground line-clamp-2">
+            {goal.split('\n')[0]?.trim()}
+          </p>
+          {cause && (
+            <p className="font-mono text-micro text-muted-foreground">{cause}</p>
+          )}
+          {item.humanSummary && (
+            <p className="font-mono text-micro text-muted-dark line-clamp-1">{item.humanSummary}</p>
+          )}
+        </>
+      ) : (
+        headline && (
+          <p className="mb-0.5 text-body font-medium leading-snug text-foreground">
+            {headline}
+          </p>
+        )
       )}
 
       {/* Entity ID */}

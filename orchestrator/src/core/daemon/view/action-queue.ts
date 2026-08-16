@@ -1232,6 +1232,14 @@ export const buildActionQueueView = async ({
           : (NOTICE_KINDS.has(row.kind as ActionQueueKind) ? row.kind : null))
       : null
 
+    // For failed condition rows, lastSeenAt is the derive-time (nowMs) and
+    // always reads as "1s ago". Use the task's updatedAt (the real failure
+    // time) instead. Fall back to raisedAt when no task is found.
+    const rowAt =
+      row.kind === 'failed'
+        ? (taskById.get(entityId)?.updatedAt ?? new Date(row.raisedAt).toISOString())
+        : new Date(row.lastSeenAt).toISOString()
+
     rows.push({
       id: row.id,
       kind: uiKind,
@@ -1239,7 +1247,7 @@ export const buildActionQueueView = async ({
       priority: toUiPriority(row.priority),
       title,
       body,
-      at: new Date(row.lastSeenAt).toISOString(),
+      at: rowAt,
       dag,
       errorKind,
       actions,

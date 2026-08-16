@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
+import { sortItems, buildRenderedRows } from '@/entities/actionQueue/clusterRows'
 import { useDaemonConnected } from '@/hooks/useDaemonConnected'
 import { resolvePageRoute } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
@@ -245,8 +246,10 @@ interface ShellProps {
 export const Shell = ({ hash, children }: ShellProps) => {
   const { items: actionQueueItems } = useActionQueue()
   const activeRoute = resolvePageRoute(hash)
-  // Badge = open action-queue items (the set the Needs you triage view shows).
-  const decisionBadge = actionQueueItems.length
+  // Badge = rendered rows after clustering — matches the count the triage page
+  // badge shows (clusters count as 1, not N). Uses the same sortItems +
+  // buildRenderedRows pipeline so sidebar and page badges are always equal.
+  const decisionBadge = buildRenderedRows(sortItems(actionQueueItems)).length
   // Proposals shortcut: #/progress?col=proposals highlights the Proposals entry
   // instead of Progress. Mutually exclusive: Progress only highlights for bare
   // #/progress visits (without col=proposals).
