@@ -407,7 +407,14 @@ export { input as readWorkflowInput }
 export interface ValidateRecorderEntry {
   /** The ctx.step name the primitive ran under (null outside a step). */
   step: string | null
-  primitive: 'setupWorktree' | 'runAgent' | 'review' | 'merge' | 'awaitHuman'
+  primitive:
+    | 'setupWorktree'
+    | 'runAgent'
+    | 'review'
+    | 'merge'
+    | 'awaitHuman'
+    | 'finalizeReport'
+    | 'finalizeMockup'
   /** Execution mode the workflow declares for this step. */
   mode: 'auto' | 'manual' | 'full-review'
   /** Step guide for manual or full-review steps; null otherwise. */
@@ -1350,6 +1357,7 @@ const KNOWN_RUN_AGENT_KEYS: ReadonlySet<string> = new Set<keyof RunAgentOpts>([
   'worktree',
   'model',
   'modelTier',
+  'indexCard',
 ])
 
 /**
@@ -1381,10 +1389,35 @@ export const runAgent = async (
   // `awaitHuman(ctx, { note })` to park a step for human implementation.
   const unknownKeys = Object.keys(opts).filter(k => !KNOWN_RUN_AGENT_KEYS.has(k))
   if (unknownKeys.length > 0) {
-    throw new Error(
+    const badOptsMessage =
       `runAgent: unknown option(s) ${unknownKeys.map(k => `'${k}'`).join(', ')} — ` +
-        `did you mean awaitHuman(ctx, { note }) for a manual step?`,
-    )
+        `did you mean awaitHuman(ctx, { note }) for a manual step?`
+    // In production, stamp the task failed in the DB before throwing so the
+    // phantom-task watchdog does not re-queue a task stuck in `running` status.
+    // Without this stamp the dispatch loop emits `task.completed` (not
+    // `task.failed`) for a non-WorkflowTerminalError result, leaving the DB
+    // status as `running`; the watchdog eventually re-queues it and the same
+    // deterministic error fires again — a silent loop with no operator alert.
+    // In a validation dry-run the recorder is present and the inert store is a
+    // no-op, but we skip the async stamp entirely to keep validation synchronous.
+    if (!validationRecorder(ctx)) {
+      const taskId = resolveTaskId(ctx, opts.taskId)
+      const store: TaskStore = ctx.services.store
+      // Best-effort: any error (sync TypeError on a stub store, or a rejected
+      // promise) must NOT mask the real error. Wrap the whole call so the throw
+      // below propagates regardless of whether the DB write succeeds.
+      try {
+        await store.updateTask(taskId, {
+          status: 'failed',
+          error: badOptsMessage,
+          failureReason: 'dispatch:bad-primitive-opts',
+          failureReasonCode: 'dispatch:bad-primitive-opts',
+        })
+      } catch (_stampErr) {
+        // intentionally swallowed — the throw below is the real signal
+      }
+    }
+    throw new Error(badOptsMessage)
   }
   const recorder = validationRecorder(ctx)
   if (recorder) {
@@ -4337,6 +4370,16 @@ export const finalizeReport = async (
   ctx: MarsCtx,
   opts: FinalizeReportOpts = {},
 ): Promise<{ taskId: string; success: true; message: string }> => {
+  const recorder = validationRecorder(ctx)
+  if (recorder) {
+    recorder.record({
+      step: ctx.currentStep?.name ?? null,
+      primitive: 'finalizeReport',
+      mode: 'auto',
+      guide: null,
+    })
+    return { taskId: resolveTaskId(ctx, opts.taskId), success: true, message: '(validation dry-run)' }
+  }
   const taskId = resolveTaskId(ctx, opts.taskId)
   const store: TaskStore = ctx.services.store
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
@@ -4391,6 +4434,21 @@ export const finalizeMockup = async (
   ctx: MarsCtx,
   opts: FinalizeMockupOpts = {},
 ): Promise<{ taskId: string; proposalId: string | null; success: true; message: string }> => {
+  const recorder = validationRecorder(ctx)
+  if (recorder) {
+    recorder.record({
+      step: ctx.currentStep?.name ?? null,
+      primitive: 'finalizeMockup',
+      mode: 'auto',
+      guide: null,
+    })
+    return {
+      taskId: resolveTaskId(ctx, opts.taskId),
+      proposalId: opts.proposalId ?? null,
+      success: true,
+      message: '(validation dry-run)',
+    }
+  }
   const taskId = resolveTaskId(ctx, opts.taskId)
   const store: TaskStore = ctx.services.store
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)

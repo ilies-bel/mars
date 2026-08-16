@@ -1,4 +1,4 @@
-// @mars-workflow-template:v4
+// @mars-workflow-template:v5
 //
 // report-workflow.js — read-only report pipeline.
 //
@@ -35,7 +35,7 @@ export default defineWorkflow({
     // code → the agent reads the codebase and produces a report.
     // Execution mode: auto. Override the model per step if needed:
     //   runAgent(ctx, { model: 'claude-opus-4-7' })
-    await ctx.step('code', () => runAgent(ctx, { mode: 'auto' }))
+    await ctx.step('code', () => runAgent(ctx))
 
     // finalize → persist the agent's output to the task record and close.
     // No verify runs, no merge is attempted — the pipeline ends here.

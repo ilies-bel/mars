@@ -92,12 +92,13 @@ import {
   defineWorkflow,
   setupWorktree,   // opts: kind, integrationBranch, recoveryPayload, fixForTaskId, taskId
   runAgent,        // opts: prompt, plan, tags, kind, spec, integrationBranch,
-                   //       resumeFromPriorAttempt, verifyFailureOutput, taskId, worktree, model,
-                   //       mode ('auto'|'manual'), guide
-  verify,          // opts: kind, integrationBranch, recoveryPayload, taskId,
-                   //       worktree, mode ('auto'|'manual'), guide
+                   //       resumeFromPriorAttempt, verifyFailureOutput, taskId, worktree,
+                   //       model, modelTier, indexCard
+                   //       NOTE: runAgent is ALWAYS headless (auto). No mode option.
+  review,          // opts: reviewType ('auto'|'manual'|'full-review'), guide,
+                   //       kind, integrationBranch, recoveryPayload, taskId, worktree
   merge,           // opts: kind, integrationBranch, taskId, worktree
-  awaitHuman,      // opts: note, taskId   — explicit human-gate step
+  awaitHuman,      // opts: note, taskId   — explicit human-gate step (parks awaiting-human)
 } from 'mars/workflow'
 ```
 
@@ -105,8 +106,8 @@ import {
 
 | User intent | What to change |
 |---|---|
-| "make verify manual" | `verify(ctx)` → `verify(ctx, { mode: 'manual', guide: '...' })` |
-| "make code step manual" / "I'll drive" | `runAgent(ctx)` → `runAgent(ctx, { mode: 'manual', guide: '...' })` — or use the `live-workflow.js` base |
+| "make verify manual" | `review(ctx)` → `review(ctx, { reviewType: 'manual', guide: '...' })` |
+| "make code step manual" / "I'll drive" | Replace `runAgent(ctx)` with `awaitHuman(ctx, { note: '...' })` — or use the `live-workflow.js` base |
 | "add a QA gate before merge" | Add `await ctx.step('qa', () => awaitHuman(ctx, { note: 'QA your changes, then run `mars step done`' }))` before the `merge` step |
 | "use opus for coding" | `runAgent(ctx, { model: 'claude-opus-4-7' })` |
 | "add a sign-off step" | Add `await ctx.step('sign-off', () => awaitHuman(ctx, { note: '...' }))` at the relevant position |

@@ -39,14 +39,14 @@ Each template is a plain ES module that default-exports a workflow defined with
 ```js
 import {
   defineWorkflow,
-  setupWorktree, runAgent, verify, merge,
+  setupWorktree, runAgent, review, merge,
 } from 'mars/workflow'
 
 export default defineWorkflow({
   id: 'task',
   async fn(ctx) {
     await ctx.step('setup',  () => setupWorktree(ctx))
-    await ctx.step('code',   () => runAgent(ctx, { mode: 'auto' }))
+    await ctx.step('code',   () => runAgent(ctx))
     await ctx.step('verify', () => review(ctx, { reviewType: 'auto' }))
     return  ctx.step('merge',  () => merge(ctx))
   },
@@ -71,20 +71,23 @@ export default defineWorkflow({
   `runAgent(ctx, { model: 'claude-opus-4-7' })` pins the model for that step.
   Omit it to use the resolved Worker's default. Precedence: `opts.model ??
   MARS_WORKER_MODEL` (Coder only) `?? the Worker's pinned model`.
-- **Per-step Execution mode** — `runAgent` and `verify` accept `mode: 'auto' |
-  'manual'` and an optional `guide: string`. `'auto'` (default) runs the
-  primitive headlessly. `'manual'` parks the task `awaiting-human` with the
-  Step guide visible in the action queue; `mars step done <id>` signals
-  completion and the pipeline continues. Example manual gate:
+- **Per-step Execution mode** — use `awaitHuman(ctx, { note })` to park a step
+  for human review. It places the task `awaiting-human` with the Step guide
+  visible in the action queue; `mars step done <id>` signals completion and the
+  pipeline continues. `runAgent(ctx)` is always headless (auto); there is no
+  `mode` option on `runAgent`. Example manual gate:
   ```js
+  import { defineWorkflow, setupWorktree, runAgent, awaitHuman, review, merge } from 'mars/workflow'
+
   await ctx.step('qa', () =>
-    runAgent(ctx, {
-      mode: 'manual',
-      guide: 'Review the diff, run smoke tests, tick criteria, then mars step done.',
+    awaitHuman(ctx, {
+      note: 'Review the diff, run smoke tests, tick criteria, then mars step done.',
     }),
   )
   ```
-  `setupWorktree` and `merge` are always auto (no `mode` option).
+  `setupWorktree` and `merge` are always auto and accept no `mode` option.
+  `review` accepts `reviewType: 'auto' | 'manual' | 'full-review'` and an
+  optional `guide: string`.
 - Failures **THROW** — the engine records the step failed. Do not swallow.
 
 ## Ownership & update semantics
@@ -106,9 +109,10 @@ increments whenever the bundled content changes materially (a diff that
 
 | Template              | Marker version |
 | --------------------- | -------------- |
-| `task-workflow.js`    | `v4`           |
+| `task-workflow.js`    | `v5`           |
 | `fix-workflow.js`     | `v3`           |
 | `diagnose-workflow.js`| `v3`           |
 | `write-workflow.js`   | `v3`           |
 | `live-workflow.js`    | `v1`           |
-| `runbook-workflow.js` | `v1`           |
+| `runbook-workflow.js` | `v2`           |
+| `report-workflow.js`  | `v5`           |

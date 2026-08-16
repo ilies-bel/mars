@@ -1,4 +1,4 @@
-// @mars-workflow-template:v1
+// @mars-workflow-template:v2
 //
 // runbook-workflow.js — a manual-heavy pipeline for operator-driven releases.
 //
@@ -24,6 +24,7 @@ import {
   defineWorkflow,
   setupWorktree,
   runAgent,
+  awaitHuman,
   review,
   merge,
 } from 'mars/workflow'
@@ -36,16 +37,15 @@ export default defineWorkflow({
     await ctx.step('setup', () => setupWorktree(ctx))
 
     // code → auto: the coder implements the task prompt inside the worktree.
-    await ctx.step('code', () => runAgent(ctx, { mode: 'auto' }))
+    await ctx.step('code', () => runAgent(ctx))
 
     // qa → MANUAL: you review the diff and run smoke tests before automated
     // verify. The Step guide is shown in the action queue.
     // Tick criteria with `mars task check <id> <criterion>`, then signal
     // completion with `mars step done <id>`.
     await ctx.step('qa', () =>
-      runAgent(ctx, {
-        mode: 'manual',
-        guide:
+      awaitHuman(ctx, {
+        note:
           'Review the diff in your editor. Run any manual smoke tests. ' +
           'Tick done-criteria with `mars task check`, commit fixes if needed, ' +
           'then run `mars step done` to proceed to automated verify.',

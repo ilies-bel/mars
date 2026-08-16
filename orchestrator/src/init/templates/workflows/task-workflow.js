@@ -1,4 +1,4 @@
-// @mars-workflow-template:v4
+// @mars-workflow-template:v5
 //
 // task-workflow.js — the default end-to-end task pipeline.
 //
@@ -27,6 +27,7 @@ import {
   defineWorkflow,
   setupWorktree,
   runAgent,
+  awaitHuman,
   review,
   merge,
 } from 'mars/workflow'
@@ -43,24 +44,22 @@ export default defineWorkflow({
     // code → the coder implements the task prompt inside the worktree.
     // Execution mode: auto. Override the model per step like the Agent SDK:
     //   runAgent(ctx, { model: 'claude-opus-4-7' })
-    await ctx.step('code', () => runAgent(ctx, { mode: 'auto' }))
+    await ctx.step('code', () => runAgent(ctx))
 
     // verify → scope-aware typecheck → tests → lint. Execution mode: auto.
     await ctx.step('verify', () => review(ctx, { reviewType: 'auto' }))
 
     // ── Manual steps (optional) ──────────────────────────────────────────
-    // Every step declares WHO executes it: auto (an agent — the default) or
-    // manual (you, in your own session). A manual step parks the task
-    // 'awaiting-human' with its Step guide in the action queue;
-    // `mars step done <id>` completes the step and the pipeline continues
-    // (re-parking at the next manual step re-leases you automatically).
+    // To park a step for human review instead of running a headless agent,
+    // use awaitHuman. The task parks 'awaiting-human' with its Step guide in
+    // the action queue; `mars step done <id>` completes the step and the
+    // pipeline continues (re-parking at the next manual step automatically).
     //
     // Example manual QA gate — uncomment and insert before merge:
     //
     //   await ctx.step('qa', () =>
-    //     runAgent(ctx, {
-    //       mode: 'manual',
-    //       guide:
+    //     awaitHuman(ctx, {
+    //       note:
     //         'Open the diff in your editor and confirm the change is correct. ' +
     //         'Tick criteria with `mars task check`, then run `mars step done`.',
     //     }),
