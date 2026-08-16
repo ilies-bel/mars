@@ -15,6 +15,7 @@ import { FallbackSurface } from '@/components/FallbackSurface'
 import { SkeletonBlock } from '@/components/Skeleton'
 import { setOpenTaskId } from '@/shared/openTaskId'
 import { taskHash } from '@/shared/routing'
+import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
 
 export interface StudioPageProps {
   /** Task id parsed from `#/studio/<taskId>`. */
@@ -36,24 +37,20 @@ export const StudioPage = ({ taskId, fetchImpl }: StudioPageProps) => {
 
   return (
     <div data-testid="studio-page" className="flex h-full flex-col overflow-hidden bg-background">
-      {/* Header bar — mirrors KpiDetailPage's back-link pattern. */}
-      <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-primary/20 px-4 py-3">
-        <a
-          href={taskHash(taskId)}
-          data-testid="studio-back-to-task"
-          className="text-sm text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
-          aria-label={`Back to task ${taskId}`}
-        >
-          ← Task
-        </a>
-        <span className="text-muted-foreground" aria-hidden="true">
-          |
-        </span>
-        <span className="font-mono text-sm font-semibold uppercase tracking-wide text-foreground">
-          Studio
-        </span>
-        <span className="break-all font-mono text-xs text-muted-foreground">{taskId}</span>
-      </div>
+      <PageHeader
+        title="Studio"
+        subtitle={taskId}
+        right={
+          <a
+            href={taskHash(taskId)}
+            data-testid="studio-back-to-task"
+            className="text-sm text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+            aria-label={`Back to task ${taskId}`}
+          >
+            ← Task
+          </a>
+        }
+      />
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
         {isLoading ? (

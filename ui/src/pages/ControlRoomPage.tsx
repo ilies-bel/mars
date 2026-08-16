@@ -22,6 +22,7 @@ import { useProgress } from '@/hooks/useProgress'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useFocusedProject } from '@/shared/useFocusedProject'
 import type { ActionQueueItem } from '@/shared/schemas'
+import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
 
 // ---------------------------------------------------------------------------
 // Advisory kinds shown in the digest (not in the main alert queue)
@@ -30,16 +31,6 @@ import type { ActionQueueItem } from '@/shared/schemas'
 const ADVISORY_KINDS = new Set(['reflect-recommended', 'scorer-suggested', 'gate-enrichment'])
 
 const isAdvisory = (item: ActionQueueItem): boolean => ADVISORY_KINDS.has(item.kind)
-
-// ---------------------------------------------------------------------------
-// Small layout helpers
-// ---------------------------------------------------------------------------
-
-const SectionHeader = ({ children }: { children: React.ReactNode }) => (
-  <h2 className="mb-3 font-mono text-[11px] uppercase tracking-widest text-primary/70">
-    {children}
-  </h2>
-)
 
 // ---------------------------------------------------------------------------
 // Section 1 — Rules & Language
@@ -60,13 +51,11 @@ const RulesSection = () => {
 
   return (
     <section>
-      <SectionHeader>Rules &amp; Language</SectionHeader>
+      <div className="mb-3"><SectionLabel>Rules &amp; Language</SectionLabel></div>
 
       {terms.length > 0 && (
         <div className="mb-4">
-          <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-primary/50">
-            Glossary
-          </p>
+          <div className="mb-2"><SectionLabel>Glossary</SectionLabel></div>
           <div className="flex flex-wrap gap-1.5">
             {terms.map((t) => (
               <span
@@ -83,9 +72,7 @@ const RulesSection = () => {
 
       {adrs.length > 0 && (
         <div>
-          <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-primary/50">
-            Decisions (ADRs)
-          </p>
+          <div className="mb-2"><SectionLabel>Decisions (ADRs)</SectionLabel></div>
           <ul className="space-y-0.5">
             {adrs.map((adr) => (
               <li key={adr.slug} className="flex items-baseline gap-2">
@@ -123,7 +110,7 @@ const NowSection = () => {
 
   return (
     <section>
-      <SectionHeader>Now</SectionHeader>
+      <div className="mb-3"><SectionLabel>Now</SectionLabel></div>
 
       <div className="mb-3 flex items-center gap-2">
         <span
@@ -187,7 +174,7 @@ const AdvisorySection = () => {
 
   return (
     <section>
-      <SectionHeader>Advisory Digest</SectionHeader>
+      <div className="mb-3"><SectionLabel>Advisory Digest</SectionLabel></div>
 
       <div className="mb-4 flex gap-3">
         <a
@@ -238,6 +225,7 @@ const AdvisorySection = () => {
 
 export const ControlRoomPage = () => (
   <main className="flex h-full min-h-0 flex-1 flex-col gap-8 overflow-y-auto bg-background p-6">
+    <PageHeader title="Control Room" />
     <RulesSection />
     <NowSection />
     <AdvisorySection />

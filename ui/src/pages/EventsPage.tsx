@@ -10,6 +10,7 @@ import { relativeTime, formatRelativeAge } from '@/shared/time'
 import { taskHash } from '@/shared/routing'
 import { KpiVector } from '@/widgets/KpiVector'
 import { groupByArc, type ArcGroup, type TaskGroup, type StepGroup } from '@/shared/groupTraceEvents'
+import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
 
 /**
  * Events tab — the unified trace stream.
@@ -910,46 +911,46 @@ export const EventsPage = () => {
   return (
     <main className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden bg-background p-4">
       {/* Header — fixed above the scrollable list */}
-      <header className="flex items-center gap-3">
-        <h1 className="font-mono text-[11px] uppercase tracking-wide text-primary">
-          Events — {events.length} event{events.length === 1 ? '' : 's'}
-        </h1>
-        <div className="ml-auto flex items-center gap-1">
-          {(['flat', 'timeline'] as const).map((mode) => (
+      <PageHeader
+        title={`Events — ${events.length} event${events.length === 1 ? '' : 's'}`}
+        right={
+          <div className="flex items-center gap-1">
+            {(['flat', 'timeline'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setViewMode(mode)}
+                data-testid={`events-view-${mode}`}
+                className={[
+                  'rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide transition-colors',
+                  viewMode === mode
+                    ? 'bg-primary/30 text-foreground'
+                    : 'text-primary hover:text-foreground',
+                ].join(' ')}
+              >
+                {mode}
+              </button>
+            ))}
             <button
-              key={mode}
               type="button"
-              onClick={() => setViewMode(mode)}
-              data-testid={`events-view-${mode}`}
-              className={[
-                'rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide transition-colors',
-                viewMode === mode
-                  ? 'bg-primary/30 text-foreground'
-                  : 'text-primary hover:text-foreground',
-              ].join(' ')}
+              onClick={onRefresh}
+              disabled={initial.isFetching}
+              data-testid="events-refresh"
+              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-foreground hover:bg-primary/15 disabled:opacity-50"
             >
-              {mode}
+              {initial.isFetching ? 'Refreshing…' : 'Refresh'}
             </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={initial.isFetching}
-          data-testid="events-refresh"
-          className="rounded border border-primary/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-foreground hover:bg-primary/15 disabled:opacity-50"
-        >
-          {initial.isFetching ? 'Refreshing…' : 'Refresh'}
-        </button>
-        {fetchedAt !== null ? (
-          <span
-            data-testid="events-fetched-at"
-            className="font-mono text-[10px] text-muted-foreground"
-          >
-            {fetchedAt}
-          </span>
-        ) : null}
-      </header>
+            {fetchedAt !== null ? (
+              <span
+                data-testid="events-fetched-at"
+                className="font-mono text-[10px] text-muted-foreground"
+              >
+                {fetchedAt}
+              </span>
+            ) : null}
+          </div>
+        }
+      />
 
       {/* KPI strip — four metric tiles at the top of the Events tab */}
       <div className="flex flex-wrap items-start gap-3 min-h-[120px]">
