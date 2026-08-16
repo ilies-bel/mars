@@ -293,6 +293,13 @@ export const alertHumanDetailSchema = z.object({
   branch: z.string().optional(),
   worktree: z.string().optional(),
   rawError: z.string().optional(),
+  /**
+   * Short excerpt from the raw captured error / verify output — last lines of
+   * the failing command's stdout/stderr. Populated by the 'failed' recipe;
+   * used by AlertCard to derive a plain-language cause string and to surface
+   * a verify-output excerpt in the expandable section.
+   */
+  errorExcerpt: z.string().optional(),
   /** Rendered as markdown on update-kind alerts. */
   changelog: z.string().optional(),
 })

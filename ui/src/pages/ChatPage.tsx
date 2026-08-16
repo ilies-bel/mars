@@ -48,6 +48,7 @@ import {
 } from '@/shared/api'
 import { collectOpenOffers, matchOffer } from '@/widgets/chat/offerMatch'
 import { useFocusedProjectId, useFocusedProject } from '@/shared/useFocusedProject'
+import { isTaskFailureActionQueueKind } from '@/shared/schemas'
 import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail, GlossaryTerm, SubthreadBoundary, DraftFeature } from '@/shared/schemas'
 import type { MarsUIMessage } from '@/shared/marsChatTransport'
 import { useMarsChat } from '@/shared/useMarsChat'
@@ -253,14 +254,26 @@ const ToolResultBox = ({ value }: { value: unknown }) => (
 )
 
 /** Adapt a ChatSegmentAlert to AlertCard props and render it. */
-const AlertCardFromSegment = ({ alert }: { alert: ChatSegmentAlert }) => {
+const AlertCardFromSegment = ({
+  alert,
+  bulkContinue,
+}: {
+  alert: ChatSegmentAlert
+  bulkContinue?: { label: string; onAction: () => void }
+}) => {
+  const isTaskFailure = isTaskFailureActionQueueKind(alert.kind)
   // Defensive: verbs/actions may be absent on legacy items bypassing schema defaults.
   const recipeVerbs = alert.verbs ?? []
   const legacyActions = alert.actions ?? []
-  const verbs =
+  const verbSources =
     recipeVerbs.length > 0
       ? recipeVerbs
-      : legacyActions.map((a) => ({ op: a.op, label: a.label, style: a.style }))
+      : legacyActions.map((a) => ({ op: a.op, label: a.label, style: a.style as 'primary' | 'destructive' | 'default' | 'snooze' }))
+  // Relabel 'restart' → 'Continue' for task-failure kinds (Mars recovery vocabulary).
+  const verbs = verbSources.map((v) => ({
+    ...v,
+    label: isTaskFailure && v.op === 'restart' ? 'Continue' : v.label,
+  }))
   return (
     <AlertCard
       itemId={`${alert.kind}:${alert.entityId}`}
@@ -272,7 +285,60 @@ const AlertCardFromSegment = ({ alert }: { alert: ChatSegmentAlert }) => {
       verbs={verbs}
       resolved={alert.resolved}
       snoozeUntil={alert.snoozeUntil}
+      bulkContinue={bulkContinue}
     />
+  )
+}
+
+/**
+ * Render a list of alert segments as a batch, adding a secondary "Continue all N"
+ * button above when multiple task-failure alerts share the `restart` verb.
+ * This gives the operator a one-click escape hatch while keeping per-task
+ * Continue buttons primary.
+ */
+const AlertBatch = ({ alerts }: { alerts: ChatSegmentAlert[] }) => {
+  const [bulkPending, setBulkPending] = useState(false)
+
+  // All alerts that carry a restart verb (eligible for bulk action).
+  const restartableAlerts = alerts.filter((a) => {
+    const verbs = a.verbs ?? []
+    const actions = a.actions ?? []
+    return (
+      isTaskFailureActionQueueKind(a.kind) &&
+      !a.resolved &&
+      ([...verbs, ...actions] as Array<{ op: string }>).some((v) => v.op === 'restart')
+    )
+  })
+
+  const handleBulkContinue = async () => {
+    setBulkPending(true)
+    try {
+      for (const a of restartableAlerts) {
+        await invokeAction('restart', a.entityId)
+      }
+    } finally {
+      setBulkPending(false)
+    }
+  }
+
+  const bulkContinue =
+    restartableAlerts.length > 1
+      ? {
+          label: bulkPending ? '…' : `Continue all ${restartableAlerts.length}`,
+          onAction: handleBulkContinue,
+        }
+      : undefined
+
+  return (
+    <>
+      {alerts.map((alert, i) => (
+        <AlertCardFromSegment
+          key={`${alert.kind}:${alert.entityId}:${i}`}
+          alert={alert}
+          bulkContinue={bulkContinue}
+        />
+      ))}
+    </>
   )
 }
 
@@ -823,9 +889,13 @@ export const MessageView = ({
     !isUser && parts.length > 0 && parts.every((p) => p.type === 'data-alert')
 
   if (isAlertOnly) {
+    // Collect alert data from all parts so AlertBatch can add the bulk action.
+    const alertSegments = parts
+      .filter((p) => p.type === 'data-alert')
+      .map((p) => p.data as ChatSegmentAlert)
     return (
       <div className="group flex flex-col gap-2 px-1 py-2" data-message-role={message.role}>
-        {parts.map((p, i) => renderPart(p, i, onRetry, terms, false))}
+        <AlertBatch alerts={alertSegments} />
         {!isUser && (
           <FeedbackControls
             messageId={message.id}

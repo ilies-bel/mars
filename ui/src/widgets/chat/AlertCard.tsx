@@ -3,10 +3,17 @@
  * and action-queue row detail views.
  *
  * Design:
- *   - Headline: humanSummary (plain-language sentence), kind icon + accent.
- *   - entityId shown small/monospace as a copy-able identifier.
+ *   - Headline: when `goal` (prompt excerpt) is present it becomes the primary
+ *     heading so the operator sees WHAT the task was doing. A plain-language
+ *     cause line (derived from the failure signature + error excerpt) sits below.
+ *     When no goal is provided the humanSummary falls back to the headline.
+ *   - entityId shown small/monospace as metadata beneath the headline.
  *   - "Details ▸" expander revealing humanDetail as labeled fields.
+ *   - "Output ▸" expander showing the last ~3 lines of verify output when
+ *     errorExcerpt is present — enough context to make a decision in place.
  *   - Verb buttons from the recipe (styles respected).
+ *   - Per-task primary action (e.g. Continue); optional secondary bulk action
+ *     ("Continue all N") rendered as visually secondary when provided.
  *   - Snooze verb opens a preset menu (1 h / 4 h / tomorrow / next week).
  *   - Snoozed cards render dimmed with "reappears in …" and a Restore option.
  *   - Resolution state shown inline after a verb succeeds.
@@ -55,6 +62,61 @@ const SNOOZE_PRESETS: { value: SnoozePreset; label: string }[] = [
 ]
 
 // ---------------------------------------------------------------------------
+// Cause derivation
+// ---------------------------------------------------------------------------
+
+/** Step-prefix → human-readable phrase. */
+const STEP_PHRASE: Record<string, string> = {
+  verify: 'verify failed',
+  code: 'coder failed',
+  setup: 'setup failed',
+  merge: 'merge failed',
+  'behaviour-verify': 'behaviour check failed',
+}
+
+/**
+ * Derive a plain-language cause string from the failure signature and error
+ * excerpt.  Returns undefined when neither is available.
+ *
+ * Format: "verify failed: <last meaningful error line>" when an excerpt is
+ * present, or "verify failed (verify/unclassified)" as a fallback.
+ */
+const deriveCause = (detail: AlertHumanDetail | undefined): string | undefined => {
+  const sig = detail?.failureSignature
+  if (!sig) return undefined
+  const step = sig.split('/')[0] ?? ''
+  const phrase = STEP_PHRASE[step] ?? (step ? `${step} failed` : 'failed')
+
+  const excerpt = detail?.errorExcerpt ?? detail?.rawError
+  if (excerpt) {
+    const lastLine = excerpt
+      .trim()
+      .split('\n')
+      .filter((l) => l.trim())
+      .at(-1)
+      ?.trim()
+    if (lastLine && lastLine.length < 120) {
+      return `${phrase}: ${lastLine}`
+    }
+  }
+
+  // Fall back to the signature string
+  return `${phrase} (${sig})`
+}
+
+// ---------------------------------------------------------------------------
+// Verify output tail
+// ---------------------------------------------------------------------------
+
+/** Extract the last `n` non-empty lines from a multi-line string. */
+const verifyTail = (text: string | undefined, n = 3): string | undefined => {
+  if (!text?.trim()) return undefined
+  const lines = text.trim().split('\n').filter((l) => l.trim())
+  if (lines.length === 0) return undefined
+  return lines.slice(-n).join('\n')
+}
+
+// ---------------------------------------------------------------------------
 // Snooze helpers
 // ---------------------------------------------------------------------------
 
@@ -83,11 +145,15 @@ export interface AlertCardProps {
    * will infer it.
    */
   itemId: string
-  /** Entity id shown small/monospace under the headline. */
+  /** Entity id shown small/monospace as metadata beneath the headline. */
   entityId: string
   /** Kind key — drives the icon and accent color. */
   kind: string
-  /** Plain-language headline (humanSummary from the recipe). */
+  /**
+   * Plain-language headline (humanSummary from the recipe). Used as the
+   * primary headline when `goal` is absent; demoted to secondary/muted text
+   * when `goal` (prompt excerpt) is present.
+   */
   summary: string
   /** Structured detail fields revealed by the "Details ▸" expander. */
   detail?: AlertHumanDetail
@@ -98,9 +164,9 @@ export interface AlertCardProps {
   /** ISO timestamp of snooze expiry — when set the card starts in snoozed state. */
   snoozeUntil?: string
   /**
-   * The arc's main goal — "what it was trying to achieve". Shown as a
-   * distinct labeled line below the summary when present. Only set for
-   * arc-failed alerts; absent for other kinds.
+   * The task's main goal / prompt excerpt — "what it was trying to achieve".
+   * When present it becomes the PRIMARY headline and the humanSummary is
+   * demoted to secondary text. Only the first line of the value is shown.
    */
   goal?: string
   /**
@@ -110,6 +176,45 @@ export interface AlertCardProps {
    * which buttons appear.
    */
   decisions?: Decision[]
+  /**
+   * Secondary bulk action shown alongside the per-task verb buttons.
+   * When provided a visually secondary button is rendered (e.g. "Continue all 5")
+   * so the operator can act on a whole batch with one click.
+   */
+  bulkContinue?: {
+    /** Button label — e.g. "Continue all 5". */
+    label: string
+    onAction: () => void
+  }
+}
+
+// ---------------------------------------------------------------------------
+// VerifyExcerpt — last lines of verify output in a collapsible section
+// ---------------------------------------------------------------------------
+
+const VerifyExcerpt = ({ tail }: { tail: string }) => {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="font-mono text-[10px] text-primary/60 hover:text-primary transition-colors select-none"
+        data-testid="alert-verify-output-toggle"
+      >
+        Output {open ? '▾' : '▸'}
+      </button>
+      {open && (
+        <pre
+          className="mt-1 max-h-28 overflow-y-auto rounded bg-primary/10 p-1.5 font-mono text-[10px] text-primary/80 whitespace-pre-wrap break-all"
+          data-testid="alert-verify-output-panel"
+        >
+          {tail}
+        </pre>
+      )}
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +347,7 @@ export const AlertCard = ({
   decisions = [],
   resolved = false,
   snoozeUntil: initialSnoozeUntil,
+  bulkContinue,
 }: AlertCardProps) => {
   const [pendingOp, setPendingOp] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -255,8 +361,17 @@ export const AlertCard = ({
     op: string
   } | null>(null)
   const [teachPending, setTeachPending] = useState(false)
+  const [bulkPending, setBulkPending] = useState(false)
 
   const isSnoozed = snoozedUntil !== null && new Date(snoozedUntil) > new Date()
+
+  // Derive cause from detail when goal is present (task failure card).
+  const cause = goal ? deriveCause(detail) : undefined
+
+  // Derive verify output tail for the expandable section.
+  const verifyOutputTail = goal
+    ? verifyTail(detail?.errorExcerpt ?? detail?.rawError)
+    : undefined
 
   const handleAction = async (op: string) => {
     if (pendingOp !== null) return
@@ -311,6 +426,16 @@ export const AlertCard = ({
     }
   }
 
+  const handleBulkContinue = async () => {
+    if (bulkPending) return
+    setBulkPending(true)
+    try {
+      await bulkContinue!.onAction()
+    } finally {
+      setBulkPending(false)
+    }
+  }
+
   const accentClass = KIND_ACCENT[kind] ?? 'border-l-iron'
 
   const entityHash =
@@ -326,7 +451,7 @@ export const AlertCard = ({
       >
         <div className="flex items-center gap-2">
           <span className="text-[13px]" aria-hidden="true">{KIND_ICON[kind] ?? '🔔'}</span>
-          <span className="flex-1 font-mono text-[11px] text-primary/60 line-clamp-1">{summary}</span>
+          <span className="flex-1 font-mono text-[11px] text-primary/60 line-clamp-1">{goal?.split('\n')[0] ?? summary}</span>
           <span className="font-mono text-[10px] text-primary/40">
             reappears in {reappearsIn(snoozedUntil)}
           </span>
@@ -361,11 +486,44 @@ export const AlertCard = ({
       data-testid="alert-card"
     >
       {/* Header: icon + headline + resolved badge */}
-      <div className="mb-1 flex items-center gap-2">
-        <span className="text-[13px] shrink-0" aria-hidden="true">{KIND_ICON[kind] ?? '🔔'}</span>
-        <span className="flex-1 font-mono text-[11px] font-semibold text-foreground line-clamp-3" data-testid="alert-card-summary">
-          {summary}
-        </span>
+      <div className="mb-1 flex items-start gap-2">
+        <span className="text-[13px] shrink-0 mt-0.5" aria-hidden="true">{KIND_ICON[kind] ?? '🔔'}</span>
+        <div className="flex-1 min-w-0">
+          {goal ? (
+            <>
+              {/* Primary headline: prompt excerpt (what the task was doing) */}
+              <p
+                className="font-mono text-[11px] font-semibold text-foreground line-clamp-2"
+                data-testid="alert-card-goal"
+              >
+                {goal.split('\n')[0]?.trim()}
+              </p>
+              {/* Cause: plain-language failure reason */}
+              {cause && (
+                <p className="mt-0.5 font-mono text-[10px] text-primary/70" data-testid="alert-card-cause">
+                  {cause}
+                </p>
+              )}
+              {/* humanSummary demoted to secondary/muted text */}
+              {summary && (
+                <p
+                  className="mt-0.5 font-mono text-[10px] text-primary/50 line-clamp-1"
+                  data-testid="alert-card-summary"
+                >
+                  {summary}
+                </p>
+              )}
+            </>
+          ) : (
+            /* No goal: summary is the primary headline (backward compat) */
+            <span
+              className="font-mono text-[11px] font-semibold text-foreground line-clamp-3"
+              data-testid="alert-card-summary"
+            >
+              {summary}
+            </span>
+          )}
+        </div>
         {resolved && (
           <span className="ml-auto shrink-0 rounded bg-primary/20 px-1.5 py-0.5 font-mono text-[10px] text-primary/60">
             Resolved
@@ -373,23 +531,15 @@ export const AlertCard = ({
         )}
       </div>
 
-      {/* Entity id — clickable monospace identifier opening the entity detail view */}
+      {/* Entity id — metadata row: smaller, muted mono */}
       <a
         href={entityHash}
-        className="mb-1 block font-mono text-[10px] text-primary/50 truncate hover:text-primary/80 hover:underline transition-colors"
+        className="mb-1.5 block font-mono text-[9px] text-primary/40 truncate hover:text-primary/60 hover:underline transition-colors"
         data-testid="alert-card-entity-id"
         aria-label={`Open details for ${entityId}`}
       >
         {entityId}
       </a>
-
-      {/* Goal line — the arc's main intent, shown when present */}
-      {goal && (
-        <p className="mb-1 font-mono text-[10px] text-primary/70" data-testid="alert-card-goal">
-          <span className="uppercase text-[9px] text-primary/40 mr-1">Goal</span>
-          {goal}
-        </p>
-      )}
 
       {/* Resolution success message */}
       {resolvedOp !== null && (
@@ -398,9 +548,10 @@ export const AlertCard = ({
         </p>
       )}
 
-      {/* Verb buttons */}
-      {!resolved && resolvedOp === null && verbs.length > 0 && (
-        <div className="relative flex flex-wrap gap-1.5 mb-2">
+      {/* Verb buttons (per-task) + optional secondary bulk action */}
+      {!resolved && resolvedOp === null && (verbs.length > 0 || bulkContinue) && (
+        <div className="relative flex flex-wrap gap-1.5 mb-2 items-center">
+          {/* Per-task verbs (primary actions) */}
           {verbs.map((verb) => (
             verb.op === 'copy' ? (
               <button
@@ -446,6 +597,19 @@ export const AlertCard = ({
               </button>
             )
           ))}
+
+          {/* Secondary bulk action — visually lighter than per-task buttons */}
+          {bulkContinue && (
+            <button
+              type="button"
+              className="rounded px-3 py-1 font-mono text-[11px] border border-primary/20 text-primary/60 hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={bulkPending || pendingOp !== null}
+              onClick={() => void handleBulkContinue()}
+              data-testid="alert-card-bulk-continue"
+            >
+              {bulkPending ? '…' : bulkContinue.label}
+            </button>
+          )}
         </div>
       )}
 
@@ -536,6 +700,9 @@ export const AlertCard = ({
           {actionError}
         </p>
       )}
+
+      {/* Verify output excerpt — last ~3 lines so the decision can be made in place */}
+      {verifyOutputTail && <VerifyExcerpt tail={verifyOutputTail} />}
 
       {/* Detail expander */}
       {detail && <DetailExpander detail={detail} />}

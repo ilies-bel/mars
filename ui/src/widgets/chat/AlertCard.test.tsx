@@ -258,30 +258,67 @@ describe('AlertCard – snooze menu', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Goal line
+// Goal line (prompt excerpt as primary headline — new UX)
 // ---------------------------------------------------------------------------
 
 describe('AlertCard – goal line', () => {
-  it('renders the goal line with label when goal is provided', () => {
+  it('renders goal as primary headline (no "Goal:" label) when goal is provided', () => {
     const html = render({ goal: 'Add rate limiting to the API gateway' })
     expect(html).toContain('data-testid="alert-card-goal"')
     expect(html).toContain('Add rate limiting to the API gateway')
-    expect(html).toContain('Goal')
+    // In the new design the goal IS the headline — no separate "Goal:" label.
+    // The word "Goal" must NOT appear as a UI label.
+    expect(html).not.toContain('>Goal<')
   })
 
-  it('does not render the goal line when goal is absent', () => {
+  it('does not render the goal element when goal is absent', () => {
     const html = render({ goal: undefined })
     expect(html).not.toContain('data-testid="alert-card-goal"')
-    expect(html).not.toContain('Goal')
+    // Verify the summary is shown as the primary headline instead
+    expect(html).toContain('data-testid="alert-card-summary"')
   })
 
-  it('goal is additive — summary is still rendered alongside goal', () => {
+  it('goal is the primary headline; summary is still rendered as muted secondary', () => {
     const html = render({
       summary: 'Arc exhausted all retry attempts',
       goal: 'Implement the caching layer',
     })
     expect(html).toContain('Arc exhausted all retry attempts')
     expect(html).toContain('Implement the caching layer')
+    // Both testids present
+    expect(html).toContain('data-testid="alert-card-goal"')
+    expect(html).toContain('data-testid="alert-card-summary"')
+  })
+
+  it('renders cause subtitle when goal + failureSignature are present', () => {
+    const html = render({
+      goal: 'Build the widget',
+      detail: { failureSignature: 'verify/typecheck' },
+    })
+    expect(html).toContain('data-testid="alert-card-cause"')
+    expect(html).toContain('verify failed')
+  })
+
+  it('does not render cause when goal is absent', () => {
+    const html = render({
+      detail: { failureSignature: 'verify/typecheck' },
+    })
+    expect(html).not.toContain('data-testid="alert-card-cause"')
+  })
+
+  it('renders verify output toggle when goal + errorExcerpt are present', () => {
+    const html = render({
+      goal: 'Build the widget',
+      detail: { failureSignature: 'verify/test', errorExcerpt: 'Error: expected 1 but got 2\nfail\n' },
+    })
+    expect(html).toContain('data-testid="alert-verify-output-toggle"')
+  })
+
+  it('does not render verify output toggle when goal is absent even with errorExcerpt', () => {
+    const html = render({
+      detail: { failureSignature: 'verify/test', errorExcerpt: 'Error: boom' },
+    })
+    expect(html).not.toContain('data-testid="alert-verify-output-toggle"')
   })
 })
 
@@ -316,6 +353,37 @@ describe('AlertCard – entity id navigation', () => {
     const html = render({ entityId: 't-999' })
     expect(html).toContain('aria-label=')
     expect(html).toContain('t-999')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Bulk continue button
+// ---------------------------------------------------------------------------
+
+describe('AlertCard – bulkContinue', () => {
+  it('renders a secondary bulk-continue button when bulkContinue prop is provided', () => {
+    const html = render({
+      verbs: [{ op: 'restart', label: 'Continue', style: 'primary' }],
+      bulkContinue: { label: 'Continue all 3', onAction: () => {} },
+    })
+    expect(html).toContain('data-testid="alert-card-bulk-continue"')
+    expect(html).toContain('Continue all 3')
+  })
+
+  it('does not render a bulk-continue button when bulkContinue prop is absent', () => {
+    const html = render({
+      verbs: [{ op: 'restart', label: 'Continue', style: 'primary' }],
+    })
+    expect(html).not.toContain('data-testid="alert-card-bulk-continue"')
+  })
+
+  it('does not render the bulk-continue button when resolved', () => {
+    const html = render({
+      resolved: true,
+      verbs: [{ op: 'restart', label: 'Continue', style: 'primary' }],
+      bulkContinue: { label: 'Continue all 3', onAction: () => {} },
+    })
+    expect(html).not.toContain('data-testid="alert-card-bulk-continue"')
   })
 })
 
