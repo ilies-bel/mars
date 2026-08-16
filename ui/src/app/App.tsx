@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { NavBar } from '@/widgets/NavBar'
+import { Shell } from '@/widgets/Shell'
 import { TaskDetailDrawer } from '@/widgets/TaskDetailDrawer'
 import { ProposalDetailDrawer } from '@/widgets/ProposalDetailDrawer'
 import { ProposalNodeDrawer } from '@/widgets/ProposalNodeDrawer'
@@ -48,7 +48,6 @@ import { ControlRoomPage } from '@/pages/ControlRoomPage'
 import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
 import { FallbackBoundary } from '@/components/FallbackBoundary'
 import { AlertNotifier } from '@/shared/notifications/alertNotifier'
-import { Breadcrumbs } from '@/widgets/Breadcrumbs'
 
 /** Hash bases the drawer returns to, keyed by the origin recorded in the hash. */
 const ROUTE_BASE: Record<RouteName, string> = {
@@ -171,9 +170,7 @@ const AppInner = () => {
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
       <AlertNotifier />
       <FrameworkUpdateBanner />
-      <NavBar hash={hash} />
-      <Breadcrumbs hash={hash} />
-      <div className="min-h-0 flex-1">
+      <Shell hash={hash}>
         <FallbackBoundary of="view" variant="pane">
           {route === 'studio' && studioTaskId !== null ? (
             <StudioPage taskId={studioTaskId} />
@@ -197,7 +194,7 @@ const AppInner = () => {
             <ChatPage />
           )}
         </FallbackBoundary>
-      </div>
+      </Shell>
       {taskId ? (
         <FallbackBoundary of="task detail" variant="inline">
           <TaskDetailDrawer
