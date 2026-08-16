@@ -45,10 +45,15 @@ const withStale = (n: number): StaleWorktreesPayload => ({
 // ---------------------------------------------------------------------------
 
 describe('detectRoute', () => {
-  it('returns chat for an empty or root hash (chat is the default landing page)', () => {
-    expect(detectRoute('')).toBe('chat')
-    expect(detectRoute('#/')).toBe('chat')
-    expect(detectRoute('#')).toBe('chat')
+  it('returns triage for an empty or root hash (triage is the default landing page)', () => {
+    expect(detectRoute('')).toBe('triage')
+    expect(detectRoute('#/')).toBe('triage')
+    expect(detectRoute('#')).toBe('triage')
+  })
+
+  it('returns triage for the #/triage hash', () => {
+    expect(detectRoute('#/triage')).toBe('triage')
+    expect(detectRoute('#/triage/anything')).toBe('triage')
   })
 
   it('returns chat for the legacy #/todo hash', () => {
@@ -101,13 +106,14 @@ describe('detectRoute', () => {
 // ---------------------------------------------------------------------------
 
 describe('isKnownRoute', () => {
-  it('returns true for the empty / root hash (Action Queue default)', () => {
+  it('returns true for the empty / root hash (Triage default)', () => {
     expect(isKnownRoute('')).toBe(true)
     expect(isKnownRoute('#')).toBe(true)
     expect(isKnownRoute('#/')).toBe(true)
   })
 
   it('returns true for named page routes', () => {
+    expect(isKnownRoute('#/triage')).toBe(true)
     expect(isKnownRoute('#/action-queue')).toBe(true)
     expect(isKnownRoute('#/action-queue/sub')).toBe(true)
     expect(isKnownRoute('#/progress')).toBe(true)
@@ -378,12 +384,13 @@ describe('resolvePageRoute', () => {
     expect(resolvePageRoute('#/progress')).toBe('progress')
   })
 
-  it('returns chat for an empty hash (chat is the default landing page)', () => {
-    expect(resolvePageRoute('')).toBe('chat')
+  it('returns triage for an empty hash (triage is the default landing page)', () => {
+    expect(resolvePageRoute('')).toBe('triage')
   })
 
   it('returns chat for a malformed #/task/ hash (empty id)', () => {
     // A stray '#/task/' must not open a blank overlay or force the progress route.
+    // It falls through to the detectRoute fallback, which is 'chat'.
     expect(resolvePageRoute('#/task/')).toBe('chat')
   })
 
@@ -445,6 +452,10 @@ describe('parseReleaseNotesRoute', () => {
 // ---------------------------------------------------------------------------
 
 describe('pageTitle', () => {
+  it('returns "mars — needs you" for the triage route', () => {
+    expect(pageTitle('triage')).toBe('mars — needs you')
+  })
+
   it('returns "mars — chat" for the chat route', () => {
     expect(pageTitle('chat')).toBe('mars — chat')
   })

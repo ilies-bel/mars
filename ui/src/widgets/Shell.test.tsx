@@ -55,17 +55,23 @@ describe('SHELL_NAV_GROUPS', () => {
     expect(SHELL_NAV_GROUPS[2].label).toBe('Intel')
   })
 
-  it('has nine total nav entries across all groups', () => {
+  it('has ten total nav entries across all groups', () => {
     const total = SHELL_NAV_GROUPS.reduce((sum, g) => sum + g.entries.length, 0)
-    expect(total).toBe(9)
+    expect(total).toBe(10)
   })
 
-  it('Workspace group contains Chat, Progress, Control Room', () => {
+  it('Workspace group contains Needs you, Chat, Progress, Control Room', () => {
     const workspace = SHELL_NAV_GROUPS[0]
     const labels = workspace.entries.map((e) => e.label)
+    expect(labels).toContain('Needs you')
     expect(labels).toContain('Chat')
     expect(labels).toContain('Progress')
     expect(labels).toContain('Control Room')
+  })
+
+  it('Needs you is the first entry in the Workspace group', () => {
+    expect(SHELL_NAV_GROUPS[0].entries[0].label).toBe('Needs you')
+    expect(SHELL_NAV_GROUPS[0].entries[0].href).toBe('#/triage')
   })
 
   it('Developer group contains Studio, Events, Reflections, Steward', () => {
@@ -133,33 +139,33 @@ describe('ShellSidebar — active state', () => {
   })
 })
 
-// ── ShellSidebar — Chat badge ─────────────────────────────────────────────────
+// ── ShellSidebar — Needs you badge ───────────────────────────────────────────
 
-describe('ShellSidebar — Chat badge', () => {
-  it('shows a numeric badge on Chat when decisionBadge > 0', () => {
+describe('ShellSidebar — Needs you badge', () => {
+  it('shows a numeric badge on Needs you when decisionBadge > 0', () => {
     const html = renderToStaticMarkup(<ShellSidebar activeRoute="progress" decisionBadge={3} />)
     expect(html).toContain('>3<')
   })
 
   it('caps badge display at 99+ when count exceeds 99', () => {
-    const html = renderToStaticMarkup(<ShellSidebar activeRoute="chat" decisionBadge={100} />)
+    const html = renderToStaticMarkup(<ShellSidebar activeRoute="triage" decisionBadge={100} />)
     expect(html).toContain('>99+<')
     expect(html).not.toContain('>100<')
   })
 
   it('shows no badge span when decisionBadge is 0', () => {
-    const html = renderToStaticMarkup(<ShellSidebar activeRoute="chat" decisionBadge={0} />)
+    const html = renderToStaticMarkup(<ShellSidebar activeRoute="triage" decisionBadge={0} />)
     expect(html).not.toContain('decisions pending')
   })
 
-  it('renders the badge only once (on Chat, not on other entries)', () => {
-    const html = renderToStaticMarkup(<ShellSidebar activeRoute="chat" decisionBadge={5} />)
+  it('renders the badge only once (on Needs you, not on other entries)', () => {
+    const html = renderToStaticMarkup(<ShellSidebar activeRoute="triage" decisionBadge={5} />)
     const badgeMatches = html.match(/decisions pending/g)
     expect(badgeMatches).toHaveLength(1)
   })
 
   it('badge is labelled for screen readers', () => {
-    const html = renderToStaticMarkup(<ShellSidebar activeRoute="chat" decisionBadge={7} />)
+    const html = renderToStaticMarkup(<ShellSidebar activeRoute="triage" decisionBadge={7} />)
     expect(html).toContain('aria-label="7 decisions pending"')
   })
 })
@@ -174,7 +180,7 @@ describe('Shell', () => {
     expect(html).toContain('Intel')
   })
 
-  it('renders all nine nav entry labels', () => {
+  it('renders all ten nav entry labels', () => {
     const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
     const allLabels = SHELL_NAV_GROUPS.flatMap((g) => g.entries.map((e) => e.label))
     for (const label of allLabels) {

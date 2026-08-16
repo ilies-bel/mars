@@ -24,7 +24,7 @@ interface NavGroup {
 
 /**
  * Three-group sidebar navigation matching the mockup layout.
- * Workspace → Developer → Intel, nine entries total.
+ * Workspace → Developer → Intel, ten entries total.
  * 'proposals' is a special route that links to '#/progress' but never
  * highlights as active (it is a filter shortcut, not a distinct page).
  */
@@ -32,6 +32,7 @@ export const SHELL_NAV_GROUPS: NavGroup[] = [
   {
     label: 'Workspace',
     entries: [
+      { route: 'triage', label: 'Needs you', href: '#/triage', icon: '◉' },
       { route: 'chat', label: 'Chat', href: '#/chat', icon: '◆' },
       { route: 'progress', label: 'Progress', href: '#/progress', icon: '◈' },
       { route: 'control', label: 'Control Room', href: '#/control', icon: '⌂' },
@@ -155,7 +156,7 @@ export const ShellSidebar = ({ activeRoute, decisionBadge }: ShellSidebarProps) 
         {group.entries.map((entry) => {
           // 'proposals' is a link shortcut, never highlighted as its own active state.
           const isActive = entry.route !== 'proposals' && entry.route === activeRoute
-          const showBadge = entry.route === 'chat' && decisionBadge > 0
+          const showBadge = entry.route === 'triage' && decisionBadge > 0
 
           return (
             <a

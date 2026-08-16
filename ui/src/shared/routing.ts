@@ -2,12 +2,13 @@ import type { KpiKey } from './schemas'
 import type { StaleWorktreesPayload } from './schemas'
 import { PRIMITIVE_NAMES, type PrimitiveName } from '@/entities/primitive/types'
 
-export type RouteName = 'progress' | 'events' | 'kpi' | 'studio' | 'chat' | 'steward' | 'reflections' | 'control'
+export type RouteName = 'progress' | 'events' | 'kpi' | 'studio' | 'chat' | 'steward' | 'reflections' | 'control' | 'triage'
 
 /**
  * Derives the current route from the URL hash.
  *
- * (empty / root)        → chat  (default landing page)
+ * (empty / root)        → triage (default landing page — "Needs you")
+ * #/triage              → triage
  * #/chat[/…]            → chat
  * #/progress[/…]        → progress
  * #/events[/…]          → events
@@ -18,7 +19,8 @@ export type RouteName = 'progress' | 'events' | 'kpi' | 'studio' | 'chat' | 'ste
  *                                action queue as projection Threads)
  */
 export const detectRoute = (hash: string): RouteName => {
-  if (hash === '' || hash === '#' || hash === '#/') return 'chat'
+  if (hash === '' || hash === '#' || hash === '#/') return 'triage'
+  if (hash.startsWith('#/triage')) return 'triage'
   if (hash.startsWith('#/chat')) return 'chat'
   if (hash.startsWith('#/progress')) return 'progress'
   if (hash.startsWith('#/events')) return 'events'
@@ -39,9 +41,10 @@ export const detectRoute = (hash: string): RouteName => {
  * rendering the wrong page.
  */
 export const isKnownRoute = (hash: string): boolean => {
-  // Empty / root hashes → Chat (the default landing page)
+  // Empty / root hashes → Triage (the default landing page)
   if (hash === '' || hash === '#' || hash === '#/') return true
   // Named page routes
+  if (hash.startsWith('#/triage')) return true
   if (hash.startsWith('#/chat')) return true
   // Legacy action-queue hashes — the App redirects them onto #/chat.
   if (hash.startsWith('#/action-queue')) return true
@@ -137,6 +140,7 @@ const ROUTE_NAMES: readonly RouteName[] = [
   'steward',
   'reflections',
   'control',
+  'triage',
 ]
 
 const isRouteName = (value: string): value is RouteName =>
@@ -422,6 +426,8 @@ export const actionQueueCount = (payload: StaleWorktreesPayload): number =>
  */
 export const pageTitle = (route: RouteName): string => {
   switch (route) {
+    case 'triage':
+      return 'mars — needs you'
     case 'chat':
       return 'mars — chat'
     case 'progress':

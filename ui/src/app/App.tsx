@@ -45,12 +45,14 @@ import { StudioPage } from '@/pages/StudioPage'
 import { StewardPage } from '@/pages/StewardPage'
 import { ReflectionsPage } from '@/pages/ReflectionsPage'
 import { ControlRoomPage } from '@/pages/ControlRoomPage'
+import { TriagePage } from '@/pages/TriagePage'
 import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
 import { FallbackBoundary } from '@/components/FallbackBoundary'
 import { AlertNotifier } from '@/shared/notifications/alertNotifier'
 
 /** Hash bases the drawer returns to, keyed by the origin recorded in the hash. */
 const ROUTE_BASE: Record<RouteName, string> = {
+  triage: '#/triage',
   chat: '#/chat',
   progress: '#/progress',
   events: '#/events',
@@ -106,7 +108,7 @@ const AppInner = () => {
   const rawHash = useHashRoute()
   useGlobalKeyboardShortcuts()
 
-  // Redirect root / bare hashes to #/chat (the default landing page) and
+  // Redirect root / bare hashes to #/triage (the default landing page) and
   // truly unknown hashes to #/progress.
   // navigateReplace (replaceState + synthetic hashchange) is used here so
   // useHashRoute's state updates atomically with the URL change.  A bare
@@ -116,7 +118,7 @@ const AppInner = () => {
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (rawHash === '' || rawHash === '#' || rawHash === '#/') {
-      navigateReplace('#/chat')
+      navigateReplace('#/triage')
     } else if (rawHash.startsWith('#/action-queue') || rawHash.startsWith('#/todo')) {
       // Legacy action-queue deep links: the chat page absorbed the action
       // queue, so map the old ?item=/kind=/q= state onto the chat hash.
@@ -127,10 +129,10 @@ const AppInner = () => {
     }
   }, [rawHash])
 
-  // For rendering, treat unknown hashes as #/chat (the default) so the nav
+  // For rendering, treat unknown hashes as #/triage (the default) so the nav
   // highlight and page selection are correct even on the first render before
   // the redirect effect fires.
-  const hash = isKnownRoute(rawHash) ? rawHash : '#/chat'
+  const hash = isKnownRoute(rawHash) ? rawHash : '#/triage'
 
   const taskId = parseTaskRoute(hash)
   const proposalId = parseProposalRoute(hash)
@@ -172,7 +174,9 @@ const AppInner = () => {
       <FrameworkUpdateBanner />
       <Shell hash={hash}>
         <FallbackBoundary of="view" variant="pane">
-          {route === 'studio' && studioTaskId !== null ? (
+          {route === 'triage' ? (
+            <TriagePage />
+          ) : route === 'studio' && studioTaskId !== null ? (
             <StudioPage taskId={studioTaskId} />
           ) : route === 'studio' ? (
             <ProgressPage />
