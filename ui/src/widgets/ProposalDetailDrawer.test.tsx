@@ -388,6 +388,65 @@ describe('ProposalDetailDrawer – sliced-tasks list', () => {
   })
 })
 
+// ── Mockup affordance in header ──────────────────────────────────────────────
+
+describe('ProposalDetailDrawer – mockup affordance', () => {
+  it('shows a "View mockup" link in the header when initialMockupExists=true', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal()}
+        onClose={() => {}}
+        initialMockupExists={true}
+      />,
+    )
+    expect(html).toContain('data-testid="link-view-mockup"')
+    expect(html).toContain('View mockup')
+  })
+
+  it('does not show the mockup link when initialMockupExists is absent (default false)', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer proposal={draftProposal()} onClose={() => {}} />,
+    )
+    expect(html).not.toContain('data-testid="link-view-mockup"')
+  })
+
+  it('shows the mockup link for non-draft proposals (prd-ready) when initialMockupExists=true', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ status: 'prd-ready' })}
+        onClose={() => {}}
+        initialMockupExists={true}
+      />,
+    )
+    // Link is in the header, visible regardless of proposal status.
+    expect(html).toContain('data-testid="link-view-mockup"')
+  })
+
+  it('shows the mockup link for sliced proposals when initialMockupExists=true', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ status: 'sliced' })}
+        onClose={() => {}}
+        initialMockupExists={true}
+      />,
+    )
+    expect(html).toContain('data-testid="link-view-mockup"')
+  })
+
+  it('the mockup link targets the correct URL and opens in a new tab', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ id: 'prop-test-id' })}
+        onClose={() => {}}
+        initialMockupExists={true}
+      />,
+    )
+    expect(html).toContain('/mockups/prop-test-id.html')
+    expect(html).toContain('target="_blank"')
+    expect(html).toContain('rel="noopener noreferrer"')
+  })
+})
+
 // ── Body sections: problem, solution, user stories, outOfScope, notes ────────
 
 describe('ProposalDetailDrawer – body sections', () => {

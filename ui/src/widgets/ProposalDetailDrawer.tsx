@@ -14,6 +14,13 @@ interface ProposalDetailDrawerProps {
    * when the proposal status is `sliced`. No new HTTP request is made.
    */
   tasks?: ProgressTask[]
+  /**
+   * Seed value for the mockup-exists check. When provided the HEAD probe is
+   * still issued on mount, but the initial render reflects this value — useful
+   * in test environments where `useEffect` does not fire (e.g. SSR with
+   * `renderToStaticMarkup`).
+   */
+  initialMockupExists?: boolean
 }
 
 /**
@@ -147,6 +154,7 @@ export const ProposalDetailDrawer = ({
   proposal,
   onClose,
   tasks = [],
+  initialMockupExists = false,
 }: ProposalDetailDrawerProps) => {
   const childTasks = proposal.status === 'sliced'
     ? tasks.filter((t) => t.parentProposalId === proposal.id)
@@ -177,7 +185,7 @@ export const ProposalDetailDrawer = ({
     | { kind: 'done'; taskId: string }
     | { kind: 'error'; message: string }
   >({ kind: 'idle' })
-  const [mockupExists, setMockupExists] = useState<boolean>(false)
+  const [mockupExists, setMockupExists] = useState<boolean>(initialMockupExists)
   const [dismissState, setDismissState] = useState<
     { kind: 'idle' } | { kind: 'pending' } | { kind: 'done' } | { kind: 'error'; message: string }
   >({ kind: 'idle' })
@@ -395,6 +403,20 @@ export const ProposalDetailDrawer = ({
               </span>
             )}
           </div>
+          {/* Mockup chip — promoted to the header so it is visible for all
+              proposal statuses, not just draft. One quiet affordance, not a
+              notification stream. */}
+          {mockupExists && (
+            <a
+              href={mockupUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="link-view-mockup"
+              className="inline-flex w-fit items-center gap-1 rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10"
+            >
+              View mockup ↗
+            </a>
+          )}
         </div>
         <button
           type="button"
@@ -493,19 +515,6 @@ export const ProposalDetailDrawer = ({
           )}
           {implementLiveState.kind === 'error' && (
             <span className="font-mono text-[9px] text-destructive">{implementLiveState.message}</span>
-          )}
-
-          {/* View mockup link — shown when .mars/mockups/<id>.html exists */}
-          {mockupExists && (
-            <a
-              href={mockupUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-testid="link-view-mockup"
-              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10"
-            >
-              View mockup ↗
-            </a>
           )}
 
           {/* Dismiss */}

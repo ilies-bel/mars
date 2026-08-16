@@ -105,6 +105,25 @@ describe('GET /mockups/<id>.html — serve generated mockup file', () => {
     }
   })
 
+  it('returns 200 for a HEAD request when the mockup file exists', async () => {
+    // The ProposalDetailDrawer and ProposalCard both probe with HEAD to decide
+    // whether to show the "View mockup" affordance.
+    const mockupsDir = resolve(repo, '.mars', 'mockups')
+    mkdirSync(mockupsDir, { recursive: true })
+    writeFileSync(resolve(mockupsDir, 'prop-head-check.html'), '<html/>', 'utf8')
+
+    const res = await fetch(`${baseUrl}/mockups/prop-head-check.html`, { method: 'HEAD' })
+    expect(res.status).toBe(200)
+    // HEAD must not return a body.
+    const text = await res.text()
+    expect(text).toBe('')
+  })
+
+  it('returns 404 for a HEAD request when the mockup file does not exist', async () => {
+    const res = await fetch(`${baseUrl}/mockups/prop-missing.html`, { method: 'HEAD' })
+    expect(res.status).toBe(404)
+  })
+
   it('serves different proposals from the same directory', async () => {
     const mockupsDir = resolve(repo, '.mars', 'mockups')
     mkdirSync(mockupsDir, { recursive: true })

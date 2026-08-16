@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useEffect, useState } from 'react'
 import type { DraftFeature } from '@/shared/schemas'
 
 interface Props {
@@ -12,6 +12,17 @@ export const ProposalCard = memo(({ proposal }: Props) => {
   const openDrawer = () => {
     window.location.hash = `#/proposal/${encodeURIComponent(proposal.id)}`
   }
+
+  // Probe for a generated mockup file so the card can show a chip when one exists.
+  const [mockupExists, setMockupExists] = useState(false)
+  const mockupUrl = `/mockups/${encodeURIComponent(proposal.id)}.html`
+  useEffect(() => {
+    let cancelled = false
+    fetch(mockupUrl, { method: 'HEAD' })
+      .then((r) => { if (!cancelled) setMockupExists(r.ok) })
+      .catch(() => { /* file does not exist yet */ })
+    return () => { cancelled = true }
+  }, [mockupUrl])
 
   return (
     <article
@@ -44,7 +55,21 @@ export const ProposalCard = memo(({ proposal }: Props) => {
       <div className="text-[14px] font-medium leading-snug text-foreground">
         {truncate(proposal.title, 120)}
       </div>
-      <div className="font-mono text-[11px] text-muted-foreground">{proposal.source}</div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono text-[11px] text-muted-foreground">{proposal.source}</span>
+        {mockupExists && (
+          <a
+            href={mockupUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="proposal-card-mockup-chip"
+            onClick={(e) => e.stopPropagation()}
+            className="rounded border border-primary/40 px-1.5 py-0.5 font-mono text-[10px] text-primary hover:bg-primary/10"
+          >
+            mockup ready ↗
+          </a>
+        )}
+      </div>
     </article>
   )
 })
