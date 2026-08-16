@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { useStaleWorktrees } from '@/entities/stale-worktrees/useStaleWorktrees'
+import { useDaemonConnected } from '@/hooks/useDaemonConnected'
 import { actionQueueCount, resolvePageRoute } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
 import { deriveBreadcrumbs } from './Breadcrumbs'
@@ -65,6 +66,7 @@ interface ShellTopbarProps {
 
 const ShellTopbar = ({ hash }: ShellTopbarProps) => {
   const crumbs = deriveBreadcrumbs(hash)
+  const connected = useDaemonConnected()
 
   return (
     <header className="col-span-2 flex h-10 items-center gap-3 border-b border-neutral-700 bg-neutral-800 px-4">
@@ -111,14 +113,16 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
         </>
       )}
 
-      {/* Live-status placeholder — wire-up to daemon state is a follow-up slice */}
+      {/* Live indicator — reflects daemon SSE connection state */}
       <div className="ml-auto flex shrink-0 items-center gap-2">
         <span
-          className="h-1.5 w-1.5 rounded-full bg-success"
+          className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-success animate-pulse' : 'bg-muted'}`}
           aria-hidden="true"
           data-testid="shell-live-dot"
         />
-        <span className="font-mono text-[10px] text-neutral-400">Live</span>
+        <span className="font-mono text-[10px] text-neutral-400">
+          {connected ? 'Live' : 'Offline'}
+        </span>
       </div>
     </header>
   )
