@@ -37,6 +37,7 @@ import { useFocusedProject } from '@/shared/useFocusedProject'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { parseReflectionDetailRoute, reflectionDetailHash, proposalHash } from '@/shared/routing'
 import { useHashRoute } from '@/shared/useHashRoute'
+import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
 
 // ---------------------------------------------------------------------------
 // Outcome types (mirrored from the server-side ReflectionSuggestionOutcome)
@@ -667,18 +668,14 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
         <>
           {/* Summary + root cause — the headline, not buried */}
           <section>
-            <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
-              Summary
-            </h3>
+            <div className="mb-2"><SectionLabel>Summary</SectionLabel></div>
             <p className="font-mono text-[12px] text-foreground leading-relaxed border border-primary/20 bg-card p-3">
               {detail.report.summary}
             </p>
           </section>
 
           <section>
-            <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
-              Root Cause
-            </h3>
+            <div className="mb-2"><SectionLabel>Root Cause</SectionLabel></div>
             <p className="font-mono text-[11px] text-primary border border-primary/30 bg-primary/5 p-3 leading-relaxed">
               {detail.report.rootCause}
             </p>
@@ -687,9 +684,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
           {/* Dissonant calls — ordered by severity, intent vs outcome side-by-side */}
           {sortedCalls.length > 0 && (
             <section>
-              <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
-                Dissonant Calls ({sortedCalls.length})
-              </h3>
+              <div className="mb-2"><SectionLabel>Dissonant Calls ({sortedCalls.length})</SectionLabel></div>
               <div className="flex flex-col gap-2">
                 {sortedCalls.map((call, i) => (
                   <DissonantCallCard key={i} call={call} index={i} />
@@ -701,9 +696,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
           {/* Verify mismatches */}
           {detail.report.verifyMismatches.length > 0 && (
             <section>
-              <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
-                Verify Mismatches ({detail.report.verifyMismatches.length})
-              </h3>
+              <div className="mb-2"><SectionLabel>Verify Mismatches ({detail.report.verifyMismatches.length})</SectionLabel></div>
               <div className="flex flex-col gap-2">
                 {detail.report.verifyMismatches.map((mm, i) => (
                   <div
@@ -737,9 +730,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
           {/* Thrashing patterns */}
           {detail.report.thrashingPatterns.length > 0 && (
             <section>
-              <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
-                Thrashing Patterns ({detail.report.thrashingPatterns.length})
-              </h3>
+              <div className="mb-2"><SectionLabel>Thrashing Patterns ({detail.report.thrashingPatterns.length})</SectionLabel></div>
               <div className="flex flex-col gap-2">
                 {detail.report.thrashingPatterns.map((p, i) => (
                   <div
@@ -760,9 +751,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
 
           {/* Tool call statistics — compact breakdown, not a raw object dump */}
           <section>
-            <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
-              Tool Calls ({detail.report.toolCallStats.total.toLocaleString()} total)
-            </h3>
+            <div className="mb-2"><SectionLabel>Tool Calls ({detail.report.toolCallStats.total.toLocaleString()} total)</SectionLabel></div>
             <div className="flex flex-wrap gap-2">
               {byNameEntries.map(([tool, count]) => (
                 <div
@@ -779,9 +768,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
           {/* Filed proposals — link arc → proposals, with lever binding */}
           {savedSuggestions.length > 0 && (
             <section>
-              <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
-                Proposals Filed ({savedSuggestions.length})
-              </h3>
+              <div className="mb-2"><SectionLabel>Proposals Filed ({savedSuggestions.length})</SectionLabel></div>
               <div className="flex flex-col gap-2">
                 {savedSuggestions.map((s, i) => (
                   <div
@@ -806,9 +793,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
           {/* Lever Changes — knobs you can tune right now */}
           {leverBindings.length > 0 && (
             <section data-testid="lever-changes-section">
-              <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
-                Lever Changes — what you can tune now ({leverBindings.length})
-              </h3>
+              <div className="mb-2"><SectionLabel>Lever Changes — what you can tune now ({leverBindings.length})</SectionLabel></div>
               <div className="flex flex-col gap-2">
                 {leverBindings.map((s, i) => {
                   const lever = (s.outcome as { type: 'lever'; lever: LeverData }).lever
@@ -834,9 +819,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
           {/* Lever Gaps — knobs Mars wishes it had */}
           {leverGaps.length > 0 && (
             <section data-testid="lever-gaps-section">
-              <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
-                Lever Gaps — knobs Mars wishes it had ({leverGaps.length})
-              </h3>
+              <div className="mb-2"><SectionLabel>Lever Gaps — knobs Mars wishes it had ({leverGaps.length})</SectionLabel></div>
               <div className="flex flex-col gap-2">
                 {leverGaps.map((gap, i) => (
                   <LeverGapCard key={i} gap={gap} index={i} />
@@ -940,23 +923,23 @@ export const ReflectionsPage = () => {
         ) : (
           // ── List view ──
           <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <h2 className="font-mono text-[11px] uppercase tracking-wide text-primary">
-                Reflections
-              </h2>
-              {listData && (
-                <span className="font-mono text-[10px] text-muted-foreground" data-testid="report-count">
-                  {listData.totalDiscovered > listData.reports.length
-                    ? `${listData.reports.length} of ${listData.totalDiscovered} reports`
-                    : `${listData.reports.length} report${listData.reports.length !== 1 ? 's' : ''}`}
-                  {listData.unreadableCount > 0 && (
-                    <span className="ml-2 text-warn">
-                      ({listData.unreadableCount} unreadable)
-                    </span>
-                  )}
-                </span>
-              )}
-            </div>
+            <PageHeader
+              title="Reflections"
+              right={
+                listData ? (
+                  <span className="font-mono text-[10px] text-muted-foreground" data-testid="report-count">
+                    {listData.totalDiscovered > listData.reports.length
+                      ? `${listData.reports.length} of ${listData.totalDiscovered} reports`
+                      : `${listData.reports.length} report${listData.reports.length !== 1 ? 's' : ''}`}
+                    {listData.unreadableCount > 0 && (
+                      <span className="ml-2 text-warn">
+                        ({listData.unreadableCount} unreadable)
+                      </span>
+                    )}
+                  </span>
+                ) : undefined
+              }
+            />
 
             {listData && (
               <RunStateBanner

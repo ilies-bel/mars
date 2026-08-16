@@ -14,6 +14,7 @@
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { useStewardView } from './useStewardView'
 import type { StewardView } from './useStewardView'
+import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
 
 export type { StewardView }
 export { useStewardView }
@@ -577,9 +578,7 @@ const GateHealthLane = ({
       <div className="space-y-4">
         {data.scopes.map((scope) => (
           <section key={scope.scope} aria-label={`Verify gates for ${scope.scope}`}>
-            <h2 className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Scope: {scope.scope}
-            </h2>
+            <div className="mb-2"><SectionLabel>Scope: {scope.scope}</SectionLabel></div>
             <ul className="space-y-2">
               {scope.gates.map((gate) => (
                 <li key={gate.id} className="rounded border border-border/40 bg-muted/10 px-3 py-2">
@@ -648,9 +647,7 @@ const StewardStatusNote = () => (
 
 const StewardSkeleton = () => (
   <main className="flex h-full min-h-0 flex-1 flex-col gap-6 overflow-y-auto bg-background p-6">
-    <header>
-      <h1 className="font-mono text-[13px] uppercase tracking-wider text-primary">Steward</h1>
-    </header>
+    <PageHeader title="Steward" />
     <GateHealthLane data={undefined} isLoading />
     {[0, 1, 2].map((i) => (
       <div
@@ -682,27 +679,27 @@ export const StewardPage = () => {
       className="flex h-full min-h-0 flex-1 flex-col gap-6 overflow-y-auto bg-background p-6"
       data-testid="steward-page"
     >
-      <header className="flex items-center gap-3">
-        <h1 className="font-mono text-[13px] uppercase tracking-wider text-primary">Steward</h1>
-        <p className="font-mono text-[10px] text-muted-foreground">
-          What the Steward is wired to do and what it has actually done.
-        </p>
-        <div className="ml-auto flex items-center gap-3 font-mono text-[9px] text-muted-foreground">
-          <span className="flex items-center gap-1">
-            <span className="inline-block h-1.5 w-6 bg-success rounded" />
-            executing
-          </span>
-          <span className="flex items-center gap-1">
-            <span
-              className="inline-block h-1.5 w-6 rounded"
-              style={{
-                background: 'repeating-linear-gradient(to right,transparent 0,transparent 3px,rgb(var(--color-muted-foreground)/0.4) 3px,rgb(var(--color-muted-foreground)/0.4) 6px)',
-              }}
-            />
-            inert / unbuilt
-          </span>
-        </div>
-      </header>
+      <PageHeader
+        title="Steward"
+        subtitle="What the Steward is wired to do and what it has actually done."
+        right={
+          <div className="flex items-center gap-3 font-mono text-[9px] text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-1.5 w-6 rounded bg-success" />
+              executing
+            </span>
+            <span className="flex items-center gap-1">
+              <span
+                className="inline-block h-1.5 w-6 rounded"
+                style={{
+                  background: 'repeating-linear-gradient(to right,transparent 0,transparent 3px,rgb(var(--color-muted-foreground)/0.4) 3px,rgb(var(--color-muted-foreground)/0.4) 6px)',
+                }}
+              />
+              inert / unbuilt
+            </span>
+          </div>
+        }
+      />
 
       <StewardStatusNote />
 

@@ -10,6 +10,7 @@ import { kpiDriftDirection } from '@/entities/kpi/types'
 import { formatKpiValue, KPI_DESCRIPTIONS } from '@/widgets/KpiTile'
 import { Sparkline } from '@/widgets/Sparkline'
 import { taskHash } from '@/shared/routing'
+import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
 
 const KPI_LABELS: Record<KpiKey, string> = {
   cost_per_arc: 'Cost per Arc',
@@ -226,10 +227,8 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
   if (kpiKey === 'cost-per-merged-task') {
     return (
       <div className="flex h-full flex-col overflow-hidden bg-background">
+        <PageHeader title="Cost / merged task" />
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-          <h2 className="mb-2 font-mono text-[11px] uppercase tracking-wide text-primary">
-            Cost / merged task
-          </h2>
           <p className="mb-4 font-mono text-[11px] text-muted-foreground">
             {KPI_DESCRIPTIONS['cost-per-merged-task']}
           </p>
@@ -277,6 +276,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
+      <PageHeader title={label} />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
         {/* KPI summary card — min-h reserves space while kpi data loads */}
         <div className="mb-4 min-h-[110px]">
@@ -328,9 +328,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
         {/* Diagnostic action */}
         <div className="mb-6 rounded border border-primary/20 bg-card">
           <div className="flex items-center justify-between px-4 py-2.5">
-            <span className="font-mono text-[11px] uppercase tracking-wide text-primary">
-              Diagnostic
-            </span>
+            <SectionLabel>Diagnostic</SectionLabel>
             <button
               type="button"
               disabled={diagnostic.status === 'running' || arcsLoading || arcs.length === 0}
@@ -387,9 +385,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
         {/* Arc list */}
         <div>
           <div className="mb-3 flex items-center gap-3">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {kpiKey === 'cost_per_arc' ? 'Arcs (by cost)' : 'Arcs'}
-            </h2>
+            <SectionLabel>{kpiKey === 'cost_per_arc' ? 'Arcs (by cost)' : 'Arcs'}</SectionLabel>
             {kpiKey !== 'cost_per_arc' && (
               <div className="ml-auto flex gap-1">
                 {(['all', 'pass', 'fail'] as const).map((f) => (

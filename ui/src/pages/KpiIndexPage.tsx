@@ -1,5 +1,6 @@
 import { KpiVector } from '@/widgets/KpiVector'
 import { WatchtowerSection } from '@/widgets/WatchtowerSection'
+import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
 
 /**
  * KPI index page — lists all KPI tiles and links to their detail pages,
@@ -9,7 +10,7 @@ import { WatchtowerSection } from '@/widgets/WatchtowerSection'
  */
 export const KpiIndexPage = () => (
   <div className="flex flex-col gap-4 overflow-y-auto p-6">
-    <h2 className="font-mono text-[11px] uppercase tracking-wide text-primary">KPIs</h2>
+    <PageHeader title="KPIs" />
     <KpiVector />
     <WatchtowerSection />
   </div>
