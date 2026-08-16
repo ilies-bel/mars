@@ -516,7 +516,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
           className={[
             'rounded p-0.5 transition-colors',
             localRating === 'down'
-              ? 'text-red-400'
+              ? 'text-error'
               : 'text-primary/40 hover:text-primary',
           ].join(' ')}
           onClick={() => void handleDown()}
@@ -549,7 +549,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
         />
       )}
       {error && (
-        <p className="font-mono text-[10px] text-red-400">{error}</p>
+        <p className="font-mono text-[10px] text-error">{error}</p>
       )}
     </div>
   )
@@ -1065,7 +1065,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
           {thread.attentionStatus === 'ready' && (
             <span
               data-testid="ready-badge"
-              className="h-1.5 w-1.5 flex-none rounded-full bg-green-500"
+              className="h-1.5 w-1.5 flex-none rounded-full bg-success"
               title="New response"
             />
           )}
@@ -1162,7 +1162,7 @@ export const LiveAssistantBubble = ({ buffer, terms = [] }: { buffer: LiveBuffer
         })
       )}
       {buffer.error && (
-        <div role="alert" className="my-2 rounded border border-red-400/40 bg-red-950/20 px-3 py-2 font-mono text-[12px] text-red-200">
+        <div role="alert" className="my-2 rounded border border-error/40 bg-error/10 px-3 py-2 font-mono text-[12px] text-error">
           <span className="font-semibold">Codex could not respond.</span>{' '}{buffer.error}
         </div>
       )}
@@ -3363,7 +3363,7 @@ export const ChatPage = () => {
               <p
                 role="alert"
                 data-testid="hero-send-error"
-                className="pb-2 text-center font-mono text-[11px] text-red-400"
+                className="pb-2 text-center font-mono text-[11px] text-error"
               >
                 {sendError}
               </p>

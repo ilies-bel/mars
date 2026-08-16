@@ -467,7 +467,7 @@ export const AlertCard = ({
             {pendingOp === 'restore' ? '…' : 'Restore'}
           </button>
           {actionError && (
-            <span className="font-mono text-[10px] text-red-400">{actionError}</span>
+            <span className="font-mono text-[10px] text-error">{actionError}</span>
           )}
         </div>
       </div>
@@ -696,7 +696,7 @@ export const AlertCard = ({
 
       {/* Action error */}
       {actionError && (
-        <p className="mb-2 font-mono text-[10px] text-red-400" data-testid="alert-card-error">
+        <p className="mb-2 font-mono text-[10px] text-error" data-testid="alert-card-error">
           {actionError}
         </p>
       )}

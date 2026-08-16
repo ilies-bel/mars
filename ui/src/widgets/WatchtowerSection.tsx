@@ -21,9 +21,9 @@ const ConfidenceBadge = ({ value }: { value: number }) => {
   const pct = Math.round(value * 100)
   const colour =
     value >= 0.9
-      ? 'text-green-600 dark:text-green-400'
+      ? 'text-success'
       : value >= 0.7
-        ? 'text-yellow-600 dark:text-yellow-400'
+        ? 'text-warn'
         : 'text-muted-foreground'
   return (
     <span className={`font-mono text-[10px] tabular-nums ${colour}`}>

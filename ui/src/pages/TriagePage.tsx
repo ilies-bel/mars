@@ -190,7 +190,7 @@ const TriageRow = ({ item }: TriageRowProps) => {
       )}
 
       {/* Entity ID */}
-      <p className="mb-2 font-mono text-[10px] text-neutral-500">
+      <p className="mb-2 font-mono text-[10px] text-muted-dark">
         {item.entityId}
       </p>
 

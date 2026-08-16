@@ -75,7 +75,7 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
   const connected = useDaemonConnected()
 
   return (
-    <header className="col-span-2 flex h-10 items-center gap-3 border-b border-neutral-700 bg-neutral-800 px-4">
+    <header className="col-span-2 flex h-10 items-center gap-3 border-b border-border-dark bg-surface-dark px-4">
       {/* Wordmark */}
       <span
         className="shrink-0 font-mono text-[13px] font-bold tracking-wide"
@@ -84,7 +84,7 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
         ◆ mars
       </span>
 
-      <span className="h-4 w-px shrink-0 bg-neutral-700" aria-hidden="true" />
+      <span className="h-4 w-px shrink-0 bg-border-dark" aria-hidden="true" />
 
       {/* Project switcher */}
       <div className="relative shrink-0">
@@ -94,24 +94,24 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
       {/* Breadcrumb — only rendered when there is something to show */}
       {crumbs.length > 0 && (
         <>
-          <span className="h-4 w-px shrink-0 bg-neutral-700" aria-hidden="true" />
+          <span className="h-4 w-px shrink-0 bg-border-dark" aria-hidden="true" />
           <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 overflow-hidden">
             {crumbs.map((crumb, i) => (
               <span key={i} className="flex shrink-0 items-center gap-1.5">
                 {i > 0 && (
-                  <span className="font-mono text-[11px] text-neutral-500" aria-hidden="true">
+                  <span className="font-mono text-[11px] text-muted-dark" aria-hidden="true">
                     ›
                   </span>
                 )}
                 {crumb.href ? (
                   <a
                     href={crumb.href}
-                    className="font-mono text-[11px] text-neutral-400 hover:text-neutral-200"
+                    className="font-mono text-[11px] text-muted-dark hover:text-fg-dark"
                   >
                     {crumb.label}
                   </a>
                 ) : (
-                  <span className="font-mono text-[11px] text-neutral-200">{crumb.label}</span>
+                  <span className="font-mono text-[11px] text-fg-dark">{crumb.label}</span>
                 )}
               </span>
             ))}
@@ -129,7 +129,7 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
           aria-hidden="true"
           data-testid="shell-live-dot"
         />
-        <span className="font-mono text-[10px] text-neutral-400">
+        <span className="font-mono text-[10px] text-muted-dark">
           {connected ? 'Live' : 'Reconnecting'}
         </span>
       </div>
@@ -167,11 +167,11 @@ interface ShellSidebarProps {
 export const ShellSidebar = ({ activeRoute, decisionBadge, isProposalsActive }: ShellSidebarProps) => (
   <nav
     aria-label="Main navigation"
-    className="flex flex-col overflow-y-auto border-r border-neutral-800 bg-neutral-900 pt-2"
+    className="flex flex-col overflow-y-auto border-r border-border-dark bg-bg-dark pt-2"
   >
     {SHELL_NAV_GROUPS.map((group) => (
       <div key={group.label} className="mb-1">
-        <p className="px-3 pb-1 pt-2 font-mono text-[10px] uppercase tracking-widest text-neutral-600">
+        <p className="px-3 pb-1 pt-2 font-mono text-[10px] uppercase tracking-widest text-muted-dark">
           {group.label}
         </p>
         {group.entries.map((entry) => {
@@ -198,10 +198,10 @@ export const ShellSidebar = ({ activeRoute, decisionBadge, isProposalsActive }: 
               href={entry.href}
               aria-current={isActive ? 'page' : undefined}
               className={[
-                'relative flex items-center gap-2 px-3 py-[5px] font-mono text-[11px] transition-colors hover:bg-neutral-800 hover:text-neutral-200',
+                'relative flex items-center gap-2 px-3 py-[5px] font-mono text-[11px] transition-colors hover:bg-surface-dark hover:text-fg-dark',
                 isActive
                   ? 'border-r-2 border-highlight bg-highlight/20'
-                  : 'text-neutral-400',
+                  : 'text-muted-dark',
               ].join(' ')}
               style={isActive ? { color: 'var(--color-amber)' } : undefined}
             >

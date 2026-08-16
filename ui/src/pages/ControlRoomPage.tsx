@@ -115,7 +115,7 @@ const NowSection = () => {
         <span
           className={[
             'h-2 w-2 rounded-full',
-            connected ? 'bg-green-500' : 'bg-primary/30',
+            connected ? 'bg-success' : 'bg-primary/30',
           ].join(' ')}
           aria-hidden="true"
         />
@@ -146,7 +146,7 @@ const Stat = ({ label, value, highlight }: StatProps) => (
     <span
       className={[
         'font-mono text-lg leading-none tabular-nums',
-        highlight ? 'text-red-400' : 'text-foreground',
+        highlight ? 'text-error' : 'text-foreground',
       ].join(' ')}
     >
       {value}

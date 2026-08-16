@@ -98,11 +98,12 @@
   --color-dust:      #F5EDE4;   /* mars-dust  */
   --color-night:     #1A0F0A;   /* mars-night */
 
-  /* ── Dark-surface tokens (DAG / SVG views) ── */
-  --color-surface-dark: #251812;
-  --color-fg-dark:      #F5EDE4;
-  --color-muted-dark:   #A89684;
-  --color-border-dark:  #3A2820;
+  /* ── Dark-surface tokens (DAG / SVG views + Shell chrome) ── */
+  --color-bg-dark:      #1A0F0A;   /* darkest shell ground (neutral-900) */
+  --color-surface-dark: #251812;   /* card/panel surface on dark chrome (neutral-800) */
+  --color-fg-dark:      #F5EDE4;   /* active/heading text on dark chrome */
+  --color-muted-dark:   #A89684;   /* secondary/muted text on dark chrome (neutral-400) */
+  --color-border-dark:  #3A2820;   /* borders and dividers on dark chrome */
 
   /* ── Brand palette ── */
   --color-flame:     #9A4F00;   /* was #F48A36 — darkened for 4.7:1 on bg */

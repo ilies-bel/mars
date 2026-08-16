@@ -76,14 +76,14 @@ export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
           <span
             aria-label={server.status}
             className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${
-              server.status === 'connected' ? 'bg-emerald-500' : 'bg-red-500'
+              server.status === 'connected' ? 'bg-success' : 'bg-error'
             }`}
           />
           {server.name}
           <span className="ml-2 text-[10px] text-primary/50">{server.command}</span>
         </p>
         {server.status === 'failed' ? (
-          <p className="mt-0.5 font-mono text-[10px] text-red-400">not connected</p>
+          <p className="mt-0.5 font-mono text-[10px] text-error">not connected</p>
         ) : (
           <div className="border-l border-primary/20 pl-2">
             <ToolList tools={server.tools} testId={`agent-config-mcp-tools-${server.name}`} />
@@ -145,7 +145,7 @@ export const AgentConfigPanel = ({ projectId }: { projectId?: string }) => {
           <div className="flex-1 overflow-y-auto">
             {isLoading && <p className="px-3 py-4 font-mono text-[11px] text-primary/60">Loading…</p>}
             {isError && (
-              <p className="px-3 py-4 font-mono text-[11px] text-red-400">
+              <p className="px-3 py-4 font-mono text-[11px] text-error">
                 Could not load the agent configuration — is the daemon running?
               </p>
             )}
