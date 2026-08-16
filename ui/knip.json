@@ -4,13 +4,17 @@
     "src/**/*.{test,spec}.{ts,tsx}",
     "server/**/*.{test,spec}.ts",
     "e2e/**/*.spec.ts",
-    "playwright.config.ts"
+    "tests/**/*.spec.ts",
+    "playwright.config.ts",
+    "playwright.smoke.config.ts"
   ],
   "project": [
     "src/**/*.{ts,tsx,mts,cts,js,mjs,cjs,jsx}",
     "server/**/*.{ts,mts,cts,js,mjs,cjs}",
     "bin/**/*.{js,mjs,cjs}",
     "e2e/**/*.ts",
-    "playwright.config.ts"
+    "tests/**/*.ts",
+    "playwright.config.ts",
+    "playwright.smoke.config.ts"
   ]
 }

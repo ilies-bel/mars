@@ -16,7 +16,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "test": "npm run lint:tokens && npm run test:src && npm run test:server",
     "lint:tokens": "node scripts/lint-tokens.mjs",
-    "test:e2e": "playwright test",
+    "test:e2e": "npm run build && playwright test --config playwright.smoke.config.ts --grep @smoke",
     "test:src": "vitest run",
     "test:server": "node scripts/run-bun-server-tests.mjs",
     "lint": "knip --no-exit-code",
