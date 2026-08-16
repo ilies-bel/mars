@@ -170,6 +170,12 @@ const progressProposalNodeSchema = z.object({
   title: z.string(),
   source: proposalSourceSchema,
   status: z.string(),
+  /**
+   * True when the proposal has an associated UI mockup ready for review.
+   * Drives the "mockup ready ↗" chip on dense board proposal cards.
+   * Optional for backward compat with daemon versions that predate this field.
+   */
+  mockupReady: z.boolean().optional().default(false),
 })
 
 const staleWorktreeSchema = z.object({

@@ -1,9 +1,11 @@
 import type { PurgeArchiveEntry, UITask } from '@/shared/types'
+import type { ProgressTask } from '@/shared/schemas'
 import { TaskCard } from '@/components/TaskCard'
 import { isLiveStatus, substepLabel } from '@/shared/substep'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
 import { GhostArc } from '@/widgets/GhostArc'
 import type { Cluster } from '@/shared/schemas'
+import { taskTitle } from '@/shared/promptTitle'
 
 export interface BoardArc {
   /** The origin task id. Legacy tasks use their own id as the arc id. */
@@ -55,6 +57,140 @@ const STATUS_CLASS: Record<Cluster, string> = {
   Queued: 'bg-status-queued/10 text-status-queued',
   Done: 'bg-status-queued/10 text-status-queued', // never rendered on board; present for type completeness
 }
+
+// ---------------------------------------------------------------------------
+// Step-rail helpers — dense board cards
+// ---------------------------------------------------------------------------
+
+type StepState = 'done' | 'run' | 'upcoming'
+
+function getStepStates(status: string): [StepState, StepState, StepState, StepState] {
+  switch (status) {
+    case 'queued':
+      return ['done', 'upcoming', 'upcoming', 'upcoming']
+    case 'running':
+      return ['done', 'run', 'upcoming', 'upcoming']
+    case 'verifying':
+      return ['done', 'done', 'run', 'upcoming']
+    case 'merging':
+    case 'vega-reconciling':
+      return ['done', 'done', 'done', 'run']
+    case 'done':
+      return ['done', 'done', 'done', 'done']
+    case 'failed':
+    case 'dropped':
+      return ['done', 'done', 'done', 'upcoming']
+    case 'blocked':
+    default:
+      return ['upcoming', 'upcoming', 'upcoming', 'upcoming']
+  }
+}
+
+// ---------------------------------------------------------------------------
+// BoardCard — compact ~90px task card with step rail
+// ---------------------------------------------------------------------------
+
+export const BoardCard = ({ task }: { task: ProgressTask }) => {
+  const title = taskTitle(task)
+  const steps = getStepStates(task.status)
+  const failureSig = task.failureSignature ?? null
+  const isLive = isLiveStatus(task.status)
+
+  const dotClass =
+    isLive
+      ? 'bg-status-running motion-safe:animate-mars-pulse'
+      : task.status === 'blocked'
+        ? 'bg-status-blocked'
+        : task.status === 'failed' || task.status === 'dropped'
+          ? 'bg-status-failed'
+          : task.status === 'done'
+            ? 'bg-status-done'
+            : 'bg-muted-foreground/40'
+
+  return (
+    <article
+      data-board-card={task.id}
+      data-task-status={task.status}
+      className={`mars-card rounded-lg bg-card p-2.5 flex flex-col gap-1.5 cursor-pointer hover:bg-secondary${isLive ? ' mars-card-live' : ''}`}
+      onClick={() => {
+        window.location.hash = `#/task/${encodeURIComponent(task.id)}`
+      }}
+    >
+      {/* Row 1: id + live dot */}
+      <div className="flex items-center justify-between gap-1 min-w-0">
+        <a
+          href={`#/task/${encodeURIComponent(task.id)}`}
+          onClick={(e) => e.stopPropagation()}
+          className="card-id block truncate font-mono text-meta text-muted-foreground hover:text-foreground hover:underline"
+        >
+          {task.id}
+        </a>
+        <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
+      </div>
+      {/* Row 2: title */}
+      <p className="line-clamp-2 text-[12px] font-medium leading-snug text-foreground">{title}</p>
+      {/* Row 3: step rail + optional failure chip */}
+      <div className="card-foot flex items-center justify-between gap-1.5">
+        <div className="step-rail flex items-center gap-0.5" aria-label="Pipeline steps">
+          {steps.map((state, i) => (
+            <span
+              // biome-ignore lint/suspicious/noArrayIndexKey: static 4-bar rail, index is stable
+              key={i}
+              className={`step h-1 w-5 rounded-sm ${
+                state === 'done'
+                  ? 's-done bg-status-done'
+                  : state === 'run'
+                    ? 's-run bg-status-running motion-safe:animate-mars-pulse'
+                    : 'upcoming border border-border bg-transparent'
+              }`}
+            />
+          ))}
+        </div>
+        {failureSig ? (
+          <span className="chip-fail shrink-0 rounded bg-status-failed/15 px-1 py-0.5 font-mono text-[9px] font-semibold text-status-failed truncate max-w-[80px]">
+            {failureSig}
+          </span>
+        ) : null}
+      </div>
+    </article>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// DenseColumn — column wrapper for the dense 4-column progress board
+// ---------------------------------------------------------------------------
+
+interface DenseColumnProps {
+  label: string
+  count: number
+  children: React.ReactNode
+}
+
+export const DenseColumn = ({ label, count, children }: DenseColumnProps) => (
+  <section
+    data-board-column={label}
+    className="flex flex-col gap-2 min-w-0 min-h-0"
+  >
+    <header className="flex items-center justify-between border-b border-border pb-2">
+      <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+        {label}
+      </span>
+      <span
+        data-column-count={label}
+        className="font-mono text-[10px] font-semibold tabular-nums text-muted-foreground"
+      >
+        {count}
+      </span>
+    </header>
+    <div className="flex flex-col gap-2 overflow-y-auto">
+      {count === 0 ? (
+        <div className="px-1 py-2 font-mono text-[11px] text-muted-foreground/70">empty</div>
+      ) : (
+        children
+      )}
+    </div>
+  </section>
+)
 
 /**
  * A status lane containing Arc summaries rather than a flat list of tasks.
