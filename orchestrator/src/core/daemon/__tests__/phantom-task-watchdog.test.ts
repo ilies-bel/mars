@@ -551,6 +551,66 @@ describe('sweepPhantomTasks — PID liveness', () => {
     expect(reloaded?.status).toBe('running')
   })
 
+  it('does NOT fail a verifying task when in-flight entry has alive PID and fresh heartbeat', async () => {
+    // Regression test for the remerge/verify-only ceiling-kill bug (mars-4934c485).
+    //
+    // Before the fix: acquireVerifySlot called releaseTracking(), removing the
+    // in-flight entry. With no entry, the watchdog used case 2a (stale updatedAt
+    // ceiling) and killed a long-running verify after 30 minutes.
+    //
+    // After the fix: the in-flight entry stays alive through the verify phase
+    // (releaseTracking() is deferred to releaseVerifySlot). The daemon registers
+    // process.pid as the alive-sentinel and a heartbeat interval to keep
+    // lastActivityMs fresh. The watchdog uses case 2b (alive PID + fresh
+    // heartbeat) and never ceiling-kills a live verify.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('remerge: full-suite verify', undefined, { skipTriage: true })
+
+    // Task has been in 'verifying' for 35 minutes — past the 30-min default
+    // ceiling. Without the fix, this would trigger case 2a and kill it.
+    const stalledUpdatedAt = new Date(nowMs - 35 * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'verifying', updated_at = ? WHERE id = ?`,
+      args: [stalledUpdatedAt, task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    // In-flight entry: kind='implement' (the slot type), with alive PID and
+    // fresh heartbeat (1 min ago). This is the state the fixed acquireVerifySlot
+    // produces: it does NOT release the entry, sets pid=process.pid, and starts
+    // a heartbeat. The test uses an arbitrary pid (12345) with a mocked isAlive.
+    const inFlightEntries = [
+      {
+        taskId: task.id,
+        kind: 'implement' as const,
+        startedAt: nowMs - 35 * 60_000,
+        pid: 12345, // daemon's PID used as alive-sentinel
+        lastActivityMs: nowMs - 1 * 60_000, // recent heartbeat
+      },
+    ]
+    const isAlive = vi.fn().mockReturnValue(true) // daemon is alive → case 2b
+
+    const { failed } = await watchdog.sweepPhantomTasks(
+      inFlightEntries,
+      reclaimSlot,
+      isAlive,
+      nowMs,
+    )
+
+    // Must NOT be failed: alive PID + fresh heartbeat overrides stale updatedAt
+    // for a 'verifying' task (case 2b: NOT phantom).
+    expect(failed).not.toContain(task.id)
+    expect(reclaimSlot).not.toHaveBeenCalled()
+
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('verifying')
+
+    // No action-queue item raised — the task is healthy.
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(0)
+  })
+
   it('keeps an alive worker running when it has not emitted events yet', async () => {
     // Providers can take several minutes to emit their first event. Process
     // liveness, not a silent event stream, is the required evidence for a

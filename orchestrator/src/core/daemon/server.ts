@@ -1396,10 +1396,17 @@ export const startDaemon = async (
     let mergeHandedOff = false
     // Verify-slot handoff bookkeeping.
     // `verifyHandedOff` flips to true when the review primitive calls
-    // acquireVerifySlot(), at which point the implement slot and tracking are
-    // released so other tasks can continue coding while this task is queued
-    // behind the verify semaphore (or actively running verify).
+    // acquireVerifySlot(), at which point the implement slot is released so
+    // other tasks can continue coding while this task is queued behind the
+    // verify semaphore or actively running verify. The in-flight tracker entry
+    // is kept alive through the verify phase (released in releaseVerifySlot)
+    // so the phantom-task watchdog can use PID liveness (case 2b/2c) rather
+    // than falling back to the bare updatedAt ceiling (case 2a).
     let verifyHandedOff = false
+    // setInterval handle for the verify-phase heartbeat. Non-null while the
+    // task holds a verify semaphore slot; cleared in releaseVerifySlot (or
+    // in the finally block on abnormal exit).
+    let verifyHeartbeatInterval: ReturnType<typeof setInterval> | null = null
     log(`[implement] ${task.id} dispatching`)
     try {
       // Slice F.2: dispatch-time dirty-main check. Runs BEFORE workflow
@@ -1728,11 +1735,20 @@ export const startDaemon = async (
             // releaseVerifySlot() in its finally block.
             //
             // At the point of acquireVerifySlot:
-            //   1. The implement slot and tracker entry are released so other
-            //      tasks can start coding while this task is queued on verify.
+            //   1. The implement slot is released so other tasks can start coding
+            //      while this task is queued on verify.
             //   2. drain() is called so freed implement slots are picked up.
             //   3. The verify semaphore (verifySem, MARS_MAX_VERIFY) is acquired
             //      — this is where the task may block until a slot is free.
+            //   4. The in-flight tracker entry (kind='implement') is KEPT ALIVE
+            //      so the phantom-task watchdog can use PID liveness (case 2b/2c)
+            //      instead of falling back to the bare updatedAt ceiling (case 2a).
+            //      releaseTracking() is called in releaseVerifySlot instead.
+            //   5. The daemon's own PID is recorded as the alive-sentinel so the
+            //      watchdog sees an alive PID while this daemon process is running.
+            //   6. A heartbeat interval keeps lastActivityMs fresh so the watchdog
+            //      never ceiling-kills a legitimately long verify (case 2b: alive
+            //      PID + recent heartbeat → never killed regardless of updatedAt).
             //
             // There is no circular dependency: coding never waits on verify, so
             // a task blocked on verifySem cannot prevent verifySem from being
@@ -1740,18 +1756,50 @@ export const startDaemon = async (
             acquireVerifySlot: async (): Promise<void> => {
               if (!verifyHandedOff) {
                 verifyHandedOff = true
-                releaseTracking()
+                // Release the implement semaphore slot so other tasks can code
+                // while this one waits for / runs verify. The in-flight tracker
+                // entry is intentionally NOT released here — it stays alive
+                // through the verify phase so the watchdog can use PID liveness.
                 release(sems.implement)
                 void drain()
               }
               await acquire(verifySem)
               // Register this task as actively verifying in this daemon so the
               // phantom-task watchdog's isVerifyRunning predicate can exempt it
-              // from the wall-clock ceiling (long verify commands — npm test on a
-              // large suite — can legitimately exceed the default 30-min limit).
+              // from the wall-clock ceiling (belt-and-suspenders alongside PID).
               activeVerifyingTaskIds.add(task.id)
+              // Register the daemon's PID as the alive-sentinel. While this
+              // daemon process is running, isProcessAlive(process.pid) returns
+              // true, so the watchdog uses case 2b (alive PID + heartbeat) or 2c
+              // (alive PID, no heartbeat yet) rather than case 2a (no PID, stale
+              // updatedAt). If the daemon dies, the startup reconciler re-queues
+              // orphaned 'verifying' tasks on the next boot.
+              tracker.recordPid(task.id, process.pid)
+              // Kick off the verify heartbeat. Fires every HEARTBEAT_INTERVAL_MS
+              // to keep lastActivityMs and task.updatedAt fresh for the watchdog.
+              // This prevents case-2b ceiling-kills for arbitrarily long test
+              // suites (remerge re-verifies can legitimately run 40-60+ minutes).
+              if (verifyHeartbeatInterval === null) {
+                lastDbHeartbeatMs = 0  // force first tick to write immediately
+                verifyHeartbeatInterval = setInterval(() => {
+                  const nowMs = Date.now()
+                  tracker.recordActivity(task.id, nowMs)
+                  void updateTask(task.id, {}).catch(() => {})
+                }, HEARTBEAT_INTERVAL_MS)
+              }
             },
             releaseVerifySlot: (): void => {
+              // Stop the heartbeat interval before releasing the semaphore so
+              // the watchdog cannot see stale liveness signals after verify ends.
+              if (verifyHeartbeatInterval !== null) {
+                clearInterval(verifyHeartbeatInterval)
+                verifyHeartbeatInterval = null
+              }
+              // Release the in-flight entry now that verify is done. This is the
+              // paired call to the commitInFlight in dispatchImplement's preamble;
+              // it was intentionally deferred from acquireVerifySlot so the entry
+              // stays alive (with PID + heartbeat) throughout the verify phase.
+              releaseTracking()
               // Deregister before releasing the semaphore so the watchdog cannot
               // see the task as "live" after the verify slot is freed.
               activeVerifyingTaskIds.delete(task.id)
@@ -2037,10 +2085,13 @@ export const startDaemon = async (
       // Three mutually-exclusive handoff states:
       //   mergeHandedOff=true  — implement slot released at merge handoff; only
       //                          clean up remaining merge tracking here.
-      //   verifyHandedOff=true — implement slot and tracking already released
-      //                          when the review primitive called acquireVerifySlot;
-      //                          the verify semaphore is released inside the
-      //                          review primitive's own finally block.
+      //   verifyHandedOff=true — implement slot released in acquireVerifySlot;
+      //                          in-flight entry and verify semaphore released in
+      //                          releaseVerifySlot (review primitive's finally).
+      //                          Call releaseTracking() here as a safety net for
+      //                          abnormal exits where releaseVerifySlot was not
+      //                          called (idempotent — no-op when already released).
+      //                          Also clear any lingering heartbeat interval.
       //   neither              — task never reached verify or merge; release the
       //                          implement slot now.
       if (mergeHandedOff) {
@@ -2049,13 +2100,19 @@ export const startDaemon = async (
         // concludes the type at this point is always null). Cast to the declared type.
         const releaseMerge = releaseMergeTracking as (() => void) | null
         if (releaseMerge !== null) releaseMerge()
-      } else if (!verifyHandedOff) {
+      } else if (verifyHandedOff) {
+        // Safety-net cleanup for the verify path: releaseTracking() is idempotent,
+        // so this is a no-op when releaseVerifySlot already called it on the
+        // normal exit path.
+        releaseTracking()
+        if (verifyHeartbeatInterval !== null) {
+          clearInterval(verifyHeartbeatInterval)
+          verifyHeartbeatInterval = null
+        }
+      } else {
         releaseTracking()
         release(sems.implement)
       }
-      // When verifyHandedOff=true the implement slot was already released inside
-      // acquireVerifySlot. The verify semaphore is released by releaseVerifySlot
-      // in the review primitive's finally block. Nothing to release here.
       void drain()
     }
   }
