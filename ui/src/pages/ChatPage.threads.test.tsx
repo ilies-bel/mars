@@ -143,7 +143,8 @@ const makeThread = (overrides: Partial<ChatThread> = {}): ChatThread => ({
   origin: null,
   alertItemId: null,
   alertResolved: false,
-  createdAt: '2024-01-01T00:00:00.000Z',
+  // Use a recent createdAt so the thread is NOT archived (< 7-day threshold).
+  createdAt: new Date(Date.now() - 24 * 3_600_000).toISOString(),
   updatedAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
   messageCount: 0,
   ...overrides,
@@ -162,10 +163,11 @@ const renderSidebar = (threads: ChatThread[]): string => {
       createElement(ThreadSidebar, {
         selectedId: null,
         onSelect: () => {},
-        filters: { query: '', kind: 'all', origin: 'all' },
+        filters: { query: '', origin: 'all' },
         onFiltersChange: () => {},
         selectedItem: null,
         onFastAction: () => {},
+        onSelectMainThread: () => {},
       }),
     ),
   )
@@ -184,10 +186,11 @@ const renderSidebarPending = (): string => {
       createElement(ThreadSidebar, {
         selectedId: null,
         onSelect: () => {},
-        filters: { query: '', kind: 'all', origin: 'all' },
+        filters: { query: '', origin: 'all' },
         onFiltersChange: () => {},
         selectedItem: null,
         onFastAction: () => {},
+        onSelectMainThread: () => {},
       }),
     ),
   )
@@ -229,10 +232,11 @@ const renderSidebarWithBoundaries = (
       createElement(ThreadSidebar, {
         selectedId: null,
         onSelect: () => {},
-        filters: { query: '', kind: 'all', origin: 'all' },
+        filters: { query: '', origin: 'all' },
         onFiltersChange: () => {},
         selectedItem: null,
         onFastAction: () => {},
+        onSelectMainThread: () => {},
       }),
     ),
   )
@@ -341,7 +345,8 @@ describe('ThreadSidebar – row scanability', () => {
       updatedAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
     })
     const html = renderSidebar([thread])
-    expect(html).toContain('2h ago')
+    // formatRelative renders compact form: '2h' (not '2h ago')
+    expect(html).toContain('2h')
   })
 
   it('shows a chat icon (💬) for user-created threads', () => {

@@ -11,7 +11,9 @@ vi.mock('@/shared/api', () => ({
   fetchActionQueue: vi.fn().mockResolvedValue([]),
   fetchChatThreads: vi.fn().mockResolvedValue([{
     id: 't1', title: 'First subthread', status: 'idle',
-    createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    // Recent createdAt so the thread is NOT archived (< 7-day threshold).
+    createdAt: new Date(Date.now() - 24 * 3_600_000).toISOString(),
+    updatedAt: new Date(Date.now() - 60_000).toISOString(),
     origin: null, alertItemId: null, alertResolved: false,
   }]),
   fetchChatHistory: vi.fn().mockResolvedValue([]),
@@ -46,10 +48,11 @@ describe('thread list', () => {
           <ThreadSidebar
             selectedId={null}
             onSelect={() => {}}
-            filters={{ query: '', kind: 'all', origin: 'all' }}
+            filters={{ query: '', origin: 'all' }}
             onFiltersChange={() => {}}
             selectedItem={null}
             onFastAction={() => {}}
+            onSelectMainThread={() => {}}
           />
         </QueryClientProvider>,
       )
