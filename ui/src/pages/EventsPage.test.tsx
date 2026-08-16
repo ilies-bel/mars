@@ -52,6 +52,7 @@ const {
   PHASE_OPTIONS,
   TIME_RANGE_MS,
   groupConsecutiveEvents,
+  formatToolDuration,
 } = __test__
 
 // ---------------------------------------------------------------------------
@@ -117,12 +118,17 @@ const renderPage = (qc: QueryClient): string =>
 // ---------------------------------------------------------------------------
 
 describe('toWireFilter', () => {
-  it('default state sends all non-CLI kinds (CLI is off by default)', () => {
+  it('default state sends all non-CLI kinds (CLI is off by default) and WARN+ERROR severity', () => {
     // cli-invocation is excluded from the default filter state so statusline
     // polls don't flood the feed. This means the default wire request includes
     // a kind constraint listing all the non-CLI kinds.
+    // Default severity is WARN+ERROR (INFO hidden until explicitly enabled).
     const wire = toWireFilter(initialFilterState(), null, 100)
-    expect(wire.severity).toBeUndefined()
+    // severity IS set — default is WARN+ERROR, not all-three
+    expect(wire.severity).toBeDefined()
+    expect(wire.severity).toContain('warn')
+    expect(wire.severity).toContain('error')
+    expect(wire.severity).not.toContain('info')
     // kind filter IS set — all 8 non-CLI kinds
     expect(wire.kind).toBeDefined()
     expect(wire.kind).not.toContain('cli-invocation')
@@ -205,6 +211,18 @@ describe('sinceFromRange', () => {
     const iso = sinceFromRange('15m', now)
     expect(iso).toBeDefined()
     expect(new Date(iso!).getTime()).toBe(now - TIME_RANGE_MS['15m'])
+  })
+})
+
+describe('formatToolDuration', () => {
+  it('formats sub-60s as Ns', () => {
+    expect(formatToolDuration(14_000)).toBe('14s')
+    expect(formatToolDuration(0)).toBe('0s')
+  })
+
+  it('formats 60s+ as Nm Ns', () => {
+    expect(formatToolDuration(90_000)).toBe('1m 30s')
+    expect(formatToolDuration(120_000)).toBe('2m')
   })
 })
 
@@ -771,8 +789,9 @@ describe('EventRow severity styling', () => {
 
 describe('EventsPage filter chips — active vs inactive visual distinction', () => {
   it('active chip carries font-semibold and aria-pressed="true"', () => {
-    // All chips start active. Each must carry font-semibold so the enabled
-    // state is legible by weight alone, not colour alone.
+    // WARN and ERROR chips start active (default severity = WARN+ERROR).
+    // Each must carry font-semibold so the enabled state is legible by weight
+    // alone, not colour alone.
     const qc = makeClient(EMPTY_RESPONSE)
     const container = document.createElement('div')
     const root = createRoot(container)
@@ -785,11 +804,19 @@ describe('EventsPage filter chips — active vs inactive visual distinction', ()
       )
     })
 
+    // WARN starts active (part of default WARN+ERROR set)
+    const warnChip = container.querySelector<HTMLButtonElement>(
+      '[data-testid="events-severity-warn"]',
+    )!
+    expect(warnChip.getAttribute('aria-pressed')).toBe('true')
+    expect(warnChip.className).toContain('font-semibold')
+
+    // INFO starts inactive — not in the WARN+ERROR default
     const infoChip = container.querySelector<HTMLButtonElement>(
       '[data-testid="events-severity-info"]',
     )!
-    expect(infoChip.getAttribute('aria-pressed')).toBe('true')
-    expect(infoChip.className).toContain('font-semibold')
+    expect(infoChip.getAttribute('aria-pressed')).toBe('false')
+    expect(infoChip.className).not.toContain('font-semibold')
 
     act(() => { root.unmount() })
     container.remove()
@@ -800,6 +827,7 @@ describe('EventsPage filter chips — active vs inactive visual distinction', ()
     //   - border-dashed distinguishes the border style from the solid active border.
     //   - No font-semibold so active/inactive differ by weight too.
     //   - aria-pressed="false" exposes the state to assistive tech.
+    // Error chip starts active (part of the WARN+ERROR default); we toggle it off.
     const qc = makeClient(EMPTY_RESPONSE)
     const container = document.createElement('div')
     const root = createRoot(container)
@@ -812,17 +840,17 @@ describe('EventsPage filter chips — active vs inactive visual distinction', ()
       )
     })
 
-    const infoChip = container.querySelector<HTMLButtonElement>(
-      '[data-testid="events-severity-info"]',
+    const errorChip = container.querySelector<HTMLButtonElement>(
+      '[data-testid="events-severity-error"]',
     )!
-    // Start active
-    expect(infoChip.getAttribute('aria-pressed')).toBe('true')
+    // Start active (ERROR is in the WARN+ERROR default set)
+    expect(errorChip.getAttribute('aria-pressed')).toBe('true')
 
-    act(() => { infoChip.click() })
+    act(() => { errorChip.click() })
 
-    expect(infoChip.getAttribute('aria-pressed')).toBe('false')
-    expect(infoChip.className).toContain('border-dashed')
-    expect(infoChip.className).not.toContain('font-semibold')
+    expect(errorChip.getAttribute('aria-pressed')).toBe('false')
+    expect(errorChip.className).toContain('border-dashed')
+    expect(errorChip.className).not.toContain('font-semibold')
 
     act(() => { root.unmount() })
     container.remove()
@@ -895,8 +923,9 @@ describe('fetchEvents URL shape via toWireFilter', () => {
     fetchSpy.mockRestore()
   })
 
-  it('default state issues a /api/trace-events GET that excludes cli-invocation', async () => {
+  it('default state issues a /api/trace-events GET that excludes cli-invocation and INFO severity', async () => {
     // CLI is off by default, so the wire request includes kind= for all non-CLI kinds.
+    // Default severity is WARN+ERROR — INFO is hidden until explicitly enabled.
     await fetchEvents(toWireFilter(initialFilterState(), null, 100))
     const url = fetchSpy.mock.calls[0]![0] as string
     expect(url).toContain('/api/trace-events')
@@ -904,8 +933,10 @@ describe('fetchEvents URL shape via toWireFilter', () => {
     // kind IS constrained — cli-invocation is excluded
     expect(url).toContain('kind=')
     expect(url).not.toContain('cli-invocation')
-    // Other filters are omitted (all selected = no constraint)
-    expect(url).not.toContain('severity=')
+    // severity IS constrained — default is WARN+ERROR, not all three
+    expect(url).toContain('severity=')
+    expect(url).not.toContain('severity=info')
+    // Other filters are omitted
     expect(url).not.toContain('phase=')
     expect(url).not.toContain('since=')
     expect(url).not.toContain('taskId=')
@@ -1179,6 +1210,74 @@ describe('groupConsecutiveEvents', () => {
     }
     expect(rows[2]).toEqual({ type: 'single', event: events[3] })
   })
+
+  // Tool-call grouping — consecutive tool_invoked INFO from same task
+  it('collapses consecutive tool_invoked INFO events from the same task into a tool-group (≥2)', () => {
+    const now = Date.now()
+    const events = [
+      makeEvent({ id: 'tc-1', kind: 'tool_invoked', severity: 'info', taskId: 't-1', payload: { tool: 'git status' }, timestamp: now }),
+      makeEvent({ id: 'tc-2', kind: 'tool_invoked', severity: 'info', taskId: 't-1', payload: { tool: 'git add' }, timestamp: now + 1000 }),
+      makeEvent({ id: 'tc-3', kind: 'tool_invoked', severity: 'info', taskId: 't-1', payload: { tool: 'git commit' }, timestamp: now + 2000 }),
+    ]
+    const rows = groupConsecutiveEvents(events)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].type).toBe('tool-group')
+    if (rows[0].type === 'tool-group') {
+      expect(rows[0].events).toHaveLength(3)
+    }
+  })
+
+  it('does NOT collapse a single tool_invoked INFO event into a tool-group (minimum is 2)', () => {
+    const events = [
+      makeEvent({ id: 'tc-solo', kind: 'tool_invoked', severity: 'info', taskId: 't-1', payload: { tool: 'git status' } }),
+    ]
+    const rows = groupConsecutiveEvents(events)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].type).toBe('single')
+  })
+
+  it('does NOT merge tool_invoked INFO events from different tasks', () => {
+    const now = Date.now()
+    // Different taskIds AND different payloads — neither grouping criterion applies.
+    const events = [
+      makeEvent({ id: 'tc-a', kind: 'tool_invoked', severity: 'info', taskId: 't-1', payload: { tool: 'git status' }, timestamp: now }),
+      makeEvent({ id: 'tc-b', kind: 'tool_invoked', severity: 'info', taskId: 't-2', payload: { tool: 'git log' }, timestamp: now + 100 }),
+    ]
+    const rows = groupConsecutiveEvents(events)
+    expect(rows).toHaveLength(2)
+    expect(rows[0].type).toBe('single')
+    expect(rows[1].type).toBe('single')
+  })
+
+  it('does NOT merge tool_invoked ERROR events (only INFO collapses into tool-group)', () => {
+    const now = Date.now()
+    const events = [
+      makeEvent({ id: 'tc-err-1', kind: 'tool_invoked', severity: 'error', taskId: 't-1', payload: { tool: 'git', error: 'oops' }, timestamp: now }),
+      makeEvent({ id: 'tc-err-2', kind: 'tool_invoked', severity: 'error', taskId: 't-1', payload: { tool: 'git', error: 'oops' }, timestamp: now + 100 }),
+    ]
+    const rows = groupConsecutiveEvents(events)
+    // identical payloads → group (the existing identical-payload grouping)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].type).toBe('group')
+  })
+
+  it('stops the tool-group at the first non-matching event', () => {
+    const now = Date.now()
+    const events = [
+      makeEvent({ id: 'tc-x1', kind: 'tool_invoked', severity: 'info', taskId: 't-1', payload: { tool: 'a' }, timestamp: now }),
+      makeEvent({ id: 'tc-x2', kind: 'tool_invoked', severity: 'info', taskId: 't-1', payload: { tool: 'b' }, timestamp: now + 500 }),
+      makeEvent({ id: 'ev-fail', kind: 'task_failed', severity: 'error', taskId: 't-1', payload: { code: 'x' }, timestamp: now + 1000 }),
+      makeEvent({ id: 'tc-x3', kind: 'tool_invoked', severity: 'info', taskId: 't-1', payload: { tool: 'c' }, timestamp: now + 1500 }),
+    ]
+    const rows = groupConsecutiveEvents(events)
+    // tool-group [tc-x1, tc-x2], single ev-fail, single tc-x3
+    expect(rows).toHaveLength(3)
+    expect(rows[0].type).toBe('tool-group')
+    expect(rows[1].type).toBe('single')
+    if (rows[1].type === 'single') expect(rows[1].event.id).toBe('ev-fail')
+    expect(rows[2].type).toBe('single')
+    if (rows[2].type === 'single') expect(rows[2].event.id).toBe('tc-x3')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1256,6 +1355,50 @@ describe('EventsPage — consecutive identical event grouping', () => {
     expect(html).toContain('typecheck (verify step)')
     // Count badge
     expect(html).toContain('×2')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 5b. EventsPage — tool-call INFO grouping (render)
+// ---------------------------------------------------------------------------
+
+describe('EventsPage — tool-call INFO event grouping', () => {
+  it('collapses consecutive tool_invoked INFO events from the same task into a tool-group row', () => {
+    const now = Date.now()
+    const events = [
+      makeEvent({ id: 'tc-r1', kind: 'tool_invoked', severity: 'info', taskId: 't-tool', payload: { tool: 'git rev-parse' }, timestamp: now }),
+      makeEvent({ id: 'tc-r2', kind: 'tool_invoked', severity: 'info', taskId: 't-tool', payload: { tool: 'git log' }, timestamp: now + 3_000 }),
+      makeEvent({ id: 'tc-r3', kind: 'tool_invoked', severity: 'info', taskId: 't-tool', payload: { tool: 'git status' }, timestamp: now + 14_000 }),
+    ]
+    // These events have different payloads so the old identical-payload grouping
+    // wouldn't catch them. The new tool-group criterion collapses them.
+    const qc = makeClient(makeResponse(events))
+    const html = renderPage(qc)
+    // Tool-group row testid uses the first event id
+    expect(html).toContain('data-testid="tool-group-row-tc-r1"')
+    // "3 tool calls" label
+    expect(html).toContain('3 tool calls')
+    // Duration is ~14s
+    expect(html).toContain('14s')
+    // Individual rows NOT rendered in collapsed state
+    expect(html).not.toContain('data-testid="event-row-tc-r1"')
+    expect(html).not.toContain('data-testid="event-row-tc-r2"')
+    expect(html).not.toContain('data-testid="event-row-tc-r3"')
+  })
+
+  it('keeps individual rows for tool_invoked events from different tasks (no cross-task grouping)', () => {
+    const now = Date.now()
+    const events = [
+      // Different tasks AND different payloads — neither grouping criterion applies
+      makeEvent({ id: 'tc-d1', kind: 'tool_invoked', severity: 'info', taskId: 't-a', payload: { tool: 'git status' }, timestamp: now }),
+      makeEvent({ id: 'tc-d2', kind: 'tool_invoked', severity: 'info', taskId: 't-b', payload: { tool: 'git log' }, timestamp: now + 1000 }),
+    ]
+    const qc = makeClient(makeResponse(events))
+    const html = renderPage(qc)
+    // Both render as individual rows — different tasks, no grouping
+    expect(html).toContain('data-testid="event-row-tc-d1"')
+    expect(html).toContain('data-testid="event-row-tc-d2"')
+    expect(html).not.toContain('tool-group-row')
   })
 })
 

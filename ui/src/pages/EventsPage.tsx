@@ -8,7 +8,6 @@ import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { TraceEvent } from '@/shared/schemas'
 import { relativeTime, formatRelativeAge } from '@/shared/time'
 import { taskHash } from '@/shared/routing'
-import { KpiVector } from '@/widgets/KpiVector'
 import { groupByArc, type ArcGroup, type TaskGroup, type StepGroup } from '@/shared/groupTraceEvents'
 import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
 
@@ -101,7 +100,8 @@ const DEFAULT_KINDS: ReadonlySet<Kind> = new Set(
 
 const initialFilterState = (): FilterState => ({
   range: 'all',
-  severities: new Set(SEVERITY_OPTIONS),
+  // Default to WARN+ERROR so INFO noise is hidden until explicitly enabled.
+  severities: new Set(['warn', 'error'] as const),
   kinds: new Set(DEFAULT_KINDS),
   phases: new Set(PHASE_OPTIONS),
   taskId: '',
@@ -369,22 +369,50 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
 type EventListRow =
   | { type: 'single'; event: TraceEvent }
   | { type: 'group'; events: TraceEvent[] }
+  /** Consecutive tool_invoked INFO events from the same task, ≥2 events. */
+  | { type: 'tool-group'; events: TraceEvent[] }
 
 /**
- * Collapse consecutive events whose payload serialises to the same JSON
- * string into a single group row. Groups require at least 2 events — a run
- * of 1 is always a `single` row. Events are compared by full payload
- * equality, so different payloads never merge even when `kind` matches.
+ * Collapse consecutive events into grouped rows.
+ *
+ * Two grouping criteria (checked in priority order):
+ *
+ * 1. **Tool-call noise reduction** — consecutive `tool_invoked` INFO events
+ *    from the same task (same taskId, ≥2) are collapsed into a `tool-group`
+ *    row showing "N tool calls · Xs". Renders as an expandable row.
+ *
+ * 2. **Identical-payload dedup** — other consecutive events whose payload
+ *    serialises to the same JSON string are collapsed into a `group` row.
+ *    Groups require at least 2 events; a run of 1 is always `single`.
  */
 const groupConsecutiveEvents = (events: readonly TraceEvent[]): EventListRow[] => {
   const rows: EventListRow[] = []
   let i = 0
   while (i < events.length) {
-    const key = JSON.stringify(events[i].payload)
+    const e = events[i]
+
+    // Tool-call noise reduction: consecutive tool_invoked INFO from same task
+    if (e.kind === 'tool_invoked' && e.severity === 'info' && e.taskId !== null) {
+      let j = i + 1
+      while (
+        j < events.length &&
+        events[j].kind === 'tool_invoked' &&
+        events[j].severity === 'info' &&
+        events[j].taskId === e.taskId
+      ) j++
+      if (j - i >= 2) {
+        rows.push({ type: 'tool-group', events: events.slice(i, j) })
+        i = j
+        continue
+      }
+    }
+
+    // Identical-payload grouping
+    const key = JSON.stringify(e.payload)
     let j = i + 1
     while (j < events.length && JSON.stringify(events[j].payload) === key) j++
     if (j - i === 1) {
-      rows.push({ type: 'single', event: events[i] })
+      rows.push({ type: 'single', event: e })
     } else {
       rows.push({ type: 'group', events: events.slice(i, j) })
     }
@@ -460,6 +488,89 @@ const GroupedRow = memo(({
       <span className="shrink-0 text-[10px] text-muted-foreground">{relativeTime(last.timestamp, now)}</span>
       <span className="shrink-0 rounded bg-primary/20 px-1.5 font-mono text-[10px] font-semibold text-primary">×{events.length}</span>
       <span className="min-w-0 truncate text-[11px] text-muted-foreground">{summarizeTraceEvent(first)}</span>
+    </button>
+  )
+})
+
+// ---------------------------------------------------------------------------
+// Tool-call group row — collapses consecutive tool_invoked INFO events
+// ---------------------------------------------------------------------------
+
+const formatToolDuration = (ms: number): string => {
+  const totalS = Math.round(ms / 1000)
+  if (totalS < 60) return `${totalS}s`
+  const m = Math.floor(totalS / 60)
+  const s = totalS % 60
+  return s > 0 ? `${m}m ${s}s` : `${m}m`
+}
+
+interface ToolCallGroupProps {
+  events: TraceEvent[]
+  groupId: string
+  expanded: boolean
+  onToggleGroup: (groupId: string) => void
+  now: number
+  fieldsExpandedSet: Set<string>
+  onToggleFields: (eventId: string) => void
+}
+
+/**
+ * Collapsed/expanded row for a run of consecutive tool_invoked INFO events
+ * from the same task. Collapsed state shows "N tool calls · Xs"; click to
+ * expand and see the individual rows.
+ */
+const ToolCallGroup = memo(({
+  events,
+  groupId,
+  expanded,
+  onToggleGroup,
+  now,
+  fieldsExpandedSet,
+  onToggleFields,
+}: ToolCallGroupProps) => {
+  const handleToggle = useCallback(() => onToggleGroup(groupId), [onToggleGroup, groupId])
+  const first = events[0]
+  const last = events[events.length - 1]
+  const durationMs = last.timestamp - first.timestamp
+  const label = `${events.length} tool call${events.length !== 1 ? 's' : ''} · ${formatToolDuration(durationMs)}`
+
+  if (expanded) {
+    return (
+      <div>
+        <button
+          type="button"
+          onClick={handleToggle}
+          className="mb-1 flex w-full items-center gap-2 rounded border border-primary/30 bg-primary/10 px-3 py-1 font-mono text-[10px] text-primary hover:text-foreground"
+          data-testid={`tool-group-row-${first.id}`}
+        >
+          <span>▾</span>
+          <span>{label}</span>
+          <span className="text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
+        </button>
+        <div className="flex flex-col gap-1">
+          {events.map((e) => (
+            <EventRow
+              key={e.id}
+              event={e}
+              now={now}
+              fieldsExpanded={fieldsExpandedSet.has(e.id)}
+              onToggleFields={onToggleFields}
+            />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleToggle}
+      className="flex w-full items-center gap-2 rounded border border-primary/20 bg-primary/5 px-3 py-1.5 font-mono text-[12px] text-muted-foreground hover:bg-primary/15"
+      data-testid={`tool-group-row-${first.id}`}
+    >
+      <span className="shrink-0 text-[10px]">{relativeTime(first.timestamp, now)}</span>
+      <span className="min-w-0 truncate text-[11px] font-medium text-foreground">{label}</span>
     </button>
   )
 })
@@ -729,6 +840,8 @@ export const EventsPage = () => {
   const [state, setState] = useState<FilterState>(initialFilterState)
   const [viewMode, setViewMode] = useState<EventsViewMode>('flat')
   const [extraPages, setExtraPages] = useState<TraceEvent[][]>([])
+  /** Whether the secondary filter panel (kind/phase/id/time) is visible. */
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [overrideCursor, setOverrideCursor] = useState<
     string | null | undefined
   >(undefined)
@@ -952,42 +1065,13 @@ export const EventsPage = () => {
         }
       />
 
-      {/* KPI strip — four metric tiles at the top of the Events tab */}
-      <div className="flex flex-wrap items-start gap-3 min-h-[120px]">
-        <KpiVector />
-      </div>
-
-      {/* Filter rows — two logical lines: (time · SEVERITY · KIND) / (PHASE · inputs) */}
-      <div className="flex flex-col gap-2">
-        {/* Row 1: time range · SEVERITY · KIND */}
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Time range */}
-          <div className="flex items-center gap-1">
-            <span className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground/60">
-              Time:
-            </span>
-            <select
-              aria-label="Time range"
-              data-testid="events-time-range"
-              value={state.range}
-              onChange={(e) =>
-                setState((prev) => ({
-                  ...prev,
-                  range: e.target.value as TimeRange,
-                }))
-              }
-              className="rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-[11px] text-foreground focus:border-primary/60 focus:outline-none"
-            >
-              {TIME_RANGE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
-
+      {/* Filter bar — one primary row: severity + search + "Filters" toggle.
+          Secondary panel (kind/phase/time/id) lives below, revealed on demand.
+          All filter controls remain in the DOM even when the panel is hidden so
+          tests and keyboard access work regardless of panel state. */}
+      <div className="flex flex-col gap-1.5">
+        {/* Primary row */}
+        <div className="flex flex-wrap items-center gap-2">
           <MultiSelect
             label="Severity"
             options={SEVERITY_OPTIONS}
@@ -998,67 +1082,8 @@ export const EventsPage = () => {
 
           <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
 
-          <MultiSelect
-            label="Kind"
-            options={KIND_OPTIONS}
-            selected={state.kinds}
-            onToggle={(v) => toggleIn<Kind>('kinds', v)}
-            testId="events-kind"
-            displayLabel={humanizeKind}
-          />
-        </div>
-
-        {/* Row 2: PHASE · text inputs */}
-        <div className="flex flex-wrap items-center gap-3">
-          <MultiSelect
-            label="Phase"
-            options={PHASE_OPTIONS}
-            selected={state.phases}
-            onToggle={(v) => toggleIn<Phase>('phases', v)}
-            testId="events-phase"
-            displayLabel={(p) => humanizePhase(p) ?? p}
-          />
-
-          <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
-
-          {/* Task ID exact match */}
-          <div className="flex items-center gap-1">
-            <span className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground/60">
-              Task&nbsp;ID:
-            </span>
-            <input
-              type="text"
-              aria-label="Filter by task ID"
-              data-testid="events-task-id"
-              placeholder="exact id…"
-              value={state.taskId}
-              onChange={(e) =>
-                setState((prev) => ({ ...prev, taskId: e.target.value }))
-              }
-              className="rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-[11px] text-foreground placeholder-iron focus:border-primary/60 focus:outline-none"
-            />
-          </div>
-
-          {/* Origin ID exact match */}
-          <div className="flex items-center gap-1">
-            <span className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground/60">
-              Origin&nbsp;ID:
-            </span>
-            <input
-              type="text"
-              aria-label="Filter by origin ID"
-              data-testid="events-origin-id"
-              placeholder="exact id…"
-              value={state.originId}
-              onChange={(e) =>
-                setState((prev) => ({ ...prev, originId: e.target.value }))
-              }
-              className="rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-[11px] text-foreground placeholder-iron focus:border-primary/60 focus:outline-none"
-            />
-          </div>
-
-          {/* Full-text */}
-          <div className="flex flex-1 items-center gap-1 min-w-[180px]">
+          {/* Free-text / payload search */}
+          <div className="flex flex-1 items-center gap-1 min-w-[160px]">
             <span className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground/60">
               Search:
             </span>
@@ -1071,8 +1096,112 @@ export const EventsPage = () => {
               onChange={(e) =>
                 setState((prev) => ({ ...prev, q: e.target.value }))
               }
-              className="flex-1 rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-[11px] text-foreground placeholder-iron focus:border-primary/60 focus:outline-none"
+              className="flex-1 rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-[11px] text-foreground placeholder-muted-foreground/40 focus:border-primary/60 focus:outline-none"
             />
+          </div>
+
+          <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
+
+          {/* Filters toggle */}
+          <button
+            type="button"
+            aria-expanded={filtersOpen}
+            onClick={() => setFiltersOpen((o) => !o)}
+            className="rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-foreground hover:bg-primary/15"
+          >
+            Filters {filtersOpen ? '▴' : '▾'}
+          </button>
+        </div>
+
+        {/* Secondary panel — always in DOM (hidden attr keeps tests green) */}
+        <div hidden={!filtersOpen} className="flex flex-col gap-2 rounded border border-primary/10 bg-primary/[0.02] p-2">
+          {/* Row: time · KIND */}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Time range */}
+            <div className="flex items-center gap-1">
+              <span className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground/60">
+                Time:
+              </span>
+              <select
+                aria-label="Time range"
+                data-testid="events-time-range"
+                value={state.range}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    range: e.target.value as TimeRange,
+                  }))
+                }
+                className="rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-[11px] text-foreground focus:border-primary/60 focus:outline-none"
+              >
+                {TIME_RANGE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
+
+            <MultiSelect
+              label="Kind"
+              options={KIND_OPTIONS}
+              selected={state.kinds}
+              onToggle={(v) => toggleIn<Kind>('kinds', v)}
+              testId="events-kind"
+              displayLabel={humanizeKind}
+            />
+          </div>
+
+          {/* Row: PHASE · task/origin id inputs */}
+          <div className="flex flex-wrap items-center gap-3">
+            <MultiSelect
+              label="Phase"
+              options={PHASE_OPTIONS}
+              selected={state.phases}
+              onToggle={(v) => toggleIn<Phase>('phases', v)}
+              testId="events-phase"
+              displayLabel={(p) => humanizePhase(p) ?? p}
+            />
+
+            <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
+
+            {/* Task ID exact match */}
+            <div className="flex items-center gap-1">
+              <span className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground/60">
+                Task&nbsp;ID:
+              </span>
+              <input
+                type="text"
+                aria-label="Filter by task ID"
+                data-testid="events-task-id"
+                placeholder="exact id…"
+                value={state.taskId}
+                onChange={(e) =>
+                  setState((prev) => ({ ...prev, taskId: e.target.value }))
+                }
+                className="rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-[11px] text-foreground placeholder-muted-foreground/40 focus:border-primary/60 focus:outline-none"
+              />
+            </div>
+
+            {/* Origin ID exact match */}
+            <div className="flex items-center gap-1">
+              <span className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground/60">
+                Origin&nbsp;ID:
+              </span>
+              <input
+                type="text"
+                aria-label="Filter by origin ID"
+                data-testid="events-origin-id"
+                placeholder="exact id…"
+                value={state.originId}
+                onChange={(e) =>
+                  setState((prev) => ({ ...prev, originId: e.target.value }))
+                }
+                className="rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-[11px] text-foreground placeholder-muted-foreground/40 focus:border-primary/60 focus:outline-none"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -1117,7 +1246,17 @@ export const EventsPage = () => {
                     paddingBottom: '4px',
                   }}
                 >
-                  {row.type === 'group' ? (
+                  {row.type === 'tool-group' ? (
+                    <ToolCallGroup
+                      events={row.events}
+                      groupId={row.events[0].id}
+                      expanded={expandedGroupIds.has(row.events[0].id)}
+                      onToggleGroup={toggleGroupExpanded}
+                      now={now}
+                      fieldsExpandedSet={fieldsExpandedSet}
+                      onToggleFields={toggleFieldsExpanded}
+                    />
+                  ) : row.type === 'group' ? (
                     <GroupedRow
                       events={row.events}
                       groupId={row.events[0].id}
@@ -1174,4 +1313,5 @@ export const __test__ = {
   PHASE_OPTIONS,
   TIME_RANGE_MS,
   groupConsecutiveEvents,
+  formatToolDuration,
 }

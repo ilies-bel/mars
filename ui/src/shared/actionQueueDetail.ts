@@ -286,7 +286,7 @@ export const severityColor = (severity: TraceEvent['severity']): string => {
 export const severityRowClass = (severity: TraceEvent['severity']): string => {
   if (severity === 'error') return 'border-error/40 bg-error/5'
   if (severity === 'warn') return 'border-warn/40 bg-warn/5'
-  return 'border-iron/30 bg-iron/5'
+  return 'border-primary/30 bg-primary/5'
 }
 
 /**
