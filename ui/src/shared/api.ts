@@ -1206,6 +1206,110 @@ export const refreshCodexAuth = async (projectId?: string): Promise<void> => {
 }
 
 // ---------------------------------------------------------------------------
+// Operator state — dispatch / recovery levers and caps
+// ---------------------------------------------------------------------------
+
+/** Mirror of the daemon's PauseReason type. */
+export type PauseReason = 'operator' | 'storm' | 'quota' | 'baseline'
+
+/** Mirror of the daemon's DispatchPauseState. */
+export interface DispatchPauseState {
+  paused: boolean
+  reason: PauseReason | null
+  since: string | null
+  detail: string | null
+}
+
+/** Mirror of the daemon's ControlLevers record. */
+export interface ControlLevers {
+  recovery: 'on' | 'off'
+  scoring: 'on' | 'off'
+  memoryCapture: 'on' | 'off'
+  autoRunReflect: 'on' | 'off'
+}
+
+/** Mirror of the daemon's DaemonCaps record. */
+export interface DaemonCaps {
+  implement: number
+  triage: number
+  refine: number
+  setupInstall: number
+  verify: number
+}
+
+/** Shape returned by GET /api/operator. */
+export interface OperatorState {
+  dispatch: DispatchPauseState
+  controlLevers: ControlLevers
+  caps: DaemonCaps
+}
+
+const pauseReasonSchema = z.enum(['operator', 'storm', 'quota', 'baseline'] as const)
+
+const dispatchPauseStateSchema = z.object({
+  paused: z.boolean(),
+  reason: pauseReasonSchema.nullable(),
+  since: z.string().nullable(),
+  detail: z.string().nullable(),
+})
+
+const controlLeversSchema = z.object({
+  recovery: z.enum(['on', 'off'] as const),
+  scoring: z.enum(['on', 'off'] as const),
+  memoryCapture: z.enum(['on', 'off'] as const),
+  autoRunReflect: z.enum(['on', 'off'] as const),
+})
+
+const daemonCapsSchema = z.object({
+  implement: z.number(),
+  triage: z.number(),
+  refine: z.number(),
+  setupInstall: z.number(),
+  verify: z.number(),
+})
+
+const operatorStateSchema = z.object({
+  dispatch: dispatchPauseStateSchema,
+  controlLevers: controlLeversSchema,
+  caps: daemonCapsSchema,
+})
+
+/**
+ * Fetch the live operator control state (dispatch pause, control levers, caps)
+ * from the daemon via the UI server proxy.
+ */
+export const fetchOperatorState = async (): Promise<OperatorState> =>
+  fetchJson('/api/operator', operatorStateSchema)
+
+/**
+ * Toggle dispatch on or off. Persists the choice to daemon.json and applies it
+ * to the live in-memory pause controller. Mirrors `mars operator set dispatch <on|off>`.
+ * Throws `ApiError` on failure.
+ */
+export const postOperatorDispatch = async (value: 'on' | 'off'): Promise<void> => {
+  const r = await fetch(`${BASE}/api/operator/dispatch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  })
+  if (!r.ok) await throwMutationError('/api/operator/dispatch', r)
+}
+
+/**
+ * Toggle the recovery kill-switch on or off. Persists the choice to daemon.json
+ * and applies to the running process env. Mirrors `mars operator set recovery <on|off>`.
+ * Throws `ApiError` on failure.
+ */
+export const postOperatorRecovery = async (value: 'on' | 'off'): Promise<void> => {
+  const r = await fetch(`${BASE}/api/operator/recovery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  })
+  if (!r.ok) await throwMutationError('/api/operator/recovery', r)
+}
+
+// ---------------------------------------------------------------------------
 // Context rail data — glossary terms and skills
 // ---------------------------------------------------------------------------
 

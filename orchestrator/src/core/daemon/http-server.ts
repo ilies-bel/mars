@@ -51,7 +51,18 @@ import {
   appendMessage,
 } from '../lib/chat-store'
 import { classifyMarsVerb } from '../lib/chat-mars-verbs'
-import { persistLeverAutonomyLevel } from './config'
+import {
+  persistLeverAutonomyLevel,
+  readControlLevers,
+  readPersistedPaused,
+  loadDaemonConfig,
+  persistPaused,
+  writeControlLever,
+  applyControlLevers,
+  type ControlLevers,
+  type DaemonCaps,
+} from './config'
+import type { DispatchPauseState, PauseReason } from './pause-state'
 import { archiveEntry } from '../archive/insert.js'
 import {
   assembleDelta,
@@ -666,6 +677,32 @@ export interface HttpServerDeps {
    * read-only test mode).
    */
   getCostPerMergedTaskKpi?: (opts: { windowDays: number }) => Promise<import('../lib/kpi/cost-per-merged-task').CostPerMergedTaskKpi>
+  /**
+   * Suspend dispatch for `reason`. First-cause wins: if dispatch is already
+   * paused this returns false (preserving the original reason). Optional —
+   * when absent, POST /operator/dispatch returns 503.
+   */
+  pauseDispatch?: (reason: PauseReason, detail?: string) => boolean
+  /**
+   * Resume dispatch. For a 'storm' pause this also clears the durable breaker
+   * flag; for other pause kinds it simply un-pauses. Optional — when absent,
+   * POST /operator/dispatch returns 503.
+   */
+  resumeDispatch?: () => void
+  /** Read the live in-memory dispatch-pause state. When absent, GET /view/operator
+   * falls back to reading the persisted `paused` flag from daemon.json. */
+  getPauseState?: () => DispatchPauseState
+  /**
+   * Clear the persisted signature-storm `tripped` flag so a subsequent daemon
+   * restart does not re-pause a queue the operator deliberately resumed.
+   * Optional — omitted from test stubs.
+   */
+  resetSignatureStorm?: () => Promise<void>
+  /**
+   * Kick the drain loop after a resume so queued tasks are picked up immediately.
+   * Optional — omitted from test stubs.
+   */
+  drainDispatch?: () => void
 }
 
 export interface HttpServerHandle {
@@ -1155,6 +1192,117 @@ export const startHttpServer = async (
         .viewTasks()
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/operator — live operator-control state: dispatch-pause state,
+    // control levers (recovery/scoring/memoryCapture/autoRunReflect), and
+    // concurrency caps. All fields are readable without a draining gate.
+    //
+    // dispatch: the live in-memory PauseState when deps.getPauseState is wired
+    // (daemon process); falls back to { paused: <persisted>, reason: null, … }
+    // for read-only consumers (UI server, test stubs).
+    if (req.method === 'GET' && req.url === '/view/operator') {
+      try {
+        const pauseState: DispatchPauseState = deps.getPauseState
+          ? deps.getPauseState()
+          : {
+              paused: readPersistedPaused(),
+              reason: null,
+              since: null,
+              detail: null,
+            }
+        const controlLevers: ControlLevers = readControlLevers()
+        const cfg = loadDaemonConfig()
+        const caps: DaemonCaps = cfg.caps
+        sendJson(res, 200, { dispatch: pauseState, controlLevers, caps })
+      } catch (err: unknown) {
+        sendError(res, err)
+      }
+      return
+    }
+
+    // POST /operator/dispatch — toggle dispatch on or off. Body: { value: 'on' | 'off' }.
+    // Persists the choice to daemon.json (survives restarts) and applies it to
+    // the live in-memory pause controller. Mirrors `mars operator set dispatch <on|off>`.
+    // Returns 503 when not wired in test/read-only mode.
+    if (req.method === 'POST' && req.url === '/operator/dispatch') {
+      if (!deps.pauseDispatch || !deps.resumeDispatch) {
+        sendJson(res, 503, { ok: false, error: 'dispatch control not available in this context' })
+        return
+      }
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(rawBody)
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+          return
+        }
+        const schema = z.object({ value: z.enum(['on', 'off']) })
+        const result = schema.safeParse(parsed)
+        if (!result.success) {
+          sendJson(res, 400, { ok: false, error: "value is required and must be 'on' or 'off'" })
+          return
+        }
+        const { value } = result.data
+        try {
+          if (value === 'off') {
+            persistPaused(true)
+            deps.pauseDispatch!('operator', 'http operator set dispatch off')
+            const state = deps.getPauseState ? deps.getPauseState() : { paused: true, reason: 'operator' as const, since: null, detail: null }
+            sendJson(res, 200, { ok: true, data: { paused: true, reason: state.reason } })
+          } else {
+            persistPaused(false)
+            deps.resumeDispatch!()
+            const resetStorm = deps.resetSignatureStorm ? deps.resetSignatureStorm() : Promise.resolve()
+            resetStorm
+              .then(() => {
+                deps.drainDispatch?.()
+                sendJson(res, 200, { ok: true, data: { paused: false } })
+              })
+              .catch((err: unknown) => sendError(res, err))
+          }
+        } catch (err: unknown) {
+          sendError(res, err)
+        }
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
+    }
+
+    // POST /operator/recovery — toggle the recovery kill-switch on or off.
+    // Body: { value: 'on' | 'off' }. Persists to daemon.json and applies to
+    // the running process env. Mirrors `mars operator set recovery <on|off>`.
+    if (req.method === 'POST' && req.url === '/operator/recovery') {
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(rawBody)
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+          return
+        }
+        const schema = z.object({ value: z.enum(['on', 'off']) })
+        const result = schema.safeParse(parsed)
+        if (!result.success) {
+          sendJson(res, 400, { ok: false, error: "value is required and must be 'on' or 'off'" })
+          return
+        }
+        const { value } = result.data
+        try {
+          writeControlLever('recovery', value)
+          applyControlLevers(readControlLevers())
+          sendJson(res, 200, { ok: true, data: { recovery: value } })
+        } catch (err: unknown) {
+          sendError(res, err)
+        }
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
       return
     }
 

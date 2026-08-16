@@ -5407,6 +5407,20 @@ export const startDaemon = async (
         })),
         reflectors: [],
       }),
+    getPauseState: () => pause.get(),
+    pauseDispatch: (reason, detail) => pause.pause(reason, detail),
+    resumeDispatch: () => {
+      if (pause.get().reason === 'storm') {
+        void stormBreaker.resume('operator resume via http')
+      } else {
+        pause.resume()
+      }
+    },
+    resetSignatureStorm: async () => {
+      const { resetFailureSignatureStreak } = await import('../lib/signature-storm-monitor')
+      await resetFailureSignatureStreak(getCompositionRootClient())
+    },
+    drainDispatch: () => { void drain() },
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)

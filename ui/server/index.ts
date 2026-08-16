@@ -610,6 +610,29 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/operator — live operator-control state: dispatch pause, control
+        // levers, and concurrency caps. Proxied from the daemon's /view/operator.
+        if (path === '/api/operator' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/view/operator')
+          return jsonResponse(r.status, r.body)
+        }
+
+        // POST /api/operator/dispatch — toggle dispatch on or off.
+        // Body: { value: 'on' | 'off' }. Proxied to the daemon's POST /operator/dispatch.
+        if (path === '/api/operator/dispatch' && req.method === 'POST') {
+          const body = await req.json().catch(() => null)
+          const r = await proxyPost(ctx.stateDir, '/operator/dispatch', body ?? {})
+          return jsonResponse(r.status, r.body)
+        }
+
+        // POST /api/operator/recovery — toggle the recovery kill-switch on or off.
+        // Body: { value: 'on' | 'off' }. Proxied to the daemon's POST /operator/recovery.
+        if (path === '/api/operator/recovery' && req.method === 'POST') {
+          const body = await req.json().catch(() => null)
+          const r = await proxyPost(ctx.stateDir, '/operator/recovery', body ?? {})
+          return jsonResponse(r.status, r.body)
+        }
+
         if (path === '/api/glossary' && req.method === 'GET') {
           const r = await proxyGet(ctx.stateDir, '/view/glossary')
           return jsonResponse(r.status, r.body)
