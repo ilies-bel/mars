@@ -161,6 +161,8 @@ export interface KpiRecord {
   delta: number
   sampleCount: number
   lowConfidence: boolean
+  /** Length of the measurement window in whole days (typically 7). */
+  windowDays: number
 }
 
 /** Per-column KPI time-series returned by GET /kpis/series on the daemon. */

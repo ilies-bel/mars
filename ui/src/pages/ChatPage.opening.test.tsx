@@ -23,6 +23,7 @@ Object.defineProperty(window, 'matchMedia', {
 const mockUseActionQueue = vi.hoisted(() => vi.fn())
 const mockUseTasks = vi.hoisted(() => vi.fn())
 const mockUseProposals = vi.hoisted(() => vi.fn())
+const mockUseStatusCounts = vi.hoisted(() => vi.fn())
 const createChatThread = vi.hoisted(() => vi.fn())
 const startThreadFromAlert = vi.hoisted(() => vi.fn())
 
@@ -66,6 +67,7 @@ vi.mock('@/shared/api', () => ({
 
 vi.mock('@/entities/alerts/api', () => ({ startThreadFromAlert }))
 vi.mock('@/hooks/useTasks', () => ({ useTasks: () => mockUseTasks() }))
+vi.mock('@/hooks/useStatusCounts', () => ({ useStatusCounts: () => mockUseStatusCounts() }))
 
 const makeQc = () => new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
 
@@ -96,6 +98,7 @@ beforeEach(() => {
   mockUseActionQueue.mockReturnValue({ items: [], error: null, projectsError: null, projectsEmpty: false })
   mockUseTasks.mockReturnValue({ snapshot: null, error: null, connected: true })
   mockUseProposals.mockReturnValue({ proposals: [], isPending: false, error: null, connected: true })
+  mockUseStatusCounts.mockReturnValue({ running: 0, recovering: 0, needYou: 0, failed: 0, doneToday: 0 })
   startThreadFromAlert.mockResolvedValue({ threadId: 'alert-subject-1' })
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -131,6 +134,7 @@ describe('ChatPage opening greeting', () => {
       projectsError: null,
       projectsEmpty: false,
     })
+    mockUseStatusCounts.mockReturnValue({ running: 0, recovering: 0, needYou: 2, failed: 0, doneToday: 0 })
 
     await renderPage()
 
@@ -195,6 +199,7 @@ describe('ChatPage opening greeting', () => {
       projectsError: null,
       projectsEmpty: false,
     })
+    mockUseStatusCounts.mockReturnValue({ running: 0, recovering: 0, needYou: 1, failed: 0, doneToday: 0 })
     await renderPage()
 
     const link = container.querySelector('[data-testid="chat-greeting-board-link"]') as HTMLAnchorElement | null

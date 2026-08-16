@@ -76,7 +76,7 @@ import { PaperclipIcon, MicIcon, SquareIcon, XIcon, PauseIcon } from 'lucide-rea
 import { AgentConfigPanel } from '@/widgets/chat/AgentConfigPanel'
 import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
-import { buildRankedOpenWork, buildStatusCounts, type OpenWorkItem } from '@/widgets/chat/openWork'
+import { buildRankedOpenWork, type OpenWorkItem } from '@/widgets/chat/openWork'
 import { ChatHero, type HeroDelta } from '@/widgets/chat/ChatHero'
 import { priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
 import { PROCESS_LEVEL_OPS, QueueThreadDetail } from '@/widgets/chat/QueueThreadDetail'
@@ -106,6 +106,7 @@ import { ConversationTimeline } from '@/widgets/chat/ConversationTimeline'
 import { CompactionNotice } from '@/widgets/chat/CompactionNotice'
 import { SubthreadBoundaryLine } from '@/widgets/chat/SubthreadBoundaryLine'
 import { useTasks } from '@/hooks/useTasks'
+import { useStatusCounts } from '@/hooks/useStatusCounts'
 import { SkeletonList } from '@/components/Skeleton'
 import { GlossaryHighlighter } from '@/components/glossary/GlossaryHighlighter'
 import { highlightGlossary } from '@/shared/highlightGlossary'
@@ -2720,16 +2721,8 @@ export const ChatPage = () => {
     [queueItems, taskSnapshot],
   )
 
-  const greetingCounts = useMemo(
-    () =>
-      buildStatusCounts(
-        openWork,
-        taskSnapshot?.columns.in_progress ?? [],
-        taskSnapshot?.columns.done ?? [],
-        new Date().toISOString().slice(0, 10),
-      ),
-    [openWork, taskSnapshot],
-  )
+  const { running, recovering, needYou, doneToday } = useStatusCounts()
+  const greetingCounts = { running, recovering, needYou, doneToday }
 
   // Threads at the root so a deep-linked queue item can resolve to its merged
   // alert-origin conversation. React Query dedupes this against the sidebar's

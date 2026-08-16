@@ -19,6 +19,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchGlossary, fetchAdrs } from '@/shared/api'
 import { useProgress } from '@/hooks/useProgress'
+import { useStatusCounts } from '@/hooks/useStatusCounts'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useFocusedProject } from '@/shared/useFocusedProject'
 import type { ActionQueueItem } from '@/shared/schemas'
@@ -100,13 +101,11 @@ const RulesSection = () => {
 // ---------------------------------------------------------------------------
 
 const NowSection = () => {
-  const { tasks, aggregates, connected } = useProgress()
+  const { tasks, connected } = useProgress()
+  const { running: inProgress, failed, doneToday } = useStatusCounts()
 
   const queued = tasks?.filter((t) => t.cluster === 'Queued').length ?? 0
-  const inProgress = tasks?.filter((t) => t.cluster === 'In progress').length ?? 0
   const blocked = tasks?.filter((t) => t.cluster === 'Blocked').length ?? 0
-  const failed = aggregates.failedOpen
-  const doneToday = aggregates.doneToday
 
   return (
     <section>

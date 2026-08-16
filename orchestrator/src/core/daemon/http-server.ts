@@ -1270,6 +1270,18 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /view/status-counts — canonical operational counts in one query.
+    // Returns { running, recovering, needYou, failed, doneToday } so every
+    // UI surface that renders these numbers fetches from one source instead
+    // of computing per-page. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/view/status-counts') {
+      deps.appServices
+        .viewStatusCounts()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/runs/:taskId — full run timeline for a task: all workflow runs
     // (identified by workflowInstanceId) in chronological order, each with its
     // ordered step list. Each step surfaces status, duration, token usage, the

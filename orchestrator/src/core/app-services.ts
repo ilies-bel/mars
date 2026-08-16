@@ -250,6 +250,7 @@ export interface AppServices {
   viewTasks: () => Promise<{ tasks: unknown[] }>
   viewTask: (id: string) => Promise<{ task: unknown } | null>
   viewProgress: () => Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[]; aggregates: ProgressAggregates }>
+  viewStatusCounts: () => Promise<{ running: number; recovering: number; needYou: number; failed: number; doneToday: number }>
   viewProposals: (opts?: {
     source?: ProposalSource
     status?: string
@@ -483,6 +484,13 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       createProposalReader(client),
       createAggregateReader(client),
     )
+  }
+
+  const viewStatusCounts: AppServices['viewStatusCounts'] = async () => {
+    const { buildStatusCountsView, createStatusCountsStore } =
+      await import('./daemon/view/status-counts')
+    const client = getCompositionRootClient()
+    return buildStatusCountsView(createStatusCountsStore(client))
   }
 
   const viewStepSpans: AppServices['viewStepSpans'] = async ({ originId, taskId }) => {
@@ -1926,6 +1934,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewTasks,
     viewTask,
     viewProgress,
+    viewStatusCounts,
     viewProposals,
     viewProposal,
     viewStepSpans,

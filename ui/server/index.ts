@@ -369,6 +369,11 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        if (path === '/api/status-counts') {
+          const r = await proxyGet(ctx.stateDir, '/view/status-counts')
+          return jsonResponse(r.status, r.body)
+        }
+
         if (path.startsWith('/api/tasks/')) {
           const id = decodeURIComponent(path.slice('/api/tasks/'.length))
           if (!id) {

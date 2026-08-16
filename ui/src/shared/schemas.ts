@@ -782,6 +782,8 @@ export const kpiSchema = z.object({
   sampleCount: z.number(),
   lowConfidence: z.boolean(),
   series: z.array(kpiSeriesPointSchema).optional(),
+  /** Length of the measurement window in whole days (typically 7). */
+  windowDays: z.number().optional(),
 })
 
 export const kpisResponseSchema = z.object({
@@ -791,6 +793,26 @@ export const kpisResponseSchema = z.object({
 export type KpiKey = z.infer<typeof kpiKeySchema>
 export type Kpi = z.infer<typeof kpiSchema>
 export type KpisPayload = z.infer<typeof kpisResponseSchema>
+
+// ----------------------------------------------------------------------------
+// Status counts (GET /api/status-counts). Canonical operational counts served
+// by a single daemon query so every UI surface shows the same numbers.
+// ----------------------------------------------------------------------------
+
+export const statusCountsSchema = z.object({
+  /** Tasks currently in an active execution state. */
+  running: z.number(),
+  /** Tasks under active recovery (status = 'under_investigation'). */
+  recovering: z.number(),
+  /** Open action-queue items that are not draft-proposals. */
+  needYou: z.number(),
+  /** Failed tasks that are not recovery tasks (fix_for_task_id IS NULL). */
+  failed: z.number(),
+  /** Tasks completed in the last 24 hours (rolling window). */
+  doneToday: z.number(),
+})
+
+export type StatusCounts = z.infer<typeof statusCountsSchema>
 
 // ----------------------------------------------------------------------------
 // KPI arcs (GET /api/kpis/:key/arcs). Per-arc breakdown behind a KPI value.

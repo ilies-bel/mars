@@ -84,7 +84,7 @@ export const KpiTile = ({ kpi }: KpiTileProps) => {
         <span className="text-lg font-semibold text-foreground">{formatKpiValue(kpi.key, kpi.currentValue)}</span>
         <span className={`flex items-center gap-1 text-[10px] ${cue.colorClass}`}>
           <span aria-hidden="true">{cue.glyph}</span>
-          <span>{cue.label}</span>
+          <span>{cue.label} · {kpi.windowDays ?? 7}d</span>
         </span>
       </div>
     </a>

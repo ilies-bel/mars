@@ -30,6 +30,7 @@ import {
   releaseNotesResponseSchema,
   skillsResponseSchema,
   staleWorktreesResponseSchema,
+  statusCountsSchema,
   tasksResponseSchema,
   visionResponseSchema,
   workerSessionsResponseSchema,
@@ -62,6 +63,7 @@ import {
   type ReleaseNoteEntry,
   type ReleaseNotesCursor,
   type Skill,
+  type StatusCounts,
   type StaleWorktreesPayload,
   type Task,
   type WorkerSession,
@@ -351,6 +353,14 @@ export const fetchProgress = async (
   const path = appendProject('/api/progress', projectId)
   const data = await fetchJson(path, progressResponseSchema, signal)
   return { tasks: data.tasks, proposals: data.proposals, aggregates: data.aggregates }
+}
+
+export const fetchStatusCounts = async (
+  projectId?: string,
+  signal?: AbortSignal,
+): Promise<StatusCounts> => {
+  const path = appendProject('/api/status-counts', projectId)
+  return fetchJson(path, statusCountsSchema, signal)
 }
 
 export const fetchProposalsPayload = async (

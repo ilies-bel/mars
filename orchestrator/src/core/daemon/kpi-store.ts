@@ -45,6 +45,8 @@ export interface KpiRecord {
   delta: number
   sampleCount: number
   lowConfidence: boolean
+  /** Length of the measurement window in whole days (typically 7). */
+  windowDays: number
 }
 
 const KPI_KEYS: KpiKey[] = [
@@ -109,6 +111,7 @@ const ZERO_RECORD = (key: KpiKey): KpiRecord => ({
   delta: 0,
   sampleCount: 0,
   lowConfidence: true,
+  windowDays: 7,
 })
 
 /**
@@ -128,6 +131,12 @@ export const listKpis = async (store?: TaskStore): Promise<KpiRecord[]> => {
   if (current === null) {
     return KPI_KEYS.map(ZERO_RECORD)
   }
+
+  // Derive window length from the snapshot bounds (rounded to nearest whole day).
+  const windowDays = Math.round(
+    (Date.parse(current.window_end) - Date.parse(current.window_start)) /
+      (24 * 60 * 60 * 1000),
+  ) || 7
 
   return KPI_KEYS.map((key) => {
     const col = KPI_SNAPSHOT_COL[key]
@@ -162,6 +171,7 @@ export const listKpis = async (store?: TaskStore): Promise<KpiRecord[]> => {
       delta,
       sampleCount: current[sampleCol],
       lowConfidence,
+      windowDays,
     }
   })
 }

@@ -40,10 +40,10 @@ const makeKpiDeps = (kpis: KpiRecord[], seriesOverride?: (limit: number) => Prom
 // ---------------------------------------------------------------------------
 
 const FIXTURE_KPIS: KpiRecord[] = [
-  { key: 'cost_per_arc', currentValue: 1.5, priorValue: 1.2, delta: 0.3, sampleCount: 10, lowConfidence: false },
-  { key: 'failure_rate', currentValue: 0.05, priorValue: 0.08, delta: -0.03, sampleCount: 10, lowConfidence: false },
-  { key: 'autonomous_completion_rate', currentValue: 0.9, priorValue: 0.85, delta: 0.05, sampleCount: 10, lowConfidence: false },
-  { key: 'recovery_success_rate', currentValue: 0.75, priorValue: 0.7, delta: 0.05, sampleCount: 10, lowConfidence: false },
+  { key: 'cost_per_arc', currentValue: 1.5, priorValue: 1.2, delta: 0.3, sampleCount: 10, lowConfidence: false, windowDays: 7 },
+  { key: 'failure_rate', currentValue: 0.05, priorValue: 0.08, delta: -0.03, sampleCount: 10, lowConfidence: false, windowDays: 7 },
+  { key: 'autonomous_completion_rate', currentValue: 0.9, priorValue: 0.85, delta: 0.05, sampleCount: 10, lowConfidence: false, windowDays: 7 },
+  { key: 'recovery_success_rate', currentValue: 0.75, priorValue: 0.7, delta: 0.05, sampleCount: 10, lowConfidence: false, windowDays: 7 },
 ]
 
 // ---------------------------------------------------------------------------

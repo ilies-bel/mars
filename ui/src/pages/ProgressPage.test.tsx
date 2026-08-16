@@ -79,6 +79,12 @@ mock.module('@/hooks/useProgress', () => ({
   useProgress: mockUseProgress,
 }))
 
+const mockUseStatusCounts = mock(() => ({ running: 0, recovering: 0, needYou: 0, failed: 0, doneToday: 0 }))
+
+mock.module('@/hooks/useStatusCounts', () => ({
+  useStatusCounts: mockUseStatusCounts,
+}))
+
 mock.module('@/entities/kpi/useKpis', () => ({
   useKpis: () => ({ data: undefined, isLoading: false, error: null }),
 }))
@@ -264,8 +270,8 @@ describe('ProgressPage – header stats', () => {
       ...baseState([]),
       tasks: [...doneTasks, ...failedTasks],
       byCluster: { ...emptyByCluster(), Failed: failedTasks },
-      aggregates: { doneToday: 2, doneTotal: 2, failedOpen: 1 },
     }))
+    mockUseStatusCounts.mockImplementation(() => ({ running: 0, recovering: 0, needYou: 0, failed: 1, doneToday: 2 }))
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
       const doneSection = between(html, 'stat-done', 'stat-failed')
@@ -275,6 +281,7 @@ describe('ProgressPage – header stats', () => {
       expect(doneSection).not.toContain('>1<')
     } finally {
       mockUseProgress.mockImplementation(() => baseState([]))
+      mockUseStatusCounts.mockImplementation(() => ({ running: 0, recovering: 0, needYou: 0, failed: 0, doneToday: 0 }))
     }
   })
 
@@ -284,8 +291,8 @@ describe('ProgressPage – header stats', () => {
       ...baseState([]),
       tasks: failedTasks,
       byCluster: { ...emptyByCluster(), Failed: failedTasks },
-      aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 2 },
     }))
+    mockUseStatusCounts.mockImplementation(() => ({ running: 0, recovering: 0, needYou: 0, failed: 2, doneToday: 0 }))
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
       const doneSection = between(html, 'stat-done', 'stat-failed')
@@ -296,23 +303,23 @@ describe('ProgressPage – header stats', () => {
       expect(doneSection).not.toContain('>2<')
     } finally {
       mockUseProgress.mockImplementation(() => baseState([]))
+      mockUseStatusCounts.mockImplementation(() => ({ running: 0, recovering: 0, needYou: 0, failed: 0, doneToday: 0 }))
     }
   })
 
   it('FAILED stat counts per-origin — a failed recovery does not inflate the count', () => {
     // One origin failure (fix_for_task_id IS NULL) + one failed recovery
-    // (fix_for_task_id IS NOT NULL) => the aggregate reader returns failedOpen: 1.
-    // The UI renders whatever failedOpen says; this test pins that the FAILED
-    // stat shows the per-origin count, not the raw total across origin+recovery.
+    // (fix_for_task_id IS NOT NULL) => the status-counts query (WHERE fix_for_task_id IS NULL)
+    // returns failed: 1. The UI renders whatever useStatusCounts says; this test
+    // pins that the FAILED stat shows the per-origin count, not the raw total.
     const originTask = makeTask('origin-1', 'failed')
     const recoveryTask = makeTask('fix-1', 'failed')
     mockUseProgress.mockImplementation(() => ({
       ...baseState([]),
       tasks: [originTask, recoveryTask],
       byCluster: { ...emptyByCluster(), Failed: [originTask, recoveryTask] },
-      // The query filters AND fix_for_task_id IS NULL, so only 1 is counted.
-      aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 1 },
     }))
+    mockUseStatusCounts.mockImplementation(() => ({ running: 0, recovering: 0, needYou: 0, failed: 1, doneToday: 0 }))
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
       const failedSection = from(html, 'stat-failed')
@@ -321,6 +328,7 @@ describe('ProgressPage – header stats', () => {
       expect(failedSection).not.toContain('>2<')
     } finally {
       mockUseProgress.mockImplementation(() => baseState([]))
+      mockUseStatusCounts.mockImplementation(() => ({ running: 0, recovering: 0, needYou: 0, failed: 0, doneToday: 0 }))
     }
   })
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { useProgress } from '@/hooks/useProgress'
+import { useStatusCounts } from '@/hooks/useStatusCounts'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import {
   readExplicitViewFromUrl,
@@ -189,7 +190,8 @@ export const ProgressPage = () => {
   // readProgressStateFromUrl() returns defaults in non-browser environments.
   const [initialUrlState] = useState(() => readProgressStateFromUrl())
 
-  const { byCluster, tasks, proposals, aggregates, error, connected } = useProgress()
+  const { byCluster, tasks, proposals, error, connected } = useProgress()
+  const { running: inProgressFromCounts, failed: failedCount, doneToday } = useStatusCounts()
 
   // Resolve the initial active tab with the following precedence:
   //   1. Explicit ?view= param in the URL (shareable links are always honoured)
@@ -271,11 +273,9 @@ export const ProgressPage = () => {
     return () => clearTimeout(id)
   }, [activeTab, searchQuery, selectedProposalId])
 
-  const inProgressCount = byCluster['In progress'].length
-  // Use server-side aggregate counts so done/failed are accurate even though
-  // terminal task rows are excluded from the progress graph projection.
-  const doneToday = aggregates.doneToday
-  const failedCount = aggregates.failedOpen
+  // inProgressFromCounts and failedCount/doneToday come from useStatusCounts()
+  // (server-side single query) so every surface shows the same numbers.
+  const inProgressCount = inProgressFromCounts
 
   return (
     <div className="flex h-full w-full min-h-0 overflow-hidden bg-background">
