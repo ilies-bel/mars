@@ -605,3 +605,7 @@ _Avoid_: notification, warning, inbox alert, operational alert
 
 **Visual-first UI**:
 Core UI product principle (operator-stated, 2026-08-14): every screen should be as visual as possible — prefer visual encodings (status chips, timelines, progress bars, sparklines, diff stats, cards with clear hierarchy) over walls of text. Raw prose/markdown dumps are a last resort shown behind an expandable detail, never the primary rendering. Applies to chat responses, task/proposal drawers, events, and board. Sibling principles: calm (one accent color, red only for needs-you), low density, quiet empty states.
+
+**Shell**:
+The persistent chrome framing every UI page — the dark grouped sidebar (Workspace / Developer / Intel) and the dark topbar (wordmark, breadcrumb, project switcher, live indicator) — inside which page content renders on the light warm surface.
+_Avoid_: app shell, layout, chrome
