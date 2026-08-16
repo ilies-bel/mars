@@ -3736,23 +3736,114 @@ export const merge = async (
           store,
         )
 
-        // Short-circuit: if the task branch has zero commits ahead of the
-        // integration branch the fast-forward would be a no-op. Skip the merge
-        // lock entirely — acquiring it for a no-op wastes serialisation budget
-        // and can stall concurrent merges for nothing.
+        // Zero-commit guard: if the task branch has zero commits ahead of the
+        // integration branch the pipeline produced no deliverable work.
+        //
+        // MAIN-COMMITTER EXCEPTION: a main-committer recovery task can legitimately
+        // produce zero commits when the integration branch self-healed before the task
+        // ran — its correct success state is a no-op (clean worktree, zero commits).
+        // For every other task kind, zero commits means the coder failed to commit:
+        // either the codex sandbox blocked writes to .git/worktrees/<id>/index.lock,
+        // or syncWorktreeToIntegration recreated the branch at the integration tip and
+        // parked the real commits on a checkpoint ref. Both scenarios are bugs; marking
+        // the task done while no work reached integration is a false-green (observed in
+        // mars-eb04bbda). Fail the task and preserve the worktree for investigation.
         const { repoRoot: mergeRepoRoot } = resolveContext()
         if (await isZeroCommitBranch(branch, mergeRepoRoot, buildPhaseCtx(trace, taskId, 'merge'))) {
-          console.log(
-            `[merge] task ${taskId}: branch ${branch} has zero commits ahead of ${integrationBranch} — skipping merge lock (no-op)`,
+          // Check for the main-committer exception before deciding the outcome.
+          let isMainCommitter = false
+          try {
+            const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
+              '../../core/lib/main-dirty'
+            )
+            const taskRow = await store.getTask(taskId)
+            isMainCommitter =
+              parseMainCommiterPayload(taskRow?.recoveryPayload ?? null)?.recipe ===
+              MAIN_COMMITER_RECIPE
+          } catch {
+            // If lookup fails, default to non-main-committer (fail-safe: prefer
+            // a false negative over a false positive).
+          }
+
+          if (isMainCommitter) {
+            // Expected no-op: the integration branch self-healed before this
+            // main-committer recovery task ran. Accept and mark done.
+            console.log(
+              `[merge] task ${taskId}: branch ${branch} has zero commits ahead of ${integrationBranch} — main-committer no-op accepted`,
+            )
+            await removeWorktree(
+              { path: worktreePath, branch },
+              true,
+              false,
+              buildPhaseCtx(trace, taskId, 'merge'),
+            )
+            await updateTask(taskId, { status: 'done', failedPhase: null }, store)
+            return {
+              taskId,
+              success: true,
+              message: 'zero-commit branch — main-committer no-op accepted',
+            }
+          }
+
+          // Non-main-committer task: zero commits is a bug. Fail the task and
+          // preserve the worktree so the operator can inspect uncommitted work.
+          const ZERO_COMMIT_SIGNATURE = 'merge:zero-commit-branch'
+          const errorMsg = (
+            `task branch ${branch} has zero commits ahead of ${integrationBranch}; ` +
+            `the pipeline produced no deliverable commits. Worktree preserved at ` +
+            `${worktreePath} for investigation.`
           )
-          await removeWorktree(
-            { path: worktreePath, branch },
-            true,
-            false,
-            buildPhaseCtx(trace, taskId, 'merge'),
+          console.error(
+            `[merge] task ${taskId}: zero-commit branch — failing task (was: false-green done). ${errorMsg}`,
           )
-          await updateTask(taskId, { status: 'done', failedPhase: null }, store)
-          return { taskId, success: true, message: 'zero-commit branch — no merge needed' }
+          await updateTask(
+            taskId,
+            {
+              status: 'failed',
+              error: errorMsg,
+              failedPhase: 'merge',
+              failureReason: ZERO_COMMIT_SIGNATURE,
+              failureReasonCode: ZERO_COMMIT_SIGNATURE,
+              failureSignature: ZERO_COMMIT_SIGNATURE,
+            },
+            store,
+          )
+          await raiseActionQueueItem({
+            kind: 'failed',
+            category: 'orchestrator',
+            priority: 'high',
+            title: `Task ${taskId}: zero-commit branch — no work delivered`,
+            body: [
+              `Task \`${taskId}\` reached the merge gate with branch \`${branch}\` at the same ` +
+                `commit as \`${integrationBranch}\` — zero commits ahead. No work was delivered ` +
+                `to the integration branch.`,
+              '',
+              `**Common causes:**`,
+              `1. The coder's \`git commit\` was blocked by the codex sandbox ` +
+                `(\`"Operation not permitted"\` writing to \`.git/worktrees/${taskId}/index.lock\`). ` +
+                `Auto-commit salvage may also have failed.`,
+              `2. \`syncWorktreeToIntegration\` reset the branch to the integration tip ` +
+                `(conflict-recreate policy) after the coder committed — parking real commits ` +
+                `on a checkpoint ref.`,
+              '',
+              `**To recover:** inspect the worktree at \`${worktreePath}\` for uncommitted ` +
+                `changes or checkpoint refs, then run \`mars continue ${taskId}\` to retry.`,
+            ].join('\n'),
+            payload: { taskId, branch, integrationBranch, worktreePath },
+            context: { repoRoot: process.env.MARS_REPO ?? null },
+            raisedBy: 'merge:zero-commit-branch',
+            signature: `${taskId}:${ZERO_COMMIT_SIGNATURE}`,
+            originTaskId: taskId,
+            occurrence: {
+              at: new Date().toISOString(),
+              taskId,
+              integrationBranch,
+            },
+          })
+          throw new WorkflowTerminalError(
+            'merge-zero-commit',
+            `merge:zero-commit-branch: task ${taskId} branch ${branch} has zero commits ahead of ${integrationBranch}`,
+          )
         }
 
         const targetStatus = await checkMergeTargetStatus({
@@ -4108,7 +4199,10 @@ export const merge = async (
             error.message.includes('merge aborted; vcs-supervisor could not reconcile') ||
             error.message.includes('merge:main-dirty') ||
             error.message.includes('merge:integration-gate') ||
-            error.message.includes('merge:post-merge-assertion'))
+            error.message.includes('merge:post-merge-assertion') ||
+            // Zero-commit branch: task already marked failed + action-queue item raised.
+            // Re-throw without spawning a fix task (the operator resolves via continue).
+            error.message.includes('merge:zero-commit-branch'))
         ) {
           throw error
         }

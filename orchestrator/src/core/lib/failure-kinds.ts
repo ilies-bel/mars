@@ -678,6 +678,26 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: DEFAULT_ACTIONS,
       },
 
+      // ── merge:zero-commit-branch ─────────────────────────────────────────
+      // Fires when the merge gate detects a zero-commit branch (branch tip ==
+      // integration tip) on a non-main-committer task. Root causes: the coder's
+      // git commits were blocked by the codex sandbox (index.lock permission
+      // denied), or syncWorktreeToIntegration recreated the branch at integration
+      // tip. The worktree is preserved for investigation.
+      {
+        signature: 'merge:zero-commit-branch',
+        staticEncodable: notEncodable('orchestration'),
+        warmTitle: 'The task produced no committed work at the merge gate',
+        verboseReason:
+          'The merge step found that the task branch had zero commits ahead of the integration ' +
+          'branch — the coder produced no deliverable commits. Common causes: (1) the codex ' +
+          'sandbox blocked git writes to the worktree metadata dir (index.lock), preventing ' +
+          'commits; (2) the worktree branch was reset to the integration tip by a conflict-' +
+          'recreate policy. The worktree is preserved at its original path. Run ' +
+          '`mars continue` to retry, or inspect the worktree for uncommitted changes.',
+        actions: DEFAULT_ACTIONS,
+      },
+
       // ── merge:vcs-supervisor-aborted ─────────────────────────────────────
       {
         signature: 'merge:vcs-supervisor-aborted/merge-conflict-unresolved',

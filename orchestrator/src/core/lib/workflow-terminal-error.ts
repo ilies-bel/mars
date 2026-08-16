@@ -48,6 +48,15 @@ export type WorkflowTerminalKind =
    * restart the task (`mars restart <id>`).
    */
   | 'setup-dirty-integration'
+  /**
+   * The merge gate detected that the task branch has zero commits ahead of the
+   * integration branch. For non-main-committer tasks this is a defect — either
+   * the coder's git commits were blocked by the sandbox (index.lock permission
+   * denied) or syncWorktreeToIntegration reset the branch to the integration
+   * tip. The task is failed and an operator action-queue item is raised; the
+   * worktree is preserved for investigation.
+   */
+  | 'merge-zero-commit'
 
 export interface WorkflowTerminalMeta {
   /** Unix epoch seconds at which the provider quota resets. Only set for `quota-rejected`. */

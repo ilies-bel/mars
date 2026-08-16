@@ -9,6 +9,8 @@
 // whole turn — not context occupancy. Reading it as occupancy is what
 // produced fabricated readouts like `289216/50000` and ctx% above 300%.
 
+import { execFileSync } from 'node:child_process'
+import { resolve } from 'node:path'
 import {
   runSubprocessStreaming,
   buildWorkerEnv,
@@ -262,6 +264,60 @@ export const codexHeadless: HeadlessAdapter = {
       }
     }
 
+    // Build the list of extra writable directories to pass to codex via --add-dir.
+    //
+    // FIX 1 — git worktree metadata dir:
+    //   codex exec --sandbox workspace-write allows writes to workdir, /tmp, and
+    //   $TMPDIR, but NOT to the repo's common .git directory. When the coder runs
+    //   `git commit` inside the worktree, git needs to write to
+    //   .git/worktrees/<task-id>/index.lock (and MERGE_MSG etc.) in the shared git
+    //   dir — a path outside the sandbox boundary. Without --add-dir, that write
+    //   fails with "Operation not permitted", leaving commits uncommitted and the
+    //   branch empty at the merge gate (the mars-748ab10e / mars-eb04bbda incident).
+    //
+    // FIX 2 (partial) — npm/pnpm install stall:
+    //   npm install of new dependencies stalls ~150s because the workspace-write
+    //   sandbox blocks outbound network (macOS sandbox-exec). The pnpm content-
+    //   addressable store (~/.pnpm-store) is also outside the sandbox boundary, so
+    //   pnpm cannot read its cache even for packages already downloaded. Adding the
+    //   pnpm store as a writable dir allows pnpm to serve already-cached packages
+    //   without network. For packages NOT yet in the store, network access remains
+    //   blocked; see CLAUDE.md for the full npm-install-in-sandbox limitation.
+    const addDirArgs: string[] = []
+    if (!isReadOnlyRun(opts)) {
+      // --- git worktree metadata dir ---
+      try {
+        const gitDir = execFileSync('git', ['rev-parse', '--git-dir'], {
+          cwd: opts.cwd,
+          encoding: 'utf8',
+        }).trim()
+        if (gitDir) {
+          // For a linked worktree, --git-dir returns an absolute path like
+          // /repo/.git/worktrees/<task-id>. resolve() handles the rare relative
+          // `.git` case (plain checkout, not a worktree) by prefixing cwd.
+          addDirArgs.push('--add-dir', resolve(opts.cwd, gitDir))
+        }
+      } catch {
+        // Best-effort: if git is unavailable or cwd is not inside a git repo,
+        // skip --add-dir for the git dir. Sandbox restrictions will prevent
+        // commits, but the session itself will still start.
+      }
+
+      // --- pnpm content-addressable store ---
+      // Allows pnpm to serve already-cached packages without network access.
+      try {
+        const pnpmStore = execFileSync('pnpm', ['store', 'path'], {
+          cwd: opts.cwd,
+          encoding: 'utf8',
+        }).trim()
+        if (pnpmStore) {
+          addDirArgs.push('--add-dir', pnpmStore)
+        }
+      } catch {
+        // pnpm not available or store path query failed — skip.
+      }
+    }
+
     // Resolved once per process (see provider-bin.ts) and reused, so a
     // mid-session PATH change cannot silently break every subsequent run.
     const result = await runSubprocessStreaming(
@@ -276,6 +332,7 @@ export const codexHeadless: HeadlessAdapter = {
         `model_reasoning_effort="${opts.effort ?? 'high'}"`,
         '--sandbox',
         isReadOnlyRun(opts) ? 'read-only' : 'workspace-write',
+        ...addDirArgs,
         composedPrompt,
       ],
       opts.cwd,

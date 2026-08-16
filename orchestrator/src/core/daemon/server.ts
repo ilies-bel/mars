@@ -2187,6 +2187,11 @@ export const startDaemon = async (
             // These are fully self-handled; suppress the generic re-update.
             log(`[implement] ${task.id} ${err.kind} abort (exception path); task already handled`)
             break
+          case 'merge-zero-commit':
+            // The merge gate found zero commits ahead of integration; already
+            // marked failed + raised action-queue item. Suppress generic re-update.
+            log(`[implement] ${task.id} merge-zero-commit abort (exception path); task already marked failed, item raised`)
+            break
         }
       } else {
         log(`[implement] ${task.id} failed: ${message}`)
