@@ -173,7 +173,7 @@ export const DenseColumn = ({ label, count, children }: DenseColumnProps) => (
   >
     <header className="flex items-center justify-between border-b border-border pb-2">
       <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-        {label}
+        {label.toUpperCase()}
       </span>
       <span
         data-column-count={label}
