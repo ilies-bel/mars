@@ -124,7 +124,7 @@ const resolvedLeaseExpiryMs = (): number => {
 export const buildPhantomBody = (
   taskId: string,
   status: string,
-  reason: 'dead-pid' | 'ceiling' | 'no-merge-job',
+  reason: 'dead-pid' | 'ceiling' | 'no-merge-job' | 'runner-hung',
   ageMinutes: number,
   prompt?: string,
 ): string => {
@@ -135,7 +135,9 @@ export const buildPhantomBody = (
       ? `its worker process was not alive when checked`
       : reason === 'no-merge-job'
         ? `it is stuck in the merge phase with no active merge job (the merge worker lost this job)`
-        : `the worker made no progress for ${ageMinutes} min (ceiling: ${Math.round(resolvedCeilingMs() / 60_000)} min)`
+        : reason === 'runner-hung'
+          ? `its verify runner held the verify slot but the child process exited and the runner did not — hung for ${ageMinutes} min`
+          : `the worker made no progress for ${ageMinutes} min (ceiling: ${Math.round(resolvedCeilingMs() / 60_000)} min)`
   return (
     `"${goal}" stalled — ${reasonDetail}, so Mars stopped it. ` +
     `Restart to try again, or drop it if the work is no longer needed.`
@@ -209,7 +211,7 @@ export const sweepPhantomTasks = async (
     for (const task of tasks) {
       const entry = inFlightByTask.get(task.id)
 
-      let phantomReason: 'dead-pid' | 'ceiling' | 'no-merge-job' | null = null
+      let phantomReason: 'dead-pid' | 'ceiling' | 'no-merge-job' | 'runner-hung' | null = null
 
       if (entry?.pid !== undefined) {
         // Belt: PID is known — check liveness. Dead PID ⟹ phantom immediately.
@@ -221,7 +223,14 @@ export const sweepPhantomTasks = async (
         // streaming output keeps this fresh, so long runs are never killed.
         if (phantomReason === null && entry.lastActivityMs !== undefined) {
           if (now - entry.lastActivityMs > ceiling) {
-            phantomReason = 'ceiling'
+            // Distinguish hung-runner from a generic ceiling hit:
+            // if the task is actively verifying in this daemon (isVerifyRunning)
+            // AND the heartbeat went silent, the verify child died without the
+            // runner exiting — emit 'runner-hung' for a precise failure code.
+            phantomReason =
+              status === 'verifying' && isVerifyRunning?.(task.id)
+                ? 'runner-hung'
+                : 'ceiling'
           }
         }
       } else if (entry !== undefined) {
@@ -339,9 +348,11 @@ export const sweepPhantomTasks = async (
           ? `worker PID ${entry?.pid ?? 'unrecorded'} was not alive when checked; last event: ${entry?.lastActivityMs === undefined ? 'none recorded' : new Date(entry.lastActivityMs).toISOString()}`
           : phantomReason === 'no-merge-job'
             ? `task is stuck in status='merging' but has no active merge_jobs row; the merge worker cannot process it and it will never leave 'merging' without intervention`
-            : entry?.lastActivityMs !== undefined
-              ? `worker PID ${entry.pid} was alive but its event stream was silent for ${Math.round((now - entry.lastActivityMs) / 60_000)} min (ceiling: ${Math.round(ceiling / 60_000)} min)`
-              : `no worker PID was recorded and the task row was unchanged for ${ageMinutes} min (ceiling: ${Math.round(ceiling / 60_000)} min)`
+            : phantomReason === 'runner-hung'
+              ? `task is in active verify phase (isVerifyRunning=true) but the verify-child heartbeat went silent ${Math.round((now - (entry?.lastActivityMs ?? now)) / 60_000)} min ago — the verify runner held the slot after its child process exited; daemon PID ${entry?.pid ?? 'unrecorded'} is alive`
+              : entry?.lastActivityMs !== undefined
+                ? `worker PID ${entry.pid} was alive but its event stream was silent for ${Math.round((now - entry.lastActivityMs) / 60_000)} min (ceiling: ${Math.round(ceiling / 60_000)} min)`
+                : `no worker PID was recorded and the task row was unchanged for ${ageMinutes} min (ceiling: ${Math.round(ceiling / 60_000)} min)`
 
       // Mark the task failed BEFORE reclaiming the slot so there is never a
       // window where the slot is free but the task is still 'running'.

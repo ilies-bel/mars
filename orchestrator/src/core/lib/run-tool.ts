@@ -62,6 +62,14 @@ export interface RunToolInput {
    *  mirroring the `timeoutMs` kill path. If already aborted at spawn time the
    *  child is signalled immediately. */
   signal?: AbortSignal
+  /**
+   * Optional callback invoked with the child's OS PID immediately after the
+   * process is spawned, before any output is collected. Use this to record the
+   * PID for external liveness checks (e.g. the verify-phase heartbeat in
+   * `server.ts`). Called only when `child.pid` is defined (i.e. spawn did not
+   * throw synchronously). No-op when absent.
+   */
+  onPid?: (pid: number) => void
 }
 
 export interface RunToolResult {
@@ -113,6 +121,10 @@ export const runTool = async (
     // streams the output.
     detached: true,
   })
+  // Notify the caller of the child's PID so it can perform external liveness
+  // checks (e.g. the verify-phase heartbeat). Called synchronously before any
+  // output is collected so the PID is known even if the child exits instantly.
+  if (child.pid !== undefined) input.onPid?.(child.pid)
 
   /**
    * Signal the child's entire process group, falling back to the direct child

@@ -225,6 +225,19 @@ export interface MarsServices {
    */
   onPid?: (pid: number) => void
   /**
+   * Optional callback invoked with the OS PID of each verify child subprocess
+   * spawned by `verifyChanges`. The daemon uses this to gate the verify-phase
+   * heartbeat on real child liveness: if the most recently reported child is
+   * dead and has been gone for more than the grace window, the heartbeat stops
+   * and the phantom-task watchdog can detect the hung runner as
+   * `verify:runner-hung`.
+   *
+   * Called once per subprocess spawn (not per step). When absent, the heartbeat
+   * fires unconditionally and the watchdog falls back to the updatedAt ceiling
+   * (pre-fix behaviour).
+   */
+  onVerifyChildPid?: (pid: number) => void
+  /**
    * Optional hook called by the `review` primitive (auto path) immediately
    * before running `verifyChanges`. When present, the daemon:
    *   1. Releases the implement semaphore slot so other tasks can start coding
@@ -3113,6 +3126,7 @@ export const review = async (
         integrationBranch,
         changedFiles: isMainCommitter ? [] : changedFiles,
         traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
+        onChildPid: ctx.services.onVerifyChildPid,
       })
 
       // Infra-failure retry (once only): if any failed step output matches an
@@ -3135,6 +3149,7 @@ export const review = async (
             integrationBranch,
             changedFiles: isMainCommitter ? [] : changedFiles,
             traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
+            onChildPid: ctx.services.onVerifyChildPid,
           })
         }
       }

@@ -30,6 +30,12 @@ interface ExecOpts {
    * grace (see `runTool`). Forwarded verbatim to the underlying child process.
    */
   signal?: AbortSignal
+  /**
+   * Optional callback forwarded to `runTool` — invoked with the child's OS PID
+   * immediately after spawn. Used by verify-phase steps to report their PID to
+   * the daemon's liveness heartbeat.
+   */
+  onPid?: (pid: number) => void
 }
 
 interface ExecError extends Error {
@@ -106,6 +112,7 @@ const runShell = async (
       expectsFailure: opts.expectsFailure,
       signal: opts.signal,
       env: opts.env,
+      onPid: opts.onPid,
     },
     ctx?.store ?? nullTraceStore,
   )
@@ -154,7 +161,7 @@ export const exec = async (
 export const execProbe = async (
   cmd: string,
   args: readonly string[],
-  opts: { cwd: string; timeout?: number; signal?: AbortSignal; env?: Record<string, string> },
+  opts: { cwd: string; timeout?: number; signal?: AbortSignal; env?: Record<string, string>; onPid?: (pid: number) => void },
   traceCtx?: TraceCtx,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
   runShell(cmd, args, {
@@ -162,6 +169,7 @@ export const execProbe = async (
     timeoutMs: opts.timeout,
     signal: opts.signal,
     env: opts.env,
+    onPid: opts.onPid,
     expectsFailure: true,
     traceCtx,
   })

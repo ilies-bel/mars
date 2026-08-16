@@ -1409,6 +1409,17 @@ export const startDaemon = async (
     // task holds a verify semaphore slot; cleared in releaseVerifySlot (or
     // in the finally block on abnormal exit).
     let verifyHeartbeatInterval: ReturnType<typeof setInterval> | null = null
+    // OS PID of the most recently spawned verify child subprocess, set via
+    // the onVerifyChildPid service callback. Used by the verify-phase
+    // heartbeat to check whether a running verify is alive or hung.
+    let verifyChildPid: number | null = null
+    // Millisecond timestamp of when the verify child was last seen alive.
+    // Updated to Date.now() when onVerifyChildPid fires (spawn) and on each
+    // heartbeat tick while isProcessAlive(verifyChildPid) is true.
+    // Used to compute the grace window: if the child has been dead for longer
+    // than VERIFY_CHILD_GONE_GRACE_MS, the heartbeat stops so the watchdog
+    // can detect the hung runner.
+    let verifyChildLastSeenAliveMs: number | null = null
     log(`[implement] ${task.id} dispatching`)
     try {
       // Slice F.2: dispatch-time dirty-main check. Runs BEFORE workflow
@@ -1589,6 +1600,15 @@ export const startDaemon = async (
       // row stays observable by monitoring tools.
       let lastDbHeartbeatMs = 0
       const HEARTBEAT_INTERVAL_MS = 60_000
+      // Grace window after a verify child exits before the heartbeat shuts
+      // down. Allows for the brief inter-step gap between sequential verify
+      // subprocess invocations (step A exits, step B spawns). After this
+      // window without any alive verify child, the heartbeat stops and the
+      // phantom-task watchdog detects the runner as hung (runner-hung).
+      // Configurable via MARS_VERIFY_CHILD_GONE_GRACE_MS.
+      const VERIFY_CHILD_GONE_GRACE_MS = Number(
+        process.env.MARS_VERIFY_CHILD_GONE_GRACE_MS ?? 5 * 60_000,
+      )
       const onEvent = (evt: WorkflowEvent): void => {
         if (evt.event === 'claude-event') {
           const nowMs = Date.now()
@@ -1755,6 +1775,16 @@ export const startDaemon = async (
             // There is no circular dependency: coding never waits on verify, so
             // a task blocked on verifySem cannot prevent verifySem from being
             // released. No deadlock is possible.
+            // onVerifyChildPid: reported by verifyChanges each time a verify
+            // subprocess is spawned. Records the PID so the heartbeat can gate
+            // on real child liveness after the verify semaphore is acquired.
+            // Resets verifyChildLastSeenAliveMs so the grace window starts fresh
+            // for each new child (allows the brief inter-step gap between
+            // sequential verify subprocess invocations without false positives).
+            onVerifyChildPid: (pid: number): void => {
+              verifyChildPid = pid
+              verifyChildLastSeenAliveMs = Date.now()
+            },
             acquireVerifySlot: async (): Promise<void> => {
               if (!verifyHandedOff) {
                 verifyHandedOff = true
@@ -1777,15 +1807,72 @@ export const startDaemon = async (
                 tracker.recordPid(task.id, process.pid)
                 // Kick off the verify heartbeat BEFORE the semaphore wait so
                 // tasks queued behind a held verify slot are never ceiling-killed
-                // while waiting. Fires every HEARTBEAT_INTERVAL_MS to keep
-                // lastActivityMs and task.updatedAt fresh for the watchdog.
-                // Starting here (rather than after acquire) is the fix for the
-                // verify/unclassified storm where tasks with caps.verify=1 were
-                // ceiling-killed while waiting for the sole verify slot to free.
+                // while waiting.
+                //
+                // Two-phase liveness:
+                //
+                //   Phase 1 — queued on semaphore (activeVerifyingTaskIds not
+                //     yet populated): heartbeat fires unconditionally. The
+                //     daemon's PID is the alive-sentinel. This preserves the
+                //     fix from commit 2ca0994d: tasks queued behind a held
+                //     verify slot are never ceiling-killed on updatedAt
+                //     staleness (case 2b: alive PID + fresh heartbeat).
+                //
+                //   Phase 2 — active verify (after acquire(verifySem) resolves,
+                //     task is in activeVerifyingTaskIds): heartbeat gates on
+                //     real child liveness. Once verifyChildPid is known, the
+                //     heartbeat checks isProcessAlive(verifyChildPid). If the
+                //     child has been dead for longer than
+                //     VERIFY_CHILD_GONE_GRACE_MS (allowing for the brief
+                //     inter-step gap between sequential subprocess invocations),
+                //     the heartbeat stops. The phantom-task watchdog then
+                //     detects the task as `runner-hung` (stale lastActivityMs
+                //     while isVerifyRunning returns true).
+                //
+                // This closes the inverse of the 2ca0994d fix: the heartbeat
+                // no longer grants immortality to a task whose verify runner
+                // is genuinely hung (child dead, runner never returned).
                 if (verifyHeartbeatInterval === null) {
                   lastDbHeartbeatMs = 0  // force first tick to write immediately
                   verifyHeartbeatInterval = setInterval(() => {
                     const nowMs = Date.now()
+                    // Log semaphore state on every tick for diagnostics.
+                    // Wedged holders show up in watch.log without a daemon restart.
+                    log(
+                      `[verify-heartbeat] ${task.id} sem inUse=${verifySem.inUse} waiting=${verifySem.waiters.length}` +
+                        (verifyChildPid !== null ? ` child-pid=${verifyChildPid}` : ''),
+                    )
+                    // Phase 2: active verify — gate on real child liveness.
+                    if (activeVerifyingTaskIds.has(task.id) && verifyChildPid !== null) {
+                      if (isProcessAlive(verifyChildPid)) {
+                        // Child alive: refresh last-seen timestamp.
+                        verifyChildLastSeenAliveMs = nowMs
+                      } else {
+                        // Child dead: allow a grace window for the next step to
+                        // spawn (sequential verify steps have a brief gap between
+                        // the previous child exiting and the next one starting).
+                        // Reference: last time the child was seen alive (or spawn
+                        // time when verifyChildLastSeenAliveMs is set by
+                        // onVerifyChildPid).
+                        const goneSinceMs = nowMs - (verifyChildLastSeenAliveMs ?? nowMs)
+                        if (goneSinceMs > VERIFY_CHILD_GONE_GRACE_MS) {
+                          // Child has been dead too long — runner is hung.
+                          // Stop heartbeating so lastActivityMs goes stale.
+                          // The phantom-task watchdog will reap this task as
+                          // `runner-hung` on its next sweep.
+                          log(
+                            `[verify-heartbeat] ${task.id} verify child pid=${verifyChildPid} gone ${Math.round(goneSinceMs / 60_000)}min` +
+                              ` (grace: ${Math.round(VERIFY_CHILD_GONE_GRACE_MS / 60_000)}min);` +
+                              ` stopping heartbeat — watchdog will detect runner-hung`,
+                          )
+                          clearInterval(verifyHeartbeatInterval!)
+                          verifyHeartbeatInterval = null
+                          return
+                        }
+                        // else: recently dead, within grace → fall through and heartbeat
+                      }
+                    }
+                    // Phase 1 (queued) or Phase 2 with alive child: heartbeat normally.
                     tracker.recordActivity(task.id, nowMs)
                     void updateTask(task.id, {}).catch(() => {})
                   }, HEARTBEAT_INTERVAL_MS)
@@ -1793,8 +1880,8 @@ export const startDaemon = async (
               }
               await acquire(verifySem)
               // Register this task as actively verifying in this daemon so the
-              // phantom-task watchdog's isVerifyRunning predicate can exempt it
-              // from the wall-clock ceiling (belt-and-suspenders alongside PID).
+              // phantom-task watchdog's isVerifyRunning predicate can identify
+              // the runner-hung case (stale heartbeat while isVerifyRunning=true).
               activeVerifyingTaskIds.add(task.id)
             },
             releaseVerifySlot: (): void => {

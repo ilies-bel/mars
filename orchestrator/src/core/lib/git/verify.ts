@@ -254,6 +254,19 @@ export interface VerifyArgs {
    * gate visible in `verifyOutput`.
    */
   verifyCmd?: string | null
+  /**
+   * Optional callback invoked with each verify step's child process OS PID
+   * immediately after the child is spawned. The daemon uses this to track
+   * verify child liveness in the heartbeat so a hung verify runner (child dead
+   * but runner still holding the slot) can be detected by the phantom-task
+   * watchdog as `verify:runner-hung` rather than timing out via the normal
+   * ceiling path.
+   *
+   * Called once per subprocess spawn (not per step — steps that skip shelling
+   * out do not invoke this callback). When absent, verify runs without PID
+   * tracking (pre-fix behaviour; watchdog falls back to the updatedAt ceiling).
+   */
+  onChildPid?: (pid: number) => void
 }
 
 export type VerifyVerdict = 'PASS' | 'FAIL' | "CAN'T-VERIFY"
@@ -278,6 +291,7 @@ const runVerifyStep = async (
   traceCtx?: TraceCtx,
   signal?: AbortSignal,
   timeoutMs?: number,
+  onChildPid?: (pid: number) => void,
 ): Promise<VerifyStep> => {
   // Per-step timeout: create a dedicated AbortSignal that fires after timeoutMs.
   // This is independent of the outer signal so timeouts can be distinguished
@@ -299,7 +313,12 @@ const runVerifyStep = async (
   const verifyCtx: TraceCtx | undefined = traceCtx
     ? { ...traceCtx, phase: traceCtx.phase ?? 'verify' }
     : undefined
-  const r = await execProbe(cmd, [...args], { cwd, signal: effectiveSignal }, verifyCtx)
+  const r = await execProbe(
+    cmd,
+    [...args],
+    { cwd, signal: effectiveSignal, onPid: onChildPid },
+    verifyCtx,
+  )
   const commandLine = [cmd, ...args].join(' ')
   if (r.exitCode === 0) {
     return {
@@ -690,6 +709,7 @@ export const verifyChanges = async (
       verifyCtx,
       args.signal,
       defaultTimeoutMs,
+      args.onChildPid,
     )
     const cmdDuration = Math.round(performance.now() - cmdStart)
     // Override commandLine to show the raw spec command, not 'sh -c <cmd>',
@@ -831,6 +851,7 @@ export const verifyChanges = async (
       verifyCtx,
       args.signal,
       stepTimeoutMs,
+      args.onChildPid,
     )
     const duration = Math.round(performance.now() - stepStart)
 
@@ -887,6 +908,7 @@ export const verifyChanges = async (
         verifyCtx,
         args.signal,
         stepTimeoutMs,
+        args.onChildPid,
       )
       const _retryDuration = Math.round(performance.now() - _retryStart)
       if (_retryResult.passed) {

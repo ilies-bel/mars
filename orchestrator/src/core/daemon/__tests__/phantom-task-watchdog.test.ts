@@ -1363,3 +1363,182 @@ describe('sweepPhantomTasks — verify-semaphore queue ceiling immunity', () => 
     expect(items[0].kind).toBe(watchdog.PHANTOM_TASK_KIND)
   })
 })
+
+// ── Hung verify runner: child died without runner exiting ─────────────────────
+//
+// Incident (2026-08-16 ~21:50-00:20): verify runner wedged 2.5h with ZERO
+// vitest/npm/tsc processes. The heartbeat (commit 2ca0994d) used process.pid
+// (daemon, always alive) so lastActivityMs stayed fresh indefinitely.
+// activeVerifyingTaskIds added belt-and-suspenders immunity. Both together made
+// hung verifies immortal.
+//
+// Fix: the heartbeat gates on real child liveness after the verify semaphore is
+// acquired. When the verify child has been dead for >VERIFY_CHILD_GONE_GRACE_MS,
+// the heartbeat stops — lastActivityMs goes stale — and the watchdog detects the
+// task as runner-hung (alive PID + stale lastActivityMs + isVerifyRunning=true).
+//
+// Regression test: task in active verify (isVerifyRunning=true), alive daemon
+// PID, but stale heartbeat (>30 min) → fails with verify:runner-hung.
+
+describe('sweepPhantomTasks — hung verify runner (child died, heartbeat stopped)', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_PHANTOM_WATCHDOG_CEILING_MS
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('fails a verifying task as runner-hung when verify child is dead and heartbeat is stale', async () => {
+    // Reproduces the hung-runner incident: verify slot was acquired, child
+    // spawned and then died, but the runner never returned. The heartbeat
+    // stopped updating lastActivityMs once the child was gone for >grace.
+    // The watchdog must detect this as runner-hung — not generic ceiling.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('verify: run test suite', undefined, { skipTriage: true })
+
+    // Task has been in 'verifying' for 35 minutes (past the 30-min ceiling).
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'verifying', updated_at = ? WHERE id = ?`,
+      args: [new Date(nowMs - 35 * 60_000).toISOString(), task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    // In-flight entry: daemon PID (alive) but stale lastActivityMs.
+    // Simulates the state after the heartbeat stopped (verify child died,
+    // grace window expired, heartbeat interval cleared itself).
+    const inFlightEntries = [
+      {
+        taskId: task.id,
+        kind: 'implement' as const,
+        startedAt: nowMs - 35 * 60_000,
+        pid: process.pid,                    // daemon PID — always alive
+        lastActivityMs: nowMs - 35 * 60_000, // stale: heartbeat stopped when child died
+      },
+    ]
+    const isAlive = vi.fn().mockReturnValue(true) // daemon PID is alive
+    // isVerifyRunning=true: the task acquired the verify slot (active verify phase,
+    // not queued on the semaphore). The heartbeat stopped because the child died.
+    const isVerifyRunning = vi.fn().mockReturnValue(true)
+
+    const { failed } = await watchdog.sweepPhantomTasks(
+      inFlightEntries,
+      reclaimSlot,
+      isAlive,
+      nowMs,
+      undefined, // hasActiveMergeJob not needed
+      isVerifyRunning,
+    )
+
+    // Must be failed as runner-hung: alive daemon PID + stale heartbeat +
+    // isVerifyRunning=true → runner held the slot after its child exited.
+    expect(failed).toContain(task.id)
+    expect(reclaimSlot).toHaveBeenCalledWith(task.id, 'implement')
+
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failedPhase).toBe('verify')
+    expect(reloaded?.failureReasonCode).toBe('phantom-task:runner-hung')
+
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(1)
+    expect(items[0].kind).toBe(watchdog.PHANTOM_TASK_KIND)
+  })
+
+  it('does NOT runner-hung-kill when isVerifyRunning is false (task still queued on semaphore)', async () => {
+    // Regression: tasks queued behind a held verify slot have an alive daemon
+    // PID + fresh heartbeat (fix from 2ca0994d). isVerifyRunning=false (they
+    // haven't acquired the slot yet). Even with a stale heartbeat, if
+    // isVerifyRunning=false the task must use the generic ceiling path, not
+    // runner-hung. But here the heartbeat is fresh (queued tasks keep it alive),
+    // so no kill at all.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('verify: heavy test suite', undefined, { skipTriage: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'verifying', updated_at = ? WHERE id = ?`,
+      args: [new Date(nowMs - 35 * 60_000).toISOString(), task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    const inFlightEntries = [
+      {
+        taskId: task.id,
+        kind: 'implement' as const,
+        startedAt: nowMs - 35 * 60_000,
+        pid: 12345,
+        lastActivityMs: nowMs - 1 * 60_000, // fresh heartbeat: queued, not hung
+      },
+    ]
+    const isAlive = vi.fn().mockReturnValue(true)
+    const isVerifyRunning = vi.fn().mockReturnValue(false) // still queued, not active
+
+    const { failed } = await watchdog.sweepPhantomTasks(
+      inFlightEntries,
+      reclaimSlot,
+      isAlive,
+      nowMs,
+      undefined,
+      isVerifyRunning,
+    )
+
+    // Must NOT be killed: fresh heartbeat overrides stale updatedAt.
+    expect(failed).not.toContain(task.id)
+    expect(reclaimSlot).not.toHaveBeenCalled()
+
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('verifying')
+
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(0)
+  })
+
+  it('uses generic ceiling (not runner-hung) for a non-verifying task with stale heartbeat and isVerifyRunning=false', async () => {
+    // Belt-and-suspenders: if status='running' (not 'verifying') with stale
+    // heartbeat, the watchdog must use 'ceiling', not 'runner-hung'. The
+    // runner-hung path is verifying-only.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('implement: heavy feature', undefined, { skipTriage: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', updated_at = ? WHERE id = ?`,
+      args: [new Date(nowMs - 35 * 60_000).toISOString(), task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    const inFlightEntries = [
+      {
+        taskId: task.id,
+        kind: 'implement' as const,
+        startedAt: nowMs - 35 * 60_000,
+        pid: process.pid,
+        lastActivityMs: nowMs - 35 * 60_000, // stale heartbeat
+      },
+    ]
+    const isAlive = vi.fn().mockReturnValue(true)
+    // isVerifyRunning=true shouldn't matter for status='running'
+    const isVerifyRunning = vi.fn().mockReturnValue(true)
+
+    const { failed } = await watchdog.sweepPhantomTasks(
+      inFlightEntries,
+      reclaimSlot,
+      isAlive,
+      nowMs,
+      undefined,
+      isVerifyRunning,
+    )
+
+    // Must be failed — but as 'ceiling', not 'runner-hung'.
+    expect(failed).toContain(task.id)
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failureReasonCode).toBe('phantom-task:ceiling')
+  })
+})
