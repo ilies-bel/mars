@@ -68,16 +68,33 @@ export interface ConditionsDeps {
  * Derive `failed` rows from `tasks WHERE status='failed'`.
  * Each returned row has the same payload shape that the old raiser produced so
  * OPERATIONAL_ALERT_COPY renderers and `getActionQueueEntityId` both work unchanged.
+ *
+ * Recovery tasks (fix_for_task_id IS NOT NULL) whose origin is currently
+ * non-terminal (i.e. the origin is queued/running/verifying/merging/blocked)
+ * are silently suppressed: the operator cannot act on such a row (a fix task
+ * is a non-recoverable leaf), and the origin's own lifecycle is the real
+ * surface.  We keep the row when the origin is itself `failed` — that is the
+ * actionable case where recovery has been exhausted — or when the fix task has
+ * no live origin.
  */
 async function deriveFailedConditions(
   client: DbClient,
   nowMs: number,
 ): Promise<PersistedActionQueueRow[]> {
   const result = await client.execute(
-    `SELECT id, failure_signature, prompt, updated_at, failure_reason_code,
-            stall_diagnostics
-       FROM tasks WHERE status = 'failed'
-       ORDER BY updated_at DESC`,
+    `SELECT t.id, t.failure_signature, t.prompt, t.updated_at, t.failure_reason_code,
+            t.stall_diagnostics
+       FROM tasks t
+      WHERE t.status = 'failed'
+        AND (
+          t.fix_for_task_id IS NULL
+          OR NOT EXISTS (
+            SELECT 1 FROM tasks origin
+             WHERE origin.id = t.fix_for_task_id
+               AND origin.status NOT IN ('done', 'failed', 'dropped')
+          )
+        )
+      ORDER BY t.updated_at DESC`,
   )
   return result.rows.map((r) => {
     const row = r as {
