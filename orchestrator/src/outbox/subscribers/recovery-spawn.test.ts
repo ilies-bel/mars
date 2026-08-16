@@ -648,16 +648,12 @@ describe('recovery-spawn outbox subscriber', () => {
       (fixRows.rows[0] as unknown as { id: string }).id,
     ).toBe(fixTaskId)
 
-    // Exactly one actionQueue item should be open for the origin task's arc,
-    // keyed on T1's originId (which equals T1.id for a root task).
-    const items = await aq.listActionQueueItems('open')
-    const originItems = items.filter(
-      (item) =>
-        item.originTaskId === t1.id ||
-        (item.payload as Record<string, unknown>).originTaskId === t1.id ||
-        (item.payload as Record<string, unknown>).recoveryTaskId === fixTaskId,
-    )
-    expect(originItems.length).toBeGreaterThanOrEqual(1)
+    // ADR-0057: 'failed' is a derived condition (no stored row). The
+    // escalation is visible through the RECOVERY TASK's (T2) failureReason
+    // carrying the recovery_failed: prefix. handleTaskFailureWithFixTask stamps
+    // this prefix on fixTaskId (T2), not on the origin (T1).
+    const reloadedFix = await q.getTask(fixTaskId)
+    expect(reloadedFix?.failureReason).toMatch(/^recovery_failed:/)
   })
 
   it('does not launch a rescue task when a recovery cannot find its origin worktree', async () => {
@@ -824,14 +820,11 @@ describe('recovery-spawn outbox subscriber', () => {
     const reloaded = await q.getTask(t1.id)
     expect(reloaded?.status).toBe('failed')
 
-    // An action-queue item citing spend-control suppression must be open.
-    const items = await aq.listActionQueueItems('open')
-    const suppressed = items.filter(
-      (item) =>
-        (item.payload as Record<string, unknown>).suppressedBy === 'spend-control' &&
-        (item.payload as Record<string, unknown>).taskId === t1.id,
-    )
-    expect(suppressed.length).toBeGreaterThanOrEqual(1)
+    // ADR-0057: 'failed' is a derived condition (no stored row). The suppression
+    // is visible through the task's failureReason carrying the
+    // spend_control_suppressed: prefix that the anti-loop gate reads.
+    const reloaded2 = await q.getTask(t1.id)
+    expect(reloaded2?.failureReason).toMatch(/^spend_control_suppressed:/)
   })
 
   it('spawns a recovery task normally when spend-control suppressRecovery is false (default)', async () => {

@@ -158,75 +158,68 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
   });
 
   // ── Acceptance criterion 1 ─────────────────────────────────────────────
-  // Each triggering state-change event raises exactly one action-queue item.
+  // ADR-0057: `failed` is now a CONDITION KIND — derived on read from
+  // tasks.status='failed'. No stored action_queue_items row is ever written
+  // by taskBlockedActionQueueRaiser. These tests verify that the subscriber
+  // runs without error and writes zero stored rows.
 
-  it('raises exactly one action-queue item when a task.blocked event is processed', async () => {
+  it('writes zero stored rows when a task.blocked event is processed (failed is derived)', async () => {
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
     await subscriber.handler(blockedEvent(1, 'task-alpha'));
 
-    expect(await openRowCount(client)).toBe(1);
-    const row = await openRowForTask(client, 'task-alpha');
-    expect(row).not.toBeNull();
-    expect(row!.kind).toBe('failed');
-    expect(row!.originTaskId).toBe('task-alpha');
+    // ADR-0057: no stored row — the failed condition is derived on read.
+    expect(await openRowCount(client)).toBe(0);
   });
 
-  it('records kind=failed, category=orchestrator, priority=high on the new row', async () => {
+  it('writes zero stored rows (kind=failed is now a derived condition, not a stored row)', async () => {
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
     await subscriber.handler(blockedEvent(2, 'task-bravo'));
 
+    // ADR-0057: no stored row written.
     const r = await client.execute({
       sql: `SELECT kind, category, priority FROM action_queue_items WHERE origin_task_id = ?`,
       args: ['task-bravo'],
     });
-    expect(r.rows).toHaveLength(1);
-    const row = r.rows[0] as unknown as {
-      kind: string;
-      category: string;
-      priority: string;
-    };
-    expect(row.kind).toBe('failed');
-    expect(row.category).toBe('orchestrator');
-    expect(row.priority).toBe('high');
+    expect(r.rows).toHaveLength(0);
   });
 
   // ── Acceptance criterion 2 ─────────────────────────────────────────────
   // Replaying the same triggering event raises zero additional rows.
+  // ADR-0057: since no stored row is written, both first-delivery and replay
+  // produce zero rows — the processedOnce guard still fires (dedup row is
+  // written) but the action-queue write path is a no-op.
 
   it('replaying the same event id raises zero additional action-queue rows', async () => {
     const event = blockedEvent(42, 'task-charlie');
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
 
-    // First delivery
+    // First delivery — ADR-0057: no stored row.
     await subscriber.handler(event);
-    expect(await openRowCount(client)).toBe(1);
+    expect(await openRowCount(client)).toBe(0);
 
     // Replay — same event id, same subscriber
     await subscriber.handler(event);
 
-    // processedOnce dedup row prevents re-entry: still exactly one row
-    expect(await openRowCount(client)).toBe(1);
-    const row = await openRowForTask(client, 'task-charlie');
-    // seen_count must NOT have changed — processedOnce blocked re-entry
-    // before raiseActionQueueItem even ran.
-    expect(row!.seenCount).toBe(1);
+    // processedOnce dedup prevents re-entry; still zero rows.
+    expect(await openRowCount(client)).toBe(0);
   });
 
   // ── Acceptance criterion 3 ─────────────────────────────────────────────
   // A daemon restart between the state-write and the action-queue raise still
-  // results in exactly one row appearing on next start.
+  // results in zero stored rows — the condition is derived on read regardless.
 
-  it('after a restart with no prior processing, the first delivery creates exactly one row', async () => {
+  it('after a restart with no prior processing, the first delivery writes zero stored rows', async () => {
     // Simulates: event written to outbox, daemon crashes before subscriber
     // processes it (processedOnce dedup table is empty). On restart a fresh
-    // subscriber instance processes the event and the action-queue item appears.
+    // subscriber instance processes the event. ADR-0057: no stored row written.
     const event = blockedEvent(99, 'task-delta');
 
     // Fresh subscriber — no dedup row in DB yet
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
     await subscriber.handler(event);
 
-    expect(await openRowCount(client)).toBe(1);
+    // ADR-0057: failed is derived on read; zero stored rows.
+    expect(await openRowCount(client)).toBe(0);
   });
 
   it('processedOnce dedup persists across subscriber instances, preventing a double-raise on restart', async () => {
@@ -235,100 +228,93 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
     // the daemon dies. On restart a second subscriber instance sees the same
     // event (cursor still behind). The persisted dedup row must prevent a
     // second raise.
+    // ADR-0057: no stored rows in either case; the test verifies the processedOnce
+    // guard still works (zero rows both before and after the simulated restart).
     const event = blockedEvent(7, 'task-echo');
 
     const [sub1] = buildActionQueueRaiserSubscribers(client);
     await sub1.handler(event);
-    expect(await openRowCount(client)).toBe(1);
+    // ADR-0057: no stored row.
+    expect(await openRowCount(client)).toBe(0);
 
     // Restart: new subscriber instance, same file-backed DB (dedup row persists)
     const [sub2] = buildActionQueueRaiserSubscribers(client);
     await sub2.handler(event);
 
-    // Dedup row in DB prevented re-raise
-    expect(await openRowCount(client)).toBe(1);
-    expect((await openRowForTask(client, 'task-echo'))!.seenCount).toBe(1);
+    // Dedup row in DB prevented re-entry; still zero rows.
+    expect(await openRowCount(client)).toBe(0);
   });
 
   // ── Origin-fingerprint dedup ───────────────────────────────────────────
-  // Multiple task.blocked events for the same task collapse into one row.
+  // ADR-0057: no stored rows are written for task.blocked events regardless of
+  // how many events fire or how many distinct tasks are blocked.
 
-  it('two distinct task.blocked events for the same task produce one open row (origin-fingerprint dedup)', async () => {
+  it('two distinct task.blocked events for the same task produce zero stored rows (failed is derived)', async () => {
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
 
-    // Different event ids → processedOnce allows both, but origin-fingerprint
-    // dedup inside raiseActionQueueItem collapses them into one row.
+    // Different event ids → processedOnce allows both through, but no stored
+    // row is written since ADR-0057 made failed a derived condition.
     await subscriber.handler(blockedEvent(10, 'task-foxtrot'));
     await subscriber.handler(blockedEvent(11, 'task-foxtrot'));
 
-    expect(await openRowCount(client)).toBe(1);
-    const row = await openRowForTask(client, 'task-foxtrot');
-    // Second event bumped seen_count
-    expect(row!.seenCount).toBe(2);
+    // ADR-0057: zero stored rows.
+    expect(await openRowCount(client)).toBe(0);
   });
 
-  it('different tasks each get their own action-queue row', async () => {
+  it('different tasks each produce zero stored rows (failed is derived per-read)', async () => {
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
     await subscriber.handler(blockedEvent(20, 'task-golf'));
     await subscriber.handler(blockedEvent(21, 'task-hotel'));
 
-    expect(await openRowCount(client)).toBe(2);
+    // ADR-0057: zero stored rows for any number of distinct tasks.
+    expect(await openRowCount(client)).toBe(0);
   });
 
   // ── Arc-origin threading (finding #6 of lineage audit) ────────────────
-  // A blocked slice (id != originId) must produce a row keyed on the arc
-  // origin so all slices of the same arc collapse onto a single action-queue item.
+  // ADR-0057: no stored rows are written for task.blocked events regardless of
+  // arc structure. The subscriber runs to completion (processedOnce dedup fires)
+  // but the action-queue write path is a no-op since failed is derived on read.
 
-  it('a blocked slice (id != originId) yields a row fingerprinted on origin:<originId>, collapsing onto the arc', async () => {
+  it('a blocked slice (id != originId) produces zero stored rows (failed is derived)', async () => {
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
 
-    // First slice of the arc blocked — originId points to the arc root.
+    // First slice of the arc blocked.
     await subscriber.handler(
       blockedEvent(50, 'slice-1', { originId: 'origin-india' }),
     );
-    expect(await openRowCount(client)).toBe(1);
+    // ADR-0057: no stored row.
+    expect(await openRowCount(client)).toBe(0);
 
-    const row1 = await openRowForTask(client, 'origin-india');
-    expect(row1).not.toBeNull();
-    expect(row1!.originTaskId).toBe('origin-india');
-    expect(row1!.seenCount).toBe(1);
-
-    // Second slice of the same arc blocked — different taskId, same originId.
-    // Must collapse onto the existing row, not create a second one.
+    // Second slice of the same arc.
     await subscriber.handler(
       blockedEvent(51, 'slice-2', { originId: 'origin-india' }),
     );
-    expect(await openRowCount(client)).toBe(1);
-
-    const row2 = await openRowForTask(client, 'origin-india');
-    expect(row2!.originTaskId).toBe('origin-india');
-    expect(row2!.seenCount).toBe(2);
+    // Still zero stored rows.
+    expect(await openRowCount(client)).toBe(0);
   });
 
-  it('a blocked slice (id != originId) does NOT produce a row keyed on the slice id', async () => {
+  it('a blocked slice (id != originId) produces no row keyed on the slice id or the origin', async () => {
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
 
     await subscriber.handler(
       blockedEvent(60, 'slice-juliet', { originId: 'origin-juliet' }),
     );
 
-    // No row should be keyed on the slice's own id.
+    // ADR-0057: no stored row for either the slice or the arc origin.
     const rowForSlice = await openRowForTask(client, 'slice-juliet');
     expect(rowForSlice).toBeNull();
 
-    // The row must be keyed on the arc origin instead.
     const rowForOrigin = await openRowForTask(client, 'origin-juliet');
-    expect(rowForOrigin).not.toBeNull();
-    expect(rowForOrigin!.originTaskId).toBe('origin-juliet');
+    expect(rowForOrigin).toBeNull();
   });
 
   // ── DB-based arc-origin resolution (ADR-0051 violation fix) ───────────
-  // When originId is absent from the event payload but the task row in the DB
-  // carries an origin_id, raiseActionQueueItem must resolve through the DB so
-  // the action-queue item is keyed on the true arc root — not the raw (fix/descendant)
-  // task id.
+  // ADR-0057: no stored rows are written for task.blocked events. The arc-origin
+  // resolution logic inside raiseActionQueueItem is still exercised by the
+  // subscriber (the processedOnce side-effect runs), but results in zero stored
+  // action_queue_items rows since the failed condition is derived on read.
 
-  it('a raiser called with a fix/descendant taskId whose task row has origin_id resolves to the arc origin', async () => {
+  it('a raiser called with a fix/descendant taskId whose task row has origin_id produces zero stored rows', async () => {
     // Insert a task row: fix-task is a descendant of arc-root.
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at, origin_id)
@@ -341,18 +327,17 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
     // older events where the field was not yet threaded in).
     await subscriber.handler(blockedEvent(100, 'fix-task-kilo'));
 
-    expect(await openRowCount(client)).toBe(1);
+    // ADR-0057: no stored row for arc root or fix task.
+    expect(await openRowCount(client)).toBe(0);
 
-    // Row must be keyed on the arc root, NOT on the fix task id.
     const rowForArc = await openRowForTask(client, 'arc-root-kilo');
-    expect(rowForArc).not.toBeNull();
-    expect(rowForArc!.originTaskId).toBe('arc-root-kilo');
+    expect(rowForArc).toBeNull();
 
     const rowForFix = await openRowForTask(client, 'fix-task-kilo');
     expect(rowForFix).toBeNull();
   });
 
-  it('two events for different fix tasks from the same arc collapse onto one row keyed on the arc origin', async () => {
+  it('two events for different fix tasks from the same arc produce zero stored rows', async () => {
     // Both fix tasks share the same arc root.
     await client.execute({
       sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at, origin_id)
@@ -365,12 +350,10 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
     await subscriber.handler(blockedEvent(200, 'fix-lima-1'));
     await subscriber.handler(blockedEvent(201, 'fix-lima-2'));
 
-    // Both events resolve to the same arc root → one row, seenCount=2.
-    expect(await openRowCount(client)).toBe(1);
+    // ADR-0057: zero stored rows regardless of arc structure.
+    expect(await openRowCount(client)).toBe(0);
     const row = await openRowForTask(client, 'arc-root-lima');
-    expect(row).not.toBeNull();
-    expect(row!.originTaskId).toBe('arc-root-lima');
-    expect(row!.seenCount).toBe(2);
+    expect(row).toBeNull();
   });
 
   // ── Fix-task invariant: no alert while recovery is in flight ──────────
@@ -417,34 +400,26 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
       blockedEvent(502, 'origin-for-failed-1', { fixTaskId: 'fix-failed-1' }),
     );
 
-    // Fix task itself failed — recovery exhausted — human action required.
-    expect(await openRowCount(client)).toBe(1);
-    const row = await openRowForTask(client, 'origin-for-failed-1');
-    expect(row).not.toBeNull();
-    expect(row!.kind).toBe('failed');
+    // ADR-0057: `failed` is a derived condition; no stored row is written.
+    expect(await openRowCount(client)).toBe(0);
   });
 
-  it('task.blocked with a fixTaskId absent from the DB still raises an action-queue row', async () => {
-    // No task inserted for 'fix-absent'. Conservative: if we cannot confirm
-    // recovery is in flight, raise so the operator can investigate.
+  it('task.blocked with a fixTaskId absent from the DB raises no action-queue row (condition derived)', async () => {
+    // No task inserted for 'fix-absent'. ADR-0057: no stored row.
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
     await subscriber.handler(
       blockedEvent(503, 'origin-for-absent', { fixTaskId: 'fix-absent' }),
     );
 
-    expect(await openRowCount(client)).toBe(1);
-    const row = await openRowForTask(client, 'origin-for-absent');
-    expect(row).not.toBeNull();
+    expect(await openRowCount(client)).toBe(0);
   });
 
-  it('task.blocked with null fixTaskId always raises (existing behaviour)', async () => {
+  it('task.blocked with null fixTaskId produces zero stored rows (condition is derived)', async () => {
+    // ADR-0057: no stored row.
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
     await subscriber.handler(blockedEvent(504, 'origin-null-fix'));
 
-    expect(await openRowCount(client)).toBe(1);
-    const row = await openRowForTask(client, 'origin-null-fix');
-    expect(row).not.toBeNull();
-    expect(row!.kind).toBe('failed');
+    expect(await openRowCount(client)).toBe(0);
   });
 
   // ── Slice 6: stall diagnostics and pool snapshot in payload ──────────
@@ -481,31 +456,8 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
     await subscriber.handler(blockedEvent(600, taskId));
 
-    const r = await client.execute({
-      sql: `SELECT payload FROM action_queue_items WHERE origin_task_id = ? AND status = 'open'`,
-      args: [taskId],
-    });
-    expect(r.rows).toHaveLength(1);
-    const payloadRaw = (r.rows[0] as unknown as { payload: string }).payload;
-    const payload = JSON.parse(payloadRaw) as Record<string, unknown>;
-
-    // stallDiagnostics must match the task's stall_diagnostics blob.
-    expect(payload.stallDiagnostics).toEqual(stallDiagData);
-
-    // poolSnapshot must carry live counts matching the seeded tasks.
-    const snap = payload.poolSnapshot as {
-      activeWorkerCount: number;
-      queuedCount: number;
-      runningCount: number;
-      blockedCount: number;
-      recentDispatchDecisions: unknown[];
-    };
-    expect(snap).not.toBeNull();
-    expect(snap.queuedCount).toBe(2);
-    expect(snap.runningCount).toBe(1);
-    expect(snap.activeWorkerCount).toBe(1); // mirrors runningCount
-    expect(snap.blockedCount).toBe(1);
-    expect(Array.isArray(snap.recentDispatchDecisions)).toBe(true);
+    // ADR-0057: `failed` is a derived condition; no stored row is written.
+    expect(await openRowCount(client)).toBe(0);
   });
 
   it('payload has null stallDiagnostics when task row has no stall_diagnostics', async () => {
@@ -521,25 +473,8 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
     const [subscriber] = buildActionQueueRaiserSubscribers(client);
     await subscriber.handler(blockedEvent(601, taskId));
 
-    const r = await client.execute({
-      sql: `SELECT payload FROM action_queue_items WHERE origin_task_id = ? AND status = 'open'`,
-      args: [taskId],
-    });
-    expect(r.rows).toHaveLength(1);
-    const payloadRaw = (r.rows[0] as unknown as { payload: string }).payload;
-    const payload = JSON.parse(payloadRaw) as Record<string, unknown>;
-
-    // stallDiagnostics must be null when the task has no stall_diagnostics.
-    expect(payload.stallDiagnostics).toBeNull();
-
-    // poolSnapshot must still be present (may have zero counts).
-    expect(payload.poolSnapshot).toBeDefined();
-    const snap = payload.poolSnapshot as Record<string, unknown>;
-    expect(typeof snap.activeWorkerCount).toBe('number');
-    expect(typeof snap.queuedCount).toBe('number');
-    expect(typeof snap.runningCount).toBe('number');
-    expect(typeof snap.blockedCount).toBe('number');
-    expect(Array.isArray(snap.recentDispatchDecisions)).toBe(true);
+    // ADR-0057: `failed` is a derived condition; no stored row is written.
+    expect(await openRowCount(client)).toBe(0);
   });
 });
 
@@ -600,12 +535,13 @@ describe('action-queue-raiser:fix-task-done subscriber', () => {
       await sub.handler(terminalEvent(600, fixTaskId, 'done'));
     }
 
-    // Stale row must be resolved — recovery succeeded, no human action needed.
-    expect(await openRowCount(client)).toBe(0);
+    // ADR-0057: fixTaskDoneActionQueueResolver was removed; stored rows are not
+    // auto-resolved on fix-task completion. The pre-existing row stays open.
+    expect(await openRowCount(client)).toBe(1);
     const r = await client.execute(
       `SELECT status FROM action_queue_items WHERE id = 'aq-stale-1'`,
     );
-    expect((r.rows[0] as unknown as { status: string }).status).toBe('resolved');
+    expect((r.rows[0] as unknown as { status: string }).status).toBe('open');
   });
 
   it('task.terminal done for a non-fix task (no origin_id) does not modify action-queue rows', async () => {
@@ -647,13 +583,14 @@ describe('action-queue-raiser:fix-task-done subscriber', () => {
     for (const sub of subscribers) {
       await sub.handler(terminalEvent(602, fixTaskId, 'done'));
     }
-    expect(await openRowCount(client)).toBe(0);
+    // ADR-0057: no subscriber resolves stored rows on fix-task done; row stays open.
+    expect(await openRowCount(client)).toBe(1);
 
-    // Replay — same eventId. Must not throw even though row is already resolved.
+    // Replay — same eventId. Must not throw; row remains open.
     for (const sub of subscribers) {
       await sub.handler(terminalEvent(602, fixTaskId, 'done'));
     }
-    expect(await openRowCount(client)).toBe(0);
+    expect(await openRowCount(client)).toBe(1);
   });
 
   it('task.terminal failed for a fix task does not resolve the open row', async () => {
@@ -759,8 +696,9 @@ describe('api-outage coalescing — circuit-breaker-open failures', () => {
 
     await subscriber.handler(blockedEvent(312, 'task-normal-c'));
 
-    // Two open rows: one api-outage (count=2) + one per-task 'failed'.
-    expect(await openRowCount(client)).toBe(2);
+    // ADR-0057: 'failed' is a derived condition — no stored row. Only the
+    // api-outage row exists.
+    expect(await openRowCount(client)).toBe(1);
 
     const outage = await client.execute(
       `SELECT kind, seen_count FROM action_queue_items WHERE kind = 'api-outage' AND status = 'open'`,
@@ -771,7 +709,7 @@ describe('api-outage coalescing — circuit-breaker-open failures', () => {
     const failed = await client.execute(
       `SELECT kind FROM action_queue_items WHERE kind = 'failed' AND status = 'open'`,
     );
-    expect(failed.rows).toHaveLength(1);
+    expect(failed.rows).toHaveLength(0);
   });
 
   // ── Criterion 3 ────────────────────────────────────────────────────────
@@ -914,8 +852,8 @@ describe('learned-recipe auto-run via task.blocked subscriber', () => {
 
     // No auto-run attempted — op was not supported.
     expect(mockExecuteLearnedOp).not.toHaveBeenCalled();
-    // Card was raised so the operator can act.
-    expect(await openRowCount(client)).toBe(1);
+    // ADR-0057: `failed` is a derived condition; no stored row is written.
+    expect(await openRowCount(client)).toBe(0);
   });
 
   it('falls back to raising a card when executeLearnedOp throws', async () => {
@@ -933,8 +871,9 @@ describe('learned-recipe auto-run via task.blocked subscriber', () => {
       }),
     );
 
-    // Fallback: card raised so the operator can intervene.
-    expect(await openRowCount(client)).toBe(1);
+    // ADR-0057: `failed` is a derived condition; no stored row is written even
+    // when the auto-run fallback fires.
+    expect(await openRowCount(client)).toBe(0);
     // Log was NOT called because execution failed before it could run.
     expect(mockLogAutoRecipeRun).not.toHaveBeenCalled();
   });
@@ -958,7 +897,8 @@ describe('learned-recipe auto-run via task.blocked subscriber', () => {
     await subscriber.handler(eventNoSig);
 
     expect(mockGetLearnedRecipe).not.toHaveBeenCalled();
-    expect(await openRowCount(client)).toBe(1);
+    // ADR-0057: `failed` is a derived condition; no stored row is written.
+    expect(await openRowCount(client)).toBe(0);
   });
 });
 
@@ -1001,12 +941,18 @@ describe('action-queue-raiser:task.dropped-via-supersede subscriber', () => {
     };
   }
 
-  /** Insert a pre-existing open 'failed' row keyed on `originId`. */
+  /**
+   * Insert a pre-existing open action-queue row keyed on `originId`.
+   * Uses kind='awaiting-human' (an operator-decision kind) because condition
+   * kinds like 'failed' are deleted by the schema migration on every
+   * ensureSchema() call (ADR-0057 cleanup step). The supersede subscriber
+   * closes rows regardless of kind.
+   */
   async function insertOpenFailedRow(c: DbClient, id: string, originId: string): Promise<void> {
     await c.execute({
       sql: `INSERT INTO action_queue_items
               (id, kind, category, priority, status, title, body, raised_by, raised_at, origin_task_id)
-            VALUES (?, 'failed', 'orchestrator', 'high', 'open', 'task blocked', '',
+            VALUES (?, 'awaiting-human', 'orchestrator', 'high', 'open', 'task blocked', '',
                     'test', ?, ?)`,
       args: [id, Date.now(), originId],
     });
