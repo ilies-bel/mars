@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
-import { useStaleWorktrees } from '@/entities/stale-worktrees/useStaleWorktrees'
+import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useDaemonConnected } from '@/hooks/useDaemonConnected'
-import { actionQueueCount, resolvePageRoute } from '@/shared/routing'
+import { resolvePageRoute } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
 import { deriveBreadcrumbs } from './Breadcrumbs'
 import { ProjectSelector } from './ProjectSelector'
@@ -243,9 +243,10 @@ interface ShellProps {
  * height of its parent (flex-1 min-h-0).
  */
 export const Shell = ({ hash, children }: ShellProps) => {
-  const { staleWorktrees } = useStaleWorktrees()
+  const { items: actionQueueItems } = useActionQueue()
   const activeRoute = resolvePageRoute(hash)
-  const decisionBadge = actionQueueCount({ staleWorktrees })
+  // Badge = open action-queue items (the set the Needs you triage view shows).
+  const decisionBadge = actionQueueItems.length
   // Proposals shortcut: #/progress?col=proposals highlights the Proposals entry
   // instead of Progress. Mutually exclusive: Progress only highlights for bare
   // #/progress visits (without col=proposals).

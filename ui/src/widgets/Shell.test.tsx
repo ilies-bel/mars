@@ -19,12 +19,13 @@ import { renderToStaticMarkup } from 'react-dom/server'
 
 // ── Module mocks — must be registered before any import of the component ─────
 
-mock.module('@/entities/stale-worktrees/useStaleWorktrees', () => ({
-  useStaleWorktrees: () => ({
-    staleWorktrees: [],
-    isPending: false,
+// useActionQueue — Shell uses this for the Needs you badge count.
+mock.module('@/entities/actionQueue/useActionQueue', () => ({
+  useActionQueue: () => ({
+    items: [],
     error: null,
-    connected: false,
+    projectsError: null,
+    projectsEmpty: false,
   }),
 }))
 

@@ -12,8 +12,9 @@ import { useState, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useProgress } from '@/hooks/useProgress'
-import { postDecision } from '@/shared/api'
-import { formatRelativeAge } from '@/shared/time'
+import { postDecision, invokeAction } from '@/shared/api'
+import { relativeTime } from '@/shared/time'
+import { isTaskFailureActionQueueKind } from '@/shared/schemas'
 import type { ActionQueueItem } from '@/shared/schemas'
 import type { Decision } from '@/shared/schemas'
 
@@ -103,7 +104,9 @@ const TriageRow = ({ item }: TriageRowProps) => {
   const [pending, setPending] = useState<string | null>(null)
   const [resolved, setResolved] = useState(false)
 
-  const age = formatRelativeAge(Date.now() - new Date(item.at).getTime())
+  // Use relativeTime so timestamps are handled via the existing helper
+  // (avoids hand-dividing epoch-ms values which can silently land at 1970).
+  const age = relativeTime(item.at)
   const headline = item.humanSummary || item.title
   const goal = item.arcGoal ?? null
   const accentClass = KIND_ACCENT[item.kind] ?? 'border-l-muted'
@@ -111,6 +114,7 @@ const TriageRow = ({ item }: TriageRowProps) => {
   const kindIcon = KIND_ICON[item.kind] ?? '•'
   const chipClass =
     KIND_CHIP_CLASS[item.kind] ?? 'text-muted-foreground border-border'
+  const isTaskFailure = isTaskFailureActionQueueKind(item.kind)
 
   const handleDecision = useCallback(
     async (d: Decision) => {
@@ -125,6 +129,21 @@ const TriageRow = ({ item }: TriageRowProps) => {
       }
     },
     [pending, qc],
+  )
+
+  const handleVerb = useCallback(
+    async (op: string) => {
+      if (pending !== null) return
+      setPending(op)
+      try {
+        await invokeAction(op, item.entityId)
+        setResolved(true)
+        void qc.invalidateQueries({ queryKey: ['action-queue'] })
+      } catch {
+        setPending(null)
+      }
+    },
+    [pending, qc, item.entityId],
   )
 
   if (resolved) return null
@@ -177,6 +196,7 @@ const TriageRow = ({ item }: TriageRowProps) => {
 
       {/* Actions row */}
       <div className="flex flex-wrap items-center gap-2">
+        {/* Server-defined decision buttons (recipe-derived per failure kind) */}
         {item.decisions.slice(0, 3).map((d) => (
           <button
             key={d.label}
@@ -187,6 +207,27 @@ const TriageRow = ({ item }: TriageRowProps) => {
             {pending === d.label ? '…' : d.label}
           </button>
         ))}
+
+        {/* Continue / Restart inline actions for failed-task rows */}
+        {isTaskFailure && (
+          <>
+            <button
+              disabled={pending !== null}
+              onClick={() => void handleVerb('continue')}
+              className="rounded border border-primary/40 px-2 py-1 font-mono text-[10px] text-foreground transition-colors hover:bg-primary/20 disabled:opacity-50"
+            >
+              {pending === 'continue' ? '…' : 'Continue'}
+            </button>
+            <button
+              disabled={pending !== null}
+              onClick={() => void handleVerb('restart')}
+              className="rounded border border-error/40 px-2 py-1 font-mono text-[10px] text-error transition-colors hover:bg-error/10 disabled:opacity-50"
+            >
+              {pending === 'restart' ? '…' : 'Restart'}
+            </button>
+          </>
+        )}
+
         <a
           href="#/chat"
           className="ml-auto font-mono text-[10px] text-muted-foreground transition-colors hover:text-foreground"
