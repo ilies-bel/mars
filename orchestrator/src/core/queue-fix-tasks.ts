@@ -37,7 +37,10 @@ import {
 } from './lib/failure-signature'
 import { isEnvironmentalSignature } from './lib/failure-kinds'
 import { classifyFailure, requiresWorktreeRebuild } from './lib/failure-class'
-import { maybeSpawnRescueOperator } from './rescue-operator-spawn'
+import { maybeSpawnRescueOperator, RESCUE_OPERATOR_TAG } from './rescue-operator-spawn'
+import { integrationBranchName } from './blocker-resolution'
+import { getRepoRoot } from './context'
+import { listUniqueCommitsAhead } from './lib/sweep'
 import { recordStewardIntervention } from './steward-ledger'
 import { raiseStewardRepeatActionQueueItem, shouldStewardFire } from './steward-guard'
 
@@ -429,6 +432,7 @@ export interface HandleTaskFailureViaTaskResult {
     | 'noop'
     | 'non-code-retry-exhausted'
     | 'requeued'
+    | 'requeued-for-remerge'
     | 'signature-storm-tripped'
     | 'steward-repeat'
   fixTaskId?: string
@@ -438,6 +442,12 @@ export interface HandleTaskFailureViaTaskResult {
   attempts?: number
   /** Streak count when the signature-storm circuit breaker first trips. */
   stormStreak?: number
+  /**
+   * When outcome is 'noop' and a rescue or fix task for the same origin
+   * arc is already in flight, this field carries that task's id so the
+   * caller can surface a supersession trace without querying the database.
+   */
+  supersedingTaskId?: string
 }
 
 /**
@@ -492,18 +502,41 @@ export const handleTaskFailureWithFixTask = async (
   // origin may still be `blocked` after the fix task reaches a terminal status
   // (if `unblockByCompletion` fires asynchronously). Querying the fix task's
   // status directly is the most robust discriminant.
+  // Fix 1 & 2: mutual exclusion across the full recovery arc (fix tasks AND
+  // rescue tasks). Before spawning any new recovery, check whether one is
+  // already in flight for this origin. The check covers:
+  //   - fix tasks:    fix_for_task_id = taskId
+  //   - rescue tasks: origin_id = taskId, tagged 'rescue-operator'
+  // When a rescue is in flight the new attempt is superseded by it; the
+  // supersedingTaskId in the return value records the supersession so callers
+  // can trace it without a follow-up query (Fix 2: explicit supersede marker
+  // instead of a silent noop).
+  const tagPattern = `%${RESCUE_OPERATOR_TAG}%`
   const outstandingFixResult = await s.query({
-    sql: `SELECT id FROM tasks
-           WHERE fix_for_task_id = ?
-             AND status IN ('queued','running','verifying','merging','vega-reconciling','draft','blocked')
+    sql: `SELECT t.id,
+                 CASE
+                   WHEN t.fix_for_task_id IS NOT NULL THEN 'fix'
+                   ELSE 'rescue'
+                 END AS kind
+            FROM tasks t
+           WHERE t.status IN ('queued','running','verifying','merging','vega-reconciling','draft','blocked')
+             AND (
+               t.fix_for_task_id = ?
+               OR (t.origin_id = ? AND t.id != ? AND t.tags_json LIKE ?)
+             )
            LIMIT 1`,
-    args: [input.taskId],
+    args: [input.taskId, input.taskId, input.taskId, tagPattern],
   })
   if (outstandingFixResult.rows.length > 0) {
     // Recovery already in-flight — this task.failed is a duplicate of the
-    // ongoing episode. The existing fix task will unblock the origin when it
-    // completes; no action needed here.
-    return { outcome: 'noop' }
+    // ongoing episode. The existing fix/rescue task will unblock the origin
+    // when it completes; no action needed here.
+    // supersedingTaskId carries the in-flight task's id (Fix 2: explicit
+    // supersede marker so the trace shows why this attempt never ran).
+    const supersedingTaskId = (
+      outstandingFixResult.rows[0] as unknown as { id: string }
+    ).id
+    return { outcome: 'noop', supersedingTaskId }
   }
 
   // Configuration-failure fast path: steps named `preflight:*` are operator-
@@ -732,6 +765,78 @@ export const handleTaskFailureWithFixTask = async (
       }
       // Cap exhausted: fall through to the normal escalation so the operator
       // gets an action-queue item.
+    }
+
+    // Fix 3: Re-verify branch tip before declaring the arc dead.
+    //
+    // A fix task runs in the origin's worktree on the origin's branch. Even
+    // when the fix task's coder phase fails at the end, it may have committed
+    // work that already passes verify. If the branch tip is ahead of the
+    // integration branch, route the ORIGIN through the remerge workflow
+    // (setup + verify + merge, no code step) instead of escalating to the
+    // action queue. This mirrors what `mars remerge` does manually and is
+    // what should have happened automatically for arc mars-cce64029.
+    //
+    // Order of mutations is load-bearing:
+    //  1. Update origin to 'queued' (remerge) — must happen BEFORE the fix
+    //     task is dropped, so unblockByCompletion (fired by the dropped event)
+    //     does not find a 'blocked' origin and try to flip it again.
+    //  2. Delete the task_blockers edge (origin→fix) — the origin is no longer
+    //     blocked by this fix task.
+    //  3. Drop the fix task as 'superseded' — signals the arc is continuing
+    //     via a remerge and leaves a clear trace in the dropped row.
+    if (task.branch) {
+      try {
+        const integrationBranch = integrationBranchName()
+        const repoRoot = getRepoRoot()
+        const commitsAhead = await listUniqueCommitsAhead(task.branch, integrationBranch, repoRoot)
+        if (commitsAhead.length > 0) {
+          const originId = task.fixForTaskId // alias for clarity
+          // Step 1: requeue origin for remerge
+          const { createQueueWorkflowStore } = await import('../workflows/queue-workflow-store')
+          await createQueueWorkflowStore().deleteRun(originId).catch(() => {})
+          await updateTask(originId, {
+            status: 'queued',
+            workflow: 'remerge',
+            worktreePath: null,
+            claudeSessionId: null,
+            error: null,
+            failedPhase: null,
+            failureSignature: null,
+            failureReasonCode: null,
+            failureReason: null,
+          }, s)
+          // Step 2: remove the origin→fix blocker edge
+          await s.execute({
+            sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+            args: [originId, input.taskId],
+          })
+          // Step 3: drop the fix task as superseded (clear trace)
+          await updateTask(input.taskId, {
+            status: 'dropped',
+            dropReason: 'superseded',
+          }, s)
+          // eslint-disable-next-line no-console
+          console.log(
+            `[failure-handler] fix task ${input.taskId} failed but branch ${task.branch} is ` +
+              `${commitsAhead.length} commit(s) ahead of ${integrationBranch}; ` +
+              `routing origin ${originId} through remerge instead of escalating`,
+          )
+          return {
+            outcome: 'requeued-for-remerge',
+            failureSignature,
+            recoverySpawnedCount: task.recoverySpawnedCount,
+          }
+        }
+      } catch (remergeCheckErr) {
+        // Best-effort: if the branch-tip check fails (e.g. repo not accessible),
+        // fall through to the normal escalation path.
+        // eslint-disable-next-line no-console
+        console.error(
+          `[failure-handler] fix task ${input.taskId}: branch-tip remerge check failed (non-fatal), escalating:`,
+          remergeCheckErr,
+        )
+      }
     }
 
     // Never nest the prefix: `truncatedError` may itself be a previously
