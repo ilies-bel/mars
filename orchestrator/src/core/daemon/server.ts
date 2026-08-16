@@ -1155,8 +1155,10 @@ export const startDaemon = async (
     arcVerify: makeSem(1),
   }
   // Verify concurrency semaphore: caps parallel verify (npm test / typecheck)
-  // steps independently of the implement cap. Default: MARS_MAX_VERIFY (2).
-  // Acquired inside the review primitive; the implement slot is released first
+  // steps independently of the implement cap. Default: MARS_MAX_VERIFY (1).
+  // Serialised by default — concurrent suites collide on embedded-PG ports and
+  // snapshot dirs, producing 200+ cross-suite failures (see config.ts DEFAULTS).
+  // Acquired inside the verify primitive; the implement slot is released first
   // so other tasks can continue coding while this one waits for a verify slot.
   const verifySem = makeSem(initialCaps.verify)
   // Set of task IDs actively running through the verify phase in this daemon

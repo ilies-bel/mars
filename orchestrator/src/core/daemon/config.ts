@@ -75,16 +75,24 @@ export interface DaemonCaps {
   /** Maximum concurrent worktree dependency installs (MARS_MAX_SETUP_INSTALL). Default 2. */
   setupInstall: number
   /**
-   * Maximum concurrent verify steps (MARS_MAX_VERIFY). Default 2.
+   * Maximum concurrent verify steps (MARS_MAX_VERIFY). Default 1.
    *
-   * The verify step (npm test / typecheck) is CPU-intensive. Without a cap,
-   * every in-flight implement slot can run a full test suite simultaneously,
-   * multiplying load beyond what the host can sustain. This semaphore limits
-   * how many verify steps run at once, independently of the implement cap.
+   * The verify step (npm test / typecheck) is CPU-intensive and uses
+   * process-global resources (embedded-PG ports, snapshot directories, tmp
+   * paths) that cannot safely be shared between concurrent test suites. Two
+   * parallel verifies reliably produce cross-suite interference: env-var
+   * mutations in one vitest worker bleed into another, embedded-PG instances
+   * collide on fixed ports, and snapshot writes race — observed as 232+
+   * failures when two tasks verified at the same time (mars-caae60e2 /
+   * mars-191c9ef5). A cap of 1 serialises verify runs so at most one full
+   * test suite runs at a time, eliminating the interference at the cost of
+   * queuing (wall-clock is dominated by one run anyway, so no throughput is
+   * lost when two would otherwise thrash each other).
    *
-   * A task waiting on this semaphore releases its implement slot first so
-   * other tasks can continue coding while verify is queued. There is no
-   * circular dependency (coding never waits on verify), so the cap is deadlock-safe.
+   * Raise MARS_MAX_VERIFY (or `mars set-cap verify N`) only for test suites
+   * that are explicitly verified as parallel-safe. The cap is deadlock-safe:
+   * a task waiting on this semaphore releases its implement slot first so
+   * other tasks can continue coding while verify is queued.
    */
   verify: number
 }
@@ -195,7 +203,10 @@ const DEFAULTS: DaemonCaps = {
   triage: 8,
   refine: 6,
   setupInstall: 2,
-  verify: 2,
+  // Serialise verify runs by default — parallel suites share ports and
+  // snapshot dirs, which produces cross-suite failures (see DaemonCaps.verify
+  // JSDoc). Raise MARS_MAX_VERIFY only for explicitly parallel-safe suites.
+  verify: 1,
 }
 
 const DEFAULT_SELF_EVOLVE: SelfEvolveConfig = {
