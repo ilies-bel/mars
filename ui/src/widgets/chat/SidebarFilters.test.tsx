@@ -14,6 +14,10 @@ const filters: SidebarFiltersValue = {
   selectedItem: null,
 }
 
+// Use a recent date so threads appear in the live rail (not the archived fold).
+// Threads older than 7 days are hidden behind the archive toggle by default.
+const RECENT_DATE = '2026-08-15T12:00:00.000Z'
+
 const thread = (overrides: Partial<ChatThread>): ChatThread => ({
   id: 'thread-1',
   title: 'Restart the failed deploy',
@@ -21,8 +25,8 @@ const thread = (overrides: Partial<ChatThread>): ChatThread => ({
   origin: 'alert',
   alertItemId: 'mars-123',
   alertResolved: false,
-  createdAt: '2026-01-01T00:00:00.000Z',
-  updatedAt: '2026-01-01T00:00:00.000Z',
+  createdAt: RECENT_DATE,
+  updatedAt: RECENT_DATE,
   ...overrides,
 } as ChatThread)
 

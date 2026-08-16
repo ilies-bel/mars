@@ -84,6 +84,8 @@ import { SidebarFilters, type SidebarFiltersValue } from '@/widgets/chat/Sidebar
 import { MainThreadRow } from '@/widgets/chat/MainThreadRow'
 import {
   filterSidebarThreads,
+  formatRelative,
+  isArchived,
   isResolvedSelection,
   sortByUrgencyThenAge,
   type ForkFilter,
@@ -98,7 +100,7 @@ import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlSt
 import { taskHash } from '@/shared/routing'
 import { linkifyTaskIds } from '@/shared/linkifyTaskIds'
 import { formatDuration } from '@/shared/time'
-import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle } from './chatPageUtils'
+import { resolveMediaKind, fileMediaKind, smartTitle } from './chatPageUtils'
 import { ChatGreeting } from '@/widgets/chat/ChatGreeting'
 import { ConversationTimeline } from '@/widgets/chat/ConversationTimeline'
 import { CompactionNotice } from '@/widgets/chat/CompactionNotice'
@@ -873,9 +875,16 @@ interface ThreadItemProps {
   onRename: (title: string) => void
   /** Inset the row so subthreads read as subordinate to the main thread above. */
   indented?: boolean
+  /**
+   * Optional kind chip shown beside the title.
+   * 'alert'    → iron-tinted chip for alert-origin threads
+   * 'decision' → ochre-tinted chip for decision-type threads
+   * null       → no chip (default for operator-created threads)
+   */
+  kindChip?: 'alert' | 'decision' | null
 }
 
-const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false }: ThreadItemProps) => {
+const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, kindChip = null }: ThreadItemProps) => {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -914,11 +923,12 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false }
   return (
     <div
       className={[
-        'group flex flex-col rounded py-1.5 cursor-pointer border-b border-primary/10',
-        // The inset plus a rule is the structural half of the hierarchy; the
-        // main-thread row carries the weight half.
-        indented ? 'ml-3 border-l border-primary/15 pl-2 pr-2' : 'px-2',
-        isSelected ? 'bg-primary/20 text-foreground' : 'text-primary hover:bg-primary/10 hover:text-foreground',
+        'group flex flex-col rounded py-1.5 cursor-pointer',
+        // Selected: flame left-border accent + white card surface (no structural indent border).
+        // Unselected: subtle indent rule for subthread hierarchy.
+        isSelected
+          ? `border-l-2 border-l-highlight bg-card text-foreground ${indented ? 'ml-3 pl-2 pr-2' : 'px-2'}`
+          : `border-b border-primary/10 ${indented ? 'ml-3 border-l border-primary/15 pl-2 pr-2' : 'px-2'} text-primary hover:bg-primary/10 hover:text-foreground`,
       ].join(' ')}
       role="button"
       tabIndex={0}
@@ -959,9 +969,25 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false }
             {typeIcon}
           </span>
           <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{title}</span>
+          {kindChip === 'alert' && (
+            <span
+              className="shrink-0 rounded-sm border border-primary/30 bg-primary/10 px-1 font-mono text-[9px] uppercase text-primary"
+              data-testid="thread-kind-chip-alert"
+            >
+              alert
+            </span>
+          )}
+          {kindChip === 'decision' && (
+            <span
+              className="shrink-0 rounded-sm border border-status-blocked/30 bg-status-blocked/10 px-1 font-mono text-[9px] uppercase text-status-blocked"
+              data-testid="thread-kind-chip-decision"
+            >
+              decision
+            </span>
+          )}
           {thread.updatedAt && (
             <span className="ml-1 flex-none font-mono text-[10px] text-muted-foreground">
-              {relativeTime(thread.updatedAt)}
+              {formatRelative(new Date(thread.updatedAt).getTime())}
             </span>
           )}
           {thread.attentionStatus === 'ready' && (
@@ -2416,9 +2442,14 @@ export const ThreadSidebar = ({
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['chat-threads'] }),
   })
 
-  // Open Subthreads are sorted by urgency → age → id. Closed transcripts remain
-  // expanded in the chronological conversation rather than an archive panel.
-  const threads = sortByUrgencyThenAge(filterSidebarThreads(data ?? [], filters, forkFilter))
+  // Toggle for the archived thread block (age > 7d or explicit archivedAt).
+  const [archivedOpen, setArchivedOpen] = useState(false)
+
+  // All open threads (resolved threads already dropped by filterSidebarThreads).
+  // Split into live (< 7d) and archived (> 7d or explicit archivedAt) blocks.
+  const allThreads = sortByUrgencyThenAge(filterSidebarThreads(data ?? [], filters, forkFilter))
+  const liveThreads = allThreads.filter((t) => !isArchived(t))
+  const archivedThreads = allThreads.filter((t) => isArchived(t))
 
   return (
     <aside className="flex w-64 flex-shrink-0 flex-col border-r border-primary/30 bg-background">
@@ -2437,7 +2468,7 @@ export const ThreadSidebar = ({
         <MainThreadRow
           isSelected={selectedId === null}
           onSelect={onSelectMainThread}
-          subthreadCount={threads.length}
+          subthreadCount={liveThreads.length}
           totalSubthreadCount={totalSubthreadCount}
         />
       </div>
@@ -2447,7 +2478,7 @@ export const ThreadSidebar = ({
         onFastAction={onFastAction}
       />
       <div className="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-0.5">
-        {threads.length > 0 && (
+        {liveThreads.length > 0 && (
           <p className="px-2 pb-1 font-mono text-[9px] uppercase tracking-wide text-primary/50">
             Subthreads
           </p>
@@ -2458,7 +2489,7 @@ export const ThreadSidebar = ({
             rowClassName="mx-2 h-7 mb-1"
             label="Loading threads"
           />
-        ) : threads.length === 0 ? (
+        ) : allThreads.length === 0 ? (
           <p
             className="px-2 py-3 font-mono text-[10px] text-primary/40"
             data-testid="empty-rail"
@@ -2466,7 +2497,7 @@ export const ThreadSidebar = ({
             {filters.query.trim() ? 'No matches' : "You're all clear"}
           </p>
         ) : null}
-        {threads.map((t) => (
+        {liveThreads.map((t) => (
           <ThreadItem
             key={t.id}
             indented
@@ -2474,8 +2505,33 @@ export const ThreadSidebar = ({
             isSelected={t.id === selectedId}
             onSelect={() => onSelect(t.id)}
             onRename={(title) => rename({ id: t.id, title })}
+            kindChip={t.origin === 'alert' ? 'alert' : null}
           />
         ))}
+        {archivedThreads.length > 0 && (
+          <div className="mt-1" data-testid="archived-section">
+            <button
+              type="button"
+              data-testid="archived-toggle"
+              className="w-full px-2 py-1 text-left font-mono text-[9px] uppercase tracking-wide text-muted-foreground hover:text-foreground"
+              onClick={() => setArchivedOpen((v) => !v)}
+              aria-expanded={archivedOpen}
+            >
+              {archivedOpen ? '▼' : '▸'} archived ({archivedThreads.length})
+            </button>
+            {archivedOpen && archivedThreads.map((t) => (
+              <ThreadItem
+                key={t.id}
+                indented
+                thread={t}
+                isSelected={t.id === selectedId}
+                onSelect={() => onSelect(t.id)}
+                onRename={(title) => rename({ id: t.id, title })}
+                kindChip={t.origin === 'alert' ? 'alert' : null}
+              />
+            ))}
+          </div>
+        )}
 
         <div className="mt-2 border-t border-primary/15 px-2 pt-2" aria-label="Archive fork filters">
           <button

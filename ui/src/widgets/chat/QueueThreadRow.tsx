@@ -65,6 +65,13 @@ interface RowProps {
   onAction?: (action: ActionDescriptor, item: ActionQueueItem) => void
   /** When the projection is merged with an alert-origin conversation. */
   hasConversation?: boolean
+  /**
+   * Optional kind chip displayed beside the sender band.
+   * 'alert'    → iron-tinted chip (operational alerts: failed tasks, stale queues…)
+   * 'decision' → ochre-tinted chip (decision requests: awaiting-human, plan-approval…)
+   * null       → no chip rendered
+   */
+  kindChip?: 'alert' | 'decision' | null
 }
 
 export const QueueThreadRow = memo(({
@@ -76,6 +83,7 @@ export const QueueThreadRow = memo(({
   restartError,
   onAction,
   hasConversation = false,
+  kindChip = null,
 }: RowProps) => {
   const why = whyNowText(item)
   // Non-restart Decisions that appear in the inline resolver and compact pill bar.
@@ -115,6 +123,22 @@ export const QueueThreadRow = memo(({
           <span className="shrink-0 font-mono text-[10px] text-foreground">Mars</span>
           <span aria-hidden="true" className="text-muted-foreground">·</span>
           <span className="shrink-0 font-mono text-[9px] uppercase text-muted-foreground">{kindBadgeLabel(item.kind)}</span>
+          {kindChip === 'alert' && (
+            <span
+              className="shrink-0 rounded-sm border border-primary/30 bg-primary/10 px-1 font-mono text-[9px] uppercase text-primary"
+              data-testid="kind-chip-alert"
+            >
+              alert
+            </span>
+          )}
+          {kindChip === 'decision' && (
+            <span
+              className="shrink-0 rounded-sm border border-status-blocked/30 bg-status-blocked/10 px-1 font-mono text-[9px] uppercase text-status-blocked"
+              data-testid="kind-chip-decision"
+            >
+              decision
+            </span>
+          )}
           {hasConversation && (
             <span
               className="shrink-0 font-mono text-[9px] text-muted-foreground"

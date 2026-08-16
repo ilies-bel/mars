@@ -11,6 +11,52 @@ import { filterByQuery } from '@/pages/ActionQueuePageFilters'
 import { smartTitle } from '@/pages/chatPageUtils'
 
 // ---------------------------------------------------------------------------
+// formatRelative — compact relative duration for thread rail timestamps
+// ---------------------------------------------------------------------------
+
+/**
+ * Compact relative duration without the "ago" suffix: 2m, 4h, 3d.
+ * Designed for tight sidebar rows where brevity matters.
+ *
+ * Bands:
+ *   < 60 s  → "now"
+ *   < 60 m  → "Nm"
+ *   < 24 h  → "Nh"
+ *   otherwise → "Nd"
+ *
+ * @param ms  Epoch-milliseconds timestamp of the event.
+ * @param now Optional anchor for testing (defaults to Date.now()).
+ */
+export function formatRelative(ms: number, now = Date.now()): string {
+  const age = Math.max(0, now - ms)
+  if (age < 60_000) return 'now'
+  if (age < 3_600_000) return `${Math.floor(age / 60_000)}m`
+  if (age < 86_400_000) return `${Math.floor(age / 3_600_000)}h`
+  return `${Math.floor(age / 86_400_000)}d`
+}
+
+// ---------------------------------------------------------------------------
+// isArchived — archive predicate for sidebar folding
+// ---------------------------------------------------------------------------
+
+/** Threads older than this threshold fold into the archived block by default. */
+const ARCHIVE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
+
+/**
+ * A thread is archived when:
+ *   - its `archivedAt` field is set (explicit operator archive), OR
+ *   - its `createdAt` is more than 7 days old (age threshold).
+ *
+ * @param thread  The chat thread to evaluate.
+ * @param now     Optional anchor for testing (defaults to Date.now()).
+ */
+export function isArchived(thread: ChatThread, now = Date.now()): boolean {
+  if (thread.archivedAt != null) return true
+  const age = now - new Date(thread.createdAt).getTime()
+  return age > ARCHIVE_THRESHOLD_MS
+}
+
+// ---------------------------------------------------------------------------
 // Open-thread filter — drops resolved projections
 // ---------------------------------------------------------------------------
 
