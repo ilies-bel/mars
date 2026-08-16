@@ -1592,13 +1592,22 @@ export const startServer = async (
   // On SIGHUP, re-check bundle freshness and rebuild if src has advanced.
   // Lets an operator trigger a pick-up of merged UI changes without a full
   // server bounce: `kill -HUP $(lsof -ti TCP:7777)`.
-  process.on('SIGHUP', () => {
+  const sighupHandler = () => {
     rebuildIfStale().then((action) => {
       console.log(`mars-ui: SIGHUP rebuild — ${action}`)
     }).catch((err: unknown) => {
       console.error(`mars-ui: rebuild failed (SIGHUP): ${(err as Error).message}`)
     })
-  })
+  }
+  process.on('SIGHUP', sighupHandler)
+
+  // Wrap stop() so the SIGHUP listener is removed when the server shuts down.
+  // Prevents MaxListenersExceededWarning in tests that start multiple instances.
+  const originalStop = server.stop.bind(server)
+  server.stop = (...args: Parameters<typeof server.stop>) => {
+    process.removeListener('SIGHUP', sighupHandler)
+    return originalStop(...args)
+  }
 
   return server
 }
