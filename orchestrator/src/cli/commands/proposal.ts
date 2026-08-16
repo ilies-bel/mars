@@ -24,6 +24,7 @@ import {
   setProposalCoordinated,
   appendProposalNotes,
   hasUnresolvedOpenQuestions,
+  reviveProposal,
   VALID_SOURCES,
   isProposalSource,
   type ProposalSource,
@@ -950,11 +951,32 @@ const proposalReslice: Command = {
   },
 }
 
+const proposalRevive: Command = {
+  path: 'proposal revive',
+  summary: 'revive an expired proposal back to draft for triage',
+  usage: 'usage: mars proposal revive <id>',
+  run: async (args, deps) => {
+    const id = args.positional[0]
+    if (!id) {
+      deps.err('usage: mars proposal revive <id>')
+      return { code: 2 }
+    }
+    try {
+      const proposal = await reviveProposal(id)
+      deps.out(`revived ${proposal.id}`)
+    } catch (error: unknown) {
+      deps.err(errorMessage(error))
+      return { code: 1 }
+    }
+    return { code: 0 }
+  },
+}
+
 const proposalGroupUsage = `usage: mars proposal <subcommand>
 
   CRUD:      add  list  show  set  delete
   PRD:       add-user-story  remove-user-story
-  Lifecycle: promote  slice  take  reslice  dismiss  mockup
+  Lifecycle: promote  slice  take  reslice  dismiss  revive  mockup
   Blockers:  block  unblock  blockers  block-task  unblock-task  task-blockers
   Reports:   ship-summary`
 
@@ -980,6 +1002,7 @@ export const proposalCommands: readonly Command[] = [
   proposalMockup,
   proposalReslice,
   proposalDismiss,
+  proposalRevive,
   proposalDelete,
   proposalList,
   proposalBlock,

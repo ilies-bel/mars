@@ -196,6 +196,13 @@ export interface DaemonConfig {
    * Absent until at least one reflection has run.
    */
   lastReflectRanAt?: string
+  /**
+   * Number of days after last update before an auto-generated (agent-authored)
+   * draft proposal is moved to 'expired'. The sweep runs at daemon boot and
+   * daily. Operator-created proposals (author_kind = 'human') are never
+   * auto-expired. Set via daemon.json key `proposalExpiryDays`. Default 14.
+   */
+  proposalExpiryDays: number
 }
 
 const DEFAULTS: DaemonCaps = {
@@ -222,6 +229,8 @@ const DEFAULT_SCORING: ScoringConfig = {
 }
 
 const DEFAULT_PROVIDER: ProviderName = 'codex'
+
+const DEFAULT_PROPOSAL_EXPIRY_DAYS = 14
 
 const DEFAULT_CONTROL_LEVERS: ControlLevers = {
   recovery: 'on',
@@ -680,6 +689,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
   let fileScoringWindow: number | undefined
   let fileDefaultProvider: ProviderName | undefined
   let fileLastReflectRanAt: string | undefined
+  let fileProposalExpiryDays: number | undefined
 
   try {
     const raw = readFileSync(daemonConfigPath(), 'utf8')
@@ -741,6 +751,15 @@ export const loadDaemonConfig = (): DaemonConfig => {
     if (typeof parsed.lastReflectRanAt === 'string' && parsed.lastReflectRanAt.length > 0) {
       fileLastReflectRanAt = parsed.lastReflectRanAt
     }
+    const rawExpiryDays = (parsed as Record<string, unknown>).proposalExpiryDays
+    if (
+      typeof rawExpiryDays === 'number' &&
+      Number.isFinite(rawExpiryDays) &&
+      Number.isInteger(rawExpiryDays) &&
+      rawExpiryDays > 0
+    ) {
+      fileProposalExpiryDays = rawExpiryDays
+    }
   } catch {
     // No file, unreadable, or invalid JSON — fall back to env+defaults.
   }
@@ -766,5 +785,6 @@ export const loadDaemonConfig = (): DaemonConfig => {
     defaultProvider: fileDefaultProvider ?? DEFAULT_PROVIDER,
     controlLevers: readControlLevers(),
     lastReflectRanAt: fileLastReflectRanAt,
+    proposalExpiryDays: fileProposalExpiryDays ?? DEFAULT_PROPOSAL_EXPIRY_DAYS,
   }
 }

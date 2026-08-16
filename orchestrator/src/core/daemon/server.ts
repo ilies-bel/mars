@@ -6026,6 +6026,37 @@ export const startDaemon = async (
   const githubUpdatePoll = setInterval(runUpdatePoll, UPDATE_POLL_INTERVAL_MS)
   githubUpdatePoll.unref()
 
+  // ── Daily proposal expiry sweep ──────────────────────────────────────────
+  // The startup reconciler already expires stale agent-authored drafts on
+  // boot; this interval keeps the sweep running daily so a long-lived daemon
+  // does not accumulate new stale rows between restarts. .unref() so the
+  // interval never prevents shutdown.
+  const PROPOSAL_EXPIRY_INTERVAL_MS = 24 * 60 * 60 * 1000
+  const runProposalExpiry = (): void => {
+    void (async () => {
+      try {
+        const { expireProposals } = await import('../proposals')
+        const { supersedeActionQueueItemsForOrigin } = await import('../lib/action-queue')
+        const expiryMs = loadDaemonConfig().proposalExpiryDays * 24 * 60 * 60 * 1000
+        const { count, ids } = await expireProposals(expiryMs)
+        if (count > 0) {
+          log(`[proposal-expiry] expired ${count} stale auto-generated draft(s)`)
+          for (const id of ids) {
+            await supersedeActionQueueItemsForOrigin(
+              id,
+              'origin-dropped',
+              'proposal-expiry-sweep',
+            ).catch(() => { /* non-fatal */ })
+          }
+        }
+      } catch (err) {
+        log(`[proposal-expiry] daily sweep failed: ${(err as Error).message}`)
+      }
+    })()
+  }
+  const proposalExpiryInterval = setInterval(runProposalExpiry, PROPOSAL_EXPIRY_INTERVAL_MS)
+  proposalExpiryInterval.unref()
+
   // ── Dev-install staleness check ──────────────────────────────────────────
   // Periodically compares the git HEAD at startup against the current HEAD.
   // Relevant, stable local code drift automatically restarts an idle dev

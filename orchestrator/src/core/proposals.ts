@@ -40,6 +40,7 @@ export const PROPOSAL_STATUSES = [
   'sliced',
   'taken',
   'dismissed',
+  'expired',
 ] as const
 
 export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number]
@@ -182,6 +183,72 @@ const assertValidSource = (raw: unknown): ProposalSource => {
   )
 }
 
+/**
+ * Default dedup window for near-identical auto-generated draft proposals.
+ * A new agent-authored draft whose title shares ≥60% of significant words with
+ * an open draft from the same agent within this window is coalesced into the
+ * existing draft instead of creating a new row.
+ */
+const DEDUP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+
+const TITLE_STOP_WORDS = new Set([
+  'that', 'this', 'with', 'from', 'have', 'will', 'when', 'does', 'should',
+  'would', 'could', 'make', 'made', 'into', 'over', 'after', 'before', 'which',
+  'their', 'there', 'then', 'than', 'them', 'they', 'each', 'some', 'been',
+  'were', 'also', 'what', 'where', 'code', 'task',
+])
+
+const titleWords = (title: string): string[] =>
+  title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 3 && !TITLE_STOP_WORDS.has(w))
+
+const titleJaccard = (a: string[], b: string[]): number => {
+  if (a.length === 0 || b.length === 0) return 0
+  const setA = new Set(a)
+  let intersection = 0
+  for (const w of b) if (setA.has(w)) intersection++
+  const union = new Set([...a, ...b]).size
+  return union === 0 ? 0 : intersection / union
+}
+
+/**
+ * Return the most recent open (status='draft') agent-authored proposal whose
+ * title is near-identical (Jaccard ≥ 0.6 on significant words) to `title`,
+ * from the same `authorName`, within `withinMs` milliseconds. Returns null
+ * when no near-duplicate is found or when `authorName` is null (cannot
+ * determine the specific agent).
+ */
+const findNearDuplicateAgentDraft = async (
+  title: string,
+  authorName: string | null,
+  withinMs: number,
+): Promise<{ id: string; title: string } | null> => {
+  if (authorName === null) return null
+  const words = titleWords(title)
+  if (words.length < 2) return null
+  const c = stateClient()
+  const cutoff = Date.now() - withinMs
+  const r = await c.execute({
+    sql: `SELECT id, title FROM proposals
+           WHERE status = 'draft'
+             AND author_kind = 'agent'
+             AND author_name = ?
+             AND updated_at >= ?
+           ORDER BY updated_at DESC
+           LIMIT 50`,
+    args: [authorName, cutoff],
+  })
+  for (const row of r.rows as unknown as Array<{ id: string; title: string }>) {
+    if (titleJaccard(words, titleWords(row.title)) >= 0.6) {
+      return { id: row.id, title: row.title }
+    }
+  }
+  return null
+}
+
 const parseSuggestionOutcome = (raw: unknown): SuggestionOutcome | null => {
   if (raw == null) return null
   try {
@@ -288,6 +355,21 @@ export const createProposal = async (
   const originSessionId = opts?.originSessionId ?? null
   const suggestionOutcomeJson =
     opts?.suggestionOutcome != null ? JSON.stringify(opts.suggestionOutcome) : null
+
+  // Rate-limit at source: coalesce a new agent-authored draft into an existing
+  // near-identical open draft from the same author within the dedup window.
+  // Human-authored proposals always go through regardless of title similarity.
+  if (authorKind === 'agent' && title.trim().length > 0) {
+    const dup = await findNearDuplicateAgentDraft(title, authorName, DEDUP_WINDOW_MS)
+    if (dup !== null) {
+      if (notes && notes.trim().length > 0) {
+        await appendProposalNotes(dup.id, notes)
+      }
+      const existing = await getProposal(dup.id)
+      if (existing) return existing
+    }
+  }
+
   const result = await c.execute({
     sql: `INSERT INTO proposals
             (id, title, problem, solution, out_of_scope, notes,
@@ -1222,4 +1304,74 @@ export const markProposalTaken = async (id: string): Promise<void> => {
       `cannot mark proposal ${id} taken: expected status='slicing', found '${current?.status ?? 'missing'}'`,
     )
   }
+}
+
+/**
+ * Bulk-expire auto-generated (agent-authored) draft proposals that have not
+ * been touched in `olderThanMs` milliseconds. Returns the count and ids of
+ * the rows flipped to 'expired'. Only proposals with `author_kind = 'agent'`
+ * are eligible — operator-created proposals (author_kind = 'human') are never
+ * auto-expired.
+ *
+ * Callers are responsible for superseding any open action-queue rows keyed
+ * on the returned ids.
+ */
+export const expireProposals = async (
+  olderThanMs: number,
+): Promise<{ count: number; ids: string[] }> => {
+  await initProposals()
+  const c = stateClient()
+  const cutoff = Date.now() - olderThanMs
+  const r = await c.execute({
+    sql: `UPDATE proposals
+             SET status = 'expired', updated_at = ?
+           WHERE status = 'draft'
+             AND author_kind = 'agent'
+             AND updated_at < ?
+           RETURNING id`,
+    args: [Date.now(), cutoff],
+  })
+  const ids = (r.rows as unknown as Array<{ id: string }>).map((row) => row.id)
+  return { count: ids.length, ids }
+}
+
+/**
+ * Revive an expired proposal back to draft status so it can be triaged again.
+ * Throws if the proposal is not currently 'expired'. Emits `proposal.added` so
+ * the action-queue-repopulator subscriber raises a new draft-proposal row.
+ */
+export const reviveProposal = async (idOrPrefix: string): Promise<Proposal> => {
+  await initProposals()
+  const resolved = await resolveProposalId(idOrPrefix)
+  if (resolved.kind === 'ambiguous') {
+    throw new Error(
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} proposals`,
+    )
+  }
+  if (resolved.kind === 'none') {
+    throw new Error(`proposal ${idOrPrefix} not found`)
+  }
+  const id = resolved.id
+  const current = await getProposal(id)
+  if (!current) throw new Error(`proposal ${id} not found`)
+  if (current.status !== 'expired') {
+    throw new Error(
+      `proposal ${id} is '${current.status}'; only expired proposals can be revived`,
+    )
+  }
+  const c = stateClient()
+  await c.execute({
+    sql: `UPDATE proposals SET status = 'draft', updated_at = ? WHERE id = ? AND status = 'expired'`,
+    args: [Date.now(), id],
+  })
+  // Emit proposal.added so the action-queue-repopulator raises a new
+  // draft-proposal row. The old row was superseded when the proposal expired.
+  await emitProposalBusEvent('proposal.added', {
+    proposalId: id,
+    source: current.source,
+    title: current.title,
+  })
+  const updated = await getProposal(id)
+  if (!updated) throw new Error(`proposal ${id} disappeared after revival`)
+  return updated
 }
