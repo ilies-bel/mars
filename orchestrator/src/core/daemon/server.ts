@@ -1764,31 +1764,38 @@ export const startDaemon = async (
                 // through the verify phase so the watchdog can use PID liveness.
                 release(sems.implement)
                 void drain()
+                // Register the daemon's PID as the alive-sentinel BEFORE waiting
+                // on the verify semaphore. When caps.verify=1 and several tasks
+                // are queued behind a running verify, each waiting task can spend
+                // many minutes blocking on acquire(verifySem). Without a PID and
+                // heartbeat, the phantom-task watchdog would ceiling-kill them on
+                // updatedAt staleness (case 2a). With an alive PID + running
+                // heartbeat established here, the watchdog uses case 2b (alive
+                // PID + fresh heartbeat → never phantom) regardless of how long
+                // the task is queued. If the daemon dies while waiting, the
+                // startup reconciler re-queues orphaned 'verifying' tasks on boot.
+                tracker.recordPid(task.id, process.pid)
+                // Kick off the verify heartbeat BEFORE the semaphore wait so
+                // tasks queued behind a held verify slot are never ceiling-killed
+                // while waiting. Fires every HEARTBEAT_INTERVAL_MS to keep
+                // lastActivityMs and task.updatedAt fresh for the watchdog.
+                // Starting here (rather than after acquire) is the fix for the
+                // verify/unclassified storm where tasks with caps.verify=1 were
+                // ceiling-killed while waiting for the sole verify slot to free.
+                if (verifyHeartbeatInterval === null) {
+                  lastDbHeartbeatMs = 0  // force first tick to write immediately
+                  verifyHeartbeatInterval = setInterval(() => {
+                    const nowMs = Date.now()
+                    tracker.recordActivity(task.id, nowMs)
+                    void updateTask(task.id, {}).catch(() => {})
+                  }, HEARTBEAT_INTERVAL_MS)
+                }
               }
               await acquire(verifySem)
               // Register this task as actively verifying in this daemon so the
               // phantom-task watchdog's isVerifyRunning predicate can exempt it
               // from the wall-clock ceiling (belt-and-suspenders alongside PID).
               activeVerifyingTaskIds.add(task.id)
-              // Register the daemon's PID as the alive-sentinel. While this
-              // daemon process is running, isProcessAlive(process.pid) returns
-              // true, so the watchdog uses case 2b (alive PID + heartbeat) or 2c
-              // (alive PID, no heartbeat yet) rather than case 2a (no PID, stale
-              // updatedAt). If the daemon dies, the startup reconciler re-queues
-              // orphaned 'verifying' tasks on the next boot.
-              tracker.recordPid(task.id, process.pid)
-              // Kick off the verify heartbeat. Fires every HEARTBEAT_INTERVAL_MS
-              // to keep lastActivityMs and task.updatedAt fresh for the watchdog.
-              // This prevents case-2b ceiling-kills for arbitrarily long test
-              // suites (remerge re-verifies can legitimately run 40-60+ minutes).
-              if (verifyHeartbeatInterval === null) {
-                lastDbHeartbeatMs = 0  // force first tick to write immediately
-                verifyHeartbeatInterval = setInterval(() => {
-                  const nowMs = Date.now()
-                  tracker.recordActivity(task.id, nowMs)
-                  void updateTask(task.id, {}).catch(() => {})
-                }, HEARTBEAT_INTERVAL_MS)
-              }
             },
             releaseVerifySlot: (): void => {
               // Stop the heartbeat interval before releasing the semaphore so

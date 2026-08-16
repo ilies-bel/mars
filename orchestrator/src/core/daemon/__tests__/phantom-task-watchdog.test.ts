@@ -1238,3 +1238,128 @@ describe('sweepPhantomTasks — merging phantom detection', () => {
     expect(reclaimSlot).toHaveBeenCalledWith(task.id, 'merge')
   })
 })
+
+// ── Verify-semaphore queue: ceiling must not fire while waiting ───────────────
+//
+// Root cause of the verify/unclassified storm (mars-4892144d et al., caps.verify=1):
+// acquireVerifySlot only started the heartbeat AFTER acquire(verifySem) returned.
+// While queued behind a running verify, a task's in-flight entry had no PID and no
+// heartbeat, so the watchdog used case 2a (stale updatedAt ceiling) and killed it.
+//
+// Fix: tracker.recordPid + heartbeat interval are started BEFORE await acquire(verifySem)
+// (inside the verifyHandedOff guard), so the watchdog sees case 2b (alive PID +
+// fresh heartbeat → never phantom) for the entire queue wait.
+
+describe('sweepPhantomTasks — verify-semaphore queue ceiling immunity', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_PHANTOM_WATCHDOG_CEILING_MS
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('does NOT ceiling-kill a verifying task queued on the semaphore for > ceiling (alive PID + fresh heartbeat)', async () => {
+    // Reproduces the exact storm: caps.verify=1, five ui tasks all enter
+    // status='verifying' and block on acquire(verifySem). Each waiting task
+    // was >30 min old when the watchdog ran — ceiling-killed as verify/unclassified.
+    //
+    // After the fix, acquireVerifySlot records process.pid and starts the
+    // heartbeat interval BEFORE await acquire(verifySem), so the in-flight
+    // entry carries an alive PID + fresh heartbeat. The watchdog uses case 2b
+    // (alive PID + fresh heartbeat → never phantom) and leaves the task alone.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('ui: render task list', undefined, { skipTriage: true })
+
+    // Task has been in 'verifying' (and queued on the semaphore) for 35 minutes —
+    // well past the 30-min ceiling. Before the fix this triggered a kill.
+    const stalledUpdatedAt = new Date(nowMs - 35 * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'verifying', updated_at = ? WHERE id = ?`,
+      args: [stalledUpdatedAt, task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    // The fixed acquireVerifySlot sets pid=process.pid and starts the heartbeat
+    // BEFORE the semaphore wait. Represented here as an alive PID + fresh heartbeat.
+    const inFlightEntries = [
+      {
+        taskId: task.id,
+        kind: 'implement' as const,
+        startedAt: nowMs - 35 * 60_000,
+        pid: 12345,                        // daemon PID recorded before the wait
+        lastActivityMs: nowMs - 1 * 60_000, // heartbeat kept fresh while queued
+      },
+    ]
+    const isAlive = vi.fn().mockReturnValue(true) // daemon is alive → case 2b
+
+    const { failed } = await watchdog.sweepPhantomTasks(
+      inFlightEntries,
+      reclaimSlot,
+      isAlive,
+      nowMs,
+    )
+
+    // Must NOT be killed: alive PID + fresh heartbeat overrides stale updatedAt.
+    expect(failed).not.toContain(task.id)
+    expect(reclaimSlot).not.toHaveBeenCalled()
+
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('verifying')
+
+    // No action-queue item — the task is healthy and just waiting.
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(0)
+  })
+
+  it('DOES ceiling-kill a verifying task with in-flight entry but no PID (genuinely dead, no pre-acquire setup)', async () => {
+    // Dead-run detection must remain unchanged: when a task's in-flight entry
+    // carries no PID (e.g. the daemon crashed before tracker.recordPid ran, or
+    // the entry was created by a prior daemon that had not yet applied this fix),
+    // the watchdog falls back to the bare updatedAt ceiling (case 2a) and kills it.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('ui: slow gate chain', undefined, { skipTriage: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'verifying', updated_at = ? WHERE id = ?`,
+      args: [new Date(nowMs - 35 * 60_000).toISOString(), task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    // In-flight entry with NO pid and NO lastActivityMs: the pre-acquire setup
+    // did not run (old daemon, crashed daemon, or other unexpected path).
+    const inFlightEntries = [
+      {
+        taskId: task.id,
+        kind: 'implement' as const,
+        startedAt: nowMs - 35 * 60_000,
+        // no pid, no lastActivityMs
+      },
+    ]
+
+    const { failed } = await watchdog.sweepPhantomTasks(
+      inFlightEntries,
+      reclaimSlot,
+      undefined, // isAlive not called when no pid
+      nowMs,
+    )
+
+    // Must be killed: no PID → case 2a (bare updatedAt ceiling) → ceiling exceeded.
+    expect(failed).toContain(task.id)
+    expect(reclaimSlot).toHaveBeenCalledWith(task.id, 'implement')
+
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failedPhase).toBe('verify')
+
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(1)
+    expect(items[0].kind).toBe(watchdog.PHANTOM_TASK_KIND)
+  })
+})
