@@ -25,8 +25,10 @@ process.env.MARS_ARC_INVARIANT_CHECK = '1'
 // environment.  Any shell that launched the daemon inherits that export, so a
 // bare `npm test` in that shell would connect the test suite to the daemon's
 // live PostgreSQL.  Rows the daemon writes asynchronously then move under
-// in-flight assertions, producing the non-deterministic failures documented in
-// ADR-0069.
+// in-flight assertions, producing non-deterministic test failures (observed:
+// `getTestDb > gives a later test setup an empty database` and 2404 failures
+// while the daemon was active, vs the same suite passing when host state was
+// quiet — ADR-0095 documents the isolation strategy).
 //
 // Forcing `pglite` here — regardless of what the caller's shell says — ensures
 // every worker fork gets an in-process, in-memory database that is isolated
