@@ -81,6 +81,26 @@ describe('ChatPage main thread', () => {
     expect(timelineIdx).toBeGreaterThan(-1)
     expect(spacerIdx).toBeGreaterThan(timelineIdx)
   })
+
+  it('renders with no permanent right rail — context panel is closed by default', () => {
+    const html = renderPage()
+
+    // Neither the full panel nor the collapsed icon strip should be present on
+    // initial render; the operator must click "context ▸" to reveal it.
+    expect(html).not.toContain('aria-label="Context rail"')
+    expect(html).not.toContain('aria-label="Context rail (collapsed)"')
+  })
+
+  it('renders the "context ▸" toggle in the page header so the panel can be opened', () => {
+    const html = renderPage()
+
+    // The toggle button is always present regardless of screen size.
+    expect(html).toContain('data-testid="context-panel-toggle"')
+    // Initially the panel is closed, so the button announces "Open context panel".
+    expect(html).toContain('aria-label="Open context panel"')
+    // aria-expanded must reflect the closed state.
+    expect(html).toContain('aria-expanded="false"')
+  })
 })
 
 describe('ConversationTimeline composer spacer', () => {

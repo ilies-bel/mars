@@ -2631,21 +2631,27 @@ export const ChatPage = () => {
   // ---------------------------------------------------------------------------
   // Responsive breakpoints
   // ---------------------------------------------------------------------------
-  // Rail: auto-expand at xl (1280 px+). Below 1024 px the three-column layout
-  // is too cramped; using the xl threshold means the rail collapses at both
-  // 768 px and 1024 px (matching the verify spec) and only opens at 1280 px+.
-  const isXlScreen = useMediaQuery('(min-width: 1280px)')
   // Sidebar: hide below 769 px (standard md breakpoint boundary) and replace
   // with a hamburger/sheet toggle.
   const isMdScreen = useMediaQuery('(min-width: 769px)')
 
-  // Rail collapse: starts collapsed by default; auto-expands at xl (≥1280px)
-  // and resets whenever the viewport crosses the xl boundary.
-  const [railCollapsed, setRailCollapsed] = useState(true)
-  const openWorkRegionRef = useRef<HTMLDivElement>(null)
+  // Context panel: hidden by default; toggled by the "context ▸" affordance in
+  // the page header.  State is remembered for the session (sessionStorage) so
+  // it survives a page refresh within the same tab but resets on a new session.
+  const [contextPanelOpen, setContextPanelOpen] = useState(() => {
+    try {
+      return sessionStorage.getItem('chat-context-panel-open') === 'true'
+    } catch {
+      return false
+    }
+  })
   useEffect(() => {
-    setRailCollapsed(!isXlScreen)
-  }, [isXlScreen])
+    try {
+      sessionStorage.setItem('chat-context-panel-open', String(contextPanelOpen))
+    } catch { /* noop — private browsing may deny storage */ }
+  }, [contextPanelOpen])
+
+  const openWorkRegionRef = useRef<HTMLDivElement>(null)
 
   // Mobile sidebar sheet
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -3059,9 +3065,10 @@ export const ChatPage = () => {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {/* Mobile top bar — hamburger button */}
-        {!isMdScreen && (
-          <div className="flex items-center border-b border-primary/30 px-3 py-2">
+        {/* Page header — hamburger (mobile only) + "context ▸" toggle (always).
+            Always rendered so the context toggle is reachable at every width. */}
+        <div className="flex items-center border-b border-primary/30 px-3 py-2">
+          {!isMdScreen && (
             <button
               type="button"
               aria-label="Open sidebar"
@@ -3070,8 +3077,18 @@ export const ChatPage = () => {
             >
               ☰
             </button>
-          </div>
-        )}
+          )}
+          <button
+            data-testid="context-panel-toggle"
+            type="button"
+            aria-expanded={contextPanelOpen}
+            aria-label={contextPanelOpen ? 'Close context panel' : 'Open context panel'}
+            className="ml-auto font-mono text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+            onClick={() => setContextPanelOpen((v) => !v)}
+          >
+            context {contextPanelOpen ? '◂' : '▸'}
+          </button>
+        </div>
         {queueSelectionResolved ? (
           <div
             data-testid="resolved-pane"
@@ -3262,23 +3279,25 @@ export const ChatPage = () => {
         )}
       </div>
 
-      <ContextRail
-        projectId={projectId}
-        files={threadAttachments}
-        meta={projectMeta}
-        threadId={selectedThreadId ?? undefined}
-        activeThreadId={selectedThreadId ?? undefined}
-        threadDetail={activeThreadDetail}
-        isStreaming={activeIsStreaming}
-        liveBuffer={activeLiveBuffer}
-        openWork={openWork}
-        onOpenWork={handleOpenWork}
-        proposals={proposals}
-        onOpenProposal={openProposalSubject}
-        openWorkRegionRef={openWorkRegionRef}
-        collapsed={railCollapsed}
-        onToggleCollapse={() => setRailCollapsed((v) => !v)}
-      />
+      {contextPanelOpen && (
+        <ContextRail
+          projectId={projectId}
+          files={threadAttachments}
+          meta={projectMeta}
+          threadId={selectedThreadId ?? undefined}
+          activeThreadId={selectedThreadId ?? undefined}
+          threadDetail={activeThreadDetail}
+          isStreaming={activeIsStreaming}
+          liveBuffer={activeLiveBuffer}
+          openWork={openWork}
+          onOpenWork={handleOpenWork}
+          proposals={proposals}
+          onOpenProposal={openProposalSubject}
+          openWorkRegionRef={openWorkRegionRef}
+          collapsed={false}
+          onToggleCollapse={() => setContextPanelOpen(false)}
+        />
+      )}
       </div>
     </div>
   )

@@ -162,7 +162,7 @@ describe('ChatPage opening greeting', () => {
     expect(feed?.querySelector('[data-testid="alert-event-timeline"]')).toBeNull()
   })
 
-  it('opens an alert Subject from its context-rail row', async () => {
+  it('opens an alert Subject from its context-rail row (panel must be opened first)', async () => {
     mockUseActionQueue.mockReturnValue({
       items: [{ ...alert('alert-1', 'Repair deployment', 'high'), kind: 'arc-failed' }],
       error: null,
@@ -171,6 +171,14 @@ describe('ChatPage opening greeting', () => {
     })
     await renderPage()
 
+    // The context panel is closed by default — open it via the toggle.
+    await act(async () => {
+      const toggle = container.querySelector('[data-testid="context-panel-toggle"]') as HTMLButtonElement
+      expect(toggle).not.toBeNull()
+      toggle.click()
+    })
+
+    // Now the alert row is visible; click it to open its Subject.
     await act(async () => {
       (container.querySelector('[data-testid="context-rail-alert-row"]') as HTMLButtonElement).click()
     })
