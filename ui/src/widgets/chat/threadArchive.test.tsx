@@ -254,3 +254,156 @@ describe('ThreadSidebar archive toggle', () => {
     root.unmount()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Stale-untitled fold in ThreadSidebar
+// ---------------------------------------------------------------------------
+
+// An untitled thread created more than 48 hours ago (must be under 7 days to
+// avoid the archived block).
+const STALE_48H = '2026-08-13T00:00:00.000Z' // 3 days ago — stale untitled, not archived
+
+describe('ThreadSidebar stale-untitled fold', () => {
+  it('folds untitled threads older than 48h into a single disclosure row', () => {
+    const threads = [
+      thread({ id: 'titled',   title: 'Titled thread', createdAt: RECENT }),
+      thread({ id: 'untitled', title: null,             createdAt: STALE_48H }),
+    ]
+    const qc = makeQueryClient(threads)
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <ThreadSidebar
+            selectedId={null}
+            onSelect={() => {}}
+            filters={filters}
+            onFiltersChange={() => {}}
+            selectedItem={null}
+            onFastAction={() => {}}
+            onSelectMainThread={() => {}}
+          />
+        </QueryClientProvider>,
+      )
+    })
+
+    // Titled thread is visible directly.
+    expect(container.textContent).toContain('Titled thread')
+    // The stale-untitled toggle is present.
+    const toggle = container.querySelector('[data-testid="stale-untitled-toggle"]')
+    expect(toggle).not.toBeNull()
+    expect(toggle!.textContent).toContain('1 older untitled thread')
+    // Stale-untitled section body is collapsed — no ThreadItem children visible.
+    // ThreadItem divs render with role="button"; only the toggle <button> is present.
+    const section = container.querySelector('[data-testid="stale-untitled-section"]')!
+    expect(section.querySelectorAll('[role="button"]')).toHaveLength(0)
+
+    root.unmount()
+  })
+
+  it('reveals stale untitled threads when the disclosure is opened', () => {
+    const threads = [
+      thread({ id: 'titled',   title: 'Named thread', createdAt: RECENT }),
+      thread({ id: 'stale1',   title: null,            createdAt: STALE_48H }),
+      thread({ id: 'stale2',   title: null,            createdAt: STALE_48H }),
+    ]
+    const qc = makeQueryClient(threads)
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <ThreadSidebar
+            selectedId={null}
+            onSelect={() => {}}
+            filters={filters}
+            onFiltersChange={() => {}}
+            selectedItem={null}
+            onFastAction={() => {}}
+            onSelectMainThread={() => {}}
+          />
+        </QueryClientProvider>,
+      )
+    })
+
+    // Two stale threads behind the fold.
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="stale-untitled-toggle"]')!
+    expect(toggle.textContent).toContain('2 older untitled threads')
+
+    // Open the fold.
+    act(() => { toggle.click() })
+
+    // Both "New thread" labels are now visible.
+    const text = container.textContent ?? ''
+    const count = (text.match(/New thread/g) ?? []).length
+    expect(count).toBeGreaterThanOrEqual(2)
+
+    root.unmount()
+  })
+
+  it('does not show the stale-untitled toggle when all threads have titles', () => {
+    const threads = [
+      thread({ id: 'a', title: 'Thread A', createdAt: STALE_48H }),
+      thread({ id: 'b', title: 'Thread B', createdAt: STALE_48H }),
+    ]
+    const qc = makeQueryClient(threads)
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <ThreadSidebar
+            selectedId={null}
+            onSelect={() => {}}
+            filters={filters}
+            onFiltersChange={() => {}}
+            selectedItem={null}
+            onFastAction={() => {}}
+            onSelectMainThread={() => {}}
+          />
+        </QueryClientProvider>,
+      )
+    })
+
+    expect(container.querySelector('[data-testid="stale-untitled-toggle"]')).toBeNull()
+    expect(container.textContent).toContain('Thread A')
+    expect(container.textContent).toContain('Thread B')
+
+    root.unmount()
+  })
+
+  it('does not fold untitled threads that are recent (under 48h)', () => {
+    const threads = [
+      thread({ id: 'recent-untitled', title: null, createdAt: RECENT }),
+    ]
+    const qc = makeQueryClient(threads)
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <ThreadSidebar
+            selectedId={null}
+            onSelect={() => {}}
+            filters={filters}
+            onFiltersChange={() => {}}
+            selectedItem={null}
+            onFastAction={() => {}}
+            onSelectMainThread={() => {}}
+          />
+        </QueryClientProvider>,
+      )
+    })
+
+    // Recent untitled thread appears directly in the list as "New thread".
+    expect(container.textContent).toContain('New thread')
+    expect(container.querySelector('[data-testid="stale-untitled-toggle"]')).toBeNull()
+
+    root.unmount()
+  })
+})

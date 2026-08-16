@@ -8,7 +8,9 @@ import {
   filterOpen,
   filterThreadsByTitle,
   isResolvedSelection,
+  isStaleUntitled,
   sortByUrgencyThenAge,
+  STALE_UNTITLED_THRESHOLD_MS,
 } from './queueThreads'
 import type { ActionQueueItem, ChatThread } from '@/shared/schemas'
 
@@ -64,6 +66,40 @@ describe('draftRowHeadline', () => {
     expect(draftRowHeadline('Ship keyboard-first navigator')).toBe(
       'Ship keyboard-first navigator',
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isStaleUntitled — stale untitled thread predicate
+// ---------------------------------------------------------------------------
+
+describe('isStaleUntitled', () => {
+  const NOW = new Date('2026-08-16T12:00:00.000Z').getTime()
+  const RECENT = new Date(NOW - 24 * 60 * 60 * 1000).toISOString() // 24h ago (under 48h)
+  const STALE  = new Date(NOW - 3 * 24 * 60 * 60 * 1000).toISOString() // 72h ago (over 48h)
+
+  it('returns false for a titled thread regardless of age', () => {
+    expect(isStaleUntitled(makeThread({ title: 'My thread', createdAt: STALE }), NOW)).toBe(false)
+  })
+
+  it('returns false for a thread with a firstUserMessage regardless of age', () => {
+    expect(isStaleUntitled(makeThread({ title: null, createdAt: STALE, firstUserMessage: 'hello there' }), NOW)).toBe(false)
+  })
+
+  it('returns false for an untitled thread that is recent (under 48h)', () => {
+    expect(isStaleUntitled(makeThread({ title: null, createdAt: RECENT, firstUserMessage: null }), NOW)).toBe(false)
+  })
+
+  it('returns true for an untitled thread older than 48h', () => {
+    expect(isStaleUntitled(makeThread({ title: null, createdAt: STALE, firstUserMessage: null }), NOW)).toBe(true)
+  })
+
+  it('returns false for an empty-string title when firstUserMessage is set', () => {
+    expect(isStaleUntitled(makeThread({ title: '', createdAt: STALE, firstUserMessage: 'ask something' }), NOW)).toBe(false)
+  })
+
+  it('STALE_UNTITLED_THRESHOLD_MS equals 48 hours in milliseconds', () => {
+    expect(STALE_UNTITLED_THRESHOLD_MS).toBe(48 * 60 * 60 * 1000)
   })
 })
 

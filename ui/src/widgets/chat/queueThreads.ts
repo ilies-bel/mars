@@ -42,6 +42,9 @@ export function formatRelative(ms: number, now = Date.now()): string {
 /** Threads older than this threshold fold into the archived block by default. */
 const ARCHIVE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
+/** Untitled threads older than this threshold fold into the stale-untitled disclosure row. */
+export const STALE_UNTITLED_THRESHOLD_MS = 48 * 60 * 60 * 1000 // 48 hours
+
 /**
  * A thread is archived when:
  *   - its `archivedAt` field is set (explicit operator archive), OR
@@ -54,6 +57,25 @@ export function isArchived(thread: ChatThread, now = Date.now()): boolean {
   if (thread.archivedAt != null) return true
   const age = now - new Date(thread.createdAt).getTime()
   return age > ARCHIVE_THRESHOLD_MS
+}
+
+/**
+ * A thread is "stale untitled" when it has no user-visible title AND is older
+ * than 48 hours. These rows carry zero information and are folded into a single
+ * collapsed disclosure row in the sidebar to reduce visual noise.
+ *
+ * A thread has a user-visible title when:
+ *   - its `title` field is non-empty, OR
+ *   - its `firstUserMessage` is set (rendered via `smartTitle`).
+ *
+ * @param thread  The chat thread to evaluate.
+ * @param now     Optional anchor for testing (defaults to Date.now()).
+ */
+export function isStaleUntitled(thread: ChatThread, now = Date.now()): boolean {
+  const hasTitle = Boolean(thread.title?.trim()) || Boolean(thread.firstUserMessage?.trim())
+  if (hasTitle) return false
+  const age = now - new Date(thread.createdAt).getTime()
+  return age > STALE_UNTITLED_THRESHOLD_MS
 }
 
 // ---------------------------------------------------------------------------

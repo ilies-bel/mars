@@ -111,8 +111,11 @@ describe('SidebarFilters', () => {
       root.render(<SidebarFilters value={filters} onChange={onChange} onFastAction={() => {}} />)
     })
 
+    const select = container.querySelector<HTMLSelectElement>('[data-testid="sidebar-filter-origin"]')!
     act(() => {
-      container.querySelector<HTMLButtonElement>('[data-testid="sidebar-filter-alerts"]')!.click()
+      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
+      nativeSetter?.call(select, 'alerts')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
     })
 
     expect(onChange).toHaveBeenCalledWith({ ...filters, origin: 'alerts' })

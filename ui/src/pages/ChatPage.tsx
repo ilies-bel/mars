@@ -87,6 +87,7 @@ import {
   filterSidebarThreads,
   formatRelative,
   isArchived,
+  isStaleUntitled,
   isResolvedSelection,
   sortByUrgencyThenAge,
   type ForkFilter,
@@ -2515,12 +2516,17 @@ export const ThreadSidebar = ({
 
   // Toggle for the archived thread block (age > 7d or explicit archivedAt).
   const [archivedOpen, setArchivedOpen] = useState(false)
+  // Toggle for the stale-untitled block (no title/message, age > 48h).
+  const [staleUntitledOpen, setStaleUntitledOpen] = useState(false)
 
   // All open threads (resolved threads already dropped by filterSidebarThreads).
   // Split into live (< 7d) and archived (> 7d or explicit archivedAt) blocks.
   const allThreads = sortByUrgencyThenAge(filterSidebarThreads(data ?? [], filters, forkFilter))
   const liveThreads = allThreads.filter((t) => !isArchived(t))
   const archivedThreads = allThreads.filter((t) => isArchived(t))
+  // Stale untitled: live threads with no user-visible title older than 48 h.
+  const staleUntitledThreads = liveThreads.filter((t) => isStaleUntitled(t))
+  const visibleLiveThreads = liveThreads.filter((t) => !isStaleUntitled(t))
 
   return (
     <aside className="flex w-64 flex-shrink-0 flex-col border-r border-primary/30 bg-background">
@@ -2568,7 +2574,7 @@ export const ThreadSidebar = ({
             {filters.query.trim() ? 'No matches' : "You're all clear"}
           </p>
         ) : null}
-        {liveThreads.map((t) => (
+        {visibleLiveThreads.map((t) => (
           <ThreadItem
             key={t.id}
             indented
@@ -2579,6 +2585,30 @@ export const ThreadSidebar = ({
             kindChip={t.origin === 'alert' ? 'alert' : null}
           />
         ))}
+        {staleUntitledThreads.length > 0 && (
+          <div className="mt-1" data-testid="stale-untitled-section">
+            <button
+              type="button"
+              data-testid="stale-untitled-toggle"
+              className="w-full px-2 py-1 text-left font-mono text-[9px] uppercase tracking-wide text-muted-foreground hover:text-foreground"
+              onClick={() => setStaleUntitledOpen((v) => !v)}
+              aria-expanded={staleUntitledOpen}
+            >
+              {staleUntitledOpen ? '▼' : '▸'} {staleUntitledThreads.length} older untitled {staleUntitledThreads.length === 1 ? 'thread' : 'threads'}
+            </button>
+            {staleUntitledOpen && staleUntitledThreads.map((t) => (
+              <ThreadItem
+                key={t.id}
+                indented
+                thread={t}
+                isSelected={t.id === selectedId}
+                onSelect={() => onSelect(t.id)}
+                onRename={(title) => rename({ id: t.id, title })}
+                kindChip={t.origin === 'alert' ? 'alert' : null}
+              />
+            ))}
+          </div>
+        )}
         {archivedThreads.length > 0 && (
           <div className="mt-1" data-testid="archived-section">
             <button
