@@ -216,6 +216,15 @@ export const sweepPhantomTasks = async (
       if (entry?.pid !== undefined) {
         // Belt: PID is known — check liveness. Dead PID ⟹ phantom immediately.
         if (!alive(entry.pid)) {
+          // Belt-and-suspenders: if this daemon's own verify-slot machinery
+          // confirms the task is actively verifying, the dead PID is the old
+          // code-phase worker PID that exited cleanly — not a crashed worker.
+          // acquireVerifySlot() records process.pid as the alive-sentinel before
+          // the verify semaphore await, but there is a brief synchronous window
+          // between updateTask(status='verifying') and that call where the entry
+          // still carries the stale PID. Exempting isVerifyRunning=true tasks
+          // prevents a spurious dead-pid kill during that window.
+          if (status === 'verifying' && isVerifyRunning?.(task.id)) continue
           phantomReason = 'dead-pid'
         }
         // Alive PID: never ceiling-kill based on updatedAt staleness alone.

@@ -611,6 +611,76 @@ describe('sweepPhantomTasks — PID liveness', () => {
     expect(items).toHaveLength(0)
   })
 
+  it('does NOT fail a verifying task when dead in-flight PID but isVerifyRunning=true', async () => {
+    // Regression test for the race between updateTask(status='verifying') and
+    // acquireVerifySlot() recording process.pid as the alive-sentinel.
+    //
+    // The race window: the primitives call updateTask(status='verifying'), then
+    // acquireVerifySlot(). Inside acquireVerifySlot, the daemon PID and
+    // activeVerifyingTaskIds registration happen BEFORE the first async yield
+    // (await acquire(verifySem)) — but if the verify semaphore has no free slot
+    // the yield still occurs. If the watchdog sweeps at the exact moment between
+    // updateTask resolving and acquireVerifySlot running synchronously (which
+    // cannot happen in practice because they are sequenced as microtasks), or
+    // more critically during the verifySem wait before the fix was applied
+    // (where recordPid was called AFTER the await), the in-flight entry would
+    // still carry the old code-phase worker PID — which has already exited
+    // cleanly after coding finished.
+    //
+    // The watchdog must not fire 'dead-pid' when isVerifyRunning=true, even if
+    // the in-flight PID is dead. This is the belt-and-suspenders guard added
+    // to the watchdog to complement the primary fix in acquireVerifySlot.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('run full test suite', undefined, { skipTriage: true })
+
+    // Task just entered 'verifying' (recent updatedAt — well within ceiling).
+    const recentUpdatedAt = new Date(nowMs - 2 * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'verifying', updated_at = ? WHERE id = ?`,
+      args: [recentUpdatedAt, task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    // In-flight entry carries the dead code-phase worker PID.
+    // This is the exact state during the race window.
+    const inFlightEntries = [
+      {
+        taskId: task.id,
+        kind: 'implement' as const,
+        startedAt: nowMs - 2 * 60_000,
+        pid: 99999, // old worker PID — process has already exited cleanly
+      },
+    ]
+    const isAlive = vi.fn().mockReturnValue(false) // worker subprocess is gone
+    // isVerifyRunning=true — acquireVerifySlot registered this task before
+    // the verify semaphore await.
+    const isVerifyRunning = vi.fn().mockReturnValue(true)
+
+    const { failed } = await watchdog.sweepPhantomTasks(
+      inFlightEntries,
+      reclaimSlot,
+      isAlive,
+      nowMs,
+      undefined,
+      isVerifyRunning,
+    )
+
+    // Must NOT be failed: isVerifyRunning=true is the definitive signal that
+    // this daemon is actively running the verify — the dead PID is the old
+    // code-phase worker, not the verify process.
+    expect(failed).not.toContain(task.id)
+    expect(reclaimSlot).not.toHaveBeenCalled()
+    expect(isVerifyRunning).toHaveBeenCalledWith(task.id)
+
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('verifying')
+
+    // No action-queue item raised — the task is healthy.
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(0)
+  })
+
   it('keeps an alive worker running when it has not emitted events yet', async () => {
     // Providers can take several minutes to emit their first event. Process
     // liveness, not a silent event stream, is the required evidence for a

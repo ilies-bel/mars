@@ -1811,15 +1811,16 @@ export const startDaemon = async (
                 //
                 // Two-phase liveness:
                 //
-                //   Phase 1 — queued on semaphore (activeVerifyingTaskIds not
-                //     yet populated): heartbeat fires unconditionally. The
-                //     daemon's PID is the alive-sentinel. This preserves the
+                //   Phase 1 — queued on semaphore (no verify child spawned yet,
+                //     verifyChildPid === null): heartbeat fires unconditionally.
+                //     The daemon's PID is the alive-sentinel. This preserves the
                 //     fix from commit 2ca0994d: tasks queued behind a held
                 //     verify slot are never ceiling-killed on updatedAt
                 //     staleness (case 2b: alive PID + fresh heartbeat).
                 //
-                //   Phase 2 — active verify (after acquire(verifySem) resolves,
-                //     task is in activeVerifyingTaskIds): heartbeat gates on
+                //   Phase 2 — active verify (after acquire(verifySem) resolves
+                //     and a verify child has been spawned, so verifyChildPid is
+                //     set): heartbeat gates on
                 //     real child liveness. Once verifyChildPid is known, the
                 //     heartbeat checks isProcessAlive(verifyChildPid). If the
                 //     child has been dead for longer than
@@ -1878,11 +1879,31 @@ export const startDaemon = async (
                   }, HEARTBEAT_INTERVAL_MS)
                 }
               }
-              await acquire(verifySem)
-              // Register this task as actively verifying in this daemon so the
-              // phantom-task watchdog's isVerifyRunning predicate can identify
-              // the runner-hung case (stale heartbeat while isVerifyRunning=true).
+              // Register this task as actively verifying BEFORE awaiting the
+              // verify semaphore — the `await acquire(verifySem)` below is the
+              // first yield point, and the phantom-task watchdog's setInterval
+              // can run during it.
+              //
+              // The race this closes: the primitives call
+              // updateTask(status='verifying') then immediately call
+              // acquireVerifySlot(). Until tracker.recordPid above overwrites
+              // it, the in-flight entry carries the old code-phase worker PID,
+              // which has already exited cleanly. A watchdog sweep landing in
+              // that window sees a dead PID on a 'verifying' task and fires
+              // 'dead-pid', killing a healthy verify. Registering here makes
+              // isVerifyRunning(task.id) true from this point on, which the
+              // watchdog uses to exempt the task from the dead-pid kill
+              // (belt-and-suspenders alongside the alive daemon PID recorded
+              // above).
+              //
+              // It also lets the watchdog identify the runner-hung case later
+              // (stale heartbeat while isVerifyRunning=true). Registering
+              // early does not misclassify a queued task as an active verify:
+              // the heartbeat's Phase 2 branch additionally requires
+              // verifyChildPid !== null, and no verify child exists until
+              // after the semaphore is acquired.
               activeVerifyingTaskIds.add(task.id)
+              await acquire(verifySem)
             },
             releaseVerifySlot: (): void => {
               // Stop the heartbeat interval before releasing the semaphore so
