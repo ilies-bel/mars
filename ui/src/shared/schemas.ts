@@ -593,6 +593,12 @@ export const actionQueueResponseSchema = z.array(
     // when even the failed-task variant rejects the row.
     const attempt = taskFailureItemSchema.safeParse({ ...raw, kind: 'failed' })
     if (attempt.success) return attempt.data
+    // Thread the real `at` from the daemon payload rather than defaulting to
+    // the epoch-0 sentinel — a missing timestamp is a parse error, not a silent
+    // fallback, so callers can detect it and the UI can't silently show "56y ago".
+    if (typeof raw.at !== 'string' || raw.at.length === 0) {
+      throw new Error(`action-queue row ${String(raw.id ?? 'unknown')} is missing required 'at' timestamp`)
+    }
     return {
       id: typeof raw.id === 'string' ? raw.id : 'unknown',
       kind: 'failed',
@@ -600,7 +606,7 @@ export const actionQueueResponseSchema = z.array(
       priority: 'high' as const,
       title: typeof raw.title === 'string' ? raw.title : '',
       body: typeof raw.body === 'string' ? raw.body : '',
-      at: '1970-01-01T00:00:00.000Z',
+      at: raw.at,
       dag: null,
       errorKind:
         typeof raw.errorKind === 'string'
@@ -934,6 +940,11 @@ export const actionQueueHistoryResponseSchema = z.object({
           : {}
       const attempt = taskFailureItemSchema.safeParse({ ...raw, kind: 'failed' })
       if (attempt.success) return attempt.data
+      // Thread the real `at` from the daemon payload; a missing timestamp is a
+      // parse error so the history view can't silently show "56y ago" either.
+      if (typeof raw.at !== 'string' || raw.at.length === 0) {
+        throw new Error(`action-queue history row ${String(raw.id ?? 'unknown')} is missing required 'at' timestamp`)
+      }
       return {
         id: typeof raw.id === 'string' ? raw.id : 'unknown',
         kind: 'failed',
@@ -941,7 +952,7 @@ export const actionQueueHistoryResponseSchema = z.object({
         priority: 'high' as const,
         title: typeof raw.title === 'string' ? raw.title : '',
         body: typeof raw.body === 'string' ? raw.body : '',
-        at: '1970-01-01T00:00:00.000Z',
+        at: raw.at,
         dag: null,
         errorKind:
           typeof raw.errorKind === 'string'

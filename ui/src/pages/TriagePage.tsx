@@ -5,6 +5,14 @@
  * action-queue item, ordered by priority then recency. Each row shows the
  * plain-language headline, kind chip, age, and inline resolution actions.
  *
+ * High-cardinality decision kinds (e.g. draft-proposal, which can reach 900+
+ * rows) are collapsed into ONE cluster row per kind, linking to the relevant
+ * surface. Condition kinds (failed, stale-queued, …) always appear as
+ * individual rows since each represents a distinct entity needing attention.
+ *
+ * Badge = count of RENDERED rows (clusters count as 1), so it reflects real
+ * operator decisions rather than raw row count.
+ *
  * Empty state: "All quiet — N running, N done today".
  */
 
@@ -91,6 +99,130 @@ function sortItems(items: ActionQueueItem[]): ActionQueueItem[] {
     // Within same priority, most-recent first
     return b.at.localeCompare(a.at)
   })
+}
+
+// ── Clustering ────────────────────────────────────────────────────────────────
+
+/**
+ * Threshold above which a decision kind collapses into a single cluster row.
+ * draft-proposal is always clustered regardless of count (see below).
+ */
+const CLUSTER_THRESHOLD = 5
+
+/**
+ * Kinds that represent per-entity conditions or per-arc failures requiring
+ * individual attention. Never collapsed into a summary cluster row even when
+ * their count is high — each row is a distinct, separately-actionable alert.
+ */
+const NEVER_CLUSTER_KINDS: ReadonlySet<string> = new Set([
+  'stale-worktree',
+  'arc-failed',
+])
+
+type RenderedRow =
+  | { type: 'item'; item: ActionQueueItem }
+  | { type: 'cluster'; kind: string; count: number; latestAt: string }
+
+/**
+ * Collapses high-cardinality decision kinds into one cluster row per kind.
+ *
+ * Rules:
+ * - Condition kinds (task failures, stale-worktree, arc-failed) → always individual.
+ * - draft-proposal → always one cluster row (the proposals backlog can reach 900+).
+ * - Any other decision kind whose count exceeds CLUSTER_THRESHOLD → one cluster row.
+ *
+ * The cluster row is inserted at the position of the first (highest-priority,
+ * most-recent) item of that kind within the already-sorted list.
+ */
+function buildRenderedRows(sorted: ActionQueueItem[]): RenderedRow[] {
+  const kindCounts = new Map<string, number>()
+  for (const item of sorted) {
+    kindCounts.set(item.kind, (kindCounts.get(item.kind) ?? 0) + 1)
+  }
+
+  const emittedClusters = new Set<string>()
+  const result: RenderedRow[] = []
+
+  for (const item of sorted) {
+    const count = kindCounts.get(item.kind) ?? 1
+    const isCondition =
+      isTaskFailureActionQueueKind(item.kind) || NEVER_CLUSTER_KINDS.has(item.kind)
+    const shouldCluster =
+      !isCondition && (item.kind === 'draft-proposal' || count > CLUSTER_THRESHOLD)
+
+    if (shouldCluster) {
+      if (!emittedClusters.has(item.kind)) {
+        emittedClusters.add(item.kind)
+        result.push({ type: 'cluster', kind: item.kind, count, latestAt: item.at })
+      }
+      // Drop individual rows for this kind — they're represented by the cluster.
+    } else {
+      result.push({ type: 'item', item })
+    }
+  }
+
+  return result
+}
+
+// ── TriageClusterRow ──────────────────────────────────────────────────────────
+
+interface TriageClusterRowProps {
+  kind: string
+  count: number
+  latestAt: string
+}
+
+/**
+ * A single collapsed row representing N items of the same kind.
+ * Linking to the relevant surface instead of expanding inline keeps the triage
+ * view actionable (the operator goes to the right page to process the batch).
+ */
+const TriageClusterRow = ({ kind, count, latestAt }: TriageClusterRowProps) => {
+  const age = relativeTime(latestAt)
+  const kindLabel = KIND_LABEL[kind] ?? kind
+  const kindIcon = KIND_ICON[kind] ?? '•'
+  const chipClass = KIND_CHIP_CLASS[kind] ?? 'text-muted-foreground border-border'
+  const accentClass = KIND_ACCENT[kind] ?? 'border-l-muted'
+  const isDraftProposal = kind === 'draft-proposal'
+
+  return (
+    <div
+      className={[
+        'mars-card relative border-l-2 px-4 py-3',
+        accentClass,
+      ].join(' ')}
+    >
+      {/* Top row: kind chip + age */}
+      <div className="mb-1.5 flex items-center gap-2">
+        <span
+          className={[
+            'rounded border px-1.5 py-0.5 font-mono text-micro leading-none',
+            chipClass,
+          ].join(' ')}
+        >
+          {kindIcon} {kindLabel}
+        </span>
+        <span className="ml-auto font-mono text-micro text-muted-foreground">
+          {age}
+        </span>
+      </div>
+
+      {/* Cluster headline */}
+      <p className="mb-1 text-body font-medium leading-snug text-foreground">
+        {isDraftProposal
+          ? `${count} draft proposals await review`
+          : `${count} ${kindLabel} items`}
+      </p>
+
+      {/* Navigation link to the relevant surface */}
+      <a
+        href={isDraftProposal ? '#/progress' : '#/triage'}
+        className="font-mono text-micro text-primary transition-colors hover:text-foreground"
+      >
+        {isDraftProposal ? 'Review proposals →' : `View all →`}
+      </a>
+    </div>
+  )
 }
 
 // ── TriageRow ─────────────────────────────────────────────────────────────────
@@ -273,6 +405,7 @@ export const TriagePage = () => {
   const doneToday = aggregates.doneToday
 
   const sorted = sortItems(items)
+  const renderedRows = buildRenderedRows(sorted)
 
   if (error) {
     return (
@@ -291,12 +424,12 @@ export const TriagePage = () => {
         <h1 className="font-mono text-body font-semibold text-foreground">
           Needs you
         </h1>
-        {sorted.length > 0 && (
+        {renderedRows.length > 0 && (
           <span
-            aria-label={`${sorted.length} items need attention`}
+            aria-label={`${renderedRows.length} items need attention`}
             className="ml-2 rounded-full bg-primary/20 px-2 py-0.5 font-mono text-micro leading-none text-primary"
           >
-            {sorted.length}
+            {renderedRows.length}
           </span>
         )}
         <a
@@ -309,13 +442,22 @@ export const TriagePage = () => {
 
       {/* Ranked list */}
       <div className="flex-1 overflow-y-auto">
-        {sorted.length === 0 ? (
+        {renderedRows.length === 0 ? (
           <EmptyState running={running} doneToday={doneToday} />
         ) : (
           <div className="flex flex-col gap-2 p-4">
-            {sorted.map((item) => (
-              <TriageRow key={item.id} item={item} />
-            ))}
+            {renderedRows.map((row) =>
+              row.type === 'cluster' ? (
+                <TriageClusterRow
+                  key={`cluster:${row.kind}`}
+                  kind={row.kind}
+                  count={row.count}
+                  latestAt={row.latestAt}
+                />
+              ) : (
+                <TriageRow key={row.item.id} item={row.item} />
+              ),
+            )}
           </div>
         )}
       </div>

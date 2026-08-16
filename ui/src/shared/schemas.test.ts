@@ -150,6 +150,45 @@ describe('actionQueueResponseSchema — known kinds parse correctly', () => {
   })
 })
 
+describe('actionQueueResponseSchema — at sentinel threading', () => {
+  it('uses raw.at for a row whose kind is unrecognised by the union', () => {
+    // 'tool-promotion' is absent from every union variant, so it hits the catch.
+    // The re-parse as kind='failed' also fails because priority:'critical' is
+    // not in the schema, forcing the sentinel path. The sentinel must use raw.at
+    // rather than the hardcoded epoch-0 string.
+    const ts = '2026-08-15T10:00:00.000Z'
+    const input = [
+      {
+        ...base,
+        at: ts,
+        kind: 'tool-promotion',
+        priority: 'critical', // invalid → forces the final sentinel path
+        errorKind: 'tool-promotion',
+      },
+    ]
+    const result = actionQueueResponseSchema.parse(input)
+    expect(result).toHaveLength(1)
+    expect(result[0]!.at).toBe(ts)
+    expect(result[0]!.at).not.toBe('1970-01-01T00:00:00.000Z')
+  })
+
+  it('throws a parse error when at is absent from an unrecognised-kind row', () => {
+    // Both the union parse and the re-parse-as-failed fail, and raw.at is absent.
+    // The sentinel must propagate a parse error rather than silently defaulting
+    // to epoch-0 ("56y ago").
+    const { at: _dropped, ...noAt } = base
+    const input = [
+      {
+        ...noAt,
+        kind: 'tool-promotion',
+        priority: 'critical', // keeps the row out of the re-parse-as-failed success path
+        errorKind: 'tool-promotion',
+      },
+    ]
+    expect(() => actionQueueResponseSchema.parse(input)).toThrow()
+  })
+})
+
 describe('chatThreadSchema — session-free contract', () => {
   it('drops legacy provider-session fields from a chat thread payload', () => {
     const thread = chatThreadSchema.parse({
