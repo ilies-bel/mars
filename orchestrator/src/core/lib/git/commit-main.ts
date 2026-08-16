@@ -260,9 +260,20 @@ export const autoCommitWorktreeIfDeterministic = async (
         ].join('\n'),
       ]
 
+  // `committer-salvage` stages ONLY tracked modifications — never untracked
+  // files. Untracked files may be operator scratch work, secrets, or build
+  // artifacts that were not gitignored; pulling them into a salvage commit and
+  // landing them on main via the steward is the exact failure mode of the
+  // 2026-08-17 incident (operator built `app/dist-demo/` and the salvage
+  // committed it). `git add -u` stages tracked changes only.
+  //
+  // `coder-left-dirty` keeps `git add -A` so newly-created source files the
+  // coder forgot to `git add` are still captured — that was the root cause of
+  // the 2026-07-20 incident where `git commit -am` silently dropped new files.
+  const addArgs = provenance === 'committer-salvage' ? ['add', '-u'] : ['add', '-A']
   const addResult = await execProbe(
     git,
-    ['add', '-A'],
+    addArgs,
     { cwd: worktreePath },
     traceCtx,
   )
@@ -270,7 +281,7 @@ export const autoCommitWorktreeIfDeterministic = async (
     return {
       committed: false,
       refusal: 'git',
-      reason: `git add -A failed: ${addResult.stderr.trim()}`,
+      reason: `git ${addArgs.join(' ')} failed: ${addResult.stderr.trim()}`,
     }
   }
 

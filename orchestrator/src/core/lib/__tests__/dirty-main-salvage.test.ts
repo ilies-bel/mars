@@ -462,6 +462,63 @@ describe('checkSecretPath', () => {
       expect(checkSecretPath('')).toBeNull()
     })
   })
+
+  describe('generated-output directory detection (2026-08-17 incident)', () => {
+    it('returns a hit for a file inside a top-level dist/ directory', () => {
+      const hit = checkSecretPath('dist/bundle.js')
+      expect(hit).not.toBeNull()
+      expect(hit?.filePath).toBe('dist/bundle.js')
+      expect(hit?.reason).toContain('generated-output directory')
+      expect(hit?.reason).toContain('dist')
+    })
+
+    it('returns a hit for a file inside a nested dist-demo/ directory (incident shape)', () => {
+      // This is the exact path shape from the 2026-08-17 incident.
+      const hit = checkSecretPath('app/dist-demo/bundle.js')
+      expect(hit).not.toBeNull()
+      expect(hit?.reason).toContain('generated-output directory')
+      expect(hit?.reason).toContain('dist-demo')
+    })
+
+    it('returns a hit for a file inside a dist-prod/ directory', () => {
+      const hit = checkSecretPath('packages/ui/dist-prod/index.js')
+      expect(hit).not.toBeNull()
+      expect(hit?.reason).toContain('generated-output directory')
+    })
+
+    it('returns a hit for a file inside a build/ directory', () => {
+      const hit = checkSecretPath('build/main.js')
+      expect(hit).not.toBeNull()
+      expect(hit?.reason).toContain('generated-output directory')
+      expect(hit?.reason).toContain('build')
+    })
+
+    it('returns a hit for a file inside a nested build/ directory', () => {
+      const hit = checkSecretPath('packages/server/build/index.js')
+      expect(hit).not.toBeNull()
+      expect(hit?.reason).toContain('generated-output directory')
+    })
+
+    it('returns a hit for a file inside a coverage/ directory', () => {
+      const hit = checkSecretPath('coverage/lcov.info')
+      expect(hit).not.toBeNull()
+      expect(hit?.reason).toContain('generated-output directory')
+      expect(hit?.reason).toContain('coverage')
+    })
+
+    it('returns null for a file named distributed.ts (no false positive on dist prefix)', () => {
+      // "distributed" starts with "dist" but is not "dist" / "dist-*" / "dist.*"
+      expect(checkSecretPath('src/distributed.ts')).toBeNull()
+    })
+
+    it('returns null for ordinary source files whose names resemble output dirs', () => {
+      // File named "build" at the root is unusual but the guard checks SEGMENTS,
+      // and a bare "build" segment matches the generated-output check.
+      // However, a file like "src/build-utils.ts" should not match.
+      expect(checkSecretPath('src/build-utils.ts')).toBeNull()
+      expect(checkSecretPath('src/coverage-reporter.ts')).toBeNull()
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

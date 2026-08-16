@@ -2,7 +2,7 @@
  * Integration tests for commitMain and autoCommitWorktreeIfDeterministic
  * against a real git repo.
  *
- * Covers two incidents:
+ * Covers three incidents:
  *
  * 1. 2026-07-20 data-loss: the main-committer used `git commit -am`, which
  *    silently drops new untracked files. commitMain uses `git add -A` so every
@@ -12,10 +12,15 @@
  *    to `main` (commit 93addc75) because the worktree happened to have HEAD on
  *    `main`. The helpers now enforce that commits only land on the invoking
  *    task's own `task/<id>` branch.
+ *
+ * 3. 2026-08-17 untracked build artifacts: an operator built `app/dist-demo/`
+ *    as an untracked directory and the salvage path committed it to main.
+ *    committer-salvage now uses `git add -u` (tracked-only) and checkSecretPath
+ *    refuses generated-output directory paths outright.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { execFileSync, execSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import {
@@ -223,14 +228,16 @@ describe('autoCommitWorktreeIfDeterministic', () => {
 
     // Switch to a second task branch for the committer-salvage case.
     execFileSync('git', ['checkout', '-q', '-b', 'task/committer-task'], { cwd: repo })
-    writeFileSync(resolve(repo, 'salvaged-work.ts'), 'export const salvagedWork = true\n')
+    // committer-salvage uses `git add -u` (tracked modifications only), so the
+    // file must be a tracked modification — add it to the index first.
+    writeFileSync(resolve(repo, 'tracked.txt'), 'salvage modification\n')
 
     await autoCommitWorktreeIfDeterministic({
       taskId: 'committer-task',
       provenance: 'committer-salvage',
       integrationBranch: 'release/2026-08',
       worktreePath: repo,
-      dirtyFiles: ['salvaged-work.ts'],
+      dirtyFiles: ['tracked.txt'],
     })
 
     const salvageMessage = execSync('git log -1 --format=%B', { cwd: repo }).toString()
@@ -292,5 +299,61 @@ describe('autoCommitWorktreeIfDeterministic', () => {
     })
 
     expect(result).toMatchObject({ committed: true, sha: expect.any(String) })
+  })
+
+  // ── 2026-08-17 incident: untracked build artifacts on main ──────────────
+
+  it('committer-salvage: refuses untracked dist-* directory files (checkSecretPath guard)', async () => {
+    // Reproduce the 2026-08-17 incident: an operator built `app/dist-demo/`
+    // as an untracked directory. The salvage path must never commit it.
+    checkoutTaskBranch(repo, 'salvage-task')
+    mkdirSync(resolve(repo, 'app', 'dist-demo'), { recursive: true })
+    writeFileSync(resolve(repo, 'app', 'dist-demo', 'bundle.js'), 'built output\n')
+    writeFileSync(resolve(repo, 'app', 'dist-demo', 'style.css'), 'body{}\n')
+
+    // Both files are untracked — git status --porcelain would show "?? app/dist-demo/bundle.js"
+    // The salvage chore would receive them as dirtyFiles.
+    const result = await autoCommitWorktreeIfDeterministic({
+      taskId: 'salvage-task',
+      provenance: 'committer-salvage',
+      integrationBranch: 'main',
+      worktreePath: repo,
+      dirtyFiles: ['app/dist-demo/bundle.js', 'app/dist-demo/style.css'],
+    })
+
+    expect(result).toMatchObject({ committed: false, refusal: 'unsafe-path' })
+    expect((result as { reason: string }).reason).toContain('app/dist-demo/bundle.js')
+    expect((result as { reason: string }).reason).toContain('generated-output directory')
+
+    // Nothing was committed — HEAD is still the initial commit.
+    const treeFiles = headCommitTree(repo)
+    expect(treeFiles).not.toContain('app/dist-demo/bundle.js')
+    expect(treeFiles).not.toContain('app/dist-demo/style.css')
+  })
+
+  it('committer-salvage: untracked non-output files are also excluded (git add -u)', async () => {
+    // Even when files are not in a generated-output directory, committer-salvage
+    // must not pick up untracked files (operator scratch work, etc.). `git add -u`
+    // stages only tracked modifications, so untracked files never land.
+    checkoutTaskBranch(repo, 'salvage-untracked')
+
+    // Modify the tracked file so there IS something to commit.
+    writeFileSync(resolve(repo, 'tracked.txt'), 'tracked modification\n')
+    // Drop an untracked scratch file that is NOT in a generated-output dir.
+    writeFileSync(resolve(repo, 'scratch-notes.txt'), 'operator notes\n')
+
+    const result = await autoCommitWorktreeIfDeterministic({
+      taskId: 'salvage-untracked',
+      provenance: 'committer-salvage',
+      integrationBranch: 'main',
+      worktreePath: repo,
+      dirtyFiles: ['tracked.txt', 'scratch-notes.txt'],
+    })
+
+    // The tracked modification lands; the untracked scratch file does not.
+    expect(result).toMatchObject({ committed: true, sha: expect.any(String) })
+    const committed = headCommitFiles(repo)
+    expect(committed).toContain('tracked.txt')
+    expect(committed).not.toContain('scratch-notes.txt')
   })
 })

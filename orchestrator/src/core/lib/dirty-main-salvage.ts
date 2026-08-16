@@ -105,6 +105,11 @@ export interface SecretPathHit {
  * - Per-repo state directory: any path that is exactly `.mars` or starts
  *   with `.mars/`.
  * - Dependency directories: any path with a `node_modules` segment.
+ * - Generated-output directories: any path whose repo-relative segments
+ *   contain a conventional build-output directory name (`dist`, `dist-*`,
+ *   `dist.*`, `build`, `coverage`). This catches `dist/`, `dist-demo/`,
+ *   `build/`, `coverage/` etc. even when nested under a package subdirectory
+ *   (e.g. `app/dist-demo/bundle.js`).
  *
  * `node_modules/` and `/.mars/` are gitignored in this repo, so `git add -A`
  * already skips them; the guard is the belt to that braces — a consumer repo
@@ -125,6 +130,24 @@ export function checkSecretPath(filePath: string): SecretPathHit | null {
     filePath.endsWith('/node_modules')
   ) {
     return { filePath, reason: 'dependency directory' }
+  }
+
+  // Generated-output directory heuristic: refuse any path whose segments
+  // contain a conventional build-output directory name. Matches `dist` (exact),
+  // `dist-<suffix>` (e.g. `dist-demo`, `dist-prod`), `dist.<ext>` (e.g.
+  // `dist.es6`), `build` (exact), and `coverage` (exact). Does NOT match
+  // words that merely start with these strings followed by other letters
+  // (e.g. `builder`, `coverage-reporter` as a FILE name would match, but
+  // `distributed.ts` would NOT match because `distributed` ≠ `dist` and does
+  // not start with `dist-` or `dist.`).
+  const segments = filePath.split('/')
+  for (const segment of segments) {
+    if (segment === 'build' || segment === 'coverage') {
+      return { filePath, reason: `generated-output directory (${segment})` }
+    }
+    if (segment === 'dist' || segment.startsWith('dist-') || segment.startsWith('dist.')) {
+      return { filePath, reason: `generated-output directory (${segment})` }
+    }
   }
 
   return null
