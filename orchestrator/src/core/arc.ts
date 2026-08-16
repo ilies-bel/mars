@@ -2211,6 +2211,17 @@ export class Arc {
           args: [fixId],
         })
         mergeJobsDeleted += Number(fixMergeJobsDel.rowsAffected ?? 0)
+        // Belt-and-suspenders: null out any fix_for_task_id pointer from a
+        // fix-of-fix task that references this fix task before deleting its
+        // row.  Mirrors the origin-level null-out above (line ~2085): if a
+        // deeply-nested recovery was spawned for this fix task, the FK on
+        // tasks.fix_for_task_id would block the DELETE below without this
+        // guard.  The UPDATE is idempotent and a no-op when no such rows
+        // exist.
+        await scope.execute({
+          sql: `UPDATE tasks SET fix_for_task_id = NULL WHERE fix_for_task_id = ?`,
+          args: [fixId],
+        })
         await scope.execute({
           sql: `DELETE FROM tasks WHERE id = ?`,
           args: [fixId],
