@@ -19,8 +19,8 @@ import type { ThreadListFilters } from './queueThreads'
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const RECENT = '2026-08-15T12:00:00.000Z'  // 1 day ago relative to 2026-08-16
-const OLD    = '2026-06-01T00:00:00.000Z'  // > 7 days ago
+const RECENT = new Date(Date.now() - 24 * 3600 * 1000).toISOString()      // 1 day ago
+const OLD    = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString() // > 7 days ago
 
 const thread = (overrides: Partial<ChatThread>): ChatThread => ({
   id: 'th-base',
@@ -261,7 +261,7 @@ describe('ThreadSidebar archive toggle', () => {
 
 // An untitled thread created more than 48 hours ago (must be under 7 days to
 // avoid the archived block).
-const STALE_48H = '2026-08-13T00:00:00.000Z' // 3 days ago — stale untitled, not archived
+const STALE_48H = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString() // 3 days ago — stale untitled, not archived
 
 describe('ThreadSidebar stale-untitled fold', () => {
   it('folds untitled threads older than 48h into a single disclosure row', () => {
