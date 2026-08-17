@@ -13,9 +13,9 @@
  *   5. Monorepo subdirectory  → boot plan resolved from ui/ subdir, available varies
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { describe, it, expect, afterEach } from 'vitest'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { probeE2eTooling } from '../e2e-tooling'
 
@@ -291,6 +291,83 @@ describe('probeE2eTooling', () => {
 
       expect(report.runner).toBe('playwright')
       expect(report.missing.some((m) => m.includes('@playwright/test'))).toBe(false)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Test 6: playwright package and config in ui/ (no root config, no workspaces)
+  // ---------------------------------------------------------------------------
+
+  describe('playwright in ui/ when root has no workspaces', () => {
+    it('detects playwright package in ui/ when root has no workspaces', () => {
+      const root = makeTmpDir()
+      const browsersDir = makeTmpDir()
+
+      // Root: no playwright, no workspaces, no playwright config, but has dev script
+      writePackageJson(root, { playwright: false, scripts: { dev: 'vite' } })
+      // No playwright.config at root
+
+      // ui/: has playwright package and config
+      const uiDir = join(root, 'ui')
+      mkdirSync(uiDir)
+      writePackageJson(uiDir, { playwright: true, scripts: { dev: 'vite' } })
+      writePlaywrightConfig(uiDir)
+      createBrowsersDir(browsersDir)
+
+      const report = probeWithBrowserPath(root, browsersDir)
+
+      expect(report.runner).toBe('playwright')
+      expect(report.missing.some((m) => m.includes('@playwright/test'))).toBe(false)
+      expect(report.available).toBe(true)
+    })
+
+    it('detects playwright.config.ts in ui/ when root has no config', () => {
+      const root = makeTmpDir()
+      const browsersDir = makeTmpDir()
+
+      // Root: has playwright package and dev script, but no playwright.config
+      writePackageJson(root, { playwright: true, scripts: { dev: 'vite' } })
+      // No playwright.config.ts at root
+
+      // ui/ subdir has the config
+      const uiDir = join(root, 'ui')
+      mkdirSync(uiDir)
+      writePlaywrightConfig(uiDir)
+      createBrowsersDir(browsersDir)
+
+      const report = probeWithBrowserPath(root, browsersDir)
+
+      // Config detected in ui/ — should not appear in missing
+      expect(report.missing.some((m) => m.toLowerCase().includes('playwright.config'))).toBe(false)
+      expect(report.available).toBe(true)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Test 7: macOS browser cache path (~/Library/Caches/ms-playwright)
+  // ---------------------------------------------------------------------------
+
+  describe.runIf(process.platform === 'darwin')('macOS browser cache path', () => {
+    it('recognizes ~/Library/Caches/ms-playwright as installed browser cache on macOS', () => {
+      const root = makeTmpDir()
+
+      writePackageJson(root, { playwright: true, scripts: { dev: 'vite' } })
+      writePlaywrightConfig(root)
+
+      // Remove PLAYWRIGHT_BROWSERS_PATH so the probe falls back to platform defaults.
+      const prev = process.env.PLAYWRIGHT_BROWSERS_PATH
+      delete process.env.PLAYWRIGHT_BROWSERS_PATH
+      try {
+        const report = probeE2eTooling(root)
+        const macOsPath = join(homedir(), 'Library', 'Caches', 'ms-playwright')
+        const hasCache = existsSync(macOsPath) && readdirSync(macOsPath).length > 0
+        // If the macOS cache dir is populated, browsers must not appear in missing.
+        if (hasCache) {
+          expect(report.missing.some((m) => m.toLowerCase().includes('browser'))).toBe(false)
+        }
+      } finally {
+        if (prev !== undefined) process.env.PLAYWRIGHT_BROWSERS_PATH = prev
+      }
     })
   })
 })

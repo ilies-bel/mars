@@ -8,10 +8,13 @@
  *
  * Detection order:
  *  1. `@playwright/test` or `playwright` in the root or any workspace
- *     `package.json`.
- *  2. A `playwright.config.{ts,js,mjs}` at the project root.
+ *     `package.json`. When the root declares no workspaces, common UI
+ *     subdirectories (ui, frontend, web, client, app) are also scanned.
+ *  2. A `playwright.config.{ts,js,mjs}` at the project root or, when none
+ *     is found there, in the same common UI subdirectories.
  *  3. Installed browsers: `PLAYWRIGHT_BROWSERS_PATH` if set, otherwise
- *     `~/.cache/ms-playwright`.
+ *     `~/Library/Caches/ms-playwright` (macOS) or `~/.cache/ms-playwright`
+ *     (Linux / macOS fallback), whichever is non-empty first.
  *  4. A runnable app surface via {@link discoverAppBoot}.
  *
  * Returns an {@link E2eToolingReport} where `available` is true only when all
@@ -43,6 +46,13 @@ export interface E2eToolingReport {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Common UI subdirectory names to probe when the repo root declares no
+ * workspaces. Mirrors the list in `app-boot-discovery.ts` so both probes
+ * cover the same monorepo layouts without per-task configuration.
+ */
+const UI_SUBDIRS: ReadonlyArray<string> = ['ui', 'frontend', 'web', 'client', 'app']
 
 /** True if `deps` (an object) contains `@playwright/test` or `playwright`. */
 const hasPwDep = (deps: unknown): boolean => {
@@ -106,41 +116,73 @@ const expandWorkspacePattern = (repoRoot: string, pattern: string): string[] => 
 
 /**
  * True when `@playwright/test` or `playwright` appears in the root
- * `package.json` or in any workspace `package.json`.
+ * `package.json`, in any declared workspace `package.json`, or — when the
+ * root declares no workspaces — in any common UI subdirectory.
  */
 const findPlaywright = (repoRoot: string): boolean => {
   if (playwrightInDir(repoRoot)) return true
   const patterns = rootWorkspaces(repoRoot)
-  for (const pattern of patterns) {
-    const dirs = expandWorkspacePattern(repoRoot, pattern)
-    for (const dir of dirs) {
-      if (playwrightInDir(dir)) return true
+  if (patterns.length > 0) {
+    for (const pattern of patterns) {
+      const dirs = expandWorkspacePattern(repoRoot, pattern)
+      for (const dir of dirs) {
+        if (playwrightInDir(dir)) return true
+      }
+    }
+  } else {
+    // No workspaces declared — scan common UI subdirectories (e.g. ui/).
+    for (const sub of UI_SUBDIRS) {
+      if (playwrightInDir(join(repoRoot, sub))) return true
     }
   }
   return false
 }
 
-/** True when a `playwright.config.{ts,js,mjs}` exists at `repoRoot`. */
-const hasPlaywrightConfig = (repoRoot: string): boolean =>
-  ['playwright.config.ts', 'playwright.config.js', 'playwright.config.mjs'].some((f) =>
-    existsSync(join(repoRoot, f)),
-  )
+/** Config file names to probe, in preference order. */
+const PW_CONFIG_FILES = ['playwright.config.ts', 'playwright.config.js', 'playwright.config.mjs']
+
+/**
+ * True when a `playwright.config.{ts,js,mjs}` exists at `repoRoot` or, when
+ * none is found there, in any common UI subdirectory.
+ */
+const hasPlaywrightConfig = (repoRoot: string): boolean => {
+  if (PW_CONFIG_FILES.some((f) => existsSync(join(repoRoot, f)))) return true
+  // Fall back to common UI subdirectories when config is absent at root.
+  for (const sub of UI_SUBDIRS) {
+    const subDir = join(repoRoot, sub)
+    if (!existsSync(subDir)) continue
+    if (PW_CONFIG_FILES.some((f) => existsSync(join(subDir, f)))) return true
+  }
+  return false
+}
 
 /**
  * True when Playwright browsers appear to be installed.
  *
- * Checks `PLAYWRIGHT_BROWSERS_PATH` when set; otherwise falls back to
- * `~/.cache/ms-playwright` (the default on Linux and macOS).
+ * Checks `PLAYWRIGHT_BROWSERS_PATH` when set. Otherwise tries, in order:
+ *  - `~/Library/Caches/ms-playwright` (macOS default)
+ *  - `~/.cache/ms-playwright` (Linux / macOS XDG fallback)
+ *
+ * Returns true as soon as any candidate path exists and is non-empty.
  */
 const hasBrowsersInstalled = (): boolean => {
-  const browserPath =
-    process.env.PLAYWRIGHT_BROWSERS_PATH ?? join(homedir(), '.cache', 'ms-playwright')
-  if (!existsSync(browserPath)) return false
-  try {
-    return readdirSync(browserPath).length > 0
-  } catch {
-    return false
-  }
+  const candidates: string[] = process.env.PLAYWRIGHT_BROWSERS_PATH
+    ? [process.env.PLAYWRIGHT_BROWSERS_PATH]
+    : [
+        ...(process.platform === 'darwin'
+          ? [join(homedir(), 'Library', 'Caches', 'ms-playwright')]
+          : []),
+        join(homedir(), '.cache', 'ms-playwright'),
+      ]
+
+  return candidates.some((p) => {
+    if (!existsSync(p)) return false
+    try {
+      return readdirSync(p).length > 0
+    } catch {
+      return false
+    }
+  })
 }
 
 // ---------------------------------------------------------------------------
