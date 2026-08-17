@@ -470,6 +470,46 @@ describe('runDoctorChecks — baseline health', () => {
     expect(labels[0]).toContain('orchestrator')
     expect(labels[1]).toContain('ui')
   })
+
+  it('WARN (inconclusive) when gate is killed at timeout — never FAIL', async () => {
+    // When the baseline runner kills the child at the timeout, the result must
+    // be reported as WARN (inconclusive) rather than FAIL. A false "baseline
+    // failure" sends operators to the wrong recovery verb (mars continue instead
+    // of waiting for load to drop or running the command directly).
+    const probes = passingProbes({
+      async baselineGates() {
+        return [{ name: 'test', cmd: 'npm', args: ['test'], dir: '.' }]
+      },
+      runGate(_cmd, _args, _cwd) {
+        return { passed: false, output: '', timedOut: true }
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'baseline: test')
+    expect(check?.status).toBe('WARN')
+    // Must not say 'FAIL' in the message
+    expect(check?.message).not.toContain('fails')
+    // Must name the timeout so the operator understands what happened
+    expect(check?.message).toContain('timeout')
+    // Must say the result is inconclusive
+    expect(check?.message).toContain('inconclusive')
+  })
+
+  it('FAIL (not WARN) when gate exits non-zero on its own — timedOut absent', async () => {
+    // A gate that exits non-zero without being killed is a genuine baseline
+    // regression and must still be reported as FAIL.
+    const probes = passingProbes({
+      async baselineGates() {
+        return [{ name: 'test', cmd: 'npm', args: ['test'], dir: '.' }]
+      },
+      runGate(_cmd, _args, _cwd) {
+        return { passed: false, output: 'error output' }
+      },
+    })
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'baseline: test')
+    expect(check?.status).toBe('FAIL')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -594,7 +634,7 @@ describe('runDoctorChecks — config coherence (defaultProvider vs registry)', (
     expect(check?.message).toContain(gestureBase)
   })
 
-  it('config coherence FAIL message offers both directions and does not pick a side', async () => {
+  it('config coherence FAIL message names the align-daemon gesture and drops the dead-end re-seed clause', async () => {
     const probes = makeConfigProbes(
       { defaultProvider: 'claude' },
       {
@@ -608,8 +648,36 @@ describe('runDoctorChecks — config coherence (defaultProvider vs registry)', (
     expect(check?.status).toBe('FAIL')
     // Must offer the "align daemon.json to registry" direction with the correct command.
     expect(check?.message).toContain('mars lever set provider.default codex')
-    // Must acknowledge the re-seed direction rather than silently omitting it.
-    expect(check?.message).toContain("re-seed the registry to 'claude'")
+    // Must NOT contain the dead-end "no command exists" text.
+    expect(check?.message).not.toContain('no command exists')
+  })
+
+  it('PASS when registry has built-in workers with a stale provider pin matching a different provider', async () => {
+    // 'Coder' is a built-in worker name. Its provider field is legacy seeding;
+    // loadWorkerRegistry strips it. The coherence check must not flag it.
+    const probes = makeConfigProbes(
+      { defaultProvider: 'claude' },
+      { Coder: { name: 'Coder', provider: 'codex' }, Planner: { name: 'Planner', provider: 'codex' } },
+    )
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    expect(results.find((r) => r.label === 'config: provider')?.status).toBe('PASS')
+  })
+
+  it('FAIL when an operator-added worker pins a provider different from defaultProvider (built-ins are still ignored)', async () => {
+    // Mix: built-in 'Coder' has stale provider='codex' (ignored) plus operator
+    // worker 'my-custom' also pins 'codex' (should trigger FAIL).
+    const probes = makeConfigProbes(
+      { defaultProvider: 'claude' },
+      {
+        Coder: { name: 'Coder', provider: 'codex' },
+        'my-custom': { provider: 'codex' },
+      },
+    )
+    const results = await runDoctorChecks(probes, null, undefined, 'claude', '/repo')
+    const check = results.find((r) => r.label === 'config: provider')
+    expect(check?.status).toBe('FAIL')
+    // Should mention operator-added worker count (1, not 2)
+    expect(check?.message).toContain('1 operator-added worker(s)')
   })
 
   it('skips coherence check when repoRoot is null', async () => {

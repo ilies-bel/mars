@@ -32,6 +32,7 @@ import {
   resolveProviderName,
 } from '../../core/workers/providers'
 import type { ProviderName } from '../../core/workers/provider-types'
+import { WORKER_CONFIGS } from '../../core/workers/index'
 import { loadLeverRegistry } from '../../core/lib/lever-registry'
 // Import from health/index triggers daemon-reachable registration as a side effect.
 import { runChecks } from '../../core/health/index.js'
@@ -90,8 +91,12 @@ export interface DoctorProbes {
   /**
    * Run a verify gate command synchronously. Returns pass/fail and the first
    * 500 characters of combined stdout+stderr.
+   *
+   * `timedOut` is set to true when the command was killed at the timeout
+   * rather than exiting on its own. A killed command must be reported as
+   * INCONCLUSIVE (WARN) by the caller — not as a baseline failure.
    */
-  runGate(cmd: string, args: readonly string[], cwd: string): { passed: boolean; output: string }
+  runGate(cmd: string, args: readonly string[], cwd: string): { passed: boolean; output: string; timedOut?: boolean }
   /**
    * Free bytes available on the filesystem at `path`. Returns null when the
    * measurement is unavailable (e.g., an unsupported platform or missing
@@ -176,8 +181,13 @@ export const realProbes: DoctorProbes = {
     ]
       .join('')
       .slice(0, 500)
+    // Distinguish "killed at timeout" from "exited non-zero on its own".
+    // spawnSync sets error.code === 'ETIMEDOUT' when the timeout fires.
+    const timedOut =
+      result.error !== undefined &&
+      (result.error as NodeJS.ErrnoException).code === 'ETIMEDOUT'
     const passed = result.status === 0 && result.error === undefined
-    return { passed, output: raw }
+    return { passed, output: raw, ...(timedOut ? { timedOut: true as const } : {}) }
   },
   freeDiskBytes(path) {
     try {
@@ -445,12 +455,27 @@ export const runDoctorChecks = async (
       // vs ui/) produce distinct, readable output lines.
       const gateLabel = gate.dir === '.' ? gate.name : `${gate.name} (${gate.dir})`
       const result = probes.runGate(gate.cmd, gate.args, cwd)
-      if (!result.passed) {
+      const gateCmd = `${gate.cmd}${gate.args.length > 0 ? ' ' + gate.args.join(' ') : ''}`
+      if (result.timedOut) {
+        // The command was killed at the 120 s timeout, not by its own logic.
+        // This is INCONCLUSIVE — report WARN so it is never mistaken for a
+        // genuine baseline regression (which would cause operators to reach for
+        // 'mars continue' instead of diagnosing the load or timeout condition).
+        results.push({
+          label: `baseline: ${gateLabel}`,
+          status: 'WARN',
+          section: 'health',
+          message:
+            `integration branch check for ${gateLabel} was killed at the 120 s timeout — ` +
+            `result is inconclusive, not a baseline failure; ` +
+            `run '${gateCmd}' in '${gate.dir}' directly to reproduce under lower load`,
+        })
+      } else if (!result.passed) {
         results.push({
           label: `baseline: ${gateLabel}`,
           status: 'FAIL',
           section: 'health',
-          message: `integration branch fails ${gateLabel} — run '${gate.cmd}${gate.args.length > 0 ? ' ' + gate.args.join(' ') : ''}' in '${gate.dir}' to reproduce`,
+          message: `integration branch fails ${gateLabel} — run '${gateCmd}' in '${gate.dir}' to reproduce`,
         })
       } else {
         results.push({
@@ -523,8 +548,11 @@ export const runDoctorChecks = async (
   }
 
   // H4. Config coherence: defaultProvider vs worker registry.
-  // The registry entries that pin an explicit provider should agree with
-  // daemon.json's defaultProvider, or operators see inconsistent behaviour.
+  // Only operator-added workers (those not in WORKER_CONFIGS) are checked.
+  // Built-in entries may carry a stale `provider` field written by an old
+  // configToDeclaration call; loadWorkerRegistry strips it at load time, so
+  // flagging it here would produce a false FAIL for a condition the runtime
+  // already handles correctly.
   if (repoRoot !== null) {
     const dcPath = resolve(repoRoot, '.mars', 'daemon.json')
     const registryPath = resolve(repoRoot, '.mars', 'worker-registry.json')
@@ -537,9 +565,17 @@ export const runDoctorChecks = async (
           ? dc.defaultProvider
           : 'codex' // default when absent
         const registry = JSON.parse(regText) as Record<string, Record<string, unknown>>
-        const pinned = Object.values(registry)
-          .filter((w) => typeof w.provider === 'string' && w.provider !== defaultProvider)
-          .map((w) => String(w.provider))
+        // Built-in names: provider fields on these entries are stripped by
+        // loadWorkerRegistry and must not trigger a coherence FAIL here.
+        const builtInNames = new Set(Object.keys(WORKER_CONFIGS))
+        const pinned = Object.entries(registry)
+          .filter(([name, w]) => {
+            // Skip built-in workers — their provider field is legacy seeding,
+            // not an operator intent pin.
+            if (builtInNames.has(name)) return false
+            return typeof w.provider === 'string' && w.provider !== defaultProvider
+          })
+          .map(([, w]) => String(w.provider))
         const uniquePinned = [...new Set(pinned)]
         if (uniquePinned.length > 0) {
           // Read the authoritative gesture from the lever registry rather than
@@ -555,9 +591,8 @@ export const runDoctorChecks = async (
             status: 'FAIL',
             section: 'health',
             message:
-              `defaultProvider='${defaultProvider}' in daemon.json but ${pinned.length} worker(s) pin provider='${uniquePinned.join("', '")}' in worker-registry.json — ` +
-              `to align daemon.json with the registry: ${alignDaemonGesture}; ` +
-              `to re-seed the registry to '${defaultProvider}': no command exists, update worker pins manually`,
+              `defaultProvider='${defaultProvider}' in daemon.json but ${pinned.length} operator-added worker(s) pin provider='${uniquePinned.join("', '")}' in worker-registry.json — ` +
+              `to align daemon.json with the registry: ${alignDaemonGesture}`,
           })
         } else {
           results.push({
