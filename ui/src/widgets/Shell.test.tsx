@@ -232,6 +232,14 @@ describe('ShellSidebar — Needs you badge', () => {
     const html = renderToStaticMarkup(<ShellSidebar activeRoute="triage" decisionBadge={7} />)
     expect(html).toContain('aria-label="7 decisions pending"')
   })
+
+  it('uses badgeAriaLabel when provided — shows composition instead of plain count', () => {
+    const label = '4 decisions pending (3 alerts + 1 proposal cluster)'
+    const html = renderToStaticMarkup(
+      <ShellSidebar activeRoute="triage" decisionBadge={4} badgeAriaLabel={label} />,
+    )
+    expect(html).toContain(`aria-label="${label}"`)
+  })
 })
 
 // ── Shell — topbar breadcrumb ─────────────────────────────────────────────────

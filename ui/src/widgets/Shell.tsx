@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { sortItems, buildRenderedRows } from '@/entities/actionQueue/clusterRows'
+import type { RenderedRow } from '@/entities/actionQueue/clusterRows'
 import { useDaemonConnected } from '@/hooks/useDaemonConnected'
 import { resolvePageRoute } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
@@ -162,6 +163,12 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
 interface ShellSidebarProps {
   activeRoute: RouteName
   decisionBadge: number
+  /**
+   * When provided, overrides the default "N decisions pending" aria-label with a
+   * richer composition string, e.g. "4 decisions pending (3 alerts + 1 proposal cluster)".
+   * Lets operators and the chat agent reconcile the badge count at a glance.
+   */
+  badgeAriaLabel?: string
 }
 
 /**
@@ -176,7 +183,7 @@ interface ShellSidebarProps {
  *     (studio is nested under Progress in the nav).
  *   - All other entries (including 'proposals'): active when entry.route === activeRoute.
  */
-export const ShellSidebar = ({ activeRoute, decisionBadge }: ShellSidebarProps) => (
+export const ShellSidebar = ({ activeRoute, decisionBadge, badgeAriaLabel }: ShellSidebarProps) => (
   <nav
     aria-label="Main navigation"
     className="flex flex-col overflow-y-auto border-r border-border-dark bg-bg-dark pt-2"
@@ -217,7 +224,7 @@ export const ShellSidebar = ({ activeRoute, decisionBadge }: ShellSidebarProps) 
               {entry.label}
               {showBadge && (
                 <span
-                  aria-label={`${decisionBadge > 99 ? '99+' : decisionBadge} decisions pending`}
+                  aria-label={badgeAriaLabel ?? `${decisionBadge > 99 ? '99+' : decisionBadge} decisions pending`}
                   className="ml-auto rounded-full bg-primary/60 px-1 py-0.5 font-mono text-micro leading-none text-foreground"
                 >
                   {decisionBadge > 99 ? '99+' : decisionBadge}
@@ -256,14 +263,35 @@ export const Shell = ({ hash, children }: ShellProps) => {
   // need immediate action. Excluding them keeps the sidebar count aligned with
   // `mars action-queue list` (which also excludes draft-proposals by default),
   // so the badge and CLI always report the same set.
-  const decisionBadge = buildRenderedRows(sortItems(actionQueueItems)).filter(
+  const badgeRows = buildRenderedRows(sortItems(actionQueueItems)).filter(
     (r) => !(r.type === 'cluster' && r.kind === 'draft-proposal'),
-  ).length
+  )
+  const decisionBadge = badgeRows.length
+
+  // Composition breakdown for the badge aria-label — lets operators and the
+  // chat agent reconcile "4 decisions pending" as "3 alerts + 1 cluster"
+  // without opening the triage page to count manually. Derived from the same
+  // badgeRows the count uses, so label and number can never disagree.
+  const clusterRowsList = badgeRows.filter(
+    (r): r is Extract<RenderedRow, { type: 'cluster' }> => r.type === 'cluster',
+  )
+  const alertCount = badgeRows.length - clusterRowsList.length
+  const badgeAriaLabel: string | undefined = (() => {
+    if (decisionBadge === 0) return undefined
+    const n = decisionBadge > 99 ? '99+' : String(decisionBadge)
+    if (clusterRowsList.length === 0) return `${n} decisions pending`
+    const parts: string[] = []
+    if (alertCount > 0) parts.push(`${alertCount} alert${alertCount !== 1 ? 's' : ''}`)
+    for (const c of clusterRowsList) {
+      parts.push(`1 ${c.kind} cluster`)
+    }
+    return `${n} decisions pending (${parts.join(' + ')})`
+  })()
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[200px_1fr] grid-rows-[40px_1fr]">
       <ShellTopbar hash={hash} />
-      <ShellSidebar activeRoute={activeRoute} decisionBadge={decisionBadge} />
+      <ShellSidebar activeRoute={activeRoute} decisionBadge={decisionBadge} badgeAriaLabel={badgeAriaLabel} />
       <div className="min-h-0 overflow-hidden">{children}</div>
     </div>
   )
