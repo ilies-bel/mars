@@ -237,11 +237,11 @@ describe('compound verb mapping', () => {
     expect(primary).toMatchObject({ op: 'restart-daemon', label: 'Restart engine', style: 'primary' })
   })
 
-  it('daemon-died has "Restart engine" as primary verb', () => {
+  it('daemon-died has "Dismiss" as primary verb (dismiss-daemon-died op)', () => {
     const recipe = lookupRecipe('daemon-died')
     const ctx = makeCtx({ kind: 'daemon-died' })
     const verbs = getRecipeVerbs(recipe, ctx)
-    expect(verbs[0]).toMatchObject({ op: 'restart-daemon', style: 'primary' })
+    expect(verbs[0]).toMatchObject({ op: 'dismiss-daemon-died', label: 'Dismiss', style: 'primary' })
   })
 
   it('failed has "Restart" and "Discard task" verbs', () => {
@@ -329,16 +329,16 @@ const makeDaemonDiedItem = (overrides: Partial<RaiseActionQueueItem> = {}): Rais
 })
 
 describe('buildAlertSegment — registered kinds use recipe verbs', () => {
-  it('daemon-died alert segment first action is restart-daemon with primary style', () => {
+  it('daemon-died alert segment first action is dismiss-daemon-died with primary style', () => {
     const segment = buildAlertSegment(makeDaemonDiedItem(), 'test-item-id')
     expect(segment.actions[0]).toMatchObject({
-      op: 'restart-daemon',
-      label: 'Restart engine',
+      op: 'dismiss-daemon-died',
+      label: 'Dismiss',
       style: 'primary',
     })
   })
 
-  it('daemon-died alert segment has Dismiss appended after restart-daemon', () => {
+  it('daemon-died alert segment has generic Dismiss appended after dismiss-daemon-died', () => {
     const segment = buildAlertSegment(makeDaemonDiedItem(), 'test-item-id')
     const dismissAction = segment.actions.find((a) => a.op === 'dismiss')
     expect(dismissAction).toBeDefined()

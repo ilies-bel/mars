@@ -495,6 +495,13 @@ export interface HttpServerDeps {
    */
   dismissProposal: (id: string) => Promise<void>
   /**
+   * Acknowledge a daemon-died alert by deleting the crash marker file. The
+   * derived `daemon-died` condition row disappears on the next action-queue read
+   * because the crash marker is gone. Optional — when absent the endpoint returns
+   * 501 Not Implemented (safe for test stubs that do not exercise this path).
+   */
+  dismissDaemonDied?: () => Promise<void>
+  /**
    * Promote a fully-shaped draft proposal: flip its status from `draft` →
    * `prd-ready`, run the slicer to create tasks, and return the resulting
    * task IDs. Throws when the proposal is not in `draft` status or the
@@ -778,6 +785,7 @@ type EntityOp =
   | 'purge'
   | 'prune-worktree'
   | 'dismiss'
+  | 'dismiss-daemon-died'
   | 'validate'
   | 'reject'
   | 'land-work'
@@ -884,7 +892,8 @@ const handleEventsRequest = async (
  *   POST /actions/unblock/:id    → phantom-recover a blocked task
  *   POST /actions/purge/:id      → drop a task + worktree
  *   POST /actions/prune-worktree/:id → remove a stale worktree
- *   POST /actions/dismiss/:id    → dismiss a draft proposal (draft → dismissed)
+ *   POST /actions/dismiss/:id             → dismiss a draft proposal (draft → dismissed)
+ *   POST /actions/dismiss-daemon-died/:id → acknowledge daemon-died (delete crash marker)
  *   POST /actions/promote/:id    → promote a draft → prd-ready + slice → { ok, taskIds }
  *   POST /actions/validate/:id   → approve a preview-gated task (→ merge)
  *   POST /actions/reject/:id     → reject a preview-gated task (→ failed)
@@ -908,6 +917,12 @@ export const startHttpServer = async (
     purge: deps.purgeTask,
     'prune-worktree': deps.pruneWorktree,
     dismiss: deps.dismissProposal,
+    'dismiss-daemon-died': async (_id) => {
+      if (!deps.dismissDaemonDied) {
+        throw Object.assign(new Error('dismiss-daemon-died not implemented'), { code: 'NOT_IMPLEMENTED' as const })
+      }
+      await deps.dismissDaemonDied()
+    },
     validate: deps.validateTask,
     reject: deps.rejectTask,
     'land-work': deps.landWork,

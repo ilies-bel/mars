@@ -208,16 +208,20 @@ const RECIPE_DEFINITIONS = {
   },
 
   'daemon-died': {
-    humanSummary: () =>
-      'The background engine crashed unexpectedly — restart it to resume normal operation.',
+    humanSummary: (ctx) => {
+      const crashedAt = str(ctx.payload['crashDetectedAt'])
+      return crashedAt
+        ? `The background engine crashed (detected at ${crashedAt}) and has already restarted automatically. Verify it is healthy, then dismiss this alert.`
+        : 'The background engine crashed unexpectedly and has already restarted automatically. Verify it is healthy, then dismiss this alert.'
+    },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
-      exitCode: ctx.payload['exitCode'],
-      crashedAt: str(ctx.payload['crashedAt']),
-      lastError: str(ctx.payload['lastError']),
+      pid: ctx.payload['pid'],
+      startedAt: str(ctx.payload['startedAt']),
+      crashDetectedAt: str(ctx.payload['crashDetectedAt']),
     }),
-    verbs: [{ op: 'restart-daemon', label: 'Restart engine', style: 'primary' }],
+    verbs: [{ op: 'dismiss-daemon-died', label: 'Dismiss', style: 'primary' }],
   },
 
   'daemon-outage': {

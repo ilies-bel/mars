@@ -1237,10 +1237,16 @@ export const buildActionQueueView = async ({
     // For failed condition rows, lastSeenAt is the derive-time (nowMs) and
     // always reads as "1s ago". Use the task's updatedAt (the real failure
     // time) instead. Fall back to raisedAt when no task is found.
+    //
+    // daemon-died rows also use lastSeenAt=nowMs; use raisedAt (=crashDetectedAt)
+    // so the card shows the actual crash time rather than "N seconds ago" on
+    // every read.
     const rowAt =
       row.kind === 'failed'
         ? (taskById.get(entityId)?.updatedAt ?? new Date(row.raisedAt).toISOString())
-        : new Date(row.lastSeenAt).toISOString()
+        : row.kind === 'daemon-died'
+          ? new Date(row.raisedAt).toISOString()
+          : new Date(row.lastSeenAt).toISOString()
 
     rows.push({
       id: row.id,

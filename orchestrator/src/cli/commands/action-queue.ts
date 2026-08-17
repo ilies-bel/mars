@@ -352,21 +352,61 @@ const actionQueueResolve: Command = {
     await migrateQueueSchema()
     const { getActionQueueItem, setActionQueueState } = await import('../../core/lib/action-queue')
     const item = await getActionQueueItem(id)
-    if (!item) {
-      deps.err(`no action queue item matching ${id}`)
-      return { code: 1 }
+    if (item) {
+      if (item.status === 'resolved') {
+        deps.err(`item ${item.id} is already resolved`)
+        return { code: 1 }
+      }
+      await setActionQueueState(item.id, 'resolved', {
+        resolution: 'manual',
+        note: typeof reason === 'string' ? reason : 'operator closed via CLI',
+        by: 'operator:cli',
+      })
+      deps.out(`resolved ${item.id}`)
+      return { code: 0 }
     }
-    if (item.status === 'resolved') {
-      deps.err(`item ${item.id} is already resolved`)
-      return { code: 1 }
+
+    // Not found in DB — derived condition rows (e.g. daemon-died) have no DB
+    // row. Fetch the live action-queue view from the daemon and handle the
+    // handful of condition kinds that can be acknowledged via the CLI.
+    const port = await readDaemonPort(deps.ctx.stateDir)
+    if (port !== null) {
+      let rows: ActionQueueRow[]
+      try {
+        rows = await fetchActionQueueView(port, 'all', {
+          signal: AbortSignal.timeout(10_000),
+        })
+      } catch {
+        rows = []
+      }
+      const derivedRow =
+        rows.find((r) => r.id === id || r.entityId === id) ??
+        rows.find((r) => r.id.startsWith(id) || r.entityId.startsWith(id))
+      if (derivedRow?.kind === 'daemon-died') {
+        // Acknowledge daemon-died: call the daemon's dismiss-daemon-died endpoint
+        // which deletes the crash marker file. The derived row disappears on the
+        // next action-queue read.
+        try {
+          const res = await fetch(
+            `http://127.0.0.1:${port}/actions/dismiss-daemon-died/${encodeURIComponent(derivedRow.entityId)}`,
+            { method: 'POST', signal: AbortSignal.timeout(10_000) },
+          )
+          if (!res.ok) {
+            const text = await res.text().catch(() => '')
+            deps.err(`failed to resolve daemon-died: daemon returned ${res.status}${text ? `: ${text}` : ''}`)
+            return { code: 1 }
+          }
+        } catch (err) {
+          deps.err(`failed to resolve daemon-died: ${errorMessage(err)}`)
+          return { code: 1 }
+        }
+        deps.out(`resolved ${derivedRow.id}`)
+        return { code: 0 }
+      }
     }
-    await setActionQueueState(item.id, 'resolved', {
-      resolution: 'manual',
-      note: typeof reason === 'string' ? reason : 'operator closed via CLI',
-      by: 'operator:cli',
-    })
-    deps.out(`resolved ${item.id}`)
-    return { code: 0 }
+
+    deps.err(`no action queue item matching ${id}`)
+    return { code: 1 }
   },
 }
 

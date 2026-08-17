@@ -5399,6 +5399,13 @@ export const startDaemon = async (
       const { dismissProposal } = await import('../proposals')
       await dismissProposal(id)
     },
+    dismissDaemonDied: async () => {
+      // Deleting the crash marker file removes the condition that drives the
+      // daemon-died derived row. The row vanishes on the next action-queue read.
+      rmSync(crashMarker, { force: true })
+      log('[dismiss-daemon-died] crash marker cleared by operator')
+      viewStreamHub.broadcast('action-queue')
+    },
     promoteProposal: async (id) => {
       // Flip draft → prd-ready, then await the slicer so the HTTP caller
       // receives the created task IDs. Unlike the socket-RPC path

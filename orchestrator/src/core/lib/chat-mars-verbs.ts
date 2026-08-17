@@ -24,6 +24,9 @@ export const SAFE_MARS_VERBS: readonly string[] = [
   // back with the transcript intact — recoverable, so it needs no confirmation.
   'archive-subthread',
   'unarchive-subthread',
+  // Acknowledging the daemon-died condition just deletes the crash marker file;
+  // the daemon has already restarted so this is a non-destructive clear.
+  'dismiss-daemon-died',
 ]
 
 /**
