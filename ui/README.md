@@ -14,7 +14,7 @@ orchestrator process — the contract is the SQLite schema.
 ## Dev
 
 Two processes. The daemon serves `/api/tasks` and `/events` on `:7777`; Vite
-serves the SPA on `:5173` and proxies `/api` + `/events` to the daemon.
+serves the SPA on `:7173` and proxies `/api` + `/events` to the daemon.
 
 ```bash
 npm install
@@ -24,7 +24,7 @@ npm run dev:server -- --repo /path/to/target/repo
 
 # terminal 2 — vite
 npm run dev
-# open http://localhost:5173
+# open http://localhost:7173
 ```
 
 Repo resolution order: `--repo <path>` → `MARS_REPO` env var → `git rev-parse --show-toplevel` from cwd.

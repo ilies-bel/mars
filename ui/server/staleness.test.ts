@@ -280,9 +280,9 @@ describe('/rebuild admin route', () => {
 describe('Vite port collision protection', () => {
   it('vite.config.ts has strictPort:true so a port collision is a fatal error', () => {
     // When strictPort is false (the Vite default), Vite silently moves to the
-    // next free port when 5173 is taken. The Bun server then falls back to the
+    // next free port when 7173 is taken. The Bun server then falls back to the
     // prebuilt bundle while the user's browser sees an unrelated service on
-    // 5173. With strictPort:true, Vite exits non-zero when the port is occupied;
+    // 7173. With strictPort:true, Vite exits non-zero when the port is occupied;
     // mars-ui.mjs propagates the exit code, so the failure is explicit.
     const viteConfig = readFileSync(join(__dirname, '..', 'vite.config.ts'), 'utf8')
     expect(viteConfig).toContain('strictPort: true')

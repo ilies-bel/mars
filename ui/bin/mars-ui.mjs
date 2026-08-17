@@ -21,9 +21,9 @@ Options:
   --dev              Run in development mode (API + Vite dev server)
   --repo <path>      Path to the Mars repo (default: auto-detected)
   --port <n>         API server HTTP port (default: 7777, fixed)
-  --vite-port <n>    Vite dev-server port (--dev only; default: auto-selects from 5173
-                     on the --host address; an IPv6-only holder of [::1]:5173 does not
-                     cause a shift — only 127.0.0.1:5173 being taken triggers fallback)
+  --vite-port <n>    Vite dev-server port (--dev only; default: auto-selects from 7173
+                     on the --host address; an IPv6-only holder of [::1]:7173 does not
+                     cause a shift — only 127.0.0.1:7173 being taken triggers fallback)
   --host <addr>      Bind address (default: 127.0.0.1)
   --help             Show this help`)
   process.exit(0)
@@ -67,20 +67,20 @@ if (isDev) {
 
   // Choose the Vite port.
   //
-  // Probe viteHost:5173 specifically — this matches server.host in vite.config.ts
+  // Probe viteHost:7173 specifically — this matches server.host in vite.config.ts
   // (default: 127.0.0.1). Vite never attempts a dual-stack bind when server.host is
-  // set to an explicit IPv4 address, so a holder of [::1]:5173 is NOT a conflict and
+  // set to an explicit IPv4 address, so a holder of [::1]:7173 is NOT a conflict and
   // must NOT trigger a port shift. We bind the probe to viteHost so the OS sees the
   // same address Vite would use.
   let usedVitePort = vitePort  // explicit --vite-port wins, skip auto-selection
   if (usedVitePort === null) {
-    const is5173Free = await new Promise((resolve) => {
+    const is7173Free = await new Promise((resolve) => {
       const srv = createServer()
       srv.once('error', () => resolve(false))
-      srv.listen(5173, viteHost, () => srv.close(() => resolve(true)))
+      srv.listen(7173, viteHost, () => srv.close(() => resolve(true)))
     })
-    if (is5173Free) {
-      usedVitePort = 5173
+    if (is7173Free) {
+      usedVitePort = 7173
     } else {
       usedVitePort = await new Promise((resolvePort, rejectPort) => {
         const srv = createServer()
