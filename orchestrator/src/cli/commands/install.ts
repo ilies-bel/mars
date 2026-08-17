@@ -20,9 +20,6 @@ import {
 } from './provider-probe'
 import type { ProviderName } from '../../core/workers/provider-types'
 
-// Re-export so the provider probe types are accessible as part of install's
-// public surface (two call sites: init command + doctor checks).
-
 // ---------------------------------------------------------------------------
 // Probe helpers — exported for unit testing (two call sites each: command +
 // test). All are pure/injectable so tests never touch real filesystem or env.

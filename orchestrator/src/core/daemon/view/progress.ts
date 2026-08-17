@@ -11,8 +11,7 @@
 import type { DbClient } from '../../lib/db.js'
 import { isProposalSource, type ProposalSource } from '../../proposals'
 
-export type Cluster = 'Queued' | 'In progress' | 'Blocked' | 'Failed' | 'Done'
-type { ProposalSource } from '../../proposals'
+type Cluster = 'Queued' | 'In progress' | 'Blocked' | 'Failed' | 'Done'
 
 /**
  * Cheap aggregate counts for the Progress-tab header.

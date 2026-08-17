@@ -104,8 +104,6 @@ export interface ReflectCorpus {
   chatSystemPrompt?: string
 }
 
-type { ChatFeedbackEntry }
-
 export interface LoadCorpusOptions {
   sinceIso?: string
   limit?: number
