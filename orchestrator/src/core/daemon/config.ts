@@ -148,6 +148,13 @@ export interface SelfEvolveConfig {
    * 'architectural' suggestions are never auto-enqueued regardless of this value.
    */
   taskConfidenceThreshold: number
+  /**
+   * Number of days after an operator resolves a reflect-recommended
+   * action-queue item before the detector is allowed to raise a new one.
+   * Prevents the operator's explicit dismissal from being undone by the
+   * next detector sweep. Default 7. Set to 0 to disable the cooldown.
+   */
+  reflectCooldownDays: number
 }
 
 /**
@@ -220,6 +227,7 @@ const DEFAULT_SELF_EVOLVE: SelfEvolveConfig = {
   autoEnqueue: false,
   driftThresholdPct: 10,
   taskConfidenceThreshold: 0.8,
+  reflectCooldownDays: 7,
 }
 
 const DEFAULT_SCORING: ScoringConfig = {
@@ -684,6 +692,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
   let fileAutoEnqueue: boolean | undefined
   let fileDriftPct: number | undefined
   let fileConfThreshold: number | undefined
+  let fileReflectCooldownDays: number | undefined
   let fileScoringAutoTrigger: boolean | undefined
   let fileScoringThreshold: number | undefined
   let fileScoringWindow: number | undefined
@@ -729,6 +738,15 @@ export const loadDaemonConfig = (): DaemonConfig => {
       seConfThreshold <= 1
     ) {
       fileConfThreshold = seConfThreshold
+    }
+    const seCooldown = se.reflectCooldownDays
+    if (
+      typeof seCooldown === 'number' &&
+      Number.isFinite(seCooldown) &&
+      Number.isInteger(seCooldown) &&
+      seCooldown >= 0
+    ) {
+      fileReflectCooldownDays = seCooldown
     }
     const sc = parsed.scoring ?? {}
     if (typeof sc.autoTrigger === 'boolean') {
@@ -776,6 +794,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
       autoEnqueue: fileAutoEnqueue ?? envAutoEnqueue,
       driftThresholdPct: fileDriftPct ?? envDriftPct,
       taskConfidenceThreshold: fileConfThreshold ?? envConfThreshold,
+      reflectCooldownDays: fileReflectCooldownDays ?? DEFAULT_SELF_EVOLVE.reflectCooldownDays,
     },
     scoring: {
       autoTrigger: fileScoringAutoTrigger ?? envScoringAutoTrigger,

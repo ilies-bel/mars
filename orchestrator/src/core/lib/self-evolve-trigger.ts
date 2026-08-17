@@ -227,8 +227,11 @@ interface ReflectWorthinessEvidence {
  *   chip is not needed.
  * - `'no-evidence'`: all three detectors (KPI drift, failure clusters, token
  *   spike) evaluated the rolling window and found nothing above threshold.
+ * - `'cooldown'`: an operator resolved a reflect-recommended row within the
+ *   configured cooldown window (selfEvolve.reflectCooldownDays). Re-raising
+ *   immediately would undo the explicit operator dismissal.
  */
-type ReflectDetectorSkipReason = 'auto-enqueue-on' | 'no-evidence'
+type ReflectDetectorSkipReason = 'auto-enqueue-on' | 'no-evidence' | 'cooldown'
 
 export interface ReflectRecommendedResult {
   /** True when the row was raised (or the existing open row was bumped). */
@@ -386,6 +389,9 @@ const countRecentTasks = async (store: TaskStore, days: number): Promise<number>
  * bumped, not duplicated). When no signal fires, or autoEnqueue is on (the
  * trigger already handles routing of mechanical suggestions), closes any open row.
  *
+ * A cooldown prevents re-raising within `selfEvolve.reflectCooldownDays` of an
+ * operator resolution — the explicit dismissal is honoured for that window.
+ *
  * The `store` option is for test injection; production callers omit it.
  */
 export const runReflectRecommendedDetector = async (opts?: {
@@ -416,6 +422,28 @@ export const runReflectRecommendedDetector = async (opts?: {
       ? 'auto-enqueue-on'
       : 'no-evidence'
     return { raised: false, rowId: null, evidence: null, skipReason }
+  }
+
+  // Cooldown: when the operator resolved a reflect-recommended row within the
+  // configured window, skip re-raising so the explicit dismissal is not undone
+  // by the next detector sweep. A zero cooldown disables the guard.
+  if (cfg.selfEvolve.reflectCooldownDays > 0) {
+    const cooldownCutoff =
+      Date.now() - cfg.selfEvolve.reflectCooldownDays * 24 * 60 * 60 * 1000
+    const recentResolution = await store.query({
+      sql: `SELECT resolved_at FROM action_queue_items
+             WHERE kind = 'reflect-recommended'
+               AND signature = ?
+               AND status = 'resolved'
+               AND resolved_at IS NOT NULL
+               AND resolved_at > ?
+             ORDER BY resolved_at DESC
+             LIMIT 1`,
+      args: [REFLECT_RECOMMENDED_SIG, cooldownCutoff],
+    })
+    if (recentResolution.rows.length > 0) {
+      return { raised: false, rowId: null, evidence: null, skipReason: 'cooldown' }
+    }
   }
 
   // Count recent tasks to include corpus size in the title.

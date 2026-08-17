@@ -401,4 +401,69 @@ describe('runReflectRecommendedDetector', () => {
     expect(result.raised).toBe(true)
     expect(result.skipReason).toBeNull()
   })
+
+  // Cooldown: a resolved item suppresses re-raise within the configured window.
+  it("suppresses re-raise within the cooldown window and returns skipReason='cooldown'", async () => {
+    const ctx = await loadContext(repo)
+
+    // Seed a condition that fires the detector
+    await insertFailedTask(ctx.store, 'task-cd1', 'code/timeout')
+    await insertFailedTask(ctx.store, 'task-cd2', 'code/timeout')
+    await insertFailedTask(ctx.store, 'task-cd3', 'code/timeout')
+
+    // First sweep: raises the row
+    const first = await ctx.runReflectRecommendedDetector({ store: ctx.store })
+    expect(first.raised).toBe(true)
+    expect(await ctx.countOpenReflectRows()).toBe(1)
+
+    // Simulate operator resolution: mark the row as resolved right now so its
+    // resolved_at is inside the 7-day default cooldown window.
+    await ctx.store.execute({
+      sql: `UPDATE action_queue_items
+               SET status = 'resolved', resolved_at = ?
+             WHERE kind = 'reflect-recommended' AND status = 'open'`,
+      args: [Date.now()],
+    })
+    expect(await ctx.countOpenReflectRows()).toBe(0)
+    expect(await ctx.countResolvedReflectRows()).toBe(1)
+
+    // Second sweep: same condition still fires, but the cooldown must block the raise.
+    const second = await ctx.runReflectRecommendedDetector({ store: ctx.store })
+    expect(second.raised).toBe(false)
+    expect(second.skipReason).toBe('cooldown')
+
+    // No new open row should have been created
+    expect(await ctx.countOpenReflectRows()).toBe(0)
+    expect(await ctx.countResolvedReflectRows()).toBe(1)
+  })
+
+  // Cooldown: once the cooldown expires the detector raises again.
+  it('raises a new row after the cooldown window has elapsed', async () => {
+    const ctx = await loadContext(repo)
+
+    // Seed a condition that fires the detector
+    await insertFailedTask(ctx.store, 'task-exp1', 'verify/oom')
+    await insertFailedTask(ctx.store, 'task-exp2', 'verify/oom')
+    await insertFailedTask(ctx.store, 'task-exp3', 'verify/oom')
+
+    // Manually insert a resolved reflect-recommended row whose resolved_at is
+    // OUTSIDE the default 7-day cooldown window (set it 8 days in the past).
+    const eightDaysAgoMs = Date.now() - 8 * 24 * 60 * 60 * 1000
+    await ctx.store.execute({
+      sql: `INSERT INTO action_queue_items
+              (id, kind, category, priority, status, title, body,
+               payload, context, raised_by, raised_at, last_seen_at,
+               seen_count, fingerprint, signature, resolved_at)
+            VALUES (?, 'reflect-recommended', 'reflector', 'high', 'resolved',
+                    'old reflect', '', '{}', '{}', 'test', ?, ?, 1,
+                    'old-fingerprint', 'reflect-recommended', ?)`,
+      args: ['old-row-id', eightDaysAgoMs, eightDaysAgoMs, eightDaysAgoMs],
+    })
+
+    // The sweep should raise a fresh row because the cooldown has expired.
+    const result = await ctx.runReflectRecommendedDetector({ store: ctx.store })
+    expect(result.raised).toBe(true)
+    expect(result.skipReason).toBeNull()
+    expect(await ctx.countOpenReflectRows()).toBe(1)
+  })
 })
