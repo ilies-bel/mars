@@ -589,4 +589,47 @@ describe('rescue-operator-spawn', () => {
     expect(results.filter((result) => result.spawned)).toHaveLength(1)
     expect(await countRescueTasks(q)).toBe(1)
   })
+
+  // ── Regression: origin already done → rescue never spawned ──────────────────
+  //
+  // Observed 2026-08-17: recovery fix-fc05f779 was dispatched to complete
+  // rescue-operator mars-a6f6fd91, whose origin mars-2eb61bfd had ALREADY reached
+  // done on its own. The recovery entered a clean worktree with nothing to do and
+  // dead-ended into an awaiting-human action-queue row that a human had to resolve
+  // by hand. The fix: check the arc root's status before spawning.
+
+  it('(g) origin already done: maybeSpawnRescueOperator is a no-op, raises no action-queue row', async () => {
+    const { q, rescue } = await loadModules(repo)
+    const task = await q.enqueueTask('do a thing', undefined, { skipTriage: true })
+
+    // Mark the origin done BEFORE the rescue is requested (simulates the race
+    // where the origin completes on its own between failure detection and rescue dispatch)
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+      args: [task.id],
+    })
+
+    const loaded = await q.getTask(task.id)
+    if (!loaded) throw new Error('task not found')
+
+    const result = await rescue.maybeSpawnRescueOperator({
+      failedTask: loaded,
+      failureSignature: 'code/unclassified',
+    })
+
+    // No rescue task spawned
+    expect(result.spawned).toBe(false)
+    expect(result.rescueTaskId).toBeUndefined()
+    expect(await countRescueTasks(q)).toBe(0)
+
+    // Arc rescue counter stays 0 — no claim was made on the rescue slot
+    expect(await readArcRescueAttempts(q, task.id)).toBe(0)
+
+    // No action-queue row raised (no awaiting-human row)
+    const aqRows = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM action_queue_items WHERE status = 'open'`,
+      args: [],
+    })
+    expect(Number((aqRows.rows[0] as unknown as { n: number | bigint }).n)).toBe(0)
+  })
 })

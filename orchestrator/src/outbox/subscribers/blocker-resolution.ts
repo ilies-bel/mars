@@ -66,7 +66,11 @@ async function cancelStaleRecoveriesForOrigin(
   const placeholders = ACTIVE_STATUSES.map(() => '?').join(', ')
 
   // Find all active fix tasks and rescue tasks for this origin.
-  // Fix tasks: kind='fix', fix_for_task_id = originId
+  // Fix tasks: kind='fix', origin_id = originId — covers BOTH direct fix tasks
+  //   (fix_for_task_id = arcRootId, origin_id = arcRootId) AND fix tasks that
+  //   target a rescue-operator (fix_for_task_id = rescueTaskId, origin_id = arcRootId).
+  //   All fix tasks inherit origin_id from their source task, so using origin_id
+  //   as the discriminant captures the full arc without a sub-query.
   // Rescue tasks: origin_id = originId, tagged 'rescue-operator' (kind='task')
   //
   // The tags_json column stores a JSON array as text; use LIKE to detect the
@@ -78,11 +82,11 @@ async function cancelStaleRecoveriesForOrigin(
         FROM tasks t
        WHERE t.status IN (${placeholders})
          AND (
-               (t.kind = 'fix' AND t.fix_for_task_id = ?)
+               (t.kind = 'fix' AND t.origin_id = ? AND t.id != ?)
                OR
                (t.origin_id = ? AND t.id != ? AND t.tags_json LIKE ?)
              )`,
-    args: [...ACTIVE_STATUSES, originId, originId, originId, tagPattern],
+    args: [...ACTIVE_STATUSES, originId, originId, originId, originId, tagPattern],
   })
 
   for (const row of rows) {

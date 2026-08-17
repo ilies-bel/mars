@@ -1162,4 +1162,61 @@ describe('blocker-resolution: cancel stale recoveries when origin reaches done (
     // Something was processed.
     expect(processed).toBeGreaterThan(0)
   })
+
+  // Regression: 2026-08-17 — recovery fix-fc05f779 dispatched for rescue
+  // mars-a6f6fd91 whose origin mars-2eb61bfd was already done.
+  // The subscriber-side cancel missed fix tasks that targeted a rescue-operator
+  // (fix_for_task_id = rescueTaskId, not arcRootId) because the query only
+  // matched kind='fix' AND fix_for_task_id = originId. Fix tasks inherit
+  // origin_id from their source, so matching on origin_id covers both direct
+  // fix tasks and fix tasks targeting rescue-operators.
+  it('drops a queued fix-of-rescue-operator task when the arc root origin reaches done', async () => {
+    // Scenario: origin done → rescue task + fix task of that rescue are both queued
+    // → both must be dropped automatically without raising any awaiting-human row
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+
+    const origin = await q.enqueueTask('implement-feature', undefined, { skipTriage: true })
+
+    // Rescue task (spawned for the arc because origin's recovery dead-ended)
+    const rescueId = `rescue-${origin.id.slice(0, 6)}`
+    const tagsJson = JSON.stringify(['rescue-operator'])
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, recovery_spawned_count, origin_id, priority, tags_json, created_at, updated_at)
+            VALUES (?, 'rescue arc', 'queued', 'task', 'agent', 'rescue-operator-spawn', 0, ?, 3, ?, ?, ?)`,
+      args: [rescueId, origin.id, tagsJson, new Date().toISOString(), new Date().toISOString()],
+    })
+
+    // Fix task targeting the rescue task (fix_for_task_id = rescueId, origin_id = origin.id)
+    // This is the shape of fix-fc05f779 from the 2026-08-17 incident.
+    const fixOfRescueId = `fix-${rescueId.slice(0, 8)}`
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, recovery_spawned_count, origin_id, priority, created_at, updated_at)
+            VALUES (?, 'fix the rescue', 'queued', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, ?, ?)`,
+      args: [fixOfRescueId, rescueId, origin.id, new Date().toISOString(), new Date().toISOString()],
+    })
+
+    // Origin reaches done (e.g. via auto-remerge or a concurrent sibling task)
+    await qc.execute({ sql: `UPDATE tasks SET status = 'done' WHERE id = ?`, args: [origin.id] })
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: origin.id, reason: 'done' })
+    // drainBlockerResolution returns processed > 0 only when Arc.unblockByCompletion
+    // changes state (i.e. there are blocked dependents to re-queue). Here the only
+    // side effect is cancelStaleRecoveriesForOrigin, so we don't assert on processed.
+    await sub.drainBlockerResolution(qc)
+
+    // Both the rescue task and its fix task must be dropped — no human action needed
+    expect((await q.getTask(rescueId))?.status).toBe('dropped')
+    expect((await q.getTask(rescueId))?.dropReason).toBe('origin-succeeded')
+    expect((await q.getTask(fixOfRescueId))?.status).toBe('dropped')
+    expect((await q.getTask(fixOfRescueId))?.dropReason).toBe('origin-succeeded')
+
+    // No awaiting-human action-queue row raised
+    const aqRows = await qc.execute({
+      sql: `SELECT COUNT(*) AS n FROM action_queue_items WHERE status = 'open'`,
+      args: [],
+    })
+    expect(Number((aqRows.rows[0] as unknown as { n: number | bigint }).n)).toBe(0)
+  })
 })

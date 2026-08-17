@@ -2723,17 +2723,21 @@ export const startDaemon = async (
               continue
             }
             // Stale-recovery guard: if this is a fix or rescue task whose
-            // origin has already reached 'done', drop it without dispatching.
-            // Handles the race where the origin succeeds (e.g. via auto-remerge
-            // after a transient merge crash) between when the recovery was
-            // enqueued and when the dispatch loop picks it up.
+            // arc root origin has already reached 'done', drop it without
+            // dispatching. Handles the race where the origin succeeds (e.g.
+            // via auto-remerge) between when the recovery was enqueued and
+            // when the dispatch loop picks it up.
             //
-            // - Fix tasks:    kind='fix', fixForTaskId is the origin
-            // - Rescue tasks: tagged 'rescue-operator', originId != self
+            // - Fix tasks:    kind='fix'. Use t.originId (the arc root) rather
+            //   than t.fixForTaskId (the immediate target) so that fix tasks
+            //   targeting a rescue-operator are also caught: their
+            //   fixForTaskId points at the rescue task (which may not be
+            //   'done'), but their originId points at the true arc root.
+            // - Rescue tasks: tagged 'rescue-operator', originId != self.
             {
               const recoveryOriginId =
                 t.kind === 'fix' && t.fixForTaskId != null
-                  ? t.fixForTaskId
+                  ? t.originId  // arc root; always populated on fix tasks
                   : t.tags.includes('rescue-operator') && t.originId !== t.id
                     ? t.originId
                     : null

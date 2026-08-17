@@ -106,6 +106,25 @@ export const maybeSpawnRescueOperator = async (
   // id when the origin_id column is null). For a recovery Chore, originId is the
   // root origin task's id; for a root origin task, it is the task's own id.
   const originId = failedTask.originId
+
+  // Origin-done early exit: if the arc root is already terminal `done`, the
+  // work that was failing has completed on its own (e.g. via auto-remerge or a
+  // concurrent task). Spawning a rescue is pointless — the agent would enter a
+  // clean worktree, find nothing to do, and dead-end into an awaiting-human row
+  // (observed 2026-08-17: recovery fix-fc05f779 / rescue mars-a6f6fd91 /
+  // origin mars-2eb61bfd). Drop silently without claiming the arc-rescue counter
+  // or raising any action-queue row.
+  {
+    const arcOriginTask = await store.getTask(originId)
+    if (arcOriginTask?.status === 'done') {
+      // eslint-disable-next-line no-console
+      console.info(
+        `[rescue-operator] arc ${originId} origin already done — rescue superseded, not spawning`,
+      )
+      return { spawned: false }
+    }
+  }
+
   const stewardTarget = {
     kind: 'arc',
     id: originId,
