@@ -264,6 +264,22 @@ export interface MarsServices {
    */
   releaseVerifySlot?: () => void
   /**
+   * Optional abort signal from the daemon's per-task verify gate controller.
+   * Fires with reason `'verify:child-vanished'` when the heartbeat detects
+   * that the verify child pid has been dead for longer than the grace window
+   * (`MARS_VERIFY_CHILD_GONE_GRACE_MS`, default 5 min).
+   *
+   * When this signal fires, `verifyChanges` kills any in-flight subprocess
+   * immediately, the primitive classifies the result as `verify:child-vanished`
+   * (not the generic gate that happened to fail), and the semaphore slot is
+   * released so waiting verifies can proceed — without waiting for the
+   * phantom-task watchdog to detect `runner-hung` (~35 min worst-case).
+   *
+   * When absent (scaffolded workflows, tests), `verifyChanges` runs without
+   * an abort signal — same behaviour as before this field was added.
+   */
+  verifyGateSignal?: AbortSignal
+  /**
    * Hook registered by the daemon that routes merge requests through the
    * durable single-consumer merge worker. The `merge` primitive always
    * delegates to this hook; it must be present in all runtime contexts
@@ -3127,6 +3143,7 @@ export const review = async (
         changedFiles: isMainCommitter ? [] : changedFiles,
         traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
         onChildPid: ctx.services.onVerifyChildPid,
+        signal: ctx.services.verifyGateSignal,
       })
 
       // Infra-failure retry (once only): if any failed step output matches an
@@ -3150,6 +3167,7 @@ export const review = async (
             changedFiles: isMainCommitter ? [] : changedFiles,
             traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
             onChildPid: ctx.services.onVerifyChildPid,
+            signal: ctx.services.verifyGateSignal,
           })
         }
       }
@@ -3344,6 +3362,38 @@ export const review = async (
         const summary = failed
           .map((s) => `${s.name}:\n${failureExcerpt(s.output)}`)
           .join('\n\n')
+
+        // Child-vanished abort: the daemon heartbeat detected the verify child
+        // pid has been dead longer than the grace window and fired the abort
+        // signal. Classify immediately as 'verify:child-vanished' rather than
+        // deriving a generic gate signature from whatever step happened to be
+        // running. Skip recovery-fix dispatch — a vanished child is an
+        // infrastructure event (process killed externally), not a code defect.
+        // The semaphore is released via the finally block below.
+        if (
+          ctx.services.verifyGateSignal?.aborted &&
+          ctx.services.verifyGateSignal.reason === 'verify:child-vanished'
+        ) {
+          const sig = 'verify:child-vanished'
+          const vanishedOutput = summary || 'verify child pid vanished mid-verify'
+          capturedVerifyOutput = capturedVerifyOutput ?? `${sig}\n${vanishedOutput}`
+          await updateTask(
+            taskId,
+            {
+              status: 'failed',
+              error: vanishedOutput,
+              failedPhase: 'verify',
+              failureReason: sig,
+              failureReasonCode: sig,
+              failureSignature: sig,
+              verifyOutput: capturedVerifyOutput,
+            },
+            store,
+          )
+          _verifyFailedRecorded = true
+          throw new Error(`task ${taskId} ${sig}`)
+        }
+
         const firstFailedName = failed[0]?.name ?? 'verify'
         // Build a structured diagnostics block for each failed gate so
         // post-mortems and recovery prompts can see the actual command, cwd,

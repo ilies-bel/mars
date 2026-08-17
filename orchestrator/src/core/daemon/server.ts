@@ -1439,6 +1439,13 @@ export const startDaemon = async (
     // than VERIFY_CHILD_GONE_GRACE_MS, the heartbeat stops so the watchdog
     // can detect the hung runner.
     let verifyChildLastSeenAliveMs: number | null = null
+    // AbortController fired when the heartbeat detects the verify child pid has
+    // been dead for longer than VERIFY_CHILD_GONE_GRACE_MS. The primitives
+    // receive the signal via verifyGateSignal and abort the in-flight
+    // verifyChanges subprocess immediately, failing with 'verify:child-vanished'
+    // and releasing the semaphore — rather than waiting for the phantom-task
+    // watchdog to classify the runner as hung (which could take another ~35 min).
+    let verifyGateAbortController = new AbortController()
     log(`[implement] ${task.id} dispatching`)
     try {
       // Slice F.2: dispatch-time dirty-main check. Runs BEFORE workflow
@@ -1804,6 +1811,13 @@ export const startDaemon = async (
               verifyChildPid = pid
               verifyChildLastSeenAliveMs = Date.now()
             },
+            // verifyGateSignal: aborted with reason 'verify:child-vanished' by the
+            // heartbeat when the verify child pid has been dead for longer than
+            // VERIFY_CHILD_GONE_GRACE_MS. Passed to verifyChanges so the running
+            // subprocess is killed immediately and the semaphore released.
+            get verifyGateSignal() {
+              return verifyGateAbortController.signal
+            },
             acquireVerifySlot: async (): Promise<void> => {
               if (!verifyHandedOff) {
                 verifyHandedOff = true
@@ -1839,15 +1853,17 @@ export const startDaemon = async (
                 //
                 //   Phase 2 — active verify (after acquire(verifySem) resolves
                 //     and a verify child has been spawned, so verifyChildPid is
-                //     set): heartbeat gates on
-                //     real child liveness. Once verifyChildPid is known, the
-                //     heartbeat checks isProcessAlive(verifyChildPid). If the
-                //     child has been dead for longer than
-                //     VERIFY_CHILD_GONE_GRACE_MS (allowing for the brief
-                //     inter-step gap between sequential subprocess invocations),
-                //     the heartbeat stops. The phantom-task watchdog then
-                //     detects the task as `runner-hung` (stale lastActivityMs
-                //     while isVerifyRunning returns true).
+                //     set): heartbeat gates on real child liveness. Once
+                //     verifyChildPid is known, the heartbeat checks
+                //     isProcessAlive(verifyChildPid). If the child has been dead
+                //     for longer than VERIFY_CHILD_GONE_GRACE_MS (allowing for
+                //     the brief inter-step gap between sequential subprocess
+                //     invocations), the heartbeat fires verifyGateAbortController
+                //     with reason 'verify:child-vanished'. The primitives receive
+                //     this via verifyGateSignal, kill any in-flight subprocess,
+                //     fail with 'verify:child-vanished', and release the semaphore
+                //     immediately — rather than waiting for the phantom-task
+                //     watchdog to classify the runner as `runner-hung`.
                 //
                 // This closes the inverse of the 2ca0994d fix: the heartbeat
                 // no longer grants immortality to a task whose verify runner
@@ -1876,17 +1892,23 @@ export const startDaemon = async (
                         // onVerifyChildPid).
                         const goneSinceMs = nowMs - (verifyChildLastSeenAliveMs ?? nowMs)
                         if (goneSinceMs > VERIFY_CHILD_GONE_GRACE_MS) {
-                          // Child has been dead too long — runner is hung.
-                          // Stop heartbeating so lastActivityMs goes stale.
-                          // The phantom-task watchdog will reap this task as
-                          // `runner-hung` on its next sweep.
+                          // Child has been dead too long — abort the verify gate
+                          // immediately so the semaphore is released and the 12
+                          // waiting verifies can proceed. verifyChanges receives
+                          // the abort signal and kills any in-flight subprocess;
+                          // the primitives classify the result as
+                          // 'verify:child-vanished' and release the slot via the
+                          // finally block. This replaces the old passive path
+                          // (stop heartbeating → wait for phantom-task watchdog
+                          // runner-hung, which could take another ~35 min).
                           log(
                             `[verify-heartbeat] ${task.id} verify child pid=${verifyChildPid} gone ${Math.round(goneSinceMs / 60_000)}min` +
                               ` (grace: ${Math.round(VERIFY_CHILD_GONE_GRACE_MS / 60_000)}min);` +
-                              ` stopping heartbeat — watchdog will detect runner-hung`,
+                              ` aborting verify gate with verify:child-vanished`,
                           )
                           clearInterval(verifyHeartbeatInterval!)
                           verifyHeartbeatInterval = null
+                          verifyGateAbortController.abort('verify:child-vanished')
                           return
                         }
                         // else: recently dead, within grace → fall through and heartbeat
