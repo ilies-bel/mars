@@ -111,6 +111,10 @@ export type DaemonRequest =
   // Complete the current manual step: re-queue for pipeline continuation but
   // KEEP the lease identity so the next manual park re-leases the same owner.
   | { op: 'step-done'; id: string }
+  // Abort the current manual step: route the task to the failure path with its
+  // worktree preserved for inspection. Requires an awaiting-human task. Records
+  // the reason as a task note and raises exactly one 'failed' action-queue row.
+  | { op: 'step-abort'; id: string; reason: string }
   // Rewind a stuck task to an earlier named workflow step: clears the durable
   // checkpoint for `stepName` and every downstream step, clears stale failure
   // metadata, and re-queues (or restores blocked status) so the next dispatch

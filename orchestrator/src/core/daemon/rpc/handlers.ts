@@ -375,6 +375,11 @@ const stepDoneHandler = handler('step-done', async (req, deps) => {
   return { ok: true }
 })
 
+const stepAbortHandler = handler('step-abort', async (req, deps) => {
+  await deps.handleStepAbort(req.id, req.reason)
+  return { ok: true }
+})
+
 const stepResetHandler = handler('step-reset', async (req, deps) => {
   const result = await deps.handleStepReset(req.id, req.stepName)
   return { ok: true, data: result }
@@ -717,6 +722,7 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   diagnoseFailureHandler,
   releaseLeaseHandler,
   stepDoneHandler,
+  stepAbortHandler,
   stepResetHandler,
   shutdownHandler,
   killHandler,

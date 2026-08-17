@@ -191,14 +191,61 @@ const stepReset: Command = {
   },
 }
 
+const stepAbort: Command = {
+  path: 'step abort',
+  summary: 'abort the current manual step, routing the task to the failure path with the worktree preserved',
+  usage: 'usage: mars step abort <task-id> --reason <text>',
+  run: async (args, deps) => {
+    const positionals = args.positional.filter((a) => !a.startsWith('--'))
+    const id = positionals[0]
+    if (!id) {
+      deps.err('usage: mars step abort <task-id> --reason <text>')
+      deps.err('  <task-id> is required')
+      return { code: 1 }
+    }
+
+    const reason = args.flags['--reason']
+    if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
+      deps.err('usage: mars step abort <task-id> --reason <text>')
+      deps.err('  --reason is required and must be non-empty')
+      return { code: 1 }
+    }
+
+    const task = await deps.store.getTask(id)
+    if (!task) {
+      deps.err(`task ${id} not found`)
+      return { code: 1 }
+    }
+    if (task.status !== 'awaiting-human') {
+      deps.err(
+        `task ${id} is ${task.status}; 'mars step abort' only applies to an 'awaiting-human' task`,
+      )
+      return { code: 1 }
+    }
+
+    try {
+      await deps.daemon.sendRequest({ op: 'step-abort', id, reason: reason.trim() })
+    } catch (err) {
+      deps.err(`${id}: ${errorMessage(err)}`)
+      return { code: 1 }
+    }
+
+    deps.out(
+      `${id}: manual step aborted — task is now failed; worktree and branch preserved for inspection`,
+    )
+    deps.out(`  use 'mars continue ${id}' to resume or 'mars restart ${id}' to start over`)
+    return { code: 0 }
+  },
+}
+
 const stepGroup: Command = {
   path: 'step',
   summary: 'manual-step subcommands',
-  usage: 'usage: mars step <done|reset> [<task-id>] [<step-name>]',
+  usage: 'usage: mars step <abort|done|reset> [<task-id>] [options]',
   run: (_args, deps) => {
-    deps.err('usage: mars step <done|reset> [<task-id>] [<step-name>]')
+    deps.err('usage: mars step <abort|done|reset> [<task-id>] [options]')
     return { code: 1 }
   },
 }
 
-export const stepCommands: readonly Command[] = [stepGroup, stepDone, stepReset]
+export const stepCommands: readonly Command[] = [stepGroup, stepDone, stepAbort, stepReset]

@@ -218,6 +218,12 @@ export interface DaemonDeps {
   /** Complete the current manual step: re-queue but keep the lease identity. */
   handleStepDone(id: string): Promise<void>
   /**
+   * Abort the current manual step: set the task to failed with failed_phase='code',
+   * record the reason as a task note, raise a 'failed' action-queue row, and
+   * preserve the worktree/branch for inspection. Refuses non-awaiting-human tasks.
+   */
+  handleStepAbort(id: string, reason: string): Promise<void>
+  /**
    * Rewind a task to an earlier named step. Clears the durable checkpoint for
    * `stepName` and every downstream step, clears stale failure metadata, and
    * re-queues or restores blocked status according to current blocker rules.

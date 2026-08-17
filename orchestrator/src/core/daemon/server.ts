@@ -4859,6 +4859,45 @@ export const startDaemon = async (
     bus.emit('task.queued', { taskId: id })
   }
 
+  // `mars step abort <id> --reason <text>`: route the task to the failure path
+  // with its worktree preserved. Sets status='failed', failed_phase='code',
+  // records the operator's reason as a task note, and raises exactly one
+  // 'failed' action-queue row so `mars continue`/`mars restart` become the
+  // recovery verbs. Refuses any task not in status='awaiting-human'.
+  const handleStepAbort = async (id: string, reason: string): Promise<void> => {
+    const task = await getTask(id)
+    if (!task) throw new Error(`task ${id} not found`)
+    if (task.status !== 'awaiting-human') {
+      throw new Error(
+        `task ${id} is in status '${task.status}'; 'mars step abort' only applies to an 'awaiting-human' task`,
+      )
+    }
+    await updateTask(id, {
+      status: 'failed',
+      failedPhase: 'code',
+      error: reason,
+    })
+    await Arc.appendProgress({
+      taskId: id,
+      author: 'cli',
+      kind: 'note',
+      body: `step-abort: ${reason}`,
+    })
+    await raiseActionQueueItem({
+      kind: 'failed',
+      category: 'daemon',
+      priority: 'high',
+      title: `Task ${id} aborted by operator`,
+      body: `Operator aborted manual step for task ${id}. Reason: ${reason}. The worktree and branch are preserved for inspection. Use \`mars continue ${id}\` to resume or \`mars restart ${id}\` to start over.`,
+      payload: { taskId: id, reason },
+      context: { taskId: id },
+      raisedBy: 'daemon:step-abort',
+      signature: `step-abort:${id}`,
+      originTaskId: id,
+    })
+    bus.emit('task.failed', { taskId: id, error: reason })
+  }
+
   // `mars step reset <task-id> <step-name>`: rewind a stuck task to an earlier
   // named workflow step. Clears checkpoints for the selected step and all
   // downstream steps so the next dispatch re-executes them from scratch;
@@ -5015,6 +5054,7 @@ export const startDaemon = async (
     diagnoseFailure,
     handleReleaseLease,
     handleStepDone,
+    handleStepAbort,
     handleStepReset,
     appendProgress,
     appendMcpWorkerAudit: async ({ toolName, taskId, argsJson, ok, errorMessage }) => {

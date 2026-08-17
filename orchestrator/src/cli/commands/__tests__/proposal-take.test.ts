@@ -467,6 +467,7 @@ describe('mars proposal take — command coverage', () => {
         diagnoseFailure: notImpl('diagnoseFailure') as DaemonDeps['diagnoseFailure'],
         handleReleaseLease: notImpl('handleReleaseLease') as DaemonDeps['handleReleaseLease'],
         handleStepDone: notImpl('handleStepDone') as DaemonDeps['handleStepDone'],
+        handleStepAbort: notImpl('handleStepAbort') as DaemonDeps['handleStepAbort'],
         handleStepReset: notImpl('handleStepReset') as DaemonDeps['handleStepReset'],
         appendProgress: notImpl('appendProgress') as DaemonDeps['appendProgress'],
         appendMcpWorkerAudit: notImpl('appendMcpWorkerAudit') as DaemonDeps['appendMcpWorkerAudit'],
