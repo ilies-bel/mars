@@ -3,8 +3,8 @@ import type { z } from 'zod';
 import type { Logger } from './logger.js';
 import { silentLogger } from './logger.js';
 import type { StepOutcomeMeta, StepRecord, WorkflowStore } from './store.js';
-import type { Container, Disposer } from './container/index.js';
-import { createContainer } from './container/index.js';
+import type { Context, Disposer } from './ctx/index.js';
+import { createRunContainer, disposeRunContainer, readService, safeEmit } from './ctx/index.js';
 
 /**
  * The imperative core.
@@ -34,6 +34,22 @@ export interface WorkflowEvent {
   event: string;
   payload: unknown;
   time: number;
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * Every {@link WorkflowEvent} the engine produces — step lifecycle plus
+     * anything a workflow body passes to `ctx.emit` — republished on the run
+     * container's bus, so a plugin can observe run progress without the host
+     * threading an `onEvent` sink through to it.
+     *
+     * Dispatched with {@link safeEmit}: a throwing listener is reported and
+     * skipped, never able to fail the run it is observing. The `onEvent`
+     * option remains the primary sink and is always called first.
+     */
+    'mars/workflow.event'(event: WorkflowEvent): void;
+  }
 }
 
 /** Options a step can attach to its own record as it runs. */
@@ -106,22 +122,35 @@ export interface WorkflowCtx<Services = unknown, Input = unknown> {
   readonly services: Services;
 
   /**
-   * The keyed service container for this run — layered on top of, not a
-   * replacement for, `ctx.services`. `ctx.services` stays the flat bag it
-   * always was; the container additionally seeds one entry per own
-   * enumerable property of `services` (so `ctx.get('store')` reaches the
-   * same value as `ctx.services.store`), and is where anything registered
-   * during the run via `ctx.provide`/`ctx.container.plugin` lives. See
-   * `container/index.ts`.
+   * The service container for this run — a cordis `Context`, layered on top
+   * of, not a replacement for, `ctx.services`. `ctx.services` stays the flat
+   * bag it always was; the container additionally seeds one entry per own
+   * enumerable property of `services` (so `ctx.get('store')` reaches the same
+   * value as `ctx.services.store`), and is where anything registered during
+   * the run via `ctx.provide` / `ctx.container.plugin` lives. It also carries
+   * the typed event bus (`ctx.container.on/emit/serial/waterfall`) and the
+   * fiber lifecycle behind `ctx.container.plugin`. See `ctx/index.ts`.
+   *
+   * `store` and `traceStore` are SEALED on it (ADR-0052): they are context
+   * accessors, so no plugin can provide, isolate, re-declare or assign them.
    */
-  readonly container: Container;
+  readonly container: Context;
 
-  /** Convenience for `ctx.container.get(key)`. */
+  /**
+   * Read a service off the container by name.
+   *
+   * Resolves both ordinary registrations and the sealed accessors, which
+   * cordis's own `container.get(key)` deliberately skips.
+   */
   get<T = unknown>(key: string): T | undefined;
 
   /**
-   * Convenience for `ctx.container.provide(key, value)`. Returns a
-   * disposer; registrations are torn down (LIFO) when the run ends.
+   * Convenience for `ctx.container.provide(key, value)`. Returns a disposer;
+   * registrations are reversed when the run ends.
+   *
+   * THROWS for a sealed name (`store`, `traceStore`) and for a name already
+   * registered in this run — cordis's registry rejects duplicates rather than
+   * silently overwriting them.
    */
   provide<T = unknown>(key: string, value: T): Disposer;
 
@@ -238,6 +267,35 @@ export async function runWorkflow<I, O, Services = unknown>(
 
   const runLogger = logger.child({ runId, workflowId });
 
+  /**
+   * Container-level failures: a plugin that failed to load, a disposer that
+   * threw, an effect that rejected, an observer listener that blew up. Cordis
+   * funnels all of them through its own logger; this is the bridge to ours.
+   */
+  const onContainerError = (error: unknown, source: string): void => {
+    runLogger.error(
+      { event: 'container.error', source, err: toError(error).message },
+      'container.error',
+    );
+  };
+
+  // One container per run, built BEFORE the run row exists: a wiring mistake
+  // (a service named after part of the container's own API) is a composition
+  // error, and must not leave a half-created 'running' run behind. Seeded from
+  // `services` so `ctx.get('x')` reaches `ctx.services.x` with no work from the
+  // caller — `ctx.services` itself is untouched, this is purely additive.
+  const container = createRunContainer({ services, onError: onContainerError });
+
+  /**
+   * Deliver a progress event to the caller's sink first, then republish it on
+   * the container bus for any plugin that is listening. Bus dispatch is
+   * fault-isolated: an observer can never fail the run.
+   */
+  const publish = (event: WorkflowEvent): void => {
+    fireEvent(options.onEvent, event);
+    safeEmit(container, 'mars/workflow.event', [event], onContainerError);
+  };
+
   const now = Date.now();
   const existing = await store.getRun(runId);
   if (!existing) {
@@ -259,21 +317,6 @@ export async function runWorkflow<I, O, Services = unknown>(
   // invocation, so a resumed run can re-reach a name it completed before.
   const seenNames = new Set<string>();
 
-  // One container per run. Seeded from `services` so `ctx.get('x')` reaches
-  // whatever `ctx.services.x` holds without the caller doing anything —
-  // `ctx.services` itself is untouched, this is purely additive.
-  const container = createContainer({
-    onError: (error) => {
-      const err = toError(error);
-      runLogger.error({ event: 'container.disposer-error', err: err.message }, 'container.disposer-error');
-    },
-  });
-  if (services && typeof services === 'object') {
-    for (const [key, value] of Object.entries(services as Record<string, unknown>)) {
-      container.provide(key, value);
-    }
-  }
-
   const ctx: WorkflowCtx<Services, I> = {
     runId,
     workflowId,
@@ -282,7 +325,7 @@ export async function runWorkflow<I, O, Services = unknown>(
     services,
     container,
     get(key) {
-      return container.get(key) as never;
+      return readService(container, key) as never;
     },
     provide(key, value) {
       return container.provide(key, value);
@@ -299,7 +342,7 @@ export async function runWorkflow<I, O, Services = unknown>(
         time: Date.now(),
       };
       runLogger.info({ event, payload }, `event:${event}`);
-      fireEvent(options.onEvent, evt);
+      publish(evt);
     },
     step<T>(name: string, fn: StepFn<T>, stepOptions?: StepOptions): Promise<T> {
       return runStep<T>({
@@ -312,7 +355,7 @@ export async function runWorkflow<I, O, Services = unknown>(
         logger: runLogger,
         signal,
         seenNames,
-        onEvent: options.onEvent,
+        onEvent: publish,
         // Publish the live step handle onto ctx for the duration of the step so
         // helpers invoked inside it (domain primitives) can reach it without
         // the caller threading `handle`. Cleared back to null when the step
@@ -335,9 +378,12 @@ export async function runWorkflow<I, O, Services = unknown>(
     runLogger.error({ event: 'run.failed', err: err.message }, 'run.failed');
     return { runId, status: 'failed', error: err };
   } finally {
-    // Reverse anything registered into this run's container (services,
-    // plugins, event listeners), LIFO, whether the run completed or failed.
-    container.dispose();
+    // Reverse anything registered into this run's container — services,
+    // sealed accessors, plugin fibers, listeners, effects — in reverse
+    // registration order, whether the run completed or failed. Teardown is
+    // async now (cordis awaits async disposers) and never throws: a failure
+    // here must not replace the run's own result.
+    await disposeRunContainer(container, onContainerError);
   }
 }
 

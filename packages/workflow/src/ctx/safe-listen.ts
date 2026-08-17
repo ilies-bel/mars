@@ -29,7 +29,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 
 /** Notified when a listener throws or rejects inside an isolated dispatch. */
-export type ListenerErrorHandler = (error: unknown, name: PropertyKey) => void;
+export type ListenerErrorHandler = (error: unknown, name: string) => void;
 
 /** Removes a listener; returns `true` if it was still registered. */
 export type ListenerDisposer = () => boolean;
