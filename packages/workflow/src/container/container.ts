@@ -25,7 +25,7 @@ export interface ContainerOptions {
   onError?: (error: unknown) => void;
 }
 
-export interface Container<M extends ServiceMap = ServiceMap, E extends EventMap = EventMap> {
+export interface Container<M extends object = ServiceMap, E extends object = EventMap> {
   /** This scope's name (`'root'`, a fork's name, or a plugin's name). */
   readonly name: string;
   /** The typed event bus, scoped so `events.on` here disposes with this scope. */
@@ -52,7 +52,7 @@ export interface Container<M extends ServiceMap = ServiceMap, E extends EventMap
 }
 
 /** Create a standalone root container. */
-export function createContainer<M extends ServiceMap = ServiceMap, E extends EventMap = EventMap>(
+export function createContainer<M extends object = ServiceMap, E extends object = EventMap>(
   options: ContainerOptions = {},
 ): Container<M, E> {
   const onError = options.onError ?? (() => {});
@@ -61,7 +61,7 @@ export function createContainer<M extends ServiceMap = ServiceMap, E extends Eve
   return buildContainer(registry, events, new DisposerSet({ onError }), 'root', onError);
 }
 
-function buildContainer<M extends ServiceMap, E extends EventMap>(
+function buildContainer<M extends object, E extends object>(
   registry: ServiceRegistry<M>,
   events: EventDispatcher<E>,
   scope: DisposerSet,
@@ -111,7 +111,7 @@ function buildContainer<M extends ServiceMap, E extends EventMap>(
 }
 
 /** Wrap a shared dispatcher so `on()` calls made through this scope disposer-track into it. */
-function scopeEvents<E extends EventMap>(events: EventDispatcher<E>, scope: DisposerSet): EventDispatcher<E> {
+function scopeEvents<E extends object>(events: EventDispatcher<E>, scope: DisposerSet): EventDispatcher<E> {
   return {
     on(name, listener) {
       const disposer = events.on(name, listener);
@@ -136,7 +136,7 @@ function scopeEvents<E extends EventMap>(events: EventDispatcher<E>, scope: Disp
   };
 }
 
-function createPluginScope<M extends ServiceMap, E extends EventMap, C>(
+function createPluginScope<M extends object, E extends object, C>(
   registry: ServiceRegistry<M>,
   events: EventDispatcher<E>,
   parentScope: DisposerSet,

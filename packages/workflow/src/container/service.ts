@@ -31,14 +31,14 @@ export class ServiceNotFoundError extends Error {
 }
 
 /** Events published as the registry's contents change. */
-export interface ServiceChangeEvents<M extends ServiceMap> {
+export interface ServiceChangeEvents<M extends object> {
   /** A key was registered (including replacing a previous value). */
   provide: (key: keyof M) => void;
   /** A key's current registration was withdrawn (its disposer ran). */
   revoke: (key: keyof M) => void;
 }
 
-export interface ServiceRegistry<M extends ServiceMap = ServiceMap> {
+export interface ServiceRegistry<M extends object = ServiceMap> {
   get<K extends keyof M>(key: K): M[K] | undefined;
   has<K extends keyof M>(key: K): boolean;
   /** Like `get`, but throws {@link ServiceNotFoundError} instead of returning `undefined`. */
@@ -57,7 +57,7 @@ export interface ServiceRegistry<M extends ServiceMap = ServiceMap> {
 }
 
 /** Create a standalone, in-memory keyed service registry. */
-export function createServiceRegistry<M extends ServiceMap = ServiceMap>(): ServiceRegistry<M> {
+export function createServiceRegistry<M extends object = ServiceMap>(): ServiceRegistry<M> {
   const store = new Map<keyof M, M[keyof M]>();
   const changes = createEventDispatcher<ServiceChangeEvents<M>>();
 

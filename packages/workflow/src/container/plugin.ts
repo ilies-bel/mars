@@ -12,7 +12,7 @@ import type { Disposer } from './disposer.js';
 import type { ServiceMap } from './service.js';
 import type { Container } from './container.js';
 
-export interface Plugin<C = unknown, M extends ServiceMap = ServiceMap> {
+export interface Plugin<C = unknown, M extends object = ServiceMap> {
   /** Stable, human-readable identity. Shown in errors and (later) narration. */
   readonly name: string;
   /**

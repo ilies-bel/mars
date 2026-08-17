@@ -30,7 +30,17 @@
 
 import type { Disposer } from './disposer.js';
 
-/** A map from event name to the listener signature that event dispatches. */
+/**
+ * A map from event name to the listener signature that event dispatches.
+ *
+ * This is the DEFAULT type argument, not the constraint. The constraint is the
+ * looser `object`, because a TypeScript `interface` has no implicit index
+ * signature and therefore never satisfies `Record<string, …>` — and every
+ * event map a consumer declares is an interface, so that it can be
+ * declaration-merged by a plugin adding its own event
+ * (docs/rework/TARGET-ARCHITECTURE.md §3.2/§3.6). Constraining to `Record`
+ * makes the documented extension mechanism uncompilable.
+ */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type EventMap = Record<string, (...args: any[]) => any>;
 
@@ -50,7 +60,7 @@ export interface EventDispatcherOptions {
   onError?: (error: unknown, name: PropertyKey) => void;
 }
 
-export interface EventDispatcher<M extends EventMap = EventMap> {
+export interface EventDispatcher<M extends object = EventMap> {
   /** Register a listener. Returns a disposer that removes it. */
   on<K extends keyof M>(name: K, listener: M[K]): Disposer;
   /** Number of listeners currently registered for `name`. */
@@ -74,7 +84,7 @@ export interface EventDispatcher<M extends EventMap = EventMap> {
 }
 
 /** Create a standalone, in-memory event dispatcher. */
-export function createEventDispatcher<M extends EventMap = EventMap>(
+export function createEventDispatcher<M extends object = EventMap>(
   options: EventDispatcherOptions = {},
 ): EventDispatcher<M> {
   const onError = options.onError ?? (() => {});
@@ -97,10 +107,15 @@ export function createEventDispatcher<M extends EventMap = EventMap>(
         set = new Set();
         listeners.set(name, set);
       }
-      set.add(listener);
+      // `M` is constrained to `object` (see EventMap's note) so `M[K]` is not
+      // statically known to be callable. The public `on` signature is what
+      // enforces that; the internal store is deliberately untyped.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const fn = listener as (...args: any[]) => any;
+      set.add(fn);
       const target = set;
       return () => {
-        target.delete(listener);
+        target.delete(fn);
       };
     },
 

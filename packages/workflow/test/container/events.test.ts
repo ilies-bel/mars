@@ -4,7 +4,10 @@ import { createEventDispatcher } from '../../src/container/index.js';
 interface TestEvents {
   ping: (n: number) => void;
   classify: (s: string) => string | undefined;
-  compose: (prompt: string, extra: string) => string;
+  // `waterfall` awaits each listener, so a waterfall listener may be async —
+  // the declared return type has to admit that or an `async` listener below
+  // is not assignable.
+  compose: (prompt: string, extra: string) => string | Promise<string>;
 }
 
 describe('EventDispatcher.on', () => {
