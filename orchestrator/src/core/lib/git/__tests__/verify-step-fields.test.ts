@@ -189,6 +189,11 @@ describe('VerifyStep — zero-step behavior (gates are optional)', () => {
     // Verify gates are optional. A task with zero configured steps passes
     // the verify phase even when it changed files — the operator chooses
     // not to configure gates for this scope.
+    //
+    // It does NOT pass silently, though: a non-empty task diff with no
+    // task-tier gate is recorded as the advisory `cant-verify:no-gate-coverage`
+    // marker so the gap is visible in the run timeline. The marker is a
+    // passing, gate-less entry — it must never wedge the pipeline.
     const result = await verifyChanges({
       cwd: tmpDir,
       steps: [],
@@ -196,7 +201,16 @@ describe('VerifyStep — zero-step behavior (gates are optional)', () => {
     })
 
     expect(result.passed).toBe(true)
-    expect(result.steps).toHaveLength(0)
+
+    // No gate ran, because none was configured.
+    expect(result.steps.filter((s) => s.cmd !== undefined)).toHaveLength(0)
+    expect(result.steps.every((s) => s.passed)).toBe(true)
+
+    // The coverage gap is surfaced rather than swallowed.
+    expect(result.steps).toHaveLength(1)
+    const marker = result.steps[0]!
+    expect(marker.name).toBe('cant-verify:no-gate-coverage')
+    expect(marker.passed).toBe(true)
   })
 
   it('(c) nonempty changedFiles + at least one gate runs the gate normally', async () => {
