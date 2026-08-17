@@ -74,6 +74,15 @@ export function findProject(projectId: string): RegistryEntry | null {
  * Idempotently ensures the given repo root is registered. If an entry with
  * the same absolute repoRoot already exists, returns it unchanged (no write).
  * Otherwise registers via addProject and returns the new entry.
+ *
+ * Belt-and-braces: when running under Vitest without an explicit
+ * MARS_PROJECTS_FILE override, registryPath() would fall through to
+ * ~/.mars/projects.json and pollute the developer's real registry.  In that
+ * case a synthesised entry is returned without touching the filesystem so
+ * daemon-boot test fixtures are self-contained without any per-fixture
+ * plumbing.  The primary guard is in test/setup-env.ts (MARS_PROJECTS_FILE
+ * is always redirected to a throw-away temp file before any test runs); this
+ * is the secondary safety net that catches any remaining gaps.
  */
 export function ensureProjectRegistered({
   repoRoot,
@@ -82,6 +91,13 @@ export function ensureProjectRegistered({
   repoRoot: string
   name?: string
 }): RegistryEntry {
+  if (process.env.VITEST && !process.env.MARS_PROJECTS_FILE) {
+    // Skipping write: running under Vitest with no MARS_PROJECTS_FILE override
+    // would write to ~/.mars/projects.json.  Return a synthesised entry.
+    const abs = path.resolve(repoRoot)
+    const hash = crypto.createHash('sha256').update(abs).digest('hex')
+    return { projectId: 'p_' + hash.slice(0, 12), repoRoot: abs, name: name ?? path.basename(abs) }
+  }
   const abs = path.resolve(repoRoot)
   const existing = loadProjectRegistry().find((e) => e.repoRoot === abs)
   if (existing) return existing

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   loadProjectRegistry,
@@ -134,5 +134,49 @@ describe('ensureProjectRegistered', () => {
     expect(entries).toHaveLength(2)
     expect(entries.map((e) => e.repoRoot)).toContain('/tmp/project-a')
     expect(entries.map((e) => e.repoRoot)).toContain('/tmp/project-b')
+  })
+})
+
+// ── Belt-and-braces guard ─────────────────────────────────────────────────────
+//
+// Verifies that ensureProjectRegistered never writes to the real
+// ~/.mars/projects.json when running under Vitest.  The primary guard
+// (test/setup-env.ts) redirects MARS_PROJECTS_FILE unconditionally; this
+// test covers the secondary guard inside ensureProjectRegistered itself —
+// the line of defence that fires when a test's afterEach accidentally
+// removes MARS_PROJECTS_FILE before a daemon boot happens.
+
+describe('ensureProjectRegistered — Vitest pollution guard', () => {
+  it('returns a synthesised entry without writing when VITEST is set and MARS_PROJECTS_FILE is unset', () => {
+    // Temporarily remove MARS_PROJECTS_FILE as if a test's afterEach had deleted it.
+    const saved = process.env.MARS_PROJECTS_FILE
+    delete process.env.MARS_PROJECTS_FILE
+    // process.env.VITEST is set unconditionally by the Vitest runner.
+    try {
+      const entry = ensureProjectRegistered({ repoRoot: '/tmp/guard-test-repo' })
+      expect(entry.repoRoot).toBe('/tmp/guard-test-repo')
+      expect(entry.projectId).toMatch(/^p_[a-f0-9]{12}$/)
+      expect(entry.name).toBe('guard-test-repo')
+    } finally {
+      // Restore so subsequent assertions and afterEach cleanup work correctly.
+      if (saved !== undefined) process.env.MARS_PROJECTS_FILE = saved
+    }
+    // The temp registry (which MARS_PROJECTS_FILE pointed at) must be empty:
+    // the guard returned without writing anything.
+    expect(loadProjectRegistry()).toHaveLength(0)
+
+    // The real home registry must not contain the sentinel path.
+    const homeRegistry = join(homedir(), '.mars', 'projects.json')
+    if (existsSync(homeRegistry)) {
+      expect(readFileSync(homeRegistry, 'utf-8')).not.toContain('/tmp/guard-test-repo')
+    }
+  })
+
+  it('still writes when VITEST is set and MARS_PROJECTS_FILE IS provided', () => {
+    // Normal path: MARS_PROJECTS_FILE is set (as setup-env.ts does) — write proceeds.
+    expect(process.env.MARS_PROJECTS_FILE).toBeTruthy()
+    const entry = ensureProjectRegistered({ repoRoot: '/tmp/normal-vitest-write' })
+    expect(entry.repoRoot).toBe('/tmp/normal-vitest-write')
+    expect(loadProjectRegistry()).toHaveLength(1)
   })
 })

@@ -9,7 +9,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { beforeEach } from 'vitest'
 
@@ -107,23 +107,47 @@ const REAL_MARS_DIR = _realMarsDir
 
 if (REAL_MARS_DIR !== null) {
   beforeEach(() => {
+    // ── MARS_REPO guard ────────────────────────────────────────────────────
     const marsRepo = process.env.MARS_REPO
-    if (marsRepo === undefined || marsRepo === '') {
-      // MARS_REPO deleted by the test — it is responsible for its own isolation
-      // (e.g. context.test.ts, which explicitly chdir-s into a temp repo and
-      // resets the context cache).  Skip the guard for this test.
-      return
+    if (marsRepo !== undefined && marsRepo !== '') {
+      const candidateStateDir = resolve(marsRepo, '.mars')
+      if (
+        candidateStateDir === REAL_MARS_DIR ||
+        candidateStateDir.startsWith(REAL_MARS_DIR + sep)
+      ) {
+        throw new Error(
+          `[mars-test hermetic violation] MARS_REPO="${marsRepo}" resolves to ` +
+            `the live .mars directory at "${REAL_MARS_DIR}". ` +
+            `Set MARS_REPO to an isolated temp dir in your test's beforeEach, ` +
+            `or rely on the global hermetic MARS_REPO set in test/setup-env.ts.`,
+        )
+      }
     }
-    const candidateStateDir = resolve(marsRepo, '.mars')
-    if (
-      candidateStateDir === REAL_MARS_DIR ||
-      candidateStateDir.startsWith(REAL_MARS_DIR + sep)
-    ) {
+    // (if marsRepo is undefined/empty the test manages its own isolation —
+    // see context.test.ts — so we skip the MARS_REPO check but still run
+    // the projects-file guard below.)
+
+    // ── MARS_PROJECTS_FILE guard ───────────────────────────────────────────
+    //
+    // A test's afterEach may delete MARS_PROJECTS_FILE (e.g. projects.test.ts
+    // manages it per-test).  Restore it here so the NEXT test is not left
+    // with an unset var that would cause registryPath() to fall through to
+    // ~/.mars/projects.json and pollute the real registry.
+    //
+    // ??= is intentional: if the test's own beforeEach already set a
+    // different temp path (as projects.test.ts does), leave it alone.
+    process.env.MARS_PROJECTS_FILE ??= join(
+      tmpdir(),
+      `mars-test-projects-${process.pid}.json`,
+    )
+
+    const realHomeRegistry = join(homedir(), '.mars', 'projects.json')
+    if (process.env.MARS_PROJECTS_FILE === realHomeRegistry) {
       throw new Error(
-        `[mars-test hermetic violation] MARS_REPO="${marsRepo}" resolves to ` +
-          `the live .mars directory at "${REAL_MARS_DIR}". ` +
-          `Set MARS_REPO to an isolated temp dir in your test's beforeEach, ` +
-          `or rely on the global hermetic MARS_REPO set in test/setup-env.ts.`,
+        `[mars-test hermetic violation] MARS_PROJECTS_FILE="${process.env.MARS_PROJECTS_FILE}" ` +
+          `resolves to the real home registry at "${realHomeRegistry}". ` +
+          `Set MARS_PROJECTS_FILE to an isolated temp file in your test's beforeEach, ` +
+          `or rely on the global hermetic MARS_PROJECTS_FILE set in test/setup-env.ts.`,
       )
     }
   })
