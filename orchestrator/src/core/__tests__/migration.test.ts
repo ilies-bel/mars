@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 
 import { openDb } from '../lib/db.js'
 import { ensureSchema, SCHEMA_VERSION } from '../lib/pg-schema.js'
+import { loadVerifyGates } from '../verify-gates.js'
 
 describe('migration 0002 PostgreSQL cutover', () => {
   it('boots the canonical schema and records the PostgreSQL migration version', async () => {
@@ -24,6 +25,44 @@ describe('migration 0002 PostgreSQL cutover', () => {
         'tasks',
         'trace_events',
       ])
+    } finally {
+      await db.close()
+    }
+  })
+
+  it('migrates timeout_min into an existing verify_gates table on the first post-7091bbcc boot', async () => {
+    // Regression for "column timeout_min does not exist": ensureSchema
+    // (= runCompositionRootMigrations) must add the column before any
+    // verify_gates SELECT runs on a daemon restarted against a pre-7091bbcc DB.
+    const db = openDb(`pglite://verify-gates-timeout-min-${randomUUID()}`)
+    try {
+      // 1. Set up a known-good schema (ensureSchema is idempotent).
+      await ensureSchema(db)
+
+      // 2. Roll back to the pre-7091bbcc state by dropping the column.
+      //    This is the on-disk condition that triggered the production failure.
+      await db.execute(`ALTER TABLE verify_gates DROP COLUMN timeout_min`)
+      await db.execute({
+        sql: `INSERT INTO verify_gates
+                (id, scope, name, cmd, args_json, required, tier, source, created_at, state)
+              VALUES (?, '.', 'typecheck', 'npx', '["tsc"]', 1, 'task', 'human', ?, 'active')`,
+        args: ['gate-pre-migration', 1000],
+      })
+
+      // 3. Daemon restarts — runCompositionRootMigrations calls ensureSchema.
+      //    This must re-add timeout_min before any verify_gates SELECT fires.
+      await ensureSchema(db)
+
+      // 4. First gate read after boot — must not throw
+      //    "column timeout_min does not exist".
+      const scopes = await loadVerifyGates(db)
+      expect(scopes).toHaveLength(1)
+      expect(scopes[0].steps[0]).toMatchObject({
+        name: 'typecheck',
+        cmd: 'npx',
+      })
+      // Column was re-added with no DEFAULT — NULL → undefined in VerifyScope.
+      expect(scopes[0].steps[0].timeoutMin).toBeUndefined()
     } finally {
       await db.close()
     }
