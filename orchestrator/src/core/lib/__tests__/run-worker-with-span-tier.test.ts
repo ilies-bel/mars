@@ -26,7 +26,7 @@ const tmpDbPath = (): string => {
 // deterministic regardless of MARS_WORKER_PROVIDER in the environment.
 const makeWorkerConfig = (overrides: Partial<WorkerConfig> = {}): WorkerConfig => ({
   name: 'Coder',
-  model: 'claude-sonnet-4-6',
+  model: 'claude-sonnet-5',
   modelTier: 'balanced',
   effort: 'high',
   permissionMode: 'default',
@@ -67,8 +67,8 @@ describe('runWorkerWithSpan modelTier override', () => {
     const traceStore = await openTraceEventStore(tmpDbPath())
     const capturedModel: { value: string | undefined } = { value: undefined }
 
-    // Worker is pinned to balanced (claude-sonnet-4-6); caller requests fast.
-    const config = makeWorkerConfig({ model: 'claude-sonnet-4-6', modelTier: 'balanced' })
+    // Worker is pinned to balanced (claude-sonnet-5); caller requests fast.
+    const config = makeWorkerConfig({ model: 'claude-sonnet-5', modelTier: 'balanced' })
     const worker = makeCapturingWorker(config, capturedModel)
 
     await runWorkerWithSpan({
@@ -87,13 +87,13 @@ describe('runWorkerWithSpan modelTier override', () => {
     const expectedFastModel = PROVIDER_MODELS['claude']['fast']
     expect(capturedModel.value).toBe(expectedFastModel)
     // Sanity: the fast model is different from the balanced pin.
-    expect(capturedModel.value).not.toBe('claude-sonnet-4-6')
+    expect(capturedModel.value).not.toBe('claude-sonnet-5')
   })
 
   it('(a) worker.config.model is not mutated by the tier override', async () => {
     const traceStore = await openTraceEventStore(tmpDbPath())
     const capturedModel: { value: string | undefined } = { value: undefined }
-    const config = makeWorkerConfig({ model: 'claude-sonnet-4-6' })
+    const config = makeWorkerConfig({ model: 'claude-sonnet-5' })
     const worker = makeCapturingWorker(config, capturedModel)
     const pinnedModelBefore = worker.config.model
 
@@ -122,7 +122,7 @@ describe('runWorkerWithSpan no modelTier', () => {
   it('(b) dispatches worker.config.model unchanged when no modelTier is given', async () => {
     const traceStore = await openTraceEventStore(tmpDbPath())
     const capturedModel: { value: string | undefined } = { value: undefined }
-    const config = makeWorkerConfig({ model: 'claude-sonnet-4-6' })
+    const config = makeWorkerConfig({ model: 'claude-sonnet-5' })
     const worker = makeCapturingWorker(config, capturedModel)
 
     await runWorkerWithSpan({
@@ -137,7 +137,7 @@ describe('runWorkerWithSpan no modelTier', () => {
       // modelTier deliberately omitted
     })
 
-    expect(capturedModel.value).toBe('claude-sonnet-4-6')
+    expect(capturedModel.value).toBe('claude-sonnet-5')
   })
 })
 
@@ -146,7 +146,7 @@ describe('runWorkerWithSpan no modelTier', () => {
 describe('runWorkerWithSpan step_started tier fields', () => {
   it('(c) step_started carries declaredTier=fast and resolvedModel=fast-model when override given', async () => {
     const traceStore = await openTraceEventStore(tmpDbPath())
-    const config = makeWorkerConfig({ model: 'claude-sonnet-4-6', modelTier: 'balanced' })
+    const config = makeWorkerConfig({ model: 'claude-sonnet-5', modelTier: 'balanced' })
     const capturedModel: { value: string | undefined } = { value: undefined }
     const worker = makeCapturingWorker(config, capturedModel)
 
@@ -172,7 +172,7 @@ describe('runWorkerWithSpan step_started tier fields', () => {
 
   it('(c) step_started carries declaredTier=balanced (from config) and resolvedModel=pinned when no override', async () => {
     const traceStore = await openTraceEventStore(tmpDbPath())
-    const config = makeWorkerConfig({ model: 'claude-sonnet-4-6', modelTier: 'balanced' })
+    const config = makeWorkerConfig({ model: 'claude-sonnet-5', modelTier: 'balanced' })
     const capturedModel: { value: string | undefined } = { value: undefined }
     const worker = makeCapturingWorker(config, capturedModel)
 
@@ -195,13 +195,13 @@ describe('runWorkerWithSpan step_started tier fields', () => {
     // declaredTier falls back to worker.config.modelTier when no override
     expect(started!.payload.declaredTier).toBe('balanced')
     // resolvedModel is the Worker's pinned model when no override
-    expect(started!.payload.resolvedModel).toBe('claude-sonnet-4-6')
+    expect(started!.payload.resolvedModel).toBe('claude-sonnet-5')
   })
 
   it('(c) step_started carries declaredTier=null when no override and config has no modelTier', async () => {
     const traceStore = await openTraceEventStore(tmpDbPath())
     // WorkerConfig with no modelTier set
-    const config = makeWorkerConfig({ model: 'claude-sonnet-4-6', modelTier: undefined })
+    const config = makeWorkerConfig({ model: 'claude-sonnet-5', modelTier: undefined })
     const capturedModel: { value: string | undefined } = { value: undefined }
     const worker = makeCapturingWorker(config, capturedModel)
 
@@ -220,7 +220,7 @@ describe('runWorkerWithSpan step_started tier fields', () => {
       await traceStore.query({ taskId: 'task-stepstarted-nulltier', kind: ['step_started'] })
     )[0]
     expect(started!.payload.declaredTier).toBeNull()
-    expect(started!.payload.resolvedModel).toBe('claude-sonnet-4-6')
+    expect(started!.payload.resolvedModel).toBe('claude-sonnet-5')
   })
 })
 

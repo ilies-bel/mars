@@ -144,7 +144,7 @@ describe('PrimitiveDetailDrawer — agent primitive (runAgent)', () => {
     workers: [
       {
         workerName: 'Coder',
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         effort: 'high',
         permissionMode: 'bypassPermissions',
         forfeitedTools: [],
@@ -152,7 +152,7 @@ describe('PrimitiveDetailDrawer — agent primitive (runAgent)', () => {
       },
       {
         workerName: 'Fixer',
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         effort: 'high',
         permissionMode: 'bypassPermissions',
         forfeitedTools: ['Bash(mars task add*)', 'Bash(mars proposal*)'],
@@ -194,7 +194,7 @@ describe('PrimitiveDetailDrawer — agent primitive (runAgent)', () => {
     expect(html).toContain('data-worker-name="Coder"')
     expect(html).toContain('data-worker-name="Fixer"')
     expect(html).toContain('data-worker-name="DocsWriter"')
-    expect(html).toContain('claude-sonnet-4-6')
+    expect(html).toContain('claude-sonnet-5')
     expect(html).toContain('bypassPermissions')
   })
 

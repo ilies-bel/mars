@@ -68,7 +68,7 @@ export default defineWorkflow({
   `setupWorktree` provisions is remembered for `verify`/`merge`. Every
   task-state write funnels through the Arc aggregate (ADR-0052).
 - **Per-step model** — like the Agent SDK's `query({ prompt, model })`,
-  `runAgent(ctx, { model: 'claude-opus-4-7' })` pins the model for that step.
+  `runAgent(ctx, { model: 'claude-opus-5' })` pins the model for that step.
   Omit it to use the resolved Worker's default. Precedence: `opts.model ??
   MARS_WORKER_MODEL` (Coder only) `?? the Worker's pinned model`.
 - **Per-step Execution mode** — use `awaitHuman(ctx, { note })` to park a step

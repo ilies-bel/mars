@@ -19,7 +19,7 @@ describe('stewardAgent — spec shape', () => {
   })
 
   it('targets the correct model', () => {
-    expect(stewardAgent.model).toBe('claude-sonnet-4-6')
+    expect(stewardAgent.model).toBe('claude-sonnet-5')
   })
 
   it('has a non-empty systemPrompt', () => {

@@ -70,7 +70,7 @@ describe('Worker runtime field', () => {
   it('createWorker plumbs runtime through to the resulting Worker', () => {
     const cfg: WorkerConfig = {
       name: 'Coder',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       effort: 'medium',
       permissionMode: 'default',
       bare: false,
@@ -128,7 +128,7 @@ describe('Coder pinned config', () => {
   const args = argvFor('Coder')
 
   it('runs on CODER_MODEL (sonnet by default) with high effort, bypassPermissions, and no read-only denials', () => {
-    // CODER_MODEL resolves process.env.MARS_WORKER_MODEL ?? 'claude-sonnet-4-6'.
+    // CODER_MODEL resolves process.env.MARS_WORKER_MODEL ?? 'claude-sonnet-5'.
     // This assertion adapts to the test environment so it passes whether or not
     // MARS_WORKER_MODEL is set (e.g. in CI overrides).
     expect(valueAfter(args, '--model')).toBe(CODER_MODEL)
@@ -211,7 +211,7 @@ describe('Fixer pinned config', () => {
 })
 
 // Regression guard: before commit 77b0f693, WORKER_CONFIGS.Fixer.model was
-// 'claude-opus-4-7', causing every recovery run to dispatch on Opus even though
+// 'claude-opus-5', causing every recovery run to dispatch on Opus even though
 // the intent was Sonnet (scoped mechanical work, not architectural reasoning).
 // During a failure storm this multiplied cost — each failed task spawned one
 // Opus Fixer. The tests below pin the dispatch-time model to prevent regression.
@@ -239,7 +239,7 @@ describe('fix-run model-tier regression', () => {
     // the Fixer config stays on the pinned sonnet.
     expect(WORKER_CONFIGS.Fixer.model).toBe(providerModel(WORKER_PROVIDER, 'balanced'))
     // Coder may differ from Fixer if MARS_WORKER_MODEL is set, but Fixer must not.
-    // The pinned constant is the same 'claude-sonnet-4-6' regardless of env.
+    // The pinned constant is the same 'claude-sonnet-5' regardless of env.
     expect(WORKER_CONFIGS.Fixer.model).not.toBe(WORKER_CONFIGS.Planner.model) // Planner is Opus
     expect(WORKER_CONFIGS.Fixer.model).not.toBe(WORKER_CONFIGS.Slicer.model) // Slicer is Opus
   })
@@ -305,7 +305,7 @@ describe('pickWorkerForTags', () => {
     // Simulate an operator-declared Worker added to the registry with a custom tag.
     const customWorker = createWorker({
       name: 'ScaffoldWorker',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       effort: 'high',
       permissionMode: 'default',
       bare: false,
@@ -324,7 +324,7 @@ describe('pickWorkerForTags', () => {
   it('falls back to Coder when a custom worker map lacks a matching tag', () => {
     const customWorker = createWorker({
       name: 'ScaffoldWorker',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       effort: 'high',
       permissionMode: 'default',
       bare: false,
@@ -409,7 +409,7 @@ describe('audit surface — full role-pinned config exposed via WORKER_CONFIGS',
 describe('systemPrompt / appendSystemPrompt mutual exclusion', () => {
   const baseConfig: WorkerConfig = {
     name: 'Coder',
-    model: 'claude-sonnet-4-6',
+    model: 'claude-sonnet-5',
     effort: 'medium',
     permissionMode: 'default',
     bare: false,

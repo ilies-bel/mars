@@ -17,7 +17,7 @@ const tmpDbPath = (): string => {
 // Minimal WorkerConfig stub that satisfies the interface.
 const makeWorkerConfig = (name: WorkerConfig['name']): WorkerConfig => ({
   name,
-  model: 'claude-sonnet-4-6',
+  model: 'claude-sonnet-5',
   effort: 'high',
   permissionMode: 'default',
   bare: false,
@@ -1450,7 +1450,7 @@ describe('runWorkerWithSpan — incremental transcript chunk streaming', () => {
 // ── worker-model-mismatch guard ───────────────────────────────────────────────
 //
 // Root cause for the Fixer-on-Opus incident (2026-07-03): the pinned model in
-// WORKER_CONFIGS.Fixer was claude-opus-4-7 before commit 77b0f693. Even after
+// WORKER_CONFIGS.Fixer was claude-opus-5 before commit 77b0f693. Even after
 // the pin was corrected, there is no runtime signal that catches future drift.
 // The guard added in runWorkerWithSpan compares the model field of the
 // system/init event (the first event the claude CLI emits, carrying the model
@@ -1460,11 +1460,11 @@ describe('runWorkerWithSpan — incremental transcript chunk streaming', () => {
 
 describe('runWorkerWithSpan — worker-model-mismatch guard', () => {
   it('emits a worker-model-mismatch warn event when the system/init model diverges from the worker pin', async () => {
-    // Fixer is pinned to claude-sonnet-4-6. If the live subprocess reports
-    // claude-opus-4-7 (the pre-77b0f693 pin), the guard must fire a warn.
+    // Fixer is pinned to claude-sonnet-5. If the live subprocess reports
+    // claude-opus-5 (the pre-77b0f693 pin), the guard must fire a warn.
     const traceStore = await openTraceEventStore(tmpDbPath())
     const fixerWorker: Worker = {
-      config: makeWorkerConfig('Fixer'), // model: 'claude-sonnet-4-6'
+      config: makeWorkerConfig('Fixer'), // model: 'claude-sonnet-5'
       runtime: 'headless',
       run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
         // Simulate the claude CLI's system/init event reporting the WRONG model
@@ -1472,7 +1472,7 @@ describe('runWorkerWithSpan — worker-model-mismatch guard', () => {
           type: 'system',
           subtype: 'init',
           session_id: 'sess-mismatch-fixer',
-          model: 'claude-opus-4-7', // diverges from worker.config.model
+          model: 'claude-opus-5', // diverges from worker.config.model
         } as ClaudeEvent)
         return successResult('sess-mismatch-fixer')
       },
@@ -1493,8 +1493,8 @@ describe('runWorkerWithSpan — worker-model-mismatch guard', () => {
     const mismatches = await traceStore.query({ kind: ['worker-model-mismatch'] })
     expect(mismatches).toHaveLength(1)
     expect(mismatches[0]!.severity).toBe('warn')
-    expect(mismatches[0]!.payload.expected).toBe('claude-sonnet-4-6')
-    expect(mismatches[0]!.payload.actual).toBe('claude-opus-4-7')
+    expect(mismatches[0]!.payload.expected).toBe('claude-sonnet-5')
+    expect(mismatches[0]!.payload.actual).toBe('claude-opus-5')
     expect(mismatches[0]!.payload.worker).toBe('Fixer')
     expect(mismatches[0]!.payload.taskId).toBe('task-mismatch-fixer')
     expect(mismatches[0]!.phase).toBe('code')
@@ -1503,14 +1503,14 @@ describe('runWorkerWithSpan — worker-model-mismatch guard', () => {
   it('does NOT emit worker-model-mismatch when system/init model matches the worker pin', async () => {
     const traceStore = await openTraceEventStore(tmpDbPath())
     const fixerWorker: Worker = {
-      config: makeWorkerConfig('Fixer'), // model: 'claude-sonnet-4-6'
+      config: makeWorkerConfig('Fixer'), // model: 'claude-sonnet-5'
       runtime: 'headless',
       run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
         await options.onEvent?.({
           type: 'system',
           subtype: 'init',
           session_id: 'sess-match',
-          model: 'claude-sonnet-4-6', // matches worker.config.model exactly
+          model: 'claude-sonnet-5', // matches worker.config.model exactly
         } as ClaudeEvent)
         return successResult('sess-match')
       },
@@ -1537,13 +1537,13 @@ describe('runWorkerWithSpan — worker-model-mismatch guard', () => {
     // A system event with a different subtype (e.g. result) must not fire.
     const traceStore = await openTraceEventStore(tmpDbPath())
     const fixerWorker: Worker = {
-      config: makeWorkerConfig('Fixer'), // model: 'claude-sonnet-4-6'
+      config: makeWorkerConfig('Fixer'), // model: 'claude-sonnet-5'
       runtime: 'headless',
       run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
         await options.onEvent?.({
           type: 'system',
           subtype: 'result', // not 'init' — must not trigger guard
-          model: 'claude-opus-4-7',
+          model: 'claude-opus-5',
         } as ClaudeEvent)
         return successResult()
       },
@@ -1568,14 +1568,14 @@ describe('runWorkerWithSpan — worker-model-mismatch guard', () => {
   it('guard is non-fatal: the run still completes and the result is returned even after emitting mismatch', async () => {
     const traceStore = await openTraceEventStore(tmpDbPath())
     const fixerWorker: Worker = {
-      config: makeWorkerConfig('Fixer'), // model: 'claude-sonnet-4-6'
+      config: makeWorkerConfig('Fixer'), // model: 'claude-sonnet-5'
       runtime: 'headless',
       run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
         await options.onEvent?.({
           type: 'system',
           subtype: 'init',
           session_id: 'sess-nonfatal',
-          model: 'claude-opus-4-7', // mismatch
+          model: 'claude-opus-5', // mismatch
         } as ClaudeEvent)
         return successResult('sess-nonfatal')
       },

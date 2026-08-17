@@ -109,7 +109,7 @@ import {
 | "make verify manual" | `review(ctx)` → `review(ctx, { reviewType: 'manual', guide: '...' })` |
 | "make code step manual" / "I'll drive" | Replace `runAgent(ctx)` with `awaitHuman(ctx, { note: '...' })` — or use the `live-workflow.js` base |
 | "add a QA gate before merge" | Add `await ctx.step('qa', () => awaitHuman(ctx, { note: 'QA your changes, then run `mars step done`' }))` before the `merge` step |
-| "use opus for coding" | `runAgent(ctx, { model: 'claude-opus-4-7' })` |
+| "use opus for coding" | `runAgent(ctx, { model: 'claude-opus-5' })` |
 | "add a sign-off step" | Add `await ctx.step('sign-off', () => awaitHuman(ctx, { note: '...' }))` at the relevant position |
 
 **Guide strings** are what the user sees in the action queue. Make them clear and actionable — tell the user exactly what

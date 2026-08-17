@@ -17,8 +17,8 @@ describe('PROVIDERS registry', () => {
   })
 
   it('rejects an unknown model instead of borrowing another provider memory policy', () => {
-    expect(() => PROVIDERS.codex.conversationMemory('claude-sonnet-4-6')).toThrow(
-      "Provider 'codex' has no conversation-memory facts for model 'claude-sonnet-4-6'",
+    expect(() => PROVIDERS.codex.conversationMemory('claude-sonnet-5')).toThrow(
+      "Provider 'codex' has no conversation-memory facts for model 'claude-sonnet-5'",
     )
   })
 
@@ -47,9 +47,9 @@ describe('PROVIDERS registry', () => {
   })
 
   it("'claude' provider spawnArgv includes '--model' when model is supplied", () => {
-    const argv = PROVIDERS.claude.spawnArgv({ model: 'claude-sonnet-4-6' })
+    const argv = PROVIDERS.claude.spawnArgv({ model: 'claude-sonnet-5' })
     expect(argv).toContain('--model')
-    expect(argv).toContain('claude-sonnet-4-6')
+    expect(argv).toContain('claude-sonnet-5')
   })
 
   it("'claude' provider spawnArgv omits '--model' when model is absent", () => {

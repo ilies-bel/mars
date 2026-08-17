@@ -330,7 +330,7 @@ export const stewardAgent = {
   displayName: 'Steward',
   description:
     'Event-driven Mars companion that responds to KPI, resource, onboarding, workflow-suggestion, and signature-storm signals.',
-  model: 'claude-sonnet-4-6',
+  model: 'claude-sonnet-5',
   systemPrompt: STEWARD_SYSTEM_PROMPT,
   // The union of both dispatch shapes: the write-capable storm tools (Edit /
   // Write, so a tripped breaker produces a fix rather than prose) plus

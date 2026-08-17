@@ -12,7 +12,7 @@
  *   async fn(ctx) {
  *     // Every primitive defaults its options from ctx.input (the dispatch
  *     // facts), so a step is just `primitive(ctx)`. Pass an options bag only
- *     // to override a field (e.g. runAgent(ctx, { model: 'claude-opus-4-7' })).
+ *     // to override a field (e.g. runAgent(ctx, { model: 'claude-opus-5' })).
  *     await ctx.step('setup',  () => setupWorktree(ctx))
  *     await ctx.step('code',   () => runAgent(ctx))
  *     await ctx.step('review', () => review(ctx, { reviewType: 'auto' }))

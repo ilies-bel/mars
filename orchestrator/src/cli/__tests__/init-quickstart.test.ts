@@ -67,7 +67,7 @@ describe('detectMarsEnvOverrides', () => {
   })
 
   it('classifies MARS_WORKER_MODEL as an active override', () => {
-    const { active } = detectMarsEnvOverrides({ MARS_WORKER_MODEL: 'claude-opus-4-7' })
+    const { active } = detectMarsEnvOverrides({ MARS_WORKER_MODEL: 'claude-opus-5' })
     expect(active.some((e) => e.key === 'MARS_WORKER_MODEL')).toBe(true)
   })
 

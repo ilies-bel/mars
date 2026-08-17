@@ -140,8 +140,8 @@ describe('deriveSeverity', () => {
     // risk but not a hard failure — warn so it surfaces in reflect.
     expect(
       deriveSeverity('worker-model-mismatch', {
-        expected: 'claude-sonnet-4-6',
-        actual: 'claude-opus-4-7',
+        expected: 'claude-sonnet-5',
+        actual: 'claude-opus-5',
         worker: 'Fixer',
       }),
     ).toBe('warn')

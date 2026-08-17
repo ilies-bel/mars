@@ -27,7 +27,7 @@ describe('claudeStreamArgs', () => {
 
   it('still denies the agent-to-user tools when options are supplied', () => {
     const args = claudeStreamArgs('hello', {
-      model: 'claude-opus-4-7',
+      model: 'claude-opus-5',
       systemPrompt: 'be brief',
       sessionId: 'sid-1',
     })

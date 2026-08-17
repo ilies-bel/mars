@@ -13,7 +13,7 @@
 // DEFAULTS every option from `ctx.input` — the dispatch facts the daemon ran
 // this task with (prompt, kind, branch, recovery payload, …). So a step is just
 // `primitive(ctx)`. You pass an options bag ONLY to override a field, e.g.
-// `runAgent(ctx, { model: 'claude-opus-4-7' })`.
+// `runAgent(ctx, { model: 'claude-opus-5' })`.
 //
 // You never touch the plumbing: the Arc task store, the trace store, the
 // worktree ref, the event sink, and the step handle are all pulled off `ctx`
@@ -43,7 +43,7 @@ export default defineWorkflow({
 
     // code → the coder implements the task prompt inside the worktree.
     // Execution mode: auto. Override the model per step like the Agent SDK:
-    //   runAgent(ctx, { model: 'claude-opus-4-7' })
+    //   runAgent(ctx, { model: 'claude-opus-5' })
     await ctx.step('code', () => runAgent(ctx))
 
     // verify → scope-aware typecheck → tests → lint. Execution mode: auto.

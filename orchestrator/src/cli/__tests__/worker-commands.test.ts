@@ -75,8 +75,8 @@ describe('mars worker list', () => {
   it('shows resolved model identifiers under the active claude provider', () => {
     const result = runCli(['worker', 'list'], ENV_CLAUDE())
     // Claude models should appear in the resolved model column.
-    expect(result.stdout).toContain('claude-sonnet-4-6')
-    expect(result.stdout).toContain('claude-opus-4-7')
+    expect(result.stdout).toContain('claude-sonnet-5')
+    expect(result.stdout).toContain('claude-opus-5')
   })
 
   it('shows a newly added worker after mars worker add', () => {
@@ -135,7 +135,7 @@ describe('mars worker add', () => {
 
   it('exits 0 when --model is a concrete model id belonging to the active provider', () => {
     const result = runCli(
-      ['worker', 'add', 'ModelIdWorker', '--model', 'claude-opus-4-7'],
+      ['worker', 'add', 'ModelIdWorker', '--model', 'claude-opus-5'],
       ENV_CLAUDE(),
     )
     expect(result.status).toBe(0)
@@ -190,9 +190,9 @@ describe('mars worker add', () => {
   })
 
   it('maps a concrete model id to its tier when the model belongs to the active provider', () => {
-    // claude-opus-4-7 is the flagship tier for the claude provider.
+    // claude-opus-5 is the flagship tier for the claude provider.
     runCli(
-      ['worker', 'add', 'ModelCheck', '--model', 'claude-opus-4-7'],
+      ['worker', 'add', 'ModelCheck', '--model', 'claude-opus-5'],
       ENV_CLAUDE(),
     )
     const content = readFileSync(

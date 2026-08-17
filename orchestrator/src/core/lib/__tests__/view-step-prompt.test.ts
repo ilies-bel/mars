@@ -183,7 +183,7 @@ describe('viewStepPrompt — resolution outcomes', () => {
       sessionId,
     })
     await store.appendTranscriptChunk!(taskId, sessionId, 0, [
-      { type: 'system', subtype: 'init', model: 'claude-sonnet-4-6' },
+      { type: 'system', subtype: 'init', model: 'claude-sonnet-5' },
       userEvent('the composed prompt recovered from chunks'),
       { type: 'assistant', message: { role: 'assistant', content: [] } },
     ])

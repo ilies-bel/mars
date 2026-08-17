@@ -23,8 +23,8 @@ export interface ProviderModels {
 /** Provider-native model ids behind MARS's semantic worker tiers. */
 export const PROVIDER_MODELS: Readonly<Record<ProviderName, ProviderModels>> = {
   claude: {
-    flagship: 'claude-opus-4-7',
-    balanced: 'claude-sonnet-4-6',
+    flagship: 'claude-opus-5',
+    balanced: 'claude-sonnet-5',
     fast: 'claude-haiku-4-5-20251001',
   },
   gemini: {

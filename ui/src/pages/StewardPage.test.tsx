@@ -68,7 +68,7 @@ const makeStewardView = (overrides: Partial<StewardView> = {}): StewardView => (
   },
   agentSpec: {
     name: 'steward',
-    model: 'claude-sonnet-4-6',
+    model: 'claude-sonnet-5',
     allowedTools: ['Read', 'Bash', 'Grep', 'Glob'],
     eventVariants: ['kpi-degraded', 'resource-load', 'onboarding', 'workflow-suggestion'],
     dispatchSites: 0,
@@ -389,6 +389,6 @@ describe('StewardPage', () => {
   it('renders the agent spec footer with 0 dispatch sites', () => {
     const html = renderToStaticMarkup(<StewardPage />)
     expect(html).toContain('0 dispatch site')
-    expect(html).toContain('claude-sonnet-4-6')
+    expect(html).toContain('claude-sonnet-5')
   })
 })

@@ -41,8 +41,8 @@ const conversationMemoryFor = (
 }
 
 const CLAUDE_CONVERSATION_MEMORY: Readonly<Record<string, ConversationMemoryFacts>> = {
-  'claude-opus-4-7': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
-  'claude-sonnet-4-6': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
+  'claude-opus-5': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
+  'claude-sonnet-5': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
   'claude-haiku-4-5-20251001': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
 }
 

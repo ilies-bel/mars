@@ -105,7 +105,7 @@ describe('runPtySession — clean done-signal', () => {
       prompt: 'do the work',
       cwd: '/tmp/test-cwd',
       sessionId: 'sess-abc',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     expect(result.exitCode).toBe(0)
@@ -118,7 +118,7 @@ describe('runPtySession — clean done-signal', () => {
       provider,
       prompt: 'ping',
       cwd: '/tmp/cwd',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     expect(vi.mocked(spawnPty)).toHaveBeenCalledWith(
@@ -135,7 +135,7 @@ describe('runPtySession — clean done-signal', () => {
       provider,
       prompt: 'ping',
       cwd: '/tmp/cwd',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     expect(fakeHandle.kill).toHaveBeenCalledWith('SIGTERM')
@@ -149,7 +149,7 @@ describe('runPtySession — clean done-signal', () => {
       prompt: 'ping',
       cwd: '/tmp/cwd',
       sessionId: 'my-session-id',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     expect(result.sessionId).toBe('my-session-id')
@@ -162,7 +162,7 @@ describe('runPtySession — clean done-signal', () => {
       provider,
       prompt: 'ping',
       cwd: '/tmp/cwd',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     expect(result.sessionId).toBeNull()
@@ -194,7 +194,7 @@ describe('runPtySession — abort signal fires', () => {
       cwd: '/tmp/cwd',
       sessionId: 'sess-xyz',
       externalAbort: controller.signal,
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     expect(result.exitCode).not.toBe(0)
@@ -225,7 +225,7 @@ describe('runPtySession — abort signal fires', () => {
       cwd: '/tmp/cwd',
       sessionId: 'sess-xyz',
       externalAbort: controller.signal,
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     expect(result.exitCode).toBe(137)
@@ -242,7 +242,7 @@ describe('runPtySession — abort signal fires', () => {
       prompt: 'do work',
       cwd: '/tmp/cwd',
       externalAbort: controller.signal,
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     expect(fakeHandle.kill).toHaveBeenCalledWith('SIGTERM')
@@ -276,7 +276,7 @@ describe('runPtySession — no doneSignal (process-exit fallback)', () => {
       provider: providerNoSignal,
       prompt: 'ping',
       cwd: '/tmp/cwd',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     // Fire the exit listeners after a tick
@@ -347,7 +347,7 @@ describe('Workers.X.run — runtime:pty dispatch (integration)', () => {
       prompt: 'do the work',
       cwd: '/tmp/integration-cwd',
       sessionId: 'integration-sess',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     expect(result.exitCode).toBe(0)
@@ -413,7 +413,7 @@ describe('runPtySession — pty.log and events.jsonl persistence', () => {
       prompt: 'hello',
       cwd: tmpDir,
       sessionId,
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     // Emit data synchronously before feedPrompt's microtask resolves so
@@ -438,7 +438,7 @@ describe('runPtySession — pty.log and events.jsonl persistence', () => {
       prompt: 'hello',
       cwd: tmpDir,
       sessionId,
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     const eventsPath = pathMod.join(tmpDir, '.mars', 'pty', `${sessionId}.events.jsonl`)
@@ -475,7 +475,7 @@ describe('runPtySession — pty.log and events.jsonl persistence', () => {
       cwd: tmpDir,
       sessionId,
       externalAbort: controller.signal,
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     const eventsPath = pathMod.join(tmpDir, '.mars', 'pty', `${sessionId}.events.jsonl`)
@@ -551,7 +551,7 @@ describe('runPtySession — provider.prepare hook', () => {
       prompt: 'ping',
       cwd: tmpDir,
       sessionId: 'prep-sess-1',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     // prepare must have been called with the right arguments
@@ -586,7 +586,7 @@ describe('runPtySession — provider.prepare hook', () => {
       prompt: 'noop',
       cwd: tmpDir,
       sessionId: taskId,
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     expect(prepareSpy).toHaveBeenCalledOnce()
@@ -610,7 +610,7 @@ describe('runPtySession — provider.prepare hook', () => {
       provider,
       prompt: 'ping',
       cwd: tmpDir,
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       // no sessionId
     })
 
@@ -669,7 +669,7 @@ describe('runPtySession — onEvent lifecycle events', () => {
       prompt: 'hello',
       cwd: tmpDir,
       sessionId: 'onevent-sess-1',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       onEvent,
     })
 
@@ -695,7 +695,7 @@ describe('runPtySession — onEvent lifecycle events', () => {
       cwd: tmpDir,
       sessionId: 'onevent-sess-2',
       externalAbort: controller.signal,
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       onEvent,
     })
 
@@ -711,7 +711,7 @@ describe('runPtySession — onEvent lifecycle events', () => {
         provider,
         prompt: 'ping',
         cwd: tmpDir,
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         // no onEvent
       }),
     ).resolves.toMatchObject({ exitCode: 0 })
@@ -772,7 +772,7 @@ describe('runPtySession — readiness gate', () => {
       prompt: 'do work',
       cwd: '/tmp/ready-gate-cwd',
       sessionId: 'ready-gate-test',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     // Flush the synchronous executor path (immediate isReady check fails —
@@ -827,7 +827,7 @@ describe('runPtySession — readiness gate', () => {
       prompt: 'do work',
       cwd: '/tmp/ready-timeout-cwd',
       sessionId: 'ready-timeout-test',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
     })
 
     // Still waiting — 30 s has not elapsed.

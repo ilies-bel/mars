@@ -88,8 +88,8 @@ for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
 describe('createWorker model override — Agent-SDK { prompt, model } parity', () => {
   it('overrides only the model, preserving every other Worker config field', () => {
     const base: WorkerConfig = Workers.Coder.config
-    const overridden = createWorker({ ...base, model: 'claude-opus-4-7' })
-    expect(overridden.config.model).toBe('claude-opus-4-7')
+    const overridden = createWorker({ ...base, model: 'claude-opus-5' })
+    expect(overridden.config.model).toBe('claude-opus-5')
     // Identity of the Worker is otherwise unchanged: role, runtime, provider,
     // permission posture, tool denials, and context budget all carry through.
     expect(overridden.config.name).toBe(base.name)

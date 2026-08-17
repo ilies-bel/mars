@@ -540,7 +540,7 @@ describe('worker (store-dir-backed)', () => {
   it('`worker add` writes the registry and `worker list` reads it back', async () => {
     const { store, ctx } = await loadStoreAndCtx()
     const add = await runCommandInProcess(
-      ['worker', 'add', 'SeamWorker', '--model', 'claude-sonnet-4-6'],
+      ['worker', 'add', 'SeamWorker', '--model', 'claude-sonnet-5'],
       { store, ctx, daemon: makeFakeDaemon() },
     )
     expect(add.code).toBe(0)

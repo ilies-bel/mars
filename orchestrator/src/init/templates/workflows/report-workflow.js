@@ -34,7 +34,7 @@ export default defineWorkflow({
 
     // code → the agent reads the codebase and produces a report.
     // Execution mode: auto. Override the model per step if needed:
-    //   runAgent(ctx, { model: 'claude-opus-4-7' })
+    //   runAgent(ctx, { model: 'claude-opus-5' })
     await ctx.step('code', () => runAgent(ctx))
 
     // finalize → persist the agent's output to the task record and close.
