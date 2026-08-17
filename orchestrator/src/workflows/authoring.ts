@@ -32,12 +32,26 @@
  * its heavy dependency graph into every user-file import.
  */
 
+// Declaration merging into cordis's `Context` / `Events` (Mars-owned
+// non-sealed container entries + growth events) — side-effect only, no
+// runtime code. Importing 'mars/workflow' is enough for a plugin author's
+// `ctx.container` reads to come back fully typed. See ./cordis-types.ts.
+import './cordis-types'
+
 // ── Engine: the workflow definition helper + the one ctx type an author types ─
 // Kept deliberately small. `WorkflowCtx` is what a `@typedef` / TS signature
 // references; `StepHandle`/`WorkflowEvent`/etc. are advanced and importable
 // straight from `@mars/workflow` if ever needed.
 export { defineWorkflow } from '@mars/workflow'
 export type { WorkflowCtx } from '@mars/workflow'
+
+// ── Cordis primitives — for authoring a step (or a whole workflow) as a real
+// cordis plugin (`{ name, inject, Config, apply }`), registered on
+// `ctx.container.plugin(...)`. See docs/architecture/cordis-primer.md and
+// `init/templates/workflows/workflow-contract.md` §"Steps as cordis plugins".
+export { Context, Service, isBailed, symbols } from '@mars/workflow'
+export type { Plugin, Inject, Fiber, Effect, Disposable } from '@mars/workflow'
+export { FiberState, fiberStateName, isActive, isDisposed } from '@mars/workflow'
 
 // ── Domain primitives: the five composable steps (`(ctx, opts)`) ──────────────
 // Each defaults every field from `ctx.input`, so the terse form is just
