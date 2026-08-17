@@ -994,3 +994,131 @@ describe('task set-verify', () => {
     expect(r.err.join('\n')).toContain('mars-xyz')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Research-prompt guard: implement-pipeline refusal + override
+//
+// A bare research-shaped prompt (no --verify, no --done) on the default
+// implement pipeline must be refused with a pointer to --workflow report.
+// The guard is bypassed by:
+//   (a) --implement   (explicit override)
+//   (b) --verify <cmd>  (concrete deliverable present)
+//   (c) --done <criterion>  (concrete deliverable present)
+//   (d) --workflow report (or any other non-default workflow)
+// ---------------------------------------------------------------------------
+
+describe('task add research-prompt guard', () => {
+  it('refuses a bare "investigate" prompt on the implement pipeline with exit code 1', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-inv', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'investigate the deadlock in the queue processor'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(1)
+    expect(fake.calls).toHaveLength(0)
+    const errText = r.err.join('\n')
+    expect(errText).toContain('refusing to enqueue')
+    expect(errText).toContain('--workflow report')
+    expect(errText).toContain('--implement')
+  })
+
+  it('refuses a "root-cause" prompt (hyphenated) on the implement pipeline', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-rc', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'root-cause the performance regression in the merge gate'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(1)
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('refuses a "diagnose" prompt on the implement pipeline', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-diag', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'Diagnose why the daemon crashes on startup'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(1)
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('refuses when research marker appears case-insensitively (INVESTIGATE)', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-ci', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'INVESTIGATE the missing rows in the tasks table'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(1)
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('allows --implement to override the guard and land on the implement pipeline', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-imp', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--implement', 'investigate and fix the queue deadlock'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+    const req = fake.calls[0] as Record<string, unknown>
+    expect(req.op).toBe('add')
+    // --implement must not surface in the daemon request (it's a local CLI guard)
+    expect(req).not.toHaveProperty('implement')
+  })
+
+  it('allows --verify to bypass the guard (proves a concrete deliverable)', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-v', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--verify', 'cd orchestrator && npm test', 'investigate and fix the queue deadlock'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+  })
+
+  it('allows --done to bypass the guard (proves a concrete deliverable)', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-d', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'investigate the root cause', '--done', 'fix is committed and tested'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+  })
+
+  it('allows --workflow report to bypass the guard (correct pipeline chosen)', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-rep', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--workflow', 'report', 'investigate the deadlock in the queue'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+    expect((fake.calls[0] as { workflow?: string }).workflow).toBe('report')
+  })
+
+  it('does not refuse a regular coding prompt without research markers', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-reg', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'fix the off-by-one error in the merge gate retry logic'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+  })
+
+  it('--help lists --implement flag', () => {
+    const r = runCli(['task', 'add', '--help'])
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('--implement')
+  })
+})

@@ -189,6 +189,10 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--mark-viewed',
   // mars proposal slice — bypass the open-questions gate knowingly
   '--accept-defaults',
+  // mars task add --implement: override the research-prompt guard and land the
+  // task on the default implement pipeline even when the prompt matches a
+  // research marker and no --verify/--done spec is present.
+  '--implement',
 ])
 
 // Short aliases are normalised to their long form before flag lookup.

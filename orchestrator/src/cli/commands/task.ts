@@ -30,7 +30,16 @@ import type { Command, CommandDeps, CommandResult } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
 
 const TASK_ADD_USAGE =
-  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag <label>] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--merge auto|gated] [--workflow <name>] [--live] [--supersede <task-id>] [--qa auto|manual] [plan flags]'
+  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag <label>] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--merge auto|gated] [--workflow <name>] [--live] [--supersede <task-id>] [--qa auto|manual] [--implement] [plan flags]'
+
+/**
+ * Regex that matches research/investigation-shaped prompt language.
+ * When the default implement pipeline is selected and none of --verify/--done
+ * prove a concrete deliverable, a prompt matching this is refused with a
+ * pointer to --workflow report.  --implement overrides the guard.
+ */
+const RESEARCH_MARKERS =
+  /\b(?:investigate|root[\s-]cause|diagnose|identify\s+the\s+cause|research|audit|report\s+on|find\s+out\s+why|reproduce\s+and\s+identify)\b/i
 
 interface EnqueueParams {
   prompt: string
@@ -161,6 +170,7 @@ const taskAdd: Command = {
     { syntax: '--workflow <name>', description: 'select the dispatch pipeline' },
     { syntax: '--supersede <task-id>', description: 'replace a task that must already be in status \'failed\'' },
     { syntax: '--qa auto|manual', description: 'QA mode for the review step; auto (default) or manual' },
+    { syntax: '--implement', description: 'override the research-prompt guard; forces the implement pipeline even for investigation-shaped prompts' },
   ],
   run: async (args, deps) => {
     const live = hasFlag(args, '--live')
@@ -285,6 +295,36 @@ const taskAdd: Command = {
     }
 
     const deferrable = hasFlag(args, '--deferrable') ? true : undefined
+
+    // Research-prompt guard: when the default implement pipeline is selected
+    // (no --workflow / --live) and the prompt matches investigation/research
+    // language without a concrete deliverable (--verify or --done), refuse with
+    // a pointer to the report pipeline.  --implement overrides the guard.
+    if (!hasFlag(args, '--implement') && workflow === undefined) {
+      const hasConcreteDeliverable =
+        specResult.value?.verifyCmd != null ||
+        (specResult.value?.doneCriteria.length ?? 0) > 0
+      if (
+        !hasConcreteDeliverable &&
+        (RESEARCH_MARKERS.test(prompt) ||
+          (intentFlag != null && RESEARCH_MARKERS.test(intentFlag)))
+      ) {
+        deps.err(
+          `[mars] refusing to enqueue: prompt looks like investigation/research work.`,
+        )
+        deps.err(
+          `[mars] research and root-cause tasks belong on the report pipeline, which runs read-only and persists a transcript.`,
+        )
+        deps.err(`[mars] re-run with: --workflow report`)
+        deps.err(
+          `[mars] to override and land on the implement pipeline: add --implement.`,
+        )
+        deps.err(
+          `[mars] to prove a concrete deliverable: add --verify <cmd> or --done <criterion>.`,
+        )
+        return { code: 1 }
+      }
+    }
 
     return enqueueViaDaemon(deps, args.flags, {
       prompt,
