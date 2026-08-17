@@ -9,6 +9,7 @@ interface State {
   isPending: boolean
   error: string | null
   connected: boolean
+  refetch: () => void
 }
 
 export const useProposals = (): State => {
@@ -37,5 +38,5 @@ export const useProposals = (): State => {
   const proposals = query.data?.drafts ?? []
   const error = query.error ? (query.error as Error).message : null
 
-  return { proposals, isPending: query.isPending, error, connected }
+  return { proposals, isPending: query.isPending, error, connected, refetch: query.refetch }
 }

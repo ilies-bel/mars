@@ -27,6 +27,7 @@ const SOURCE_LABEL: Record<string, string> = {
   planner: 'planner',
   'skill-forge': 'skill-forge',
   'failure-reflector': 'failure-reflector',
+  slicer: 'slicer',
 }
 
 const SOURCE_CHIP_CLASS: Record<string, string> = {
@@ -36,6 +37,7 @@ const SOURCE_CHIP_CLASS: Record<string, string> = {
   planner: 'text-warn border-warn/40',
   'skill-forge': 'text-trace-mars border-trace-mars/40',
   'failure-reflector': 'text-error border-error/40',
+  slicer: 'text-warn border-warn/40',
 }
 
 // ── ProposalRow ───────────────────────────────────────────────────────────────
@@ -125,14 +127,20 @@ const EmptyState = () => (
 // ── ProposalsPage ─────────────────────────────────────────────────────────────
 
 export const ProposalsPage = () => {
-  const { proposals, isPending, error } = useProposals()
+  const { proposals, isPending, error, refetch } = useProposals()
 
   if (error) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <p className="font-mono text-label text-error">
-          Failed to load proposals
-        </p>
+      <div className="flex h-full flex-col items-center justify-center gap-3">
+        <p className="font-mono text-label text-error">Failed to load proposals</p>
+        <p className="max-w-sm text-center font-mono text-micro text-muted-foreground">{error}</p>
+        <button
+          type="button"
+          onClick={() => refetch()}
+          className="rounded border border-border px-3 py-1 font-mono text-micro text-foreground hover:bg-muted"
+        >
+          Retry
+        </button>
       </div>
     )
   }

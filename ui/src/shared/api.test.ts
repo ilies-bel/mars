@@ -341,6 +341,20 @@ describe('fetchProposalsPayload', () => {
     fetchSpy.mockResolvedValue(json({}))
     await expect(fetchProposalsPayload()).rejects.toThrow('schema validation')
   })
+
+  it('parses a draft with source "slicer" without throwing', async () => {
+    fetchSpy.mockResolvedValue(json({ drafts: [minDraft({ source: 'slicer' })] }))
+    const result = await fetchProposalsPayload()
+    expect(result.drafts).toHaveLength(1)
+    expect(result.drafts[0].source).toBe('slicer')
+  })
+
+  it('falls back to "human" and does not throw when source is an unknown future value', async () => {
+    fetchSpy.mockResolvedValue(json({ drafts: [minDraft({ source: 'future-producer' })] }))
+    const result = await fetchProposalsPayload()
+    expect(result.drafts).toHaveLength(1)
+    expect(result.drafts[0].source).toBe('human')
+  })
 })
 
 // ---------------------------------------------------------------------------

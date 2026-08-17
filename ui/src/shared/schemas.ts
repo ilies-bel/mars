@@ -27,13 +27,21 @@ const proposalSourceSchema = z.enum([
   'slicer',
 ])
 
+// Resilient field wrapper: an unknown source from a future producer falls back
+// to 'human' rather than rejecting the whole page. A console.warn surfaces it
+// so new producers are noticed without silent data loss.
+const proposalSourceField = proposalSourceSchema.catch((ctx) => {
+  console.warn('[proposals] unknown source value:', ctx.input, '— falling back to "human"')
+  return 'human' as const
+})
+
 const draftFeatureSchema = z.object({
   id: z.string(),
   title: z.string(),
   problem: z.string(),
   solution: z.string(),
   status: z.string(),
-  source: proposalSourceSchema,
+  source: proposalSourceField,
   createdAt: z.number(),
   updatedAt: z.number(),
   acceptanceCount: z.number(),
@@ -50,7 +58,7 @@ export const proposalDetailSchema = z.object({
   outOfScope: z.string(),
   notes: z.string(),
   status: z.string(),
-  source: proposalSourceSchema,
+  source: proposalSourceField,
   author: z.object({ kind: z.string(), name: z.string() }).nullable().optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
@@ -169,7 +177,7 @@ const progressTaskSchema = taskSchema.extend({
 const progressProposalNodeSchema = z.object({
   id: z.string(),
   title: z.string(),
-  source: proposalSourceSchema,
+  source: proposalSourceField,
   status: z.string(),
   /**
    * True when the proposal has an associated UI mockup ready for review.
