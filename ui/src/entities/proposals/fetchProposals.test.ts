@@ -157,4 +157,22 @@ describe('fetchProposals', () => {
     fetchSpy.mockRejectedValue(new TypeError('Failed to fetch'))
     await expect(fetchProposals()).rejects.toThrow('cannot reach the mars-ui API server')
   })
+
+  // --- Schema tolerance ---
+
+  it('parses a draft with source "slicer" without throwing', async () => {
+    fetchSpy.mockResolvedValue(
+      json(todoPayload({ drafts: [minDraft({ source: 'slicer' })] })),
+    )
+    const result = await fetchProposals()
+    expect(result).toHaveLength(1)
+    expect(result[0].source).toBe('slicer')
+  })
+
+  it('throws SchemaError when a draft has an unknown source value', async () => {
+    fetchSpy.mockResolvedValue(
+      json(todoPayload({ drafts: [minDraft({ source: 'totally-unknown-source' })] })),
+    )
+    await expect(fetchProposals()).rejects.toThrow(/response failed schema validation/)
+  })
 })

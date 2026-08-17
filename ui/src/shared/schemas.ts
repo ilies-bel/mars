@@ -24,6 +24,7 @@ const proposalSourceSchema = z.enum([
   'planner',
   'skill-forge',
   'failure-reflector',
+  'slicer',
 ])
 
 const draftFeatureSchema = z.object({

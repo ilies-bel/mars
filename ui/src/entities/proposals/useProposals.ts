@@ -12,17 +12,26 @@ interface State {
 }
 
 export const useProposals = (): State => {
-  const { focusedProjectId: projectId, projectsSettled, projectsError, projects } = useFocusedProject()
+  const { focusedProjectId: projectId, projectsSettled } = useFocusedProject()
   const connected = useSseConnected()
-  // Fire without ?project= when the registry is empty so the server's --repo
-  // default can answer.
-  const projectsEmpty = projectsSettled && projectsError === null && projects.length === 0
+  // Fire once the project registry has settled (success, error, or empty) so
+  // the server's --repo default can answer when no project is resolved.
+  // Also fire immediately when a stored project ID is already available.
   const query = useQuery({
     queryKey: ['proposals', projectId],
     // Request only draft proposals with an explicit limit so the server does
     // not return the full unfiltered table on every load.
     queryFn: () => fetchProposalsPayload(projectId ?? undefined, { status: 'draft', limit: 50 }),
-    enabled: projectId !== null || projectsEmpty,
+    enabled: projectId !== null || projectsSettled,
+    // SchemaErrors indicate a version skew between the UI bundle and the
+    // running daemon; retrying won't fix them.  Surface the error immediately
+    // (no retry) so the operator sees "Failed to load proposals" instead of
+    // "Loading…" indefinitely while the retry backoff drains.
+    // Check by name to avoid importing SchemaError into test-mocked modules.
+    retry: (failureCount, error) => {
+      if ((error as { name?: string } | null)?.name === 'SchemaError') return false
+      return failureCount < 1
+    },
   })
 
   const proposals = query.data?.drafts ?? []
