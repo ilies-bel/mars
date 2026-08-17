@@ -171,8 +171,13 @@ export type AutoCommitResult =
    *
    * `wrong-branch` — HEAD is some other non-`task/<taskId>` branch. The
    * orchestrator only commits to the invoking task's own branch.
+   *
+   * `nothing-to-commit` — `git commit` exited non-zero but the combined output
+   * contains "nothing to commit" / "working tree clean". The desired end-state
+   * (no uncommitted work) already holds; the caller must NOT treat this as a
+   * terminal failure.
    */
-  | { committed: false; refusal: 'unsafe-path' | 'git' | 'main-branch' | 'wrong-branch'; reason: string }
+  | { committed: false; refusal: 'unsafe-path' | 'git' | 'main-branch' | 'wrong-branch' | 'nothing-to-commit'; reason: string }
 
 /**
  * Attempt a deterministic `git add -A && git commit` inside the worktree, on
@@ -278,10 +283,13 @@ export const autoCommitWorktreeIfDeterministic = async (
     traceCtx,
   )
   if (addResult.exitCode !== 0) {
+    const addDetail =
+      [addResult.stderr.trim(), addResult.stdout.trim()].filter(Boolean).join(' | ') ||
+      `(exit ${addResult.exitCode}, no output)`
     return {
       committed: false,
       refusal: 'git',
-      reason: `git ${addArgs.join(' ')} failed: ${addResult.stderr.trim()}`,
+      reason: `git ${addArgs.join(' ')} failed: ${addDetail}`,
     }
   }
 
@@ -292,10 +300,28 @@ export const autoCommitWorktreeIfDeterministic = async (
     traceCtx,
   )
   if (commitResult.exitCode !== 0) {
+    const combinedOutput = [commitResult.stderr.trim(), commitResult.stdout.trim()]
+      .filter(Boolean)
+      .join(' | ')
+    // "nothing to commit, working tree clean" arrives on stdout, not stderr.
+    // This is NOT a refusal — the desired post-condition (no uncommitted work)
+    // already holds. Return a distinct variant so callers can treat it as a
+    // no-op rather than a terminal failure.
+    if (/nothing to commit|working tree clean/i.test(combinedOutput)) {
+      return {
+        committed: false,
+        refusal: 'nothing-to-commit',
+        reason:
+          combinedOutput ||
+          `git commit exited ${commitResult.exitCode} with no output (clean tree inferred)`,
+      }
+    }
     return {
       committed: false,
       refusal: 'git',
-      reason: `git commit failed: ${commitResult.stderr.trim()}`,
+      reason:
+        `git commit failed: ${combinedOutput}` ||
+        `git commit failed (exit ${commitResult.exitCode}, no output)`,
     }
   }
 

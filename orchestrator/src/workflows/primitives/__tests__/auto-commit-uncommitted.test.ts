@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { WorkflowTerminalError } from '../../../core/lib/workflow-terminal-error'
+import { autoCommitWorktreeIfDeterministic } from '../../../core/lib/git/commit-main'
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -646,5 +647,103 @@ describe('coder commit contract (code step post-condition)', () => {
     update = mockUpdateTask.mock.calls.at(-1)?.[1] as { error: string }
     expect(update.error).toContain('integration branch: main')
     expect(update.error).toContain('committed 1 commit(s)')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Regression: "nothing to commit, working tree clean" is not a terminal failure
+//
+// When a stale dirty-file snapshot is used after the coder already committed
+// everything, `git commit` exits 1 with "nothing to commit, working tree clean"
+// on stdout (not stderr). This must NOT be treated as a `git` refusal; it
+// must produce a distinct `nothing-to-commit` outcome so the caller can fall
+// through to verify instead of failing the task terminally.
+// ---------------------------------------------------------------------------
+
+describe('nothing-to-commit — non-terminal clean-tree refusal', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-ntc-'))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
+    writeFileSync(resolve(repo, 'README'), 'hello\n')
+    execFileSync('git', ['add', 'README'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+    execFileSync('git', ['checkout', '-q', '-b', 'task/mars-ntc', 'main'], { cwd: repo })
+    // The coder committed all its work — worktree is clean
+    writeFileSync(resolve(repo, 'work.ts'), 'export const x = 1\n')
+    execFileSync('git', ['add', 'work.ts'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'feat: committed work'], { cwd: repo })
+  })
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns nothing-to-commit with a non-empty reason when the tree is already clean', async () => {
+    // Pass a stale dirty-file list (the file was already committed above).
+    // git commit exits 1 with "nothing to commit, working tree clean" on stdout.
+    const result = await autoCommitWorktreeIfDeterministic({
+      taskId: 'mars-ntc',
+      provenance: 'coder-left-dirty',
+      integrationBranch: 'main',
+      worktreePath: repo,
+      dirtyFiles: ['work.ts'],
+    })
+
+    // (a) non-empty reason containing the git message
+    expect(result.committed).toBe(false)
+    if (result.committed) return
+    expect(result.reason.trim().length).toBeGreaterThan(0)
+    expect(result.reason).toMatch(/nothing to commit|working tree clean/i)
+
+    // (b) distinct non-terminal refusal — not the generic 'git' failure
+    expect(result.refusal).toBe('nothing-to-commit')
+  })
+
+  it('runAgent does not fail terminally when auto-commit encounters a clean tree', async () => {
+    // Set up: the coder's first run returns cleanly (work already committed in beforeEach)
+    vi.clearAllMocks()
+    mockUpdateTask.mockResolvedValue(undefined)
+    mockHandleTaskFailureWithFixTask.mockResolvedValue({ outcome: 'fix-task-spawned' })
+    mockResolveOriginIdForTask.mockImplementation(async (id: string) => id)
+    mockCleanWorktreeIfNoCommitsAhead.mockResolvedValue({
+      cleaned: false,
+      reason: 'skipped for test',
+      output: '',
+    })
+    mockFetchLessonsForTask.mockResolvedValue([])
+    mockListMergedWorkers.mockReturnValue([])
+    mockRecordSignals.mockResolvedValue(undefined)
+    mockRaiseActionQueueItem.mockResolvedValue(undefined)
+    mockRestoreWorktreeIfMissing.mockResolvedValue('present')
+    // The coder exits cleanly; detectPostCoderState initially sees dirty (via mock),
+    // but we simulate the tree being clean for the auto-commit step via a hook
+    // override — the simplest way is to let the real git observe the already-clean tree.
+    mockRunWorkerWithSpan.mockResolvedValue({
+      exitCode: 0,
+      stderr: '',
+      stdout: '',
+      sessionId: 'sess-ntc',
+      conversation: [],
+      quotaRejected: null,
+    })
+
+    const ctx = makeCtx('mars-ntc', makeStore())
+    // The worktree branch is already clean and 1 commit ahead — runAgent should succeed.
+    const result = await runAgent(ctx, {
+      worktree: { path: repo, branch: 'task/mars-ntc' },
+    })
+
+    expect(result).toHaveProperty('sessionId', 'sess-ntc')
+    // No terminal failure, no fix-task, no action-queue alert
+    expect(mockUpdateTask).not.toHaveBeenCalledWith(
+      'mars-ntc',
+      expect.objectContaining({ status: 'failed' }),
+      expect.anything(),
+    )
+    expect(mockRaiseActionQueueItem).not.toHaveBeenCalled()
   })
 })

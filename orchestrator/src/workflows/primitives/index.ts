@@ -2300,6 +2300,14 @@ export const runAgent = async (
       console.log(
         `[post-coder] task ${taskId}: auto-committed ${postState.dirtyFiles.length} path(s) as ${autoResult.sha.slice(0, 8)} (on top of ${commitsAhead} coder commit(s))`,
       )
+    } else if (autoResult.refusal === 'nothing-to-commit') {
+      // The worktree is already clean — the desired post-condition holds.
+      // This happens when a stale dirty-file snapshot from before the
+      // corrective turn is used after the coder already committed everything.
+      // Treat it as a successful no-op and fall through to verify.
+      console.log(
+        `[post-coder] task ${taskId}: auto-commit skipped — worktree already clean (${autoResult.reason}); falling through to verify`,
+      )
     } else {
       // Genuinely terminal: the guard refused an unsafe path, or git rejected
       // the commit. Either way nothing landed and nothing can land without an
