@@ -8,6 +8,8 @@ import {
 import { getTask } from './queue'
 import type { ActionQueueKind } from './lib/action-queue-kinds'
 import { ORIGIN_RECOVERY_FAILED_PREFIX } from './lib/failure-signature'
+import { raiseActionQueueItem } from './lib/action-queue'
+import { WORKTREE_AHEAD_FAILURE_REASON as _WORKTREE_AHEAD_FAILURE_REASON } from './lib/worktree-ahead-payload'
 
 const execFileP = promisify(execFile)
 
@@ -110,18 +112,91 @@ export const resetDependentWorktreeToIntegration = async (
 }
 
 /**
- * No-op: `worktree-ahead` is now a derived kind (ADR-0057). The task's worktree
- * state is visible via `mars list` and the log messages at unblock time; no stored
- * action-queue row is needed. Kept as a stub so callers compile without change.
+ * Raise a stored `worktree-ahead` action-queue item for a dependent whose
+ * worktree branch has commits ahead of the integration branch at re-dispatch
+ * time.  The payload carries the full list of unique commits so the operator
+ * can decide whether to `mars purge` (branch already on main — lean PURGE)
+ * or `mars restart` (branch diverged — lean RESTART).  When the worktree path
+ * is missing on disk the item is still raised with `onMainLean='unknown'` and
+ * an empty `commitsAhead` list.
  */
 export const raiseWorktreeAheadActionQueue = async (
-  _taskId: string,
-  _worktreePath: string,
-  _aheadCount: number,
-  _integrationBranch: string,
+  taskId: string,
+  worktreePath: string,
+  aheadCount: number,
+  integrationBranch: string,
   _opts?: { leaseOwned?: boolean },
 ): Promise<void> => {
-  // worktree-ahead is a derived kind; no stored row written here.
+  let onMainLean: 'on-main' | 'not-on-main' | 'unknown' = 'unknown'
+  let commitsAhead: Array<{ shortSha: string; subject: string }> = []
+
+  if (await worktreeExists(worktreePath)) {
+    try {
+      // exit 0 iff HEAD is an ancestor of integrationBranch (tip already on main)
+      await execFileP(
+        'git',
+        ['merge-base', '--is-ancestor', 'HEAD', integrationBranch],
+        { cwd: worktreePath },
+      )
+      onMainLean = 'on-main'
+    } catch {
+      onMainLean = 'not-on-main'
+    }
+
+    try {
+      const { stdout } = await execFileP(
+        'git',
+        ['log', '--format=%h %s', `${integrationBranch}..HEAD`],
+        { cwd: worktreePath },
+      )
+      commitsAhead = stdout
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const spaceIdx = line.indexOf(' ')
+          return {
+            shortSha: spaceIdx > 0 ? line.slice(0, spaceIdx) : line,
+            subject: spaceIdx > 0 ? line.slice(spaceIdx + 1) : '',
+          }
+        })
+    } catch {
+      commitsAhead = []
+    }
+  }
+
+  const leanLine =
+    onMainLean === 'on-main'
+      ? '\n\nlean PURGE — branch tip is already reachable from the integration branch; use `mars purge`.'
+      : onMainLean === 'not-on-main'
+        ? '\n\nlean RESTART — branch tip is NOT reachable from the integration branch; use `mars restart`.'
+        : ''
+
+  const body =
+    `Worktree for task ${taskId} is ${aheadCount} commit(s) ahead of ${integrationBranch}; ` +
+    `refused to reset. Resolve the divergence manually before re-dispatching.${leanLine}`
+
+  await raiseActionQueueItem({
+    kind: WORKTREE_AHEAD_ACTION_QUEUE_KIND,
+    category: 'orchestrator',
+    priority: 'high',
+    title: `Unblock ${taskId}: worktree is ${aheadCount} commit(s) ahead of ${integrationBranch}`,
+    body,
+    payload: {
+      taskId,
+      branch: null,
+      worktreePath,
+      integrationBranch,
+      commitsAhead,
+      onMainLean,
+      leaseOwned: false,
+      failureReason: _WORKTREE_AHEAD_FAILURE_REASON,
+    },
+    context: {},
+    raisedBy: 'orchestrator:blocker-resolution',
+    signature: taskId,
+    originTaskId: taskId,
+  })
 }
 
 export const PREREQUISITE_FAILED_ACTION_QUEUE_KIND: ActionQueueKind = 'prerequisite-failed'

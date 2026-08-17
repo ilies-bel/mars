@@ -99,26 +99,14 @@ export const checkMergeTargetStatus = async (
       }
     }
 
-    const diff = await exec(
-      resolveGitBin(),
-      ['diff', '--name-only', `${integrationBranch}..${taskBranch}`],
-      { cwd: targetPath },
-      mergeCtx,
-    )
-    const changedPaths = diff.stdout.split('\n').filter((p) => p.length > 0)
-    if (changedPaths.length === 0) return { kind: 'clean' }
-
-    // Cap pathspec argv to avoid blowing past ARG_MAX on huge diffs; if we
-    // exceed it, fall back to a tracked-only global status. Untracked files
-    // are still ignored — they cannot block an ff.
-    const PATH_CAP = 500
-    const statusArgs = ['status', '--porcelain', '--untracked-files=no']
-    if (changedPaths.length <= PATH_CAP) {
-      statusArgs.push('--', ...changedPaths)
-    }
+    // Check for any tracked uncommitted changes on the integration branch.
+    // We report dirty for ALL tracked edits — not just those overlapping the
+    // fast-forward path — so an operator who edited a file that is not in the
+    // task diff is not silently allowed through. Untracked files are ignored
+    // (they cannot block an ff merge).
     const status = await exec(
       resolveGitBin(),
-      statusArgs,
+      ['status', '--porcelain', '--untracked-files=no'],
       { cwd: targetPath },
       mergeCtx,
     )
@@ -126,7 +114,7 @@ export const checkMergeTargetStatus = async (
     return {
       kind: 'dirty',
       targetPath,
-      statusOutput: `tracked changes on paths the fast-forward would update:\n${status.stdout}`,
+      statusOutput: `tracked operator changes in the integration checkout:\n${status.stdout}`,
     }
     // TODO(merge_target_missing): also surface a 'missing' kind when the
     // merge target branch has been deleted/renamed; for now any unexpected
@@ -680,45 +668,24 @@ export const mergeBranch = async ({
       // replays the already-committed (including any Vega-reconciled) work onto
       // the new integration tip cleanly. Vega is NOT re-invoked unless a
       // genuinely NEW conflict appears in this iteration's rebase.
-      // Guard: if the worktree is dirty BEFORE the rebase starts, auto-commit
-      // any outstanding changes as a salvage checkpoint. This is the common
-      // case after `mars continue` on a merge-phase failure caused by a verify
-      // step that dirtied the worktree (e.g. `npm install` updating
-      // package-lock.json). Without the salvage commit, `git rebase` would exit
-      // non-zero without creating a rebase-in-progress state, falling through to
-      // the confusing "rebase-no-in-progress-state" path — or, before that guard
-      // existed, producing a `rebase-dirty-worktree` abort that required manual
-      // `git add && git commit` inside the worktree.
-      //
-      // Salvage strategy: `git add -A` + `git commit`. If the commit itself
-      // fails (e.g. nothing to commit after `add`, or a hook rejection), we fall
-      // back to the original abort with a diagnostic message.
+      // Pre-rebase hygiene check: abort immediately when the task worktree has
+      // uncommitted changes BEFORE `git rebase` runs.  A dirty worktree causes
+      // `git rebase` to exit non-zero WITHOUT creating a rebase-in-progress
+      // state, which used to route to the confusing "rebase-no-in-progress-state"
+      // path.  Detecting it here lets the failure-signature classifier route to
+      // `rebase-dirty-worktree` (resolution: restart to re-provision the worktree)
+      // instead of spawning Vega with a false-premise prompt.  Vega is never
+      // the right recovery when there is simply no conflict to reconcile.
       const statusResult = await gprobe(['status', '--porcelain'], worktreePath)
       if (statusResult.stdout.trim().length > 0) {
-        lastStep = 'salvage-commit'
-        try {
-          await gexec(['add', '-A'], worktreePath)
-          await gexec(
-            [
-              'commit',
-              '-m',
-              'chore(mars): salvage uncommitted verify artifacts',
-            ],
-            worktreePath,
-          )
-          output += `\n[merge:salvage] auto-committed dirty worktree before rebase:\n${statusResult.stdout}`
-        } catch (salvageErr: unknown) {
-          const msg =
-            salvageErr instanceof Error ? salvageErr.message : String(salvageErr)
-          return {
-            merged: false,
-            conflictResolved: false,
-            aborted: true,
-            output: `worktree dirty before rebase and salvage commit failed: ${msg}\n${statusResult.stdout}${output}`,
-            supervisorConversation,
-            vegaSessionId: null,
-            retriesAttempted,
-          }
+        return {
+          merged: false,
+          conflictResolved: false,
+          aborted: true,
+          output: `worktree dirty before rebase:\n${statusResult.stdout}${output}`,
+          supervisorConversation,
+          vegaSessionId: null,
+          retriesAttempted,
         }
       }
 

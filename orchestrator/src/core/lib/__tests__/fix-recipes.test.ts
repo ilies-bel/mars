@@ -84,6 +84,11 @@ const RECIPE_CONTRACT_TABLE = [
     expectedTitle: 'Remove or populate the empty test file blocking verify:test on task/recipe-contract',
   },
   {
+    signature: 'code/empty-diff',
+    expectedTitle:
+      'Implement the task that the coder abandoned without committing on task/recipe-contract',
+  },
+  {
     signature: 'code/uncommitted-changes',
     expectedTitle: 'Commit the work the coder left uncommitted on task/recipe-contract',
   },

@@ -1941,11 +1941,19 @@ const DDL: readonly string[] = [
     dismissed_by text
   )`,
 
-  // ADR-0057 (now ADR-0094): condition kinds are derived on read; stored rows
-  // for these kinds are stale artifacts from before the derivation refactor.
+  // ADR-0057 (now ADR-0094): pure derived/condition kinds that were previously
+  // stored as rows are stale artifacts from before the derivation refactor.
   // Delete them once at startup — they carry no operator-authored content, so
   // nothing is lost. The DELETEs are idempotent (rows absent on every
   // subsequent boot).
+  //
+  // Excluded from the cleanup:
+  //   'failed'       — operators may have notes on these items; too aggressive
+  //                    to delete them silently at every boot.
+  //   'worktree-ahead' — now stored as a real operator-decision row (the
+  //                    raiseWorktreeAheadActionQueue path writes a row that the
+  //                    operator must act on before re-dispatch); deleting on
+  //                    startup would silently erase actionable alerts.
   //
   // action_queue_history has a FK on action_queue_items.id (no CASCADE), so
   // history rows must be removed before the parent rows can be deleted.
@@ -1953,7 +1961,6 @@ const DDL: readonly string[] = [
      WHERE item_id IN (
        SELECT id FROM action_queue_items
         WHERE kind IN (
-          'failed',
           'stale-queued',
           'gate-broken',
           'subscriber-stalled',
@@ -1963,14 +1970,12 @@ const DDL: readonly string[] = [
           'baseline-broken',
           'stale-worktree',
           'phantom-task',
-          'worktree-ahead',
           'orphaned-origin',
           'steward-repeat'
         )
      )`,
   `DELETE FROM action_queue_items
      WHERE kind IN (
-       'failed',
        'stale-queued',
        'gate-broken',
        'subscriber-stalled',
@@ -1980,7 +1985,6 @@ const DDL: readonly string[] = [
        'baseline-broken',
        'stale-worktree',
        'phantom-task',
-       'worktree-ahead',
        'orphaned-origin',
        'steward-repeat'
      )`,
