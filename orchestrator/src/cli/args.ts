@@ -192,11 +192,11 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
 ])
 
 // Short aliases are normalised to their long form before flag lookup.
-export const SHORT_FLAG_ALIASES: Readonly<Record<string, string>> = {
+const SHORT_FLAG_ALIASES: Readonly<Record<string, string>> = {
   '-y': '--yes',
 }
 
-export const REPEATABLE_FLAGS: ReadonlySet<string> = new Set([
+const REPEATABLE_FLAGS: ReadonlySet<string> = new Set([
   '--blocked-by',
   '--files',
   '--done',
@@ -406,7 +406,7 @@ export const parsePriority = (raw: string): FlagResult<number> => {
 }
 
 /** `--merge`: one of auto|gated (the only valid merge modes). */
-export const parseMergeMode = (
+const parseMergeMode = (
   raw: string,
 ): FlagResult<'auto' | 'gated'> => {
   if (raw !== 'auto' && raw !== 'gated') {

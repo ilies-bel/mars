@@ -144,7 +144,7 @@ const enqueueViaDaemon = async (
   return { code: 0 }
 }
 
-export const taskAdd: Command = {
+const taskAdd: Command = {
   path: 'task add',
   summary: 'enqueue a runnable task directly (skips triage)',
   usage: TASK_ADD_USAGE,
@@ -446,7 +446,7 @@ export const renderTaskDetail = async (
   }
 }
 
-export const taskShow: Command = {
+const taskShow: Command = {
   path: 'task show',
   summary: 'show a single task',
   usage: 'usage: mars task show <id> [--json]',
@@ -498,7 +498,7 @@ export const taskShow: Command = {
   },
 }
 
-export const taskPriority: Command = {
+const taskPriority: Command = {
   path: 'task priority',
   summary: 'set a task priority (0..3)',
   usage: 'usage: mars task priority <id> <0..3>',
@@ -529,7 +529,7 @@ export const taskPriority: Command = {
   },
 }
 
-export const taskNote: Command = {
+const taskNote: Command = {
   path: 'task note',
   summary: 'append a progress note to a task',
   usage: 'usage: mars task note <id> ("<text>" | @<file> | -)',
@@ -566,7 +566,7 @@ export const taskNote: Command = {
   },
 }
 
-export const taskCheck: Command = {
+const taskCheck: Command = {
   path: 'task check',
   summary: 'toggle a done-criterion check state (1-based index)',
   usage: 'usage: mars task check <id> <n> [--uncheck]',
@@ -602,7 +602,7 @@ export const taskCheck: Command = {
   },
 }
 
-export const taskStop: Command = {
+const taskStop: Command = {
   path: 'task stop',
   summary: 'stop running tasks while preserving their worktrees',
   usage: 'usage: mars task stop <id> [<id> ...]',
@@ -640,7 +640,7 @@ Stops at the first error.`,
  * resolves. Read-only workers (Planner, Slicer, Triager, BehaviourVerifier,
  * Scorer) have this Bash pattern in their disallowedTools and cannot use it.
  */
-export const taskAsk: Command = {
+const taskAsk: Command = {
   path: 'task ask',
   summary: 'raise a question to the operator from within a task run',
   usage: 'usage: mars task ask <task-id> "<question>"',
@@ -667,7 +667,7 @@ export const taskAsk: Command = {
   },
 }
 
-export const taskSetVerify: Command = {
+const taskSetVerify: Command = {
   path: 'task set-verify',
   summary: 'update the verify command for a task',
   usage: 'usage: mars task set-verify <id> "<cmd>"',
@@ -721,7 +721,7 @@ the command was authored without a 'cd <subdir> &&' prefix:
 }
 
 /** `task` with no/unknown subcommand. */
-export const taskGroup: Command = {
+const taskGroup: Command = {
   path: 'task',
   summary: 'task subcommands',
   usage: 'usage: mars task <add|ask|show|priority|note|check|set-verify|stop> ...',

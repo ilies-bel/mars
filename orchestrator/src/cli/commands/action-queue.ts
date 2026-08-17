@@ -102,10 +102,6 @@ const readStdin = async (): Promise<string> => {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-// readDaemonPort is imported from ./shared and re-exported below for
-// backwards compatibility with modules that import it from this file.
-export { readDaemonPort }
-
 /**
  * Fetch the action queue view from the daemon's derived-view endpoint.
  * Throws when the daemon is unreachable or returns a non-2xx response.

@@ -93,10 +93,8 @@ function isExecutable(relPath: string): boolean {
  *
  * The hook command is expanded from a repo-relative path to
  * `$CLAUDE_PROJECT_DIR/<relPath>` to match Claude Code's expected format.
- *
- * Exported for use by other install/init paths that need the same merge.
  */
-export function mergeSettingsHooks(
+function mergeSettingsHooks(
   existingContent: Buffer,
   opts: {
     owned: string[]
