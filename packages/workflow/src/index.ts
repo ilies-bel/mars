@@ -42,31 +42,60 @@ export type { Logger, LogFields } from './logger.js';
 // Manual step park/resume hooks
 export { awaitManualDone, resolveManualStep } from './manual-step.js';
 
-// Service container — keyed services, plugins with dependency scheduling,
-// typed event dispatch. Layered onto WorkflowCtx as `ctx.container` (plus
-// `ctx.get`/`ctx.provide` convenience) alongside the existing flat
-// `ctx.services` bag. See container/index.ts.
+// ---------------------------------------------------------------------------
+// The service container
+// ---------------------------------------------------------------------------
+// `WorkflowCtx.container` is a cordis `Context`: keyed services, plugins with
+// fiber-based dependency scheduling, a typed event bus and effect-based
+// teardown. Cordis's own surface is re-exported here so consumers depend on
+// this package rather than on `@deepseek-ai/cordis` directly — two copies of
+// cordis in one process do not share service-class identity.
+//
+// Mars-owned additions: `createServiceRegistry` (a fiber-free keyed registry
+// for module-level singletons), `FiberState` (a runtime mirror of a const enum
+// that does not survive compilation), `safeEmit`/`safeOn` (fault-isolated
+// dispatch), and the ADR-0052 seal. See ctx/index.ts.
 export {
-  createContainer,
-  createEventDispatcher,
+  Context,
+  CordisError,
+  DisposableList,
+  Service,
+  ValidationError,
+  createRunContainer,
   createServiceRegistry,
-  DisposerSet,
-  once,
+  disposeRunContainer,
+  FiberState,
+  fiberStateName,
+  isActive,
+  isBailed,
+  isDisposed,
+  isSealedName,
+  readService,
+  ReservedServiceNameError,
+  safeEmit,
+  safeOn,
+  sealService,
+  SEALED_SERVICE_KEYS,
   ServiceNotFoundError,
-} from './container/index.js';
+  symbols,
+} from './ctx/index.js';
 export type {
-  Args,
-  Container,
-  ContainerOptions,
+  ContainerErrorHandler,
+  Disposable,
   Disposer,
-  DisposerSetOptions,
-  EventDispatcher,
-  EventDispatcherOptions,
-  EventMap,
-  ForkScope,
+  Effect,
+  EffectMeta,
+  EventOptions,
+  Events,
+  Fiber,
+  Inject,
+  ListenerDisposer,
+  ListenerErrorHandler,
   Plugin,
-  Ret,
+  RunContainerOptions,
+  SealedServiceKey,
   ServiceChangeEvents,
+  ServiceChanges,
   ServiceMap,
   ServiceRegistry,
-} from './container/index.js';
+} from './ctx/index.js';
