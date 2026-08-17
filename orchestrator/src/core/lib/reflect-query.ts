@@ -137,7 +137,7 @@ const tail = (value: string | null, bytes: number): string | null => {
   return `…${value.slice(value.length - bytes)}`
 }
 
-export const median = (values: readonly number[]): number => {
+const median = (values: readonly number[]): number => {
   if (values.length === 0) return 0
   const sorted = [...values].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
