@@ -19,6 +19,7 @@ export type {
   StepHandle,
   StepOptions,
   WorkflowEvent,
+  FiberStatusPayload,
   RunWorkflowOptions,
   RunResult,
 } from './workflow.js';

@@ -4,7 +4,7 @@ import type { Logger } from './logger.js';
 import { silentLogger } from './logger.js';
 import type { StepOutcomeMeta, StepRecord, WorkflowStore } from './store.js';
 import type { Context, Disposer } from './ctx/index.js';
-import { createRunContainer, disposeRunContainer, readService, safeEmit } from './ctx/index.js';
+import { createRunContainer, disposeRunContainer, fiberStateName, readService, safeEmit } from './ctx/index.js';
 
 /**
  * The imperative core.
@@ -39,10 +39,11 @@ export interface WorkflowEvent {
 declare module '@deepseek-ai/cordis' {
   interface Events {
     /**
-     * Every {@link WorkflowEvent} the engine produces — step lifecycle plus
-     * anything a workflow body passes to `ctx.emit` — republished on the run
-     * container's bus, so a plugin can observe run progress without the host
-     * threading an `onEvent` sink through to it.
+     * Every {@link WorkflowEvent} the engine produces — step lifecycle,
+     * `fiber.status` transitions of any plugin registered on `ctx.container`
+     * (see below), plus anything a workflow body passes to `ctx.emit` —
+     * republished on the run container's bus, so a plugin can observe run
+     * progress without the host threading an `onEvent` sink through to it.
      *
      * Dispatched with {@link safeEmit}: a throwing listener is reported and
      * skipped, never able to fail the run it is observing. The `onEvent`
@@ -50,6 +51,23 @@ declare module '@deepseek-ai/cordis' {
      */
     'mars/workflow.event'(event: WorkflowEvent): void;
   }
+}
+
+/**
+ * Payload of a `fiber.status` {@link WorkflowEvent} — see the republishing
+ * note below. Reliable for every transition that happens while the run is
+ * still live (PENDING/LOADING/ACTIVE/FAILED, and a mid-run dispose's own
+ * UNLOADING/DISPOSED); a fiber's terminal UNLOADING -> DISPOSED transition
+ * during the RUN'S OWN teardown is best-effort (see the comment above the
+ * subscription in `runWorkflow`).
+ */
+export interface FiberStatusPayload {
+  /** The fiber's own name — nearest named ancestor, `'root'` for the container itself. */
+  name: string;
+  /** State transitioned FROM, as a {@link FiberState} name (`'PENDING'`, `'ACTIVE'`, …). */
+  from: string;
+  /** State transitioned TO. */
+  to: string;
 }
 
 /** Options a step can attach to its own record as it runs. */
@@ -295,6 +313,43 @@ export async function runWorkflow<I, O, Services = unknown>(
     fireEvent(options.onEvent, event);
     safeEmit(container, 'mars/workflow.event', [event], onContainerError);
   };
+
+  // Fiber lifecycle surfaced (beyond-parity §5.3): every plugin a workflow
+  // registers on `ctx.container` (`ctx.container.plugin(...)`) is a real
+  // cordis fiber, moving PENDING -> LOADING -> ACTIVE -> UNLOADING -> DISPOSED
+  // (or -> FAILED). Republish every transition as a `fiber.status`
+  // WorkflowEvent so a plugin's lifecycle is visible on the same stream as
+  // step lifecycle, with zero effort from the workflow author. The root
+  // fiber's own bookkeeping transitions are excluded — they mirror the run's
+  // own start/teardown, which `run.completed`/`run.failed` already report.
+  //
+  // This listener is itself a plain container listener (an effect of the
+  // root fiber), so `disposeRunContainer` tears it down along with
+  // everything else — no manual cleanup required. One consequence: a plugin
+  // fiber's OWN final teardown (during THIS run's teardown, i.e. nothing
+  // disposed it earlier) unloads concurrently with this very listener's
+  // removal (both are root effects torn down in the same wave — cordis
+  // commences disposal in reverse-registration order but does not
+  // sequentialise completion), so that fiber's terminal UNLOADING -> DISPOSED
+  // transition is a best-effort observation, not a guarantee. A plugin
+  // disposed explicitly mid-run (`await fiber.dispose()` from inside a step,
+  // before the run itself ends) reports its full lifecycle reliably — see
+  // `test/fiber-status-event.test.ts`.
+  container.on('internal/status', (fiber, oldState) => {
+    if (fiber === container.fiber) return;
+    publish({
+      runId,
+      workflowId,
+      step: null,
+      event: 'fiber.status',
+      payload: {
+        name: fiber.name,
+        from: fiberStateName(oldState),
+        to: fiberStateName(fiber.state),
+      } satisfies FiberStatusPayload,
+      time: Date.now(),
+    });
+  });
 
   const now = Date.now();
   const existing = await store.getRun(runId);
