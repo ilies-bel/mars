@@ -611,11 +611,52 @@ function makePgliteBackend(target: string): BackendOps {
       )
     }
   }
+  /**
+   * Watchdog: races `op` against a timer.  If the operation is still pending
+   * after `PGLITE_QUERY_TIMEOUT_MS` milliseconds (default 60 000) it rejects
+   * with a diagnostic that names the operation so a wedged test suite fails
+   * fast with a pointed message instead of hanging until the 20-minute verify
+   * gate kills it.
+   *
+   * The timeout is read per-call so tests can set a short value via the env
+   * var without restarting the process.
+   */
+  function withWatchdog<T>(op: Promise<T>, label: string): Promise<T> {
+    const ms = Number(process.env.PGLITE_QUERY_TIMEOUT_MS ?? 60_000)
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(
+          new Error(
+            `db: PGlite watchdog — operation still pending after ${ms / 1000}s\n${label}`,
+          ),
+        )
+      }, ms)
+      op.then(
+        (v) => {
+          clearTimeout(timer)
+          resolve(v)
+        },
+        (e) => {
+          clearTimeout(timer)
+          reject(e)
+        },
+      )
+    })
+  }
+
   return {
     // Single session: EVERY operation takes the mutex so a plain execute can
     // never land inside another caller's open BEGIN..COMMIT window.
-    query: (sql, params) => mutex.run(() => rawQuery(sql, params)),
-    transaction: (fn) => mutex.run(() => runInTx(rawQuery, fn)),
+    //
+    // The watchdog is placed INSIDE the mutex chain (not wrapping the whole
+    // mutex.run call) so that when the watchdog timer fires the mutex tail
+    // settles and the next queued operation — including `end()` — can run.
+    // If the watchdog wrapped the whole mutex.run(), the mutex's tail promise
+    // would remain stuck on the hung rawQuery forever, making `end()` hang.
+    query: (sql, params) =>
+      mutex.run(() => withWatchdog(rawQuery(sql, params), `query: ${sql}`)),
+    transaction: <T>(fn: (query: QueryFn) => Promise<T>) =>
+      mutex.run(() => withWatchdog(runInTx(rawQuery, fn), 'transaction')),
     end: () => (db === undefined ? Promise.resolve() : mutex.run(() => db!.close())),
   }
 }
