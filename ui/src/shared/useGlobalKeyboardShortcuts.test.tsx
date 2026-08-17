@@ -202,3 +202,31 @@ describe('useGlobalKeyboardShortcuts — modifier key guard', () => {
     expect(window.location.hash).toBe('#/progress')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Guards — inert during IME composition (isComposing)
+// ---------------------------------------------------------------------------
+
+describe('useGlobalKeyboardShortcuts — isComposing guard', () => {
+  it('does not navigate when t is pressed during IME composition', () => {
+    pressKey('t', document, { isComposing: true })
+    expect(window.location.hash).toBe('#/progress')
+  })
+
+  it('does not navigate when ? is pressed during IME composition', () => {
+    pressKey('?', document, { isComposing: true })
+    expect(window.location.hash).toBe('#/progress')
+  })
+
+  it('does not focus a task card when 1 is pressed during IME composition', () => {
+    const card = document.createElement('div')
+    card.setAttribute('data-task-index', '0')
+    card.setAttribute('tabindex', '0')
+    document.body.appendChild(card)
+
+    pressKey('1', document, { isComposing: true })
+
+    expect(document.activeElement).not.toBe(card)
+    document.body.removeChild(card)
+  })
+})

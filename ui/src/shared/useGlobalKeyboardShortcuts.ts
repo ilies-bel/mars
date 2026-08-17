@@ -26,6 +26,7 @@ const isOverlayHash = (hash: string): boolean => {
  *
  * Shortcuts are silenced when:
  *   - focus is inside an input, textarea, select, or contenteditable element
+ *   - the event is part of an IME composition sequence (isComposing)
  *   - a drawer or modal overlay is currently open (hash-based detection)
  *   - a modifier key (Ctrl, Meta, Alt) is held
  */
@@ -33,6 +34,7 @@ export const useGlobalKeyboardShortcuts = (): void => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
       if (e.ctrlKey || e.metaKey || e.altKey) return
+      if (e.isComposing) return
       if (isEditableTarget(e.target)) return
       if (isOverlayHash(window.location.hash)) return
 
