@@ -18,9 +18,12 @@ import {
   verifyChanges,
   selectVerifySteps,
   getChangedFiles,
-  isInfraFailureOutput,
   type VerifyStepSpec,
 } from '../../core/lib/git/verify'
+// The suite-level infra retry asks the heuristic registry, not a hard-coded
+// pattern list (TARGET §4.5). `infra-failure-patterns` is the built-in that
+// answers today; a repo can register its own ahead of it.
+import { isInfraFailure } from '../../registries/verify-heuristics'
 import { appendEnrichmentScopes, recordEnrichmentShadowRuns } from '../../core/lib/gate-enrichment'
 import { createWorker, Workers } from '../../core/workers'
 import { resolveContext, getStateDir } from '../../core/context'
@@ -774,7 +777,7 @@ export const review = async (
       // just removes phantom failures caused by concurrent infra contention.
       if (!r.passed) {
         const failedSteps = r.steps.filter((s) => !s.passed)
-        if (failedSteps.some((s) => isInfraFailureOutput(s.output))) {
+        if (failedSteps.some((s) => isInfraFailure(s.output))) {
           console.log(
             `[verify] task ${taskId}: infra failure detected in ${failedSteps.length} step(s) ` +
               `(embedded-PG shutdown or Spring context init); retrying once`,

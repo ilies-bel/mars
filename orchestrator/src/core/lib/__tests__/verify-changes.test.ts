@@ -17,10 +17,12 @@ import {
   selectVerifySteps,
   getChangedFiles,
   checkBranchHasDiff,
-  TSC_DECOY_MARKER,
   VERIFY_TIMEOUT_MARKER,
   type VerifyScope,
 } from '../git/verify'
+// The tsc decoy marker moved into the typescript-toolchain verify heuristic
+// (docs/rework/TARGET-ARCHITECTURE.md §4.5); the runner no longer knows it.
+import { TSC_DECOY_MARKER } from '../../../tools/verify/heuristics/typescript-toolchain'
 import {
   parseMainCommiterPayload,
   MAIN_COMMITER_RECIPE,

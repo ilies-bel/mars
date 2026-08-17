@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import {
@@ -8,26 +7,20 @@ import {
   type TraceCtx,
 } from './internal'
 import { assertWorktreeHygieneForVerify } from '../verify'
-import { classifyTypecheckOutput } from '../failure-signature'
 import { detectMalformedGateArgs } from '../gate-args-validation'
+import {
+  classifyVerifyFailure,
+  decideBeforeVerifyStep,
+  planVerifyRetry,
+} from '../../../registries/verify-heuristics'
+import { VERIFY_TIMEOUT_MARKER } from './verify-markers'
 
 /**
- * The output marker emitted by the npm decoy `tsc` placeholder when
- * `npx tsc` is invoked without TypeScript properly installed. When this
- * string appears in a failing typecheck step's output, the step should be
- * treated as a skip rather than a real typecheck failure.
+ * The runner's output contract. Re-exported (not redefined) from the leaf
+ * `./verify-markers` so a heuristic can match against it without importing
+ * the runner and closing an import cycle.
  */
-export const TSC_DECOY_MARKER = 'This is not the tsc command you are looking for'
-
-/**
- * Output marker prepended by `runVerifyStep` when the per-step wall-clock
- * timeout fires and the subprocess is killed.  Consumed by
- * `computeFailureSignature` to produce `verify:timeout/<step-name>` rather
- * than an `unclassified` verdict, and matched by `VERIFY_INFRA_FAILURE_PATTERNS`
- * so the first timeout gets an automatic infra retry (a second timeout is
- * final).
- */
-export const VERIFY_TIMEOUT_MARKER = 'verify child timed out after'
+export { VERIFY_TIMEOUT_MARKER }
 
 /**
  * Default per-step verify timeout in minutes.
@@ -38,69 +31,6 @@ export const VERIFY_TIMEOUT_MARKER = 'verify child timed out after'
 const VERIFY_STEP_TIMEOUT_MIN_DEFAULT: number = Number(
   process.env.MARS_VERIFY_TIMEOUT_MIN ?? 15,
 )
-
-/**
- * Patterns in verify-step output that indicate an infrastructure failure
- * (embedded-PostgreSQL shutdown, Spring context initialisation error,
- * connection-refused to an embedded port, or a per-step wall-clock timeout)
- * rather than a genuine code-level assertion failure.
- *
- * Background: when multiple tasks run their verify steps in parallel, each
- * gradle/Spring build spins up its own embedded-PG instance.  One build's
- * Gradle daemon teardown (or an OS-level OOM eviction) can shut down another
- * build's database mid-suite, producing the "the database system is shutting
- * down" FATAL that cascades into dozens of phantom integration-test failures
- * and empty Spring-context init errors.  These are infrastructure flakes, not
- * code regressions.
- *
- * A per-step timeout is also classified as an infrastructure failure: a hung
- * test suite is an environment problem (deadlock, OOM, PGLite fixture
- * serialisation), not a code regression.  The first timeout triggers a single
- * retry; a second timeout is final.
- *
- * A verify step whose output matches any of these patterns is eligible for a
- * single retry by the verify primitive (see `primitives/index.ts`).  Genuine
- * assertion failures (JUnit `AssertionFailedError`, TypeScript type errors,
- * `NullPointerException`, …) do NOT match these patterns and are never
- * silently swallowed.
- *
- * Note: empty output is intentionally NOT treated as an infra failure here.
- * An empty failure is ambiguous — it could be a Spring context init error
- * caused by an infra race, but it could also be a genuine process crash or
- * timeout.  If the empty-output case proves prevalent in practice it can be
- * added as a separate heuristic.
- */
-const VERIFY_INFRA_FAILURE_PATTERNS: readonly RegExp[] = [
-  /FATAL: the database system is shutting down/i,
-  /the database system is shutting down/i,
-  /org\.springframework\.dao\.DataAccessResourceFailureException/,
-  /org\.springframework\.context\.ApplicationContextException/,
-  /Connection refused.*\d+/i,
-  // Per-step timeout: the VERIFY_TIMEOUT_MARKER prefix is always the first
-  // non-blank line when the timeout fires.
-  new RegExp(`^${VERIFY_TIMEOUT_MARKER} `),
-]
-
-/**
- * Returns `true` when the given verify-step output matches at least one
- * infrastructure-failure pattern (embedded-PG shutdown or Spring context init
- * error) rather than a genuine assertion failure.  Used by the verify
- * primitive to decide whether to retry once before counting the failure as a
- * real task failure.
- *
- * Empty or whitespace-only output returns `false` — treat it as ambiguous and
- * fall through to standard failure handling.
- */
-export const isInfraFailureOutput = (output: string): boolean => {
-  if (!output || output.trim() === '') return false
-  return VERIFY_INFRA_FAILURE_PATTERNS.some((p) => p.test(output))
-}
-
-// True when the step is an `npx tsc …` invocation. Used in two places
-// inside verifyChanges: the pre-flight presence guard and the post-flight
-// decoy-output guard.
-const isNpxTscStep = (spec: VerifyStepSpec): boolean =>
-  spec.cmd === 'npx' && spec.args.length > 0 && spec.args[0] === 'tsc'
 
 export interface VerifyStep {
   name: string
@@ -805,62 +735,26 @@ export const verifyChanges = async (
       continue
     }
 
-    // Pre-flight tsc-presence guard: skip `npx tsc` steps when no real
-    // TypeScript toolchain is detected in the step directory. A real
-    // toolchain requires both a tsconfig.json (the project is configured
-    // for TypeScript) and a locally-installed tsc binary. Without the
-    // local binary, `npx tsc` resolves to the npm decoy package and emits
-    // "This is not the tsc command you are looking for" rather than
-    // running an actual typecheck. Skipping avoids a spurious required-
-    // step failure in Kotlin/Gradle or other non-TypeScript repos.
-    if (isNpxTscStep(spec)) {
-      const hasTsconfig = existsSync(resolve(stepCwd, 'tsconfig.json'))
-      const hasWorkspaceManifest = existsSync(resolve(stepCwd, 'package.json'))
-      const hasWorkspaceModules = existsSync(resolve(stepCwd, 'node_modules'))
-      // Check both the step dir and one level up (workspace/monorepo hoist).
-      const hasBin =
-        existsSync(resolve(stepCwd, 'node_modules', '.bin', 'tsc')) ||
-        existsSync(resolve(stepCwd, '..', 'node_modules', '.bin', 'tsc'))
-      // A TypeScript workspace without its own module tree is not a
-      // non-TypeScript project. It is a git-created/recreated worktree whose
-      // dependencies were never provisioned. Fail before invoking tsc so the
-      // operator sees the repair rather than TS2688 / TS2307 noise.
-      if (hasTsconfig && hasWorkspaceManifest && !hasWorkspaceModules) {
-        // Set stderr (not just output) so the message survives the structured
-        // firstFailedOutput assembly in primitives/index.ts (which reads stderr
-        // and stdout, not the combined output field, for steps that have a cmd).
-        // Without this, classifyError sees only the step name as the first line
-        // and falls through to `unclassified` instead of `typecheck-infra`.
-        const _depMsg =
-          `worktree deps not provisioned: ${stepCwd}/node_modules is missing — ` +
-          'run mars restart <task-id> to recreate the worktree with dependencies'
-        results.push({
-          name: spec.name,
-          ...(spec.gateId !== undefined ? { gateId: spec.gateId } : {}),
-          tier: 'task',
-          passed: false,
-          output: _depMsg,
-          stderr: _depMsg,
-          cmd: spec.cmd,
-          args: [...spec.args],
-          stepDir: stepCwd,
-        })
-        if (spec.required) stoppedOnRequired = true
-        continue
-      }
-      if (!hasTsconfig || !hasBin) {
-        results.push({
-          name: spec.name,
-          ...(spec.gateId !== undefined ? { gateId: spec.gateId } : {}),
-          tier: 'task',
-          passed: true,
-          output: `typecheck skipped: no real TypeScript toolchain detected in ${stepCwd} (tsconfig.json present: ${hasTsconfig}, local tsc binary found: ${hasBin})`,
-          cmd: spec.cmd,
-          args: [...spec.args],
-          stepDir: stepCwd,
-        })
-        continue
-      }
+    // Pre-flight heuristic guard: a registered heuristic may decide this step
+    // must not run here at all — the built-in `typescript-toolchain` skips an
+    // `npx tsc` step in a repo with no TypeScript toolchain, and fails one in
+    // a TypeScript worktree whose dependencies were never provisioned. The
+    // runner applies the decision; it does not know what a toolchain is.
+    const preStep = decideBeforeVerifyStep(spec, stepCwd)
+    if (preStep) {
+      results.push({
+        name: spec.name,
+        ...(spec.gateId !== undefined ? { gateId: spec.gateId } : {}),
+        tier: 'task',
+        passed: preStep.passed,
+        output: preStep.output,
+        ...(preStep.stderr !== undefined ? { stderr: preStep.stderr } : {}),
+        cmd: spec.cmd,
+        args: [...spec.args],
+        stepDir: stepCwd,
+      })
+      if (!preStep.passed && spec.required) stoppedOnRequired = true
+      continue
     }
 
     const stepStart = performance.now()
@@ -881,51 +775,45 @@ export const verifyChanges = async (
     )
     const duration = Math.round(performance.now() - stepStart)
 
-    // Post-flight decoy guard: if `npx tsc` exited non-zero with the
-    // well-known placeholder message, treat it as a skip rather than a
-    // code-level typecheck failure. This is a misconfiguration signal —
-    // the TypeScript package is not properly installed — not an actual
-    // type error that the agent should attempt to fix.
-    if (isNpxTscStep(spec) && !result.passed && result.output.includes(TSC_DECOY_MARKER)) {
-      results.push({
-        ...result,
-        tier: 'task',
-        duration,
-        passed: true,
-        output: `typecheck skipped (decoy tsc detected — TypeScript not installed): ${result.output}`,
-      })
-      continue
+    // Post-flight classification: a registered heuristic may rule that this
+    // failure is not a code failure at all. Only a `skip` verdict changes what
+    // the runner records (the built-in `typescript-toolchain` returns one for
+    // the npm decoy `tsc` placeholder — a misconfiguration signal, not a type
+    // error the agent should try to fix). An `infra` verdict is advisory and
+    // is consumed one level up, by the `review` primitive's suite-level retry.
+    if (!result.passed) {
+      const verdict = classifyVerifyFailure(result, spec)
+      if (verdict?.kind === 'skip') {
+        results.push({
+          ...result,
+          tier: 'task',
+          duration,
+          passed: true,
+          output: verdict.output,
+        })
+        continue
+      }
     }
 
-    // Infra-retry for tsc steps: if the failure contains no TypeScript error
-    // codes, the environment is likely the culprit (missing modules, ENOENT,
-    // OOM, etc.).  Attempt a dep refresh and retry once.  A real type error
-    // fails both runs (dep refresh cannot change compiled code), so one retry
-    // cannot mask a genuine bug.  Do NOT add a retry budget beyond one.
-    if (isNpxTscStep(spec) && !result.passed && classifyTypecheckOutput(result.output) === 'infra') {
-      // Best-effort dep refresh: detect the package manager from the lockfile
-      // and run the frozen install command.  Failure is silently ignored — the
-      // retry below will fail for the same reason and be recorded as infra.
-      {
-        const _dirs = [stepCwd, resolve(stepCwd, '..')]
-        let _pm: string | undefined
-        let _installArgs: string[] | undefined
-        for (const _d of _dirs) {
-          if (existsSync(resolve(_d, 'pnpm-lock.yaml'))) { _pm = 'pnpm'; _installArgs = ['install', '--frozen-lockfile']; break }
-          if (existsSync(resolve(_d, 'package-lock.json'))) { _pm = 'npm'; _installArgs = ['ci']; break }
-          if (existsSync(resolve(_d, 'yarn.lock'))) { _pm = 'yarn'; _installArgs = ['install', '--frozen-lockfile']; break }
-          if (existsSync(resolve(_d, 'bun.lockb'))) { _pm = 'bun'; _installArgs = ['install', '--frozen-lockfile']; break }
-        }
-        if (_pm && _installArgs) {
-          try {
-            await execProbe(_pm, _installArgs, { cwd: stepCwd }, verifyCtx)
-          } catch {
-            // best-effort: ignore refresh failures; the retry decides the outcome
-          }
-        }
+    // Post-flight retry: a heuristic may ask for exactly one re-run of a
+    // failing step, optionally repairing the environment first (the built-in
+    // `typescript-toolchain` refreshes dependencies when a tsc failure carries
+    // no TypeScript error codes). One retry, never a budget — a real defect
+    // fails both runs, so a single retry cannot mask it.
+    const retryPlan = result.passed ? undefined : planVerifyRetry(result, spec)
+    if (retryPlan) {
+      if (retryPlan.prepare) {
+        await retryPlan
+          .prepare(async (cmd, cmdArgs, cwd) => {
+            await execProbe(cmd, [...cmdArgs], { cwd }, verifyCtx)
+          }, stepCwd)
+          .catch(() => {
+            // best-effort: ignore repair failures; the retry decides the outcome
+          })
       }
-      const _retryStart = performance.now()
-      const _retryResult = await runVerifyStep(
+
+      const retryStart = performance.now()
+      const retryResult = await runVerifyStep(
         spec.name,
         spec.gateId,
         spec.cmd,
@@ -936,31 +824,27 @@ export const verifyChanges = async (
         stepTimeoutMs,
         args.onChildPid,
       )
-      const _retryDuration = Math.round(performance.now() - _retryStart)
-      if (_retryResult.passed) {
-        // Retry succeeded: the infra condition was transient.  Record as passed.
-        results.push({ ..._retryResult, tier: 'task', duration: _retryDuration })
+      const retryDuration = Math.round(performance.now() - retryStart)
+      if (retryResult.passed) {
+        // Retry succeeded: the condition was transient. Record as passed.
+        results.push({ ...retryResult, tier: 'task', duration: retryDuration })
         continue
       }
-      // Retry also failed.  Distinguish infra (no TS codes) from a real type
-      // error revealed by the dep refresh (dep refresh fixed the environment
-      // and now tsc can run and reports real TS errors).
-      if (classifyTypecheckOutput(_retryResult.output) === 'infra') {
-        // Still infra after retry: add the sentinel so classifyError produces
-        // `typecheck-infra` rather than `unclassified`.
-        const _infraSentinel = `typecheck-infra: infra failure persisted after dep-refresh retry (exit ${_retryResult.exitCode ?? 'null'})`
-        results.push({
-          ..._retryResult,
-          tier: 'task',
-          duration: _retryDuration,
-          stderr: _infraSentinel + (_retryResult.stderr ? '\n' + _retryResult.stderr : ''),
-          output: _infraSentinel + '\n' + _retryResult.output,
-        })
-      } else {
-        // Retry revealed a real type error: record as-is so the fix-task recipe
-        // can address the actual TypeScript defect.
-        results.push({ ..._retryResult, tier: 'task', duration: _retryDuration })
-      }
+      // Retry also failed — let the heuristic rewrite the recorded output
+      // (e.g. prepend a sentinel the failure classifier keys off). Returning
+      // undefined records the retry verbatim.
+      const rewritten = retryPlan.afterRetry?.(retryResult)
+      results.push(
+        rewritten
+          ? {
+              ...retryResult,
+              tier: 'task',
+              duration: retryDuration,
+              stderr: rewritten.stderr,
+              output: rewritten.output,
+            }
+          : { ...retryResult, tier: 'task', duration: retryDuration },
+      )
       if (spec.required) stoppedOnRequired = true
       continue
     }

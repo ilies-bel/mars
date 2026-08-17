@@ -11,7 +11,10 @@
  *
  */
 import { describe, it, expect } from 'vitest'
-import { isInfraFailureOutput } from './verify'
+// `isInfraFailureOutput` moved into the infra-failure-patterns verify
+// heuristic (docs/rework/TARGET-ARCHITECTURE.md §4.5); the runner no longer
+// carries the pattern list.
+import { isInfraFailureOutput } from '../../../tools/verify/heuristics/infra-failure-patterns'
 
 describe('isInfraFailureOutput', () => {
   // ── positive cases (infra failures) ─────────────────────────────────────
