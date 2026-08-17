@@ -260,36 +260,25 @@ https://github.com/user-attachments/assets/PLACEHOLDER-UI-WALKTHROUGH
 - **Action queue** — the human-attention surface: pick a row, read the failure
   reason and full transcript, and resolve it (restart, drop, investigate).
 
-## Architecture
+## Swapping modules
 
+Mars ships fully wired — one install, zero configuration, no external
+modules. Everything it does opinionated-by-default is also swappable, from
+inside a normal workflow file:
+
+```js
+// .mars/workflows/task-workflow.js
+import { defineWorkflow, review, useTool } from 'mars/workflow'
+
+useTool('verify', myVerifyTool)   // scoped to this workflow; returns a disposer
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  mars CLI                                                    │
-│  (Bun single-file binary — installs with curl | bash)       │
-├─────────────────────────────────────────────────────────────┤
-│  Daemon                                                      │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │
-│  │ Pool:    │  │ Pool:    │  │ Pool:    │  │ Pool:    │    │
-│  │ implement│  │ triage   │  │ refine   │  │ write    │    │
-│  │ (Slots)  │  │ (Slots)  │  │ (Slots)  │  │ (Slots)  │    │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘    │
-│       │                                                      │
-│       ▼                                                      │
-│  @mars/workflow engine (packages/workflow/)                  │
-│  ┌────────────────────────────────────────────────┐         │
-│  │ setup → code → verify → merge                  │         │
-│  │         (selected agent CLI in worktree)        │         │
-│  └────────────────────────────────────────────────┘         │
-├─────────────────────────────────────────────────────────────┤
-│  Embedded PostgreSQL (.mars/pg/)                             │
-│  tasks · task_blockers · proposals · events · sessions       │
-├─────────────────────────────────────────────────────────────┤
-│  Git worktrees (.mars/worktrees/<task-id>/)                  │
-│  one per running task — branch task/<id> off main            │
-├─────────────────────────────────────────────────────────────┤
-│  UI (Vite + React — read-only, streams from daemon HTTP)    │
-└─────────────────────────────────────────────────────────────┘
-```
+
+The same pattern swaps a coder, a merge strategy, or a verify heuristic. One
+thing is deliberately **not** swappable: whichever tool you plug in, Mars
+still records what happened to the task — you can change what runs, never
+whether it's tracked. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the
+module map and how the pieces fit together; that's also where to look before
+adding a provider, a worker, or a verify check.
 
 ## CLI reference
 
@@ -334,7 +323,8 @@ Full reference with env vars and workflow internals:
 | [`PRODUCT.md`](./PRODUCT.md) | Product purpose, users, design principles |
 | [`orchestrator/README.md`](./orchestrator/README.md) | Full CLI reference, workflow internals, env vars |
 | [`CONTEXT.md`](./CONTEXT.md) | Domain glossary (edit via `mars glossary` only) |
-| [`docs/adr/`](./docs/adr/) | Architecture Decision Records (add via `mars adr` only) |
+| [`docs/knowledge/decisions/`](./docs/knowledge/decisions/) | Architecture Decision Records (add via `mars adr` only) |
+| [`docs/architecture/modular-core.md`](./docs/architecture/modular-core.md) | The service-container/tools/registries rework: target and phase status |
 
 ## License
 
