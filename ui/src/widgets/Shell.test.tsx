@@ -103,9 +103,9 @@ describe('SHELL_NAV_GROUPS', () => {
     expect(icons).not.toContain('◆')
   })
 
-  it('Proposals entry href is #/progress?col=proposals', () => {
+  it('Proposals entry href is #/proposals', () => {
     const entry = SHELL_NAV_GROUPS.flatMap((g) => g.entries).find((e) => e.label === 'Proposals')
-    expect(entry?.href).toBe('#/progress?col=proposals')
+    expect(entry?.href).toBe('#/proposals')
   })
 })
 
@@ -147,10 +147,15 @@ describe('ShellSidebar — active state', () => {
     expect(amberMatches).toHaveLength(1)
   })
 
-  it('proposals entry never has aria-current when isProposalsActive is not set', () => {
-    // Proposals entry links to progress; without isProposalsActive it must not highlight
+  it('proposals entry has aria-current when activeRoute is proposals', () => {
+    const html = renderToStaticMarkup(<ShellSidebar activeRoute="proposals" decisionBadge={0} />)
+    const matches = html.match(/aria-current="page"/g)
+    expect(matches).toHaveLength(1)
+  })
+
+  it('proposals entry has no aria-current when activeRoute is progress', () => {
+    // proposals is its own route; visiting #/progress does not highlight Proposals
     const html = renderToStaticMarkup(<ShellSidebar activeRoute="progress" decisionBadge={0} />)
-    // Only Progress (route='progress') should have aria-current, not Proposals
     const matches = html.match(/aria-current="page"/g)
     expect(matches).toHaveLength(1)
   })
@@ -164,33 +169,32 @@ describe('ShellSidebar — active state', () => {
   })
 })
 
-// ── ShellSidebar — Proposals / Progress mutual exclusion ─────────────────────
+// ── ShellSidebar — Proposals route highlighting ───────────────────────────────
 
-describe('ShellSidebar — Proposals/Progress mutual exclusion', () => {
-  it('highlights Proposals (not Progress) when isProposalsActive is true', () => {
+describe('ShellSidebar — Proposals route highlighting', () => {
+  it('highlights Proposals when activeRoute is proposals', () => {
     const html = renderToStaticMarkup(
-      <ShellSidebar activeRoute="progress" decisionBadge={0} isProposalsActive={true} />,
+      <ShellSidebar activeRoute="proposals" decisionBadge={0} />,
     )
     // Must have exactly one active entry
     const matches = html.match(/aria-current="page"/g)
     expect(matches).toHaveLength(1)
-  })
-
-  it('Proposals entry has aria-current="page" when isProposalsActive is true', () => {
-    const html = renderToStaticMarkup(
-      <ShellSidebar activeRoute="progress" decisionBadge={0} isProposalsActive={true} />,
-    )
-    // The Proposals anchor should be the one with aria-current
-    // It appears before its aria-current in the markup; check the content wraps it
-    expect(html).toContain('aria-current="page"')
-    // Progress should NOT be the active one — verify by checking amber appears once
+    // Only one amber highlight
     const amber = html.match(/var\(--color-amber\)/g)
     expect(amber).toHaveLength(1)
   })
 
-  it('Progress is highlighted and Proposals is not when isProposalsActive is false', () => {
+  it('highlights Progress (not Proposals) when activeRoute is progress', () => {
     const html = renderToStaticMarkup(
-      <ShellSidebar activeRoute="progress" decisionBadge={0} isProposalsActive={false} />,
+      <ShellSidebar activeRoute="progress" decisionBadge={0} />,
+    )
+    const matches = html.match(/aria-current="page"/g)
+    expect(matches).toHaveLength(1)
+  })
+
+  it('highlights Progress when activeRoute is studio (studio nests under Progress)', () => {
+    const html = renderToStaticMarkup(
+      <ShellSidebar activeRoute="studio" decisionBadge={0} />,
     )
     const matches = html.match(/aria-current="page"/g)
     expect(matches).toHaveLength(1)
@@ -298,8 +302,8 @@ describe('Shell', () => {
     expect(html).toContain('bg-highlight/20')
   })
 
-  it('highlights Proposals when hash contains col=proposals', () => {
-    const html = renderToStaticMarkup(<Shell hash="#/progress?col=proposals">page</Shell>)
+  it('highlights Proposals when hash is #/proposals', () => {
+    const html = renderToStaticMarkup(<Shell hash="#/proposals">page</Shell>)
     expect(html).toContain('aria-current="page"')
     // Exactly one active entry
     const matches = html.match(/aria-current="page"/g)

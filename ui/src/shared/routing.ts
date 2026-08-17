@@ -2,7 +2,7 @@ import type { KpiKey } from './schemas'
 import type { StaleWorktreesPayload } from './schemas'
 import { PRIMITIVE_NAMES, type PrimitiveName } from '@/entities/primitive/types'
 
-export type RouteName = 'progress' | 'events' | 'kpi' | 'studio' | 'chat' | 'steward' | 'reflections' | 'control' | 'triage'
+export type RouteName = 'progress' | 'events' | 'kpi' | 'studio' | 'chat' | 'steward' | 'reflections' | 'control' | 'triage' | 'proposals'
 
 /**
  * Derives the current route from the URL hash.
@@ -29,6 +29,7 @@ export const detectRoute = (hash: string): RouteName => {
   if (hash === '#/steward') return 'steward'
   if (hash.startsWith('#/reflections')) return 'reflections'
   if (hash === '#/control') return 'control'
+  if (hash === '#/proposals') return 'proposals'
   return 'chat'
 }
 
@@ -57,6 +58,7 @@ export const isKnownRoute = (hash: string): boolean => {
   if (hash === '#/steward') return true
   if (hash.startsWith('#/reflections')) return true
   if (hash === '#/control') return true
+  if (hash === '#/proposals') return true
   // Overlay routes (task drawer, proposal drawers, primitive drawer,
   // release notes, shortcuts)
   if (hash.startsWith('#/task/')) return true
@@ -141,6 +143,7 @@ const ROUTE_NAMES: readonly RouteName[] = [
   'reflections',
   'control',
   'triage',
+  'proposals',
 ]
 
 const isRouteName = (value: string): value is RouteName =>
@@ -444,6 +447,8 @@ export const pageTitle = (route: RouteName): string => {
       return 'mars — reflections'
     case 'control':
       return 'mars — control'
+    case 'proposals':
+      return 'mars — proposals'
   }
 }
 

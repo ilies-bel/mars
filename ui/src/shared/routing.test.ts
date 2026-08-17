@@ -99,6 +99,10 @@ describe('detectRoute', () => {
   it('returns control for the #/control hash', () => {
     expect(detectRoute('#/control')).toBe('control')
   })
+
+  it('returns proposals for the #/proposals hash', () => {
+    expect(detectRoute('#/proposals')).toBe('proposals')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -122,6 +126,7 @@ describe('isKnownRoute', () => {
     expect(isKnownRoute('#/kpi/cost_per_arc')).toBe(true)
     expect(isKnownRoute('#/steward')).toBe(true)
     expect(isKnownRoute('#/control')).toBe(true)
+    expect(isKnownRoute('#/proposals')).toBe(true)
   })
 
   it('returns true for overlay routes', () => {

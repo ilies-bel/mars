@@ -46,6 +46,7 @@ import { StewardPage } from '@/pages/StewardPage'
 import { ReflectionsPage } from '@/pages/ReflectionsPage'
 import { ControlRoomPage } from '@/pages/ControlRoomPage'
 import { TriagePage } from '@/pages/TriagePage'
+import { ProposalsPage } from '@/pages/ProposalsPage'
 import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
 import { FallbackBoundary } from '@/components/FallbackBoundary'
 import { AlertNotifier } from '@/shared/notifications/alertNotifier'
@@ -61,6 +62,7 @@ const ROUTE_BASE: Record<RouteName, string> = {
   steward: '#/steward',
   reflections: '#/reflections',
   control: '#/control',
+  proposals: '#/proposals',
 }
 
 /**
@@ -194,6 +196,8 @@ const AppInner = () => {
             <ReflectionsPage />
           ) : route === 'control' ? (
             <ControlRoomPage />
+          ) : route === 'proposals' ? (
+            <ProposalsPage />
           ) : (
             <ChatPage />
           )}
