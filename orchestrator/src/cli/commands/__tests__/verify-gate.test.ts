@@ -15,6 +15,7 @@
  *  11. `verify-gate remove` by --scope/--name pair → idempotent exit 0
  *  12. `verify-gate remove` with no args → exit 2
  *  13. `verify-gate remove` unknown id → silent exit 0 (idempotent)
+ *  14. `verify-gate add` whitespace-in-arg guard — rejects "run test:e2e" as single token
  *
  * All tests use dynamic imports after vi.resetModules() to get fresh singleton
  * instances per test, following the pattern in memory.test.ts.
@@ -465,5 +466,43 @@ describe('mars verify-gate remove — unknown id', () => {
 
     expect(r.code).toBe(0)
     expect(r.err).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 14. verify-gate add — whitespace-in-arg guard
+// ---------------------------------------------------------------------------
+
+describe('mars verify-gate add — whitespace-in-arg guard', () => {
+  it('rejects a single-token "run test:e2e" arg for npm (exit 2, helpful error)', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    // Simulate what an agent does when it forgets to split the arg:
+    // --cmd npm and then passes "run test:e2e" as one token after --
+    const r = await run(
+      ['verify-gate', 'add', '--name', 'e2e', '--cmd', 'npm', '--', 'run test:e2e'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).toBe(2)
+    const errText = r.err.join('\n')
+    // Must name the offending arg
+    expect(errText).toContain('run test:e2e')
+    // Must suggest the split form
+    expect(errText.toLowerCase()).toMatch(/split|--args|-- /)
+  })
+
+  it('accepts correctly-split args via -- separator: --cmd npm -- run test:e2e', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['verify-gate', 'add', '--name', 'e2e', '--cmd', 'npm', '--', 'run', 'test:e2e'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).toBe(0)
+    expect(r.out[0]).toMatch(/^[0-9a-f-]{36}$/)
   })
 })

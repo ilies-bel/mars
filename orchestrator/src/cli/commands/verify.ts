@@ -14,19 +14,15 @@ import {
   listVerifyGates,
   removeVerifyGate,
 } from '../../core/verify-gates'
+import {
+  detectMalformedGateArgs,
+  PACKAGE_RUNNER_CMDS,
+} from '../../core/lib/gate-args-validation'
 import { hasFlag } from '../args'
 import type { Command } from '../command'
 
 /** UUID v4 pattern used to distinguish gate ids from gate names. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-/**
- * Package-runner multiplexers that require at least one argument to be useful.
- * A gate whose cmd is one of these and whose resolved args array is empty will
- * run a bare binary that either always passes (npx, pnpm, bunx) or always fails
- * (npm, yarn) — never verifying what its name implies.
- */
-const BARE_MULTIPLEXER_CMDS = new Set(['npx', 'npm', 'pnpm', 'yarn', 'bunx'])
 
 /** Detect a PostgreSQL UNIQUE-constraint violation (23505) or its message equivalent. */
 const isUniqueConstraint = (err: unknown): boolean => {
@@ -119,12 +115,22 @@ const verifyAdd: Command = {
 
     // Refuse to register a bare-multiplexer gate. A command like `npx` with no
     // args runs a REPL or prints help — it never verifies what the gate name implies.
-    if (gateArgs.length === 0 && BARE_MULTIPLEXER_CMDS.has(cmd)) {
+    if (gateArgs.length === 0 && PACKAGE_RUNNER_CMDS.has(cmd)) {
       deps.err(
         `refusing to register a bare '${cmd}' gate with no arguments — it would ` +
           `${cmd === 'npm' || cmd === 'yarn' ? 'always fail' : 'always pass'} without checking anything. ` +
           `Specify what to run via -- or --args: e.g. --cmd ${cmd} -- <subcommand>`,
       )
+      return { code: 2 }
+    }
+
+    // Reject any arg element that contains whitespace when the cmd is a package
+    // runner. A single "run test:e2e" token becomes npm "run test:e2e" at the
+    // shell level — npm treats it as an unknown command and always fails with a
+    // generic usage error, never verifying what the gate name implies.
+    const malformedMsg = detectMalformedGateArgs(cmd, gateArgs)
+    if (malformedMsg) {
+      deps.err(malformedMsg)
       return { code: 2 }
     }
 

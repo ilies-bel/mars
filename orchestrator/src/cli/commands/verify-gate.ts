@@ -21,6 +21,7 @@ import {
 } from '../../core/verify-gates'
 import { loadVerifyScopes } from '../../core/lib/git/verify'
 import { detectVerifyGates } from '../../init/detect-verify-gates'
+import { detectMalformedGateArgs } from '../../core/lib/gate-args-validation'
 import type { Command } from '../command'
 
 /** Detect a PostgreSQL UNIQUE-constraint violation (23505) or its message equivalent. */
@@ -132,6 +133,16 @@ const verifyGateAdd: Command = {
     // Gate args are the tokens that appeared after the bare '--' separator.
     // parseArgs puts them in args.rest (never in args.positional).
     const gateArgs = args.rest
+
+    // Reject any arg element that contains whitespace when the cmd is a package
+    // runner. A single "run test:e2e" token becomes npm "run test:e2e" at the
+    // shell level — npm treats it as an unknown command and always fails with a
+    // generic usage error, never verifying what the gate name implies.
+    const malformedMsg = detectMalformedGateArgs(cmd, gateArgs)
+    if (malformedMsg) {
+      deps.err(malformedMsg)
+      return { code: 2 }
+    }
 
     // --optional makes required=false; --required is the default.
     const required = args.flags['--optional'] === undefined

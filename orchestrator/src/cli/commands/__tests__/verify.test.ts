@@ -19,6 +19,7 @@
  *  15–16. `verify add` bare -- separator
  *  17. `verify add` bare multiplexer guard
  *  18. `verify remove` name exists only in a different scope → exit 1 naming the scope
+ *  19. `verify add` whitespace-in-arg guard — rejects "run test:e2e" as single token
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -501,5 +502,97 @@ describe('mars verify remove — name in non-default scope', () => {
     expect(errText).toContain('.')
     // Must hint at the scope where it actually lives
     expect(errText).toContain('apps/web')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 19. verify add — whitespace-in-arg guard
+// ---------------------------------------------------------------------------
+
+describe('mars verify add — whitespace-in-arg guard', () => {
+  it('rejects a single-token "run test:e2e" arg for npm (exit 2, helpful error)', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    // Simulate what an agent does when it forgets to split the arg:
+    // --cmd npm --args "run test:e2e"  → args = ["run test:e2e"]
+    const r = await run(
+      ['verify', 'add', 'e2e', '--cmd', 'npm', '--args', 'run test:e2e'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).toBe(2)
+    const errText = r.err.join('\n')
+    // Must name the offending arg
+    expect(errText).toContain('run test:e2e')
+    // Must suggest the split form
+    expect(errText.toLowerCase()).toMatch(/split|--args|-- /)
+  })
+
+  it('rejects a single-token "run test:e2e" arg via -- separator for npm', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    // This simulates what happens when the shell collapses tokens before Mars sees them:
+    // mars verify add e2e --cmd npm -- "run test:e2e"
+    const r = await run(
+      ['verify', 'add', 'e2e', '--cmd', 'npm', '--', 'run test:e2e'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).toBe(2)
+    const errText = r.err.join('\n')
+    expect(errText).toContain('run test:e2e')
+  })
+
+  it('accepts correctly-split args: --cmd npm --args run --args test:e2e', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['verify', 'add', 'e2e', '--cmd', 'npm', '--args', 'run', '--args', 'test:e2e'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).toBe(0)
+    expect(r.out[0]).toMatch(/^[0-9a-f-]{36}$/)
+  })
+
+  it('accepts correctly-split args via -- separator: --cmd npm -- run test:e2e', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['verify', 'add', 'e2e', '--cmd', 'npm', '--', 'run', 'test:e2e'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).toBe(0)
+  })
+
+  it('rejects whitespace-containing arg for pnpm as well', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['verify', 'add', 'e2e', '--cmd', 'pnpm', '--args', 'run test'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain('run test')
+  })
+
+  it('does not reject whitespace-containing arg for non-package-runner (e.g. bash)', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    // bash -c "some command" is legitimate — the whole string is one shell expression
+    const r = await run(
+      ['verify', 'add', 'custom', '--cmd', 'bash', '--args', '-c', '--args', 'npm run test:e2e'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).toBe(0)
   })
 })

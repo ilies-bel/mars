@@ -9,6 +9,7 @@ import {
 } from './internal'
 import { assertWorktreeHygieneForVerify } from '../verify'
 import { classifyTypecheckOutput } from '../failure-signature'
+import { detectMalformedGateArgs } from '../gate-args-validation'
 
 /**
  * The output marker emitted by the npm decoy `tsc` placeholder when
@@ -771,6 +772,31 @@ export const verifyChanges = async (
         tier: 'task',
         passed: false,
         output: 'step not started: abort signal already fired',
+        cmd: spec.cmd,
+        args: [...spec.args],
+        stepDir: stepCwd,
+      })
+      if (spec.required) stoppedOnRequired = true
+      continue
+    }
+
+    // Pre-flight malformed-args guard: if any arg element contains whitespace
+    // and the command is a package runner (npm/pnpm/yarn/bunx/npx), the gate
+    // was registered with a quoting mistake (e.g. args: ["run test:e2e"]
+    // instead of ["run", "test:e2e"]). Executing it would produce a confusing
+    // generic npm usage error rather than running the intended script.  Fail
+    // immediately with a clear "malformed gate args" message so the gate-broken
+    // alert is actionable rather than opaque.
+    const malformedArgsMsg = detectMalformedGateArgs(spec.cmd, spec.args)
+    if (malformedArgsMsg) {
+      const msg = `malformed gate args: ${malformedArgsMsg}`
+      results.push({
+        name: spec.name,
+        ...(spec.gateId !== undefined ? { gateId: spec.gateId } : {}),
+        tier: 'task',
+        passed: false,
+        output: msg,
+        stderr: msg,
         cmd: spec.cmd,
         args: [...spec.args],
         stepDir: stepCwd,
