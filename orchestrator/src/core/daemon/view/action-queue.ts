@@ -491,6 +491,8 @@ const OPERATIONAL_ALERT_COPY: Record<
   },
   'recovery-abandoned': null,
   'mockup-ready': null,
+  'qa-step-list-opt-in': null,
+  'qa-step-list-promote': null,
 }
 
 const renderOperationalAlertCopy = (

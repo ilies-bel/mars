@@ -1049,6 +1049,35 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [],
   },
+
+  'qa-step-list-opt-in': {
+    humanSummary: (_ctx) =>
+      'Enable QA step list generation for this project?',
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      arcId: str(ctx.payload['arcId']),
+    }),
+    verbs: [
+      { op: 'accept', label: 'Enable', style: 'primary' },
+      { op: 'reject', label: 'Skip', style: 'default' },
+    ],
+  },
+
+  'qa-step-list-promote': {
+    humanSummary: (_ctx) =>
+      'Promote QA step list to project documentation?',
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      arcId: str(ctx.payload['arcId']),
+      manifestPath: str(ctx.payload['manifestPath']),
+    }),
+    verbs: [
+      { op: 'accept', label: 'Promote to docs', style: 'primary' },
+      { op: 'reject', label: 'Keep as arc artefact only', style: 'default' },
+    ],
+  },
 } satisfies Record<ActionQueueKind, Omit<Recipe, 'preloadedResponses'>>
 
 /**

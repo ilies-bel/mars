@@ -57,6 +57,8 @@ export const ACTION_QUEUE_KINDS = [
   'fragmented-repo-layout',
   'recovery-abandoned',
   'mockup-ready',
+  'qa-step-list-opt-in',
+  'qa-step-list-promote',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

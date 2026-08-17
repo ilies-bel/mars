@@ -212,6 +212,174 @@ const defaultArcE2eDeps: ArcE2eDeps = {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// QA step list — shared contract
+//
+// These types, constants, and helpers are the single source of truth used by
+// all QA-step-list consumer slices:
+//   • Relocate arc QA artefacts out of the worktree
+//   • Walk each QA step with per-step screenshots and record stop-at
+//   • Persist per-Arc QA manifest as JSON
+//   • Opt-in capability with per-project enable suggestion
+//   • Promote-step-list-to-docs suggestion (first per project)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A single prose QA step authored by the verifier for a behaviour criterion.
+ * Steps are written in ordinary language so an agent or a human can follow
+ * them without reference to the codebase.
+ */
+export interface QaStep {
+  /** 1-based position of this step in the walk sequence. */
+  index: number
+  /** Plain-language instruction describing the concrete move to perform. */
+  description: string
+}
+
+/**
+ * Why a QA step walk halted before completing all steps.
+ *
+ * - `step-unreachable` — the verifier could not reach the required UI
+ *   surface, route, or state described in this step.
+ * - `screenshot-failed` — navigation succeeded but capturing a screenshot
+ *   at this step failed.
+ * - `error` — an unexpected infrastructure error caused the walk to abort.
+ */
+export type QaStopReason = 'step-unreachable' | 'screenshot-failed' | 'error'
+
+/**
+ * The walk result for a single QA step.
+ * Produced by the walk pass; one record per step in the authored list.
+ */
+export interface QaStepWalkResult {
+  /** 1-based index matching the corresponding {@link QaStep}. */
+  index: number
+  /**
+   * Absolute path of the screenshot taken at this step, or `null` when no
+   * screenshot could be captured (e.g. walk stopped before reaching the step).
+   */
+  screenshotPath: string | null
+  /** `true` when the walk stopped at or before this step. */
+  stoppedAt: boolean
+  /** Reason the walk stopped, or `null` when the walk did not stop here. */
+  stopReason: QaStopReason | null
+}
+
+/**
+ * The QA step list and walk outcome for a single behaviour criterion.
+ * One record per done criterion that has an authored step list.
+ */
+export interface QaCriterionRecord {
+  /** The done-criterion text this step list targets. */
+  criterion: string
+  /** Prose steps authored by the verifier agent. */
+  steps: QaStep[]
+  /**
+   * Per-step walk results.  Empty when the walk has not yet run
+   * (e.g. the manifest was written before the walk pass ran).
+   */
+  walkResults: QaStepWalkResult[]
+}
+
+/**
+ * JSON manifest persisted per Arc under `.mars/qa-passes/<arcId>/manifest.json`.
+ *
+ * The manifest is the canonical record of a completed QA pass.  It is written
+ * once after the walk completes and never modified in place — a new pass
+ * produces a new manifest.
+ */
+export interface ArcQaManifest {
+  arcId: string
+  /** ISO 8601 timestamp of when the manifest was written. */
+  createdAt: string
+  /** One record per done criterion across all arc tasks that has a step list. */
+  criteria: QaCriterionRecord[]
+  /**
+   * 1-based index of the step where the overall walk stopped, or `null` when
+   * all steps completed successfully.
+   */
+  stoppedAtIndex: number | null
+  /** Reason the walk stopped, or `null` when all steps completed. */
+  stopReason: QaStopReason | null
+}
+
+/**
+ * Result of the arc-level QA step list pass.
+ *
+ * `ran: false` means the pass was skipped; `cantRunReason` explains why.
+ * `ran: true` means the pass executed and `manifest` holds the evidence.
+ * The QA pass NEVER fails the arc — it only captures evidence.
+ */
+export interface ArcQaPassResult {
+  ran: boolean
+  cantRunReason: 'disabled' | 'no-criteria' | 'already-done' | null
+  manifest: ArcQaManifest | null
+}
+
+// ── Storage paths ──────────────────────────────────────────────────────────
+
+/** Sub-directory of `.mars/` that holds per-Arc QA pass artefacts. */
+export const QA_PASSES_DIR_NAME = 'qa-passes'
+
+/** Filename of the JSON manifest inside a QA pass directory. */
+export const QA_MANIFEST_FILENAME = 'manifest.json'
+
+/**
+ * Resolve the directory for a given arc's QA pass artefacts.
+ *
+ * Artefacts live in the shared `.mars/qa-passes/<arcId>/` tree, outside any
+ * worktree, so they persist across worktree pruning and daemon restarts.
+ */
+export function getQaPassDir(marsStateDir: string, arcId: string): string {
+  return join(marsStateDir, QA_PASSES_DIR_NAME, arcId)
+}
+
+// ── Opt-in state ───────────────────────────────────────────────────────────
+
+/**
+ * Name of the marker file whose presence in `.mars/` means the operator has
+ * opted this project in to QA step list generation.  Absence means the
+ * capability is off; the daemon may offer to create this file.
+ */
+export const QA_STEP_LIST_ENABLED_MARKER = 'qa-step-lists-enabled'
+
+/**
+ * Returns `true` when the operator has opted this project in to QA step list
+ * generation (i.e. `.mars/qa-step-lists-enabled` exists).
+ */
+export function isQaStepListEnabled(marsStateDir: string): boolean {
+  return existsSync(join(marsStateDir, QA_STEP_LIST_ENABLED_MARKER))
+}
+
+// ── Promotion tracking ─────────────────────────────────────────────────────
+
+/**
+ * Name of the marker file that records that the "promote step list to docs"
+ * suggestion has already been offered for this project.
+ *
+ * The suggestion is raised at most once per project lifetime.  Once the marker
+ * exists, subsequent arcs skip the promotion check entirely.
+ */
+export const QA_STEP_LIST_PROMOTION_SUGGESTED_MARKER = 'qa-step-list-promotion-suggested'
+
+/**
+ * Returns `true` when the first-promotion suggestion has already been raised
+ * for this project (i.e. the durable marker exists).
+ */
+export function hasStepListPromotionBeenSuggested(marsStateDir: string): boolean {
+  return existsSync(join(marsStateDir, QA_STEP_LIST_PROMOTION_SUGGESTED_MARKER))
+}
+
+/**
+ * Write the durable marker recording that the first-promotion suggestion was
+ * offered for this project.  Idempotent: writing when the marker already
+ * exists is a no-op.
+ */
+export async function markStepListPromotionSuggested(marsStateDir: string): Promise<void> {
+  mkdirSync(marsStateDir, { recursive: true })
+  writeFileSync(join(marsStateDir, QA_STEP_LIST_PROMOTION_SUGGESTED_MARKER), '')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Verdict type
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -219,6 +387,8 @@ export interface ArcVerificationVerdict {
   ok: boolean
   findings: string[]
   e2ePass?: ArcE2ePassResult
+  /** QA step list pass result, present when the pass ran or was attempted. */
+  qaPass?: ArcQaPassResult
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
