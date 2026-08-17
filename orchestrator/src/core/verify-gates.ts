@@ -80,6 +80,21 @@ export const VerifyGateInputSchema = z.object({
 /** Input accepted by {@link addVerifyGate}. */
 export type VerifyGateInput = z.infer<typeof VerifyGateInputSchema>
 
+/**
+ * Fields that can be updated on an existing gate via {@link updateVerifyGate}.
+ * At least one field must be provided.
+ */
+export const VerifyGateUpdateSchema = z.object({
+  /** Per-gate wall-clock timeout in minutes. Pass `null` to clear (revert to process-wide default). */
+  timeoutMin: z.number().positive().nullable().optional(),
+}).refine(
+  (v) => v.timeoutMin !== undefined,
+  { message: 'at least one updatable field (timeoutMin) must be provided' },
+)
+
+/** Input accepted by {@link updateVerifyGate}. */
+export type VerifyGateUpdate = z.infer<typeof VerifyGateUpdateSchema>
+
 /** A verify gate row as returned by {@link listVerifyGates}. */
 export interface VerifyGate {
   id: string
@@ -211,7 +226,7 @@ export const addVerifyGate = async (input: VerifyGateInput): Promise<string> => 
     required = true,
     tier = 'task',
     source = 'human',
-    timeoutMin = null,
+    timeoutMin = 20,
   } = input
   const createdAt = Date.now()
   await c.execute(
@@ -221,6 +236,45 @@ export const addVerifyGate = async (input: VerifyGateInput): Promise<string> => 
   )
   await resolveCoveredVerifyAlerts(scope)
   return id
+}
+
+/**
+ * Update an existing verify gate. Accepts either:
+ * - a gate `id` string, or
+ * - a `{ scope, name }` object to target the unique (scope, name) pair.
+ *
+ * Returns `true` if a gate was updated, `false` if no matching gate was found.
+ */
+export const updateVerifyGate = async (
+  idOrRef: string | { scope: string; name: string },
+  updates: VerifyGateUpdate,
+): Promise<boolean> => {
+  const c = resolveStateClient()
+  const setClauses: string[] = []
+  const params: (string | number | null)[] = []
+
+  if (updates.timeoutMin !== undefined) {
+    setClauses.push('timeout_min = ?')
+    params.push(updates.timeoutMin)
+  }
+
+  if (setClauses.length === 0) return false
+
+  if (typeof idOrRef === 'string') {
+    params.push(idOrRef)
+    const r = await c.execute(
+      `UPDATE verify_gates SET ${setClauses.join(', ')} WHERE id = ?`,
+      params,
+    )
+    return r.rowsAffected > 0
+  } else {
+    params.push(idOrRef.scope, idOrRef.name)
+    const r = await c.execute(
+      `UPDATE verify_gates SET ${setClauses.join(', ')} WHERE scope = ? AND name = ?`,
+      params,
+    )
+    return r.rowsAffected > 0
+  }
 }
 
 /**

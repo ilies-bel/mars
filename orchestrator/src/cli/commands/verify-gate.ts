@@ -18,6 +18,7 @@ import {
   addVerifyGate,
   listVerifyGates,
   removeVerifyGate,
+  updateVerifyGate,
 } from '../../core/verify-gates'
 import { loadVerifyScopes } from '../../core/lib/git/verify'
 import { detectVerifyGates } from '../../init/detect-verify-gates'
@@ -58,7 +59,8 @@ const verifyGateList: Command = {
         'quarantined_at'.padEnd(16),
         'last_failure'.padEnd(28),
         'last_origin'.padEnd(20),
-        'last_failure_at',
+        'last_failure_at'.padEnd(16),
+        'timeout_min',
       ].join('  '),
     )
     deps.out(
@@ -76,7 +78,8 @@ const verifyGateList: Command = {
         '--------------'.padEnd(16),
         '------------'.padEnd(28),
         '-----------'.padEnd(20),
-        '---------------',
+        '---------------'.padEnd(16),
+        '-----------',
       ].join('  '),
     )
     for (const g of gates) {
@@ -95,7 +98,8 @@ const verifyGateList: Command = {
           (g.quarantinedAt === null ? '—' : String(g.quarantinedAt)).padEnd(16),
           (g.lastFailureSignature ?? 'healthy').slice(0, 28).padEnd(28),
           (g.lastFailureOriginId ?? '—').slice(0, 20).padEnd(20),
-          g.lastFailureAt === null ? '—' : String(g.lastFailureAt),
+          (g.lastFailureAt === null ? '—' : String(g.lastFailureAt)).padEnd(16),
+          g.timeoutMin === null ? '—(default)' : String(g.timeoutMin),
         ].join('  '),
       )
     }
@@ -107,7 +111,7 @@ const verifyGateAdd: Command = {
   path: 'verify-gate add',
   summary: 'register a new verify gate',
   usage:
-    'usage: mars verify-gate add --name <n> --cmd <c> [--scope <s>] [-- <args...>] [--tier task|integration] [--required|--optional]',
+    'usage: mars verify-gate add --name <n> --cmd <c> [--scope <s>] [--timeout <min>] [-- <args...>] [--tier task|integration] [--required|--optional]',
   run: async (args, deps) => {
     const name = args.flags['--name']
     const cmd = args.flags['--cmd']
@@ -147,6 +151,18 @@ const verifyGateAdd: Command = {
     // --optional makes required=false; --required is the default.
     const required = args.flags['--optional'] === undefined
 
+    // --timeout <minutes>: per-gate wall-clock timeout. Defaults to 20 when omitted.
+    let timeoutMin: number | undefined
+    const timeoutRaw = args.flags['--timeout']
+    if (timeoutRaw !== undefined) {
+      const parsed = Number(timeoutRaw)
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        deps.err('--timeout must be a positive number (minutes)')
+        return { code: 2 }
+      }
+      timeoutMin = parsed
+    }
+
     try {
       const id = await addVerifyGate({
         scope,
@@ -156,6 +172,7 @@ const verifyGateAdd: Command = {
         required,
         tier,
         source: 'operator',
+        ...(timeoutMin !== undefined ? { timeoutMin } : {}),
       })
       deps.out(id)
       return { code: 0 }
@@ -275,12 +292,62 @@ const verifyGateDetect: Command = {
   },
 }
 
+const verifyGateSet: Command = {
+  path: 'verify-gate set',
+  summary: 'update an existing verify gate (e.g. set --timeout)',
+  usage:
+    'usage: mars verify-gate set <id>  [--timeout <min>]\n' +
+    '       mars verify-gate set --scope <s> --name <n>  [--timeout <min>]',
+  run: async (args, deps) => {
+    const id = args.positional[0]
+    const scope = args.flags['--scope']
+    const name = args.flags['--name']
+
+    // Resolve which gate to target.
+    let target: string | { scope: string; name: string }
+    if (id) {
+      target = id
+    } else if (scope && name) {
+      target = { scope, name }
+    } else {
+      deps.err(
+        'usage: mars verify-gate set <id> [--timeout <min>]\n' +
+          '       mars verify-gate set --scope <s> --name <n> [--timeout <min>]',
+      )
+      return { code: 2 }
+    }
+
+    // Parse --timeout.
+    const timeoutRaw = args.flags['--timeout']
+    if (timeoutRaw === undefined) {
+      deps.err('at least one flag must be specified; supported: --timeout <min>')
+      return { code: 2 }
+    }
+    const parsed = Number(timeoutRaw)
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      deps.err('--timeout must be a positive number (minutes)')
+      return { code: 2 }
+    }
+
+    const updated = await updateVerifyGate(target, { timeoutMin: parsed })
+    if (!updated) {
+      deps.err(
+        typeof target === 'string'
+          ? `no verify gate with id ${target}`
+          : `no verify gate (${target.scope},${target.name})`,
+      )
+      return { code: 1 }
+    }
+    return { code: 0 }
+  },
+}
+
 const verifyGateGroup: Command = {
   path: 'verify-gate',
   summary: 'manage verify gate registrations',
-  usage: 'usage: mars verify-gate <list|add|remove|check|detect>',
+  usage: 'usage: mars verify-gate <list|add|remove|set|check|detect>',
   run: (_args, deps) => {
-    deps.err('usage: mars verify-gate <list|add|remove|check|detect>')
+    deps.err('usage: mars verify-gate <list|add|remove|set|check|detect>')
     return { code: 2 }
   },
 }
@@ -289,6 +356,7 @@ export const verifyGateCommands: readonly Command[] = [
   verifyGateList,
   verifyGateAdd,
   verifyGateRemove,
+  verifyGateSet,
   verifyGateCheck,
   verifyGateDetect,
   verifyGateGroup,

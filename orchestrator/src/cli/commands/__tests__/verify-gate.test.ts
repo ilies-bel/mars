@@ -506,3 +506,160 @@ describe('mars verify-gate add — whitespace-in-arg guard', () => {
     expect(r.out[0]).toMatch(/^[0-9a-f-]{36}$/)
   })
 })
+
+// ---------------------------------------------------------------------------
+// 15. verify-gate add --timeout → stored and shown in list
+// ---------------------------------------------------------------------------
+
+describe('mars verify-gate add — --timeout flag', () => {
+  it('stores a custom timeout and list shows it', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    await run(
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx', '--timeout', '45'],
+      { store, ctx, daemon },
+    )
+
+    const listR = await run(['verify-gate', 'list'], { store, ctx, daemon })
+    expect(listR.code).toBe(0)
+    expect(listR.out.join('\n')).toContain('45')
+  })
+
+  it('exits 2 when --timeout is not a positive number', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx', '--timeout', 'bad'],
+      { store, ctx, daemon },
+    )
+
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain('--timeout')
+  })
+
+  it('new gates default to 20 min timeout when --timeout is omitted', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    await run(
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx'],
+      { store, ctx, daemon },
+    )
+
+    const listR = await run(['verify-gate', 'list'], { store, ctx, daemon })
+    expect(listR.code).toBe(0)
+    // Default timeout 20 should appear
+    expect(listR.out.join('\n')).toContain('20')
+    // And NOT the unbounded marker
+    expect(listR.out.join('\n')).not.toContain('—(default)')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 16. verify-gate list → shows timeout_min column header
+// ---------------------------------------------------------------------------
+
+describe('mars verify-gate list — timeout_min column', () => {
+  it('shows timeout_min in the header', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    await run(
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx'],
+      { store, ctx, daemon },
+    )
+
+    const r = await run(['verify-gate', 'list'], { store, ctx, daemon })
+    expect(r.code).toBe(0)
+    expect(r.out.join('\n')).toContain('timeout_min')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 17. verify-gate set — update timeout via CLI
+// ---------------------------------------------------------------------------
+
+describe('mars verify-gate set — update timeout by id', () => {
+  it('updates timeout on an existing gate by id', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const addR = await run(
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx'],
+      { store, ctx, daemon },
+    )
+    expect(addR.code).toBe(0)
+    const id = addR.out[0]!
+
+    const setR = await run(
+      ['verify-gate', 'set', id, '--timeout', '30'],
+      { store, ctx, daemon },
+    )
+    expect(setR.code).toBe(0)
+
+    const listR = await run(['verify-gate', 'list'], { store, ctx, daemon })
+    expect(listR.out.join('\n')).toContain('30')
+  })
+
+  it('updates timeout on an existing gate by scope/name', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    await run(
+      ['verify-gate', 'add', '--scope', 'orchestrator', '--name', 'typecheck', '--cmd', 'npx'],
+      { store, ctx, daemon },
+    )
+
+    const setR = await run(
+      ['verify-gate', 'set', '--scope', 'orchestrator', '--name', 'typecheck', '--timeout', '10'],
+      { store, ctx, daemon },
+    )
+    expect(setR.code).toBe(0)
+
+    const listR = await run(['verify-gate', 'list'], { store, ctx, daemon })
+    expect(listR.out.join('\n')).toContain('10')
+  })
+
+  it('exits 1 when the gate id does not exist', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['verify-gate', 'set', 'non-existent-uuid', '--timeout', '15'],
+      { store, ctx, daemon },
+    )
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n').length).toBeGreaterThan(0)
+  })
+
+  it('exits 2 when no target is specified', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(
+      ['verify-gate', 'set', '--timeout', '15'],
+      { store, ctx, daemon },
+    )
+    expect(r.code).toBe(2)
+  })
+
+  it('exits 2 when --timeout is omitted', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const addR = await run(
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx'],
+      { store, ctx, daemon },
+    )
+    const id = addR.out[0]!
+
+    const r = await run(
+      ['verify-gate', 'set', id],
+      { store, ctx, daemon },
+    )
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain('--timeout')
+  })
+})

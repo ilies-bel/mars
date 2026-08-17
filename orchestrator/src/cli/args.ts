@@ -126,6 +126,8 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--surface-form',
   // mars action-queue resolve --reason <text>: human-readable note for the resolution.
   '--reason',
+  // mars verify-gate add/set --timeout <minutes>: per-gate wall-clock timeout.
+  '--timeout',
 ])
 
 /**
