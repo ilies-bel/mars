@@ -1,12 +1,5 @@
 import { useEffect } from 'react'
-
-/** Returns true when the event target is a text-entry field. */
-const isEditableTarget = (target: EventTarget | null): boolean => {
-  if (!(target instanceof HTMLElement)) return false
-  const tag = target.tagName
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
-  return target.isContentEditable
-}
+import { isEditableTarget } from './isEditableTarget'
 
 /** Returns true when the current hash indicates a drawer or modal is layered on the page. */
 const isOverlayHash = (hash: string): boolean => {

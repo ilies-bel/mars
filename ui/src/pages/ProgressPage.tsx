@@ -312,6 +312,12 @@ export const ProgressPage = () => {
             placeholder="Search id, prompt, branch…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              // Stop native propagation so window-level and document-level key
+              // handlers (e.g. the TopologyView Escape collapse handler and the
+              // global digit shortcuts) never see events from the search box.
+              e.nativeEvent.stopPropagation()
+            }}
             className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-label text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border"
           />
         </div>

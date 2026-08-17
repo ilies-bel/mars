@@ -407,6 +407,229 @@ describe('TopologyView – arc click model', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Search isolation: arc expansion while search is active
+//
+// When a search query is active, clicking an arc card must NOT call
+// onSelectProposal — the proposal filter must stay unset so the matched task
+// remains visible alongside all other tasks. Without this guard the topology
+// switches to single-proposal mode and the URL gains an unwanted ?proposal=.
+// ---------------------------------------------------------------------------
+
+describe('TopologyView – search isolation: arc click while search active', () => {
+  it('does not call onSelectProposal when clicking a proposal arc card while search is active', async () => {
+    const onSelectProposal = vi.fn<[string | null], void>()
+
+    const proposal: ProgressProposalNode = {
+      id: 'p-search-test',
+      title: 'Search Isolation Proposal',
+      source: 'human',
+      status: 'draft',
+    }
+    const task1: ProgressTask = { ...stubTask('t-match'), parentProposalId: 'p-search-test' }
+    const task2: ProgressTask = { ...stubTask('t-other'), parentProposalId: 'p-search-test' }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <TopologyView
+            tasks={[task1, task2]}
+            proposals={[proposal]}
+            onSelectProposal={onSelectProposal}
+            // Active search: matches t-match and its parent proposal
+            searchMatchIds={new Set(['t-match', 'p-search-test'])}
+            searchQuery="t-match"
+          />,
+        )
+      })
+
+      const arcCard = container.querySelector('[aria-label*="click to open"]')
+      expect(arcCard).not.toBeNull()
+
+      await act(async () => {
+        arcCard!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      })
+
+      // The proposal filter must NOT be set while search is active — arc
+      // expansion is local only and the URL must stay free of ?proposal=.
+      expect(onSelectProposal).not.toHaveBeenCalled()
+    } finally {
+      await act(async () => { root.unmount() })
+      document.body.removeChild(container)
+    }
+  })
+
+  it('still calls onSelectProposal when clicking a proposal arc card with no active search', async () => {
+    // Regression guard: the baseline behaviour (no search) must be preserved.
+    const onSelectProposal = vi.fn<[string | null], void>()
+
+    const proposal: ProgressProposalNode = {
+      id: 'p-no-search',
+      title: 'No Search Proposal',
+      source: 'human',
+      status: 'draft',
+    }
+    const task1: ProgressTask = { ...stubTask('t-ns-1'), parentProposalId: 'p-no-search' }
+    const task2: ProgressTask = { ...stubTask('t-ns-2'), parentProposalId: 'p-no-search' }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <TopologyView
+            tasks={[task1, task2]}
+            proposals={[proposal]}
+            onSelectProposal={onSelectProposal}
+            // No active search
+            searchMatchIds={null}
+            searchQuery=""
+          />,
+        )
+      })
+
+      const arcCard = container.querySelector('[aria-label*="click to open"]')
+      expect(arcCard).not.toBeNull()
+
+      await act(async () => {
+        arcCard!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      })
+
+      expect(onSelectProposal).toHaveBeenCalledWith('p-no-search')
+    } finally {
+      await act(async () => { root.unmount() })
+      document.body.removeChild(container)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Search isolation: Escape key while an input is focused
+//
+// The TopologyView's window-level Escape handler must NOT collapse the arc
+// when an input element (e.g. the Progress search box) has keyboard focus.
+// ---------------------------------------------------------------------------
+
+describe('TopologyView – Escape key isolation from editable targets', () => {
+  it('does not call onSelectProposal when Escape is dispatched from an input', async () => {
+    const onSelectProposal = vi.fn<[string | null], void>()
+
+    const proposal: ProgressProposalNode = {
+      id: 'p-esc-test',
+      title: 'Escape Test Proposal',
+      source: 'human',
+      status: 'draft',
+    }
+    const task1: ProgressTask = { ...stubTask('t-esc-1'), parentProposalId: 'p-esc-test' }
+    const task2: ProgressTask = { ...stubTask('t-esc-2'), parentProposalId: 'p-esc-test' }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    // A search input outside the topology canvas (sibling in the real layout)
+    const searchInput = document.createElement('input')
+    searchInput.type = 'text'
+    document.body.appendChild(searchInput)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <TopologyView
+            tasks={[task1, task2]}
+            proposals={[proposal]}
+            onSelectProposal={onSelectProposal}
+          />,
+        )
+      })
+
+      // Open the arc first so collapse() has something to do
+      const arcCard = container.querySelector('[aria-label*="click to open"]')
+      expect(arcCard).not.toBeNull()
+
+      await act(async () => {
+        arcCard!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      })
+
+      // Arc opened → onSelectProposal called once with the proposal id
+      expect(onSelectProposal).toHaveBeenCalledWith('p-esc-test')
+      onSelectProposal.mockClear()
+
+      // Simulate Escape dispatched from a search input (target = INPUT element)
+      await act(async () => {
+        searchInput.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+        )
+      })
+
+      // Escape from an input must NOT trigger collapse → onSelectProposal must
+      // NOT be called a second time (with null).
+      expect(onSelectProposal).not.toHaveBeenCalled()
+    } finally {
+      await act(async () => { root.unmount() })
+      document.body.removeChild(container)
+      document.body.removeChild(searchInput)
+    }
+  })
+
+  it('does call onSelectProposal(null) when Escape is dispatched from the document body (non-input)', async () => {
+    // Regression guard: pressing Escape NOT in an input still collapses.
+    const onSelectProposal = vi.fn<[string | null], void>()
+
+    const proposal: ProgressProposalNode = {
+      id: 'p-esc-body',
+      title: 'Escape Body Test',
+      source: 'human',
+      status: 'draft',
+    }
+    const task1: ProgressTask = { ...stubTask('t-eb-1'), parentProposalId: 'p-esc-body' }
+    const task2: ProgressTask = { ...stubTask('t-eb-2'), parentProposalId: 'p-esc-body' }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <TopologyView
+            tasks={[task1, task2]}
+            proposals={[proposal]}
+            onSelectProposal={onSelectProposal}
+          />,
+        )
+      })
+
+      // Open the arc
+      const arcCard = container.querySelector('[aria-label*="click to open"]')
+      expect(arcCard).not.toBeNull()
+
+      await act(async () => {
+        arcCard!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      })
+
+      onSelectProposal.mockClear()
+
+      // Escape from the body (target = BODY, not an input) must still collapse
+      await act(async () => {
+        document.body.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+        )
+      })
+
+      expect(onSelectProposal).toHaveBeenCalledWith(null)
+    } finally {
+      await act(async () => { root.unmount() })
+      document.body.removeChild(container)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Task node click → correct URL hash (from=progress)
 //
 // Clicking a bare task node must navigate to #/task/<id>?from=progress, not a

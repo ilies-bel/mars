@@ -56,6 +56,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { chainForProposal, chainForTask, type ChainResult } from '@/shared/chainTrace'
+import { isEditableTarget } from '@/shared/isEditableTarget'
 import {
   encodeProgressStateAsTaskParams,
   readProgressStateFromUrl,
@@ -277,6 +278,10 @@ const TopologyViewInner = ({
   // Tracks the externally-driven selectedProposalId so we only react to
   // changes and don't echo our own onSelectProposal callbacks into a drill-in.
   const lastSelectedRef = useRef<string | null | undefined>(undefined)
+  // Tracks the current search query so toggleArc/collapse can suppress proposal
+  // filter propagation while the user is searching.
+  const searchQueryRef = useRef(searchQuery)
+  searchQueryRef.current = searchQuery
 
   // Set of proposal ids — used to gate onSelectProposal calls in toggleArc so
   // that clicking an origin arc card (whose key is a task id, not a proposal id)
@@ -419,12 +424,17 @@ const TopologyViewInner = ({
     (arcKey: string) => {
       const next = openArcKeyRef.current === arcKey ? null : arcKey
       setOpenArcKey(next)
-      // Only propagate to the proposal filter when the arc key really is a
+      // When a search query is active, arc expansion/collapse only changes the
+      // local drill-in state — it does NOT propagate to the proposal filter.
+      // This prevents the topology from entering single-proposal mode (which
+      // hides all non-proposal tasks) while the user is searching for a specific
+      // task, keeping the matched task visible and the URL free of ?proposal=.
+      //
+      // Without a search query: propagate only when the arc key is a real
       // proposal id. Origin arcs are keyed by a task id — propagating that id
       // would set selectedProposalId to a task id, which matches no
-      // parentProposalId and empties the board. Collapsing (next === null)
-      // always propagates so the proposal dropdown resets correctly.
-      if (next === null || proposalIdsRef.current.has(next)) {
+      // parentProposalId and empties the board.
+      if (!searchQueryRef.current?.trim() && (next === null || proposalIdsRef.current.has(arcKey))) {
         onSelectProposalRef.current?.(next)
       }
       clearHover()
@@ -434,7 +444,12 @@ const TopologyViewInner = ({
   const collapse = useCallback(() => {
     if (openArcKeyRef.current !== null) {
       setOpenArcKey(null)
-      onSelectProposalRef.current?.(null)
+      // Skip proposal filter propagation while a search is active (same
+      // reasoning as toggleArc: leave the proposal filter untouched so
+      // the search results are not disturbed by the collapse gesture).
+      if (!searchQueryRef.current?.trim()) {
+        onSelectProposalRef.current?.(null)
+      }
     }
     clearHover()
   }, [clearHover])
@@ -482,7 +497,9 @@ const TopologyViewInner = ({
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') collapse()
+      // Guard against editable targets so pressing Escape inside the search
+      // input (or any other text field) does not collapse the open arc.
+      if (e.key === 'Escape' && !isEditableTarget(e.target)) collapse()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
