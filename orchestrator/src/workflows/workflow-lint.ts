@@ -22,22 +22,33 @@
  * passes the lint still lands as a non-dispatchable agent draft.
  */
 
+import { listPrimitives } from './primitives/registry'
+
 export interface WorkflowLintResult {
   ok: boolean
   errors: string[]
 }
 
 /** The single import surface an authored workflow may use. */
-const ALLOWED_WORKFLOW_IMPORT = 'mars/workflow'
+export const ALLOWED_WORKFLOW_IMPORT = 'mars/workflow'
 
-/** Named bindings an authored workflow may import from `mars/workflow`. */
-const ALLOWED_IMPORT_BINDINGS: ReadonlySet<string> = new Set([
+/**
+ * Named bindings an authored workflow may import from `mars/workflow`:
+ * `defineWorkflow` plus every registered primitive that declares an
+ * authoring-surface export (`exportName` — see `./primitives/registry.ts`).
+ * Registry-driven instead of a hard-coded list so this allowlist and
+ * `validate-workflow.ts`'s dry-run introspection read the same set of
+ * primitives and cannot independently drift, per the target architecture
+ * doc §4.4. `behaviourVerify`/`finalizeReport`/`finalizeMockup` are
+ * registered primitives but carry no `exportName` — they are reachable only
+ * from the bundled pipelines, never from a self-authored workflow — so they
+ * do not appear here, exactly as before this became registry-driven.
+ */
+export const ALLOWED_IMPORT_BINDINGS: ReadonlySet<string> = new Set([
   'defineWorkflow',
-  'setupWorktree',
-  'runAgent',
-  'review',
-  'merge',
-  'awaitHuman',
+  ...listPrimitives()
+    .map((p) => p.exportName)
+    .filter((name): name is string => name !== undefined),
 ])
 
 /** Identifiers that are always rejected, wherever they appear. */

@@ -38,6 +38,7 @@ import {
   RESCUE_OPERATOR_SYSTEM_PROMPT,
   RESCUE_OPERATOR_DENIED_TOOLS,
 } from './rescue-operator'
+import { registerWorker, workerRegistryView } from './worker-registry'
 
 // The bash pattern that invokes the ask-user path. Coder and Fixer workers
 // may call `mars task ask <taskId> "<question>"` to surface a question to the
@@ -94,15 +95,28 @@ export const FIXER_BACKLOG_DENIED_TOOLS: readonly string[] = [
   'Bash(mars draft*)',
 ] as const
 
-export type WorkerName =
-  | 'Coder'
-  | 'Planner'
-  | 'Slicer'
-  | 'Triager'
-  | 'Fixer'
-  | 'BehaviourVerifier'
-  | 'Scorer'
-  | 'RescueOperator'
+/**
+ * Worker identifier. Was a closed union of the eight built-in roles; opened
+ * to `string` so an operator-declared Worker (`.mars/worker-registry.json`,
+ * see `persisted-registry.ts`) or a future registered Worker is a first-class
+ * `WorkerName` rather than a second-class string that has to be widened at
+ * every call site. The eight names below remain the opinionated, shipped
+ * defaults (see `WORKER_CONFIGS`) — this alias exists so every existing
+ * `WorkerName`-typed call site keeps compiling unchanged.
+ */
+export type WorkerName = string
+
+/** The eight built-in Worker names, for call sites that specifically want the shipped set. */
+export const BUILT_IN_WORKER_NAMES = [
+  'Coder',
+  'Planner',
+  'Slicer',
+  'Triager',
+  'Fixer',
+  'BehaviourVerifier',
+  'Scorer',
+  'RescueOperator',
+] as const
 
 // Execution runtime for a Worker. 'headless' runs via the selected provider's
 // non-interactive subprocess (current default for all built-in Workers).
@@ -376,7 +390,10 @@ const GENEROUS_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(180_000)
 const FOCUSED_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(100_000)
 const TRIAGER_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(80_000)
 
-export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
+// The eight built-in Worker configs. Not exported directly — see
+// `WORKER_CONFIGS` below, the registry-backed compatibility view built from
+// the Workers these configs are used to construct and register.
+const BUILT_IN_WORKER_CONFIGS: Readonly<Record<string, WorkerConfig>> = {
   Coder: {
     name: 'Coder',
     model: CODER_MODEL,
@@ -636,16 +653,26 @@ const buildWorker = (config: WorkerConfig): Worker => {
   }
 }
 
-export const Workers: Readonly<Record<WorkerName, Worker>> = {
-  Coder: buildWorker(WORKER_CONFIGS.Coder),
-  Planner: buildWorker(WORKER_CONFIGS.Planner),
-  Slicer: buildWorker(WORKER_CONFIGS.Slicer),
-  Triager: buildWorker(WORKER_CONFIGS.Triager),
-  Fixer: buildWorker(WORKER_CONFIGS.Fixer),
-  BehaviourVerifier: buildWorker(WORKER_CONFIGS.BehaviourVerifier),
-  Scorer: buildWorker(WORKER_CONFIGS.Scorer),
-  RescueOperator: buildWorker(WORKER_CONFIGS.RescueOperator),
-} as const
+// Build and self-register the eight built-in Workers into the open worker
+// registry (register/get/require/list — see worker-registry.ts). Any later
+// `registerWorker(...)` call (persisted-registry.ts's operator-declared
+// Workers do NOT call this — see its module doc — but the seam is real, and
+// is what makes an eventual plugin-registered Worker a first-class citizen)
+// extends `listWorkers()` and, through it, the compatibility views below.
+for (const config of Object.values(BUILT_IN_WORKER_CONFIGS)) {
+  registerWorker(buildWorker(config))
+}
+
+/**
+ * Compatibility view: `WORKER_CONFIGS[name]` → the Worker's pinned config.
+ * Live and registry-backed — see `workerRegistryView` in `worker-registry.ts`.
+ */
+export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = workerRegistryView(
+  (w) => w.config,
+)
+
+/** Compatibility view: `Workers[name]` → the constructed Worker. Live and registry-backed. */
+export const Workers: Readonly<Record<WorkerName, Worker>> = workerRegistryView((w) => w)
 
 export const getWorker = (name: WorkerName): Worker => Workers[name]
 

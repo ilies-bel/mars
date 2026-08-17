@@ -445,18 +445,22 @@ export { input as readWorkflowInput }
 // Validation recorder seam (`mars workflow validate`)
 // ---------------------------------------------------------------------------
 
-/** One primitive declaration captured during a validation dry-run. */
+/**
+ * One primitive declaration captured during a validation dry-run.
+ *
+ * `primitive` was a closed union of the seven names a `.record()` call site
+ * below could pass. Opened to `string` — the actual set of legal ids/aliases
+ * now lives in the open primitive registry (`./registry.ts`), which
+ * `validate-workflow.ts` cross-checks each recorded entry against, and which
+ * `workflow-lint.ts` derives its authoring-surface allowlist from. This is
+ * what keeps those two checks from independently drifting the way the old
+ * union and `core/lib/primitive-catalog.ts`'s `PRIMITIVE_NAMES` already had.
+ */
 export interface ValidateRecorderEntry {
   /** The ctx.step name the primitive ran under (null outside a step). */
   step: string | null
-  primitive:
-    | 'setupWorktree'
-    | 'runAgent'
-    | 'review'
-    | 'merge'
-    | 'awaitHuman'
-    | 'finalizeReport'
-    | 'finalizeMockup'
+  /** A registered primitive id or alias (see `./registry.ts`). */
+  primitive: string
   /** Execution mode the workflow declares for this step. */
   mode: 'auto' | 'manual' | 'full-review'
   /** Step guide for manual or full-review steps; null otherwise. */

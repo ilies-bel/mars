@@ -21,6 +21,7 @@
 import { InMemoryStore, runWorkflow } from '@mars/workflow'
 import type { DomainTaskStore } from '../core/store/task-store'
 import type { ValidateRecorderEntry } from './primitives'
+import { isPrimitiveId } from './primitives/registry'
 import {
   loadWorkflowByName,
   userWorkflowPath,
@@ -149,6 +150,19 @@ export const dryRunWorkflow = async (
     errors.push(
       'workflow fn ran but declared no steps — wrap work in ctx.step(name, fn)',
     )
+  }
+
+  // Registry-driven introspection: every recorded primitive id must resolve
+  // in the open primitive registry (`./primitives/registry.ts`). A recorder
+  // entry with an unregistered id would mean a primitive shell recorded
+  // under a name the registry doesn't know — a drift bug, not a workflow
+  // authoring error, but one this dry-run is exactly positioned to catch.
+  for (const e of entries) {
+    if (!isPrimitiveId(e.primitive)) {
+      errors.push(
+        `step ${e.step ?? '(no step)'}: recorded unknown primitive '${e.primitive}' — not in the primitive registry`,
+      )
+    }
   }
 
   return { steps, errors }

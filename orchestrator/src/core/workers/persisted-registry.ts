@@ -1,7 +1,15 @@
 // Persisted Worker declaration registry — operator-defined workers stored in
 // .mars/worker-registry.json. At daemon start the file is loaded if present;
-// if absent, the existing hard-coded WORKER_CONFIGS continue to serve as
-// defaults (the registry shadows but does not replace them when missing).
+// if absent, the eight built-in Workers registered in `./index` (via
+// `./worker-registry`) continue to serve as defaults (the registry shadows
+// but does not replace them when missing).
+//
+// The "default set" this module merges operator declarations against is read
+// through `listWorkers()` (the open worker registry), not a closed
+// `WORKER_CONFIGS` record — this is the fold referenced in the target
+// architecture doc: the merged-view computation here and the registry
+// `./index` seeds are the same open set, not two independently-maintained
+// lists of built-in names.
 //
 // Dispatch behaviour is unchanged by this module: the Workers object in
 // index.ts is still used for dispatch. This module owns the file I/O and
@@ -11,13 +19,14 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { ClaudeEffort, ClaudePermissionMode } from '../lib/git/claude'
 import {
-  WORKER_CONFIGS,
   WORKER_PROVIDER,
   createWorker,
   type ClaudeOutputFormat,
   type Worker,
+  type WorkerConfig,
   type WorkerRuntime,
 } from './index'
+import { listWorkers } from './worker-registry'
 import {
   PROVIDER_MODELS,
   tierForModel,
@@ -25,6 +34,10 @@ import {
   type ProviderName,
 } from './provider-types'
 import { PROVIDERS } from './providers'
+
+/** The built-in Worker configs, read live off the open worker registry (see module doc above). */
+const defaultWorkerConfigs = (): readonly WorkerConfig[] => listWorkers().map((w) => w.config)
+const defaultWorkerNames = (): readonly string[] => listWorkers().map((w) => w.config.name)
 
 // A Worker declaration as stored in the registry file. Same shape as
 // WorkerConfig but name is a plain string — not constrained to the built-in
@@ -154,7 +167,7 @@ export const loadWorkerRegistry = (stateDir: string): WorkerDeclaration[] => {
   const raw = readFileSync(filePath, 'utf8')
   const parsed = JSON.parse(raw) as Record<string, Record<string, unknown>>
   const knownProviders = Object.keys(PROVIDERS)
-  const builtInNames = new Set(Object.keys(WORKER_CONFIGS))
+  const builtInNames = new Set(defaultWorkerNames())
   const decls: WorkerDeclaration[] = []
   for (const entry of Object.values(parsed)) {
     const provider = entry['provider']
@@ -194,9 +207,7 @@ export const loadWorkerRegistry = (stateDir: string): WorkerDeclaration[] => {
 // in daemon.json changes ALL un-pinned workers' resolved models without a
 // registry edit. Operator-added workers that explicitly pin a provider (via
 // `mars worker add --provider ...`) keep their `provider` field.
-const configToDeclaration = (
-  config: (typeof WORKER_CONFIGS)[keyof typeof WORKER_CONFIGS],
-): WorkerDeclaration => {
+const configToDeclaration = (config: WorkerConfig): WorkerDeclaration => {
   // Use the tracked modelTier from WorkerConfig if present, otherwise
   // reverse-map the concrete model id to a tier for the worker's provider.
   const modelTier: ProviderModelTier =
@@ -298,10 +309,10 @@ export const listMergedWorkers = (
 ): Worker[] => {
   const registered = loadWorkerRegistry(stateDir)
   const byName = new Map(registered.map((d) => [d.name, d]))
-  const defaultNames = new Set(Object.keys(WORKER_CONFIGS))
+  const defaultNames = new Set(defaultWorkerNames())
 
   // Start with defaults, overriding with registry entries where names match.
-  const decls: WorkerDeclaration[] = Object.values(WORKER_CONFIGS).map(
+  const decls: WorkerDeclaration[] = defaultWorkerConfigs().map(
     (c) => byName.get(c.name) ?? configToDeclaration(c),
   )
 
@@ -323,9 +334,9 @@ export const listWorkersForDisplay = (
 ): WorkerDisplayEntry[] => {
   const registered = loadWorkerRegistry(stateDir)
   const byName = new Map(registered.map((d) => [d.name, d]))
-  const defaultNames = new Set(Object.keys(WORKER_CONFIGS))
+  const defaultNames = new Set(defaultWorkerNames())
 
-  const decls: WorkerDeclaration[] = Object.values(WORKER_CONFIGS).map(
+  const decls: WorkerDeclaration[] = defaultWorkerConfigs().map(
     (c) => byName.get(c.name) ?? configToDeclaration(c),
   )
   for (const decl of registered) {
@@ -375,7 +386,7 @@ export const removeWorkerFromRegistry = (
   name: string,
 ): void => {
   const filePath = resolve(stateDir, REGISTRY_FILENAME)
-  const builtInNames = new Set(Object.keys(WORKER_CONFIGS))
+  const builtInNames = new Set(defaultWorkerNames())
 
   // Refuse to remove built-in workers.
   if (builtInNames.has(name)) {
@@ -438,7 +449,7 @@ export const addWorkerToRegistry = (
   } else {
     // Seed from hard-coded defaults on first write.
     existing = {}
-    for (const config of Object.values(WORKER_CONFIGS)) {
+    for (const config of defaultWorkerConfigs()) {
       existing[config.name] = configToDeclaration(config)
     }
   }

@@ -10,7 +10,14 @@ import type {
 import type { AgentEvent } from '../lib/claude-stream'
 import type { ProviderUsageSemantics } from '../lib/claude-usage'
 
-export type ProviderName = 'claude' | 'gemini' | 'codex'
+/**
+ * Provider identifier. Was a closed union (`'claude' | 'gemini' | 'codex'`);
+ * opened to `string` so a provider can be registered at runtime without a
+ * type-level edit here (see `provider-registry.ts`). The three built-ins are
+ * still `'claude'`, `'gemini'`, and `'codex'` — this alias exists purely so
+ * every existing `ProviderName`-typed call site keeps compiling unchanged.
+ */
+export type ProviderName = string
 
 export type ProviderModelTier = 'flagship' | 'balanced' | 'fast'
 
@@ -20,43 +27,15 @@ export interface ProviderModels {
   readonly fast: string
 }
 
-/** Provider-native model ids behind MARS's semantic worker tiers. */
-export const PROVIDER_MODELS: Readonly<Record<ProviderName, ProviderModels>> = {
-  claude: {
-    flagship: 'claude-opus-5',
-    balanced: 'claude-sonnet-5',
-    fast: 'claude-haiku-4-5-20251001',
-  },
-  gemini: {
-    flagship: 'gemini-2.5-pro',
-    balanced: 'gemini-2.5-pro',
-    fast: 'gemini-2.5-flash',
-  },
-  codex: {
-    flagship: 'gpt-5.6-sol',
-    balanced: 'gpt-5.6-terra',
-    fast: 'gpt-5.6-luna',
-  },
-} as const
-
 /**
- * Reverse-map a concrete model id to the tier it occupies for the given
- * provider. Returns undefined when the model does not appear in that
- * provider's tier table (i.e. it is not a tier-derived model for this
- * provider). When a provider maps the same model to multiple tiers (e.g.
- * Gemini's flagship and balanced are both gemini-2.5-pro), returns the
- * higher-priority tier: flagship > balanced > fast.
+ * `PROVIDER_MODELS` and `tierForModel` are now registry-backed (see
+ * `provider-registry.ts`) — re-exported here so the many existing
+ * `from './provider-types'` / `from '../workers/provider-types'` imports
+ * keep resolving without a per-file edit. New code should prefer importing
+ * them (or `getProvider`/`requireProvider`/`listProviders`) directly from
+ * `./provider-registry`.
  */
-export const tierForModel = (
-  model: string,
-  provider: ProviderName,
-): ProviderModelTier | undefined => {
-  const models = PROVIDER_MODELS[provider]
-  for (const tier of ['flagship', 'balanced', 'fast'] as ProviderModelTier[]) {
-    if (models[tier] === model) return tier
-  }
-  return undefined
-}
+export { PROVIDER_MODELS, tierForModel } from './provider-registry'
 
 /**
  * Provider-declared limits that govern whether consecutive conversation
@@ -161,7 +140,7 @@ export interface ProcessHandle {
 //                  that path. Implemented in claude-done-signal.ts.
 //   prompt-scan  — the pty buffer is scanned for a spinnerOverride sequence
 //                  followed by the shell promptPrefix returning.
-interface StatusFileDoneSignal {
+export interface StatusFileDoneSignal {
   readonly kind: 'status-file'
   /**
    * Watches <cwd>/.mars/pty-status/<sessionId>.json and resolves when the
@@ -171,7 +150,7 @@ interface StatusFileDoneSignal {
   wait(sessionId: string, cwd: string, signal: AbortSignal): Promise<void>
 }
 
-interface PromptScanDoneSignal {
+export interface PromptScanDoneSignal {
   readonly kind: 'prompt-scan'
   /** Fixed string the agent shell prints when it returns to the prompt. */
   readonly promptPrefix: string
@@ -180,7 +159,7 @@ interface PromptScanDoneSignal {
   readonly spinnerOverride: RegExp
 }
 
-type ProviderDoneSignal = StatusFileDoneSignal | PromptScanDoneSignal
+export type ProviderDoneSignal = StatusFileDoneSignal | PromptScanDoneSignal
 
 // Descriptor for a single agent CLI. Bundles:
 //   - spawnArgv  : build the argv array used to launch the process;

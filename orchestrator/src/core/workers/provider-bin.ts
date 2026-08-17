@@ -28,19 +28,47 @@
 import { isAbsolute, join } from 'node:path'
 import { FALLBACK_CLAUDE_PATH_DIRS, isExecutableFile } from '../lib/git/internal'
 import type { ProviderName } from './provider-types'
+import { getProvider } from './provider-registry'
 
-/** Env var that pins each provider's binary path. */
+/**
+ * Default `MARS_<NAME>_BIN` / `<name>` convention for a provider that hasn't
+ * registered a `binEnvVar` / `binName` override on its descriptor.
+ *
+ * Deliberately NOT a registry lookup with no fallback: `resolveProviderBin`
+ * below (and the two headless adapters that call it) must resolve correctly
+ * even in a module graph that never imported `./providers` — e.g. a unit test
+ * that imports `./providers/codex-headless` directly — so self-registration
+ * having run cannot be a precondition for a correct answer. See `envVarFor` /
+ * `binNameFor`, which consult a registered override when one exists and fall
+ * back to this formula otherwise, for either a built-in or a future custom
+ * provider.
+ */
+const defaultBinEnvVar = (name: ProviderName): string => `MARS_${name.toUpperCase()}_BIN`
+const defaultBinName = (name: ProviderName): string => name
+
+const envVarFor = (provider: ProviderName): string =>
+  getProvider(provider)?.binEnvVar ?? defaultBinEnvVar(provider)
+
+const binNameFor = (provider: ProviderName): string =>
+  getProvider(provider)?.binName ?? defaultBinName(provider)
+
+/**
+ * Compatibility view of the env var / binary name for the three shipped
+ * built-ins. `resolveProviderBin` does not read these — it calls
+ * `envVarFor`/`binNameFor` directly so it degrades gracefully for a provider
+ * that isn't (yet) registered; this record exists for callers/tests that want
+ * the historical plain-object shape.
+ */
 export const PROVIDER_BIN_ENV: Readonly<Record<ProviderName, string>> = {
-  claude: 'MARS_CLAUDE_BIN',
-  codex: 'MARS_CODEX_BIN',
-  gemini: 'MARS_GEMINI_BIN',
+  claude: defaultBinEnvVar('claude'),
+  codex: defaultBinEnvVar('codex'),
+  gemini: defaultBinEnvVar('gemini'),
 }
 
-/** Bare executable name searched on PATH when no env override is set. */
-const PROVIDER_BIN_NAME: Readonly<Record<ProviderName, string>> = {
-  claude: 'claude',
-  codex: 'codex',
-  gemini: 'gemini',
+export const PROVIDER_BIN_NAME: Readonly<Record<ProviderName, string>> = {
+  claude: defaultBinName('claude'),
+  codex: defaultBinName('codex'),
+  gemini: defaultBinName('gemini'),
 }
 
 export interface ProviderBinResolution {
@@ -60,7 +88,7 @@ export interface ProviderBinResolution {
 }
 
 const candidateNames = (provider: ProviderName): readonly string[] => {
-  const base = PROVIDER_BIN_NAME[provider]
+  const base = binNameFor(provider)
   return process.platform === 'win32' ? [`${base}.exe`, `${base}.cmd`] : [base]
 }
 
@@ -104,10 +132,10 @@ export const resolveProviderBin = (
   provider: ProviderName,
   opts: ResolveProviderBinOptions = {},
 ): ProviderBinResolution => {
-  const envVar = PROVIDER_BIN_ENV[provider]
+  const envVar = envVarFor(provider)
   const raw = process.env[envVar]?.trim()
   const override = raw && raw.length > 0 ? raw : null
-  const binaryName = PROVIDER_BIN_NAME[provider]
+  const binaryName = binNameFor(provider)
   const pathEnv = opts.pathEnv ?? process.env.PATH ?? ''
 
   if (override !== null && isAbsolute(override)) {
@@ -162,7 +190,7 @@ export const providerBinPath = (
   const cached = resolved.get(provider)
   if (cached !== undefined) return cached
   const r = resolveProviderBin(provider, opts)
-  const value = r.path ?? r.override ?? PROVIDER_BIN_NAME[provider]
+  const value = r.path ?? r.override ?? binNameFor(provider)
   resolved.set(provider, value)
   return value
 }

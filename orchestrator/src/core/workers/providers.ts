@@ -14,12 +14,10 @@ import type { ProviderUsageSemantics } from '../lib/claude-usage'
 import { codexHeadless } from './providers/codex-headless'
 import { geminiHeadless } from './providers/gemini-headless'
 import {
-  PROVIDER_MODELS,
   type ConversationMemoryFacts,
   type HeadlessAdapter,
   type HeadlessRunOpts,
   type ProcessHandle,
-  type Provider,
   type ProviderName,
   type RunHeadlessProviderOpts,
   type SpawnOpts,
@@ -28,6 +26,15 @@ import {
 // from core/workers/provider-types (a type-only import, erased at runtime), so
 // there is no runtime circular dependency through this path.
 import { loadDaemonConfig } from '../daemon/config'
+import {
+  registerProvider,
+  requireProvider,
+  listProviders,
+  type ProviderDescriptor,
+} from './provider-registry'
+// Re-exported for the many existing `from './providers'` / `from '../workers/providers'`
+// call sites — the registry is now the source of truth (see provider-registry.ts).
+export { PROVIDERS, PROVIDER_MODELS, tierForModel, getProvider, requireProvider } from './provider-registry'
 
 const conversationMemoryFor = (
   provider: ProviderName,
@@ -77,12 +84,32 @@ export const reportsContextOccupancy = (adapter: HeadlessAdapter): boolean =>
  * run report zero tokens everywhere.
  */
 export const usageSemanticsOf = (provider: ProviderName): ProviderUsageSemantics =>
-  PROVIDERS[provider].headless.capabilities.usageSemantics
+  requireProvider(provider).headless.capabilities.usageSemantics
 
-// Registry of every known Provider keyed by ProviderName.
-export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
-  claude: {
+/** Provider-native model ids behind MARS's semantic worker tiers. */
+const CLAUDE_MODELS: ProviderDescriptor['models'] = {
+  flagship: 'claude-opus-4-7',
+  balanced: 'claude-sonnet-4-6',
+  fast: 'claude-haiku-4-5-20251001',
+}
+
+const GEMINI_MODELS: ProviderDescriptor['models'] = {
+  flagship: 'gemini-2.5-pro',
+  balanced: 'gemini-2.5-pro',
+  fast: 'gemini-2.5-flash',
+}
+
+const CODEX_MODELS: ProviderDescriptor['models'] = {
+  flagship: 'gpt-5.6-sol',
+  balanced: 'gpt-5.6-terra',
+  fast: 'gpt-5.6-luna',
+}
+
+// The three built-in providers, self-registered into the open provider
+// registry below (register/get/require/list — see provider-registry.ts).
+const CLAUDE_PROVIDER: ProviderDescriptor = {
     name: 'claude',
+    models: CLAUDE_MODELS,
     conversationMemory: conversationMemoryFor('claude', CLAUDE_CONVERSATION_MEMORY),
     // Argv for interactive (non-headless) claude invocations under the native
     // TTY harness. No `-p` flag — the agent runs in interactive mode and
@@ -184,9 +211,11 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
         runClaudeCode({ prompt, ...opts }),
       readOutput: readClaudeOutput,
     },
-  },
-  gemini: {
+}
+
+const GEMINI_PROVIDER: ProviderDescriptor = {
     name: 'gemini',
+    models: GEMINI_MODELS,
     conversationMemory: conversationMemoryFor('gemini', GEMINI_CONVERSATION_MEMORY),
     // Argv for interactive gemini invocations under the native TTY harness.
     // No headless/pipe flag — the agent runs interactively and receives the
@@ -212,9 +241,11 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
     // to AgentEvent shape, and returns a RunAgentResult with null sessionId
     // and quotaRejected (signals gemini does not expose).
     headless: geminiHeadless,
-  },
-  codex: {
+}
+
+const CODEX_PROVIDER: ProviderDescriptor = {
     name: 'codex',
+    models: CODEX_MODELS,
     conversationMemory: conversationMemoryFor('codex', CODEX_CONVERSATION_MEMORY),
     // Argv for interactive codex invocations under the native TTY harness.
     // No headless/pipe flag — the agent runs interactively and receives the
@@ -243,21 +274,31 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
     // stream to AgentEvent shape, and returns a RunAgentResult with null
     // sessionId and quotaRejected (signals codex does not expose).
     headless: codexHeadless,
-  },
-} as const
+}
 
-const KNOWN_PROVIDER_NAMES: readonly ProviderName[] = ['claude', 'codex', 'gemini']
+// Self-register the three built-ins. Any later `registerProvider(...)` call
+// (there is no discovery mechanism yet — see the target architecture doc —
+// but the registration seam itself is real) extends `listProviders()` and,
+// through it, the `PROVIDERS`/`PROVIDER_MODELS` compatibility views above.
+registerProvider(CLAUDE_PROVIDER)
+registerProvider(GEMINI_PROVIDER)
+registerProvider(CODEX_PROVIDER)
 
 export const resolveProviderName = (
   raw: string | undefined = process.env.MARS_WORKER_PROVIDER,
 ): ProviderName => {
   if (raw !== undefined && raw.trim() !== '') {
-    if (!(KNOWN_PROVIDER_NAMES as readonly string[]).includes(raw)) {
+    // Validate against the live registry rather than a closed union so a
+    // runtime-registered provider is accepted (see provider-registry.ts).
+    const known = listProviders().map((p) => p.name)
+    if (!known.includes(raw)) {
       throw new Error(
-        `Unknown MARS_WORKER_PROVIDER '${raw}' — known: ${KNOWN_PROVIDER_NAMES.join(', ')}`,
+        // Sorted so the message is deterministic regardless of registration
+        // order — alphabetical happens to match the historical claude/codex/gemini order.
+        `Unknown MARS_WORKER_PROVIDER '${raw}' — known: ${[...known].sort().join(', ')}`,
       )
     }
-    return raw as ProviderName
+    return raw
   }
   // Env var absent — consult the persisted daemon.json choice so a plain CLI
   // process (e.g. `mars worker list`) reflects the operator's persisted default
@@ -279,7 +320,7 @@ export const runHeadlessProvider = async (
   opts: RunHeadlessProviderOpts,
 ): Promise<RunAgentResult> => {
   const providerName = opts.provider ?? resolveProviderName()
-  const provider = PROVIDERS[providerName]
+  const provider = requireProvider(providerName)
   const abort = new AbortController()
   const onExternalAbort = (): void => abort.abort()
   if (opts.externalAbort?.aborted) abort.abort()
@@ -294,7 +335,7 @@ export const runHeadlessProvider = async (
     const { provider: _provider, modelTier = 'balanced', timeoutMs: _timeoutMs, ...runOpts } = opts
     return await provider.headless.run(prompt, {
       ...runOpts,
-      model: opts.model ?? PROVIDER_MODELS[providerName][modelTier],
+      model: opts.model ?? provider.models[modelTier],
       externalAbort: abort.signal,
     })
   } finally {
