@@ -513,6 +513,33 @@ export const composePrompt = (
    * an index card receive an unchanged prompt).
    */
   indexCard: string | null = null,
+  /**
+   * When true, a "## Resume prior work" section is appended in the
+   * task-specific suffix — after the main prompt body — so the stable
+   * COMMIT_EXIT_CONDITION prefix is never disrupted by resume-specific
+   * content.
+   *
+   * Contract established by the "shared contract" owner slice
+   * (mars-1776d629). Consumer slice "Move resume banner and verify-failure
+   * block into prompt suffix, not basePrompt prefix" implements the
+   * injection logic.
+   *
+   * Defaults to `false` (backward-compatible).
+   */
+  resumeFromPriorAttempt: boolean = false,
+  /**
+   * Raw verify-failure output from a prior coder run. When non-null, a
+   * "The previous verification failed" block is appended in the
+   * task-specific suffix after the main prompt body.
+   *
+   * Contract established by the "shared contract" owner slice
+   * (mars-1776d629). Consumer slice "Move resume banner and verify-failure
+   * block into prompt suffix, not basePrompt prefix" implements the
+   * injection logic.
+   *
+   * Defaults to `null` (backward-compatible).
+   */
+  verifyFailureOutput: string | null = null,
 ): string => {
   // Diagnose Chore short-circuit: the prompt arrives fully composed.
   if (kind === 'diagnose') return prompt.trim()

@@ -1015,3 +1015,217 @@ describe('composePrompt — gate-step augmentation in <verify> (narrow-test regr
     expect(verifyBlock.trim()).toBe('<verify>\nnpx tsc --noEmit\n</verify>')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Resume banner — task-specific suffix (not basePrompt prefix)
+//
+// These tests establish the contract for consumer slices:
+//   - "Restructure composePrompt into stable prefix + task-specific suffix"
+//   - "Move resume banner and verify-failure block into prompt suffix, not
+//     basePrompt prefix"
+//
+// Contract: the resume banner and verify-failure block must be appended AFTER
+// the main prompt body (task-specific suffix), never prepended before it.
+// This keeps the stable COMMIT_EXIT_CONDITION section uninterrupted so that
+// callers building a cacheable prefix do not have to strip the variable
+// resume content from the beginning.
+// ---------------------------------------------------------------------------
+
+describe('composePrompt — resume banner is task-specific suffix (not prefix)', () => {
+  it('resume banner appears after the raw prompt body when resumeFromPriorAttempt is true', () => {
+    const out = composePrompt(
+      'do the task',
+      null,
+      'coder',
+      null,
+      'mars-test-resume',
+      '',
+      'task',
+      [],
+      [],
+      null,
+      true, // resumeFromPriorAttempt
+    )
+    const promptIdx = out.indexOf('do the task')
+    const resumeIdx = out.indexOf('## Resume prior work')
+    expect(resumeIdx).toBeGreaterThan(-1)
+    expect(promptIdx).toBeGreaterThan(-1)
+    // The resume banner must be a suffix — after the task prompt body, not before it.
+    expect(resumeIdx).toBeGreaterThan(promptIdx)
+  })
+
+  it('resume banner is absent when resumeFromPriorAttempt is false (the default)', () => {
+    const out = composePrompt('do the task', null)
+    expect(out).not.toContain('## Resume prior work')
+  })
+
+  it('resume banner appears before COMMIT_FOOTER', () => {
+    const out = composePrompt(
+      'do the task',
+      null,
+      'coder',
+      null,
+      'mars-test-resume',
+      '',
+      'task',
+      [],
+      [],
+      null,
+      true,
+    )
+    const resumeIdx = out.indexOf('## Resume prior work')
+    const footerIdx = out.indexOf(COMMIT_FOOTER)
+    expect(resumeIdx).toBeGreaterThan(-1)
+    expect(footerIdx).toBeGreaterThan(resumeIdx)
+  })
+
+  it('COMMIT_EXIT_CONDITION is still the first section even when resume banner is requested', () => {
+    const out = composePrompt(
+      'do the task',
+      null,
+      'coder',
+      null,
+      'mars-test-resume',
+      '',
+      'task',
+      [],
+      [],
+      null,
+      true,
+    )
+    expect(out.startsWith(COMMIT_EXIT_CONDITION)).toBe(true)
+  })
+
+  it('diagnose short-circuit omits resume banner even when resumeFromPriorAttempt is true', () => {
+    const prompt = '# Diagnose-only'
+    const out = composePrompt(
+      prompt,
+      null,
+      'coder',
+      null,
+      'mars-test',
+      '',
+      'diagnose',
+      [],
+      [],
+      null,
+      true,
+    )
+    expect(out).not.toContain('## Resume prior work')
+    expect(out).toBe(prompt)
+  })
+})
+
+describe('composePrompt — verify-failure block is task-specific suffix (not prefix)', () => {
+  it('verify-failure block appears after the raw prompt body', () => {
+    const out = composePrompt(
+      'do the task',
+      null,
+      'coder',
+      null,
+      'mars-test-vf',
+      '',
+      'task',
+      [],
+      [],
+      null,
+      false,
+      'AssertionError: expected foo to be bar',
+    )
+    const promptIdx = out.indexOf('do the task')
+    const verifyIdx = out.indexOf('The previous verification failed')
+    expect(verifyIdx).toBeGreaterThan(-1)
+    expect(promptIdx).toBeGreaterThan(-1)
+    // The verify-failure block must be a suffix — after the task prompt body, not before it.
+    expect(verifyIdx).toBeGreaterThan(promptIdx)
+  })
+
+  it('verify-failure block is absent when verifyFailureOutput is null (the default)', () => {
+    const out = composePrompt('do the task', null)
+    expect(out).not.toContain('The previous verification failed')
+  })
+
+  it('verify-failure block appears before COMMIT_FOOTER', () => {
+    const out = composePrompt(
+      'do the task',
+      null,
+      'coder',
+      null,
+      'mars-test-vf',
+      '',
+      'task',
+      [],
+      [],
+      null,
+      false,
+      'tsc error output',
+    )
+    const verifyIdx = out.indexOf('The previous verification failed')
+    const footerIdx = out.indexOf(COMMIT_FOOTER)
+    expect(verifyIdx).toBeGreaterThan(-1)
+    expect(footerIdx).toBeGreaterThan(verifyIdx)
+  })
+
+  it('resume banner and verify-failure block can appear together; both are suffixes after the prompt body', () => {
+    const out = composePrompt(
+      'do the task',
+      null,
+      'coder',
+      null,
+      'mars-test-both',
+      '',
+      'task',
+      [],
+      [],
+      null,
+      true,
+      'tsc error output',
+    )
+    expect(out).toContain('## Resume prior work')
+    expect(out).toContain('The previous verification failed')
+    const promptIdx = out.indexOf('do the task')
+    const resumeIdx = out.indexOf('## Resume prior work')
+    const verifyIdx = out.indexOf('The previous verification failed')
+    // Both must appear after the prompt body.
+    expect(resumeIdx).toBeGreaterThan(promptIdx)
+    expect(verifyIdx).toBeGreaterThan(promptIdx)
+  })
+
+  it('COMMIT_EXIT_CONDITION is still the first section even when verify-failure is provided', () => {
+    const out = composePrompt(
+      'do the task',
+      null,
+      'coder',
+      null,
+      'mars-test-vf',
+      '',
+      'task',
+      [],
+      [],
+      null,
+      false,
+      'some error',
+    )
+    expect(out.startsWith(COMMIT_EXIT_CONDITION)).toBe(true)
+  })
+
+  it('diagnose short-circuit omits verify-failure block even when verifyFailureOutput is set', () => {
+    const prompt = '# Diagnose-only'
+    const out = composePrompt(
+      prompt,
+      null,
+      'coder',
+      null,
+      'mars-test',
+      '',
+      'diagnose',
+      [],
+      [],
+      null,
+      false,
+      'some error',
+    )
+    expect(out).not.toContain('The previous verification failed')
+    expect(out).toBe(prompt)
+  })
+})
