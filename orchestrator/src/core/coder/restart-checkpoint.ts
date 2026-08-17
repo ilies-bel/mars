@@ -62,7 +62,10 @@ export interface LastVerify {
  * operator observability.
  */
 export interface RestartCheckpoint {
-  /** Commits already made on this branch since the merge-base with `main`. */
+  /**
+   * Commits already made on this branch since the merge-base with `main`,
+   * newest-first (`git log` order).
+   */
   commits: CommitEntry[]
   /**
    * Repository-relative paths changed across all commits on the branch
