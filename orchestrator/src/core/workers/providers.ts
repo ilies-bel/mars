@@ -24,6 +24,10 @@ import {
   type RunHeadlessProviderOpts,
   type SpawnOpts,
 } from './provider-types'
+// No import cycle: core/daemon/config imports only `import type { ProviderName }`
+// from core/workers/provider-types (a type-only import, erased at runtime), so
+// there is no runtime circular dependency through this path.
+import { loadDaemonConfig } from '../daemon/config'
 
 const conversationMemoryFor = (
   provider: ProviderName,
@@ -247,13 +251,21 @@ const KNOWN_PROVIDER_NAMES: readonly ProviderName[] = ['claude', 'codex', 'gemin
 export const resolveProviderName = (
   raw: string | undefined = process.env.MARS_WORKER_PROVIDER,
 ): ProviderName => {
-  if (raw === undefined || raw.trim() === '') return 'codex'
-  if (!(KNOWN_PROVIDER_NAMES as readonly string[]).includes(raw)) {
-    throw new Error(
-      `Unknown MARS_WORKER_PROVIDER '${raw}' — known: ${KNOWN_PROVIDER_NAMES.join(', ')}`,
-    )
+  if (raw !== undefined && raw.trim() !== '') {
+    if (!(KNOWN_PROVIDER_NAMES as readonly string[]).includes(raw)) {
+      throw new Error(
+        `Unknown MARS_WORKER_PROVIDER '${raw}' — known: ${KNOWN_PROVIDER_NAMES.join(', ')}`,
+      )
+    }
+    return raw as ProviderName
   }
-  return raw as ProviderName
+  // Env var absent — consult the persisted daemon.json choice so a plain CLI
+  // process (e.g. `mars worker list`) reflects the operator's persisted default
+  // instead of silently falling back to the hard-coded 'codex'.
+  // MARS_WORKER_PROVIDER still wins when set because the check above runs first;
+  // the daemon sets it before importing any worker module, so this path is only
+  // taken by direct CLI invocations outside the daemon.
+  return loadDaemonConfig().defaultProvider
 }
 
 /**

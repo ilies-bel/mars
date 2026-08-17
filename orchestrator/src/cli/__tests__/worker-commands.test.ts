@@ -3,7 +3,7 @@
 
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -86,6 +86,37 @@ describe('mars worker list', () => {
     )
     const result = runCli(['worker', 'list'], ENV())
     expect(result.stdout).toContain('ScaffoldWorker')
+  })
+
+  it('reads defaultProvider from daemon.json when MARS_WORKER_PROVIDER is unset', () => {
+    // Write a daemon.json that persists 'claude' as the default provider.
+    mkdirSync(resolve(tmpRepo, '.mars'), { recursive: true })
+    writeFileSync(
+      resolve(tmpRepo, '.mars', 'daemon.json'),
+      JSON.stringify({ defaultProvider: 'claude' }),
+      'utf8',
+    )
+    // Run without MARS_WORKER_PROVIDER so resolveProviderName() falls through to
+    // daemon.json — this is the fix for the "wrong provider" operator false trail.
+    const result = runCli(['worker', 'list'], ENV())
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('Provider: claude')
+  })
+
+  it('MARS_WORKER_PROVIDER overrides the persisted defaultProvider', () => {
+    // Persist 'claude' but override back to 'codex' via the env var.
+    mkdirSync(resolve(tmpRepo, '.mars'), { recursive: true })
+    writeFileSync(
+      resolve(tmpRepo, '.mars', 'daemon.json'),
+      JSON.stringify({ defaultProvider: 'claude' }),
+      'utf8',
+    )
+    const result = runCli(['worker', 'list'], {
+      MARS_REPO: tmpRepo,
+      MARS_WORKER_PROVIDER: 'codex',
+    })
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('Provider: codex')
   })
 })
 
