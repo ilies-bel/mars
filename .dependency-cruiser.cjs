@@ -173,6 +173,29 @@ module.exports = {
         pathNot: '^orchestrator/src/core/daemon/config\\.ts$',
       },
     },
+    // ─────────────────────────────────────────────────────────────────────────
+    // NOT HERE: the ADR-0052 sealed-service guard.
+    //
+    // The obvious rule to want next to these — "nothing outside the container
+    // seam may `ctx.provide('store', …)`, and nothing outside it may import
+    // @deepseek-ai/cordis directly" — is NOT expressible in this file, twice
+    // over:
+    //
+    //   1. dependency-cruiser reasons about IMPORTS, never about call
+    //      expressions. `ctx.provide('store', fake)` is invisible to it.
+    //   2. `options.includeOnly` below pins the graph to
+    //      `^(orchestrator|packages|scripts)/`, so npm packages are not in the
+    //      cruised graph at all. A rule with `to: { path: '@deepseek-ai/cordis' }`
+    //      would match nothing and pass silently forever — the exact failure
+    //      mode the TYPESCRIPT PARSING note at the top of this file exists to
+    //      prevent. Widening includeOnly to fix that would drag node_modules
+    //      into every other rule.
+    //
+    // The guard therefore lives in vitest, alongside the ADR-0052 any-ban it is
+    // a sibling of: orchestrator/src/core/__tests__/sealed-write-funnel-guard.test.ts.
+    // The runtime seal itself is in packages/workflow/src/ctx/sealed.ts.
+    // ─────────────────────────────────────────────────────────────────────────
+
     {
       name: 'verify-heuristics-no-provider-modules',
       severity: 'error',
