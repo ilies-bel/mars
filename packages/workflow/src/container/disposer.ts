@@ -9,8 +9,10 @@
  * order, when that scope tears down.
  */
 
-/** Reverses one registration. Calling it more than once must be safe. */
-export type Disposer = () => void;
+// `Disposer` moved to `../ctx/disposer.ts` — it is the one name from this file
+// that outlives the native container (four orchestrator registries import it).
+export type { Disposer } from '../ctx/disposer.js';
+import type { Disposer } from '../ctx/disposer.js';
 
 export interface DisposerSetOptions {
   /**

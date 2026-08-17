@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createServiceRegistry, ServiceNotFoundError } from '../../src/container/index.js';
+import { createServiceRegistry, ServiceNotFoundError } from '../../src/ctx/registry.js';
 
 interface TestServices {
   store: { name: string };
