@@ -90,6 +90,71 @@ export default defineWorkflow({
   optional `guide: string`.
 - Failures **THROW** — the engine records the step failed. Do not swallow.
 
+## Steps as cordis plugins (advanced)
+
+`ctx.container` is a real [cordis](https://www.npmjs.com/package/@deepseek-ai/cordis)
+`Context` — the same extension mechanism `mars/workflow` itself is built on
+(see the primer linked from `ARCHITECTURE.md`). You never need it for the
+five-primitive flow above, but a step (or your whole workflow body) MAY
+register itself as a cordis plugin instead of a plain function, which buys
+you three things for free: **declarative dependencies** (`inject`, gates
+loading until every required service exists), **validated config**
+(`Config`, a standard-schema — zod works out of the box) instead of hand
+rolled option-bag checks, and **fiber lifecycle** — the plugin's own
+PENDING → LOADING → ACTIVE → UNLOADING → DISPOSED transitions are republished
+as `fiber.status` events on the same stream `ctx.emit` uses.
+
+```js
+import { defineWorkflow, setupWorktree, runAgent, review, merge, Context } from 'mars/workflow'
+import { z } from 'zod'
+
+export default defineWorkflow({
+  id: 'task',
+  async fn(ctx) {
+    await ctx.step('setup', () => setupWorktree(ctx))
+    await ctx.step('code', () => runAgent(ctx))
+
+    // A step authored as a cordis plugin: `Config` validates the options bag
+    // BEFORE `apply` ever runs (a bad config throws a ValidationError that
+    // names the offending field, instead of a hand-rolled option check), and
+    // disposing the fiber (e.g. when the run ends) runs whatever `ctx.effect`
+    // registered, in reverse order — no manual cleanup. `inject` gates
+    // loading on ordinary PROVIDED services only (see the note below on
+    // `store`/`traceStore` — they're sealed accessors, not injectable).
+    await ctx.step('verify', () =>
+      ctx.container.plugin(
+        {
+          name: 'verify',
+          Config: z.object({ reviewType: z.enum(['auto', 'manual', 'full-review']).optional() }),
+          apply(pluginCtx, config) {
+            pluginCtx.effect(() => {
+              const t0 = Date.now()
+              return () => pluginCtx.logger('verify').info('took %sms', Date.now() - t0)
+            })
+            return review(ctx, config)
+          },
+        },
+        { reviewType: 'auto' },
+      ),
+    )
+
+    return ctx.step('merge', () => merge(ctx))
+  },
+})
+```
+
+`store` and `traceStore` (ADR-0052) are SEALED — installed as cordis
+**accessors**, not `provide`d services — so a plugin can read but never
+re-provide, isolate, or reassign them, and `inject: ['store']` will never
+resolve (cordis's dependency gate only watches provided services, not
+accessors — a plugin that injects a sealed name stays PENDING forever). To
+read the store from inside a plugin, use `ctx.get('store')` (the `WorkflowCtx`
+helper above, not `ctx.container.get`, which is cordis's own method and skips
+accessors by design) or a plain property read, `pluginCtx.store`, which — like
+any Proxy-trapped property on a cordis `Context` — reaches the accessor fine.
+`Context`, `Service`, `Plugin`, `Inject`, `Fiber`, `FiberState` and friends are
+all importable from `mars/workflow` for this purpose.
+
 ## Ownership & update semantics
 
 - **`mars init`** scaffolds the files when they do not yet exist (a fresh repo

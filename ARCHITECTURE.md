@@ -29,7 +29,10 @@ Start from the question you have, not the top of the tree:
    [cordis](https://www.npmjs.com/package/@deepseek-ai/cordis) (`Context`,
    `Fiber`, `ctx.plugin`, `ctx.effect`, the event bus) plus four Mars-owned
    pieces cordis does not provide. This is what makes tools swappable from a
-   `.mars/workflows/*.js` file without touching this repo.
+   `.mars/workflows/*.js` file without touching this repo — a scaffolded
+   workflow file, or any step inside one, can itself be authored as a cordis
+   plugin (`apply`/`inject`/`Config`). Ten-minute primer:
+   [`docs/architecture/cordis-primer.md`](./docs/architecture/cordis-primer.md).
 6. **"How does Mars improve itself over time?"** →
    `orchestrator/src/growth/` (step-gap heuristics that turn recurring
    friction into draft proposals) and `orchestrator/src/narration/` (pure,
@@ -50,9 +53,9 @@ imports nothing above it).
 | Workflows (pipelines) | `orchestrator/src/workflows/` | The bundled state machines: implement, plan, init, slice, triage, validate, tool-forge. `authoring.ts` is the frozen `mars/workflow` barrel that user-owned `.mars/workflows/*.js` files import. |
 | Tools | `orchestrator/src/tools/` | The domain-agnostic leaves a workflow step calls: `coder/` (setup-worktree, run-agent), `verify/` (review, selection), `merge/`, `human/` (await-human), `report/` (finalize-report), `qa/` (finalize-mockup, behaviour-verify — mid-move, see below). |
 | Registries | `orchestrator/src/registries/`, `orchestrator/src/core/workers/{provider,worker}-registry.ts` | Open, seedable sets that replaced closed unions: providers, workers, verify heuristics. `register()` returns a disposer; nothing is a hard-imported god list anymore. |
-| Container | `packages/workflow/src/ctx/` | The meta-framework, now cordis 4.0.1 itself (`Context` = services + plugin fibers + typed event bus + effect-based teardown) plus what cordis leaves to the host: `sealed.ts` (the ADR-0052 guard — `store`/`traceStore` are context ACCESSORS, so they cannot be provided, isolated, re-declared or assigned), `registry.ts` (a fiber-free keyed registry for module-level singletons), `safe-listen.ts` (fault-isolated dispatch — cordis's `emit` lets a throwing listener reach the emitter), `fiber-state.ts` (a runtime mirror of a const enum that is erased at build time), `run-container.ts` (composes one Context per run). |
+| Container | `packages/workflow/src/ctx/` | The meta-framework, now cordis 4.0.1 itself (`Context` = services + plugin fibers + typed event bus + effect-based teardown) plus what cordis leaves to the host: `sealed.ts` (the ADR-0052 guard — `store`/`traceStore` are context ACCESSORS, so they cannot be provided, isolated, re-declared or assigned), `registry.ts` (a fiber-free keyed registry for module-level singletons), `safe-listen.ts` (fault-isolated dispatch — cordis's `emit` lets a throwing listener reach the emitter), `fiber-state.ts` (a runtime mirror of a const enum that is erased at build time), `run-container.ts` (composes one Context per run). The engine republishes every plugin fiber's `internal/status` transition as a `fiber.status` `WorkflowEvent` (`workflow.ts`). `orchestrator/src/workflows/cordis-types.ts` layers Mars's OWN declaration merging on top — typed `Context`/`Events` entries for the orchestrator's non-sealed container registrations and domain events — so `import ... from 'mars/workflow'` carries full typing end to end. |
 | Domain / core | `orchestrator/src/core/` | Task queue, Arc aggregate, proposals, action queue, blocker resolution, reflect signals. Out of scope for this rework — it keeps its current internals. |
-| Growth | `orchestrator/src/growth/` | Step-gap heuristics (`heuristics.ts`, `step-suggestions.ts`) that read task history and file draft proposals — never a direct edit to a user's workflow file. |
+| Growth | `orchestrator/src/growth/` | Step-gap heuristics (`heuristics.ts`, `step-suggestions.ts`) that read task history and file draft proposals — never a direct edit to a user's workflow file. Persistence is cordis-dispatched: a suggestion is a `'mars/growth.step-suggestion'` event on a small module-private `Context`, consumed by a config-validated (zod) plugin — see `step-suggestions.ts`'s module doc comment. |
 | Narration | `orchestrator/src/narration/` | Pure, deterministic arc-outcome explanations (`landed` / `stumbled-recovered` / `needs-you`). No clocks, no randomness, no model calls. |
 | UI | `ui/` | Vite + React SPA, read-only Kanban over daemon state via SSE. |
 
