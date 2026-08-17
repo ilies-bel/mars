@@ -845,3 +845,106 @@ describe('buildArcsByCluster — proposal-rooted arcs', () => {
 // BoardView — proposal-rooted arc rendering and done-origin regression rendering
 // are now tested via buildArcsByCluster unit tests (pure function) above.
 // The dense board renders raw cluster data, not arc-grouped data.
+
+// ---------------------------------------------------------------------------
+// BoardView – proposal card click-to-open (draw open #/proposal/<id> route)
+// ---------------------------------------------------------------------------
+
+describe('BoardView – proposal card opens the proposal detail drawer', () => {
+  const proposal = (overrides: Partial<{ id: string; title: string; source: string; status: string; mockupReady?: boolean }> = {}) => ({
+    id: 'prop-test-001',
+    title: 'Test Proposal',
+    source: 'human' as const,
+    status: 'draft' as const,
+    mockupReady: false,
+    ...overrides,
+  })
+
+  it('renders proposal cards in the Proposals column', () => {
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={emptyByCluster()}
+        proposals={[proposal()]}
+        error={null}
+        selectedProposalId={null}
+      />,
+    )
+    expect(html).toContain('data-proposal-card="prop-test-001"')
+  })
+
+  it('card anchor links to #/proposal/<id> (singular, not #/proposals/<id>) for the drawer route', () => {
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={emptyByCluster()}
+        proposals={[proposal()]}
+        error={null}
+        selectedProposalId={null}
+      />,
+    )
+    // The anchor href must use the singular /proposal/ route
+    // so that App.tsx parseProposalRoute picks it up and opens ProposalDetailDrawer.
+    expect(html).toContain('href="#/proposal/prop-test-001')
+    expect(html).not.toContain('href="#/proposals/prop-test-001')
+  })
+
+  it('encodes special characters in the proposal id in the anchor href', () => {
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={emptyByCluster()}
+        proposals={[proposal({ id: 'prop/special id' })]}
+        error={null}
+        selectedProposalId={null}
+      />,
+    )
+    expect(html).toContain('href="#/proposal/prop%2Fspecial%20id')
+  })
+
+  it('card has cursor-pointer for click affordance', () => {
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={emptyByCluster()}
+        proposals={[proposal()]}
+        error={null}
+        selectedProposalId={null}
+      />,
+    )
+    expect(html).toContain('cursor-pointer')
+  })
+
+  it('card is keyboard-focusable via tabIndex=0', () => {
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={emptyByCluster()}
+        proposals={[proposal()]}
+        error={null}
+        selectedProposalId={null}
+      />,
+    )
+    expect(html).toContain('tabindex="0"')
+  })
+
+  it('card has role=button for assistive-technology operability', () => {
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={emptyByCluster()}
+        proposals={[proposal()]}
+        error={null}
+        selectedProposalId={null}
+      />,
+    )
+    expect(html).toContain('role="button"')
+  })
+
+  it('card has focus-visible ring for keyboard navigation', () => {
+    const html = renderToStaticMarkup(
+      <BoardView
+        byCluster={emptyByCluster()}
+        proposals={[proposal()]}
+        error={null}
+        selectedProposalId={null}
+      />,
+    )
+    expect(html).toContain('focus-visible:ring-2')
+    expect(html).toContain('focus-visible:ring-ring')
+  })
+})

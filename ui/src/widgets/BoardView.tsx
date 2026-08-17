@@ -1,6 +1,7 @@
 import type { Cluster, ProgressProposalNode, ProgressTask, PurgeArchiveEntry } from '@/shared/schemas'
 import type { UITask } from '@/shared/types'
 import { taskTitle } from '@/shared/promptTitle'
+import { proposalHash } from '@/shared/routing'
 import { arcPlacementCluster, resolveArcLabel, sanitizeProposalTitle, taskArcKey } from '@/widgets/topologyFlowModel'
 import { BoardCard, DenseColumn, type BoardArc } from '@/widgets/Column'
 
@@ -123,33 +124,54 @@ export const buildArcsByCluster = (
 // ProposalCard — dense proposal card (dashed border, ochre-tinted surface)
 // ---------------------------------------------------------------------------
 
-const ProposalCard = ({ proposal }: { proposal: ProgressProposalNode }) => (
-  <article
-    data-proposal-card={proposal.id}
-    className="rounded-lg border border-dashed border-warn/50 bg-warn/10 p-2.5 flex flex-col gap-1.5 cursor-pointer hover:bg-warn/15"
-    onClick={() => {
-      window.location.hash = `#/proposals/${encodeURIComponent(proposal.id)}`
-    }}
-  >
-    {/* Row 1: source badge + id */}
-    <div className="flex items-center justify-between gap-1 min-w-0">
-      <span className="font-mono text-micro font-semibold uppercase tracking-wide text-muted-foreground">
-        {proposal.source}
-      </span>
-      <span className="font-mono text-label text-muted-foreground truncate">{proposal.id}</span>
-    </div>
-    {/* Row 2: title */}
-    <p className="line-clamp-2 text-body font-medium leading-snug text-foreground">
-      {sanitizeProposalTitle(proposal.title)}
-    </p>
-    {/* Row 3: mockup-ready chip (conditional) */}
-    {proposal.mockupReady ? (
-      <span className="self-start rounded bg-status-done/15 px-1.5 py-0.5 font-mono text-micro font-semibold text-status-done">
-        mockup ready ↗
-      </span>
-    ) : null}
-  </article>
-)
+const ProposalCard = ({ proposal }: { proposal: ProgressProposalNode }) => {
+  const href = proposalHash(proposal.id, 'progress')
+  const open = () => {
+    window.location.hash = href
+  }
+  return (
+    <article
+      data-proposal-card={proposal.id}
+      role="button"
+      tabIndex={0}
+      className="rounded-lg border border-dashed border-warn/50 bg-warn/10 p-2.5 flex flex-col gap-1.5 cursor-pointer hover:bg-warn/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('a') !== null) return
+        open()
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        if ((e.target as HTMLElement).closest('a') !== null) return
+        e.preventDefault()
+        open()
+      }}
+    >
+      {/* Row 1: source badge + id (id is an anchor for right-click and testability) */}
+      <div className="flex items-center justify-between gap-1 min-w-0">
+        <span className="font-mono text-micro font-semibold uppercase tracking-wide text-muted-foreground">
+          {proposal.source}
+        </span>
+        <a
+          href={href}
+          className="font-mono text-label text-muted-foreground truncate hover:text-foreground hover:underline"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {proposal.id}
+        </a>
+      </div>
+      {/* Row 2: title */}
+      <p className="line-clamp-2 text-body font-medium leading-snug text-foreground">
+        {sanitizeProposalTitle(proposal.title)}
+      </p>
+      {/* Row 3: mockup-ready chip (conditional) */}
+      {proposal.mockupReady ? (
+        <span className="self-start rounded bg-status-done/15 px-1.5 py-0.5 font-mono text-micro font-semibold text-status-done">
+          mockup ready ↗
+        </span>
+      ) : null}
+    </article>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // BoardView props (stable contract — callers unchanged)
