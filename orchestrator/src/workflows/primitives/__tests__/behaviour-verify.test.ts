@@ -355,6 +355,8 @@ const makeDeps = (args: {
         verdict: 'unverifiable' as const,
         screenshotPath: null,
         note: 'mocked: no real browser in unit tests',
+        steps: [] as const,
+        stopAt: null,
       })),
     ),
     // Not triggered in these tests (all browser results are 'unverifiable');
@@ -674,8 +676,8 @@ describe('behaviourVerify — verdict recording (task_acceptance writes)', () =>
     })
     // Return pass for first criterion, unverifiable for second
     vi.mocked(deps.runBrowserCheck).mockResolvedValueOnce([
-      { criterion: 'criterion A', verdict: 'pass', screenshotPath: 'a.png', note: 'ok' },
-      { criterion: 'criterion B', verdict: 'unverifiable', screenshotPath: null, note: '' },
+      { criterion: 'criterion A', verdict: 'pass', screenshotPath: 'a.png', note: 'ok', steps: [], stopAt: null },
+      { criterion: 'criterion B', verdict: 'unverifiable', screenshotPath: null, note: '', steps: [], stopAt: null },
     ])
 
     await behaviourVerify(ctx, { worktree: { path: viteRepo, branch: 'task/mars-rec03' }, deps })

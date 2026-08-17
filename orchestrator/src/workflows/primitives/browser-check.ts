@@ -17,10 +17,11 @@
  *
  * QA artefact storage:
  * By default screenshots are written to `<worktreeDir>/qa/<criterionIndex>.png`
- * and `screenshotPath` is the path relative to `worktreeDir`. Pass `outputDir`
- * to redirect artefacts to a stable, non-ephemeral directory (e.g. a `.mars/`
- * state directory) — in that case `screenshotPath` is relative to `outputDir`.
- * Callers that relocate artefacts out of the worktree must pass `outputDir`.
+ * and `screenshotPath` is the path relative to `worktreeDir`. Pass
+ * `artifactsDir` to redirect artefacts to a stable, non-ephemeral directory
+ * (e.g. a `.mars/` state directory) — in that case `screenshotPath` is relative
+ * to `artifactsDir`. Callers that relocate artefacts out of the worktree must
+ * pass `artifactsDir`.
  */
 
 import { mkdirSync } from 'node:fs'
@@ -52,38 +53,28 @@ interface MinimalBrowser {
 // ---------------------------------------------------------------------------
 
 /**
- * One concrete step in the QA step list generated for a criterion.
+ * Per-step result when the verifier walks an explicit numbered QA step list
+ * for a criterion. Populated by the step-walker consumer; empty by default
+ * when `runBrowserCheck` is called without an explicit step list.
  *
- * The verifier writes a numbered prose step list for each criterion and then
- * walks the list against the running app, capturing one screenshot per step.
- * Each step records whether the walk reached it, and — for the step where the
- * walk stopped — the reason it stopped.
+ * This is the *walk evidence* for one step. The authored prose step itself is
+ * `QaStep` in the shared QA step-list contract (`core/lib/arc-verifier.ts`),
+ * which is deliberately a distinct type — and a distinct name — from this one.
  */
-export interface QaStep {
+export interface QaStepResult {
+  /** Zero-based step index within the criterion's step list. */
+  stepIndex: number
+  /** The step's prose description. */
+  text: string
   /**
-   * 1-based position of this step in the criterion's numbered step list.
-   * Steps are always numbered from 1 regardless of how many criteria there are.
-   */
-  index: number
-  /** Plain-language prose instruction ("click the Login button"). */
-  instruction: string
-  /**
-   * Screenshot captured immediately after executing this step.
-   * Null when the walk stopped before reaching this step, or when capture
-   * failed after the step was executed.
-   *
-   * The path is relative to the `outputDir` option passed to
-   * {@link runBrowserCheck} (or relative to `worktreeDir` when `outputDir` is
-   * not provided).
+   * Screenshot path captured for this step. Relative to the active artefacts
+   * directory (either `artifactsDir` when provided, or `<worktreeDir>/qa/`).
+   * Null when the screenshot was not captured for this step — e.g. the walk
+   * stopped before reaching it, or capture failed after it executed.
    */
   screenshotPath: string | null
-  /**
-   * Human-readable reason the walk stopped at this step.
-   * Absent when the step completed normally. Present on the last step in
-   * `qaSteps` when the walk did not finish the full list — e.g.
-   * `'element not found'`, `'navigation timeout'`, or `'app not booted'`.
-   */
-  stopReason?: string
+  /** Operator note for this step's outcome. */
+  note: string
 }
 
 /** Per-criterion result returned by {@link runBrowserCheck}. */
@@ -100,25 +91,27 @@ export interface CriterionResult {
    * Path to the screenshot for this criterion as a whole, or null when no
    * screenshot was captured.
    *
-   * When `qaSteps` is present this is the screenshot from the final step
-   * reached (the step-level screenshots are in `qaSteps[n].screenshotPath`).
+   * When `steps` is non-empty this is the screenshot from the final step
+   * reached (the step-level screenshots are in `steps[n].screenshotPath`).
    *
-   * The path is relative to the `outputDir` option passed to
-   * {@link runBrowserCheck} (or relative to `worktreeDir` when `outputDir` is
-   * not provided).
+   * Relative to `artifactsDir` when that option is provided; otherwise
+   * relative to `worktreeDir` (legacy: `qa/<index>.png`).
    */
   screenshotPath: string | null
   /** Free-text note explaining the verdict or capture outcome. */
   note: string
   /**
-   * Per-step evidence when the verifier walked a QA step list for this
-   * criterion. Absent when no step list was generated (e.g. the app did not
-   * boot, or the caller did not supply step generation).
-   *
-   * The step where the walk stopped has `stopReason` set; all subsequent
-   * steps (if any) have `screenshotPath: null` and the same `stopReason`.
+   * Per-step walk results when the verifier walked an explicit QA step list.
+   * Empty array when the criterion was verified without a step-by-step walk
+   * (the default `runBrowserCheck` behaviour), e.g. because the app did not
+   * boot or the caller supplied no step list.
    */
-  qaSteps?: readonly QaStep[]
+  steps: ReadonlyArray<QaStepResult>
+  /**
+   * Which step stopped the walk and why; null when the walk completed normally
+   * or when no step list was walked. Populated by the step-walker layer.
+   */
+  stopAt: { stepIndex: number; reason: string } | null
 }
 
 /**
@@ -188,22 +181,23 @@ const defaultDeps: BrowserCheckDeps = {
  * Dev-server teardown is guaranteed: {@link killDevServer} is called in a
  * `finally` block on both the success and failure paths.
  *
- * Screenshots are written to `<outputDir>/<criterionIndex>.png` when
- * `outputDir` is provided, otherwise to `<worktreeDir>/qa/<criterionIndex>.png`.
- * `screenshotPath` on each result is the path relative to `outputDir` (or
- * relative to `worktreeDir` when `outputDir` is absent).
+ * Screenshots are written to `<artifactsDir>/<criterionIndex>.png` when
+ * `artifactsDir` is provided, otherwise to
+ * `<worktreeDir>/qa/<criterionIndex>.png`. `screenshotPath` on each result is
+ * the path relative to `artifactsDir` (or relative to `worktreeDir` when
+ * `artifactsDir` is absent).
  *
- * @param bootPlan         - Discovered dev-server boot plan.
- * @param criteria         - DoD criterion strings; one result per entry.
- * @param opts.taskId      - Task id used to name the dev-server log file.
- * @param opts.worktreeDir - Worktree root; used as the screenshot base when
- *                           `outputDir` is not provided (legacy path).
- * @param opts.logDir      - Directory for dev-server stdout/stderr logs.
- * @param opts.outputDir   - When provided, screenshots are written here and
- *                           `screenshotPath` values are relative to this
- *                           directory. Use a stable `.mars/` state path so
- *                           artefacts survive worktree deletion after merge.
- * @param opts.deps        - Injectable overrides for all side effects (tests).
+ * @param bootPlan          - Discovered dev-server boot plan.
+ * @param criteria          - DoD criterion strings; one result per entry.
+ * @param opts.taskId       - Task id used to name the dev-server log file.
+ * @param opts.worktreeDir  - Worktree root; used as the screenshot base when
+ *                            `artifactsDir` is not provided (legacy path).
+ * @param opts.logDir       - Directory for dev-server stdout/stderr logs.
+ * @param opts.artifactsDir - When provided, screenshots are written here and
+ *                            `screenshotPath` values are relative to this
+ *                            directory. Use a stable `.mars/` state path so
+ *                            artefacts survive worktree deletion after merge.
+ * @param opts.deps         - Injectable overrides for all side effects (tests).
  */
 export async function runBrowserCheck(
   bootPlan: BootPlan,
@@ -213,26 +207,32 @@ export async function runBrowserCheck(
     worktreeDir: string
     logDir: string
     /**
-     * When provided, screenshots are written here instead of
-     * `<worktreeDir>/qa/`. `screenshotPath` values in the returned results are
-     * relative to this directory.
+     * Directory where QA artefacts (screenshots) are written. When provided,
+     * screenshots go here and `screenshotPath` on each result is relative to
+     * this directory. When absent the legacy `<worktreeDir>/qa/` location is
+     * used and `screenshotPath` is relative to `worktreeDir`.
      *
-     * Pass a stable `.mars/` state directory (e.g.
-     * `join(marsStateDir, 'qa', arcId)`) so QA artefacts persist after the
-     * worktree is pruned following a successful merge.
+     * Use this option to relocate artefacts outside the git-tracked worktree
+     * so screenshots are not committed with the task branch. Pass a stable
+     * `.mars/` state directory (e.g. `join(marsStateDir, 'qa', arcId)`) so QA
+     * artefacts also persist after the worktree is pruned following a
+     * successful merge.
      */
-    outputDir?: string
+    artifactsDir?: string
     deps?: Partial<BrowserCheckDeps>
   },
 ): Promise<CriterionResult[]> {
   const { taskId, worktreeDir, logDir } = opts
   const deps: BrowserCheckDeps = { ...defaultDeps, ...opts.deps }
 
-  // Resolve the output base directory. When `outputDir` is provided artefacts
-  // land in a stable location outside the worktree (e.g. `.mars/qa/<arcId>/`);
-  // otherwise fall back to the legacy `<worktreeDir>/qa/` path.
-  const outputBase = opts.outputDir ?? join(worktreeDir, 'qa')
-  const qaDir = outputBase
+  // Screenshot storage: when `artifactsDir` is provided artefacts land in a
+  // stable location outside the worktree (e.g. `.mars/qa/<arcId>/`); otherwise
+  // fall back to the legacy `<worktreeDir>/qa/` path. The base used for
+  // relative-path computation follows, so `screenshotPath` is always relative
+  // to whichever directory actually holds the screenshots — and the legacy
+  // `qa/<i>.png` form is preserved for existing consumers and tests.
+  const qaDir = opts.artifactsDir ?? join(worktreeDir, 'qa')
+  const screenshotBase = opts.artifactsDir ?? worktreeDir
   mkdirSync(qaDir, { recursive: true })
 
   const allUnverifiable = (reason: string): CriterionResult[] =>
@@ -241,6 +241,8 @@ export async function runBrowserCheck(
       verdict: 'unverifiable' as const,
       screenshotPath: null,
       note: reason,
+      steps: [],
+      stopAt: null,
     }))
 
   let serverHandle: DevServerHandle | null = null
@@ -261,14 +263,7 @@ export async function runBrowserCheck(
 
       for (let i = 0; i < criteria.length; i++) {
         const absPath = join(qaDir, `${i}.png`)
-        // When `outputDir` is provided, screenshotPath is relative to
-        // `outputDir` so callers can resolve the absolute path from it.
-        // When falling back to `<worktreeDir>/qa/` (no outputDir), the path is
-        // relative to `worktreeDir` — preserving the legacy `qa/<i>.png` form
-        // that existing consumers and tests expect.
-        const relPath = opts.outputDir != null
-          ? relative(outputBase, absPath)
-          : relative(worktreeDir, absPath)
+        const relPath = relative(screenshotBase, absPath)
         try {
           const page = await browser.newPage()
           try {
@@ -279,6 +274,8 @@ export async function runBrowserCheck(
               verdict: 'unverifiable',
               screenshotPath: relPath,
               note: 'screenshot captured; automated verdict not available',
+              steps: [],
+              stopAt: null,
             })
           } finally {
             await page.close()
@@ -289,6 +286,8 @@ export async function runBrowserCheck(
             verdict: 'unverifiable',
             screenshotPath: null,
             note: `screenshot failed: ${String(pageErr)}`,
+            steps: [],
+            stopAt: null,
           })
         }
       }

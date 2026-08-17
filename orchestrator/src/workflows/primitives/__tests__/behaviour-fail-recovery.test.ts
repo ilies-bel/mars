@@ -67,7 +67,7 @@ const makeCtx = (input: MarsWorkflowInput, traceStore: TraceEventStore): MarsCtx
     currentStep: undefined,
   }) as unknown as MarsCtx
 
-type BrowserResult = { criterion: string; verdict: 'pass' | 'fail' | 'unverifiable'; screenshotPath: string | null; note: string }
+type BrowserResult = { criterion: string; verdict: 'pass' | 'fail' | 'unverifiable'; screenshotPath: string | null; note: string; steps: readonly never[]; stopAt: null }
 
 const makeDeps = (args: {
   /** Task returned for the primary taskId (and any unrecognised id). */
@@ -89,6 +89,8 @@ const makeDeps = (args: {
       verdict: 'fail',
       screenshotPath: 'qa/0.png',
       note: 'banner not visible',
+      steps: [],
+      stopAt: null,
     },
   ]
 
@@ -151,7 +153,7 @@ describe('behaviourVerify — FAIL verdict triggers recovery', () => {
     const { deps, handleTaskFailure } = makeDeps({
       task: taskWithCriteria('mars-behav01', ['banner renders on the home page']),
       browserResults: [
-        { criterion: 'banner renders on the home page', verdict: 'fail', screenshotPath: 'qa/0.png', note: 'not found' },
+        { criterion: 'banner renders on the home page', verdict: 'fail', screenshotPath: 'qa/0.png', note: 'not found', steps: [], stopAt: null },
       ],
     })
 
@@ -170,7 +172,7 @@ describe('behaviourVerify — FAIL verdict triggers recovery', () => {
     const { deps, handleTaskFailure } = makeDeps({
       task: taskWithCriteria('mars-behav01', ['banner renders on the home page']),
       browserResults: [
-        { criterion: 'banner renders on the home page', verdict: 'fail', screenshotPath: 'qa/0.png', note: '' },
+        { criterion: 'banner renders on the home page', verdict: 'fail', screenshotPath: 'qa/0.png', note: '', steps: [], stopAt: null },
       ],
     })
 
@@ -215,7 +217,7 @@ describe('behaviourVerify — FAIL verdict triggers recovery', () => {
         [originId]: taskWithCriteria(originId, ['banner renders on the home page']),
       },
       browserResults: [
-        { criterion: 'banner renders on the home page', verdict: 'pass', screenshotPath: 'qa/0.png', note: 'visible' },
+        { criterion: 'banner renders on the home page', verdict: 'pass', screenshotPath: 'qa/0.png', note: 'visible', steps: [], stopAt: null },
       ],
     })
 
@@ -248,7 +250,7 @@ describe('behaviourVerify — FAIL verdict triggers recovery', () => {
         [originId]: taskWithCriteria(originId, ['checkout flow completes']),
       },
       browserResults: [
-        { criterion: 'checkout flow completes', verdict: 'fail', screenshotPath: 'qa/0.png', note: '' },
+        { criterion: 'checkout flow completes', verdict: 'fail', screenshotPath: 'qa/0.png', note: '', steps: [], stopAt: null },
       ],
     })
 
@@ -282,7 +284,7 @@ describe('behaviourVerify — FAIL verdict triggers recovery', () => {
         [originId]: taskWithCriteria(originId, ['header text matches design']),
       },
       browserResults: [
-        { criterion: 'header text matches design', verdict: 'fail', screenshotPath: 'qa/0.png', note: '' },
+        { criterion: 'header text matches design', verdict: 'fail', screenshotPath: 'qa/0.png', note: '', steps: [], stopAt: null },
       ],
     })
 
@@ -316,7 +318,7 @@ describe('behaviourVerify — FAIL verdict triggers recovery', () => {
         [originId]: taskWithCriteria(originId, ['login button is visible']),
       },
       browserResults: [
-        { criterion: 'login button is visible', verdict: 'fail', screenshotPath: 'qa/0.png', note: '' },
+        { criterion: 'login button is visible', verdict: 'fail', screenshotPath: 'qa/0.png', note: '', steps: [], stopAt: null },
       ],
     })
 
@@ -341,7 +343,7 @@ describe('behaviourVerify — FAIL verdict triggers recovery', () => {
     const { deps } = makeDeps({
       task: taskWithCriteria('mars-behav01', ['banner renders on the home page']),
       browserResults: [
-        { criterion: 'banner renders on the home page', verdict: 'fail', screenshotPath: 'qa/0.png', note: 'not visible' },
+        { criterion: 'banner renders on the home page', verdict: 'fail', screenshotPath: 'qa/0.png', note: 'not visible', steps: [], stopAt: null },
       ],
     })
 
