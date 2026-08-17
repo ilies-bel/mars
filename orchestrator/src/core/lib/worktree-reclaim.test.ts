@@ -146,6 +146,25 @@ describe('classifyWorktree — protection categories', () => {
     })
     expect(result.category).toBe('protected-awaiting-validation')
   })
+
+  it('does not reclaim an awaiting-human task held by an operator lease, even when idle past the reclaim threshold', () => {
+    // Simulate a task that has been parked for > 1 hour (past any idle threshold).
+    const idleUpdatedAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+    const task = {
+      ...makeTask('awaiting-human' as Task['status']),
+      updatedAt: idleUpdatedAt,
+    } as Task
+
+    const result = classifyWorktree({
+      id: 'mars-abc1',
+      task,
+      lease: { owner: 'operator' },
+    })
+
+    expect(result.category).toBe('protected-awaiting-human')
+    // Verify the task is NOT classified as safe-to-reclaim.
+    expect(SAFE_CATEGORIES.has(result.category)).toBe(false)
+  })
 })
 
 // ---------------------------------------------------------------------------

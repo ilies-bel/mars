@@ -104,9 +104,16 @@ export const classifyWorktree = (input: {
   }
 
   if (task.status === 'awaiting-human') {
+    // Operator-leased awaiting-human tasks are explicitly exempt from idle-time reclaim
+    // regardless of how long they have been parked — only explicit `mars step abort`
+    // or `mars drop` releases them.
+    // Implements: AND NOT (status = 'awaiting-human' AND lease_owner = 'operator')
     return {
       category: 'protected-awaiting-human',
-      reason: 'task is parked for human input',
+      reason:
+        lease?.owner === 'operator'
+          ? 'awaiting-human task held by operator lease — exempt from idle reclaim'
+          : 'task is parked for human input',
     }
   }
 
