@@ -1636,7 +1636,7 @@ export const startDaemon = async (
         process.env.MARS_VERIFY_CHILD_GONE_GRACE_MS ?? 5 * 60_000,
       )
       const onEvent = (evt: WorkflowEvent): void => {
-        if (evt.event === 'claude-event') {
+        if (evt.event === 'agent-event' || evt.event === 'claude-event') {
           const nowMs = Date.now()
           tracker.recordActivity(task.id, nowMs)
           if (nowMs - lastDbHeartbeatMs >= HEARTBEAT_INTERVAL_MS) {

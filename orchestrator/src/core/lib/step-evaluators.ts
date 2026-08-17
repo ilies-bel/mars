@@ -119,7 +119,9 @@ function llmEvaluators(): StepEvaluator[] {
   ]
 }
 
-const LLM_STEPS = ['run-claude-code', 'slicer', 'triage', 'plan', 'slice']
+// 'run-claude-code' is kept alongside 'run-agent' so checkpoints recorded
+// before the provider-neutral rename still resolve an evaluator.
+const LLM_STEPS = ['run-agent', 'run-claude-code', 'slicer', 'triage', 'plan', 'slice']
 for (const step of LLM_STEPS) {
   for (const ev of llmEvaluators()) {
     registerStepEvaluator(step, ev)

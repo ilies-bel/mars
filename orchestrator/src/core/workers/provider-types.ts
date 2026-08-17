@@ -5,9 +5,9 @@
 import type {
   ClaudeEffort,
   ClaudePermissionMode,
-  RunClaudeResult,
+  RunAgentResult,
 } from '../lib/git/claude'
-import type { ClaudeEvent } from '../lib/claude-stream'
+import type { AgentEvent } from '../lib/claude-stream'
 import type { ProviderUsageSemantics } from '../lib/claude-usage'
 
 export type ProviderName = 'claude' | 'gemini' | 'codex'
@@ -78,7 +78,7 @@ export interface ConversationMemoryFacts {
 export type HeadlessRunOpts = Readonly<{
   cwd: string
   sessionId?: string
-  onEvent?: (event: ClaudeEvent) => void | Promise<void>
+  onEvent?: (event: AgentEvent) => void | Promise<void>
   model?: string
   systemPrompt?: string
   effort?: ClaudeEffort
@@ -116,9 +116,9 @@ export type HeadlessRunOpts = Readonly<{
 // turn spend (codex) must never have that number read as context occupancy —
 // see ProviderUsageSemantics in ../lib/claude-usage.
 export interface HeadlessAdapter {
-  run(prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult>
+  run(prompt: string, opts: HeadlessRunOpts): Promise<RunAgentResult>
   /** Decode this provider's complete stdout into normalized stream events. */
-  readOutput(stdout: string): ClaudeEvent[]
+  readOutput(stdout: string): AgentEvent[]
   readonly capabilities: {
     readonly usageSemantics: ProviderUsageSemantics
     readonly quotaRejected: boolean

@@ -90,7 +90,7 @@ import {
   WorktreeInstallError,
   WorktreeModulesMissingError,
 } from '../../core/lib/worktree-install'
-import { extractLastStreamText, type ClaudeEvent } from '../../core/lib/claude-stream'
+import { extractLastStreamText, type AgentEvent } from '../../core/lib/claude-stream'
 import { readWorkerOutputText } from '../../core/lib/worker-json'
 import { getTask, hasIncompleteBlockers, IllegalTransitionError, TERMINAL_TASK_STATUSES, updateTask } from '../../core/queue'
 import { Arc } from '../../core/arc'
@@ -1496,7 +1496,7 @@ const KNOWN_RUN_AGENT_KEYS: ReadonlySet<string> = new Set<keyof RunAgentOpts>([
 
 /**
  * Run the coder through the selected headless provider inside the worktree. Mirrors the former
- * `run-claude-code` step body: sweeps stray debris from a prior failed attempt
+ * `run-agent` step body: sweeps stray debris from a prior failed attempt
  * (gated on 0 commits ahead), composes the full prompt, picks the worker
  * (kind-aware: fix → Fixer; else tag-routed including registry workers), runs
  * the worker span, classifies the post-coder worktree state for the run log,
@@ -1510,7 +1510,7 @@ const KNOWN_RUN_AGENT_KEYS: ReadonlySet<string> = new Set<keyof RunAgentOpts>([
  * ```js
  * await ctx.step('code', () => runAgent(ctx, { prompt: input.prompt, tags: input.tags }))
  * ```
- * Coder progress is forwarded to `ctx.emit('claude-event', …)` internally.
+ * Coder progress is forwarded to `ctx.emit('agent-event', …)` internally.
  */
 export const runAgent = async (
   ctx: MarsCtx,
@@ -1586,7 +1586,7 @@ export const runAgent = async (
   const store: TaskStore = ctx.services.store
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
   const trace = await resolveTrace(ctx, taskId)
-  const emit = (event: ClaudeEvent): void => ctx.emit('claude-event', event)
+  const emit = (event: AgentEvent): void => ctx.emit('agent-event', event)
   const handle: Pick<StepHandle, 'setTranscriptKey'> | undefined =
     ctx.currentStep ?? undefined
 
@@ -1885,7 +1885,7 @@ export const runAgent = async (
         externalAbort: ctx.signal,
       },
       traceStore: spanStore(trace),
-      stepName: 'run-claude-code',
+      stepName: 'run-agent',
       workflowInstanceId: trace.workflowInstanceId,
       originId,
       taskId,
@@ -2685,7 +2685,7 @@ export const runAgent = async (
     handle?.setTranscriptKey(r.sessionId)
     await updateTask(taskId, { claudeSessionId: r.sessionId }, store)
   }
-  await recordSignals(taskId, 'run-claude-code', usage, store).catch(() => {
+  await recordSignals(taskId, 'run-agent', usage, store).catch(() => {
     // signal capture must never fail the task
   })
 
@@ -3955,7 +3955,7 @@ export const merge = async (
 
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
   const trace = await resolveTrace(ctx, taskId)
-  const emit = (event: ClaudeEvent): void =>
+  const emit = (event: AgentEvent): void =>
     ctx.emit('vcs-supervisor-event', event)
 
   const worktreePath = worktree.path
@@ -4321,7 +4321,7 @@ export const merge = async (
           )
         }
 
-        const supervisorConversation: ClaudeEvent[] = []
+        const supervisorConversation: AgentEvent[] = []
         let m: MergeResult
         // Unconditional queue path: delegate the merge to the durable
         // single-consumer worker. Serialisation is enforced by the worker's

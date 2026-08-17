@@ -125,7 +125,7 @@ const toolForgeWorkflow = defineWorkflow<
   inputSchema: toolForgeInputSchema,
   fn: async (ctx): Promise<ToolForgeOutput> => {
     await ctx.step('setup-worktree', () => setupWorktree(ctx))
-    await ctx.step('run-claude-code', () => runAgent(ctx))
+    await ctx.step('run-agent', () => runAgent(ctx))
     await ctx.step('review', () => review(ctx, { reviewType: 'auto' }))
     return await ctx.step('merge', () => mergePrimitive(ctx))
   },

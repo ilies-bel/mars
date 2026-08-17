@@ -167,7 +167,7 @@ export interface ArcToolError {
 export interface ArcSpanEntry {
   /** Approximated start time: ended_at − durationMs (ISO-8601). */
   startedAt: string
-  /** Step name, e.g. 'generate-plan', 'setup-worktree', 'run-claude-code', 'verify', 'merge'. */
+  /** Step name, e.g. 'generate-plan', 'setup-worktree', 'run-agent', 'verify', 'merge'. */
   stepName: string
   /** Worker name when LLM-backed (e.g. 'Planner', 'Slicer', 'Coder', 'Fixer'), null otherwise. */
   workerName: string | null

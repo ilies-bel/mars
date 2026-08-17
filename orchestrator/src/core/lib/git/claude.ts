@@ -257,7 +257,7 @@ export type ClaudePermissionMode =
   | 'dontAsk'
   | 'plan'
 
-export interface RunClaudeResult extends RunSubprocessResult {
+export interface RunAgentResult extends RunSubprocessResult {
   sessionId: string | null
   conversation: ClaudeEvent[]
   /**
@@ -268,6 +268,9 @@ export interface RunClaudeResult extends RunSubprocessResult {
    */
   quotaRejected: { resetsAt: number } | null
 }
+
+/** @deprecated Use RunAgentResult. Kept for backward compatibility. */
+export type RunClaudeResult = RunAgentResult
 
 /**
  * First line of the synthetic stderr every headless adapter emits when it is
@@ -293,14 +296,14 @@ const EMPTY_PROMPT_REFUSAL = (provider: string): string =>
 /**
  * Synthetic "we never spawned anything" result.
  *
- * Deliberately a returned non-zero {@link RunClaudeResult} rather than a
+ * Deliberately a returned non-zero {@link RunAgentResult} rather than a
  * thrown error: the code step already owns a tested non-zero-exit path that
  * stamps the row, computes a failure signature from the stderr text, and
  * spawns exactly one recovery task. Throwing would bypass all of it and land
  * as an unclassified step crash. exitCode 1 keeps the failure inside the
  * machinery that names it.
  */
-export const emptyPromptResult = (provider: string): RunClaudeResult => ({
+export const emptyPromptResult = (provider: string): RunAgentResult => ({
   exitCode: 1,
   stdout: '',
   stderr: EMPTY_PROMPT_REFUSAL(provider),
@@ -741,7 +744,7 @@ export const runClaudeCode = async ({
   externalAbort,
   onPid,
   taskId,
-}: RunClaudeArgs): Promise<RunClaudeResult> => {
+}: RunClaudeArgs): Promise<RunAgentResult> => {
   // Refuse before spawning: `claude -p ''` reads the prompt from stdin, which
   // is /dev/null for dispatched workers. See EMPTY_PROMPT_REFUSAL.
   if (isBlankPrompt(prompt)) return emptyPromptResult('claude')

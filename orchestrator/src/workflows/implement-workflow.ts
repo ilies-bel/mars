@@ -32,7 +32,7 @@ import {
 //
 // The pipeline is one imperative async function. `ctx.step(name, fn)` wraps
 // each durable unit; the four step NAMES are load-bearing
-// ('setup-worktree', 'run-claude-code', 'review', 'merge') — they key
+// ('setup-worktree', 'run-agent', 'review', 'merge') — they key
 // checkpoint-resume and the trace-view node label. Each step body is now a
 // thin composition over the corresponding `./primitives` function.
 // ---------------------------------------------------------------------------
@@ -102,7 +102,7 @@ export const implementWorkflow = defineWorkflow<
     // `setup-worktree` provisions is memoised on `ctx` for verify/merge. The
     // four step NAMES stay load-bearing (checkpoint-resume + trace labels).
     await ctx.step('setup-worktree', () => setupWorktree(ctx))
-    await ctx.step('run-claude-code', () => runAgent(ctx))
+    await ctx.step('run-agent', () => runAgent(ctx))
     // review throws on failure, so reaching merge always means review passed.
     // qa is sourced from the task row (tasks.qa); defaults to 'auto'.
     const qa = ctx.input.qa ?? 'auto'

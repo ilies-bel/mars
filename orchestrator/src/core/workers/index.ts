@@ -22,9 +22,9 @@
 import {
   type ClaudeEffort,
   type ClaudePermissionMode,
-  type RunClaudeResult,
+  type RunAgentResult,
 } from '../lib/git/claude'
-import type { ClaudeEvent } from '../lib/claude-stream'
+import type { AgentEvent } from '../lib/claude-stream'
 import { PROVIDER_MODELS, tierForModel, type ProviderModelTier, type ProviderName } from './provider-types'
 export { tierForModel } from './provider-types'
 import {
@@ -283,7 +283,7 @@ export const resolveWorkerMaxContextTokens = (override?: number): number => {
 export interface RunOptions {
   readonly cwd: string
   readonly sessionId?: string
-  readonly onEvent?: (event: ClaudeEvent) => void | Promise<void>
+  readonly onEvent?: (event: AgentEvent) => void | Promise<void>
   readonly systemPrompt?: string
   /**
    * Optional per-invocation model override. When set, the Worker dispatches
@@ -319,7 +319,7 @@ export interface RunOptions {
 export interface Worker {
   readonly config: WorkerConfig
   readonly runtime: WorkerRuntime
-  run(prompt: string, options: RunOptions): Promise<RunClaudeResult>
+  run(prompt: string, options: RunOptions): Promise<RunAgentResult>
 }
 
 // codegraph nudge appended to the system prompt of the workers that benefit

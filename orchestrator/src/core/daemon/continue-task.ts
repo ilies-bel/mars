@@ -490,12 +490,14 @@ export const coreContinueTask = async (
     // commit in the worktree. A missing checkpoint is harmless: the engine
     // will execute a step it cannot find on the next dispatch.
     const { clearStepsFromCheckpoint } = await import('../../workflows/queue-workflow-store')
-    // The built-in pipeline calls its coder checkpoint `run-claude-code`,
-    // while the workflow scaffold documents the equivalent user-authored
-    // checkpoint as `code`. Rewind whichever checkpoint this run recorded;
-    // otherwise a custom workflow silently skips the coder and just repeats
-    // the failed verification.
-    const cleared = await clearStepsFromCheckpoint(id, 'run-claude-code')
+    // The built-in pipeline calls its coder checkpoint `run-agent` (formerly
+    // `run-claude-code`, still present on checkpoints recorded before the
+    // rename), while the workflow scaffold documents the equivalent
+    // user-authored checkpoint as `code`. Rewind whichever checkpoint this
+    // run recorded; otherwise a custom workflow silently skips the coder and
+    // just repeats the failed verification.
+    let cleared = await clearStepsFromCheckpoint(id, 'run-agent')
+    if (cleared === null) cleared = await clearStepsFromCheckpoint(id, 'run-claude-code')
     if (cleared === null) await clearStepsFromCheckpoint(id, 'code')
   }
 

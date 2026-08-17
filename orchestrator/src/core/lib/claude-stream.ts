@@ -1,4 +1,4 @@
-export interface ClaudeEvent {
+export interface AgentEvent {
   type: string
   [key: string]: unknown
 }
@@ -47,7 +47,7 @@ const trimContentBlocks = (blocks: unknown): unknown => {
   })
 }
 
-const trimEvent = (event: ClaudeEvent): ClaudeEvent => {
+const trimEvent = (event: AgentEvent): AgentEvent => {
   if (event.type === 'assistant' || event.type === 'user') {
     const message = event.message
     if (isObject(message) && 'content' in message) {
@@ -67,7 +67,7 @@ const trimEvent = (event: ClaudeEvent): ClaudeEvent => {
   return event
 }
 
-export const parseClaudeStreamLine = (line: string): ClaudeEvent | null => {
+export const parseClaudeStreamLine = (line: string): AgentEvent | null => {
   const trimmed = line.trim()
   if (!trimmed) return null
   if (!trimmed.startsWith('{')) return null
@@ -78,15 +78,15 @@ export const parseClaudeStreamLine = (line: string): ClaudeEvent | null => {
     return null
   }
   if (!isObject(parsed) || typeof parsed.type !== 'string') return null
-  return trimEvent(parsed as ClaudeEvent)
+  return trimEvent(parsed as AgentEvent)
 }
 
 /** Read Claude's newline-delimited event stream into normalized events. */
-export const readClaudeOutput = (stdout: string): ClaudeEvent[] => {
+export const readClaudeOutput = (stdout: string): AgentEvent[] => {
   const events = stdout
     .split(/\r?\n/)
     .map((line) => parseClaudeStreamLine(line))
-    .filter((event): event is ClaudeEvent => event !== null)
+    .filter((event): event is AgentEvent => event !== null)
 
   if (events.length > 0) return events
 
@@ -125,7 +125,7 @@ export const readClaudeOutput = (stdout: string): ClaudeEvent[] => {
  * Returns `null` when neither signal is present.
  */
 export const extractQuotaRejected = (
-  conversation: readonly ClaudeEvent[],
+  conversation: readonly AgentEvent[],
 ): { resetsAt: number } | null => {
   // Primary: scan for rate_limit_event with rejected status. Use the last
   // occurrence in case multiple appear (e.g. five_hour + monthly in one run).
@@ -265,7 +265,7 @@ export const extractAgentToolCalls = (events: readonly unknown[]): AgentToolCall
  * Returns `null` when the conversation is empty or neither source has text.
  * Used as a fallback error label on nonzero exits with empty stderr.
  */
-export const extractLastStreamText = (conversation: readonly ClaudeEvent[]): string | null => {
+export const extractLastStreamText = (conversation: readonly AgentEvent[]): string | null => {
   // Prefer the final result event's result string.
   for (let i = conversation.length - 1; i >= 0; i--) {
     const event = conversation[i]
@@ -305,7 +305,7 @@ export const diagnoseClaudeFailure = (stdout: string, stderr: string): string =>
   const lines = stdout.split(/\r?\n/)
   const events = lines
     .map((line) => parseClaudeStreamLine(line))
-    .filter((event): event is ClaudeEvent => event !== null)
+    .filter((event): event is AgentEvent => event !== null)
 
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i]
@@ -326,3 +326,6 @@ export const diagnoseClaudeFailure = (stdout: string, stderr: string): string =>
   const tail = fallback.slice(-3).join('\n').trim()
   return tail.length > 0 ? tail : 'claude -p produced no diagnostic output'
 }
+
+/** @deprecated Use AgentEvent. Kept for backward compatibility. */
+export type ClaudeEvent = AgentEvent

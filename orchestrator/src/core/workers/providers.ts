@@ -7,7 +7,7 @@ import {
   runClaudeCode,
   AGENT_TO_USER_DENIED_TOOLS,
   toClaudeSessionId,
-  type RunClaudeResult,
+  type RunAgentResult,
 } from '../lib/git/claude'
 import { readClaudeOutput } from '../lib/claude-stream'
 import type { ProviderUsageSemantics } from '../lib/claude-usage'
@@ -180,7 +180,7 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
         quotaRejected: true,
         sessionId: true,
       },
-      run: (prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult> =>
+      run: (prompt: string, opts: HeadlessRunOpts): Promise<RunAgentResult> =>
         runClaudeCode({ prompt, ...opts }),
       readOutput: readClaudeOutput,
     },
@@ -209,7 +209,7 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
       spinnerOverride: /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/,
     },
     // Headless adapter: spawns `gemini -p`, normalises its line-buffered stdout
-    // to ClaudeEvent shape, and returns a RunClaudeResult with null sessionId
+    // to AgentEvent shape, and returns a RunAgentResult with null sessionId
     // and quotaRejected (signals gemini does not expose).
     headless: geminiHeadless,
   },
@@ -240,7 +240,7 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
       spinnerOverride: /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .*$/,
     },
     // Headless adapter: spawns `codex exec --json`, normalises its JSONL
-    // stream to ClaudeEvent shape, and returns a RunClaudeResult with null
+    // stream to AgentEvent shape, and returns a RunAgentResult with null
     // sessionId and quotaRejected (signals codex does not expose).
     headless: codexHeadless,
   },
@@ -277,7 +277,7 @@ export const resolveProviderName = (
 export const runHeadlessProvider = async (
   prompt: string,
   opts: RunHeadlessProviderOpts,
-): Promise<RunClaudeResult> => {
+): Promise<RunAgentResult> => {
   const providerName = opts.provider ?? resolveProviderName()
   const provider = PROVIDERS[providerName]
   const abort = new AbortController()
