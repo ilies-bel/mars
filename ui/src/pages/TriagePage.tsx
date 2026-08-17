@@ -21,9 +21,9 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { sortItems, buildRenderedRows } from '@/entities/actionQueue/clusterRows'
 import { useProgress } from '@/hooks/useProgress'
-import { postDecision, invokeAction } from '@/shared/api'
+import { postDecision } from '@/shared/api'
 import { relativeTime } from '@/shared/time'
-import { isTaskFailureActionQueueKind } from '@/shared/schemas'
+import { dispatchAlertVerb } from '@/widgets/chat/alertVerbs'
 import { deriveCause } from '@/shared/alertCause'
 import type { ActionQueueItem } from '@/shared/schemas'
 import type { Decision } from '@/shared/schemas'
@@ -83,6 +83,35 @@ const KIND_CHIP_CLASS: Record<string, string> = {
   'draft-proposal': 'text-success border-success/40',
 }
 
+// ── Action kind sets ──────────────────────────────────────────────────────────
+
+/**
+ * Kinds where the entity is a failed task that can be continued / restarted.
+ * All other task-failure kinds are system/daemon conditions whose recovery
+ * verbs come from the server-side recipe (item.verbs / item.decisions).
+ */
+const TASK_RECOVERY_KINDS = new Set([
+  'failed',
+  'daemon-killed',
+  'coder-question',
+  'diagnose-inconclusive',
+  'steward-repeat',
+  'cancelled-blocker-cascade',
+  'worktree-ahead',
+  'prerequisite-failed',
+  'slices-dropped',
+  'behaviour-unverified',
+  'arc-verification-failed',
+  'done-with-unmerged-commits',
+])
+
+/**
+ * Kinds whose rows surface only the Chat → link and no action buttons.
+ * The reflect and scorer flows are purely conversational — the operator
+ * discusses proposals in chat rather than clicking a verb in this view.
+ */
+const CHAT_ONLY_KINDS = new Set(['reflect-recommended', 'scorer-suggested'])
+
 // ── TriageClusterRow ──────────────────────────────────────────────────────────
 
 interface TriageClusterRowProps {
@@ -135,8 +164,9 @@ const TriageClusterRow = ({ kind, count, latestAt }: TriageClusterRowProps) => {
 
       {/* Navigation link to the relevant surface */}
       <a
-        href={isDraftProposal ? '#/progress' : '#/triage'}
+        href={isDraftProposal ? '#/proposals' : '#/triage'}
         className="font-mono text-micro text-primary transition-colors hover:text-foreground"
+        data-testid={isDraftProposal ? 'cluster-proposals-link' : 'cluster-view-link'}
       >
         {isDraftProposal ? 'Review proposals →' : `View all →`}
       </a>
@@ -153,6 +183,7 @@ interface TriageRowProps {
 const TriageRow = ({ item }: TriageRowProps) => {
   const qc = useQueryClient()
   const [pending, setPending] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [resolved, setResolved] = useState(false)
 
   // Use relativeTime so timestamps are handled via the existing helper
@@ -169,17 +200,23 @@ const TriageRow = ({ item }: TriageRowProps) => {
   const kindIcon = KIND_ICON[item.kind] ?? '•'
   const chipClass =
     KIND_CHIP_CLASS[item.kind] ?? 'text-muted-foreground border-border'
-  const isTaskFailure = isTaskFailureActionQueueKind(item.kind)
+  const isChatOnly = CHAT_ONLY_KINDS.has(item.kind)
+  const isTaskRecovery = TASK_RECOVERY_KINDS.has(item.kind)
+  const verbs = item.verbs ?? []
 
   const handleDecision = useCallback(
     async (d: Decision) => {
       if (pending !== null) return
       setPending(d.label)
+      setError(null)
       try {
-        await postDecision(d)
+        const res = await postDecision(d)
+        if (!res.ok) throw new Error(`request failed (${res.status})`)
         setResolved(true)
         void qc.invalidateQueries({ queryKey: ['action-queue'] })
-      } catch {
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
         setPending(null)
       }
     },
@@ -190,15 +227,18 @@ const TriageRow = ({ item }: TriageRowProps) => {
     async (op: string) => {
       if (pending !== null) return
       setPending(op)
+      setError(null)
       try {
-        await invokeAction(op, item.entityId)
+        await dispatchAlertVerb(item.id, item.entityId, op)
         setResolved(true)
         void qc.invalidateQueries({ queryKey: ['action-queue'] })
-      } catch {
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
         setPending(null)
       }
     },
-    [pending, qc, item.entityId],
+    [pending, qc, item.id, item.entityId],
   )
 
   if (resolved) return null
@@ -260,35 +300,62 @@ const TriageRow = ({ item }: TriageRowProps) => {
 
       {/* Actions row */}
       <div className="flex flex-wrap items-center gap-2">
-        {/* Server-defined decision buttons (recipe-derived per failure kind) */}
-        {item.decisions.slice(0, 3).map((d) => (
-          <button
-            key={d.label}
-            disabled={pending !== null}
-            onClick={() => void handleDecision(d)}
-            className="rounded border border-primary/40 px-2 py-1 font-mono text-micro text-foreground transition-colors hover:bg-primary/20 disabled:opacity-50"
-          >
-            {pending === d.label ? '…' : d.label}
-          </button>
-        ))}
-
-        {/* Continue / Restart inline actions for failed-task rows */}
-        {isTaskFailure && (
+        {!isChatOnly && (
           <>
-            <button
-              disabled={pending !== null}
-              onClick={() => void handleVerb('continue')}
-              className="rounded border border-primary/40 px-2 py-1 font-mono text-micro text-foreground transition-colors hover:bg-primary/20 disabled:opacity-50"
-            >
-              {pending === 'continue' ? '…' : 'Continue'}
-            </button>
-            <button
-              disabled={pending !== null}
-              onClick={() => void handleVerb('restart')}
-              className="rounded border border-error/40 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/10 disabled:opacity-50"
-            >
-              {pending === 'restart' ? '…' : 'Restart'}
-            </button>
+            {/* Server-defined decision buttons (recipe-derived per failure kind) */}
+            {item.decisions.slice(0, 3).map((d) => (
+              <button
+                key={d.label}
+                disabled={pending !== null}
+                onClick={() => void handleDecision(d)}
+                className="rounded border border-primary/40 px-2 py-1 font-mono text-micro text-foreground transition-colors hover:bg-primary/20 disabled:opacity-50"
+                data-testid={`triage-decision-${d.label}`}
+              >
+                {pending === d.label ? '…' : d.label}
+              </button>
+            ))}
+
+            {/* Recipe verb buttons (e.g. "Restart daemon" for daemon-code-drift).
+                Styled per verb.style so destructive ops are visually distinct. */}
+            {verbs.map((verb) => (
+              <button
+                key={verb.op}
+                disabled={pending !== null}
+                onClick={() => void handleVerb(verb.op)}
+                className={
+                  verb.style === 'destructive'
+                    ? 'rounded border border-error/40 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/10 disabled:opacity-50'
+                    : 'rounded border border-primary/40 px-2 py-1 font-mono text-micro text-foreground transition-colors hover:bg-primary/20 disabled:opacity-50'
+                }
+                data-testid={`triage-verb-${verb.op}`}
+              >
+                {pending === verb.op ? '…' : verb.label}
+              </button>
+            ))}
+
+            {/* Continue / Restart inline actions — only for task-recovery kinds.
+                daemon-code-drift, gate-enrichment, and other system-level kinds
+                use server-side verbs/decisions above instead. */}
+            {isTaskRecovery && (
+              <>
+                <button
+                  disabled={pending !== null}
+                  onClick={() => void handleVerb('continue')}
+                  className="rounded border border-primary/40 px-2 py-1 font-mono text-micro text-foreground transition-colors hover:bg-primary/20 disabled:opacity-50"
+                  data-testid="triage-continue"
+                >
+                  {pending === 'continue' ? '…' : 'Continue'}
+                </button>
+                <button
+                  disabled={pending !== null}
+                  onClick={() => void handleVerb('restart')}
+                  className="rounded border border-error/40 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/10 disabled:opacity-50"
+                  data-testid="triage-restart"
+                >
+                  {pending === 'restart' ? '…' : 'Restart'}
+                </button>
+              </>
+            )}
           </>
         )}
 
@@ -299,6 +366,16 @@ const TriageRow = ({ item }: TriageRowProps) => {
           Chat →
         </a>
       </div>
+
+      {/* Error feedback — shown inline below the actions row */}
+      {error && (
+        <p
+          className="mt-1 font-mono text-micro text-error"
+          data-testid="triage-error"
+        >
+          {error}
+        </p>
+      )}
     </div>
   )
 }
