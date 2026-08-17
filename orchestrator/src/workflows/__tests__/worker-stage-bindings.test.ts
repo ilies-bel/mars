@@ -14,9 +14,11 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-const workflowsDir = resolve(__dirname, '..')
+const srcDir = resolve(__dirname, '../..')
 const read = (name: string): string =>
-  readFileSync(resolve(workflowsDir, name), 'utf-8')
+  readFileSync(resolve(srcDir, 'workflows', name), 'utf-8')
+const readTool = (name: string): string =>
+  readFileSync(resolve(srcDir, 'tools', name), 'utf-8')
 
 describe('PRD 948691d0 slice 4 — stages route through named Workers', () => {
   it('implement workflow dispatches through Coder/Fixer via the Workers registry', () => {
@@ -25,7 +27,11 @@ describe('PRD 948691d0 slice 4 — stages route through named Workers', () => {
     // implement-workflow now COMPOSES it; the Worker-routing binding lives in
     // the primitive. Assert the binding at its new home (the primitive surface)
     // and that the bundled workflow composes it.
-    const primitive = read('primitives/index.ts')
+    // The primitive moved again in the modular-core rework: `runAgent` now
+    // lives at `tools/coder/run-agent.ts` and `workflows/primitives/index.ts`
+    // is a re-export barrel (TARGET §2.1). The binding is asserted at the
+    // implementation, not the barrel.
+    const primitive = readTool('coder/run-agent.ts')
     // Fixer for kind='fix', everything else via pickWorkerForTags — intersects
     // the task's tag list against each registered Worker's tag set; falls back
     // to the default headless Worker (Coder) when no Worker claims a tag.
@@ -69,14 +75,15 @@ describe('PRD 948691d0 slice 4 — stages route through named Workers', () => {
     // `runClaudeCode` — that is the wrapper Workers.run delegates to, and
     // a stage that imports it directly is the symptom of the regression
     // this slice was built to prevent.
-    for (const name of [
-      'implement-workflow.ts',
-      'primitives/index.ts',
-      'plan-workflow.ts',
-      'slice-workflow.ts',
-      'triage-workflow.ts',
-    ]) {
-      const src = read(name)
+    const sources = [
+      read('implement-workflow.ts'),
+      read('plan-workflow.ts'),
+      read('slice-workflow.ts'),
+      read('triage-workflow.ts'),
+      readTool('coder/run-agent.ts'),
+      readTool('coder/setup-worktree.ts'),
+    ]
+    for (const src of sources) {
       expect(src).not.toMatch(/from ['"][^'"]*\/lib\/git['"][^]*runClaudeCode/)
       expect(src).not.toMatch(/import\s*\{[^}]*runClaudeCode[^}]*\}\s*from/)
     }

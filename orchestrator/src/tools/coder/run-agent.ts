@@ -1,0 +1,1357 @@
+/**
+ * The `runAgent` primitive shell (the coder step).
+ *
+ * Split out of `workflows/primitives/index.ts` (TARGET §2.1). Framework-owned:
+ * every task-state write below goes through `ctx.services.store` (the Arc
+ * aggregate, ADR-0052). The worker itself is selected through the worker
+ * registry (`core/workers`) — swapping the worker changes what the step does,
+ * never whether the task row is updated.
+ */
+import { type StepHandle } from '@mars/workflow'
+import { runTool } from '../../core/lib/run-tool'
+import {
+  restoreWorktreeIfMissing,
+  ResumeWorktreeUnrecoverable,
+  type WorktreeRef,
+} from '../../core/lib/git/worktree'
+import { cleanWorktreeIfNoCommitsAhead, selectVerifySteps } from '../../core/lib/git/verify'
+import { SALVAGE_CHECKPOINT_SUBJECT_PREFIX } from '../../core/lib/git/checkpoint'
+import { autoCommitWorktreeIfDeterministic } from '../../core/lib/git/commit-main'
+import { createWorker, pickWorkerForTags, Workers, type Worker } from '../../core/workers'
+import { resolveContext } from '../../core/context'
+import { extractLastStreamText, type AgentEvent } from '../../core/lib/claude-stream'
+import { isTaskTag, type TaskTag, type TaskSpec, getTask, updateTask } from '../../core/queue'
+import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks'
+import { computeFailureSignature } from '../../core/lib/failure-signature'
+import { resolveOriginIdForTask } from '../../core/lib/origin'
+import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
+import { raiseActionQueueItem } from '../../core/lib/action-queue'
+import { summarizeUsageForSemantics, buildContextTokenSignals } from '../../core/lib/claude-usage'
+import { usageSemanticsOf } from '../../core/workers/providers'
+import { PROVIDER_MODELS, type ProviderModelTier } from '../../core/workers/provider-types'
+import { recordSignals } from '../../core/lib/reflect-signals'
+import { resolveTaskDomains, fetchLessonsForTask } from '../../core/store/memory-packet-store'
+import { runWorkerWithSpan } from '../../core/lib/run-worker-with-span'
+import {
+  composePrompt,
+  detectPostCoderState,
+  resolveWorkerSystemPrompt,
+  coderUncommittedFailure,
+  CODER_EXIT_NONZERO_ABORT_MESSAGE,
+  CODER_EMPTY_DIFF_ABORT_MESSAGE,
+  CODER_EMPTY_DIFF_SIGNATURE,
+  CODER_EMPTY_DIFF_STEP,
+  CODER_UNCOMMITTED_ABORT_MESSAGE,
+  CODER_UNCOMMITTED_SIGNATURE,
+  CODER_UNCOMMITTED_STEP,
+  CONTEXT_EXHAUSTED_ABORT_MESSAGE,
+  QUOTA_REJECTED_ABORT_MESSAGE,
+  POST_CODER_CLASSIFIER_ERROR_ABORT_MESSAGE,
+  POST_CODER_CLASSIFIER_ERROR_SIGNATURE,
+  POST_CODER_CLASSIFIER_ERROR_STEP,
+} from '../../workflows/primitives/shared'
+import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
+import { distillObservation } from '../../core/lib/distill/observation'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import {
+  type MarsCtx,
+  resolveTrace,
+  resolveWorktree,
+  readWorkflowInput as input,
+  resolveTaskId,
+  buildPhaseCtx,
+  spanStore,
+  readCachedIndexCard,
+} from '../context'
+import { validationRecorder } from '../validate-recorder'
+import { buildSessionKey } from './session-key'
+import { ensureWorktreeCurrent } from './worktree-currency'
+import { classifyCoderExitDisposition } from './coder-exit'
+import {
+  composeRestartCheckpoint,
+  renderRestartCheckpoint,
+  RESTART_CHECKPOINT_KIND,
+} from '../../core/coder/restart-checkpoint'
+
+// ---------------------------------------------------------------------------
+// runAgent
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-call domain options for {@link runAgent}. Every field defaults — `prompt`
+ * falls back to `ctx.input.prompt`, so a step can be as terse as
+ * `runAgent(ctx)`. Pass `prompt` explicitly only to override the dispatch input.
+ */
+export interface RunAgentOpts {
+  /** The task prompt fed to the coder. Defaults to `ctx.input.prompt`. */
+  prompt?: string
+  /** Optional plan sections injected into the composed prompt. Default null. */
+  plan?: { functional: string; technical: string } | null
+  /** Routing tags (selects the Worker). Default `['coder']`. */
+  tags?: TaskTag[]
+  /** Pipeline kind. Default `'task'`. `'fix'` routes to the Fixer. */
+  kind?: 'task' | 'fix' | 'diagnose'
+  /** Structured task spec. Default null. */
+  spec?: TaskSpec | null
+  /** Merge target. Default `'main'`. */
+  integrationBranch?: string
+  /** True when re-dispatched to repair a prior attempt (prepends a resume banner). Default false. */
+  resumeFromPriorAttempt?: boolean
+  /** Recorded output from the failed verify, when the resumed coder should repair it. */
+  verifyFailureOutput?: string | null
+  /** Override the task id (defaults to `ctx.runId`). */
+  taskId?: string
+  /** Override the worktree (defaults to the one stashed by setupWorktree). */
+  worktree?: WorktreeRef
+  /**
+   * Override the model for this step. Mirrors the Agent SDK's per-call
+   * `{ prompt, model }`: precedence is `opts.model ?? MARS_WORKER_MODEL (Coder
+   * only) ?? the selected Worker's pinned default`. Applies to whichever Worker
+   * the tags/kind resolve to (Coder, Fixer, or an operator-declared Worker),
+   * so a step can run on a heavier model without editing Worker configs.
+   */
+  model?: string
+  /**
+   * Model tier for this step. When set and `model` is not explicitly provided,
+   * the tier is translated to a native model id via the selected Worker's
+   * Provider tier map (`PROVIDER_MODELS[provider][tier]`). Precedence:
+   * `opts.model` > `MARS_WORKER_MODEL` (Coder only) > `opts.modelTier` > the
+   * Worker's pinned default. Mechanical steps should pass `'fast'`; coding
+   * defaults to `'balanced'` per Worker policy; recovery should stay on
+   * `'flagship'` unless explicitly downgraded.
+   */
+  modelTier?: ProviderModelTier
+  /**
+   * Index-card text to inject into the composed prompt. When omitted, the cache
+   * stashed by `setupWorktree` is used automatically — explicit injection is only
+   * needed when calling `runAgent` without a preceding `setupWorktree` step.
+   * Pass `null` to suppress the card even when one is cached.
+   */
+  indexCard?: string | null
+}
+
+export interface RunAgentResult {
+  /** Claude session id (transcript key), null when the run produced none. */
+  sessionId: string | null
+}
+
+/**
+ * All valid option keys for {@link runAgent}. Unknown keys indicate a mis-wired
+ * template (e.g. `mode:'manual'` — use {@link awaitHuman} instead) and are
+ * caught at runtime so a plain-JS workflow file cannot silently degrade a
+ * manual step into a headless coder dispatch.
+ */
+const KNOWN_RUN_AGENT_KEYS: ReadonlySet<string> = new Set<keyof RunAgentOpts>([
+  'prompt',
+  'plan',
+  'tags',
+  'kind',
+  'spec',
+  'integrationBranch',
+  'resumeFromPriorAttempt',
+  'verifyFailureOutput',
+  'taskId',
+  'worktree',
+  'model',
+  'modelTier',
+  'indexCard',
+])
+
+/**
+ * Run the coder through the selected headless provider inside the worktree. Mirrors the former
+ * `run-agent` step body: sweeps stray debris from a prior failed attempt
+ * (gated on 0 commits ahead), composes the full prompt, picks the worker
+ * (kind-aware: fix → Fixer; else tag-routed including registry workers), runs
+ * the worker span, classifies the post-coder worktree state for the run log,
+ * and records usage signals.
+ *
+ * Context-budget hard abort (exitCode 138 + "context budget exhausted") is
+ * handled here exactly as before: stamp the task failed, spawn the resume
+ * fix-task through `store`, and throw the context-exhausted sentinel.
+ *
+ * Usage from a scaffolded workflow:
+ * ```js
+ * await ctx.step('code', () => runAgent(ctx, { prompt: input.prompt, tags: input.tags }))
+ * ```
+ * Coder progress is forwarded to `ctx.emit('agent-event', …)` internally.
+ */
+export const runAgent = async (
+  ctx: MarsCtx,
+  opts: RunAgentOpts = {},
+): Promise<RunAgentResult> => {
+  // Unknown option keys are silently dropped at the TypeScript type level when
+  // the caller is a plain-JS workflow file. Detect them loudly here so a
+  // template bug (e.g. `{ mode: 'manual', guide: '...' }`) cannot silently
+  // degrade a manual step into a headless coder dispatch. Use
+  // `awaitHuman(ctx, { note })` to park a step for human implementation.
+  const unknownKeys = Object.keys(opts).filter(k => !KNOWN_RUN_AGENT_KEYS.has(k))
+  if (unknownKeys.length > 0) {
+    const badOptsMessage =
+      `runAgent: unknown option(s) ${unknownKeys.map(k => `'${k}'`).join(', ')} — ` +
+        `did you mean awaitHuman(ctx, { note }) for a manual step?`
+    // In production, stamp the task failed in the DB before throwing so the
+    // phantom-task watchdog does not re-queue a task stuck in `running` status.
+    // Without this stamp the dispatch loop emits `task.completed` (not
+    // `task.failed`) for a non-WorkflowTerminalError result, leaving the DB
+    // status as `running`; the watchdog eventually re-queues it and the same
+    // deterministic error fires again — a silent loop with no operator alert.
+    // In a validation dry-run the recorder is present and the inert store is a
+    // no-op, but we skip the async stamp entirely to keep validation synchronous.
+    if (!validationRecorder(ctx)) {
+      const taskId = resolveTaskId(ctx, opts.taskId)
+      const store: TaskStore = ctx.services.store
+      // Best-effort: any error (sync TypeError on a stub store, or a rejected
+      // promise) must NOT mask the real error. Wrap the whole call so the throw
+      // below propagates regardless of whether the DB write succeeds.
+      try {
+        await store.updateTask(taskId, {
+          status: 'failed',
+          error: badOptsMessage,
+          failureReason: 'dispatch:bad-primitive-opts',
+          failureReasonCode: 'dispatch:bad-primitive-opts',
+        })
+      } catch (_stampErr) {
+        // intentionally swallowed — the throw below is the real signal
+      }
+    }
+    throw new Error(badOptsMessage)
+  }
+  const recorder = validationRecorder(ctx)
+  if (recorder) {
+    recorder.record({
+      step: ctx.currentStep?.name ?? null,
+      primitive: 'runAgent',
+      mode: 'auto',
+      guide: null,
+    })
+    return { sessionId: null }
+  }
+  // Resolve dispatch facts: explicit opts → ctx.input → hard default. Plumbing
+  // (store / trace / emit / handle / worktree) is pulled off ctx.
+  const taskId = resolveTaskId(ctx, opts.taskId)
+  const prompt = opts.prompt ?? input(ctx).prompt
+  if (prompt === undefined) {
+    throw new Error(
+      `runAgent: no prompt — pass { prompt } or dispatch the run with ctx.input.prompt (task ${taskId})`,
+    )
+  }
+  const plan = opts.plan ?? input(ctx).plan ?? null
+  const tags: TaskTag[] = opts.tags ?? input(ctx).tags ?? ['coder']
+  const kind = opts.kind ?? input(ctx).kind ?? 'task'
+  const spec = opts.spec ?? input(ctx).spec ?? null
+  const integrationBranch =
+    opts.integrationBranch ?? input(ctx).integrationBranch ?? 'main'
+  const resumeFromPriorAttempt =
+    opts.resumeFromPriorAttempt ?? input(ctx).resumeFromPriorAttempt ?? false
+  const verifyFailureOutput =
+    opts.verifyFailureOutput ?? input(ctx).verifyFailureOutput ?? null
+  const model = opts.model
+  const store: TaskStore = ctx.services.store
+  const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
+  const trace = await resolveTrace(ctx, taskId)
+  const emit = (event: AgentEvent): void => ctx.emit('agent-event', event)
+  const handle: Pick<StepHandle, 'setTranscriptKey'> | undefined =
+    ctx.currentStep ?? undefined
+
+  const worktreePath = worktree.path
+  const branch = worktree.branch
+
+  // ── Resume preflight: the worktree must actually exist ────────────────────
+  // On a checkpoint-resume (a watchdog-killed task being retried, `mars
+  // continue`, any re-dispatch with runId=task.id) the completed `setup` step
+  // short-circuits and `resolveWorktree` hands back the path recorded on the
+  // task row WITHOUT revalidating it. If that directory was removed while the
+  // task was parked, every spawn below runs with a dead `cwd` and Node reports
+  // `spawn <bin> ENOENT` → exit 127 in ~20ms, which looks exactly like a
+  // missing provider binary and buckets as a contentless coder-exit-nonzero.
+  // Re-attach the worktree from its branch when possible so the retry gets a
+  // real working directory; fail with a NAMED signature when it cannot be.
+  try {
+    const restored = await restoreWorktreeIfMissing({
+      taskId,
+      ref: { path: worktreePath, branch },
+      traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+    })
+    if (restored === 'rebuilt') {
+      console.log(
+        `[resume] task ${taskId}: worktree ${worktreePath} was missing on resume; ` +
+          `re-attached from branch ${branch}`,
+      )
+    }
+  } catch (err) {
+    if (!(err instanceof ResumeWorktreeUnrecoverable)) throw err
+    const summary = err.message
+    const missingSignature = computeFailureSignature('code:worktree-missing', summary)
+    await updateTask(
+      taskId,
+      {
+        status: 'failed',
+        error: summary,
+        failedPhase: 'code',
+        failureReason: 'code:worktree-missing',
+        failureSignature: missingSignature,
+        failureReasonCode: missingSignature,
+      },
+      store,
+    )
+    throw new WorkflowTerminalError('resume-worktree-missing', summary)
+  }
+
+  // ── Currency preflight: the worktree must contain the integration tip ─────
+  // A checkpoint-resume short-circuits the completed `setup` step, so this is
+  // the only hook guaranteed to run before the coder on `mars continue` / a
+  // watchdog retry. It is a single `merge-base --is-ancestor` probe when setup
+  // already synced and the integration branch has not advanced since.
+  //
+  // `reconcile`, never `recreate`: by the time the code step runs, the branch's
+  // commits are the run's own prior progress — `resumeFromPriorAttempt` literally
+  // tells the coder "prior progress is already in this worktree, review
+  // `git log -p` and continue". Resetting it here would silently gut that, so
+  // a conflict goes to the vcs-supervisor and only escalates if it cannot be
+  // reconciled.
+  await ensureWorktreeCurrent({
+    taskId,
+    ref: { path: worktreePath, branch },
+    integrationBranch,
+    phase: 'code',
+    onConflict: 'reconcile',
+    traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+    store,
+  })
+
+  // Sweep stray untracked files from a prior failed attempt BEFORE the agent
+  // runs (gated on 0 commits ahead so real committed work is preserved).
+  try {
+    const cleanResult = await cleanWorktreeIfNoCommitsAhead({
+      worktreePath,
+      integrationBranch,
+      traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+    })
+    if (cleanResult.cleaned && cleanResult.output.trim().length > 0) {
+      console.log(
+        `[clean] task ${taskId} ${cleanResult.reason}\n${cleanResult.output.trim()}`,
+      )
+    } else if (!cleanResult.cleaned) {
+      console.log(`[clean] task ${taskId} skipped: ${cleanResult.reason}`)
+    }
+  } catch (err) {
+    console.error(
+      `[clean] task ${taskId} threw, continuing without clean:`,
+      err,
+    )
+  }
+
+  const originId = await resolveOriginIdForTask(taskId)
+  const primaryTag: TaskTag = tags.find(isTaskTag) ?? 'coder'
+
+  // Distill noisy verify output before embedding it in the resume banner.
+  // Raw vitest / tsc output can exceed 200 000 chars; the distilled form
+  // strips progress bars and timing lines, keeping only signal (FAIL lines,
+  // Error:, TS diagnostics, diff hunks). A <verify_full_log_ref> element
+  // points the coder at the persisted full log so nothing is truly lost.
+  let verifyBlock = ''
+  if (verifyFailureOutput !== null) {
+    const verifyLogRef = `arc://task/${taskId}/verify-output`
+    const distilled = distillObservation({
+      text: verifyFailureOutput,
+      ref: verifyLogRef,
+      kind: 'verify',
+    })
+    verifyBlock =
+      `\n\n<verify_full_log_ref>${verifyLogRef}</verify_full_log_ref>\n` +
+      `The previous verification failed. Fix the task diff using this recorded output:\n\n` +
+      `\`\`\`text\n${distilled.text}\n\`\`\``
+    // Emit telemetry — best-effort, must never affect dispatch.
+    trace.traceStore
+      .record({
+        kind: 'distill.applied',
+        taskId,
+        originId,
+        phase: 'code',
+        payload: {
+          ref: verifyLogRef,
+          originalBytes: distilled.originalBytes,
+          distilledBytes: distilled.distilledBytes,
+        },
+      })
+      .catch(() => {
+        // Telemetry must never change the completion result.
+      })
+  }
+
+  const fullTask = await store.getTask(taskId).catch(() => null)
+  const domains = resolveTaskDomains({
+    workflow: fullTask?.workflow ?? null,
+    tags,
+  })
+  const lessons = await fetchLessonsForTask(domains).catch(() => [] as string[])
+  // Load active verify gate steps so the coder's <verify> block contains the
+  // exact commands the orchestrator's verify step will run (package-wide
+  // typecheck included), not only what the slicer put in spec.verifyCmd.
+  // This prevents narrow-test false positives where focused tests pass but the
+  // package typecheck fails at the orchestrator's verify gate.
+  // Best-effort: gate-load failures must never block dispatch.
+  const gateSteps = await (async () => {
+    try {
+      const { loadVerifyGates } = await import('../../core/verify-gates')
+      const scopes = await loadVerifyGates(store)
+      return selectVerifySteps(scopes, spec?.files ?? [])
+    } catch {
+      return []
+    }
+  })()
+  // Resolve the index card: explicit opts.indexCard wins; otherwise fall back
+  // to the card stashed by setupWorktree. When opts.indexCard is explicitly
+  // null, suppress the card even if one is cached.
+  const indexCard =
+    'indexCard' in opts ? opts.indexCard ?? null : (readCachedIndexCard(ctx) ?? null)
+  // Compose the stable prefix + task-specific body. The resume banner and
+  // distilled verify-failure block are appended AFTER composePrompt returns so
+  // the stable prefix bytes (COMMIT_EXIT_CONDITION → CODING_DISCIPLINE →
+  // COMMIT_FOOTER) are byte-identical whether or not this is a resume dispatch.
+  // Prepending them (the old basePrompt approach) displaced the stable prefix
+  // and prevented provider-side caching of the shared boilerplate.
+  let fullPrompt = composePrompt(
+    prompt,
+    plan,
+    primaryTag,
+    spec ?? null,
+    taskId,
+    worktreePath,
+    kind,
+    lessons,
+    gateSteps,
+    indexCard,
+  )
+  // Compose and render the restart checkpoint when this is a resume dispatch.
+  // Best-effort: a composition failure must never block dispatch.
+  let checkpointSection = ''
+  if (resumeFromPriorAttempt && fullTask !== null) {
+    try {
+      const cp = await composeRestartCheckpoint({
+        taskId,
+        worktreePath,
+        task: fullTask,
+        workflowState: { runId: ctx.runId, step: 'run-claude-code' },
+      })
+      const rendered = renderRestartCheckpoint(cp)
+      if (rendered) checkpointSection = '\n\n' + rendered
+      await trace.traceStore.record({
+        kind: RESTART_CHECKPOINT_KIND,
+        taskId,
+        originId: trace.originId,
+        phase: 'code',
+        payload: {
+          taskId,
+          commitCount: cp.commits.length,
+          changedPathCount: cp.changedPaths.length,
+          outstandingCount: cp.outstandingCriteria.length,
+          hadPriorVerify: cp.lastVerify !== null,
+          renderedBytes: rendered.length,
+        },
+      })
+    } catch (cpErr) {
+      console.warn(
+        `[code] task ${taskId}: restart checkpoint composition failed (non-fatal):`,
+        cpErr instanceof Error ? cpErr.message : String(cpErr),
+      )
+    }
+  }
+  if (resumeFromPriorAttempt || verifyBlock !== '') {
+    fullPrompt =
+      fullPrompt +
+      checkpointSection +
+      '\n\n## Resume prior work\n\nPrior progress is already in this worktree. Run `git log -p` first to review what was already completed, then continue from where the last coder stopped. Do NOT restart from scratch.' +
+      verifyBlock
+  }
+
+  // Registry workers: merge operator-declared Workers so their tag sets are
+  // visible to pickWorkerForTags. listMergedWorkers now returns fully-
+  // constructed Worker instances, so no createWorker call is needed here.
+  const { listMergedWorkers } = await import('../../core/workers/persisted-registry')
+  const mergedWorkers = listMergedWorkers(resolveContext().stateDir)
+  const allWorkers: Record<string, Worker> = { ...Workers }
+  for (const worker of mergedWorkers) {
+    if (!(worker.config.name in allWorkers)) {
+      allWorkers[worker.config.name] = worker
+    }
+  }
+  const selectedWorker =
+    kind === 'fix' ? Workers.Fixer : pickWorkerForTags(tags, allWorkers)
+  // Per-step model override (Agent-SDK parity): rebuild the chosen Worker with
+  // the requested model so it threads through buildWorker to both the headless
+  // and pty spawn paths. Precedence: explicit `model` > tier-resolved model >
+  // Worker's pinned default. `modelTier` translates to a native model id via
+  // the Worker's Provider tier map; `model` always wins when both are set.
+  const _tierResolvedModel =
+    opts.modelTier !== undefined
+      ? PROVIDER_MODELS[selectedWorker.config.provider][opts.modelTier]
+      : undefined
+  const _effectiveModel = model ?? _tierResolvedModel
+  const worker =
+    _effectiveModel !== undefined && _effectiveModel !== selectedWorker.config.model
+      ? createWorker({ ...selectedWorker.config, model: _effectiveModel, modelTier: opts.modelTier ?? selectedWorker.config.modelTier })
+      : selectedWorker
+  // How the selected Worker's Provider reports usage. Every token read below
+  // (post-coder telemetry, reflect signals) goes through it — the assistant
+  // shape is Claude's alone.
+  const coderSemantics = usageSemanticsOf(worker.config.provider)
+
+  // Generate a fresh random invocation token per coder/recovery dispatch so
+  // concurrent and rapid-resume runs NEVER collide on the same Claude session
+  // UUID. The previous retryCount-based salt was insufficient because:
+  //   (a) `mars continue` does not increment retryCount, so a code-phase
+  //       re-entry after a kill reused the same UUID while Claude still held it,
+  //       producing "Session ID <uuid> is already in use" exits.
+  //   (b) Under parallel recovery the orchestrator can spawn multiple code
+  //       phases faster than Claude releases session bookkeeping, causing the
+  //       same collision even when retryCount differs across tasks.
+  //
+  // A per-invocation random suffix makes every dispatch unconditionally unique.
+  // The session key is still prefixed with taskId so traces/logs remain
+  // attributable to the task. Both spawn paths normalise the key to a valid
+  // UUID via toClaudeSessionId (PTY in providers.ts, headless/stream in
+  // claudeStreamArgs) before it reaches `claude --session-id`, so a non-UUID
+  // key is acceptable here.
+
+  // At-most-two-attempt retry loop for retryable-transient exits (e.g. SIGKILL
+  // or startup failure before provider contact). On attempt 1 a retryable exit
+  // re-derives a fresh session key and re-dispatches the coder; on attempt 2 (or
+  // for any terminal disposition on attempt 1) the existing recovery handlers
+  // below fire unchanged. Operator stops, context-exhausted, and quota-rejected
+  // are all terminal and fall straight through — the loop is a thin guard, not a
+  // redesign of the error-handling below it.
+  let sessionKey = buildSessionKey(taskId)
+  // TypeScript cannot statically prove the loop body runs at least once (attempt
+  // starts at 1, condition 1 <= 2 is always true on the first check). The
+  // definite-assignment assertion `!` is correct: `r` is always assigned before
+  // any post-loop read.
+  let r!: Awaited<ReturnType<typeof runWorkerWithSpan>>
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    if (attempt > 1) sessionKey = buildSessionKey(taskId)
+    r = await runWorkerWithSpan({
+      worker,
+      prompt: fullPrompt,
+      runOptions: {
+        cwd: worktreePath,
+        sessionId: sessionKey,
+        systemPrompt: resolveWorkerSystemPrompt(primaryTag),
+        onEvent: async (event) => {
+          emit?.(event)
+        },
+        // Wire the spawn-time PID callback so the phantom-task watchdog can
+        // switch from the bare wall-clock ceiling (no-PID path, case a) to the
+        // alive-PID + heartbeat path (case b/c), preventing false ceiling kills
+        // of legitimately long-running coders.
+        onPid: ctx.services.onPid,
+        externalAbort: ctx.signal,
+      },
+      traceStore: spanStore(trace),
+      stepName: 'run-agent',
+      workflowInstanceId: trace.workflowInstanceId,
+      originId,
+      taskId,
+      phase: 'code',
+      // Fix (recovery) tasks run flagship so high-risk repair has the
+      // strongest model available. Regular coder tasks inherit whatever
+      // modelTier the caller declared (opts.modelTier); when absent the
+      // Worker's own pinned tier applies.
+      modelTier: kind === 'fix' ? 'flagship' : undefined,
+    })
+
+    // A task stop is an operator decision, not a coder failure. Bail out before
+    // the ordinary non-zero-exit recovery path can stamp or recover the task;
+    // the daemon already marked it failed with failureReason='cancelled'.
+    if (ctx.signal.aborted) throw new Error(`task ${taskId} stopped by operator`)
+
+    // Classify the exit. Operator abort is already handled above so `aborted`
+    // is always false here — pass it explicitly for clarity and purity.
+    const disposition = classifyCoderExitDisposition({ r, aborted: false })
+    if (disposition.kind === 'retryable-transient' && attempt === 1) {
+      // Environmental kill or startup failure before any provider contact. The
+      // worktree is untouched so a single re-dispatch on a fresh session key is
+      // safe. Record a trace event so the action-queue and reflect signals can
+      // observe the retry before it happens.
+      trace.traceStore
+        .record({
+          kind: 'code-retry-attempt',
+          taskId,
+          originId,
+          phase: 'code',
+          payload: { reason: disposition.reason, attempt: 2, sessionKey },
+        })
+        .catch(() => {
+          // Telemetry is best-effort — a DB hiccup must never change the result.
+        })
+      continue
+    }
+
+    // Any other disposition (success, terminal-recovery on attempt 1, any exit
+    // on attempt 2) falls through to the existing handlers below.
+    break
+  }
+
+  // Context-budget hard abort: spawn a resume fix-task and throw the sentinel.
+  if (r.exitCode === 138 && r.stderr.includes('context budget exhausted')) {
+    await updateTask(
+      taskId,
+      {
+        status: 'failed',
+        error: `context-exhausted: coder hit the context token budget limit`,
+        failedPhase: 'code',
+        failureReason: 'context-exhausted',
+        failureReasonCode: 'context-exhausted',
+        // Self-heal keys off `failure_signature`, not `failure_reason_code`:
+        // a NULL here hides the failure from recipe matching, the storm streak
+        // counter and the Steward brief.
+        failureSignature: computeFailureSignature(
+          'code:context-exhausted',
+          'context budget exhausted (maxContextTokens) mid-code',
+        ),
+      },
+      store,
+    )
+    await handleTaskFailureWithFixTask({
+      taskId,
+      failingStep: 'code:context-exhausted',
+      errorOutput: `context budget exhausted (maxContextTokens) mid-code; the worktree holds in-progress work to resume`,
+      branch,
+      store,
+      recipeContext: {
+        targetPath: worktreePath,
+        statusOutput: `The coder ran out of context budget mid-implementation. The worktree at ${worktreePath} holds whatever it committed before the kill — read it and continue.`,
+        targetBranch: branch,
+        originalPrompt: '',
+      },
+    })
+    console.log(
+      `[ctx] task ${taskId}: context-exhausted; recovery fix-task spawned to resume the existing worktree`,
+    )
+    throw new WorkflowTerminalError('context-exhausted', CONTEXT_EXHAUSTED_ABORT_MESSAGE(taskId))
+  }
+
+  // Provider rate/spend-limit rejection (GLOBAL ENVIRONMENTAL CONDITION).
+  //
+  // When the provider rejects the run before the coder can do any work (e.g.
+  // monthly spend limit, five-hour rate limit), the Claude CLI emits a
+  // `rate_limit_event` followed by a `result` event with is_error:true and
+  // api_error_status:429, then exits non-zero. This is NOT a code failure —
+  // the coder never ran, the worktree is untouched, and spawning a recovery
+  // fix-task would instantly hit the same rejection and burn the single
+  // recovery slot with nothing to show for it.
+  //
+  // Correct response: re-queue with the worktree intact, throw a quota-
+  // rejection sentinel that the daemon catches to pause dispatch until
+  // resetsAt and raise exactly one level-triggered action-queue row.
+  if (r.exitCode !== 0 && r.quotaRejected !== null) {
+    // Increment the quota-rejected counter so the poll-fallback ceiling can
+    // discount these attempts. Fetch the current value for a safe increment;
+    // the task semaphore guarantees one active coder per task so no race.
+    const currentTask = await getTask(taskId, store)
+    const nextQuotaRejectedAttempts = (currentTask?.quotaRejectedAttempts ?? 0) + 1
+    await updateTask(taskId, { status: 'queued', quotaRejectedAttempts: nextQuotaRejectedAttempts }, store)
+    console.log(
+      `[code] task ${taskId}: env-rejected by provider quota (resetsAt=${r.quotaRejected.resetsAt}); re-queued; quotaRejectedAttempts=${nextQuotaRejectedAttempts}`,
+    )
+    throw new WorkflowTerminalError('quota-rejected', QUOTA_REJECTED_ABORT_MESSAGE(taskId, r.quotaRejected.resetsAt), { resetsAt: r.quotaRejected.resetsAt })
+  }
+
+  // Catch-all for any OTHER non-zero coder exit (138/context-exhausted is the
+  // only sentinel handled above). Previously such an exit fell straight through
+  // to the normal return: verify then no-ops on the untouched worktree and an
+  // empty diff merges as a false "done". A real example is claude rejecting a
+  // bad --session-id ("Invalid session ID. Must be a valid UUID.") and exiting
+  // before doing any work. Treat it as a code-phase failure: stamp the task,
+  // spawn exactly one recovery fix-task, and throw to stop before verify/merge.
+  if (r.exitCode !== 0) {
+    // --- Termination cause ---------------------------------------------------
+    // Map well-known exit codes to a human-readable cause. SIGKILL (137) and
+    // SIGTERM (143) come from `runSubprocessStreaming`'s fixed close handler
+    // (which now maps `signal` to the conventional 128+N codes). 124 is the
+    // timeout sentinel. 138 is context-budget exhaustion / external abort.
+    const terminationCause =
+      r.exitCode === 137
+        ? 'killed-by-SIGKILL'
+        : r.exitCode === 143
+          ? 'killed-by-SIGTERM'
+          : r.exitCode === 124
+            ? 'timed-out'
+            : r.exitCode === 138
+              ? 'aborted (context-budget or external cancel)'
+              : `natural-exit-or-unclassified (exit ${r.exitCode})`
+
+    // --- Zero-message detection ----------------------------------------------
+    // When the coder did not exchange even one message with the provider it
+    // did not attempt the work — the exit was a startup, auth, or
+    // recursion-guard failure. Name it explicitly so operators are not left
+    // guessing why the worktree is clean and the stderr is sparse.
+    const messageCount = r.conversation.length
+    const zeroMessageNote =
+      messageCount === 0
+        ? ' ZERO MESSAGES EXCHANGED WITH PROVIDER (coder did not attempt the work — likely a startup, auth, or recursion-guard failure).'
+        : ''
+
+    // --- Bounded head + tail capture -----------------------------------------
+    // Head matters: auth / startup failures print early and scroll away before
+    // the tail. Keep the first 2 kB AND the last 2 kB of each stream so that
+    // both early errors and final-state messages are always preserved.
+    const HEAD_CHARS = 2000
+    const TAIL_CHARS = 2000
+    const stdoutLen = r.stdout.length
+    const stderrLen = r.stderr.length
+    const stdoutHead = r.stdout.slice(0, HEAD_CHARS)
+    const stdoutTail = stdoutLen > HEAD_CHARS ? r.stdout.slice(-TAIL_CHARS) : ''
+    const stderrHead = r.stderr.slice(0, HEAD_CHARS)
+    const stderrTail = stderrLen > HEAD_CHARS ? r.stderr.slice(-TAIL_CHARS) : ''
+
+    // diagText drives the task `error` column and the failure signature. It
+    // uses the stderr tail (last chunk) for compat with existing signature
+    // recipes and tests; the full head+tail are in the artifact file.
+    const stderrTailForDiag = r.stderr.trim().slice(-1000)
+    // When the claude CLI dies from an API-level rejection (e.g. monthly spend
+    // limit, auth error) it exits non-zero but writes nothing to stderr — the
+    // actual cause arrives in the event stream as a `result` event or a final
+    // assistant message. Fall back to that text so the task `error` field is
+    // diagnosable without reading the raw transcript.
+    const diagText =
+      stderrTailForDiag.length > 0
+        ? `stderr tail:\n${stderrTailForDiag}`
+        : (() => {
+            const streamText = extractLastStreamText(r.conversation)
+            return streamText
+              ? `stderr empty; last stream text:\n${streamText.slice(-500)}`
+              : `stderr empty; no stream text captured`
+          })()
+
+    // Before reporting failure, detect whether the coder did real work before
+    // it was killed. A watchdog kill, timeout, or quota death can leave
+    // completed but uncommitted changes in the worktree — work that would be
+    // silently lost if the fixer starts from a clean tree. Preserve those
+    // changes as a wip(checkpoint) commit so the recovery fixer inherits a
+    // reviewable, rebuildable baseline. The marker is intentionally
+    // unambiguous so the fixer can distinguish checkpointed WIP from
+    // deliberate commits and knows not to merge as-is.
+    let checkpointFiles: string[] | null = null
+    try {
+      const postState = await detectPostCoderState({
+        worktreePath,
+        integrationBranch,
+        traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+      })
+      if (
+        postState.kind === 'dirty-no-commits' ||
+        postState.kind === 'dirty-with-commits'
+      ) {
+        // Branch-safety guard: the checkpoint commit must land ONLY on the
+        // task's own branch (task/<id>), never on the integration branch
+        // (`main`) or any other freeform branch. The 2026-08-05 incident
+        // (commit 93addc75) was caused by this path committing to `main` when
+        // the worktreePath resolved to the main checkout.
+        const headBranchR = await runTool(
+          {
+            tool: 'git',
+            argv: ['rev-parse', '--abbrev-ref', 'HEAD'],
+            cwd: worktreePath,
+            taskId,
+            originId,
+            phase: 'code',
+          },
+          trace.traceStore,
+        )
+        const headBranch = headBranchR.exitCode === 0 ? headBranchR.stdout.trim() : null
+        if (headBranch !== branch) {
+          const isOnMain = headBranch === 'main' || headBranch === 'master'
+          const refusalReason = isOnMain
+            ? `HEAD is on the integration branch '${headBranch}' — wip(checkpoint) commits must land on the task branch '${branch}'`
+            : `HEAD is on '${headBranch ?? '(detached)'}', expected task branch '${branch}'`
+          console.warn(
+            `[code] task ${taskId}: SKIPPING wip(checkpoint) commit — branch guard tripped: ${refusalReason}. ` +
+              `Dirty paths (${postState.dirtyFiles.length}): ${postState.dirtyFiles.slice(0, 10).join(', ')}`,
+          )
+          // Raise an operator alert so the uncommitted work is not silently lost.
+          await raiseActionQueueItem({
+            kind: 'failed',
+            category: 'orchestrator',
+            priority: 'urgent',
+            title: `Task ${taskId}: wip-checkpoint BLOCKED — wrong branch '${headBranch ?? '(detached)'}' (expected '${branch}')`,
+            body: [
+              `Task ${taskId}'s coder exited with exit code ${r.exitCode} leaving ${postState.dirtyFiles.length} uncommitted path(s),`,
+              `but the wip(checkpoint) commit was BLOCKED because the worktree HEAD is on`,
+              `'${headBranch ?? '(detached HEAD)'}' instead of the task's own branch '${branch}'.`,
+              '',
+              isOnMain
+                ? `This is the scenario that produced commit 93addc75 on main (2026-08-05 incident). Nothing was committed.`
+                : `Committing to a non-task branch would land work on an unowned branch.`,
+              '',
+              'The uncommitted work may be lost. Inspect the worktree manually:',
+              `  Worktree: ${worktreePath}`,
+              `  Actual HEAD branch: ${headBranch ?? '(detached HEAD)'}`,
+              `  Expected branch: ${branch}`,
+              '',
+              'Dirty paths:',
+              ...postState.dirtyFiles.map((f) => `  ${f}`),
+            ].join('\n'),
+            payload: {
+              taskId,
+              worktreePath,
+              actualBranch: headBranch,
+              expectedBranch: branch,
+              dirtyFiles: postState.dirtyFiles,
+              coderExitCode: r.exitCode,
+            },
+            context: { repoRoot: process.env.MARS_REPO ?? null },
+            raisedBy: 'workflow:code:wip-checkpoint-branch-guard',
+            signature: `wip-checkpoint-branch-guard:${taskId}`,
+            originTaskId: taskId,
+          }).catch((raiseErr) => {
+            console.error(
+              `[code] task ${taskId}: wip-checkpoint branch-guard action-queue raise errored:`,
+              raiseErr,
+            )
+          })
+        } else {
+          // Branch is correct — proceed with the checkpoint commit.
+          const addR = await runTool(
+            {
+              tool: 'git',
+              argv: ['add', '-A'],
+              cwd: worktreePath,
+              taskId,
+              originId,
+              phase: 'code',
+            },
+            trace.traceStore,
+          )
+          if (addR.exitCode === 0) {
+            const commitMsg = `${SALVAGE_CHECKPOINT_SUBJECT_PREFIX} coder killed (exit ${r.exitCode}) with ${postState.dirtyFiles.length} uncommitted path(s) — do not merge as-is`
+            const commitR = await runTool(
+              {
+                tool: 'git',
+                argv: ['commit', '-m', commitMsg],
+                cwd: worktreePath,
+                taskId,
+                originId,
+                phase: 'code',
+              },
+              trace.traceStore,
+            )
+            if (commitR.exitCode === 0) {
+              checkpointFiles = postState.dirtyFiles
+              console.log(
+                `[code] task ${taskId}: checkpointed ${postState.dirtyFiles.length} uncommitted path(s) as wip(checkpoint) commit (exit ${r.exitCode})`,
+              )
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[code] task ${taskId}: checkpoint attempt failed, continuing:`, err)
+    }
+
+    const worktreeNote =
+      checkpointFiles !== null
+        ? `worktree had ${checkpointFiles.length} uncommitted path(s); preserved as wip(checkpoint) commit on branch ${branch}`
+        : 'worktree was clean at exit (no uncommitted work found)'
+
+    // --- Per-run artifact file -----------------------------------------------
+    // Write a bounded head+tail of both stdout and stderr to a named file
+    // under .mars/coder-failures/ so `mars diagnose` can find it without
+    // having to reconstruct from the truncated `tasks.error` string.
+    // Written AFTER the checkpoint so the artifact itself never appears as a
+    // dirty file that the checkpoint would commit.
+    let artifactPath: string | null = null
+    try {
+      const failureDir = join(worktreePath, '.mars', 'coder-failures')
+      mkdirSync(failureDir, { recursive: true })
+      artifactPath = join(failureDir, `${sessionKey}.log`)
+      const artifactLines: string[] = [
+        `=== coder-failure: task=${taskId} session=${sessionKey} ===`,
+        `exit-code: ${r.exitCode}`,
+        `termination-cause: ${terminationCause}`,
+        `messages-exchanged: ${messageCount}`,
+        `worktree: ${worktreeNote}`,
+        '',
+        `--- stdout (${stdoutLen} chars total; head=${Math.min(HEAD_CHARS, stdoutLen)}) ---`,
+        stdoutHead,
+        ...(stdoutTail.length > 0
+          ? [`--- stdout tail (last ${stdoutTail.length} chars) ---`, stdoutTail]
+          : []),
+        '',
+        `--- stderr (${stderrLen} chars total; head=${Math.min(HEAD_CHARS, stderrLen)}) ---`,
+        stderrHead,
+        ...(stderrTail.length > 0
+          ? [`--- stderr tail (last ${stderrTail.length} chars) ---`, stderrTail]
+          : []),
+        '',
+        '=== end ===',
+      ]
+      writeFileSync(artifactPath, artifactLines.join('\n'))
+    } catch (artifactWriteErr) {
+      console.warn(
+        `[code] task ${taskId}: failed to write coder-failure artifact:`,
+        artifactWriteErr,
+      )
+      artifactPath = null
+    }
+    const artifactNote =
+      artifactPath !== null ? ` Diagnostic artifact: ${artifactPath}` : ''
+
+    // When the coder exits by SIGTERM (143) or SIGKILL (137) — a process kill,
+    // not a code defect — prepend a sentinel line that mirrors the pattern
+    // `runVerifyStep` uses for verify:killed. `computeFailureSignature` detects
+    // this marker first and overrides the nominal `code:coder-exit-nonzero` gate
+    // with `code:killed/sigterm` or `code:killed/sigkill`, routing the failure
+    // to the environmental re-queue path instead of spawning a recovery Chore.
+    const signalName =
+      r.exitCode === 143 ? 'SIGTERM' : r.exitCode === 137 ? 'SIGKILL' : null
+    const signalMarker =
+      signalName !== null ? `code child killed by ${signalName} (exit ${r.exitCode})\n` : ''
+
+    // One string, two consumers: the row's `error` column and the signature the
+    // failure handler computes. Deriving both from the same text keeps the
+    // stamped signature identical to the one the handler mints, so
+    // `upsertFixTask`'s (taskId, signature) dedup agrees across the two paths.
+    const coderExitOutput = `${signalMarker}coder process exited ${r.exitCode}.${zeroMessageNote} ${worktreeNote}. ${diagText}${artifactNote}`
+    await updateTask(
+      taskId,
+      {
+        status: 'failed',
+        error: `coder exited ${r.exitCode} before completing; termination: ${terminationCause};${zeroMessageNote} ${diagText}${artifactNote}`,
+        failedPhase: 'code',
+        failureReason: 'coder-exit-nonzero',
+        failureReasonCode: 'coder-exit-nonzero',
+        // Without this the row lands with a NULL signature and is invisible to
+        // recipe matching (`code:coder-exit-nonzero/api-unreachable` and
+        // friends), the storm streak counter and the Steward brief.
+        failureSignature: computeFailureSignature(
+          'code:coder-exit-nonzero',
+          coderExitOutput,
+        ),
+      },
+      store,
+    )
+    await handleTaskFailureWithFixTask({
+      taskId,
+      failingStep: 'code:coder-exit-nonzero',
+      errorOutput: coderExitOutput,
+      branch,
+      store,
+      recipeContext: {
+        targetPath: worktreePath,
+        statusOutput:
+          checkpointFiles !== null
+            ? `The coder exited ${r.exitCode} mid-run. The worktree had ${checkpointFiles.length} uncommitted path(s) which have been preserved as a wip(checkpoint) commit on branch ${branch}. Review the checkpoint (\`git -C ${worktreePath} log -p -1\`) and continue from there — do NOT redo work that is already in the checkpoint commit.`
+            : `The coder exited ${r.exitCode} and the worktree was clean at exit (no uncommitted work found). Investigate the exit cause from the diagnostic text before retrying.`,
+        targetBranch: branch,
+        originalPrompt: '',
+      },
+    })
+    console.log(
+      `[code] task ${taskId}: coder exited ${r.exitCode}; recovery fix-task spawned`,
+    )
+    throw new WorkflowTerminalError('coder-exit-nonzero', CODER_EXIT_NONZERO_ABORT_MESSAGE(taskId, r.exitCode))
+  }
+
+  // Classify the worktree end-state. A `dirty-no-commits` tree (the coder did
+  // real work but never ran `git commit`) is NOT benign: it silently falls
+  // through verify (the has-diff gate reads 0 commits ahead and PASSES it as a
+  // no-op) into merge, which rebases an empty branch and dispatches the
+  // vcs-supervisor with a "rebase just conflicted / is in progress" prompt that
+  // is false — Vega aborts, no recipe matches, and the first-principles recovery
+  // idles until the phantom-task watchdog ceiling kills it (~2h; observed on
+  // mars-c6cab686 / fix-64929590). Catch it here, at the earliest point, and
+  // spawn exactly one cheap recovery whose only job is to commit the work that
+  // is already in the worktree — mirroring the coder-exit-nonzero handler above.
+  // Classifier failures (`error`) stay best-effort: log and fall through, so a
+  // transient git hiccup never blocks an otherwise-good run.
+  let postState: Awaited<ReturnType<typeof detectPostCoderState>> | null = null
+  let commitSource: 'self' | 'corrected' | 'net' | 'no-work' | 'unknown' = 'unknown'
+  try {
+    postState = await detectPostCoderState({
+      worktreePath,
+      integrationBranch,
+      traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+    })
+    if (postState.kind === 'error') {
+      console.warn(
+        `[post-coder] task ${taskId}: classifier error: ${postState.error}`,
+      )
+    }
+    if (postState.kind === 'clean-with-commits') commitSource = 'self'
+    if (postState.kind === 'clean-no-work') commitSource = 'no-work'
+  } catch (err) {
+    console.warn(
+      `[post-coder] task ${taskId}: classifier threw, continuing:`,
+      err,
+    )
+  }
+
+  // --- Empty-diff guard -------------------------------------------------------
+  // `clean-no-work` (0 commits ahead, worktree clean) after a coder exit 0
+  // almost always means the worker bailed silently — it printed something,
+  // decided it was done, and exited without touching a single file. That is
+  // never correct for a real coding task: the task appears 'done' in the UI
+  // but produced zero work (the mars-f2a5d4ea incident). Detect it here,
+  // before the dirty-check, and fail with a named signature so recovery can
+  // re-run the prompt.
+  //
+  // Exception: main-committer recovery tasks. Their correct success state IS
+  // zero commits — they exist specifically to handle the case where the
+  // integration branch self-healed before the task ran. parseMainCommiterPayload
+  // returns a non-null value for those tasks; we let them fall through.
+  if (postState?.kind === 'clean-no-work') {
+    const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
+      '../../core/lib/main-dirty'
+    )
+    const isMainCommitter =
+      parseMainCommiterPayload(fullTask?.recoveryPayload ?? null)?.recipe === MAIN_COMMITER_RECIPE
+    if (!isMainCommitter) {
+      const errorMsg = CODER_EMPTY_DIFF_ABORT_MESSAGE(taskId, integrationBranch)
+      console.log(
+        `[post-coder] task ${taskId}: clean-no-work — coder produced zero commits, failing with ${CODER_EMPTY_DIFF_SIGNATURE}`,
+      )
+      await updateTask(
+        taskId,
+        {
+          status: 'failed',
+          error: errorMsg,
+          failedPhase: 'code',
+          failureReason: CODER_EMPTY_DIFF_STEP,
+          failureSignature: CODER_EMPTY_DIFF_SIGNATURE,
+          failureReasonCode: CODER_EMPTY_DIFF_SIGNATURE,
+        },
+        store,
+      )
+      throw new WorkflowTerminalError('coder-empty-diff', errorMsg)
+    }
+    console.log(
+      `[post-coder] task ${taskId}: clean-no-work on main-committer recovery — no-op accepted`,
+    )
+  }
+
+  // --- Coder commit contract -----------------------------------------------
+  // Post-condition on the `code` step: the coder must hand over a CLEAN
+  // worktree. TWO shapes violate it and they are the SAME defect, so they get
+  // the SAME two-stage escalation:
+  //
+  //   `dirty-no-commits`   — the coder committed nothing at all.
+  //   `dirty-with-commits` — the coder committed once, kept working, and left
+  //                          the rest dirty.
+  //
+  // Until 2026-07 only the first shape was recoverable; the second failed the
+  // task outright as `code:commit-contract/uncommitted-changes`, on the theory
+  // that a coder which had already committed deliberately chose to leave the
+  // rest out. Live evidence says otherwise: that signature became the single
+  // largest source of task failures and tripped the signature-storm circuit
+  // breaker, and the leftover paths were ordinary source and test files the
+  // coder simply never got around to committing. Failing a task for it throws
+  // away a worktree full of good work over a missing `git commit`.
+  //
+  // The escalation is the one `fix-recipes.ts` already documents for
+  // `code/uncommitted-changes`, now applied to both shapes:
+  //
+  //   1. One corrective coder turn — the coder gets to commit its own work
+  //      rather than have the orchestrator take authorship of it.
+  //   2. A guarded, deterministic `git add -A && git commit` net, attributed to
+  //      the orchestrator (`chore(auto-commit): task <id> — …`) so history
+  //      never implies the agent committed it.
+  //
+  // Only when BOTH fail is the task terminal — the guard refused an unsafe
+  // path (`.env`, `.mars/`, `node_modules`), or git itself rejected the commit
+  // (pre-commit hook, nothing stageable). That case keeps the registered
+  // `code/uncommitted-changes` signature, which failure-kinds.ts and
+  // fix-recipes.ts both know how to name and recover.
+  if (postState?.kind === 'dirty-no-commits' || postState?.kind === 'dirty-with-commits') {
+    const dirtyList = postState.dirtyFiles.join('\n  ')
+    const committedNote =
+      postState.kind === 'dirty-with-commits'
+        ? `${postState.commitsAhead} commit(s) ahead of ${integrationBranch}`
+        : `0 commits ahead of ${integrationBranch}`
+    console.log(
+      `[post-coder] task ${taskId}: dirty tree with ${committedNote} — coder left ${postState.dirtyFiles.length} uncommitted path(s):\n  ${dirtyList}`,
+    )
+
+    // A clean process exit with a dirty worktree is a recoverable instruction
+    // adherence failure, not a reason to immediately take authorship of the
+    // change. Give the same Coder one short, worktree-backed correction turn
+    // first. Codex exec is ephemeral, so this deliberately starts a second
+    // process; the worktree is the continuation state.
+    const alreadyCommittedLine =
+      postState.kind === 'dirty-with-commits'
+        ? `You already made ${postState.commitsAhead} commit(s) on this branch, but these paths were left out.\n\n`
+        : ''
+    const correction = await runWorkerWithSpan({
+      worker,
+      prompt: `${alreadyCommittedLine}Your previous pass left uncommitted changes in these paths:\n  ${dirtyList}\n\nCommit them now. Do not make unrelated changes.`,
+      runOptions: {
+        cwd: worktreePath,
+        systemPrompt: resolveWorkerSystemPrompt(primaryTag),
+        onEvent: async (event) => emit?.(event),
+        onPid: ctx.services.onPid,
+        externalAbort: ctx.signal,
+      },
+      traceStore: spanStore(trace),
+      stepName: 'commit-correction',
+      workflowInstanceId: trace.workflowInstanceId,
+      originId,
+      taskId,
+      phase: 'code',
+      modelTier: 'fast',
+    })
+
+    if (ctx.signal.aborted) throw new Error(`task ${taskId} stopped by operator`)
+
+    try {
+      const correctedState = await detectPostCoderState({
+        worktreePath,
+        integrationBranch,
+        traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+      })
+      if (correctedState.kind === 'clean-with-commits') {
+        postState = correctedState
+        commitSource = 'corrected'
+        console.log(
+          `[post-coder] task ${taskId}: coder committed ${correctedState.commitsAhead} change(s) on corrective turn`,
+        )
+      } else if (correctedState.kind === 'error') {
+        console.warn(
+          `[post-coder] task ${taskId}: corrective classifier error: ${correctedState.error}; retrying once`,
+        )
+        // Retry once — the observed rev-list failure was transient (the same
+        // probe succeeded minutes earlier in the same worktree and `main` was
+        // present throughout). One bounded retry covers the common transient-git-
+        // hiccup case without masking a persistent failure.
+        const retryState = await detectPostCoderState({
+          worktreePath,
+          integrationBranch,
+          traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+        })
+        if (retryState.kind !== 'error') {
+          // Retry succeeded — update postState normally.
+          if (retryState.kind === 'clean-with-commits') {
+            postState = retryState
+            commitSource = 'corrected'
+            console.log(
+              `[post-coder] task ${taskId}: retry classifier: coder committed ${retryState.commitsAhead} change(s) on corrective turn`,
+            )
+          } else {
+            postState = retryState
+            console.warn(
+              `[post-coder] task ${taskId}: retry classifier: corrective turn exited ${correction.exitCode} without a commit; using the auto-commit net`,
+            )
+          }
+        } else {
+          // Both the initial and retry classifications failed. Carrying the
+          // stale pre-correction snapshot forward risks reporting dirty-file
+          // counts that are no longer true (the corrective turn may have
+          // committed all of them). Fail with a distinct, honest signature
+          // so the operator can inspect the worktree rather than restarting
+          // (which discards potentially-committed work).
+          const classifierError = retryState.error
+          const errorMsg = POST_CODER_CLASSIFIER_ERROR_ABORT_MESSAGE(
+            taskId,
+            classifierError,
+            worktreePath,
+          )
+          console.error(
+            `[post-coder] task ${taskId}: classifier retry also failed (${classifierError}); refusing to use stale pre-correction state`,
+          )
+          await updateTask(
+            taskId,
+            {
+              status: 'failed',
+              error: errorMsg,
+              failedPhase: 'code',
+              failureReason: POST_CODER_CLASSIFIER_ERROR_STEP,
+              failureSignature: POST_CODER_CLASSIFIER_ERROR_SIGNATURE,
+              failureReasonCode: POST_CODER_CLASSIFIER_ERROR_SIGNATURE,
+            },
+            store,
+          )
+          await raiseActionQueueItem({
+            kind: 'failed',
+            category: 'orchestrator',
+            priority: 'high',
+            title: `Post-coder classifier failed for task ${taskId}: worktree state unknown after corrective turn`,
+            body: errorMsg,
+            payload: {
+              taskId,
+              worktreePath,
+              classifierError,
+            },
+            context: { repoRoot: process.env.MARS_REPO ?? null },
+            raisedBy: 'workflow:code:post-coder-classifier-error',
+            signature: `post-coder-classifier-error:${taskId}`,
+            originTaskId: taskId,
+          }).catch((raiseErr) => {
+            console.error(
+              `[post-coder] task ${taskId}: action-queue raise for classifier error errored:`,
+              raiseErr,
+            )
+          })
+          throw new WorkflowTerminalError(
+            'post-coder-classifier-error',
+            errorMsg,
+          )
+        }
+      } else {
+        postState = correctedState
+        console.warn(
+          `[post-coder] task ${taskId}: corrective commit turn exited ${correction.exitCode} without a commit; using the auto-commit net`,
+        )
+      }
+    } catch (err) {
+      // Re-throw terminal errors (e.g. post-coder-classifier-error) so they
+      // are not swallowed and do not let stale state fall into Stage 2.
+      if (err instanceof WorkflowTerminalError) throw err
+      console.warn(`[post-coder] task ${taskId}: corrective classifier threw; using the auto-commit net:`, err)
+    }
+  }
+
+  // Stage 2 — the deterministic net. Runs for both dirty shapes, so a coder
+  // that committed once and left the rest dirty is no longer terminal.
+  if (postState?.kind === 'dirty-no-commits' || postState?.kind === 'dirty-with-commits') {
+    const dirtyList = postState.dirtyFiles.join('\n  ')
+    const commitsAhead =
+      postState.kind === 'dirty-with-commits' ? postState.commitsAhead : 0
+    const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
+      '../../core/lib/main-dirty'
+    )
+    const provenance =
+      parseMainCommiterPayload(fullTask?.recoveryPayload ?? null)?.recipe === MAIN_COMMITER_RECIPE
+        ? 'committer-salvage'
+        : 'coder-left-dirty'
+    const autoResult = await autoCommitWorktreeIfDeterministic({
+      taskId,
+      provenance,
+      integrationBranch,
+      worktreePath,
+      dirtyFiles: postState.dirtyFiles,
+      traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+    })
+
+    if (autoResult.committed) {
+      commitSource = 'net'
+      console.log(
+        `[post-coder] task ${taskId}: auto-committed ${postState.dirtyFiles.length} path(s) as ${autoResult.sha.slice(0, 8)} (on top of ${commitsAhead} coder commit(s))`,
+      )
+    } else if (autoResult.refusal === 'nothing-to-commit') {
+      // The worktree is already clean — the desired post-condition holds.
+      // This happens when a stale dirty-file snapshot from before the
+      // corrective turn is used after the coder already committed everything.
+      // Treat it as a successful no-op and fall through to verify.
+      console.log(
+        `[post-coder] task ${taskId}: auto-commit skipped — worktree already clean (${autoResult.reason}); falling through to verify`,
+      )
+    } else {
+      // Genuinely terminal: the guard refused an unsafe path, or git rejected
+      // the commit. Either way nothing landed and nothing can land without an
+      // operator, so this keeps failing — with the ONE registered signature.
+      const errorMsg = coderUncommittedFailure({
+        taskId,
+        worktreePath,
+        branch,
+        integrationBranch,
+        dirtyFiles: postState.dirtyFiles,
+        commitsAhead,
+        autoCommitReason: autoResult.reason,
+      })
+      console.log(
+        `[post-coder] task ${taskId}: auto-commit refused (${autoResult.refusal}) — ${autoResult.reason}`,
+      )
+      await updateTask(
+        taskId,
+        {
+          status: 'failed',
+          error: errorMsg,
+          failedPhase: 'code',
+          // `failure_reason` doubles as the fine-grained failing step for the
+          // durable recovery-spawn subscriber (`asStepId(task.failureReason)`),
+          // which recomputes the signature from it. It must stay the bare step
+          // id that, combined with the "has uncommitted changes" phrase in
+          // `error`, recomputes to CODER_UNCOMMITTED_SIGNATURE — the prose
+          // lives in `error`.
+          failureReason: CODER_UNCOMMITTED_STEP,
+          failureReasonCode: 'orchestration:coder-left-uncommitted-unfixable',
+          // Stamp the structured signature so the action queue can name this
+          // failure (failure-kinds.ts) and self-heal can find its recipe
+          // (fix-recipes.ts `code/uncommitted-changes`). Without it the row
+          // resolves to the generic "A pipeline step did not complete".
+          failureSignature: CODER_UNCOMMITTED_SIGNATURE,
+        },
+        store,
+      )
+      await raiseActionQueueItem({
+        kind: 'failed',
+        category: 'orchestrator',
+        priority: 'high',
+        title: `Auto-commit failed for task ${taskId}: coder left uncommitted work`,
+        body: [
+          `Task ${taskId} coder exited cleanly but left ${postState.dirtyFiles.length} uncommitted path(s) (${commitsAhead} commit(s) ahead of ${integrationBranch}).`,
+          'A corrective coder turn ran first and did not commit them.',
+          `Deterministic auto-commit was then attempted and refused (${autoResult.refusal}): ${autoResult.reason}`,
+          '',
+          'Dirty files:',
+          `  ${dirtyList}`,
+          '',
+          `Worktree: ${worktreePath}`,
+          '',
+          'Resolve: inspect the worktree, commit manually if the work is viable, or `mars purge` the task.',
+        ].join('\n'),
+        payload: {
+          taskId,
+          worktreePath,
+          dirtyFiles: postState.dirtyFiles,
+          commitsAhead,
+          autoCommitRefusal: autoResult.refusal,
+          autoCommitReason: autoResult.reason,
+        },
+        context: { repoRoot: process.env.MARS_REPO ?? null },
+        raisedBy: 'workflow:code:auto-commit-failed',
+        signature: `coder-uncommitted:${taskId}`,
+      }).catch((raiseErr) => {
+        console.error(
+          `[post-coder] task ${taskId}: action-queue raise for auto-commit failure errored:`,
+          raiseErr,
+        )
+      })
+      throw new WorkflowTerminalError('coder-uncommitted', CODER_UNCOMMITTED_ABORT_MESSAGE(taskId))
+    }
+  }
+
+  // Emitted only for runs that survive every post-coder gate above, matching
+  // the existing terminal-failure branches (auto-commit-failed, commit
+  // contract), which throw before reaching this point.
+  await trace.traceStore
+    .record({
+      kind: 'post-coder-commit',
+      taskId,
+      originId,
+      phase: 'code',
+      payload: {
+        provider: worker.config.provider,
+        commitSource,
+        // Occupancy for a per-request provider, cumulative spend for a
+        // cumulative one, and NEITHER field for a provider that reports no
+        // usage — a hardcoded `contextTokens` read the assistant shape on
+        // every provider and stamped a fabricated 0 on every Codex run.
+        ...buildContextTokenSignals(coderSemantics, r.conversation),
+      },
+    })
+    .catch(() => {
+      // Telemetry must never change the completion result.
+    })
+
+  const usage = summarizeUsageForSemantics(coderSemantics, r.conversation)
+  if (r.sessionId) {
+    handle?.setTranscriptKey(r.sessionId)
+    await updateTask(taskId, { claudeSessionId: r.sessionId }, store)
+  }
+  await recordSignals(taskId, 'run-agent', usage, store).catch(() => {
+    // signal capture must never fail the task
+  })
+
+  return { sessionId: r.sessionId ?? null }
+}

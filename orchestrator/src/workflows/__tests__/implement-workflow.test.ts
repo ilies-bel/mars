@@ -26,7 +26,13 @@ import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
 
 describe('workflow verify cwd', () => {
   it('anchors repo-relative supervisor scopes at the worktree root', () => {
-    const source = readFileSync(resolve(import.meta.dirname, '../primitives/index.ts'), 'utf8')
+    // The `review` primitive moved to `tools/verify/review.ts` in the
+    // modular-core rework; `workflows/primitives/index.ts` is now a re-export
+    // barrel (TARGET §2.1), so this source-text guardrail reads the new home.
+    const source = readFileSync(
+      resolve(import.meta.dirname, '../../tools/verify/review.ts'),
+      'utf8',
+    )
     expect(source).toContain('const verifyCwd = worktreePath')
     expect(source).not.toContain('const verifyCwd = resolveVerifyCwd(worktreePath)')
   })
