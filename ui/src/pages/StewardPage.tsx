@@ -12,6 +12,7 @@
  */
 
 import { FallbackSurface } from '@/components/FallbackSurface'
+import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { useStewardView } from './useStewardView'
 import type { StewardView } from './useStewardView'
 import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
@@ -599,19 +600,28 @@ const GateHealthLane = ({
                   </code>
                   {gate.state === 'quarantined' && (
                     <div className="mt-2 space-y-1 font-mono text-micro text-error">
-                      <p>Quarantine signature: {gate.quarantineSignature ?? 'Unavailable'}</p>
                       <p>
-                        Quarantined at:{' '}
-                        {gate.quarantinedAt === null ? 'Unavailable' : new Date(gate.quarantinedAt).toLocaleString()}
+                        This check was temporarily disabled
+                        {gate.quarantinedAt !== null
+                          ? ` on ${new Date(gate.quarantinedAt).toLocaleString()}`
+                          : ''}{' '}
+                        after failing repeatedly.
                       </p>
+                      <CollapsibleSection label="Technical details">
+                        <p>Signature: {gate.quarantineSignature ?? 'Unavailable'}</p>
+                      </CollapsibleSection>
                     </div>
                   )}
                   {(gate.lastFailureSignature !== null || gate.lastFailureOriginId !== null || gate.lastFailureAt !== null) && (
-                    <div className="mt-2 space-y-1 border-t border-border/30 pt-2 font-mono text-micro text-muted-foreground">
-                      <p className="uppercase tracking-wide">Latest failure</p>
-                      {gate.lastFailureSignature !== null && <p>Signature: {gate.lastFailureSignature}</p>}
-                      {gate.lastFailureOriginId !== null && <p>Origin: {gate.lastFailureOriginId}</p>}
-                      {gate.lastFailureAt !== null && <p>At: {new Date(gate.lastFailureAt).toLocaleString()}</p>}
+                    <div className="mt-2 border-t border-border/30 pt-2 font-mono text-micro text-muted-foreground">
+                      <p>
+                        Last failed
+                        {gate.lastFailureAt !== null ? ` on ${new Date(gate.lastFailureAt).toLocaleString()}` : ''}.
+                      </p>
+                      <CollapsibleSection label="Technical details">
+                        {gate.lastFailureSignature !== null && <p>Signature: {gate.lastFailureSignature}</p>}
+                        {gate.lastFailureOriginId !== null && <p>Origin task: {gate.lastFailureOriginId}</p>}
+                      </CollapsibleSection>
                     </div>
                   )}
                 </li>
