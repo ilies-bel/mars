@@ -158,7 +158,7 @@ export const resolveDbTarget = (override?: string): string => {
  * `.mars/<file>` location) and don't want to pull the full context
  * struct.
  */
-export const resolveRepo = (override?: string): string =>
+const resolveRepo = (override?: string): string =>
   resolveContext(override).repoRoot
 
 /**

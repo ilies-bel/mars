@@ -25,9 +25,9 @@ import { join } from 'node:path'
 import EmbeddedPostgres from 'embedded-postgres'
 import pg from 'pg'
 
-export const PG_USER = 'mars'
-export const PG_DATABASE = 'mars'
-export const PG_HOST = '127.0.0.1'
+const PG_USER = 'mars'
+const PG_DATABASE = 'mars'
+const PG_HOST = '127.0.0.1'
 
 // ── Pure helpers (unit-tested without PG binaries) ──────────────────────────
 

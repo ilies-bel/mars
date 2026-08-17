@@ -10,7 +10,7 @@ import {
   type DiscoveredWorktree,
 } from './worktree-clean'
 
-export type PruneVerdict =
+type PruneVerdict =
   | 'remove-done'
   | 'remove-dropped'
   | 'remove-orphan'

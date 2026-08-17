@@ -24,7 +24,7 @@ export interface SubprocessLine {
 // added at spawn time and removed on 'close'/'error'.
 const liveChildPids = new Set<number>()
 
-export const getLiveChildPids = (): readonly number[] => Array.from(liveChildPids)
+const getLiveChildPids = (): readonly number[] => Array.from(liveChildPids)
 
 // SIGKILL every tracked child's process group. Each child is spawned with
 // `detached: true` so it leads its own process group; signalling -pid kills
@@ -183,7 +183,7 @@ export const runSubprocessStreaming = (
     })
   })
 
-export const runSubprocess = (
+const runSubprocess = (
   cmd: string,
   args: readonly string[],
   cwd: string,
@@ -293,7 +293,7 @@ export interface RunClaudeResult extends RunSubprocessResult {
  * indistinguishable from a real coder failure, which is exactly the kind of
  * baffling exit this guard converts into a diagnosis.
  */
-export const EMPTY_PROMPT_REFUSAL = (provider: string): string =>
+const EMPTY_PROMPT_REFUSAL = (provider: string): string =>
   `refusing to spawn ${provider} with an empty prompt (the composed prompt was blank; ` +
   `the CLI would have fallen back to reading stdin, which is /dev/null for dispatched workers, ` +
   `and exited non-zero with no diagnostic)`
@@ -645,7 +645,7 @@ export const buildWorkerEnv = (taskId?: string): NodeJS.ProcessEnv => {
  * through `MARS_MCP_TASK_ID` in its inherited environment (set by
  * `buildWorkerEnv(taskId)`).
  */
-export const marsWorkerMcpConfigJson = (
+const marsWorkerMcpConfigJson = (
   taskId: string,
   marsBinPath: string,
 ): { mcpServers: Record<string, unknown> } => ({

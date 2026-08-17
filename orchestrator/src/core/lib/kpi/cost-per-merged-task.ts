@@ -49,7 +49,7 @@ export const PROVIDER_PRICING: Record<string, { inputPer1M: number; outputPer1M:
 
 // ── Return types ──────────────────────────────────────────────────────────────
 
-export interface CostPerMergedTaskCurrent {
+interface CostPerMergedTaskCurrent {
   /** Total USD cost across tasks whose pricing is known (null when none are known). */
   costUsd: number | null
   /** Total cache-weighted token count across all done tasks in the window. */
@@ -65,7 +65,7 @@ export interface CostPerMergedTaskCurrent {
   excludedNullCostCount: number
 }
 
-export interface CostPerMergedTaskTrendEntry {
+interface CostPerMergedTaskTrendEntry {
   /** ISO-8601 date string (YYYY-MM-DD) representing the day tasks completed. */
   day: string
   /** Average USD cost per merged task that day (null when no pricing data). */

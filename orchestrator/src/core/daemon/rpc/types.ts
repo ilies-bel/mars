@@ -53,7 +53,7 @@ import type { SpendControlLevers } from '../spend-control/store'
  * coordinated by {@link DocumentWriteCoordinator} rather than a shared
  * semaphore and therefore do not appear here.
  */
-export interface RpcSemaphores {
+interface RpcSemaphores {
   implement: Semaphore
   triage: Semaphore
   refine: Semaphore
@@ -64,7 +64,7 @@ export interface RpcSemaphores {
  * The daemon file paths the `kill` leaf unlinks before tearing down the event
  * loop (socket, pid file, http-port file).
  */
-export interface RpcDaemonPaths {
+interface RpcDaemonPaths {
   socketPath: string
   pidFile: string
   httpPortFile: string
@@ -276,7 +276,7 @@ export interface DaemonDeps {
 }
 
 /** The `patch` shape carried by the `update` op (matches protocol). */
-export type DaemonUpdatePatch = Extract<
+type DaemonUpdatePatch = Extract<
   DaemonRequest,
   { op: 'update' }
 >['patch']

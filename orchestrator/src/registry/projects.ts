@@ -4,7 +4,7 @@ import * as os from 'node:os'
 import * as fs from 'node:fs'
 import * as crypto from 'node:crypto'
 
-export const projectSchema = z.object({
+const projectSchema = z.object({
   projectId: z.string(),
   repoRoot: z.string().refine(path.isAbsolute, { message: 'repoRoot must be an absolute path' }),
   name: z.string(),
@@ -13,7 +13,7 @@ export const projectSchema = z.object({
 export type RegistryEntry = z.infer<typeof projectSchema>
 
 /** Returns the path to the project registry file. Overridable via MARS_PROJECTS_FILE for tests. */
-export function registryPath(): string {
+function registryPath(): string {
   return process.env.MARS_PROJECTS_FILE ?? path.join(os.homedir(), '.mars', 'projects.json')
 }
 
@@ -28,7 +28,7 @@ export function loadProjectRegistry(): RegistryEntry[] {
 }
 
 /** Writes entries atomically to the registry file (write-temp-then-rename). */
-export function saveProjectRegistry(entries: RegistryEntry[]): void {
+function saveProjectRegistry(entries: RegistryEntry[]): void {
   const filePath = registryPath()
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   const tmp = filePath + '.tmp'

@@ -28,10 +28,10 @@ export interface WorkflowLintResult {
 }
 
 /** The single import surface an authored workflow may use. */
-export const ALLOWED_WORKFLOW_IMPORT = 'mars/workflow'
+const ALLOWED_WORKFLOW_IMPORT = 'mars/workflow'
 
 /** Named bindings an authored workflow may import from `mars/workflow`. */
-export const ALLOWED_IMPORT_BINDINGS: ReadonlySet<string> = new Set([
+const ALLOWED_IMPORT_BINDINGS: ReadonlySet<string> = new Set([
   'defineWorkflow',
   'setupWorktree',
   'runAgent',

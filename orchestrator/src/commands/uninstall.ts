@@ -120,7 +120,7 @@ export interface UninstallDeps {
   deactivateClaudePlugin: () => void
 }
 
-export type UninstallOutcome =
+type UninstallOutcome =
   | 'cancelled'
   | 'full-success'
   | 'source-already-absent'

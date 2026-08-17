@@ -76,7 +76,7 @@ import { DAEMON_KILLED_SIGNATURE } from './retry-budget'
  *                                ahead commits onto the integration branch, then
  *                                resolve the worktree-ahead action-queue row.
  */
-export type ActionOp =
+type ActionOp =
   | 'restart'
   | 'unblock'
   | 'purge'

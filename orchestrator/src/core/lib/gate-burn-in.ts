@@ -50,7 +50,7 @@ export const SHADOW_BURN_IN_COUNT = 10
  * `ensureSchema`, applied at daemon/init start). This function is retained as
  * the historical call-site seam and is now a no-op.
  */
-export const ensureGateBurnInSchema = async (
+const ensureGateBurnInSchema = async (
   _client: MonitorDb,
 ): Promise<void> => {
   // Schema is guaranteed by pg-schema.ts ensureSchema at startup.

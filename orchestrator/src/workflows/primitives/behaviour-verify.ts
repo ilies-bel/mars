@@ -205,7 +205,7 @@ export const extractVerdictReport = (
 }
 
 /** Reason classes for the CAN'T-VERIFY outcome. */
-export type UnverifiableReason =
+type UnverifiableReason =
   | 'no-preview-command'
   | 'no-done-criteria'
   | 'dev-server-unhealthy'
@@ -296,7 +296,7 @@ export interface BehaviourVerifyArtifact {
   verdict: CriterionVerdict['verdict']
 }
 
-export type BehaviourVerifyOutcome = 'pass' | 'unverifiable' | 'skipped'
+type BehaviourVerifyOutcome = 'pass' | 'unverifiable' | 'skipped'
 
 export interface BehaviourVerifyResult {
   outcome: BehaviourVerifyOutcome

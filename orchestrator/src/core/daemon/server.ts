@@ -214,7 +214,7 @@ const LOG_ROTATE_BYTES = 10 * 1024 * 1024
  * elsewhere. Pinning both the command argument and environment keeps the
  * replacement reading the same daemon.json, including an operator pause.
  */
-export const spawnReplacementDaemon = async (): Promise<void> => {
+const spawnReplacementDaemon = async (): Promise<void> => {
   const { captureDaemonBootStderr, daemonPaths, spawnDaemonProcess } = await import('./paths')
   const { repoRoot } = resolveContext()
   const child = spawnDaemonProcess({ repoRoot })

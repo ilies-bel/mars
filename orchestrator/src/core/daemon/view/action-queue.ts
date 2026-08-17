@@ -32,7 +32,7 @@ import type { DispatchPauseState } from '../pause-state'
  * collapsed into a smaller UI vocabulary: operators need to distinguish the
  * condition that raised each row.
  */
-export type DerivedActionQueueKind = string
+type DerivedActionQueueKind = string
 export type DerivedActionQueueFilter = 'open' | 'all'
 
 const NON_TASK_FAILURE_KINDS = new Set([
@@ -54,7 +54,7 @@ const NON_TASK_FAILURE_KINDS = new Set([
 const isTaskFailureKind = (kind: string): boolean => !NON_TASK_FAILURE_KINDS.has(kind)
 
 /** Resolution metadata carried by resolved rows in history responses. */
-export interface ActionQueueResolutionMeta {
+interface ActionQueueResolutionMeta {
   resolvedAt: string
   resolution: string | null
   resolutionNote: string | null
@@ -62,7 +62,7 @@ export interface ActionQueueResolutionMeta {
   resolvedBy: string | null
 }
 
-export interface StaleWorktreeDetail {
+interface StaleWorktreeDetail {
   prompt: string | null
   status: string
   ageHours: number

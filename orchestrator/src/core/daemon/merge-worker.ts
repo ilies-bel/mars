@@ -87,7 +87,7 @@ const pendingMergeJobs = new Map<string, (r: MergeJobResult) => void>()
  * Set up BEFORE enqueuing the DB row so the resolver is in place before the
  * worker can process the job.
  */
-export function awaitMergeJobDone(taskId: string): Promise<MergeJobResult> {
+function awaitMergeJobDone(taskId: string): Promise<MergeJobResult> {
   return new Promise<MergeJobResult>((resolve) => {
     pendingMergeJobs.set(taskId, resolve)
   })

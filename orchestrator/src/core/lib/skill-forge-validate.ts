@@ -10,7 +10,7 @@
 
 import type { DeepReflectRow } from './skill-forge-detector'
 
-export type ValidationVerdict = 'applies' | 'misses'
+type ValidationVerdict = 'applies' | 'misses'
 
 export interface ValidationResult {
   verdict: ValidationVerdict

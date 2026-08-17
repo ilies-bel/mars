@@ -57,7 +57,7 @@ export type HealthCheckPosture = 'automatic' | 'manual' | 'off'
  * alongside result and check, a handler can make its routing decision without
  * reaching back into the registry or any external configuration.
  */
-export interface PassFinding {
+interface PassFinding {
   readonly check: HealthCheck
   readonly result: Extract<HealthCheckResult, { status: 'fail' }>
   readonly posture: HealthCheckPosture

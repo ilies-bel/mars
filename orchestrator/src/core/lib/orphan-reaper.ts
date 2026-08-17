@@ -148,7 +148,7 @@ export interface TableRow {
 export type ProcessKind = 'verify-runner' | 'agent-session' | 'foreign'
 
 /** Why a process was (or was not) judged an orphan. */
-export type OrphanReason =
+type OrphanReason =
   /** Reparented to init — the orchestrator that spawned it is gone. */
   | 'reparented'
   /** Belongs to a worktree whose task is no longer in flight. */
@@ -225,7 +225,7 @@ const AGENT_BINARIES = new Set(['claude', 'codex', 'gemini'])
  *
  * `pgrep` takes an extended regular expression, hence the escaped dot.
  */
-export const ORPHAN_PGREP_PATTERN = '\\.mars/worktrees/'
+const ORPHAN_PGREP_PATTERN = '\\.mars/worktrees/'
 
 /**
  * `ps` escapes non-printable argv bytes as three-digit octal (`\012` for LF),
@@ -708,7 +708,7 @@ const PS_MAX_BUFFER = 8 * 1024 * 1024
  * `ps` for the fields we need. `ps -o comm=` would print only `node`, so the
  * argv must come from `ps -o command=` with `-ww` to defeat width truncation.
  */
-export const listCandidateProcesses = async (): Promise<readonly ProcessRow[]> => {
+const listCandidateProcesses = async (): Promise<readonly ProcessRow[]> => {
   let pidOutput = ''
   try {
     const { stdout } = await execFileAsync('pgrep', ['-f', ORPHAN_PGREP_PATTERN], {
@@ -773,7 +773,7 @@ export const parseTableLine = (line: string): TableRow | null => {
  * One `ps` per sweep. Returns an empty array on failure, which reads downstream
  * as "no progress evidence" and therefore spares everything.
  */
-export const readProcessTable = async (): Promise<readonly TableRow[]> => {
+const readProcessTable = async (): Promise<readonly TableRow[]> => {
   let out = ''
   try {
     const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,pgid=,time='], {
@@ -792,7 +792,7 @@ export const readProcessTable = async (): Promise<readonly TableRow[]> => {
 }
 
 /** Read this process's own process-group id via `ps`; `null` when unavailable. */
-export const readOwnPgid = async (): Promise<number | null> => {
+const readOwnPgid = async (): Promise<number | null> => {
   try {
     const { stdout } = await execFileAsync('ps', ['-o', 'pgid=', '-p', String(process.pid)])
     const n = Number(stdout.trim())
@@ -870,7 +870,7 @@ export const resolveAgentMaxAgeSeconds = (
 export const DEFAULT_AGENT_MAX_AGE_SECONDS = resolveAgentMaxAgeSeconds()
 
 /** Grace between the group SIGTERM and the escalation to SIGKILL. */
-export const DEFAULT_KILL_GRACE_MS = Number(
+const DEFAULT_KILL_GRACE_MS = Number(
   process.env.MARS_ORPHAN_KILL_GRACE_MS ?? 2_000,
 )
 

@@ -36,7 +36,7 @@ import { registerSubscriberName } from '../registry.js'
 import { createTaskStore } from '../../core/store/task-store.js'
 import { incrementRescueSuccess } from '../../core/daemon/kpi-store.js'
 
-export const ARC_VERIFIER_SUBSCRIBER = 'arc-verifier'
+const ARC_VERIFIER_SUBSCRIBER = 'arc-verifier'
 registerSubscriberName(ARC_VERIFIER_SUBSCRIBER)
 
 export type ArcVerificationDispatchResult =

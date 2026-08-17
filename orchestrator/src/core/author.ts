@@ -62,7 +62,7 @@ const readGitIdentity = (): string | null => {
   return null
 }
 
-export const detectAuthor = (env: NodeJS.ProcessEnv = process.env): Author => {
+const detectAuthor = (env: NodeJS.ProcessEnv = process.env): Author => {
   if (isAgentEnv(env)) {
     const name = env.MARS_AGENT_NAME?.trim() || 'agent'
     return { kind: 'agent', name }
@@ -71,7 +71,7 @@ export const detectAuthor = (env: NodeJS.ProcessEnv = process.env): Author => {
   return { kind: 'human', name }
 }
 
-export const parseAuthorFlag = (raw: string): Author => {
+const parseAuthorFlag = (raw: string): Author => {
   const trimmed = raw.trim()
   if (trimmed.length === 0) {
     throw new Error('--author requires a value (e.g. human:alice or agent:vega)')

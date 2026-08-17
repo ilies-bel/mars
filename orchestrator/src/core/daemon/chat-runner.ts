@@ -344,7 +344,7 @@ const OVERRIDE_RESHAPE_AS_PROPOSAL_TOOL: FunctionToolDef = {
 }
 
 /** The built-in function tools the chat agent gets, in the order sent to the API. */
-export const CHAT_TOOLS: FunctionToolDef[] = [SHELL_TOOL, READ_FILE_TOOL, WRITE_FILE_TOOL, SKILL_TOOL]
+const CHAT_TOOLS: FunctionToolDef[] = [SHELL_TOOL, READ_FILE_TOOL, WRITE_FILE_TOOL, SKILL_TOOL]
 const TRIAGE_TOOLS: FunctionToolDef[] = [...CHAT_TOOLS, SET_POSTURE_TOOL, OVERRIDE_RESHAPE_AS_PROPOSAL_TOOL]
 
 /** Cap on MCP tool output fed back to the model (codegraph_explore returns verbatim source). */
@@ -357,7 +357,7 @@ const MCP_DESCRIPTION_CHAR_CAP = 2_000
  * collides with a built-in or an earlier server's tool is dropped — tool
  * names are the only dispatch key. Exported for unit testing.
  */
-export const buildMcpToolDefs = (mcpTools: readonly McpToolInfo[]): FunctionToolDef[] => {
+const buildMcpToolDefs = (mcpTools: readonly McpToolInfo[]): FunctionToolDef[] => {
   const taken = new Set([...TRIAGE_TOOLS, OVERRIDE_END_GRILL_TOOL].map((t) => t.name))
   const defs: FunctionToolDef[] = []
   for (const t of mcpTools) {

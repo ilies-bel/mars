@@ -28,7 +28,7 @@ import { truncateFailure } from './truncate-failure'
 import { resolveOriginIdForTask } from './origin'
 
 /** The operator-facing failure families an Alert can describe. */
-export type AlertKind = 'arc-failed' | 'stale-worktree' | 'verify-uncovered'
+type AlertKind = 'arc-failed' | 'stale-worktree' | 'verify-uncovered'
 
 /**
  * A single descendant task in the arc, surfaced under the Alert's `technical`

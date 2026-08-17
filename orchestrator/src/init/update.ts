@@ -22,14 +22,14 @@ import { unifiedDiff } from './unified-diff'
 /** Async line reader; production wraps Node's readline, tests inject a fake. */
 export type LineReader = (question: string) => Promise<string>
 
-export type WorkflowUpdateOutcome =
+type WorkflowUpdateOutcome =
   | 'created' // file did not exist — scaffolded fresh
   | 'unchanged' // on-disk identical to template — silently refreshed (no-op)
   | 'accepted' // diverged + user accepted the new template
   | 'skipped' // diverged + user (or --yes) declined; on-disk kept
   | 'untouched' // diverged but unowned (removed from manifest) — left alone
 
-export interface WorkflowUpdateRecord {
+interface WorkflowUpdateRecord {
   /** Repo-relative destination path, e.g. `.mars/workflows/task-workflow.js`. */
   rel: string
   outcome: WorkflowUpdateOutcome
@@ -190,5 +190,5 @@ export const realLineReader: LineReader = async (question) => {
 }
 
 /** Resolve a repo-relative workflow dest to its absolute path (helper for tests). */
-export const workflowDestPath = (repoRoot: string, rel: string): string =>
+const workflowDestPath = (repoRoot: string, rel: string): string =>
   resolve(repoRoot, rel)

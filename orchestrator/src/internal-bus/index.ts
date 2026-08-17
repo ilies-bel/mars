@@ -39,4 +39,3 @@ export const internalBus = (): InternalBus => {
   return singleton
 }
 
-export type { InternalEventName, InternalEvents } from './events'

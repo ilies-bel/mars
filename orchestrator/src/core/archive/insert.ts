@@ -21,7 +21,7 @@ import { registerSubscriber, fetchPending, advanceCursor } from '../../bus/subsc
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-export type ArchiveSourceKind = 'alert' | 'notice' | 'silent_completion' | 'subject'
+type ArchiveSourceKind = 'alert' | 'notice' | 'silent_completion' | 'subject'
 
 export interface ArchiveSource {
   /** Specific disposition: e.g. 'resolved', 'acked', 'done'. */
@@ -63,7 +63,7 @@ export async function archiveEntry(tx: DbTx, source: ArchiveSource): Promise<voi
 // ── Durable Outbox Subscriber ─────────────────────────────────────────────────
 
 /** Unique name for the durable archive-entries subscriber cursor. */
-export const ARCHIVE_ENTRIES_SUBSCRIBER = 'archive-entries'
+const ARCHIVE_ENTRIES_SUBSCRIBER = 'archive-entries'
 registerSubscriberName(ARCHIVE_ENTRIES_SUBSCRIBER)
 
 /**

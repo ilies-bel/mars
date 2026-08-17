@@ -19,7 +19,7 @@ import { insertMemoryPacket } from '../store/memory-packet-store'
 import { getTask } from '../queue'
 import { isMemoryCaptureDisabled } from './auto-reflect-gate'
 
-export interface DissonantCall {
+interface DissonantCall {
   taskId: string | null
   eventIndex: number
   tool: string
@@ -29,13 +29,13 @@ export interface DissonantCall {
   evidence: string
 }
 
-export interface ThrashingPattern {
+interface ThrashingPattern {
   pattern: string
   occurrences: number
   evidence: string
 }
 
-export interface VerifyMismatch {
+interface VerifyMismatch {
   taskId: string | null
   claimed: string
   actual: string
@@ -1005,7 +1005,7 @@ const emptyReport = (): DeepReflectionReport => ({
  * Resolve the memory-packet domain for an arc: the origin task's workflow name,
  * its first tag, or the fallback literal 'general'.
  */
-export const resolveArcDomain = async (originId: string): Promise<string> => {
+const resolveArcDomain = async (originId: string): Promise<string> => {
   const task = await getTask(originId)
   return task?.workflow ?? task?.tags?.[0] ?? 'general'
 }
@@ -1146,7 +1146,7 @@ const SESSION_PROMPT_CAP_BYTES = 300 * 1024
  * - workflow_step_runs records (retry counts, durations, error summaries)
  * - Token spend breakdown
  */
-export const buildSessionPrompt = (result: SessionArcsResult): string => {
+const buildSessionPrompt = (result: SessionArcsResult): string => {
   const arcsSummary = result.arcs.map((arc) => {
     const statusMixStr = Object.entries(arc.statusMix)
       .map(([k, v]) => `${k}=${v}`)

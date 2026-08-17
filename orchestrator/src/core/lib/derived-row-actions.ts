@@ -21,7 +21,7 @@
 import type { ActionDescriptor } from './failure-kinds'
 
 /** The non-failure derived action-queue row kinds. */
-export type DerivedRowKind =
+type DerivedRowKind =
   | 'stale-worktree'
   | 'draft-proposal'
   | 'awaiting-validation'

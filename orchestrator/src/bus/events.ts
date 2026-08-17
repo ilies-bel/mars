@@ -287,6 +287,6 @@ export function parseEvent<T extends EventName>(
 }
 
 /** Type guard for runtime strings that should narrow to `EventName`. */
-export function isEventName(s: string): s is EventName {
+function isEventName(s: string): s is EventName {
   return Object.prototype.hasOwnProperty.call(EventMap, s);
 }

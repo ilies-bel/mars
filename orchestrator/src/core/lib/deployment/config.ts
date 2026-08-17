@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 
-export const DeployConfigSchema = z
+const DeployConfigSchema = z
   .object({
     provider: z.string().min(1),
     env: z.record(z.string(), z.string()).default({}),

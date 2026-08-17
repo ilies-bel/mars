@@ -180,7 +180,7 @@ If you abort, set \`STATUS: aborted\` and explain in a \`REASON:\` line. The orc
 // This constant is the single source of truth; it was previously inlined in
 // implement-workflow.ts as WRITER_SYSTEM_PROMPT and removed by ADR 0019.
 // The Agent Live Board (PRD 2b8e1d21) reads it from here instead.
-export const WRITER_SYSTEM_PROMPT = [
+const WRITER_SYSTEM_PROMPT = [
   'You are the Writer worker.',
   '',
   'You land documentation changes (glossary terms, ADRs) by calling the Mars CLI verbs that route through the structured-write daemon, NOT by editing files in this worktree.',

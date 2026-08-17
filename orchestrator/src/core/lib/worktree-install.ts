@@ -8,7 +8,7 @@ import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
 export const DEFAULT_INSTALL_TIMEOUT_MS = 8 * 60_000
 
 /** Maximum time to wait for a declared .d.ts/.d.cts file to appear after build. */
-export const DECLARATION_WAIT_TIMEOUT_MS = 30_000
+const DECLARATION_WAIT_TIMEOUT_MS = 30_000
 
 // ---------------------------------------------------------------------------
 // Install concurrency semaphore
@@ -139,7 +139,7 @@ export interface InstallSite {
   lockfile: string
 }
 
-export interface InstallResult extends InstallSite {
+interface InstallResult extends InstallSite {
   exitCode: number
   stdout: string
   stderr: string
@@ -1103,7 +1103,7 @@ export const installWorktreeDeps = async ({
 }
 
 /** Process-wide lock serializing lockfile regeneration across all worktrees. */
-export const INSTALL_REGEN_LOCK_TIMEOUT_MS = 10 * 60_000
+const INSTALL_REGEN_LOCK_TIMEOUT_MS = 10 * 60_000
 
 /**
  * Per-lock-path in-process mutex. The cross-process file lock (`acquireLock`)

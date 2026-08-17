@@ -26,7 +26,7 @@ export const SUBJECT_MAX_LEN = 72
  * Conventional commit pattern: `type(scope): description` or `type: description`.
  * Scope is optional; a breaking-change marker `!` is allowed before the colon.
  */
-export const CONVENTIONAL_COMMIT_RE = /^[a-z]+(\([^)]+\))?!?: .+/
+const CONVENTIONAL_COMMIT_RE = /^[a-z]+(\([^)]+\))?!?: .+/
 
 // ---------------------------------------------------------------------------
 // Pure repair logic (no I/O — unit-testable without a real git repo)

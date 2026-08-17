@@ -31,9 +31,9 @@
 import { getDefaultTaskStore } from '../store/task-store'
 import { getProposal } from '../proposals'
 
-export type OriginNodeKind = 'proposal' | 'prd' | 'task' | 'fix'
+type OriginNodeKind = 'proposal' | 'prd' | 'task' | 'fix'
 
-export interface OriginNode {
+interface OriginNode {
   id: string
   kind: OriginNodeKind
   title: string

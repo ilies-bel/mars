@@ -104,7 +104,7 @@ export interface Command {
 }
 
 /** One documented command-line flag. */
-export interface CommandFlag {
+interface CommandFlag {
   syntax: string
   description: string
 }

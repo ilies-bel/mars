@@ -260,7 +260,7 @@ export const raiseAggregatedMainCommiterFailureRow = async (
  * the same branch bump `seen_count` on the existing open row rather than
  * inserting a new one.
  */
-export const unrelatedDirtActionQueueSignature = (integrationBranch: string): string =>
+const unrelatedDirtActionQueueSignature = (integrationBranch: string): string =>
   `main-dirty:unrelated:${integrationBranch}`
 
 export const raiseUnrelatedDirtActionQueue = async (

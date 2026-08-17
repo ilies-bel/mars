@@ -55,7 +55,7 @@ import type { RanVerifyStep } from './derive-repro-command'
  */
 
 /** Name prefix for every enrichment-registry verify step. */
-export const ENRICH_STEP_PREFIX = 'enrich:'
+const ENRICH_STEP_PREFIX = 'enrich:'
 
 /**
  * Number of consecutive clean verify-run passes on an ENFORCING enrichment
@@ -68,7 +68,7 @@ export const ENRICH_STEP_PREFIX = 'enrich:'
 export const ENFORCING_STALE_THRESHOLD = 20
 
 /** Action-queue kind for the "enforcing check may be stale" row. */
-export const GATE_ENRICHMENT_STALE_KIND = 'gate-enrichment-stale' as const
+const GATE_ENRICHMENT_STALE_KIND = 'gate-enrichment-stale' as const
 
 /** The verify-step name for an enrichment record: `enrich:<signature>`. */
 export const enrichStepName = (signature: string): string =>
@@ -101,7 +101,7 @@ export const signatureFromEnrichStepName = (name: string): string | null =>
  *                     prompt-misread / unclassified). Produces NO check;
  *                     recorded so the coverage gap is enumerable, not silent.
  */
-export type EnrichmentStatus =
+type EnrichmentStatus =
   | 'candidate'
   | 'shadow'
   | 'enforcing'
@@ -139,7 +139,7 @@ export interface EnrichmentRecord {
  * (pg-schema.ts `ensureSchema`, applied at daemon/init start). This function
  * is retained as the historical call-site seam and is now a no-op.
  */
-export const ensureGateEnrichmentSchema = async (
+const ensureGateEnrichmentSchema = async (
   _client: MonitorDb,
 ): Promise<void> => {
   // Schema is guaranteed by pg-schema.ts ensureSchema at startup.
@@ -858,7 +858,7 @@ export interface EnrichmentSideEffects {
  * it never approves, never enforces — the human does that via the action
  * queue (ADR-0048), and burn-in gates enforcement after that.
  */
-export const buildEnrichmentDraftPrompt = (
+const buildEnrichmentDraftPrompt = (
   record: EnrichmentRecord,
   input: ObserveFailureForEnrichmentInput,
 ): string => {

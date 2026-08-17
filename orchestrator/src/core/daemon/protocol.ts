@@ -182,7 +182,7 @@ export type DaemonResponse =
   | { ok: true; data?: unknown }
   | { ok: false; error: string; errorCode?: string }
 
-export type InitResponseData = RunInitResult
+type InitResponseData = RunInitResult
 
 export interface DaemonStatusPayload {
   pid: number

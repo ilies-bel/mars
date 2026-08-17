@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { ChatMessage } from '../lib/chat-store'
 
 /** Whether a persisted chat entry belongs to the reusable conversation or one Subthread. */
-export const ChatContextScopeSchema = z.enum(['main', 'subthread'])
+const ChatContextScopeSchema = z.enum(['main', 'subthread'])
 export type ChatContextScope = z.infer<typeof ChatContextScopeSchema>
 
 /**

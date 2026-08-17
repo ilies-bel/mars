@@ -205,7 +205,7 @@ export interface ReconcileSummary {
  * report the field(s) they own; steps with no numeric report (e.g. the
  * dispatch-reseed) return `{}`.
  */
-export type ReconcileStepResult = Partial<ReconcileSummary>
+type ReconcileStepResult = Partial<ReconcileSummary>
 
 /**
  * A single reconciliation step. `name` is for logging and the ordering

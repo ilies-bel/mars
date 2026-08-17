@@ -111,7 +111,7 @@ export const listUniqueCommitsAhead = async (
   }
 }
 
-export type SweepAction = 'keep' | 'delete' | 'cherry-pick'
+type SweepAction = 'keep' | 'delete' | 'cherry-pick'
 
 export interface SweepVerbDeps extends SweepDeps {
   /** Prompt the operator for an action on the given orphan branch. */

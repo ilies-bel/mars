@@ -1159,5 +1159,5 @@ export const humanSummary = (
  * collapse-hero PRD) and available to any CLI/UI surface that needs a
  * "nothing pending" status line.
  */
-export const noPendingHumanSummary =
+const noPendingHumanSummary =
   "Nothing's pressing right now — what would you like to work on?"

@@ -3,7 +3,7 @@ export interface ClaudeEvent {
   [key: string]: unknown
 }
 
-export type ClaudeConversation = ClaudeEvent[]
+type ClaudeConversation = ClaudeEvent[]
 
 const TOOL_USE_INPUT_THRESHOLD = 2 * 1024
 const TOOL_RESULT_CONTENT_THRESHOLD = 4 * 1024

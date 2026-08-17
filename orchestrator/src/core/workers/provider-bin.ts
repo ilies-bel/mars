@@ -37,7 +37,7 @@ export const PROVIDER_BIN_ENV: Readonly<Record<ProviderName, string>> = {
 }
 
 /** Bare executable name searched on PATH when no env override is set. */
-export const PROVIDER_BIN_NAME: Readonly<Record<ProviderName, string>> = {
+const PROVIDER_BIN_NAME: Readonly<Record<ProviderName, string>> = {
   claude: 'claude',
   codex: 'codex',
   gemini: 'gemini',

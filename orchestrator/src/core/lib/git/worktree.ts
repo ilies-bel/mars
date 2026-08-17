@@ -852,7 +852,7 @@ export const PARKED_REF_PREFIX = 'refs/mars/parked'
  * nested under a per-task directory) so `<taskId>` and `<taskId>/<sha>` can
  * never collide as a git D/F conflict.
  */
-export const parkedRefFor = (taskId: string, sha: string): string => {
+const parkedRefFor = (taskId: string, sha: string): string => {
   const safe = taskId
     .replace(/[^A-Za-z0-9._-]/g, '-')
     .replace(/^\.+/, '')
@@ -861,7 +861,7 @@ export const parkedRefFor = (taskId: string, sha: string): string => {
   return `${PARKED_REF_PREFIX}/${safe}-${sha.slice(0, 9)}`
 }
 
-export interface ParkedCommit {
+interface ParkedCommit {
   shortSha: string
   subject: string
 }
@@ -1314,7 +1314,7 @@ export const syncWorktreeToIntegration = async (args: {
   return { kind: 'rebased', from, to, checkpointRef: checkpoint?.ref ?? null }
 }
 
-export const resolveSha = async (
+const resolveSha = async (
   ref: string,
   traceCtx?: TraceCtx,
 ): Promise<string> => {

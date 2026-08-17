@@ -93,7 +93,7 @@ const IN_FLIGHT_STATUSES: ReadonlySet<TaskStatus> = new Set([
   'vega-reconciling',
 ])
 
-export type Verdict =
+type Verdict =
   | 'remove-done-merged'
   | 'remove-failed-zero-commit'
   | 'remove-orphan-zero-commit'
@@ -198,7 +198,7 @@ export interface RunOptions {
   guardCheck?: (wtPath: string) => Promise<string | null>
 }
 
-export const discoverWorktreesIn = (root: string): DiscoveredWorktree[] => {
+const discoverWorktreesIn = (root: string): DiscoveredWorktree[] => {
   if (!existsSync(root)) return []
   let entries: string[]
   try {
@@ -406,7 +406,7 @@ export const runWorktreeClean = async (
   return summary
 }
 
-export const isDaemonRunning = async (socketPath: string): Promise<boolean> => {
+const isDaemonRunning = async (socketPath: string): Promise<boolean> => {
   if (!existsSync(socketPath)) return false
   const { createConnection } = await import('node:net')
   return new Promise((resolveFn) => {

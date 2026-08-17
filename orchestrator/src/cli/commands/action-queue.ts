@@ -39,7 +39,7 @@ const LEAN_PREVIEW = 3
  * The router (Steward) reads this value per check before deciding which of
  * the three routes to take for a given finding.
  */
-export type HealthCheckPosture = 'automatic' | 'manual' | 'off'
+type HealthCheckPosture = 'automatic' | 'manual' | 'off'
 
 const NO_DAEMON_MSG =
   'action queue: daemon not running — run `mars daemon start` (the action queue view is served by the daemon)'

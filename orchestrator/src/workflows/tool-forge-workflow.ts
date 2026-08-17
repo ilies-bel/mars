@@ -14,7 +14,6 @@ import {
   specSchema,
 } from './primitives/shared'
 
-export type { MarsServices }
 
 // ---------------------------------------------------------------------------
 // Tool-forge pipeline
@@ -41,9 +40,9 @@ const toolForgeInputSchema = z.object({
   fixForTaskId: z.string().nullable().default(null),
 })
 
-export type ToolForgeInput = z.infer<typeof toolForgeInputSchema>
+type ToolForgeInput = z.infer<typeof toolForgeInputSchema>
 
-export interface ToolForgeOutput {
+interface ToolForgeOutput {
   taskId: string
   success: boolean
   message: string
@@ -118,7 +117,7 @@ export const buildToolForgePrompt = (
     motivatingArcIds.join(', '),
   )
 
-export const toolForgeWorkflow = defineWorkflow<
+const toolForgeWorkflow = defineWorkflow<
   ToolForgeInput,
   ToolForgeOutput,
   MarsServices

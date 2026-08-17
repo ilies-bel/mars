@@ -44,7 +44,7 @@ import { provisionWorktreeDeps } from './lib/worktree-deps'
 
 const execFileP = promisify(execFile)
 
-export type LandTaskOutcome =
+type LandTaskOutcome =
   | 'landed'
   | 'verify-failed'
   | 'conflict'

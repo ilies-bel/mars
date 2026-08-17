@@ -26,7 +26,7 @@ import { registerSubscriberName } from '../registry.js'
 import { postConversationNotice } from '../../core/lib/conversation-delivery.js'
 
 /** Durable cursor that observes alert mutations to prompt Subthread archival. */
-export const ARCHIVE_PROMPTER_SUBSCRIBER = 'archive-prompter'
+const ARCHIVE_PROMPTER_SUBSCRIBER = 'archive-prompter'
 registerSubscriberName(ARCHIVE_PROMPTER_SUBSCRIBER)
 
 /** Register the durable cursor before alert-mutation events are published. */
@@ -64,7 +64,7 @@ interface ArchiveCandidate {
  * Exported because the objective-met path (operator-created Subthreads) reaches
  * the same prompt without going through an outbox event.
  */
-export async function proposeArchive(
+async function proposeArchive(
   subthread: ArchiveCandidate,
   reason: 'alert-mutated' | 'objective-met',
   promptedFor?: string,

@@ -31,7 +31,7 @@ export const BUCKET_ORDER: ReadonlyArray<BucketKey> = [
   'older',
 ]
 
-export const BUCKET_LABEL: Readonly<Record<BucketKey, string>> = {
+const BUCKET_LABEL: Readonly<Record<BucketKey, string>> = {
   today: 'Today',
   yesterday: 'Yesterday',
   this_week: 'This Week',

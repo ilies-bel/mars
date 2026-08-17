@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, relative } from 'node:path'
 
-export interface VerifyStepEntry {
+interface VerifyStepEntry {
   name: string
   cmd: string
   args: string[]

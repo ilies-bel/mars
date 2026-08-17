@@ -2,7 +2,7 @@ import type { DbClient } from '../lib/db.js'
 import { resolveStateClient } from '../store/state-client.js'
 import type { ConversationMemoryFacts } from '../workers/provider-types.js'
 
-export type MemoryCutReason = 'capacity' | 'retention-lapse'
+type MemoryCutReason = 'capacity' | 'retention-lapse'
 
 export interface MainMemoryWindow {
   startsAfterSeq: number

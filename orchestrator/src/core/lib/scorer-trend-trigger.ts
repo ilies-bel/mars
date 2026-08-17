@@ -25,7 +25,7 @@ import {
 } from '../scorer-results.js'
 import { findOpenDraftByKpiTag, createProposal } from '../proposals.js'
 
-export type ScorerTrendSkipReason =
+type ScorerTrendSkipReason =
   | 'disabled'
   | 'insufficient-samples'
   | 'healthy'

@@ -84,7 +84,7 @@ export type VerifyGateInput = z.infer<typeof VerifyGateInputSchema>
  * Fields that can be updated on an existing gate via {@link updateVerifyGate}.
  * At least one field must be provided.
  */
-export const VerifyGateUpdateSchema = z.object({
+const VerifyGateUpdateSchema = z.object({
   /** Per-gate wall-clock timeout in minutes. Pass `null` to clear (revert to process-wide default). */
   timeoutMin: z.number().positive().nullable().optional(),
 }).refine(
@@ -166,7 +166,7 @@ const rowToGate = (row: VerifyGateRow): VerifyGate => ({
  * The action queue is intentionally read and updated directly here: this is
  * the entity mutation that makes the Alert projection disappear.
  */
-export const resolveCoveredVerifyAlerts = async (scope: string): Promise<void> => {
+const resolveCoveredVerifyAlerts = async (scope: string): Promise<void> => {
   const c = resolveStateClient()
   try {
     const open = await c.execute({
@@ -328,7 +328,7 @@ export const quarantineVerifyGate = async (
 /**
  * Return a quarantined gate to execution without erasing its latest failure.
  */
-export const activateVerifyGate = async (id: string): Promise<void> => {
+const activateVerifyGate = async (id: string): Promise<void> => {
   const c = resolveStateClient()
   await c.execute(
     `UPDATE verify_gates

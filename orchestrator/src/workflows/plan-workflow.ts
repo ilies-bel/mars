@@ -34,7 +34,7 @@ const plannerOutputSchema = z.object({
 // The plan workflow reads the task and writes Proposal rows; the daemon
 // wires the TaskStore and TraceEventStore from the composition root, read
 // inside as `ctx.services.store` and `ctx.services.traceStore`.
-export interface PlanServices {
+interface PlanServices {
   store: TaskStore
   traceStore: TraceEventStore
 }
@@ -71,7 +71,7 @@ export interface RunPlanResult {
 //
 // One imperative step ('generate-plan', load-bearing as the trace-view node
 // label). Failures THROW; the engine records the step failed.
-export const planWorkflow = defineWorkflow<PlanInput, RunPlanResult, PlanServices>({
+const planWorkflow = defineWorkflow<PlanInput, RunPlanResult, PlanServices>({
   id: 'plan',
   inputSchema: planInputSchema,
   fn: async (

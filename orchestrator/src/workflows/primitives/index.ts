@@ -458,7 +458,7 @@ export interface ValidateRecorderEntry {
  * (per-run state), never an env var, so the daemon can validate one workflow
  * while real dispatches run concurrently.
  */
-export interface ValidateRecorder {
+interface ValidateRecorder {
   record(entry: ValidateRecorderEntry): void
 }
 
@@ -2431,7 +2431,7 @@ export const runAgent = async (
  *     the resulting `RanVerifyStep.exitCode` to surface the faithful exit code
  *     in the verifyOutput text and in recovery prompts.
  */
-export const buildSpecVerifyCmdStep = (verifyCmd: string | null | undefined): VerifyStepSpec | null => {
+const buildSpecVerifyCmdStep = (verifyCmd: string | null | undefined): VerifyStepSpec | null => {
   if (!verifyCmd || verifyCmd.trim().length === 0) return null
   return {
     name: 'spec-verify-cmd',
@@ -2496,7 +2496,7 @@ export interface ReviewOpts {
  * Used by both the task-tier `review` primitive and the merge-time
  * integration-gate runner.
  */
-export interface VerifyGateOutcome {
+interface VerifyGateOutcome {
   name: string
   tier: 'task' | 'integration'
   passed: boolean

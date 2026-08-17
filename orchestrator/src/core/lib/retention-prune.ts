@@ -56,7 +56,7 @@ export const RETENTION_BATCH_SIZE = 1_000
  * each sweep tick short while allowing real catch-up when the table is
  * significantly over cap.
  */
-export const RETENTION_SWEEP_BUDGET_MS = 500
+const RETENTION_SWEEP_BUDGET_MS = 500
 
 export interface RetentionOptions {
   /**

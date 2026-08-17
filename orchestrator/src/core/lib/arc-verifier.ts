@@ -57,7 +57,7 @@ const VERIFY_CMD_OUTPUT_CAP = 2_000
  * it is never triggered again in the same daemon process. Never cleared in
  * production; cleared between tests via {@link _clearTriggeredForTests}.
  */
-export const triggeredOriginIds = new Set<string>()
+const triggeredOriginIds = new Set<string>()
 
 /** For test isolation ONLY. Never call in production. */
 export const _clearTriggeredForTests = (): void => {
@@ -173,7 +173,7 @@ export const isArcVerifyDisabled = (): boolean =>
  * `ran: true` means the pass executed and `criterionResults` holds evidence.
  * The pass NEVER fails the arc — it only captures evidence.
  */
-export interface ArcE2ePassResult {
+interface ArcE2ePassResult {
   ran: boolean
   cantVerifyReason: 'no-criteria' | 'no-boot-plan' | 'already-done' | null
   criterionResults: CriterionResult[]
@@ -404,7 +404,7 @@ export interface ArcVerificationVerdict {
  *
  * Satisfied stories appear in neither array.
  */
-export interface ReachabilityJudgement {
+interface ReachabilityJudgement {
   unsatisfiedStories: Array<{ story: string; humanCannotDo: string }>
   deferredStories: string[]
 }
@@ -419,7 +419,7 @@ export interface ReachabilityJudgement {
  * a user story.  Stories covered textually by `outOfScope` entries are
  * classified as deferred and produce no finding.
  */
-export async function judgeReachableSurfaces(opts: {
+async function judgeReachableSurfaces(opts: {
   userStories: string[]
   outOfScope: string[]
   diff: string

@@ -670,7 +670,7 @@ export const classifyTypecheckOutput = (output: string): 'type-error' | 'infra' 
  * separator between the prefix and the error tail — that is what makes
  * {@link stripRecoveryFailedPrefixes} exact rather than heuristic.
  */
-export const RECOVERY_FAILED_PREFIX = 'recovery_failed:'
+const RECOVERY_FAILED_PREFIX = 'recovery_failed:'
 
 /** `recovery_exhausted:<sig>` — the code-recovery budget gate in `queue-fix-tasks.ts`. */
 export const RECOVERY_EXHAUSTED_PREFIX = 'recovery_exhausted:'

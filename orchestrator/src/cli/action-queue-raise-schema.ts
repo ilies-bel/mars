@@ -19,4 +19,4 @@ export const actionQueueRaiseSchema = z.object({
   occurrence: recordOfUnknown.optional(),
 })
 
-export type ActionQueueRaiseInput = z.infer<typeof actionQueueRaiseSchema>
+type ActionQueueRaiseInput = z.infer<typeof actionQueueRaiseSchema>

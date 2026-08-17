@@ -35,7 +35,7 @@ export const VERIFY_TIMEOUT_MARKER = 'verify child timed out after'
  * Override for the whole process with `MARS_VERIFY_TIMEOUT_MIN=<number>`.
  * Per-gate overrides are stored in `verify_gates.timeout_min`.
  */
-export const VERIFY_STEP_TIMEOUT_MIN_DEFAULT: number = Number(
+const VERIFY_STEP_TIMEOUT_MIN_DEFAULT: number = Number(
   process.env.MARS_VERIFY_TIMEOUT_MIN ?? 15,
 )
 
@@ -70,7 +70,7 @@ export const VERIFY_STEP_TIMEOUT_MIN_DEFAULT: number = Number(
  * timeout.  If the empty-output case proves prevalent in practice it can be
  * added as a separate heuristic.
  */
-export const VERIFY_INFRA_FAILURE_PATTERNS: readonly RegExp[] = [
+const VERIFY_INFRA_FAILURE_PATTERNS: readonly RegExp[] = [
   /FATAL: the database system is shutting down/i,
   /the database system is shutting down/i,
   /org\.springframework\.dao\.DataAccessResourceFailureException/,
@@ -270,7 +270,7 @@ export interface VerifyArgs {
   onChildPid?: (pid: number) => void
 }
 
-export type VerifyVerdict = 'PASS' | 'FAIL' | "CAN'T-VERIFY"
+type VerifyVerdict = 'PASS' | 'FAIL' | "CAN'T-VERIFY"
 
 /**
  * The task-level verification decision. A CAN'T-VERIFY verdict still permits
@@ -428,7 +428,7 @@ const captureHasDiffDiagnostics = async (
  * which is a verdict about the branch's DIFF — conflating them made every
  * hygiene problem read as a diff problem.
  */
-export const WORKTREE_HYGIENE_STEP = 'worktree-hygiene'
+const WORKTREE_HYGIENE_STEP = 'worktree-hygiene'
 
 /**
  * Step name for the required verify step that executes `spec.verifyCmd`

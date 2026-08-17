@@ -218,7 +218,7 @@ const runActivatePlugin = (): void => {
 // seeds) and DB side effects (schema + legacy import) are preserved verbatim.
 // Failures THROW; the engine records the step failed. 'activate-plugin' is
 // best-effort: it never throws regardless of outcome.
-export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
+const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
   id: 'init',
   inputSchema: initInputSchema,
   fn: async (ctx: WorkflowCtx, input: InitInput): Promise<InitWorkflowOutput> => {

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { WORKFLOWS_DEST_REL } from './scaffold-workflows'
 
-export interface InitManifest {
+interface InitManifest {
   version: 1
   generatedAt: string
   /**

@@ -16,7 +16,7 @@
  * - `task.needs-you`— the task needs operator intervention (action-queue
  *   item raised, or the task is blocked without a recovery path).
  */
-export type NarrationEventKind =
+type NarrationEventKind =
   | 'task.landed'
   | 'task.stumbled'
   | 'task.recovered'

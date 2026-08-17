@@ -9,7 +9,7 @@
  */
 
 /** Spec fields included in the release-note detail. */
-export interface ReleaseNoteSpec {
+interface ReleaseNoteSpec {
   files: readonly string[]
   verifyCmd: string | null
   doneCriteria: readonly string[]

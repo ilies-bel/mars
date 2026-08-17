@@ -17,7 +17,7 @@ const OUTBOX_MAX_AGE_SECONDS = 86_400 // 24 hours
  * Returns `{ lag, wedged: [name, ...] }` when `lag > threshold`, where
  * `wedged` lists every subscriber whose cursor equals `MIN(cursor)`.
  */
-export const detectOutboxLag = async (
+const detectOutboxLag = async (
   dbTarget: string,
   threshold: number,
 ): Promise<{ lag: number; wedged: string[] }> => {

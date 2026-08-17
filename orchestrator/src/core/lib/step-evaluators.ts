@@ -4,7 +4,7 @@ export interface StepEvalResult {
   warn: boolean
 }
 
-export interface StepEvaluator {
+interface StepEvaluator {
   /** Short display label, e.g. "ctx%" */
   label: string
   /** Pure function: reads the step_ended payload, returns a value or null if not applicable */
@@ -19,7 +19,7 @@ const CONTEXT_WINDOW_TOKENS = 200_000
 
 const registry = new Map<string, StepEvaluator[]>()
 
-export function registerStepEvaluator(stepName: string, evaluator: StepEvaluator): void {
+function registerStepEvaluator(stepName: string, evaluator: StepEvaluator): void {
   const existing = registry.get(stepName) ?? []
   const idx = existing.findIndex((e) => e.label === evaluator.label)
   if (idx === -1) {

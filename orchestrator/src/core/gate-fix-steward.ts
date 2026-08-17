@@ -11,11 +11,11 @@ import { ensureSchema } from './lib/pg-schema.js'
 import { resolveStateClient } from './store/state-client.js'
 
 /** The only response shape accepted from a quarantined-gate diagnosis. */
-export const GateFixStewardResultSchema = GateDefinitionSchema.extend({
+const GateFixStewardResultSchema = GateDefinitionSchema.extend({
   rationale: z.string().trim().min(1),
 }).strict()
 
-export type GateFixStewardResult = z.infer<typeof GateFixStewardResultSchema>
+type GateFixStewardResult = z.infer<typeof GateFixStewardResultSchema>
 
 export interface GateFixProposal {
   id: string
@@ -170,7 +170,7 @@ export interface GateFixStewardDiagnostic {
  * a stored row being written here. Kept as a stub so callers compile without
  * change.
  */
-export const raiseGateFixStewardDiagnostic = async (
+const raiseGateFixStewardDiagnostic = async (
   _diagnostic: GateFixStewardDiagnostic,
 ): Promise<void> => {
   // gate-broken is derived; no stored row written here.

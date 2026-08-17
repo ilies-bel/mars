@@ -4,7 +4,7 @@
  * paid chat runner/provider boundary.
  */
 
-export interface SituationTask {
+interface SituationTask {
   status: string
 }
 

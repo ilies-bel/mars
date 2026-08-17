@@ -19,7 +19,7 @@ import { postConversationNotice, type ConversationPriority } from './conversatio
 const stateClient = resolveStateClient
 
 /** Idempotent PostgreSQL schema bootstrap retained for existing callers. */
-export const initNoticeStore = async (): Promise<void> => {
+const initNoticeStore = async (): Promise<void> => {
   const { ensureSchema } = await import('./pg-schema.js')
   await ensureSchema(stateClient())
 }

@@ -25,9 +25,9 @@ import {
 import { appendMessage, createThread } from './lib/chat-store'
 import { stewardAgent, type StewardEvent } from './agents/steward'
 
-export const WORKER_PROMPT_TARGET_KIND = 'worker-prompt' as const
+const WORKER_PROMPT_TARGET_KIND = 'worker-prompt' as const
 
-export interface PromptOptimizationProposal {
+interface PromptOptimizationProposal {
   proposedByModel: string
   targetId: WorkerPromptBlockId
   replacement: string
@@ -88,7 +88,7 @@ const conciseCommitFooter = (): string =>
  * complete in content can still be changed for structural reasons (depth,
  * duplication, and standing-to-task volume).
  */
-export const proposeWorkerPromptOptimization = (
+const proposeWorkerPromptOptimization = (
   measurement: WorkerPromptMeasurement,
 ): PromptOptimizationProposal => {
   const save = measurement.sections.find((section) => section.name === '## Save your work')
@@ -236,4 +236,4 @@ export const startStewardPromptOptimization = (
 
 // This export makes the intended default inspectable without re-spelling its
 // value. mars-8b5c09ce may rename the autonomous member; config owns it.
-export const DEFAULT_PROMPT_OPTIMIZER_AUTONOMY: AutonomyLevel = AUTONOMOUS_AUTONOMY_LEVEL
+const DEFAULT_PROMPT_OPTIMIZER_AUTONOMY: AutonomyLevel = AUTONOMOUS_AUTONOMY_LEVEL

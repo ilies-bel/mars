@@ -64,7 +64,7 @@ export interface PrimitiveWorkerProfile {
  *  - 'human'  — no tool surface at all; it writes task state and raises an
  *               action-queue row (parks, not spans).
  */
-export type PrimitiveExecutor = 'agent' | 'shell' | 'human'
+type PrimitiveExecutor = 'agent' | 'shell' | 'human'
 
 export interface PrimitiveCatalogEntry {
   readonly name: PrimitiveName

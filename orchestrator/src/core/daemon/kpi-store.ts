@@ -30,7 +30,7 @@ import {
 } from '../lib/kpi-compute.js'
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store.js'
 
-export type { KpiArcRow }
+type { KpiArcRow }
 
 export type KpiKey =
   | 'cost_per_arc'

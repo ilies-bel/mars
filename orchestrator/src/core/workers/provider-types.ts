@@ -161,7 +161,7 @@ export interface ProcessHandle {
 //                  that path. Implemented in claude-done-signal.ts.
 //   prompt-scan  — the pty buffer is scanned for a spinnerOverride sequence
 //                  followed by the shell promptPrefix returning.
-export interface StatusFileDoneSignal {
+interface StatusFileDoneSignal {
   readonly kind: 'status-file'
   /**
    * Watches <cwd>/.mars/pty-status/<sessionId>.json and resolves when the
@@ -171,7 +171,7 @@ export interface StatusFileDoneSignal {
   wait(sessionId: string, cwd: string, signal: AbortSignal): Promise<void>
 }
 
-export interface PromptScanDoneSignal {
+interface PromptScanDoneSignal {
   readonly kind: 'prompt-scan'
   /** Fixed string the agent shell prints when it returns to the prompt. */
   readonly promptPrefix: string
@@ -180,7 +180,7 @@ export interface PromptScanDoneSignal {
   readonly spinnerOverride: RegExp
 }
 
-export type ProviderDoneSignal = StatusFileDoneSignal | PromptScanDoneSignal
+type ProviderDoneSignal = StatusFileDoneSignal | PromptScanDoneSignal
 
 // Descriptor for a single agent CLI. Bundles:
 //   - spawnArgv  : build the argv array used to launch the process;

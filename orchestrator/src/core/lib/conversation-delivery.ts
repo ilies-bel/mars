@@ -23,7 +23,7 @@ import {
 
 const stateClient = resolveStateClient
 
-export const ConversationPrioritySchema = z.enum(['urgent', 'routine'])
+const ConversationPrioritySchema = z.enum(['urgent', 'routine'])
 export type ConversationPriority = z.infer<typeof ConversationPrioritySchema>
 
 /**

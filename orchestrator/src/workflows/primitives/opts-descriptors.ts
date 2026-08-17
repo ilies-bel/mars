@@ -16,7 +16,7 @@ import type {
 } from './index'
 
 /** One-line descriptions for every {@link SetupWorktreeOpts} field. */
-export const setupWorktreeDescriptors = {
+const setupWorktreeDescriptors = {
   kind: 'Pipeline kind — "task" (default), "fix" (attaches to origin worktree), or "diagnose".',
   integrationBranch: 'Merge target branch. Defaults to "main".',
   recoveryPayload: 'Serialised recovery payload (tasks.recovery_payload); only used when kind is "fix".',
@@ -26,7 +26,7 @@ export const setupWorktreeDescriptors = {
 } satisfies Record<keyof SetupWorktreeOpts, string>
 
 /** One-line descriptions for every {@link RunAgentOpts} field. */
-export const runAgentDescriptors = {
+const runAgentDescriptors = {
   prompt: 'The task prompt fed to the coder. Defaults to ctx.input.prompt.',
   plan: 'Optional plan sections (functional + technical) injected into the composed prompt.',
   tags: 'Routing tags that select the Worker (e.g. ["coder"]). Defaults to ["coder"].',
@@ -43,7 +43,7 @@ export const runAgentDescriptors = {
 } satisfies Record<keyof RunAgentOpts, string>
 
 /** One-line descriptions for every {@link ReviewOpts} field. */
-export const reviewDescriptors = {
+const reviewDescriptors = {
   kind: 'Pipeline kind — "task" (default), "fix", or "diagnose" (short-circuits verification).',
   integrationBranch: 'Merge target branch. Defaults to "main".',
   recoveryPayload: 'Serialised recovery payload; skips test/typecheck/lint for main-committer recovery.',
@@ -56,7 +56,7 @@ export const reviewDescriptors = {
 } satisfies Record<keyof ReviewOpts, string>
 
 /** One-line descriptions for every {@link MergeOpts} field. */
-export const mergeDescriptors = {
+const mergeDescriptors = {
   kind: 'Pipeline kind — "task" (default), "fix", or "diagnose" (removes worktree, marks done).',
   integrationBranch: 'Merge target branch. Defaults to "main".',
   taskId: 'Override the task id. Defaults to ctx.runId.',
@@ -64,7 +64,7 @@ export const mergeDescriptors = {
 } satisfies Record<keyof MergeOpts, string>
 
 /** One-line descriptions for every {@link AwaitHumanOpts} field. */
-export const awaitHumanDescriptors = {
+const awaitHumanDescriptors = {
   note: 'Human-readable note shown in the action-queue row body alongside the task id. Default null.',
   taskId: 'Override the task id. Defaults to ctx.runId.',
   previewUrl: 'Preview URL for a manual-QA row. Null when no preview was started.',

@@ -514,7 +514,7 @@ export const composePrompt = (
 // ---------------------------------------------------------------------------
 
 /** A section measured from the exact prompt text the selected provider receives. */
-export interface WorkerPromptSection {
+interface WorkerPromptSection {
   name: string
   channel: 'system' | 'user'
   byteOffset: number

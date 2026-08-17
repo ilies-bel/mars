@@ -4,7 +4,7 @@ import { cacheWeightedTokens } from './kpi-compute.js'
 import { isReflectDisabled } from './reflect-signals'
 import type { ChatFeedbackEntry } from './chat-feedback-query'
 
-export interface ReflectCorpusEntry {
+interface ReflectCorpusEntry {
   taskId: string
   status: string
   promptPrefix: string
@@ -50,7 +50,7 @@ export interface ReflectCorpusEntry {
   }
 }
 
-export interface ReflectCostSummary {
+interface ReflectCostSummary {
   totalWeightedTokens: number
   taskCount: number
   successCount: number
@@ -104,7 +104,7 @@ export interface ReflectCorpus {
   chatSystemPrompt?: string
 }
 
-export type { ChatFeedbackEntry }
+type { ChatFeedbackEntry }
 
 export interface LoadCorpusOptions {
   sinceIso?: string

@@ -6,9 +6,9 @@ import { exec } from './git/internal.js'
 
 const stateClient = resolveStateClient
 
-export type PatchStatus = 'awaiting-human' | 'applied' | 'rejected'
+type PatchStatus = 'awaiting-human' | 'applied' | 'rejected'
 
-export interface WorkflowPatchProposal {
+interface WorkflowPatchProposal {
   id: string
   workflow_path: string
   unified_diff: string
@@ -65,7 +65,7 @@ export const stewardProposeWorkflowPatch = async (input: {
  * Apply an approved workflow patch. Reads the diff from the proposal,
  * applies it to the workflow file, and sets status='applied'.
  */
-export const applyWorkflowPatch = async (
+const applyWorkflowPatch = async (
   proposalId: string,
   repoRoot: string,
 ): Promise<void> => {
@@ -104,7 +104,7 @@ export const applyWorkflowPatch = async (
 /**
  * Reject a workflow patch. Sets status='rejected' — nothing is applied.
  */
-export const rejectWorkflowPatch = async (
+const rejectWorkflowPatch = async (
   proposalId: string,
 ): Promise<void> => {
   const c = stateClient()
@@ -144,7 +144,7 @@ export const findAwaitingProposalForPath = async (
 /**
  * Get a proposal by id.
  */
-export const getWorkflowPatchProposal = async (
+const getWorkflowPatchProposal = async (
   proposalId: string,
 ): Promise<WorkflowPatchProposal | null> => {
   const c = stateClient()

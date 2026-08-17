@@ -39,7 +39,7 @@ import {
 } from './codex-api.js'
 
 /** Idle period before a thread becomes eligible for compaction. */
-export const CHAT_COMPACTION_IDLE_MS = Number(process.env.MARS_CHAT_COMPACTION_IDLE_MS ?? 5 * 60_000)
+const CHAT_COMPACTION_IDLE_MS = Number(process.env.MARS_CHAT_COMPACTION_IDLE_MS ?? 5 * 60_000)
 
 /**
  * Minimum replay size, in tokens, before a transcript is compacted.
@@ -49,7 +49,7 @@ export const CHAT_COMPACTION_IDLE_MS = Number(process.env.MARS_CHAT_COMPACTION_I
  * the fix; moving the trigger point at the same time would have made a
  * behaviour change ride along invisibly with a units change.
  */
-export const CHAT_COMPACTION_MIN_TOKENS = Number(process.env.MARS_CHAT_COMPACTION_MIN_TOKENS ?? 8_000)
+const CHAT_COMPACTION_MIN_TOKENS = Number(process.env.MARS_CHAT_COMPACTION_MIN_TOKENS ?? 8_000)
 
 /**
  * Token cost of one stored message.

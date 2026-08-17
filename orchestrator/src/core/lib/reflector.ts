@@ -19,7 +19,7 @@ import type { LeverRegistryEntry } from './lever-registry'
 
 // Re-export the shared outcome types so callers importing from 'reflector'
 // continue to get them (deep-reflector.ts, tests, etc.).
-export type { LeverBinding, LeverGap, SuggestionOutcome } from './suggestion-outcome'
+export type { SuggestionOutcome } from './suggestion-outcome'
 import type { SuggestionOutcome } from './suggestion-outcome'
 
 export interface ReflectionSuggestion {
@@ -56,7 +56,7 @@ export interface ReflectionSuggestion {
   outcome: SuggestionOutcome
 }
 
-export interface TokenAnalysis {
+interface TokenAnalysis {
   headline: string
   tokenHeavyTasks: ReadonlyArray<{
     taskId: string

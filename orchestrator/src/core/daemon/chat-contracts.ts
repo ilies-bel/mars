@@ -17,7 +17,7 @@ export type ChatSegment =
   | { type: 'attachment'; path: string; mimeType: string; name: string; size: number; kindHint: 'image' | 'audio' | 'video' }
 
 /** Usage statistics carried on a terminal UI message chunk. */
-export interface UiMessageMetadata {
+interface UiMessageMetadata {
   turnTokens: number
   usage?: {
     durationMs: number | null

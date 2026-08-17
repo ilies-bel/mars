@@ -22,8 +22,6 @@ import type { ProviderName } from '../../core/workers/provider-types'
 
 // Re-export so the provider probe types are accessible as part of install's
 // public surface (two call sites: init command + doctor checks).
-export type { ProviderProbeDeps, ProviderProbeResult } from './provider-probe'
-export { probeProvider, formatProviderProbe, realProviderProbeDeps } from './provider-probe'
 
 // ---------------------------------------------------------------------------
 // Probe helpers — exported for unit testing (two call sites each: command +

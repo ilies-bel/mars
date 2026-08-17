@@ -39,7 +39,7 @@ export const parseGeminiEventLine = (line: string): ClaudeEvent | null => {
 }
 
 /** Read Gemini's line-buffered text output into normalized assistant events. */
-export const readGeminiOutput = (stdout: string): ClaudeEvent[] =>
+const readGeminiOutput = (stdout: string): ClaudeEvent[] =>
   stdout
     .split(/\r?\n/)
     .map((line) => parseGeminiEventLine(line))

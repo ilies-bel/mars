@@ -10,7 +10,7 @@ import { classifyInstallRoute, type InstallRoute } from './install-route'
 export const UPDATE_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000
 
 /** Shape written to .mars/update.json by a successful poll. */
-export interface FrameworkUpdateCache {
+interface FrameworkUpdateCache {
   installed: string
   latest: string
   available: boolean

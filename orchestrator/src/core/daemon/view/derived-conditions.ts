@@ -31,7 +31,7 @@ const deriveId = (kind: string, entityKey: string): string =>
 
 // ── Derivation deps ───────────────────────────────────────────────────────────
 
-export interface DaemonCodeDriftState {
+interface DaemonCodeDriftState {
   sourceSha: string | null
   currentSha: string | null
   dependencyDrift: boolean

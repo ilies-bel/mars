@@ -54,7 +54,7 @@ export interface CheckResult {
 }
 
 /** A verify gate spec sufficient for the baseline health check. */
-export interface BaselineGateSpec {
+interface BaselineGateSpec {
   name: string
   cmd: string
   args: string[]

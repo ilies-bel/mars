@@ -14,7 +14,7 @@
  *   is only paid when the raw text is large enough to warrant it.
  */
 
-export type ObservationKind = 'verify' | 'generic'
+type ObservationKind = 'verify' | 'generic'
 
 export interface DistillInput {
   /** Raw text to distill (e.g. full verify command output). */

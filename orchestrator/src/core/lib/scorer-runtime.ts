@@ -62,7 +62,7 @@ export const isScoringDisabled = (): boolean =>
  * value, so an approved self-authored workflow is scored exactly like a
  * bundled pipeline.
  */
-export const effectiveWorkflowKind = (
+const effectiveWorkflowKind = (
   task: Pick<Task, 'workflow' | 'kind'>,
 ): string => task.workflow ?? task.kind ?? 'task'
 
@@ -77,7 +77,7 @@ const capText = (text: string, cap: number): string =>
     : `${text.slice(0, cap)}\n…[truncated at ${cap} bytes]`
 
 /** The persisted artifacts one scoring run grades. */
-export interface ScorerRunArtifacts {
+interface ScorerRunArtifacts {
   /** The composed dispatch prompt the Coder received (capped). */
   prompt: string
   /** `git diff <mergePreSha> <mergePostSha>` of the landed work; null when the SHAs were not persisted. */
@@ -87,7 +87,7 @@ export interface ScorerRunArtifacts {
 }
 
 /** One judge invocation: grade `artifacts` against `scorer.rubric`. */
-export type ScorerJudge = (args: {
+type ScorerJudge = (args: {
   scorer: Scorer
   task: Task
   artifacts: ScorerRunArtifacts
@@ -198,7 +198,7 @@ const loadVerifyOutput = async (taskId: string): Promise<string | null> => {
  * dispatch prompt is re-rendered via the same `composePrompt` the dispatcher
  * used (dynamic import — core must not statically depend on workflows).
  */
-export const assembleScorerArtifacts = async (
+const assembleScorerArtifacts = async (
   task: Task,
 ): Promise<ScorerRunArtifacts> => {
   let prompt = task.prompt
@@ -230,10 +230,10 @@ export const assembleScorerArtifacts = async (
 // Judge dispatch (default judge = pinned Scorer Worker)
 // ---------------------------------------------------------------------------
 
-export const SCORER_VERDICT_OPEN_TAG = '<scorer_verdict>'
-export const SCORER_VERDICT_CLOSE_TAG = '</scorer_verdict>'
+const SCORER_VERDICT_OPEN_TAG = '<scorer_verdict>'
+const SCORER_VERDICT_CLOSE_TAG = '</scorer_verdict>'
 
-export const buildScorerPrompt = (
+const buildScorerPrompt = (
   scorer: Scorer,
   task: Task,
   artifacts: ScorerRunArtifacts,
@@ -315,7 +315,7 @@ const tryParseVerdict = (raw: string): ScorerVerdict | null => {
  * numeric `score`. Returns null when nothing parses — the caller records an
  * `error` row, never an inferred score: the parser guards against optimism.
  */
-export const extractScorerVerdict = (
+const extractScorerVerdict = (
   events: readonly ClaudeEvent[],
 ): ScorerVerdict | null => {
   for (const text of collectCandidateTexts(events)) {
@@ -505,7 +505,7 @@ export const runScorersForTask = async (
 }
 
 /** Zod schema export for callers that validate external verdict input. */
-export const ScorerRunOutcomeSchema = z.object({
+const ScorerRunOutcomeSchema = z.object({
   taskId: z.string(),
   outcome: z.enum(['disabled', 'no-task', 'not-done', 'no-scorers', 'ran']),
   workflow: z.string().nullable(),

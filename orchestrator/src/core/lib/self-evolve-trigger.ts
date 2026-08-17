@@ -23,7 +23,7 @@ import { loadDaemonConfig } from '../daemon/config.js'
 import type { KpiSnapshot as PersistedSnapshot } from './kpi-snapshots.js'
 import { type DomainTaskStore as TaskStore, getDefaultTaskStore } from '../store/task-store.js'
 
-export type SkipReason = 'disabled' | 'low-confidence' | 'duplicate' | 'below-threshold'
+type SkipReason = 'disabled' | 'low-confidence' | 'duplicate' | 'below-threshold'
 
 export interface SelfEvolveTriggerResult {
   raised: string[]
@@ -213,7 +213,7 @@ const FAILURE_CLUSTER_MIN = 3
  * Evidence gathered by the worthiness detectors. Each field is an empty array
  * (or null for tokenSpike) when the corresponding detector did not fire.
  */
-export interface ReflectWorthinessEvidence {
+interface ReflectWorthinessEvidence {
   kpiDrift: Array<{ kpi: string; deltaPct: number }>
   failureClusters: Array<{ signature: string; count: number }>
   tokenSpike: { taskId: string; weightedTokens: number; multipleOfMedian: number } | null
@@ -228,7 +228,7 @@ export interface ReflectWorthinessEvidence {
  * - `'no-evidence'`: all three detectors (KPI drift, failure clusters, token
  *   spike) evaluated the rolling window and found nothing above threshold.
  */
-export type ReflectDetectorSkipReason = 'auto-enqueue-on' | 'no-evidence'
+type ReflectDetectorSkipReason = 'auto-enqueue-on' | 'no-evidence'
 
 export interface ReflectRecommendedResult {
   /** True when the row was raised (or the existing open row was bumped). */

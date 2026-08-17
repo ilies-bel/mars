@@ -32,7 +32,7 @@ const LIST_USAGE =
  * Fetch the release-notes feed from the daemon's derived-view endpoint.
  * Throws when the daemon is unreachable or returns a non-2xx response.
  */
-export const fetchReleaseNotes = async (port: number): Promise<ReleaseNoteEntry[]> => {
+const fetchReleaseNotes = async (port: number): Promise<ReleaseNoteEntry[]> => {
   const res = await fetch(`http://127.0.0.1:${port}/view/release-notes`)
   if (!res.ok) throw new Error(`daemon returned ${res.status}`)
   return (await res.json()) as ReleaseNoteEntry[]
@@ -42,7 +42,7 @@ export const fetchReleaseNotes = async (port: number): Promise<ReleaseNoteEntry[
  * GET /view/release-notes-cursor — returns the last-viewed timestamp (null when never viewed).
  * Throws when the daemon is unreachable or returns a non-2xx response.
  */
-export const fetchReleaseNotesCursor = async (
+const fetchReleaseNotesCursor = async (
   port: number,
 ): Promise<{ lastViewedAt: string | null }> => {
   const res = await fetch(`http://127.0.0.1:${port}/view/release-notes-cursor`)
@@ -54,7 +54,7 @@ export const fetchReleaseNotesCursor = async (
  * POST /view/release-notes-cursor — stamps now as last-viewed and returns the timestamp.
  * Throws when the daemon is unreachable or returns a non-2xx response.
  */
-export const postReleaseNotesCursor = async (
+const postReleaseNotesCursor = async (
   port: number,
 ): Promise<{ lastViewedAt: string }> => {
   const res = await fetch(`http://127.0.0.1:${port}/view/release-notes-cursor`, {

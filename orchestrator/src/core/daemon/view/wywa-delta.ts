@@ -18,7 +18,7 @@
 
 import type { StewardLedgerRow } from '../../steward-ledger'
 
-export type WywaEventKind =
+type WywaEventKind =
   | 'merge'
   | 'failure-recovered'
   | 'auto-recipe'

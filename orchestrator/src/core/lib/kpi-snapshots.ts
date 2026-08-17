@@ -47,7 +47,7 @@ export interface KpiSnapshot {
   recovery_success_rate: number | null
 }
 
-export type KpiDeltaEntry = { value: number | null; lowConfidenceSuppressed: boolean }
+type KpiDeltaEntry = { value: number | null; lowConfidenceSuppressed: boolean }
 
 /**
  * Per-KPI deltas between a current and prior window snapshot.
@@ -234,7 +234,7 @@ export async function readLatestKpiSnapshot(
   return rowToSnapshot(result.rows[0])
 }
 
-export interface KpiSeriesPoint {
+interface KpiSeriesPoint {
   takenAt: string
   value: number | null
 }

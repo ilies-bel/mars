@@ -11,7 +11,7 @@ import {
 } from '../../core/agents/steward.js'
 import { registerSubscriberName } from '../registry.js'
 
-export const GATE_FIX_STEWARD_SUBSCRIBER = 'gate-fix-steward'
+const GATE_FIX_STEWARD_SUBSCRIBER = 'gate-fix-steward'
 registerSubscriberName(GATE_FIX_STEWARD_SUBSCRIBER)
 
 export type GateFixStewardDispatch = (event: GateSystemicFailureEvent) => Promise<unknown>

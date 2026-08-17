@@ -6,7 +6,7 @@ import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
 import { registerSubscriberName } from '../registry.js'
 
 /** Durable consumer for recipe autoruns in the continuous conversation. */
-export const RECIPE_CONVERSATION_NOTICE_SUBSCRIBER = 'recipe-conversation-notice'
+const RECIPE_CONVERSATION_NOTICE_SUBSCRIBER = 'recipe-conversation-notice'
 registerSubscriberName(RECIPE_CONVERSATION_NOTICE_SUBSCRIBER)
 
 export async function ensureRecipeConversationNoticeSubscriber(client: DbClient): Promise<void> {

@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { readDaemonConfigFile, patchDaemonConfigFile } from '../daemon/config'
 import type { DomainTaskStore } from '../store/task-store'
 
-export const budgetConfigSchema = z.object({
+const budgetConfigSchema = z.object({
   windowMs: z.number().int().positive().nullish(),
   windowTokens: z.number().int().positive().nullish(),
   arcTokens: z.number().int().positive().nullish(),
@@ -16,12 +16,12 @@ export interface BudgetConfig {
   arcTokens: number | null
 }
 
-export interface ArcSpend {
+interface ArcSpend {
   arcId: string
   spendTokens: number
 }
 
-export type SpendBand = 'good' | 'warn' | 'bad'
+type SpendBand = 'good' | 'warn' | 'bad'
 
 export interface BudgetStatus {
   configured: boolean

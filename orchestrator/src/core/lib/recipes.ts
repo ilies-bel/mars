@@ -48,16 +48,16 @@ export const VALID_RECIPE_TOOL_NAMES = [
   'TodoWrite',
 ] as const
 
-export type RecipeToolName = (typeof VALID_RECIPE_TOOL_NAMES)[number]
+type RecipeToolName = (typeof VALID_RECIPE_TOOL_NAMES)[number]
 
 /** Where a resolved recipe came from. */
-export type RecipeSource = 'built-in' | 'override'
+type RecipeSource = 'built-in' | 'override'
 
 /**
  * A resolved recipe. `prompt` is the markdown body verbatim with the
  * frontmatter block stripped; it is fed straight to `claude -p`.
  */
-export interface Recipe {
+interface Recipe {
   /** Stable identifier — must match the filename (without `.md`). */
   name: string
   /** One-liner description; surfaces in actionQueue/UI listings. */
@@ -84,7 +84,7 @@ export interface RecipeCatalog {
  * is enforced at the per-string level so the error message names the bad
  * tool, not just "invalid array".
  */
-export const recipeFrontmatterSchema = z.object({
+const recipeFrontmatterSchema = z.object({
   name: z.string().min(1),
   description: z.string().min(1),
   tools: z

@@ -18,7 +18,7 @@ import { join } from 'node:path'
 // Types
 // ---------------------------------------------------------------------------
 
-export interface HookRegistration {
+interface HookRegistration {
   /** The PreToolUse matcher (e.g. 'Edit', 'Write', 'Bash'). */
   matcher: string
   /**
@@ -42,7 +42,7 @@ export interface Manifest {
   scopes: unknown[]
 }
 
-export interface MarsLock {
+interface MarsLock {
   schemaVersion: number
   marsVersion: string
   installedAt: string
@@ -67,7 +67,7 @@ export interface InstallDeps {
   log: (msg: string) => void
 }
 
-export type InstallOutcome = 'success'
+type InstallOutcome = 'success'
 
 export interface InstallResult {
   outcome: InstallOutcome

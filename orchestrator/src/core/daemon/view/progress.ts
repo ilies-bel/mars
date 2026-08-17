@@ -12,7 +12,7 @@ import type { DbClient } from '../../lib/db.js'
 import { isProposalSource, type ProposalSource } from '../../proposals'
 
 export type Cluster = 'Queued' | 'In progress' | 'Blocked' | 'Failed' | 'Done'
-export type { ProposalSource } from '../../proposals'
+type { ProposalSource } from '../../proposals'
 
 /**
  * Cheap aggregate counts for the Progress-tab header.
@@ -37,7 +37,7 @@ export interface ProposalNode {
   status: string
 }
 
-export interface ProgressTaskSpec {
+interface ProgressTaskSpec {
   files: string[]
   readFirst: string[]
   prescriptiveAction: string | null

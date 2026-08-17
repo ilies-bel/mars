@@ -177,7 +177,7 @@ export interface SamplePressureOptions {
   wait?: (ms: number) => Promise<void>
 }
 
-export const DEFAULT_SAMPLE_MS = Number(process.env.MARS_PRESSURE_SAMPLE_MS ?? 1_000)
+const DEFAULT_SAMPLE_MS = Number(process.env.MARS_PRESSURE_SAMPLE_MS ?? 1_000)
 
 /**
  * Take one machine-pressure sample. Never throws: on any sampling failure the

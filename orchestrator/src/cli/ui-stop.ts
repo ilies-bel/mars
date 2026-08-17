@@ -32,7 +32,7 @@ export interface StopDeps {
 /** Grace period before escalating from SIGTERM to SIGKILL (ms). */
 export const STOP_GRACE_PERIOD_MS = 2000
 /** How often to poll for process exit during the grace period (ms). */
-export const STOP_POLL_INTERVAL_MS = 100
+const STOP_POLL_INTERVAL_MS = 100
 
 /** Build a StopDeps that delegates to the real OS process-control APIs. */
 export const makeOsStopDeps = (): StopDeps => {

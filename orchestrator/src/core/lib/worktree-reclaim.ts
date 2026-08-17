@@ -29,7 +29,7 @@ export const SAFE_CATEGORIES = new Set<ReclaimCategory>([
   'terminal-clean',
 ])
 
-export interface WorktreeClassification {
+interface WorktreeClassification {
   id: string
   category: ReclaimCategory
   reason: string

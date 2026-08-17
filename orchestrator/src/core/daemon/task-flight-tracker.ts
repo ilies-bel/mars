@@ -96,7 +96,7 @@ type InFlightRecord = InFlightEntry & { abortController?: AbortController }
  * and it only clears the entry it itself committed (so a second `commitInFlight`
  * after a force-drop is never clobbered by a stale release).
  */
-export type ReleaseInFlight = () => void
+type ReleaseInFlight = () => void
 
 export interface TaskFlightTracker {
   // ── inFlight reads ──────────────────────────────────────────────────────

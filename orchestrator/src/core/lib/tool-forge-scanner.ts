@@ -52,7 +52,7 @@ function deriveReasonCode(errorText: string): string {
  * Injectable so the production CLI can delegate to the real queue path
  * while tests supply a lightweight stub.
  */
-export type EnqueueToolForgeFn = (
+type EnqueueToolForgeFn = (
   prompt: string,
   arcIds: string[],
 ) => Promise<string>

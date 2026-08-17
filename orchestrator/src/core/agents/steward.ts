@@ -23,7 +23,7 @@ import { terminalVerdictEchoPattern } from '../lib/failure-signature.js'
 import { healthPass, type HealthPassDeps } from '../health/pass.js'
 
 /** One task's failure context, handed to the Steward so it can diagnose. */
-export const StormFailureExcerptSchema = z.object({
+const StormFailureExcerptSchema = z.object({
   taskId: z.string(),
   /** The failing step / signature recorded for this task. */
   signature: z.string(),
@@ -39,7 +39,7 @@ export const StormFailureExcerptSchema = z.object({
   usable: z.boolean().default(true),
 })
 
-export type StormFailureExcerpt = z.infer<typeof StormFailureExcerptSchema>
+type StormFailureExcerpt = z.infer<typeof StormFailureExcerptSchema>
 
 export const GateDefinitionSchema = z.object({
   cmd: z.string().trim().min(1),
@@ -174,7 +174,7 @@ const statusEchoToken = (): RegExp => terminalVerdictEchoPattern()
 /** Shortest remainder that could plausibly be real captured output. */
 const MIN_DIAGNOSTIC_CHARS = 40
 
-export type StormEvidenceVerdict = 'ok' | 'empty' | 'status-echo'
+type StormEvidenceVerdict = 'ok' | 'empty' | 'status-echo'
 
 export interface StormEvidenceAssessment {
   usable: boolean

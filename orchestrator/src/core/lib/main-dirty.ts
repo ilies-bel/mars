@@ -591,7 +591,7 @@ const PROCESS_BACKED_COMMITTER_STATUSES = new Set(['running'])
  *              into a permanent, queue-wide deadlock, because every later task
  *              attaches too. Must be reaped and replaced.
  */
-export type ActiveMainCommitterResolution =
+type ActiveMainCommitterResolution =
   | { kind: 'none' }
   | { kind: 'alive'; id: string; status: string }
   | { kind: 'zombie'; id: string; status: string }
@@ -618,7 +618,7 @@ export type ActiveMainCommitterResolution =
  * answers `'unknown'` and the committer is treated as alive — a process that
  * does not own the workers has no standing to declare one dead.
  */
-export const resolveActiveMainCommitter = async (
+const resolveActiveMainCommitter = async (
   integrationBranch: string,
   store: TaskStore,
   nowMs: number = Date.now(),

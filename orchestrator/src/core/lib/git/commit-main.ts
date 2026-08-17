@@ -68,7 +68,7 @@ async function readCurrentBranch(
  * The set of branch names the orchestrator treats as integration branches.
  * A commit to any of these from a recovery or checkpoint path is always wrong.
  */
-export const INTEGRATION_BRANCH_NAMES = new Set(['main', 'master'])
+const INTEGRATION_BRANCH_NAMES = new Set(['main', 'master'])
 
 export interface CommitMainArgs {
   /** Absolute path to the worktree directory where git commands will run. */

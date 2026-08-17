@@ -42,7 +42,7 @@ export type LeverFamily =
   | 'self-evolve'
   | 'task-spec'
 
-export type LeverScope = 'global' | 'per-workflow' | 'per-task'
+type LeverScope = 'global' | 'per-workflow' | 'per-task'
 
 /**
  * The wiring state of a lever — whether its value is actually read by
@@ -65,30 +65,30 @@ export type LeverWiringState = 'wired' | 'no-gesture' | 'no-consumer'
  * declared consumer reference points to an existing file containing the named
  * symbol. An entry whose declared consumer doesn't exist will fail the build.
  */
-export interface LeverConsumerRef {
+interface LeverConsumerRef {
   file: string
   symbol: string
 }
 
-export interface AllowedEnum {
+interface AllowedEnum {
   type: 'enum'
   values: readonly string[]
 }
-export interface AllowedRange {
+interface AllowedRange {
   type: 'range'
   min: number
   max?: number
 }
-export interface AllowedFreeform {
+interface AllowedFreeform {
   type: 'freeform'
 }
-export type AllowedValues = AllowedEnum | AllowedRange | AllowedFreeform
+type AllowedValues = AllowedEnum | AllowedRange | AllowedFreeform
 
 /**
  * Recipe metadata for verify-family levers, folded in from the former
  * improvement-recipes.ts. Only verify-family entries carry this field.
  */
-export interface RecipeMetadata {
+interface RecipeMetadata {
   triggerPattern: string
   problem: string
   solution: string
@@ -102,7 +102,7 @@ export interface RecipeMetadata {
  * from the persisted config (e.g. steward autotune raising `implementCap`
  * in-process). Returned by `LeverRegistryEntry.readEffective`.
  */
-export interface EffectiveRead {
+interface EffectiveRead {
   effective: string
   reason: string | null
 }

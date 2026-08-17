@@ -42,7 +42,7 @@ import type { TaskStatus, TaskKind } from '../queue'
  * parking status, not a worker-running status. A task under investigation
  * is awaiting operator action, not awaiting a recovery worker.
  */
-export const IN_FLIGHT_STATUSES: readonly TaskStatus[] = [
+const IN_FLIGHT_STATUSES: readonly TaskStatus[] = [
   'queued',
   'triaging',
   'running',
@@ -54,7 +54,7 @@ export const IN_FLIGHT_STATUSES: readonly TaskStatus[] = [
 const IN_FLIGHT_SET = new Set<TaskStatus>(IN_FLIGHT_STATUSES)
 
 /** A task in `failed` or `dropped` is DEAD — terminal-without-success. */
-export const DEAD_STATUSES: readonly TaskStatus[] = ['failed', 'dropped']
+const DEAD_STATUSES: readonly TaskStatus[] = ['failed', 'dropped']
 const DEAD_SET = new Set<TaskStatus>(DEAD_STATUSES)
 
 /**

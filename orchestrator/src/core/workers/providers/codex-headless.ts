@@ -89,7 +89,7 @@ const parseCodexResetsAt = (message: string): number => {
  * Returns the daemon's `{ resetsAt }` sentinel, or null when the run failed
  * for any other reason.
  */
-export const extractCodexQuotaRejected = (
+const extractCodexQuotaRejected = (
   conversation: readonly ClaudeEvent[],
 ): { resetsAt: number } | null => {
   for (let i = conversation.length - 1; i >= 0; i--) {
