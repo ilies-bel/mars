@@ -33,7 +33,6 @@
  * Side-effect-only import — no runtime code, purely `declare module`.
  */
 
-import type {} from '@deepseek-ai/cordis';
 import type { MarsServices } from './primitives';
 import type { StepSuggestion } from '../growth/types';
 
