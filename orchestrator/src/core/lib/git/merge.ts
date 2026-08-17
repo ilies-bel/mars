@@ -127,6 +127,27 @@ export const checkMergeTargetStatus = async (
   }
 }
 
+/**
+ * Interval (ms) at which {@link MergeArgs.onHeartbeat} fires while the merge
+ * lock is held. Exported so callers can base their own liveness timers on the
+ * same constant and avoid hard-coding a separate magic number.
+ */
+export const MERGE_HEARTBEAT_INTERVAL_MS = 30_000
+
+/** Payload delivered to {@link MergeArgs.onHeartbeat} on each periodic tick. */
+export interface MergeHeartbeatInfo {
+  /** Wall-clock milliseconds elapsed since the merge lock was acquired. */
+  elapsedMs: number
+  /**
+   * The merge sub-phase currently in flight — the same label set emitted by
+   * {@link MergeArgs.onPhase} (`acquire-lock`, `rebase`, `vega`,
+   * `fast-forward`, `integration-gate`, etc.).
+   */
+  phase: string
+  /** 1-indexed rebase+fast-forward attempt number within this merge invocation. */
+  attempt: number
+}
+
 export interface MergeArgs {
   branch: string
   worktreePath: string
@@ -192,6 +213,14 @@ export interface MergeArgs {
    * it must never abort or slow a merge.
    */
   onPhase?: (phase: string) => void | Promise<void>
+  /**
+   * Fired every {@link MERGE_HEARTBEAT_INTERVAL_MS} while the merge lock is
+   * held. Use to emit keep-alive events so the UI and operator tooling know
+   * the merge is still in progress during long vcs-supervisor sessions.
+   * A reporting failure (throw or rejected promise) is silently swallowed —
+   * it must never abort or slow a merge.
+   */
+  onHeartbeat?: (info: MergeHeartbeatInfo) => void | Promise<void>
 }
 
 export interface MergeResult {
@@ -223,6 +252,15 @@ export interface MergeResult {
    * is true. Used by the merge primitive to seed the recovery Chore.
    */
   integrationGateOutput?: string
+  /**
+   * `true` when the vcs-supervisor session was abandoned because it exceeded
+   * {@link VCS_SUPERVISOR_TIMEOUT_MS}. When set, `aborted` is `true` and the
+   * merge lock has already been released. Callers should surface this as a
+   * distinct, actionable failure — e.g. raise an action queue item prompting
+   * the operator to resolve the conflict manually or restart the task — rather
+   * than treating it as a generic abort.
+   */
+  supervisorTimedOut?: boolean
   /**
    * Machine-readable reason for a `merged: false` outcome that is not an abort
    * or integration-gate failure. Currently only `'merge-left-dirty-tree'`:
@@ -516,6 +554,7 @@ export const mergeBranch = async ({
   onBeforeFastForward,
   onAfterFastForward,
   onPhase,
+  onHeartbeat,
   traceCtx,
 }: MergeArgs): Promise<MergeResult> => {
   const mergeCtx: TraceCtx | undefined = traceCtx
@@ -528,6 +567,9 @@ export const mergeBranch = async ({
   // than hanging the merge lock forever.
   const startedAt = Date.now()
   let lastStep = 'init'
+  // Tracks the current rebase+fast-forward attempt number; updated at the top
+  // of each loop iteration and read by the heartbeat closure.
+  let currentAttempt = 1
   const watchdogController = new AbortController()
   const watchdogTimer = setTimeout(() => {
     watchdogController.abort()
@@ -590,6 +632,24 @@ export const mergeBranch = async ({
         combinedSignal.addEventListener('abort', onAbort, { once: true })
       }
     })
+
+    // Heartbeat timer: fires every MERGE_HEARTBEAT_INTERVAL_MS while the lock
+    // is held so callers can emit keep-alive events during long vcs-supervisor
+    // sessions. Reads `lastStep` and `currentAttempt` from the enclosing scope,
+    // both of which are updated in-place by the merge body as it progresses.
+    const lockAcquiredAt = Date.now()
+    let heartbeatTimer: ReturnType<typeof setInterval> | undefined
+    if (onHeartbeat) {
+      heartbeatTimer = setInterval(() => {
+        try {
+          const r = onHeartbeat({ elapsedMs: Date.now() - lockAcquiredAt, phase: lastStep, attempt: currentAttempt })
+          if (r instanceof Promise) r.catch(() => {})
+        } catch {
+          // intentionally swallowed — heartbeat must never abort a merge
+        }
+      }, MERGE_HEARTBEAT_INTERVAL_MS)
+    }
+
     try {
     return await Promise.race([
     (async (): Promise<MergeResult> => {
@@ -651,6 +711,8 @@ export const mergeBranch = async ({
     }
 
     for (let attempt = 1; attempt <= MAX_MERGE_ATTEMPTS; attempt++) {
+      // Keep the heartbeat closure up-to-date with the current attempt number.
+      currentAttempt = attempt
       // Capture the integration tip BEFORE rebasing so we can later distinguish
       // a retryable forward advance from a non-retryable divergent state when
       // the ancestry check or CAS indicates integration has moved.
@@ -737,6 +799,9 @@ export const mergeBranch = async ({
           VCS_SUPERVISOR_TIMEOUT_MS,
           onSupervisorEvent,
         )
+        // exitCode 124 is the sentinel emitted by invokeVcsSupervisor's own
+        // internal timeout Promise when the supervisor exceeds VCS_SUPERVISOR_TIMEOUT_MS.
+        const supervisorDidTimeout = sup.exitCode === 124
         supervisorConversation.push(...sup.conversation)
         output += sup.stdout + sup.stderr
 
@@ -760,7 +825,9 @@ export const mergeBranch = async ({
             merged: false,
             conflictResolved: false,
             aborted: true,
-            output: `vcs-supervisor outcome rejected by git tree (stillInProgress=${stillInProgress}, advanced=${advanced}, treeClean=${treeClean}); rebase aborted.\n${output}`,
+            // Set only when true so the field is absent on normal failures.
+            supervisorTimedOut: supervisorDidTimeout ? true : undefined,
+            output: `vcs-supervisor outcome rejected by git tree (stillInProgress=${stillInProgress}, advanced=${advanced}, treeClean=${treeClean})${supervisorDidTimeout ? '; supervisor timed out' : ''}; rebase aborted.\n${output}`,
             supervisorConversation,
             vegaSessionId: null,
             retriesAttempted,
@@ -1133,8 +1200,9 @@ export const mergeBranch = async ({
     abortPromise,
     ])
     } finally {
-      // Release the merge lock via the existing lock/release path regardless of
-      // how the merge body exits — success, early return, or abort.
+      // Clear the heartbeat timer and release the merge lock regardless of how
+      // the merge body exits — success, early return, or abort.
+      if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer)
       await release()
     }
   } catch (err: unknown) {
