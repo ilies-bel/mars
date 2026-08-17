@@ -3671,9 +3671,25 @@ export const startDaemon = async (
   // worktree, skipping into the failed phase. When the failure occurred
   // upstream of worktree creation (pre-setup), it degrades silently to
   // restart behaviour and returns a note the CLI can surface to the operator.
+  //
+  // Gate: the startup reconcile runs concurrently after the HTTP server
+  // starts.  Calling continue before the reconcile settles can race with
+  // status transitions the reconcile makes, producing a spurious
+  // IllegalTransitionError ("terminal 'failed' cannot transition to 'queued'")
+  // that is not a real illegal operation.  We wait for the gate to open (up to
+  // CONTINUE_RECONCILE_WAIT_MS) and surface a retryable message if the cap is
+  // hit — never the misleading IllegalTransitionError claim.
+  const CONTINUE_RECONCILE_WAIT_MS = 15_000
   const handleContinue = async (
     id: string,
   ): Promise<import('./continue-task').ContinueResult> => {
+    const { waitForReconcileWithTimeout } = await import('./reconcile-gate')
+    const outcome = await waitForReconcileWithTimeout(CONTINUE_RECONCILE_WAIT_MS)
+    if (outcome === 'timeout') {
+      throw new Error(
+        'daemon still initializing (startup reconcile in progress); retry in a few seconds',
+      )
+    }
     const { coreContinueTask } = await import('./continue-task')
     const result = await coreContinueTask(id)
     bus.emit('task.queued', { taskId: id })
@@ -5541,9 +5557,20 @@ export const startDaemon = async (
   // Boot reconcile after server is listening (so any reconcile-driven dispatch
   // is fully wired). Once it is complete, reconcile durable deferrals as well:
   // a daemon that was down over a reset window can immediately resume work.
+  //
+  // The reconcile gate is signalled on both the success and the error path so
+  // operator handlers (e.g. handleContinue) that await it never block forever.
   void reconcile()
-    .then(() => deferralWakeSweeper.tick())
-    .catch((err) => log(`[reconcile] failed: ${(err as Error).message}`))
+    .then(async () => {
+      const { markReconcileComplete } = await import('./reconcile-gate')
+      markReconcileComplete()
+      deferralWakeSweeper.tick()
+    })
+    .catch(async (err) => {
+      const { markReconcileComplete } = await import('./reconcile-gate')
+      markReconcileComplete()
+      log(`[reconcile] failed: ${(err as Error).message}`)
+    })
 
   // ── API endpoint probe ────────────────────────────────────────────────────
   // While the circuit breaker is open, probe the Anthropic API every 30 s
