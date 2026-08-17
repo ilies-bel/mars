@@ -33,6 +33,7 @@ import type { EventEmitter } from 'node:events'
 import type { MergeArgs, MergeResult } from '../lib/git/merge.js'
 import { mergeBranch, MergeAbortedError, DEFAULT_WATCHDOG_MS } from '../lib/git/merge.js'
 import type { MergeJob, MergeJobStore, EnqueueMergeJobInput } from '../store/merge-job-store.js'
+import type { ClaudeEvent } from '../lib/claude-stream.js'
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -61,6 +62,21 @@ export interface MergeWorkerDeps {
    * Override in tests to avoid real git operations.
    */
   mergeFn?: (args: MergeArgs) => Promise<MergeResult>
+  /**
+   * Optional callback fired for each streaming event emitted by the
+   * vcs-supervisor (Vega) while it resolves a merge conflict. Receives the
+   * task's id so the caller can correlate events with the right task.
+   *
+   * Used in server.ts to:
+   *   - update the in-flight activity tracker so the phantom-task watchdog
+   *     can tell a healthy (event-emitting) Vega session from a hung one;
+   *   - write tool-call trace events so operators polling /events can see
+   *     Vega activity in the task's event stream rather than a blank wall.
+   *
+   * Errors thrown by this callback are silently swallowed — a reporting
+   * failure must never abort or slow a merge.
+   */
+  onSupervisorEvent?: (taskId: string, event: ClaudeEvent) => void
 }
 
 export interface MergeWorkerHandle {
@@ -233,6 +249,7 @@ async function runMergeJob(
   log: (msg: string) => void,
   mergeFn: (args: MergeArgs) => Promise<MergeResult>,
   signal: AbortSignal,
+  onSupervisorEvent?: (taskId: string, event: ClaudeEvent) => void,
 ): Promise<void> {
   log(
     `[merge-worker] executing job ${job.id} for task ${job.taskId} branch=${job.branch}`,
@@ -267,6 +284,19 @@ async function runMergeJob(
       lockTimeoutMs: 30_000,
       watchdogMs,
       signal,
+      // Forward vcs-supervisor streaming events to the caller-supplied
+      // callback (wired in server.ts to the activity tracker + trace store).
+      // A swallowed-error wrapper here so a reporting failure can never
+      // abort or slow a merge.
+      onSupervisorEvent: onSupervisorEvent
+        ? (event: ClaudeEvent) => {
+            try {
+              onSupervisorEvent(job.taskId, event)
+            } catch {
+              // intentionally swallowed
+            }
+          }
+        : undefined,
     })
     result = { status: 'done', result: mergeResult }
     // Where the integration branch now points. Recorded here rather than
@@ -349,6 +379,7 @@ export function startMergeWorker({
   signal,
   pollIntervalMs = 500,
   mergeFn = mergeBranch,
+  onSupervisorEvent,
 }: MergeWorkerDeps): MergeWorkerHandle {
   const ac = new AbortController()
 
@@ -404,7 +435,7 @@ export function startMergeWorker({
 
       try {
         await store.markRunning(job.id)
-        await runMergeJob(job, store, log, mergeFn, jobAc.signal)
+        await runMergeJob(job, store, log, mergeFn, jobAc.signal, onSupervisorEvent)
       } catch (err) {
         const msg = (err as Error).message
         log(`[merge-worker] job ${job.id} failed: ${msg}`)

@@ -6079,6 +6079,32 @@ export const startDaemon = async (
     log,
     bus,
     signal: mergeWorkerAc.signal,
+    // Forward vcs-supervisor (Vega) streaming events from the merge worker
+    // to the activity tracker and the trace store. This allows operators
+    // polling /events to see Vega tool invocations in the task event stream,
+    // and lets the phantom-task watchdog distinguish an active Vega session
+    // (event-emitting) from a genuinely hung one (no events for N minutes).
+    onSupervisorEvent: (taskId: string, event: { type: string; [key: string]: unknown }) => {
+      // Update the in-flight liveness timestamp so the phantom-task watchdog
+      // does not misidentify an actively-resolving conflict as a hung task.
+      tracker.recordActivity(taskId, Date.now())
+      // Persist tool invocations to the trace store so they appear in the
+      // /events feed for the merge phase. This is the same observable surface
+      // operators use to verify a coder is making progress.
+      if (event.type === 'tool_use') {
+        void traceStore.record({
+          kind: 'tool_invoked',
+          taskId,
+          phase: 'merge',
+          payload: {
+            source: 'vega',
+            tool: typeof event['name'] === 'string' ? event['name'] : 'unknown',
+          },
+        }).catch(() => {
+          // Non-fatal: a trace write failure must not abort or slow the merge.
+        })
+      }
+    },
   })
   log('[merge-worker] started')
 
@@ -6326,9 +6352,9 @@ export const startDaemon = async (
   //
   // The threshold must comfortably exceed the maximum possible in-flight merge
   // duration so the sweep never races a legitimately running merge:
-  //   - DEFAULT_WATCHDOG_MS  = VCS_SUPERVISOR_TIMEOUT_MS (30 min)
+  //   - DEFAULT_WATCHDOG_MS  = VCS_SUPERVISOR_TIMEOUT_MS (default 10 min, env-overridable)
   //                          + MERGE_GIT_BUDGET_MS       ( 5 min)
-  //                          = 35 min
+  //                          = 15 min (default)
   //   + one sweep interval                               = 5 min
   //   → threshold = 40 min
   //

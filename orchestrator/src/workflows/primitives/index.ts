@@ -4186,6 +4186,43 @@ export const merge = async (
         }
 
         if (m.aborted) {
+          // Timeout path: the vcs-supervisor subprocess was killed by the
+          // per-step wall-clock timeout (exitCode 124). Surface a distinct
+          // `merge:vega-timeout` signature so the action queue shows a
+          // recognisable item separate from a Vega run that finished but
+          // produced a bad git tree.
+          if (m.vegaTimedOut) {
+            const errorMsg =
+              `merge:vega-timeout — vcs-supervisor timed out during conflict ` +
+              `resolution for ${branch}; rebase aborted. ` +
+              m.output.slice(0, 500)
+            await updateTask(
+              taskId,
+              {
+                status: 'failed',
+                error: errorMsg,
+                failedPhase: 'merge',
+                failureReason: 'merge:vega-timeout',
+                failureSignature: 'merge:vega-timeout',
+                failureReasonCode: 'merge:vega-timeout',
+              },
+              store,
+            )
+            await handleTaskFailureWithFixTask({
+              taskId,
+              failingStep: 'merge:vega-timeout',
+              errorOutput: m.output,
+              branch,
+              store,
+            }).catch((err) => {
+              console.error(
+                `[failure-handler] task ${taskId} vega-timeout handling errored:`,
+                err,
+              )
+            })
+            throw new Error(errorMsg)
+          }
+
           const errorMsg = `merge aborted by vcs-supervisor; worktree retained at ${worktreePath}\n${m.output.slice(0, 1000)}`
           // Classify from the WRAPPED message, not the raw mergeBranch output:
           // the wrapper line is what lands in `error` and what the durable
@@ -4403,6 +4440,7 @@ export const merge = async (
           (error.message.includes('merge:preflight') ||
             error.message.includes('merge pre-flight failed') ||
             error.message.includes('merge aborted; vcs-supervisor could not reconcile') ||
+            error.message.includes('merge:vega-timeout') ||
             error.message.includes('merge:main-dirty') ||
             error.message.includes('merge:integration-gate') ||
             error.message.includes('merge:post-merge-assertion') ||

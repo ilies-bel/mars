@@ -253,14 +253,18 @@ export interface MergeResult {
    */
   integrationGateOutput?: string
   /**
-   * `true` when the vcs-supervisor session was abandoned because it exceeded
-   * {@link VCS_SUPERVISOR_TIMEOUT_MS}. When set, `aborted` is `true` and the
-   * merge lock has already been released. Callers should surface this as a
-   * distinct, actionable failure — e.g. raise an action queue item prompting
-   * the operator to resolve the conflict manually or restart the task — rather
-   * than treating it as a generic abort.
+   * True when the vcs-supervisor (Vega) session was killed by the per-step
+   * wall-clock timeout ({@link VCS_SUPERVISOR_TIMEOUT_MS}). In this case
+   * `aborted` is also true and any in-progress rebase has been aborted, and
+   * the merge lock has already been released.
+   *
+   * The merge primitive maps this to the `merge:vega-timeout` failure signature
+   * so the action queue shows a recognisable, actionable item — prompting the
+   * operator to resolve the conflict manually or restart the task — distinct
+   * both from a generic abort and from a Vega run that actively reconciled but
+   * failed the post-supervisor tree checks.
    */
-  supervisorTimedOut?: boolean
+  vegaTimedOut?: boolean
   /**
    * Machine-readable reason for a `merged: false` outcome that is not an abort
    * or integration-gate failure. Currently only `'merge-left-dirty-tree'`:
@@ -347,8 +351,14 @@ export interface InvokeSupervisorResult extends RunSubprocessResult {
  * Wall-clock budget for one vcs-supervisor session. Shared by every caller so
  * the two dispatch sites (the merge step's rebase, and the setup step's
  * bring-the-worktree-current rebase) cannot drift apart.
+ *
+ * Default: 10 minutes. Override with `MARS_VCS_SUPERVISOR_TIMEOUT_MS` (ms).
+ * A shorter value makes a hung session detectable faster; set it higher when
+ * legitimate conflict resolutions routinely exceed the default.
  */
-export const VCS_SUPERVISOR_TIMEOUT_MS = 30 * 60 * 1000
+export const VCS_SUPERVISOR_TIMEOUT_MS: number = Number(
+  process.env.MARS_VCS_SUPERVISOR_TIMEOUT_MS ?? 10 * 60 * 1000,
+)
 
 /**
  * Spawn Vega against a rebase that is CURRENTLY IN PROGRESS in `cwd`.
@@ -362,6 +372,10 @@ export const VCS_SUPERVISOR_TIMEOUT_MS = 30 * 60 * 1000
  * Exported because the setup step reuses this verbatim: a conflicted rebase is
  * the same problem wherever it happens, and the prompt is written about the
  * git state, not about the merge phase.
+ *
+ * When `timeoutMs` elapses the subprocess is killed with SIGKILL and the
+ * function returns `{ exitCode: 124, … }` — the sentinel used by callers to
+ * distinguish a timed-out session from a clean zero exit.
  */
 export const invokeVcsSupervisor = async (
   branch: string,
@@ -372,33 +386,47 @@ export const invokeVcsSupervisor = async (
 ): Promise<InvokeSupervisorResult> => {
   const prompt = await buildSupervisorPrompt(branch, integrationBranch)
   const conversation: ClaudeEvent[] = []
-  const work = runSubprocessStreaming(
-    resolveClaudeBin(),
-    claudeStreamArgs(prompt),
-    cwd,
-    async ({ stream, line }) => {
-      if (stream !== 'stdout') return
-      const event = parseClaudeStreamLine(line)
-      if (!event) return
-      conversation.push(event)
-      if (onEvent) await onEvent(event)
-    },
-    undefined,
-    buildWorkerEnv(),
-  )
-  const timeout = new Promise<RunSubprocessResult>((resolveFn) =>
-    setTimeout(
-      () =>
-        resolveFn({
-          exitCode: 124,
-          stdout: '',
-          stderr: `vcs-supervisor timed out after ${timeoutMs}ms`,
-        }),
-      timeoutMs,
-    ),
-  )
-  const result = await Promise.race([work, timeout])
-  return { ...result, conversation }
+  // AbortController used to kill the subprocess when the timeout fires.
+  // Without this, the old Promise.race approach resolved the caller's promise
+  // but left the subprocess running in the background — it could still be
+  // writing to disk (conflict markers, staged hunks) while mergeBranch ran
+  // `git rebase --abort`, causing a race and corrupting worktree state.
+  let timedOut = false
+  const ac = new AbortController()
+  const timer = setTimeout(() => {
+    timedOut = true
+    ac.abort()
+  }, timeoutMs)
+  try {
+    const result = await runSubprocessStreaming(
+      resolveClaudeBin(),
+      claudeStreamArgs(prompt),
+      cwd,
+      async ({ stream, line }) => {
+        if (stream !== 'stdout') return
+        const event = parseClaudeStreamLine(line)
+        if (!event) return
+        conversation.push(event)
+        if (onEvent) await onEvent(event)
+      },
+      ac.signal,
+      buildWorkerEnv(),
+    )
+    // When the abort was triggered by our own timer, replace the subprocess's
+    // (SIGKILL'd) exit code with the conventional timeout sentinel 124 so
+    // callers don't have to inspect the abort reason separately.
+    if (timedOut) {
+      return {
+        exitCode: 124,
+        stdout: '',
+        stderr: `vcs-supervisor timed out after ${timeoutMs}ms`,
+        conversation,
+      }
+    }
+    return { ...result, conversation }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 // Portable directory check. Replaces a prior shell-out to `test -d <path>`,
@@ -799,11 +827,30 @@ export const mergeBranch = async ({
           VCS_SUPERVISOR_TIMEOUT_MS,
           onSupervisorEvent,
         )
-        // exitCode 124 is the sentinel emitted by invokeVcsSupervisor's own
-        // internal timeout Promise when the supervisor exceeds VCS_SUPERVISOR_TIMEOUT_MS.
-        const supervisorDidTimeout = sup.exitCode === 124
         supervisorConversation.push(...sup.conversation)
         output += sup.stdout + sup.stderr
+
+        // Detect the per-step timeout before running post-supervisor git checks.
+        // exitCode 124 is the sentinel emitted by invokeVcsSupervisor's own
+        // internal timeout Promise when the supervisor exceeds
+        // VCS_SUPERVISOR_TIMEOUT_MS. The subprocess was killed mid-flight, so we
+        // know nothing about the worktree state — the post-supervisor probes
+        // below would report meaningless values. Abort the rebase immediately
+        // and surface a distinct `vegaTimedOut` result instead.
+        if (sup.exitCode === 124) {
+          lastStep = 'vega-timeout-abort'
+          await gprobe(['rebase', '--abort'], worktreePath).catch(() => {})
+          return {
+            merged: false,
+            conflictResolved: false,
+            aborted: true,
+            vegaTimedOut: true,
+            output: `vcs-supervisor timed out after ${VCS_SUPERVISOR_TIMEOUT_MS}ms; rebase aborted.\n${output}`,
+            supervisorConversation,
+            vegaSessionId: null,
+            retriesAttempted,
+          }
+        }
 
         lastStep = 'vega-verify'
         const stillInProgress = await isRebaseInProgress(worktreePath, mergeCtx, combinedSignal)
@@ -825,9 +872,7 @@ export const mergeBranch = async ({
             merged: false,
             conflictResolved: false,
             aborted: true,
-            // Set only when true so the field is absent on normal failures.
-            supervisorTimedOut: supervisorDidTimeout ? true : undefined,
-            output: `vcs-supervisor outcome rejected by git tree (stillInProgress=${stillInProgress}, advanced=${advanced}, treeClean=${treeClean})${supervisorDidTimeout ? '; supervisor timed out' : ''}; rebase aborted.\n${output}`,
+            output: `vcs-supervisor outcome rejected by git tree (stillInProgress=${stillInProgress}, advanced=${advanced}, treeClean=${treeClean}); rebase aborted.\n${output}`,
             supervisorConversation,
             vegaSessionId: null,
             retriesAttempted,
