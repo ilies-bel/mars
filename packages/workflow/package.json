@@ -24,6 +24,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
     "zod": "4.3.6"
   },
   "devDependencies": {

@@ -103,6 +103,9 @@ importers:
 
   packages/workflow:
     dependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.1
+        version: 4.0.1
       zod:
         specifier: 4.3.6
         version: 4.3.6
@@ -357,6 +360,21 @@ packages:
 
   '@dagrejs/graphlib@4.0.5':
     resolution: {integrity: sha512-7xrBTqIts3o+PMUZX97wSc+7TUbW+/rULzGNCTP6yooNVDXbzw4Wutg/H/xOutTB/c/k0YqOAavgPh4/Zk9PFA==}
+
+  '@deepseek-ai/cordis@4.0.1':
+    resolution: {integrity: sha512-YBdskTU2Po1kru3GgcUWUbkTsPMA9LkSQDAY8rBkFJeajdgcQad3QPJZE26JyK99Xb6HaASvoXg2DSUTeN/0Nw==}
+    hasBin: true
+    peerDependencies:
+      '@deepseek-ai/cordis-plugin-include': ^1.0.6
+      '@deepseek-ai/cordis-plugin-loader': ^1.0.2
+    peerDependenciesMeta:
+      '@deepseek-ai/cordis-plugin-include':
+        optional: true
+      '@deepseek-ai/cordis-plugin-loader':
+        optional: true
+
+  '@deepseek-ai/cosmokit@1.8.2':
+    resolution: {integrity: sha512-muBOKtSrUKU5m/xpq8ZXWL6hQ/jgd4PhU2PqH97bcxIiLEJfNwZOGQEx4t/aS/GgxRAR+ra9pMHPMtTHU4sqqA==}
 
   '@electric-sql/pglite@0.5.4':
     resolution: {integrity: sha512-yYZUyyXrHU7tPlCjwZQJ6hIG9DscdCCn7Uk0mYKwC1FeHX286AbcmFveMiRBEak8e9iPupjsoVImN3yJZVed2g==}
@@ -4640,6 +4658,13 @@ snapshots:
       '@dagrejs/graphlib': 4.0.5
 
   '@dagrejs/graphlib@4.0.5': {}
+
+  '@deepseek-ai/cordis@4.0.1':
+    dependencies:
+      '@deepseek-ai/cosmokit': 1.8.2
+      '@standard-schema/spec': 1.1.0
+
+  '@deepseek-ai/cosmokit@1.8.2': {}
 
   '@electric-sql/pglite@0.5.4': {}
 

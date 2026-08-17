@@ -14,8 +14,10 @@ export default defineConfig({
   dts: true,
   clean: true,
   outDir: 'dist',
-  // Externalize runtime dependencies — don't bundle them
-  external: ['zod'],
+  // Externalize runtime dependencies — don't bundle them. `@deepseek-ai/cordis`
+  // is ESM-only; bundling it into the CJS output would produce a `require()` of
+  // an ES module at load time.
+  external: ['zod', '@deepseek-ai/cordis'],
   platform: 'node',
   // Use a build-specific tsconfig: noEmit:false + ignoreDeprecations:"6.0"
   // (TypeScript 6 deprecated baseUrl; some tsup internals trigger it)
