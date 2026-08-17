@@ -6,6 +6,7 @@ import { useDaemonConnected } from '@/hooks/useDaemonConnected'
 import { resolvePageRoute } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
 import { deriveBreadcrumbs } from './Breadcrumbs'
+import { LiveParkedChip } from './LiveParkedChip'
 import { ProjectSelector } from './ProjectSelector'
 
 // ── Nav groups ────────────────────────────────────────────────────────────────
@@ -145,6 +146,8 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
           When disconnected it shows 'Reconnecting' (EventSource always retries;
           'Offline' is never shown while data may still be rendering from cache). */}
       <div className="ml-auto flex shrink-0 items-center gap-2">
+        {/* Awaiting-human counter — hidden when zero */}
+        <LiveParkedChip />
         <span
           className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-success animate-pulse' : 'bg-muted'}`}
           aria-hidden="true"

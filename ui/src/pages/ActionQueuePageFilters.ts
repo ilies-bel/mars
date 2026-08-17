@@ -30,3 +30,11 @@ export function whyNowText(item: ActionQueueItem): string | null {
 export function subtitleFor(item: ActionQueueItem): string {
   return whyNowText(item) ?? item.title
 }
+
+/**
+ * URL hash that opens the Triage view pre-filtered to tasks that are parked
+ * at a manual step, awaiting operator input (kind='awaiting-human').
+ *
+ * Used by LiveParkedChip to set the action-queue filter on click.
+ */
+export const AWAITING_HUMAN_HREF = '#/triage?kind=awaiting-human'
