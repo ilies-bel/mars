@@ -118,6 +118,40 @@ export const CODER_EXIT_NONZERO_ABORT_MESSAGE = (
 export const CODER_UNCOMMITTED_ABORT_MESSAGE = (taskId: string): string =>
   `coder for task ${taskId} left uncommitted work the auto-commit net could not land`
 
+// ── code/post-coder-classifier-error ─────────────────────────────────────────
+// Thrown when the post-coder worktree classifier (`detectPostCoderState`)
+// fails AFTER a corrective coder turn — i.e. the rev-list probe exits non-zero
+// both on the initial attempt and after one retry. Using the stale pre-correction
+// dirty-file counts as the terminal verdict would tell an operator the work was
+// uncommitted when the corrective turn may actually have committed it all. Failing
+// with this distinct signature directs the operator to inspect the worktree
+// rather than running `mars restart` (which would discard potentially-committed
+// work). The initial classification error (before the corrective turn) stays
+// best-effort and falls through, since no corrective action has been taken yet.
+export const POST_CODER_CLASSIFIER_ERROR_STEP = 'code'
+export const POST_CODER_CLASSIFIER_ERROR_SIGNATURE = `${POST_CODER_CLASSIFIER_ERROR_STEP}/post-coder-classifier-error`
+
+/**
+ * Abort message for the post-coder-classifier-error path.
+ * Includes the classifier error text and worktree path so the operator has
+ * enough context without opening the full transcript.
+ */
+export const POST_CODER_CLASSIFIER_ERROR_ABORT_MESSAGE = (
+  taskId: string,
+  classifierError: string,
+  worktreePath: string,
+): string =>
+  [
+    `task ${taskId}: the post-coder worktree classifier could not determine the worktree state after the corrective coder turn.`,
+    '',
+    `Classifier error: ${classifierError}`,
+    `Worktree: ${worktreePath}`,
+    '',
+    'The worktree may contain committed work from the corrective turn.',
+    "PREFER `mars continue` over `mars restart` — restart discards the worktree and any committed work it holds.",
+    'Inspect the worktree before taking any destructive action.',
+  ].join('\n')
+
 /**
  * Failing-step id stamped on `failure_reason` for the coder-left-uncommitted
  * terminal path. `failure_reason` doubles as the fine-grained failing step for

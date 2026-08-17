@@ -57,6 +57,15 @@ export type WorkflowTerminalKind =
    * worktree is preserved for investigation.
    */
   | 'merge-zero-commit'
+  /**
+   * The post-coder worktree classifier (`detectPostCoderState`) failed to
+   * determine the worktree state after the corrective coder turn, even after
+   * one retry. Carrying a stale pre-correction snapshot forward risks reporting
+   * files as uncommitted when the corrective turn may have committed them, so
+   * the run fails with this distinct signature instead. The worktree may contain
+   * committed work — prefer `mars continue` over `mars restart`.
+   */
+  | 'post-coder-classifier-error'
 
 export interface WorkflowTerminalMeta {
   /** Unix epoch seconds at which the provider quota resets. Only set for `quota-rejected`. */

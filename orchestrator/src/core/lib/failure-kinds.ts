@@ -658,6 +658,34 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: DEFAULT_ACTIONS,
       },
 
+      // ── code/post-coder-classifier-error ─────────────────────────────────
+      // The post-coder worktree classifier (detectPostCoderState) failed to
+      // determine the worktree state after the corrective coder turn, even
+      // after one retry. Using the stale pre-correction dirty-file counts as
+      // the terminal verdict would tell the operator the work was uncommitted
+      // when the corrective turn may actually have committed it. This distinct
+      // signature directs the operator to inspect the worktree rather than
+      // restarting (which discards potentially-committed work).
+      // `mars continue` is the correct first response: it resumes on the
+      // existing worktree so no commits are lost.
+      {
+        signature: 'code/post-coder-classifier-error',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: 'The worktree state check failed after the corrective coder turn',
+        verboseReason:
+          'The code step ran a corrective commit turn but the post-coder worktree classifier (rev-list probe) failed both on the initial attempt and after one retry. The worktree may contain committed work — prefer `mars continue` over `mars restart` to avoid discarding it.',
+        actions: [
+          { id: 'diagnose-failure', label: 'Investigate', op: 'diagnose-failure' },
+          {
+            id: 'restart',
+            label: 'Restart from scratch',
+            op: 'restart',
+            needsConfirm: true,
+          },
+          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+        ],
+      },
+
       // ── behaviour-verify:dod-unmet ───────────────────────────────────────
       // Behaviour verification (the pre-merge behaviour-verify step) reached
       // the live surface and found a Definition-of-Done criterion observably
