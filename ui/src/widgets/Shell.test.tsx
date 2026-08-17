@@ -20,9 +20,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 // ── Module mocks — must be registered before any import of the component ─────
 
 // useActionQueue — Shell uses this for the Needs you badge count.
+// Mutable so tests can inject items and verify badge computation.
+let mockActionQueueItems: { id: string; kind: string; priority: string; at: string }[] = []
 mock.module('@/entities/actionQueue/useActionQueue', () => ({
   useActionQueue: () => ({
-    items: [],
+    items: mockActionQueueItems,
     error: null,
     projectsError: null,
     projectsEmpty: false,
@@ -337,5 +339,43 @@ describe('Shell — live indicator', () => {
     expect(html).toContain('>Reconnecting<')
     expect(html).not.toContain('>Live<')
     expect(html).not.toContain('>Offline<')
+  })
+})
+
+// ── Shell — badge computation (draft-proposal exclusion) ──────────────────────
+
+describe('Shell — Needs you badge computation', () => {
+  const makeItem = (kind: string, id = `${kind}:1`) => ({
+    id,
+    kind,
+    priority: 'normal',
+    at: '2024-01-01T00:00:00.000Z',
+  })
+
+  it('shows badge for an operational alert item', () => {
+    mockActionQueueItems = [makeItem('daemon-died')]
+    const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
+    expect(html).toContain('decisions pending')
+    mockActionQueueItems = []
+  })
+
+  it('does not count a draft-proposal item toward the badge', () => {
+    mockActionQueueItems = [makeItem('draft-proposal')]
+    const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
+    expect(html).not.toContain('decisions pending')
+    mockActionQueueItems = []
+  })
+
+  it('counts operational alerts but not draft-proposals when both present', () => {
+    mockActionQueueItems = [
+      makeItem('daemon-died', 'daemon-died:1'),
+      makeItem('reflect-recommended', 'reflect-recommended:1'),
+      makeItem('draft-proposal', 'draft-proposal:p1'),
+    ]
+    const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
+    // 2 operational + 1 draft → badge shows 2, not 3
+    expect(html).toContain('>2<')
+    expect(html).not.toContain('>3<')
+    mockActionQueueItems = []
   })
 })

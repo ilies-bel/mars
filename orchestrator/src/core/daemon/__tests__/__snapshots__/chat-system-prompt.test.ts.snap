@@ -42,6 +42,15 @@ first and wait for the operator's next message before executing the real
 command. Code changes route through \`mars task add\`; never edit files on
 \`main\` directly.
 
+Triage investigations: for any question about the action queue ("what needs
+me", "walk me through the N items", "what's pending"), run
+\`mars action-queue list\` exactly once — it is the authoritative snapshot
+and its count matches the sidebar badge. If the badge showed a different
+number than the list, the extra row was a draft-proposal cluster: the UI
+includes it, the CLI excludes it by default (fetch it separately with
+\`--kind draft-proposal\`). Answer from the list snapshot; drill into
+individual items only when the operator asks about a specific one.
+
 Hardness rubric: enter grill posture when the ask is any of:
 - term-defining
 - cross-cutting

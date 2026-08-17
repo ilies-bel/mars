@@ -251,10 +251,14 @@ interface ShellProps {
 export const Shell = ({ hash, children }: ShellProps) => {
   const { items: actionQueueItems } = useActionQueue()
   const activeRoute = resolvePageRoute(hash)
-  // Badge = rendered rows after clustering — matches the count the triage page
-  // badge shows (clusters count as 1, not N). Uses the same sortItems +
-  // buildRenderedRows pipeline so sidebar and page badges are always equal.
-  const decisionBadge = buildRenderedRows(sortItems(actionQueueItems)).length
+  // Badge = rendered rows after clustering, draft-proposal clusters excluded.
+  // Draft proposals are a backlog of shaped ideas, not operational alerts that
+  // need immediate action. Excluding them keeps the sidebar count aligned with
+  // `mars action-queue list` (which also excludes draft-proposals by default),
+  // so the badge and CLI always report the same set.
+  const decisionBadge = buildRenderedRows(sortItems(actionQueueItems)).filter(
+    (r) => !(r.type === 'cluster' && r.kind === 'draft-proposal'),
+  ).length
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[200px_1fr] grid-rows-[40px_1fr]">
