@@ -30,6 +30,9 @@ interface ArcState {
   hasStumbled: boolean
   hasRecovered: boolean
   hasNeedsYou: boolean
+  /** First non-empty `why` seen for this arc, preferring 'task.needs-you' events. */
+  why: string | undefined
+  whyFromNeedsYou: boolean
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -67,6 +70,8 @@ export const narrate = (events: NarrationEvent[]): NarrationLine[] | null => {
         hasStumbled: false,
         hasRecovered: false,
         hasNeedsYou: false,
+        why: undefined,
+        whyFromNeedsYou: false,
       })
     }
 
@@ -92,6 +97,14 @@ export const narrate = (events: NarrationEvent[]): NarrationLine[] | null => {
         state.hasNeedsYou = true
         break
     }
+
+    if (event.why && event.why.trim().length > 0) {
+      const isNeedsYouEvent = event.kind === 'task.needs-you' || event.kind === 'task.stumbled'
+      if (state.why === undefined || (isNeedsYouEvent && !state.whyFromNeedsYou)) {
+        state.why = event.why.trim()
+        state.whyFromNeedsYou = isNeedsYouEvent
+      }
+    }
   }
 
   const lines: NarrationLine[] = []
@@ -108,11 +121,15 @@ export const narrate = (events: NarrationEvent[]): NarrationLine[] | null => {
     }
 
     if (shape !== null) {
+      const baseText = arcText[shape](state.title)
+      const text =
+        shape === 'needs-you' && state.why ? `${baseText} Why: ${state.why}` : baseText
       lines.push({
         taskId: originId,
         title: state.title,
         arcShape: shape,
-        text: arcText[shape](state.title),
+        text,
+        ...(state.why ? { why: state.why } : {}),
       })
     }
   }

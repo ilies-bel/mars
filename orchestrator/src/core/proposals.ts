@@ -23,6 +23,10 @@ export type { SuggestionOutcome, LeverBinding, LeverGap } from './lib/suggestion
  *                         deferred deliverables declared in a PRD's
  *                         `out_of_scope` field at slice time.
  * - `human`             — an operator, via the CLI or UI.
+ * - `growth`            — the growth step-suggestion heuristics
+ *                         (orchestrator/src/growth), proposing new workflow
+ *                         steps inferred from repeated verify-failure or
+ *                         failure-signature patterns in task history.
  */
 export type ProposalSource =
   | 'reflection'
@@ -32,6 +36,7 @@ export type ProposalSource =
   | 'skill-forge'
   | 'failure-reflector'
   | 'slicer'
+  | 'growth'
 
 export const PROPOSAL_STATUSES = [
   'draft',
@@ -151,6 +156,7 @@ export const VALID_SOURCES: readonly ProposalSource[] = [
   'skill-forge',
   'failure-reflector',
   'slicer',
+  'growth',
 ]
 
 /**

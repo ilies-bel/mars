@@ -23,10 +23,11 @@ const recovered = (recoveryTaskId: string, title: string, originId: string): Nar
   kind: 'task.recovered',
 })
 
-const needsYou = (taskId: string, title: string): NarrationEvent => ({
+const needsYou = (taskId: string, title: string, why?: string): NarrationEvent => ({
   taskId,
   title,
   kind: 'task.needs-you',
+  ...(why ? { why } : {}),
 })
 
 // ─── null / empty span ────────────────────────────────────────────────────────
@@ -200,5 +201,30 @@ describe('narrate() — determinism', () => {
     for (const r of results) {
       expect(r).toEqual(results[0])
     }
+  })
+})
+
+describe('narrate() — why-narration', () => {
+  it('appends the why to the text of a needs-you arc', () => {
+    const events: NarrationEvent[] = [
+      needsYou('t-1', 'Ship the thing', "Verify failed at the 'typecheck' gate."),
+    ]
+    const [line] = narrate(events)!
+    expect(line.why).toBe("Verify failed at the 'typecheck' gate.")
+    expect(line.text).toBe(
+      "Ship the thing needs attention. Why: Verify failed at the 'typecheck' gate.",
+    )
+  })
+
+  it('omits the Why suffix when no event carries a why', () => {
+    const [line] = narrate([needsYou('t-1', 'Ship the thing')])!
+    expect(line.why).toBeUndefined()
+    expect(line.text).toBe('Ship the thing needs attention.')
+  })
+
+  it('does not attach a why to a landed or stumbled-recovered arc', () => {
+    const [line] = narrate([landed('t-1', 'Ship the thing')])!
+    expect(line.why).toBeUndefined()
+    expect(line.text).toBe('Ship the thing landed.')
   })
 })

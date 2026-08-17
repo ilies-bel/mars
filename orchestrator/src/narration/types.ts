@@ -33,6 +33,14 @@ export interface NarrationEvent {
   /** Human-readable task title, used verbatim in the narration string. */
   title: string
   kind: NarrationEventKind
+  /**
+   * Plain-English reason for a 'task.needs-you' event (why it parked, why
+   * verify failed, why a merge was blocked) — see `./why.ts` for the pure
+   * helpers that produce these strings from a reason code. Optional and
+   * ignored for other event kinds; when absent the narration falls back to
+   * the generic arc-shape sentence.
+   */
+  why?: string
 }
 
 /** The three recognisable arc-shapes a span of events can resolve to. */
@@ -47,6 +55,13 @@ export interface NarrationLine {
   arcShape: NarrationArcShape
   /** The canonical, deterministic narration string for this arc. */
   text: string
+  /**
+   * Plain-English reason, when at least one contributing event carried one
+   * (see {@link NarrationEvent.why}). Already folded into `text` for
+   * 'needs-you' arcs; exposed separately too so a caller that wants to
+   * render it on its own (e.g. a distinct "why" line in the UI) can.
+   */
+  why?: string
 }
 
 /**
