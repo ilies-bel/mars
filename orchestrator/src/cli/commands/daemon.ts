@@ -33,6 +33,7 @@ import {
   daemonPaths,
   isDaemonAlive,
   spawnDaemonProcess,
+  waitForProcessExit,
 } from '../../core/daemon/paths'
 import { warnWhenRepoRootDiffersFromIntegration } from '../../core/lib/repo-root-branch-warning'
 import { hasFlag } from '../args'
@@ -436,19 +437,44 @@ const daemonRestart: Command = {
   run: async (_args, deps) => {
     const liveness = await isDaemonAlive()
     if (liveness.alive) {
+      // Capture the old PID before the daemon deletes its pid file during
+      // shutdown. `liveness.pid` is 0 when the pid file was absent (sentinel);
+      // treat that as "unknown" so we skip the process-exit wait.
+      const oldPid = liveness.pid > 0 ? liveness.pid : null
       try {
-        await deps.daemon.sendRequest(
-          { op: 'shutdown', force: true },
-        )
+        await deps.daemon.sendRequest({ op: 'shutdown', force: true })
       } catch (err) {
         const msg = errorMessage(err)
         if (!isDaemonDownError(msg)) throw err
       }
-      const deadline = Date.now() + 5_000
-      while (Date.now() < deadline) {
+      // Wait for the socket to disappear — the daemon removes it near the end
+      // of its shutdown sequence, so its absence signals that cleanup is mostly
+      // complete. Most healthy force-shutdowns finish within this window.
+      const socketDeadline = Date.now() + 5_000
+      while (Date.now() < socketDeadline) {
         await new Promise((r) => setTimeout(r, 100))
         const check = await isDaemonAlive()
         if (!check.alive) break
+      }
+      // Wait for the OLD PROCESS itself to exit, not just the socket.
+      //
+      // A wedged daemon (e.g. a stuck merge child keeping the event loop
+      // alive) can delete its socket mid-shutdown while still running. When
+      // that happens isDaemonAlive() returns false and we race to spawn the
+      // new child — which then hits the startup lock, sees the old PID alive,
+      // and exits with "holds the exclusive startup lock; refusing to start".
+      // Result: no daemon at all (the observed incident of 2026-08-17).
+      //
+      // By waiting for the OS to confirm the process is gone (up to 10 s,
+      // then escalating to SIGKILL) before spawning, we guarantee the new
+      // child only races the scheduler — never the old lock holder.
+      if (oldPid !== null) {
+        const exited = await waitForProcessExit(oldPid, 10_000)
+        if (!exited) {
+          // Graceful wait exhausted — escalate to SIGKILL.
+          try { process.kill(oldPid, 'SIGKILL') } catch { /* may have exited */ }
+          await waitForProcessExit(oldPid, 5_000)
+        }
       }
     }
     const child = spawnDetached(deps)

@@ -538,14 +538,33 @@ export const startDaemon = async (
 
   // ── Exclusive advisory startup lock ─────────────────────────────────────
   // daemon.lock holds the PID of the daemon that last passed the startup
-  // guards. A second concurrent start finds a live PID here and refuses
-  // rather than running split-brain (two daemons sharing the DB / PG server).
+  // guards. A second concurrent start finds a live PID here and waits for
+  // that process to exit before proceeding (up to 15 s, then refuses).
+  //
+  // Why wait instead of refusing immediately: `mars daemon restart` signals
+  // shutdown then spawns a replacement child as soon as the socket disappears.
+  // A wedged daemon (e.g. a stuck merge child keeping the event loop alive)
+  // can delete its socket mid-shutdown while its process is still running.
+  // The replacement child would arrive here, find the lock holder alive, and
+  // exit — leaving no daemon at all (observed incident 2026-08-17).
+  //
+  // Waiting here absorbs that race: the new child simply waits for the old
+  // process to finish tearing down before taking the lock. If the old process
+  // is genuinely stuck (not shutting down), the 15 s timeout surfaces a loud,
+  // clear error rather than a silent "no daemon at all" state.
   const lockPid = readDaemonPid(lockFile)
   if (lockPid !== null && isProcessAlive(lockPid)) {
     log(
-      `daemon (pid ${lockPid}) holds the exclusive startup lock; refusing to start`,
+      `daemon (pid ${lockPid}) holds the exclusive startup lock; waiting up to 15 s for it to exit`,
     )
-    process.exit(1)
+    const lockExited = await waitForProcessExit(lockPid, 15_000)
+    if (!lockExited) {
+      log(
+        `daemon (pid ${lockPid}) still holds the startup lock after 15 s; refusing to start`,
+      )
+      process.exit(1)
+    }
+    log(`prior lock holder (pid ${lockPid}) exited; proceeding with startup`)
   }
 
   // ── Socket probe ─────────────────────────────────────────────────────────

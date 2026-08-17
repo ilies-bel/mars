@@ -158,6 +158,33 @@ describe('waitForProcessExit', () => {
       try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
     }
   })
+
+  // ── SIGKILL escalation: returns true after SIGKILL ───────────────────────
+  //
+  // `mars daemon restart` uses SIGKILL as a fallback when a wedged daemon does
+  // not exit after SIGTERM within the grace window. This test pins the contract
+  // that waitForProcessExit returns true immediately after SIGKILL lands — the
+  // same pattern the restart path relies on to confirm the old process is gone
+  // before spawning the replacement.
+
+  it('returns true after SIGKILL is sent to a running process', async () => {
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], {
+      detached: true,
+      stdio: 'ignore',
+    })
+    child.unref()
+    const pid = child.pid!
+
+    // Confirm alive before killing.
+    expect(isProcessAlive(pid)).toBe(true)
+
+    // Send SIGKILL — unconditionally terminates the process.
+    try { process.kill(pid, 'SIGKILL') } catch { /* may have already exited */ }
+
+    // waitForProcessExit should return true (process gone) within a short window.
+    const result = await waitForProcessExit(pid, 5_000)
+    expect(result).toBe(true)
+  })
 })
 
 // ── daemonPaths: lockFile contract ───────────────────────────────────────────
