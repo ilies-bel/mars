@@ -1,7 +1,7 @@
 import type { Cluster, ProgressProposalNode, ProgressTask, PurgeArchiveEntry } from '@/shared/schemas'
 import type { UITask } from '@/shared/types'
 import { taskTitle } from '@/shared/promptTitle'
-import { arcPlacementCluster, resolveArcLabel, taskArcKey } from '@/widgets/topologyFlowModel'
+import { arcPlacementCluster, resolveArcLabel, sanitizeProposalTitle, taskArcKey } from '@/widgets/topologyFlowModel'
 import { BoardCard, DenseColumn, type BoardArc } from '@/widgets/Column'
 
 // ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ const ProposalCard = ({ proposal }: { proposal: ProgressProposalNode }) => (
     </div>
     {/* Row 2: title */}
     <p className="line-clamp-2 text-body font-medium leading-snug text-foreground">
-      {proposal.title}
+      {sanitizeProposalTitle(proposal.title)}
     </p>
     {/* Row 3: mockup-ready chip (conditional) */}
     {proposal.mockupReady ? (

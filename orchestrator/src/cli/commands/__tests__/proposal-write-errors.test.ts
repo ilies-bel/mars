@@ -121,6 +121,64 @@ describe('proposal write commands', () => {
     expect(result.err).toEqual([])
   })
 
+  it('expands an @<path> reference in "proposal set title" to the file contents', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const { createProposal, getProposal } = await import('../../../core/proposals')
+    const { makeFakeDaemon } = await import('../../test-adapter')
+    const proposal = await createProposal('Original title')
+
+    // Write the intended title into a temp file, mimicking what the /mars:to-prd
+    // skill does when it stores field content in a scratchpad file.
+    const titleFile = join(repo, 'title.txt')
+    writeFileSync(titleFile, 'Record each arc behaviour verification\n')
+
+    const result = await run(
+      ['proposal', 'set', proposal.id, 'title', `@${titleFile}`],
+      { store, ctx, daemon: makeFakeDaemon() },
+    )
+
+    expect(result.code).toBe(0)
+    const updated = await getProposal(proposal.id)
+    // The stored title must be the file contents, not the raw @<path> reference.
+    expect(updated?.title).toBe('Record each arc behaviour verification\n')
+  })
+
+  it('stores a plain (non-@) title verbatim without attempting file reads', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const { createProposal, getProposal } = await import('../../../core/proposals')
+    const { makeFakeDaemon } = await import('../../test-adapter')
+    const proposal = await createProposal('Original title')
+
+    const result = await run(
+      ['proposal', 'set', proposal.id, 'title', 'Plain title with no at-sign'],
+      { store, ctx, daemon: makeFakeDaemon() },
+    )
+
+    expect(result.code).toBe(0)
+    const updated = await getProposal(proposal.id)
+    expect(updated?.title).toBe('Plain title with no at-sign')
+  })
+
+  it('does not expand @<path> for the status field (status is never a file reference)', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const { createProposal } = await import('../../../core/proposals')
+    const { makeFakeDaemon } = await import('../../test-adapter')
+    const proposal = await createProposal('Status field test')
+
+    // Passing a non-existent path for status must not cause a file-read attempt;
+    // instead it should fail with the "invalid proposal status" error from the DB layer.
+    const result = await run(
+      ['proposal', 'set', proposal.id, 'status', '@/nonexistent/status.txt'],
+      { store, ctx, daemon: makeFakeDaemon() },
+    )
+
+    // The status value "@/nonexistent/status.txt" is not a valid status, so
+    // setProposalField rejects it — but the rejection comes from the DB
+    // validation layer, not from trying to read a file.
+    expect(result.code).toBe(1)
+    expect(result.err.join('\n')).toMatch(/invalid.*status/i)
+  })
+
   it.each([
     ['proposal set', ['proposal', 'set', 'draft-id', 'notes', 'x']],
     ['proposal add-user-story', ['proposal', 'add-user-story', 'draft-id', 'As a user I can save']],

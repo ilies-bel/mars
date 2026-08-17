@@ -37,7 +37,7 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
-import { hasFlag, parsePriority, resolvePromptSource } from '../args'
+import { hasFlag, parsePriority, readMaybeFile, resolvePromptSource } from '../args'
 
 const execFileAsync = promisify(execFile)
 
@@ -178,8 +178,8 @@ const proposalSet: Command = {
   run: async (args, deps) => {
     const id = args.positional[0]
     const field = args.positional[1]
-    const value = args.positional.slice(2).join(' ')
-    if (!id || !field || value.length === 0) {
+    const rawValue = args.positional.slice(2).join(' ')
+    if (!id || !field || rawValue.length === 0) {
       deps.err(
         'usage: mars proposal set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"',
       )
@@ -198,6 +198,8 @@ const proposalSet: Command = {
       )
       return { code: 2 }
     }
+    // Resolve @<path> references for text fields; status values are not file refs.
+    const value = field === 'status' ? rawValue : readMaybeFile(rawValue)
     try {
       await setProposalField(id, field, value)
       deps.out(`updated ${id}`)
@@ -215,11 +217,12 @@ const proposalAddUserStory: Command = {
   usage: 'usage: mars proposal add-user-story <id> "<text>"',
   run: async (args, deps) => {
     const id = args.positional[0]
-    const story = args.positional.slice(1).join(' ')
-    if (!id || story.length === 0) {
+    const rawStory = args.positional.slice(1).join(' ')
+    if (!id || rawStory.length === 0) {
       deps.err('usage: mars proposal add-user-story <id> "<text>"')
       return { code: 2 }
     }
+    const story = readMaybeFile(rawStory)
     try {
       const idea = await addProposalUserStory(id, story)
       deps.out(`added user story [${idea.userStories.length - 1}] to ${id}`)

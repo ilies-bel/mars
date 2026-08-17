@@ -237,6 +237,17 @@ export const taskArcKey = (t: ProgressTask): string =>
   t.parentProposalId ?? t.originId ?? t.id
 
 /**
+ * Returns a display-safe proposal title.
+ *
+ * A title that starts with "@/" is a raw `@<path>` file reference that the
+ * CLI failed to expand before storing (e.g. `mars proposal set <id> title
+ * "@/tmp/.../title.txt"`). Elide it so the UI never renders a filesystem path
+ * in place of a human-readable name.
+ */
+export const sanitizeProposalTitle = (title: string): string =>
+  title.startsWith('@/') ? '(untitled)' : title
+
+/**
  * Shared arc label resolution: proposal-first, then origin-task title.
  *
  * The origin-task branch goes through `taskTitle`, so a server-provided
@@ -252,7 +263,7 @@ export const resolveArcLabel = (
   proposalMap: ReadonlyMap<string, { readonly title: string }>,
 ): string | undefined => {
   const proposal = proposalMap.get(arcKey)
-  if (proposal) return proposal.title
+  if (proposal) return sanitizeProposalTitle(proposal.title)
   const originTask = tasks.find((t) => t.id === arcKey)
   if (originTask) return taskTitle(originTask) || undefined
   return undefined

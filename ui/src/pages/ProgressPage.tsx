@@ -14,6 +14,7 @@ import { readPersistedView, writePersistedView } from '@/shared/viewPreference'
 import { BoardView } from '@/widgets/BoardView'
 import { Footer } from '@/widgets/Footer'
 import { TabStrip } from '@/widgets/TabStrip'
+import { sanitizeProposalTitle } from '@/widgets/topologyFlowModel'
 import { TopologyView } from '@/widgets/TopologyView'
 import { TopStripe } from '@/widgets/TopStripe'
 
@@ -151,7 +152,7 @@ function ProposalCombobox({ proposals, tasks, selectedProposalId, onSelect }: Pr
               }}
               className="w-full px-3 py-1.5 text-left font-mono text-label text-foreground hover:bg-muted/50"
             >
-              {p.title}
+              {sanitizeProposalTitle(p.title)}
             </button>
           </li>
         ))}
