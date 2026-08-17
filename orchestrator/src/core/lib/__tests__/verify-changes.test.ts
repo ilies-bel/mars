@@ -18,6 +18,7 @@ import {
   getChangedFiles,
   checkBranchHasDiff,
   TSC_DECOY_MARKER,
+  VERIFY_TIMEOUT_MARKER,
   type VerifyScope,
 } from '../git/verify'
 import {
@@ -1172,5 +1173,83 @@ describe('verifyChanges — typecheck infra-retry', () => {
       rmSync(dir, { recursive: true, force: true })
       rmSync(fakeBinDir, { recursive: true, force: true })
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Per-step wall-clock timeout (regression / done-criterion test)
+//
+// A gate that hangs forever must fail with `VERIFY_TIMEOUT_MARKER` in its
+// output well within the configured ceiling so the failure signature becomes
+// `verify:timeout/<step-name>` rather than leaving the verify slot occupied
+// until an external kill.
+//
+// The test uses timeoutMin=0.005 (≈300 ms) with a step that sleeps for 10 s,
+// so the test completes in < 1 s (timeout fires → SIGTERM → Node exits).
+// ---------------------------------------------------------------------------
+describe('verifyChanges — per-step wall-clock timeout', () => {
+  it('fails a hanging step with VERIFY_TIMEOUT_MARKER within the configured ceiling', async () => {
+    const r = await verifyChanges({
+      cwd: process.cwd(),
+      steps: [
+        {
+          name: 'slow-suite',
+          cmd: 'node',
+          args: ['-e', 'setTimeout(() => {}, 10_000)'],
+          required: true,
+          // ~300 ms ceiling — well under vitest's default per-test timeout.
+          timeoutMin: 0.005,
+        },
+      ],
+    })
+
+    expect(r.passed).toBe(false)
+    const step = r.steps.find((s) => s.name === 'slow-suite')
+    expect(step).toBeDefined()
+    expect(step!.passed).toBe(false)
+    expect(step!.output).toContain(VERIFY_TIMEOUT_MARKER)
+    // exitCode is null when killed by a signal
+    expect(step!.exitCode).toBeNull()
+  }, 10_000 /* allow up to 10 s in CI even on a slow host */)
+
+  it('correctly records the timeout marker regardless of the step name', async () => {
+    const r = await verifyChanges({
+      cwd: process.cwd(),
+      steps: [
+        {
+          name: 'my-custom-gate',
+          cmd: 'node',
+          args: ['-e', 'setTimeout(() => {}, 10_000)'],
+          required: true,
+          timeoutMin: 0.005,
+        },
+      ],
+    })
+
+    const step = r.steps.find((s) => s.name === 'my-custom-gate')
+    expect(step).toBeDefined()
+    expect(step!.output).toMatch(/verify child timed out after \d+ms/)
+  }, 10_000)
+
+  it('allows a step that completes within the timeout ceiling', async () => {
+    const r = await verifyChanges({
+      cwd: process.cwd(),
+      steps: [
+        {
+          name: 'fast-step',
+          cmd: 'node',
+          args: ['-e', 'process.exit(0)'],
+          required: true,
+          // Generous timeout; step exits immediately.
+          timeoutMin: 1,
+        },
+      ],
+    })
+
+    expect(r.passed).toBe(true)
+    const step = r.steps.find((s) => s.name === 'fast-step')
+    expect(step).toBeDefined()
+    expect(step!.passed).toBe(true)
+    expect(step!.output).not.toContain(VERIFY_TIMEOUT_MARKER)
   })
 })

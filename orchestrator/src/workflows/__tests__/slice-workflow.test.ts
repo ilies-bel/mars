@@ -517,7 +517,9 @@ describe('enqueueTask round-trip: slicer split lands in tasks.files_json', () =>
     repo = setupRepo()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { closeAllDbs } = await import('../../core/lib/db')
+    await closeAllDbs()
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -605,7 +607,9 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { closeAllDbs } = await import('../../core/lib/db')
+    await closeAllDbs()
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     vi.doUnmock('../../core/queue')
@@ -1798,7 +1802,9 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
     process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { closeAllDbs } = await import('../../core/lib/db')
+    await closeAllDbs()
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
@@ -2291,7 +2297,9 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
     process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { closeAllDbs } = await import('../../core/lib/db')
+    await closeAllDbs()
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
@@ -2905,7 +2913,9 @@ describe('enqueueTask round-trip: hitl slice kind and subDeliverable land on tas
     repo = setupRepo()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { closeAllDbs } = await import('../../core/lib/db')
+    await closeAllDbs()
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -3006,7 +3016,9 @@ describe('enqueueTask round-trip: slicer intent lands on emitted task row', () =
     repo = setupRepo()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { closeAllDbs } = await import('../../core/lib/db')
+    await closeAllDbs()
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -3159,7 +3171,9 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
     process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { closeAllDbs } = await import('../../core/lib/db')
+    await closeAllDbs()
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
@@ -3334,7 +3348,9 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
     process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { closeAllDbs } = await import('../../core/lib/db')
+    await closeAllDbs()
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
@@ -3642,7 +3658,9 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { closeAllDbs } = await import('../../core/lib/db')
+    await closeAllDbs()
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO

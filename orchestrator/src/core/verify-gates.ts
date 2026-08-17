@@ -32,6 +32,7 @@ const VERIFY_GATES_DDL = `CREATE TABLE IF NOT EXISTS verify_gates (
   last_failure_signature text,
   last_failure_at bigint,
   last_failure_origin_id text,
+  timeout_min REAL,
   UNIQUE(scope, name)
 )`
 
@@ -47,6 +48,7 @@ export const ensureVerifyGatesSchema = async (client: DbTx): Promise<void> => {
   await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_signature text`)
   await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_at bigint`)
   await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_origin_id text`)
+  await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS timeout_min REAL`)
   await client.execute(`UPDATE verify_gates SET state = 'active' WHERE state IS NULL`)
 }
 
@@ -66,6 +68,13 @@ export const VerifyGateInputSchema = z.object({
   tier: z.enum(['task', 'integration']).optional(),
   /** Who added this gate ('human', 'operator', …). Defaults to 'human'. */
   source: z.string().trim().min(1).optional(),
+  /**
+   * Per-gate wall-clock timeout in minutes. When the step runs longer than
+   * this it is SIGTERM'd then SIGKILL'd and recorded as verify:timeout/<name>.
+   * When absent the process-wide default (env MARS_VERIFY_TIMEOUT_MIN, 15 min)
+   * applies.
+   */
+  timeoutMin: z.number().positive().optional(),
 })
 
 /** Input accepted by {@link addVerifyGate}. */
@@ -88,6 +97,11 @@ export interface VerifyGate {
   lastFailureSignature: string | null
   lastFailureAt: number | null
   lastFailureOriginId: string | null
+  /**
+   * Per-gate wall-clock timeout in minutes, or `null` to use the process-wide
+   * default (env `MARS_VERIFY_TIMEOUT_MIN`, default 15 min).
+   */
+  timeoutMin: number | null
 }
 
 interface VerifyGateRow {
@@ -106,6 +120,7 @@ interface VerifyGateRow {
   last_failure_signature: string | null
   last_failure_at: number | null
   last_failure_origin_id: string | null
+  timeout_min: number | null
 }
 
 const rowToGate = (row: VerifyGateRow): VerifyGate => ({
@@ -124,6 +139,7 @@ const rowToGate = (row: VerifyGateRow): VerifyGate => ({
   lastFailureSignature: row.last_failure_signature,
   lastFailureAt: row.last_failure_at,
   lastFailureOriginId: row.last_failure_origin_id,
+  timeoutMin: row.timeout_min,
 })
 
 /**
@@ -195,12 +211,13 @@ export const addVerifyGate = async (input: VerifyGateInput): Promise<string> => 
     required = true,
     tier = 'task',
     source = 'human',
+    timeoutMin = null,
   } = input
   const createdAt = Date.now()
   await c.execute(
-    `INSERT INTO verify_gates (id, scope, name, cmd, args_json, required, tier, source, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, scope, name, cmd, JSON.stringify(args), required ? 1 : 0, tier, source, createdAt],
+    `INSERT INTO verify_gates (id, scope, name, cmd, args_json, required, tier, source, created_at, timeout_min)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, scope, name, cmd, JSON.stringify(args), required ? 1 : 0, tier, source, createdAt, timeoutMin],
   )
   await resolveCoveredVerifyAlerts(scope)
   return id
@@ -275,7 +292,7 @@ export const listVerifyGates = async (): Promise<VerifyGate[]> => {
   const r = await c.execute(
     `SELECT id, scope, name, cmd, args_json, required, tier, source, created_at,
             state, quarantined_at, quarantine_signature, last_failure_signature,
-            last_failure_at, last_failure_origin_id
+            last_failure_at, last_failure_origin_id, timeout_min
      FROM verify_gates ORDER BY scope, created_at`,
   )
   return (r.rows as unknown as VerifyGateRow[]).map(rowToGate)
@@ -293,7 +310,7 @@ export const loadVerifyGates = async (client: DbTx): Promise<VerifyScope[]> => {
   const r = await client.execute(
     `SELECT id, scope, name, cmd, args_json, required, tier, source, created_at,
             state, quarantined_at, quarantine_signature, last_failure_signature,
-            last_failure_at, last_failure_origin_id
+            last_failure_at, last_failure_origin_id, timeout_min
        FROM verify_gates
       WHERE state = 'active'
       ORDER BY scope, created_at`,
@@ -319,6 +336,7 @@ export const loadVerifyGates = async (client: DbTx): Promise<VerifyScope[]> => {
       required: row.required !== 0,
       dir: scope,
       ...(tier !== undefined ? { tier } : {}),
+      ...(row.timeout_min !== null ? { timeoutMin: row.timeout_min } : {}),
     }
     byScope.get(scope)!.push(step)
   }

@@ -19,10 +19,30 @@ import { classifyTypecheckOutput } from '../failure-signature'
 export const TSC_DECOY_MARKER = 'This is not the tsc command you are looking for'
 
 /**
+ * Output marker prepended by `runVerifyStep` when the per-step wall-clock
+ * timeout fires and the subprocess is killed.  Consumed by
+ * `computeFailureSignature` to produce `verify:timeout/<step-name>` rather
+ * than an `unclassified` verdict, and matched by `VERIFY_INFRA_FAILURE_PATTERNS`
+ * so the first timeout gets an automatic infra retry (a second timeout is
+ * final).
+ */
+export const VERIFY_TIMEOUT_MARKER = 'verify child timed out after'
+
+/**
+ * Default per-step verify timeout in minutes.
+ *
+ * Override for the whole process with `MARS_VERIFY_TIMEOUT_MIN=<number>`.
+ * Per-gate overrides are stored in `verify_gates.timeout_min`.
+ */
+export const VERIFY_STEP_TIMEOUT_MIN_DEFAULT: number = Number(
+  process.env.MARS_VERIFY_TIMEOUT_MIN ?? 15,
+)
+
+/**
  * Patterns in verify-step output that indicate an infrastructure failure
- * (embedded-PostgreSQL shutdown, Spring context initialisation error, or
- * connection-refused to an embedded port) rather than a genuine code-level
- * assertion failure.
+ * (embedded-PostgreSQL shutdown, Spring context initialisation error,
+ * connection-refused to an embedded port, or a per-step wall-clock timeout)
+ * rather than a genuine code-level assertion failure.
  *
  * Background: when multiple tasks run their verify steps in parallel, each
  * gradle/Spring build spins up its own embedded-PG instance.  One build's
@@ -31,6 +51,11 @@ export const TSC_DECOY_MARKER = 'This is not the tsc command you are looking for
  * down" FATAL that cascades into dozens of phantom integration-test failures
  * and empty Spring-context init errors.  These are infrastructure flakes, not
  * code regressions.
+ *
+ * A per-step timeout is also classified as an infrastructure failure: a hung
+ * test suite is an environment problem (deadlock, OOM, PGLite fixture
+ * serialisation), not a code regression.  The first timeout triggers a single
+ * retry; a second timeout is final.
  *
  * A verify step whose output matches any of these patterns is eligible for a
  * single retry by the verify primitive (see `primitives/index.ts`).  Genuine
@@ -50,6 +75,9 @@ export const VERIFY_INFRA_FAILURE_PATTERNS: readonly RegExp[] = [
   /org\.springframework\.dao\.DataAccessResourceFailureException/,
   /org\.springframework\.context\.ApplicationContextException/,
   /Connection refused.*\d+/i,
+  // Per-step timeout: the VERIFY_TIMEOUT_MARKER prefix is always the first
+  // non-blank line when the timeout fires.
+  new RegExp(`^${VERIFY_TIMEOUT_MARKER} `),
 ]
 
 /**
@@ -147,6 +175,16 @@ export interface VerifyStepSpec {
    * a trace note "deferred to integration".
    */
   tier?: 'task' | 'integration'
+  /**
+   * Per-step wall-clock timeout in minutes. When the step runs longer than
+   * this, it is SIGTERM'd then SIGKILL'd after a 10 s grace, and the step
+   * is recorded as failed with a `VERIFY_TIMEOUT_MARKER` prefix so the
+   * failure signature becomes `verify:timeout/<step-name>`.
+   *
+   * When absent the global default (`VERIFY_STEP_TIMEOUT_MIN_DEFAULT`,
+   * env `MARS_VERIFY_TIMEOUT_MIN`, default 15 min) is used.
+   */
+  timeoutMin?: number
 }
 
 /**
@@ -239,11 +277,29 @@ const runVerifyStep = async (
   cwd: string,
   traceCtx?: TraceCtx,
   signal?: AbortSignal,
+  timeoutMs?: number,
 ): Promise<VerifyStep> => {
+  // Per-step timeout: create a dedicated AbortSignal that fires after timeoutMs.
+  // This is independent of the outer signal so timeouts can be distinguished
+  // from intentional cancellations (e.g. the integration-gate abort signal).
+  // run-tool escalates SIGTERM → SIGKILL after a 2 s grace when either signal
+  // fires, matching the integration-gate kill path behaviour.
+  let stepTimeoutSignal: AbortSignal | undefined
+  if (timeoutMs !== undefined && timeoutMs > 0) {
+    stepTimeoutSignal = AbortSignal.timeout(timeoutMs)
+  }
+
+  // Combine the outer signal with the per-step timeout signal so the
+  // subprocess is killed when EITHER fires first.
+  const effectiveSignal: AbortSignal | undefined =
+    signal && stepTimeoutSignal
+      ? AbortSignal.any([signal, stepTimeoutSignal])
+      : signal ?? stepTimeoutSignal
+
   const verifyCtx: TraceCtx | undefined = traceCtx
     ? { ...traceCtx, phase: traceCtx.phase ?? 'verify' }
     : undefined
-  const r = await execProbe(cmd, [...args], { cwd, signal }, verifyCtx)
+  const r = await execProbe(cmd, [...args], { cwd, signal: effectiveSignal }, verifyCtx)
   const commandLine = [cmd, ...args].join(' ')
   if (r.exitCode === 0) {
     return {
@@ -260,13 +316,22 @@ const runVerifyStep = async (
       commandLine,
     }
   }
-  // When the abort signal fired and killed the subprocess, prefix the output
-  // with a clear marker so post-mortems can distinguish a timeout-kill from a
-  // genuine test failure (the subprocess output alone may be empty or partial).
-  // Raw stdout/stderr are kept unprefixed so callers can inspect them directly.
+  // Determine what caused the failure and prefix the output accordingly so
+  // post-mortems and `computeFailureSignature` can distinguish:
+  //   1. Per-step wall-clock timeout → VERIFY_TIMEOUT_MARKER prefix
+  //      → failure signature: verify:timeout/<step-name>
+  //      → triggers infra-retry (first timeout); second timeout is final
+  //   2. Outer abort signal (integration-gate cancel, …) → abort-signal prefix
+  //   3. SIGTERM / SIGKILL from an external source → exit-code markers
+  //   4. Normal non-zero exit → raw output only
+  //
+  // Raw stdout/stderr are kept unprefixed on the VerifyStep so callers can
+  // inspect them directly without stripping the prefix.
+  const timedOut = stepTimeoutSignal?.aborted === true
   const rawOutput = r.stdout + r.stderr
-  const output =
-    signal?.aborted
+  const output = timedOut
+    ? `${VERIFY_TIMEOUT_MARKER} ${timeoutMs!}ms (exit ${r.exitCode ?? 'null'})\n${rawOutput}`
+    : signal?.aborted
       ? `step killed by abort signal\n${rawOutput}`
       : r.exitCode === 143
         ? `verify child killed by SIGTERM (exit 143)\n${rawOutput}`
@@ -278,7 +343,9 @@ const runVerifyStep = async (
     ...(gateId !== undefined ? { gateId } : {}),
     passed: false,
     output,
-    exitCode: signal?.aborted ? null : r.exitCode,
+    // exitCode is null when killed abnormally (timeout or outer abort signal)
+    // so callers can distinguish a killed step from a step that exited on its own.
+    exitCode: timedOut || signal?.aborted ? null : r.exitCode,
     stdout: r.stdout,
     stderr: r.stderr,
     cmd,
@@ -586,6 +653,11 @@ export const verifyChanges = async (
     results.push(diffStep)
   }
 
+  // Per-step wall-clock timeout in milliseconds. Derived from the global
+  // VERIFY_STEP_TIMEOUT_MIN_DEFAULT (env MARS_VERIFY_TIMEOUT_MIN, default 15 min).
+  // Individual registry steps may override via spec.timeoutMin.
+  const defaultTimeoutMs = VERIFY_STEP_TIMEOUT_MIN_DEFAULT * 60_000
+
   // Execute spec.verifyCmd verbatim as a required step when present. Runs
   // after the has-diff / worktree-hygiene gates and before registry gate steps
   // so a failing focused test blocks the task immediately without running
@@ -617,6 +689,7 @@ export const verifyChanges = async (
       args.cwd,
       verifyCtx,
       args.signal,
+      defaultTimeoutMs,
     )
     const cmdDuration = Math.round(performance.now() - cmdStart)
     // Override commandLine to show the raw spec command, not 'sh -c <cmd>',
@@ -745,6 +818,10 @@ export const verifyChanges = async (
     }
 
     const stepStart = performance.now()
+    // Per-step timeout: prefer the gate's own timeoutMin (from verify_gates.timeout_min),
+    // falling back to the process-wide default (MARS_VERIFY_TIMEOUT_MIN, 15 min).
+    const stepTimeoutMs =
+      spec.timeoutMin !== undefined ? spec.timeoutMin * 60_000 : defaultTimeoutMs
     const result = await runVerifyStep(
       spec.name,
       spec.gateId,
@@ -753,6 +830,7 @@ export const verifyChanges = async (
       stepCwd,
       verifyCtx,
       args.signal,
+      stepTimeoutMs,
     )
     const duration = Math.round(performance.now() - stepStart)
 
@@ -808,6 +886,7 @@ export const verifyChanges = async (
         stepCwd,
         verifyCtx,
         args.signal,
+        stepTimeoutMs,
       )
       const _retryDuration = Math.round(performance.now() - _retryStart)
       if (_retryResult.passed) {

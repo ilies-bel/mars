@@ -859,6 +859,23 @@ export const computeFailureSignature = (
     return `verify:killed/sig${kill[1]!.toLowerCase()}`
   }
 
+  // `runVerifyStep` also adds this marker when the per-step wall-clock timeout
+  // fires (VERIFY_TIMEOUT_MARKER prefix in the output). Override the nominal
+  // gate name with `verify:timeout/<step-name>` so the signature:
+  //   1. routes to the `timed-out` error class in the storm circuit breaker,
+  //   2. triggers the infra-retry path (first timeout = one retry; second = final),
+  //   3. is distinguishable from a genuine assertion failure in the failing gate.
+  //
+  // The step name is extracted from rawFailingStep (e.g. 'verify:typecheck' →
+  // 'typecheck').  If rawFailingStep does not satisfy STEP_ID_RE the step falls
+  // back to UNKNOWN_STEP_ID, which is still a valid slug for the signature.
+  if (firstNonBlankLine(errorOutput).startsWith('verify child timed out after ')) {
+    const failingStep = asStepId(rawFailingStep) ?? UNKNOWN_STEP_ID
+    const colon = failingStep.indexOf(':')
+    const stepName = colon !== -1 ? failingStep.slice(colon + 1) : failingStep
+    return `verify:timeout/${stepName}`
+  }
+
   // The code step prepends this marker when the coder process exits by SIGTERM
   // or SIGKILL (exit 143 / 137). A signal death is infrastructure, not a code
   // defect — the coder was mid-sentence, not producing wrong output. Override

@@ -3,7 +3,12 @@ import { delimiter, relative, resolve, sep } from 'node:path'
 import { load as loadYaml } from 'js-yaml'
 import { VerifyGateInputSchema, type VerifyGateInput } from '../core/verify-gates'
 
-export interface DetectedVerifyGate extends Required<VerifyGateInput> {
+/** All VerifyGateInput fields with non-optional defaults applied, except for
+ * `timeoutMin` which remains optional (null = use the process-wide default). */
+type NormalizedVerifyGateInput = Required<Omit<VerifyGateInput, 'timeoutMin'>> &
+  Pick<VerifyGateInput, 'timeoutMin'>
+
+export interface DetectedVerifyGate extends NormalizedVerifyGateInput {
   evidence: string
 }
 
@@ -14,7 +19,7 @@ export interface DetectedVerifyGate extends Required<VerifyGateInput> {
  */
 export const normalizeDetectedVerifyGates = (
   gates: readonly VerifyGateInput[],
-): Required<VerifyGateInput>[] =>
+): NormalizedVerifyGateInput[] =>
   gates.map((gate) => {
     const parsed = VerifyGateInputSchema.parse(gate)
     return {
@@ -25,6 +30,7 @@ export const normalizeDetectedVerifyGates = (
       required: parsed.required ?? true,
       tier: parsed.tier ?? 'task',
       source: parsed.source ?? 'detected',
+      timeoutMin: parsed.timeoutMin,
     }
   })
 

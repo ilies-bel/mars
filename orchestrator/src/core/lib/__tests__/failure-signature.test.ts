@@ -258,6 +258,37 @@ describe('computeFailureSignature', () => {
     )
     expect(sig).not.toBe('verify:has-diff/no-commits-ahead')
   })
+
+  it('returns verify:timeout/<step-name> when the output starts with VERIFY_TIMEOUT_MARKER', () => {
+    // The exact marker emitted by runVerifyStep when the per-step timeout fires.
+    const output = 'verify child timed out after 900000ms (exit null)\nsome partial output'
+    expect(computeFailureSignature('verify:typecheck', output)).toBe(
+      'verify:timeout/typecheck',
+    )
+    expect(computeFailureSignature('verify:spec-verify-cmd', output)).toBe(
+      'verify:timeout/spec-verify-cmd',
+    )
+    expect(computeFailureSignature('verify:my-custom-test', output)).toBe(
+      'verify:timeout/my-custom-test',
+    )
+  })
+
+  it('timeout signature overrides the SIGTERM/SIGKILL kill check (timeout fires before any kill marker)', () => {
+    // If the output has the timeout marker it must be classified as timeout,
+    // even though the process exits by SIGTERM (exit 143) internally.
+    const output = 'verify child timed out after 300ms (exit null)\n'
+    const sig = computeFailureSignature('verify:slow-tests', output)
+    expect(sig).toBe('verify:timeout/slow-tests')
+    expect(sig).not.toContain('sigterm')
+    expect(sig).not.toContain('sigkill')
+  })
+
+  it('falls back to UNKNOWN_STEP_ID when rawFailingStep is prose for a timeout output', () => {
+    const output = 'verify child timed out after 900000ms (exit null)\n'
+    // 'Re-queue time bound exceeded' fails STEP_ID_RE → UNKNOWN_STEP_ID
+    const sig = computeFailureSignature('Re-queue time bound exceeded: 1 attempt', output)
+    expect(sig).toBe('verify:timeout/unknown')
+  })
 })
 
 describe('classifyError', () => {
