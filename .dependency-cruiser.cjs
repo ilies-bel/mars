@@ -107,6 +107,96 @@ module.exports = {
     },
 
     // =========================================================================
+    // MODULAR-CORE BOUNDARIES (rework/modular-core)
+    // =========================================================================
+    // Four rules enforcing the seams the modular-core rework depends on. Each
+    // is scoped to pass CLEAN on today's tree — no baseline growth — by
+    // excluding the one or two files that ARE the seam (the registry/shell
+    // modules a rule's own boundary requires to cross it). Widening a `from`/
+    // `to` pattern here to cover more ground is welcome; widening it in a way
+    // that starts failing on existing code means fixing that import, not
+    // adding it to `.dependency-cruiser-known-violations.json`.
+
+    {
+      name: 'workflow-package-is-domain-agnostic',
+      severity: 'error',
+      comment:
+        'packages/workflow is the domain-agnostic step-engine (WorkflowCtx, the flat `services` ' +
+        'bag) — it knows nothing about git, Arc, or Mars. Reaching into orchestrator/ from here ' +
+        'would let a "generic" engine type silently depend on one concrete host, which is exactly ' +
+        'the coupling the package boundary exists to prevent. If the engine needs something ' +
+        'orchestrator-shaped, the orchestrator injects it through `services` instead.',
+      from: { path: '^packages/workflow/src/' },
+      to: { path: '^orchestrator/' },
+    },
+    {
+      name: 'core-no-direct-provider-impl',
+      severity: 'error',
+      comment:
+        'core/workers/providers/* are concrete provider adapters (codex, gemini — claude\'s is ' +
+        'still lib/git/claude.ts and not yet covered by this rule). `providers.ts` imports them ' +
+        'to self-register into provider-registry.ts; every other consumer must go through that ' +
+        'registry (getProvider/requireProvider/listProviders, or the PROVIDERS / PROVIDER_MODELS ' +
+        'compat views) so a provider can be added or swapped without editing its callers.',
+      from: {
+        path: '^orchestrator/src/core/',
+        pathNot: [
+          '^orchestrator/src/core/workers/providers\\.ts$',
+          '^orchestrator/src/core/workers/providers/',
+          '^orchestrator/src/core/workers/provider-registry\\.ts$',
+          '(^|/)__tests__/',
+          '\\.(test|spec)\\.ts$',
+        ],
+      },
+      to: { path: '^orchestrator/src/core/workers/providers/' },
+    },
+    {
+      name: 'primitives-no-daemon-server',
+      severity: 'error',
+      comment:
+        'Step primitives (workflows/primitives/*) are called from scaffolded `.mars/workflows/*.js` ' +
+        'files as well as the bundled pipelines, and must work wherever a WorkflowCtx does — they ' +
+        'may not reach into the long-running daemon process (its HTTP server, sweepers, ' +
+        'reconcilers) or the sweeper/MCP servers directly. `core/daemon/config.ts` is a pure ' +
+        'zod-schema config reader with no process/HTTP surface, so it is excepted; every other ' +
+        'daemon module is the process itself.',
+      from: {
+        path: '^orchestrator/src/workflows/primitives/',
+        pathNot: ['(^|/)__tests__/', '\\.(test|spec)\\.ts$'],
+      },
+      to: {
+        path: [
+          '^orchestrator/src/core/daemon/',
+          '^orchestrator/src/core/sweeper/server\\.ts$',
+          '^orchestrator/src/core/mcp/worker-server\\.ts$',
+        ],
+        pathNot: '^orchestrator/src/core/daemon/config\\.ts$',
+      },
+    },
+    {
+      name: 'verify-heuristics-no-provider-modules',
+      severity: 'error',
+      comment:
+        'A verify heuristic (tools/verify/heuristics/*, tools/verify/selection.ts, the ' +
+        'registries/verify-heuristics.ts registry) is tool-specific knowledge the verify RUNNER ' +
+        'consults, not a place that dispatches work — heuristics/types.ts says so explicitly: ' +
+        '"a heuristic never records a step, never touches task state, and never spawns the step ' +
+        'itself". Reaching into core/workers/* (provider dispatch, provider-registry, the concrete ' +
+        'provider adapters) from here would let a heuristic act like a worker instead of judging ' +
+        'one. `tools/verify/review.ts` — the shell that DOES dispatch workers to retry a failing ' +
+        'suite — is deliberately outside this rule\'s `from`.',
+      from: {
+        path: [
+          '^orchestrator/src/tools/verify/heuristics/',
+          '^orchestrator/src/tools/verify/selection\\.ts$',
+          '^orchestrator/src/registries/verify-heuristics\\.ts$',
+        ],
+        pathNot: ['(^|/)__tests__/', '\\.(test|spec)\\.ts$'],
+      },
+      to: { path: '^orchestrator/src/core/workers/' },
+    },
+
+    // =========================================================================
     // STUB — ADR-0056 LAYER RULES. INTENTIONALLY DISABLED. DO NOT ENABLE YET.
     // =========================================================================
     // ADR-0056 ("One library, three logical layers") specifies a downward-only
