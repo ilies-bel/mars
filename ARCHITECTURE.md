@@ -25,10 +25,11 @@ Start from the question you have, not the top of the tree:
    `orchestrator/src/core/workers/worker-registry.ts`. These replaced closed
    unions (`ProviderName`, `WorkerName`) with seedable, `register()`-able sets.
 5. **"What's the actual plumbing — services, plugins, events?"** →
-   `packages/workflow/src/container/` — the service container (registry +
-   plugin host + typed event bus), modelled on Cordis. This is what makes
-   tools swappable from a `.mars/workflows/*.js` file without touching this
-   repo.
+   `packages/workflow/src/ctx/` — the service container. It IS
+   [cordis](https://www.npmjs.com/package/@deepseek-ai/cordis) (`Context`,
+   `Fiber`, `ctx.plugin`, `ctx.effect`, the event bus) plus four Mars-owned
+   pieces cordis does not provide. This is what makes tools swappable from a
+   `.mars/workflows/*.js` file without touching this repo.
 6. **"How does Mars improve itself over time?"** →
    `orchestrator/src/growth/` (step-gap heuristics that turn recurring
    friction into draft proposals) and `orchestrator/src/narration/` (pure,
@@ -49,7 +50,7 @@ imports nothing above it).
 | Workflows (pipelines) | `orchestrator/src/workflows/` | The bundled state machines: implement, plan, init, slice, triage, validate, tool-forge. `authoring.ts` is the frozen `mars/workflow` barrel that user-owned `.mars/workflows/*.js` files import. |
 | Tools | `orchestrator/src/tools/` | The domain-agnostic leaves a workflow step calls: `coder/` (setup-worktree, run-agent), `verify/` (review, selection), `merge/`, `human/` (await-human), `report/` (finalize-report), `qa/` (finalize-mockup, behaviour-verify — mid-move, see below). |
 | Registries | `orchestrator/src/registries/`, `orchestrator/src/core/workers/{provider,worker}-registry.ts` | Open, seedable sets that replaced closed unions: providers, workers, verify heuristics. `register()` returns a disposer; nothing is a hard-imported god list anymore. |
-| Container | `packages/workflow/src/container/` | The meta-framework: `service.ts` (provide/get/require), `seal.ts` (the ADR-0052 guard — `store`/`traceStore` can't be swapped), `plugin.ts` (inject-based plugin lifecycle), `events.ts` (emit/parallel/serial/waterfall dispatch), `disposer.ts` (reversible registration). |
+| Container | `packages/workflow/src/ctx/` | The meta-framework, now cordis 4.0.1 itself (`Context` = services + plugin fibers + typed event bus + effect-based teardown) plus what cordis leaves to the host: `sealed.ts` (the ADR-0052 guard — `store`/`traceStore` are context ACCESSORS, so they cannot be provided, isolated, re-declared or assigned), `registry.ts` (a fiber-free keyed registry for module-level singletons), `safe-listen.ts` (fault-isolated dispatch — cordis's `emit` lets a throwing listener reach the emitter), `fiber-state.ts` (a runtime mirror of a const enum that is erased at build time), `run-container.ts` (composes one Context per run). |
 | Domain / core | `orchestrator/src/core/` | Task queue, Arc aggregate, proposals, action queue, blocker resolution, reflect signals. Out of scope for this rework — it keeps its current internals. |
 | Growth | `orchestrator/src/growth/` | Step-gap heuristics (`heuristics.ts`, `step-suggestions.ts`) that read task history and file draft proposals — never a direct edit to a user's workflow file. |
 | Narration | `orchestrator/src/narration/` | Pure, deterministic arc-outcome explanations (`landed` / `stumbled-recovered` / `needs-you`). No clocks, no randomness, no model calls. |
@@ -65,7 +66,7 @@ container/` and `registries/` as first-class siblings of `tools/`, and a
 That document is the plan; this file is the ground truth. Notable gaps
 between them right now:
 
-- The service container lives in `packages/workflow/src/container/`, not
+- The service container lives in `packages/workflow/src/ctx/`, not
   `orchestrator/src/container/`. It works; it just wasn't moved.
 - Neutral agent contracts (`AgentEvent`, `AgentInvocationResult`) exist
   alongside their Claude-named originals (`ClaudeEvent` in

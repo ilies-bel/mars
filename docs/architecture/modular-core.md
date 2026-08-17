@@ -12,7 +12,8 @@
 ## The one-paragraph version
 
 Mars is becoming a small meta-framework: a **container** (service registry +
-plugin lifecycle + typed event bus, modelled on Cordis) that a set of
+plugin lifecycle + typed event bus — cordis itself, since 4.0.1 was adopted)
+that a set of
 **tools** (coder, verify, merge, qa, deploy) register into, instead of being
 hard-imported from a god module; and a set of **registries** that turn closed
 unions (`ProviderName`, `WorkerName`, the verify-primitive union) into open,
@@ -24,20 +25,23 @@ One thing does **not** become pluggable: the Arc write funnel (ADR-0052). A
 tool never writes task state; the framework-owned primitive shell that
 invoked it does, through `ctx.services.store`. Plugins swap what a tool does,
 never whether task state is recorded. `store` and `traceStore` are sealed
-services — `ctx.provide('store', …)` throws at registration time.
+services — `ctx.provide('store', …)` throws at registration time. They are
+installed as cordis ACCESSORS rather than services, which is what makes the
+seal hold under `ctx.isolate('store', …)` as well: a `provide`-based seal only
+rejects duplicates inside one isolation scope.
 
 ## Status by phase
 
 | Phase | Goal | Status |
 | --- | --- | --- |
 | A — neutral agent contracts | `AgentEvent`/`AgentInvocationResult` replace `ClaudeEvent`/`RunClaudeResult` in neutral seams | Partial — neutral types added, Claude-named originals still present and still used in `core/lib/claude-stream.ts` / `core/lib/git/claude.ts`. Not a hard cut yet. |
-| B — the container | Service registry + plugin host + event bus, unused by anything yet | Done, but landed at `packages/workflow/src/container/`, not `orchestrator/src/container/` as originally specified. |
+| B — the container | Service registry + plugin host + event bus | Done. Landed at `packages/workflow/src/container/`, not `orchestrator/src/container/` as originally specified — then replaced outright by **cordis 4.0.1** at `packages/workflow/src/ctx/`. `WorkflowCtx.container` is a real `Context`; the 688 LOC of hand-rolled container are gone. Mars still owns four things cordis does not provide: the ADR-0052 seal, a fiber-free keyed registry, fault-isolated `emit`, and a runtime mirror of the `FiberState` const enum (which cordis erases at build time). |
 | C — open registries | Replace `ProviderName`/`WorkerName`/primitive unions with registries | Done for providers and workers (`core/workers/{provider,worker}-registry.ts`), aliased so old `Record<ProviderName, …>` call sites keep compiling. Primitive registry not yet extracted from `core/lib/primitive-catalog.ts`. |
 | D — split `primitives/index.ts` | 4,622-LOC god module → `tools/` capability folders | Mostly done — `tools/{coder,verify,merge,human,report,qa}/` exist. `workflows/primitives/shared.ts` (prompt composition, abort messages) and the QA leaves (`behaviour-verify.ts`, `browser-check.ts`, `app-boot-discovery.ts`) still live under `workflows/primitives/`; `tools/index.ts` documents this as "still owed." |
 | E — verify heuristics out of the runner | No tool-specific knowledge in the verify runner | Done — `registries/verify-heuristics.ts` + `tools/verify/heuristics/{typescript-toolchain,infra-failure-patterns}.ts`, dispatched via `serial`. |
 | F — tools resolved through `ctx.tools` | Primitive shells resolve implementations from the container instead of importing them | Not started. Tools are still directly imported by the shells that use them. |
 | G — `growth/` | Reflect, narration, step-suggestion under one folder | Partial — `growth/heuristics.ts` and `growth/step-suggestions.ts` exist and file draft proposals. `narration/` and the reflect pipeline (`core/lib/reflector.ts` and friends) have not moved under `growth/` yet. |
-| H — arch rules + arch tests | Dependency-cruiser rules + vitest arch tests enforcing the boundaries above | Not started. |
+| H — arch rules + arch tests | Dependency-cruiser rules + vitest arch tests enforcing the boundaries above | Partial — four dependency-cruiser boundary rules plus the ADR-0052 source guards (`no-any-domain-engine.test.ts`, `sealed-write-funnel-guard.test.ts`). The sealed-service guard is deliberately NOT a dependency-cruiser rule: it reasons about imports, never call expressions, and `includeOnly` keeps npm packages out of the graph. |
 | I — `core/daemon` → `daemon` path move | Pure rename, optional | Not started; low priority. |
 
 ## Non-negotiable invariants

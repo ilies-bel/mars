@@ -294,6 +294,60 @@ Note there is no persisted `'skipped'` status: a step skipped on resume is
 simply one whose stored status is already `'completed'`. Skip is a
 runtime/trace concept (the `step.skipped` event), not a stored state.
 
+## The container (`ctx.container`)
+
+Alongside the flat `ctx.services` bag, every run gets a **cordis** `Context` —
+[`@deepseek-ai/cordis@4.0.1`](https://www.npmjs.com/package/@deepseek-ai/cordis),
+a bundled dependency, re-exported from this package's barrel so consumers never
+import it directly (two copies in one process do not share service-class
+identity).
+
+```ts
+ctx.get('agent')                       // read a service (also resolves sealed ones)
+ctx.provide('agent', impl)             // register one; returns a disposer
+ctx.container.plugin({                 // load a plugin; returns an awaitable Fiber
+  name: 'my-tool',
+  inject: ['agent'],                   // in cordis 4 EVERY inject entry is required
+  apply(pluginCtx) {
+    pluginCtx.provide('tool.mine', build(pluginCtx.get('agent')))
+    pluginCtx.effect(() => () => teardown())   // teardown is an effect…
+  },
+})                                     // …NOT a disposer returned from apply()
+ctx.container.on('mars/workflow.event', (event) => { /* run progress */ })
+```
+
+The container is seeded from `services`, so `ctx.get('x')` reaches
+`ctx.services.x` for free, and everything registered during the run is reversed
+when the run ends — completed or failed.
+
+Things worth knowing before you use it:
+
+- **`store` and `traceStore` are sealed** (ADR-0052). They are context
+  *accessors*, not services, so `provide`, `accessor`, `set` and plain
+  assignment all throw — including under `ctx.isolate('store', …)`, which is
+  the one gap a `provide`-based seal would leave open. Task-state writes funnel
+  through the framework-owned shell; a plugin can change what a tool *does*,
+  never whether task state is recorded.
+- **`provide` rejects duplicates.** Registering a name twice in one isolation
+  scope throws rather than silently overwriting.
+- **A plugin only runs while every `inject` entry is available**, and is torn
+  down and re-applied as that changes. "Optional dependency" is simply not
+  declaring it and reading `ctx.get(name)`, which never throws.
+- **`emit` is not fault-isolated.** cordis's `emit` calls listeners directly, so
+  a throwing listener reaches the emitter and skips the rest. Use `safeEmit`
+  (isolates a whole dispatch) or `safeOn` (isolates one observer) for observer
+  channels. The engine's own `mars/workflow.event` republication uses `safeEmit`.
+- **`serial`/`bail` stop at the first *bailed* value** — anything that is not
+  `null`, `false` or `undefined`. A listener returning `false` no longer wins.
+- **`waterfall` is onion middleware**, not a fold: listeners run outermost-first
+  and receive a trailing `next`; not calling it vetoes the rest of the chain.
+- **`FiberState` is type-only.** It is a `const enum` erased from cordis's
+  shipped JavaScript; import the `FiberState` value from this package instead.
+
+Also exported, and deliberately NOT a `Context`: `createServiceRegistry` — a
+plain keyed registry for module-level singletons that register at import time,
+before any context exists, and legally re-register the same key.
+
 ## What this is not
 
 - Not a queue. It runs *a* workflow. Dispatching, retries-with-backoff, and
