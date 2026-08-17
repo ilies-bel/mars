@@ -41,3 +41,32 @@ export type { Logger, LogFields } from './logger.js';
 
 // Manual step park/resume hooks
 export { awaitManualDone, resolveManualStep } from './manual-step.js';
+
+// Service container — keyed services, plugins with dependency scheduling,
+// typed event dispatch. Layered onto WorkflowCtx as `ctx.container` (plus
+// `ctx.get`/`ctx.provide` convenience) alongside the existing flat
+// `ctx.services` bag. See container/index.ts.
+export {
+  createContainer,
+  createEventDispatcher,
+  createServiceRegistry,
+  DisposerSet,
+  once,
+  ServiceNotFoundError,
+} from './container/index.js';
+export type {
+  Args,
+  Container,
+  ContainerOptions,
+  Disposer,
+  DisposerSetOptions,
+  EventDispatcher,
+  EventDispatcherOptions,
+  EventMap,
+  ForkScope,
+  Plugin,
+  Ret,
+  ServiceChangeEvents,
+  ServiceMap,
+  ServiceRegistry,
+} from './container/index.js';

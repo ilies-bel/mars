@@ -3,6 +3,8 @@ import type { z } from 'zod';
 import type { Logger } from './logger.js';
 import { silentLogger } from './logger.js';
 import type { StepOutcomeMeta, StepRecord, WorkflowStore } from './store.js';
+import type { Container, Disposer } from './container/index.js';
+import { createContainer } from './container/index.js';
 
 /**
  * The imperative core.
@@ -102,6 +104,26 @@ export interface WorkflowCtx<Services = unknown, Input = unknown> {
   readonly signal: AbortSignal;
   /** Services wired in at `runWorkflow` time (agent runtime, git, fs…). */
   readonly services: Services;
+
+  /**
+   * The keyed service container for this run — layered on top of, not a
+   * replacement for, `ctx.services`. `ctx.services` stays the flat bag it
+   * always was; the container additionally seeds one entry per own
+   * enumerable property of `services` (so `ctx.get('store')` reaches the
+   * same value as `ctx.services.store`), and is where anything registered
+   * during the run via `ctx.provide`/`ctx.container.plugin` lives. See
+   * `container/index.ts`.
+   */
+  readonly container: Container;
+
+  /** Convenience for `ctx.container.get(key)`. */
+  get<T = unknown>(key: string): T | undefined;
+
+  /**
+   * Convenience for `ctx.container.provide(key, value)`. Returns a
+   * disposer; registrations are torn down (LIFO) when the run ends.
+   */
+  provide<T = unknown>(key: string, value: T): Disposer;
 
   /**
    * Wrap a durable unit of work.
@@ -237,12 +259,34 @@ export async function runWorkflow<I, O, Services = unknown>(
   // invocation, so a resumed run can re-reach a name it completed before.
   const seenNames = new Set<string>();
 
+  // One container per run. Seeded from `services` so `ctx.get('x')` reaches
+  // whatever `ctx.services.x` holds without the caller doing anything —
+  // `ctx.services` itself is untouched, this is purely additive.
+  const container = createContainer({
+    onError: (error) => {
+      const err = toError(error);
+      runLogger.error({ event: 'container.disposer-error', err: err.message }, 'container.disposer-error');
+    },
+  });
+  if (services && typeof services === 'object') {
+    for (const [key, value] of Object.entries(services as Record<string, unknown>)) {
+      container.provide(key, value);
+    }
+  }
+
   const ctx: WorkflowCtx<Services, I> = {
     runId,
     workflowId,
     logger: runLogger,
     signal,
     services,
+    container,
+    get(key) {
+      return container.get(key) as never;
+    },
+    provide(key, value) {
+      return container.provide(key, value);
+    },
     input: parsedInput,
     currentStep: null,
     emit(event: string, payload?: unknown): void {
@@ -290,6 +334,10 @@ export async function runWorkflow<I, O, Services = unknown>(
     await store.setRunStatus(runId, 'failed', Date.now());
     runLogger.error({ event: 'run.failed', err: err.message }, 'run.failed');
     return { runId, status: 'failed', error: err };
+  } finally {
+    // Reverse anything registered into this run's container (services,
+    // plugins, event listeners), LIFO, whether the run completed or failed.
+    container.dispose();
   }
 }
 
