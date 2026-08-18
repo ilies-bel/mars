@@ -473,8 +473,11 @@ export const renderTaskDetail = async (
   if (task.originId && task.originId !== task.id) {
     const originIdea = await getProposal(task.originId).catch(() => null)
     if (originIdea) {
-      const firstLine = originIdea.title.split('\n')[0]?.trim() ?? ''
-      const titleSuffix = firstLine.length > 0 ? ` ${firstLine}` : ''
+      // Proposal titles are single-line by construction: createProposal splits
+      // incoming prose into title + body, and migration 0037 backfilled the
+      // legacy blob rows. No first-line extraction needed.
+      const title = originIdea.title.trim()
+      const titleSuffix = title.length > 0 ? ` ${title}` : ''
       deps.out(`origin:     proposal ${originIdea.id}${titleSuffix}`)
     } else {
       deps.out(`origin:     task ${task.originId}`)
