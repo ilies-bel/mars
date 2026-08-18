@@ -1297,4 +1297,70 @@ describe('composePrompt — stable prefix is byte-identical across tasks', () =>
     // The task-specific content (anything after the stable prefix) must differ.
     expect(outA.slice(stablePrefix.length)).not.toBe(outB.slice(stablePrefix.length))
   })
+
+  it('fresh dispatch and resume dispatch share byte-identical leading stable-prefix bytes (only trailing suffix differs)', () => {
+    // This is the cache-reuse guarantee: the resume banner must never appear in
+    // the stable prefix so providers can cache the boilerplate across dispatches.
+    // With the old basePrompt approach the resume banner was prepended, which
+    // displaced the stable prefix and broke provider-side caching.
+    const stablePrefix = [COMMIT_EXIT_CONDITION, CODING_DISCIPLINE, COMMIT_FOOTER].join('\n\n')
+
+    const freshOut = composePrompt(
+      'Implement the feature.',
+      { functional: 'Plan functional', technical: 'Plan technical' },
+      'coder',
+      {
+        files: ['src/a.ts'],
+        verifyCmd: 'npx tsc --noEmit',
+        doneCriteria: ['types pass'],
+        mergeMode: 'auto',
+      },
+      'mars-task-resume-test',
+      '',
+      'task',
+      [],
+      [],
+      null,
+      false, // resumeFromPriorAttempt = false (fresh dispatch)
+    )
+
+    const resumeOut = composePrompt(
+      'Implement the feature.',
+      { functional: 'Plan functional', technical: 'Plan technical' },
+      'coder',
+      {
+        files: ['src/a.ts'],
+        verifyCmd: 'npx tsc --noEmit',
+        doneCriteria: ['types pass'],
+        mergeMode: 'auto',
+      },
+      'mars-task-resume-test',
+      '',
+      'task',
+      [],
+      [],
+      null,
+      true, // resumeFromPriorAttempt = true (resume dispatch)
+    )
+
+    // Both must start with the identical stable prefix.
+    expect(freshOut.startsWith(stablePrefix)).toBe(true)
+    expect(resumeOut.startsWith(stablePrefix)).toBe(true)
+
+    // The bytes up to the end of the stable prefix must be byte-for-byte equal
+    // — the resume banner must not shift the stable prefix bytes.
+    const prefixLen = Buffer.byteLength(stablePrefix)
+    const freshPrefixBytes = Buffer.from(freshOut).subarray(0, prefixLen)
+    const resumePrefixBytes = Buffer.from(resumeOut).subarray(0, prefixLen)
+    expect(freshPrefixBytes.equals(resumePrefixBytes)).toBe(true)
+
+    // The fresh dispatch must NOT contain the resume banner.
+    expect(freshOut).not.toContain('## Resume prior work')
+    // The resume dispatch MUST contain the resume banner (in the suffix).
+    expect(resumeOut).toContain('## Resume prior work')
+    // The resume banner must appear after the task prompt body (task-specific suffix).
+    const promptIdx = resumeOut.indexOf('Implement the feature.')
+    const resumeIdx = resumeOut.indexOf('## Resume prior work')
+    expect(resumeIdx).toBeGreaterThan(promptIdx)
+  })
 })

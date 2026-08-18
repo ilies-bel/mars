@@ -1711,9 +1711,6 @@ export const runAgent = async (
       })
   }
 
-  const basePrompt = resumeFromPriorAttempt
-    ? `## Resume prior work\n\nPrior progress is already in this worktree. Run \`git log -p\` first to review what was already completed, then continue from where the last coder stopped. Do NOT restart from scratch.${verifyBlock}\n\n${prompt}`
-    : prompt
   const fullTask = await store.getTask(taskId).catch(() => null)
   const domains = resolveTaskDomains({
     workflow: fullTask?.workflow ?? null,
@@ -1740,8 +1737,14 @@ export const runAgent = async (
   // null, suppress the card even if one is cached.
   const indexCard =
     'indexCard' in opts ? opts.indexCard ?? null : (indexCardCache.get(ctx) ?? null)
-  const fullPrompt = composePrompt(
-    basePrompt,
+  // Compose the stable prefix + task-specific body. The resume banner and
+  // distilled verify-failure block are appended AFTER composePrompt returns so
+  // the stable prefix bytes (COMMIT_EXIT_CONDITION → CODING_DISCIPLINE →
+  // COMMIT_FOOTER) are byte-identical whether or not this is a resume dispatch.
+  // Prepending them (the old basePrompt approach) displaced the stable prefix
+  // and prevented provider-side caching of the shared boilerplate.
+  let fullPrompt = composePrompt(
+    prompt,
     plan,
     primaryTag,
     spec ?? null,
@@ -1752,6 +1755,12 @@ export const runAgent = async (
     gateSteps,
     indexCard,
   )
+  if (resumeFromPriorAttempt || verifyBlock !== '') {
+    fullPrompt =
+      fullPrompt +
+      '\n\n## Resume prior work\n\nPrior progress is already in this worktree. Run `git log -p` first to review what was already completed, then continue from where the last coder stopped. Do NOT restart from scratch.' +
+      verifyBlock
+  }
 
   // Registry workers: merge operator-declared Workers so their tag sets are
   // visible to pickWorkerForTags. listMergedWorkers now returns fully-
