@@ -27,6 +27,25 @@
 import { mkdirSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
+// ---------------------------------------------------------------------------
+// QA step-list contract
+// ---------------------------------------------------------------------------
+
+/**
+ * A list of numbered QA steps for one behaviour criterion.
+ * Passed to {@link runQaWalk} so the verifier can walk them step by step
+ * and capture per-step screenshots.
+ */
+export interface QaStepList {
+  /** The DoD criterion text this step list targets. */
+  criterion: string
+  /**
+   * Ordered steps for walking this criterion. `index` values must be unique
+   * within the list; by convention they are 1-based.
+   */
+  steps: Array<{ index: number; text: string }>
+}
+
 import { startDevServer, killDevServer } from '../../core/lib/dev-server'
 import type { DevServerHandle, StartDevServerOptions } from '../../core/lib/dev-server'
 import type { BootPlan } from './app-boot-discovery'
@@ -77,7 +96,7 @@ export interface QaStepResult {
   note: string
 }
 
-/** Per-criterion result returned by {@link runBrowserCheck}. */
+/** Per-criterion result returned by {@link runBrowserCheck} and {@link runQaWalk}. */
 export interface CriterionResult {
   /** The DoD criterion text (verbatim from the criteria array). */
   criterion: string
@@ -112,6 +131,31 @@ export interface CriterionResult {
    * or when no step list was walked. Populated by the step-walker layer.
    */
   stopAt: { stepIndex: number; reason: string } | null
+  /**
+   * 0-based sentinel or 1-based step index at which the walk stopped, or
+   * `null` when the walk was never attempted or completed all steps.
+   *
+   * `0` is a sentinel meaning the walk did not start (server never ready,
+   * browser failed to launch before any step ran).  When a step at position N
+   * failed, `stoppedAtStep` equals that step's `index` value.
+   *
+   * Populated only by {@link runQaWalk}. Always `null` from
+   * {@link runBrowserCheck}.
+   */
+  stoppedAtStep: number | null
+  /**
+   * Why the walk stopped, or `null` when no walk was attempted.
+   *
+   * - `'server-not-ready'` — dev server never became healthy.
+   * - `'browser-launch'`   — browser or page could not be opened.
+   * - `'navigation'`       — `page.goto` threw during a step.
+   * - `'completed'`        — every step was reached (some screenshots may be
+   *                          null if screenshot capture failed at a step).
+   *
+   * Populated only by {@link runQaWalk}. Always `null` from
+   * {@link runBrowserCheck}.
+   */
+  stopReason: 'server-not-ready' | 'browser-launch' | 'navigation' | 'completed' | null
 }
 
 /**
@@ -243,6 +287,8 @@ export async function runBrowserCheck(
       note: reason,
       steps: [],
       stopAt: null,
+      stoppedAtStep: null,
+      stopReason: null,
     }))
 
   let serverHandle: DevServerHandle | null = null
@@ -276,6 +322,8 @@ export async function runBrowserCheck(
               note: 'screenshot captured; automated verdict not available',
               steps: [],
               stopAt: null,
+              stoppedAtStep: null,
+              stopReason: null,
             })
           } finally {
             await page.close()
@@ -288,6 +336,8 @@ export async function runBrowserCheck(
             note: `screenshot failed: ${String(pageErr)}`,
             steps: [],
             stopAt: null,
+            stoppedAtStep: null,
+            stopReason: null,
           })
         }
       }
@@ -298,6 +348,201 @@ export async function runBrowserCheck(
     }
   } catch (err) {
     return allUnverifiable(String(err))
+  } finally {
+    await deps.killDevServer(serverHandle?.pid ?? null)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// runQaWalk — per-step screenshot walk
+// ---------------------------------------------------------------------------
+
+/**
+ * Launch the app from `bootPlan`, open a headless browser, and walk each
+ * {@link QaStepList} step by step, capturing a screenshot per step.
+ *
+ * Returns one {@link CriterionResult} per entry in `stepLists`. All verdicts
+ * are `'unverifiable'` — this function captures evidence, not judgements.
+ *
+ * **Screenshot paths:** `<artefactsDir>/<criterionIndex>/<stepIndex>.png`
+ * (or `<worktreeDir>/qa/<criterionIndex>/<stepIndex>.png` when `artifactsDir`
+ * is absent). `screenshotPath` on each step result is relative to whichever
+ * base directory is active.
+ *
+ * **Stop semantics:**
+ * - `'server-not-ready'` — dev server never became healthy; `stoppedAtStep: 0`
+ *   on every criterion.
+ * - `'browser-launch'`   — browser (or a page) could not be opened;
+ *   `stoppedAtStep: 0`.
+ * - `'navigation'`       — `page.goto` threw for a specific step; walk stops
+ *   for that criterion at `stoppedAtStep = step.index`.
+ * - `'completed'`        — every step was attempted; individual screenshot
+ *   failures are page-level and do not abort the walk.
+ *
+ * Teardown is guaranteed: `killDevServer` is always called in a `finally`.
+ */
+export async function runQaWalk(
+  bootPlan: BootPlan,
+  stepLists: readonly QaStepList[],
+  opts: {
+    taskId: string
+    worktreeDir: string
+    logDir: string
+    artifactsDir?: string
+    deps?: Partial<BrowserCheckDeps>
+  },
+): Promise<CriterionResult[]> {
+  const { taskId, worktreeDir, logDir } = opts
+  const deps: BrowserCheckDeps = { ...defaultDeps, ...opts.deps }
+
+  const qaDir = opts.artifactsDir ?? join(worktreeDir, 'qa')
+  const screenshotBase = opts.artifactsDir ?? worktreeDir
+  mkdirSync(qaDir, { recursive: true })
+
+  /** Return all-unverifiable results with the given stop reason. */
+  const allUnverifiable = (
+    reason: string,
+    stopReason: 'server-not-ready' | 'browser-launch',
+  ): CriterionResult[] =>
+    stepLists.map((sl) => ({
+      criterion: sl.criterion,
+      verdict: 'unverifiable' as const,
+      screenshotPath: null,
+      note: reason,
+      steps: [],
+      stopAt: null,
+      stoppedAtStep: 0,
+      stopReason,
+    }))
+
+  let serverHandle: DevServerHandle | null = null
+
+  try {
+    // ── Server startup + readiness ──────────────────────────────────────────
+    try {
+      serverHandle = await deps.startDevServer({
+        command: bootPlan.cmd,
+        cwd: bootPlan.cwd,
+        taskId,
+        logDir,
+      })
+      await deps.waitForReady(serverHandle.url)
+    } catch (serverErr) {
+      return allUnverifiable(String(serverErr), 'server-not-ready')
+    }
+
+    // ── Browser launch ──────────────────────────────────────────────────────
+    let browser: MinimalBrowser
+    try {
+      browser = await deps.openBrowser()
+    } catch (browserErr) {
+      return allUnverifiable(String(browserErr), 'browser-launch')
+    }
+
+    // ── Per-criterion step walk ─────────────────────────────────────────────
+    try {
+      const results: CriterionResult[] = []
+
+      for (let i = 0; i < stepLists.length; i++) {
+        const { criterion, steps } = stepLists[i]
+        const criterionDir = join(qaDir, `${i}`)
+        mkdirSync(criterionDir, { recursive: true })
+
+        const stepResults: QaStepResult[] = []
+        let stoppedAtStep: number | null = null
+        let stopReason: CriterionResult['stopReason'] = null
+
+        // Open a fresh page for this criterion.
+        let page: MinimalPage
+        try {
+          page = await browser.newPage()
+        } catch (pageErr) {
+          // Browser crash — cannot open page; abort this criterion.
+          results.push({
+            criterion,
+            verdict: 'unverifiable',
+            screenshotPath: null,
+            note: `page open failed: ${String(pageErr)}`,
+            steps: stepResults,
+            stopAt: { stepIndex: 0, reason: 'browser-launch' },
+            stoppedAtStep: 0,
+            stopReason: 'browser-launch',
+          })
+          continue
+        }
+
+        try {
+          for (const step of steps) {
+            const absPath = join(criterionDir, `${step.index}.png`)
+            const relPath = relative(screenshotBase, absPath)
+
+            // Navigation — a failure here stops the walk for this criterion.
+            try {
+              await page.goto(serverHandle.url)
+            } catch (navErr) {
+              stepResults.push({
+                stepIndex: step.index,
+                text: step.text,
+                screenshotPath: null,
+                note: `navigation failed: ${String(navErr)}`,
+              })
+              stoppedAtStep = step.index
+              stopReason = 'navigation'
+              break
+            }
+
+            // Screenshot — a failure is page-level; walk continues.
+            let screenshotPath: string | null = null
+            try {
+              await page.screenshot({ path: absPath })
+              screenshotPath = relPath
+            } catch {
+              // page-level failure — continue to the next step
+            }
+
+            stepResults.push({
+              stepIndex: step.index,
+              text: step.text,
+              screenshotPath,
+              note: screenshotPath !== null ? 'screenshot captured' : 'screenshot failed',
+            })
+          }
+
+          if (stoppedAtStep === null) {
+            stopReason = 'completed'
+          }
+        } finally {
+          await page.close()
+        }
+
+        // Overall screenshotPath for the criterion = last step that captured one.
+        const lastScreenshot = stepResults.reduceRight<string | null>(
+          (acc, s) => acc ?? s.screenshotPath,
+          null,
+        )
+
+        results.push({
+          criterion,
+          verdict: 'unverifiable',
+          screenshotPath: lastScreenshot,
+          note:
+            stopReason === 'completed'
+              ? 'all steps reached'
+              : `stopped at step ${stoppedAtStep}: ${stopReason}`,
+          steps: stepResults,
+          stopAt:
+            stoppedAtStep !== null
+              ? { stepIndex: stoppedAtStep, reason: stopReason ?? '' }
+              : null,
+          stoppedAtStep,
+          stopReason,
+        })
+      }
+
+      return results
+    } finally {
+      await browser.close()
+    }
   } finally {
     await deps.killDevServer(serverHandle?.pid ?? null)
   }

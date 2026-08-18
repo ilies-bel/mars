@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 
-import { runBrowserCheck, type CriterionResult, type QaStepResult } from '../browser-check'
+import { runBrowserCheck, runQaWalk, type CriterionResult, type QaStepResult, type QaStepList } from '../browser-check'
 import { isDevServerAlive } from '../../../core/lib/dev-server'
 import type { DevServerHandle } from '../../../core/lib/dev-server'
 import type { BootPlan } from '../app-boot-discovery'
@@ -353,6 +353,8 @@ describe('runBrowserCheck — QA step contract fields', () => {
       note: 'captured',
       steps: [step],
       stopAt: { stepIndex: 1, reason: 'element not found' },
+      stoppedAtStep: null,
+      stopReason: null,
     }
     // Runtime guard that the fields are shaped correctly.
     expect(result.steps[0].stepIndex).toBe(0)
@@ -453,5 +455,240 @@ describe('runBrowserCheck — artifactsDir option', () => {
 
     expect(results[0].verdict).toBe('unverifiable')
     expect(results[0].screenshotPath).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// runQaWalk — per-step walk with screenshots and stop-at recording
+// ---------------------------------------------------------------------------
+
+describe('runQaWalk — step walking', () => {
+  // ── clean walk ─────────────────────────────────────────────────────────────
+
+  it('clean walk: steps populated, stoppedAtStep null, stopReason completed', async () => {
+    const stepLists: QaStepList[] = [
+      {
+        criterion: 'the header renders',
+        steps: [
+          { index: 1, text: 'Open the home page' },
+          { index: 2, text: 'Scroll to the header' },
+        ],
+      },
+    ]
+
+    const results = await runQaWalk(fakePlan, stepLists, {
+      taskId: 'clean-walk',
+      worktreeDir: tmpWorktree,
+      logDir: tmpLogDir,
+      deps: {
+        startDevServer: async () => fakeHandle(),
+        killDevServer: async () => {},
+        waitForReady: async () => {},
+        openBrowser: async () => silentBrowser(),
+      },
+    })
+
+    expect(results).toHaveLength(1)
+    const r = results[0]
+    expect(r.criterion).toBe('the header renders')
+    expect(r.verdict).toBe('unverifiable')
+    expect(r.stoppedAtStep).toBeNull()
+    expect(r.stopReason).toBe('completed')
+
+    expect(r.steps).toHaveLength(2)
+    expect(r.steps[0].stepIndex).toBe(1)
+    expect(r.steps[0].text).toBe('Open the home page')
+    expect(r.steps[0].screenshotPath).not.toBeNull()
+    expect(r.steps[1].stepIndex).toBe(2)
+    expect(r.steps[1].text).toBe('Scroll to the header')
+    expect(r.steps[1].screenshotPath).not.toBeNull()
+  })
+
+  it('screenshots written under <criterionIndex>/<stepIndex>.png relative to artifactsDir', async () => {
+    const tmpArtifacts = mkdtempSync(join(tmpdir(), 'mars-walk-arts-'))
+    try {
+      const stepLists: QaStepList[] = [
+        {
+          criterion: 'widget visible',
+          steps: [
+            { index: 1, text: 'step one' },
+            { index: 2, text: 'step two' },
+          ],
+        },
+      ]
+
+      const results = await runQaWalk(fakePlan, stepLists, {
+        taskId: 'path-check',
+        worktreeDir: tmpWorktree,
+        logDir: tmpLogDir,
+        artifactsDir: tmpArtifacts,
+        deps: {
+          startDevServer: async () => fakeHandle(),
+          killDevServer: async () => {},
+          waitForReady: async () => {},
+          openBrowser: async () => silentBrowser(),
+        },
+      })
+
+      // Criterion 0, steps 1 and 2 → 0/1.png and 0/2.png relative to artifactsDir
+      expect(results[0].steps[0].screenshotPath).toBe(join('0', '1.png'))
+      expect(results[0].steps[1].screenshotPath).toBe(join('0', '2.png'))
+    } finally {
+      rmSync(tmpArtifacts, { recursive: true, force: true })
+    }
+  })
+
+  // ── server-not-ready ───────────────────────────────────────────────────────
+
+  it('server-not-ready: all criteria get stoppedAtStep 0 and stopReason server-not-ready', async () => {
+    const stepLists: QaStepList[] = [
+      { criterion: 'criterion A', steps: [{ index: 1, text: 'step 1' }] },
+      { criterion: 'criterion B', steps: [{ index: 1, text: 'step 1' }] },
+    ]
+
+    const results = await runQaWalk(fakePlan, stepLists, {
+      taskId: 'server-fail',
+      worktreeDir: tmpWorktree,
+      logDir: tmpLogDir,
+      deps: {
+        startDevServer: async () => fakeHandle(),
+        killDevServer: async () => {},
+        waitForReady: async () => { throw new Error('server did not become ready') },
+        openBrowser: async () => silentBrowser(),
+      },
+    })
+
+    expect(results).toHaveLength(2)
+    for (const r of results) {
+      expect(r.verdict).toBe('unverifiable')
+      // Must never be 'fail' — only 'unverifiable' on infrastructure failure.
+      expect(r.verdict).not.toBe('fail')
+      expect(r.stoppedAtStep).toBe(0)
+      expect(r.stopReason).toBe('server-not-ready')
+      expect(r.steps).toHaveLength(0)
+    }
+  })
+
+  it('server-not-ready when startDevServer throws: stoppedAtStep 0, stopReason server-not-ready', async () => {
+    const stepLists: QaStepList[] = [
+      { criterion: 'criterion X', steps: [{ index: 1, text: 'navigate' }] },
+    ]
+
+    const results = await runQaWalk(fakePlan, stepLists, {
+      taskId: 'start-fail',
+      worktreeDir: tmpWorktree,
+      logDir: tmpLogDir,
+      deps: {
+        startDevServer: async () => { throw new Error('port already in use') },
+        killDevServer: async () => {},
+        waitForReady: async () => {},
+        openBrowser: async () => silentBrowser(),
+      },
+    })
+
+    expect(results[0].stoppedAtStep).toBe(0)
+    expect(results[0].stopReason).toBe('server-not-ready')
+    expect(results[0].verdict).toBe('unverifiable')
+  })
+
+  // ── mid-step navigation error ──────────────────────────────────────────────
+
+  it('mid-step navigation error: stoppedAtStep records failing step index, stopReason navigation', async () => {
+    let gotoCallCount = 0
+    const countingBrowser = () => ({
+      newPage: async () => ({
+        goto: async (_url: string) => {
+          gotoCallCount++
+          // Second goto call (step 2) throws.
+          if (gotoCallCount === 2) throw new Error('net::ERR_CONNECTION_REFUSED')
+        },
+        screenshot: async (_opts: { path: string }) => {},
+        close: async () => {},
+      }),
+      close: async () => {},
+    })
+
+    const stepLists: QaStepList[] = [
+      {
+        criterion: 'login works',
+        steps: [
+          { index: 1, text: 'Open home page' },
+          { index: 2, text: 'Navigate to /login' },
+        ],
+      },
+    ]
+
+    const results = await runQaWalk(fakePlan, stepLists, {
+      taskId: 'nav-fail',
+      worktreeDir: tmpWorktree,
+      logDir: tmpLogDir,
+      deps: {
+        startDevServer: async () => fakeHandle(),
+        killDevServer: async () => {},
+        waitForReady: async () => {},
+        openBrowser: async () => countingBrowser(),
+      },
+    })
+
+    expect(results).toHaveLength(1)
+    const r = results[0]
+    expect(r.stoppedAtStep).toBe(2)          // step.index of the failing step
+    expect(r.stopReason).toBe('navigation')
+
+    // Step 1 succeeded — screenshotPath present.
+    expect(r.steps).toHaveLength(2)
+    expect(r.steps[0].stepIndex).toBe(1)
+    expect(r.steps[0].screenshotPath).not.toBeNull()
+
+    // Step 2 triggered the navigation error — no screenshot.
+    expect(r.steps[1].stepIndex).toBe(2)
+    expect(r.steps[1].screenshotPath).toBeNull()
+  })
+
+  it('walk continues past a page-level screenshot failure to the next step', async () => {
+    let screenshotCallCount = 0
+    const partialBrowser = () => ({
+      newPage: async () => ({
+        goto: async (_url: string) => {},
+        screenshot: async (_opts: { path: string }) => {
+          screenshotCallCount++
+          // Only the first screenshot call throws (page-level failure).
+          if (screenshotCallCount === 1) throw new Error('screenshot failed')
+        },
+        close: async () => {},
+      }),
+      close: async () => {},
+    })
+
+    const stepLists: QaStepList[] = [
+      {
+        criterion: 'form visible',
+        steps: [
+          { index: 1, text: 'Step one — screenshot will fail' },
+          { index: 2, text: 'Step two — screenshot will succeed' },
+        ],
+      },
+    ]
+
+    const results = await runQaWalk(fakePlan, stepLists, {
+      taskId: 'screenshot-fail',
+      worktreeDir: tmpWorktree,
+      logDir: tmpLogDir,
+      deps: {
+        startDevServer: async () => fakeHandle(),
+        killDevServer: async () => {},
+        waitForReady: async () => {},
+        openBrowser: async () => partialBrowser(),
+      },
+    })
+
+    const r = results[0]
+    // Walk must complete — page-level failure is not an abort.
+    expect(r.stopReason).toBe('completed')
+    expect(r.stoppedAtStep).toBeNull()
+
+    // Step 1 screenshot failed → null; step 2 screenshot succeeded → non-null.
+    expect(r.steps[0].screenshotPath).toBeNull()
+    expect(r.steps[1].screenshotPath).not.toBeNull()
   })
 })
