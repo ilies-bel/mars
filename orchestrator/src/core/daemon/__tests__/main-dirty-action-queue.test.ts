@@ -9,8 +9,20 @@
  *
  * Pattern follows the existing F.1 blocker-invariant tests: a temp repo and
  * a per-test reset of the queue/actionQueue singletons via `vi.resetModules()`.
+ *
+ * mars-65155345: `vi.resetModules()` + a fresh dynamic import of `../../queue`
+ * pays a PGlite cold-start (1-3s locally, 5-25s under full-suite load per the
+ * vitest.config.ts guardrail comment) on every call. Doing that once per
+ * `it()` — 11 times across this file — was a meaningful chunk of what pushed
+ * this file (and its neighbour worktree-reclaim.test.ts, sharing the same
+ * single-fork process under `pool: 'forks', maxForks: 1`) past the 30s
+ * `testTimeout` under load. Describes that don't need real git state or
+ * process mocking (everything except "failed main-committer source cohort",
+ * which keeps its real git commits + `server.startDaemon()` daemon test)
+ * now pay ONE cold-start per describe in `beforeAll`, and reset just the
+ * mutable DB state between tests via `truncateQueueState`.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -26,29 +38,56 @@ const setupRepo = (): string => {
 
 const noopLog = (): void => {}
 
+/**
+ * Wipes the mutable queue/actionQueue state (but keeps the schema and the
+ * already-cold-started PGlite client) so a `describe` block can share one
+ * module graph across its tests instead of paying a fresh cold-start per
+ * `it()`. `action_queue_items` has no FK to `tasks` (see pg-schema.ts) so it
+ * needs listing explicitly; `task_blockers` and the other task-referencing
+ * tables cascade off `tasks`.
+ */
+const truncateQueueState = async (
+  queue: typeof import('../../queue'),
+): Promise<void> => {
+  await queue.resolveQueueClient().execute({
+    sql: 'TRUNCATE TABLE tasks, action_queue_items RESTART IDENTITY CASCADE',
+  })
+}
+
 describe('raiseAggregatedMainCommiterFailureRow', () => {
   let repo: string
+  let queue: typeof import('../../queue')
+  let spawnOrAttachMainCommitter: typeof import('../../lib/main-dirty').spawnOrAttachMainCommitter
+  let nullTraceStore: typeof import('../../lib/run-tool').nullTraceStore
+  let raiseAggregatedMainCommiterFailureRow: typeof import('../main-dirty-action-queue').raiseAggregatedMainCommiterFailureRow
+  let actionQueue: typeof import('../../lib/action-queue')
 
-  beforeEach(() => {
+  beforeAll(async () => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
     vi.resetModules()
+    queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const m = await import('../../lib/main-dirty')
+    const r = await import('../../lib/run-tool')
+    spawnOrAttachMainCommitter = m.spawnOrAttachMainCommitter
+    nullTraceStore = r.nullTraceStore
+    raiseAggregatedMainCommiterFailureRow = (
+      await import('../main-dirty-action-queue')
+    ).raiseAggregatedMainCommiterFailureRow
+    actionQueue = await import('../../lib/action-queue')
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    await truncateQueueState(queue)
+  })
+
+  afterAll(() => {
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
 
   it('lists every blocked dependent in the body and titles the cohort count', async () => {
-    const queue = await import('../../queue')
-    await queue.migrateQueueSchema()
-    const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
-      const m = await import('../../lib/main-dirty')
-      const r = await import('../../lib/run-tool')
-      return { ...m, nullTraceStore: r.nullTraceStore }
-    })()
-
     const src1 = await queue.enqueueTask('first dependent', undefined, {
       skipTriage: true,
     })
@@ -76,16 +115,12 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
       traceStore: nullTraceStore,
     })
 
-    const { raiseAggregatedMainCommiterFailureRow } = await import(
-      '../main-dirty-action-queue'
-    )
     const actionQueueItemId = await raiseAggregatedMainCommiterFailureRow(
       resolution.fixTaskId,
       noopLog,
     )
     expect(actionQueueItemId).toBeTruthy()
 
-    const actionQueue = await import('../../lib/action-queue')
     const item = await actionQueue.getActionQueueItem(actionQueueItemId!)
     expect(item).not.toBeNull()
     expect(item!.kind).toBe('failed')
@@ -98,13 +133,6 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
   })
 
   it('handles a committer with zero current dependents (cleared by other paths)', async () => {
-    const queue = await import('../../queue')
-    await queue.migrateQueueSchema()
-    const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
-      const m = await import('../../lib/main-dirty')
-      const r = await import('../../lib/run-tool')
-      return { ...m, nullTraceStore: r.nullTraceStore }
-    })()
     const src = await queue.enqueueTask('a', undefined, { skipTriage: true })
     const resolution = await spawnOrAttachMainCommitter({
       sourceTaskId: src.id,
@@ -122,15 +150,11 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
       args: [resolution.fixTaskId],
     })
 
-    const { raiseAggregatedMainCommiterFailureRow } = await import(
-      '../main-dirty-action-queue'
-    )
     const id = await raiseAggregatedMainCommiterFailureRow(
       resolution.fixTaskId,
       noopLog,
     )
     expect(id).toBeTruthy()
-    const actionQueue = await import('../../lib/action-queue')
     const item = await actionQueue.getActionQueueItem(id!)
     expect(item!.title).toMatch(/no tasks currently blocked/i)
   })
@@ -138,29 +162,39 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
 
 describe('sweepStaleFailedMainCommiterActionQueue', () => {
   let repo: string
+  let queue: typeof import('../../queue')
+  let spawnOrAttachMainCommitter: typeof import('../../lib/main-dirty').spawnOrAttachMainCommitter
+  let nullTraceStore: typeof import('../../lib/run-tool').nullTraceStore
+  let raiseAggregatedMainCommiterFailureRow: typeof import('../main-dirty-action-queue').raiseAggregatedMainCommiterFailureRow
+  let sweepStaleFailedMainCommiterActionQueue: typeof import('../main-dirty-action-queue').sweepStaleFailedMainCommiterActionQueue
+  let actionQueue: typeof import('../../lib/action-queue')
 
-  beforeEach(() => {
+  beforeAll(async () => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
     vi.resetModules()
+    queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const m = await import('../../lib/main-dirty')
+    const r = await import('../../lib/run-tool')
+    spawnOrAttachMainCommitter = m.spawnOrAttachMainCommitter
+    nullTraceStore = r.nullTraceStore
+    const mainDirtyActionQueue = await import('../main-dirty-action-queue')
+    raiseAggregatedMainCommiterFailureRow = mainDirtyActionQueue.raiseAggregatedMainCommiterFailureRow
+    sweepStaleFailedMainCommiterActionQueue = mainDirtyActionQueue.sweepStaleFailedMainCommiterActionQueue
+    actionQueue = await import('../../lib/action-queue')
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    await truncateQueueState(queue)
+  })
+
+  afterAll(() => {
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
 
   it('resolves both stale rows when two failed committers on main are superseded by a succeeding committer on main', async () => {
-    const queue = await import('../../queue')
-    await queue.migrateQueueSchema()
-    const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
-      const m = await import('../../lib/main-dirty')
-      const r = await import('../../lib/run-tool')
-      return { ...m, nullTraceStore: r.nullTraceStore }
-    })()
-    const { raiseAggregatedMainCommiterFailureRow, sweepStaleFailedMainCommiterActionQueue } =
-      await import('../main-dirty-action-queue')
-
     // First failed committer on main.
     const src1 = await queue.enqueueTask('first task', undefined, { skipTriage: true })
     const old1 = await spawnOrAttachMainCommitter({
@@ -205,7 +239,6 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
 
     await sweepStaleFailedMainCommiterActionQueue('main', fresh.fixTaskId, noopLog)
 
-    const actionQueue = await import('../../lib/action-queue')
     const item1 = await actionQueue.getActionQueueItem(oldId1!)
     const item2 = await actionQueue.getActionQueueItem(oldId2!)
     expect(item1!.status).toBe('resolved')
@@ -213,16 +246,6 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
   })
 
   it('leaves a failed committer on release-2026-01 untouched when a committer on main succeeds', async () => {
-    const queue = await import('../../queue')
-    await queue.migrateQueueSchema()
-    const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
-      const m = await import('../../lib/main-dirty')
-      const r = await import('../../lib/run-tool')
-      return { ...m, nullTraceStore: r.nullTraceStore }
-    })()
-    const { raiseAggregatedMainCommiterFailureRow, sweepStaleFailedMainCommiterActionQueue } =
-      await import('../main-dirty-action-queue')
-
     // Failed committer on the release branch.
     const releaseSrc = await queue.enqueueTask('release task', undefined, { skipTriage: true })
     const releaseCommitter = await spawnOrAttachMainCommitter({
@@ -256,7 +279,6 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
     // Sweep only main — must not touch the release-2026-01 row.
     await sweepStaleFailedMainCommiterActionQueue('main', mainFresh.fixTaskId, noopLog)
 
-    const actionQueue = await import('../../lib/action-queue')
     const releaseItem = await actionQueue.getActionQueueItem(releaseActionQueueId!)
     expect(releaseItem!.status).toBe('open')
   })
@@ -294,6 +316,18 @@ describe('failed main-committer source cohort', () => {
     exitSpy?.mockRestore()
   })
 
+  // mars-65155345: this is the most expensive test in the file — a fresh
+  // PGlite cold-start via vi.resetModules()/migrateQueueSchema() PLUS a real
+  // server.startDaemon() (worker pools, socket server, reconciler wiring)
+  // PLUS a real socket round-trip. It measured ~3.4s on an idle machine and
+  // is the likeliest single test in this file to cross the 30s testTimeout
+  // under full-suite load. Left in its own git-repo-per-test / resetModules
+  // setup (unlike the other describes in this file) because it mocks
+  // 'node:net' and '../http-server' and needs a clean module graph for that;
+  // sharing a describe-level module graph with real git commits would risk
+  // process.exit/socket-mock state leaking across tests. A local timeout
+  // override is the sanctioned move here (vitest.config.ts's global
+  // testTimeout is a guarded merge-gate constraint — see the file header).
   it('keeps every source blocked and raises one deduplicated cohort action when a running committer fails on clean main', async () => {
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
@@ -439,7 +473,7 @@ describe('failed main-committer source cohort', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]!.body).toContain(src1.id)
     expect(rows[0]!.body).toContain(src2.id)
-  })
+  }, 60_000)
 
   it('leaves a task blocked when other active blockers remain', async () => {
     const queue = await import('../../queue')
@@ -609,29 +643,36 @@ describe('failed main-committer source cohort', () => {
 
 describe('main-committer done: source task re-queued, not marked done (mars-4d66145d)', () => {
   let repo: string
+  let queue: typeof import('../../queue')
+  let spawnOrAttachMainCommitter: typeof import('../../lib/main-dirty').spawnOrAttachMainCommitter
+  let nullTraceStore: typeof import('../../lib/run-tool').nullTraceStore
+  let RECONCILERS: typeof import('../reconcilers').RECONCILERS
 
-  beforeEach(() => {
+  beforeAll(async () => {
     repo = mkdtempSync(resolve(tmpdir(), 'mars-mc-done-guard-test-'))
     execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
     mkdirSync(resolve(repo, '.mars'), { recursive: true })
     process.env.MARS_REPO = repo
     vi.resetModules()
+    queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const m = await import('../../lib/main-dirty')
+    const r = await import('../../lib/run-tool')
+    spawnOrAttachMainCommitter = m.spawnOrAttachMainCommitter
+    nullTraceStore = r.nullTraceStore
+    RECONCILERS = (await import('../reconcilers')).RECONCILERS
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    await truncateQueueState(queue)
+  })
+
+  afterAll(() => {
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
 
   it('re-queues the source task instead of marking it done when the main-committer completes', async () => {
-    const queue = await import('../../queue')
-    await queue.migrateQueueSchema()
-    const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
-      const m = await import('../../lib/main-dirty')
-      const r = await import('../../lib/run-tool')
-      return { ...m, nullTraceStore: r.nullTraceStore }
-    })()
-
     // Source task is blocked on the main-committer (simulates dispatch:main-dirty)
     const src = await queue.enqueueTask('implement-license-slice-3', undefined, { skipTriage: true })
     const detection = { dirty: true as const, statusOutput: 'M some-file.ts' }
@@ -650,7 +691,6 @@ describe('main-committer done: source task re-queued, not marked done (mars-4d66
     await queue.updateTask(resolution.fixTaskId, { status: 'done' })
 
     // Run the recovery-done-propagation reconciler step
-    const { RECONCILERS } = await import('../reconcilers')
     const step = RECONCILERS.find((r) => r.name === 'recovery-done-propagation')!
     await step.run({ log: () => {}, bus: new EventEmitter(), traceStore: null, handleProposalSlice: null })
 
@@ -661,14 +701,6 @@ describe('main-committer done: source task re-queued, not marked done (mars-4d66
   })
 
   it('does NOT cascade-unblock downstream tasks when main-committer completes (mars-4d66145d)', async () => {
-    const queue = await import('../../queue')
-    await queue.migrateQueueSchema()
-    const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
-      const m = await import('../../lib/main-dirty')
-      const r = await import('../../lib/run-tool')
-      return { ...m, nullTraceStore: r.nullTraceStore }
-    })()
-
     // Source task (blocked on committer) with a downstream that should stay blocked
     const src = await queue.enqueueTask('implement-license-slice-3', undefined, { skipTriage: true })
     const downstream = await queue.enqueueTask('slice-9-ui', undefined, { skipTriage: true })
@@ -700,7 +732,6 @@ describe('main-committer done: source task re-queued, not marked done (mars-4d66
     await queue.updateTask(resolution.fixTaskId, { status: 'done' })
 
     // Run reconciler step
-    const { RECONCILERS } = await import('../reconcilers')
     const step = RECONCILERS.find((r) => r.name === 'recovery-done-propagation')!
     await step.run({ log: () => {}, bus: new EventEmitter(), traceStore: null, handleProposalSlice: null })
 
@@ -712,9 +743,6 @@ describe('main-committer done: source task re-queued, not marked done (mars-4d66
 
   it('a regular (non-main-committer) fix task still marks the origin done', async () => {
     // Regression guard: ensure we didn't accidentally break the normal recovery path
-    const queue = await import('../../queue')
-    await queue.migrateQueueSchema()
-
     const origin = await queue.enqueueTask('origin-task', undefined, { skipTriage: true })
     // Force origin to 'failed' (normal failure state before a recovery runs)
     await queue.resolveQueueClient().execute({
@@ -732,7 +760,6 @@ describe('main-committer done: source task re-queued, not marked done (mars-4d66
     })
 
     // Run the reconciler step
-    const { RECONCILERS } = await import('../reconcilers')
     const step = RECONCILERS.find((r) => r.name === 'recovery-done-propagation')!
     await step.run({ log: () => {}, bus: new EventEmitter(), traceStore: null, handleProposalSlice: null })
 
