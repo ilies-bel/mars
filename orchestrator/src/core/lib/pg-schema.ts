@@ -67,7 +67,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0036'
+export const SCHEMA_VERSION = '0037'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -182,6 +182,78 @@ const DDL: readonly string[] = [
   `DROP INDEX IF EXISTS idx_proposals_fingerprint`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_source_fingerprint
      ON proposals(source, fingerprint) WHERE fingerprint IS NOT NULL`,
+  // Illegible-proposals backfill (migration 0037). `createProposal` used to
+  // store the entire caller-supplied prose blob as `title`, so agent-authored
+  // drafts filed via `mars proposal add` (which passes no explicit `problem`)
+  // landed as a single unbroken 2000-3800 char paragraph with an empty
+  // `problem`. The write path now splits title/body at creation time
+  // (`splitProposalProse` in proposals.ts); this backfill applies the SAME
+  // algorithm to every pre-existing row so legacy drafts become legible too,
+  // without touching any row that already has a populated `problem` (those
+  // came from structured callers and must be left alone).
+  //
+  // Mirrors `splitProposalProse`: skip leading blank lines, strip a leading
+  // markdown heading marker from the first non-blank line, word-boundary-
+  // truncate at 120 chars with an ellipsis if still too long, and the
+  // remainder becomes `problem`. Keep the 120 literal in sync with
+  // PROPOSAL_TITLE_LIMIT in proposals.ts if it ever changes.
+  `DO $$
+   DECLARE
+     rec RECORD;
+     lines text[];
+     n int;
+     idx int;
+     head text;
+     short_title text;
+     truncated text;
+     space_from_end int;
+     cut_len int;
+     body text;
+   BEGIN
+     FOR rec IN
+       SELECT id, title FROM proposals
+        WHERE problem = ''
+          AND (title LIKE '%' || chr(10) || '%' OR char_length(title) > 120)
+     LOOP
+       lines := string_to_array(rec.title, chr(10));
+       n := COALESCE(array_length(lines, 1), 0);
+       idx := 1;
+       -- NB: single-argument btrim() strips SPACES ONLY. JS .trim() strips all
+       -- whitespace, so every trim here must name the character set explicitly
+       -- or the backfill diverges from splitProposalProse — a body would keep
+       -- its leading newline and a tab-only line would not count as blank.
+       WHILE idx <= n AND btrim(lines[idx], E' \\t\\r\\n') = '' LOOP
+         idx := idx + 1;
+       END LOOP;
+       IF idx > n THEN
+         CONTINUE;
+       END IF;
+       head := btrim(regexp_replace(btrim(lines[idx], E' \\t\\r\\n'), '^#{1,6}\\s+', ''), E' \\t\\r\\n');
+       IF char_length(head) > 120 THEN
+         truncated := substring(head from 1 for 120);
+         space_from_end := position(' ' in reverse(truncated));
+         cut_len := char_length(truncated) - space_from_end;
+         IF space_from_end > 0 AND cut_len > 0 THEN
+           short_title := btrim(substring(truncated from 1 for cut_len), E' \\t\\r\\n') || chr(8230);
+         ELSE
+           -- No word boundary: cut one char short of the limit so the appended
+           -- ellipsis still lands at exactly 120. An over-long result would
+           -- re-match this migration's WHERE clause and rewrite itself (and
+           -- bump updated_at) on every daemon boot. Mirrors the same fallback
+           -- in splitProposalProse.
+           short_title := btrim(substring(head from 1 for 119), E' \\t\\r\\n') || chr(8230);
+         END IF;
+       ELSE
+         short_title := head;
+       END IF;
+       IF idx < n THEN
+         body := btrim(array_to_string(lines[idx+1:n], chr(10)), E' \\t\\r\\n');
+       ELSE
+         body := '';
+       END IF;
+       UPDATE proposals SET title = short_title, problem = body, updated_at = ${EPOCH_NOW} WHERE id = rec.id;
+     END LOOP;
+   END $$`,
   `CREATE TABLE IF NOT EXISTS proposal_user_stories (
     proposal_id text   NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
     position    bigint NOT NULL,

@@ -28,6 +28,19 @@ describe('ProposalCard', () => {
     expect(html).toContain('Surface proposals in the Progress board')
   })
 
+  it('clamps a long title with CSS rather than a hard character cut', () => {
+    // Previously the title was cut at 120 chars with `truncate()`, which sliced
+    // mid-word and dropped the tail from the DOM. A CSS clamp keeps the full
+    // title available to search and screen readers while bounding the card —
+    // and matches the treatment on ProposalsPage.
+    const long = 'A very long legacy title that used to be a whole prose document. '.repeat(10)
+    const html = renderToStaticMarkup(<ProposalCard proposal={draft({ title: long })} />)
+
+    expect(html).toContain('line-clamp-2')
+    expect(html).not.toContain('…')
+    expect(html).toContain('whole prose document.')
+  })
+
   it('URL-encodes special characters in the proposal id', () => {
     const html = renderToStaticMarkup(
       <ProposalCard proposal={draft({ id: 'prop/special id' })} />,

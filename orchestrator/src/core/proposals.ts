@@ -148,6 +148,66 @@ export const generateProposalId = (title: string): string => {
   return `${prefix}-${slugify(title)}`
 }
 
+/**
+ * Max length of a derived proposal title before it gets word-boundary
+ * truncated with an ellipsis. Mirrored (as a literal, `120`) by the
+ * `pg-schema.ts` backfill migration that applies the same split to
+ * pre-existing rows — keep the two in sync if this ever changes.
+ */
+export const PROPOSAL_TITLE_LIMIT = 120
+
+/**
+ * Split a raw prose blob (as typed by a human or an agent via
+ * `mars proposal add`) into a short, single-line title and a body.
+ *
+ * Agent-authored proposals are often multi-paragraph documents passed
+ * wholesale as the `title` argument (see `mars proposal add`); without this
+ * split the entire document lands in `proposals.title`, which is illegible
+ * in any list view and produces a slugified id truncated mid-sentence.
+ *
+ * Algorithm:
+ *   1. Find the first non-empty line (leading blank lines are skipped and do
+ *      not appear in the body either).
+ *   2. Strip a leading markdown heading marker (`#` through `######`
+ *      followed by whitespace) and surrounding whitespace from that line —
+ *      that becomes the title.
+ *   3. If the title exceeds {@link PROPOSAL_TITLE_LIMIT} characters, cut it
+ *      at the last word boundary before the limit and append an ellipsis.
+ *      A cut that would leave nothing (the only space is at the very start)
+ *      falls back to a hard truncation instead of an empty title.
+ *   4. Everything after the title line becomes the body (trimmed).
+ *
+ * An all-blank input returns `{ title: '', body: '' }` — callers fall back
+ * to the raw (trimmed) input in that case so a blank title is never silently
+ * substituted for whatever was actually passed in.
+ */
+export const splitProposalProse = (prose: string): { title: string; body: string } => {
+  const lines = prose.split('\n')
+  let idx = 0
+  while (idx < lines.length && (lines[idx] ?? '').trim().length === 0) idx++
+  if (idx >= lines.length) return { title: '', body: '' }
+
+  const headingStripped = (lines[idx] ?? '').trim().replace(/^#{1,6}\s+/, '')
+  const head = headingStripped.trim()
+
+  let title = head
+  if (title.length > PROPOSAL_TITLE_LIMIT) {
+    const truncated = title.slice(0, PROPOSAL_TITLE_LIMIT)
+    const lastSpace = truncated.lastIndexOf(' ')
+    // The no-word-boundary fallback cuts one char short of the limit so that
+    // appending the ellipsis still lands at exactly PROPOSAL_TITLE_LIMIT. A
+    // derived title must never exceed the limit: the pg-schema backfill
+    // selects rows on `char_length(title) > 120`, so an over-long result
+    // would re-match and rewrite itself on every daemon boot.
+    const cut =
+      lastSpace > 0 ? truncated.slice(0, lastSpace) : title.slice(0, PROPOSAL_TITLE_LIMIT - 1)
+    title = `${cut.trimEnd()}…`
+  }
+
+  const body = lines.slice(idx + 1).join('\n').trim()
+  return { title, body }
+}
+
 export const VALID_SOURCES: readonly ProposalSource[] = [
   'reflection',
   'arc-verifier',
@@ -342,7 +402,16 @@ export const createProposal = async (
 ): Promise<Proposal> => {
   await initProposals()
   const c = stateClient()
-  const id = generateProposalId(title)
+
+  // Split the incoming prose blob into a short title and a leftover body.
+  // Agent-authored (and human-pasted) proposals routinely arrive as
+  // multi-paragraph documents in `title` — see `mars proposal add`. An
+  // all-blank `title` derives nothing usable, so fall back to the raw
+  // (trimmed) input rather than silently substituting an empty title.
+  const { title: derivedTitle, body: derivedBody } = splitProposalProse(title)
+  const effectiveTitle = derivedTitle.length > 0 ? derivedTitle : title.trim()
+
+  const id = generateProposalId(effectiveTitle)
   const now = Date.now()
   const source: ProposalSource =
     opts?.source !== undefined
@@ -352,7 +421,18 @@ export const createProposal = async (
         : 'human'
   const authorKind = opts?.author?.kind ?? null
   const authorName = opts?.author?.name ?? null
-  const problem = opts?.problem ?? ''
+  // Only fall back to the derived body when the caller did not supply an
+  // explicit `problem` — structured callers (reflector, failure-reflector,
+  // slicer, scorer-trend-trigger, self-evolve-trigger, promote-from-thread,
+  // chat-runner's non-draft paths, ...) keep their current behaviour
+  // untouched. When a caller DOES pass a `problem` and the title was also
+  // multi-line, prepend the leftover body rather than dropping it.
+  const problem =
+    opts?.problem === undefined
+      ? derivedBody
+      : derivedBody.length > 0
+        ? `${derivedBody}\n\n${opts.problem}`
+        : opts.problem
   const solution = opts?.solution ?? ''
   const outOfScope = opts?.outOfScope ?? ''
   const notes = opts?.notes ?? ''
@@ -365,8 +445,9 @@ export const createProposal = async (
   // Rate-limit at source: coalesce a new agent-authored draft into an existing
   // near-identical open draft from the same author within the dedup window.
   // Human-authored proposals always go through regardless of title similarity.
-  if (authorKind === 'agent' && title.trim().length > 0) {
-    const dup = await findNearDuplicateAgentDraft(title, authorName, DEDUP_WINDOW_MS)
+  // Compares on the derived (short) title, not the raw blob.
+  if (authorKind === 'agent' && effectiveTitle.trim().length > 0) {
+    const dup = await findNearDuplicateAgentDraft(effectiveTitle, authorName, DEDUP_WINDOW_MS)
     if (dup !== null) {
       if (notes && notes.trim().length > 0) {
         await appendProposalNotes(dup.id, notes)
@@ -398,7 +479,7 @@ export const createProposal = async (
                     suggestion_outcome`,
     args: [
       id,
-      title,
+      effectiveTitle,
       problem,
       solution,
       outOfScope,
@@ -417,7 +498,7 @@ export const createProposal = async (
   const row = result.rows[0] as unknown as Record<string, unknown>
   const proposal = rowToProposal(row, [])
   if (proposal.id === id) {
-    await emitProposalBusEvent('proposal.added', { proposalId: id, source, title })
+    await emitProposalBusEvent('proposal.added', { proposalId: id, source, title: effectiveTitle })
   }
   return proposal
 }

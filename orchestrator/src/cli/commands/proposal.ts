@@ -786,7 +786,7 @@ const proposalShipSummary: Command = {
         JSON.stringify(
           {
             proposalId: proposal.id,
-            title: proposal.title.split('\n')[0].trim(),
+            title: proposal.title,
             arcState: arc.status,
             tasks: taskRows.map((r) => ({
               id: r.id,
@@ -805,7 +805,7 @@ const proposalShipSummary: Command = {
     }
 
     deps.out(`proposal: ${proposal.id}`)
-    deps.out(`title:    ${proposal.title.split('\n')[0].trim()}`)
+    deps.out(`title:    ${proposal.title}`)
     deps.out(`arc:      ${arc.status}`)
     if (taskRows.length > 0) {
       deps.out('')

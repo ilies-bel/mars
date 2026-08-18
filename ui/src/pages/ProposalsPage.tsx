@@ -53,8 +53,10 @@ const ProposalRow = ({ draft }: ProposalRowProps) => {
   const sourceLabel = SOURCE_LABEL[draft.source] ?? draft.source
   const chipClass =
     SOURCE_CHIP_CLASS[draft.source] ?? 'text-muted-foreground border-border'
-  // One-line problem preview — strip newlines and clamp with CSS
-  const preview = draft.problem.split('\n')[0]?.trim() ?? ''
+  // Body preview — collapse newlines to spaces and clamp with CSS. Legacy
+  // (pre-split) rows may still carry a multi-paragraph `problem`; collapsing
+  // newlines keeps the preview readable instead of jamming lines together.
+  const preview = draft.problem.replace(/\s*\n\s*/g, ' ').trim()
   const grillCmd = `/mars:grill ${draft.id}`
 
   return (
@@ -74,17 +76,19 @@ const ProposalRow = ({ draft }: ProposalRowProps) => {
         </span>
       </div>
 
-      {/* Title */}
+      {/* Title — clamped to 2 lines so a long legacy (pre-split) title can
+          never take over the card; the clamp is the durable guard,
+          independent of whether the backfill has run. */}
       <a
         href={proposalHash(draft.id, 'proposals')}
-        className="mb-1 block text-body font-medium leading-snug text-foreground hover:underline"
+        className="mb-1 block line-clamp-2 text-body font-medium leading-snug text-foreground hover:underline"
       >
         {draft.title}
       </a>
 
-      {/* One-line problem preview */}
+      {/* Body preview — subordinate to the title, 3 lines max */}
       {preview && (
-        <p className="mb-2 font-mono text-micro text-muted-foreground line-clamp-1">
+        <p className="mb-2 line-clamp-3 font-mono text-micro text-muted-foreground">
           {preview}
         </p>
       )}

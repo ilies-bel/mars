@@ -5,9 +5,6 @@ interface Props {
   proposal: DraftFeature
 }
 
-const truncate = (s: string, n: number): string =>
-  s.length > n ? `${s.slice(0, n - 1)}…` : s
-
 export const ProposalCard = memo(({ proposal }: Props) => {
   const openDrawer = () => {
     window.location.hash = `#/proposal/${encodeURIComponent(proposal.id)}`
@@ -52,8 +49,12 @@ export const ProposalCard = memo(({ proposal }: Props) => {
           {proposal.status}
         </span>
       </div>
-      <div className="text-title font-medium leading-snug text-foreground">
-        {truncate(proposal.title, 120)}
+      {/* Title — clamped to 2 lines, matching ProposalsPage. A CSS clamp
+          replaces the old hard 120-char cut: it never slices a word mid-way,
+          adapts to the card width, and leaves the full title in the DOM for
+          search and screen readers. */}
+      <div className="line-clamp-2 text-title font-medium leading-snug text-foreground">
+        {proposal.title}
       </div>
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-label text-muted-foreground">{proposal.source}</span>
