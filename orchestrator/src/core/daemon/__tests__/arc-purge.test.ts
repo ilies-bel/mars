@@ -155,7 +155,7 @@ describe('coreArcPurge', () => {
     // which don't apply here, but we use raw SQL for test clarity).
     await client.execute({
       sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-      args: [dependent.id, origin.id, new Date().toISOString()],
+      args: [dependent.id, origin.id, Date.now()],
     })
 
     await ap.coreArcPurge(origin.id, true, 'main', repo)

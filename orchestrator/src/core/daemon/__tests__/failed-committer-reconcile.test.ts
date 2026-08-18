@@ -150,11 +150,12 @@ describe('failed-committer-action-queue reconciler', () => {
     // A plain (non-committer) failed fix task with a blocked dependent: the
     // reconciler must skip it (no recovery_payload → not a main-commiter).
     const origin = await queue.enqueueTask('origin', undefined, { skipTriage: true })
-    const now = Date.now()
+    const nowMs = Date.now()
+    const nowIso = new Date(nowMs).toISOString()
     const fixId = `fix-plain-${Math.random().toString(36).slice(2, 8)}`
     await queue.resolveQueueClient().execute({
       sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, origin_id, priority, created_at, updated_at) VALUES (?, ?, 'failed', 'fix', ?, ?, 0, ?, ?)`,
-      args: [fixId, 'plain fix', origin.id, origin.id, now, now],
+      args: [fixId, 'plain fix', origin.id, origin.id, nowIso, nowIso],
     })
     await queue.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
@@ -162,7 +163,7 @@ describe('failed-committer-action-queue reconciler', () => {
     })
     await queue.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-      args: [origin.id, fixId, now],
+      args: [origin.id, fixId, nowMs],
     })
 
     await reconciler!.run(makeDeps())

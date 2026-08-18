@@ -246,7 +246,15 @@ function splitSqlList(sql: string): string[] {
  * direct inserts, the fixture shape that caused the failures.
  */
 function assertFixtureTimestampEncodings(sql: string, args: readonly DbInValue[]): void {
-  const insert = /^\s*INSERT\s+INTO\s+(?:"?public"?\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s*\(([^)]*)\)\s*VALUES\s*/i.exec(sql)
+  // The SQLite-fixture dialect also uses `INSERT OR IGNORE`/`INSERT OR REPLACE`
+  // (rewritten to `ON CONFLICT ...` further down the pipeline by
+  // rewriteLegacyFixtureSql, but this check runs on the pre-rewrite SQL) —
+  // without matching those forms here, such inserts skip validation entirely
+  // and a bad encoding surfaces as an opaque PGlite cast error instead.
+  const insert =
+    /^\s*INSERT\s+(?:OR\s+(?:IGNORE|REPLACE)\s+)?INTO\s+(?:"?public"?\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s*\(([^)]*)\)\s*VALUES\s*/i.exec(
+      sql,
+    )
   if (!insert) return
 
   const table = insert[1]!.toLowerCase() as keyof typeof FIXTURE_TIMESTAMP_ENCODINGS

@@ -107,7 +107,7 @@ describe('corePurgeTask — task.dropped emitted before DELETE', () => {
     // Register subscriber AFTER seeding so pre-purge events are behind the cursor.
     await ad.ensureAlertDismisser(client)
 
-    const beforeSec = Math.floor(Date.now() / 1000)
+    const beforeMs = Date.now()
 
     // corePurgeTask with force=true — the task branch doesn't exist so
     // git branch -D fails silently (.catch(() => {}) in the implementation).
@@ -131,11 +131,11 @@ describe('corePurgeTask — task.dropped emitted before DELETE', () => {
     })
     expect(evRow.rows.length).toBe(1)
     const eventTs = Number((evRow.rows[0] as unknown as { ts: number | bigint }).ts)
-    const afterSec = Math.floor(Date.now() / 1000)
+    const afterMs = Date.now()
     // Event was written during the purge call (ts ≥ before).
-    expect(eventTs).toBeGreaterThanOrEqual(beforeSec)
-    // Event ts ≤ afterSec — at or before the deletion timestamp.
-    expect(eventTs).toBeLessThanOrEqual(afterSec)
+    expect(eventTs).toBeGreaterThanOrEqual(beforeMs)
+    // Event ts ≤ afterMs — at or before the deletion timestamp.
+    expect(eventTs).toBeLessThanOrEqual(afterMs)
 
     // (b) Action-queue row is cleared by drainAlertDismissals consuming the task.dropped event.
     await ad.drainAlertDismissals(client)

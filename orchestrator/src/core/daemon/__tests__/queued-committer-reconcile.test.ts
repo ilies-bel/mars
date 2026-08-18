@@ -153,7 +153,8 @@ describe('queued-committer-reseed reconciler', () => {
 
     // A plain queued fix task with a blocked dependent but no recovery_payload.
     const origin = await queue.enqueueTask('plain-origin', undefined, { skipTriage: true })
-    const staleTime = new Date(Date.now() - 20 * 60_000).toISOString()
+    const staleTimeMs = Date.now() - 20 * 60_000
+    const staleTime = new Date(staleTimeMs).toISOString()
     const fixId = `fix-plain-${Math.random().toString(36).slice(2, 8)}`
     await queue.resolveQueueClient().execute({
       sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, origin_id, priority, created_at, updated_at) VALUES (?, ?, 'queued', 'fix', ?, ?, 0, ?, ?)`,
@@ -165,7 +166,7 @@ describe('queued-committer-reseed reconciler', () => {
     })
     await queue.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-      args: [origin.id, fixId, staleTime],
+      args: [origin.id, fixId, staleTimeMs],
     })
 
     const deps = makeDeps()

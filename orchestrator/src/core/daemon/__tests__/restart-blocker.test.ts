@@ -137,8 +137,8 @@ describe('coreRestartTask blocker invariant', () => {
     // was added after these edges appeared in production).
     await client.execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
-            VALUES (?, ?, 'confirmed', datetime('now'))`,
-      args: [origin.id, recovery.id],
+            VALUES (?, ?, 'confirmed', ?)`,
+      args: [origin.id, recovery.id, Date.now()],
     })
     await client.execute({
       sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
