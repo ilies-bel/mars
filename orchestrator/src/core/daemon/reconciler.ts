@@ -63,6 +63,17 @@ export interface ReconcileDeps {
    * not release a claim held by this process.
    */
   isProposalSliceInFlight?: (proposalId: string) => boolean
+  /**
+   * Reports whether a task id is currently owned by a live in-flight job in
+   * the daemon's tracker. Used by `phantom-in-flight-sweep` to avoid
+   * disturbing tasks that are actively being processed.
+   *
+   * At daemon boot the inFlight tracker is always empty, so the default
+   * (`() => false`) is correct: every in-flight-status row is phantom. When
+   * called from a live daemon's `mars sync` handler, the real tracker
+   * predicate is passed so active jobs are not re-queued mid-flight.
+   */
+  isInFlight?: (id: string) => boolean
 }
 
 /**
@@ -90,6 +101,13 @@ export interface ReconcileSummary {
   /** Tasks flipped from blocked→queued because they had zero live blocker edges. */
   orphanedBlockedRequeued: number
   runningRequeued: number
+  /**
+   * Tasks re-queued by the `phantom-in-flight-sweep` reconciler at daemon
+   * boot (or during a manual `mars sync`). A non-zero count indicates the
+   * daemon restarted with rows in an in-flight status but an empty inFlight
+   * tracker — the affected tasks were phantom and have been safely re-queued.
+   */
+  phantomInFlightRequeued: number
   orphanSpansSwept: number
   verifyingRequeued: number
   verifyingFailed: number
@@ -229,6 +247,7 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   terminalOriginChoresDropped: 0,
   orphanedBlockedRequeued: 0,
   runningRequeued: 0,
+  phantomInFlightRequeued: 0,
   orphanSpansSwept: 0,
   verifyingRequeued: 0,
   verifyingFailed: 0,

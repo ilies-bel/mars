@@ -4451,6 +4451,19 @@ export const startDaemon = async (
     } catch {
       // Non-fatal: daemon status continues without footprint.
     }
+    // Detect phantom in-flight rows: DB says tasks are in-flight but the
+    // tracker has no live jobs. This is the footprint of a prior daemon that
+    // was hard-stopped (mars daemon restart) and left rows in in-flight
+    // statuses. The boot reconcile re-queues them automatically; this warning
+    // surfaces the condition if it persists (e.g. the reconcile itself failed).
+    const inFlightCount = tracker.inFlightSnapshot().length
+    const phantomInFlightCount =
+      counts.running + counts.verifying + counts.merging + counts['vega-reconciling']
+    const phantomWarning =
+      phantomInFlightCount > 0 && inFlightCount === 0
+        ? `⚠ ${phantomInFlightCount} row(s) in in-flight status but 0 live jobs — phantom rows left by prior daemon may stall dispatch; run \`mars sync\` to re-queue them`
+        : null
+
     return {
       pid: process.pid,
       startedAt,
@@ -4464,6 +4477,7 @@ export const startDaemon = async (
       signatureStorm,
       draining: !acceptingWork,
       worktrees,
+      phantomWarning,
     }
   }
 
@@ -4477,6 +4491,10 @@ export const startDaemon = async (
       traceStore,
       handleProposalSlice,
       isProposalSliceInFlight: (proposalId) => proposalSliceRuns.has(proposalId),
+      // At boot the tracker is always empty, so every in-flight-status row is
+      // phantom. Pass the real predicate so mars sync (which reuses runSync)
+      // does not disturb rows owned by live jobs.
+      isInFlight: (id) => tracker.isInFlight(id),
     })
   }
 
@@ -4490,6 +4508,7 @@ export const startDaemon = async (
       traceStore,
       handleProposalSlice,
       isProposalSliceInFlight: (proposalId) => proposalSliceRuns.has(proposalId),
+      isInFlight: (id) => tracker.isInFlight(id),
     })
   }
 

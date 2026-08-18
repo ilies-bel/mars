@@ -47,6 +47,9 @@ describe('RECONCILERS registry', () => {
       'verifying-recovery',
       'merging-recovery',
       'vega-reconciling-recovery',
+      // Safety-net re-queue for any task still in an in-flight status after the
+      // specialized phase-recovery steps have run (incident 2026-08-17).
+      'phantom-in-flight-sweep',
       'stale-queued-merge-job-cancel',
       'stranded-slicing-proposal-reconcile',
       'stalled-proposal-slice',

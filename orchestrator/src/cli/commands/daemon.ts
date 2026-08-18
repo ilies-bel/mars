@@ -264,6 +264,7 @@ const daemonStatus: Command = {
       signatureStorm: { tripped: boolean; signature: string | null; streak: number; lastTaskId: string | null }
       draining?: boolean
       worktrees?: { count: number; totalBytes: number } | null
+      phantomWarning?: string | null
     }
     // Drain state takes precedence over pause and staleness notices. A draining
     // daemon is alive but winding down — the operator must not reach for
@@ -296,6 +297,9 @@ const daemonStatus: Command = {
     if (cap.reason !== null) deps.out(`            ${cap.reason}`)
     deps.out(`inFlight:   ${data.inFlight.length}`)
     for (const f of data.inFlight) deps.out(`  ${f.kind} ${f.taskId}`)
+    // Phantom in-flight warning: rows in in-flight status but no live jobs.
+    // Normally cleared by the boot reconcile; printed when they persist.
+    if (data.phantomWarning) deps.out(data.phantomWarning)
     // Worktree footprint — helps operators spot disk-space accumulation early.
     if (data.worktrees != null) {
       const mb = (data.worktrees.totalBytes / (1024 * 1024)).toFixed(1)

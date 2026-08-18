@@ -1030,3 +1030,258 @@ describe('runStartupReconcile — vega-reconciling-recovery integration', { time
     expect(summary.vegaReconcilingFinalized).toBe(0)
   })
 })
+
+/**
+ * Regression tests for the phantom-in-flight-sweep reconciler.
+ *
+ * Incident 2026-08-17: after `mars daemon restart` 14 tasks remained in
+ * 'verifying' status while the new daemon came up with an empty inFlight
+ * tracker. The full startup reconcile was aborting before reaching
+ * verifying-recovery (a transient error in an earlier step), leaving the
+ * phantom rows in place and stalling dispatch. `mars sync` fixed it; nothing
+ * pointed at the verb.
+ *
+ * Fix: (a) per-step try/catch in runStartupReconcile so no step aborts the
+ * pass, and (b) `phantom-in-flight-sweep` as a safety-net for rows that
+ * survive despite (a).
+ */
+describe('runStartupReconcile — phantom-in-flight-sweep', { timeout: 120_000 }, () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('boot reconcile clears phantom verifying rows — incident 2026-08-17 regression', async () => {
+    // Regression: N tasks left in 'verifying' by a prior daemon (phantom rows
+    // holding the implement cap) must be cleared by the boot reconcile pass so
+    // that eligible queued tasks can dispatch.
+    //
+    // In the test environment (no worktrees, no branches) verifyingRecovery
+    // processes these rows and marks them 'failed' (no worktree found, branch
+    // not merged) — freeing the implement cap. The phantom-in-flight-sweep
+    // then has no 'verifying' rows left and contributes 0; both steps together
+    // guarantee no 'verifying' row survives the pass.
+    const { q, reconcile } = await loadModules(repo)
+    const taskQueuedEvents: string[] = []
+    const bus = new EventEmitter()
+    bus.on('task.queued', (e: { taskId: string }) => taskQueuedEvents.push(e.taskId))
+
+    // Simulate: 3 tasks left in 'verifying' by a prior daemon (phantom rows).
+    const phantomIds: string[] = []
+    for (let i = 0; i < 3; i++) {
+      const t = await q.enqueueTask(`phantom verifying ${i}`, undefined, { skipTriage: true })
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'verifying' WHERE id = ?`,
+        args: [t.id],
+      })
+      phantomIds.push(t.id)
+    }
+
+    // Also create eligible queued tasks (the dispatch that was blocked).
+    const queued = await q.enqueueTask('eligible queued', undefined, { skipTriage: true })
+
+    const summary = await reconcile.runStartupReconcile({
+      log: () => {},
+      bus,
+      traceStore: null,
+      handleProposalSlice: null,
+    })
+
+    // All phantom verifying tasks must leave 'verifying' status — they were
+    // phantom (no real live job) and the boot reconcile must clear them.
+    for (const id of phantomIds) {
+      const updated = await q.getTask(id)
+      expect(updated?.status, `task ${id} should not still be verifying`).not.toBe('verifying')
+    }
+
+    // The eligible queued task must remain queued and receive a task.queued
+    // bus event so the dispatch loop can pick it up.
+    expect((await q.getTask(queued.id))?.status).toBe('queued')
+    expect(taskQueuedEvents).toContain(queued.id)
+
+    // Between verifyingRecovery and phantomInFlightSweep, all phantom rows
+    // must be accounted for.
+    const totalHandled =
+      (summary.verifyingFailed ?? 0) +
+      (summary.verifyingRequeued ?? 0) +
+      (summary.phantomInFlightRequeued ?? 0)
+    expect(totalHandled).toBeGreaterThanOrEqual(phantomIds.length)
+  })
+
+  it('phantom-in-flight-sweep re-queues orphaned in-flight rows in isolation', async () => {
+    // Isolation test for the phantom-in-flight-sweep reconciler itself.
+    // Calls the reconciler directly (bypassing earlier recovery steps) to verify
+    // it re-queues every in-flight-status row not owned by the tracker.
+    const { q } = await loadModules(repo)
+    const { RECONCILERS } = await import('../reconcilers')
+    const phantomSweep = RECONCILERS.find((r) => r.name === 'phantom-in-flight-sweep')
+    expect(phantomSweep).toBeDefined()
+
+    const taskQueuedEvents: string[] = []
+    const bus = new EventEmitter()
+    bus.on('task.queued', (e: { taskId: string }) => taskQueuedEvents.push(e.taskId))
+
+    // Seed 3 tasks directly in 'verifying' (simulating the incident).
+    const phantomIds: string[] = []
+    for (let i = 0; i < 3; i++) {
+      const t = await q.enqueueTask(`phantom verifying ${i}`, undefined, { skipTriage: true })
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'verifying' WHERE id = ?`,
+        args: [t.id],
+      })
+      phantomIds.push(t.id)
+    }
+
+    // A legitimately queued task — must remain untouched.
+    const queued = await q.enqueueTask('eligible queued', undefined, { skipTriage: true })
+
+    const result = await phantomSweep!.run({
+      log: () => {},
+      bus,
+      traceStore: null,
+      handleProposalSlice: null,
+      isInFlight: () => false, // empty tracker — all rows are phantom
+    })
+
+    // All phantom verifying tasks must be re-queued by the sweep.
+    for (const id of phantomIds) {
+      const updated = await q.getTask(id)
+      expect(updated?.status, `task ${id} should be queued`).toBe('queued')
+    }
+
+    // The eligible queued task must remain queued and untouched.
+    expect((await q.getTask(queued.id))?.status).toBe('queued')
+
+    // Summary counter must reflect the re-queued phantom rows.
+    expect(result.phantomInFlightRequeued).toBe(3)
+
+    // The bus must have received task.queued for each re-queued phantom row.
+    for (const id of phantomIds) {
+      expect(taskQueuedEvents, `task.queued for ${id}`).toContain(id)
+    }
+  })
+
+  it('phantom-in-flight-sweep handles all four in-flight statuses in isolation', async () => {
+    // The sweep must clear every in-flight status, not just 'verifying'.
+    const { q } = await loadModules(repo)
+    const { RECONCILERS } = await import('../reconcilers')
+    const phantomSweep = RECONCILERS.find((r) => r.name === 'phantom-in-flight-sweep')!
+
+    const taskQueuedEvents: string[] = []
+    const bus = new EventEmitter()
+    bus.on('task.queued', (e: { taskId: string }) => taskQueuedEvents.push(e.taskId))
+
+    const statuses = ['running', 'verifying', 'merging', 'vega-reconciling'] as const
+    const phantomIds: string[] = []
+    for (const status of statuses) {
+      const t = await q.enqueueTask(`phantom ${status}`, undefined, { skipTriage: true })
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = ? WHERE id = ?`,
+        args: [status, t.id],
+      })
+      phantomIds.push(t.id)
+    }
+
+    const result = await phantomSweep.run({
+      log: () => {},
+      bus,
+      traceStore: null,
+      handleProposalSlice: null,
+      isInFlight: () => false,
+    })
+
+    for (const id of phantomIds) {
+      expect((await q.getTask(id))?.status, `id=${id}`).toBe('queued')
+    }
+    expect(result.phantomInFlightRequeued).toBe(4)
+    for (const id of phantomIds) {
+      expect(taskQueuedEvents).toContain(id)
+    }
+  })
+
+  it('phantom-in-flight-sweep skips rows owned by a live job (isInFlight guard)', async () => {
+    // A row in 'verifying' that is still owned by a live job (isInFlight=true)
+    // must NOT be re-queued — the sweep must not disturb active work.
+    const { q } = await loadModules(repo)
+    const { RECONCILERS } = await import('../reconcilers')
+    const phantomSweep = RECONCILERS.find((r) => r.name === 'phantom-in-flight-sweep')!
+
+    const taskQueuedEvents: string[] = []
+    const bus = new EventEmitter()
+    bus.on('task.queued', (e: { taskId: string }) => taskQueuedEvents.push(e.taskId))
+
+    const liveTask = await q.enqueueTask('live verifying', undefined, { skipTriage: true })
+    const phantomTask = await q.enqueueTask('phantom verifying', undefined, { skipTriage: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'verifying' WHERE id = ?`,
+      args: [liveTask.id],
+    })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'verifying' WHERE id = ?`,
+      args: [phantomTask.id],
+    })
+
+    const result = await phantomSweep.run({
+      log: () => {},
+      bus,
+      traceStore: null,
+      handleProposalSlice: null,
+      // liveTask is "owned by a live job" — phantom sweep must not re-queue it.
+      isInFlight: (id) => id === liveTask.id,
+    })
+
+    // The live task must be untouched (still verifying).
+    expect((await q.getTask(liveTask.id))?.status).toBe('verifying')
+    // The phantom task must be re-queued.
+    expect((await q.getTask(phantomTask.id))?.status).toBe('queued')
+    // Only the phantom counted.
+    expect(result.phantomInFlightRequeued).toBe(1)
+    // Bus received task.queued only for the phantom.
+    expect(taskQueuedEvents).toContain(phantomTask.id)
+    expect(taskQueuedEvents).not.toContain(liveTask.id)
+  })
+
+  it('phantom-in-flight-sweep restores to blocked (not queued) when phantom has incomplete blockers', async () => {
+    // A phantom in-flight task with an incomplete blocker must be restored to
+    // 'blocked', not 'queued' — its dependency is still outstanding.
+    const { q } = await loadModules(repo)
+    const { RECONCILERS } = await import('../reconcilers')
+    const phantomSweep = RECONCILERS.find((r) => r.name === 'phantom-in-flight-sweep')!
+    const bus = new EventEmitter()
+    const taskQueuedEvents: string[] = []
+    bus.on('task.queued', (e: { taskId: string }) => taskQueuedEvents.push(e.taskId))
+
+    // A live blocker (queued — not done/dropped) blocks the phantom verifying task.
+    const blocker = await q.enqueueTask('live blocker', undefined, { skipTriage: true })
+    const phantom = await q.enqueueTask('phantom verifying with blocker', undefined, {
+      skipTriage: true,
+    })
+    await q.addBlockers(phantom.id, [blocker.id])
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'verifying' WHERE id = ?`,
+      args: [phantom.id],
+    })
+
+    const result = await phantomSweep.run({
+      log: () => {},
+      bus,
+      traceStore: null,
+      handleProposalSlice: null,
+      isInFlight: () => false,
+    })
+
+    // Task has an incomplete blocker → must land in 'blocked', not 'queued'.
+    expect((await q.getTask(phantom.id))?.status).toBe('blocked')
+    // No task.queued event for a blocked task.
+    expect(taskQueuedEvents).not.toContain(phantom.id)
+    // Blocked tasks do NOT count toward phantomInFlightRequeued.
+    expect(result.phantomInFlightRequeued).toBe(0)
+  })
+})

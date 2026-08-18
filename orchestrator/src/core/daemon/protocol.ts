@@ -261,6 +261,15 @@ export interface DaemonStatusPayload {
    * directory does not exist or the measurement failed.
    */
   worktrees: { count: number; totalBytes: number } | null
+  /**
+   * Non-null when the daemon has rows in an in-flight status
+   * ('running', 'verifying', 'merging', 'vega-reconciling') but zero live
+   * jobs in the inFlight tracker. This is the symptom of phantom rows left
+   * by a prior daemon hard-stop. The boot reconcile normally clears them;
+   * this field is populated when they persist so `mars daemon status` can
+   * surface the remediation hint.
+   */
+  phantomWarning: string | null
 }
 
 const NEWLINE = 0x0a

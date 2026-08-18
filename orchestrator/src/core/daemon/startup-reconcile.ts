@@ -159,11 +159,12 @@ export const reconcileMergeJobs = async (deps: {
  * 11. Workflow-install drift — raise one operator alert for every bundled
  *     Workflow missing from `.mars/workflows`, or resolve it once restored.
  *
- * Error semantics are preserved verbatim from the original hand-called
- * sequence: steps 1, 2, 3, 4, 7 and 10 swallow their own errors (log + continue);
- * steps 5, 6, 8 and 9 do not, so a throw inside them rejects the whole pass.
- * This orchestrator therefore does NOT add a blanket per-step try/catch —
- * each step owns its error policy.
+ * Error semantics: each step is wrapped in a per-step try/catch so a failure
+ * in one step (e.g. a transient DB error in requeue-stale-running) cannot
+ * prevent later steps (e.g. verifying-recovery, phantom-in-flight-sweep) from
+ * running. Individual steps still catch and swallow their own errors where
+ * appropriate; this outer guard is the safety net that ensures the whole pass
+ * completes rather than aborting at the first failing step.
  */
 export const runStartupReconcile = async (
   deps: StartupReconcileDeps,
@@ -171,8 +172,14 @@ export const runStartupReconcile = async (
   const summary = emptyReconcileSummary()
 
   for (const reconciler of RECONCILERS) {
-    const result = await reconciler.run(deps)
-    Object.assign(summary, result)
+    try {
+      const result = await reconciler.run(deps)
+      Object.assign(summary, result)
+    } catch (err) {
+      deps.log(
+        `[reconcile] step ${reconciler.name} failed: ${(err as Error).message}`,
+      )
+    }
   }
 
   return summary

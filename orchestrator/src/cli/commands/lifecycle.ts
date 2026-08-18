@@ -399,6 +399,12 @@ const printReconcile = (
     deps.out(`  merging finalized to done: ${summary.mergingFinalized}`)
   if (summary.mergingRequeued > 0)
     deps.out(`  merging re-queued: ${summary.mergingRequeued}`)
+  if (summary.phantomInFlightRequeued > 0)
+    deps.out(
+      `  phantom in-flight re-queued: ${summary.phantomInFlightRequeued} ` +
+        '(rows left in an in-flight status by a prior daemon; the specialized ' +
+        'phase-recovery steps above missed them, so this safety net caught them)',
+    )
   if (summary.stalledProposalsSliced > 0) deps.out(slicedLabel)
   const anyWork =
     summary.daemonKilledAlerts +
@@ -411,6 +417,7 @@ const printReconcile = (
       summary.verifyingFailed +
       summary.mergingFinalized +
       summary.mergingRequeued +
+      summary.phantomInFlightRequeued +
       summary.stalledProposalsSliced >
     0
   if (!anyWork) deps.out('  nothing to reconcile — queue is consistent')
@@ -460,7 +467,8 @@ const sync: Command = {
       summary.orphanedBlockedRequeued +
         summary.runningRequeued +
         summary.verifyingRequeued +
-        summary.mergingRequeued >
+        summary.mergingRequeued +
+        summary.phantomInFlightRequeued >
       0
     ) {
       deps.out(

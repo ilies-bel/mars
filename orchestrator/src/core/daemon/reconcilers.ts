@@ -15,7 +15,7 @@
  * that never reach those steps (e.g. the standalone `mars sync` path).
  */
 
-import { listTasks } from '../queue'
+import { hasIncompleteBlockers, listTasks, updateTask } from '../queue'
 import { getDefaultDomainTaskStore } from '../store/task-store'
 import { listProposals, revertSlicingProposalToReady } from '../proposals'
 import { sweepOrphanRunningSpans } from '../lib/trace-events-store'
@@ -632,6 +632,88 @@ const queuedCommitterReseed: Reconciler = {
 }
 
 /**
+ * 9c-post. Phantom in-flight sweep — safety-net re-queue for any task whose
+ *     DB status is still in an in-flight set ('running', 'verifying',
+ *     'merging', 'vega-reconciling') after the specialized phase-recovery
+ *     steps have run.
+ *
+ *     Runs AFTER verifying-recovery / merging-recovery / vega-reconciling-
+ *     recovery so those steps get first crack with their full worktree checks.
+ *     When they succeed this step is a no-op (no rows left in in-flight
+ *     status). When one of them fails (e.g. a transient DB error caught by the
+ *     per-step try/catch in runStartupReconcile), this step re-queues the
+ *     surviving phantom rows so dispatch is never permanently stalled.
+ *
+ *     Motivation (incident 2026-08-17): after `mars daemon restart` 14 rows
+ *     remained in 'verifying'. The full startup reconcile aborted before
+ *     reaching verifying-recovery; `mars sync` fixed it but nothing pointed at
+ *     the verb. Fix: (a) per-step try/catch in runStartupReconcile so no step
+ *     aborts the pass, and (b) this safety-net step for any rows that survive
+ *     despite (a).
+ *
+ *     This step catches and swallows its own errors so it never prevents the
+ *     reconcile from completing.
+ *
+ *     Safety: `deps.isInFlight` (default `() => false`) gates re-queuing —
+ *     a task actively owned by a live job is never re-queued mid-flight.
+ *     At daemon boot the tracker is always empty, so the default is correct.
+ *     A live `mars sync` call passes the real tracker predicate.
+ */
+const phantomInFlightSweep: Reconciler = {
+  name: 'phantom-in-flight-sweep',
+  async run({ log, bus, isInFlight = () => false }) {
+    const IN_FLIGHT_STATUSES = [
+      'running',
+      'verifying',
+      'merging',
+      'vega-reconciling',
+    ] as const
+    const CLEARED_INFLIGHT = {
+      branch: null,
+      worktreePath: null,
+      claudeSessionId: null,
+      error: null,
+      failedPhase: null,
+    } as const
+    try {
+      let requeued = 0
+      for (const status of IN_FLIGHT_STATUSES) {
+        const tasks = await listTasks(status)
+        for (const task of tasks) {
+          if (isInFlight(task.id)) continue // owned by a live job — leave it alone
+          const hasBlockers = await hasIncompleteBlockers(task.id).catch(() => false)
+          await updateTask(task.id, {
+            status: hasBlockers ? 'blocked' : 'queued',
+            ...CLEARED_INFLIGHT,
+          }).catch((err: unknown) => {
+            log(
+              `[reconcile] phantom-in-flight-sweep: updateTask ${task.id} failed: ${
+                (err as Error).message
+              }`,
+            )
+          })
+          if (!hasBlockers) {
+            bus.emit('task.queued', { taskId: task.id })
+            requeued++
+          }
+        }
+      }
+      if (requeued > 0) {
+        log(
+          `[reconcile] phantom-in-flight-sweep: ${requeued} phantom in-flight task(s) re-queued (stale rows left by prior daemon)`,
+        )
+      }
+      return { phantomInFlightRequeued: requeued }
+    } catch (err) {
+      log(
+        `[reconcile] phantom-in-flight-sweep failed: ${(err as Error).message}`,
+      )
+      return {}
+    }
+  },
+}
+
+/**
  * 5. Requeue stale-running — tasks that were `running` when the prior daemon
  *    died are re-queued from setup (no retry budget burn). Must run BEFORE
  *    reseed-dispatch so that orphaned 'running' rows are converted to 'queued'
@@ -1187,6 +1269,7 @@ export const RECONCILERS: readonly Reconciler[] = [
   verifyingRecovery,
   mergingRecovery,
   vegaReconcilingRecovery,
+  phantomInFlightSweep,
   staleQueuedMergeJobCancel,
   strandedSlicingProposalReconcile,
   stalledProposalSlice,
