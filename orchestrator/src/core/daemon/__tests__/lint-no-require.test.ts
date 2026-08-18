@@ -16,6 +16,9 @@
  * Exceptions:
  *   - `createRequire(` — the ESM-sanctioned way to obtain a require function
  *     (used in node-sqlite.ts to work around a vitest/vite limitation).
+ *   - `<obj>.require(` — a member call on an unrelated object (the Worker and
+ *     provider registries expose a `require(name)` lookup method); it is a
+ *     property access, not the CommonJS global.
  *   - Occurrences inside template literals or string literals that contain
  *     sub-scripts (script bodies spawned as child processes) — filtered by
  *     the regex below which only matches assignment-form requires.
@@ -88,8 +91,14 @@ function hasBareRequire(line: string): boolean {
   const firstToken = trimmed[0]
   if (firstToken === '"' || firstToken === "'" || firstToken === '`') return false
 
-  // Match `require(` where it is NOT preceded by `create` (i.e. not `createRequire(`).
-  return /(?<!create)require\(/.test(codeOnly)
+  // Match a *bare* `require(` — one that starts an identifier and is not a
+  // member access. The lookbehind rejects:
+  //   - `.require(`  — a method on some object (e.g. `registry.require(name)`
+  //                    in worker-registry.ts / provider-registry.ts), which has
+  //                    nothing to do with CommonJS and is perfectly valid ESM;
+  //   - `createRequire(` / any `<word>require(` — the sanctioned ESM workaround
+  //     and any other identifier merely ending in "require".
+  return /(?<![.\w$])require\(/.test(codeOnly)
 }
 
 describe('lint: no bare require() in production source files', () => {

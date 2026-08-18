@@ -48,8 +48,18 @@ vi.mock('../chat-shell', () => ({ runShellCommand: vi.fn() }))
 vi.mock('../../lib/chat-store', () => ({
   appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: 0, kind: 'acknowledgment', backing_entity_id: null }),
   getThread: vi.fn(),
+  listMainSessionMessages: vi.fn().mockResolvedValue([]),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
+}))
+
+// The Main-session memory window is a DB-backed seam; these are unit tests with
+// no state client, so stub it to "no cut, empty prefix".
+vi.mock('../chat-memory-window', () => ({
+  readMainMemoryWindow: vi.fn().mockResolvedValue({ startsAfterSeq: 0, lastUsedAt: null, cutAt: null, reason: null }),
+  selectMemoryCut: vi.fn().mockResolvedValue(null),
+  advanceMainMemoryWindow: vi.fn().mockResolvedValue(undefined),
+  markMainMemoryWindowUsed: vi.fn().mockResolvedValue(undefined),
 }))
 
 const codexApi = await import('../codex-api')

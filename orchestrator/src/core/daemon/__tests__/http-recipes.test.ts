@@ -89,7 +89,8 @@ describe('GET /recipes', () => {
         source: 'built-in' | 'override'
       }>
       expect(Array.isArray(body)).toBe(true)
-      // All slice-E built-ins plus slice-F.2's `main-commiter`.
+      // All slice-E built-ins plus slice-F.2's `main-commiter` and the
+      // `merge:crashed`/`watchdog-*` recipe `merge-watchdog-continue`.
       const names = body.map((e) => e.name).sort()
       expect(names).toEqual(
         [
@@ -98,6 +99,7 @@ describe('GET /recipes', () => {
           'lint-autofix',
           'main-commiter',
           'merge-aborter',
+          'merge-watchdog-continue',
           'prompt-tightener',
           'scope-narrower',
           'test-repairer',

@@ -52,9 +52,17 @@ vi.mock('../chat-mcp', () => ({
   },
 }))
 
-vi.mock('../../lib/git/claude', () => ({
-  buildWorkerEnv: vi.fn(() => ({})),
-  runSubprocessStreaming: vi.fn(),
+// The `shell` chat tool bottoms out in runShellCommand, which spawns a real
+// `/bin/zsh -lc`. Stub it so the scripted turns never touch the host.
+vi.mock('../chat-shell', () => ({ runShellCommand: vi.fn() }))
+
+// The Main-session memory window is a DB-backed seam; these are unit tests with
+// no state client, so stub it to "no cut, empty prefix".
+vi.mock('../chat-memory-window', () => ({
+  readMainMemoryWindow: vi.fn(async () => ({ startsAfterSeq: 0, lastUsedAt: null, cutAt: null, reason: null })),
+  selectMemoryCut: vi.fn(async () => null),
+  advanceMainMemoryWindow: vi.fn(async () => {}),
+  markMainMemoryWindowUsed: vi.fn(async () => {}),
 }))
 
 const queue = vi.hoisted(() => ({
@@ -75,6 +83,7 @@ const store = vi.hoisted(() => ({
   posture: 'triage' as 'triage' | 'grill',
   appendMessage: vi.fn(),
   getThread: vi.fn(),
+  listMainSessionMessages: vi.fn(async () => []),
   setThreadPosture: vi.fn(),
   setThreadStatus: vi.fn(),
   updateThreadTitle: vi.fn(),

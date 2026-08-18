@@ -148,8 +148,8 @@ describe('RPC registry', () => {
     // (35 + preview.spawn + preview.status + preview.teardown + merge.cancel
     //  + spend-control.show + spend-control.set + apply-lever + task.contextForWorker
     //  + mcp.audit.append + set-dispatch + reset-breaker + vision-write
-    //  + adr-supersede + task.set-verify).
-    expect(rpcRegistry.size).toBe(51)
+    //  + adr-supersede + task.set-verify + step.abort).
+    expect(rpcRegistry.size).toBe(52)
   })
 
   it('rejects duplicate ops', () => {

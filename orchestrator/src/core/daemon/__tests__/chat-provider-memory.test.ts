@@ -19,10 +19,13 @@ vi.mock('../chat-mcp', () => ({
 }))
 
 const originalChatModel = process.env.MARS_CHAT_MODEL
+const originalProvider = process.env.MARS_WORKER_PROVIDER
 
 afterEach(() => {
   if (originalChatModel === undefined) delete process.env.MARS_CHAT_MODEL
   else process.env.MARS_CHAT_MODEL = originalChatModel
+  if (originalProvider === undefined) delete process.env.MARS_WORKER_PROVIDER
+  else process.env.MARS_WORKER_PROVIDER = originalProvider
 })
 
 describe('ChatRunner provider memory', () => {
@@ -38,6 +41,11 @@ describe('ChatRunner provider memory', () => {
   })
 
   it('fails explicitly when the selected provider has no facts for the configured chat model', async () => {
+    // Pin the provider: `MARS_CHAT_MODEL` is only consulted on the Codex path,
+    // and without this the repo's `.mars/daemon.json` `defaultProvider` decides
+    // which provider the runner resolves — making the assertion pass or fail
+    // depending on the host's operator config rather than on the code.
+    process.env.MARS_WORKER_PROVIDER = 'codex'
     process.env.MARS_CHAT_MODEL = 'not-a-provider-model'
 
     expect(() => new ChatRunner()).toThrow(

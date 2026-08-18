@@ -52,30 +52,39 @@ vi.mock('../chat-mcp', () => ({
   },
 }))
 
-vi.mock('../../lib/git/claude', () => ({
-  buildWorkerEnv: vi.fn(() => ({})),
-  runSubprocessStreaming: vi.fn(),
-}))
+// The `shell` chat tool bottoms out in runShellCommand, which spawns a real
+// `/bin/zsh -lc`. Stub it so the scripted turns never touch the host.
+vi.mock('../chat-shell', () => ({ runShellCommand: vi.fn() }))
 
 const store = vi.hoisted(() => ({
   posture: 'triage' as 'triage' | 'grill',
   appendMessage: vi.fn(),
   getThread: vi.fn(),
+  listMainSessionMessages: vi.fn(async () => []),
   setThreadPosture: vi.fn(),
   setThreadStatus: vi.fn(),
   updateThreadTitle: vi.fn(),
 }))
 vi.mock('../../lib/chat-store', () => store)
 
+// The Main-session memory window is a DB-backed seam; these are unit tests with
+// no state client, so stub it to "no cut, empty prefix".
+vi.mock('../chat-memory-window', () => ({
+  readMainMemoryWindow: vi.fn(async () => ({ startsAfterSeq: 0, lastUsedAt: null, cutAt: null, reason: null })),
+  selectMemoryCut: vi.fn(async () => null),
+  advanceMainMemoryWindow: vi.fn(async () => {}),
+  markMainMemoryWindowUsed: vi.fn(async () => {}),
+}))
+
 const codexApi = await import('../codex-api')
 const chatSkills = await import('../chat-skills')
-const { runSubprocessStreaming } = await import('../../lib/git/claude')
+const { runShellCommand } = await import('../chat-shell')
 
 const mockStream = codexApi.streamCodexResponse as unknown as MockInstance<
   (opts: StreamCodexResponseOpts) => Promise<void>
 >
-const mockShell = runSubprocessStreaming as unknown as MockInstance<
-  (cmd: string, args: readonly string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
+const mockShell = runShellCommand as unknown as MockInstance<
+  (command: string, cwd: string, signal: AbortSignal) => Promise<{ exitCode: number; stdout: string; stderr: string }>
 >
 
 const streamEmitting = (...events: unknown[]) => async (opts: StreamCodexResponseOpts): Promise<void> => {
@@ -119,7 +128,7 @@ describe('ChatRunner posture', () => {
       'small', 'assistant', 'Queued task-1.', expect.anything(),
     ))
     expect(store.posture).toBe('triage')
-    expect(mockShell.mock.calls.filter(([, args]) => args[1]?.startsWith('mars task add'))).toHaveLength(1)
+    expect(mockShell.mock.calls.filter(([command]) => command.startsWith('mars task add'))).toHaveLength(1)
   })
 
   it('persists grill posture and announces the shift when the agent judges an ask hard', async () => {
