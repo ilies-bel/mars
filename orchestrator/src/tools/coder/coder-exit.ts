@@ -49,6 +49,9 @@ import {
   CODER_UNCOMMITTED_STEP,
   CONTEXT_EXHAUSTED_ABORT_MESSAGE,
   QUOTA_REJECTED_ABORT_MESSAGE,
+  POST_CODER_CLASSIFIER_ERROR_ABORT_MESSAGE,
+  POST_CODER_CLASSIFIER_ERROR_SIGNATURE,
+  POST_CODER_CLASSIFIER_ERROR_STEP,
 } from '../../workflows/primitives/shared'
 import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -661,7 +664,86 @@ export const enforceCoderCommitContract = async (args: {
           `[post-coder] task ${taskId}: coder committed ${correctedState.commitsAhead} change(s) on corrective turn`,
         )
       } else if (correctedState.kind === 'error') {
-        console.warn(`[post-coder] task ${taskId}: corrective classifier error: ${correctedState.error}`)
+        console.warn(
+          `[post-coder] task ${taskId}: corrective classifier error: ${correctedState.error}; retrying once`,
+        )
+        // Retry once — the observed rev-list failure was transient (the same
+        // probe succeeded minutes earlier in the same worktree and `main` was
+        // present throughout). One bounded retry covers the common transient-git-
+        // hiccup case without masking a persistent failure.
+        const retryState = await detectPostCoderState({
+          worktreePath,
+          integrationBranch,
+          traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+        })
+        if (retryState.kind !== 'error') {
+          // Retry succeeded — update postState normally.
+          if (retryState.kind === 'clean-with-commits') {
+            postState = retryState
+            commitSource = 'corrected'
+            console.log(
+              `[post-coder] task ${taskId}: retry classifier: coder committed ${retryState.commitsAhead} change(s) on corrective turn`,
+            )
+          } else {
+            postState = retryState
+            console.warn(
+              `[post-coder] task ${taskId}: retry classifier: corrective turn exited ${correction.exitCode} without a commit; using the auto-commit net`,
+            )
+          }
+        } else {
+          // Both the initial and retry classifications failed. Carrying the
+          // stale pre-correction snapshot forward risks reporting dirty-file
+          // counts that are no longer true (the corrective turn may have
+          // committed all of them). Fail with a distinct, honest signature
+          // so the operator can inspect the worktree rather than restarting
+          // (which discards potentially-committed work).
+          const classifierError = retryState.error
+          const errorMsg = POST_CODER_CLASSIFIER_ERROR_ABORT_MESSAGE(
+            taskId,
+            classifierError,
+            worktreePath,
+          )
+          console.error(
+            `[post-coder] task ${taskId}: classifier retry also failed (${classifierError}); refusing to use stale pre-correction state`,
+          )
+          await updateTask(
+            taskId,
+            {
+              status: 'failed',
+              error: errorMsg,
+              failedPhase: 'code',
+              failureReason: POST_CODER_CLASSIFIER_ERROR_STEP,
+              failureSignature: POST_CODER_CLASSIFIER_ERROR_SIGNATURE,
+              failureReasonCode: POST_CODER_CLASSIFIER_ERROR_SIGNATURE,
+            },
+            store,
+          )
+          await raiseActionQueueItem({
+            kind: 'failed',
+            category: 'orchestrator',
+            priority: 'high',
+            title: `Post-coder classifier failed for task ${taskId}: worktree state unknown after corrective turn`,
+            body: errorMsg,
+            payload: {
+              taskId,
+              worktreePath,
+              classifierError,
+            },
+            context: { repoRoot: process.env.MARS_REPO ?? null },
+            raisedBy: 'workflow:code:post-coder-classifier-error',
+            signature: `post-coder-classifier-error:${taskId}`,
+            originTaskId: taskId,
+          }).catch((raiseErr) => {
+            console.error(
+              `[post-coder] task ${taskId}: action-queue raise for classifier error errored:`,
+              raiseErr,
+            )
+          })
+          throw new WorkflowTerminalError(
+            'post-coder-classifier-error',
+            errorMsg,
+          )
+        }
       } else {
         postState = correctedState
         console.warn(
