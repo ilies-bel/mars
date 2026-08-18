@@ -242,12 +242,30 @@ describe('WORKER_CONFIGS provider field', () => {
     }
   })
 
-  it("all Workers use the global default provider 'codex'", () => {
+  it('all Workers are un-pinned: every one inherits the same resolved default provider', () => {
     // RescueOperator (8th) added in PRD 94e2a82a; update this count if more workers are added.
     expect(workerNames).toHaveLength(8)
+    // Deliberately does not assert which provider is active — `defaultProvider`
+    // in .mars/daemon.json is a legitimate, machine-local operator setting
+    // (see resolveWorkerProvider in providers.ts). The invariant under test is
+    // that no built-in Worker carries its own provider pin: they all resolve
+    // to whatever the ambient default is, so they share exactly one provider
+    // and their models all come from that provider's own model table.
+    const providers = new Set(workerNames.map((name) => WORKER_CONFIGS[name].provider))
+    expect(providers.size).toBe(1)
+    const [resolvedProvider] = [...providers]
+
+    const modelPatternByProvider: Record<string, RegExp> = {
+      codex: /^gpt-5\.6-/,
+      claude: /^claude-/,
+      gemini: /^gemini-/,
+    }
+    const pattern = modelPatternByProvider[resolvedProvider]
+    expect(pattern, `no known model pattern for provider '${resolvedProvider}'`).toBeDefined()
+
     for (const name of workerNames) {
-      expect(WORKER_CONFIGS[name].provider).toBe('codex')
-      expect(WORKER_CONFIGS[name].model).toMatch(/^gpt-5\.6-/)
+      expect(WORKER_CONFIGS[name].provider).toBe(resolvedProvider)
+      expect(WORKER_CONFIGS[name].model).toMatch(pattern)
     }
   })
 })
