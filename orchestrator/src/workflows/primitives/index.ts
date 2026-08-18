@@ -148,6 +148,7 @@ import {
   POST_CODER_CLASSIFIER_ERROR_STEP,
 } from './shared'
 import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
+import { RESCUE_OPERATOR_TAG } from '../../core/rescue-operator-spawn'
 import { loadDeployConfig, DeployConfigError } from '../../core/lib/deployment/config'
 import { getProvider } from '../../core/lib/deployment/registry'
 import type { DeployResult } from '../../core/lib/deployment/provider'
@@ -1012,6 +1013,37 @@ export const setupWorktree = async (
             throw new WorkflowTerminalError(
               'setup-dirty-integration',
               `Task ${taskId}: ${dirtyMsg} — task failed`,
+            )
+          }
+        }
+      }
+
+      // Guard: rescue-operator tasks become obsolete when their arc origin
+      // reaches 'done' after the rescue was enqueued. Between spawn time and
+      // this dispatch point, a concurrent recovery can settle the arc — there
+      // is then no valid RescueVerdict the worker can emit (restart, continue,
+      // and supersede all presuppose a still-failing arc). Drop the rescue
+      // cleanly here rather than running the RescueOperator Worker.
+      //
+      // Mirrors the analogous origin-terminal guard in `attachOriginWorktreeForFix`
+      // (see lines above) for kind='fix' recovery tasks.
+      //
+      // Observed 2026-08-18: rescue mars-68b1b5ac was dispatched after its arc
+      // origin mars-291a4dc0 had already reached 'done', leaving the worker no
+      // valid verdict to emit. The recovery (fix-0e4937b8) had to land an empty
+      // commit to exit cleanly.
+      {
+        const selfTask = await store.getTask(taskId).catch(() => null)
+        if (selfTask?.tags?.includes(RESCUE_OPERATOR_TAG) && selfTask.originId !== taskId) {
+          const arcOrigin = await getTask(selfTask.originId, store)
+          if (arcOrigin?.status === 'done') {
+            await updateTask(taskId, { status: 'dropped', dropReason: 'origin-succeeded' }, store)
+            console.info(
+              `[setup] rescue-operator ${taskId} dropped — arc origin ${selfTask.originId} already done`,
+            )
+            throw new WorkflowTerminalError(
+              'origin-terminal',
+              `Rescue-operator ${taskId} dropped: arc origin ${selfTask.originId} is already done`,
             )
           }
         }
