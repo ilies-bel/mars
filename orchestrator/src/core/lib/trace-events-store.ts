@@ -42,6 +42,7 @@ export const TRACE_EVENT_KINDS = [
   'index-card.attached',
   'merge-idempotent-skip',
   'merge-heartbeat',
+  'code-retry-attempt',
 ] as const
 
 export type TraceEventKind = (typeof TRACE_EVENT_KINDS)[number]

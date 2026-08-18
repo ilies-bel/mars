@@ -163,6 +163,7 @@ import { readFile } from 'node:fs/promises'
 import { distillObservation } from '../../core/lib/distill/observation'
 import { loadOrBuildIndexCard } from '../../core/lib/index-card/cache.js'
 import { MERGE_IDEMPOTENT_TERMINAL_STATUSES } from '../../tools/merge/merge.js'
+import { classifyCoderExitDisposition } from '../../tools/coder/coder-exit'
 
 // ---------------------------------------------------------------------------
 // Session-key construction (exported for regression tests)
@@ -1737,42 +1738,84 @@ export const runAgent = async (
   // UUID via toClaudeSessionId (PTY in providers.ts, headless/stream in
   // claudeStreamArgs) before it reaches `claude --session-id`, so a non-UUID
   // key is acceptable here.
-  const sessionKey = buildSessionKey(taskId)
 
-  const r = await runWorkerWithSpan({
-    worker,
-    prompt: fullPrompt,
-    runOptions: {
-      cwd: worktreePath,
-      sessionId: sessionKey,
-      systemPrompt: resolveWorkerSystemPrompt(primaryTag),
-      onEvent: async (event) => {
-        emit?.(event)
+  // At-most-two-attempt retry loop for retryable-transient exits (e.g. SIGKILL
+  // or startup failure before provider contact). On attempt 1 a retryable exit
+  // re-derives a fresh session key and re-dispatches the coder; on attempt 2 (or
+  // for any terminal disposition on attempt 1) the existing recovery handlers
+  // below fire unchanged. Operator stops, context-exhausted, and quota-rejected
+  // are all terminal and fall straight through — the loop is a thin guard, not a
+  // redesign of the error-handling below it.
+  let sessionKey = buildSessionKey(taskId)
+  // TypeScript cannot statically prove the loop body runs at least once (attempt
+  // starts at 1, condition 1 <= 2 is always true on the first check). The
+  // definite-assignment assertion `!` is correct: `r` is always assigned before
+  // any post-loop read.
+  let r!: Awaited<ReturnType<typeof runWorkerWithSpan>>
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    if (attempt > 1) sessionKey = buildSessionKey(taskId)
+    r = await runWorkerWithSpan({
+      worker,
+      prompt: fullPrompt,
+      runOptions: {
+        cwd: worktreePath,
+        sessionId: sessionKey,
+        systemPrompt: resolveWorkerSystemPrompt(primaryTag),
+        onEvent: async (event) => {
+          emit?.(event)
+        },
+        // Wire the spawn-time PID callback so the phantom-task watchdog can
+        // switch from the bare wall-clock ceiling (no-PID path, case a) to the
+        // alive-PID + heartbeat path (case b/c), preventing false ceiling kills
+        // of legitimately long-running coders.
+        onPid: ctx.services.onPid,
+        externalAbort: ctx.signal,
       },
-      // Wire the spawn-time PID callback so the phantom-task watchdog can
-      // switch from the bare wall-clock ceiling (no-PID path, case a) to the
-      // alive-PID + heartbeat path (case b/c), preventing false ceiling kills
-      // of legitimately long-running coders.
-      onPid: ctx.services.onPid,
-      externalAbort: ctx.signal,
-    },
-    traceStore: spanStore(trace),
-    stepName: 'run-claude-code',
-    workflowInstanceId: trace.workflowInstanceId,
-    originId,
-    taskId,
-    phase: 'code',
-    // Fix (recovery) tasks run flagship so high-risk repair has the
-    // strongest model available. Regular coder tasks inherit whatever
-    // modelTier the caller declared (opts.modelTier); when absent the
-    // Worker's own pinned tier applies.
-    modelTier: kind === 'fix' ? 'flagship' : undefined,
-  })
+      traceStore: spanStore(trace),
+      stepName: 'run-claude-code',
+      workflowInstanceId: trace.workflowInstanceId,
+      originId,
+      taskId,
+      phase: 'code',
+      // Fix (recovery) tasks run flagship so high-risk repair has the
+      // strongest model available. Regular coder tasks inherit whatever
+      // modelTier the caller declared (opts.modelTier); when absent the
+      // Worker's own pinned tier applies.
+      modelTier: kind === 'fix' ? 'flagship' : undefined,
+    })
 
-  // A task stop is an operator decision, not a coder failure. Bail out before
-  // the ordinary non-zero-exit recovery path can stamp or recover the task;
-  // the daemon already marked it failed with failureReason='cancelled'.
-  if (ctx.signal.aborted) throw new Error(`task ${taskId} stopped by operator`)
+    // A task stop is an operator decision, not a coder failure. Bail out before
+    // the ordinary non-zero-exit recovery path can stamp or recover the task;
+    // the daemon already marked it failed with failureReason='cancelled'.
+    if (ctx.signal.aborted) throw new Error(`task ${taskId} stopped by operator`)
+
+    // Classify the exit. Operator abort is already handled above so `aborted`
+    // is always false here — pass it explicitly for clarity and purity.
+    const disposition = classifyCoderExitDisposition({ r, aborted: false })
+    if (disposition.kind === 'retryable-transient' && attempt === 1) {
+      // Environmental kill or startup failure before any provider contact. The
+      // worktree is untouched so a single re-dispatch on a fresh session key is
+      // safe. Record a trace event so the action-queue and reflect signals can
+      // observe the retry before it happens.
+      trace.traceStore
+        .record({
+          kind: 'code-retry-attempt',
+          taskId,
+          originId,
+          phase: 'code',
+          payload: { reason: disposition.reason, attempt: 2, sessionKey },
+        })
+        .catch(() => {
+          // Telemetry is best-effort — a DB hiccup must never change the result.
+        })
+      continue
+    }
+
+    // Any other disposition (success, terminal-recovery on attempt 1, any exit
+    // on attempt 2) falls through to the existing handlers below.
+    break
+  }
 
   // Context-budget hard abort: spawn a resume fix-task and throw the sentinel.
   if (r.exitCode === 138 && r.stderr.includes('context budget exhausted')) {
