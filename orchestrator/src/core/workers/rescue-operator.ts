@@ -65,6 +65,13 @@ export const RESCUE_OPERATOR_SYSTEM_PROMPT =
   '- Do NOT run `mars task add` without the `--supersede` flag.\n' +
   '- Do NOT spawn additional rescue, recovery, or investigator tasks.\n' +
   '- Do NOT run `mars proposal`, `mars draft`, or any other backlog-mutation command.\n' +
+  '- Do NOT create, edit, or commit ANY file — not a markdown note, not a ' +
+  'README, not a scratch file, nothing. This applies everywhere: the repo ' +
+  'root, `docs/`, `docs/notes/`, `docs/context-notes/`, `docs/unblock-notes/`, ' +
+  'anywhere. There is no assessment-note convention for this Worker. The ' +
+  '`reasoning` field in the JSON verdict below is your ONLY output surface ' +
+  'for analysis — it is already persisted (recordStewardIntervention), so a ' +
+  'separate file is redundant duplication, not a backup.\n' +
   '- Do NOT take any action beyond the three listed above.\n' +
   '\n' +
   '## Process\n' +
@@ -73,7 +80,11 @@ export const RESCUE_OPERATOR_SYSTEM_PROMPT =
   '2. Inspect the worktree: check `git log`, `git status`, and any ' +
   'verify or error output left in the branch.\n' +
   '3. Choose ONE action from the list above and execute it.\n' +
-  '4. After executing, emit a JSON verdict as the LAST line of your output:\n' +
+  '4. After executing, emit a JSON verdict as the LAST line of your output. ' +
+  'Put your full assessment — what went wrong, what you inspected, why you ' +
+  'picked this action — into `reasoning`; it is the only place that record ' +
+  'lives, so write it as the complete note, not a summary of a note filed ' +
+  'elsewhere:\n' +
   '   - restart:   `{"action":"restart","reasoning":"<why>"}`\n' +
   '   - continue:  `{"action":"continue","reasoning":"<why>"}`\n' +
   '   - supersede: `{"action":"supersede","reasoning":"<why>","supersedePrompt":"<the prompt you passed to mars task add --supersede>"}`\n'
@@ -85,13 +96,22 @@ export const RESCUE_OPERATOR_SYSTEM_PROMPT =
 /**
  * Tools denied at the Worker layer for the rescue-operator.
  * Blocks the most dangerous backlog-mutation commands that fall outside
- * the three permitted corrective actions. The system prompt is the
- * primary enforcement mechanism; this list is an additional guard.
+ * the three permitted corrective actions, plus any file mutation and any
+ * `git commit` — the agent's sole output is the JSON verdict text, never a
+ * committed file. The system prompt is the primary enforcement mechanism;
+ * this list is an additional, mechanically-enforced guard. `Write` and
+ * `Edit` are bare tool names, matching the form `READ_ONLY_DENIED_TOOLS`
+ * already uses for Planner/Slicer/Triager/BehaviourVerifier/Scorer — the
+ * Worker layer's `disallowedTools` matches on exact tool name for these,
+ * same as the Bash(...) glob patterns match on command prefix.
  */
 export const RESCUE_OPERATOR_DENIED_TOOLS: readonly string[] = [
   'Bash(mars proposal*)',
   'Bash(mars draft*)',
   'Bash(mars task add --blocked-by*)',
+  'Bash(git commit*)',
+  'Write',
+  'Edit',
 ] as const
 
 // ---------------------------------------------------------------------------

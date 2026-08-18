@@ -111,6 +111,15 @@ describe('RESCUE_OPERATOR_SYSTEM_PROMPT', () => {
     expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toMatch(/Do NOT run.*mars proposal/i)
   })
 
+  it('explicitly forbids creating, editing, or committing any file', () => {
+    expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toMatch(/Do NOT create, edit, or commit ANY file/)
+  })
+
+  it('directs the assessment into the reasoning field, not a separate note file', () => {
+    expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toMatch(/reasoning.*is your ONLY output surface/i)
+    expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toMatch(/already persisted/i)
+  })
+
   it('instructs the agent to emit a JSON verdict as the last line', () => {
     expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toMatch(/JSON verdict/)
     expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toContain('"action":"restart"')
@@ -161,9 +170,13 @@ describe('WORKER_CONFIGS.RescueOperator', () => {
     }
   })
 
-  it('does NOT deny Edit or Write — the agent needs full worktree access to inspect the branch', () => {
-    expect(WORKER_CONFIGS.RescueOperator.disallowedTools).not.toContain('Edit')
-    expect(WORKER_CONFIGS.RescueOperator.disallowedTools).not.toContain('Write')
+  it('denies Edit and Write — the agent inspects the branch but never writes files', () => {
+    expect(WORKER_CONFIGS.RescueOperator.disallowedTools).toContain('Edit')
+    expect(WORKER_CONFIGS.RescueOperator.disallowedTools).toContain('Write')
+  })
+
+  it('denies git commit — the JSON verdict is the sole output, never a commit', () => {
+    expect(WORKER_CONFIGS.RescueOperator.disallowedTools).toContain('Bash(git commit*)')
   })
 })
 
