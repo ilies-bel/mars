@@ -421,12 +421,63 @@ const arcPurge: Command = {
   },
 }
 
+const arcQa: Command = {
+  path: 'arc qa',
+  summary: 'show QA steps walked for a behaviour-verification arc',
+  usage: 'usage: mars arc qa <originId>',
+  run: async (args, deps) => {
+    const originId = args.positional.find((a) => !a.startsWith('--'))
+    if (!originId) {
+      deps.err('usage: mars arc qa <originId>')
+      return { code: 1 }
+    }
+
+    const { loadArcQaManifest } = await import('../../core/lib/arc-qa-manifest')
+    const { getStateDir } = await import('../../core/context')
+    const { resolve: resolvePath } = await import('node:path')
+
+    const stateDir = getStateDir()
+    const manifest = await loadArcQaManifest(originId, stateDir)
+
+    if (!manifest) {
+      deps.err(
+        `no QA manifest for arc ${originId} (E2E pass may not have run)`,
+      )
+      return { code: 1 }
+    }
+
+    for (const criterion of manifest.criteria) {
+      deps.out(`Criterion: ${criterion.criterion}`)
+      for (const step of criterion.steps) {
+        const isStopped = criterion.stoppedAtStep === step.index
+        const prefix = isStopped ? '→' : ' '
+        const stopAnnotation =
+          isStopped && criterion.stopReason
+            ? ` [stopped: ${criterion.stopReason}]`
+            : ''
+        deps.out(`  ${prefix} ${step.index}. ${step.text}${stopAnnotation}`)
+        if (step.screenshotPath !== null) {
+          const absPath = resolvePath(
+            stateDir,
+            'arc-qa',
+            originId,
+            step.screenshotPath,
+          )
+          deps.out(`      ${absPath}`)
+        }
+      }
+    }
+
+    return { code: 0 }
+  },
+}
+
 const arcGroup: Command = {
   path: 'arc',
   summary: 'arc subcommands',
-  usage: 'usage: mars arc <list|purge|reflect> ...',
+  usage: 'usage: mars arc <list|purge|qa|reflect> ...',
   run: (_args, deps) => {
-    deps.err('usage: mars arc <list|purge|reflect> ...')
+    deps.err('usage: mars arc <list|purge|qa|reflect> ...')
     return { code: 1 }
   },
 }
@@ -708,6 +759,7 @@ export const reflectCommands: readonly Command[] = [
   reflectWorkflowFit,
   arcList,
   arcPurge,
+  arcQa,
   arcReflect,
   arcGroup,
 ]
