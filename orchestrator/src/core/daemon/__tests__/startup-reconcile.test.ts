@@ -422,7 +422,7 @@ describe('runStartupReconcile — retired planning gate', { timeout: 120_000 }, 
       args: ['legacy-gate-row'],
     })
     expect(closed.rows[0]).toMatchObject({
-      state: 'resolved',
+      status: 'resolved',
       resolution_note: 'superseded: retired planning gate',
     })
 
