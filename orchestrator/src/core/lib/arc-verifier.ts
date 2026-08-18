@@ -188,7 +188,7 @@ export interface ArcE2eDeps {
   runBrowserCheck: (
     bootPlan: BootPlan,
     criteria: readonly string[],
-    opts: { taskId: string; worktreeDir: string; logDir: string },
+    opts: { taskId: string; worktreeDir: string; logDir: string; artifactsDir?: string },
   ) => Promise<CriterionResult[]>
   acquireLock: (lockPath: string, timeoutMs: number) => Promise<() => Promise<void>>
   isE2ePassDone: (originId: string, marsStateDir: string) => boolean
@@ -1017,10 +1017,11 @@ export async function runArcVerification(
               e2ePass = { ran: false, cantVerifyReason: 'already-done', criterionResults: [] }
             } else {
               const logDir = join(marsStateDir, 'dev-servers')
+              const artifactsDir = join(marsStateDir, 'arc-qa', originId)
               const criterionResults = await e2eDepsResolved.runBrowserCheck(
                 bootPlan,
                 allCriteria,
-                { taskId: originId, worktreeDir: opts.cwd, logDir },
+                { taskId: originId, worktreeDir: opts.cwd, logDir, artifactsDir },
               )
               await e2eDepsResolved.markE2ePassDone(originId, marsStateDir)
               e2ePass = { ran: true, cantVerifyReason: null, criterionResults }

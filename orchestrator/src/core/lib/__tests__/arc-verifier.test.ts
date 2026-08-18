@@ -931,6 +931,24 @@ describe('arc-verifier', () => {
       )
     })
 
+    // ── artifactsDir: screenshots go to marsStateDir/arc-qa/<originId>/ ────────
+
+    it('[e2e-pass:artifacts-dir] runBrowserCheck receives artifactsDir under marsStateDir/arc-qa/<originId>', async () => {
+      const { deps, runBrowserCheckSpy } = makeE2eDeps()
+      getDefaultTaskStoreMock.mockResolvedValue(makeArcDoneStore('origin-e2e-arts'))
+
+      await runArcVerification('origin-e2e-arts', { cwd: '/repo', e2eDeps: deps })
+
+      expect(runBrowserCheckSpy).toHaveBeenCalledOnce()
+      expect(runBrowserCheckSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          artifactsDir: '/repo/.mars/arc-qa/origin-e2e-arts',
+        }),
+      )
+    })
+
     // ── Arc verdict never changes due to E2E pass ────────────────────────────
 
     it('[e2e-pass:verdict-unchanged] arc verdict ok=true is preserved even when E2E ran', async () => {
