@@ -12,6 +12,8 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
+import { ErrorState } from '@/components/ErrorState'
+import { SkeletonList } from '@/components/Skeleton'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -64,7 +66,7 @@ export const ArcQaPage = ({ originId }: ArcQaPageProps) => {
   if (isLoading || data === undefined) {
     return (
       <main className="flex h-full flex-1 flex-col bg-background p-4">
-        <p className="text-label text-muted-foreground">Loading…</p>
+        <SkeletonList rows={4} rowClassName="h-12 w-full mb-3" label="Loading QA walk" />
       </main>
     )
   }
@@ -72,7 +74,7 @@ export const ArcQaPage = ({ originId }: ArcQaPageProps) => {
   if (error) {
     return (
       <main className="flex h-full flex-1 flex-col bg-background p-4">
-        <p className="text-label text-error">Failed to load QA data.</p>
+        <ErrorState error={error} of="QA data" variant="inline" />
       </main>
     )
   }

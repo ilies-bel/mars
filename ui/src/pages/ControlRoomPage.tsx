@@ -29,6 +29,8 @@ import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useFocusedProject } from '@/shared/useFocusedProject'
 import type { ActionQueueItem } from '@/shared/schemas'
 import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
+import { ErrorState } from '@/components/ErrorState'
+import { SkeletonList } from '@/components/Skeleton'
 import {
   Dialog,
   DialogContent,
@@ -90,7 +92,7 @@ const CONFIRM_COPY: Record<ConfirmAction['kind'], { title: string; body: string;
 
 const LeversSection = () => {
   const queryClient = useQueryClient()
-  const { data: state, isLoading, isError } = useQuery<OperatorState>({
+  const { data: state, isLoading, isError, error: queryError } = useQuery<OperatorState>({
     queryKey: ['operator-state'],
     queryFn: fetchOperatorState,
     refetchInterval: 5_000,
@@ -129,7 +131,7 @@ const LeversSection = () => {
     return (
       <section>
         <div className="mb-3"><SectionLabel>Levers</SectionLabel></div>
-        <p className="font-mono text-label text-primary/40">Loading…</p>
+        <SkeletonList rows={2} rowClassName="h-16 w-full mb-3" label="Loading levers" />
       </section>
     )
   }
@@ -138,9 +140,11 @@ const LeversSection = () => {
     return (
       <section>
         <div className="mb-3"><SectionLabel>Levers</SectionLabel></div>
-        <p className="font-mono text-label text-error/70">
-          Daemon unreachable — levers unavailable.
-        </p>
+        <ErrorState
+          error={queryError ?? new Error('Operator state unavailable')}
+          of="levers"
+          variant="inline"
+        />
       </section>
     )
   }

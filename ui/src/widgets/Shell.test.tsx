@@ -36,12 +36,6 @@ mock.module('@/widgets/ProjectSelector', () => ({
   ProjectSelector: () => null,
 }))
 
-// useDaemonConnected — controllable per-test via the module-level variable below.
-let mockDaemonConnected = true
-mock.module('@/hooks/useDaemonConnected', () => ({
-  useDaemonConnected: () => mockDaemonConnected,
-}))
-
 // ── Import after mocks are registered ────────────────────────────────────────
 
 const { Shell, ShellSidebar, SHELL_NAV_GROUPS } = await import('./Shell')
@@ -293,12 +287,6 @@ describe('Shell', () => {
     expect(html).toContain('◆ mars')
   })
 
-  it('renders the live-dot element', () => {
-    mockDaemonConnected = true
-    const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
-    expect(html).toContain('data-testid="shell-live-dot"')
-  })
-
   it('renders the children in the content area', () => {
     const html = renderToStaticMarkup(<Shell hash="#/chat"><p>hello world</p></Shell>)
     expect(html).toContain('<p>hello world</p>')
@@ -324,29 +312,6 @@ describe('Shell', () => {
     const html = renderToStaticMarkup(<Shell hash="#/progress">page</Shell>)
     const matches = html.match(/aria-current="page"/g)
     expect(matches).toHaveLength(1)
-  })
-})
-
-// ── Shell — live indicator ────────────────────────────────────────────────────
-
-describe('Shell — live indicator', () => {
-  it('shows green pulsing dot and Live label when daemon is connected', () => {
-    mockDaemonConnected = true
-    const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
-    expect(html).toContain('bg-success')
-    expect(html).toContain('animate-pulse')
-    expect(html).toContain('>Live<')
-    expect(html).not.toContain('>Reconnecting<')
-  })
-
-  it('shows muted grey dot and Reconnecting label when daemon is disconnected', () => {
-    mockDaemonConnected = false
-    const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
-    expect(html).toContain('bg-muted')
-    expect(html).not.toContain('animate-pulse')
-    expect(html).toContain('>Reconnecting<')
-    expect(html).not.toContain('>Live<')
-    expect(html).not.toContain('>Offline<')
   })
 })
 

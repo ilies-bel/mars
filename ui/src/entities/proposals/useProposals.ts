@@ -7,7 +7,8 @@ import type { DraftFeature } from '@/shared/schemas'
 interface State {
   proposals: DraftFeature[]
   isPending: boolean
-  error: string | null
+  /** The raw query error object; null when there is no error. */
+  error: Error | null
   connected: boolean
   refetch: () => void
 }
@@ -36,7 +37,7 @@ export const useProposals = (): State => {
   })
 
   const proposals = query.data?.drafts ?? []
-  const error = query.error ? (query.error as Error).message : null
+  const error = (query.error as Error | null) ?? null
 
   return { proposals, isPending: query.isPending, error, connected, refetch: query.refetch }
 }

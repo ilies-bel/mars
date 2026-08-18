@@ -2,7 +2,6 @@ import type { ReactNode } from 'react'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { sortItems, buildRenderedRows } from '@/entities/actionQueue/clusterRows'
 import type { RenderedRow } from '@/entities/actionQueue/clusterRows'
-import { useDaemonConnected } from '@/hooks/useDaemonConnected'
 import { resolvePageRoute } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
 import { deriveBreadcrumbs } from './Breadcrumbs'
@@ -69,7 +68,6 @@ interface ShellTopbarProps {
 }
 
 const ShellTopbar = ({ hash }: ShellTopbarProps) => {
-  const connected = useDaemonConnected()
   const derivedCrumbs = deriveBreadcrumbs(hash)
 
   // For top-level nav routes, deriveBreadcrumbs returns []; fall back to group › page crumbs
@@ -141,21 +139,9 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
         </>
       )}
 
-      {/* Live indicator — reflects daemon SSE connection state.
-          When connected the dot pulses green and shows 'Live'.
-          When disconnected it shows 'Reconnecting' (EventSource always retries;
-          'Offline' is never shown while data may still be rendering from cache). */}
+      {/* Right-side chrome — awaiting-human counter, hidden when zero */}
       <div className="ml-auto flex shrink-0 items-center gap-2">
-        {/* Awaiting-human counter — hidden when zero */}
         <LiveParkedChip />
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-success animate-pulse' : 'bg-muted'}`}
-          aria-hidden="true"
-          data-testid="shell-live-dot"
-        />
-        <span className="font-mono text-micro text-muted-dark">
-          {connected ? 'Live' : 'Reconnecting'}
-        </span>
       </div>
     </header>
   )

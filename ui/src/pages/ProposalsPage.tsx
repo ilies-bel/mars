@@ -16,6 +16,8 @@ import { useProposals } from '@/entities/proposals/useProposals'
 import { proposalHash } from '@/shared/routing'
 import { relativeTime } from '@/shared/time'
 import { CopyButton } from '@/components/CopyButton'
+import { ErrorState } from '@/components/ErrorState'
+import { SkeletonBlock } from '@/components/Skeleton'
 import type { DraftFeature } from '@/shared/schemas'
 
 // ── Source display ────────────────────────────────────────────────────────────
@@ -124,6 +126,27 @@ const EmptyState = () => (
   </div>
 )
 
+// ── ProposalsSkeleton ─────────────────────────────────────────────────────────
+
+/** Card-shaped shimmer placeholder shown while the proposals list is loading. */
+const ProposalsSkeleton = () => (
+  <div aria-busy="true" aria-label="Loading proposals" className="flex flex-col gap-2 p-4">
+    {Array.from({ length: 4 }, (_, i) => (
+      <div
+        key={i}
+        className="mars-card border-l-2 border-l-primary/20 px-4 py-3 flex flex-col gap-2"
+      >
+        <div className="flex items-center gap-2 mb-1">
+          <SkeletonBlock className="h-4 w-20" />
+          <SkeletonBlock className="ml-auto h-3 w-14" />
+        </div>
+        <SkeletonBlock className="h-4 w-3/4" />
+        <SkeletonBlock className="h-3 w-1/2" />
+      </div>
+    ))}
+  </div>
+)
+
 // ── ProposalsPage ─────────────────────────────────────────────────────────────
 
 export const ProposalsPage = () => {
@@ -131,16 +154,11 @@ export const ProposalsPage = () => {
 
   if (error) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3">
-        <p className="font-mono text-label text-error">Failed to load proposals</p>
-        <p className="max-w-sm text-center font-mono text-micro text-muted-foreground">{error}</p>
-        <button
-          type="button"
-          onClick={() => refetch()}
-          className="rounded border border-border px-3 py-1 font-mono text-micro text-foreground hover:bg-muted"
-        >
-          Retry
-        </button>
+      <div className="flex h-full flex-col overflow-hidden bg-background">
+        <div className="flex shrink-0 items-center border-b border-border px-5 py-3">
+          <h1 className="font-mono text-body font-semibold text-foreground">Proposals</h1>
+        </div>
+        <ErrorState error={error} of="proposals" onRetry={() => refetch()} />
       </div>
     )
   }
@@ -168,9 +186,7 @@ export const ProposalsPage = () => {
       {/* List */}
       <div className="flex-1 overflow-y-auto">
         {isPending ? (
-          <div className="flex h-full items-center justify-center">
-            <p className="font-mono text-label text-muted-foreground">Loading…</p>
-          </div>
+          <ProposalsSkeleton />
         ) : sorted.length === 0 ? (
           <EmptyState />
         ) : (

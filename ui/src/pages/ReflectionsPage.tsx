@@ -35,6 +35,7 @@ import type {
 } from '@/shared/api'
 import { useFocusedProject } from '@/shared/useFocusedProject'
 import { FallbackSurface } from '@/components/FallbackSurface'
+import { SkeletonList } from '@/components/Skeleton'
 import { parseReflectionDetailRoute, reflectionDetailHash, proposalHash } from '@/shared/routing'
 import { useHashRoute } from '@/shared/useHashRoute'
 import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
@@ -916,8 +917,8 @@ export const ReflectionsPage = () => {
             {detailError ? (
               <FallbackSurface error={detailError} of="reflection detail" variant="inline" />
             ) : detailLoading || detailData === undefined ? (
-              <div className="font-mono text-label text-muted-foreground" data-testid="detail-loading">
-                Loading…
+              <div data-testid="detail-loading">
+                <SkeletonList rows={3} rowClassName="h-16 w-full mb-3" label="Loading reflection detail" />
               </div>
             ) : (
               <ReflectionDetailView detail={detailData} />
@@ -953,8 +954,8 @@ export const ReflectionsPage = () => {
             )}
 
             {listLoading && listData === undefined ? (
-              <div className="font-mono text-label text-muted-foreground" data-testid="list-loading">
-                Loading…
+              <div data-testid="list-loading">
+                <SkeletonList rows={4} rowClassName="h-14 w-full mb-2" label="Loading reflections" />
               </div>
             ) : listData?.reports.length === 0 ? (
               <div

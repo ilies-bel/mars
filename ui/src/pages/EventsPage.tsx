@@ -3,6 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import { fetchEvents, type EventsFilter } from '@/shared/api'
 import { FallbackSurface } from '@/components/FallbackSurface'
+import { SkeletonList } from '@/components/Skeleton'
 import { severityColor, severityRowClass, summarizeTraceEvent, marsToolTextClass, humanizeKind, humanizePhase } from '@/shared/actionQueueDetail'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { TraceEvent } from '@/shared/schemas'
@@ -1213,7 +1214,7 @@ export const EventsPage = () => {
         data-testid="events-list"
       >
         {initial.isPending ? (
-          <div className="font-mono text-label text-primary">Loading events…</div>
+          <SkeletonList rows={8} rowClassName="h-8 w-full mb-1" label="Loading events" />
         ) : viewMode === 'timeline' ? (
           <TimelineView events={events} now={now} />
         ) : events.length === 0 ? (

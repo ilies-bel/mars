@@ -1011,7 +1011,7 @@ void mock
 // ---------------------------------------------------------------------------
 
 describe('EventsPage debounce / keepPreviousData', () => {
-  it('does not show "Loading events…" when query is success but still fetching in background', () => {
+  it('does not show a loading skeleton when query is success but still fetching in background', () => {
     // Construct the QueryClient state that placeholderData: keepPreviousData
     // produces after a filter change: status='success', data=previous events,
     // fetchStatus='fetching' (new request in-flight).
@@ -1025,12 +1025,12 @@ describe('EventsPage debounce / keepPreviousData', () => {
       fetchStatus: 'fetching',
     })
     const html = renderPage(qc)
-    // Must show events — NOT the loading placeholder
-    expect(html).not.toContain('Loading events…')
+    // Must show events — NOT the loading skeleton
+    expect(html).not.toContain('aria-label="Loading events"')
     expect(html).toContain('data-testid="event-row-ev-keep"')
   })
 
-  it('shows "Loading events…" only when there is genuinely no data yet (status=pending)', () => {
+  it('shows a loading skeleton only when there is genuinely no data yet (status=pending)', () => {
     // Construct the QueryClient state that represents a brand-new query that
     // has never resolved. keepPreviousData cannot help here — there is no
     // prior data to hold onto.
@@ -1040,7 +1040,9 @@ describe('EventsPage debounce / keepPreviousData', () => {
     const query = qc.getQueryCache().build(qc, { queryKey: QUERY_KEY_FOR() })
     query.setState({ status: 'pending', fetchStatus: 'fetching', data: undefined })
     const html = renderPage(qc)
-    expect(html).toContain('Loading events…')
+    // Skeleton renders with aria-busy and the "Loading events" label
+    expect(html).toContain('aria-busy="true"')
+    expect(html).toContain('aria-label="Loading events"')
   })
 })
 
