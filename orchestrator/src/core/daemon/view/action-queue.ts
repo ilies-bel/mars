@@ -1234,17 +1234,25 @@ export const buildActionQueueView = async ({
           : (NOTICE_KINDS.has(row.kind as ActionQueueKind) ? row.kind : null))
       : null
 
-    // For failed condition rows, lastSeenAt is the derive-time (nowMs) and
-    // always reads as "1s ago". Use the task's updatedAt (the real failure
-    // time) instead. Fall back to raisedAt when no task is found.
+    // Condition rows are derived on every read, so their `lastSeenAt` is the
+    // derive time — rendering it makes every condition claim it happened "0s
+    // ago" no matter how old the underlying evidence is. Their `raisedAt` is
+    // the real evidence time (a gate's `last_failure_at`, a crash's
+    // `crashDetectedAt`, a worktree's mtime), so read that instead.
     //
-    // daemon-died rows also use lastSeenAt=nowMs; use raisedAt (=crashDetectedAt)
-    // so the card shows the actual crash time rather than "N seconds ago" on
-    // every read.
+    // This was previously patched per-kind for `failed` and `daemon-died`,
+    // which left the other eleven condition kinds lying: five quarantined
+    // gates all rendered "0s ago" on a live queue. It is a property of the
+    // class, not of those two kinds, so classify once and apply it.
+    //
+    // `failed` keeps its sharper source: the task's own updatedAt is the exact
+    // failure time, where raisedAt is only the derive-time fallback.
+    //
+    // Decision and notice rows are stored, so their lastSeenAt is meaningful.
     const rowAt =
       row.kind === 'failed'
         ? (taskById.get(entityId)?.updatedAt ?? new Date(row.raisedAt).toISOString())
-        : row.kind === 'daemon-died'
+        : itemClass === 'condition'
           ? new Date(row.raisedAt).toISOString()
           : new Date(row.lastSeenAt).toISOString()
 

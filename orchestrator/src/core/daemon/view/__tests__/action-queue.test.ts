@@ -73,6 +73,67 @@ const BASE_PARAMS = {
   filter: 'open' as const,
 }
 
+// ── row timestamps ────────────────────────────────────────────────────────────
+
+describe('buildActionQueueView — condition rows report evidence time, not derive time', () => {
+  const EVIDENCE = '2026-07-31T08:55:00.000Z'
+  const DERIVED = '2026-08-19T12:00:00.000Z'
+
+  // Conditions are recomputed on every read, so lastSeenAt is always "now".
+  // Rendering it made every condition claim it had just happened — five
+  // quarantined gates, hours old, all showed "0s ago" on a live queue.
+  it.each([
+    ['gate-broken', { gate: 'test', verdict: 'verify:test/test-assertion-error', streak: 3 }],
+    ['stale-worktree', { taskId: 'mars-abcdef12' }],
+    ['baseline-broken', {}],
+    ['subscriber-stalled', {}],
+  ])('reads raisedAt for %s', async (kind, payload) => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeRow({
+          id: `row-${kind}`,
+          kind: kind as PersistedActionQueueRow['kind'],
+          payload,
+          raisedAt: Date.parse(EVIDENCE),
+          lastSeenAt: Date.parse(DERIVED),
+        }),
+      ]),
+      taskStore: makeTaskStore([]),
+      ...BASE_PARAMS,
+    })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.at).toBe(EVIDENCE)
+  })
+
+  it('still prefers the task updatedAt for failed rows — a sharper source than raisedAt', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeRow({ raisedAt: Date.parse(DERIVED), lastSeenAt: Date.parse(DERIVED) }),
+      ]),
+      taskStore: makeTaskStore([makeTask({ updatedAt: EVIDENCE })]),
+      ...BASE_PARAMS,
+    })
+    expect(rows[0]!.at).toBe(EVIDENCE)
+  })
+
+  it('keeps lastSeenAt for stored decision rows', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeRow({
+          id: 'row-decision',
+          kind: 'gate-enrichment',
+          payload: {},
+          raisedAt: Date.parse(EVIDENCE),
+          lastSeenAt: Date.parse(DERIVED),
+        }),
+      ]),
+      taskStore: makeTaskStore([]),
+      ...BASE_PARAMS,
+    })
+    expect(rows[0]!.at).toBe(DERIVED)
+  })
+})
+
 // ── title/body derivation from Failure kind registry (slice 2) ───────────────
 
 describe('buildActionQueueView — failure-kind title/body derivation', () => {
