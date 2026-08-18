@@ -66,6 +66,15 @@ export type WorkflowTerminalKind =
    * committed work — prefer `mars continue` over `mars restart`.
    */
   | 'post-coder-classifier-error'
+  /**
+   * The merge step tried to transition the task to `merging` but found the task
+   * already in a terminal status (`failed` / `done` / `dropped`). This is a
+   * benign race: the recovery-exhaustion path (or another concurrent writer)
+   * already settled the task before the merge step could start. The task DB
+   * state is already correct; no further update or fix-task spawn is needed.
+   * The merge step exits cleanly without touching the task row.
+   */
+  | 'merge-already-terminal'
 
 export interface WorkflowTerminalMeta {
   /** Unix epoch seconds at which the provider quota resets. Only set for `quota-rejected`. */

@@ -2129,6 +2129,14 @@ export const startDaemon = async (
             // fix-task before throwing). Fall through to the normal bus.emit so the
             // task transitions out of the running state.
             break
+
+          case 'merge-already-terminal':
+            // Race: recovery-exhaustion (or another concurrent writer) already
+            // settled the task in a terminal status before the merge step could
+            // start. The task row is already correct; no further DB write or emit
+            // is needed. Suppress the generic task.completed emit.
+            log(`[implement] ${task.id}: merge step skipped — task already in terminal status (race with recovery-exhaustion)`)
+            return
         }
       }
       log(`[implement] ${task.id} -> ${result.status}`)
@@ -2213,6 +2221,11 @@ export const startDaemon = async (
             // The merge gate found zero commits ahead of integration; already
             // marked failed + raised action-queue item. Suppress generic re-update.
             log(`[implement] ${task.id} merge-zero-commit abort (exception path); task already marked failed, item raised`)
+            break
+          case 'merge-already-terminal':
+            // Race: task was already in a terminal status when the merge step
+            // tried to start. No DB update needed; suppress generic re-update.
+            log(`[implement] ${task.id} merge-already-terminal abort (exception path); task already in terminal status, no update needed`)
             break
         }
       } else {

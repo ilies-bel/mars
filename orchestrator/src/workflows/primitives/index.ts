@@ -92,7 +92,7 @@ import {
 } from '../../core/lib/worktree-install'
 import { extractLastStreamText, type ClaudeEvent } from '../../core/lib/claude-stream'
 import { readWorkerOutputText } from '../../core/lib/worker-json'
-import { getTask, hasIncompleteBlockers, TERMINAL_TASK_STATUSES, updateTask } from '../../core/queue'
+import { getTask, hasIncompleteBlockers, IllegalTransitionError, TERMINAL_TASK_STATUSES, updateTask } from '../../core/queue'
 import { Arc } from '../../core/arc'
 import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks'
 import { computeFailureSignature } from '../../core/lib/failure-signature'
@@ -4458,6 +4458,27 @@ export const merge = async (
             : 'merged cleanly',
         }
       } catch (error: unknown) {
+        // Race guard: if the task was already settled in a terminal state (e.g.
+        // recovery-exhaustion marked it `failed`) BEFORE the merge step could
+        // transition it to `merging`, the initial `updateTask(merging)` call
+        // throws `IllegalTransitionError`. The task row is already correct — no
+        // further DB update or fix-task spawn is needed. Exit cleanly.
+        //
+        // This race (recovery_exhausted:merge:crashed/unclassified) was observed
+        // on task mars-5d48eda6: the recovery-exhaustion path marked the origin
+        // `failed` while the merge supervisor was still advancing it. Without
+        // this guard the generic crash-handler's own `updateTask(failed)` call
+        // also throws `IllegalTransitionError`, which escapes the catch block as
+        // an unclassified crash with a misleading signature.
+        if (error instanceof IllegalTransitionError) {
+          console.log(
+            `[merge] task ${taskId}: already in terminal status '${error.fromStatus}' — merge step skipped (race with recovery-exhaustion)`,
+          )
+          throw new WorkflowTerminalError(
+            'merge-already-terminal',
+            `task ${taskId}: already in terminal status '${error.fromStatus}'; merge step skipped`,
+          )
+        }
         if (
           error instanceof Error &&
           (error.message.includes('merge:preflight') ||
