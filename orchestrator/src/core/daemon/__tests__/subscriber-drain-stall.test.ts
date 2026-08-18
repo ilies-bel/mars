@@ -8,8 +8,12 @@ import type { Client } from '@libsql/client'
 /**
  * ADR-0032 stall contract for the shared drainWithStall helper: a handler
  * that throws blocks the subscriber's cursor on the failing event, retries
- * on every wake, raises a subscriber-stalled actionQueue row after K consecutive
- * failures, and supersedes that row once the event finally processes.
+ * on every wake, surfaces a subscriber-stalled action-queue item after K
+ * consecutive failures, and withdraws it once the event finally processes.
+ *
+ * Per ADR-0057 `subscriber-stalled` is a derived condition kind — there is no
+ * stored action_queue_items row. These tests therefore assert on the operator
+ * surface itself (the derived condition source), not on any table.
  */
 
 interface Loaded {
@@ -18,6 +22,7 @@ interface Loaded {
   drain: typeof import('../subscriber-drain')
   subs: typeof import('../../../bus/subscribers')
   pub: typeof import('../../../bus/publisher')
+  conditions: typeof import('../view/derived-conditions')
 }
 
 const setupRepo = (): string => {
@@ -36,16 +41,24 @@ const load = async (repo: string): Promise<Loaded> => {
   const drain = await import('../subscriber-drain')
   const subs = await import('../../../bus/subscribers')
   const pub = await import('../../../bus/publisher')
-  return { q, actionQueue, drain, subs, pub }
+  const conditions = await import('../view/derived-conditions')
+  return { q, actionQueue, drain, subs, pub, conditions }
 }
 
 const SUB = 'test-stall-subscriber'
 
-const openStalledCount = async (client: Client): Promise<number> => {
-  const r = await client.execute({
-    sql: `SELECT COUNT(*) AS n FROM action_queue_items WHERE kind = 'subscriber-stalled' AND status = 'open'`,
-  })
-  return Number((r.rows[0] as unknown as { n: number | bigint }).n)
+/**
+ * Count the `subscriber-stalled` items an operator would actually see. Goes
+ * through the derived condition source rather than any table, so the assertion
+ * survives a change of where the stall state is kept.
+ */
+const openStalledCount = async (
+  conditions: Loaded['conditions'],
+  client: Client,
+): Promise<number> => {
+  const source = conditions.createConditionItemsSource({ getClient: () => client })
+  const rows = await source.derive({ kinds: new Set(['subscriber-stalled']) })
+  return rows.length
 }
 
 
@@ -60,7 +73,7 @@ describe('drainWithStall — ADR-0032', () => {
   })
 
   it('blocks the cursor on a throwing handler and raises a stalled row after K failures, then recovers', async () => {
-    const { q, actionQueue, drain, subs, pub } = await load(repo)
+    const { q, actionQueue, drain, subs, pub, conditions } = await load(repo)
     const client = q.resolveQueueClient()
 
     await actionQueue.initActionQueue()
@@ -83,14 +96,14 @@ describe('drainWithStall — ADR-0032', () => {
     // Drains 1 and 2: cursor stays blocked, no stalled row yet.
     await drain.drainWithStall({ client, subscriberId: SUB, handle })
     expect(await subs.getCursor(client, SUB)).toBe(cursorStart)
-    expect(await openStalledCount(client)).toBe(0)
+    expect(await openStalledCount(conditions, client)).toBe(0)
     await drain.drainWithStall({ client, subscriberId: SUB, handle })
-    expect(await openStalledCount(client)).toBe(0)
+    expect(await openStalledCount(conditions, client)).toBe(0)
 
     // Drain 3: K-th consecutive failure → stalled row raised, cursor still blocked.
     await drain.drainWithStall({ client, subscriberId: SUB, handle })
     expect(await subs.getCursor(client, SUB)).toBe(cursorStart)
-    expect(await openStalledCount(client)).toBe(1)
+    expect(await openStalledCount(conditions, client)).toBe(1)
 
     // Drain 4: handler now succeeds → cursor advances, stalled row superseded.
     const { processed } = await drain.drainWithStall({
@@ -100,12 +113,12 @@ describe('drainWithStall — ADR-0032', () => {
     })
     expect(processed).toBe(1)
     expect(await subs.getCursor(client, SUB)).toBeGreaterThan(cursorStart)
-    expect(await openStalledCount(client)).toBe(0)
+    expect(await openStalledCount(conditions, client)).toBe(0)
   })
 
   it('closes a stalled row when the event succeeds in a fresh drain with empty failureCounts (post-restart scenario)', async () => {
     // Phase 1: raise a subscriber-stalled row via K consecutive failures.
-    const { q, actionQueue, drain, subs, pub } = await load(repo)
+    const { q, actionQueue, drain, subs, pub, conditions } = await load(repo)
     const client = q.resolveQueueClient()
 
     await actionQueue.initActionQueue()
@@ -123,7 +136,7 @@ describe('drainWithStall — ADR-0032', () => {
       })
     }
 
-    expect(await openStalledCount(client)).toBe(1)
+    expect(await openStalledCount(conditions, client)).toBe(1)
 
     // Phase 2: simulate a daemon restart by resetting module state (clears the
     // in-memory failureCounts Map), then drain successfully. The stalled row
@@ -140,11 +153,11 @@ describe('drainWithStall — ADR-0032', () => {
       },
     })
 
-    expect(await openStalledCount(client2)).toBe(0)
+    expect(await openStalledCount(reloaded.conditions, client2)).toBe(0)
   })
 
   it('a healthy subscriber advances its cursor and raises nothing', async () => {
-    const { q, actionQueue, drain, subs, pub } = await load(repo)
+    const { q, actionQueue, drain, subs, pub, conditions } = await load(repo)
     const client = q.resolveQueueClient()
 
     await actionQueue.initActionQueue()
@@ -159,6 +172,6 @@ describe('drainWithStall — ADR-0032', () => {
     })
     expect(processed).toBe(1)
     expect(await subs.getCursor(client, SUB)).toBeGreaterThan(before)
-    expect(await openStalledCount(client)).toBe(0)
+    expect(await openStalledCount(conditions, client)).toBe(0)
   })
 })

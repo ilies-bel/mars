@@ -12,11 +12,12 @@ import { processedOnce } from '../../bus/processed-once.js'
  *     breaks the loop; the next drain retries from the same event. There is
  *     no dead-letter queue — Mars events are causally dependent, so skipping
  *     a poison terminal would strand every downstream task.
- *   - After K consecutive failures on the SAME event id, the in-memory
- *     {@link failureCounts} counter crosses {@link STALL_THRESHOLD} and a log
- *     line is emitted. The operator-visible `subscriber-stalled` alert is
- *     derived on read from the `subscriber_stalls` table (written by
- *     `outbox/stall.ts`); no stored action-queue row is written here.
+ *   - After K consecutive failures on the SAME event id, a row is written to
+ *     the `subscriber_stalls` table and a log line is emitted. The
+ *     operator-visible `subscriber-stalled` alert is derived on read from that
+ *     table (ADR-0057) — no stored action-queue row is written here. The row is
+ *     deleted again as soon as the event processes, so the alert disappears
+ *     with the condition.
  *
  * Side effects run at-most-once per (subscriber, event) via `processedOnce`.
  * The dedup row is claimed BEFORE the handler runs, so the claim is exclusive
@@ -33,15 +34,15 @@ import { processedOnce } from '../../bus/processed-once.js'
  * this claim is the correctness guarantee, that gate is the pressure relief.
  */
 
-/** Consecutive-failure threshold before the stall-threshold log line fires. */
+/** Consecutive-failure threshold before a `subscriber_stalls` row is written. */
 export const STALL_THRESHOLD = 3
 
 /**
  * In-memory per-(subscriber,event) consecutive-failure counter. The cursor
  * itself is the durable record of progress; this counter only gates WHEN to
- * log the stall-threshold notice. Losing it across a restart simply resets
- * the K-count (the log is emitted again after K more failures).
- * Keyed `subscriberId:eventId`.
+ * write the stall row. Losing it across a restart simply resets the K-count
+ * (the row is re-inserted after K more failures, and the table's primary key
+ * collapses the repeat). Keyed `subscriberId:eventId`.
  */
 const failureCounts = new Map<string, number>()
 
@@ -129,12 +130,27 @@ export async function drainWithStall(
           throw err
         }
       }
-      // Success — clear any stall counter.
-      // subscriber-stalled rows are derived on read from subscriber_stalls;
-      // once the event processes, the stall entry disappears automatically
-      // (the DB write from stall.ts is absent for a succeeded event), so no
-      // stored row needs closing here.
+      // Success — clear the stall counter and the durable stall entry.
+      //
+      // The DELETE is unconditional rather than gated on `failureCounts`
+      // holding an entry: the counter is in-memory and is lost across a daemon
+      // restart, and the most common fix for a real stall IS a restart (so the
+      // subscriber re-binds to corrected code). Gating on the counter would
+      // strand a stall row written by the previous process forever. The
+      // statement is a no-op when no row exists, so running it on every
+      // successful event is safe.
       failureCounts.delete(key)
+      await client
+        .execute({
+          sql: `DELETE FROM subscriber_stalls
+                 WHERE subscriber_id = ? AND event_id = ?`,
+          args: [subscriberId, event.id],
+        })
+        .catch(() => {
+          // Best-effort: failing to clear the stall entry must not re-stall a
+          // subscriber that just made progress. The next successful drain of
+          // this subscriber retries the delete.
+        })
     } catch (err) {
       const lastError = (err as Error).message
       const count = (failureCounts.get(key) ?? 0) + 1
@@ -143,10 +159,26 @@ export async function drainWithStall(
         `[${subscriberId}] event ${event.id} (${event.type}) failed ` +
           `(${count} consecutive): ${lastError}`,
       )
-      // subscriber-stalled rows are now derived on read from subscriber_stalls;
-      // no stored row is written here. The failureCounts counter still gates
-      // logging so the daemon log shows when a stall threshold is crossed.
+      // subscriber-stalled action-queue rows are derived on read from
+      // `subscriber_stalls` (ADR-0057), so crossing the threshold has to write
+      // that table — it is the only durable record the derivation can see.
+      // Every production subscriber drains through this function, so without
+      // this write the operator surface for a blocked cursor is silent.
       if (count >= STALL_THRESHOLD) {
+        await client
+          .execute({
+            sql: `INSERT INTO subscriber_stalls (subscriber_id, event_id, last_error)
+                  VALUES (?, ?, ?)
+                  ON CONFLICT (subscriber_id, event_id)
+                    DO UPDATE SET last_error = EXCLUDED.last_error`,
+            args: [subscriberId, event.id, lastError],
+          })
+          .catch((writeErr) => {
+            log?.(
+              `[${subscriberId}] failed to record subscriber stall: ` +
+                `${(writeErr as Error).message}`,
+            )
+          })
         log?.(
           `[${subscriberId}] stall threshold crossed (${count} consecutive failures on event ${event.id}); ` +
             `condition is visible in the derived action-queue view`,

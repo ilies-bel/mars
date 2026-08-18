@@ -1941,23 +1941,39 @@ const DDL: readonly string[] = [
     dismissed_at bigint NOT NULL,
     dismissed_by text
   )`,
+]
 
-  // ADR-0057 (now ADR-0094): pure derived/condition kinds that were previously
-  // stored as rows are stale artifacts from before the derivation refactor.
-  // Delete them once at startup — they carry no operator-authored content, so
-  // nothing is lost. The DELETEs are idempotent (rows absent on every
-  // subsequent boot).
-  //
-  // Excluded from the cleanup:
-  //   'failed'       — operators may have notes on these items; too aggressive
-  //                    to delete them silently at every boot.
-  //   'worktree-ahead' — now stored as a real operator-decision row (the
-  //                    raiseWorktreeAheadActionQueue path writes a row that the
-  //                    operator must act on before re-dispatch); deleting on
-  //                    startup would silently erase actionable alerts.
-  //
-  // action_queue_history has a FK on action_queue_items.id (no CASCADE), so
-  // history rows must be removed before the parent rows can be deleted.
+// ADR-0057 (now ADR-0094): pure derived/condition kinds that were previously
+// stored as rows are stale artifacts from before the derivation refactor.
+// Delete them once at startup — they carry no operator-authored content, so
+// nothing is lost. The DELETEs are idempotent (rows absent on every
+// subsequent boot).
+//
+// Excluded from the cleanup:
+//   'failed'       — operators may have notes on these items; too aggressive
+//                    to delete them silently at every boot.
+//   'worktree-ahead' — now stored as a real operator-decision row (the
+//                    raiseWorktreeAheadActionQueue path writes a row that the
+//                    operator must act on before re-dispatch); deleting on
+//                    startup would silently erase actionable alerts.
+//
+// action_queue_history has a FK on action_queue_items.id (no CASCADE), so
+// history rows must be removed before the parent rows can be deleted.
+//
+// IMPORTANT — kept OUT of the main `DDL` array on purpose: `ensureSchema` is
+// invoked from several independent call sites within a single process
+// (`ensureQueueSchema`, `getDefaultTaskStore`, `createRunMigrations`,
+// `initActionQueue`), each with its own "have I already bootstrapped"
+// tracking that doesn't know about the others. Every one of those calls
+// re-runs the FULL `DDL` array — harmless for `CREATE TABLE IF NOT EXISTS` /
+// catalog-guarded `ALTER`s, but a live daemon-code-drift/stale-worktree/
+// subscriber-stalled row raised between two such calls would be silently
+// deleted by the second one, even though it was raised in the CURRENT boot,
+// not a stale one from a prior boot. `runConditionKindPurgeOnce` below makes
+// the purge itself idempotent per (client, i.e. per process+target) so it
+// only ever fires the first time any call site bootstraps this client,
+// regardless of how many call sites do so afterward.
+const CONDITION_KIND_PURGE_ONCE: readonly string[] = [
   `DELETE FROM action_queue_history
      WHERE item_id IN (
        SELECT id FROM action_queue_items
@@ -1990,6 +2006,14 @@ const DDL: readonly string[] = [
        'steward-repeat'
      )`,
 ]
+
+/**
+ * Clients that have already had {@link CONDITION_KIND_PURGE_ONCE} applied in
+ * this process. Keyed by client identity (not target string) so it lines up
+ * with the fact that `openDb` hands back the same shared client object to
+ * every caller resolving the same target — see the comment above.
+ */
+const conditionKindPurgeDone = new WeakSet<DbClient>()
 
 /**
  * Every table the canonical schema owns. The importer intersects this set
@@ -2175,6 +2199,7 @@ export async function ensureSchema(client: DbClient): Promise<void> {
   ) {
     return
   }
+  const runConditionKindPurge = !conditionKindPurgeDone.has(client)
   await __execSchemaBatch(client, [
     // Serialize concurrent callers: DDL takes AccessExclusiveLock on
     // `tasks`, so two interleaved ensureSchema batches deadlock. This
@@ -2182,6 +2207,11 @@ export async function ensureSchema(client: DbClient): Promise<void> {
     // pg_advisory_xact_lock auto-releases on COMMIT/ROLLBACK.
     { sql: 'SELECT pg_advisory_xact_lock(?)', args: [SCHEMA_ADVISORY_LOCK_KEY] },
     ...DDL,
+    ...(runConditionKindPurge ? CONDITION_KIND_PURGE_ONCE : []),
     ...schemaSeedStatements(new Date().toISOString()),
   ])
+  // Only record success once the batch has actually committed — a failed
+  // ensureSchema call (e.g. advisory-lock timeout) must not mark the purge
+  // as done, or a legitimate retry would silently skip it forever.
+  if (runConditionKindPurge) conditionKindPurgeDone.add(client)
 }
