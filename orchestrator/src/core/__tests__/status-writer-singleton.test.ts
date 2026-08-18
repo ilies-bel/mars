@@ -46,6 +46,15 @@ const ALLOWED = ['core', 'arc.ts'].join(sep)
 
 const SKIP_DIRS = new Set(['node_modules', '__tests__', '.git', 'dist', 'build'])
 
+// Honored migration-only markers — a faithful copy of the protocol in the
+// sibling guard `arc-sole-writer.test.ts`, so the two guards agree on ONE
+// exemption mechanism. Without this, a schema-migration backfill correctly
+// marked for the sole-writer guard would still be flagged here.
+// A physical line bearing either marker is dropped BEFORE comment-stripping
+// (line-scoped; cannot blanket-disable the pattern).
+const MIGRATION_DELETE_MARKER = '// arch-guard:migration-delete'
+const MIGRATION_WRITE_MARKER = '// arch-guard:migration-write'
+
 const walk = (dir: string): string[] => {
   const out: string[] = []
   for (const name of readdirSync(dir)) {
@@ -71,6 +80,26 @@ const walk = (dir: string): string[] => {
 const stripComments = (src: string): string =>
   src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
 
+/**
+ * Drop any physical line carrying an honored migration marker. Runs BEFORE
+ * comment-stripping so the markers (JS `//` comments) are still present to
+ * match. Line-scoped: only marked lines disappear.
+ */
+const stripMigrationMarkedLines = (src: string): string =>
+  src
+    .split('\n')
+    .filter(
+      (line) =>
+        !line.includes(MIGRATION_DELETE_MARKER) && !line.includes(MIGRATION_WRITE_MARKER),
+    )
+    .join('\n')
+
+/**
+ * Normalize a file's source for matching: drop migration-marked lines, then
+ * strip comments. Mirrors `normalizeForScan` in `arc-sole-writer.test.ts`.
+ */
+const normalizeForScan = (raw: string): string => stripComments(stripMigrationMarkedLines(raw))
+
 describe('architecture: UPDATE tasks SET status is confined to setTaskStatus in queue.ts', () => {
   it('scanner regex matches known raw status writes but not the exempt form', () => {
     // Meta-guard: a regex typo would make all other assertions vacuously pass.
@@ -91,10 +120,26 @@ describe('architecture: UPDATE tasks SET status is confined to setTaskStatus in 
     )
   })
 
+  it('migration marker is LINE-SCOPED: marked status write stripped, unmarked still flagged', () => {
+    // Mirrors the sibling meta-guard in arc-sole-writer.test.ts. Proves the
+    // ported exemption drops only the physical line that carries the marker —
+    // it must not blanket-disable STATUS_WRITE for the whole file.
+    const markedOnly = normalizeForScan(
+      `await c.execute("UPDATE tasks SET status = 'failed' WHERE id = ?") ${MIGRATION_WRITE_MARKER}`,
+    )
+    expect(STATUS_WRITE.test(markedOnly)).toBe(false)
+
+    const markedPlusUnmarked = normalizeForScan(
+      `await c.execute("UPDATE tasks SET status = 'failed' WHERE id = ?") ${MIGRATION_WRITE_MARKER}\n` +
+        `await c.execute("UPDATE tasks SET status = 'done' WHERE id = ?")`,
+    )
+    expect(STATUS_WRITE.test(markedPlusUnmarked)).toBe(true)
+  })
+
   it('exactly one non-test production file carries the pattern: core/queue.ts', () => {
     const files = walk(SRC_ROOT)
     const matches = files
-      .filter((f) => STATUS_WRITE.test(stripComments(readFileSync(f, 'utf8'))))
+      .filter((f) => STATUS_WRITE.test(normalizeForScan(readFileSync(f, 'utf8'))))
       .map((f) => relative(SRC_ROOT, f))
 
     expect(

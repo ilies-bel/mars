@@ -7,7 +7,7 @@ import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
 import { markSchemaReady, openDb, type DbClient, type DbInValue, type DbStatement } from './lib/db'
 import { ensureSchema } from './lib/pg-schema'
-import { buildEventInsert, withWriteTx } from './lib/outbox'
+import { buildEventInsert } from './lib/outbox'
 import {
   asStepId,
   computeFailureSignature,
@@ -1616,49 +1616,18 @@ export const updateTask = async (
 }
 
 /**
- * The sole audited seam for an operator to reopen a terminal task.  General
- * task updates cannot use this capability: the database trigger consumes the
- * audit record in the same transaction as this transition.
+ * The sole audited seam for an operator to reopen a terminal task. Thin
+ * wrapper over {@link Arc.reopenTerminalTask} (ADR-0052 sole-writer): the
+ * raw `UPDATE tasks SET …` now lives in `core/arc.ts`, the only legitimate
+ * task-table writer. General task updates cannot use this capability: the
+ * database trigger consumes the audit record in the same transaction as
+ * this transition.
  */
 export const reopenTerminalTask = async (
   id: string,
   reason: string,
   store?: TaskStore,
-): Promise<void> => {
-  const task = await getTask(id, store)
-  if (task === null) throw new Error(`task ${id} not found`)
-  if (!TERMINAL_TASK_STATUSES.has(task.status)) {
-    throw new IllegalTransitionError(id, task.status, 'queued')
-  }
-  const now = new Date().toISOString()
-  const statements: DbStatement[] = [
-    {
-      sql: `INSERT INTO task_terminal_reopens (task_id, reason, reopened_by, reopened_at)
-            VALUES (?, ?, 'operator', ?)`,
-      args: [id, reason, now],
-    },
-    {
-      sql: `UPDATE tasks SET updated_at = ?, status = 'queued', error = NULL,
-              failure_reason = NULL, failure_signature = NULL, failure_reason_code = NULL
-            WHERE id = ?`,
-      args: [now, id],
-    },
-    buildEventInsert('task.queued', { taskId: id }),
-    {
-      sql: `UPDATE task_terminal_reopens SET consumed_at = ?
-            WHERE task_id = ? AND consumed_at IS NULL`,
-      args: [now, id],
-    },
-  ]
-  if (store) {
-    await store.batch(statements, 'write')
-  } else {
-    await ensureQueueSchema()
-    await withWriteTx(resolveQueueClient(), async (tx) => {
-      for (const statement of statements) await tx.execute(statement)
-    })
-  }
-}
+): Promise<void> => Arc.reopenTerminalTask(id, reason, store)
 
 export const getTask = async (id: string, store?: TaskStore): Promise<Task | null> => {
   const stmt = { sql: `${TASK_SEL} WHERE t.id = ?`, args: [id] }
@@ -1778,7 +1747,10 @@ export const setTaskPriority = async (
 ): Promise<Task> => Arc.load(id).reprioritize(priority)
 
 /**
- * Update the verify command for a task.
+ * Update the verify command for a task. Thin wrapper over
+ * {@link Arc.setVerifyCmd} (ADR-0052 sole-writer): the `verify_cmd`
+ * `UPDATE tasks SET …` now lives in `core/arc.ts`, the only legitimate
+ * task-table writer.
  *
  * Allowed for all non-done, non-dropped tasks (including failed tasks, which
  * need their spec repaired before they can be re-tried). Rejects done and
@@ -1791,28 +1763,7 @@ export const setTaskPriority = async (
 export const setTaskVerifyCmd = async (
   id: string,
   verifyCmd: string | null,
-): Promise<{ id: string; verifyCmd: string | null }> => {
-  await ensureQueueSchema()
-  const client = resolveQueueClient()
-  const sel = await client.execute({
-    sql: `SELECT status FROM tasks WHERE id = ?`,
-    args: [id],
-  })
-  if (sel.rows.length === 0) {
-    throw new Error(`task not found: ${id}`)
-  }
-  const status = (sel.rows[0] as Record<string, unknown>)['status'] as string
-  if (status === 'done' || status === 'dropped') {
-    throw new Error(
-      `set-verify is not allowed for ${status} tasks — the row is immutable`,
-    )
-  }
-  await client.execute({
-    sql: `UPDATE tasks SET verify_cmd = ?, updated_at = NOW() WHERE id = ?`,
-    args: [verifyCmd, id],
-  })
-  return { id, verifyCmd }
-}
+): Promise<{ id: string; verifyCmd: string | null }> => Arc.setVerifyCmd(id, verifyCmd)
 
 export interface DropTaskResult {
   taskId: string

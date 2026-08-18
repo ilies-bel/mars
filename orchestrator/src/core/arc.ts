@@ -31,7 +31,8 @@ import {
   assertTaskKindInvariant,
   ensureQueueSchema,
   getTask,
-  reopenTerminalTask,
+  IllegalTransitionError,
+  TERMINAL_TASK_STATUSES,
   updateTask,
   resolveQueueClient,
   MAX_PRIORITY,
@@ -45,7 +46,9 @@ import {
   type EnqueueTaskOptions,
   type DropTaskResult,
   type UnblockTaskResult,
+  type QaReport,
 } from './queue'
+import type { ReviewPacket } from './lib/review-packet.js'
 import {
   getDefaultTaskStore,
   getDefaultDomainTaskStore,
@@ -113,7 +116,7 @@ const truncate = (s: string, max: number): string =>
  *
  *  A. every Action's `origin_id` resolves to a real Arc root row;
  *  B. every Arc root is a non-recovery origin Action (`kind` ∈ {'task',
- *     'diagnose'}, `fix_for_task_id IS NULL`).
+ *     'diagnose', 'structured-write'}, `fix_for_task_id IS NULL`).
  *
  * This is a *construction guard*, not a runtime recovery path: a throw means
  * the aggregate produced a stranded entity, which is a bug in a write method,
@@ -1058,6 +1061,38 @@ export class Arc {
   }
 
   /**
+   * Persist a task's review packet (ADR-0052 sole-writer). Relocated from
+   * `store/task-store.ts:setReviewPacket`: `review_packet_json` is a
+   * non-lifecycle payload column write (no status change, no outbox event),
+   * but it must still live behind the Arc aggregate so the task table has
+   * exactly one writer (ADR-0052 is column-agnostic) — the store facade now
+   * delegates to this instance method, bound to the same client via
+   * `Arc.load(taskId, store)`.
+   */
+  async setReviewPacket(packet: ReviewPacket): Promise<void> {
+    await this.store.execute({
+      sql: `UPDATE tasks SET review_packet_json = ? WHERE id = ?`,
+      args: [JSON.stringify(packet), this.arcId],
+    })
+  }
+
+  /**
+   * Persist a task's QA report (ADR-0052 sole-writer). Relocated from
+   * `store/task-store.ts:setQaReport`: `qa_report_json` is a non-lifecycle
+   * payload column write (no status change, no outbox event), but it must
+   * still live behind the Arc aggregate so the task table has exactly one
+   * writer (ADR-0052 is column-agnostic) — the store facade now delegates to
+   * this instance method, bound to the same client via
+   * `Arc.load(taskId, store)`.
+   */
+  async setQaReport(report: QaReport): Promise<void> {
+    await this.store.execute({
+      sql: `UPDATE tasks SET qa_report_json = ? WHERE id = ?`,
+      args: [JSON.stringify(report), this.arcId],
+    })
+  }
+
+  /**
    * Reprioritize a pre-dispatch or blocked task (ADR-0052 sole-writer).
    * Relocated from `queue.ts:setTaskPriority`: the priority `UPDATE tasks SET
    * priority = …, updated_at = …` is a non-lifecycle column write (no status
@@ -1121,6 +1156,96 @@ export class Arc {
   }
 
   /**
+   * Update a task's verify command (ADR-0052 sole-writer). Relocated
+   * bit-for-bit from `queue.ts:setTaskVerifyCmd`: `verify_cmd` is a
+   * non-lifecycle column write (no status change, no outbox event), but it
+   * must still live behind the Arc aggregate so the task table has exactly
+   * one writer (ADR-0052) — `setTaskVerifyCmd` in queue.ts is now a thin
+   * wrapper that delegates here.
+   *
+   * Allowed for all non-done, non-dropped tasks (including failed tasks,
+   * which need their spec repaired before they can be re-tried). Rejects
+   * done and dropped tasks — those rows are immutable.
+   *
+   * The caller is responsible for validating that `verifyCmd` uses relative
+   * paths (i.e. does not embed the repo root as an absolute prefix). That
+   * check lives at the CLI layer, mirroring the guard on `task add --verify`.
+   */
+  static async setVerifyCmd(
+    id: string,
+    verifyCmd: string | null,
+  ): Promise<{ id: string; verifyCmd: string | null }> {
+    await ensureQueueSchema()
+    const client = resolveQueueClient()
+    const sel = await client.execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [id],
+    })
+    if (sel.rows.length === 0) {
+      throw new Error(`task not found: ${id}`)
+    }
+    const status = (sel.rows[0] as Record<string, unknown>)['status'] as string
+    if (status === 'done' || status === 'dropped') {
+      throw new Error(
+        `set-verify is not allowed for ${status} tasks — the row is immutable`,
+      )
+    }
+    await client.execute({
+      sql: `UPDATE tasks SET verify_cmd = ?, updated_at = NOW() WHERE id = ?`,
+      args: [verifyCmd, id],
+    })
+    return { id, verifyCmd }
+  }
+
+  /**
+   * The sole audited seam for an operator to reopen a terminal task
+   * (ADR-0052 sole-writer). Relocated bit-for-bit from
+   * `queue.ts:reopenTerminalTask`; `queue.ts` is now a thin wrapper that
+   * delegates here. General task updates cannot use this capability: the
+   * database trigger consumes the audit record (`task_terminal_reopens`) in
+   * the same transaction as this transition.
+   */
+  static async reopenTerminalTask(
+    id: string,
+    reason: string,
+    store?: DomainTaskStore,
+  ): Promise<void> {
+    const task = await getTask(id, store)
+    if (task === null) throw new Error(`task ${id} not found`)
+    if (!TERMINAL_TASK_STATUSES.has(task.status)) {
+      throw new IllegalTransitionError(id, task.status, 'queued')
+    }
+    const now = new Date().toISOString()
+    const statements: DbStatement[] = [
+      {
+        sql: `INSERT INTO task_terminal_reopens (task_id, reason, reopened_by, reopened_at)
+              VALUES (?, ?, 'operator', ?)`,
+        args: [id, reason, now],
+      },
+      {
+        sql: `UPDATE tasks SET updated_at = ?, status = 'queued', error = NULL,
+                failure_reason = NULL, failure_signature = NULL, failure_reason_code = NULL
+              WHERE id = ?`,
+        args: [now, id],
+      },
+      buildEventInsert('task.queued', { taskId: id }),
+      {
+        sql: `UPDATE task_terminal_reopens SET consumed_at = ?
+              WHERE task_id = ? AND consumed_at IS NULL`,
+        args: [now, id],
+      },
+    ]
+    if (store) {
+      await store.batch(statements, 'write')
+    } else {
+      await ensureQueueSchema()
+      await withWriteTx(resolveQueueClient(), async (tx) => {
+        for (const statement of statements) await tx.execute(statement)
+      })
+    }
+  }
+
+  /**
    * Reflection-task insert (ADR-0052). Writes a single self-arc reflection row
    * (`origin_id = self`, status `'done'`) capturing a `mars reflect` run over
    * `corpusSize` task(s). Returns the new task id. Routed through the Arc
@@ -1138,6 +1263,42 @@ export class Arc {
     })
     await Arc.maybeAssertArcInvariant(id, this.store)
     return id
+  }
+
+  /**
+   * Structured-write bookkeeping insert (ADR-0052 sole-writer). Writes a
+   * single terminal (`status='done'`) row for a deterministic, no-LLM
+   * filesystem mutation (e.g. `mars glossary set`, `mars adr add`) that is
+   * merged through the durable merge queue but is not queued/dispatchable
+   * work. `kind = 'structured-write'` — {@link ORDINARY_TASK_SQL} in
+   * queue.ts excludes these rows from ordinary task listings — and the row
+   * is self-rooted (`origin_id = id`), the same shape as
+   * {@link Arc.insertReflection}. Routed through the Arc aggregate so
+   * `runStructuredWrite` (`lib/structured-write.ts`) has exactly one writer,
+   * like every other task-row write (ADR-0052).
+   *
+   * `id` and `prompt` are supplied by the caller: the write id doubles as
+   * the merge-queue's `task_id` foreign key, so it must be allocated before
+   * this call (it cannot be generated here the way {@link insertReflection}
+   * generates its own id).
+   *
+   * `'structured-write'` is a recognized self-rooted Arc-root kind (see
+   * {@link Arc.assertArcInvariant} INVARIANT B), not a `TaskKind` union
+   * member — it never flows through {@link assertTaskKindInvariant}.
+   */
+  static async recordStructuredWrite(
+    id: string,
+    prompt: string,
+    store?: DomainTaskStore,
+  ): Promise<void> {
+    const resolvedStore = store ?? (await getDefaultTaskStore())
+    await ensureQueueSchema()
+    const now = new Date().toISOString()
+    await resolvedStore.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, origin_id, created_at, updated_at) VALUES (?, ?, 'done', 'structured-write', ?, ?, ?)`,
+      args: [id, prompt, id, now, now],
+    })
+    await Arc.maybeAssertArcInvariant(id, resolvedStore)
   }
 
   /**
@@ -3241,7 +3402,7 @@ export class Arc {
     // terminal transition.
     const store = await getDefaultTaskStore()
     if (origin.status === 'failed' || origin.status === 'dropped') {
-      await reopenTerminalTask(originTaskId, 'successful recovery', store)
+      await Arc.reopenTerminalTask(originTaskId, 'successful recovery', store)
     }
     await Arc.setTaskStatus(originTaskId, 'done', { result: { via: 'recovery' } }, store)
     // Clear the error field and emit the terminal event in a second transaction.
@@ -3336,9 +3497,14 @@ export class Arc {
       fix_for_task_id: string | null
     }
     const rootKind = rootRow.kind ?? 'task'
-    if (rootKind !== 'task' && rootKind !== 'diagnose') {
+    // 'structured-write' is a recognized self-rooted terminal bookkeeping
+    // kind (Arc.recordStructuredWrite): always origin_id = id, never
+    // recoverable/dispatchable, and excluded from ordinary task listings via
+    // ORDINARY_TASK_SQL. It is a real Arc root, just not a TaskKind union
+    // member, so it is allowed here alongside 'task' / 'diagnose'.
+    if (rootKind !== 'task' && rootKind !== 'diagnose' && rootKind !== 'structured-write') {
       throw new ArcInvariantError(
-        `Arc root ${oid} (for Action ${arcId}) has kind='${rootKind}'; an Arc root must be kind 'task' or 'diagnose'`,
+        `Arc root ${oid} (for Action ${arcId}) has kind='${rootKind}'; an Arc root must be kind 'task', 'diagnose', or 'structured-write'`,
       )
     }
     if (rootRow.fix_for_task_id !== null) {

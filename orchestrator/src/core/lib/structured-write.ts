@@ -175,21 +175,10 @@ export const runStructuredWrite = async (
   // writes are not queued work, but they do use the same durable merge queue
   // as every other branch; a terminal bookkeeping row gives that queue a real
   // task identity without making this write dispatchable or recoverable.
-  const { getDefaultTaskStore } = await import('../store/task-store')
-  const taskStore = await getDefaultTaskStore()
-  const now = new Date().toISOString()
-  await taskStore.execute({
-    sql: `INSERT INTO tasks
-            (id, prompt, status, kind, origin_id, created_at, updated_at)
-          VALUES (?, ?, 'done', 'structured-write', ?, ?, ?)`,
-    args: [
-      writeId,
-      `Structured ${args.kind} write bookkeeping`,
-      writeId,
-      now,
-      now,
-    ],
-  })
+  // Routed through Arc.recordStructuredWrite — the Arc aggregate is the sole
+  // task-table writer (ADR-0052 sole-writer).
+  const { Arc } = await import('../arc')
+  await Arc.recordStructuredWrite(writeId, `Structured ${args.kind} write bookkeeping`)
 
   const worktree = await createWorktree({
     taskId: writeId,

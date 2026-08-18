@@ -749,13 +749,10 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
       return ReviewPacketSchema.parse(JSON.parse(row.review_packet_json))
     },
 
-    setReviewPacket: async (taskId, packet) => {
-      const c = guardClient()
-      await c.execute({
-        sql: `UPDATE tasks SET review_packet_json = ? WHERE id = ?`,
-        args: [JSON.stringify(packet), taskId],
-      })
-    },
+    // The `review_packet_json` write funnels through the Arc aggregate — the
+    // sole task-table writer (ADR-0052 is column-agnostic, so a payload
+    // column counts) — bound to THIS store so a test store hits its own DB.
+    setReviewPacket: (taskId, packet) => Arc.load(taskId, store).setReviewPacket(packet),
 
     // ── QA report ─────────────────────────────────────────────────────────
 
@@ -771,13 +768,9 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
       return JSON.parse(row.qa_report_json)
     },
 
-    setQaReport: async (taskId, report) => {
-      const c = guardClient()
-      await c.execute({
-        sql: `UPDATE tasks SET qa_report_json = ? WHERE id = ?`,
-        args: [JSON.stringify(report), taskId],
-      })
-    },
+    // Same funnel as setReviewPacket: `qa_report_json` is a payload column,
+    // still covered by the column-agnostic ADR-0052 sole-writer rule.
+    setQaReport: (taskId, report) => Arc.load(taskId, store).setQaReport(report),
 
     // ── Generic SQL escape hatches ─────────────────────────────────────────
 

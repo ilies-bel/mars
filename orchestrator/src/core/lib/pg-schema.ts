@@ -289,9 +289,15 @@ const DDL: readonly string[] = [
      ) THEN
        ALTER TABLE tasks RENAME COLUMN task_type TO merge_mode;
      END IF;
-     UPDATE tasks SET merge_mode = 'gated' WHERE merge_mode = 'checkpoint';
    END
    $$`,
+  // Backfill hoisted out of the DO block above so the arch-guard exemption
+  // marker can sit on the same physical line as the SQL token without being
+  // embedded in the executed PL/pgSQL body (a literal `//` inside the DO
+  // block would be invalid SQL). Still runs in the same migration batch
+  // transaction, immediately after the conditional rename, so ordering is
+  // unchanged.
+  `UPDATE tasks SET merge_mode = 'gated' WHERE merge_mode = 'checkpoint'`, // arch-guard:migration-write
   // Backfill `requeue_anchor_ms` for databases created before this column was
   // added. IF NOT EXISTS makes this idempotent on fresh databases (where the
   // column already exists from the CREATE TABLE above).
@@ -340,19 +346,14 @@ const DDL: readonly string[] = [
              ORDER BY recovery_payload::jsonb ->> 'integrationBranch', created_at DESC
           )
      LOOP
-       UPDATE tasks
-          SET status               = 'failed',
-              failed_phase         = 'code',
-              failure_reason       = 'main-commiter:duplicate-singleton',
-              failure_reason_code  = 'main-commiter:duplicate-singleton',
-              failure_signature    = 'main-commiter:duplicate-singleton',
-              error                = 'Duplicate active main-commiter reaped at schema migration 0008: ' ||
-                                     'only one active committer per branch is permitted (ADR-0071 now ' ||
-                                     'enforced by DB constraint uq_tasks_active_main_committer). ' ||
-                                     'The newest active committer for this branch was kept; this one was retired.',
-              updated_at           = NOW()
-        WHERE id = dup_id;
-     END LOOP;
+` +
+    // The UPDATE is single-lined (and the surrounding DO block split into a
+    // concatenation) so the `// arch-guard:migration-write` marker can sit on
+    // the SAME physical line as the SQL token — required for the line-scoped
+    // guard strip — without the marker text itself landing inside the
+    // executed PL/pgSQL body (this is a real JS comment, outside the string).
+    `       UPDATE tasks SET status = 'failed', failed_phase = 'code', failure_reason = 'main-commiter:duplicate-singleton', failure_reason_code = 'main-commiter:duplicate-singleton', failure_signature = 'main-commiter:duplicate-singleton', error = 'Duplicate active main-commiter reaped at schema migration 0008: only one active committer per branch is permitted (ADR-0071 now enforced by DB constraint uq_tasks_active_main_committer). The newest active committer for this branch was kept; this one was retired.', updated_at = NOW() WHERE id = dup_id;\n` + // arch-guard:migration-write
+    `     END LOOP;
    END $$`,
   `CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_active_main_committer
      ON tasks(

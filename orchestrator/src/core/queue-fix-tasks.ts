@@ -806,11 +806,12 @@ export const handleTaskFailureWithFixTask = async (
             failureReasonCode: null,
             failureReason: null,
           }, s)
-          // Step 2: remove the origin→fix blocker edge
-          await s.execute({
-            sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
-            args: [originId, input.taskId],
-          })
+          // Step 2: remove the origin→fix blocker edge. Routed through the
+          // Arc aggregate — the sole task_blockers writer (ADR-0052) — and
+          // bound to the SAME store seam `s` that steps 1 and 3 use, so all
+          // three mutations stay in one scope rather than fanning out into
+          // separate transactions.
+          await Arc.load(originId, s).removeBlocker(originId, input.taskId)
           // Step 3: drop the fix task as superseded (clear trace)
           await updateTask(input.taskId, {
             status: 'dropped',
