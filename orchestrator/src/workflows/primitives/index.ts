@@ -3935,6 +3935,28 @@ export const merge = async (
     getCommandOutput: () => capturedIntegrationGateOutput,
     getExtraPayload: () => (capturedMergeShas !== null ? { ...capturedMergeShas } : {}),
     fn: async (): Promise<MergeOutput> => {
+      // Periodic heartbeat: records the active merge sub-phase every
+      // MARS_MERGE_HEARTBEAT_MS (default 10 s) so an operator inspecting a
+      // long-running merge can see which sub-phase is hot rather than staring
+      // at a silent 'merge running' span.  Cleared in the finally block so no
+      // tick fires after the step returns or throws.
+      let currentPhase = 'preflight'
+      const heartbeatStartedAt = Date.now()
+      const heartbeatIntervalMs = Number(process.env.MARS_MERGE_HEARTBEAT_MS ?? 10_000)
+      const heartbeatTimer = setInterval(() => {
+        void trace.traceStore
+          .record({
+            kind: 'merge-heartbeat',
+            taskId,
+            phase: 'merge',
+            payload: {
+              subPhase: currentPhase,
+              elapsedMs: Date.now() - heartbeatStartedAt,
+              taskId,
+            },
+          })
+          .catch(() => {})
+      }, heartbeatIntervalMs)
       try {
         await updateTask(
           taskId,
@@ -4150,6 +4172,7 @@ export const merge = async (
         // single-consumer worker. Serialisation is enforced by the worker's
         // single-consumer loop and the DB `FOR UPDATE SKIP LOCKED` claim, so
         // concurrent merge primitives don't race on the file lock.
+        currentPhase = 'waiting-for-worker'
         if (!ctx.services.enqueueMergeJobAndAwait) {
           throw new Error('enqueueMergeJobAndAwait service hook is required — merge queue is always on')
         }
@@ -4484,6 +4507,10 @@ export const merge = async (
           )
         })
         throw error instanceof Error ? error : new Error(message)
+      } finally {
+        // Unconditional: clear the heartbeat interval whether the merge
+        // succeeded, was aborted, or crashed so no tick fires after this step.
+        clearInterval(heartbeatTimer)
       }
     },
   })
