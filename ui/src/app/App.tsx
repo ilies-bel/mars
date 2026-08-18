@@ -16,6 +16,7 @@ import {
 import {
   isKnownRoute,
   pageTitle,
+  parseArcQaRoute,
   parseKpiRoute,
   parseOverlayOrigin,
   parsePrimitiveRoute,
@@ -47,6 +48,7 @@ import { ReflectionsPage } from '@/pages/ReflectionsPage'
 import { ControlRoomPage } from '@/pages/ControlRoomPage'
 import { TriagePage } from '@/pages/TriagePage'
 import { ProposalsPage } from '@/pages/ProposalsPage'
+import { ArcQaPage } from '@/pages/ArcQaPage'
 import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
 import { FallbackBoundary } from '@/components/FallbackBoundary'
 import { AlertNotifier } from '@/shared/notifications/alertNotifier'
@@ -63,6 +65,7 @@ const ROUTE_BASE: Record<RouteName, string> = {
   reflections: '#/reflections',
   control: '#/control',
   proposals: '#/proposals',
+  'arc-qa': '#/progress',
 }
 
 /**
@@ -147,6 +150,7 @@ const AppInner = () => {
   // encoded in the task hash query params to keep the detail page mounted behind.
   const kpiKey = parseKpiRoute(hash) ?? parseTaskKpiKey(hash)
   const studioTaskId = parseStudioRoute(hash)
+  const arcQaOriginId = parseArcQaRoute(hash)
   const activeStepName = parseTaskStep(hash) ?? undefined
 
   // Proposal list: used only for ProposalNodeDrawer (DAG canvas overlay).
@@ -176,7 +180,11 @@ const AppInner = () => {
       <FrameworkUpdateBanner />
       <Shell hash={hash}>
         <FallbackBoundary of="view" variant="pane">
-          {route === 'triage' ? (
+          {route === 'arc-qa' && arcQaOriginId !== null ? (
+            <ArcQaPage originId={arcQaOriginId} />
+          ) : route === 'arc-qa' ? (
+            <ProgressPage />
+          ) : route === 'triage' ? (
             <TriagePage />
           ) : route === 'studio' && studioTaskId !== null ? (
             <StudioPage taskId={studioTaskId} />

@@ -15,6 +15,7 @@
 
 import type { DagContext, Cluster } from '@/shared/schemas'
 import { dagClusterStyle } from '@/shared/dagColors'
+import { arcQaHash } from '@/shared/routing'
 
 // ---------------------------------------------------------------------------
 // Status → Cluster mapping (dag nodes carry a raw status string)
@@ -171,6 +172,7 @@ export const ArcTree = ({ dag, entityId, entityStatus, onOpenTask }: ArcTreeProp
           <li
             key={row.id}
             style={{ marginLeft: `${row.depth * 12}px` }}
+            className={row.isCenter ? 'flex items-center gap-1' : undefined}
           >
             <button
               type="button"
@@ -213,6 +215,15 @@ export const ArcTree = ({ dag, entityId, entityStatus, onOpenTask }: ArcTreeProp
                 {row.status}
               </span>
             </button>
+            {row.isCenter && (
+              <a
+                href={arcQaHash(row.id)}
+                className="shrink-0 font-mono text-micro text-primary underline decoration-primary/40 hover:decoration-primary"
+                title="View QA walk"
+              >
+                QA
+              </a>
+            )}
           </li>
         )
       })}

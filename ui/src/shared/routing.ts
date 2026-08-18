@@ -2,7 +2,7 @@ import type { KpiKey } from './schemas'
 import type { StaleWorktreesPayload } from './schemas'
 import { PRIMITIVE_NAMES, type PrimitiveName } from '@/entities/primitive/types'
 
-export type RouteName = 'progress' | 'events' | 'kpi' | 'studio' | 'chat' | 'steward' | 'reflections' | 'control' | 'triage' | 'proposals'
+export type RouteName = 'progress' | 'events' | 'kpi' | 'studio' | 'chat' | 'steward' | 'reflections' | 'control' | 'triage' | 'proposals' | 'arc-qa'
 
 /**
  * Derives the current route from the URL hash.
@@ -26,6 +26,7 @@ export const detectRoute = (hash: string): RouteName => {
   if (hash.startsWith('#/events')) return 'events'
   if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return 'kpi'
   if (parseStudioRoute(hash) !== null) return 'studio'
+  if (parseArcQaRoute(hash) !== null) return 'arc-qa'
   if (hash === '#/steward') return 'steward'
   if (hash.startsWith('#/reflections')) return 'reflections'
   if (hash === '#/control') return 'control'
@@ -55,6 +56,8 @@ export const isKnownRoute = (hash: string): boolean => {
   if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return true
   // Studio requires a non-empty task id — a bare `#/studio/` redirects.
   if (parseStudioRoute(hash) !== null) return true
+  // Arc QA requires a non-empty origin id — a bare `#/arc//qa` redirects.
+  if (parseArcQaRoute(hash) !== null) return true
   if (hash === '#/steward') return true
   if (hash.startsWith('#/reflections')) return true
   if (hash === '#/control') return true
@@ -118,6 +121,26 @@ export const studioHash = (taskId: string): string =>
   `#/studio/${encodeURIComponent(taskId)}`
 
 /**
+ * Parses an optional `#/arc/<originId>/qa` full-page route — the per-arc
+ * QA walk viewer showing criteria, step screenshots, and the stop reason.
+ *
+ * Returns the decoded origin task id, or `null` when the hash is not an
+ * arc-qa route. Trailing slashes and empty ids normalise to `null`.
+ */
+export const parseArcQaRoute = (hash: string): string | null => {
+  const m = /^#\/arc\/([^/?#]+)\/qa/.exec(hash)
+  if (!m) return null
+  const id = decodeURIComponent(m[1])
+  return id.length > 0 ? id : null
+}
+
+/**
+ * Builds a `#/arc/<originId>/qa` hash for navigating to the Arc QA page.
+ */
+export const arcQaHash = (originId: string): string =>
+  `#/arc/${encodeURIComponent(originId)}/qa`
+
+/**
  * Parses an optional `#/task/<id>` overlay route. The task drawer is layered
  * on top of whatever the underlying `detectRoute(...)` route resolves to —
  * Progress or otherwise — so this function returns the id alone (or `null`
@@ -144,6 +167,7 @@ const ROUTE_NAMES: readonly RouteName[] = [
   'control',
   'triage',
   'proposals',
+  'arc-qa',
 ]
 
 const isRouteName = (value: string): value is RouteName =>
@@ -449,6 +473,8 @@ export const pageTitle = (route: RouteName): string => {
       return 'mars — control'
     case 'proposals':
       return 'mars — proposals'
+    case 'arc-qa':
+      return 'mars — arc qa'
   }
 }
 

@@ -35,6 +35,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': API,
+      '/arc': API,
       '/events': { target: API, changeOrigin: true },
     },
   },
