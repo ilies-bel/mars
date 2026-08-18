@@ -42,6 +42,7 @@ import {
   findAwaitingProposalForPath,
   type ProposeResult,
 } from './steward-workflow-patch.js'
+import { writeArcQaManifest } from './arc-qa-manifest.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -1023,6 +1024,28 @@ export async function runArcVerification(
                 allCriteria,
                 { taskId: originId, worktreeDir: opts.cwd, logDir, artifactsDir },
               )
+              // Persist the QA manifest — best-effort; never fails the arc.
+              try {
+                await writeArcQaManifest(originId, marsStateDir, {
+                  originId,
+                  generatedAt: Date.now(),
+                  criteria: criterionResults.map((r) => ({
+                    criterion: r.criterion,
+                    steps: r.steps.map((s) => ({
+                      index: s.stepIndex,
+                      text: s.text,
+                      screenshotPath: s.screenshotPath,
+                    })),
+                    stoppedAtStep: r.stoppedAtStep,
+                    stopReason: r.stopReason,
+                  })),
+                })
+              } catch (manifestErr) {
+                console.error(
+                  `[arc-verifier] Failed to write arc QA manifest for ${originId}:`,
+                  manifestErr,
+                )
+              }
               await e2eDepsResolved.markE2ePassDone(originId, marsStateDir)
               e2ePass = { ran: true, cantVerifyReason: null, criterionResults }
             }
