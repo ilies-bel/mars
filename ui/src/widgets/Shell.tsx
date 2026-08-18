@@ -5,6 +5,7 @@ import type { RenderedRow } from '@/entities/actionQueue/clusterRows'
 import { resolvePageRoute } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
 import { deriveBreadcrumbs } from './Breadcrumbs'
+import { DispatchPausedChip } from './DispatchPausedChip'
 import { LiveParkedChip } from './LiveParkedChip'
 import { ProjectSelector } from './ProjectSelector'
 
@@ -139,8 +140,11 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
         </>
       )}
 
-      {/* Right-side chrome — awaiting-human counter, hidden when zero */}
+      {/* Right-side chrome — dispatch pause, then awaiting-human counter.
+          Both hidden when they don't apply, so the bar costs nothing in the
+          normal case. */}
       <div className="ml-auto flex shrink-0 items-center gap-2">
+        <DispatchPausedChip />
         <LiveParkedChip />
       </div>
     </header>

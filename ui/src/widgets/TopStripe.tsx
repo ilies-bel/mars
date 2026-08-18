@@ -1,4 +1,6 @@
 import { releaseNotesHash } from '@/shared/routing'
+import { pauseReasonLabel } from '@/entities/operator/useDispatchState'
+import type { DispatchPauseState } from '@/shared/api'
 
 interface Props {
   inProgress: number
@@ -6,9 +8,47 @@ interface Props {
   /** Tasks completed in the last 24 hours (rolling window). */
   doneToday: number
   connected: boolean
+  /**
+   * Dispatch pause state. Distinct from `connected`, which is only the SSE
+   * socket: a paused daemon is perfectly connected and perfectly idle, and
+   * showing "live" for it reads as "healthy, nothing to do" when the truth is
+   * "frozen, nothing will happen". Every zero on this header is explained by a
+   * pause, so the pause has to win the indicator.
+   */
+  dispatch: DispatchPauseState
 }
 
-export const TopStripe = ({ inProgress, failed, doneToday, connected }: Props) => (
+/**
+ * Health indicator: dispatch state first, then socket state.
+ *
+ * Ordered by what invalidates more of the screen. A pause makes every counter
+ * meaningless; a dropped socket only makes them stale.
+ */
+const HealthDot = ({ connected, dispatch }: Pick<Props, 'connected' | 'dispatch'>) => {
+  const { tone, label, title } = dispatch.paused
+    ? {
+        tone: 'bg-warning',
+        label: `paused · ${pauseReasonLabel(dispatch)}`,
+        title: dispatch.detail ?? 'Dispatch is paused — no new work is being dispatched.',
+      }
+    : connected
+      ? { tone: 'bg-success animate-mars-pulse', label: 'live', title: 'Dispatch is running.' }
+      : { tone: 'bg-muted-foreground', label: 'offline', title: 'Lost the event stream.' }
+
+  return (
+    <a
+      href="#/control"
+      title={title}
+      data-testid="health-indicator"
+      className="flex items-center gap-1.5 transition-opacity hover:opacity-80"
+    >
+      <span className={`h-2 w-2 rounded-full ${tone}`} />
+      <span className="font-mono text-body text-muted-foreground">{label}</span>
+    </a>
+  )
+}
+
+export const TopStripe = ({ inProgress, failed, doneToday, connected, dispatch }: Props) => (
   <header className="flex h-12 items-center justify-between border-b border-border bg-background px-6">
     <div className="flex items-center gap-3">
       <h1 className="text-title font-semibold text-foreground">Tasks</h1>
@@ -47,14 +87,7 @@ export const TopStripe = ({ inProgress, failed, doneToday, connected }: Props) =
           <span className="text-micro text-muted-foreground">FAILED</span>
         </div>
       </div>
-      <div className="flex items-center gap-1.5">
-        <span
-          className={`h-2 w-2 rounded-full bg-success ${connected ? 'animate-mars-pulse' : 'opacity-30'}`}
-        />
-        <span className="font-mono text-body text-muted-foreground">
-          {connected ? 'live' : 'offline'}
-        </span>
-      </div>
+      <HealthDot connected={connected} dispatch={dispatch} />
     </div>
   </header>
 )

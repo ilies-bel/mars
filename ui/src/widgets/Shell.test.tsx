@@ -36,6 +36,14 @@ mock.module('@/widgets/ProjectSelector', () => ({
   ProjectSelector: () => null,
 }))
 
+// useDispatchState — Shell renders the global paused chip from it. These tests
+// render with renderToStaticMarkup and no QueryClientProvider, so stub it out
+// the same way useActionQueue is. Dispatch running ⇒ the chip renders nothing.
+mock.module('@/entities/operator/useDispatchState', () => ({
+  useDispatchState: () => ({ paused: false, reason: null, since: null, detail: null }),
+  pauseReasonLabel: () => 'paused',
+}))
+
 // ── Import after mocks are registered ────────────────────────────────────────
 
 const { Shell, ShellSidebar, SHELL_NAV_GROUPS } = await import('./Shell')

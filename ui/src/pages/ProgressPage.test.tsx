@@ -53,6 +53,14 @@ mock.module('@/entities/frameworkUpdate/useFrameworkUpdate', () => ({
   useFrameworkUpdate: () => ({ update: null, error: null, isPending: false }),
 }))
 
+// The header's health indicator reads dispatch state. Default to running so the
+// existing header assertions describe a normal system; the paused case is
+// covered directly in TopStripe.test.tsx.
+mock.module('@/entities/operator/useDispatchState', () => ({
+  useDispatchState: () => ({ paused: false, reason: null, since: null, detail: null }),
+  pauseReasonLabel: () => 'paused',
+}))
+
 const { ProgressPage } = await import('./ProgressPage')
 
 // ---------------------------------------------------------------------------

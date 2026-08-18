@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { TopStripe } from './TopStripe'
+import type { DispatchPauseState } from '@/shared/api'
+
+const RUNNING: DispatchPauseState = { paused: false, reason: null, since: null, detail: null }
+const PAUSED: DispatchPauseState = {
+  paused: true,
+  reason: 'storm',
+  since: '2026-08-19T10:00:00.000Z',
+  detail: 'signature storm: code:context-exhausted/unclassified x3',
+}
 
 // ---------------------------------------------------------------------------
 // Section helpers — extract a region of the rendered HTML bounded by
@@ -22,7 +31,7 @@ function from(html: string, startId: string): string {
 describe('TopStripe – stat labels match their values', () => {
   it('shows the IN PROGRESS count in its own section', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={3} doneToday={5} failed={2} connected={true} />,
+      <TopStripe inProgress={3} doneToday={5} failed={2} connected={true} dispatch={RUNNING} />,
     )
     const section = between(html, 'stat-in-progress', 'stat-done')
     expect(section).toContain('>3<')
@@ -31,7 +40,7 @@ describe('TopStripe – stat labels match their values', () => {
 
   it('shows the DONE TODAY count in its own section', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={3} doneToday={5} failed={2} connected={true} />,
+      <TopStripe inProgress={3} doneToday={5} failed={2} connected={true} dispatch={RUNNING} />,
     )
     const section = between(html, 'stat-done', 'stat-failed')
     expect(section).toContain('>5<')
@@ -40,7 +49,7 @@ describe('TopStripe – stat labels match their values', () => {
 
   it('shows the FAILED count in its own section', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={3} doneToday={5} failed={2} connected={true} />,
+      <TopStripe inProgress={3} doneToday={5} failed={2} connected={true} dispatch={RUNNING} />,
     )
     const section = from(html, 'stat-failed')
     expect(section).toContain('>2<')
@@ -49,14 +58,14 @@ describe('TopStripe – stat labels match their values', () => {
 
   it('does not show an ACTION QUEUE label (replaced by FAILED)', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={0} doneToday={0} failed={0} connected={true} />,
+      <TopStripe inProgress={0} doneToday={0} failed={0} connected={true} dispatch={RUNNING} />,
     )
     expect(html).not.toContain('ACTION QUEUE')
   })
 
   it('DONE TODAY and FAILED counts are independent — different values render as distinct stats', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={1} doneToday={7} failed={4} connected={true} />,
+      <TopStripe inProgress={1} doneToday={7} failed={4} connected={true} dispatch={RUNNING} />,
     )
     const doneSection = between(html, 'stat-done', 'stat-failed')
     const failedSection = from(html, 'stat-failed')
@@ -74,7 +83,7 @@ describe('TopStripe – stat labels match their values', () => {
 describe('TopStripe – digit jitter prevention', () => {
   it('IN PROGRESS count span carries tabular-nums so width stays stable across values', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={9} doneToday={0} failed={0} connected={true} />,
+      <TopStripe inProgress={9} doneToday={0} failed={0} connected={true} dispatch={RUNNING} />,
     )
     const section = between(html, 'stat-in-progress', 'stat-done')
     expect(section).toContain('tabular-nums')
@@ -82,7 +91,7 @@ describe('TopStripe – digit jitter prevention', () => {
 
   it('DONE TODAY count span carries tabular-nums', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={0} doneToday={9} failed={0} connected={true} />,
+      <TopStripe inProgress={0} doneToday={9} failed={0} connected={true} dispatch={RUNNING} />,
     )
     const section = between(html, 'stat-done', 'stat-failed')
     expect(section).toContain('tabular-nums')
@@ -90,7 +99,7 @@ describe('TopStripe – digit jitter prevention', () => {
 
   it('FAILED count span carries tabular-nums', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={0} doneToday={0} failed={9} connected={true} />,
+      <TopStripe inProgress={0} doneToday={0} failed={9} connected={true} dispatch={RUNNING} />,
     )
     const section = from(html, 'stat-failed')
     expect(section).toContain('tabular-nums')
@@ -100,7 +109,7 @@ describe('TopStripe – digit jitter prevention', () => {
 describe('TopStripe – connection indicator', () => {
   it('shows "live" when connected', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={0} doneToday={0} failed={0} connected={true} />,
+      <TopStripe inProgress={0} doneToday={0} failed={0} connected={true} dispatch={RUNNING} />,
     )
     expect(html).toContain('>live<')
     expect(html).not.toContain('>offline<')
@@ -108,7 +117,7 @@ describe('TopStripe – connection indicator', () => {
 
   it('shows "offline" when disconnected', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={0} doneToday={0} failed={0} connected={false} />,
+      <TopStripe inProgress={0} doneToday={0} failed={0} connected={false} dispatch={RUNNING} />,
     )
     expect(html).toContain('>offline<')
     expect(html).not.toContain('>live<')
@@ -116,14 +125,14 @@ describe('TopStripe – connection indicator', () => {
 
   it('live indicator dot pulses when connected', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={0} doneToday={0} failed={0} connected={true} />,
+      <TopStripe inProgress={0} doneToday={0} failed={0} connected={true} dispatch={RUNNING} />,
     )
     expect(html).toContain('animate-mars-pulse')
   })
 
   it('live indicator dot does not pulse when disconnected', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={0} doneToday={0} failed={0} connected={false} />,
+      <TopStripe inProgress={0} doneToday={0} failed={0} connected={false} dispatch={RUNNING} />,
     )
     expect(html).not.toContain('animate-mars-pulse')
   })
@@ -132,7 +141,7 @@ describe('TopStripe – connection indicator', () => {
 describe('TopStripe – visual hierarchy (numbers pop from labels)', () => {
   it('IN PROGRESS count uses the running status color to signal active work', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={3} doneToday={0} failed={0} connected={true} />,
+      <TopStripe inProgress={3} doneToday={0} failed={0} connected={true} dispatch={RUNNING} />,
     )
     const section = between(html, 'stat-in-progress', 'stat-done')
     expect(section).toContain('text-status-running')
@@ -140,7 +149,7 @@ describe('TopStripe – visual hierarchy (numbers pop from labels)', () => {
 
   it('DONE TODAY count uses success color', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={0} doneToday={5} failed={0} connected={true} />,
+      <TopStripe inProgress={0} doneToday={5} failed={0} connected={true} dispatch={RUNNING} />,
     )
     const section = between(html, 'stat-done', 'stat-failed')
     expect(section).toContain('text-success')
@@ -148,7 +157,7 @@ describe('TopStripe – visual hierarchy (numbers pop from labels)', () => {
 
   it('FAILED count uses error color to draw attention', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={0} doneToday={0} failed={2} connected={true} />,
+      <TopStripe inProgress={0} doneToday={0} failed={2} connected={true} dispatch={RUNNING} />,
     )
     const section = from(html, 'stat-failed')
     expect(section).toContain('text-error')
@@ -156,7 +165,7 @@ describe('TopStripe – visual hierarchy (numbers pop from labels)', () => {
 
   it('IN PROGRESS label is muted so the number stands out', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={3} doneToday={0} failed={0} connected={true} />,
+      <TopStripe inProgress={3} doneToday={0} failed={0} connected={true} dispatch={RUNNING} />,
     )
     const section = between(html, 'stat-in-progress', 'stat-done')
     // The label span should carry text-muted-foreground (not the number span which carries text-status-running)
@@ -165,9 +174,43 @@ describe('TopStripe – visual hierarchy (numbers pop from labels)', () => {
 
   it('FAILED label is muted so the number stands out', () => {
     const html = renderToStaticMarkup(
-      <TopStripe inProgress={0} doneToday={0} failed={2} connected={true} />,
+      <TopStripe inProgress={0} doneToday={0} failed={2} connected={true} dispatch={RUNNING} />,
     )
     const section = from(html, 'stat-failed')
     expect(section).toContain('text-muted-foreground')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Health indicator. `connected` is only the SSE socket: a paused daemon is
+// perfectly connected and perfectly idle, and a green "live" for it reads as
+// "healthy, nothing to do" when the truth is "frozen, nothing will happen".
+// ---------------------------------------------------------------------------
+
+describe('TopStripe – health indicator', () => {
+  it('reads live when dispatch is running and the stream is connected', () => {
+    const html = renderToStaticMarkup(
+      <TopStripe inProgress={0} doneToday={0} failed={0} connected={true} dispatch={RUNNING} />,
+    )
+    expect(from(html, 'health-indicator')).toContain('live')
+  })
+
+  it('never reads live while dispatch is paused, even with a healthy stream', () => {
+    const html = renderToStaticMarkup(
+      <TopStripe inProgress={0} doneToday={0} failed={0} connected={true} dispatch={PAUSED} />,
+    )
+    const section = from(html, 'health-indicator')
+    expect(section).toContain('paused')
+    expect(section).toContain('signature storm')
+    expect(section).not.toContain('>live<')
+  })
+
+  it('does not paint the offline dot green', () => {
+    const html = renderToStaticMarkup(
+      <TopStripe inProgress={0} doneToday={0} failed={0} connected={false} dispatch={RUNNING} />,
+    )
+    const section = from(html, 'health-indicator')
+    expect(section).toContain('offline')
+    expect(section).not.toContain('bg-success')
   })
 })

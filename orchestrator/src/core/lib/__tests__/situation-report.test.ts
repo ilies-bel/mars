@@ -34,6 +34,33 @@ describe('buildSituationReport', () => {
     expect(report).toContain('2 items need attention.')
     expect(report).not.toContain('4 items')
   })
+
+  // Every zero in this report has one cause when dispatch is paused. Reporting
+  // them without saying so reads as "idle and healthy" rather than "frozen".
+  it('names the pause so the zeros are explained', async () => {
+    const report = await buildSituationReport({
+      listTasks: async () => [],
+      getSemaphoreSnapshot: () => ({ inUse: 0, limit: 14 }),
+      listActionQueue: async () => [],
+      getDispatchState: () => ({ paused: true, reason: 'storm' }),
+    })
+
+    expect(report).toContain('0 queued tasks')
+    expect(report).toContain('Dispatch is paused by the signature-storm breaker')
+    expect(report).toContain('no new work is being dispatched')
+  })
+
+  it('says nothing about dispatch when it is running', async () => {
+    const report = await buildSituationReport({
+      listTasks: async () => [],
+      getSemaphoreSnapshot: () => ({ inUse: 0, limit: 14 }),
+      listActionQueue: async () => [],
+      getDispatchState: () => ({ paused: false, reason: null }),
+    })
+
+    expect(report).not.toContain('Dispatch')
+    expect(report.endsWith('need attention.')).toBe(true)
+  })
 })
 
 // ---------------------------------------------------------------------------

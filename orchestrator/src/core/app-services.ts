@@ -463,6 +463,9 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       listTasks: () => getDefaultDomainTaskStore().listTasks(),
       getSemaphoreSnapshot: deps.getSituationSemaphoreSnapshot ?? (() => ({ inUse: 0, limit: 0 })),
       listActionQueue: () => viewActionQueue('open'),
+      // Without this the report reads "0 queued, 0 running, workers 0 of 14"
+      // during a pause and looks like a healthy idle system.
+      getDispatchState: deps.getPauseState,
     })
 
   const openSubthread: AppServices['openSubthread'] = async ({ title, acknowledgment }) => {

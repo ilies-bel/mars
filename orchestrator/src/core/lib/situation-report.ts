@@ -13,10 +13,30 @@ export interface SituationSemaphoreSnapshot {
   limit: number
 }
 
+export interface SituationDispatchState {
+  paused: boolean
+  reason: 'operator' | 'storm' | 'quota' | 'baseline' | null
+}
+
 export interface SituationReportSources {
   listTasks: () => Promise<readonly SituationTask[]>
   getSemaphoreSnapshot: () => SituationSemaphoreSnapshot
   listActionQueue: () => Promise<readonly { kind?: string }[]>
+  /**
+   * Dispatch pause state. Optional so existing callers keep working; when
+   * absent the report simply omits the pause clause.
+   */
+  getDispatchState?: () => SituationDispatchState
+}
+
+const PAUSE_REASON_LABEL: Record<
+  NonNullable<SituationDispatchState['reason']>,
+  string
+> = {
+  operator: 'paused by the operator',
+  storm: 'paused by the signature-storm breaker',
+  quota: 'paused by a provider quota rejection',
+  baseline: 'paused by a broken baseline',
 }
 
 const taskCount = (tasks: readonly SituationTask[], status: string): number =>
@@ -51,5 +71,14 @@ export const buildSituationReport = async (
   const failed = taskCount(tasks, 'failed')
 
   const actionableCount = countNeedsYou(actionQueue)
-  return `Situation: ${plural(queued, 'queued task')}, ${plural(running, 'running task')}, ${plural(blocked, 'blocked task')}, and ${plural(failed, 'failed task')}. Workers: ${workers.inUse} of ${workers.limit} active. ${plural(actionableCount, 'item', 'items')} need attention.`
+
+  // A pause is the reason every counter above may read zero, so say it rather
+  // than leaving the reader to infer "idle and healthy" from "0 running".
+  const dispatch = sources.getDispatchState?.()
+  const pauseClause =
+    dispatch?.paused === true
+      ? ` Dispatch is ${dispatch.reason ? PAUSE_REASON_LABEL[dispatch.reason] : 'paused'} — no new work is being dispatched.`
+      : ''
+
+  return `Situation: ${plural(queued, 'queued task')}, ${plural(running, 'running task')}, ${plural(blocked, 'blocked task')}, and ${plural(failed, 'failed task')}. Workers: ${workers.inUse} of ${workers.limit} active. ${plural(actionableCount, 'item', 'items')} need attention.${pauseClause}`
 }
