@@ -83,6 +83,20 @@ describe('BoardView dense — four column titles', () => {
     expect(html).toContain('FAILED')
   })
 
+  // Regression for the "one word, two numbers" half of the divergent-counts
+  // bug: this column counts every proposal with an in-scope task (any status),
+  // while the Proposals page counts only drafts awaiting review. Both used to
+  // render under a bare "PROPOSALS", so the board's number and the page's
+  // number disagreed with nothing on screen explaining why. The heading must
+  // name its population.
+  it('qualifies the proposals heading with the population it counts', () => {
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={emptyByCluster()} proposals={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toContain('PROPOSALS (ALL)')
+  })
+
   it('count pill reflects the number of items in each column', () => {
     const p = proposal({ id: 'prop-1' })
     const running = task({ id: 'run-1', cluster: 'In progress', status: 'running' })

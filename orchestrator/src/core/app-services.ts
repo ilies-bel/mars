@@ -127,7 +127,11 @@ import {
   recoverPromptFromDiskTranscript,
 } from './lib/step-prompt-recovery'
 import { extractAgentToolCalls, type AgentToolCall } from './lib/claude-stream'
-import { buildSituationReport, type SituationSemaphoreSnapshot } from './lib/situation-report'
+import {
+  buildSituationReport,
+  countNeedsYou,
+  type SituationSemaphoreSnapshot,
+} from './lib/situation-report'
 import { listVerifyGates, type VerifyGate } from './verify-gates'
 
 export type { AgentToolCall }
@@ -495,7 +499,17 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     const { buildStatusCountsView, createStatusCountsStore } =
       await import('./daemon/view/status-counts')
     const client = getCompositionRootClient()
-    return buildStatusCountsView(createStatusCountsStore(client))
+    // needYou is deliberately NOT sourced from the SQL store: that query only
+    // counts literal action_queue_items rows, but condition kinds (failed,
+    // stale-queued, gate-broken, …) are derived on read (ADR-0057) and have
+    // no stored row. Sourcing needYou from viewActionQueue('open') — the same
+    // feed the triage badge, sidebar badge, and situation card all read from
+    // — keeps this the single canonical "needs you" count everywhere.
+    const [counts, openActionQueue] = await Promise.all([
+      buildStatusCountsView(createStatusCountsStore(client)),
+      viewActionQueue('open'),
+    ])
+    return { ...counts, needYou: countNeedsYou(openActionQueue) }
   }
 
   const viewStepSpans: AppServices['viewStepSpans'] = async ({ originId, taskId }) => {

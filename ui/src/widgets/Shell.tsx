@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import { sortItems, buildRenderedRows } from '@/entities/actionQueue/clusterRows'
+import { sortItems, buildRenderedRows, countNeedsYou } from '@/entities/actionQueue/clusterRows'
 import type { RenderedRow } from '@/entities/actionQueue/clusterRows'
 import { resolvePageRoute } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
@@ -247,24 +247,26 @@ interface ShellProps {
 export const Shell = ({ hash, children }: ShellProps) => {
   const { items: actionQueueItems } = useActionQueue()
   const activeRoute = resolvePageRoute(hash)
-  // Badge = rendered rows after clustering, draft-proposal clusters excluded.
-  // Draft proposals are a backlog of shaped ideas, not operational alerts that
-  // need immediate action. Excluding them keeps the sidebar count aligned with
-  // `mars action-queue list` (which also excludes draft-proposals by default),
-  // so the badge and CLI always report the same set.
-  const badgeRows = buildRenderedRows(sortItems(actionQueueItems)).filter(
-    (r) => !(r.type === 'cluster' && r.kind === 'draft-proposal'),
-  )
-  const decisionBadge = badgeRows.length
+  // Badge = the canonical "needs you" count (open items, draft-proposals
+  // excluded) — the SAME definition the triage page badge, the chat
+  // greeting, and the chat situation card all use (see `countNeedsYou`).
+  // Draft proposals are a backlog of shaped ideas, not operational alerts
+  // that need immediate action, so they're excluded everywhere. This is
+  // deliberately the raw item count, NOT the clustered rendered-row count —
+  // clustering is a display concern for the triage list and must not change
+  // what the badge reports.
+  const nonProposalItems = actionQueueItems.filter((item) => item.kind !== 'draft-proposal')
+  const decisionBadge = countNeedsYou(actionQueueItems)
 
   // Composition breakdown for the badge aria-label — lets operators and the
-  // chat agent reconcile "4 decisions pending" as "3 alerts + 1 cluster"
-  // without opening the triage page to count manually. Derived from the same
-  // badgeRows the count uses, so label and number can never disagree.
-  const clusterRowsList = badgeRows.filter(
+  // chat agent reconcile "4 decisions pending" as "3 alerts + 1 cluster of N"
+  // without opening the triage page to count manually. Clustered kinds report
+  // their real item count (not "1"), so the parts always sum to decisionBadge.
+  const renderedRows = buildRenderedRows(sortItems(nonProposalItems))
+  const clusterRowsList = renderedRows.filter(
     (r): r is Extract<RenderedRow, { type: 'cluster' }> => r.type === 'cluster',
   )
-  const alertCount = badgeRows.length - clusterRowsList.length
+  const alertCount = renderedRows.length - clusterRowsList.length
   const badgeAriaLabel: string | undefined = (() => {
     if (decisionBadge === 0) return undefined
     const n = decisionBadge > 99 ? '99+' : String(decisionBadge)
@@ -272,7 +274,7 @@ export const Shell = ({ hash, children }: ShellProps) => {
     const parts: string[] = []
     if (alertCount > 0) parts.push(`${alertCount} alert${alertCount !== 1 ? 's' : ''}`)
     for (const c of clusterRowsList) {
-      parts.push(`1 ${c.kind} cluster`)
+      parts.push(`${c.count} ${c.kind} item${c.count !== 1 ? 's' : ''}`)
     }
     return `${n} decisions pending (${parts.join(' + ')})`
   })()

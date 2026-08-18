@@ -1,12 +1,31 @@
 /**
  * Clustering logic for the "Needs you" triage view.
  *
- * Shared by TriagePage (rendering) and Shell (badge count) so both always
- * reflect the same rendered-row count rather than raw item count.
+ * Shared by TriagePage (rendering) so the list always reflects the same
+ * rendered-row grouping. The rendered-row COUNT is intentionally NOT used as
+ * the "needs you" badge count (see `countNeedsYou` below) — clustering
+ * collapses high-cardinality kinds for display, which makes the rendered-row
+ * count diverge from the true number of open, actionable items whenever a
+ * non-draft-proposal kind exceeds CLUSTER_THRESHOLD.
  */
 
 import { isTaskFailureActionQueueKind } from '@/shared/schemas'
 import type { ActionQueueItem } from '@/shared/schemas'
+
+// ── Canonical "needs you" count ────────────────────────────────────────────
+
+/**
+ * The single canonical "needs you" count: open action-queue items excluding
+ * draft-proposal rows (a backlog of shaped ideas, not an operational alert
+ * needing immediate action). Every surface that renders this concept — the
+ * triage page badge, the sidebar badge, the chat greeting, the situation
+ * card — derives from this same definition (mirrored server-side by
+ * `countNeedsYou` in orchestrator/src/core/lib/situation-report.ts) so the
+ * four surfaces can never disagree.
+ */
+export function countNeedsYou(items: readonly { kind: string }[]): number {
+  return items.filter((item) => item.kind !== 'draft-proposal').length
+}
 
 // ── Sort ──────────────────────────────────────────────────────────────────────
 

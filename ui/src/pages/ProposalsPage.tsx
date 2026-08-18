@@ -9,6 +9,13 @@
  * Actions (Promote, Dismiss, Grill) live inside ProposalDetailDrawer —
  * ProposalsPage is pure navigation.
  *
+ * The header is labelled "Draft proposals" (not the bare "Proposals" the
+ * Progress board column uses) because the two surfaces count different
+ * populations: this page counts proposals with status='draft' awaiting a
+ * decision, while the Progress board's "Proposals" column counts every
+ * proposal that has spawned at least one in-scope task, regardless of
+ * status. Same word, different population — the label says which.
+ *
  * Empty state: "No drafts — proposals appear here when agents or the slicer file them."
  */
 
@@ -154,13 +161,13 @@ const ProposalsSkeleton = () => (
 // ── ProposalsPage ─────────────────────────────────────────────────────────────
 
 export const ProposalsPage = () => {
-  const { proposals, isPending, error, refetch } = useProposals()
+  const { proposals, total, isPending, error, refetch } = useProposals()
 
   if (error) {
     return (
       <div className="flex h-full flex-col overflow-hidden bg-background">
         <div className="flex shrink-0 items-center border-b border-border px-5 py-3">
-          <h1 className="font-mono text-body font-semibold text-foreground">Proposals</h1>
+          <h1 className="font-mono text-body font-semibold text-foreground">Draft proposals</h1>
         </div>
         <ErrorState error={error} of="proposals" onRetry={() => refetch()} />
       </div>
@@ -175,14 +182,19 @@ export const ProposalsPage = () => {
       {/* Header strip */}
       <div className="flex shrink-0 items-center border-b border-border px-5 py-3">
         <h1 className="font-mono text-body font-semibold text-foreground">
-          Proposals
+          Draft proposals
         </h1>
-        {!isPending && sorted.length > 0 && (
+        {/* Count = `total` (all matching drafts, before pagination), NOT
+            `sorted.length` (this page only, capped at the fetch limit). The
+            list below is paginated; the badge is a population count and must
+            match the triage page's `draft-proposal` cluster row, which counts
+            the same population. */}
+        {!isPending && total > 0 && (
           <span
-            aria-label={`${sorted.length} draft proposals`}
+            aria-label={`${total} draft proposals awaiting review`}
             className="ml-2 rounded-full bg-success/20 px-2 py-0.5 font-mono text-micro leading-none text-success"
           >
-            {sorted.length}
+            {total}
           </span>
         )}
       </div>

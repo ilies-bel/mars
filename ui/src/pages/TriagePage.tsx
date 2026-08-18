@@ -10,8 +10,13 @@
  * surface. Condition kinds (failed, stale-queued, …) always appear as
  * individual rows since each represents a distinct entity needing attention.
  *
- * Badge = count of RENDERED rows (clusters count as 1), so it reflects real
- * operator decisions rather than raw row count.
+ * Badge = the canonical "needs you" count (open items, draft-proposals
+ * excluded) — the SAME definition the sidebar badge, the chat greeting, and
+ * the chat situation card all use (see `countNeedsYou`). This is
+ * deliberately NOT the rendered-row count: clustering (draft-proposal, or
+ * any other kind past CLUSTER_THRESHOLD) is a display concern for this list
+ * and must not change what the badge reports, or the header count and the
+ * sidebar count would drift apart whenever a kind clusters.
  *
  * Empty state: "All quiet — N running, N done today".
  */
@@ -19,7 +24,7 @@
 import { useState, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import { sortItems, buildRenderedRows } from '@/entities/actionQueue/clusterRows'
+import { sortItems, buildRenderedRows, countNeedsYou } from '@/entities/actionQueue/clusterRows'
 import { useProgress } from '@/hooks/useProgress'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { postDecision } from '@/shared/api'
@@ -568,6 +573,7 @@ export const TriagePage = () => {
 
   const sorted = sortItems(items)
   const renderedRows = buildRenderedRows(sorted)
+  const needsYouCount = countNeedsYou(items)
 
   // Only show the empty state when every feed succeeded AND there is genuinely
   // nothing to act on. A feed error is itself something to surface, so the
@@ -582,12 +588,12 @@ export const TriagePage = () => {
         <h1 className="font-mono text-body font-semibold text-foreground">
           Needs you
         </h1>
-        {renderedRows.length > 0 && (
+        {needsYouCount > 0 && (
           <span
-            aria-label={`${renderedRows.length} items need attention`}
+            aria-label={`${needsYouCount} items need attention`}
             className="ml-2 rounded-full bg-primary/20 px-2 py-0.5 font-mono text-micro leading-none text-primary"
           >
-            {renderedRows.length}
+            {needsYouCount}
           </span>
         )}
         <a

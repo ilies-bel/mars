@@ -5,7 +5,20 @@ import { useFocusedProject } from '@/shared/useFocusedProject'
 import type { DraftFeature } from '@/shared/schemas'
 
 interface State {
+  /** The current page of drafts — capped by the `limit` below, so this is a
+   *  page, NOT the full population. Never render `proposals.length` as a
+   *  count of "how many drafts await review"; use `total` for that. */
   proposals: DraftFeature[]
+  /**
+   * Total drafts matching the request filters BEFORE pagination, as reported
+   * by the daemon. This — not `proposals.length` — is the canonical "drafts
+   * awaiting review" count, and it is the same population the triage page's
+   * `draft-proposal` cluster row reports. Rendering the page length instead
+   * silently capped the Proposals page badge at the fetch limit, which is how
+   * that badge and the triage row came to show different numbers for one
+   * concept.
+   */
+  total: number
   isPending: boolean
   /** The raw query error object; null when there is no error. */
   error: Error | null
@@ -37,7 +50,10 @@ export const useProposals = (): State => {
   })
 
   const proposals = query.data?.drafts ?? []
+  // Fall back to the page length only when the daemon omitted `total` (an
+  // older daemon); a truncated count still beats reporting zero.
+  const total = query.data?.total ?? proposals.length
   const error = (query.error as Error | null) ?? null
 
-  return { proposals, isPending: query.isPending, error, connected, refetch: query.refetch }
+  return { proposals, total, isPending: query.isPending, error, connected, refetch: query.refetch }
 }

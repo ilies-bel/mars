@@ -13,10 +13,14 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { DraftFeature } from '@/shared/schemas'
 
 const proposals: DraftFeature[] = []
+/** Total matching drafts before pagination; `render` defaults it to the page
+ *  length, and the badge test overrides it to prove the two are independent. */
+let total = 0
 
 vi.mock('@/entities/proposals/useProposals', () => ({
   useProposals: () => ({
     proposals,
+    total,
     isPending: false,
     error: null,
     connected: true,
@@ -41,10 +45,34 @@ const draft = (overrides: Partial<DraftFeature> = {}): DraftFeature =>
     ...overrides,
   }) as DraftFeature
 
-const render = (drafts: DraftFeature[]): string => {
+const render = (drafts: DraftFeature[], totalOverride?: number): string => {
   proposals.splice(0, proposals.length, ...drafts)
+  total = totalOverride ?? drafts.length
   return renderToStaticMarkup(<ProposalsPage />)
 }
+
+describe('ProposalsPage — header count', () => {
+  // Regression for the divergent-counts bug: the badge rendered
+  // `proposals.length`, but that array is one page capped at the fetch limit
+  // (50). With more drafts than the limit the page showed the cap while the
+  // triage page's draft-proposal row showed the true number — two numbers for
+  // one population. The badge must render the daemon's pre-pagination total.
+  it('renders the pre-pagination total, not the length of the fetched page', () => {
+    const page = Array.from({ length: 50 }, (_, i) => draft({ id: `prop-${i}` }))
+    const html = render(page, 198)
+
+    expect(html).toContain('>198<')
+    expect(html).toContain('198 draft proposals awaiting review')
+    expect(html).not.toContain('>50<')
+  })
+
+  // The heading names the population it counts, so it cannot be confused with
+  // the Progress board's "PROPOSALS (ALL)" column, which counts every status.
+  it('labels the header with the population it counts', () => {
+    const html = render([draft()])
+    expect(html).toContain('Draft proposals')
+  })
+})
 
 describe('ProposalsPage — title clamping', () => {
   it('clamps the title to two lines so a long legacy title cannot take over the card', () => {

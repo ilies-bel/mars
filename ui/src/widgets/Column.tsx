@@ -161,19 +161,30 @@ export const BoardCard = ({ task }: { task: ProgressTask }) => {
 // ---------------------------------------------------------------------------
 
 interface DenseColumnProps {
+  /** Stable column identity. Drives the `data-board-column` /
+   *  `data-column-count` test hooks, so it must NOT change when the visible
+   *  heading is reworded — use `qualifier` for that. */
   label: string
+  /**
+   * Optional parenthetical appended to the visible heading only (e.g. "all"
+   * renders "PROPOSALS (ALL)"). Exists so a column can name the population it
+   * counts — the Proposals column counts every proposal with an in-scope task,
+   * while the Proposals page counts only drafts awaiting review, and showing
+   * both under a bare "PROPOSALS" made one concept report two numbers.
+   */
+  qualifier?: string
   count: number
   children: React.ReactNode
 }
 
-export const DenseColumn = ({ label, count, children }: DenseColumnProps) => (
+export const DenseColumn = ({ label, qualifier, count, children }: DenseColumnProps) => (
   <section
     data-board-column={label}
     className="flex flex-col gap-2 min-w-0 min-h-0"
   >
     <header className="flex items-center justify-between border-b border-border pb-2">
       <span className="font-mono text-micro font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-        {label.toUpperCase()}
+        {qualifier === undefined ? label.toUpperCase() : `${label.toUpperCase()} (${qualifier.toUpperCase()})`}
       </span>
       <span
         data-column-count={label}

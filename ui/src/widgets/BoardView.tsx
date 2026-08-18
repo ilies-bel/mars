@@ -233,6 +233,15 @@ export const BoardView = ({
     !isSearchActive && selectedProposalId !== null && totalFilteredTasks === 0
 
   // ── Proposal column (unfiltered — always shows all active proposals) ───────
+  //
+  // This column counts a DIFFERENT population than the Proposals page: every
+  // proposal referenced by at least one in-scope task, regardless of status
+  // (see the `listByIds` call in orchestrator/src/core/daemon/view/progress.ts),
+  // whereas the Proposals page counts only proposals with status='draft'
+  // awaiting a decision. Both used to render under the bare word "Proposals",
+  // so one concept showed two numbers and neither surface said which it meant.
+  // The labels now name their populations: "Proposals (all)" here, "Draft
+  // proposals" there.
   const visibleProposals = proposals
 
   return (
@@ -270,8 +279,8 @@ export const BoardView = ({
 
       {/* ── Dense 4-column grid ─────────────────────────────────────────────── */}
       <main className="grid grid-cols-4 gap-3.5 p-6 items-start overflow-y-auto flex-1">
-        {/* Proposals */}
-        <DenseColumn label="Proposals" count={visibleProposals.length}>
+        {/* Proposals — renders as "PROPOSALS (ALL)"; see the population note above */}
+        <DenseColumn label="Proposals" qualifier="all" count={visibleProposals.length}>
           {visibleProposals.map((p) => (
             <ProposalCard key={p.id} proposal={p} />
           ))}

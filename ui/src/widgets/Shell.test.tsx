@@ -351,4 +351,23 @@ describe('Shell — Needs you badge computation', () => {
     expect(html).not.toContain('>3<')
     mockActionQueueItems = []
   })
+
+  // Regression: the badge used to be the CLUSTERED rendered-row count, so a
+  // kind exceeding CLUSTER_THRESHOLD (5) collapsed to 1 row and undercounted
+  // the badge relative to the triage page's own canonical count. The badge
+  // must report the raw item count — the same `countNeedsYou` definition
+  // used by TriagePage, ChatGreeting, and the situation card. Mirrors the
+  // fixture in needsYouParity.test.tsx and
+  // orchestrator/.../situation-report.test.ts (14 = 5 failed + 9 awaiting-human).
+  it('reports the raw item count, not the clustered rendered-row count', () => {
+    mockActionQueueItems = [
+      ...Array.from({ length: 5 }, (_, i) => makeItem('failed', `failed:${i}`)),
+      ...Array.from({ length: 9 }, (_, i) => makeItem('awaiting-human', `awaiting:${i}`)),
+      ...Array.from({ length: 20 }, (_, i) => makeItem('draft-proposal', `draft:${i}`)),
+    ]
+    const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
+    expect(html).toContain('>14<')
+    expect(html).not.toContain('>7<')
+    mockActionQueueItems = []
+  })
 })

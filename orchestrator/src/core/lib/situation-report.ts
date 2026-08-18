@@ -25,6 +25,17 @@ const taskCount = (tasks: readonly SituationTask[], status: string): number =>
 const plural = (count: number, singular: string, pluralNoun = `${singular}s`): string =>
   `${count} ${count === 1 ? singular : pluralNoun}`
 
+/**
+ * The single canonical "needs you" count: open action-queue items excluding
+ * draft-proposal rows (a backlog of shaped ideas, not an operational alert
+ * needing immediate action). Every UI surface that renders this concept
+ * (the triage badge, the sidebar badge, the chat greeting, the situation
+ * card) must derive from this same definition — see the fix for the
+ * "four different counts" bug for the full rationale.
+ */
+export const countNeedsYou = (actionQueue: readonly { kind?: string }[]): number =>
+  actionQueue.filter((item) => item.kind !== 'draft-proposal').length
+
 /** Read current stored state and render the first, zero-token Subthread message. */
 export const buildSituationReport = async (
   sources: SituationReportSources,
@@ -39,6 +50,6 @@ export const buildSituationReport = async (
   const blocked = taskCount(tasks, 'blocked')
   const failed = taskCount(tasks, 'failed')
 
-  const actionableCount = actionQueue.filter((item) => item.kind !== 'draft-proposal').length
+  const actionableCount = countNeedsYou(actionQueue)
   return `Situation: ${plural(queued, 'queued task')}, ${plural(running, 'running task')}, ${plural(blocked, 'blocked task')}, and ${plural(failed, 'failed task')}. Workers: ${workers.inUse} of ${workers.limit} active. ${plural(actionableCount, 'item', 'items')} need attention.`
 }
