@@ -286,14 +286,128 @@ describe('TriageRow – Continue/Restart buttons fire invokeAction', () => {
     expect(mockInvokeAction).toHaveBeenCalledWith('continue', 'task-failed')
   })
 
-  it('clicking Restart calls invokeAction("restart", entityId)', async () => {
+  it('clicking Restart does NOT immediately call invokeAction — it opens an in-app confirm', async () => {
     const { container } = renderPage()
     const btn = container.querySelector('[data-testid="triage-restart"]') as HTMLButtonElement
     expect(btn).not.toBeNull()
     await act(async () => {
       btn.click()
     })
+    expect(mockInvokeAction).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid="triage-restart-confirm"]')).not.toBeNull()
+  })
+
+  it('confirm text names the discarded work (entity id)', async () => {
+    const { container } = renderPage()
+    const btn = container.querySelector('[data-testid="triage-restart"]') as HTMLButtonElement
+    await act(async () => {
+      btn.click()
+    })
+    const confirmEl = container.querySelector('[data-testid="triage-restart-confirm"]')
+    expect(confirmEl?.textContent).toContain('task-failed')
+    expect(confirmEl?.textContent).toMatch(/discard|lose|losing/i)
+  })
+
+  it('confirm text includes the branch when humanDetail.branch is present', async () => {
+    mockItems.mockReturnValue([
+      makeItem('failed', { humanDetail: { branch: 'task/mars-abc123' } }),
+    ])
+    const { container } = renderPage()
+    const btn = container.querySelector('[data-testid="triage-restart"]') as HTMLButtonElement
+    await act(async () => {
+      btn.click()
+    })
+    const confirmEl = container.querySelector('[data-testid="triage-restart-confirm"]')
+    expect(confirmEl?.textContent).toContain('task/mars-abc123')
+  })
+
+  it('clicking "Yes, discard & restart" in the confirm step calls invokeAction("restart", entityId)', async () => {
+    const { container } = renderPage()
+    const restartBtn = container.querySelector('[data-testid="triage-restart"]') as HTMLButtonElement
+    await act(async () => {
+      restartBtn.click()
+    })
+    const confirmYesBtn = container.querySelector(
+      '[data-testid="triage-restart-confirm-yes"]',
+    ) as HTMLButtonElement
+    expect(confirmYesBtn).not.toBeNull()
+    await act(async () => {
+      confirmYesBtn.click()
+    })
     expect(mockInvokeAction).toHaveBeenCalledWith('restart', 'task-failed')
+  })
+
+  it('clicking Cancel in the confirm step dismisses it without dispatching', async () => {
+    const { container } = renderPage()
+    const restartBtn = container.querySelector('[data-testid="triage-restart"]') as HTMLButtonElement
+    await act(async () => {
+      restartBtn.click()
+    })
+    const cancelBtn = container.querySelector(
+      '[data-testid="triage-restart-cancel"]',
+    ) as HTMLButtonElement
+    expect(cancelBtn).not.toBeNull()
+    await act(async () => {
+      cancelBtn.click()
+    })
+    expect(mockInvokeAction).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid="triage-restart-confirm"]')).toBeNull()
+    // The demoted Restart button is back, ready to be clicked again.
+    expect(container.querySelector('[data-testid="triage-restart"]')).not.toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// TriageRow — task id is reachable (evidence before a destroy-or-resume call)
+// ---------------------------------------------------------------------------
+
+describe('TriageRow – task id is a link to the task detail drawer', () => {
+  it('renders the entity id as a link into #/task/<id>', () => {
+    mockItems.mockReturnValue([makeItem('failed', { entityId: 'mars-bff7e039' })])
+    const html = renderToStaticMarkup(<TriagePage />)
+    expect(html).toContain('data-testid="triage-entity-link"')
+    expect(html).toContain('href="#/task/mars-bff7e039?from=triage"')
+    expect(html).toContain('mars-bff7e039')
+  })
+
+  it('non-task-backed kinds (reflect-recommended) keep the entity id as plain text', () => {
+    mockItems.mockReturnValue([makeItem('reflect-recommended', { entityId: 'refl-1' })])
+    const html = renderToStaticMarkup(<TriagePage />)
+    expect(html).not.toContain('data-testid="triage-entity-link"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// TriageRow — recovery-exhausted rows get carry-forward CLI hints, not
+// Continue/Restart (mars continue refuses non-zero on these).
+// ---------------------------------------------------------------------------
+
+describe('TriageRow – recovery-exhausted rows surface carry-forward options', () => {
+  beforeEach(() => {
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        entityId: 'mars-abc123',
+        failureReasonCode: 'recovery_exhausted:verify/unclassified',
+      }),
+    ])
+  })
+
+  it('has no Continue button', () => {
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
+  })
+
+  it('has no Restart button', () => {
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-restart"]')).toBeNull()
+  })
+
+  it('renders the recovery-exhausted carry-forward panel with mars remerge / --supersede hints', () => {
+    const { container } = renderPage()
+    const panel = container.querySelector('[data-testid="triage-recovery-exhausted"]')
+    expect(panel).not.toBeNull()
+    expect(panel?.textContent).toContain('mars remerge mars-abc123')
+    expect(panel?.textContent).toContain('mars task add --supersede mars-abc123')
   })
 })
 

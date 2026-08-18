@@ -28,8 +28,19 @@ import { dispatchAlertVerb, resolveThreadForItem } from '@/widgets/chat/alertVer
 import { deriveCause } from '@/shared/alertCause'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { defaultAqUrlState, encodeAqState } from '@/shared/actionQueueUrlState'
+import { taskHash } from '@/shared/routing'
+import { CopyButton } from '@/components/CopyButton'
 import type { ActionQueueItem } from '@/shared/schemas'
 import type { Decision } from '@/shared/schemas'
+
+/**
+ * Prefix written onto `failureReasonCode` when a task's single recovery
+ * attempt has already been spent (see CLAUDE.md "Blockers" / orchestrator's
+ * `RECOVERY_EXHAUSTED_PREFIX`). `mars continue` refuses non-zero on such a
+ * task — Continue/Restart would just error, so those rows get carry-forward
+ * CLI hints (`mars remerge`, `mars task add --supersede`) instead.
+ */
+const RECOVERY_EXHAUSTED_PREFIX = 'recovery_exhausted:'
 
 // ── Kind display ──────────────────────────────────────────────────────────────
 
@@ -189,6 +200,10 @@ const TriageRow = ({ item }: TriageRowProps) => {
   const [pending, setPending] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [resolved, setResolved] = useState(false)
+  // Restart is destructive (wipes worktree + branch, discarding commits) — it
+  // requires an explicit in-app confirm step before dispatching, rather than
+  // firing on first click like the reversible Continue verb.
+  const [confirmRestart, setConfirmRestart] = useState(false)
 
   // Use relativeTime so timestamps are handled via the existing helper
   // (avoids hand-dividing epoch-ms values which can silently land at 1970).
@@ -206,6 +221,8 @@ const TriageRow = ({ item }: TriageRowProps) => {
     KIND_CHIP_CLASS[item.kind] ?? 'text-muted-foreground border-border'
   const isChatOnly = CHAT_ONLY_KINDS.has(item.kind)
   const isTaskRecovery = TASK_RECOVERY_KINDS.has(item.kind)
+  const isRecoveryExhausted =
+    isTaskRecovery && (item.failureReasonCode?.startsWith(RECOVERY_EXHAUSTED_PREFIX) ?? false)
   const verbs = item.verbs ?? []
 
   const handleDecision = useCallback(
@@ -318,10 +335,24 @@ const TriageRow = ({ item }: TriageRowProps) => {
         )
       )}
 
-      {/* Entity ID */}
-      <p className="mb-2 font-mono text-micro text-muted-dark">
-        {item.entityId}
-      </p>
+      {/* Entity ID — links to the task detail drawer (prompt, failure signature,
+          failure output, restart command) for task-backed rows so the operator
+          can see the evidence without leaving the UI. Non-task-backed kinds
+          (e.g. reflect-recommended) keep plain text since their entityId is
+          not a task id the drawer can resolve. */}
+      {isTaskRecovery ? (
+        <a
+          href={taskHash(item.entityId, 'triage')}
+          className="mb-2 block font-mono text-micro text-primary transition-colors hover:text-foreground hover:underline"
+          data-testid="triage-entity-link"
+        >
+          {item.entityId}
+        </a>
+      ) : (
+        <p className="mb-2 font-mono text-micro text-muted-dark">
+          {item.entityId}
+        </p>
+      )}
 
       {/* Actions row */}
       <div className="flex flex-wrap items-center gap-2">
@@ -360,9 +391,43 @@ const TriageRow = ({ item }: TriageRowProps) => {
 
             {/* Continue / Restart inline actions — only for task-recovery kinds.
                 daemon-code-drift, gate-enrichment, and other system-level kinds
-                use server-side verbs/decisions above instead. */}
-            {isTaskRecovery && (
+                use server-side verbs/decisions above instead. A task whose
+                single recovery attempt is already spent gets carry-forward CLI
+                hints instead (Continue/Restart would just error). */}
+            {isTaskRecovery && isRecoveryExhausted && (
+              <div
+                className="flex w-full flex-col gap-1.5 rounded border border-warn/40 bg-warn/5 px-2 py-1.5"
+                data-testid="triage-recovery-exhausted"
+              >
+                <p className="font-mono text-micro text-warn">
+                  Recovery already spent — Continue/Restart won&rsquo;t help. Carry the
+                  work forward instead:
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <code className="rounded bg-warn/10 px-1.5 py-0.5 font-mono text-micro text-warn">
+                    mars remerge {item.entityId}
+                  </code>
+                  <CopyButton
+                    text={`mars remerge ${item.entityId}`}
+                    data-testid="triage-copy-remerge"
+                    className="shrink-0 rounded border border-warn/40 px-1.5 py-0.5 font-mono text-micro text-warn hover:bg-warn/10"
+                  />
+                  <code className="rounded bg-warn/10 px-1.5 py-0.5 font-mono text-micro text-warn">
+                    mars task add --supersede {item.entityId}
+                  </code>
+                  <CopyButton
+                    text={`mars task add --supersede ${item.entityId}`}
+                    data-testid="triage-copy-supersede"
+                    className="shrink-0 rounded border border-warn/40 px-1.5 py-0.5 font-mono text-micro text-warn hover:bg-warn/10"
+                  />
+                </div>
+              </div>
+            )}
+
+            {isTaskRecovery && !isRecoveryExhausted && (
               <>
+                {/* Continue is the documented default recovery verb (reuses the
+                    existing worktree/branch) — it stays visually primary. */}
                 <button
                   disabled={pending !== null}
                   onClick={() => void handleVerb('continue')}
@@ -371,14 +436,48 @@ const TriageRow = ({ item }: TriageRowProps) => {
                 >
                   {pending === 'continue' ? '…' : 'Continue'}
                 </button>
-                <button
-                  disabled={pending !== null}
-                  onClick={() => void handleVerb('restart')}
-                  className="rounded border border-error/40 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/10 disabled:opacity-50"
-                  data-testid="triage-restart"
-                >
-                  {pending === 'restart' ? '…' : 'Restart'}
-                </button>
+
+                {/* Restart discards worktree/branch commits — demoted to a
+                    neutral affordance and gated behind an in-app confirm step
+                    (never window.confirm, so it stays testable and non-blocking). */}
+                {confirmRestart ? (
+                  <span
+                    className="flex w-full flex-wrap items-center gap-2 rounded border border-error/40 bg-error/5 px-2 py-1.5"
+                    data-testid="triage-restart-confirm"
+                  >
+                    <span className="flex-1 font-mono text-micro text-error">
+                      Discard {item.entityId}
+                      {item.humanDetail?.branch ? ` (branch ${item.humanDetail.branch})` : ''} —
+                      wipes the worktree and branch, losing any commits the worker
+                      made. Continue reuses them instead. This can&rsquo;t be undone.
+                    </span>
+                    <button
+                      disabled={pending !== null}
+                      onClick={() => void handleVerb('restart')}
+                      className="shrink-0 rounded border border-error/60 bg-error/10 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/20 disabled:opacity-50"
+                      data-testid="triage-restart-confirm-yes"
+                    >
+                      {pending === 'restart' ? '…' : 'Yes, discard & restart'}
+                    </button>
+                    <button
+                      disabled={pending !== null}
+                      onClick={() => setConfirmRestart(false)}
+                      className="shrink-0 rounded border border-border px-2 py-1 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                      data-testid="triage-restart-cancel"
+                    >
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    disabled={pending !== null}
+                    onClick={() => setConfirmRestart(true)}
+                    className="rounded border border-border px-2 py-1 font-mono text-micro text-muted-foreground transition-colors hover:border-error/40 hover:text-error disabled:opacity-50"
+                    data-testid="triage-restart"
+                  >
+                    Restart
+                  </button>
+                )}
               </>
             )}
           </>

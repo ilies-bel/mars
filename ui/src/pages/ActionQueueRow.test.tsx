@@ -140,3 +140,38 @@ describe('ActionQueueRow – copy-op verb', () => {
     expect(mockInvokeAction).not.toHaveBeenCalled()
   })
 })
+
+// ---------------------------------------------------------------------------
+// restart → "Continue" relabeling on task-failure rows
+// ---------------------------------------------------------------------------
+
+describe('ActionQueueRow – task-failure rows relabel the restart verb', () => {
+  // 'failed' is a member of taskFailureKinds (isTaskFailureActionQueueKind),
+  // so its server-provided 'restart' verb is relabeled to the Mars recovery
+  // vocabulary term "Continue" client-side (see ActionQueueRow.tsx).
+  const FAILED_ITEM: ActionQueueItem = {
+    ...PROPOSAL_ITEM,
+    id: 'failed:task-1',
+    kind: 'failed',
+    entityId: 'task-1',
+    actions: [],
+    verbs: [{ op: 'restart', label: 'Restart', style: 'primary' }],
+  } as unknown as ActionQueueItem
+
+  it('renders the restart verb button labelled "Continue", not "Restart"', () => {
+    const { container } = renderRow(FAILED_ITEM)
+    const btn = container.querySelector('[data-testid="alert-card-verb-restart"]')
+    expect(btn).not.toBeNull()
+    expect(btn!.textContent).toContain('Continue')
+    expect(btn!.textContent).not.toContain('Restart')
+  })
+
+  it('clicking it still dispatches invokeAction("restart", entityId)', async () => {
+    const { container } = renderRow(FAILED_ITEM)
+    const btn = container.querySelector('[data-testid="alert-card-verb-restart"]')!
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(mockInvokeAction).toHaveBeenCalledWith('restart', 'task-1')
+  })
+})
