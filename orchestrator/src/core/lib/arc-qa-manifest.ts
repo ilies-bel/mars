@@ -11,9 +11,10 @@
  * portable if the `.mars/` root is relocated.
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { raiseActionQueueItem } from './action-queue.js'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public types
@@ -118,6 +119,62 @@ export async function loadArcQaManifest(
   } catch {
     return null
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Promote-step-list-to-docs suggestion
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Dedup signature for the one-per-project promote-step-list-to-docs suggestion. */
+export const QA_STEP_LIST_PROMOTE_SUGGESTION_SIGNATURE = 'qa-step-list-promote-suggestion'
+
+/**
+ * Offer to promote the QA step list into the project's permanent documentation,
+ * but only the first time per project.
+ *
+ * Checks `.mars/arc-qa/.promote-suggested`. When absent, raises a
+ * `draft-proposal` action-queue item (deduped by the fixed signature
+ * {@link QA_STEP_LIST_PROMOTE_SUGGESTION_SIGNATURE}) then writes the marker so
+ * subsequent arcs skip the check entirely.
+ *
+ * Best-effort: callers must wrap this in their own try/catch so a failure here
+ * never fails the Arc.
+ */
+export async function maybeSuggestPromotion(
+  originId: string,
+  marsStateDir: string,
+): Promise<void> {
+  const markerDir = join(marsStateDir, 'arc-qa')
+  const markerPath = join(markerDir, '.promote-suggested')
+  if (existsSync(markerPath)) return
+
+  const manifestPath = join('arc-qa', originId, 'manifest.json')
+
+  await raiseActionQueueItem({
+    kind: 'draft-proposal',
+    category: 'orchestrator',
+    priority: 'normal',
+    title: 'Promote QA step lists into project documentation?',
+    body: [
+      `Arc \`${originId}\` produced a QA step list. Preview it with:`,
+      '',
+      '```',
+      `mars arc qa ${originId}`,
+      '```',
+      '',
+      `The manifest is available at \`.mars/${manifestPath}\`.`,
+      '',
+      'Consider promoting this step list into the project\'s permanent documentation',
+      'so future contributors can follow the same QA flow without running the Arc.',
+    ].join('\n'),
+    payload: { originId, manifestPath },
+    context: {},
+    raisedBy: 'arc-verifier',
+    signature: QA_STEP_LIST_PROMOTE_SUGGESTION_SIGNATURE,
+  })
+
+  mkdirSync(markerDir, { recursive: true })
+  writeFileSync(markerPath, '')
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

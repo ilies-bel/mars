@@ -10,14 +10,30 @@
  *  6. Path layout: manifest is written inside .mars/arc-qa/<originId>/.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { RaiseActionQueueItem } from '../action-queue'
+
+// ── Mock raiseActionQueueItem so maybeSuggestPromotion tests don't hit the DB ─
+
+const raiseSpy = vi.hoisted(() =>
+  vi.fn(async (_item: RaiseActionQueueItem): Promise<string> => 'mock-item-id'),
+)
+vi.mock('../action-queue', async (importActual) => {
+  const actual = await importActual<typeof import('../action-queue')>()
+  return {
+    ...actual,
+    raiseActionQueueItem: raiseSpy,
+  }
+})
 
 import {
   writeArcQaManifest,
   loadArcQaManifest,
+  maybeSuggestPromotion,
+  QA_STEP_LIST_PROMOTE_SUGGESTION_SIGNATURE,
   type ArcQaManifest,
 } from '../arc-qa-manifest'
 
@@ -207,5 +223,74 @@ describe('arc-qa-manifest', () => {
       const parsed = JSON.parse(raw) as ArcQaManifest
       expect(parsed.originId).toBe(originId)
     })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// maybeSuggestPromotion
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('maybeSuggestPromotion()', () => {
+  let marsStateDir: string
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    marsStateDir = mkdtempSync(join(tmpdir(), 'mars-arc-qa-promote-test-'))
+  })
+
+  afterEach(() => {
+    rmSync(marsStateDir, { recursive: true, force: true })
+  })
+
+  it('QA_STEP_LIST_PROMOTE_SUGGESTION_SIGNATURE is "qa-step-list-promote-suggestion"', () => {
+    expect(QA_STEP_LIST_PROMOTE_SUGGESTION_SIGNATURE).toBe('qa-step-list-promote-suggestion')
+  })
+
+  it('raises a draft-proposal when the marker is absent', async () => {
+    await maybeSuggestPromotion('origin-abc', marsStateDir)
+
+    expect(raiseSpy).toHaveBeenCalledOnce()
+    const item = raiseSpy.mock.calls[0][0] as RaiseActionQueueItem
+    expect(item.kind).toBe('draft-proposal')
+    expect(item.signature).toBe('qa-step-list-promote-suggestion')
+  })
+
+  it('writes the .promote-suggested marker after raising the suggestion', async () => {
+    await maybeSuggestPromotion('origin-abc', marsStateDir)
+
+    expect(existsSync(join(marsStateDir, 'arc-qa', '.promote-suggested'))).toBe(true)
+  })
+
+  it('suggestion body includes the exact mars arc qa <originId> invocation', async () => {
+    await maybeSuggestPromotion('origin-myarc', marsStateDir)
+
+    const item = raiseSpy.mock.calls[0][0] as RaiseActionQueueItem
+    expect(item.body).toContain('mars arc qa origin-myarc')
+  })
+
+  it('does not raise a suggestion when the marker already exists', async () => {
+    // Pre-create the marker so the first suggestion is already considered done.
+    const markerDir = join(marsStateDir, 'arc-qa')
+    mkdirSync(markerDir, { recursive: true })
+    writeFileSync(join(markerDir, '.promote-suggested'), '')
+
+    await maybeSuggestPromotion('origin-abc', marsStateDir)
+
+    expect(raiseSpy).not.toHaveBeenCalled()
+  })
+
+  it('two sequential arcs: only one suggestion is raised', async () => {
+    await maybeSuggestPromotion('origin-first', marsStateDir)
+    await maybeSuggestPromotion('origin-second', marsStateDir)
+
+    expect(raiseSpy).toHaveBeenCalledOnce()
+  })
+
+  it('marker is at .mars/arc-qa/.promote-suggested (not at marsStateDir root)', async () => {
+    await maybeSuggestPromotion('origin-path', marsStateDir)
+
+    // Marker must be inside arc-qa/, not at the marsStateDir root.
+    expect(existsSync(join(marsStateDir, 'arc-qa', '.promote-suggested'))).toBe(true)
+    expect(existsSync(join(marsStateDir, '.promote-suggested'))).toBe(false)
   })
 })

@@ -42,7 +42,7 @@ import {
   findAwaitingProposalForPath,
   type ProposeResult,
 } from './steward-workflow-patch.js'
-import { writeArcQaManifest } from './arc-qa-manifest.js'
+import { writeArcQaManifest, maybeSuggestPromotion } from './arc-qa-manifest.js'
 import { readQaStepListFlag, suggestQaStepListCapability } from './qa-step-list-flag.js'
 
 const execFileAsync = promisify(execFile)
@@ -1041,6 +1041,7 @@ export async function runArcVerification(
                     stopReason: r.stopReason,
                   })),
                 })
+                await maybeSuggestPromotion(originId, marsStateDir)
               } catch (manifestErr) {
                 console.error(
                   `[arc-verifier] Failed to write arc QA manifest for ${originId}:`,
