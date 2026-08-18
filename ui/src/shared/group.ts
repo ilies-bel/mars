@@ -18,6 +18,7 @@ const roleFromTask = (t: Task): Role => {
     case 'failed':
     case 'dropped':
     case 'under_investigation':
+    case 'awaiting-human':
       return 'orchestrator'
   }
 }
@@ -38,6 +39,7 @@ const columnFor = (t: Task): ColumnKey | null => {
     case 'merging':
     case 'vega-reconciling':
     case 'blocked':
+    case 'awaiting-human':
       return 'in_progress'
     case 'done':
     case 'failed':
