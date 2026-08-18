@@ -166,6 +166,10 @@ import { MERGE_IDEMPOTENT_TERMINAL_STATUSES } from '../../tools/merge/merge.js'
 import { classifyCoderExitDisposition } from '../../tools/coder/coder-exit'
 import { checkWorktreeIntegrity } from '../lib/worktree-integrity'
 import { computeDepFingerprint } from '../lib/dep-fingerprint'
+import {
+  composeRestartCheckpoint,
+  renderRestartCheckpoint,
+} from '../../core/coder/restart-checkpoint'
 
 // ---------------------------------------------------------------------------
 // Session-key construction (exported for regression tests)
@@ -1755,9 +1759,30 @@ export const runAgent = async (
     gateSteps,
     indexCard,
   )
+  // Compose and render the restart checkpoint when this is a resume dispatch.
+  // Best-effort: a composition failure must never block dispatch.
+  let checkpointSection = ''
+  if (resumeFromPriorAttempt && fullTask !== null) {
+    try {
+      const cp = await composeRestartCheckpoint({
+        taskId,
+        worktreePath,
+        task: fullTask,
+        workflowState: { runId: ctx.runId, step: 'run-claude-code' },
+      })
+      const rendered = renderRestartCheckpoint(cp)
+      if (rendered) checkpointSection = '\n\n' + rendered
+    } catch (cpErr) {
+      console.warn(
+        `[code] task ${taskId}: restart checkpoint composition failed (non-fatal):`,
+        cpErr instanceof Error ? cpErr.message : String(cpErr),
+      )
+    }
+  }
   if (resumeFromPriorAttempt || verifyBlock !== '') {
     fullPrompt =
       fullPrompt +
+      checkpointSection +
       '\n\n## Resume prior work\n\nPrior progress is already in this worktree. Run `git log -p` first to review what was already completed, then continue from where the last coder stopped. Do NOT restart from scratch.' +
       verifyBlock
   }

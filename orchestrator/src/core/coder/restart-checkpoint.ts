@@ -33,7 +33,7 @@ const TAIL_OUTPUT_CAP = 4096
 // ---------------------------------------------------------------------------
 
 /** One commit the coder already made on the task branch. */
-export interface CommitEntry {
+interface CommitEntry {
   /** Full commit SHA. */
   sha: string
   /** First line of the commit message (subject). */
@@ -43,7 +43,7 @@ export interface CommitEntry {
 }
 
 /** The last failing verify run, as far as it could be reconstructed. */
-export interface LastVerify {
+interface LastVerify {
   /** The verify command that failed, or null if not recorded. */
   command: string | null
   /** Process exit code, or null when not captured. */
@@ -77,6 +77,14 @@ export interface RestartCheckpoint {
    * present or all criteria are met.
    */
   outstandingCriteria: string[]
+  /**
+   * True when the task spec had at least one done-criterion (regardless of
+   * how many remain). Used by the renderer to distinguish "all criteria met"
+   * (hadDoneCriteria=true, outstandingCriteria=[]) from "no criteria at all"
+   * (hadDoneCriteria=false), so the renderer can emit an empty-but-present
+   * criteria header in the first case.
+   */
+  hadDoneCriteria: boolean
   /**
    * The last failing verify run, or `null` if the coder is resuming after a
    * non-verify failure (e.g. a watchdog kill).
@@ -119,6 +127,7 @@ export const restartCheckpointSchema = z.object({
   commits: z.array(commitEntrySchema),
   changedPaths: z.array(z.string()),
   outstandingCriteria: z.array(z.string()),
+  hadDoneCriteria: z.boolean().default(false),
   lastVerify: lastVerifySchema.nullable(),
   diagnostics: z.record(z.string(), z.unknown()),
 })
@@ -142,36 +151,60 @@ export const RESTART_CHECKPOINT_KIND = 'restart-checkpoint' as const
 // ---------------------------------------------------------------------------
 
 /**
- * Render a {@link RestartCheckpoint} into Markdown suitable for embedding
- * in the coder's resume banner.
+ * Render a {@link RestartCheckpoint} into a Markdown section suitable for
+ * embedding in the coder's resume prompt.
  *
- * The rendered block is injected between the "Prior progress is already in
- * this worktree" header and the verify-failure block (if any) — hence
- * {@link RestartCheckpoint.lastVerify} is deliberately not rendered here.
+ * Produces a `## Restart checkpoint` section listing:
+ *  - commits already on the branch (sha7 + subject),
+ *  - changed paths (de-duplicated union of all commits),
+ *  - outstanding done-criteria as a `- [ ]` checklist (header still
+ *    emitted when `hadDoneCriteria` is true and all are met, so the coder
+ *    can see the full spec was satisfied),
+ *  - the last failing verify run as a fenced code block with command, exit
+ *    code, failure signature, and tail output.
  *
- * Returns an empty string when all three rendered collections are empty (no
- * commits, no changed paths, no outstanding criteria) — callers can skip
- * injection in that case.
+ * Returns an empty string when the checkpoint has no commits, no changed
+ * paths, no criteria, and no lastVerify — callers can skip injection in
+ * that case. In practice the caller only invokes this when `isResume` is
+ * true, so at least one of those will be populated.
  */
 export function renderRestartCheckpoint(cp: RestartCheckpoint): string {
-  const parts: string[] = []
+  const body: string[] = []
 
   if (cp.commits.length > 0) {
-    const lines = cp.commits.map((c) => `  - \`${c.sha}\` ${c.subject}`).join('\n')
-    parts.push(`### Commits already on this branch\n\n${lines}`)
+    const lines = cp.commits.map((c) => `  - \`${c.sha.slice(0, 7)}\` ${c.subject}`).join('\n')
+    body.push(`### Commits already on this branch\n\n${lines}`)
   }
 
   if (cp.changedPaths.length > 0) {
     const lines = cp.changedPaths.map((p) => `  - ${p}`).join('\n')
-    parts.push(`### Files already changed\n\n${lines}`)
+    body.push(`### Files already changed\n\n${lines}`)
   }
 
-  if (cp.outstandingCriteria.length > 0) {
-    const lines = cp.outstandingCriteria.map((c) => `  - [ ] ${c}`).join('\n')
-    parts.push(`### Remaining acceptance criteria\n\n${lines}`)
+  if (cp.hadDoneCriteria) {
+    if (cp.outstandingCriteria.length > 0) {
+      const lines = cp.outstandingCriteria.map((c) => `  - [ ] ${c}`).join('\n')
+      body.push(`### Remaining acceptance criteria\n\n${lines}`)
+    } else {
+      body.push(`### Remaining acceptance criteria`)
+    }
   }
 
-  return parts.join('\n\n')
+  if (cp.lastVerify !== null) {
+    const lv = cp.lastVerify
+    const meta: string[] = []
+    if (lv.command !== null) meta.push(`Command: \`${lv.command}\``)
+    if (lv.exitCode !== null) meta.push(`Exit code: ${lv.exitCode}`)
+    if (lv.signature !== null) meta.push(`Signature: \`${lv.signature}\``)
+    const tailBlock =
+      lv.tailOutput !== null
+        ? `\n\n\`\`\`text\n${lv.tailOutput}\n\`\`\``
+        : ''
+    body.push(`### Last failing verify\n\n${meta.join('\n')}${tailBlock}`)
+  }
+
+  if (body.length === 0) return ''
+  return `## Restart checkpoint (prior work already on this branch)\n\n${body.join('\n\n')}`
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +273,7 @@ export async function composeRestartCheckpoint(
 
   // ── 4. Outstanding criteria ───────────────────────────────────────────────
   const doneCriteria = task.spec?.doneCriteria ?? []
+  const hadDoneCriteria = doneCriteria.length > 0
   let outstandingCriteria: string[]
 
   if (doneCriteria.length === 0) {
@@ -306,6 +340,7 @@ export async function composeRestartCheckpoint(
     commits,
     changedPaths,
     outstandingCriteria,
+    hadDoneCriteria,
     lastVerify,
     diagnostics: {
       taskId,
