@@ -133,13 +133,24 @@ describe('rescue-operator-spawn', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  // ── (a) No-recipe origin failure → rescue enqueued ────────────────────────
+  // ── (a) No-recipe origin failure → generic fix spawns, no redundant rescue ─
+  //
+  // Before the in-flight-recovery guard, a no-recipe failure spawned a
+  // rescue-operator IN PARALLEL with the freshly-created generic fix task
+  // (ADR: uniform failure→fix spawn always creates one). That fix task is
+  // itself the arc's "automatic move" the module's own header comment
+  // requires be absent before firing — and by the time the rescue agent
+  // actually dispatched, the fix had advanced to 'running', so the rescue's
+  // only permitted actions (restart/continue) were refused by the
+  // in-flight-recovery guard those verbs carry. It could only ever no-op.
+  // See the in-flight-recovery test below for the direct regression guard.
 
-  it('(a) no-recipe origin failure: rescue-operator task enqueued, durable arc counter becomes 1', async () => {
+  it('(a) no-recipe origin failure: generic fix task spawns, no rescue while it is in flight', async () => {
     const { q, ft } = await loadModules(repo)
     const task = await q.enqueueTask('do a thing', undefined, { skipTriage: true })
 
-    // 'code/unclassified' has no registered recipe — rescue must fire
+    // 'code/unclassified' has no registered recipe — a generic fix task still
+    // spawns (ADR: uniform failure→fix spawn).
     const r = await ft.handleTaskFailureWithFixTask({
       taskId: task.id,
       failingStep: 'code',
@@ -147,21 +158,15 @@ describe('rescue-operator-spawn', () => {
     })
 
     expect(r.outcome).toBe('blocked') // generic fix task still spawns
+    expect(r.fixTaskId).toBeTruthy()
 
-    // Exactly one rescue-operator task in DB
-    expect(await countRescueTasks(q)).toBe(1)
+    // No rescue-operator task: the fresh fix task is itself the arc's
+    // in-flight recovery, so a parallel rescue would be redundant.
+    expect(await countRescueTasks(q)).toBe(0)
 
-    // origin_id of rescue task points at the origin
-    const rescueRows = await q.resolveQueueClient().execute({
-      sql: `SELECT origin_id FROM tasks WHERE tags_json LIKE '%rescue-operator%'`,
-      args: [],
-    })
-    expect(rescueRows.rows).toHaveLength(1)
-    const rescueRow = rescueRows.rows[0] as unknown as { origin_id: string }
-    expect(rescueRow.origin_id).toBe(task.id)
-
-    // The durable arc counter is 1.
-    expect(await readArcRescueAttempts(q, task.id)).toBe(1)
+    // The durable arc counter stays 0 — no rescue attempt was consumed, so
+    // the arc remains eligible for a genuine rescue later.
+    expect(await readArcRescueAttempts(q, task.id)).toBe(0)
   })
 
   // ── (b) Recipe-backed origin failure → NO rescue enqueued ─────────────────
@@ -238,6 +243,67 @@ describe('rescue-operator-spawn', () => {
     expect(await readArcRescueAttempts(q, origin.id)).toBe(1)
   })
 
+  // ── In-flight recovery → no redundant rescue ──────────────────────────────
+  //
+  // Observed 2026-08-17 (RESCUE-mars-3dcef8b5.md): fix-6b227c76, the standard
+  // one-recovery-per-origin fix task, was already 'running' on the arc's
+  // worktree — actively resuming the coder on salvageable partial work — when
+  // a rescue-operator was spawned for the same arc. The rescue's only
+  // permitted actions (restart/continue) are refused by the in-flight-recovery
+  // guard those verbs already carry, so it could only ever enter, observe the
+  // in-flight recovery, and no-op — burning a full agent run for nothing.
+
+  it('in-flight recovery: a running fix task on the arc blocks the rescue without consuming the counter', async () => {
+    const { q, ft, rescue, rc } = await loadModules(repo)
+
+    const origin = await q.enqueueTask('original work', undefined, { skipTriage: true })
+    const cleanup = registerTestRecipe(rc, 'test/recipe-for-in-flight')
+    let fixTaskId: string
+    try {
+      const fix = await ft.upsertFixTask({
+        sourceTaskId: origin.id,
+        failureSignature: 'test/recipe-for-in-flight',
+        failingStep: 'code',
+        truncatedError: 'initial failure',
+        branch: null,
+        recipeContext: {
+          targetPath: '/tmp/test',
+          statusOutput: '',
+          targetBranch: 'main',
+          originalPrompt: 'original work',
+        },
+      })
+      fixTaskId = fix.fixTaskId
+    } finally {
+      cleanup()
+    }
+
+    // Simulate the fix task actively running on the arc's worktree, resuming
+    // the coder on salvageable partial work — the same state fix-6b227c76 was
+    // in when the wasted rescue spawned.
+    await q.updateTask(fixTaskId, { status: 'running' })
+
+    const loaded = await q.getTask(origin.id)
+    if (!loaded) throw new Error('origin task not found')
+
+    const result = await rescue.maybeSpawnRescueOperator({
+      failedTask: loaded,
+      // A different failure signature than the one the running fix task is
+      // already handling — the origin dead-ending again while its recovery
+      // is still in flight is exactly the scenario that must no-op.
+      failureSignature: 'code/some-other-unclassified-failure',
+    })
+
+    expect(result.spawned).toBe(false)
+    expect(result.rescueTaskId).toBeUndefined()
+    expect(await countRescueTasks(q)).toBe(0)
+
+    // The durable arc-rescue counter must stay 0: a skipped-for-redundancy
+    // spawn must not consume the arc's one genuine rescue attempt. If the
+    // in-flight fix task later fails, the arc must still be eligible.
+    expect(await readArcRescueAttempts(q, origin.id)).toBe(0)
+  })
+
   // ── (d) Second dead-end on same Arc → no second rescue ────────────────────
 
   it('(d) second dead-end on same Arc: maybeSpawnRescueOperator is a no-op after first rescue', async () => {
@@ -286,15 +352,36 @@ describe('rescue-operator-spawn', () => {
   // must therefore be dispatchable the moment it is created.
 
   it('rescue-operator task spawned by the self-heal path is dispatchable, not stranded in draft', async () => {
-    const { q, ft } = await loadModules(repo)
-    const task = await q.enqueueTask('do a thing', undefined, { skipTriage: true })
+    const { q, ft, rc } = await loadModules(repo)
 
-    // 'code/unclassified' has no registered recipe — the arc dead-ends and the
-    // self-heal path spawns a rescue-operator.
+    // Drive the "recovery Chore itself fails" self-heal trigger: an origin's
+    // fix task exists (and is terminal, having just failed), so the arc has
+    // no in-flight recovery left and the rescue-operator dead-end path fires.
+    const origin = await q.enqueueTask('original work', undefined, { skipTriage: true })
+    const cleanup = registerTestRecipe(rc, 'test/recipe-for-setup')
+    let fixTaskId: string
+    try {
+      const fix = await ft.upsertFixTask({
+        sourceTaskId: origin.id,
+        failureSignature: 'test/recipe-for-setup',
+        failingStep: 'code',
+        truncatedError: 'initial failure',
+        branch: null,
+        recipeContext: {
+          targetPath: '/tmp/test',
+          statusOutput: '',
+          targetBranch: 'main',
+          originalPrompt: 'original work',
+        },
+      })
+      fixTaskId = fix.fixTaskId
+    } finally {
+      cleanup()
+    }
     await ft.handleTaskFailureWithFixTask({
-      taskId: task.id,
+      taskId: fixTaskId,
       failingStep: 'code',
-      errorOutput: 'something went wrong (unclassified)',
+      errorOutput: 'recovery also failed',
     })
 
     const rescueRows = await q.resolveQueueClient().execute({
@@ -327,8 +414,32 @@ describe('rescue-operator-spawn', () => {
   // have passed with the bug present.
 
   it('registers the rescue task for dispatch at creation time, without a daemon restart or reconcile', async () => {
-    const { q, ft, hint } = await loadModules(repo)
-    const task = await q.enqueueTask('do a thing', undefined, { skipTriage: true })
+    const { q, ft, rc, hint } = await loadModules(repo)
+
+    // Drive the "recovery Chore itself fails" self-heal trigger — see the
+    // dispatchability test above for why this replaces a no-recipe origin
+    // failure as the trigger fixture.
+    const origin = await q.enqueueTask('original work', undefined, { skipTriage: true })
+    const cleanup = registerTestRecipe(rc, 'test/recipe-for-setup')
+    let fixTaskId: string
+    try {
+      const fix = await ft.upsertFixTask({
+        sourceTaskId: origin.id,
+        failureSignature: 'test/recipe-for-setup',
+        failingStep: 'code',
+        truncatedError: 'initial failure',
+        branch: null,
+        recipeContext: {
+          targetPath: '/tmp/test',
+          statusOutput: '',
+          targetBranch: 'main',
+          originalPrompt: 'original work',
+        },
+      })
+      fixTaskId = fix.fixTaskId
+    } finally {
+      cleanup()
+    }
 
     const hinted: Array<{ taskId: string; kind: string }> = []
     const unregister = hint.registerDispatchHint((taskId, kind) => {
@@ -338,9 +449,9 @@ describe('rescue-operator-spawn', () => {
     let rescueId: string
     try {
       await ft.handleTaskFailureWithFixTask({
-        taskId: task.id,
+        taskId: fixTaskId,
         failingStep: 'code',
-        errorOutput: 'something went wrong (unclassified)',
+        errorOutput: 'recovery also failed',
       })
 
       const rescueRows = await q.resolveQueueClient().execute({

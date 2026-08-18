@@ -1496,9 +1496,14 @@ export const handleTaskFailureWithFixTask = async (
     outcome: result.created ? 'recovery-created' : 'recovery-reused',
   })
 
-  // No registered fix recipe → the Arc has no targeted recovery playbook; spawn
-  // a rescue-operator agent in parallel with the generic fix task so the arc
-  // does not dead-end silently. Recipe-backed failures (hasRecipe = true) have
+  // No registered fix recipe → the Arc has no targeted recovery playbook, so
+  // offer a rescue-operator agent as a second opinion. `maybeSpawnRescueOperator`
+  // itself is the gate on redundancy: it no-ops whenever the arc already carries
+  // a non-terminal recovery/fix task — including the one `upsertFixTask` just
+  // created above — since that task's own in-flight-recovery guard already
+  // covers the arc and a parallel rescue could only ever no-op against it. A
+  // rescue therefore only actually spawns once every prior recovery attempt on
+  // this arc has gone terminal. Recipe-backed failures (hasRecipe = true) have
   // a known playbook and must NOT trigger a rescue on their first attempt.
   // Best-effort: a rescue spawn error must not block the blocked outcome.
   if (!hasRecipe(failureSignature)) {

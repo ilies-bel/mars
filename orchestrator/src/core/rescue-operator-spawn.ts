@@ -10,6 +10,12 @@
  * keyed by the Arc's text origin id, so task-id and proposal-slug arcs share
  * the same invariant.
  *
+ * A rescue only fires when the Arc has nothing else moving. Three early exits
+ * run BEFORE the counter is claimed, so a declined spawn never consumes the
+ * Arc's one rescue: the origin is already `done`, the Arc already has an
+ * in-flight recovery task, or the supersession checker finds the work already
+ * on the integration branch.
+ *
  * IMPORTANT: `store.getArcRescueAttempts` / `store.incrementArcRescueAttempts`
  * are called ONLY from this module. The ordinary dispatch path (dispatch.ts and
  * its helpers deciding which queued tasks may run) does NOT read
@@ -32,7 +38,7 @@
 export const RESCUE_OPERATOR_TAG = 'rescue-operator' as const
 
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/task-store'
-import type { Task } from './queue'
+import { IN_FLIGHT_RECOVERY_STATUSES, type Task } from './queue'
 import type { FixRecipeContext } from './lib/fix-recipes'
 import {
   buildRescueOperatorPrompt,
@@ -125,6 +131,33 @@ export const maybeSpawnRescueOperator = async (
     }
   }
 
+  // In-flight-recovery early exit: if the arc already has a non-terminal
+  // recovery/fix task (kind='fix', i.e. `fixForTaskId !== null`), a rescue is
+  // redundant — its only permitted actions (restart/continue) are refused by
+  // the very in-flight-recovery guard those verbs already carry, so the
+  // rescue agent can only ever no-op (observed 2026-08-17:
+  // RESCUE-mars-3dcef8b5.md — fix-6b227c76 was already running when the
+  // rescue spawned; the rescue's own `mars continue` confirmed the correct
+  // corrective action was already underway and made no further mutation).
+  // Fetched once here and reused below for prompt assembly so this does not
+  // cost a second query. Deliberately placed BEFORE `incrementArcRescueAttempts`
+  // so a skipped spawn does not consume the arc's one-rescue-per-arc budget —
+  // if the in-flight recovery later fails, the arc is still eligible for its
+  // one genuine rescue.
+  const arcMembers = await store.listArcMembers(originId)
+  const inFlightRecovery = arcMembers.find(
+    (member) =>
+      member.fixForTaskId !== null && IN_FLIGHT_RECOVERY_STATUSES.includes(member.status),
+  )
+  if (inFlightRecovery) {
+    // eslint-disable-next-line no-console
+    console.info(
+      `[rescue-operator] arc ${originId} has in-flight recovery ${inFlightRecovery.id} ` +
+        `(status=${inFlightRecovery.status}) — rescue redundant, not spawning`,
+    )
+    return { spawned: false }
+  }
+
   const stewardTarget = {
     kind: 'arc',
     id: originId,
@@ -195,8 +228,9 @@ export const maybeSpawnRescueOperator = async (
   // The rescue task itself passes through the tight-budget triage worker
   // before it reaches RescueOperator. Build its bounded, newest-first arc
   // context before incrementing the guard so an assembly failure cannot leave
-  // an arc marked as rescued without a rescue task to inspect it.
-  const arcMembers = await store.listArcMembers(originId)
+  // an arc marked as rescued without a rescue task to inspect it. Reuses the
+  // `arcMembers` fetched above for the in-flight-recovery check rather than
+  // querying the store a second time.
   if (!arcMembers.some((task) => task.id === failedTask.id)) arcMembers.push(failedTask)
   const prompt = buildRescueOperatorPrompt({
     failedTaskId: failedTask.id,

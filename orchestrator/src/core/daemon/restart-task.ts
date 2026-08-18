@@ -1,5 +1,12 @@
 import type { WorkflowStore } from '@mars/workflow'
-import { getTask, hasIncompleteBlockers, removeBlocker, TERMINAL_TASK_STATUSES, updateTask } from '../queue'
+import {
+  getTask,
+  hasIncompleteBlockers,
+  IN_FLIGHT_RECOVERY_STATUSES,
+  removeBlocker,
+  TERMINAL_TASK_STATUSES,
+  updateTask,
+} from '../queue'
 import { supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
 import { getDefaultTaskStore } from '../store/task-store'
 import { getDefaultMergeJobStore } from '../store/merge-job-store'
@@ -190,10 +197,10 @@ export const coreRestartTask = async (
   const inflightRows = await taskStore.query({
     sql: `SELECT id FROM tasks
            WHERE fix_for_task_id = ?
-             AND status IN ('queued','running','verifying','merging','vega-reconciling','draft','blocked')
+             AND status IN (${IN_FLIGHT_RECOVERY_STATUSES.map(() => '?').join(',')})
            ORDER BY created_at DESC
            LIMIT 1`,
-    args: [id],
+    args: [id, ...IN_FLIGHT_RECOVERY_STATUSES],
   })
   if (inflightRows.rows.length > 0) {
     const recoveryId = (inflightRows.rows[0] as unknown as { id: string }).id

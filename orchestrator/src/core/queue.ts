@@ -67,6 +67,38 @@ export const TERMINAL_TASK_STATUSES: ReadonlySet<TaskStatus> = new Set([
 ])
 
 /**
+ * The statuses at which a recovery task (`fix_for_task_id IS NOT NULL`) counts
+ * as IN FLIGHT — i.e. the arc already has a corrective action underway and a
+ * second corrective action would collide with it.
+ *
+ * This is the single definition behind three guards that must agree:
+ *  - `mars continue` (`daemon/continue-task.ts`) refuses to resume a task whose
+ *    recovery is still in flight,
+ *  - `mars restart` (`daemon/restart-task.ts`) refuses to wipe a worktree an
+ *    in-flight recovery is working in,
+ *  - `maybeSpawnRescueOperator` (`rescue-operator-spawn.ts`) refuses to spawn a
+ *    rescue whose only permitted actions are the two verbs above — it could
+ *    only ever no-op against them.
+ *
+ * NOT the complement of {@link TERMINAL_TASK_STATUSES}: the parked statuses
+ * (`triaging`, `awaiting-validation`, `awaiting-human`, `under_investigation`)
+ * are deliberately absent, since a recovery parked on a human is not a moving
+ * corrective action and must not hold the guards shut indefinitely.
+ *
+ * Ordered, not a Set, because every consumer expands it into a SQL `IN (...)`
+ * clause with one placeholder per member.
+ */
+export const IN_FLIGHT_RECOVERY_STATUSES: readonly TaskStatus[] = [
+  'queued',
+  'running',
+  'verifying',
+  'merging',
+  'vega-reconciling',
+  'draft',
+  'blocked',
+]
+
+/**
  * The statuses at which a blocker STOPS gating its dependents.
  *
  * - `done`    — the blocked-on work landed; the dependent's premise holds.

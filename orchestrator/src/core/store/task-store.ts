@@ -192,7 +192,13 @@ export interface Scope {
  */
 export type ArcMember = Pick<
   Task,
-  'id' | 'branch' | 'status' | 'failureSignature' | 'failureReason' | 'createdAt'
+  | 'id'
+  | 'branch'
+  | 'status'
+  | 'failureSignature'
+  | 'failureReason'
+  | 'createdAt'
+  | 'fixForTaskId'
 >
 
 /**
@@ -578,7 +584,7 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
     listArcMembers: async (originId) => {
       const c = guardClient()
       const r = await c.execute({
-        sql: `SELECT id, branch, status, failure_signature, failure_reason, created_at
+        sql: `SELECT id, branch, status, failure_signature, failure_reason, created_at, fix_for_task_id
               FROM tasks WHERE origin_id = ? ORDER BY created_at DESC`,
         args: [originId],
       })
@@ -590,6 +596,7 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
           failure_signature: string | null
           failure_reason: string | null
           created_at: string
+          fix_for_task_id: string | null
         }
         return {
           id: r0.id,
@@ -598,6 +605,7 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
           failureSignature: r0.failure_signature,
           failureReason: r0.failure_reason,
           createdAt: r0.created_at,
+          fixForTaskId: r0.fix_for_task_id,
         }
       })
     },

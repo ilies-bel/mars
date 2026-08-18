@@ -1141,28 +1141,30 @@ describe('queue-fix-tasks', () => {
       sql: `SELECT id, tags_json FROM tasks`,
       args: [],
     })
-    // Origin + fix + exactly one detached gate-enrichment Writer draft task +
-    // one rescue-operator task (spawned because 'verify:test/unclassified' has
-    // no registered recipe, triggering maybeSpawnRescueOperator in parallel
-    // with the generic fix task).
+    // Origin + fix + exactly one detached gate-enrichment Writer draft task.
+    // No rescue-operator task: `maybeSpawnRescueOperator` treats the fix task
+    // `upsertFixTask` just created as an in-flight recovery already covering
+    // this arc (queued, fixForTaskId set) and no-ops rather than spawning a
+    // rescue that could only ever find that same fix task in progress and
+    // no-op itself (see rescue-operator-spawn.ts's in-flight-recovery guard).
     // (PRD 745f33e0: 'verify:test/unclassified' is statically encodable and
     // unclaimed, so the failure chokepoint claims the signature and spawns
     // ONE writer-tagged candidate-drafting task — never a second one).
-    expect(all.rows.length).toBe(4)
+    expect(all.rows.length).toBe(3)
     const writerRows = all.rows.filter((row) =>
       String(
         (row as unknown as { tags_json: string | null }).tags_json ?? '',
       ).includes('writer'),
     )
     expect(writerRows).toHaveLength(1)
-    // The rescue-operator task was spawned alongside the generic fix task
-    // because no recipe is registered for this signature.
+    // No rescue-operator task: the freshly created generic fix task is
+    // itself the in-flight recovery, so a rescue would be redundant.
     const rescueRows = all.rows.filter((row) =>
       String(
         (row as unknown as { tags_json: string | null }).tags_json ?? '',
       ).includes('rescue-operator'),
     )
-    expect(rescueRows).toHaveLength(1)
+    expect(rescueRows).toHaveLength(0)
   })
 
   it('steward blocks repeated fix-task spawns for same (sourceTaskId, failureSignature): first → blocked, repeat → steward-repeat', async () => {

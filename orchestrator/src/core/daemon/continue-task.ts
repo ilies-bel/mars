@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { getTask, updateTask } from '../queue'
+import { getTask, IN_FLIGHT_RECOVERY_STATUSES, updateTask } from '../queue'
 import { getDefaultTaskStore } from '../store/task-store'
 import { raiseActionQueueItem } from '../lib/action-queue'
 import { computeFailureSignature, RECOVERY_EXHAUSTED_PREFIX } from '../lib/failure-signature'
@@ -109,10 +109,10 @@ export const coreContinueTask = async (
   const inflightRows = await store.query({
     sql: `SELECT id FROM tasks
            WHERE fix_for_task_id = ?
-             AND status IN ('queued','running','verifying','merging','vega-reconciling','draft','blocked')
+             AND status IN (${IN_FLIGHT_RECOVERY_STATUSES.map(() => '?').join(',')})
            ORDER BY created_at DESC
            LIMIT 1`,
-    args: [id],
+    args: [id, ...IN_FLIGHT_RECOVERY_STATUSES],
   })
   if (inflightRows.rows.length > 0) {
     const recoveryId = (inflightRows.rows[0] as unknown as { id: string }).id
