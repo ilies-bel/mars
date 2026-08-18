@@ -29,7 +29,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { startServer } from './index.ts'
+import { isDocumentRequest, startServer } from './index.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -269,6 +269,108 @@ describe('/rebuild admin route', () => {
       expect(body.ok).toBe(true)
       expect(body.action).toBe('rebuilt')
       expect(buildCalled).toBe(true)
+    } finally {
+      server.stop()
+    }
+  })
+})
+
+// ── serve-time freshness ──────────────────────────────────────────────────────
+
+describe('isDocumentRequest', () => {
+  it('treats the root and extensionless SPA routes as documents', () => {
+    expect(isDocumentRequest('GET', '/')).toBe(true)
+    expect(isDocumentRequest('GET', '/triage')).toBe(true)
+    expect(isDocumentRequest('GET', '/index.html')).toBe(true)
+    expect(isDocumentRequest('HEAD', '/')).toBe(true)
+  })
+
+  it('treats build assets and non-GET methods as non-documents', () => {
+    expect(isDocumentRequest('GET', '/assets/index-a1b2c3.js')).toBe(false)
+    expect(isDocumentRequest('GET', '/assets/index-a1b2c3.css')).toBe(false)
+    expect(isDocumentRequest('GET', '/favicon.svg')).toBe(false)
+    expect(isDocumentRequest('POST', '/')).toBe(false)
+  })
+})
+
+describe('serve-time freshness', () => {
+  it('rebuilds on a page load when src has advanced past the bundle', async () => {
+    mkdirSync(join(tmpSrc, 'src'), { recursive: true })
+    writeFileSync(join(tmpSrc, 'src', 'main.ts'), 'export const x = 1')
+    utimesSync(join(tmpSrc, 'src', 'main.ts'), OLD_TIME, OLD_TIME)
+
+    writeFileSync(join(tmpDist, 'index.html'), '<html>bundle</html>')
+    utimesSync(join(tmpDist, 'index.html'), NEW_TIME, NEW_TIME)
+
+    let buildCalls = 0
+    const server = await startServer(
+      { port: 0, host: '127.0.0.1', distDir: tmpDist, srcDir: tmpSrc },
+      { ...minimalDeps, _runBuild: async () => { buildCalls += 1 } },
+    )
+    try {
+      // Boot saw a fresh bundle, so nothing has been built yet.
+      expect(buildCalls).toBe(0)
+
+      // A merge lands: source is now newer than the bundle.
+      utimesSync(join(tmpSrc, 'src', 'main.ts'), NEW_TIME, NEW_TIME)
+      utimesSync(join(tmpDist, 'index.html'), OLD_TIME, OLD_TIME)
+
+      // The next page load must pick it up — this is the whole point: a
+      // long-running `mars ui` used to serve its boot-time bundle forever.
+      const resp = await fetch(`http://127.0.0.1:${server.port}/triage`)
+      expect(resp.status).toBe(200)
+      expect(buildCalls).toBe(1)
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('does not walk src for asset requests', async () => {
+    mkdirSync(join(tmpSrc, 'src'), { recursive: true })
+    writeFileSync(join(tmpSrc, 'src', 'main.ts'), 'export const x = 1')
+    utimesSync(join(tmpSrc, 'src', 'main.ts'), OLD_TIME, OLD_TIME)
+
+    writeFileSync(join(tmpDist, 'index.html'), '<html>bundle</html>')
+    utimesSync(join(tmpDist, 'index.html'), NEW_TIME, NEW_TIME)
+    mkdirSync(join(tmpDist, 'assets'), { recursive: true })
+    writeFileSync(join(tmpDist, 'assets', 'app-abc123.js'), 'console.log(1)')
+
+    let buildCalls = 0
+    const server = await startServer(
+      { port: 0, host: '127.0.0.1', distDir: tmpDist, srcDir: tmpSrc },
+      { ...minimalDeps, _runBuild: async () => { buildCalls += 1 } },
+    )
+    try {
+      utimesSync(join(tmpSrc, 'src', 'main.ts'), NEW_TIME, NEW_TIME)
+      utimesSync(join(tmpDist, 'index.html'), OLD_TIME, OLD_TIME)
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/assets/app-abc123.js`)
+      expect(resp.status).toBe(200)
+      expect(buildCalls).toBe(0)
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('serves the stale bundle rather than failing the page load when the rebuild throws', async () => {
+    mkdirSync(join(tmpSrc, 'src'), { recursive: true })
+    writeFileSync(join(tmpSrc, 'src', 'main.ts'), 'export const x = 1')
+    utimesSync(join(tmpSrc, 'src', 'main.ts'), OLD_TIME, OLD_TIME)
+
+    writeFileSync(join(tmpDist, 'index.html'), '<html>bundle</html>')
+    utimesSync(join(tmpDist, 'index.html'), NEW_TIME, NEW_TIME)
+
+    const server = await startServer(
+      { port: 0, host: '127.0.0.1', distDir: tmpDist, srcDir: tmpSrc },
+      { ...minimalDeps, _runBuild: async () => { throw new Error('build blew up') } },
+    )
+    try {
+      utimesSync(join(tmpSrc, 'src', 'main.ts'), NEW_TIME, NEW_TIME)
+      utimesSync(join(tmpDist, 'index.html'), OLD_TIME, OLD_TIME)
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/triage`)
+      expect(resp.status).toBe(200)
+      expect(await resp.text()).toContain('bundle')
     } finally {
       server.stop()
     }

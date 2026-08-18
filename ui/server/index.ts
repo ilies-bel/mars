@@ -224,6 +224,22 @@ const maxMtimeMs = (dir: string): number => {
   return max
 }
 
+/**
+ * True when a request is for the app shell rather than a build asset.
+ *
+ * The SPA serves index.html for `/` and for every client-side route (which
+ * carry no file extension), while Vite emits every real asset with an
+ * extension (`.js`, `.css`, `.svg`, …). Testing for a missing extension is
+ * therefore an exact split, not a heuristic, and keeps the freshness check off
+ * the hot asset path.
+ */
+export const isDocumentRequest = (method: string, urlPath: string): boolean => {
+  if (method !== 'GET' && method !== 'HEAD') return false
+  if (urlPath === '/') return true
+  const ext = extname(urlPath)
+  return ext === '' || ext === '.html'
+}
+
 const staticResponse = (root: string, urlPath: string): Response | null => {
   const safe = normalize(urlPath).replace(/^(\.\.[\\/])+/, '')
   const candidate = join(root, safe === '/' ? 'index.html' : safe)
@@ -340,13 +356,16 @@ export const startServer = async (
     } catch { /* dist not present — the not-built check above will surface this */ }
   }
 
-  // Re-check staleness and rebuild if needed. Called by SIGHUP handler and
-  // /rebuild admin route (2 callers). Serialised by `rebuilding` so concurrent
-  // requests don't spawn parallel builds.
-  let rebuilding = false
-  const rebuildIfStale = async (): Promise<'fresh' | 'rebuilt' | 'in-progress'> => {
+  // Re-check staleness and rebuild if needed. Called by the SIGHUP handler, the
+  // /rebuild admin route, and every document (app-shell) request.
+  //
+  // Concurrent callers JOIN the in-flight build rather than being turned away.
+  // Turning them away would defeat the point: a page load that arrives during a
+  // rebuild would be served the very stale bundle the rebuild exists to replace.
+  let rebuildInFlight: Promise<'fresh' | 'rebuilt'> | null = null
+  const rebuildIfStale = async (): Promise<'fresh' | 'rebuilt'> => {
     if (!distDir || !args.srcDir) return 'fresh'
-    if (rebuilding) return 'in-progress'
+    if (rebuildInFlight) return rebuildInFlight
     const uiDir = resolve(args.srcDir)
     let newestSrc = maxMtimeMs(join(uiDir, 'src'))
     for (const f of ['index.html', 'package.json', 'vite.config.ts']) {
@@ -355,13 +374,16 @@ export const startServer = async (
     let distMs = 0
     try { distMs = statSync(join(distDir, 'index.html')).mtimeMs } catch {}
     if (newestSrc <= distMs) return 'fresh'
-    rebuilding = true
-    try {
+    const run = (async (): Promise<'fresh' | 'rebuilt'> => {
       await runBuild(uiDir)
       try { bundleBuiltAt = new Date(statSync(join(distDir, 'index.html')).mtimeMs).toISOString() } catch {}
       return 'rebuilt'
+    })()
+    rebuildInFlight = run
+    try {
+      return await run
     } finally {
-      rebuilding = false
+      rebuildInFlight = null
     }
   }
 
@@ -1581,6 +1603,26 @@ export const startServer = async (
       }
 
       if (distDir) {
+        // Serve-time freshness. The boot-time staleness guard runs exactly once,
+        // so a server left running across a merge kept serving the bundle it
+        // booted with — silently, and indefinitely. Re-checking here means any
+        // full page load picks up merged source.
+        //
+        // Scoped to document requests (the app shell) so the src/ mtime walk
+        // runs once per navigation, not once per hashed asset.
+        if (isDocumentRequest(req.method, path)) {
+          try {
+            const action = await rebuildIfStale()
+            if (action === 'rebuilt') {
+              console.log('mars-ui: bundle rebuilt on page load — source had advanced past the last build')
+            }
+          } catch (err) {
+            // Never fail the page load over a rebuild: serving the stale bundle
+            // beats serving nothing. The error is logged so the operator can see
+            // why the UI still looks old.
+            console.error(`mars-ui: rebuild on page load failed: ${(err as Error).message}`)
+          }
+        }
         const r = staticResponse(distDir, path)
         if (r) return r
       }
