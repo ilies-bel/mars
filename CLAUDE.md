@@ -461,6 +461,17 @@ recovery-spawn path itself.
   `node -e "fetch('http://127.0.0.1:'+require('fs').readFileSync('.mars/http.port','utf8').trim()+'/view/<route>').then(r=>r.json()).then(d=>console.log(JSON.stringify(d).slice(0,2000)))"`.
   `curl -o /dev/null -w '%{http_code}'` is still fine for a bare status probe,
   since it emits no body.
+- **Never read vitest results off stdout for anything larger than a single
+  test file.** RTK truncates captured output at ~1 MB, and the summary line
+  with the real pass/fail counts is what gets cut. Use
+  `npx vitest run --reporter=json --outputFile=<scratch>/results.json` and
+  parse the file (`numTotalTests`, `numFailedTests`,
+  `testResults[].assertionResults[]`) instead. Do not parse the RTK tee logs
+  under `~/Library/Application Support/rtk/tee/` to reconstruct failures —
+  field adjacency between `status` and `name` is not guaranteed and
+  attribution silently comes out wrong. Treat a backgrounded vitest run that
+  returns exit 0 with an empty or truncated log as UNKNOWN, not a pass —
+  re-run in the foreground with `--outputFile`.
 - A 404 on a daemon route that exists in source usually means the running
   daemon predates that route — restart with `mars daemon restart` rather
   than scoping a code task. The same applies to a `mars ui` Bun-server 404
