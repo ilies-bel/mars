@@ -170,9 +170,21 @@ describe('WORKER_CONFIGS.RescueOperator', () => {
     }
   })
 
-  it('denies Edit and Write — the agent inspects the branch but never writes files', () => {
+  it('denies every file-mutation tool — the agent inspects the branch but never writes files', () => {
     expect(WORKER_CONFIGS.RescueOperator.disallowedTools).toContain('Edit')
     expect(WORKER_CONFIGS.RescueOperator.disallowedTools).toContain('Write')
+    // NotebookEdit is the third file-write tool READ_ONLY_DENIED_TOOLS covers;
+    // omitting it leaves a write path open on the claude provider.
+    expect(WORKER_CONFIGS.RescueOperator.disallowedTools).toContain('NotebookEdit')
+  })
+
+  // codex-headless's isReadOnlyRun spawns `codex exec --sandbox read-only`
+  // only when BOTH 'Edit' and 'Write' are denied. Dropping either silently
+  // returns the run to workspace-write, so this pins the exact pair that
+  // mechanically enforces the no-file-writes rule on the default provider.
+  it('denies Edit and Write together so codex runs sandboxed read-only', () => {
+    const denied = new Set(WORKER_CONFIGS.RescueOperator.disallowedTools ?? [])
+    expect(denied.has('Edit') && denied.has('Write')).toBe(true)
   })
 
   it('denies git commit — the JSON verdict is the sole output, never a commit', () => {

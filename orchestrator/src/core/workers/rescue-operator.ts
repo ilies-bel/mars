@@ -99,11 +99,26 @@ export const RESCUE_OPERATOR_SYSTEM_PROMPT =
  * the three permitted corrective actions, plus any file mutation and any
  * `git commit` — the agent's sole output is the JSON verdict text, never a
  * committed file. The system prompt is the primary enforcement mechanism;
- * this list is an additional, mechanically-enforced guard. `Write` and
- * `Edit` are bare tool names, matching the form `READ_ONLY_DENIED_TOOLS`
- * already uses for Planner/Slicer/Triager/BehaviourVerifier/Scorer — the
- * Worker layer's `disallowedTools` matches on exact tool name for these,
- * same as the Bash(...) glob patterns match on command prefix.
+ * this list is an additional, mechanically-enforced guard.
+ *
+ * `Edit`, `Write` and `NotebookEdit` are bare tool names, matching the form
+ * `READ_ONLY_DENIED_TOOLS` already uses for
+ * Planner/Slicer/Triager/BehaviourVerifier/Scorer. Both providers honour
+ * that form, by different mechanisms:
+ *
+ * - claude: `spawnArgv` passes the list straight through as
+ *   `--disallowedTools Edit,Write,…`, matching on exact tool name (the
+ *   `Bash(...)` entries match on command prefix in the same flag).
+ * - codex (the current global default): `isReadOnlyRun` in
+ *   `providers/codex-headless.ts` tests for `Edit` AND `Write` in this list
+ *   and, when both are present, spawns `codex exec` with
+ *   `--sandbox read-only` instead of `workspace-write`. That is an OS-level
+ *   sandbox, so it also blocks `git commit` and any shell-based write —
+ *   independently of the `Bash(git commit*)` pattern below.
+ *
+ * Keep `Edit` and `Write` together: `isReadOnlyRun` requires BOTH, so
+ * dropping either one silently returns the codex run to `workspace-write`
+ * and un-enforces this entire list on the default provider.
  */
 export const RESCUE_OPERATOR_DENIED_TOOLS: readonly string[] = [
   'Bash(mars proposal*)',
@@ -112,6 +127,7 @@ export const RESCUE_OPERATOR_DENIED_TOOLS: readonly string[] = [
   'Bash(git commit*)',
   'Write',
   'Edit',
+  'NotebookEdit',
 ] as const
 
 // ---------------------------------------------------------------------------
