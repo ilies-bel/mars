@@ -1199,6 +1199,29 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /view/task/:id/live — live-task panel data for awaiting-human tasks.
+    // Returns { stepGuide, doneCriteria, notes } or 404 when the task is not
+    // found or is not in status='awaiting-human'. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/task/') && req.url.endsWith('/live')) {
+      const urlPart = req.url.slice('/view/task/'.length, -'/live'.length)
+      const id = decodeURIComponent(urlPart)
+      if (!id) {
+        sendJson(res, 400, { error: 'id is required' })
+        return
+      }
+      import('./view/live-task.js')
+        .then((m) => m.buildLiveTaskView(id))
+        .then((result) => {
+          if (result === null) {
+            sendJson(res, 404, { error: 'not_found_or_not_parked', id })
+          } else {
+            sendJson(res, 200, result)
+          }
+        })
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/tasks — full task list from the daemon's DomainTaskStore.
     // The read-only UI proxies this endpoint instead of opening the DB
     // directly, so the daemon is the single reader of its own database.

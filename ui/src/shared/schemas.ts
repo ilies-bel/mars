@@ -12,6 +12,7 @@ const taskStatusSchema = z.enum([
   'dropped',
   'blocked',
   'under_investigation',
+  'awaiting-human',
 ])
 
 // Mirrors ProposalSource in orchestrator/src/core/proposals.ts. Kept as a

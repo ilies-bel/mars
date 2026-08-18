@@ -35,6 +35,7 @@ import { SkeletonBlock } from '@/components/Skeleton'
 import { ErrorFirstLog } from '@/components/ErrorFirstLog'
 import { OriginTree } from './OriginTree'
 import { StewardLedgerPanel } from './StewardLedgerPanel'
+import { LiveTaskPanel } from './LiveTaskPanel'
 
 /** A single step execution span — one step_started event paired with its step_ended (if any). */
 export interface StepSpan {
@@ -1953,6 +1954,10 @@ export const TaskDetailDrawer = ({
             Task not found. It may have been purged.
           </p>
         </div>
+      ) : null}
+
+      {state.kind === 'ready' && state.task.status === 'awaiting-human' ? (
+        <LiveTaskPanel taskId={state.task.id} fetchImpl={fetchImpl} />
       ) : null}
 
       {state.kind === 'ready' ? (

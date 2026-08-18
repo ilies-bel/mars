@@ -450,6 +450,18 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/task/:id/live — live-task panel data for awaiting-human tasks.
+        // Proxies GET /view/task/:id/live on the daemon.
+        if (req.method === 'GET' && path.startsWith('/api/task/') && path.endsWith('/live')) {
+          const urlPart = path.slice('/api/task/'.length, -'/live'.length)
+          const id = decodeURIComponent(urlPart)
+          if (!id) {
+            return jsonResponse(400, { error: 'id is required' })
+          }
+          const r = await proxyGet(ctx.stateDir, `/view/task/${encodeURIComponent(id)}/live`)
+          return jsonResponse(r.status, r.body)
+        }
+
         // GET /api/action-queue — proxy the daemon's derived action-queue view.
         // The daemon's `buildActionQueueView` is the single source of truth for
         // the projection (kind/priority normalisation, entityId extraction,
