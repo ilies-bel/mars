@@ -203,6 +203,39 @@ describe('codexHeadless.run — (a) argv shape', () => {
     expect(argv[sandboxIdx + 1]).toBe('read-only')
   })
 
+  // Regression test for the rescue-operator no-op incident: denying both
+  // Edit and Write (RESCUE_OPERATOR_DENIED_TOOLS's shape) would otherwise
+  // force `--sandbox read-only`, which was verified empirically to break
+  // the `mars` CLI itself (a tsx wrapper that needs to open a local IPC
+  // pipe under $TMPDIR at startup — denied outright under read-only, so
+  // even `mars --version` fails). forceSandbox must override the
+  // disallowedTools-derived default so a Worker like the rescue-operator,
+  // whose entire job is to run `mars restart`/`mars continue`/
+  // `mars task add --supersede`, is not silently unable to execute any of
+  // its permitted actions.
+  it('forceSandbox: workspace-write overrides the disallowedTools-derived read-only default', async () => {
+    await codexHeadless.run('rescue this arc', {
+      cwd: '/tmp',
+      disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
+      forceSandbox: 'workspace-write',
+    })
+
+    const argv = vi.mocked(runSubprocessStreaming).mock.calls[0][1] as readonly string[]
+    const sandboxIdx = argv.indexOf('--sandbox')
+    expect(argv[sandboxIdx + 1]).toBe('workspace-write')
+  })
+
+  it('forceSandbox: read-only overrides the disallowedTools-derived workspace-write default', async () => {
+    await codexHeadless.run('inspect only, no tools denied', {
+      cwd: '/tmp',
+      forceSandbox: 'read-only',
+    })
+
+    const argv = vi.mocked(runSubprocessStreaming).mock.calls[0][1] as readonly string[]
+    const sandboxIdx = argv.indexOf('--sandbox')
+    expect(argv[sandboxIdx + 1]).toBe('read-only')
+  })
+
   it('appends the prompt as the final argv entry', async () => {
     const prompt = 'implement the codex adapter'
     await codexHeadless.run(prompt, { cwd: '/tmp', model: 'o4-mini' })

@@ -65,6 +65,29 @@ export type HeadlessRunOpts = Readonly<{
   bare?: boolean
   agent?: string
   disallowedTools?: ReadonlyArray<string>
+  /**
+   * Explicit sandbox-mode override, independent of `disallowedTools`.
+   *
+   * Providers WITHOUT a discrete per-tool deny mechanism (codex) derive
+   * their OS-level sandbox mode from `disallowedTools` by default (see
+   * `isReadOnlyRun` in `providers/codex-headless.ts`): denying both `Edit`
+   * and `Write` normally forces `--sandbox read-only`. That coupling is
+   * wrong for a Worker that must deny file-editing tools yet still needs
+   * OS-level write access to run ordinary subprocesses — e.g. the
+   * rescue-operator, whose permitted actions are `mars restart` / `mars
+   * continue` / `mars task add --supersede`. Empirically, codex's
+   * `read-only` sandbox denies ALL filesystem writes, including under
+   * `/tmp`/`$TMPDIR`; the dev-mode `mars` CLI (a tsx wrapper) needs to
+   * create a local IPC pipe there at startup, so under `read-only` even
+   * `mars --version` fails with `EPERM` on `Server.listen` before argument
+   * parsing — the rescue-operator would be a silent total no-op.
+   *
+   * Set this field to bypass the `disallowedTools`-derived default for
+   * this run. Leave unset for every other Worker so their existing
+   * behaviour (including the five read-only Workers that share the
+   * `Edit`+`Write` deny shape) is unaffected.
+   */
+  forceSandbox?: 'workspace-write' | 'read-only'
   maxContextTokens?: number
   mcpServers?: Readonly<Record<string, unknown>>
   externalAbort?: AbortSignal

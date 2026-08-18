@@ -171,6 +171,16 @@ export interface WorkerConfig {
   // these as `--allowedTools`; absence means no allow-list filtering.
   readonly allowedTools?: readonly string[]
   readonly disallowedTools: readonly string[]
+  // Explicit sandbox-mode override forwarded verbatim to HeadlessRunOpts.
+  // Only the codex adapter reads it (see isReadOnlyRun in
+  // providers/codex-headless.ts); every other Worker leaves it undefined so
+  // sandbox mode keeps deriving from `disallowedTools` as before. See the
+  // field's doc comment on HeadlessRunOpts in provider-types.ts for why this
+  // is needed: codex's `read-only` sandbox blocks ALL filesystem writes,
+  // including under `/tmp`/`$TMPDIR`, which breaks the `mars` CLI itself
+  // (a tsx wrapper needing a local IPC pipe at startup) — not just the
+  // mutations a Worker like the rescue-operator is meant to perform.
+  readonly forceSandbox?: 'workspace-write' | 'read-only'
   // Pinned tool list (mapped to claude's `--tools` flag if present). Most
   // Workers leave this undefined and rely on the default tool surface;
   // tightly-scoped roles may pin a narrow list.
@@ -537,6 +547,27 @@ const BUILT_IN_WORKER_CONFIGS: Readonly<Record<string, WorkerConfig>> = {
   // Sonnet / high effort — targeted recovery work, same posture as Fixer.
   // At most one RescueOperator task fires per Arc (the durable
   // arc_rescue_attempts guard in rescue-operator-spawn.ts). See PRD 94e2a82a.
+  //
+  // forceSandbox: 'workspace-write' — RESCUE_OPERATOR_DENIED_TOOLS denies
+  // both Edit and Write, which on the codex provider would otherwise force
+  // `--sandbox read-only` (see isReadOnlyRun in providers/codex-headless.ts).
+  // That was verified empirically to make this Worker a silent total no-op
+  // on codex: `mars`'s own CLI process (a tsx wrapper) needs to create a
+  // local IPC pipe under `$TMPDIR` at startup, and codex's read-only
+  // sandbox denies ALL filesystem writes — even under `/tmp` — so under
+  // read-only even `mars --version` fails with `EPERM` before argument
+  // parsing, let alone the three permitted mutating actions (which
+  // themselves execute in the daemon process over a Unix socket, not in
+  // this CLI process, but never get the chance to run). Codex exposes no
+  // narrower policy that keeps `/tmp`/IPC writable while blocking repo
+  // writes (`sandbox_workspace_write.writable_roots` cannot exclude the
+  // primary workspace root — verified empirically), and it has no
+  // discrete per-tool deny mechanism the way Claude's `--disallowedTools`
+  // does, so file-write prevention for this Worker on codex is enforced by
+  // the system prompt alone (already strengthened to forbid ANY file
+  // mutation) rather than the OS sandbox. `disallowedTools` is left
+  // unchanged so the claude provider's `--disallowedTools Edit,Write,…`
+  // still hard-blocks those tool calls at the API layer.
   RescueOperator: {
     name: 'RescueOperator',
     model: providerModel(WORKER_PROVIDER, 'balanced'),
@@ -546,6 +577,7 @@ const BUILT_IN_WORKER_CONFIGS: Readonly<Record<string, WorkerConfig>> = {
     bare: false,
     systemPrompt: RESCUE_OPERATOR_SYSTEM_PROMPT,
     disallowedTools: RESCUE_OPERATOR_DENIED_TOOLS,
+    forceSandbox: 'workspace-write',
     outputFormat: 'stream-json',
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
@@ -640,6 +672,7 @@ const buildWorker = (config: WorkerConfig): Worker => {
             bare: config.bare,
             agent: config.agent,
             disallowedTools: config.disallowedTools,
+            forceSandbox: config.forceSandbox,
             maxContextTokens: meteredContextBudget,
             mcpServers: config.mcpConfig,
             externalAbort: options.externalAbort,

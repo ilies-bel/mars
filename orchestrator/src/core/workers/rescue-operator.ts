@@ -103,22 +103,39 @@ export const RESCUE_OPERATOR_SYSTEM_PROMPT =
  *
  * `Edit`, `Write` and `NotebookEdit` are bare tool names, matching the form
  * `READ_ONLY_DENIED_TOOLS` already uses for
- * Planner/Slicer/Triager/BehaviourVerifier/Scorer. Both providers honour
- * that form, by different mechanisms:
+ * Planner/Slicer/Triager/BehaviourVerifier/Scorer. The two providers honour
+ * that form very differently:
  *
  * - claude: `spawnArgv` passes the list straight through as
  *   `--disallowedTools Edit,Write,…`, matching on exact tool name (the
- *   `Bash(...)` entries match on command prefix in the same flag).
+ *   `Bash(git commit*)` entry matches on command prefix in the same flag).
+ *   This is a genuine, mechanically-enforced block at the tool-call layer,
+ *   independent of sandbox mode.
  * - codex (the current global default): `isReadOnlyRun` in
- *   `providers/codex-headless.ts` tests for `Edit` AND `Write` in this list
- *   and, when both are present, spawns `codex exec` with
- *   `--sandbox read-only` instead of `workspace-write`. That is an OS-level
- *   sandbox, so it also blocks `git commit` and any shell-based write —
- *   independently of the `Bash(git commit*)` pattern below.
+ *   `providers/codex-headless.ts` normally tests for `Edit` AND `Write` in
+ *   this list and, when both are present, spawns `codex exec` with
+ *   `--sandbox read-only` instead of `workspace-write` — codex has no
+ *   per-tool deny mechanism, so the OS sandbox is its only enforcement
+ *   surface. For THIS Worker specifically, the RescueOperator's own
+ *   `WorkerConfig` in `index.ts` pins `forceSandbox: 'workspace-write'`,
+ *   which `isReadOnlyRun` honours ahead of the `disallowedTools`-derived
+ *   default. That override exists because `--sandbox read-only` was
+ *   verified empirically to break the `mars` CLI itself (a tsx wrapper
+ *   that opens a local IPC pipe under `$TMPDIR` at startup — denied
+ *   outright by codex's read-only sandbox, so even `mars --version` fails
+ *   with `EPERM`), which would make this Worker a silent total no-op: it
+ *   could never execute any of its three permitted actions. On codex,
+ *   file-write prevention for this Worker therefore rests on the system
+ *   prompt above (forbidding ANY file mutation) rather than the OS sandbox
+ *   — codex exposes no narrower policy that keeps `/tmp` writable while
+ *   blocking writes to the repo (`sandbox_workspace_write.writable_roots`
+ *   cannot exclude the primary workspace root; verified empirically).
  *
- * Keep `Edit` and `Write` together: `isReadOnlyRun` requires BOTH, so
- * dropping either one silently returns the codex run to `workspace-write`
- * and un-enforces this entire list on the default provider.
+ * Keep `Edit` and `Write` together regardless: `isReadOnlyRun`'s
+ * `disallowedTools`-derived fallback (used by every OTHER Worker sharing
+ * this list shape) requires BOTH, so dropping either one would silently
+ * return those Workers' codex runs to `workspace-write` and un-enforce
+ * their read-only posture.
  */
 export const RESCUE_OPERATOR_DENIED_TOOLS: readonly string[] = [
   'Bash(mars proposal*)',

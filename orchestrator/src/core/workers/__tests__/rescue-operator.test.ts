@@ -178,13 +178,26 @@ describe('WORKER_CONFIGS.RescueOperator', () => {
     expect(WORKER_CONFIGS.RescueOperator.disallowedTools).toContain('NotebookEdit')
   })
 
-  // codex-headless's isReadOnlyRun spawns `codex exec --sandbox read-only`
-  // only when BOTH 'Edit' and 'Write' are denied. Dropping either silently
-  // returns the run to workspace-write, so this pins the exact pair that
-  // mechanically enforces the no-file-writes rule on the default provider.
-  it('denies Edit and Write together so codex runs sandboxed read-only', () => {
+  // codex-headless's isReadOnlyRun would normally spawn
+  // `codex exec --sandbox read-only` whenever BOTH 'Edit' and 'Write' are
+  // denied (used to keep the other READ_ONLY_DENIED_TOOLS Workers sandboxed).
+  // Pin the pair regardless: it still hard-blocks Edit/Write at the
+  // tool-call layer on the claude provider, and dropping either would
+  // silently loosen that provider's enforcement even though codex now
+  // overrides sandbox choice via forceSandbox (see below).
+  it('denies Edit and Write together (claude tool-layer enforcement)', () => {
     const denied = new Set(WORKER_CONFIGS.RescueOperator.disallowedTools ?? [])
     expect(denied.has('Edit') && denied.has('Write')).toBe(true)
+  })
+
+  // Regression test for the codex read-only-sandbox no-op: denying both
+  // Edit and Write would otherwise force codex into `--sandbox read-only`,
+  // which was verified empirically (see rescue-operator.ts's doc comment on
+  // RESCUE_OPERATOR_DENIED_TOOLS) to break the `mars` CLI itself, making
+  // this Worker unable to execute any of its three permitted actions.
+  // forceSandbox overrides that derivation so codex runs workspace-write.
+  it('pins forceSandbox: workspace-write so codex mars commands can execute', () => {
+    expect(WORKER_CONFIGS.RescueOperator.forceSandbox).toBe('workspace-write')
   })
 
   it('denies git commit — the JSON verdict is the sole output, never a commit', () => {

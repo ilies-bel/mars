@@ -26,6 +26,11 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
 const isReadOnlyRun = (opts: HeadlessRunOpts): boolean => {
+  // opts.forceSandbox is an explicit override and takes priority over the
+  // disallowedTools-derived default — see the field's doc comment in
+  // provider-types.ts for why a Worker (the rescue-operator) needs to deny
+  // Edit/Write yet still run under workspace-write.
+  if (opts.forceSandbox) return opts.forceSandbox === 'read-only'
   const denied = new Set(opts.disallowedTools ?? [])
   return denied.has('Edit') && denied.has('Write')
 }
