@@ -2,7 +2,7 @@ import { lstat, mkdir, readdir, readlink, rm, symlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { repoRoot } from './git/internal'
 
-const WORKTREE_DEPENDENCY_WORKSPACES = ['orchestrator', 'ui'] as const
+const WORKTREE_DEPENDENCY_WORKSPACES = ['orchestrator', 'ui', 'packages/workflow'] as const
 
 export interface ProvisionWorktreeDepsArgs {
   worktreeRoot: string

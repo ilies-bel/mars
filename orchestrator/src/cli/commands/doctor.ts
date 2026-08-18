@@ -643,13 +643,14 @@ export const runDoctorChecks = async (
   // Recovery: CI=true pnpm install --frozen-lockfile in the affected workspace.
   if (repoRoot !== null) {
     // Checked directories: the workspace root (virtual store for single-root
-    // pnpm workspaces lives here) plus the two sub-packages managed by
+    // pnpm workspaces lives here) plus the sub-packages managed by
     // provisionWorktreeDeps that receive cross-worktree node_modules symlinks.
     // Each entry is { dir: repo-relative path, label: display name }.
     const MANAGED_WORKSPACES = [
       { dir: '.', label: 'workspace root' },
       { dir: 'orchestrator', label: 'orchestrator' },
       { dir: 'ui', label: 'ui' },
+      { dir: 'packages/workflow', label: 'packages/workflow' },
     ] as const
     for (const { dir: wsDir, label: wsLabel } of MANAGED_WORKSPACES) {
       const modulesYamlPath = resolve(repoRoot, wsDir, 'node_modules', '.modules.yaml')

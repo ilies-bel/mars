@@ -18,7 +18,7 @@ describe('provisionWorktreeDeps', () => {
     const sourceRoot = mkdtempSync(resolve(tmpdir(), 'mars-worktree-deps-source-'))
     const worktreeRoot = mkdtempSync(resolve(tmpdir(), 'mars-worktree-deps-target-'))
     roots.push(sourceRoot, worktreeRoot)
-    for (const workspace of ['orchestrator', 'ui']) {
+    for (const workspace of ['orchestrator', 'ui', 'packages/workflow']) {
       mkdirSync(resolve(sourceRoot, workspace, 'node_modules'), { recursive: true })
       mkdirSync(resolve(worktreeRoot, workspace), { recursive: true })
     }
@@ -26,7 +26,7 @@ describe('provisionWorktreeDeps', () => {
     await provisionWorktreeDeps({ worktreeRoot, sourceRoot })
     await provisionWorktreeDeps({ worktreeRoot, sourceRoot })
 
-    for (const workspace of ['orchestrator', 'ui']) {
+    for (const workspace of ['orchestrator', 'ui', 'packages/workflow']) {
       const link = resolve(worktreeRoot, workspace, 'node_modules')
       expect(lstatSync(link).isSymbolicLink()).toBe(true)
       expect(realpathSync(link)).toBe(realpathSync(resolve(sourceRoot, workspace, 'node_modules')))
@@ -36,7 +36,7 @@ describe('provisionWorktreeDeps', () => {
   it('provisions dependencies when creating a task worktree', async () => {
     const sourceRoot = mkdtempSync(resolve(tmpdir(), 'mars-worktree-create-source-'))
     roots.push(sourceRoot)
-    for (const workspace of ['orchestrator', 'ui']) {
+    for (const workspace of ['orchestrator', 'ui', 'packages/workflow']) {
       mkdirSync(resolve(sourceRoot, workspace, 'node_modules'), { recursive: true })
     }
     writeFileSync(resolve(sourceRoot, 'README.md'), 'base\n')
@@ -57,7 +57,7 @@ describe('provisionWorktreeDeps', () => {
         integrationBranch: 'main',
       })
 
-      for (const workspace of ['orchestrator', 'ui']) {
+      for (const workspace of ['orchestrator', 'ui', 'packages/workflow']) {
         expect(realpathSync(resolve(worktree.path, workspace, 'node_modules'))).toBe(
           realpathSync(resolve(sourceRoot, workspace, 'node_modules')),
         )
