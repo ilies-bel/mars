@@ -137,7 +137,14 @@ describe('proposal add — @file goal input', () => {
     const proposalId = r.out[0]?.split(' ')[0]
     expect(proposalId).toBeTruthy()
     const proposal = await getProposal(proposalId!)
-    expect(proposal?.title).toBe(goal)
+    // `createProposal` splits incoming prose into a short title + body, so the
+    // goal no longer lands wholesale in `title`. What this test guards is
+    // unchanged: nothing is shell-expanded and nothing is lost — the backticks
+    // and `$(...)` survive verbatim and the two halves recombine into the
+    // original bytes.
+    expect(proposal?.title).toBe('support `mars task add` for $(cmd)')
+    expect(proposal?.problem).toBe('multi-line proposal title')
+    expect(`${proposal?.title}\n${proposal?.problem}`).toBe(goal)
   })
 
   it('round-trips content via stdin (-) without shell expansion', () => {
