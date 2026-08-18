@@ -1033,13 +1033,12 @@ export const startDaemon = async (
   // root once at startup so a periodic tick can detect commits that changed
   // loaded daemon code or workflows. Unrelated auto-commits must not mark the
   // in-memory daemon stale. Gate on dev install only; prod binaries are
-  // handled by self-update.ts. A stable, idle local code drift automatically
-  // restarts by default; dependency drift and disabled auto-restart keep the
-  // operator-facing nudge. On any git error, leave sourceSha null so we never
-  // surface a spurious warning.
+  // handled by self-update.ts. The daemon never restarts itself on code
+  // drift — it only ever surfaces an operator-facing nudge; restarting is an
+  // operator gesture (`mars daemon restart`). On any git error, leave
+  // sourceSha null so we never surface a spurious warning.
   const sourceDir = dirname(fileURLToPath(import.meta.url))
   const installRoute = classifyInstallRoute()
-  const devAutoRestartEnabled = process.env.MARS_DEV_AUTORESTART !== '0'
   let sourceSha: string | null = null
   let sourceRepoDir: string | null = null
   if (installRoute === 'dev') {
@@ -6209,53 +6208,33 @@ export const startDaemon = async (
 
   // ── Dev-install staleness check ──────────────────────────────────────────
   // Periodically compares the git HEAD at startup against the current HEAD.
-  // Relevant, stable local code drift automatically restarts an idle dev
-  // daemon by default. Busy daemons, dependency manifest drift, and
-  // MARS_DEV_AUTORESTART=0 retain the level-triggered restart nudge instead.
-  // Active only for dev installs (prod is handled by self-update.ts). On any
-  // git error the check is a no-op — we never flip isStale to false once it is
-  // true. .unref() so the interval never prevents a clean shutdown. Override
-  // cadence via MARS_DEV_STALENESS_CHECK_MS. The startup reconciler
+  // Relevant local code drift only ever raises an operator-facing nudge — the
+  // daemon never restarts itself on code drift; restarting is an operator
+  // gesture (`mars daemon restart`). Active only for dev installs (prod is
+  // handled by self-update.ts). On any git error the check is a no-op — we
+  // never flip isStale to false once it is true. .unref() so the interval
+  // never prevents a clean shutdown. Override cadence via
+  // MARS_DEV_STALENESS_CHECK_MS. The startup reconciler
   // (code-drift-clear-sweep) resolves open drift rows after a restart.
   const DEV_STALENESS_CHECK_MS = Number(process.env.MARS_DEV_STALENESS_CHECK_MS ?? 60_000)
-  let lastDevDriftHead: string | null = null
-  let stableDevDriftChecks = 0
   const devStalenessCheck = setInterval(() => {
     void (async () => {
       try {
         const { stdout } = await exec(resolveGitBin(), ['rev-parse', 'HEAD'], { cwd: sourceDir })
         const head = stdout.trim() || null
         if (!(await hasRelevantDevDrift(sourceSha, head, installRoute, sourceRepoDir))) {
-          lastDevDriftHead = null
-          stableDevDriftChecks = 0
           return
         }
 
         currentSha = head
         isStale = true
-        stableDevDriftChecks = head === lastDevDriftHead ? stableDevDriftChecks + 1 : 1
-        lastDevDriftHead = head
         const dependencyDrift = await hasDevDependencyDrift(sourceSha, head, sourceRepoDir)
         lastDependencyDrift = dependencyDrift
         const action = decideDevStalenessAction({
           sourceSha,
           currentSha: head,
           installRoute,
-          inFlightCount: tracker.inFlightCount(),
-          dependencyDrift,
-          stabilityCount: stableDevDriftChecks,
-          autoRestartEnabled: devAutoRestartEnabled,
         })
-
-        if (action === 'restart') {
-          const shortSrc = sourceSha?.slice(0, 7) ?? '?'
-          const shortHead = head?.slice(0, 7) ?? '?'
-          log(`[dev-autorestart] HEAD ${shortSrc} -> ${shortHead}, restarting daemon`)
-          // Mirror the restartDaemon RPC handler.
-          await spawnReplacementDaemon()
-          setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100)
-          return
-        }
 
         if (action === 'nudge') {
           // Drift is now surfaced as a derived condition on every action-queue

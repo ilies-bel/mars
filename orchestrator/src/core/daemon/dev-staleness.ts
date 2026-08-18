@@ -9,17 +9,13 @@ const DEPENDENCY_PATHS = [
   'orchestrator/package-lock.json',
 ]
 
-export type DevStalenessAction = 'none' | 'nudge' | 'restart'
+export type DevStalenessAction = 'none' | 'nudge'
 
 /** Inputs used to decide how a dev daemon should react to relevant HEAD drift. */
 export type DevStalenessDecisionInput = {
   sourceSha: string | null
   currentSha: string | null
   installRoute: 'dev' | 'prod'
-  inFlightCount: number
-  dependencyDrift: boolean
-  stabilityCount: number
-  autoRestartEnabled: boolean
 }
 
 /**
@@ -45,22 +41,18 @@ export const isStaleDev = (
 }
 
 /**
- * Decide whether relevant local HEAD drift needs an operator nudge or can
- * safely restart this daemon. Call only after {@link hasRelevantDevDrift}
+ * Decide whether relevant local HEAD drift needs an operator nudge. The
+ * daemon never restarts itself on code drift — restarting is an operator
+ * gesture (`mars daemon restart`). Call only after {@link hasRelevantDevDrift}
  * reports true; this policy intentionally does not inspect git itself.
  */
 export const decideDevStalenessAction = ({
   sourceSha,
   currentSha,
   installRoute,
-  inFlightCount,
-  dependencyDrift,
-  stabilityCount,
-  autoRestartEnabled,
 }: DevStalenessDecisionInput): DevStalenessAction => {
   if (!isStaleDev(sourceSha, currentSha, installRoute)) return 'none'
-  if (!autoRestartEnabled || dependencyDrift || inFlightCount > 0) return 'nudge'
-  return stabilityCount >= 2 ? 'restart' : 'none'
+  return 'nudge'
 }
 
 /**

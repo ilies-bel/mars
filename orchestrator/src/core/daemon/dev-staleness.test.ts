@@ -22,44 +22,12 @@ const commit = (repo: string, path: string, content: string): string => {
 }
 
 describe('dev-install staleness', () => {
-  it('restarts an idle dev daemon after relevant drift has been stable', () => {
+  it('nudges an idle dev daemon after relevant drift — never restarts', () => {
     expect(
       decideDevStalenessAction({
         sourceSha: 'abc1234',
         currentSha: 'def5678',
         installRoute: 'dev',
-        inFlightCount: 0,
-        dependencyDrift: false,
-        stabilityCount: 2,
-        autoRestartEnabled: true,
-      }),
-    ).toBe('restart')
-  })
-
-  it('nudges instead of restarting while a task is in flight', () => {
-    expect(
-      decideDevStalenessAction({
-        sourceSha: 'abc1234',
-        currentSha: 'def5678',
-        installRoute: 'dev',
-        inFlightCount: 1,
-        dependencyDrift: false,
-        stabilityCount: 2,
-        autoRestartEnabled: true,
-      }),
-    ).toBe('nudge')
-  })
-
-  it('nudges instead of restarting when dependencies changed', () => {
-    expect(
-      decideDevStalenessAction({
-        sourceSha: 'abc1234',
-        currentSha: 'def5678',
-        installRoute: 'dev',
-        inFlightCount: 0,
-        dependencyDrift: true,
-        stabilityCount: 2,
-        autoRestartEnabled: true,
       }),
     ).toBe('nudge')
   })
@@ -82,44 +50,22 @@ describe('dev-install staleness', () => {
     }
   })
 
-  it('never auto-restarts a prod install', () => {
+  it('never nudges a prod install', () => {
     expect(
       decideDevStalenessAction({
         sourceSha: 'abc1234',
         currentSha: 'def5678',
         installRoute: 'prod',
-        inFlightCount: 0,
-        dependencyDrift: false,
-        stabilityCount: 2,
-        autoRestartEnabled: true,
       }),
     ).toBe('none')
   })
 
-  it('keeps nudge-only behaviour when auto-restart is disabled', () => {
+  it('returns none when there is no drift on a dev install', () => {
     expect(
       decideDevStalenessAction({
         sourceSha: 'abc1234',
-        currentSha: 'def5678',
+        currentSha: 'abc1234',
         installRoute: 'dev',
-        inFlightCount: 0,
-        dependencyDrift: false,
-        stabilityCount: 2,
-        autoRestartEnabled: false,
-      }),
-    ).toBe('nudge')
-  })
-
-  it('waits for a second stable drift check before restarting', () => {
-    expect(
-      decideDevStalenessAction({
-        sourceSha: 'abc1234',
-        currentSha: 'def5678',
-        installRoute: 'dev',
-        inFlightCount: 0,
-        dependencyDrift: false,
-        stabilityCount: 1,
-        autoRestartEnabled: true,
       }),
     ).toBe('none')
   })
