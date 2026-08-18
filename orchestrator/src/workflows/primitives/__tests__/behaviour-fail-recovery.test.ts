@@ -26,6 +26,7 @@ import {
   type BehaviourVerifyDeps,
 } from '../behaviour-verify'
 import type { MarsCtx, MarsWorkflowInput } from '../index'
+import type { CriterionResult } from '../browser-check'
 import type { Task } from '../../../core/queue'
 import type { TraceEventStore } from '../../../core/lib/trace-events-store'
 import type { HandleTaskFailureViaTaskResult } from '../../../core/queue-fix-tasks'
@@ -67,7 +68,7 @@ const makeCtx = (input: MarsWorkflowInput, traceStore: TraceEventStore): MarsCtx
     currentStep: undefined,
   }) as unknown as MarsCtx
 
-type BrowserResult = { criterion: string; verdict: 'pass' | 'fail' | 'unverifiable'; screenshotPath: string | null; note: string; steps: readonly never[]; stopAt: null }
+type BrowserResult = CriterionResult
 
 const makeDeps = (args: {
   /** Task returned for the primary taskId (and any unrecognised id). */
@@ -91,6 +92,8 @@ const makeDeps = (args: {
       note: 'banner not visible',
       steps: [],
       stopAt: null,
+      stoppedAtStep: null,
+      stopReason: null,
     },
   ]
 
@@ -153,7 +156,7 @@ describe('behaviourVerify — FAIL verdict triggers recovery', () => {
     const { deps, handleTaskFailure } = makeDeps({
       task: taskWithCriteria('mars-behav01', ['banner renders on the home page']),
       browserResults: [
-        { criterion: 'banner renders on the home page', verdict: 'fail', screenshotPath: 'qa/0.png', note: 'not found', steps: [], stopAt: null },
+        { criterion: 'banner renders on the home page', verdict: 'fail', screenshotPath: 'qa/0.png', note: 'not found', steps: [], stopAt: null, stoppedAtStep: null, stopReason: null },
       ],
     })
 
@@ -172,7 +175,7 @@ describe('behaviourVerify — FAIL verdict triggers recovery', () => {
     const { deps, handleTaskFailure } = makeDeps({
       task: taskWithCriteria('mars-behav01', ['banner renders on the home page']),
       browserResults: [
-        { criterion: 'banner renders on the home page', verdict: 'fail', screenshotPath: 'qa/0.png', note: '', steps: [], stopAt: null },
+        { criterion: 'banner renders on the home page', verdict: 'fail', screenshotPath: 'qa/0.png', note: '', steps: [], stopAt: null, stoppedAtStep: null, stopReason: null },
       ],
     })
 
@@ -217,7 +220,7 @@ describe('behaviourVerify — FAIL verdict triggers recovery', () => {
         [originId]: taskWithCriteria(originId, ['banner renders on the home page']),
       },
       browserResults: [
-        { criterion: 'banner renders on the home page', verdict: 'pass', screenshotPath: 'qa/0.png', note: 'visible', steps: [], stopAt: null },
+        { criterion: 'banner renders on the home page', verdict: 'pass', screenshotPath: 'qa/0.png', note: 'visible', steps: [], stopAt: null, stoppedAtStep: null, stopReason: null },
       ],
     })
 
@@ -250,7 +253,7 @@ describe('behaviourVerify — FAIL verdict triggers recovery', () => {
         [originId]: taskWithCriteria(originId, ['checkout flow completes']),
       },
       browserResults: [
-        { criterion: 'checkout flow completes', verdict: 'fail', screenshotPath: 'qa/0.png', note: '', steps: [], stopAt: null },
+        { criterion: 'checkout flow completes', verdict: 'fail', screenshotPath: 'qa/0.png', note: '', steps: [], stopAt: null, stoppedAtStep: null, stopReason: null },
       ],
     })
 
@@ -284,7 +287,7 @@ describe('behaviourVerify — FAIL verdict triggers recovery', () => {
         [originId]: taskWithCriteria(originId, ['header text matches design']),
       },
       browserResults: [
-        { criterion: 'header text matches design', verdict: 'fail', screenshotPath: 'qa/0.png', note: '', steps: [], stopAt: null },
+        { criterion: 'header text matches design', verdict: 'fail', screenshotPath: 'qa/0.png', note: '', steps: [], stopAt: null, stoppedAtStep: null, stopReason: null },
       ],
     })
 
@@ -318,7 +321,7 @@ describe('behaviourVerify — FAIL verdict triggers recovery', () => {
         [originId]: taskWithCriteria(originId, ['login button is visible']),
       },
       browserResults: [
-        { criterion: 'login button is visible', verdict: 'fail', screenshotPath: 'qa/0.png', note: '', steps: [], stopAt: null },
+        { criterion: 'login button is visible', verdict: 'fail', screenshotPath: 'qa/0.png', note: '', steps: [], stopAt: null, stoppedAtStep: null, stopReason: null },
       ],
     })
 
@@ -343,7 +346,7 @@ describe('behaviourVerify — FAIL verdict triggers recovery', () => {
     const { deps } = makeDeps({
       task: taskWithCriteria('mars-behav01', ['banner renders on the home page']),
       browserResults: [
-        { criterion: 'banner renders on the home page', verdict: 'fail', screenshotPath: 'qa/0.png', note: 'not visible', steps: [], stopAt: null },
+        { criterion: 'banner renders on the home page', verdict: 'fail', screenshotPath: 'qa/0.png', note: 'not visible', steps: [], stopAt: null, stoppedAtStep: null, stopReason: null },
       ],
     })
 
