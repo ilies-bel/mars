@@ -56,20 +56,28 @@ export const dispatchAlertVerb = async (
  * Resolve the chat thread id an action-queue row should open, creating one
  * if needed.
  *
- * `arc-failed` rows are backed by a daemon-derived Alert: `startThreadFromAlert`
+ * Task-failure rows are backed by a daemon-derived Alert: `startThreadFromAlert`
  * dedups by arc, so a repeat click reuses the existing thread rather than
- * creating a new one. Every other kind gets a fresh thread seeded with the
- * row's own summary/title and kind so it isn't blank and untitled; the caller's
- * `chat-threads` query is invalidated so a freshly created thread shows up in
- * the sidebar immediately.
+ * creating a new one. Per CLAUDE.md/ADR-0057, `'failed'` is the actual
+ * condition kind the action-queue endpoint emits for a failed task; `'arc-failed'`
+ * is the daemon's internal Alert-domain kind for the same condition (kept here
+ * too so a row sourced directly from the Alert/Bell surface still resolves).
+ * The Alert is keyed by the arc's origin id, which is the row's own `entityId`
+ * for an origin task but `fixForTaskId` for a recovery/fix task's row — passing
+ * `entityId` alone for a recovery-task row would look up the wrong (or a
+ * nonexistent) arc and 404.
+ *
+ * Every other kind gets a fresh thread seeded with the row's own summary/title
+ * and kind so it isn't blank and untitled; the caller's `chat-threads` query is
+ * invalidated so a freshly created thread shows up in the sidebar immediately.
  */
 export const resolveThreadForItem = async (
   item: ActionQueueItem,
   projectId: string | undefined,
   qc: QueryClient,
 ): Promise<string> => {
-  if (item.kind === 'arc-failed') {
-    const result = await startThreadFromAlert(item.entityId)
+  if (item.kind === 'arc-failed' || item.kind === 'failed') {
+    const result = await startThreadFromAlert(item.fixForTaskId ?? item.entityId)
     return result.threadId
   }
   const thread = await createChatThread({
