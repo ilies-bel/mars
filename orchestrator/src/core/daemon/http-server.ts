@@ -1,4 +1,5 @@
 import { createServer, type Server } from 'node:http'
+import { createReadStream } from 'node:fs'
 import { mkdir, writeFile, readdir, readFile } from 'node:fs/promises'
 import { join, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -72,7 +73,7 @@ import { listStewardLedgerFor, listStewardLedgerSince } from '../steward-ledger'
 import type { ChatRunner, AttachmentInfo } from './chat-runner'
 import type { ChatStreamHub, SeqChunk } from './chat-contracts'
 import { listTasksForThread } from './chat-thread-tasks'
-import { getRepoRoot } from '../context'
+import { getRepoRoot, getStateDir } from '../context'
 import { z } from 'zod'
 
 // ── Chat upload constants ─────────────────────────────────────────────────────
@@ -1855,6 +1856,98 @@ export const startHttpServer = async (
         .then((candidates) => sendJson(res, 200, candidates))
         .catch((err: unknown) => sendError(res, err))
       return
+    }
+
+    // GET /arc/:originId/qa/screenshot/:criterionIndex/:stepIndex — stream a
+    // single PNG screenshot captured during a behaviour-verification walk.
+    // The file lives at .mars/arc-qa/<originId>/<criterionIndex>/<stepIndex>.png.
+    // criterionIndex and stepIndex must be non-negative integers (all-digit
+    // strings); anything else — including `.` / `..` / slashes — is rejected
+    // with 400 to prevent path traversal. Returns 404 when the file is absent.
+    // Must be matched BEFORE the /arc/:originId/qa manifest route because its
+    // path is a strict prefix extension of that route.
+    {
+      const screenshotMatch =
+        req.method === 'GET' && req.url
+          ? req.url.match(
+              /^\/arc\/([^/?]+)\/qa\/screenshot\/([^/?]+)\/([^/?]+)(?:\?.*)?$/,
+            )
+          : null
+      if (screenshotMatch && screenshotMatch[1] && screenshotMatch[2] && screenshotMatch[3]) {
+        const originId = decodeURIComponent(screenshotMatch[1])
+        const criterionIndex = screenshotMatch[2]
+        const stepIndex = screenshotMatch[3]
+
+        // Reject path-traversal attempts: originId must not contain `..` or `/`;
+        // criterionIndex and stepIndex must be all-digit strings.
+        if (
+          originId.includes('..') ||
+          originId.includes('/') ||
+          originId.startsWith('\0') ||
+          !/^\d+$/.test(criterionIndex) ||
+          !/^\d+$/.test(stepIndex)
+        ) {
+          sendJson(res, 400, { error: 'invalid path parameter' })
+          return
+        }
+
+        const filePath = join(
+          getStateDir(),
+          'arc-qa',
+          originId,
+          criterionIndex,
+          `${stepIndex}.png`,
+        )
+        const stream = createReadStream(filePath)
+        let headersSent = false
+        stream.on('error', (err: NodeJS.ErrnoException) => {
+          if (!headersSent) {
+            if (err.code === 'ENOENT') {
+              sendJson(res, 404, { error: 'screenshot not found' })
+            } else {
+              sendError(res, err)
+            }
+          } else {
+            res.destroy()
+          }
+        })
+        stream.on('open', () => {
+          headersSent = true
+          res.writeHead(200, { 'Content-Type': 'image/png' })
+          stream.pipe(res)
+        })
+        return
+      }
+    }
+
+    // GET /arc/:originId/qa — per-Arc QA manifest JSON. Reads the manifest
+    // written by the behaviour-verification step from
+    // .mars/arc-qa/<originId>/manifest.json. Returns { error: 'no manifest' }
+    // with 404 when no pass has run yet for the arc.
+    // originId must not contain `..` or `/` to prevent path traversal (400).
+    {
+      const arcQaMatch =
+        req.method === 'GET' && req.url
+          ? req.url.match(/^\/arc\/([^/?]+)\/qa(?:\?.*)?$/)
+          : null
+      if (arcQaMatch && arcQaMatch[1]) {
+        const originId = decodeURIComponent(arcQaMatch[1])
+        if (originId.includes('..') || originId.includes('/') || originId.startsWith('\0')) {
+          sendJson(res, 400, { error: 'invalid originId' })
+          return
+        }
+        import('../lib/arc-qa-manifest.js')
+          .then((m) => m.loadArcQaManifest(originId, getStateDir()))
+          .then((manifest) => {
+            if (manifest === null) {
+              sendJson(res, 404, { error: 'no manifest' })
+            } else {
+              sendJson(res, 200, manifest)
+            }
+          })
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
     }
 
     // GET /view/deep-reflections/:originId — full detail for one arc reflection
