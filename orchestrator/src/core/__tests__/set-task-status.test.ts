@@ -28,6 +28,7 @@ interface QueueMod {
   enqueueTask: typeof import('../queue').enqueueTask
   updateTask: typeof import('../queue').updateTask
   getTask: typeof import('../queue').getTask
+  reopenTerminalTask: typeof import('../queue').reopenTerminalTask
 }
 
 interface ArcMod {
@@ -50,7 +51,13 @@ const loadMods = async (repo: string): Promise<QueueMod & ArcMod> => {
   return { ...(queue as unknown as QueueMod), Arc: arc.Arc }
 }
 
-/** Write failure columns directly — simulates what a failed task carry. */
+/**
+ * Write failure columns directly and drive status to 'failed' — simulates
+ * what a failed task carries. This transition starts from a non-terminal
+ * status (the freshly-enqueued task is 'queued'), so it does not need the
+ * audited reopen seam: the `tasks_reject_terminal_transition` trigger only
+ * guards transitions OUT of a terminal status.
+ */
 const stampFailure = async (
   q: QueueMod,
   id: string,
@@ -59,6 +66,29 @@ const stampFailure = async (
 ): Promise<void> => {
   await q.resolveQueueClient().execute({
     sql: `UPDATE tasks SET status = 'failed', failure_reason = ?, failure_signature = ?, failure_reason_code = 'test:failure' WHERE id = ?`,
+    args: [reason, signature, id],
+  })
+}
+
+/**
+ * Re-stamp the failure columns without touching status. `reopenTerminalTask`
+ * (the audited seam production uses to leave a terminal status) already
+ * NULLs these columns as part of its own UPDATE, so calling it alone would
+ * make the done-transition assertions below trivially true without ever
+ * exercising the cleanup branch under test. Re-populating the columns here —
+ * while the row sits in the non-terminal 'queued' status the reopen left it
+ * in — reproduces "a task carries stale failure fields going into its done
+ * write" without re-triggering the terminal-transition guard (status is
+ * unchanged), so the done transition itself is what has to clear them.
+ */
+const restampFailureFields = async (
+  q: QueueMod,
+  id: string,
+  reason: string,
+  signature: string,
+): Promise<void> => {
+  await q.resolveQueueClient().execute({
+    sql: `UPDATE tasks SET failure_reason = ?, failure_signature = ?, failure_reason_code = 'test:failure' WHERE id = ?`,
     args: [reason, signature, id],
   })
 }
@@ -196,6 +226,15 @@ describe('failure field cleanup on done transition', () => {
     // Stamp failure columns directly — mirrors what a failed run leaves behind.
     await stampFailure(q, task.id, 'setup:origin-worktree-missing', 'sig-abc')
 
+    // Mirror production (Arc.propagateRecoveryDone): a failed origin must
+    // first cross the audited reopen seam before the terminal-transition
+    // trigger permits it to move again.
+    await q.reopenTerminalTask(task.id, 'successful recovery')
+    // reopenTerminalTask already NULLs the failure columns as a side effect —
+    // re-stamp them so this test actually exercises Arc.setTaskStatus's own
+    // done-transition cleanup rather than just the reopen's.
+    await restampFailureFields(q, task.id, 'setup:origin-worktree-missing', 'sig-abc')
+
     // Simulate propagateRecoveryDone completing the origin.
     await q.Arc.setTaskStatus(task.id, 'done')
 
@@ -223,6 +262,12 @@ describe('failure field cleanup on done transition', () => {
 
     await stampFailure(q, task.id, 'verify:typecheck', 'sig-xyz')
 
+    // Mirror production: cross the audited reopen seam (routed through the
+    // same store) before the done transition, then re-stamp the failure
+    // columns so the done write itself has to clear them.
+    await q.reopenTerminalTask(task.id, 'successful recovery', store)
+    await restampFailureFields(q, task.id, 'verify:typecheck', 'sig-xyz')
+
     await q.Arc.setTaskStatus(task.id, 'done', { result: { via: 'recovery' } }, store)
 
     const row = await q.resolveQueueClient().execute({
@@ -246,6 +291,13 @@ describe('failure field cleanup on done transition', () => {
     const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
 
     await stampFailure(q, task.id, 'code:exit-1', 'sig-code')
+
+    // updateTask's own preflight (queue.ts) rejects any transition OUT of a
+    // terminal status outright — it has no reopen-grant escape hatch — so a
+    // failed task must cross the audited reopen seam first, exactly as
+    // production does, before updateTask can move it to 'done'.
+    await q.reopenTerminalTask(task.id, 'successful recovery')
+    await restampFailureFields(q, task.id, 'code:exit-1', 'sig-code')
 
     // Direct updateTask path — used when the implement pipeline marks done.
     await q.updateTask(task.id, { status: 'done' })
