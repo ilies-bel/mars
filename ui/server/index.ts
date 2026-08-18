@@ -954,6 +954,38 @@ export const startServer = async (
           }
         }
 
+        // GET /api/kpi/cost-per-merged-task?days=N — cost-per-merged-task trend.
+        // Proxies to the daemon's /kpi/cost-per-merged-task endpoint.
+        if (path === '/api/kpi/cost-per-merged-task' && req.method === 'GET') {
+          try {
+            const r = await proxyGet(
+              ctx.stateDir,
+              `/kpi/cost-per-merged-task${url.search}`,
+            )
+            return jsonResponse(r.status, r.body)
+          } catch (err) {
+            return jsonResponse(500, { error: (err as Error).message })
+          }
+        }
+
+        // GET /api/workflow-configs?workflow=<kind> — versioned workflow config
+        // records. Proxies to the daemon's /view/workflow-configs endpoint.
+        if (path === '/api/workflow-configs' && req.method === 'GET') {
+          const workflow = url.searchParams.get('workflow')
+          if (!workflow) {
+            return jsonResponse(400, { error: 'workflow query param is required' })
+          }
+          try {
+            const r = await proxyGet(
+              ctx.stateDir,
+              `/view/workflow-configs${url.search}`,
+            )
+            return jsonResponse(r.status, r.body)
+          } catch (err) {
+            return jsonResponse(500, { error: (err as Error).message })
+          }
+        }
+
         if (path === '/events') {
           const stream = new ReadableStream<Uint8Array>({
             start(controller) {

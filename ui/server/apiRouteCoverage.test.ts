@@ -41,6 +41,9 @@ const FRONTEND_ROUTES: Array<{ method: string; path: string }> = [
   // KPIs
   { method: 'GET', path: '/api/kpis' },
   { method: 'GET', path: '/api/kpis/x/arcs' },
+  { method: 'GET', path: '/api/kpi/cost-per-merged-task' },
+  // Workflow configs
+  { method: 'GET', path: '/api/workflow-configs' },
   // Projects
   { method: 'GET',  path: '/api/projects' },
   { method: 'POST', path: '/api/projects/x/start' },
