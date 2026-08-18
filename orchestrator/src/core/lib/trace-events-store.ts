@@ -43,6 +43,7 @@ export const TRACE_EVENT_KINDS = [
   'merge-idempotent-skip',
   'merge-heartbeat',
   'code-retry-attempt',
+  'restart-checkpoint',
 ] as const
 
 export type TraceEventKind = (typeof TRACE_EVENT_KINDS)[number]

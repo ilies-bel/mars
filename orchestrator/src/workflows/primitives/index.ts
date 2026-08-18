@@ -169,6 +169,7 @@ import { computeDepFingerprint } from '../lib/dep-fingerprint'
 import {
   composeRestartCheckpoint,
   renderRestartCheckpoint,
+  RESTART_CHECKPOINT_KIND,
 } from '../../core/coder/restart-checkpoint'
 
 // ---------------------------------------------------------------------------
@@ -1772,6 +1773,20 @@ export const runAgent = async (
       })
       const rendered = renderRestartCheckpoint(cp)
       if (rendered) checkpointSection = '\n\n' + rendered
+      await trace.traceStore.record({
+        kind: RESTART_CHECKPOINT_KIND,
+        taskId,
+        originId: trace.originId,
+        phase: 'code',
+        payload: {
+          taskId,
+          commitCount: cp.commits.length,
+          changedPathCount: cp.changedPaths.length,
+          outstandingCount: cp.outstandingCriteria.length,
+          hadPriorVerify: cp.lastVerify !== null,
+          renderedBytes: rendered.length,
+        },
+      })
     } catch (cpErr) {
       console.warn(
         `[code] task ${taskId}: restart checkpoint composition failed (non-fatal):`,
