@@ -417,6 +417,20 @@ recovery-spawn path itself.
   whether `main` was broken at the moment they branched (typecheck/test it at
   that commit). If so, fix `main`, then `continue` them — never `restart` N
   good worktrees to work around one bad baseline commit.
+  **A recovery-exhausted arc with commits ahead is a carry-forward, not a
+  restart.** `mars continue` refuses non-zero on a task whose failure reason
+  carries the `recovery_exhausted:` prefix (its single recovery attempt is
+  already spent — re-queuing would be immediately re-terminated). That
+  refusal names whether the branch holds salvageable commits and picks the
+  matching escape verb: `mars remerge` for real (human/coder-authored)
+  commits, `mars task add --supersede <id>` for a branch that holds only an
+  auto-generated salvage checkpoint (inherits the branch onto a fresh task so
+  a coder can finish it), or `mars restart` only when nothing is ahead. Read
+  the message before reaching for `mars restart`/`mars drop` — both discard
+  whatever the message just named. A recovery-exhausted arc has already had
+  a coder *and* a full recovery attempt spent on it, so it is exactly the
+  kind of branch most likely to be carrying substantial, easily-discarded
+  partial work.
 - **Deleting tasks: `purge` vs `drop`.** `mars purge <id>` only accepts
   terminal tasks (`failed`/`done`/`dropped`) — it refuses anything it
   considers in-flight, and `queued` counts as in-flight. `mars drop <id>

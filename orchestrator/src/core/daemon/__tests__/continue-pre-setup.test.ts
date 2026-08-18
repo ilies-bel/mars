@@ -959,7 +959,119 @@ describe('continue degrades to restart for pre-setup failures', () => {
     expect(thrown).not.toBeNull()
     expect(thrown!.message).toContain('recovery budget is exhausted')
     expect(thrown!.message).toContain('mars restart')
+    // No branch → nothing to salvage; must not claim commits are at risk.
+    expect(thrown!.message).not.toContain('commit(s) ahead')
+    expect(thrown!.message).not.toContain('salvage checkpoint')
     // Task must remain failed — nothing was queued
+    const after = await queue.getTask(origin.id)
+    expect(after?.status).toBe('failed')
+  })
+
+  // ── Branch-aware recovery-exhausted messaging (mars-6340b827, 2026-08-18) ─
+  // `mars continue` on an exhausted arc used to offer only `mars restart` /
+  // `mars drop` — both destructive — without ever checking whether the
+  // branch held salvageable work. An operator nearly lost a 408-insertion
+  // salvage checkpoint because the refusal never named it. These two tests
+  // pin the fix: the message must name salvageable commits when the branch
+  // is ahead of the integration branch, and must not when it is not.
+
+  it('recovery-exhausted with real commits ahead: names them and offers mars remerge', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const origin = await queue.enqueueTask('exhausted with real commits', undefined, {
+      skipTriage: true,
+    })
+    const branch = `task/${origin.id}`
+    const worktreePath = resolve(repo, '.mars', 'worktrees', origin.id)
+
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    writeFileSync(resolve(worktreePath, 'feature.ts'), 'export const feature = true\n')
+    execFileSync('git', ['add', 'feature.ts'], { cwd: worktreePath })
+    execFileSync(
+      'git',
+      [
+        '-c', 'user.email=coder@test', '-c', 'user.name=Coder',
+        'commit', '-m', 'feat: implement salvaged feature',
+      ],
+      { cwd: worktreePath },
+    )
+
+    await queue.updateTask(origin.id, {
+      status: 'failed',
+      error: 'coder exited non-zero',
+      failedPhase: 'code',
+      failureReason: 'recovery_exhausted:code:coder-exit-nonzero/unclassified',
+      branch,
+      worktreePath,
+    })
+
+    let thrown: Error | null = null
+    try {
+      await continueTask.coreContinueTask(origin.id)
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    expect(thrown!.message).toContain('recovery budget is exhausted')
+    // Reports the salvageable commit count and names the commit
+    expect(thrown!.message).toContain('1 commit(s) ahead')
+    expect(thrown!.message).toContain('feat: implement salvaged feature')
+    // Warns that the destructive escapes below would discard it
+    expect(thrown!.message).toContain('would discard them')
+    // Real commits → mars remerge re-verifies without re-running the coder
+    expect(thrown!.message).toContain('mars remerge')
+    const after = await queue.getTask(origin.id)
+    expect(after?.status).toBe('failed')
+  })
+
+  it('recovery-exhausted with only a salvage checkpoint: names it and offers mars task add --supersede', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const origin = await queue.enqueueTask('exhausted with checkpoint only', undefined, {
+      skipTriage: true,
+    })
+    const branch = `task/${origin.id}`
+    const worktreePath = resolve(repo, '.mars', 'worktrees', origin.id)
+
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    writeFileSync(resolve(worktreePath, 'wip.ts'), 'export const x = 1\n')
+    execFileSync('git', ['add', '-A'], { cwd: worktreePath })
+    execFileSync(
+      'git',
+      [
+        '-c', 'user.email=mars@test', '-c', 'user.name=Mars',
+        'commit', '-m', 'wip(checkpoint): coder killed (exit 1) with 1 uncommitted path(s) — do not merge as-is',
+      ],
+      { cwd: worktreePath },
+    )
+
+    await queue.updateTask(origin.id, {
+      status: 'failed',
+      error: 'coder exited non-zero',
+      failedPhase: 'code',
+      failureReason: 'recovery_exhausted:code:coder-exit-nonzero/unclassified',
+      branch,
+      worktreePath,
+    })
+
+    let thrown: Error | null = null
+    try {
+      await continueTask.coreContinueTask(origin.id)
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    expect(thrown!.message).toContain('recovery budget is exhausted')
+    // Must name the salvage checkpoint — the mars-6340b827 regression case:
+    // a checkpoint-only branch must not be silently offered only restart/drop.
+    expect(thrown!.message).toContain('1 salvage checkpoint commit(s)')
+    expect(thrown!.message).toContain('would discard them')
+    // No reviewed work → must NOT offer mars remerge
+    expect(thrown!.message).not.toContain('mars remerge')
+    // Must offer the branch-preserving supersede path
+    expect(thrown!.message).toContain('mars task add --supersede')
     const after = await queue.getTask(origin.id)
     expect(after?.status).toBe('failed')
   })
