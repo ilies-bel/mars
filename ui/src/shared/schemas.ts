@@ -27,13 +27,12 @@ const proposalSourceSchema = z.enum([
   'slicer',
 ])
 
-// Resilient field wrapper: an unknown source from a future producer falls back
-// to 'human' rather than rejecting the whole page. A console.warn surfaces it
-// so new producers are noticed without silent data loss.
-const proposalSourceField = proposalSourceSchema.catch((ctx) => {
-  console.warn('[proposals] unknown source value:', ctx.input, '— falling back to "human"')
-  return 'human' as const
-})
+// Strict field: an unknown source rejects the payload with a SchemaError so
+// callers see the version mismatch rather than silently coercing new producer
+// values to 'human'. Feed-level UIs (TriagePage, etc.) render an inline
+// FeedErrorCard on schema-validation failures so a single bad row does not
+// blank out unrelated feeds.
+const proposalSourceField = proposalSourceSchema
 
 const draftFeatureSchema = z.object({
   id: z.string(),

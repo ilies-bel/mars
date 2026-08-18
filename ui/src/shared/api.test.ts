@@ -349,11 +349,13 @@ describe('fetchProposalsPayload', () => {
     expect(result.drafts[0].source).toBe('slicer')
   })
 
-  it('falls back to "human" and does not throw when source is an unknown future value', async () => {
+  it('throws SchemaError when source is an unknown future value', async () => {
+    // The schema is strict — unknown source values reject the payload with a
+    // SchemaError so callers surface the version mismatch. Feed-level UIs
+    // render an inline FeedErrorCard on schema failures so one bad draft does
+    // not blank unrelated feeds.
     fetchSpy.mockResolvedValue(json({ drafts: [minDraft({ source: 'future-producer' })] }))
-    const result = await fetchProposalsPayload()
-    expect(result.drafts).toHaveLength(1)
-    expect(result.drafts[0].source).toBe('human')
+    await expect(fetchProposalsPayload()).rejects.toThrow('schema validation')
   })
 })
 
