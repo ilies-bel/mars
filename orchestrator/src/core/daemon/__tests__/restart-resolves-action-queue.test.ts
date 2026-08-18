@@ -217,7 +217,22 @@ describe('restart → done auto-dismisses the failed action-queue row', () => {
 
     // Simulate recovery completing — task reaches 'done' without the event
     // drain having cleared the stale row (daemon was briefly down).
-    await q.updateTask(task.id, { status: 'done' })
+    //
+    // This cannot go through `q.updateTask({status:'done'})`, nor through a
+    // raw SQL UPDATE: both queue.ts's terminal-status guard (~line 1279) AND
+    // a database trigger reject any 'failed' -> 'done' transition outright.
+    // Production never takes that path either — a real recovery reaches
+    // 'done' from a 'failed' origin via the sole audited reopen seam
+    // (`Arc.reopenTerminalTask`, which records a `task_terminal_reopens` row
+    // and flips the task back to 'queued') followed by `Arc.setTaskStatus`
+    // to 'done' — see `Arc.propagateRecoveryDone` in arc.ts, which is what
+    // actually drives a recovered origin to 'done' in production. Mirror
+    // that exact two-call sequence here instead of faking the end state.
+    const { Arc } = (await import('../../arc')) as unknown as {
+      Arc: { reopenTerminalTask: (id: string, reason: string) => Promise<void>; setTaskStatus: (id: string, status: string) => Promise<void> }
+    }
+    await Arc.reopenTerminalTask(task.id, 'successful recovery (test)')
+    await Arc.setTaskStatus(task.id, 'done')
 
     // Confirm the row is still open (the Invalidator didn't run).
     const before = await actionQueue.getActionQueueItem(itemId)
