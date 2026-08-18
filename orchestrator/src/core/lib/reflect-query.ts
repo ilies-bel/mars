@@ -4,7 +4,7 @@ import { cacheWeightedTokens } from './kpi-compute.js'
 import { isReflectDisabled } from './reflect-signals'
 import type { ChatFeedbackEntry } from './chat-feedback-query'
 
-interface ReflectCorpusEntry {
+export interface ReflectCorpusEntry {
   taskId: string
   status: string
   promptPrefix: string

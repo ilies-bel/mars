@@ -515,7 +515,7 @@ describe('listWorkersForDisplay', () => {
         OverrideWorker: {
           name: 'OverrideWorker',
           modelTier: 'balanced',
-          modelOverride: 'claude-opus-4-7',  // claude flagship — valid for claude
+          modelOverride: 'claude-opus-5',  // claude flagship — valid for claude
           effort: 'high',
           permissionMode: 'default',
           bare: false,
@@ -530,7 +530,7 @@ describe('listWorkersForDisplay', () => {
     const override = entries.find((e) => e.worker.config.name === 'OverrideWorker')
     // Override is valid — no conflict and the override model is used.
     expect(override?.conflictingOverride).toBeUndefined()
-    expect(override?.resolvedModel).toBe('claude-opus-4-7')
+    expect(override?.resolvedModel).toBe('claude-opus-5')
   })
 
   it('marks built-in workers as isBuiltIn=true and operator-added as isBuiltIn=false', () => {
