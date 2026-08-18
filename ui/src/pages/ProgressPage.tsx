@@ -110,7 +110,7 @@ export const ProgressPage = () => {
             placeholder="Search id, prompt, branch…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border"
+            className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-label text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border"
           />
         </div>
         {/* Proposal filter — shown while loading (tasks===null) to reserve the
@@ -123,7 +123,7 @@ export const ProgressPage = () => {
           >
             <label
               htmlFor="proposal-filter-select"
-              className="shrink-0 font-mono text-[11px] text-muted-foreground"
+              className="shrink-0 font-mono text-label text-muted-foreground"
             >
               Proposal
             </label>
@@ -132,7 +132,7 @@ export const ProgressPage = () => {
               value={selectedProposalId ?? ''}
               onChange={(e) => setSelectedProposalId(e.target.value || null)}
               disabled={tasks === null}
-              className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-border disabled:opacity-50"
+              className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-label text-foreground focus:outline-none focus:ring-1 focus:ring-border disabled:opacity-50"
             >
               <option value="">All</option>
               {proposals.map((p) => (
