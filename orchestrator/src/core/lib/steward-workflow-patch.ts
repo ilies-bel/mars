@@ -65,7 +65,7 @@ export const stewardProposeWorkflowPatch = async (input: {
  * Apply an approved workflow patch. Reads the diff from the proposal,
  * applies it to the workflow file, and sets status='applied'.
  */
-const applyWorkflowPatch = async (
+export const applyWorkflowPatch = async (
   proposalId: string,
   repoRoot: string,
 ): Promise<void> => {
@@ -104,7 +104,7 @@ const applyWorkflowPatch = async (
 /**
  * Reject a workflow patch. Sets status='rejected' — nothing is applied.
  */
-const rejectWorkflowPatch = async (
+export const rejectWorkflowPatch = async (
   proposalId: string,
 ): Promise<void> => {
   const c = stateClient()
@@ -144,7 +144,7 @@ export const findAwaitingProposalForPath = async (
 /**
  * Get a proposal by id.
  */
-const getWorkflowPatchProposal = async (
+export const getWorkflowPatchProposal = async (
   proposalId: string,
 ): Promise<WorkflowPatchProposal | null> => {
   const c = stateClient()

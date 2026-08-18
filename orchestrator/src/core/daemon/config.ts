@@ -39,7 +39,7 @@ export type WorkerPromptBlockId = 'Coder.system' | 'COMMIT_FOOTER'
  * Zod schema for a single lever entry in daemon.json's `levers` map.
  * The `autonomy_level` field defaults to `'ask'` when omitted.
  */
-const leverSchema = z.object({
+export const leverSchema = z.object({
   autonomy_level: z.enum(AUTONOMY_LEVELS).default('ask'),
 })
 

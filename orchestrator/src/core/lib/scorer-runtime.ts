@@ -62,7 +62,7 @@ export const isScoringDisabled = (): boolean =>
  * value, so an approved self-authored workflow is scored exactly like a
  * bundled pipeline.
  */
-const effectiveWorkflowKind = (
+export const effectiveWorkflowKind = (
   task: Pick<Task, 'workflow' | 'kind'>,
 ): string => task.workflow ?? task.kind ?? 'task'
 

@@ -543,7 +543,13 @@ export const composePrompt = (
 ): string => {
   // Diagnose Chore short-circuit: the prompt arrives fully composed.
   if (kind === 'diagnose') return prompt.trim()
-  const sections: string[] = [COMMIT_EXIT_CONDITION, prompt.trim()]
+
+  // Stable prefix — byte-identical across tasks and retries so the provider
+  // can cache it. Push these FIRST, before any task-specific content.
+  const sections: string[] = [COMMIT_EXIT_CONDITION, CODING_DISCIPLINE, workerPromptBlock('COMMIT_FOOTER')]
+
+  // Task-specific suffix — all content that varies per task follows here.
+  sections.push(prompt.trim())
   if (plan?.functional?.trim()) {
     sections.push(`## Functional plan\n\n${plan.functional.trim()}`)
   }
@@ -565,8 +571,28 @@ export const composePrompt = (
     const items = lessons.map((l) => `  - ${l}`).join('\n')
     sections.push(`## Lessons\n\n<lessons>\n${items}\n</lessons>`)
   }
-  sections.push(CODING_DISCIPLINE)
-  sections.push(workerPromptBlock('COMMIT_FOOTER'))
+  // Resume banner — appended after the main prompt body so the stable prefix
+  // is never disrupted by variable resume-specific content.
+  if (resumeFromPriorAttempt) {
+    sections.push(
+      '## Resume prior work\n\n' +
+        'You are resuming a prior attempt at this task. The worktree already contains ' +
+        'commits from the previous run. Review what was done, identify what remains, ' +
+        'and continue from where the prior attempt left off rather than starting over.',
+    )
+  }
+  // Verify-failure block — appended after the main prompt body so the stable
+  // prefix is never disrupted by variable failure output.
+  if (verifyFailureOutput !== null) {
+    sections.push(
+      '## The previous verification failed\n\n' +
+        'The previous verification failed with the following output. Review it carefully ' +
+        'and fix the issue before committing.\n\n' +
+        '<verify_failure_output>\n' +
+        verifyFailureOutput.trim() +
+        '\n</verify_failure_output>',
+    )
+  }
   return sections.join('\n\n')
 }
 

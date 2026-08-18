@@ -57,7 +57,10 @@ describe('composePrompt — coder default', () => {
     expect(DEVIATION_RULES).not.toMatch(/commit whatever in-scope work/i)
   })
 
-  it('appends the commit footer after the plan sections', () => {
+  it('places the commit footer in the stable prefix — before the plan sections', () => {
+    // With the stable-prefix restructure (ADR: cache-reuse), COMMIT_FOOTER is
+    // part of the stable prefix that comes FIRST, so the plan sections follow
+    // it in the task-specific suffix.
     const out = composePrompt('do the thing', {
       functional: 'F',
       technical: 'T',
@@ -67,7 +70,8 @@ describe('composePrompt — coder default', () => {
     const cIdx = out.indexOf(COMMIT_FOOTER)
     expect(fIdx).toBeGreaterThan(-1)
     expect(tIdx).toBeGreaterThan(fIdx)
-    expect(cIdx).toBeGreaterThan(tIdx)
+    // COMMIT_FOOTER is in the stable prefix — before the task-specific plans.
+    expect(cIdx).toBeLessThan(fIdx)
   })
 
   it('mentions git add and git commit explicitly', () => {
@@ -1059,7 +1063,10 @@ describe('composePrompt — resume banner is task-specific suffix (not prefix)',
     expect(out).not.toContain('## Resume prior work')
   })
 
-  it('resume banner appears before COMMIT_FOOTER', () => {
+  it('resume banner appears after COMMIT_FOOTER (COMMIT_FOOTER is in the stable prefix)', () => {
+    // With the stable-prefix restructure, COMMIT_FOOTER is part of the stable
+    // prefix that comes first. The resume banner is task-specific content and
+    // follows in the suffix — so it appears AFTER COMMIT_FOOTER, not before.
     const out = composePrompt(
       'do the task',
       null,
@@ -1076,7 +1083,9 @@ describe('composePrompt — resume banner is task-specific suffix (not prefix)',
     const resumeIdx = out.indexOf('## Resume prior work')
     const footerIdx = out.indexOf(COMMIT_FOOTER)
     expect(resumeIdx).toBeGreaterThan(-1)
-    expect(footerIdx).toBeGreaterThan(resumeIdx)
+    expect(footerIdx).toBeGreaterThan(-1)
+    // Resume banner is task-specific suffix — it comes after the stable prefix.
+    expect(resumeIdx).toBeGreaterThan(footerIdx)
   })
 
   it('COMMIT_EXIT_CONDITION is still the first section even when resume banner is requested', () => {
@@ -1145,7 +1154,10 @@ describe('composePrompt — verify-failure block is task-specific suffix (not pr
     expect(out).not.toContain('The previous verification failed')
   })
 
-  it('verify-failure block appears before COMMIT_FOOTER', () => {
+  it('verify-failure block appears after COMMIT_FOOTER (COMMIT_FOOTER is in the stable prefix)', () => {
+    // With the stable-prefix restructure, COMMIT_FOOTER is part of the stable
+    // prefix that comes first. The verify-failure block is task-specific and
+    // follows in the suffix — so it appears AFTER COMMIT_FOOTER, not before.
     const out = composePrompt(
       'do the task',
       null,
@@ -1163,7 +1175,9 @@ describe('composePrompt — verify-failure block is task-specific suffix (not pr
     const verifyIdx = out.indexOf('The previous verification failed')
     const footerIdx = out.indexOf(COMMIT_FOOTER)
     expect(verifyIdx).toBeGreaterThan(-1)
-    expect(footerIdx).toBeGreaterThan(verifyIdx)
+    expect(footerIdx).toBeGreaterThan(-1)
+    // Verify-failure block is task-specific suffix — it comes after the stable prefix.
+    expect(verifyIdx).toBeGreaterThan(footerIdx)
   })
 
   it('resume banner and verify-failure block can appear together; both are suffixes after the prompt body', () => {
@@ -1227,5 +1241,60 @@ describe('composePrompt — verify-failure block is task-specific suffix (not pr
     )
     expect(out).not.toContain('The previous verification failed')
     expect(out).toBe(prompt)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Stable prefix — cache-reuse guarantee
+//
+// The stable prefix (COMMIT_EXIT_CONDITION, CODING_DISCIPLINE, COMMIT_FOOTER)
+// must be byte-identical across different task invocations so providers can
+// cache it and only process the task-specific suffix on each new call.
+// ---------------------------------------------------------------------------
+
+describe('composePrompt — stable prefix is byte-identical across tasks', () => {
+  it('two calls with different prompt/taskId/plan/spec share the same leading bytes up to the first task-specific section', () => {
+    const stablePrefix = [COMMIT_EXIT_CONDITION, CODING_DISCIPLINE, COMMIT_FOOTER].join('\n\n')
+
+    const outA = composePrompt(
+      'Implement the first feature.',
+      { functional: 'Plan A functional', technical: 'Plan A technical' },
+      'coder',
+      {
+        files: ['src/a.ts'],
+        verifyCmd: 'npx tsc --noEmit',
+        doneCriteria: ['types pass'],
+        mergeMode: 'auto',
+      },
+      'mars-task-aaaa',
+      '',
+    )
+
+    const outB = composePrompt(
+      'Implement the second feature, which is completely different.',
+      { functional: 'Plan B functional', technical: 'Plan B technical' },
+      'coder',
+      {
+        files: ['src/b.ts', 'src/c.ts'],
+        verifyCmd: 'cd orchestrator && npx vitest run src/b.test.ts',
+        doneCriteria: ['tests pass', 'types pass'],
+        mergeMode: 'gated',
+      },
+      'mars-task-bbbb',
+      '',
+    )
+
+    // Both outputs must start with the identical stable prefix.
+    expect(outA.startsWith(stablePrefix)).toBe(true)
+    expect(outB.startsWith(stablePrefix)).toBe(true)
+
+    // The bytes up to the end of the stable prefix must be byte-for-byte equal.
+    const prefixLen = Buffer.byteLength(stablePrefix)
+    const aBytesPrefix = Buffer.from(outA).subarray(0, prefixLen)
+    const bBytesPrefix = Buffer.from(outB).subarray(0, prefixLen)
+    expect(aBytesPrefix.equals(bBytesPrefix)).toBe(true)
+
+    // The task-specific content (anything after the stable prefix) must differ.
+    expect(outA.slice(stablePrefix.length)).not.toBe(outB.slice(stablePrefix.length))
   })
 })
