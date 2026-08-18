@@ -37,6 +37,7 @@ import {
   readPersistedPaused,
   writeControlLever,
 } from '../../core/daemon/config'
+import { persistQaStepListEnabled } from '../../core/lib/qa-step-list-flag.js'
 import { isDaemonAlive } from '../../core/daemon/paths'
 import { describePauseState } from '../../core/daemon/pause-state'
 import type { DispatchPauseState } from '../../core/daemon/pause-state'
@@ -205,7 +206,7 @@ const operatorSet: Command = {
   path: 'operator set',
   summary: 'set a control lever and apply it immediately',
   usage:
-    'usage: mars operator set <dispatch|recovery|scoring|memory-capture|auto-run-reflect|auto-enqueue|scoring-auto-trigger> <on|off>\n' +
+    'usage: mars operator set <dispatch|recovery|scoring|memory-capture|auto-run-reflect|auto-enqueue|scoring-auto-trigger|qa-step-list> <on|off>\n' +
     '       mars operator set <drift-threshold-pct|task-confidence-threshold|scoring-low-trend-threshold|scoring-low-trend-window> <n>\n' +
     '       mars operator set <budget-window|budget-window-tokens|budget-arc-tokens> <value>',
   run: async (args, deps) => {
@@ -278,11 +279,21 @@ const operatorSet: Command = {
       deps.err(`mars operator set: ${errorMessage(err)}`)
       return { code: 2 }
     }
+    // ── qa-step-list — persisted in daemon.json under qaStepList.enabled ────────
+    if (lever === 'qa-step-list') {
+      if (value !== 'on' && value !== 'off') {
+        deps.err(`mars operator set: value must be 'on' or 'off'; got '${value}'`)
+        return { code: 2 }
+      }
+      persistQaStepListEnabled(value === 'on')
+      deps.out(`qa-step-list: ${value}`)
+      return { code: 0 }
+    }
     const validLevers = ['dispatch', 'recovery', 'scoring', 'memory-capture', 'auto-run-reflect', 'auto-enqueue', 'scoring-auto-trigger'] as const
     type LeverName = (typeof validLevers)[number]
     if (!validLevers.includes(lever as LeverName)) {
       deps.err(
-        `mars operator set: unknown lever '${lever}'; valid levers: ${validLevers.join(', ')}, drift-threshold-pct, task-confidence-threshold, scoring-low-trend-threshold, scoring-low-trend-window, budget-window, budget-window-tokens, budget-arc-tokens`,
+        `mars operator set: unknown lever '${lever}'; valid levers: ${validLevers.join(', ')}, qa-step-list, drift-threshold-pct, task-confidence-threshold, scoring-low-trend-threshold, scoring-low-trend-window, budget-window, budget-window-tokens, budget-arc-tokens`,
       )
       return { code: 2 }
     }

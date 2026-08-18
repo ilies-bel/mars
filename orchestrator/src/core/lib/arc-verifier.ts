@@ -43,6 +43,7 @@ import {
   type ProposeResult,
 } from './steward-workflow-patch.js'
 import { writeArcQaManifest } from './arc-qa-manifest.js'
+import { readQaStepListFlag, suggestQaStepListCapability } from './qa-step-list-flag.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -1063,6 +1064,23 @@ export async function runArcVerification(
     if (e2ePass !== undefined) {
       verdict = { ...verdict, e2ePass }
     }
+
+    // ── QA step-list pass ─────────────────────────────────────────────────────
+    // The step-list walk is opt-in (default off). When disabled, raise a
+    // one-per-project `draft-proposal` suggestion so the operator can enable the
+    // capability. The suggestion uses a fixed global signature so N arcs produce
+    // at most one action-queue row regardless of how many arcs trigger the check.
+    // When enabled, slices 2-4 will add the walk implementation here.
+    if (!readQaStepListFlag(marsStateDir)) {
+      await suggestQaStepListCapability(originId).catch(() => {
+        // Best-effort — never block the arc.
+      })
+      verdict = {
+        ...verdict,
+        qaPass: { ran: false, cantRunReason: 'disabled' as const, manifest: null },
+      }
+    }
+    // When the flag is true the step-list walk (slices 2-4) runs here.
   }
 
   // On failure: raise exactly one arc-verification-failed action-queue item.
