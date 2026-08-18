@@ -24,8 +24,10 @@ import { useProgress } from '@/hooks/useProgress'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { postDecision } from '@/shared/api'
 import { relativeTime } from '@/shared/time'
-import { dispatchAlertVerb } from '@/widgets/chat/alertVerbs'
+import { dispatchAlertVerb, resolveThreadForItem } from '@/widgets/chat/alertVerbs'
 import { deriveCause } from '@/shared/alertCause'
+import { useFocusedProjectId } from '@/shared/useFocusedProject'
+import { defaultAqUrlState, encodeAqState } from '@/shared/actionQueueUrlState'
 import type { ActionQueueItem } from '@/shared/schemas'
 import type { Decision } from '@/shared/schemas'
 
@@ -183,6 +185,7 @@ interface TriageRowProps {
 
 const TriageRow = ({ item }: TriageRowProps) => {
   const qc = useQueryClient()
+  const projectId = useFocusedProjectId() ?? undefined
   const [pending, setPending] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [resolved, setResolved] = useState(false)
@@ -241,6 +244,27 @@ const TriageRow = ({ item }: TriageRowProps) => {
     },
     [pending, qc, item.id, item.entityId],
   )
+
+  // Open (or reuse) a chat thread for this row and navigate to it — mirrors
+  // ChatPage.handleOpenSubthread via the shared resolveThreadForItem helper
+  // so both entry points open the same thread for the same row.
+  const handleChat = useCallback(async () => {
+    if (pending !== null) return
+    setPending('chat')
+    setError(null)
+    try {
+      const threadId = await resolveThreadForItem(item, projectId, qc)
+      window.location.hash = `#/chat${encodeAqState({
+        ...defaultAqUrlState(),
+        thread: threadId,
+        project: projectId ?? null,
+      })}`
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPending(null)
+    }
+  }, [pending, item, projectId, qc])
 
   if (resolved) return null
 
@@ -360,12 +384,15 @@ const TriageRow = ({ item }: TriageRowProps) => {
           </>
         )}
 
-        <a
-          href="#/chat"
-          className="ml-auto font-mono text-micro text-muted-foreground transition-colors hover:text-foreground"
+        <button
+          type="button"
+          disabled={pending !== null}
+          onClick={() => void handleChat()}
+          className="ml-auto font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+          data-testid="triage-chat"
         >
-          Chat →
-        </a>
+          {pending === 'chat' ? '…' : 'Chat →'}
+        </button>
       </div>
 
       {/* Error feedback — shown inline below the actions row */}

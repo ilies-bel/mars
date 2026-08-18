@@ -96,7 +96,7 @@ import {
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
 import { useProposals } from '@/entities/proposals/useProposals'
-import { startThreadFromAlert } from '@/entities/alerts/api'
+import { resolveThreadForItem } from '@/widgets/chat/alertVerbs'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
@@ -3055,15 +3055,7 @@ export const ChatPage = () => {
 
 
   const handleOpenSubthread = useCallback(async (row: ActionQueueItem) => {
-    let threadId: string
-    if (row.kind === 'arc-failed') {
-      const result = await startThreadFromAlert(row.entityId)
-      threadId = result.threadId
-    } else {
-      const thread = await createChatThread({ projectId })
-      threadId = thread.id
-      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
-    }
+    const threadId = await resolveThreadForItem(row, projectId, qc)
     setActiveSubthreadId(threadId)
   }, [projectId, qc])
 
