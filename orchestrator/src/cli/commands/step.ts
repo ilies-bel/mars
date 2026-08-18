@@ -1,5 +1,6 @@
 /**
- * Manual-step subcommands: `mars step done [<task-id>]` and
+ * Manual-step subcommands: `mars step done [<task-id>]`,
+ * `mars step abort <task-id> --reason <text>`, and
  * `mars step reset <task-id> <step-name>`.
  *
  * `mars step done` — operator calls this from inside the leased worktree
@@ -7,6 +8,14 @@
  * awaiting promise in the workflow engine and lets the pipeline proceed to the
  * next step (auto or manual). The lease follows the operator: if the pipeline
  * parks at another manual step it is re-granted to the same owner.
+ *
+ * `mars step abort` — operator's explicit fail-out verb for a manual step
+ * that cannot be finished. Routes the task to the failure path (status
+ * `failed`, `failed_phase='code'`) with its worktree and branch preserved
+ * for inspection, records the reason as a task note, and raises exactly
+ * one `failed` action-queue item — identical terminal state to a headless
+ * failure, so `mars continue` / `mars restart` become the recovery verbs.
+ * Requires the task to be in `awaiting-human` status.
  *
  * `mars step reset` — operator command to rewind a stuck task to an earlier
  * named workflow step. Clears the durable checkpoint for the named step and
