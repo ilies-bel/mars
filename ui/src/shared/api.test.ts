@@ -889,26 +889,29 @@ describe('ApiError kind — fetchTasks classifies errors correctly', () => {
     fetchSpy.mockRestore()
   })
 
-  it('throws ApiError kind:stale-daemon on 404 with JSON body', async () => {
+  it('throws ApiError kind:other on 404 with JSON body but no errorCode', async () => {
+    // A plain 404 from the daemon (e.g. "report not found") carries no errorCode.
+    // It must NOT be classified as stale-daemon — that banner should only appear
+    // on explicit PROXY_FAILED / connection-failure signals, not on 4xx responses.
     fetchSpy.mockResolvedValue(json({ error: 'not found' }, 404))
     try {
       await fetchTasks()
       throw new Error('expected fetchTasks to throw')
     } catch (err) {
       expect(err).toBeInstanceOf(ApiError)
-      expect((err as ApiError).kind).toBe('stale-daemon')
+      expect((err as ApiError).kind).toBe('other')
       expect((err as ApiError).status).toBe(404)
     }
   })
 
-  it('throws ApiError kind:stale-daemon on 405 with JSON body', async () => {
+  it('throws ApiError kind:other on 405 with JSON body but no errorCode', async () => {
     fetchSpy.mockResolvedValue(json({ error: 'method not allowed' }, 405))
     try {
       await fetchTasks()
       throw new Error('expected fetchTasks to throw')
     } catch (err) {
       expect(err).toBeInstanceOf(ApiError)
-      expect((err as ApiError).kind).toBe('stale-daemon')
+      expect((err as ApiError).kind).toBe('other')
       expect((err as ApiError).status).toBe(405)
     }
   })

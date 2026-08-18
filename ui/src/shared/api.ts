@@ -189,8 +189,6 @@ export const fetchJson = async <T>(
         if (kind === 'stale-daemon-code' && typeof body?.sourceSha === 'string' && typeof body?.currentSha === 'string') {
           shas = { sourceSha: body.sourceSha, currentSha: body.currentSha }
         }
-      } else if (r.status === 404 || r.status === 405) {
-        kind = 'stale-daemon'
       } else {
         kind = 'other'
       }
