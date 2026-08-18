@@ -23,6 +23,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { RaiseActionQueueItem } from '../action-queue'
 import type { E2eToolingReport } from '../e2e-tooling'
+import type {
+  QaStep,
+  QaStopReason,
+  QaStepWalkResult,
+  QaCriterionRecord,
+  ArcQaManifest,
+  ArcQaPassResult,
+} from '../arc-verifier'
 
 // ── Mock raiseActionQueueItem / listActionQueueItems / setActionQueueState ────
 
@@ -121,6 +129,15 @@ const {
   _clearTriggeredForTests,
   _clearToolingMissCountForTests,
   CONSECUTIVE_TOOLING_MISS_THRESHOLD,
+  // QA step list shared contract
+  QA_PASSES_DIR_NAME,
+  QA_MANIFEST_FILENAME,
+  getQaPassDir,
+  QA_STEP_LIST_ENABLED_MARKER,
+  isQaStepListEnabled,
+  QA_STEP_LIST_PROMOTION_SUGGESTED_MARKER,
+  hasStepListPromotionBeenSuggested,
+  markStepListPromotionSuggested,
 } = await import('../arc-verifier')
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1285,6 +1302,251 @@ describe('arc-verifier', () => {
       } finally {
         await rm(repoDir, { recursive: true, force: true }).catch(() => {})
       }
+    })
+  })
+
+  // ── QA step list shared contract ─────────────────────────────────────────────
+  //
+  // Shared types, constants, path helpers, and opt-in state functions required
+  // by three consumer slices:
+  //   • Relocate arc QA artefacts out of the worktree
+  //   • Walk each QA step with per-step screenshots and record stop-at
+  //   • Opt-in capability with per-project enable suggestion
+  //
+  // Observable-behaviour tests only — no assertions on private/internal state.
+
+  describe('QA step list shared contract', () => {
+    // ── Storage path constants ─────────────────────────────────────────────
+
+    it('QA_PASSES_DIR_NAME is "qa-passes"', () => {
+      expect(QA_PASSES_DIR_NAME).toBe('qa-passes')
+    })
+
+    it('QA_MANIFEST_FILENAME is "manifest.json"', () => {
+      expect(QA_MANIFEST_FILENAME).toBe('manifest.json')
+    })
+
+    // ── getQaPassDir ──────────────────────────────────────────────────────
+
+    describe('getQaPassDir()', () => {
+      it('returns <marsStateDir>/qa-passes/<arcId>', () => {
+        expect(getQaPassDir('/repo/.mars', 'arc-123')).toBe('/repo/.mars/qa-passes/arc-123')
+      })
+
+      it('path contains QA_PASSES_DIR_NAME and the arcId', () => {
+        const result = getQaPassDir('/state', 'my-arc')
+        expect(result).toContain(QA_PASSES_DIR_NAME)
+        expect(result).toContain('my-arc')
+      })
+
+      it('artefacts live outside any worktree — path starts with marsStateDir, not a worktree sub-path', () => {
+        const marsStateDir = '/repo/.mars'
+        const worktreeDir = '/repo/.mars/worktrees/task-abc'
+        const result = getQaPassDir(marsStateDir, 'arc-x')
+        expect(result.startsWith(marsStateDir)).toBe(true)
+        expect(result.startsWith(worktreeDir)).toBe(false)
+      })
+    })
+
+    // ── Opt-in state ──────────────────────────────────────────────────────
+
+    it('QA_STEP_LIST_ENABLED_MARKER is "qa-step-lists-enabled"', () => {
+      expect(QA_STEP_LIST_ENABLED_MARKER).toBe('qa-step-lists-enabled')
+    })
+
+    describe('isQaStepListEnabled()', () => {
+      it('returns false when the marker file does not exist', async () => {
+        const { mkdtemp, rm } = await import('node:fs/promises')
+        const { join: pathJoin } = await import('node:path')
+        const { tmpdir } = await import('node:os')
+        const dir = await mkdtemp(pathJoin(tmpdir(), 'mars-qa-enabled-'))
+        try {
+          expect(isQaStepListEnabled(dir)).toBe(false)
+        } finally {
+          await rm(dir, { recursive: true, force: true }).catch(() => {})
+        }
+      })
+
+      it('returns true when <marsStateDir>/<QA_STEP_LIST_ENABLED_MARKER> exists', async () => {
+        const { mkdtemp, rm, writeFile } = await import('node:fs/promises')
+        const { join: pathJoin } = await import('node:path')
+        const { tmpdir } = await import('node:os')
+        const dir = await mkdtemp(pathJoin(tmpdir(), 'mars-qa-enabled-'))
+        try {
+          await writeFile(pathJoin(dir, QA_STEP_LIST_ENABLED_MARKER), '')
+          expect(isQaStepListEnabled(dir)).toBe(true)
+        } finally {
+          await rm(dir, { recursive: true, force: true }).catch(() => {})
+        }
+      })
+    })
+
+    // ── Promotion tracking ────────────────────────────────────────────────
+
+    it('QA_STEP_LIST_PROMOTION_SUGGESTED_MARKER is "qa-step-list-promotion-suggested"', () => {
+      expect(QA_STEP_LIST_PROMOTION_SUGGESTED_MARKER).toBe('qa-step-list-promotion-suggested')
+    })
+
+    describe('hasStepListPromotionBeenSuggested() + markStepListPromotionSuggested()', () => {
+      it('returns false when the promotion marker has not been written', async () => {
+        const { mkdtemp, rm } = await import('node:fs/promises')
+        const { join: pathJoin } = await import('node:path')
+        const { tmpdir } = await import('node:os')
+        const dir = await mkdtemp(pathJoin(tmpdir(), 'mars-qa-promo-'))
+        try {
+          expect(hasStepListPromotionBeenSuggested(dir)).toBe(false)
+        } finally {
+          await rm(dir, { recursive: true, force: true }).catch(() => {})
+        }
+      })
+
+      it('returns true after markStepListPromotionSuggested is called', async () => {
+        const { mkdtemp, rm } = await import('node:fs/promises')
+        const { join: pathJoin } = await import('node:path')
+        const { tmpdir } = await import('node:os')
+        const dir = await mkdtemp(pathJoin(tmpdir(), 'mars-qa-promo-'))
+        try {
+          await markStepListPromotionSuggested(dir)
+          expect(hasStepListPromotionBeenSuggested(dir)).toBe(true)
+        } finally {
+          await rm(dir, { recursive: true, force: true }).catch(() => {})
+        }
+      })
+
+      it('is idempotent — calling markStepListPromotionSuggested twice does not throw', async () => {
+        const { mkdtemp, rm } = await import('node:fs/promises')
+        const { join: pathJoin } = await import('node:path')
+        const { tmpdir } = await import('node:os')
+        const dir = await mkdtemp(pathJoin(tmpdir(), 'mars-qa-promo-'))
+        try {
+          await markStepListPromotionSuggested(dir)
+          await expect(markStepListPromotionSuggested(dir)).resolves.toBeUndefined()
+          expect(hasStepListPromotionBeenSuggested(dir)).toBe(true)
+        } finally {
+          await rm(dir, { recursive: true, force: true }).catch(() => {})
+        }
+      })
+
+      it('marker file exists at <marsStateDir>/<QA_STEP_LIST_PROMOTION_SUGGESTED_MARKER> after marking', async () => {
+        const { mkdtemp, rm, access } = await import('node:fs/promises')
+        const { join: pathJoin } = await import('node:path')
+        const { tmpdir } = await import('node:os')
+        const dir = await mkdtemp(pathJoin(tmpdir(), 'mars-qa-promo-'))
+        try {
+          await markStepListPromotionSuggested(dir)
+          await expect(
+            access(pathJoin(dir, QA_STEP_LIST_PROMOTION_SUGGESTED_MARKER)),
+          ).resolves.toBeUndefined()
+        } finally {
+          await rm(dir, { recursive: true, force: true }).catch(() => {})
+        }
+      })
+    })
+
+    // ── Type shapes ───────────────────────────────────────────────────────
+    //
+    // Exercises the runtime shape of objects matching the QA interfaces.
+    // A type-shape test fails when a consumer constructs an object that the
+    // TypeScript type would reject — it catches schema regressions that pure
+    // type-import tests would not.
+
+    describe('type shapes', () => {
+      it('QaStep has numeric index and string description', () => {
+        const step: QaStep = { index: 1, description: 'Click the login button' }
+        expect(step.index).toBe(1)
+        expect(step.description).toBe('Click the login button')
+      })
+
+      it('QaStepWalkResult with stoppedAt=false has null stopReason', () => {
+        const result: QaStepWalkResult = {
+          index: 1,
+          screenshotPath: '/tmp/0.png',
+          stoppedAt: false,
+          stopReason: null,
+        }
+        expect(result.stoppedAt).toBe(false)
+        expect(result.stopReason).toBeNull()
+      })
+
+      it('QaStepWalkResult with stoppedAt=true accepts every QaStopReason value', () => {
+        const reasons: QaStopReason[] = ['step-unreachable', 'screenshot-failed', 'error']
+        for (const reason of reasons) {
+          const r: QaStepWalkResult = {
+            index: 2,
+            screenshotPath: null,
+            stoppedAt: true,
+            stopReason: reason,
+          }
+          expect(r.stopReason).toBe(reason)
+        }
+      })
+
+      it('QaCriterionRecord groups criterion, steps, and walkResults', () => {
+        const rec: QaCriterionRecord = {
+          criterion: 'widget loads',
+          steps: [{ index: 1, description: 'Open the app' }],
+          walkResults: [
+            { index: 1, screenshotPath: '/tmp/0.png', stoppedAt: false, stopReason: null },
+          ],
+        }
+        expect(rec.criterion).toBe('widget loads')
+        expect(rec.steps).toHaveLength(1)
+        expect(rec.walkResults).toHaveLength(1)
+      })
+
+      it('ArcQaManifest has arcId, ISO createdAt, criteria array, and null stop fields', () => {
+        const manifest: ArcQaManifest = {
+          arcId: 'arc-abc',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          criteria: [],
+          stoppedAtIndex: null,
+          stopReason: null,
+        }
+        expect(manifest.arcId).toBe('arc-abc')
+        expect(manifest.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+        expect(Array.isArray(manifest.criteria)).toBe(true)
+        expect(manifest.stoppedAtIndex).toBeNull()
+        expect(manifest.stopReason).toBeNull()
+      })
+
+      it('ArcQaManifest with stoppedAtIndex records the stopping point and reason', () => {
+        const manifest: ArcQaManifest = {
+          arcId: 'arc-def',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          criteria: [],
+          stoppedAtIndex: 3,
+          stopReason: 'step-unreachable',
+        }
+        expect(manifest.stoppedAtIndex).toBe(3)
+        expect(manifest.stopReason).toBe('step-unreachable')
+      })
+
+      it('ArcQaPassResult with ran=false has a cantRunReason and null manifest', () => {
+        const cantRunReasons: ArcQaPassResult['cantRunReason'][] = [
+          'disabled', 'no-criteria', 'already-done',
+        ]
+        for (const reason of cantRunReasons) {
+          const result: ArcQaPassResult = { ran: false, cantRunReason: reason, manifest: null }
+          expect(result.ran).toBe(false)
+          expect(result.cantRunReason).toBe(reason)
+          expect(result.manifest).toBeNull()
+        }
+      })
+
+      it('ArcQaPassResult with ran=true has null cantRunReason and a non-null manifest', () => {
+        const manifest: ArcQaManifest = {
+          arcId: 'arc-x',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          criteria: [],
+          stoppedAtIndex: null,
+          stopReason: null,
+        }
+        const result: ArcQaPassResult = { ran: true, cantRunReason: null, manifest }
+        expect(result.ran).toBe(true)
+        expect(result.cantRunReason).toBeNull()
+        expect(result.manifest).not.toBeNull()
+        expect(result.manifest?.arcId).toBe('arc-x')
+      })
     })
   })
 })
