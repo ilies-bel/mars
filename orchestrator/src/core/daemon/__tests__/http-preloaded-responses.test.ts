@@ -94,7 +94,7 @@ describe('POST /chat/messages/:messageId/responses/:responseId', () => {
       responses: [{
         id: 'review-task',
         label: 'Review task',
-        target: { type: 'subthread', title: 'Review task-42' },
+        target: { type: 'subject', title: 'Review task-42' },
       }],
     }], { kind: 'notice', contextScope: 'main' })
     const openSubthread = vi.fn().mockResolvedValue({ threadId: 'subthread-review' })
