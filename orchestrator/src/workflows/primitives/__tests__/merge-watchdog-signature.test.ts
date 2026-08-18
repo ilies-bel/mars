@@ -148,6 +148,10 @@ const makeCtx = (taskId: string, enqueueFn: () => Promise<unknown>) =>
     signal: new AbortController().signal,
     services: {
       store: {
+        // The merge primitive's idempotent-terminal short-circuit reads the task
+        // row via `store.getTask` before doing any work. `null` = no terminal row,
+        // so the merge proceeds and the generic watchdog-crash path is exercised.
+        getTask: vi.fn().mockResolvedValue(null),
         query: vi.fn().mockResolvedValue({ rows: [] }),
         execute: vi.fn().mockResolvedValue({ rows: [] }),
         batch: vi.fn().mockResolvedValue([]),
@@ -205,10 +209,13 @@ describe('merge — worktree-vanished crash signature', () => {
 })
 
 describe('merge — watchdog crash signature', () => {
-  it('produces merge:crashed/watchdog-<lastStep> via instanceof branch when MergeAbortedError is thrown directly', async () => {
+  it('produces merge:crashed/watchdog-<lastStep> via instanceof branch when MergeAbortedError is thrown directly (non-vega phase)', async () => {
+    // Uses 'fast-forward' — a non-vega phase — so the vega-wedged branch is
+    // NOT taken and the generic watchdog-crash path fires instead. Tests that
+    // exercise vega-supervisor lastSteps live in merge-vega-wedged.test.ts.
     const taskId = 'mars-watchdog-01'
     const enqueueFn = vi.fn().mockRejectedValue(
-      new MergeAbortedError('watchdog', 60_000, 'vega-supervisor'),
+      new MergeAbortedError('watchdog', 60_000, 'fast-forward'),
     )
 
     await expect(
@@ -220,7 +227,7 @@ describe('merge — watchdog crash signature', () => {
     )
     expect(failedCalls).toHaveLength(1)
     expect((failedCalls[0][1] as Record<string, unknown>).failureSignature).toBe(
-      'merge:crashed/watchdog-vega-supervisor',
+      'merge:crashed/watchdog-fast-forward',
     )
   })
 

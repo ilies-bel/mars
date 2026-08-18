@@ -4479,6 +4479,75 @@ export const merge = async (
             `task ${taskId}: already in terminal status '${error.fromStatus}'; merge step skipped`,
           )
         }
+
+        // ── Vega-wedged path ─────────────────────────────────────────────────
+        // When mergeBranch's watchdog fires during a vcs-supervisor phase, the
+        // merge lock has already been released (inside mergeBranch's finally
+        // block) before MergeAbortedError is thrown. Stamp the task failed with
+        // a dedicated signature and raise an actionable item so the operator can
+        // inspect the worktree and `mars continue` / `mars restart`. No fix-task
+        // is spawned — the supervisor session and rebase state are preserved for
+        // investigation.
+        if (
+          error instanceof MergeAbortedError &&
+          error.reason === 'watchdog' &&
+          /vega|vcs-supervisor|reconcile/i.test(error.lastStep)
+        ) {
+          const signature = 'merge:vega-wedged'
+          const vegaMsg = (
+            `vcs-supervisor wedged during merge step for task ${taskId}: ` +
+            `watchdog fired after ${Math.round(error.elapsedMs / 1_000)}s ` +
+            `during phase '${error.lastStep}'; merge lock released, task stamped failed`
+          )
+          console.error(`[merge] task ${taskId} vega-wedged:`, vegaMsg)
+          await raiseActionQueueItem({
+            kind: 'failed',
+            category: 'orchestrator',
+            priority: 'high',
+            title: `Task ${taskId}: vcs-supervisor wedged`,
+            body: [
+              `The vcs-supervisor (Vega) wedged during the merge step for task \`${taskId}\`.`,
+              '',
+              `**Last phase:** \`${error.lastStep}\``,
+              `**Elapsed:** ${Math.round(error.elapsedMs / 1_000)}s`,
+              '',
+              `The merge lock has been released. Inspect the worktree at \`${worktreePath}\`` +
+                ` and run \`mars continue ${taskId}\` to retry.`,
+            ].join('\n'),
+            payload: {
+              taskId,
+              branch,
+              worktreePath,
+              lastStep: error.lastStep,
+              elapsedMs: error.elapsedMs,
+            },
+            context: { repoRoot: process.env.MARS_REPO ?? null },
+            raisedBy: 'merge:vega-wedged',
+            signature: `${taskId}:${signature}`,
+            originTaskId: taskId,
+          }).catch((aqErr) => {
+            console.error(
+              `[merge] task ${taskId} vega-wedged: failed to raise action-queue item:`,
+              aqErr,
+            )
+          })
+          await updateTask(
+            taskId,
+            {
+              status: 'failed',
+              error: vegaMsg.slice(0, 1000),
+              failedPhase: 'merge',
+              failureReason: signature,
+              failureSignature: signature,
+              failureReasonCode: signature,
+            },
+            store,
+          )
+          // Do NOT spawn a fix-task — the operator resolves via `mars continue`
+          // or `mars restart` once the vcs-supervisor blockage is cleared.
+          throw error
+        }
+
         if (
           error instanceof Error &&
           (error.message.includes('merge:preflight') ||
