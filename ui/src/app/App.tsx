@@ -52,6 +52,7 @@ import { ArcQaPage } from '@/pages/ArcQaPage'
 import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
 import { FallbackBoundary } from '@/components/FallbackBoundary'
 import { AlertNotifier } from '@/shared/notifications/alertNotifier'
+import { Toaster } from '@/components/ui/sonner'
 
 /** Hash bases the drawer returns to, keyed by the origin recorded in the hash. */
 const ROUTE_BASE: Record<RouteName, string> = {
@@ -287,6 +288,7 @@ const AppInner = () => {
 const App = () => (
   <FocusedProjectProvider>
     <AppInner />
+    <Toaster />
   </FocusedProjectProvider>
 )
 

@@ -17,7 +17,7 @@
  * missing data just omits optional sections).
  */
 
-import { describe, expect, it, mock } from 'bun:test'
+import { describe, expect, it, mock, vi } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { Task } from '@/shared/schemas'
 
@@ -28,6 +28,17 @@ import type { Task } from '@/shared/schemas'
 let liveQueryData: unknown = null
 let liveQueryPending = false
 let liveQueryError = false
+
+// ── Module-level mock for sonner ──────────────────────────────────────────────
+// Prevents DOM errors when EnterSessionButton calls toast.success() in a node
+// environment. The toastSuccess reference is captured once the factory runs
+// (triggered when LiveTaskPanel is first imported).
+
+let toastSuccess = vi.fn()
+mock.module('sonner', () => {
+  toastSuccess = vi.fn()
+  return { toast: { success: toastSuccess } }
+})
 
 // ── Module-level mock for @tanstack/react-query ───────────────────────────────
 // Factory is evaluated lazily so closures read the latest variable values when
@@ -60,6 +71,7 @@ mock.module('@tanstack/react-query', () => ({
 // Import components AFTER the mock so they see the mocked module.
 const { LiveTaskPanel } = await import('./LiveTaskPanel')
 const { TaskDetailDrawer } = await import('./TaskDetailDrawer')
+const { handleEnterSession } = await import('./EnterSessionButton')
 
 // ── Fixture ───────────────────────────────────────────────────────────────────
 
@@ -416,5 +428,31 @@ describe('TaskDetailDrawer — enter-session integration', () => {
 
     // LiveTaskPanel is not mounted for non-awaiting-human tasks.
     expect(html).not.toContain('data-testid="enter-session-btn"')
+  })
+})
+
+// ── EnterSessionButton — clipboard write ──────────────────────────────────────
+//
+// Consumer slice: "UI: 'Enter session' action on parked task".
+//
+// Verifies that handleEnterSession writes the correct `mars enter <id>` command
+// to the clipboard and calls the toast helper. Uses a mocked clipboard so the
+// test runs in the node environment without a real browser API.
+
+describe('EnterSessionButton — clipboard write and toast', () => {
+  it('copies "mars enter <taskId>" to clipboard and calls toast.success', async () => {
+    const writeText = vi.fn<[string], Promise<void>>().mockResolvedValue(undefined)
+    // In node environment, navigator is not defined — attach a minimal mock.
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { clipboard: { writeText } },
+      writable: true,
+      configurable: true,
+    })
+
+    await handleEnterSession('mars-test01')
+
+    expect(writeText).toHaveBeenCalledWith('mars enter mars-test01')
+    // toast.success is called after the clipboard write to confirm the action.
+    expect(toastSuccess).toHaveBeenCalledOnce()
   })
 })

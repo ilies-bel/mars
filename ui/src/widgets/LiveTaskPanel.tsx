@@ -6,8 +6,8 @@
  *   2. Done criteria — checklist with distinct checked/unchecked states.
  *   3. Progress journal — notes ordered newest-first.
  *
- * Optionally renders an "Enter session" action when the backing Claude Code
- * session id is present and the caller supplies `onEnterSession`.
+ * When the live endpoint returns a worktreePath, renders an EnterSessionButton
+ * above the Step guide so the operator can copy `mars enter <id>` to the clipboard.
  *
  * Fetches GET /api/task/:taskId/live (proxied from the daemon's
  * GET /view/task/:id/live). Accepts a `fetchImpl` prop for testing.
@@ -17,6 +17,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
+import { EnterSessionButton } from './EnterSessionButton'
 
 export interface LiveTaskCriterion {
   text: string
@@ -33,10 +34,12 @@ export interface LiveTaskData {
   doneCriteria: LiveTaskCriterion[]
   notes: LiveTaskNote[]
   /**
-   * The Claude Code session ID backing the current manual step.
-   * `null` when the step has no associated session (e.g. a non-live step).
+   * Absolute path to the task's git worktree on the host.
+   * When present, the panel renders an EnterSessionButton so the operator
+   * can copy `mars enter <taskId>` to the clipboard without leaving the UI.
+   * `null` or absent when the step has no associated worktree.
    */
-  sessionId: string | null
+  worktreePath?: string | null
 }
 
 export interface LiveTaskPanelProps {
@@ -46,11 +49,6 @@ export interface LiveTaskPanelProps {
    * component hits `/api/task/:taskId/live` via the runtime `fetch`.
    */
   fetchImpl?: typeof fetch
-  /**
-   * Called when the operator clicks "Enter session". Only rendered when
-   * `data.sessionId` is non-null and this callback is provided.
-   */
-  onEnterSession?: (sessionId: string) => void
 }
 
 /**
@@ -74,7 +72,7 @@ const SECTION_LABEL = 'font-mono text-label uppercase tracking-[0.1em] text-mute
  * Shown above the existing drawer panes when task.status === 'awaiting-human'.
  * Hides itself entirely if the fetch returns 404 (task is no longer parked).
  */
-export const LiveTaskPanel = ({ taskId, fetchImpl, onEnterSession }: LiveTaskPanelProps) => {
+export const LiveTaskPanel = ({ taskId, fetchImpl }: LiveTaskPanelProps) => {
   const { data, isPending, isError } = useQuery<LiveTaskData | null>({
     queryKey: liveTaskQueryKey(taskId),
     queryFn: async () => {
@@ -113,19 +111,8 @@ export const LiveTaskPanel = ({ taskId, fetchImpl, onEnterSession }: LiveTaskPan
       className="border-b border-primary/20 px-4 py-3 flex flex-col gap-4"
     >
       {/* ── Enter session action ─────────────────────────────────────────── */}
-      {data.sessionId != null && onEnterSession != null ? (
-        <div data-testid="live-enter-session" className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => onEnterSession(data.sessionId!)}
-            className="font-mono text-label border border-primary/40 px-3 py-1.5 rounded text-primary hover:bg-primary/10 transition-colors"
-          >
-            Enter session
-          </button>
-          <span className="font-mono text-label text-muted-foreground">
-            session:{data.sessionId.slice(0, 8)}
-          </span>
-        </div>
+      {data.worktreePath ? (
+        <EnterSessionButton taskId={taskId} worktreePath={data.worktreePath} />
       ) : null}
 
       {/* ── Step guide ───────────────────────────────────────────────────── */}
