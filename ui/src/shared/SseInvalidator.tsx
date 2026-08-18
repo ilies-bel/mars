@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { eventsUrl } from './api'
 import { getOpenTaskId } from './openTaskId'
 import { setSseConnected } from './sseStatus'
+import { liveTaskQueryKey } from '../widgets/LiveTaskPanel'
 
 export const SseInvalidator = () => {
   const qc = useQueryClient()
@@ -98,6 +99,15 @@ export const SseInvalidator = () => {
     // (`GET /api/chat/thread/:id/ui-stream`) that `MarsChatTransport` consumes
     // directly. The `chat` invalidation ping above still refetches the thread
     // list + open thread detail so persisted history reconciles.
+
+    // 'live-task' events fire when `mars task note` or `mars task check` writes
+    // to a task's progress journal. The payload carries { taskId } so only the
+    // relevant LiveTaskPanel re-fetches — no broad invalidation, no debounce
+    // (notes arrive one at a time and the endpoint is cheap).
+    es.addEventListener('live-task', (e) => {
+      const { taskId } = JSON.parse((e as MessageEvent).data) as { taskId: string }
+      void qc.invalidateQueries({ queryKey: liveTaskQueryKey(taskId) })
+    })
 
     es.onerror = () => setSseConnected(false)
     return () => {

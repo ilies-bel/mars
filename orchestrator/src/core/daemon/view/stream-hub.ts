@@ -1,6 +1,6 @@
 import type { ServerResponse } from 'node:http'
 
-export type StreamChannel = 'tasks' | 'progress' | 'action-queue' | 'proposals' | 'kpis' | 'chat'
+export type StreamChannel = 'tasks' | 'progress' | 'action-queue' | 'proposals' | 'kpis' | 'chat' | 'live-task'
 
 interface StreamClient {
   res: ServerResponse

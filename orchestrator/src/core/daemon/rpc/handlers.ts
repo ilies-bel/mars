@@ -537,6 +537,7 @@ const taskNoteHandler = handler('task.note', async (req, deps) => {
     kind: 'note',
     body: req.body,
   })
+  deps.broadcastLiveTask(req.id)
   return { ok: true, data: entry }
 })
 
@@ -548,6 +549,7 @@ const taskCheckHandler = handler('task.check', async (req, deps) => {
     body: '',
     criterionIndex: req.criterionIndex,
   })
+  deps.broadcastLiveTask(req.id)
   return { ok: true, data: entry }
 })
 

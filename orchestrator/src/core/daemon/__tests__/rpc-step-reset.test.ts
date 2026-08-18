@@ -87,6 +87,7 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): DaemonDeps => ({
   handleStepAbort: notImpl('handleStepAbort') as DaemonDeps['handleStepAbort'],
   handleStepReset: notImpl('handleStepReset') as DaemonDeps['handleStepReset'],
   appendProgress: notImpl('appendProgress') as DaemonDeps['appendProgress'],
+  broadcastLiveTask: () => {},
   appendMcpWorkerAudit: notImpl('appendMcpWorkerAudit') as DaemonDeps['appendMcpWorkerAudit'],
   handlePreviewSpawn: notImpl('handlePreviewSpawn') as DaemonDeps['handlePreviewSpawn'],
   handlePreviewStatus: notImpl('handlePreviewStatus') as DaemonDeps['handlePreviewStatus'],

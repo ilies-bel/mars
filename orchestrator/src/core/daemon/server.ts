@@ -5109,6 +5109,7 @@ export const startDaemon = async (
     handleStepAbort,
     handleStepReset,
     appendProgress,
+    broadcastLiveTask: (taskId: string) => viewStreamHub.broadcastData('live-task', { taskId }),
     appendMcpWorkerAudit: async ({ toolName, taskId, argsJson, ok, errorMessage }) => {
       await dbClient.execute({
         sql: `INSERT INTO mcp_worker_audit

@@ -238,6 +238,13 @@ export interface DaemonDeps {
     stepName: string,
   ): Promise<{ nextStep: string; queued: boolean; cleared: string[] }>
   appendProgress(params: AppendProgressParams): Promise<ProgressEntry>
+  /**
+   * Broadcast a `live-task` invalidation ping to all connected UI clients,
+   * keyed by task id. Called after `task.note` and `task.check` ops so the
+   * LiveTaskPanel in the UI re-fetches `/view/task/:id/live` within a second
+   * without a page reload.
+   */
+  broadcastLiveTask(taskId: string): void
   /** Persist one worker-MCP mutation audit row. */
   appendMcpWorkerAudit(params: {
     toolName: string

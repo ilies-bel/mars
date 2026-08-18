@@ -29,6 +29,11 @@ let liveQueryData: unknown = null
 let liveQueryPending = false
 let liveQueryError = false
 
+// Captured queryFn from the last live-task useQuery call. Tests that need to
+// simulate React Query invalidation (i.e. a re-fetch triggered by a view-stream
+// ping) invoke this directly with a custom fetchImpl and count the calls.
+let capturedQueryFn: (() => Promise<unknown>) | undefined
+
 // ── Module-level mock for sonner ──────────────────────────────────────────────
 // Prevents DOM errors when EnterSessionButton calls toast.success() in a node
 // environment. The toastSuccess reference is captured once the factory runs
@@ -53,10 +58,13 @@ mock.module('@tanstack/react-query', () => ({
     getDefaultOptions() { return {} }
   },
   QueryClientProvider: ({ children }: { children: React.ReactNode }) => children,
-  useQuery: (opts: { queryKey: unknown[] }) => {
+  useQuery: (opts: { queryKey: unknown[]; queryFn?: () => Promise<unknown> }) => {
     const key = opts.queryKey as unknown[]
     // Live-task query key: ['task', id, 'live']
     if (Array.isArray(key) && key[2] === 'live') {
+      // Capture queryFn so tests can invoke it directly to simulate a refetch
+      // that React Query would perform after invalidateQueries fires.
+      capturedQueryFn = opts.queryFn
       return {
         data: liveQueryData,
         isPending: liveQueryPending,
@@ -454,5 +462,46 @@ describe('EnterSessionButton — clipboard write and toast', () => {
     expect(writeText).toHaveBeenCalledWith('mars enter mars-test01')
     // toast.success is called after the clipboard write to confirm the action.
     expect(toastSuccess).toHaveBeenCalledOnce()
+  })
+})
+
+// ── LiveTaskPanel — queryFn fetch count (invalidation contract) ───────────────
+//
+// The SseInvalidator calls qc.invalidateQueries({ queryKey: ['task', id, 'live'] })
+// on every 'live-task' view-stream ping. React Query responds by calling the
+// panel's queryFn, which calls fetchImpl. These tests verify that the queryFn
+// produced by LiveTaskPanel does in fact call fetchImpl each time it is invoked —
+// so two invalidation pings result in two fetches.
+//
+// Strategy: the module-level useQuery mock captures the queryFn passed by the
+// component on each render. Tests invoke the captured fn directly to simulate
+// what React Query does on invalidation.
+
+describe('LiveTaskPanel — queryFn calls fetchImpl on each invalidation', () => {
+  it('fires fetchImpl twice when the queryFn is invoked twice (two view-stream pings)', async () => {
+    liveQueryData = FIXTURE
+    liveQueryPending = false
+    liveQueryError = false
+
+    const mockFetch = mock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(FIXTURE), { status: 200 }),
+      ),
+    )
+
+    // Render to let useQuery capture the queryFn that closes over mockFetch.
+    renderToStaticMarkup(
+      <LiveTaskPanel taskId="mars-test01" fetchImpl={mockFetch as unknown as typeof fetch} />,
+    )
+
+    // capturedQueryFn is set by the useQuery mock during the render above.
+    expect(capturedQueryFn).toBeDefined()
+
+    // Simulate two back-to-back view-stream 'live-task' pings: React Query
+    // would call queryFn once per invalidation when the query is active.
+    await capturedQueryFn!()
+    await capturedQueryFn!()
+
+    expect(mockFetch).toHaveBeenCalledTimes(2)
   })
 })
