@@ -162,6 +162,7 @@ import { join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { distillObservation } from '../../core/lib/distill/observation'
 import { loadOrBuildIndexCard } from '../../core/lib/index-card/cache.js'
+import { MERGE_IDEMPOTENT_TERMINAL_STATUSES } from '../../tools/merge/merge.js'
 
 // ---------------------------------------------------------------------------
 // Session-key construction (exported for regression tests)
@@ -3767,6 +3768,36 @@ export const merge = async (
   const integrationBranch =
     opts.integrationBranch ?? input(ctx).integrationBranch ?? 'main'
   const store: TaskStore = ctx.services.store
+
+  // ── Idempotent terminal short-circuit ──────────────────────────────────────
+  // When the task row is already terminal (done/failed/dropped), a re-dispatch
+  // after a partial completion (e.g. daemon restart between resolveMergeJob and
+  // step-completion recording) must NOT re-acquire the merge lock or re-run the
+  // fast-forward. Return immediately with a synthesized MergeOutput.
+  const _currentTask = await store.getTask(taskId)
+  if (_currentTask !== null && MERGE_IDEMPOTENT_TERMINAL_STATUSES.has(_currentTask.status)) {
+    const _priorStatus = _currentTask.status
+    const _trace = await resolveTrace(ctx, taskId)
+    await _trace.traceStore
+      .record({
+        kind: 'merge-idempotent-skip',
+        taskId,
+        originId: _trace.originId,
+        phase: 'merge',
+        payload: { priorStatus: _priorStatus },
+      })
+      .catch(() => {}) // trace failures must never abort a correctness path
+    const _message =
+      _priorStatus === 'done'
+        ? `merge step: task already terminal (done), short-circuiting`
+        : `merge step: task already ${_priorStatus} (already terminal), short-circuiting`
+    return {
+      taskId,
+      success: _priorStatus === 'done',
+      message: _message,
+    }
+  }
+
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
   const trace = await resolveTrace(ctx, taskId)
   const emit = (event: ClaudeEvent): void =>
