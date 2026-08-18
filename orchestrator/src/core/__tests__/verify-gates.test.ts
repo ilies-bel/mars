@@ -141,10 +141,11 @@ describe('removeVerifyGate', () => {
 
   it('silently does nothing when the gate does not exist', async () => {
     const { removeVerifyGate, listVerifyGates } = await import('../verify-gates.js')
-    await expect(removeVerifyGate('non-existent-id')).resolves.toBeUndefined()
+    // removeVerifyGate resolves to a boolean — false when nothing matched.
+    await expect(removeVerifyGate('non-existent-id')).resolves.toBe(false)
     await expect(
       removeVerifyGate({ scope: '.', name: 'no-such-step' }),
-    ).resolves.toBeUndefined()
+    ).resolves.toBe(false)
     expect(await listVerifyGates()).toHaveLength(0)
   })
 })

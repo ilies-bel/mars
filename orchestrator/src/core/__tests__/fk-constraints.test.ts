@@ -51,7 +51,9 @@ describe('FK constraints: self_heal_attempts.fix_task_id', () => {
       skipTriage: true,
     })
     const c = resolveQueueClient()
-    const now = new Date().toISOString()
+    // self_heal_attempts.created_at is bigint epoch-milliseconds, not an ISO
+    // string — see src/cli/__tests__/drop-origin-recovery-fk.test.ts:90.
+    const now = Date.now()
 
     // This should succeed since fix_task_id references an existing task.
     await expect(

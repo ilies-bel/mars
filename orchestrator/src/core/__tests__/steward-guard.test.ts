@@ -31,7 +31,6 @@ describe('Steward repeat guard', () => {
     const queue = await import('../queue')
     await queue.migrateQueueSchema()
     const fixTasks = await import('../queue-fix-tasks')
-    const actionQueue = await import('../lib/action-queue')
     const task = await queue.enqueueTask('repair the release notes', undefined, {
       skipTriage: true,
     })
@@ -59,14 +58,16 @@ describe('Steward repeat guard', () => {
     })
     expect(fixes.rows).toHaveLength(1)
 
-    const repeats = await actionQueue.listActionQueueItems('open', {
-      kind: 'steward-repeat',
-    })
-    expect(repeats).toHaveLength(1)
-    expect(repeats[0]?.payload).toMatchObject({
-      targetKind: 'task',
-      targetId: task.id,
-      targetVersion: first.failureSignature,
-    })
+    // Under ADR-0057, `steward-repeat` is a derived action-queue kind, not a
+    // stored row — see src/core/steward-guard.ts's
+    // raiseStewardRepeatActionQueueItem (a no-op stub) and the `DERIVED_KINDS`
+    // set / `ConditionItemsSource` doc comment in
+    // src/core/daemon/view/action-queue.ts. There is no producer that can be
+    // exercised without standing up the daemon's action-queue view, so the
+    // real guard for this test is the two assertions above: exactly one fix
+    // task is spawned and the second dispatch reports `steward-repeat`
+    // instead of spawning another. The general derived-kind filtering
+    // behaviour (stored rows for derived kinds never leak into the view) is
+    // covered by src/core/daemon/view/__tests__/action-queue.test.ts.
   })
 })
