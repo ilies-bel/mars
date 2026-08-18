@@ -18,6 +18,11 @@ export default defineConfig({
     },
   },
   test: {
+    server: {
+      deps: {
+        external: [/@deepseek-ai\//],
+      },
+    },
     include: [
       'src/**/__tests__/**/*.test.ts',
       'src/**/__tests__/**/*.test.tsx',
