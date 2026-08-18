@@ -187,7 +187,7 @@ describe('verify — child-vanished abort sets failureReasonCode and releases sl
       verdict: 'FAIL',
       steps: [
         {
-          name: 'spec.verifyCmd',
+          name: 'spec-verify-cmd',
           passed: false,
           output: 'step not started: abort signal already fired',
           tier: 'task',

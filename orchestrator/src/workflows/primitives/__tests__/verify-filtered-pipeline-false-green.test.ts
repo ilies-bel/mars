@@ -5,19 +5,19 @@
  * by driving verifyChanges with a real subprocess (a PATH-shadowed npm shim
  * that exits 2 and writes a TypeScript diagnostic to stderr).
  *
- * The incident: a task's spec.verifyCmd was
+ * The incident: a task's spec-verify-cmd was
  *   npm run typecheck 2>&1 | grep "error TS" | head -10
  * Under plain `sh -c`, `head` exits 0 even though npm exited 2, so the
  * verify step returned passed:true — a false green that allowed a broken
  * build to merge.
  *
- * Fix (slice 2): the `review` primitive wraps spec.verifyCmd in
+ * Fix (slice 2): the `review` primitive wraps spec-verify-cmd in
  * `bash -o pipefail -c`, which propagates the leftmost non-zero exit from
  * any pipeline, preventing the false green from recurring.
  *
  * Two cases verified here:
  *  1. Direct command ('npm run typecheck') — verifyChanges returns
- *     passed:false and exitCode:2 on the spec.verifyCmd step.
+ *     passed:false and exitCode:2 on the spec-verify-cmd step.
  *  2. Incident-verbatim filtered pipeline — with bash -o pipefail the
  *     leftmost non-zero exit (npm's 2) propagates through grep | head,
  *     so verifyChanges still returns passed:false and exitCode:2.
@@ -67,13 +67,13 @@ afterAll(() => {
 })
 
 // ---------------------------------------------------------------------------
-// Helper: the synthetic spec.verifyCmd step the review primitive builds.
+// Helper: the synthetic spec-verify-cmd step the review primitive builds.
 // bash -o pipefail ensures the leftmost non-zero exit propagates through
 // any pipeline (prevents head/grep from masking a failing typecheck).
 // ---------------------------------------------------------------------------
 
 const makeSpecVerifyStep = (cmd: string) => ({
-  name: 'spec.verifyCmd' as const,
+  name: 'spec-verify-cmd' as const,
   cmd: 'bash' as const,
   args: ['-o', 'pipefail', '-c', cmd] as readonly string[],
   required: true as const,
@@ -95,7 +95,7 @@ describe('verify — filtered pipeline cannot mask a failing typecheck', () => {
 
       expect(result.passed).toBe(false)
 
-      const step = result.steps.find((s) => s.name === 'spec.verifyCmd')
+      const step = result.steps.find((s) => s.name === 'spec-verify-cmd')
       expect(step).toBeDefined()
 
       // The step must record npm's true exit code — not the exit of any
@@ -127,7 +127,7 @@ describe('verify — filtered pipeline cannot mask a failing typecheck', () => {
 
       expect(result.passed).toBe(false)
 
-      const step = result.steps.find((s) => s.name === 'spec.verifyCmd')
+      const step = result.steps.find((s) => s.name === 'spec-verify-cmd')
       expect(step).toBeDefined()
 
       // pipefail propagates npm's exit=2 through the grep | head pipeline.

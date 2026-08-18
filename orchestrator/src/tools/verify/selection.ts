@@ -2,7 +2,7 @@
  * Verify step selection helpers shared by the `review` shell and consumer
  * slices. Split out of `workflows/primitives/index.ts` (TARGET §2.1).
  */
-import { type VerifyStepSpec } from '../../core/lib/git/verify'
+import { SPEC_VERIFY_CMD_STEP, type VerifyStepSpec } from '../../core/lib/git/verify'
 
 // ---------------------------------------------------------------------------
 // Spec-verifyCmd step builder (shared contract for consumer slices)
@@ -27,7 +27,7 @@ import { type VerifyStepSpec } from '../../core/lib/git/verify'
 export const buildSpecVerifyCmdStep = (verifyCmd: string | null | undefined): VerifyStepSpec | null => {
   if (!verifyCmd || verifyCmd.trim().length === 0) return null
   return {
-    name: 'spec-verify-cmd',
+    name: SPEC_VERIFY_CMD_STEP,
     cmd: 'sh',
     args: ['-c', verifyCmd.trim()],
     required: true,

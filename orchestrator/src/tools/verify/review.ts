@@ -18,6 +18,8 @@ import {
   verifyChanges,
   selectVerifySteps,
   getChangedFiles,
+  SPEC_VERIFY_CMD_STEP,
+  VERIFY_TIMEOUT_MARKER,
   type VerifyStepSpec,
 } from '../../core/lib/git/verify'
 // The suite-level infra retry asks the heuristic registry, not a hard-coded
@@ -749,7 +751,7 @@ export const review = async (
           : specVerifyCmdRaw
       const specVerifyStep: VerifyStepSpec | null = specVerifyCmd
         ? {
-            name: 'spec.verifyCmd',
+            name: SPEC_VERIFY_CMD_STEP,
             required: true,
             tier: 'task',
             cmd: 'bash',
@@ -1081,14 +1083,27 @@ export const review = async (
               )
             : failureExcerpt(firstFailed.output)
           : summary
+        // A per-step wall-clock timeout prefixes the step's `output` field
+        // with VERIFY_TIMEOUT_MARKER (runVerifyStep, git/verify.ts) — but
+        // that prefix never reaches `stdout`/`stderr`, which is what
+        // firstFailedOutputBody is built from above. Recover the marker line
+        // here so computeFailureSignature's timeout override still fires
+        // (`verify:timeout/<step>`) instead of falling through to a generic
+        // classification of whatever partial stdout/stderr was captured.
+        const timeoutMarkerLine =
+          firstFailed?.output !== undefined && firstFailed.output.startsWith(VERIFY_TIMEOUT_MARKER)
+            ? firstFailed.output.split('\n', 1)[0]
+            : null
         // `computeFailureSignature` preserves an explicit signature at the
         // start of the output. This lets the downstream failure handler derive
         // the same infrastructure signature instead of reclassifying an empty
         // killed child as an unclassified typecheck failure.
         const firstFailedOutput =
-          killedBy === null
-            ? firstFailedOutputBody
-            : `${failingStep}/${killedBy}\n${firstFailedOutputBody}`
+          timeoutMarkerLine !== null
+            ? `${timeoutMarkerLine}\n${firstFailedOutputBody}`
+            : killedBy === null
+              ? firstFailedOutputBody
+              : `${failingStep}/${killedBy}\n${firstFailedOutputBody}`
         const ranVerifySteps: RanVerifyStep[] = r.steps
           .filter(
             (s): s is typeof s & { cmd: string; stepDir: string } =>

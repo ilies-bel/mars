@@ -174,7 +174,7 @@ export interface VerifyArgs {
    * the resulting {@link VerifyStep} (step name: {@link SPEC_VERIFY_CMD_STEP}).
    *
    * **Synthetic-step alternative**: consumers may instead append a
-   * `VerifyStepSpec` with `name: 'spec.verifyCmd'`, `cmd: 'bash'`,
+   * `VerifyStepSpec` with `name: 'spec-verify-cmd'`, `cmd: 'bash'`,
    * `args: ['-o', 'pipefail', '-c', <cmd>]`, `required: true`, and
    * `tier: 'task'` directly to `args.steps`. The `bash -o pipefail` shell
    * propagates the leftmost non-zero exit from any pipeline and the step
