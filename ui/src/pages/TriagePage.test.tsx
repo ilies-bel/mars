@@ -33,8 +33,20 @@ vi.mock('@/shared/api', () => ({
 }))
 
 const mockItems = vi.fn<[], ActionQueueItem[]>().mockReturnValue([])
+const mockQueueError = vi.fn<[], Error | null>().mockReturnValue(null)
 vi.mock('@/entities/actionQueue/useActionQueue', () => ({
-  useActionQueue: () => ({ items: mockItems(), error: null }),
+  useActionQueue: () => ({ items: mockItems(), error: mockQueueError() }),
+}))
+
+const mockProposalsError = vi.fn<[], string | null>().mockReturnValue(null)
+vi.mock('@/entities/proposals/useProposals', () => ({
+  useProposals: () => ({
+    proposals: [],
+    error: mockProposalsError(),
+    isPending: false,
+    connected: true,
+    refetch: vi.fn(),
+  }),
 }))
 
 vi.mock('@/hooks/useProgress', () => ({
@@ -105,6 +117,8 @@ afterEach(() => {
   document.body.innerHTML = ''
   vi.clearAllMocks()
   mockItems.mockReturnValue([])
+  mockQueueError.mockReturnValue(null)
+  mockProposalsError.mockReturnValue(null)
 })
 
 // ---------------------------------------------------------------------------
@@ -369,5 +383,52 @@ describe('TriageRow – error feedback shown when mutation fails', () => {
     const errorEl = container.querySelector('[data-testid="triage-error"]')
     expect(errorEl).not.toBeNull()
     expect(errorEl?.textContent).toContain('500')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Feed resilience — a single failing feed must not blank the page
+// ---------------------------------------------------------------------------
+
+describe('TriagePage – proposals feed rejects but action-queue items still render', () => {
+  beforeEach(() => {
+    mockItems.mockReturnValue([makeItem('failed')])
+    mockProposalsError.mockReturnValue(
+      'GET /api/proposals → response failed schema validation',
+    )
+  })
+
+  it('renders the action-queue item when proposals fetch errors', () => {
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-continue"]')).not.toBeNull()
+  })
+
+  it('shows an inline proposals feed error card', () => {
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-feed-error-proposals"]')).not.toBeNull()
+  })
+
+  it('does not show the All-quiet empty state', () => {
+    const { container } = renderPage()
+    expect(container.textContent).not.toContain('All quiet')
+  })
+})
+
+describe('TriagePage – action-queue feed rejects but proposals error still surfaces', () => {
+  beforeEach(() => {
+    mockItems.mockReturnValue([])
+    mockQueueError.mockReturnValue(new Error('Cannot reach daemon'))
+    mockProposalsError.mockReturnValue(null)
+  })
+
+  it('shows an inline action-queue feed error card', () => {
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-feed-error-action-queue"]')).not.toBeNull()
+  })
+
+  it('does not show the All-quiet empty state when the queue fetch failed', () => {
+    // The error card IS the content — "all quiet" should not appear
+    const { container } = renderPage()
+    expect(container.textContent).not.toContain('All quiet')
   })
 })

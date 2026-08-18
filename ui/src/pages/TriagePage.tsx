@@ -21,6 +21,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { sortItems, buildRenderedRows } from '@/entities/actionQueue/clusterRows'
 import { useProgress } from '@/hooks/useProgress'
+import { useProposals } from '@/entities/proposals/useProposals'
 import { postDecision } from '@/shared/api'
 import { relativeTime } from '@/shared/time'
 import { dispatchAlertVerb } from '@/widgets/chat/alertVerbs'
@@ -380,6 +381,29 @@ const TriageRow = ({ item }: TriageRowProps) => {
   )
 }
 
+// ── FeedErrorCard ─────────────────────────────────────────────────────────────
+
+interface FeedErrorCardProps {
+  label: string
+}
+
+/**
+ * Inline error card shown when a single data feed fails to load.
+ * Keeps the rest of the triage page visible — a single failed feed
+ * must never blank the whole view.
+ */
+const FeedErrorCard = ({ label }: FeedErrorCardProps) => (
+  <div
+    className="mars-card border-l-2 border-l-error px-4 py-3"
+    data-testid={`triage-feed-error-${label.replace(/\s+/g, '-')}`}
+    role="alert"
+  >
+    <p className="font-mono text-label text-error">
+      Failed to load {label} — try refreshing or restarting the daemon
+    </p>
+  </div>
+)
+
 // ── EmptyState ────────────────────────────────────────────────────────────────
 
 interface EmptyStateProps {
@@ -407,8 +431,11 @@ const EmptyState = ({ running, doneToday }: EmptyStateProps) => (
 // ── TriagePage ────────────────────────────────────────────────────────────────
 
 export const TriagePage = () => {
-  const { items, error } = useActionQueue()
+  const { items, error: queueError } = useActionQueue()
   const { byCluster, aggregates } = useProgress()
+  // Proposals is a third independent feed. Its error is surfaced as an inline
+  // card so a schema-validation failure or network blip never blanks the page.
+  const { error: proposalsError } = useProposals()
 
   const running = byCluster['In progress'].length
   const doneToday = aggregates.doneToday
@@ -416,15 +443,11 @@ export const TriagePage = () => {
   const sorted = sortItems(items)
   const renderedRows = buildRenderedRows(sorted)
 
-  if (error) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <p className="font-mono text-label text-error">
-          Failed to load action queue
-        </p>
-      </div>
-    )
-  }
+  // Only show the empty state when every feed succeeded AND there is genuinely
+  // nothing to act on. A feed error is itself something to surface, so the
+  // empty state must never hide it.
+  const hasAnyError = queueError !== null || proposalsError !== null
+  const hasContent = renderedRows.length > 0 || hasAnyError
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
@@ -451,10 +474,13 @@ export const TriagePage = () => {
 
       {/* Ranked list */}
       <div className="flex-1 overflow-y-auto">
-        {renderedRows.length === 0 ? (
+        {!hasContent ? (
           <EmptyState running={running} doneToday={doneToday} />
         ) : (
           <div className="flex flex-col gap-2 p-4">
+            {/* Inline error cards — one per failing feed, never blanking the page */}
+            {queueError && <FeedErrorCard label="action queue" />}
+            {proposalsError && <FeedErrorCard label="proposals" />}
             {renderedRows.map((row) =>
               row.type === 'cluster' ? (
                 <TriageClusterRow
