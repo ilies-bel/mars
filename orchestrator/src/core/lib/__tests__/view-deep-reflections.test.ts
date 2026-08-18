@@ -44,9 +44,13 @@ const makeServices = (traceStore: TraceEventStore): AppServices =>
     listAwaitingHumanParks: async () => [],
   })
 
-/** Minimal valid report JSON. */
+/** Minimal valid report JSON for arc reports (have an `originId` field). */
 const reportJson = (originId: string, recordedAt: string, status = 'complete') =>
   JSON.stringify({ originId, recordedAt, status })
+
+/** Minimal valid session report JSON — no `originId` field, matches what reflect.ts writes. */
+const sessionReportJson = (sessionId: string, recordedAt: string, status = 'complete') =>
+  JSON.stringify({ sessionId, recordedAt, status })
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -173,5 +177,30 @@ describe('viewDeepReflections', () => {
     const result = await svc.viewDeepReflections({ limit: 2 })
 
     expect(result.lastReflectedAt).toBe('2026-08-05T00:00:00.000Z')
+  })
+
+  it('session-* report is listed with canonical id (no .json extension) and fetchable by detail route', async () => {
+    // Reproduces the live bug: session reports have no `originId` field, so
+    // the list fell back to the raw filename (with .json), and the detail
+    // route only matched arc-* files — causing a 404 for every session report.
+    const dir = join(repo, '.mars', 'deep-reflections')
+    const filename = 'session-f0715a63-2026-08-17T13-50-43-815Z.json'
+    writeFileSync(
+      join(dir, filename),
+      sessionReportJson('f0715a63-0000-0000-0000-000000000000', '2026-08-17T13:50:43.815Z'),
+    )
+
+    const listResult = await svc.viewDeepReflections()
+
+    // The canonical id must not include the .json extension.
+    expect(listResult.reports).toHaveLength(1)
+    const listedOriginId = listResult.reports[0]?.originId
+    expect(listedOriginId).toBe('session-f0715a63-2026-08-17T13-50-43-815Z')
+    expect(listedOriginId?.endsWith('.json')).toBe(false)
+
+    // The detail route must find the file using the listed canonical id.
+    const detail = await svc.viewDeepReflection(listedOriginId!)
+    expect(detail).not.toBeNull()
+    expect(detail?.status).toBe('complete')
   })
 })

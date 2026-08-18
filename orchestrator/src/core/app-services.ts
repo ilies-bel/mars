@@ -1473,7 +1473,10 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
           ? data.verdictResult as { saved?: unknown; absorbed?: unknown; dropped?: unknown }
           : {}
         parsed.push({
-          originId: typeof data.originId === 'string' ? data.originId : file,
+          // Session reports (session-*.json) have no `originId` field; fall back
+          // to the filename stem (no .json extension) so the UI can pass a clean
+          // id to the detail route without a 404.
+          originId: typeof data.originId === 'string' ? data.originId : file.replace(/\.json$/, ''),
           recordedAt: typeof data.recordedAt === 'string' ? data.recordedAt : '',
           status: typeof data.status === 'string' ? data.status : 'unknown',
           totalToolCalls: typeof toolCallStats?.total === 'number' ? toolCallStats.total : 0,
@@ -1516,15 +1519,29 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       return null
     }
 
-    // Find the file matching this originId — filenames are arc-<originId>-<slug>-<ISO>.json.
-    // The originId is always the first segment after "arc-".
-    const arcFiles = entries.filter(
-      (f) => f.startsWith('arc-') && f.endsWith('.json') && f.startsWith(`arc-${originId}`)
-    )
-    if (arcFiles.length === 0) return null
-
-    // Most-recent file for this originId (sort ascending then take last).
-    const file = [...arcFiles].sort().at(-1)!
+    // Resolve the report file for this originId.
+    //
+    // Two naming schemes coexist on disk:
+    //   1. Arc reports:     arc-<originId>-<ISO>.json   (originId is a task id)
+    //   2. Session reports: session-<idSlice>-<ISO>.json (no originId field in JSON;
+    //      the list route emits the filename stem as the canonical id)
+    //
+    // Strategy:
+    //   a) Direct match: <originId>.json — covers session-* and any future schemes
+    //      where the canonical id IS the filename stem.
+    //   b) Arc-prefix match: arc-<originId>* — handles the arc naming convention.
+    let file: string | undefined
+    if (entries.includes(`${originId}.json`)) {
+      // Direct stem match (e.g. session-f0715a63-2026-08-17T13-50-43-815Z).
+      file = `${originId}.json`
+    } else {
+      // Arc-prefix match — take the most-recent file for this originId.
+      const arcFiles = entries.filter(
+        (f) => f.startsWith('arc-') && f.endsWith('.json') && f.startsWith(`arc-${originId}`)
+      )
+      file = [...arcFiles].sort().at(-1)
+    }
+    if (!file) return null
     let raw: string
     try {
       raw = await readFile(resolvePath(dir, file), 'utf8')
