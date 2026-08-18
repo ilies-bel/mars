@@ -77,8 +77,6 @@ export interface AutonomousNoticePayloads {
   'gate.main-broken': { failingCheck: string; blockedTasks: number }
 }
 
-type AutonomousNoticePayload = AutonomousNoticePayloads[AutonomousNoticeKind]
-
 export type AutonomousConversationNoticeInput = {
   [Kind in AutonomousNoticeKind]: {
     kind: Kind

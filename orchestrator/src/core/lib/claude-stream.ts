@@ -3,8 +3,6 @@ export interface ClaudeEvent {
   [key: string]: unknown
 }
 
-type ClaudeConversation = ClaudeEvent[]
-
 const TOOL_USE_INPUT_THRESHOLD = 2 * 1024
 const TOOL_RESULT_CONTENT_THRESHOLD = 4 * 1024
 const HEAD_PREVIEW_BYTES = 2048

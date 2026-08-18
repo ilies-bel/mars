@@ -72,8 +72,3 @@ export const observeVerifyGateFailure = async (
   }
 }
 
-/** Kept as a no-op seam for callers that initialize the canonical schema. */
-const ensureGateMetaMonitorSchema = async (_client: MonitorDb): Promise<void> => {}
-
-/** Historical test hook; schema state is owned by pg-schema.ts. */
-const resetGateMetaMonitorSchemaLatchForTests = (): void => {}

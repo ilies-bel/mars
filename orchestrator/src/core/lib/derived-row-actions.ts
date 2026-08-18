@@ -20,18 +20,6 @@
 
 import type { ActionDescriptor } from './failure-kinds'
 
-/** The non-failure derived action-queue row kinds. */
-type DerivedRowKind =
-  | 'stale-worktree'
-  | 'draft-proposal'
-  | 'awaiting-validation'
-  | 'awaiting-human'
-  | 'reflect-recommended'
-  | 'workflow-draft-pending'
-  | 'scorer-suggested'
-  | 'signature-storm'
-  | 'worktree-ahead'
-
 /**
  * Resolve the recovery menu for a non-failure derived row kind. Returns an
  * empty list for any other kind (failed-task rows derive their menu from the

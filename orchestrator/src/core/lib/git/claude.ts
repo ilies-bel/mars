@@ -24,8 +24,6 @@ export interface SubprocessLine {
 // added at spawn time and removed on 'close'/'error'.
 const liveChildPids = new Set<number>()
 
-const getLiveChildPids = (): readonly number[] => Array.from(liveChildPids)
-
 // SIGKILL every tracked child's process group. Each child is spawned with
 // `detached: true` so it leads its own process group; signalling -pid kills
 // the leader AND every descendant (npm → vitest → forks) atomically.
@@ -182,12 +180,6 @@ export const runSubprocessStreaming = (
       settle({ exitCode, stdout, stderr })
     })
   })
-
-const runSubprocess = (
-  cmd: string,
-  args: readonly string[],
-  cwd: string,
-): Promise<RunSubprocessResult> => runSubprocessStreaming(cmd, args, cwd)
 
 export interface RunClaudeArgs {
   cwd: string

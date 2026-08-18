@@ -286,7 +286,3 @@ export function parseEvent<T extends EventName>(
   return schema.parse(rawPayload) as EventPayload<T>;
 }
 
-/** Type guard for runtime strings that should narrow to `EventName`. */
-function isEventName(s: string): s is EventName {
-  return Object.prototype.hasOwnProperty.call(EventMap, s);
-}

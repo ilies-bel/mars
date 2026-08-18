@@ -326,19 +326,6 @@ export const quarantineVerifyGate = async (
 }
 
 /**
- * Return a quarantined gate to execution without erasing its latest failure.
- */
-const activateVerifyGate = async (id: string): Promise<void> => {
-  const c = resolveStateClient()
-  await c.execute(
-    `UPDATE verify_gates
-        SET state = 'active', quarantined_at = NULL, quarantine_signature = NULL
-      WHERE id = ?`,
-    [id],
-  )
-}
-
-/**
  * Return all verify gates ordered by scope then creation time.
  */
 export const listVerifyGates = async (): Promise<VerifyGate[]> => {

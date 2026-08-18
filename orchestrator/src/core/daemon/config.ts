@@ -43,8 +43,6 @@ export const leverSchema = z.object({
   autonomy_level: z.enum(AUTONOMY_LEVELS).default('ask'),
 })
 
-type LeverEntry = z.infer<typeof leverSchema>
-
 export type ControlLeverValue = 'on' | 'off'
 
 export interface ControlLevers {

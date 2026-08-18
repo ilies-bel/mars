@@ -39,8 +39,6 @@ const StormFailureExcerptSchema = z.object({
   usable: z.boolean().default(true),
 })
 
-type StormFailureExcerpt = z.infer<typeof StormFailureExcerptSchema>
-
 export const GateDefinitionSchema = z.object({
   cmd: z.string().trim().min(1),
   args: z.array(z.string()),

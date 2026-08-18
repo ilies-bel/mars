@@ -1314,19 +1314,6 @@ export const syncWorktreeToIntegration = async (args: {
   return { kind: 'rebased', from, to, checkpointRef: checkpoint?.ref ?? null }
 }
 
-const resolveSha = async (
-  ref: string,
-  traceCtx?: TraceCtx,
-): Promise<string> => {
-  const { stdout } = await exec(
-    resolveGitBin(),
-    ['rev-parse', ref],
-    { cwd: repoRoot() },
-    traceCtx,
-  )
-  return stdout.trim()
-}
-
 export const removeWorktree = async (
   ref: WorktreeRef,
   force = true,

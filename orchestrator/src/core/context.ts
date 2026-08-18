@@ -149,19 +149,6 @@ export const resolveDbTarget = (override?: string): string => {
 }
 
 /**
- * Resolve the repo root using the same precedence as the rest of the
- * orchestrator (`override` > `MARS_REPO` > git toplevel from cwd).
- *
- * Thin alias over `resolveContext(override).repoRoot` that mirrors the
- * `resolveRepo` helper exposed by the UI server in `ui/server/repo.ts`.
- * Use this when you only need the repo root path (e.g. to derive a
- * `.mars/<file>` location) and don't want to pull the full context
- * struct.
- */
-const resolveRepo = (override?: string): string =>
-  resolveContext(override).repoRoot
-
-/**
  * Return the path to `.mars/mars.db` if the state directory ALREADY EXISTS,
  * without creating it.  Used for best-effort trace emissions that must never
  * side-effect into creating `.mars/`.
