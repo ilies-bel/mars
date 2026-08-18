@@ -5,7 +5,101 @@ import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
-import { provisionWorktreeDeps, removeStaleWorktreeLinks } from '../worktree-deps'
+import {
+  provisionWorktreeDeps,
+  removeStaleWorktreeLinks,
+  resolveDependencyWorkspaces,
+} from '../worktree-deps'
+
+describe('resolveDependencyWorkspaces', () => {
+  const roots: string[] = []
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
+  const makeWorktreeRoot = (): string => {
+    const root = mkdtempSync(resolve(tmpdir(), 'mars-resolve-workspaces-'))
+    roots.push(root)
+    return root
+  }
+
+  it('expands a literal entry and a trailing /* glob against packages on disk', async () => {
+    const root = makeWorktreeRoot()
+    writeFileSync(
+      resolve(root, 'pnpm-workspace.yaml'),
+      'packages:\n  - orchestrator\n  - ui\n  - packages/*\n',
+    )
+    mkdirSync(resolve(root, 'orchestrator'), { recursive: true })
+    mkdirSync(resolve(root, 'ui'), { recursive: true })
+    mkdirSync(resolve(root, 'packages', 'workflow'), { recursive: true })
+    mkdirSync(resolve(root, 'packages', 'claude-session'), { recursive: true })
+    // A stray file under packages/ must not be treated as a package.
+    writeFileSync(resolve(root, 'packages', 'README.md'), 'not a package\n')
+
+    const workspaces = await resolveDependencyWorkspaces(root)
+
+    expect([...workspaces].sort()).toEqual(
+      ['orchestrator', 'ui', 'packages/claude-session', 'packages/workflow'].sort(),
+    )
+  })
+
+  it('falls back to the default list when pnpm-workspace.yaml is absent', async () => {
+    const root = makeWorktreeRoot()
+
+    const workspaces = await resolveDependencyWorkspaces(root)
+
+    expect([...workspaces]).toEqual([
+      'orchestrator',
+      'ui',
+      'packages/workflow',
+      'packages/claude-session',
+    ])
+  })
+
+  it('falls back to the default list when pnpm-workspace.yaml has no packages array', async () => {
+    const root = makeWorktreeRoot()
+    writeFileSync(resolve(root, 'pnpm-workspace.yaml'), 'onlyBuiltDependencies:\n  - foo\n')
+
+    const workspaces = await resolveDependencyWorkspaces(root)
+
+    expect([...workspaces]).toEqual([
+      'orchestrator',
+      'ui',
+      'packages/workflow',
+      'packages/claude-session',
+    ])
+  })
+
+  it('falls back to the default list when pnpm-workspace.yaml is unparseable', async () => {
+    const root = makeWorktreeRoot()
+    writeFileSync(resolve(root, 'pnpm-workspace.yaml'), 'packages:\n  - [unterminated\n')
+
+    const workspaces = await resolveDependencyWorkspaces(root)
+
+    expect([...workspaces]).toEqual([
+      'orchestrator',
+      'ui',
+      'packages/workflow',
+      'packages/claude-session',
+    ])
+  })
+
+  it('ignores negated patterns and skips a glob dir that does not exist', async () => {
+    const root = makeWorktreeRoot()
+    writeFileSync(
+      resolve(root, 'pnpm-workspace.yaml'),
+      'packages:\n  - orchestrator\n  - "!orchestrator/fixtures"\n  - packages/*\n',
+    )
+    mkdirSync(resolve(root, 'orchestrator'), { recursive: true })
+    // packages/ deliberately absent — the glob must resolve to nothing for it
+    // rather than throw.
+
+    const workspaces = await resolveDependencyWorkspaces(root)
+
+    expect([...workspaces]).toEqual(['orchestrator'])
+  })
+})
 
 describe('provisionWorktreeDeps', () => {
   const roots: string[] = []

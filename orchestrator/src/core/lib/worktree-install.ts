@@ -4,6 +4,7 @@ import { acquireLock } from './git/lock'
 import { type RunSubprocessResult } from './git/claude'
 import { getStateDir } from '../context'
 import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
+import { provisionWorktreeDeps } from './worktree-deps'
 
 export const DEFAULT_INSTALL_TIMEOUT_MS = 8 * 60_000
 
@@ -1086,6 +1087,21 @@ export const installWorktreeDeps = async ({
       }
     }),
   )
+
+  // Re-provision the cross-worktree node_modules symlinks AFTER installing,
+  // not only before. `_removeCrossWorktreeNodeModulesSymlink` above can strip
+  // a symlink `provisionWorktreeDeps` created at worktree-creation time, and
+  // the install itself does not always recreate one for every workspace
+  // package — e.g. in a single-root pnpm workspace the only detected install
+  // site is the worktree root, so pnpm only ever touches node_modules there,
+  // never inside `orchestrator/`, `ui/`, or `packages/*`. Without this,
+  // those workspace packages are left with no node_modules at all (not even
+  // a stale one), and every test file that imports them fails to resolve a
+  // dependency that is only ever a sibling inside the parent checkout's own
+  // install. provisionWorktreeDeps is documented as safe to call at every
+  // worktree entry, so this is a scheduling change, not a behaviour change.
+  await provisionWorktreeDeps({ worktreeRoot })
+
   if (requireModuleTrees) {
     for (const site of sites) {
       if (await dirExists(resolve(site.dir, 'node_modules'))) continue

@@ -1,8 +1,94 @@
-import { lstat, mkdir, readdir, readlink, rm, symlink } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readFile, readlink, rm, symlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { load as parseYaml } from 'js-yaml'
 import { repoRoot } from './git/internal'
 
-const WORKTREE_DEPENDENCY_WORKSPACES = ['orchestrator', 'ui', 'packages/workflow'] as const
+/**
+ * Fallback workspace list used when `pnpm-workspace.yaml` is absent,
+ * unparseable, or declares no `packages` entries — e.g. Mars orchestrating a
+ * repo that does not have this framework's layout, or a stripped-down test
+ * fixture. {@link resolveDependencyWorkspaces} reads the committed workspace
+ * file whenever one is present, so this constant only covers the degraded
+ * path; keep it in sync with the framework's actual package layout anyway so
+ * that degraded path stays correct.
+ */
+const FALLBACK_DEPENDENCY_WORKSPACES = [
+  'orchestrator',
+  'ui',
+  'packages/workflow',
+  'packages/claude-session',
+] as const
+
+/**
+ * Resolve the workspace-relative package directories a linked worktree
+ * should share `node_modules` symlinks for.
+ *
+ * Reads `pnpm-workspace.yaml` at `worktreeRoot` — the checked-out copy for
+ * THIS branch, in case the branch itself adds, renames, or removes a
+ * workspace package — and expands its `packages` globs. Only the pattern
+ * shapes actually used by this repo are supported: a literal directory
+ * (`orchestrator`) and a single trailing `/*` glob (`packages/*`, expanded
+ * via `readdir`). Negated patterns (`!...`) are ignored rather than
+ * supported, since none are in use today.
+ *
+ * Falls back to {@link FALLBACK_DEPENDENCY_WORKSPACES} when the file is
+ * missing, unparseable, or resolves to no packages at all — this keeps
+ * `provisionWorktreeDeps` working for repos without a committed pnpm
+ * workspace.
+ *
+ * @internal Exported for unit-testing; not part of the module's public API.
+ */
+export const resolveDependencyWorkspaces = async (
+  worktreeRoot: string,
+): Promise<readonly string[]> => {
+  let raw: string
+  try {
+    raw = await readFile(resolve(worktreeRoot, 'pnpm-workspace.yaml'), 'utf8')
+  } catch {
+    return FALLBACK_DEPENDENCY_WORKSPACES
+  }
+
+  let parsed: unknown
+  try {
+    parsed = parseYaml(raw)
+  } catch {
+    return FALLBACK_DEPENDENCY_WORKSPACES
+  }
+
+  const packagesField =
+    parsed !== null && typeof parsed === 'object'
+      ? (parsed as Record<string, unknown>).packages
+      : undefined
+  const patterns = Array.isArray(packagesField)
+    ? packagesField.filter((p): p is string => typeof p === 'string')
+    : null
+  if (patterns === null || patterns.length === 0) return FALLBACK_DEPENDENCY_WORKSPACES
+
+  const resolved: string[] = []
+  for (const pattern of patterns) {
+    if (pattern.startsWith('!')) continue // negation glob — not supported, skip
+    if (pattern.endsWith('/*')) {
+      const dir = pattern.slice(0, -2)
+      let entries: string[]
+      try {
+        entries = await readdir(resolve(worktreeRoot, dir))
+      } catch {
+        continue
+      }
+      for (const entry of entries) {
+        try {
+          const st = await lstat(resolve(worktreeRoot, dir, entry))
+          if (st.isDirectory()) resolved.push(`${dir}/${entry}`)
+        } catch {
+          // Unreadable entry — skip it rather than fail the whole resolution.
+        }
+      }
+      continue
+    }
+    resolved.push(pattern)
+  }
+  return resolved.length > 0 ? resolved : FALLBACK_DEPENDENCY_WORKSPACES
+}
 
 export interface ProvisionWorktreeDepsArgs {
   worktreeRoot: string
@@ -24,7 +110,8 @@ export const provisionWorktreeDeps = async ({
   worktreeRoot,
   sourceRoot = repoRoot(),
 }: ProvisionWorktreeDepsArgs): Promise<void> => {
-  for (const workspace of WORKTREE_DEPENDENCY_WORKSPACES) {
+  const workspaces = await resolveDependencyWorkspaces(worktreeRoot)
+  for (const workspace of workspaces) {
     const source = resolve(sourceRoot, workspace, 'node_modules')
     const target = resolve(worktreeRoot, workspace, 'node_modules')
 
@@ -118,7 +205,8 @@ export const repairNodeModulesAfterWorktreeRemoval = async (
   const { promisify } = await import('node:util')
   const execFileAsync = promisify(execFile)
 
-  for (const workspace of WORKTREE_DEPENDENCY_WORKSPACES) {
+  const workspaces = await resolveDependencyWorkspaces(worktreePath)
+  for (const workspace of workspaces) {
     const nmDir = resolve(sourceRoot, workspace, 'node_modules')
     let removed: number
     try {
