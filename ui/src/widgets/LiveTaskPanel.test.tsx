@@ -266,3 +266,155 @@ describe('TaskDetailDrawer — live panel visibility by status', () => {
     expect(html).toContain('data-testid="task-detail-body"')
   })
 })
+
+// ── LiveTaskPanel — auto-refresh contract ─────────────────────────────────────
+//
+// Consumer slice: "UI: LiveTaskPanel auto-refreshes on view-stream ping".
+//
+// The panel must pick up fresh data whenever the ['task', taskId, 'live']
+// React Query cache entry is invalidated. SseInvalidator fires such
+// invalidations on every view-stream ping that touches the task; no explicit
+// polling is required. These tests verify that the component re-renders
+// correctly whenever the query returns new data — a prerequisite for the
+// consumer's invalidation wiring to be meaningful.
+
+describe('LiveTaskPanel — data updates on re-render', () => {
+  it('renders updated step guide when mock returns new data (simulates post-ping refetch)', () => {
+    liveQueryData = { ...FIXTURE, stepGuide: '## Step A\n\nOriginal guide.' }
+    liveQueryPending = false
+    liveQueryError = false
+
+    const html1 = renderToStaticMarkup(<LiveTaskPanel taskId="mars-test01" />)
+    expect(html1).toContain('Original guide.')
+
+    // After SseInvalidator invalidates ['task', taskId, 'live'] and React Query
+    // refetches, the component must render the fresh payload immediately.
+    liveQueryData = { ...FIXTURE, stepGuide: '## Step B\n\nGuide updated after ping.' }
+    const html2 = renderToStaticMarkup(<LiveTaskPanel taskId="mars-test01" />)
+    expect(html2).toContain('Guide updated after ping.')
+    expect(html2).not.toContain('Original guide.')
+  })
+
+  it('renders updated note count after a ping delivers a new note', () => {
+    liveQueryData = { ...FIXTURE, notes: [{ ts: 1_700_000_000_000, text: 'First note' }] }
+    liveQueryPending = false
+    liveQueryError = false
+
+    const html1 = renderToStaticMarkup(<LiveTaskPanel taskId="mars-test01" />)
+    expect((html1.match(/data-testid="live-note"/g) ?? []).length).toBe(1)
+
+    // Ping → invalidate → refetch → second note arrives.
+    liveQueryData = {
+      ...FIXTURE,
+      notes: [
+        { ts: 1_700_000_000_000, text: 'First note' },
+        { ts: 1_700_000_002_000, text: 'Second note after ping' },
+      ],
+    }
+    const html2 = renderToStaticMarkup(<LiveTaskPanel taskId="mars-test01" />)
+    expect((html2.match(/data-testid="live-note"/g) ?? []).length).toBe(2)
+    expect(html2).toContain('Second note after ping')
+  })
+})
+
+// ── LiveTaskPanel — enter-session action contract ─────────────────────────────
+//
+// Consumer slice: "UI: 'Enter session' action on parked task".
+//
+// When the live-task endpoint returns a worktreePath, the panel renders a
+// data-testid="enter-session-btn" action so the operator can jump into the
+// agent's working directory for manual inspection without leaving the UI.
+//
+// Implementation requirements for the consumer slice:
+//   • Extend LiveTaskData with `worktreePath?: string | null` in LiveTaskPanel.tsx.
+//   • The daemon's GET /view/task/:id/live endpoint must populate worktreePath
+//     from task.worktreePath; the UI proxy at GET /api/task/:id/live passes it
+//     through unchanged.
+//   • The component renders the action only when worktreePath is a non-empty string.
+
+describe('LiveTaskPanel — enter-session action', () => {
+  it('renders data-testid="enter-session-btn" when worktreePath is present', () => {
+    liveQueryData = {
+      ...FIXTURE,
+      worktreePath: '/Users/dev/.mars/worktrees/mars-abc12345',
+    }
+    liveQueryPending = false
+    liveQueryError = false
+
+    const html = renderToStaticMarkup(<LiveTaskPanel taskId="mars-test01" />)
+
+    expect(html).toContain('data-testid="enter-session-btn"')
+    expect(html).toContain('/Users/dev/.mars/worktrees/mars-abc12345')
+  })
+
+  it('omits the enter-session action when worktreePath is null', () => {
+    liveQueryData = { ...FIXTURE, worktreePath: null }
+    liveQueryPending = false
+    liveQueryError = false
+
+    const html = renderToStaticMarkup(<LiveTaskPanel taskId="mars-test01" />)
+
+    expect(html).not.toContain('data-testid="enter-session-btn"')
+  })
+
+  it('omits the enter-session action when worktreePath is absent from the payload', () => {
+    liveQueryData = FIXTURE
+    liveQueryPending = false
+    liveQueryError = false
+
+    const html = renderToStaticMarkup(<LiveTaskPanel taskId="mars-test01" />)
+
+    expect(html).not.toContain('data-testid="enter-session-btn"')
+  })
+})
+
+// ── TaskDetailDrawer — enter-session integration ──────────────────────────────
+//
+// Consumer slice: "UI: 'Enter session' action on parked task".
+//
+// The enter-session action must be visible inside the TaskDetailDrawer when the
+// task is parked at a manual step (status === 'awaiting-human') and the live
+// endpoint returns a worktreePath. For non-parked tasks the panel is not mounted
+// so the action never appears.
+
+describe('TaskDetailDrawer — enter-session integration', () => {
+  it('exposes the enter-session action for an awaiting-human task with a worktree path', () => {
+    liveQueryData = {
+      ...FIXTURE,
+      worktreePath: '/tmp/mars-test-worktree',
+    }
+    liveQueryPending = false
+    liveQueryError = false
+
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="mars-test01"
+        onClose={() => {}}
+        initialState={{ kind: 'ready', task: makeTask('awaiting-human') }}
+      />,
+    )
+
+    expect(html).toContain('data-testid="enter-session-btn"')
+    expect(html).toContain('/tmp/mars-test-worktree')
+  })
+
+  it('omits the enter-session action for a non-awaiting-human task even when live data has a worktree path', () => {
+    liveQueryData = {
+      ...FIXTURE,
+      worktreePath: '/tmp/mars-test-worktree',
+    }
+    liveQueryPending = false
+    liveQueryError = false
+
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="mars-test01"
+        onClose={() => {}}
+        initialState={{ kind: 'ready', task: makeTask('running') }}
+      />,
+    )
+
+    // LiveTaskPanel is not mounted for non-awaiting-human tasks.
+    expect(html).not.toContain('data-testid="enter-session-btn"')
+  })
+})
