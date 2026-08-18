@@ -474,7 +474,7 @@ describe('failedTaskTitle', () => {
         taskId: 'mars-c6cab686',
       }),
     ).toBe(
-      'verify:typecheck/typecheck-cannot-find-name — The changes did not pass type-checking [task mars-c6c]',
+      'verify:typecheck/typecheck-cannot-find-name — The changes did not pass type-checking [task mars-c6cab686]',
     )
   })
 
@@ -483,9 +483,9 @@ describe('failedTaskTitle', () => {
       signature: 'verify:test/unclassified',
       taskId: 'task-1234567890',
     })
-    expect(title).toBe('A verification check did not pass [task task-123]')
+    expect(title).toBe('A verification check did not pass [task task-1234567890]')
     expect(title).not.toContain('verify:test/unclassified')
-    expect(title).toContain('[task task-123]')
+    expect(title).toContain('[task task-1234567890]')
   })
 
   it('falls back to the captured error head when there is no signature', () => {
@@ -496,7 +496,7 @@ describe('failedTaskTitle', () => {
         capturedError: '\n\n  ENOSPC: no space left on device\nsecond line\n',
       }),
     ).toBe(
-      'Mars could not determine why this task failed: ENOSPC: no space left on device [task abcdefgh]',
+      'Mars could not determine why this task failed: ENOSPC: no space left on device [task abcdefgh12345]',
     )
   })
 
@@ -542,7 +542,27 @@ describe('failedTaskTitle', () => {
     })
     expect(title).toContain('continue:base-refresh-conflict/merge-conflict-unresolved')
     expect(title).not.toContain('Mars could not determine why this task failed')
-    expect(title).toContain('[task mars-5c8]')
+    expect(title).toContain('[task mars-5c83d931]')
+  })
+
+  it('keeps a task id whole so two failures of the same kind stay distinguishable', () => {
+    // Regression: the tag used to be `taskId.slice(0, 8)`, which counted the
+    // `mars-` prefix and left three hex chars. Three different tasks then all
+    // rendered `[task mars-634]` in the live action queue.
+    const a = failedTaskTitle({ signature: 'code/context-exhausted', taskId: 'mars-6340b827' })
+    const b = failedTaskTitle({ signature: 'code/context-exhausted', taskId: 'mars-6341f9de' })
+    expect(a).toContain('[task mars-6340b827]')
+    expect(b).toContain('[task mars-6341f9de]')
+    expect(a).not.toBe(b)
+  })
+
+  it('clips only ids that genuinely exceed the budget', () => {
+    const long = failedTaskTitle({
+      signature: 'code/context-exhausted',
+      taskId: '7daf8c8c-record-each-arc-s-behaviour-verification',
+    })
+    expect(long).toContain('…]')
+    expect(long.length).toBeLessThan(160)
   })
 
   it('gives two failures with different signatures two different titles', () => {

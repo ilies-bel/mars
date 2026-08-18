@@ -1041,8 +1041,19 @@ export const resolveFailureKind = (
   return unknownFailureKind('unknown', capturedError)
 }
 
-/** Chars of `taskId` shown in a failed-row title (repo-wide short-id convention). */
-const TITLE_TASK_ID_CHARS = 8
+/**
+ * Length budget for the `[task …]` tag in a failed-row title.
+ *
+ * This is a budget, NOT a slice width. A blind `slice(0, 8)` counted the
+ * `mars-` prefix, so a task id — which is already only `mars-` + 8 hex — came
+ * out as `mars-c7f`: three hex characters. Three rows for three different
+ * tasks then rendered the identical tag `[task mars-634]`, which is precisely
+ * the ambiguity the id is in the title to prevent.
+ *
+ * Every id that fits the budget is shown whole. Longer ids (slugs, composed
+ * recovery ids) are clipped with an ellipsis so the row still scans.
+ */
+const TITLE_TASK_ID_MAX = 24
 
 /** Max chars of the captured error head folded into a signature-less title. */
 const TITLE_ERROR_HEAD_MAX = 98
@@ -1078,7 +1089,7 @@ export const failedTaskTitle = (args: {
   const { signature, taskId = null, capturedError = '' } = args
   const idPart =
     taskId !== null && taskId.length > 0
-      ? ` [task ${taskId.slice(0, TITLE_TASK_ID_CHARS)}]`
+      ? ` [task ${taskId.length > TITLE_TASK_ID_MAX ? `${taskId.slice(0, TITLE_TASK_ID_MAX - 1)}…` : taskId}]`
       : ''
 
   if (signature !== null && signature.length > 0) {
