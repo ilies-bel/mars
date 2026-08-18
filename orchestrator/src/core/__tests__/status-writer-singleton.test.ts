@@ -100,7 +100,7 @@ const stripMigrationMarkedLines = (src: string): string =>
  */
 const normalizeForScan = (raw: string): string => stripComments(stripMigrationMarkedLines(raw))
 
-describe('architecture: UPDATE tasks SET status is confined to setTaskStatus in queue.ts', () => {
+describe('architecture: UPDATE tasks SET status is confined to Arc.setTaskStatus in arc.ts', () => {
   it('scanner regex matches known raw status writes but not the exempt form', () => {
     // Meta-guard: a regex typo would make all other assertions vacuously pass.
     // Pin the pattern against representative SQL to rule out the silent-pass risk.
@@ -136,7 +136,7 @@ describe('architecture: UPDATE tasks SET status is confined to setTaskStatus in 
     expect(STATUS_WRITE.test(markedPlusUnmarked)).toBe(true)
   })
 
-  it('exactly one non-test production file carries the pattern: core/queue.ts', () => {
+  it('exactly one non-test production file carries the pattern: core/arc.ts', () => {
     const files = walk(SRC_ROOT)
     const matches = files
       .filter((f) => STATUS_WRITE.test(normalizeForScan(readFileSync(f, 'utf8'))))
