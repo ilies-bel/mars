@@ -492,7 +492,7 @@ const statusClass = (status: string): string => {
 
 const ReflectionRow = ({ report }: ReflectionRowProps) => (
   <a
-    href={reflectionDetailHash(report.originId)}
+    href={reflectionDetailHash(report.originId, report.recordedAt)}
     data-testid={`reflection-row-${report.originId}`}
     className="flex flex-col gap-1 border border-primary/20 bg-card p-3 hover:border-primary/50 hover:bg-card/80 transition-colors"
   >
@@ -852,15 +852,15 @@ const useDeepReflections = (projectId: string | null): {
   return { data: query.data, isLoading: query.isLoading, error: query.error as Error | null }
 }
 
-const useDeepReflection = (originId: string | null, projectId: string | null): {
+const useDeepReflection = (originId: string | null, recordedAt: string | null, projectId: string | null): {
   data: DeepReflectionDetail | undefined
   isLoading: boolean
   error: Error | null
 } => {
   const query = useQuery({
-    queryKey: ['deep-reflection', originId, projectId],
-    queryFn: () => fetchDeepReflection(originId!, projectId ?? undefined),
-    enabled: originId !== null,
+    queryKey: ['deep-reflection', originId, recordedAt, projectId],
+    queryFn: () => fetchDeepReflection(originId!, recordedAt!, projectId ?? undefined),
+    enabled: originId !== null && recordedAt !== null,
   })
   return { data: query.data, isLoading: query.isLoading, error: query.error as Error | null }
 }
@@ -882,12 +882,15 @@ export const ReflectionsPage = () => {
   const projectsEmpty = projectsSettled && projectsError === null && projects.length === 0
   const resolvedProjectId = projectId ?? (projectsEmpty ? undefined : null)
 
-  const originId = parseReflectionDetailRoute(hash)
-  const isDetail = originId !== null
+  const detailRoute = parseReflectionDetailRoute(hash)
+  const isDetail = detailRoute !== null
+  const originId = detailRoute?.originId ?? null
+  const recordedAt = detailRoute?.recordedAt ?? null
 
   const { data: listData, isLoading: listLoading, error: listError } = useDeepReflections(resolvedProjectId ?? null)
   const { data: detailData, isLoading: detailLoading, error: detailError } = useDeepReflection(
-    isDetail ? originId : null,
+    originId,
+    recordedAt,
     resolvedProjectId ?? null,
   )
 
@@ -963,7 +966,7 @@ export const ReflectionsPage = () => {
             ) : (
               <div className="flex flex-col gap-2" data-testid="reflection-list">
                 {(listData?.reports ?? []).map((report) => (
-                  <ReflectionRow key={report.originId} report={report} />
+                  <ReflectionRow key={`${report.originId}:${report.recordedAt}`} report={report} />
                 ))}
               </div>
             )}

@@ -423,23 +423,36 @@ export const parseReleaseNotesRoute = (hash: string): boolean =>
 export const parseShortcutsRoute = (hash: string): boolean => hash === '#/shortcuts'
 
 /**
- * Parses an optional `#/reflections/<originId>` detail sub-route within the
- * Reflection page. Returns the originId when present, `null` otherwise.
- *
- * The list route `#/reflections` returns `null` (no detail selected).
+ * Parsed reflection detail route — uniquely identifies one report file.
  */
-export const parseReflectionDetailRoute = (hash: string): string | null => {
-  const m = /^#\/reflections\/([^/?#]+)/.exec(hash)
-  if (!m) return null
-  const id = decodeURIComponent(m[1])
-  return id.length > 0 ? id : null
+export interface ReflectionDetailRoute {
+  originId: string
+  recordedAt: string
 }
 
 /**
- * Builds the `#/reflections/<originId>` hash for a reflection detail view.
+ * Parses an optional `#/reflections/<originId>/<recordedAt>` detail sub-route
+ * within the Reflection page.  Returns `{originId, recordedAt}` when present,
+ * `null` for the list route `#/reflections`.
+ *
+ * The two-segment form is required so that multiple reports that share the
+ * same originId each get a stable, unambiguous URL.
  */
-export const reflectionDetailHash = (originId: string): string =>
-  `#/reflections/${encodeURIComponent(originId)}`
+export const parseReflectionDetailRoute = (hash: string): ReflectionDetailRoute | null => {
+  const m = /^#\/reflections\/([^/?#]+)\/([^/?#]+)/.exec(hash)
+  if (!m) return null
+  const originId = decodeURIComponent(m[1])
+  const recordedAt = decodeURIComponent(m[2])
+  return originId.length > 0 && recordedAt.length > 0 ? { originId, recordedAt } : null
+}
+
+/**
+ * Builds the `#/reflections/<originId>/<recordedAt>` hash for a reflection
+ * detail view.  Both segments are required so each report file gets a unique URL
+ * even when several share the same originId.
+ */
+export const reflectionDetailHash = (originId: string, recordedAt: string): string =>
+  `#/reflections/${encodeURIComponent(originId)}/${encodeURIComponent(recordedAt)}`
 
 /**
  * Badge count for the Chat nav entry — stale worktrees only.

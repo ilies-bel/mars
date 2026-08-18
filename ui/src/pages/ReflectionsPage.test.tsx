@@ -252,11 +252,54 @@ describe('ReflectionsPage', () => {
     expect(html).toContain('1 thrashing')
   })
 
-  it('links each row to the reflection detail hash', () => {
+  it('links each row to the reflection detail hash (compound originId + recordedAt)', () => {
     const html = renderToStaticMarkup(<ReflectionsPage />)
 
-    expect(html).toContain('href="#/reflections/abc123"')
-    expect(html).toContain('href="#/reflections/def456"')
+    // Route includes both originId and recordedAt so each report has a unique URL.
+    expect(html).toContain('href="#/reflections/abc123/2026-01-15T10%3A00%3A00Z"')
+    expect(html).toContain('href="#/reflections/def456/2026-01-10T08%3A00%3A00Z"')
+  })
+
+  it('uses a compound key (originId + recordedAt) for list rows so duplicate-originId reports render without duplicate-key errors', () => {
+    // Two reports that share the same originId but have different recordedAt timestamps.
+    const listWithDupes = makeListResponse({
+      reports: [
+        {
+          originId: 'shared-origin',
+          recordedAt: '2026-01-15T10:00:00Z',
+          status: 'complete',
+          totalToolCalls: 10,
+          dissonantCallCount: 0,
+          verifyMismatchCount: 0,
+          thrashingPatternCount: 0,
+          verdictResult: { saved: 0, absorbed: 0, dropped: 0 },
+        },
+        {
+          originId: 'shared-origin',
+          recordedAt: '2026-01-10T08:00:00Z',
+          status: 'complete',
+          totalToolCalls: 5,
+          dissonantCallCount: 0,
+          verifyMismatchCount: 0,
+          thrashingPatternCount: 0,
+          verdictResult: { saved: 0, absorbed: 0, dropped: 0 },
+        },
+      ],
+    })
+    vi.mocked(useQuery)
+      .mockReset()
+      .mockReturnValueOnce(mockQueryResult({ data: listWithDupes }))
+      .mockReturnValueOnce(mockQueryResult({ data: undefined }))
+
+    const html = renderToStaticMarkup(<ReflectionsPage />)
+
+    // Both rows are present — neither is dropped.
+    expect(html).toContain('href="#/reflections/shared-origin/2026-01-15T10%3A00%3A00Z"')
+    expect(html).toContain('href="#/reflections/shared-origin/2026-01-10T08%3A00%3A00Z"')
+    // Two distinct hrefs confirm two distinct rows were rendered.
+    expect(
+      (html.match(/href="#\/reflections\/shared-origin\//g) ?? []).length
+    ).toBe(2)
   })
 
   // -------------------------------------------------------------------------
@@ -355,7 +398,7 @@ describe('ReflectionsPage', () => {
   // -------------------------------------------------------------------------
 
   it('renders the detail view with summary and root cause when hash is #/reflections/<originId>', () => {
-    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123')
+    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123/2026-01-15T10:00:00Z')
     vi.mocked(useQuery)
       .mockReset()
       .mockReturnValueOnce(mockQueryResult({ data: makeListResponse() }))
@@ -368,7 +411,7 @@ describe('ReflectionsPage', () => {
   })
 
   it('renders dissonant calls ordered high → medium → low by severity', () => {
-    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123')
+    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123/2026-01-15T10:00:00Z')
     vi.mocked(useQuery)
       .mockReset()
       .mockReturnValueOnce(mockQueryResult({ data: makeListResponse() }))
@@ -395,7 +438,7 @@ describe('ReflectionsPage', () => {
   })
 
   it('renders stated intent and actual outcome side-by-side in each dissonant call card', () => {
-    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123')
+    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123/2026-01-15T10:00:00Z')
     vi.mocked(useQuery)
       .mockReset()
       .mockReturnValueOnce(mockQueryResult({ data: makeListResponse() }))
@@ -410,7 +453,7 @@ describe('ReflectionsPage', () => {
   })
 
   it('renders verify mismatches with claimed vs actual side-by-side', () => {
-    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123')
+    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123/2026-01-15T10:00:00Z')
     vi.mocked(useQuery)
       .mockReset()
       .mockReturnValueOnce(mockQueryResult({ data: makeListResponse() }))
@@ -424,7 +467,7 @@ describe('ReflectionsPage', () => {
   })
 
   it('renders tool call stats as a compact breakdown', () => {
-    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123')
+    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123/2026-01-15T10:00:00Z')
     vi.mocked(useQuery)
       .mockReset()
       .mockReturnValueOnce(mockQueryResult({ data: makeListResponse() }))
@@ -441,7 +484,7 @@ describe('ReflectionsPage', () => {
   })
 
   it('links filed proposals to the proposal overlay', () => {
-    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123')
+    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123/2026-01-15T10:00:00Z')
     vi.mocked(useQuery)
       .mockReset()
       .mockReturnValueOnce(mockQueryResult({ data: makeListResponse() }))
@@ -456,7 +499,7 @@ describe('ReflectionsPage', () => {
   })
 
   it('includes a back link to the list from the detail view', () => {
-    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123')
+    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123/2026-01-15T10:00:00Z')
     vi.mocked(useQuery)
       .mockReset()
       .mockReturnValueOnce(mockQueryResult({ data: makeListResponse() }))
@@ -473,7 +516,7 @@ describe('ReflectionsPage', () => {
   // -------------------------------------------------------------------------
 
   it('does not crash when report body is null (pending/non-complete status)', () => {
-    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123')
+    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123/2026-01-15T10:00:00Z')
     const pendingDetail = makeDetailResponse({ status: 'pending', report: null })
     vi.mocked(useQuery)
       .mockReset()
@@ -484,7 +527,7 @@ describe('ReflectionsPage', () => {
   })
 
   it('shows non-complete notice when report body is null', () => {
-    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123')
+    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123/2026-01-15T10:00:00Z')
     const pendingDetail = makeDetailResponse({ status: 'pending', report: null })
     vi.mocked(useQuery)
       .mockReset()
@@ -505,7 +548,7 @@ describe('ReflectionsPage', () => {
   // -------------------------------------------------------------------------
 
   it('shows a detail loading indicator while the detail fetch is in flight', () => {
-    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123')
+    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123/2026-01-15T10:00:00Z')
     vi.mocked(useQuery)
       .mockReset()
       .mockReturnValueOnce(mockQueryResult({ data: makeListResponse() }))

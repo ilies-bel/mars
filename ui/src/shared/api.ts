@@ -1452,17 +1452,20 @@ export const fetchDeepReflections = async (
 }
 
 /**
- * Fetch the full detail for one arc reflection report by originId.
- * Returns the complete report body including dissonant calls, verify
- * mismatches, and thrashing patterns.
+ * Fetch the full detail for one arc reflection report.
+ *
+ * Both `originId` and `recordedAt` are required.  `recordedAt` is forwarded as
+ * the `?at=` query parameter so the server can pick the exact report file when
+ * several share the same originId (e.g. two reflect runs on the same arc).
  */
 export const fetchDeepReflection = async (
   originId: string,
+  recordedAt: string,
   projectId?: string,
 ): Promise<import('./schemas').DeepReflectionDetail> => {
-  const params: string[] = []
+  const params: string[] = [`at=${encodeURIComponent(recordedAt)}`]
   if (projectId) params.push(`project=${encodeURIComponent(projectId)}`)
-  const qs = params.length > 0 ? `?${params.join('&')}` : ''
+  const qs = `?${params.join('&')}`
   return fetchJson(
     `/api/deep-reflections/${encodeURIComponent(originId)}${qs}`,
     deepReflectionDetailSchema,

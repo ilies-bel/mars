@@ -281,8 +281,13 @@ export interface AppServices {
   // ── deep reflection reports ──────────────────────────────────────────────────
   /** List all arc reflection reports newest-first with headline counts. */
   viewDeepReflections: (opts?: { limit?: number }) => Promise<DeepReflectionsListResult>
-  /** Fetch the full detail of one arc reflection report by originId. */
-  viewDeepReflection: (originId: string) => Promise<DeepReflectionDetail | null>
+  /**
+   * Fetch the full detail of one arc reflection report by originId.
+   * When `at` is supplied (a `recordedAt` ISO string) the call selects the
+   * specific report file whose recordedAt matches, rather than always returning
+   * the most-recent file for that originId.
+   */
+  viewDeepReflection: (originId: string, at?: string) => Promise<DeepReflectionDetail | null>
   // ── scorer results (record-only quality signal, PRD 6cf85bc9) ──────────────
   viewScorerTrend: (opts?: {
     workflow?: string
@@ -1510,7 +1515,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     return { reports, totalDiscovered, unreadableCount, autoRunReflect, autoEnqueue, lastReflectedAt }
   }
 
-  const viewDeepReflection: AppServices['viewDeepReflection'] = async (originId) => {
+  const viewDeepReflection: AppServices['viewDeepReflection'] = async (originId, at) => {
     const dir = resolvePath(resolveContext().stateDir, 'deep-reflections')
     let entries: string[]
     try {
@@ -1522,24 +1527,52 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     // Resolve the report file for this originId.
     //
     // Two naming schemes coexist on disk:
-    //   1. Arc reports:     arc-<originId>-<ISO>.json   (originId is a task id)
+    //   1. Arc reports:     arc-<originId>-<slug>-<ISO>.json (originId is a task id;
+    //      it is always the first segment after "arc-", so several reports can
+    //      share one originId and are disambiguated by `at`)
     //   2. Session reports: session-<idSlice>-<ISO>.json (no originId field in JSON;
     //      the list route emits the filename stem as the canonical id)
     //
     // Strategy:
     //   a) Direct match: <originId>.json — covers session-* and any future schemes
-    //      where the canonical id IS the filename stem.
-    //   b) Arc-prefix match: arc-<originId>* — handles the arc naming convention.
+    //      where the canonical id IS the filename stem. Unique by construction,
+    //      so no `at` disambiguation is needed.
+    //   b) Arc-prefix match: arc-<originId>* — handles the arc naming convention,
+    //      disambiguated by `at` when several candidates exist.
     let file: string | undefined
     if (entries.includes(`${originId}.json`)) {
       // Direct stem match (e.g. session-f0715a63-2026-08-17T13-50-43-815Z).
       file = `${originId}.json`
     } else {
-      // Arc-prefix match — take the most-recent file for this originId.
       const arcFiles = entries.filter(
         (f) => f.startsWith('arc-') && f.endsWith('.json') && f.startsWith(`arc-${originId}`)
       )
-      file = [...arcFiles].sort().at(-1)
+      if (arcFiles.length === 0) return null
+
+      // When `at` is supplied (a recordedAt ISO string), prefer the file whose
+      // own recordedAt field matches exactly.  Fall back to most-recent if no
+      // file matches (e.g. URL is stale or the file was rotated).
+      if (at && arcFiles.length > 1) {
+        // Read each candidate file to find the one whose recordedAt matches `at`.
+        let matched: string | undefined
+        for (const candidate of arcFiles) {
+          try {
+            const candidateRaw = await readFile(resolvePath(dir, candidate), 'utf8')
+            const candidateData = JSON.parse(candidateRaw) as Record<string, unknown>
+            if (typeof candidateData.recordedAt === 'string' && candidateData.recordedAt === at) {
+              matched = candidate
+              break
+            }
+          } catch {
+            // Skip unreadable/malformed files during disambiguation.
+          }
+        }
+        // Fall back to most-recent file if no exact match found.
+        file = matched ?? [...arcFiles].sort().at(-1)
+      } else {
+        // Most-recent file for this originId (sort ascending then take last).
+        file = [...arcFiles].sort().at(-1)
+      }
     }
     if (!file) return null
     let raw: string

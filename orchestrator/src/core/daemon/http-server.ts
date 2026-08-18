@@ -1954,14 +1954,18 @@ export const startHttpServer = async (
     // report, including the complete report body, dissonant calls, verify
     // mismatches, and thrashing patterns. Returns 404 when no matching report
     // file is found. Pure read; no draining gate.
+    // The optional `?at=<recordedAt>` parameter disambiguates when multiple
+    // report files share the same originId.
     {
       const drMatch = req.method === 'GET' && req.url
         ? req.url.match(/^\/view\/deep-reflections\/([^/?]+)(?:\?.*)?$/)
         : null
       if (drMatch && drMatch[1]) {
         const originId = decodeURIComponent(drMatch[1])
+        const parsedUrl = new URL(req.url!, 'http://localhost')
+        const at = parsedUrl.searchParams.get('at') ?? undefined
         deps.appServices
-          .viewDeepReflection(originId)
+          .viewDeepReflection(originId, at)
           .then((detail) => {
             if (detail === null) {
               sendJson(res, 404, { ok: false, error: 'report not found' })

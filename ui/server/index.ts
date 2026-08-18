@@ -883,14 +883,18 @@ export const startServer = async (
 
         // GET /api/deep-reflections/:originId — full detail for one arc reflection
         // report. Must be matched before /api/deep-reflections so the longer path wins.
+        // The `?at=<recordedAt>` query parameter is forwarded to the daemon so it can
+        // select the exact report file when multiple share the same originId.
         if (path.startsWith('/api/deep-reflections/') && req.method === 'GET') {
           const originId = decodeURIComponent(path.slice('/api/deep-reflections/'.length))
           if (!originId) {
             return jsonResponse(400, { error: 'originId is required' })
           }
+          const at = url.searchParams.get('at')
+          const daemonQs = at ? `?at=${encodeURIComponent(at)}` : ''
           const r = await proxyGet(
             ctx.stateDir,
-            `/view/deep-reflections/${encodeURIComponent(originId)}`,
+            `/view/deep-reflections/${encodeURIComponent(originId)}${daemonQs}`,
           )
           return jsonResponse(r.status, r.body)
         }
