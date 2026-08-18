@@ -129,13 +129,12 @@ export const checkMergeTargetStatus = async (
 
 /**
  * Interval (ms) at which {@link MergeArgs.onHeartbeat} fires while the merge
- * lock is held. Exported so callers can base their own liveness timers on the
- * same constant and avoid hard-coding a separate magic number.
+ * lock is held.
  */
-export const MERGE_HEARTBEAT_INTERVAL_MS = 30_000
+const MERGE_HEARTBEAT_INTERVAL_MS = 30_000
 
 /** Payload delivered to {@link MergeArgs.onHeartbeat} on each periodic tick. */
-export interface MergeHeartbeatInfo {
+interface MergeHeartbeatInfo {
   /** Wall-clock milliseconds elapsed since the merge lock was acquired. */
   elapsedMs: number
   /**

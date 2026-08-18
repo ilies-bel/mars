@@ -13,8 +13,8 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 
-export type IntegrityOk = { ok: true }
-export type IntegrityFail = {
+type IntegrityOk = { ok: true }
+type IntegrityFail = {
   ok: false
   reason: 'missing-dir' | 'not-a-worktree' | 'wrong-branch' | 'missing-node-modules'
 }

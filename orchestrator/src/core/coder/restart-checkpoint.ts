@@ -19,7 +19,6 @@
  */
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { z } from 'zod'
 import type { Task } from '../queue.js'
 import { getTranscript, resolveQueueClient } from '../queue.js'
 
@@ -100,37 +99,6 @@ export interface RestartCheckpointInput {
   task: Task
   workflowState?: unknown
 }
-
-// ---------------------------------------------------------------------------
-// Zod schemas (validation + serialisation)
-// ---------------------------------------------------------------------------
-
-export const commitEntrySchema = z.object({
-  sha: z.string(),
-  subject: z.string(),
-  files: z.array(z.string()),
-})
-
-export const lastVerifySchema = z.object({
-  command: z.string().nullable(),
-  exitCode: z.number().nullable(),
-  signature: z.string().nullable(),
-  tailOutput: z.string().nullable(),
-})
-
-/**
- * Zod schema for {@link RestartCheckpoint}. Used by both consumers: the
- * inject consumer validates the payload before embedding it in the brief;
- * the trace consumer validates before recording the event.
- */
-export const restartCheckpointSchema = z.object({
-  commits: z.array(commitEntrySchema),
-  changedPaths: z.array(z.string()),
-  outstandingCriteria: z.array(z.string()),
-  hadDoneCriteria: z.boolean().default(false),
-  lastVerify: lastVerifySchema.nullable(),
-  diagnostics: z.record(z.string(), z.unknown()),
-})
 
 // ---------------------------------------------------------------------------
 // Trace event kind
