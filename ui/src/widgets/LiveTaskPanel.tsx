@@ -6,8 +6,14 @@
  *   2. Done criteria — checklist with distinct checked/unchecked states.
  *   3. Progress journal — notes ordered newest-first.
  *
+ * Optionally renders an "Enter session" action when the backing Claude Code
+ * session id is present and the caller supplies `onEnterSession`.
+ *
  * Fetches GET /api/task/:taskId/live (proxied from the daemon's
  * GET /view/task/:id/live). Accepts a `fetchImpl` prop for testing.
+ *
+ * Query key — use `liveTaskQueryKey(taskId)` wherever the cache entry needs
+ * to be targeted (e.g. `SseInvalidator` explicit invalidation).
  */
 
 import { useQuery } from '@tanstack/react-query'
@@ -26,6 +32,11 @@ export interface LiveTaskData {
   stepGuide: string | null
   doneCriteria: LiveTaskCriterion[]
   notes: LiveTaskNote[]
+  /**
+   * The Claude Code session ID backing the current manual step.
+   * `null` when the step has no associated session (e.g. a non-live step).
+   */
+  sessionId: string | null
 }
 
 export interface LiveTaskPanelProps {
@@ -35,7 +46,25 @@ export interface LiveTaskPanelProps {
    * component hits `/api/task/:taskId/live` via the runtime `fetch`.
    */
   fetchImpl?: typeof fetch
+  /**
+   * Called when the operator clicks "Enter session". Only rendered when
+   * `data.sessionId` is non-null and this callback is provided.
+   */
+  onEnterSession?: (sessionId: string) => void
 }
+
+/**
+ * Stable query-key factory for the live-task endpoint.
+ *
+ * Use this wherever the cache entry must be targeted by key — e.g. in
+ * `SseInvalidator` to invalidate on `tasks` view-stream pings, and in
+ * tests to prime the cache.
+ *
+ * @example
+ *   qc.invalidateQueries({ queryKey: liveTaskQueryKey(openId) })
+ */
+export const liveTaskQueryKey = (taskId: string) =>
+  ['task', taskId, 'live'] as const
 
 const SECTION_LABEL = 'font-mono text-label uppercase tracking-[0.1em] text-muted-foreground'
 
@@ -45,9 +74,9 @@ const SECTION_LABEL = 'font-mono text-label uppercase tracking-[0.1em] text-mute
  * Shown above the existing drawer panes when task.status === 'awaiting-human'.
  * Hides itself entirely if the fetch returns 404 (task is no longer parked).
  */
-export const LiveTaskPanel = ({ taskId, fetchImpl }: LiveTaskPanelProps) => {
+export const LiveTaskPanel = ({ taskId, fetchImpl, onEnterSession }: LiveTaskPanelProps) => {
   const { data, isPending, isError } = useQuery<LiveTaskData | null>({
-    queryKey: ['task', taskId, 'live'],
+    queryKey: liveTaskQueryKey(taskId),
     queryFn: async () => {
       const f = fetchImpl ?? fetch
       const res = await f(`/api/task/${encodeURIComponent(taskId)}/live`)
@@ -83,6 +112,22 @@ export const LiveTaskPanel = ({ taskId, fetchImpl }: LiveTaskPanelProps) => {
       data-testid="live-task-panel"
       className="border-b border-primary/20 px-4 py-3 flex flex-col gap-4"
     >
+      {/* ── Enter session action ─────────────────────────────────────────── */}
+      {data.sessionId != null && onEnterSession != null ? (
+        <div data-testid="live-enter-session" className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => onEnterSession(data.sessionId!)}
+            className="font-mono text-label border border-primary/40 px-3 py-1.5 rounded text-primary hover:bg-primary/10 transition-colors"
+          >
+            Enter session
+          </button>
+          <span className="font-mono text-label text-muted-foreground">
+            session:{data.sessionId.slice(0, 8)}
+          </span>
+        </div>
+      ) : null}
+
       {/* ── Step guide ───────────────────────────────────────────────────── */}
       {data.stepGuide != null && data.stepGuide.length > 0 ? (
         <div data-testid="live-step-guide">
