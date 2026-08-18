@@ -43,12 +43,14 @@ const autoEnqueueOn: SelfEvolveConfig = {
   autoEnqueue: true,
   driftThresholdPct: 10,
   taskConfidenceThreshold: THRESHOLD,
+  reflectCooldownDays: 7,
 }
 
 const autoEnqueueOff: SelfEvolveConfig = {
   autoEnqueue: false,
   driftThresholdPct: 10,
   taskConfidenceThreshold: THRESHOLD,
+  reflectCooldownDays: 7,
 }
 
 const mechanical = {
