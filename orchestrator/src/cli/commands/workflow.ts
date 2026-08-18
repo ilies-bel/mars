@@ -394,12 +394,46 @@ const workflowValidate: Command = {
       return { code: 0 }
     } catch (err) {
       if (isWorkflowLoadError(err)) {
+        // User-owned workflow not found — fall back to built-in pipelines.
+        // Built-in workflows (implement, triage, plan, slice) are compiled
+        // into the orchestrator binary, not scaffolded as .mars/workflows/*.js
+        // files. The dry-run validates them with zero side effects, just like
+        // user-owned workflows.
+        const builtIn = await loadBuiltInWorkflow(kind!)
+        if (builtIn !== null) {
+          const { dryRunWorkflow } = await import('../../workflows/validate-workflow')
+          const dry = await dryRunWorkflow(builtIn, kind!)
+          if (dry.errors.length > 0) {
+            for (const e of dry.errors) deps.err(e)
+            return { code: 1 }
+          }
+          deps.out(`ok: (built-in ${kind} pipeline)`)
+          return { code: 0 }
+        }
         deps.err(err.message)
         return { code: 1 }
       }
       throw err
     }
   },
+}
+
+/**
+ * Load a built-in (bundled) workflow object by name. Returns null when the
+ * name is not a recognised built-in, so the caller can fall through to the
+ * user-owned error path. Intentionally kept narrow: only pipelines that ship
+ * as compiled TS (not user-scaffolded JS) appear here.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const loadBuiltInWorkflow = async (name: string): Promise<{ id: string; fn: (...args: any[]) => any } | null> => {
+  switch (name) {
+    case 'implement': {
+      const { implementWorkflow } = await import('../../workflows/implement-workflow')
+      return implementWorkflow
+    }
+    default:
+      return null
+  }
 }
 
 const workflowRender: Command = {

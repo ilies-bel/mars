@@ -164,6 +164,8 @@ import { distillObservation } from '../../core/lib/distill/observation'
 import { loadOrBuildIndexCard } from '../../core/lib/index-card/cache.js'
 import { MERGE_IDEMPOTENT_TERMINAL_STATUSES } from '../../tools/merge/merge.js'
 import { classifyCoderExitDisposition } from '../../tools/coder/coder-exit'
+import { checkWorktreeIntegrity } from '../lib/worktree-integrity'
+import { computeDepFingerprint } from '../lib/dep-fingerprint'
 
 // ---------------------------------------------------------------------------
 // Session-key construction (exported for regression tests)
@@ -1058,19 +1060,36 @@ export const setupWorktree = async (
       // The generic createWorktree() branches off the clean integration tip
       // and leaves the dirty state stranded on the integration checkout —
       // every downstream task then fails verify:main-dirty forever.
-      const ref = attachesToOrigin
-        ? await attachOriginWorktreeForFix()
-        : isMainCommiterFix
-          ? await provisionCommitterWorktree({
-              recoveryTaskId: taskId,
-              integrationBranch,
-              traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
-            })
-          : await createWorktree({
-              taskId,
-              integrationBranch,
-              traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
-            })
+      let ref: WorktreeRef
+      let worktreeReused = false
+      if (attachesToOrigin) {
+        ref = await attachOriginWorktreeForFix()
+      } else if (isMainCommiterFix) {
+        ref = await provisionCommitterWorktree({
+          recoveryTaskId: taskId,
+          integrationBranch,
+          traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
+        })
+      } else {
+        // Check whether the existing linked worktree for this task is
+        // structurally sound before calling createWorktree — which prunes
+        // registrations, probes git, and may recreate a branch from scratch.
+        // A passing integrity check means the directory, git link, and branch
+        // are all intact; we reuse it in place and save the overhead.
+        const expectedBranch = `task/${taskId}`
+        const expectedPath = resolve(getStateDir(), `worktrees/${taskId}`)
+        const integrity = await checkWorktreeIntegrity(expectedPath, expectedBranch)
+        if (integrity.ok) {
+          ref = { path: expectedPath, branch: expectedBranch }
+          worktreeReused = true
+        } else {
+          ref = await createWorktree({
+            taskId,
+            integrationBranch,
+            traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
+          })
+        }
+      }
       await updateTask(
         taskId,
         { branch: ref.branch, worktreePath: ref.path },
@@ -1198,73 +1217,67 @@ export const setupWorktree = async (
         }
       }
 
+      // Dep-fingerprint check: skip installWorktreeDeps when the package
+      // manifests and lockfiles are unchanged since the last successful install.
+      // The fingerprint is persisted inside the worktree at .mars/dep-fingerprint
+      // so a recovery rerrun (same worktree, same branch) can compare against it.
+      const depFingerprintPath = join(ref.path, '.mars', 'dep-fingerprint')
+      const newFp = await computeDepFingerprint(ref.path)
+      let oldFp: string | null = null
       try {
-        const summary = await installWorktreeDeps({
-          worktreeRoot: ref.path,
-          requireModuleTrees: true,
-          log: (line) => console.log(line),
-          traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
-        })
-        if (summary.sites.length > 0) {
-          console.log(
-            `[setup] task ${taskId} install completed in ${(
-              summary.totalDurationMs / 1000
-            ).toFixed(1)}s (${summary.sites.length} manifest${summary.sites.length === 1 ? '' : 's'})`,
-          )
-        }
-      } catch (error: unknown) {
-        const isInstallErr = error instanceof WorktreeInstallError
-        const isModulesMissingErr = error instanceof WorktreeModulesMissingError
-        const errorOutput = isInstallErr ? error.message : String(error)
-        const failingStep = isModulesMissingErr
-          ? error.failureStep
-          : 'setup:install'
+        oldFp = (await readFile(depFingerprintPath, 'utf8')).trim()
+      } catch {
+        // File absent or unreadable — treat as fingerprint mismatch.
+      }
+      const depsSkipped = newFp !== null && newFp === oldFp
 
-        // Repair-in-place FIRST: a frozen-install failure is an environment
-        // failure, not a code defect. Reconcile the lockfile in the origin's
-        // own worktree and continue; only escalate if the repair fails.
-        if (isInstallErr) {
-          try {
-            const repair = await repairInstallInPlace({
-              site: error.site,
-              log: (line) => console.log(line),
-              traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
-            })
-            if (repair.repaired) {
-              if (repair.lockfileChanged) {
-                // Branch-safety guard: the lockfile-repair commit must land on
-                // the task's own branch, not on the integration branch.
-                const headBranchR = await runTool(
-                  {
-                    tool: 'git',
-                    argv: ['rev-parse', '--abbrev-ref', 'HEAD'],
-                    cwd: ref.path,
-                    taskId,
-                    originId: trace.originId,
-                    phase: 'setup',
-                  },
-                  trace.traceStore,
-                )
-                const headBranch =
-                  headBranchR.exitCode === 0 ? headBranchR.stdout.trim() : null
-                if (headBranch !== ref.branch) {
-                  throw new Error(
-                    `[setup:install] task ${taskId} branch-guard: lockfile repair would commit to ` +
-                      `'${headBranch ?? '(detached)'}' but expected '${ref.branch}'; refusing commit`,
-                  )
-                }
-                for (const argv of [
-                  ['add', '-A'],
-                  [
-                    'commit',
-                    '-m',
-                    `chore(setup): reconcile ${error.site.lockfile} with manifest (in-place install repair)`,
-                  ],
-                ]) {
-                  const c = await runTool(
+      if (!depsSkipped) {
+        try {
+          const summary = await installWorktreeDeps({
+            worktreeRoot: ref.path,
+            requireModuleTrees: true,
+            log: (line) => console.log(line),
+            traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
+          })
+          if (summary.sites.length > 0) {
+            console.log(
+              `[setup] task ${taskId} install completed in ${(
+                summary.totalDurationMs / 1000
+              ).toFixed(1)}s (${summary.sites.length} manifest${summary.sites.length === 1 ? '' : 's'})`,
+            )
+          }
+          // Persist the fingerprint so the next setup invocation can skip
+          // the install when manifests/lockfiles are unchanged.
+          if (newFp !== null) {
+            mkdirSync(join(ref.path, '.mars'), { recursive: true })
+            writeFileSync(depFingerprintPath, newFp)
+          }
+        } catch (error: unknown) {
+          const isInstallErr = error instanceof WorktreeInstallError
+          const isModulesMissingErr = error instanceof WorktreeModulesMissingError
+          const errorOutput = isInstallErr ? error.message : String(error)
+          const failingStep = isModulesMissingErr
+            ? error.failureStep
+            : 'setup:install'
+
+          // Repair-in-place FIRST: a frozen-install failure is an environment
+          // failure, not a code defect. Reconcile the lockfile in the origin's
+          // own worktree and continue; only escalate if the repair fails.
+          if (isInstallErr) {
+            try {
+              const repair = await repairInstallInPlace({
+                site: error.site,
+                log: (line) => console.log(line),
+                traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
+              })
+              if (repair.repaired) {
+                if (repair.lockfileChanged) {
+                  // Branch-safety guard: the lockfile-repair commit must land on
+                  // the task's own branch, not on the integration branch.
+                  const headBranchR = await runTool(
                     {
                       tool: 'git',
-                      argv,
+                      argv: ['rev-parse', '--abbrev-ref', 'HEAD'],
                       cwd: ref.path,
                       taskId,
                       originId: trace.originId,
@@ -1272,68 +1285,118 @@ export const setupWorktree = async (
                     },
                     trace.traceStore,
                   )
-                  if (c.exitCode !== 0) {
+                  const headBranch =
+                    headBranchR.exitCode === 0 ? headBranchR.stdout.trim() : null
+                  if (headBranch !== ref.branch) {
                     throw new Error(
-                      `git ${argv[0]} after lockfile repair exited ${c.exitCode}: ${c.stderr}`,
+                      `[setup:install] task ${taskId} branch-guard: lockfile repair would commit to ` +
+                        `'${headBranch ?? '(detached)'}' but expected '${ref.branch}'; refusing commit`,
                     )
                   }
+                  for (const argv of [
+                    ['add', '-A'],
+                    [
+                      'commit',
+                      '-m',
+                      `chore(setup): reconcile ${error.site.lockfile} with manifest (in-place install repair)`,
+                    ],
+                  ]) {
+                    const c = await runTool(
+                      {
+                        tool: 'git',
+                        argv,
+                        cwd: ref.path,
+                        taskId,
+                        originId: trace.originId,
+                        phase: 'setup',
+                      },
+                      trace.traceStore,
+                    )
+                    if (c.exitCode !== 0) {
+                      throw new Error(
+                        `git ${argv[0]} after lockfile repair exited ${c.exitCode}: ${c.stderr}`,
+                      )
+                    }
+                  }
+                  console.log(
+                    `[setup:install] task ${taskId} reconciled ${error.site.lockfile} in place and committed; continuing`,
+                  )
+                } else {
+                  console.log(
+                    `[setup:install] task ${taskId} install recovered in place (no lockfile change); continuing`,
+                  )
                 }
+                // Persist fingerprint after successful in-place repair.
+                if (newFp !== null) {
+                  mkdirSync(join(ref.path, '.mars'), { recursive: true })
+                  writeFileSync(depFingerprintPath, newFp)
+                }
+                // Emit log before early return so exactly one line appears per run.
                 console.log(
-                  `[setup:install] task ${taskId} reconciled ${error.site.lockfile} in place and committed; continuing`,
+                  `[setup] task ${taskId}: ${worktreeReused ? 'setup:reused-worktree' : 'setup:fresh-install'} (deps repaired in place)`,
                 )
-              } else {
-                console.log(
-                  `[setup:install] task ${taskId} install recovered in place (no lockfile change); continuing`,
-                )
+                return { path: ref.path, branch: ref.branch, indexCard: setupIndexCard }
               }
-              return { path: ref.path, branch: ref.branch, indexCard: setupIndexCard }
+              console.log(
+                `[setup:install] task ${taskId} in-place repair did not reconcile; escalating to fix-task`,
+              )
+            } catch (repairErr: unknown) {
+              console.error(
+                `[setup:install] task ${taskId} in-place repair errored; escalating to fix-task:`,
+                repairErr,
+              )
             }
-            console.log(
-              `[setup:install] task ${taskId} in-place repair did not reconcile; escalating to fix-task`,
-            )
-          } catch (repairErr: unknown) {
-            console.error(
-              `[setup:install] task ${taskId} in-place repair errored; escalating to fix-task:`,
-              repairErr,
-            )
           }
-        }
 
-        const failSummary = errorOutput.slice(0, 1000)
-        const setupSignature = computeFailureSignature(failingStep, errorOutput)
-        await updateTask(
-          taskId,
-          {
-            status: 'failed',
-            error: failSummary,
-            failedPhase: 'code',
-            failureReason: isModulesMissingErr ? failingStep : failSummary,
-            failureSignature: setupSignature,
-            failureReasonCode: setupSignature,
-          },
-          store,
-        )
-        await handleTaskFailureWithFixTask({
-          taskId,
-          failingStep,
-          errorOutput: isModulesMissingErr
-            ? `dependency module tree missing\n${errorOutput}`
-            : `frozen-lockfile install failed\n${errorOutput}`,
-          branch: ref.branch,
-          store,
-          recipeContext: {
-            targetPath: isInstallErr || isModulesMissingErr ? error.site.dir : ref.path,
-            statusOutput: errorOutput,
-            targetBranch: ref.branch,
-            originalPrompt: '',
-          },
-        }).catch((err) => {
-          console.error(
-            `[failure-handler] task ${taskId} ${failingStep} handling errored:`,
-            err,
+          const failSummary = errorOutput.slice(0, 1000)
+          const setupSignature = computeFailureSignature(failingStep, errorOutput)
+          await updateTask(
+            taskId,
+            {
+              status: 'failed',
+              error: failSummary,
+              failedPhase: 'code',
+              failureReason: isModulesMissingErr ? failingStep : failSummary,
+              failureSignature: setupSignature,
+              failureReasonCode: setupSignature,
+            },
+            store,
           )
-        })
-        throw error instanceof Error ? error : new Error(errorOutput)
+          await handleTaskFailureWithFixTask({
+            taskId,
+            failingStep,
+            errorOutput: isModulesMissingErr
+              ? `dependency module tree missing\n${errorOutput}`
+              : `frozen-lockfile install failed\n${errorOutput}`,
+            branch: ref.branch,
+            store,
+            recipeContext: {
+              targetPath: isInstallErr || isModulesMissingErr ? error.site.dir : ref.path,
+              statusOutput: errorOutput,
+              targetBranch: ref.branch,
+              originalPrompt: '',
+            },
+          }).catch((err) => {
+            console.error(
+              `[failure-handler] task ${taskId} ${failingStep} handling errored:`,
+              err,
+            )
+          })
+          throw error instanceof Error ? error : new Error(errorOutput)
+        }
+      }
+
+      // Emit exactly one structured log line per setup run recording which
+      // branch was taken. Mutually exclusive:
+      //   setup:reused-deps     — worktree reused AND dep install skipped
+      //   setup:reused-worktree — worktree reused, deps reinstalled
+      //   setup:fresh-install   — full fresh setup (new worktree + install)
+      if (depsSkipped) {
+        console.log(`[setup] task ${taskId}: setup:reused-deps (dep fingerprint matched; install skipped)`)
+      } else if (worktreeReused) {
+        console.log(`[setup] task ${taskId}: setup:reused-worktree (existing worktree reused; deps reinstalled)`)
+      } else {
+        console.log(`[setup] task ${taskId}: setup:fresh-install (worktree created; deps installed)`)
       }
 
       return { path: ref.path, branch: ref.branch, indexCard: setupIndexCard }
