@@ -65,7 +65,7 @@ import {
   appendEnrichmentScopes,
   recordEnrichmentShadowRuns,
 } from '../../core/lib/gate-enrichment'
-import { mergeBranch, checkMergeTargetStatus, isZeroCommitBranch, isBranchTipInIntegration, MergeAbortedError, type MergeResult } from '../../core/lib/git/merge'
+import { mergeBranch, checkMergeTargetStatus, isZeroCommitBranch, isBranchTipInIntegration, MergeAbortedError, MERGE_HARD_TIMEOUT_MS, MergeHardTimeoutError, type MergeResult } from '../../core/lib/git/merge'
 import {
   captureCheckpoint,
   discardWorkingTreeChanges,
@@ -159,7 +159,7 @@ import {
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { readFile } from 'node:fs/promises'
+import { readFile, unlink } from 'node:fs/promises'
 import { distillObservation } from '../../core/lib/distill/observation'
 import { loadOrBuildIndexCard } from '../../core/lib/index-card/cache.js'
 import { MERGE_IDEMPOTENT_TERMINAL_STATUSES } from '../../tools/merge/merge.js'
@@ -4282,12 +4282,72 @@ export const merge = async (
         if (!ctx.services.enqueueMergeJobAndAwait) {
           throw new Error('enqueueMergeJobAndAwait service hook is required — merge queue is always on')
         }
-        const queueResult = await ctx.services.enqueueMergeJobAndAwait({
-          taskId,
-          branch,
-          worktreePath,
-          integrationBranch,
-        })
+
+        // Hard step-level wall-clock ceiling (PRD bf7bbd39, slice 2).
+        // If the merge worker is wedged and enqueueMergeJobAndAwait does not
+        // return within MERGE_HARD_TIMEOUT_MS, abort with an actionable
+        // failure so the task never parks in status='merging' forever.
+        const hardAbortController = new AbortController()
+        const hardTimer = setTimeout(() => hardAbortController.abort(), MERGE_HARD_TIMEOUT_MS)
+        let queueResult: { status: 'done'; result: MergeResult } | { status: 'failed'; error: string; errorCode: string }
+        try {
+          queueResult = await Promise.race([
+            ctx.services.enqueueMergeJobAndAwait({
+              taskId,
+              branch,
+              worktreePath,
+              integrationBranch,
+            }),
+            new Promise<never>((_, reject) => {
+              if (hardAbortController.signal.aborted) {
+                reject(new MergeHardTimeoutError('step-level'))
+                return
+              }
+              hardAbortController.signal.addEventListener(
+                'abort',
+                () => reject(new MergeHardTimeoutError('step-level')),
+                { once: true },
+              )
+            }),
+          ])
+        } catch (err: unknown) {
+          if (err instanceof MergeHardTimeoutError) {
+            // Best-effort: unlink the merge lock so subsequent merges aren't
+            // blocked. The running mergeBranch call will also call release()
+            // via its own finally block when the merge-worker eventually exits.
+            await unlink(resolve(getStateDir(), '.merge.lock')).catch(() => {})
+            const hardMsg = `merge:hard-timeout — merge step for task ${taskId} exceeded the step-level ceiling of ${Math.round(MERGE_HARD_TIMEOUT_MS / 60_000)} min`
+            await updateTask(
+              taskId,
+              {
+                status: 'failed',
+                error: hardMsg,
+                failedPhase: 'merge',
+                failureReason: 'merge:hard-timeout',
+                failureSignature: 'merge:hard-timeout',
+                failureReasonCode: 'merge:hard-timeout',
+              },
+              store,
+            )
+            await handleTaskFailureWithFixTask({
+              taskId,
+              failingStep: 'merge:hard-timeout',
+              errorOutput: hardMsg,
+              branch,
+              store,
+            }).catch((handlerErr) => {
+              console.error(
+                `[failure-handler] task ${taskId} merge hard-timeout handling errored:`,
+                handlerErr,
+              )
+            })
+            throw new WorkflowTerminalError('merge-hard-timeout', hardMsg)
+          }
+          throw err
+        } finally {
+          clearTimeout(hardTimer)
+        }
+
         if (queueResult.status === 'failed') {
           // Let the outer crash-handler deal with this — it marks the task
           // failed and spawns a fix-task, same as a mergeBranch throw.
@@ -4564,6 +4624,12 @@ export const merge = async (
             : 'merged cleanly',
         }
       } catch (error: unknown) {
+        // WorkflowTerminalError instances are fully self-handled before being
+        // thrown (task already marked failed, fix-task spawned). Pass them
+        // through directly so the daemon dispatch loop can suppress the generic
+        // implement:crashed re-update without a double DB write.
+        if (error instanceof WorkflowTerminalError) throw error
+
         // Race guard: if the task was already settled in a terminal state (e.g.
         // recovery-exhaustion marked it `failed`) BEFORE the merge step could
         // transition it to `merging`, the initial `updateTask(merging)` call

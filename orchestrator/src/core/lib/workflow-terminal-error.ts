@@ -75,6 +75,14 @@ export type WorkflowTerminalKind =
    * The merge step exits cleanly without touching the task row.
    */
   | 'merge-already-terminal'
+  /**
+   * The merge step's hard wall-clock ceiling fired before
+   * `enqueueMergeJobAndAwait` returned. The task has been marked `failed`
+   * with `failureSignature: 'merge:hard-timeout'` and a fix-task spawned.
+   * The merge primitive throws this so the daemon dispatch loop can suppress
+   * the generic `implement:crashed` re-update.
+   */
+  | 'merge-hard-timeout'
 
 export interface WorkflowTerminalMeta {
   /** Unix epoch seconds at which the provider quota resets. Only set for `quota-rejected`. */

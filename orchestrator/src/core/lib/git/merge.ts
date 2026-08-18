@@ -499,6 +499,35 @@ const MERGE_GIT_BUDGET_MS = 5 * 60 * 1000
 export const DEFAULT_WATCHDOG_MS = VCS_SUPERVISOR_TIMEOUT_MS + MERGE_GIT_BUDGET_MS
 
 /**
+ * Hard wall-clock ceiling (milliseconds) for the merge STEP, measured at the
+ * `enqueueMergeJobAndAwait` call site in the merge primitive. Defaults to
+ * {@link DEFAULT_WATCHDOG_MS} + 2 min grace so the ceiling fires only when
+ * the merge job has clearly stalled past its own internal watchdog.
+ *
+ * Override with `MARS_MERGE_HARD_TIMEOUT_MS`.
+ */
+export const MERGE_HARD_TIMEOUT_MS = Number(
+  process.env.MARS_MERGE_HARD_TIMEOUT_MS ?? DEFAULT_WATCHDOG_MS + 2 * 60 * 1000,
+)
+
+/**
+ * Thrown when the merge step's hard wall-clock ceiling
+ * ({@link MERGE_HARD_TIMEOUT_MS}) fires before `enqueueMergeJobAndAwait`
+ * returns. Caught by the merge primitive which converts it to a
+ * {@link WorkflowTerminalError} with failure-signature prefix
+ * `merge:hard-timeout`.
+ */
+export class MergeHardTimeoutError extends Error {
+  readonly phase: string
+
+  constructor(phase: string) {
+    super(`merge hard timeout in ${phase}`)
+    this.name = 'MergeHardTimeoutError'
+    this.phase = phase
+  }
+}
+
+/**
  * Short, self-contained timeout for the abort-cleanup git calls. These run
  * AFTER the merge has already been aborted, so they must never inherit the
  * (already-aborted) merge signal — they get their own bound so a wedged git

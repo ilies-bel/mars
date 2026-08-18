@@ -2137,6 +2137,13 @@ export const startDaemon = async (
             // is needed. Suppress the generic task.completed emit.
             log(`[implement] ${task.id}: merge step skipped — task already in terminal status (race with recovery-exhaustion)`)
             return
+
+          case 'merge-hard-timeout':
+            // The merge step's hard wall-clock ceiling fired. The merge primitive
+            // already marked the task failed with failureSignature='merge:hard-timeout'
+            // and spawned a fix-task. Fall through so bus.emit fires and the task
+            // transitions out of status='merging'.
+            break
         }
       }
       log(`[implement] ${task.id} -> ${result.status}`)
@@ -2226,6 +2233,12 @@ export const startDaemon = async (
             // Race: task was already in a terminal status when the merge step
             // tried to start. No DB update needed; suppress generic re-update.
             log(`[implement] ${task.id} merge-already-terminal abort (exception path); task already in terminal status, no update needed`)
+            break
+          case 'merge-hard-timeout':
+            // The merge step's hard wall-clock ceiling fired. Already marked the
+            // task failed with failureSignature='merge:hard-timeout' and spawned
+            // a fix-task. Suppress the generic implement:crashed re-update.
+            log(`[implement] ${task.id} merge-hard-timeout abort (exception path); task already marked failed, fix-task spawned`)
             break
         }
       } else {
