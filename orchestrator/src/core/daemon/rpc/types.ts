@@ -216,8 +216,19 @@ export interface DaemonDeps {
   investigateWorktree(id: string): Promise<unknown>
   diagnoseFailure(id: string): Promise<unknown>
   handleReleaseLease(id: string, abort: boolean, note?: string): Promise<void>
-  /** Complete the current manual step: re-queue but keep the lease identity. */
-  handleStepDone(id: string): Promise<void>
+  /**
+   * Complete the current manual step: re-queue but keep the lease identity.
+   *
+   * Two paths, and the caller must not assume Path 1 happened: `degraded:
+   * true` means the in-process workflow promise was gone (daemon restarted
+   * between park and this call) and the task was re-queued for the engine to
+   * re-enter on a fresh dispatch, rather than continuing in-process.
+   * `anchorRef` names a per-task ref anchoring the worktree branch's tip at
+   * the moment of the degraded re-queue (null when no worktree/branch was on
+   * record, or the anchor write itself failed) — a recovery point in case the
+   * re-entered dispatch's setup step ever resets the branch.
+   */
+  handleStepDone(id: string): Promise<{ degraded: boolean; anchorRef: string | null }>
   /**
    * Abort the current manual step: set the task to failed with failed_phase='code',
    * record the reason as a task note, raise a 'failed' action-queue row, and

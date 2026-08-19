@@ -4874,7 +4874,14 @@ export const startDaemon = async (
   //
   // The lease identity is preserved in both paths — no re-attach is required
   // when the workflow parks at the task's next manual step.
-  const handleStepDone = async (id: string): Promise<void> => {
+  //
+  // The return value's `degraded` flag tells the caller which path ran — the
+  // CLI must not print the same "pipeline continues in place" message for
+  // both (see mars-7f2de34d: `mars step done` reported plain success on a
+  // Path 2 fallback, which is misleading about what actually happened).
+  const handleStepDone = async (
+    id: string,
+  ): Promise<{ degraded: boolean; anchorRef: string | null }> => {
     const task = await getTask(id)
     if (!task) throw new Error(`task ${id} not found`)
     if (task.status !== 'awaiting-human') {
@@ -4897,7 +4904,7 @@ export const startDaemon = async (
       // UI reflects the correct state; the workflow will update further as it
       // executes subsequent steps.
       await updateTask(id, { status: 'running' })
-      return
+      return { degraded: false, anchorRef: null }
     }
     // Path 2: sentinel fallback — re-queue for engine re-entry.
     // Patch the step record to 'completed' before re-queuing so the engine
@@ -4932,8 +4939,46 @@ export const startDaemon = async (
         )
       }
     }
+    // Safety net (mars-7f2de34d): anchor the worktree branch's tip on a named,
+    // per-task ref before re-queuing. The step-completion patch above should
+    // make the re-entered dispatch resume past 'setup' and the parked step
+    // without touching the worktree at all — but a daemon restart between
+    // park and this call is exactly the situation that once let a re-queue
+    // reach 'setup' again and reset a branch that carried committed, unmerged
+    // work. This anchor costs one idempotent `git update-ref`: on the common
+    // path where nothing resets the branch it is simply never looked at
+    // again; on the rare path where something does, the tip is still
+    // reachable by name. Mirrors the 'recreate' conflict policy's own
+    // parked-ref discipline (never `git stash` — refs/stash is shared by
+    // every worktree in this repo).
+    let anchorRef: string | null = null
+    if (task.worktreePath) {
+      try {
+        const { existsSync } = await import('node:fs')
+        if (existsSync(task.worktreePath)) {
+          const { anchorBranchTip } = await import('../lib/git/checkpoint')
+          const anchored = await anchorBranchTip({
+            worktreePath: task.worktreePath,
+            key: `step-done-fallback-${id}`,
+          })
+          if (anchored !== null) {
+            anchorRef = anchored.ref
+            log(
+              `[step-done] ${id}: anchored branch tip ${anchored.sha.slice(0, 9)} on ${anchored.ref} before sentinel-fallback re-queue`,
+            )
+          }
+        }
+      } catch (anchorErr) {
+        log(
+          `[step-done] ${id}: fallback branch-tip anchor errored (non-fatal): ${
+            anchorErr instanceof Error ? anchorErr.message : String(anchorErr)
+          }`,
+        )
+      }
+    }
     await Arc.load(id).releaseLease(id, { keepLease: true })
     bus.emit('task.queued', { taskId: id })
+    return { degraded: true, anchorRef }
   }
 
   // `mars step abort <id> --reason <text>`: route the task to the failure path

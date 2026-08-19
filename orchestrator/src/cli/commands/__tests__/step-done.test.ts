@@ -121,6 +121,72 @@ describe('mars step done — happy path', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Degraded (sentinel-fallback) reporting — mars-a98bec46
+//
+// `handleStepDone` reports which of its two paths ran: Path 1 (promise-based,
+// in-process resume) or Path 2 (sentinel fallback / re-queue, taken when the
+// daemon restarted between park and this call). The CLI must not print the
+// same "pipeline continues" message for both — a Path 2 fallback re-enters
+// the pipeline on the NEXT dispatch, not in-process.
+// ---------------------------------------------------------------------------
+
+describe('mars step done — degraded (sentinel-fallback) reporting', () => {
+  it('prints a re-queue fallback message, not "manual step complete", when degraded:true', async () => {
+    const taskId = await createTask('awaiting-human', 'user@host')
+    const fake = makeFakeDaemon(() => ({ degraded: true, anchorRef: null }))
+    const { store, ctx } = await loadStoreAndCtx()
+
+    const r = await runCommandInProcess(['step', 'done', taskId], {
+      store,
+      ctx,
+      daemon: fake,
+    })
+
+    expect(r.code).toBe(0)
+    const out = r.out.join('\n')
+    expect(out).toContain('re-queue fallback')
+    expect(out).not.toContain('manual step complete')
+  })
+
+  it('names the anchor ref and recovery command when one was written', async () => {
+    const taskId = await createTask('awaiting-human', 'user@host')
+    const fake = makeFakeDaemon(() => ({
+      degraded: true,
+      anchorRef: 'refs/mars/checkpoint/step-done-fallback-mars-abc123-deadbeef',
+    }))
+    const { store, ctx } = await loadStoreAndCtx()
+
+    const r = await runCommandInProcess(['step', 'done', taskId], {
+      store,
+      ctx,
+      daemon: fake,
+    })
+
+    expect(r.code).toBe(0)
+    const out = r.out.join('\n')
+    expect(out).toContain('refs/mars/checkpoint/step-done-fallback-mars-abc123-deadbeef')
+    expect(out).toContain('git cherry-pick -n')
+  })
+
+  it('still prints "manual step complete" when degraded:false (Path 1)', async () => {
+    const taskId = await createTask('awaiting-human', 'user@host')
+    const fake = makeFakeDaemon(() => ({ degraded: false, anchorRef: null }))
+    const { store, ctx } = await loadStoreAndCtx()
+
+    const r = await runCommandInProcess(['step', 'done', taskId], {
+      store,
+      ctx,
+      daemon: fake,
+    })
+
+    expect(r.code).toBe(0)
+    const out = r.out.join('\n')
+    expect(out).toContain('manual step complete')
+    expect(out).not.toContain('re-queue fallback')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Task-id lookup by CWD
 // ---------------------------------------------------------------------------
 

@@ -118,16 +118,35 @@ const stepDone: Command = {
       }
     }
 
+    let result: { degraded: boolean; anchorRef: string | null } | undefined
     try {
-      await deps.daemon.sendRequest({ op: 'step-done', id })
+      result = (await deps.daemon.sendRequest({ op: 'step-done', id })) as
+        | { degraded: boolean; anchorRef: string | null }
+        | undefined
     } catch (err) {
       deps.err(`${id}: ${errorMessage(err)}`)
       return { code: 1 }
     }
 
-    deps.out(
-      `${id}: manual step complete — pipeline continues; if it parks at another manual step the lease comes back to you`,
-    )
+    if (result?.degraded) {
+      // Path 2 fallback: the in-process workflow promise was gone (the daemon
+      // restarted between park and this call), so the step was closed by
+      // re-queuing the task rather than resuming the same run in place. The
+      // pipeline still advances, but on the NEXT dispatch — say so explicitly
+      // rather than claiming the same "continues" outcome as Path 1.
+      deps.out(
+        `${id}: step closed via re-queue fallback — the daemon restarted since this step parked, so the run could not resume in-process; the pipeline re-enters on the next dispatch`,
+      )
+      if (result.anchorRef) {
+        deps.out(
+          `  branch tip anchored on ${result.anchorRef} as a precaution; recover with: git cherry-pick -n ${result.anchorRef}`,
+        )
+      }
+    } else {
+      deps.out(
+        `${id}: manual step complete — pipeline continues; if it parks at another manual step the lease comes back to you`,
+      )
+    }
     return { code: 0 }
   },
 }

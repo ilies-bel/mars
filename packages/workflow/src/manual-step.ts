@@ -13,7 +13,12 @@
 //     already resolved or was never registered), making step-done idempotent.
 //   - After a daemon restart the in-memory map is empty; the fallback path in
 //     handleStepDone re-queues via the sentinel mechanism so the operator can
-//     use 'mars step done' again after the restart.
+//     use 'mars step done' again after the restart. That fallback is a
+//     DIFFERENT outcome from the promise-based path — the run does not
+//     continue in-process, it re-enters on the next dispatch — so
+//     handleStepDone reports which path ran (`degraded: true` for the
+//     fallback) and `mars step done` prints a message that matches what
+//     actually happened instead of a blanket "pipeline continues".
 // ---------------------------------------------------------------------------
 
 /** Key format for the pending manual-step map. */

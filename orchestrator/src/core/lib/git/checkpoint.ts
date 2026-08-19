@@ -196,6 +196,54 @@ export const captureCheckpoint = async (
   }
 }
 
+export interface AnchorBranchTipArgs {
+  /** Worktree whose current branch tip should be anchored. */
+  worktreePath: string
+  /**
+   * Namespacing key. The tip's short sha is appended automatically so a
+   * caller that anchors the same branch more than once (e.g. two degraded
+   * `step done` calls in a row) parks each tip under its own ref instead of
+   * clobbering the previous one — same convention as {@link parkedRefFor} in
+   * `worktree.ts`.
+   */
+  key: string
+  traceCtx?: TraceCtx
+}
+
+export interface AnchorBranchTipResult {
+  /** Ref anchoring the tip. Never garbage-collected while it exists. */
+  ref: string
+  /** The branch tip's sha at the moment it was anchored. */
+  sha: string
+}
+
+/**
+ * Anchor a worktree's CURRENT branch tip on a per-task ref, without touching
+ * the branch, the working tree, or any uncommitted changes.
+ *
+ * Unlike {@link captureCheckpoint} — which snapshots uncommitted changes into
+ * a brand-new commit object — this names the branch's existing HEAD commit
+ * directly with a single idempotent `git update-ref`. It is a pure safety
+ * net: on the common path nothing ever reads the ref back; it only matters if
+ * something downstream unexpectedly resets the branch.
+ *
+ * Returns `null` (rather than throwing) when `HEAD` cannot be resolved (e.g.
+ * an unborn branch) — callers treat that as "nothing to anchor" and proceed.
+ */
+export const anchorBranchTip = async (
+  args: AnchorBranchTipArgs,
+): Promise<AnchorBranchTipResult | null> => {
+  const { worktreePath, key, traceCtx } = args
+  const git = resolveGitBin()
+  const head = await execProbe(git, ['rev-parse', 'HEAD'], { cwd: worktreePath }, traceCtx)
+  if (head.exitCode !== 0) return null
+  const sha = head.stdout.trim()
+  if (sha.length === 0) return null
+  const ref = checkpointRefFor(`${key}-${sha.slice(0, 9)}`)
+  await exec(git, ['update-ref', ref, sha], { cwd: worktreePath }, traceCtx)
+  return { ref, sha }
+}
+
 export interface RestoreCheckpointArgs {
   /** Working tree the checkpoint is applied into. Must be clean. */
   cwd: string

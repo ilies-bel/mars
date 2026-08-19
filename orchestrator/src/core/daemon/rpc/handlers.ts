@@ -372,8 +372,8 @@ const releaseLeaseHandler = handler('release-lease', async (req, deps) => {
 })
 
 const stepDoneHandler = handler('step-done', async (req, deps) => {
-  await deps.handleStepDone(req.id)
-  return { ok: true }
+  const result = await deps.handleStepDone(req.id)
+  return { ok: true, data: result }
 })
 
 const stepAbortHandler = handler('step-abort', async (req, deps) => {
