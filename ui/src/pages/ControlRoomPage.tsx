@@ -26,6 +26,7 @@ import {
 import { useProgress } from '@/hooks/useProgress'
 import { useStatusCounts } from '@/hooks/useStatusCounts'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
+import { useDispatchState, pauseReasonLabel } from '@/entities/operator/useDispatchState'
 import { useFocusedProject } from '@/shared/useFocusedProject'
 import type { ActionQueueItem } from '@/shared/schemas'
 import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
@@ -52,13 +53,6 @@ const isAdvisory = (item: ActionQueueItem): boolean => ADVISORY_KINDS.has(item.k
 // ---------------------------------------------------------------------------
 // Section 1 — Operator Levers
 // ---------------------------------------------------------------------------
-
-const PAUSE_REASON_LABELS: Record<string, string> = {
-  operator: 'operator',
-  storm: 'signature storm',
-  quota: 'provider quota',
-  baseline: 'baseline poisoned',
-}
 
 type ConfirmAction =
   | { kind: 'dispatch-off' }
@@ -185,7 +179,7 @@ const LeversSection = () => {
               </div>
               {isDispatchPaused && dispatch.reason && (
                 <p className="mt-1 font-mono text-micro text-foreground/50">
-                  Reason: {PAUSE_REASON_LABELS[dispatch.reason] ?? dispatch.reason}
+                  Reason: {pauseReasonLabel(dispatch)}
                   {dispatch.since ? ` · since ${new Date(dispatch.since).toLocaleTimeString()}` : ''}
                 </p>
               )}
@@ -327,6 +321,7 @@ const CapStat = ({ label, value }: { label: string; value: number }) => (
 const NowSection = () => {
   const { tasks, connected } = useProgress()
   const { running: inProgress, failed, doneToday } = useStatusCounts()
+  const dispatch = useDispatchState()
 
   const queued = tasks?.filter((t) => t.cluster === 'Queued').length ?? 0
   const blocked = tasks?.filter((t) => t.cluster === 'Blocked').length ?? 0
@@ -339,12 +334,16 @@ const NowSection = () => {
         <span
           className={[
             'h-2 w-2 rounded-full',
-            connected ? 'bg-success' : 'bg-primary/30',
+            dispatch.paused ? 'bg-warn' : connected ? 'bg-success' : 'bg-primary/30',
           ].join(' ')}
           aria-hidden="true"
         />
         <span className="font-mono text-label text-foreground/70">
-          {connected ? 'Live' : 'Connecting…'}
+          {dispatch.paused
+            ? `⏸ Paused · ${pauseReasonLabel(dispatch)}`
+            : connected
+              ? 'Live'
+              : 'Connecting…'}
         </span>
       </div>
 

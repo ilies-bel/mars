@@ -53,12 +53,30 @@ mock.module('@/entities/frameworkUpdate/useFrameworkUpdate', () => ({
   useFrameworkUpdate: () => ({ update: null, error: null, isPending: false }),
 }))
 
-// The header's health indicator reads dispatch state. Default to running so the
-// existing header assertions describe a normal system; the paused case is
-// covered directly in TopStripe.test.tsx.
+// The header's health indicator reads dispatch state. mock.fn allows per-test
+// overrides via mockImplementation, defaulting to running so the existing
+// header assertions describe a normal system.
+const mockUseDispatchState = mock(() => ({
+  paused: false,
+  reason: null as string | null,
+  since: null as string | null,
+  detail: null as string | null,
+}))
+
+// Mirrors the real label map rather than returning a constant, so the paused
+// assertions below pin the reason the operator actually sees.
 mock.module('@/entities/operator/useDispatchState', () => ({
-  useDispatchState: () => ({ paused: false, reason: null, since: null, detail: null }),
-  pauseReasonLabel: () => 'paused',
+  useDispatchState: mockUseDispatchState,
+  pauseReasonLabel: (state: { reason: string | null }) =>
+    state.reason === 'storm'
+      ? 'signature storm'
+      : state.reason === 'quota'
+        ? 'provider quota'
+        : state.reason === 'baseline'
+          ? 'broken baseline'
+          : state.reason === 'operator'
+            ? 'paused by you'
+            : 'paused',
 }))
 
 const { ProgressPage } = await import('./ProgressPage')
@@ -129,6 +147,43 @@ describe('ProgressPage – SSE connection indicator', () => {
         ]),
       )
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Dispatch-paused indicator: the header stat bar must never claim "live"
+// while the orchestrator's dispatch loop is suspended, even though the SSE
+// bus itself is connected — a paused dispatcher isn't dispatching.
+// ---------------------------------------------------------------------------
+
+describe('ProgressPage – dispatch-paused indicator', () => {
+  it('does not render the "live" label when dispatch is paused', () => {
+    // SSE stays connected (connected: true) — only dispatch is paused — so
+    // this pins that the two signals are independent: a paused dispatcher
+    // must win over a live SSE connection.
+    mockUseDispatchState.mockImplementation(() => ({
+      paused: true,
+      reason: 'storm',
+      since: '2026-08-19T00:00:00.000Z',
+      detail: 'signature storm x3',
+    }))
+    try {
+      const html = renderToStaticMarkup(<ProgressPage />)
+      expect(html).not.toContain('>live<')
+      expect(html).toContain('signature storm')
+    } finally {
+      mockUseDispatchState.mockImplementation(() => ({
+        paused: false,
+        reason: null,
+        since: null,
+        detail: null,
+      }))
+    }
+  })
+
+  it('renders the "live" label when dispatch is running', () => {
+    const html = renderToStaticMarkup(<ProgressPage />)
+    expect(html).toContain('>live<')
   })
 })
 
