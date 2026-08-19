@@ -16,24 +16,43 @@ interface Props {
    * pause, so the pause has to win the indicator.
    */
   dispatch: DispatchPauseState
+  /**
+   * True when the daemon itself is not running. Outranks both of the above:
+   * the SSE socket is served by the mars-ui server, so it stays happily
+   * "connected" to a dead daemon, and dispatch state can only be read FROM the
+   * daemon — so with the daemon down this header would otherwise show a
+   * pulsing green "live" directly under a banner saying it is unreachable.
+   */
+  daemonDown: boolean
 }
 
 /**
- * Health indicator: dispatch state first, then socket state.
+ * Health indicator: daemon reachability, then dispatch state, then socket state.
  *
- * Ordered by what invalidates more of the screen. A pause makes every counter
- * meaningless; a dropped socket only makes them stale.
+ * Ordered by what invalidates more of the screen. A dead daemon makes every
+ * counter fictional; a pause makes them meaningless; a dropped socket only
+ * makes them stale.
  */
-const HealthDot = ({ connected, dispatch }: Pick<Props, 'connected' | 'dispatch'>) => {
-  const { tone, label, title } = dispatch.paused
+const HealthDot = ({
+  connected,
+  dispatch,
+  daemonDown,
+}: Pick<Props, 'connected' | 'dispatch' | 'daemonDown'>) => {
+  const { tone, label, title } = daemonDown
     ? {
-        tone: 'bg-warning',
-        label: `paused · ${pauseReasonLabel(dispatch)}`,
-        title: dispatch.detail ?? 'Dispatch is paused — no new work is being dispatched.',
+        tone: 'bg-error',
+        label: 'daemon down',
+        title: 'The Mars daemon is not running — these counts are not current.',
       }
-    : connected
-      ? { tone: 'bg-success animate-mars-pulse', label: 'live', title: 'Dispatch is running.' }
-      : { tone: 'bg-muted-foreground', label: 'offline', title: 'Lost the event stream.' }
+    : dispatch.paused
+      ? {
+          tone: 'bg-warning',
+          label: `paused · ${pauseReasonLabel(dispatch)}`,
+          title: dispatch.detail ?? 'Dispatch is paused — no new work is being dispatched.',
+        }
+      : connected
+        ? { tone: 'bg-success animate-mars-pulse', label: 'live', title: 'Dispatch is running.' }
+        : { tone: 'bg-muted-foreground', label: 'offline', title: 'Lost the event stream.' }
 
   return (
     <a
@@ -48,7 +67,14 @@ const HealthDot = ({ connected, dispatch }: Pick<Props, 'connected' | 'dispatch'
   )
 }
 
-export const TopStripe = ({ inProgress, failed, doneToday, connected, dispatch }: Props) => (
+export const TopStripe = ({
+  inProgress,
+  failed,
+  doneToday,
+  connected,
+  dispatch,
+  daemonDown,
+}: Props) => (
   <header className="flex h-12 items-center justify-between border-b border-border bg-background px-6">
     <div className="flex items-center gap-3">
       <h1 className="text-title font-semibold text-foreground">Tasks</h1>
@@ -87,7 +113,7 @@ export const TopStripe = ({ inProgress, failed, doneToday, connected, dispatch }
           <span className="text-micro text-muted-foreground">FAILED</span>
         </div>
       </div>
-      <HealthDot connected={connected} dispatch={dispatch} />
+      <HealthDot connected={connected} dispatch={dispatch} daemonDown={daemonDown} />
     </div>
   </header>
 )

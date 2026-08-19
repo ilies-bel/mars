@@ -9,6 +9,11 @@
  * The count refreshes automatically whenever the React Query cache entry for
  * 'action-queue' is invalidated by the view-stream SSE channel — no separate
  * poll needed.
+ *
+ * The chip carries the word "parked", not just the glyph and the number. As
+ * `◎ 1` it was unreadable: an unlabelled count in the corner of the top bar
+ * tells you something is being counted but not what, and the aria-label that
+ * explained it was only reachable by screen readers.
  */
 
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
@@ -31,7 +36,7 @@ export const LiveParkedChip = () => {
         color: 'var(--color-amber, #f59e0b)',
       }}
     >
-      ◎&nbsp;{count}
+      ◎&nbsp;{count} parked
     </a>
   )
 }

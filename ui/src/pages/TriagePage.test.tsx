@@ -40,8 +40,28 @@ vi.mock('@/entities/alerts/api', () => ({
 }))
 
 const mockFocusedProjectId = vi.fn<[], string | null>().mockReturnValue(null)
+const mockDaemonHealth = vi
+  .fn<[], 'live' | 'degraded' | 'down'>()
+  .mockReturnValue('live')
+
 vi.mock('@/shared/useFocusedProject', () => ({
   useFocusedProjectId: () => mockFocusedProjectId(),
+  // TriagePage reads the focused project's probed health to decide whether an
+  // empty queue means "nothing to do" or "the daemon can't answer".
+  useFocusedProject: () => ({
+    projects: [
+      {
+        projectId: 'p_test',
+        repoRoot: '/repo',
+        name: 'repo',
+        health: mockDaemonHealth(),
+      },
+    ],
+    focusedProjectId: 'p_test',
+    setFocusedProjectId: () => {},
+    projectsSettled: true,
+    projectsError: null,
+  }),
 }))
 
 const mockItems = vi.fn<[], ActionQueueItem[]>().mockReturnValue([])

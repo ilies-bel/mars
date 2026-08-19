@@ -5,6 +5,7 @@ import type { RenderedRow } from '@/entities/actionQueue/clusterRows'
 import { resolvePageRoute } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
 import { deriveBreadcrumbs } from './Breadcrumbs'
+import { DaemonDownBanner } from './DaemonDownBanner'
 import { DispatchPausedChip } from './DispatchPausedChip'
 import { LiveParkedChip } from './LiveParkedChip'
 import { ProjectSelector } from './ProjectSelector'
@@ -287,7 +288,13 @@ export const Shell = ({ hash, children }: ShellProps) => {
     <div className="grid min-h-0 flex-1 grid-cols-[200px_1fr] grid-rows-[40px_1fr]">
       <ShellTopbar hash={hash} />
       <ShellSidebar activeRoute={activeRoute} decisionBadge={decisionBadge} badgeAriaLabel={badgeAriaLabel} />
-      <div className="min-h-0 overflow-hidden">{children}</div>
+      {/* The banner sits above the page content rather than above the topbar so
+          it reads as a statement about what is on screen: everything under it
+          is stale. It renders nothing while the daemon is healthy. */}
+      <div className="flex min-h-0 flex-col overflow-hidden">
+        <DaemonDownBanner />
+        <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+      </div>
     </div>
   )
 }

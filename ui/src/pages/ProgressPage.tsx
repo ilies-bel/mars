@@ -15,6 +15,7 @@ import { TabStrip } from '@/widgets/TabStrip'
 import { TopologyView } from '@/widgets/TopologyView'
 import { TopStripe } from '@/widgets/TopStripe'
 import { useDispatchState } from '@/entities/operator/useDispatchState'
+import { useDaemonHealth } from '@/entities/daemon/useDaemonHealth'
 
 export const ProgressPage = () => {
   // Initialise query and proposal filter dimensions from the URL on first render.
@@ -88,6 +89,7 @@ export const ProgressPage = () => {
   }, [activeTab, searchQuery, selectedProposalId])
 
   const dispatch = useDispatchState()
+  const { isDown: daemonDown } = useDaemonHealth()
   const inProgressCount = byCluster['In progress'].length
   // Use server-side aggregate counts so done/failed are accurate even though
   // terminal task rows are excluded from the progress graph projection.
@@ -103,6 +105,7 @@ export const ProgressPage = () => {
           failed={failedCount}
           connected={connected}
           dispatch={dispatch}
+          daemonDown={daemonDown}
         />
         <TabStrip active={activeTab} onSelect={setActiveTab} />
         {/* Text search — always visible */}

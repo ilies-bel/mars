@@ -18,7 +18,9 @@
  * and must not change what the badge reports, or the header count and the
  * sidebar count would drift apart whenever a kind clusters.
  *
- * Empty state: "All quiet — N running, N done today".
+ * Empty state: "All quiet — N running, N done today". Shown ONLY when the
+ * daemon actually answered and had nothing to report; when it is unreachable
+ * the page says so instead (see UnreachableState).
  */
 
 import { useState, useCallback } from 'react'
@@ -27,6 +29,9 @@ import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { sortItems, buildRenderedRows, countNeedsYou } from '@/entities/actionQueue/clusterRows'
 import { useProgress } from '@/hooks/useProgress'
 import { useProposals } from '@/entities/proposals/useProposals'
+import { useDaemonHealth } from '@/entities/daemon/useDaemonHealth'
+import { DAEMON_DOWN_MESSAGE } from '@/widgets/DaemonDownBanner'
+import { describeFeedFailure } from '@/shared/feedFailure'
 import { postDecision } from '@/shared/api'
 import { relativeTime } from '@/shared/time'
 import { dispatchAlertVerb, resolveThreadForItem } from '@/widgets/chat/alertVerbs'
@@ -516,24 +521,41 @@ const TriageRow = ({ item }: TriageRowProps) => {
 
 interface FeedErrorCardProps {
   label: string
+  error: Error
 }
 
 /**
  * Inline error card shown when a single data feed fails to load.
  * Keeps the rest of the triage page visible — a single failed feed
  * must never blank the whole view.
+ *
+ * The wording comes from `describeFeedFailure` so the card names the actual
+ * failure and the exact command that fixes it, rather than the old catch-all
+ * "try refreshing or restarting the daemon" (which was wrong advice whenever
+ * the daemon was simply not running).
  */
-const FeedErrorCard = ({ label }: FeedErrorCardProps) => (
-  <div
-    className="mars-card border-l-2 border-l-error px-4 py-3"
-    data-testid={`triage-feed-error-${label.replace(/\s+/g, '-')}`}
-    role="alert"
-  >
-    <p className="font-mono text-label text-error">
-      Failed to load {label} — try refreshing or restarting the daemon
-    </p>
-  </div>
-)
+const FeedErrorCard = ({ label, error }: FeedErrorCardProps) => {
+  const { message, remedy } = describeFeedFailure(error, label)
+  return (
+    <div
+      className="mars-card border-l-2 border-l-error px-4 py-3"
+      data-testid={`triage-feed-error-${label.replace(/\s+/g, '-')}`}
+      role="alert"
+    >
+      <p className="font-mono text-label text-error">
+        {message} — {label} is unavailable
+      </p>
+      {remedy && (
+        <p className="mt-1 font-mono text-micro text-muted-foreground">
+          Fix it with{' '}
+          <code className="rounded bg-error/10 px-1 py-0.5 text-error">
+            {remedy}
+          </code>
+        </p>
+      )}
+    </div>
+  )
+}
 
 // ── EmptyState ────────────────────────────────────────────────────────────────
 
@@ -541,6 +563,36 @@ interface EmptyStateProps {
   running: number
   doneToday: number
 }
+
+/**
+ * Shown when the daemon is not running.
+ *
+ * An empty action queue and an action queue that could not be read look
+ * identical once the error is dropped, and the old page rendered "All quiet —
+ * nothing running" for both. Over a dead daemon that is the most misleading
+ * thing this page could say: the operator's whole picture is missing at exactly
+ * the moment it reassures them.
+ */
+const UnreachableState = () => (
+  <div
+    className="flex flex-col items-center justify-center py-24 text-center"
+    data-testid="triage-unreachable"
+    role="alert"
+  >
+    <span className="mb-3 text-4xl text-error opacity-40" aria-hidden="true">
+      ⃠
+    </span>
+    <p className="mb-1 text-title font-medium text-foreground">
+      {DAEMON_DOWN_MESSAGE}
+    </p>
+    <p className="font-mono text-label text-muted-foreground">
+      Nothing here is current. Start it with{' '}
+      <code className="rounded bg-error/10 px-1 py-0.5 text-error">
+        mars daemon start
+      </code>
+    </p>
+  </div>
+)
 
 const EmptyState = ({ running, doneToday }: EmptyStateProps) => (
   <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -563,6 +615,7 @@ const EmptyState = ({ running, doneToday }: EmptyStateProps) => (
 
 export const TriagePage = () => {
   const { items, error: queueError } = useActionQueue()
+  const { isDown } = useDaemonHealth()
   const { byCluster, aggregates } = useProgress()
   // Proposals is a third independent feed. Its error is surfaced as an inline
   // card so a schema-validation failure or network blip never blanks the page.
@@ -578,6 +631,12 @@ export const TriagePage = () => {
   // Only show the empty state when every feed succeeded AND there is genuinely
   // nothing to act on. A feed error is itself something to surface, so the
   // empty state must never hide it.
+  //
+  // `isDown` is checked independently of the feed errors because it is a
+  // positive signal (see useDaemonHealth): /api/projects succeeds and reports
+  // the daemon as down. Relying on the feed errors alone left a window where
+  // the queries had not yet settled into an error state and the page cheerfully
+  // announced "All quiet".
   const hasAnyError = queueError !== null || proposalsError !== null
   const hasContent = renderedRows.length > 0 || hasAnyError
 
@@ -606,13 +665,15 @@ export const TriagePage = () => {
 
       {/* Ranked list */}
       <div className="flex-1 overflow-y-auto">
-        {!hasContent ? (
+        {isDown && renderedRows.length === 0 ? (
+          <UnreachableState />
+        ) : !hasContent ? (
           <EmptyState running={running} doneToday={doneToday} />
         ) : (
           <div className="flex flex-col gap-2 p-4">
             {/* Inline error cards — one per failing feed, never blanking the page */}
-            {queueError && <FeedErrorCard label="action queue" />}
-            {proposalsError && <FeedErrorCard label="proposals" />}
+            {queueError && <FeedErrorCard label="action queue" error={queueError} />}
+            {proposalsError && <FeedErrorCard label="proposals" error={proposalsError} />}
             {renderedRows.map((row) =>
               row.type === 'cluster' ? (
                 <TriageClusterRow
