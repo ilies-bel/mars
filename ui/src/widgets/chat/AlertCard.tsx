@@ -78,9 +78,11 @@ const verifyTail = (text: string | undefined, n = 3): string | undefined => {
 // Snooze helpers
 // ---------------------------------------------------------------------------
 
-/** Compute a human-readable "reappears in X" string for an ISO snoozeUntil. */
-const reappearsIn = (snoozeUntilIso: string): string => {
-  const ms = new Date(snoozeUntilIso).getTime() - Date.now()
+/**
+ * Compute a human-readable "reappears in X" string for an epoch-ms snoozeUntil.
+ */
+const reappearsIn = (snoozeUntilMs: number): string => {
+  const ms = snoozeUntilMs - Date.now()
   if (ms <= 0) return 'soon'
   const h = Math.floor(ms / 3_600_000)
   const m = Math.floor((ms % 3_600_000) / 60_000)
@@ -119,8 +121,12 @@ export interface AlertCardProps {
   verbs: AlertVerb[]
   /** True once the underlying item is resolved/superseded. */
   resolved?: boolean
-  /** ISO timestamp of snooze expiry — when set the card starts in snoozed state. */
-  snoozeUntil?: string
+  /**
+   * Epoch-millisecond timestamp of snooze expiry — when set to a future
+   * instant the card starts in snoozed state. Epoch-ms, not an ISO string,
+   * to match the store's `ActionQueueItem.snoozedUntil` encoding.
+   */
+  snoozeUntil?: number
   /**
    * The task's main goal / prompt excerpt — "what it was trying to achieve".
    * When present it becomes the PRIMARY headline and the humanSummary is
@@ -311,7 +317,7 @@ export const AlertCard = ({
   const [actionError, setActionError] = useState<string | null>(null)
   const [resolvedOp, setResolvedOp] = useState<string | null>(null)
   const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false)
-  const [snoozedUntil, setSnoozedUntil] = useState<string | null>(
+  const [snoozedUntil, setSnoozedUntil] = useState<number | null>(
     initialSnoozeUntil ?? null,
   )
   const [teachPrompt, setTeachPrompt] = useState<{
@@ -321,7 +327,7 @@ export const AlertCard = ({
   const [teachPending, setTeachPending] = useState(false)
   const [bulkPending, setBulkPending] = useState(false)
 
-  const isSnoozed = snoozedUntil !== null && new Date(snoozedUntil) > new Date()
+  const isSnoozed = snoozedUntil !== null && snoozedUntil > Date.now()
 
   // Derive cause from detail when goal is present (task failure card).
   const cause = goal ? deriveCause(detail) : undefined
@@ -360,7 +366,7 @@ export const AlertCard = ({
         'tomorrow-morning': msUntilTomorrowMorning(now),
         'next-week': msUntilNextWeekMonday(now),
       }
-      setSnoozedUntil(new Date(now + durations[preset]).toISOString())
+      setSnoozedUntil(now + durations[preset])
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
     } finally {

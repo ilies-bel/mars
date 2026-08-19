@@ -411,8 +411,13 @@ const actionQueueBaseSchema = z.object({
    * Falls back to empty for daemon versions predating recipe fields.
    */
   verbs: z.array(alertVerbSchema).optional().default([]),
-  /** ISO timestamp until which this row is snoozed. Absent when not snoozed. */
-  snoozeUntil: z.string().optional(),
+  /**
+   * Epoch-millisecond timestamp until which this row is snoozed. Absent when
+   * not snoozed. Matches the store's `ActionQueueItem.snoozedUntil` encoding
+   * (`action_queue_items.snoozed_until` is a bigint of epoch-ms, not an ISO
+   * string) — see orchestrator/src/core/lib/timestamp-encodings.ts.
+   */
+  snoozeUntil: z.number().optional(),
   /**
    * Server-defined decision buttons. Each entry maps to exactly one button on
    * the AlertCard — no client-side switch on failure kind required.
@@ -1150,8 +1155,13 @@ export const chatSegmentAlertSchema = z.object({
    * Falls back to empty for daemon messages that predate recipe fields.
    */
   verbs: z.array(alertVerbSchema).optional().default([]),
-  /** ISO timestamp until which this alert is snoozed. Absent when not snoozed. */
-  snoozeUntil: z.string().optional(),
+  /**
+   * Epoch-millisecond timestamp until which this alert is snoozed. Absent when
+   * not snoozed. Matches the store's `ActionQueueItem.snoozedUntil` encoding
+   * (`action_queue_items.snoozed_until` is a bigint of epoch-ms, not an ISO
+   * string) — see orchestrator/src/core/lib/timestamp-encodings.ts.
+   */
+  snoozeUntil: z.number().optional(),
   /**
    * Legacy title field — kept optional so old daemon messages still parse.
    * UI code should prefer humanSummary; use title as the fallback.

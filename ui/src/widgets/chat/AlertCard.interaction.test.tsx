@@ -125,7 +125,7 @@ describe('AlertCard – snooze interaction flow', () => {
   })
 
   it('clicking Restore calls restoreSnoozedItem and brings back the normal card', async () => {
-    const future = new Date(Date.now() + 3_600_000).toISOString()
+    const future = Date.now() + 3_600_000
     const { container } = renderCard({ snoozeUntil: future })
 
     // Should start snoozed

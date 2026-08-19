@@ -103,7 +103,7 @@ describe('AlertCard – no Discuss button', () => {
   })
 
   it('does not render Discuss on snoozed card', () => {
-    const future = new Date(Date.now() + 3_600_000).toISOString()
+    const future = Date.now() + 3_600_000
     const html = render({ snoozeUntil: future })
     expect(html).not.toContain('Discuss')
   })
@@ -196,33 +196,33 @@ describe('AlertCard – resolved state', () => {
 
 describe('AlertCard – snoozed state', () => {
   it('renders the snoozed card when snoozeUntil is in the future', () => {
-    const future = new Date(Date.now() + 3_600_000).toISOString()
+    const future = Date.now() + 3_600_000
     const html = render({ snoozeUntil: future })
     expect(html).toContain('data-testid="alert-card-snoozed"')
   })
 
   it('shows "reappears in" text on snoozed card', () => {
-    const future = new Date(Date.now() + 3_600_000).toISOString()
+    const future = Date.now() + 3_600_000
     const html = render({ snoozeUntil: future })
     expect(html).toContain('reappears in')
   })
 
   it('renders the Restore button on snoozed card', () => {
-    const future = new Date(Date.now() + 3_600_000).toISOString()
+    const future = Date.now() + 3_600_000
     const html = render({ snoozeUntil: future })
     expect(html).toContain('data-testid="alert-card-restore"')
     expect(html).toContain('Restore')
   })
 
   it('does not render verb buttons on snoozed card', () => {
-    const future = new Date(Date.now() + 3_600_000).toISOString()
+    const future = Date.now() + 3_600_000
     const html = render({ snoozeUntil: future, verbs: VERBS })
     expect(html).not.toContain('Restart')
     expect(html).not.toContain('Dismiss')
   })
 
   it('renders normal card when snoozeUntil is in the past', () => {
-    const past = new Date(Date.now() - 1000).toISOString()
+    const past = Date.now() - 1000
     const html = render({ snoozeUntil: past })
     // snoozeUntil expired → render normal card
     expect(html).not.toContain('data-testid="alert-card-snoozed"')
