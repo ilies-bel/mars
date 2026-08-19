@@ -49,6 +49,7 @@ import {
   archiveSubthread,
   unarchiveSubthread,
   deleteSubthread,
+  startThreadForQueueItem,
   setThreadStatus,
   appendMessage,
 } from '../lib/chat-store'
@@ -2708,6 +2709,53 @@ export const startHttpServer = async (
             if (run.alreadyRunning) throw new Error('new Subthread unexpectedly has an active run')
             deps.viewStreamHub?.broadcast('chat')
             sendJson(res, 202, toThreadApiView(thread))
+          })
+          .catch((err: unknown) => sendError(res, err))
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
+    }
+
+    // POST /chat/threads/from-queue-item — open the thread for an action-queue
+    // row, seeded with a proactive opener. Deduped on the row id, so a repeat
+    // click reuses the conversation instead of minting another one.
+    if (req.method === 'POST' && req.url === '/chat/threads/from-queue-item') {
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let parsed: unknown = {}
+        try {
+          parsed = rawBody.trim().length > 0 ? JSON.parse(rawBody) : {}
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+          return
+        }
+        const schema = z.object({
+          itemId: z.string().min(1),
+          title: z.string(),
+          seed: z.string().min(1),
+        })
+        const result = schema.safeParse(parsed)
+        if (!result.success) {
+          sendJson(res, 400, {
+            ok: false,
+            error: 'body must be { itemId: string, title: string, seed: string }',
+          })
+          return
+        }
+        deps.appServices
+          .buildSituationReport()
+          .then((situation) =>
+            startThreadForQueueItem(
+              result.data.itemId,
+              result.data.title,
+              result.data.seed,
+              situation,
+            ),
+          )
+          .then((thread) => {
+            deps.viewStreamHub?.broadcast('chat')
+            sendJson(res, 200, toThreadApiView(thread))
           })
           .catch((err: unknown) => sendError(res, err))
       })

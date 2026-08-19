@@ -26,12 +26,16 @@ const mockInvokeAction = vi.fn().mockResolvedValue(undefined)
 const mockPostDecision = vi.fn<[], Promise<Response>>().mockResolvedValue(
   new Response(null, { status: 200 }),
 )
-const mockCreateChatThread = vi.fn().mockResolvedValue({ id: 'new-thread-id' })
+// Non-task-failure rows now go through startThreadForQueueItem, which dedups
+// on the row id and seeds the thread with a proactive opener. The generic
+// createChatThread it used to call knew nothing about the row: it minted a new
+// thread per click and opened it blank.
+const mockStartThreadForQueueItem = vi.fn().mockResolvedValue({ id: 'new-thread-id' })
 
 vi.mock('@/shared/api', () => ({
   invokeAction: (...args: unknown[]) => mockInvokeAction(...args),
   postDecision: (...args: unknown[]) => mockPostDecision(...args),
-  createChatThread: (...args: unknown[]) => mockCreateChatThread(...args),
+  startThreadForQueueItem: (...args: unknown[]) => mockStartThreadForQueueItem(...args),
 }))
 
 const mockStartThreadFromAlert = vi.fn().mockResolvedValue({ threadId: 'alert-thread-id' })
@@ -549,45 +553,48 @@ describe('TriageRow – Chat control opens a thread and navigates', () => {
       btn.click()
     })
     expect(mockStartThreadFromAlert).toHaveBeenCalledWith('arc-xyz')
-    expect(mockCreateChatThread).not.toHaveBeenCalled()
+    expect(mockStartThreadForQueueItem).not.toHaveBeenCalled()
     expect(window.location.hash).toBe('#/chat?thread=alert-thread-id')
   })
 
-  it('non-task-failure row: calls createChatThread seeded from the row, navigates to #/chat?thread=<id>', async () => {
+  it('non-task-failure row: opens the row-keyed thread with a seeded opener', async () => {
     mockItems.mockReturnValue([
       makeItem('stale-worktree', { entityId: 'task-stale', humanSummary: 'Deploy step broke' }),
     ])
-    mockCreateChatThread.mockResolvedValueOnce({ id: 'new-thread-id' })
+    mockStartThreadForQueueItem.mockResolvedValueOnce({ id: 'new-thread-id' })
     const { container } = renderPage()
     const btn = container.querySelector('[data-testid="triage-chat"]') as HTMLButtonElement
     await act(async () => {
       btn.click()
     })
     expect(mockStartThreadFromAlert).not.toHaveBeenCalled()
-    expect(mockCreateChatThread).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'Deploy step broke', origin: 'stale-worktree' }),
-    )
+    // Keyed on the row id (so a second click reuses the thread) and carrying a
+    // non-empty seed message.
+    const [itemId, title, seed] = mockStartThreadForQueueItem.mock.calls[0] as string[]
+    expect(itemId).toBeTruthy()
+    expect(title).toBe('Deploy step broke')
+    expect(seed).toContain('Deploy step broke')
     expect(window.location.hash).toBe('#/chat?thread=new-thread-id')
   })
 
   it('preserves the focused project id in the navigation hash', async () => {
     mockFocusedProjectId.mockReturnValue('proj-1')
     mockItems.mockReturnValue([makeItem('stale-worktree')])
-    mockCreateChatThread.mockResolvedValueOnce({ id: 'new-thread-id' })
+    mockStartThreadForQueueItem.mockResolvedValueOnce({ id: 'new-thread-id' })
     const { container } = renderPage()
     const btn = container.querySelector('[data-testid="triage-chat"]') as HTMLButtonElement
     await act(async () => {
       btn.click()
     })
-    expect(mockCreateChatThread).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: 'proj-1' }),
+    expect(mockStartThreadForQueueItem).toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), expect.anything(), 'proj-1',
     )
     expect(window.location.hash).toBe('#/chat?thread=new-thread-id&project=proj-1')
   })
 
   it('shows error feedback when thread resolution fails', async () => {
     mockItems.mockReturnValue([makeItem('stale-worktree')])
-    mockCreateChatThread.mockRejectedValueOnce(new Error('Daemon unreachable'))
+    mockStartThreadForQueueItem.mockRejectedValueOnce(new Error('Daemon unreachable'))
     const { container } = renderPage()
     const btn = container.querySelector('[data-testid="triage-chat"]') as HTMLButtonElement
     await act(async () => {
@@ -615,7 +622,7 @@ describe('TriageRow – Chat control opens a thread and navigates', () => {
       btn.click()
     })
     expect(mockStartThreadFromAlert).toHaveBeenCalledWith('mars-origin1')
-    expect(mockCreateChatThread).not.toHaveBeenCalled()
+    expect(mockStartThreadForQueueItem).not.toHaveBeenCalled()
     expect(window.location.hash).toBe('#/chat?thread=origin-thread-id')
   })
 
@@ -632,7 +639,7 @@ describe('TriageRow – Chat control opens a thread and navigates', () => {
       btn.click()
     })
     expect(mockStartThreadFromAlert).toHaveBeenCalledWith('mars-origin1')
-    expect(mockCreateChatThread).not.toHaveBeenCalled()
+    expect(mockStartThreadForQueueItem).not.toHaveBeenCalled()
     expect(window.location.hash).toBe('#/chat?thread=origin-thread-id')
   })
 

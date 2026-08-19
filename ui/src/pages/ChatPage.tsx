@@ -83,7 +83,7 @@ import { ChatHero, type HeroDelta } from '@/widgets/chat/ChatHero'
 import { priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
 import { PROCESS_LEVEL_OPS, QueueThreadDetail } from '@/widgets/chat/QueueThreadDetail'
 import { SidebarFilters, type SidebarFiltersValue } from '@/widgets/chat/SidebarFilters'
-import { MainThreadRow } from '@/widgets/chat/MainThreadRow'
+import { AlertsRail } from '@/widgets/chat/AlertsRail'
 import {
   filterSidebarThreads,
   formatRelative,
@@ -2508,8 +2508,12 @@ interface ThreadSidebarProps {
   onForkFilterChange?: (filter: ForkFilter) => void
   selectedItem: ActionQueueItem | null
   onFastAction: (action: 'restart') => void
-  /** Return the reading pane to the main thread. */
-  onSelectMainThread: () => void
+  /** Open (or reuse) the thread for an alert and show it in the reading pane. */
+  onOpenAlert: (item: ActionQueueItem) => void
+  /** The alert whose thread the reading pane is showing, if any. */
+  openAlertItemId?: string | null
+  /** The alert whose thread is currently being resolved. */
+  pendingAlertItemId?: string | null
 }
 
 export const ThreadSidebar = ({
@@ -2522,7 +2526,9 @@ export const ThreadSidebar = ({
   onForkFilterChange = () => {},
   selectedItem,
   onFastAction,
-  onSelectMainThread,
+  onOpenAlert,
+  openAlertItemId = null,
+  pendingAlertItemId = null,
 }: ThreadSidebarProps) => {
   const qc = useQueryClient()
   const hasForkFilter = Boolean(forkFilter.parentThreadId || forkFilter.hasParent)
@@ -2531,15 +2537,6 @@ export const ThreadSidebar = ({
     queryKey: hasForkFilter ? ['chat-threads', projectId, forkFilter] : ['chat-threads', projectId],
     queryFn: () => hasForkFilter ? fetchChatThreads(projectId, forkFilter) : fetchChatThreads(projectId),
   })
-
-  // Total subthread count across the transcript (open + closed), used to
-  // disambiguate the rail label when closed subthreads exist but are not listed.
-  // React Query deduplicates this with the main ChatPage chat-conversation fetch.
-  const { data: conversationData } = useQuery({
-    queryKey: ['chat-conversation', projectId],
-    queryFn: () => fetchChatConversation(projectId),
-  })
-  const totalSubthreadCount = conversationData?.boundaries.length
 
   const { mutate: create } = useMutation({
     mutationFn: () => createChatThread({ projectId }),
@@ -2560,7 +2557,9 @@ export const ThreadSidebar = ({
     onSuccess: (_data, id) => {
       // Deleting the open thread would otherwise leave the pane pointed at a
       // thread that no longer exists.
-      if (id === selectedId) onSelectMainThread()
+      // Clear the pane rather than leave it pointed at a deleted thread.
+      // `handleSelectThread` maps an empty id to "nothing selected".
+      if (id === selectedId) onSelect('')
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
       void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
     },
@@ -2591,16 +2590,13 @@ export const ThreadSidebar = ({
           + New thread
         </button>
       </div>
-      {/* Pinned OUTSIDE the scroll region: the main thread must stay visible
-          however many subthreads pile up below it. */}
-      <div className="px-2 pt-2">
-        <MainThreadRow
-          isSelected={selectedId === null}
-          onSelect={onSelectMainThread}
-          subthreadCount={liveThreads.length}
-          totalSubthreadCount={totalSubthreadCount}
-        />
-      </div>
+      {/* Pinned OUTSIDE the scroll region: what needs the operator must stay
+          visible however many threads pile up below it. */}
+      <AlertsRail
+        onOpen={onOpenAlert}
+        openItemId={openAlertItemId}
+        pendingItemId={pendingAlertItemId}
+      />
       <SidebarFilters
         value={{ ...filters, selectedItem } satisfies SidebarFiltersValue}
         onChange={({ selectedItem: _selectedItem, ...nextFilters }) => onFiltersChange(nextFilters)}
@@ -3097,14 +3093,26 @@ export const ChatPage = () => {
     void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
   }, [activeSubthreadId, selectedThreadId, qc])
 
-  // Returning to the main thread clears every pinned selection — the seeded
-  // feed is what renders when nothing else is claiming the reading pane.
-  const handleSelectMainThread = useCallback(() => {
-    setSelectedThreadId(null)
-    setActiveSubthreadId(null)
-    setSelectedQueueItemId(null)
-    setWhatHappenedActive(false)
-  }, [])
+  // Which alert's thread is being resolved right now. Creating a thread is a
+  // round-trip, so the rail marks the row rather than appearing to ignore the
+  // click.
+  const [pendingAlertItemId, setPendingAlertItemId] = useState<string | null>(null)
+
+  // Opening an alert from the rail: resolve its thread (reusing the existing
+  // one when the arc already has it — see resolveThreadForItem) and show it.
+  const handleOpenAlert = useCallback(async (item: ActionQueueItem) => {
+    setPendingAlertItemId(item.id)
+    try {
+      const threadId = await resolveThreadForItem(item, projectId, qc)
+      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+      setActiveSubthreadId(null)
+      setSelectedQueueItemId(null)
+      setWhatHappenedActive(false)
+      setSelectedThreadId(threadId)
+    } finally {
+      setPendingAlertItemId(null)
+    }
+  }, [projectId, qc])
 
 
   const handleOpenSubthread = useCallback(async (row: ActionQueueItem) => {
@@ -3165,7 +3173,9 @@ export const ChatPage = () => {
           onForkFilterChange={setForkFilter}
           selectedItem={selectedSidebarItem}
           onFastAction={restartSelectedThread}
-          onSelectMainThread={handleSelectMainThread}
+          onOpenAlert={handleOpenAlert}
+          openAlertItemId={selectedSidebarItem?.id ?? null}
+          pendingAlertItemId={pendingAlertItemId}
         />
       )}
 
@@ -3193,10 +3203,12 @@ export const ChatPage = () => {
               onForkFilterChange={setForkFilter}
               selectedItem={selectedSidebarItem}
               onFastAction={restartSelectedThread}
-              onSelectMainThread={() => {
-                handleSelectMainThread()
+              onOpenAlert={(item) => {
+                void handleOpenAlert(item)
                 setSidebarOpen(false)
               }}
+              openAlertItemId={selectedSidebarItem?.id ?? null}
+              pendingAlertItemId={pendingAlertItemId}
             />
           </div>
         </>

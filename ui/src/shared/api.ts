@@ -1080,6 +1080,32 @@ export const renameChatThread = async (
 }
 
 /**
+ * Open (or reuse) the chat thread for an action-queue row, seeded with a
+ * proactive opener. Deduped daemon-side on `itemId`, so a repeat click on the
+ * same row returns the same conversation.
+ */
+export const startThreadForQueueItem = async (
+  itemId: string,
+  title: string,
+  seed: string,
+  projectId?: string,
+): Promise<ChatThread> => {
+  const path = appendProject('/api/chat/threads/from-queue-item', projectId)
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ itemId, title, seed }),
+  })
+  if (!r.ok) await throwMutationError(path, r)
+  const raw = await r.json()
+  const result = chatThreadsResponseSchema.shape.threads.element.safeParse(raw)
+  if (!result.success) {
+    throw new Error(`POST ${path} → response failed schema validation: ${result.error.message}`)
+  }
+  return result.data
+}
+
+/**
  * Delete a Subthread and its messages. Irreversible — the caller is
  * responsible for confirming with the operator first.
  */

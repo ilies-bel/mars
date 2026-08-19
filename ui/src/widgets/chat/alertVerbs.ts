@@ -4,8 +4,9 @@
  */
 
 import type { QueryClient } from '@tanstack/react-query'
-import { invokeAction, createChatThread } from '@/shared/api'
+import { invokeAction, startThreadForQueueItem } from '@/shared/api'
 import { startThreadFromAlert } from '@/entities/alerts/api'
+import { buildQueueItemSeed } from './queueItemSeed'
 import { PROCESS_LEVEL_OPS } from './QueueThreadDetail'
 import type { AlertVerb, ActionQueueItem } from '@/shared/schemas'
 
@@ -67,9 +68,16 @@ export const dispatchAlertVerb = async (
  * `entityId` alone for a recovery-task row would look up the wrong (or a
  * nonexistent) arc and 404.
  *
- * Every other kind gets a fresh thread seeded with the row's own summary/title
- * and kind so it isn't blank and untitled; the caller's `chat-threads` query is
- * invalidated so a freshly created thread shows up in the sidebar immediately.
+ * Every other kind goes through `startThreadForQueueItem`, which dedups on the
+ * row id the same way the arc path dedups on the arc, and seeds the thread with
+ * a proactive opener stating the problem and the available moves. It previously
+ * called the generic `createChatThread`, which knew nothing about the row: each
+ * click minted a NEW thread for the same alert, and that thread opened empty —
+ * so the operator landed in a blank conversation about a problem it never
+ * stated, and clicking twice left two of them.
+ *
+ * The caller's `chat-threads` query is invalidated so a freshly created thread
+ * shows up in the sidebar immediately.
  */
 export const resolveThreadForItem = async (
   item: ActionQueueItem,
@@ -80,11 +88,12 @@ export const resolveThreadForItem = async (
     const result = await startThreadFromAlert(item.fixForTaskId ?? item.entityId)
     return result.threadId
   }
-  const thread = await createChatThread({
+  const thread = await startThreadForQueueItem(
+    item.id,
+    item.humanSummary || item.title,
+    buildQueueItemSeed(item),
     projectId,
-    title: item.humanSummary || item.title,
-    origin: item.kind,
-  })
+  )
   void qc.invalidateQueries({ queryKey: ['chat-threads'] })
   return thread.id
 }

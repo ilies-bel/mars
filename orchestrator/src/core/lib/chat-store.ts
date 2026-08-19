@@ -1136,6 +1136,86 @@ export const unarchiveSubthread = async (id: string): Promise<void> => {
 }
 
 /**
+ * Open the thread for an action-queue row, creating it on first click.
+ *
+ * The counterpart to {@link startThreadFromAlert} for every kind that is not a
+ * failed arc. Those kinds used to go through the generic `createThread`, which
+ * knows nothing about the row: each click minted a NEW thread for the same
+ * alert, and the thread arrived empty, so the operator landed in a blank
+ * conversation about a problem it never stated.
+ *
+ * Dedup is on `alert_item_id`, matching the arc path, so a second click on the
+ * same row returns the same conversation instead of another duplicate.
+ *
+ * `seedMessage` is the proactive opener: what is wrong and what to do about it.
+ * It is stored as an assistant message so the transcript reads as Mars raising
+ * the issue, which is what actually happened.
+ */
+export const startThreadForQueueItem = async (
+  itemId: string,
+  title: string,
+  seedMessage: string,
+  situationReport?: string,
+): Promise<ChatThread> => {
+  const existing = await findThreadByArc(itemId)
+  if (existing) return existing
+
+  const c = stateClient()
+  const threadId = randomUUID()
+  const ts = now()
+  await withTransaction(c, async (tx) => {
+    await tx.execute({
+      sql: `INSERT INTO chat_threads
+              (id, title, status, created_at, updated_at, origin, alert_item_id, alert_resolved)
+            VALUES (?, ?, 'idle', ?, ?, 'alert', ?, 0)`,
+      args: [threadId, title, ts, ts, itemId],
+    })
+    if (situationReport !== undefined) {
+      await tx.execute({
+        sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope, kind)
+              VALUES (?, ?, 'assistant', ?, ?, ?, 'main', 'situation')`,
+        args: [
+          randomUUID(),
+          threadId,
+          situationReport,
+          JSON.stringify([{ type: 'text', text: situationReport }]),
+          ts,
+        ],
+      })
+    }
+    await tx.execute({
+      sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, context_scope)
+            VALUES (?, ?, 'assistant', ?, ?, ?, 'subthread')`,
+      args: [
+        randomUUID(),
+        threadId,
+        seedMessage,
+        JSON.stringify([{ type: 'text', text: seedMessage }]),
+        ts,
+      ],
+    })
+  })
+
+  return {
+    id: threadId,
+    title,
+    status: 'idle',
+    posture: 'triage',
+    created_at: ts,
+    updated_at: ts,
+    origin: 'alert',
+    alert_item_id: itemId,
+    alert_resolved: false,
+    closed_at: null,
+    archived_at: null,
+    terminal_event_type: null,
+    terminal_entity_id: null,
+    parent_thread_id: null,
+    fork_idempotency_key: null,
+  }
+}
+
+/**
  * Delete a Subject and everything hanging off it.
  *
  * Archiving hides a Subject; this removes it. The rail accumulates threads

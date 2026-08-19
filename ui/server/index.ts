@@ -1253,6 +1253,15 @@ export const startServer = async (
           return jsonResponse(result.status, result.body)
         }
 
+        // POST /api/chat/threads/from-queue-item — open (or reuse) the thread
+        // for an action-queue row. Must precede the DELETE/:id matcher below.
+        if (path === '/api/chat/threads/from-queue-item' && req.method === 'POST') {
+          let body: unknown = {}
+          try { body = await req.json() } catch { /* daemon validates this */ }
+          const result = await proxyPost(ctx.stateDir, '/chat/threads/from-queue-item', body)
+          return jsonResponse(result.status, result.body)
+        }
+
         // DELETE /api/chat/threads/:id — remove a Subthread for good.
         if (path.startsWith('/api/chat/threads/') && req.method === 'DELETE') {
           const threadId = decodeURIComponent(path.slice('/api/chat/threads/'.length))
