@@ -197,6 +197,43 @@ describe('mars task check', () => {
     expect(result.code).toBe(1)
     expect(result.err.join('\n')).toContain('criterion index must be a positive integer')
   })
+
+  it('prints the numbered done-criteria list on a non-integer index', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const task = await createTask(store, { doneCriteria: ['do thing A', 'do thing B'] })
+    const fake = makeFakeDaemon()
+    const result = await runCommandInProcess(
+      ['task', 'check', task.id, 'foo'],
+      { store, ctx, daemon: fake },
+    )
+    expect(result.code).toBe(1)
+    const errStr = result.err.join('\n')
+    expect(errStr).toContain('criterion index must be a positive integer')
+    expect(errStr).toContain('1. do thing A')
+    expect(errStr).toContain('2. do thing B')
+  })
+
+  it('prints the numbered done-criteria list on an out-of-range index', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const task = await createTask(store, { doneCriteria: ['do thing A', 'do thing B'] })
+    const fake = makeFakeDaemon((req) => {
+      if (req.op === 'task.check') {
+        throw new Error(
+          `criterionIndex ${(req as { criterionIndex: number }).criterionIndex} is out of range; task has 2 done criteria`,
+        )
+      }
+      return {}
+    })
+    const result = await runCommandInProcess(
+      ['task', 'check', task.id, '99'],
+      { store, ctx, daemon: fake },
+    )
+    expect(result.code).toBe(1)
+    const errStr = result.err.join('\n')
+    expect(errStr).toContain('out of range')
+    expect(errStr).toContain('1. do thing A')
+    expect(errStr).toContain('2. do thing B')
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -153,8 +153,9 @@ completion.
 
 - `mars task note <id> "<observation>"` — journal progress or blockers
   at any point during a step.
-- `mars task check <id> <criterion>` — mark a done-criterion as
-  complete.
+- `mars task check <id> <n>` — mark a done-criterion as complete, where
+  `<n>` is the 1-based index into the `--done` criteria, in declaration
+  order (not the criterion text).
 - Commit early and often inside the worktree; the lease does not
   auto-commit.
 - `mars step done <id>` — signal step completion; the workflow advances

@@ -622,9 +622,21 @@ const taskCheck: Command = {
       deps.err('usage: mars task check <id> <n> [--uncheck]')
       return { code: 1 }
     }
+    // On any invalid-index error (bad argument here, or out-of-range from the
+    // daemon below), print the task's numbered done-criteria so the operator
+    // doesn't have to make a second round-trip (`task show`) to find the
+    // right index.
+    const printCriteriaList = async () => {
+      const task = await deps.store.getTask(id)
+      const criteria = task?.spec?.doneCriteria ?? []
+      if (criteria.length === 0) return
+      deps.err('done criteria:')
+      criteria.forEach((c, i) => deps.err(`  ${i + 1}. ${c}`))
+    }
     const criterionIndex = parseInt(indexRaw, 10)
     if (!Number.isInteger(criterionIndex) || criterionIndex < 1) {
       deps.err(`criterion index must be a positive integer; got ${indexRaw}`)
+      await printCriteriaList()
       return { code: 1 }
     }
     const uncheck = hasFlag(args, '--uncheck')
@@ -639,7 +651,11 @@ const taskCheck: Command = {
       })
       deps.out(`${uncheck ? 'unchecked' : 'checked'} criterion ${criterionIndex} on ${id}`)
     } catch (error: unknown) {
-      deps.err(errorMessage(error))
+      const message = errorMessage(error)
+      deps.err(message)
+      if (/out of range/.test(message)) {
+        await printCriteriaList()
+      }
       return { code: 1 }
     }
     return { code: 0 }
