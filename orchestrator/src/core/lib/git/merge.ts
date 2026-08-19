@@ -1061,10 +1061,6 @@ export const mergeBranch = async ({
     // merge already landed via the ref update; log and continue.
     lastStep = 'resync-working-tree'
     let didResyncWorkingTree = false
-    // Set when Step 3 found genuine uncommitted operator work and deliberately
-    // declined to clobber it. `post-merge-assert` below reads this so it does
-    // not undo that decision with its own `reset --hard`.
-    let operatorEditsPresent = false
     try {
       const headBranch = (
         await gexec(['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot())
@@ -1082,7 +1078,6 @@ export const mergeBranch = async ({
           output += reset.stdout + reset.stderr
           didResyncWorkingTree = true
         } else {
-          operatorEditsPresent = true
           output += `\n[mergeBranch] merge target checkout has local changes vs ${finalIntegrationSha.slice(0, 9)}; left as-is to avoid clobbering (HEAD ref advanced).`
         }
       }
@@ -1180,11 +1175,11 @@ export const mergeBranch = async ({
           //      recoverable where lost edits are not"), OR Step 3 never got a
           //      chance to classify the tree at all (its own HEAD/diff probes
           //      threw, or the primary checkout was transiently not reporting
-          //      as `integrationBranch`). `operatorEditsPresent` is only set
-          //      to `true` inside that same guarded block, so a probe failure
-          //      leaves it `false` — indistinguishable, if we branch on it,
-          //      from "genuinely nothing to worry about". Branching on the
-          //      ABSENCE of that flag is exactly the bug that shipped once
+          //      as `integrationBranch`). A probe failure leaves
+          //      `didResyncWorkingTree` at its initial `false` — indistinguishable,
+          //      if we branch on the absence of a separate "operator edits seen"
+          //      flag, from "genuinely nothing to worry about". Branching on the
+          //      ABSENCE of such a flag is exactly the bug that shipped once
           //      already: a `reset --hard HEAD` here silently destroys
           //      whatever is actually dirty and undoes Step 3's decision (or
           //      papers over the fact Step 3 never got to make one). This
