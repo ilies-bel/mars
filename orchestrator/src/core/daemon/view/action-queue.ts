@@ -25,6 +25,7 @@ import {
   type RecipeVerb,
 } from '../../lib/action-queue-recipes'
 import { isActionQueueKind, classifyKind, NOTICE_KINDS, type ActionQueueKind, type ActionQueueClass } from '../../lib/action-queue-kinds'
+import { shortId } from '../../lib/short-id'
 import type { DispatchPauseState } from '../pause-state'
 
 /**
@@ -665,7 +666,9 @@ const REGISTRY_TITLED_KINDS: ReadonlySet<string> = new Set([
 
 const tagWithTask = (title: string, taskId: string | null): string => {
   if (taskId === null || taskId.length === 0) return title
-  const short = taskId.slice(0, 8)
+  // `shortId`, not a slice — see its doc comment. A slice rendered two
+  // different recovery drops as the identical `[task mars-bff]`.
+  const short = shortId(taskId)
   return title.includes(short) ? title : `${title} [task ${short}]`
 }
 

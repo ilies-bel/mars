@@ -483,9 +483,9 @@ describe('failedTaskTitle', () => {
       signature: 'verify:test/unclassified',
       taskId: 'task-1234567890',
     })
-    expect(title).toBe('A verification check did not pass [task task-1234567890]')
+    expect(title).toBe('A verification check did not pass [task task-12345678]')
     expect(title).not.toContain('verify:test/unclassified')
-    expect(title).toContain('[task task-1234567890]')
+    expect(title).toContain('[task task-12345678]')
   })
 
   it('falls back to the captured error head when there is no signature', () => {
@@ -496,7 +496,7 @@ describe('failedTaskTitle', () => {
         capturedError: '\n\n  ENOSPC: no space left on device\nsecond line\n',
       }),
     ).toBe(
-      'Mars could not determine why this task failed: ENOSPC: no space left on device [task abcdefgh12345]',
+      'Mars could not determine why this task failed: ENOSPC: no space left on device [task abcdefgh]',
     )
   })
 
@@ -556,12 +556,15 @@ describe('failedTaskTitle', () => {
     expect(a).not.toBe(b)
   })
 
-  it('clips only ids that genuinely exceed the budget', () => {
+  it('reduces a hex-then-slug id to its hex head', () => {
+    // `<8hex>-<slug>` ids (ideas, arcs) carry no kind prefix, so the hex head
+    // is the identifying part and the slug is prose. Keeping the whole thing
+    // would swamp the row.
     const long = failedTaskTitle({
       signature: 'code/context-exhausted',
       taskId: '7daf8c8c-record-each-arc-s-behaviour-verification',
     })
-    expect(long).toContain('…]')
+    expect(long).toContain('[task 7daf8c8c]')
     expect(long.length).toBeLessThan(160)
   })
 

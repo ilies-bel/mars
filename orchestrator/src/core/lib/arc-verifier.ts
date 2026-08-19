@@ -44,6 +44,7 @@ import {
 } from './steward-workflow-patch.js'
 import { writeArcQaManifest, maybeSuggestPromotion } from './arc-qa-manifest.js'
 import { readQaStepListFlag, suggestQaStepListCapability } from './qa-step-list-flag.js'
+import { shortId } from './short-id.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -888,7 +889,7 @@ export async function runArcVerification(
   // missing E2E infra.
   const toolingReport = probeE2eTooling(opts.cwd)
   if (!toolingReport.available) {
-    const arcShort = originId.slice(0, 8)
+    const arcShort = shortId(originId)
     const missingList = toolingReport.missing.map((m) => `- ${m}`).join('\n')
     const stepsBlock = toolingReport.setupSteps
       .map((s, i) => `${i + 1}. \`${s}\``)

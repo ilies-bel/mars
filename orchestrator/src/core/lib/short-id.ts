@@ -8,6 +8,13 @@
  * A naive `id.slice(0, 8)` clips a `mars-XXXXXXXX` id down to `mars-XXX`,
  * losing 5 hex chars of entropy and making the prefix uncopyable into
  * `mars show`. Preserve the `<prefix>-` and then take 8 hex chars after it.
+ *
+ * Live consequence of the naive form, seen on one screen of the Needs you
+ * page: three failures for three different tasks all tagged `[task mars-634]`.
+ *
+ * This lives in `core/lib` rather than `cli/` because every surface that
+ * renders an id needs it — the CLI, the action-queue view titles, and the
+ * proposal bodies. Reach for it instead of writing a slice.
  */
 export function shortId(id: string): string {
   const dash = id.indexOf('-')

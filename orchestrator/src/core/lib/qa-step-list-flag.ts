@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { patchDaemonConfigFile, readDaemonConfigFile } from '../daemon/config.js'
 import { raiseActionQueueItem } from './action-queue.js'
+import { shortId } from './short-id.js'
 
 /** Dedup signature for the one-per-project enable-capability suggestion. */
 export const QA_STEP_LIST_CAPABILITY_SUGGESTION_SIGNATURE = 'qa-step-list-capability-suggestion'
@@ -84,7 +85,7 @@ export async function suggestQaStepListCapability(originId: string): Promise<voi
     priority: 'normal',
     title: 'Enable QA step-list walk for this project',
     body: [
-      `Arc \`${originId.slice(0, 8)}\` completed verification without a QA step-list`,
+      `Arc \`${shortId(originId)}\` completed verification without a QA step-list`,
       'walk because the capability is off by default.',
       '',
       'The QA step-list walk generates a step-by-step guide for each done criterion',
