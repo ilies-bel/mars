@@ -700,6 +700,73 @@ describe('ChatPage – docked composer and jump-to-bottom', () => {
 })
 
 // ---------------------------------------------------------------------------
+// ChatPage — selected-thread header must not claim "nothing is pressing"
+// ---------------------------------------------------------------------------
+
+describe('ChatPage – selected thread header', () => {
+  let container: HTMLDivElement
+  let root: ReturnType<typeof createRoot>
+  const originalHash = window.location.hash
+
+  beforeEach(() => {
+    mockFetchChatHistory.mockResolvedValue([])
+    mockFetchChatConversation.mockResolvedValue({
+      entries: [], boundaries: [], memoryStartsAfterSeq: 0, memoryCutAt: null, memoryCutReason: null,
+    })
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount()
+    })
+    container.remove()
+    window.location.hash = originalHash
+    vi.clearAllMocks()
+  })
+
+  it('does not claim "Nothing\'s pressing" when a thread is selected and the action queue is non-empty', async () => {
+    const arcItem = makeArcFailedItem()
+    mockUseActionQueue.mockReturnValue({
+      items: [arcItem],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+
+    // Seed the URL so ChatPage's initial state resolves selectedThreadId to
+    // this thread (readAqStateFromUrl().thread), exactly as a deep link or a
+    // sidebar click would.
+    window.location.hash = '#/chat?thread=th-selected'
+
+    const qc = makeQc()
+    const thread = makeThread({ id: 'th-selected', title: 'Deploy investigation' })
+    qc.setQueryData(['chat-threads', undefined], [thread])
+    qc.setQueryData(['chat-thread', 'th-selected', undefined], {
+      thread,
+      messages: [],
+    })
+
+    await act(async () => {
+      root.render(
+        createElement(QueryClientProvider, { client: qc }, createElement(ChatPage)),
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(container.textContent).not.toContain("Nothing's pressing")
+    const header = container.querySelector('[data-testid="selected-thread-title"]')
+    expect(header).not.toBeNull()
+    expect(header?.textContent).toBe('Deploy investigation')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // ArtifactsRail – TASKS panel rendering
 // ---------------------------------------------------------------------------
 

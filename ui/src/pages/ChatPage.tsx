@@ -3330,9 +3330,18 @@ export const ChatPage = () => {
                     onNextMove={handleOpenWork}
                   />
                 ) : (
-                  <p className="font-mono text-title text-foreground">
-                    Nothing&apos;s pressing right now — what would you like to
-                    work on?
+                  // A selected thread's header answers "what am I looking at",
+                  // not "how is the system" — the latter is the greeting's job
+                  // and duplicating it here would go stale the moment the
+                  // thread's own state diverges from the workspace summary.
+                  <p
+                    className="font-mono text-title text-foreground"
+                    data-testid="selected-thread-title"
+                  >
+                    {smartTitle(
+                      activeThreadDetail?.thread.title ?? null,
+                      activeThreadDetail?.thread.firstUserMessage,
+                    )}
                   </p>
                 )}
               </div>
