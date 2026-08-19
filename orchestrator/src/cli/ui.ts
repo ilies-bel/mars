@@ -126,18 +126,37 @@ export const launchUi = async (opts: LaunchOptions): Promise<void> => {
       resolve(result)
     }
 
-    // 10-second guard against a hung child.
-    const timer = setTimeout(() => {
+    // Guard against a hung child. Two budgets, because "slow" and "hung" are
+    // different: a normal start binds in well under a second, but a start that
+    // has to rebuild a stale bundle first runs `tsc -b && vite build && tsc`,
+    // which takes tens of seconds on a cold cache.
+    //
+    // The child announces the rebuild on stdout before it begins, so we extend
+    // the deadline on evidence rather than raising it blindly — a genuinely
+    // hung child still fails fast at 10s.
+    const START_TIMEOUT_MS = 10_000
+    const BUILD_TIMEOUT_MS = 180_000
+
+    let timeoutMs = START_TIMEOUT_MS
+    const onTimeout = (): void => {
       settle({
         ok: false,
-        message: 'mars-ui: timed out waiting for server to start (10s)',
+        message: `mars-ui: timed out waiting for server to start (${Math.round(timeoutMs / 1000)}s)`,
         exitedZero: false,
       })
-    }, 10_000)
+    }
+    let timer = setTimeout(onTimeout, timeoutMs)
 
     child.stdout?.setEncoding('utf8')
     child.stdout?.on('data', (chunk: string) => {
       stdoutBuf += chunk
+      // Rebuilding — this start is legitimately slow, not stuck.
+      if (timeoutMs === START_TIMEOUT_MS && /bundle is stale — rebuilding/.test(stdoutBuf)) {
+        timeoutMs = BUILD_TIMEOUT_MS
+        clearTimeout(timer)
+        timer = setTimeout(onTimeout, timeoutMs)
+        process.stderr.write('mars-ui: frontend bundle is stale — rebuilding, this can take a minute…\n')
+      }
       const m = stdoutBuf.match(/listening on (http:\/\/\S+)/)
       if (m) settle({ ok: true, url: m[1] })
     })
