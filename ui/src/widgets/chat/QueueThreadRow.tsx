@@ -10,17 +10,10 @@
 import { memo } from 'react'
 import { isTaskFailureActionQueueKind, type ActionDescriptor, type ActionQueueItem } from '@/shared/schemas'
 import { kindBadgeLabel, whyNowText } from '@/shared/actionQueueDetail'
-import { relativeTime } from '@/shared/time'
+import { relativeTime, formatAbsoluteDateTime } from '@/shared/time'
 import { draftRowHeadline } from './queueThreads'
 
 // ---- Shared row helpers ----
-
-export const formatTime = (iso: string): string => {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleString()
-}
 
 export const priorityBadgeClass = (priority: string): string => {
   if (priority === 'high') return 'rounded bg-error/10 px-1.5 py-0.5 text-error'
@@ -183,7 +176,7 @@ export const QueueThreadRow = memo(({
 
         {/* Timestamp + restart button */}
         <div className="mt-1 flex items-center justify-between gap-2">
-          <span className="font-mono text-micro text-muted-foreground" title={formatTime(item.at)}>
+          <span className="font-mono text-micro text-muted-foreground" title={formatAbsoluteDateTime(item.at)}>
             {relativeTime(item.at)}
           </span>
           {onRestart !== null && (

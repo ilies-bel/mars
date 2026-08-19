@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'bun:test'
-import { formatRelativeAge, formatRelativeAgeFromHours, relativeTime } from './time'
+import {
+  formatAbsoluteDate,
+  formatAbsoluteDateTime,
+  formatRelativeAge,
+  formatRelativeAgeFromHours,
+  formatShortDate,
+  relativeTime,
+} from './time'
 
 const SEC = 1_000
 const MIN = 60 * SEC
@@ -7,6 +14,63 @@ const HOUR = 60 * MIN
 const DAY = 24 * HOUR
 const WEEK = 7 * DAY
 const YEAR = 365 * DAY
+
+// ---------------------------------------------------------------------------
+// formatAbsoluteDateTime / formatAbsoluteDate / formatShortDate — the single
+// unambiguous absolute-date format used across the whole UI (17 Aug 2026,
+// 15:50 — never a numeric-only form like 01/08/2026, which reads as either
+// 1 Aug or 8 Jan depending on the reader's locale).
+// ---------------------------------------------------------------------------
+
+describe('formatAbsoluteDateTime', () => {
+  it('renders "D Mon YYYY, HH:MM" — an unambiguous, month-named format', () => {
+    // Constructed from local Date fields so the assertion is timezone-agnostic.
+    const d = new Date(2026, 7, 17, 15, 50) // 17 Aug 2026, 15:50 local time
+    expect(formatAbsoluteDateTime(d.getTime())).toBe('17 Aug 2026, 15:50')
+  })
+
+  it('accepts an ISO string input', () => {
+    const d = new Date(2026, 7, 17, 15, 50)
+    expect(formatAbsoluteDateTime(d.toISOString())).toBe(formatAbsoluteDateTime(d.getTime()))
+  })
+
+  it('zero-pads single-digit hours and minutes', () => {
+    const d = new Date(2026, 0, 1, 2, 3)
+    expect(formatAbsoluteDateTime(d.getTime())).toBe('1 Jan 2026, 02:03')
+  })
+
+  it('never renders an ambiguous numeric date like 01/08/2026', () => {
+    const d = new Date(2026, 7, 1, 2, 3)
+    const result = formatAbsoluteDateTime(d.getTime())
+    expect(result).not.toMatch(/\d{1,2}\/\d{1,2}\/\d{2,4}/)
+  })
+
+  it('returns "—" for an empty string', () => {
+    expect(formatAbsoluteDateTime('')).toBe('—')
+  })
+
+  it('returns the raw input for an unparsable date', () => {
+    expect(formatAbsoluteDateTime('not-a-date')).toBe('not-a-date')
+  })
+})
+
+describe('formatAbsoluteDate', () => {
+  it('renders "D Mon YYYY" with no time component', () => {
+    const d = new Date(2026, 7, 17)
+    expect(formatAbsoluteDate(d.getTime())).toBe('17 Aug 2026')
+  })
+
+  it('returns "—" for an empty string', () => {
+    expect(formatAbsoluteDate('')).toBe('—')
+  })
+})
+
+describe('formatShortDate', () => {
+  it('renders "D Mon" with no year and no time', () => {
+    const d = new Date(2026, 7, 17)
+    expect(formatShortDate(d.getTime())).toBe('17 Aug')
+  })
+})
 
 describe('formatRelativeAge — bucket boundaries', () => {
   it('< 1m returns "just now"', () => {

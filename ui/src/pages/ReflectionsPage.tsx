@@ -39,6 +39,7 @@ import { SkeletonList } from '@/components/Skeleton'
 import { CopyButton } from '@/components/CopyButton'
 import { parseReflectionDetailRoute, reflectionDetailHash, proposalHash } from '@/shared/routing'
 import { useHashRoute } from '@/shared/useHashRoute'
+import { formatAbsoluteDateTime } from '@/shared/time'
 import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
 
 // ---------------------------------------------------------------------------
@@ -82,16 +83,6 @@ export type LeverApplyState =
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-const fmt = (iso: string): string => {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  if (isNaN(d.getTime())) return iso
-  return d.toLocaleString(undefined, {
-    year: 'numeric', month: 'short', day: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  })
-}
 
 const fmtRelative = (iso: string | null): string => {
   if (!iso) return 'never'
@@ -359,7 +350,7 @@ export const LeverChangeCard = ({
           className="mt-2 border-t border-success/20 pt-2 text-micro text-success"
           aria-live="polite"
         >
-          ✓ Applied: {applyState.appliedValue} at {fmt(applyState.appliedAt)}
+          ✓ Applied: {applyState.appliedValue} at {formatAbsoluteDateTime(applyState.appliedAt)}
         </div>
       )}
 
@@ -464,7 +455,7 @@ interface RunStateBannerProps {
 }
 
 const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt, originId = null }: RunStateBannerProps) => {
-  const lastRan = lastReflectedAt ? `Last reflection: ${fmt(lastReflectedAt)} (${fmtRelative(lastReflectedAt)})` : 'No reflection has run yet.'
+  const lastRan = lastReflectedAt ? `Last reflection: ${formatAbsoluteDateTime(lastReflectedAt)} (${fmtRelative(lastReflectedAt)})` : 'No reflection has run yet.'
   const needsManualTrigger = autoRunReflect === 'off' || !autoEnqueue
   const triggerLabel =
     autoRunReflect === 'off'
@@ -536,7 +527,7 @@ const ReflectionRow = ({ report }: ReflectionRowProps) => (
       </span>
     </div>
     <div className="flex items-center gap-4 font-mono text-micro text-muted-foreground">
-      <span>{fmt(report.recordedAt)}</span>
+      <span>{formatAbsoluteDateTime(report.recordedAt)}</span>
       {report.dissonantCallCount > 0 && (
         <span className="text-error">{report.dissonantCallCount} dissonant</span>
       )}
@@ -683,7 +674,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
             <div className={`font-mono text-label uppercase font-semibold ${statusClass(detail.status)}`}>
               {detail.status}
             </div>
-            <div className="font-mono text-micro text-muted-foreground">{fmt(detail.recordedAt)}</div>
+            <div className="font-mono text-micro text-muted-foreground">{formatAbsoluteDateTime(detail.recordedAt)}</div>
           </div>
         </div>
         {detail.status !== 'complete' && (

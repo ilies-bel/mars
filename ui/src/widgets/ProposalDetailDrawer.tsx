@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import type { ProposalDetail, ProgressTask } from '@/shared/schemas'
 import { CopyButton } from '@/components/CopyButton'
 import { CollapsibleSection } from '@/components/CollapsibleSection'
+import { formatAbsoluteDate } from '@/shared/time'
 
 interface ProposalDetailDrawerProps {
   /** Full proposal record sourced from GET /api/proposals/:id. */
@@ -328,10 +329,8 @@ export const ProposalDetailDrawer = ({
 
   const isDraft = proposal.status === 'draft'
 
-  // Format createdAt timestamp as a locale date string.
-  const createdLabel = proposal.createdAt
-    ? new Date(proposal.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
-    : null
+  // Format createdAt timestamp as an unambiguous absolute date.
+  const createdLabel = proposal.createdAt ? formatAbsoluteDate(proposal.createdAt) : null
 
   return (
     <>

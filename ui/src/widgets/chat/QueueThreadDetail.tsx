@@ -32,10 +32,10 @@ import type {
   ActionQueueResolution,
   TraceEvent,
 } from '@/shared/schemas'
-import { relativeTime } from '@/shared/time'
+import { relativeTime, formatAbsoluteDateTime, formatAbsoluteDate } from '@/shared/time'
 import { taskHash, proposalHash } from '@/shared/routing'
 import { resolveFallback } from '@/shared/uiFallback'
-import { formatTime, priorityBadgeClass } from './QueueThreadRow'
+import { priorityBadgeClass } from './QueueThreadRow'
 
 // ---- Resolution block (read-only; shown for resolved history rows) ----
 
@@ -52,7 +52,7 @@ const ResolutionBlock = ({ resolution }: ResolutionBlockProps) => (
       <span className="font-mono text-label text-foreground">
         {resolution.resolution ?? '(closed)'}
       </span>
-      <span className="font-mono text-micro text-muted-foreground" title={formatTime(resolution.resolvedAt)}>
+      <span className="font-mono text-micro text-muted-foreground" title={formatAbsoluteDateTime(resolution.resolvedAt)}>
         {relativeTime(resolution.resolvedAt)}
         {resolution.resolvedBy ? ` · ${resolution.resolvedBy}` : null}
       </span>
@@ -623,7 +623,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
       ) : null}
       <div>
         <dd className="text-micro text-muted-foreground">
-          Status: {p.status} · from {p.source} · {new Date(p.createdAt).toLocaleDateString()}
+          Status: {p.status} · from {p.source} · {formatAbsoluteDate(p.createdAt)}
         </dd>
       </div>
     </>
@@ -767,7 +767,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 <dd>
                   {item.staleWorktreeDetail.investigation ? (
                     <>
-                      <p className="mb-1 text-micro text-muted-foreground" title={formatTime(item.staleWorktreeDetail.updatedAt)}>
+                      <p className="mb-1 text-micro text-muted-foreground" title={formatAbsoluteDateTime(item.staleWorktreeDetail.updatedAt)}>
                         {relativeTime(item.staleWorktreeDetail.updatedAt)}
                       </p>
                       <p className="whitespace-pre-wrap text-foreground">
@@ -814,7 +814,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 Diagnosis
               </dt>
               <dd>
-                <p className="mb-1 text-micro text-muted-foreground" title={formatTime(item.diagnosis.diagnosedAt)}>
+                <p className="mb-1 text-micro text-muted-foreground" title={formatAbsoluteDateTime(item.diagnosis.diagnosedAt)}>
                   {relativeTime(item.diagnosis.diagnosedAt)}
                 </p>
                 <p className="whitespace-pre-wrap text-foreground">

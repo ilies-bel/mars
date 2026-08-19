@@ -1,3 +1,41 @@
+// ---------------------------------------------------------------------------
+// Absolute date/time — one unambiguous format used everywhere in the UI.
+//
+// Numeric date formats like `01/08/2026` are ambiguous (1 Aug vs 8 Jan
+// depending on the reader's locale). Every absolute-date rendering in the
+// app routes through these helpers so there is exactly one format, spelled
+// out with a month name so it can't be misread.
+// ---------------------------------------------------------------------------
+
+const MONTH_ABBR = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+]
+
+const pad2 = (n: number): string => String(n).padStart(2, '0')
+
+/** Formats a valid `input` with `render`; falls back to '—' (empty) or the raw input (invalid). */
+const withValidDate = (input: string | number, render: (d: Date) => string): string => {
+  if (input === '') return '—'
+  const d = new Date(input)
+  if (Number.isNaN(d.getTime())) return String(input)
+  return render(d)
+}
+
+/** Absolute date + time, unambiguous: "17 Aug 2026, 15:50". */
+export const formatAbsoluteDateTime = (input: string | number): string =>
+  withValidDate(input, (d) =>
+    `${d.getDate()} ${MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}, ${pad2(d.getHours())}:${pad2(d.getMinutes())}`,
+  )
+
+/** Absolute date only, unambiguous: "17 Aug 2026". */
+export const formatAbsoluteDate = (input: string | number): string =>
+  withValidDate(input, (d) => `${d.getDate()} ${MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}`)
+
+/** Compact date, no year, for space-constrained UI (e.g. chart axis labels): "17 Aug". */
+export const formatShortDate = (input: string | number): string =>
+  withValidDate(input, (d) => `${d.getDate()} ${MONTH_ABBR[d.getMonth()]}`)
+
 export const relativeTime = (timestamp: string | number, now = Date.now()): string => {
   const t = new Date(timestamp).getTime()
   if (Number.isNaN(t)) return ''

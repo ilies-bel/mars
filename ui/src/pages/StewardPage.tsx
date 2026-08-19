@@ -16,6 +16,7 @@ import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { useStewardView } from './useStewardView'
 import type { StewardView } from './useStewardView'
 import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
+import { formatAbsoluteDateTime, formatShortDate } from '@/shared/time'
 
 export type { StewardView }
 export { useStewardView }
@@ -65,7 +66,7 @@ const StatusDot = ({ active, label }: { active: boolean; label?: string }) => (
 const formatLastActivity = (timestamp: string | null): string =>
   timestamp === null
     ? 'no activity yet'
-    : `last activity ${new Date(timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}`
+    : `last activity ${formatShortDate(timestamp)}`
 
 // ---------------------------------------------------------------------------
 // Runtime tuning lane
@@ -225,7 +226,7 @@ const CapRatchet = ({
             fillOpacity={0.5}
             className="text-muted-foreground"
           >
-            {new Date(firstEntry.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+            {formatShortDate(firstEntry.timestamp)}
           </text>
         )}
         {lastEntry !== undefined && lastEntry !== firstEntry && (
@@ -238,7 +239,7 @@ const CapRatchet = ({
             textAnchor="end"
             className="text-muted-foreground"
           >
-            {new Date(lastEntry.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+            {formatShortDate(lastEntry.timestamp)}
           </text>
         )}
       </svg>
@@ -326,7 +327,7 @@ const RuntimeTuningLane = ({ data }: { data: StewardView['runtimeTuning'] }) => 
             >
               <p className="font-mono text-label text-foreground">{ack.text}</p>
               <time className="font-mono text-micro text-muted-foreground">
-                {new Date(ack.timestamp).toLocaleString()}
+                {formatAbsoluteDateTime(ack.timestamp)}
               </time>
             </div>
           ))
@@ -409,7 +410,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
           </div>
           {updated_at && (
             <time className="font-mono text-micro text-muted-foreground">
-              {new Date(updated_at).toLocaleString()}
+              {formatAbsoluteDateTime(updated_at)}
             </time>
           )}
         </div>
@@ -621,7 +622,7 @@ const GateHealthLane = ({
                       <p>
                         This check was temporarily disabled
                         {gate.quarantinedAt !== null
-                          ? ` on ${new Date(gate.quarantinedAt).toLocaleString()}`
+                          ? ` on ${formatAbsoluteDateTime(gate.quarantinedAt)}`
                           : ''}{' '}
                         after failing repeatedly.
                       </p>
@@ -634,7 +635,7 @@ const GateHealthLane = ({
                     <div className="mt-2 border-t border-border/30 pt-2 font-mono text-micro text-muted-foreground">
                       <p>
                         Last failed
-                        {gate.lastFailureAt !== null ? ` on ${new Date(gate.lastFailureAt).toLocaleString()}` : ''}.
+                        {gate.lastFailureAt !== null ? ` on ${formatAbsoluteDateTime(gate.lastFailureAt)}` : ''}.
                       </p>
                       <CollapsibleSection label="Technical details">
                         {gate.lastFailureSignature !== null && <p>Signature: {gate.lastFailureSignature}</p>}

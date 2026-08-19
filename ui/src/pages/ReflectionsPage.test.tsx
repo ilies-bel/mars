@@ -20,6 +20,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { ReflectionsPage, ReflectionDetailView, LeverChangeCard, LeverGapCard } from './ReflectionsPage'
 import type { LeverApplyState, LeverData } from './ReflectionsPage'
 import type { DeepReflectionsListResponse, DeepReflectionDetail } from '@/shared/api'
+import { formatAbsoluteDateTime } from '@/shared/time'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -311,6 +312,14 @@ describe('ReflectionsPage', () => {
 
     expect(html).toContain('data-testid="run-state-banner"')
     expect(html).toContain('auto-reflect is ON and auto-trigger is ON')
+  })
+
+  it('renders the last-reflected timestamp through the shared unambiguous formatter', () => {
+    // lastReflectedAt is '2026-01-15T10:00:00Z' — must render via formatAbsoluteDateTime,
+    // never as an ambiguous numeric date like 01/15/2026 or 15/01/2026.
+    const html = renderToStaticMarkup(<ReflectionsPage />)
+
+    expect(html).toContain(formatAbsoluteDateTime('2026-01-15T10:00:00Z'))
   })
 
   it('shows autoRunReflect OFF state when the lever is off', () => {

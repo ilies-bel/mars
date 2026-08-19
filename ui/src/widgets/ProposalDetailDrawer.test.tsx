@@ -91,7 +91,7 @@ describe('ProposalDetailDrawer', () => {
         onClose={() => {}}
       />,
     )
-    // The date is rendered via toLocaleDateString — just check the testid exists
+    // The date is rendered via formatAbsoluteDate — just check the testid exists
     expect(html).toContain('data-testid="proposal-detail-created"')
   })
 })

@@ -24,6 +24,7 @@ vi.mock('./useStewardView', () => ({
 
 import { useStewardView } from './useStewardView'
 import { StewardViewSchema } from './steward-view-schema'
+import { formatAbsoluteDateTime, formatShortDate } from '@/shared/time'
 
 const makeStewardView = (overrides: Partial<StewardView> = {}): StewardView => ({
   runtimeTuning: {
@@ -165,7 +166,7 @@ describe('StewardPage', () => {
 
   it('shows quarantine and latest failure evidence for quarantined gates', () => {
     const html = renderToStaticMarkup(<StewardPage />)
-    const timestamp = new Date(1767225600000).toLocaleString()
+    const timestamp = formatAbsoluteDateTime(1767225600000)
 
     expect(html).toContain('verify:typecheck:exit-1')
     expect(html).toContain('origin-123')
@@ -217,6 +218,14 @@ describe('StewardPage', () => {
     expect(html).toContain('I bumped implement workers from 15 to 16')
   })
 
+  it('renders ack timestamps through the shared unambiguous formatter', () => {
+    // Regression: Steward acks used to render via bare toLocaleString(), which
+    // produces an ambiguous numeric date like 01/08/2026 in some locales.
+    const html = renderToStaticMarkup(<StewardPage />)
+    expect(html).toContain(formatAbsoluteDateTime('2026-01-01T00:00:00Z'))
+    expect(html).not.toMatch(/\d{1,2}\/\d{1,2}\/\d{2,4}/)
+  })
+
   it('does not claim the runtime tuning lane is "executing" — the page-level banner already says the Steward is not wired up, so this indicator must not contradict it', () => {
     const html = renderToStaticMarkup(<StewardPage />)
     const laneMatch = /<article[^>]*data-testid="lane-runtime-tuning"[\s\S]*?<\/article>/.exec(html)
@@ -256,7 +265,7 @@ describe('StewardPage', () => {
       error: null,
     })
     const html = renderToStaticMarkup(<StewardPage />)
-    const expectedLabel = `last activity ${new Date('2026-01-03T00:00:00Z').toLocaleDateString([], { month: 'short', day: 'numeric' })}`
+    const expectedLabel = `last activity ${formatShortDate('2026-01-03T00:00:00Z')}`
     expect(html).toContain(expectedLabel)
   })
 
