@@ -10,13 +10,16 @@
  * surface. Condition kinds (failed, stale-queued, …) always appear as
  * individual rows since each represents a distinct entity needing attention.
  *
- * Badge = the canonical "needs you" count (open items, draft-proposals
- * excluded) — the SAME definition the sidebar badge, the chat greeting, and
- * the chat situation card all use (see `countNeedsYou`). This is
- * deliberately NOT the rendered-row count: clustering (draft-proposal, or
- * any other kind past CLUSTER_THRESHOLD) is a display concern for this list
- * and must not change what the badge reports, or the header count and the
- * sidebar count would drift apart whenever a kind clusters.
+ * Badge = the number of distinct SUBJECTS needing attention (see
+ * `countDistinctSubjects`), which is deliberately different from the
+ * cross-surface `countNeedsYou` the sidebar badge / chat greeting / situation
+ * card use. Kind-clustering (draft-proposal, or any other kind past
+ * CLUSTER_THRESHOLD) never changes the count — those are many different
+ * subjects sharing a kind. Entity grouping DOES change the count — several
+ * condition kinds (failed, recovery-abandoned, gate-broken, …) can derive
+ * independently for the SAME task (ADR-0057 kinds never reconcile with each
+ * other), and a task shown on three rows is one subject, not three. See
+ * `buildRenderedRows` in clusterRows.ts for how the two are told apart.
  *
  * Empty state: "All quiet — N running, N done today". Shown ONLY when the
  * daemon actually answered and had nothing to report; when it is unreachable
@@ -26,7 +29,7 @@
 import { useState, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import { sortItems, buildRenderedRows, countNeedsYou } from '@/entities/actionQueue/clusterRows'
+import { sortItems, buildRenderedRows, countDistinctSubjects } from '@/entities/actionQueue/clusterRows'
 import { useProgress } from '@/hooks/useProgress'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { useDaemonHealth } from '@/entities/daemon/useDaemonHealth'
@@ -58,6 +61,8 @@ const KIND_ICON: Record<string, string> = {
   'diagnose-inconclusive': '🔬',
   'reflect-recommended': '✦',
   'scorer-suggested': '◈',
+  'gate-broken': '⛔',
+  'recovery-abandoned': '↩',
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -72,6 +77,8 @@ const KIND_LABEL: Record<string, string> = {
   'coder-question': 'question',
   'diagnose-inconclusive': 'inconclusive',
   'reflect-recommended': 'reflect',
+  'gate-broken': 'gate broken',
+  'recovery-abandoned': 'recovery abandoned',
   'scorer-suggested': 'scorer',
 }
 
@@ -193,9 +200,16 @@ const TriageClusterRow = ({ kind, count, latestAt }: TriageClusterRowProps) => {
 
 interface TriageRowProps {
   item: ActionQueueItem
+  /**
+   * Other condition kinds derived for the SAME task, collapsed into this row
+   * by buildRenderedRows' entity grouping (see clusterRows.ts). Read-only —
+   * the row exposes exactly one verb set (this item's), never a second
+   * Continue/Restart affordance that could contradict the first.
+   */
+  extraBadges?: string[]
 }
 
-const TriageRow = ({ item }: TriageRowProps) => {
+const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
   const qc = useQueryClient()
   const projectId = useFocusedProjectId() ?? undefined
   const [pending, setPending] = useState<string | null>(null)
@@ -320,6 +334,24 @@ const TriageRow = ({ item }: TriageRowProps) => {
           {age}
         </span>
       </div>
+
+      {/* Other condition rows collapsed into this card (entity grouping —
+          see clusterRows.ts). Read-only labels, no buttons: exactly one verb
+          set is shown for this task, chosen by ENTITY_GROUP_KIND_RANK. */}
+      {extraBadges && extraBadges.length > 0 && (
+        <div className="mb-1.5 flex flex-wrap items-center gap-1" data-testid="triage-entity-badges">
+          <span className="font-mono text-micro text-muted-foreground">also:</span>
+          {extraBadges.map((badgeKind) => (
+            <span
+              key={badgeKind}
+              className="rounded border border-border px-1.5 py-0.5 font-mono text-micro leading-none text-muted-foreground"
+              data-testid={`triage-entity-badge-${badgeKind}`}
+            >
+              {KIND_LABEL[badgeKind] ?? badgeKind}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Headline — narrative treatment mirrors AlertCard:
            - When goal (prompt excerpt) is present: goal is primary, cause + humanSummary secondary.
@@ -625,7 +657,7 @@ export const TriagePage = () => {
 
   const sorted = sortItems(items)
   const renderedRows = buildRenderedRows(sorted)
-  const needsYouCount = countNeedsYou(items)
+  const needsYouCount = countDistinctSubjects(items)
 
   // Only show the empty state when every feed succeeded AND there is genuinely
   // nothing to act on. A feed error is itself something to surface, so the
@@ -648,7 +680,11 @@ export const TriagePage = () => {
         </h1>
         {needsYouCount > 0 && (
           <span
-            aria-label={`${needsYouCount} items need attention`}
+            aria-label={
+              needsYouCount === 1
+                ? '1 item needs attention'
+                : `${needsYouCount} items need attention`
+            }
             className="ml-2 rounded-full bg-primary/20 px-2 py-0.5 font-mono text-micro leading-none text-primary"
           >
             {needsYouCount}
@@ -673,18 +709,31 @@ export const TriagePage = () => {
             {/* Inline error cards — one per failing feed, never blanking the page */}
             {queueError && <FeedErrorCard label="action queue" error={queueError} />}
             {proposalsError && <FeedErrorCard label="proposals" error={proposalsError} />}
-            {renderedRows.map((row) =>
-              row.type === 'cluster' ? (
-                <TriageClusterRow
-                  key={`cluster:${row.kind}`}
-                  kind={row.kind}
-                  count={row.count}
-                  latestAt={row.latestAt}
-                />
-              ) : (
-                <TriageRow key={row.item.id} item={row.item} />
-              ),
-            )}
+            {renderedRows.map((row) => {
+              if (row.type === 'cluster') {
+                return (
+                  <TriageClusterRow
+                    key={`cluster:${row.kind}`}
+                    kind={row.kind}
+                    count={row.count}
+                    latestAt={row.latestAt}
+                  />
+                )
+              }
+              // Entity group: several conditions derived for ONE task. Render
+              // the precedence-chosen row and surface the rest as read-only
+              // badges, so the card exposes exactly one verb set.
+              if (row.type === 'entityGroup') {
+                return (
+                  <TriageRow
+                    key={row.primary.id}
+                    item={row.primary}
+                    extraBadges={row.badgeKinds}
+                  />
+                )
+              }
+              return <TriageRow key={row.item.id} item={row.item} />
+            })}
           </div>
         )}
       </div>

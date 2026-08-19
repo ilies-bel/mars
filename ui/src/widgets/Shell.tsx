@@ -271,7 +271,14 @@ export const Shell = ({ hash, children }: ShellProps) => {
   const clusterRowsList = renderedRows.filter(
     (r): r is Extract<RenderedRow, { type: 'cluster' }> => r.type === 'cluster',
   )
-  const alertCount = renderedRows.length - clusterRowsList.length
+  // Count the ITEMS not represented by a cluster row, not the rendered rows.
+  // Rendered rows under-count: entity grouping collapses several condition
+  // rows for one task onto a single card, so `renderedRows.length` is smaller
+  // than the number of items those rows stand for. Deriving from item counts
+  // keeps the documented invariant (alerts + every cluster count === badge)
+  // true regardless of how the triage list chooses to group for display.
+  const clusteredItemCount = clusterRowsList.reduce((n, c) => n + c.count, 0)
+  const alertCount = nonProposalItems.length - clusteredItemCount
   const badgeAriaLabel: string | undefined = (() => {
     if (decisionBadge === 0) return undefined
     const n = decisionBadge > 99 ? '99+' : String(decisionBadge)

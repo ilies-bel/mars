@@ -501,6 +501,63 @@ describe('TriageRow – recovery-exhausted rows surface carry-forward options', 
   })
 })
 
+// ---------------------------------------------------------------------------
+// Entity grouping — one task that derived several conditions gets ONE card
+// with ONE verb set, so two rows can never give contradictory advice.
+// ---------------------------------------------------------------------------
+
+describe('TriagePage – several conditions for one task collapse to one card', () => {
+  beforeEach(() => {
+    // The live queue state this fixes: mars-6340b827 held three rows at once.
+    // Its branch carries a coder salvage checkpoint, so the Restart the
+    // `recovery-abandoned` row offered would have discarded real work — the
+    // exact thing the `failed` row's carry-forward panel warns against.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        id: 'bc0e4764',
+        entityId: 'mars-6340b827',
+        recoveryExhausted: true,
+      }),
+      makeItem('recovery-abandoned', { id: '59a092fc', entityId: 'mars-6340b827' }),
+      makeItem('gate-broken', { id: 'a1b64b91', entityId: 'mars-6340b827' }),
+    ])
+  })
+
+  it('offers no Restart button anywhere on the page', () => {
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-restart"]')).toBeNull()
+  })
+
+  it('offers no Continue button anywhere on the page', () => {
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
+  })
+
+  it('shows the carry-forward panel exactly once', () => {
+    const { container } = renderPage()
+    const panels = container.querySelectorAll('[data-testid="triage-recovery-exhausted"]')
+    expect(panels).toHaveLength(1)
+    expect(panels[0]?.textContent).toContain('mars remerge mars-6340b827')
+  })
+
+  it('keeps the collapsed conditions visible as read-only badges', () => {
+    const { container } = renderPage()
+    const badges = container.querySelector('[data-testid="triage-entity-badges"]')
+    expect(badges).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid="triage-entity-badge-recovery-abandoned"]'),
+    ).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid="triage-entity-badge-gate-broken"]'),
+    ).not.toBeNull()
+  })
+
+  it('counts the task as one subject in the header, not three', () => {
+    const { container } = renderPage()
+    expect(container.querySelector('[aria-label="1 item needs attention"]')).not.toBeNull()
+  })
+})
+
 describe('TriageRow – daemon-code-drift verb fires invokeAction without entityId', () => {
   beforeEach(() => {
     mockItems.mockReturnValue([

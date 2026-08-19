@@ -3,10 +3,12 @@
  *
  * Shared by TriagePage (rendering) so the list always reflects the same
  * rendered-row grouping. The rendered-row COUNT is intentionally NOT used as
- * the "needs you" badge count (see `countNeedsYou` below) — clustering
- * collapses high-cardinality kinds for display, which makes the rendered-row
- * count diverge from the true number of open, actionable items whenever a
- * non-draft-proposal kind exceeds CLUSTER_THRESHOLD.
+ * the cross-surface "needs you" badge count (see `countNeedsYou` below) —
+ * clustering collapses high-cardinality kinds for display, which makes the
+ * rendered-row count diverge from the true number of open, actionable items
+ * whenever a non-draft-proposal kind exceeds CLUSTER_THRESHOLD. The triage
+ * page header uses a different, page-local count instead — see
+ * `countDistinctSubjects`.
  */
 
 import { isTaskFailureActionQueueKind } from '@/shared/schemas'
@@ -26,6 +28,63 @@ import type { ActionQueueItem } from '@/shared/schemas'
 export function countNeedsYou(items: readonly { kind: string }[]): number {
   return items.filter((item) => item.kind !== 'draft-proposal').length
 }
+
+/**
+ * Distinct-subject count for the triage page header specifically (NOT the
+ * cross-surface `countNeedsYou` above — see buildRenderedRows below for why).
+ *
+ * Several condition kinds (`failed`, `recovery-abandoned`, `gate-broken`, …)
+ * derive independently per ADR-0057 with no reconciliation between them, so
+ * one failed task can raise several open rows at once. `countNeedsYou` counts
+ * those as several items, which is correct for its contract (raw open-item
+ * count, shared byte-for-byte with the sidebar badge / chat greeting /
+ * situation card) but wrong for a page whose whole job is to say how many
+ * distinct THINGS need the operator — a task shown 3 times is one thing, not
+ * three. This mirrors the entity-grouping `buildRenderedRows` performs so the
+ * header integer always matches the number of cards actually rendered.
+ *
+ * Deliberately scoped to the triage page only: extending the same dedup to
+ * the sidebar badge / chat greeting / situation card means also updating
+ * their shared server-side counterpart (`countNeedsYou` in
+ * orchestrator/src/core/lib/situation-report.ts) — a cross-repo change beyond
+ * this fix, tracked as a follow-up rather than folded in here.
+ */
+export function countDistinctSubjects(items: readonly ActionQueueItem[]): number {
+  const seenEntities = new Set<string>()
+  let count = 0
+  for (const item of items) {
+    if (item.kind === 'draft-proposal') continue
+    if (item.entityId && isGroupableConditionKind(item.kind)) {
+      if (seenEntities.has(item.entityId)) continue
+      seenEntities.add(item.entityId)
+    }
+    count++
+  }
+  return count
+}
+
+/**
+ * Whether a kind is a per-TASK condition that can co-occur with other
+ * conditions for the same task, and so must be collapsed onto one card.
+ *
+ * Almost all of these are already carried by the daemon's task-failure
+ * classification (`isTaskFailureActionQueueKind`), but `recovery-abandoned`
+ * is NOT in that list — it is a distinct condition the daemon raises from
+ * `orchestrator/src/outbox/subscribers/recovery-abandoned.ts`, and
+ * `taskFailureKinds` deliberately mirrors the daemon's own classification
+ * byte-for-byte, so it must not be edited to paper over a UI grouping need.
+ * The extra kinds are therefore listed here, local to the triage view.
+ *
+ * This gap is the whole bug: `recovery-abandoned` is precisely the kind that
+ * was rendering a live Restart button next to a recovery-exhausted `failed`
+ * row telling the operator that Restart would discard real work. Gating
+ * grouping on `isTaskFailureActionQueueKind` alone silently excludes it and
+ * leaves the contradiction on screen.
+ */
+const EXTRA_GROUPABLE_CONDITION_KINDS: ReadonlySet<string> = new Set(['recovery-abandoned'])
+
+const isGroupableConditionKind = (kind: string): boolean =>
+  isTaskFailureActionQueueKind(kind) || EXTRA_GROUPABLE_CONDITION_KINDS.has(kind)
 
 // ── Sort ──────────────────────────────────────────────────────────────────────
 
@@ -65,17 +124,53 @@ const NEVER_CLUSTER_KINDS: ReadonlySet<string> = new Set([
 export type RenderedRow =
   | { type: 'item'; item: ActionQueueItem }
   | { type: 'cluster'; kind: string; count: number; latestAt: string }
+  | { type: 'entityGroup'; primary: ActionQueueItem; badgeKinds: string[] }
 
 /**
- * Collapses high-cardinality decision kinds into one cluster row per kind.
+ * Precedence used to pick the ONE verb set an entity-group card exposes when
+ * a single task has raised more than one condition row (see
+ * `buildRenderedRows`). A recovery-exhausted row always wins regardless of
+ * kind: Continue/Restart would error on it, so its carry-forward panel is the
+ * only correct advice. Absent that, prefer the structured `failed` row, then
+ * `recovery-abandoned`, then `gate-broken`; any other kind keeps its position
+ * in the already-sorted (priority, recency) list.
+ */
+const ENTITY_GROUP_KIND_RANK: Record<string, number> = {
+  failed: 0,
+  'recovery-abandoned': 1,
+  'gate-broken': 2,
+}
+
+/**
+ * Collapses high-cardinality decision kinds into one cluster row per kind,
+ * AND collapses several condition rows for the SAME task into one entity
+ * group card.
+ *
+ * These are two different problems with the same symptom (row-count
+ * inflation) but different causes:
+ * - Kind clustering: many DIFFERENT subjects sharing a kind (900
+ *   draft-proposals) — collapsed to a "view all" link, count preserved.
+ * - Entity grouping: the SAME subject represented by several independently
+ *   derived condition rows (ADR-0057 kinds never reconcile with each other,
+ *   so a `failed` task can also carry `recovery-abandoned` and `gate-broken`
+ *   rows) — collapsed to one card with one chosen verb set (see
+ *   ENTITY_GROUP_KIND_RANK) and the other kinds surfaced as read-only badges,
+ *   because two verb sets for one task can — and did — contradict each other
+ *   (a recovery-exhausted `failed` row saying Continue/Restart won't help,
+ *   next to a `recovery-abandoned` row offering a live Restart for the same
+ *   task).
  *
  * Rules:
- * - Condition kinds (task failures, stale-worktree, arc-failed) → always individual.
+ * - Per-task condition rows (isGroupableConditionKind) sharing a non-empty
+ *   entityId → one entity-group card, verb set chosen by
+ *   ENTITY_GROUP_KIND_RANK / recoveryExhausted.
+ * - Any other condition kind (stale-worktree, arc-failed) → always individual.
  * - draft-proposal → always one cluster row (the proposals backlog can reach 900+).
  * - Any other decision kind whose count exceeds CLUSTER_THRESHOLD → one cluster row.
  *
- * The cluster row is inserted at the position of the first (highest-priority,
- * most-recent) item of that kind within the already-sorted list.
+ * The cluster/group row is inserted at the position of the first
+ * (highest-priority, most-recent) item of that kind/entity within the
+ * already-sorted list.
  */
 export function buildRenderedRows(sorted: ActionQueueItem[]): RenderedRow[] {
   const kindCounts = new Map<string, number>()
@@ -83,13 +178,36 @@ export function buildRenderedRows(sorted: ActionQueueItem[]): RenderedRow[] {
     kindCounts.set(item.kind, (kindCounts.get(item.kind) ?? 0) + 1)
   }
 
+  const entityBuckets = new Map<string, ActionQueueItem[]>()
+  for (const item of sorted) {
+    if (!item.entityId || !isGroupableConditionKind(item.kind)) continue
+    const bucket = entityBuckets.get(item.entityId)
+    if (bucket) bucket.push(item)
+    else entityBuckets.set(item.entityId, [item])
+  }
+
   const emittedClusters = new Set<string>()
+  const emittedEntityGroups = new Set<string>()
   const result: RenderedRow[] = []
 
   for (const item of sorted) {
+    const bucket = item.entityId ? entityBuckets.get(item.entityId) : undefined
+    if (bucket && bucket.length > 1) {
+      if (emittedEntityGroups.has(item.entityId)) continue
+      emittedEntityGroups.add(item.entityId)
+      const primary = bucket.reduce((best, cur) => {
+        const rank = (x: ActionQueueItem) =>
+          x.recoveryExhausted ? -1 : (ENTITY_GROUP_KIND_RANK[x.kind] ?? 100)
+        return rank(cur) < rank(best) ? cur : best
+      })
+      const badgeKinds = [...new Set(bucket.filter((b) => b !== primary).map((b) => b.kind))]
+      result.push({ type: 'entityGroup', primary, badgeKinds })
+      continue
+    }
+
     const count = kindCounts.get(item.kind) ?? 1
     const isCondition =
-      isTaskFailureActionQueueKind(item.kind) || NEVER_CLUSTER_KINDS.has(item.kind)
+      isGroupableConditionKind(item.kind) || NEVER_CLUSTER_KINDS.has(item.kind)
     const shouldCluster =
       !isCondition && (item.kind === 'draft-proposal' || count > CLUSTER_THRESHOLD)
 
