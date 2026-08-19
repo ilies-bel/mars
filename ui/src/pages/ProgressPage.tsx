@@ -8,7 +8,6 @@ import {
 } from '@/shared/progressUrlState'
 import type { Tab } from '@/shared/tabs'
 import { DEFAULT_TAB } from '@/shared/tabs'
-import { readPersistedView, writePersistedView } from '@/shared/viewPreference'
 import { BoardView } from '@/widgets/BoardView'
 import { Footer } from '@/widgets/Footer'
 import { TabStrip } from '@/widgets/TabStrip'
@@ -24,26 +23,23 @@ export const ProgressPage = () => {
 
   const { byCluster, tasks, proposals, aggregates, error, connected } = useProgress()
 
-  // Resolve the initial active tab with the following precedence:
+  // Resolve the initial active tab:
   //   1. Explicit ?view= param in the URL (shareable links are always honoured)
-  //   2. Last persisted view from localStorage (remembered across sessions)
-  //   3. DEFAULT_TAB ('topology') as the final fallback
-  const [activeTab, setActiveTab] = useState<Tab>(() => {
-    const explicit = readExplicitViewFromUrl()
-    if (explicit !== null) return explicit
-    return readPersistedView() ?? DEFAULT_TAB
-  })
+  //   2. DEFAULT_TAB ('topology')
+  //
+  // Topology is THE Progress view; Board is the alternate. The tab used to be
+  // remembered in localStorage, which quietly defeated that: one visit to Board
+  // pinned it as the landing view forever, so the declared default never
+  // applied again and Progress opened on Board indefinitely. A per-session tab
+  // choice is not worth overriding the primary view of the page.
+  const [activeTab, setActiveTab] = useState<Tab>(
+    () => readExplicitViewFromUrl() ?? DEFAULT_TAB,
+  )
 
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(
     initialUrlState.proposal,
   )
   const [searchQuery, setSearchQuery] = useState<string>(initialUrlState.query)
-
-  // Persist the active tab to localStorage whenever it changes so the user's
-  // last-selected view is restored on future bare '#/progress' visits.
-  useEffect(() => {
-    writePersistedView(activeTab)
-  }, [activeTab])
 
   // Compute the set of IDs that match the search query (null = no active filter).
   const searchMatchIds = useMemo((): Set<string> | null => {
@@ -119,36 +115,6 @@ export const ProgressPage = () => {
             className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-label text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border"
           />
         </div>
-        {/* Proposal filter — shown while loading (tasks===null) to reserve the
-            slot height, and whenever there are in-scope proposals to filter by.
-            Hidden only when data has settled and no proposals exist. */}
-        {(tasks === null || proposals.length > 0) ? (
-          <div
-            className="flex items-center gap-2 border-b border-border px-4 py-2"
-            data-testid="proposal-filter"
-          >
-            <label
-              htmlFor="proposal-filter-select"
-              className="shrink-0 font-mono text-label text-muted-foreground"
-            >
-              Proposal
-            </label>
-            <select
-              id="proposal-filter-select"
-              value={selectedProposalId ?? ''}
-              onChange={(e) => setSelectedProposalId(e.target.value || null)}
-              disabled={tasks === null}
-              className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-label text-foreground focus:outline-none focus:ring-1 focus:ring-border disabled:opacity-50"
-            >
-              <option value="">All</option>
-              {proposals.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.title.length > 60 ? `${p.title.slice(0, 59)}…` : p.title}
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : null}
         {error && tasks === null ? (
           <main className="flex min-h-0 flex-1 overflow-hidden bg-background">
             <FallbackSurface error={error} of="tasks" variant="pane" />

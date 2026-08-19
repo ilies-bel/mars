@@ -80,6 +80,17 @@ vi.mock('@/entities/alerts/api', () => ({
 
 vi.mock('@/shared/useFocusedProject', () => ({
   useFocusedProjectId: () => null,
+  // TriagePage reads the focused project's probed health so an unreadable
+  // queue is never rendered as an empty one.
+  useFocusedProject: () => ({
+    projects: [
+      { projectId: 'p_test', repoRoot: '/repo', name: 'repo', health: 'live' },
+    ],
+    focusedProjectId: 'p_test',
+    setFocusedProjectId: () => {},
+    projectsSettled: true,
+    projectsError: null,
+  }),
 }))
 
 vi.mock('@/entities/actionQueue/useActionQueue', () => ({

@@ -67,39 +67,6 @@ const { ProgressPage } = await import('./ProgressPage')
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('ProgressPage – proposal filter control', () => {
-  it('renders the proposal-filter control when in-scope proposals are present', () => {
-    const html = renderToStaticMarkup(<ProgressPage />)
-    expect(html).toContain('data-testid="proposal-filter"')
-  })
-
-  it('lists each proposal title as an option in the filter dropdown', () => {
-    const html = renderToStaticMarkup(<ProgressPage />)
-    expect(html).toContain('Feature Alpha')
-    expect(html).toContain('Feature Beta')
-  })
-
-  it('includes an "All" option so the filter can be cleared', () => {
-    const html = renderToStaticMarkup(<ProgressPage />)
-    expect(html).toContain('>All<')
-  })
-
-  it('hides the proposal-filter control when there are no in-scope proposals', () => {
-    mockUseProgress.mockImplementation(() => baseState([]))
-    try {
-      const html = renderToStaticMarkup(<ProgressPage />)
-      expect(html).not.toContain('data-testid="proposal-filter"')
-    } finally {
-      // Restore the default implementation for subsequent tests
-      mockUseProgress.mockImplementation(() =>
-        baseState([
-          { id: 'p1', title: 'Feature Alpha', source: 'human', status: 'draft' },
-          { id: 'p2', title: 'Feature Beta', source: 'human', status: 'draft' },
-        ]),
-      )
-    }
-  })
-})
 
 // ---------------------------------------------------------------------------
 // Responsive layout: the sidebar has been removed; main content fills the
@@ -318,5 +285,28 @@ describe('ProgressPage – search zero-state not shown on initial load', () => {
     const html = renderToStaticMarkup(<ProgressPage />)
     expect(html).not.toContain('0 tasks match')
     expect(html).not.toContain('data-testid="search-zero-state"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Landing view + removed proposal filter
+// ---------------------------------------------------------------------------
+
+describe('ProgressPage – Topology is the landing view', () => {
+  it('opens on Topology when the URL does not name a view', () => {
+    // Previously a localStorage preference could pin Board as the landing view
+    // permanently, so the declared default never applied again.
+    const html = renderToStaticMarkup(<ProgressPage />)
+    const topologyTab = html.slice(html.indexOf('data-testid="tab-topology"') - 120)
+    expect(topologyTab.slice(0, 200)).toContain('aria-selected="true"')
+  })
+
+  it('no longer renders the proposal filter', () => {
+    // It filtered the three task columns but left the proposals column showing
+    // every proposal under the heading "PROPOSALS (ALL)", so a filtered board
+    // contradicted its own header.
+    const html = renderToStaticMarkup(<ProgressPage />)
+    expect(html).not.toContain('data-testid="proposal-filter"')
+    expect(html).not.toContain('proposal-filter-select')
   })
 })
