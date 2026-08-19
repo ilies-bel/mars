@@ -35,6 +35,7 @@ import {
   endChatSubthread,
   uploadAttachment,
   renameChatThread,
+  deleteChatThread,
   setMessageFeedback,
   clearMessageFeedback,
   fetchCodexAuthState,
@@ -954,12 +955,22 @@ interface ThreadItemProps {
    * null       → no chip (default for operator-created threads)
    */
   kindChip?: 'alert' | 'decision' | null
+  /** Delete this thread for good. Omitted where deletion does not apply. */
+  onDelete?: () => void
 }
 
-const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, kindChip = null }: ThreadItemProps) => {
+const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, kindChip = null, onDelete }: ThreadItemProps) => {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
+  // Deleting is irreversible, so the control arms on first click and deletes on
+  // the second. An inline two-step keeps the confirmation next to the row it
+  // affects; window.confirm() would block the page on a modal instead.
+  const [armed, setArmed] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Disarm as soon as the pointer leaves, so an armed row never sits waiting to
+  // swallow an unrelated click later.
+  const disarm = () => setArmed(false)
 
   const startEdit = () => {
     setDraft(thread.title || 'New thread')
@@ -1006,6 +1017,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
       tabIndex={0}
       onClick={onSelect}
       onDoubleClick={startEdit}
+      onMouseLeave={disarm}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect() } }}
     >
       <div className="flex items-center gap-1">
@@ -1074,6 +1086,35 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
               className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-primary/60"
               title={thread.status === 'throttled' ? 'Retrying…' : undefined}
             />
+          )}
+          {onDelete && (
+            <button
+              type="button"
+              data-testid={armed ? 'thread-delete-confirm' : 'thread-delete'}
+              aria-label={
+                armed
+                  ? `Confirm deleting thread "${title}"`
+                  : `Delete thread "${title}"`
+              }
+              title={armed ? 'Click again to delete permanently' : 'Delete thread'}
+              className={[
+                'ml-1 flex-none rounded px-1 font-mono text-micro leading-none transition-opacity',
+                armed
+                  ? 'bg-error/20 text-error opacity-100'
+                  : 'text-muted-foreground opacity-0 hover:text-error group-hover:opacity-100 focus:opacity-100',
+              ].join(' ')}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (armed) {
+                  onDelete()
+                  setArmed(false)
+                } else {
+                  setArmed(true)
+                }
+              }}
+            >
+              {armed ? 'delete?' : '×'}
+            </button>
           )}
         </>
       )}
@@ -2514,6 +2555,17 @@ export const ThreadSidebar = ({
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['chat-threads'] }),
   })
 
+  const { mutate: remove } = useMutation({
+    mutationFn: (id: string) => deleteChatThread(id, projectId),
+    onSuccess: (_data, id) => {
+      // Deleting the open thread would otherwise leave the pane pointed at a
+      // thread that no longer exists.
+      if (id === selectedId) onSelectMainThread()
+      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+      void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
+    },
+  })
+
   // Toggle for the archived thread block (age > 7d or explicit archivedAt).
   const [archivedOpen, setArchivedOpen] = useState(false)
   // Toggle for the stale-untitled block (no title/message, age > 48h).
@@ -2554,12 +2606,10 @@ export const ThreadSidebar = ({
         onChange={({ selectedItem: _selectedItem, ...nextFilters }) => onFiltersChange(nextFilters)}
         onFastAction={onFastAction}
       />
+      {/* No "SUBTHREADS" heading: the rows sit directly under the pinned main
+          thread and are visibly indented beneath it, so the label named what
+          the layout already said and cost a line of the rail. */}
       <div className="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-0.5">
-        {liveThreads.length > 0 && (
-          <p className="px-2 pb-1 font-mono text-micro uppercase tracking-wide text-primary/50">
-            Subthreads
-          </p>
-        )}
         {isPending ? (
           <SkeletonList
             rows={3}
@@ -2582,6 +2632,7 @@ export const ThreadSidebar = ({
             isSelected={t.id === selectedId}
             onSelect={() => onSelect(t.id)}
             onRename={(title) => rename({ id: t.id, title })}
+            onDelete={() => remove(t.id)}
             kindChip={t.origin === 'alert' ? 'alert' : null}
           />
         ))}
@@ -2604,6 +2655,7 @@ export const ThreadSidebar = ({
                 isSelected={t.id === selectedId}
                 onSelect={() => onSelect(t.id)}
                 onRename={(title) => rename({ id: t.id, title })}
+                onDelete={() => remove(t.id)}
                 kindChip={t.origin === 'alert' ? 'alert' : null}
               />
             ))}
@@ -2628,6 +2680,7 @@ export const ThreadSidebar = ({
                 isSelected={t.id === selectedId}
                 onSelect={() => onSelect(t.id)}
                 onRename={(title) => rename({ id: t.id, title })}
+                onDelete={() => remove(t.id)}
                 kindChip={t.origin === 'alert' ? 'alert' : null}
               />
             ))}

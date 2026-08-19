@@ -1,11 +1,22 @@
 // @vitest-environment happy-dom
-/** The thread list preserves every Subthread once it has entered the conversation. */
+/**
+ * The thread rail lets an operator delete a Subthread.
+ *
+ * It used to refuse: threads were preserved forever, so the rail grew one row
+ * per alert, grill and stray question and the only relief was a 7-day
+ * auto-archive into a collapsed block that also only grew. Deleting is
+ * irreversible, so the control arms on first click and deletes on the second.
+ */
 
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThreadSidebar } from './ChatPage'
+
+const { mockDeleteChatThread } = vi.hoisted(() => ({
+  mockDeleteChatThread: vi.fn().mockResolvedValue(undefined),
+}))
 
 vi.mock('@/shared/api', () => ({
   fetchActionQueue: vi.fn().mockResolvedValue([]),
@@ -21,6 +32,7 @@ vi.mock('@/shared/api', () => ({
   createChatThread: vi.fn(),
   postChatMessage: vi.fn(),
   renameChatThread: vi.fn(),
+  deleteChatThread: mockDeleteChatThread,
   stopChatThread: vi.fn(),
   invokeAction: vi.fn(),
 }))
@@ -40,7 +52,7 @@ describe('thread list', () => {
     container.remove()
   })
 
-  it('does not offer a way to delete a Subthread', async () => {
+  it('offers a delete control that takes two clicks to fire', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     await act(async () => {
       root.render(
@@ -65,7 +77,18 @@ describe('thread list', () => {
     }
 
     expect(container.textContent).toContain('First subthread')
-    expect(container.querySelector('[aria-label="Delete thread"]')).toBeNull()
-    expect(container.textContent).not.toMatch(/delete subthread|delete thread/i)
+
+    const trigger = container.querySelector<HTMLButtonElement>('[data-testid="thread-delete"]')
+    expect(trigger).not.toBeNull()
+
+    // First click only arms it — nothing is deleted yet.
+    await act(async () => { trigger!.click() })
+    expect(mockDeleteChatThread).not.toHaveBeenCalled()
+
+    const confirm = container.querySelector<HTMLButtonElement>('[data-testid="thread-delete-confirm"]')
+    expect(confirm).not.toBeNull()
+
+    await act(async () => { confirm!.click() })
+    expect(mockDeleteChatThread).toHaveBeenCalledWith('t1', undefined)
   })
 })

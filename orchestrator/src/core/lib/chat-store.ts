@@ -1135,6 +1135,45 @@ export const unarchiveSubthread = async (id: string): Promise<void> => {
   })
 }
 
+/**
+ * Delete a Subject and everything hanging off it.
+ *
+ * Archiving hides a Subject; this removes it. The rail accumulates threads
+ * nobody will read again — one per alert, per grill, per stray question — and
+ * with no way to delete them the only options were to leave them or wait for
+ * the 7-day auto-archive to move them into a collapsed block that also only
+ * grows. Cleanup has to actually reclaim the list.
+ *
+ * `chat_messages.thread_id` has no ON DELETE CASCADE, so dependents are
+ * removed explicitly and in FK order inside one transaction: a half-deleted
+ * thread would leave messages that no longer resolve to a Subject.
+ * `chat_feedback.message_id` cascades from `chat_messages`, but rows are keyed
+ * by `thread_id` too, so they are cleared directly rather than relying on the
+ * cascade to catch every one.
+ *
+ * Forks whose `parent_thread_id` points here are detached rather than deleted
+ * — a fork is its own conversation and must not disappear because its origin
+ * was tidied away.
+ */
+export const deleteSubthread = async (id: string): Promise<void> => {
+  const c = stateClient()
+  await c.execute({ sql: 'BEGIN', args: [] })
+  try {
+    await c.execute({
+      sql: `UPDATE chat_threads SET parent_thread_id = NULL WHERE parent_thread_id = ?`,
+      args: [id],
+    })
+    await c.execute({ sql: `DELETE FROM chat_feedback WHERE thread_id = ?`, args: [id] })
+    await c.execute({ sql: `DELETE FROM chat_thread_tasks WHERE thread_id = ?`, args: [id] })
+    await c.execute({ sql: `DELETE FROM chat_messages WHERE thread_id = ?`, args: [id] })
+    await c.execute({ sql: `DELETE FROM chat_threads WHERE id = ?`, args: [id] })
+    await c.execute({ sql: 'COMMIT', args: [] })
+  } catch (err) {
+    await c.execute({ sql: 'ROLLBACK', args: [] }).catch(() => {})
+    throw err
+  }
+}
+
 // ── Feedback API ──────────────────────────────────────────────────────────────
 
 /**

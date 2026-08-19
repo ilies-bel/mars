@@ -48,6 +48,7 @@ import {
   closeSubject,
   archiveSubthread,
   unarchiveSubthread,
+  deleteSubthread,
   setThreadStatus,
   appendMessage,
 } from '../lib/chat-store'
@@ -2508,6 +2509,26 @@ export const startHttpServer = async (
           ? unarchiveSubthread(id)
           : archiveSubthread(id)
         action
+          .then(() => {
+            deps.viewStreamHub?.broadcast('chat')
+            sendJson(res, 200, { ok: true })
+          })
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
+    // DELETE /chat/threads/:id — remove a Subthread and its messages for good.
+    // Archiving only hides a thread; the rail still accumulates one row per
+    // alert and grill forever, so cleanup needs a verb that actually removes.
+    {
+      const deleteMatch =
+        req.method === 'DELETE' && req.url
+          ? req.url.match(/^\/chat\/threads\/([^/?]+)$/)
+          : null
+      if (deleteMatch && deleteMatch[1]) {
+        const id = decodeURIComponent(deleteMatch[1])
+        deleteSubthread(id)
           .then(() => {
             deps.viewStreamHub?.broadcast('chat')
             sendJson(res, 200, { ok: true })

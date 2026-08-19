@@ -1211,6 +1211,7 @@ export const startServer = async (
         // POST /api/chat/threads/:id/stop    → daemon /chat/threads/:id/stop
         // POST /api/chat/threads/:id/title   → daemon /chat/threads/:id/title
         // POST /api/chat/threads/:id/end     → daemon /chat/threads/:id/end
+        // DELETE /api/chat/threads/:id       → daemon DELETE /chat/threads/:id
         // ---------------------------------------------------------------------------
 
         if (path === '/api/chat/threads' && req.method === 'GET') {
@@ -1249,6 +1250,19 @@ export const startServer = async (
           let body: unknown = {}
           try { body = await req.json() } catch { /* empty body fine */ }
           const result = await proxyPost(ctx.stateDir, '/chat/threads', body)
+          return jsonResponse(result.status, result.body)
+        }
+
+        // DELETE /api/chat/threads/:id — remove a Subthread for good.
+        if (path.startsWith('/api/chat/threads/') && req.method === 'DELETE') {
+          const threadId = decodeURIComponent(path.slice('/api/chat/threads/'.length))
+          if (!threadId || threadId.includes('/')) {
+            return jsonResponse(400, { ok: false, error: 'thread id required' })
+          }
+          const result = await proxyDelete(
+            ctx.stateDir,
+            `/chat/threads/${encodeURIComponent(threadId)}`,
+          )
           return jsonResponse(result.status, result.body)
         }
 

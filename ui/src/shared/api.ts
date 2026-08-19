@@ -1080,6 +1080,19 @@ export const renameChatThread = async (
 }
 
 /**
+ * Delete a Subthread and its messages. Irreversible — the caller is
+ * responsible for confirming with the operator first.
+ */
+export const deleteChatThread = async (
+  threadId: string,
+  projectId?: string,
+): Promise<void> => {
+  const path = appendProject(`/api/chat/threads/${encodeURIComponent(threadId)}`, projectId)
+  const r = await fetch(`${BASE}${path}`, { method: 'DELETE' })
+  if (!r.ok) await throwMutationError(path, r)
+}
+
+/**
  * Stop a running thread response early.
  */
 export const stopChatThread = async (
