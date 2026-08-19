@@ -4,9 +4,13 @@
  * These tests verify:
  *   1. The child is spawned with detached:true so it runs in its own process
  *      group and survives the parent shell's exit / SIGHUP.
- *   2. stdio uses piped stdout/stderr (not 'inherit') — child is disconnected
- *      from the parent tty, which prevents the kernel from delivering a SIGHUP
- *      when the tty hangs up.
+ *   2. stdio sends the child's stdout/stderr to a real log-file descriptor.
+ *      Not 'inherit' (child must be disconnected from the parent tty so the
+ *      kernel does not deliver SIGHUP on hangup) and NOT 'pipe' either: this
+ *      process exits right after printing the banner, which would close the
+ *      read ends and leave the detached server writing into a dead pipe. That
+ *      killed the server on its next log line — twice in one session — and
+ *      left the advertised log file empty.
  *   3. The starting banner is printed ONLY after the child emits "listening on"
  *      confirming a successful bind — not optimistically upfront.
  *   4. child.unref() is called so the parent's event loop exits promptly.
@@ -28,7 +32,7 @@
  */
 
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, mkdirSync, appendFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { EventEmitter } from 'node:events'
@@ -49,31 +53,17 @@ const spawnMock = vi.mocked(spawn)
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Minimal pipe-like stream that launchUi attaches listeners to.
- * setEncoding, resume, and destroy are no-ops; unref is not called in tests
- * because the child is mocked.
+ * Build a fake ChildProcess. It needs no stdout/stderr streams: readiness is
+ * read out of the log file the real child writes to, not out of pipes.
  */
-class FakePipe extends EventEmitter {
-  setEncoding(_encoding: string): this { return this }
-  // resume() is called by launchUi to drain the stream and release backpressure.
-  resume(): this { return this }
-  // destroy() may be called if the implementation changes.
-  destroy(): void { /* no-op */ }
-}
-
-/** Build a fake ChildProcess with the pipe streams launchUi requires. */
 const makeFakeChild = (pid = 12345) => {
   const child = new EventEmitter() as ReturnType<typeof spawn>
   ;(child as unknown as { pid: number }).pid = pid
   ;(child as unknown as { unref: () => void }).unref = vi.fn()
-  ;(child as unknown as { stdout: FakePipe }).stdout = new FakePipe()
-  ;(child as unknown as { stderr: FakePipe }).stderr = new FakePipe()
   return child
 }
 
 type FakeChild = ReturnType<typeof makeFakeChild> & {
-  stdout: FakePipe
-  stderr: FakePipe
   unref: ReturnType<typeof vi.fn>
 }
 
@@ -102,14 +92,18 @@ afterEach(() => {
   spawnMock.mockReset()
 })
 
-// ── helper: emit the "listening on" signal from a fake child ─────────────────
+// ── helper: emit the "listening on" signal the way a real child does ─────────
 
-/** Signal successful bind from the fake child's stdout. */
-const signalReady = (child: FakeChild, url = 'http://127.0.0.1:7777'): void => {
-  ;(child as unknown as { stdout: FakePipe }).stdout.emit(
-    'data',
-    `mars-ui  repo=/tmp/repo\n         db=/tmp/db\n         listening on ${url}\n`,
-  )
+const logPath = () => resolve(stateDir, 'ui.log')
+
+/** Write to the log file, standing in for the child's stdout fd. */
+const childLogs = (text: string): void => {
+  appendFileSync(logPath(), text)
+}
+
+/** Signal successful bind the way the real server does — via the log file. */
+const signalReady = (_child: FakeChild, url = 'http://127.0.0.1:7777'): void => {
+  childLogs(`mars-ui  repo=/tmp/repo\n         db=/tmp/db\n         listening on ${url}\n`)
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -128,7 +122,7 @@ describe('launchUi — detached spawn', () => {
     expect(opts).toMatchObject({ detached: true })
   })
 
-  it('uses piped stdout/stderr — child is disconnected from the parent tty', async () => {
+  it('gives the child a real log fd — never a pipe this process will close', async () => {
     const fakeChild = makeFakeChild(12345)
     spawnMock.mockReturnValue(fakeChild)
 
@@ -137,12 +131,43 @@ describe('launchUi — detached spawn', () => {
     await promise
 
     const [, , opts] = spawnMock.mock.calls[0]
-    const stdio = opts?.stdio as string[]
+    const stdio = opts?.stdio as unknown[]
     // stdin must be 'ignore' so no tty SIGHUP on hangup
     expect(stdio[0]).toBe('ignore')
-    // stdout and stderr must be 'pipe' (not 'inherit') for readiness detection
-    expect(stdio[1]).toBe('pipe')
-    expect(stdio[2]).toBe('pipe')
+    // stdout/stderr must be a numeric descriptor. 'pipe' would tie the server's
+    // lifetime to ours: we exit after the banner, the read ends close, and the
+    // detached server dies on its next write. 'inherit' would re-attach it to
+    // the tty and reintroduce SIGHUP.
+    expect(typeof stdio[1]).toBe('number')
+    expect(typeof stdio[2]).toBe('number')
+    expect(stdio[1]).toBe(stdio[2])
+  })
+
+  it('points the banner at a log file that actually receives the child output', async () => {
+    const fakeChild = makeFakeChild(12345)
+    spawnMock.mockReturnValue(fakeChild)
+
+    const promise = launchUi({ repo: tmpRepo })
+    signalReady(fakeChild as unknown as FakeChild)
+    await promise
+
+    expect(readFileSync(logPath(), 'utf8')).toContain('listening on')
+  })
+
+  it('reads readiness from output appended after an existing log, not the whole file', async () => {
+    // A second `mars ui` in the same repo must not match the PREVIOUS run's
+    // "listening on" line and declare success before this child has bound.
+    writeFileSync(logPath(), 'mars-ui  listening on http://127.0.0.1:9999\n')
+
+    const fakeChild = makeFakeChild(31337)
+    spawnMock.mockReturnValue(fakeChild)
+
+    const promise = launchUi({ repo: tmpRepo })
+    signalReady(fakeChild as unknown as FakeChild, 'http://127.0.0.1:7777')
+    await promise
+
+    const entry = readPidEntry(tmpRepo)
+    expect(entry!.port).toBe(7777)
   })
 
   it('calls child.unref() so the parent event loop exits without waiting', async () => {
@@ -269,8 +294,8 @@ describe('launchUi — detached spawn', () => {
 
     try {
       const promise = launchUi({ repo: tmpRepo })
-      // Emit the conflict error then signal non-zero exit.
-      ;(fakeChild as unknown as FakeChild).stderr.emit('data', conflictMsg)
+      // Write the conflict error to the log then signal non-zero exit.
+      childLogs(conflictMsg)
       fakeChild.emit('exit', 1, null)
       await promise
     } catch (err) {

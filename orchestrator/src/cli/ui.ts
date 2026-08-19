@@ -1,11 +1,18 @@
 import { spawn } from 'node:child_process'
-import { existsSync, writeFileSync, unlinkSync, readFileSync, openSync, closeSync } from 'node:fs'
+import {
+  existsSync,
+  writeFileSync,
+  unlinkSync,
+  readFileSync,
+  openSync,
+  closeSync,
+  fstatSync,
+  readSync,
+} from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveContext } from '../core/context'
 import { stopProcess, makeOsStopDeps } from './ui-stop'
-
-type StreamWithUnref = { unref?: () => void; removeAllListeners: (event: string) => unknown; resume: () => unknown }
 
 interface LaunchOptions {
   repo?: string
@@ -82,10 +89,19 @@ export const launchUi = async (opts: LaunchOptions): Promise<void> => {
 
   const ctx = resolveContext(opts.repo)
   const logFile = resolve(ctx.stateDir, 'ui.log')
-  // Touch the log file so the path shown in the banner always resolves even
-  // though the child's output now travels through pipes instead of this fd.
+  // The child's stdout/stderr are this file, not pipes back to us.
+  //
+  // Piping was a latent kill-switch. This process exits as soon as it has
+  // printed the banner, which closes the read ends; the detached server was
+  // then left holding write ends with no reader (`lsof` shows the socket peer
+  // as `->(none)`), so its very next log line took it down. Observed twice in
+  // one session: server healthy on :7777, gone minutes later, with the
+  // advertised log file empty because nothing was ever written to it.
+  //
+  // A real fd has neither problem — it survives our exit, and the log the
+  // banner points at now actually contains the server's output.
   const logFd = openSync(logFile, 'a')
-  closeSync(logFd)
+  const logStartOffset = fstatSync(logFd).size
 
   const args: string[] = []
   if (opts.repo) args.push('--repo', opts.repo)
@@ -94,9 +110,9 @@ export const launchUi = async (opts: LaunchOptions): Promise<void> => {
   if (opts.dev) args.push('--dev')
   if (opts.vitePort) args.push('--vite-port', opts.vitePort)
 
-  // Readiness signal: we pipe stdout and stderr so the banner is only printed
-  // after the child confirms a successful bind ("listening on <url>" on stdout)
-  // or we learn it failed (non-zero exit with a message on stderr).
+  // Readiness signal: the banner is printed only after the child confirms a
+  // successful bind ("listening on <url>") or we learn it failed. We read that
+  // out of the log file the child is writing to.
   //
   // We prefer this over port-polling (avoids a timing gap between the OS bind
   // and the first successful HTTP probe) and over Node IPC (would require
@@ -104,25 +120,46 @@ export const launchUi = async (opts: LaunchOptions): Promise<void> => {
   //
   // detached: true — child leads its own process group; survives parent exit.
   // stdin 'ignore' — no tty, so no SIGHUP when the launching shell closes.
+  // stdout/stderr → logFd — see the note on logFd above; pipes here left the
+  // detached server writing into a closed pipe once this process exited.
   const child = spawn(process.execPath, [launcher, ...args], {
     detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', logFd, logFd],
     env: process.env,
   })
+  // The child holds its own duplicate of the descriptor; ours is done.
+  closeSync(logFd)
 
   type Outcome =
     | { ok: true; url: string }
     | { ok: false; message: string; exitedZero: boolean }
 
+  /** Everything the child has written to the log since we spawned it. */
+  const readChildLog = (): string => {
+    try {
+      const fd = openSync(logFile, 'r')
+      try {
+        const size = fstatSync(fd).size
+        if (size <= logStartOffset) return ''
+        const buf = Buffer.allocUnsafe(size - logStartOffset)
+        readSync(fd, buf, 0, buf.length, logStartOffset)
+        return buf.toString('utf8')
+      } finally {
+        closeSync(fd)
+      }
+    } catch {
+      return ''
+    }
+  }
+
   const outcome = await new Promise<Outcome>((resolve) => {
-    let stdoutBuf = ''
-    let stderrBuf = ''
     let settled = false
 
     const settle = (result: Outcome): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      clearInterval(poll)
       resolve(result)
     }
 
@@ -131,9 +168,9 @@ export const launchUi = async (opts: LaunchOptions): Promise<void> => {
     // has to rebuild a stale bundle first runs `tsc -b && vite build && tsc`,
     // which takes tens of seconds on a cold cache.
     //
-    // The child announces the rebuild on stdout before it begins, so we extend
-    // the deadline on evidence rather than raising it blindly — a genuinely
-    // hung child still fails fast at 10s.
+    // The child announces the rebuild before it begins, so we extend the
+    // deadline on evidence rather than raising it blindly — a genuinely hung
+    // child still fails fast at 10s.
     const START_TIMEOUT_MS = 10_000
     const BUILD_TIMEOUT_MS = 180_000
 
@@ -147,47 +184,38 @@ export const launchUi = async (opts: LaunchOptions): Promise<void> => {
     }
     let timer = setTimeout(onTimeout, timeoutMs)
 
-    child.stdout?.setEncoding('utf8')
-    child.stdout?.on('data', (chunk: string) => {
-      stdoutBuf += chunk
+    const poll = setInterval(() => {
+      const log = readChildLog()
       // Rebuilding — this start is legitimately slow, not stuck.
-      if (timeoutMs === START_TIMEOUT_MS && /bundle is stale — rebuilding/.test(stdoutBuf)) {
+      if (timeoutMs === START_TIMEOUT_MS && /bundle is stale — rebuilding/.test(log)) {
         timeoutMs = BUILD_TIMEOUT_MS
         clearTimeout(timer)
         timer = setTimeout(onTimeout, timeoutMs)
-        process.stderr.write('mars-ui: frontend bundle is stale — rebuilding, this can take a minute…\n')
+        process.stderr.write(
+          'mars-ui: frontend bundle is stale — rebuilding, this can take a minute…\n',
+        )
       }
-      const m = stdoutBuf.match(/listening on (http:\/\/\S+)/)
+      const m = log.match(/listening on (http:\/\/\S+)/)
       if (m) settle({ ok: true, url: m[1] })
-    })
-
-    child.stderr?.setEncoding('utf8')
-    child.stderr?.on('data', (chunk: string) => {
-      stderrBuf += chunk
-    })
+    }, 100)
 
     child.on('exit', (code) => {
       if (settled) return
+      const log = readChildLog().trim()
       if (code === 0) {
-        // "already running" case: server exits 0 with a message on stdout.
-        const msg = stdoutBuf.trim()
-        if (msg) process.stdout.write(msg + '\n')
+        // "already running" case: server exits 0 with a message.
+        if (log) process.stdout.write(log + '\n')
         settle({ ok: false, message: '', exitedZero: true })
       } else {
-        const msg = stderrBuf.trim() || `mars-ui: server exited with code ${code}`
-        settle({ ok: false, message: msg, exitedZero: false })
+        settle({
+          ok: false,
+          message: log || `mars-ui: server exited with code ${code}`,
+          exitedZero: false,
+        })
       }
     })
   })
 
-  // Drain and unref the streams: keep the pipes open so the running child
-  // does not get EPIPE, but stop buffering and release from the event loop.
-  for (const stream of [child.stdout, child.stderr]) {
-    if (!stream) continue
-    stream.removeAllListeners('data')
-    stream.resume()
-    ;(stream as unknown as StreamWithUnref).unref?.()
-  }
   child.unref()
 
   if (!outcome.ok) {
