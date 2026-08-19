@@ -336,6 +336,30 @@ describe('ReflectionsPage', () => {
     expect(html).toContain('auto-reflect is ON but auto-trigger is OFF')
   })
 
+  // The detail view knows exactly which arc it is showing, so the manual
+  // trigger it prompts for should be a real, copyable command rather than
+  // prose with a `<originId>` placeholder the operator has to hand-fill.
+  it('detail view offers a copyable mars arc reflect <originId> command instead of a placeholder', () => {
+    vi.mocked(useHashRoute).mockReturnValue('#/reflections/abc123/2026-01-15T10:00:00Z')
+    vi.mocked(useQuery)
+      .mockReset()
+      .mockReturnValueOnce(mockQueryResult({ data: makeListResponse() }))
+      .mockReturnValueOnce(
+        mockQueryResult({
+          data: makeDetailResponse({ autoRunReflect: 'off', autoEnqueue: false, originId: 'abc123' }),
+        }),
+      )
+
+    const html = renderToStaticMarkup(<ReflectionsPage />)
+
+    // The real command, fully spelled out — not the `<originId>` placeholder.
+    expect(html).toContain('mars arc reflect abc123')
+    expect(html).not.toContain('&lt;originId&gt;')
+    // A copy affordance exposes the exact same command, so it can be pasted
+    // into a terminal verbatim rather than retyped.
+    expect(html).toContain('aria-label="Copy mars arc reflect abc123"')
+  })
+
   it('shows "No reflection has run yet" when lastReflectedAt is null', () => {
     vi.mocked(useQuery)
       .mockReset()

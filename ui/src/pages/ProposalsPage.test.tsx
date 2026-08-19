@@ -112,3 +112,35 @@ describe('ProposalsPage — body preview', () => {
     expect(html).not.toContain('line-clamp-3')
   })
 })
+
+describe('ProposalsPage — grill command copy', () => {
+  // Regression: the row used to render `/mars:grill <id>` as a dead,
+  // non-clickable chip that could also truncate a long id — leaving no
+  // accurate copy of it on screen. The copy affordance must carry the full,
+  // untruncated id, both in its visible label and its aria-label, and must
+  // not rely on CSS truncation classes that would hide part of it.
+  it('exposes the full, untruncated proposal id in the grill command copy button', () => {
+    const longId = '894fbcdf-src-core-tests-src-cli-commands-tests-timeout-handling'
+    const html = render([draft({ id: longId })])
+
+    expect(html).toContain(`/mars:grill ${longId}`)
+    expect(html).toContain(`aria-label="Copy /mars:grill ${longId}"`)
+  })
+
+  it('does not truncate the grill command chip with CSS clamping', () => {
+    const longId = '894fbcdf-src-core-tests-src-cli-commands-tests-timeout-handling'
+    const html = render([draft({ id: longId })])
+
+    // Isolate the copy button element itself (starts at the nearest
+    // `<button` before the grill text, ends at its own `>`) — its class
+    // attribute must not clamp or truncate the id, since the button is the
+    // only copy of it on screen.
+    const grillIdx = html.indexOf(`/mars:grill ${longId}`)
+    expect(grillIdx).toBeGreaterThan(-1)
+    const buttonStart = html.lastIndexOf('<button', grillIdx)
+    const buttonOpenTagEnd = html.indexOf('>', buttonStart)
+    const buttonOpenTag = html.slice(buttonStart, buttonOpenTagEnd)
+    expect(buttonOpenTag).not.toContain('truncate')
+    expect(buttonOpenTag).not.toContain('line-clamp')
+  })
+})

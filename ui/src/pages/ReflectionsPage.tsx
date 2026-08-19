@@ -36,6 +36,7 @@ import type {
 import { useFocusedProject } from '@/shared/useFocusedProject'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { SkeletonList } from '@/components/Skeleton'
+import { CopyButton } from '@/components/CopyButton'
 import { parseReflectionDetailRoute, reflectionDetailHash, proposalHash } from '@/shared/routing'
 import { useHashRoute } from '@/shared/useHashRoute'
 import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
@@ -452,16 +453,26 @@ interface RunStateBannerProps {
   autoRunReflect: 'on' | 'off'
   autoEnqueue: boolean
   lastReflectedAt: string | null
+  /**
+   * The arc this banner is scoped to, when known (detail view only — the
+   * list view spans every arc, so there is no single command to offer).
+   * When present, the manual-trigger message swaps its `<originId>`
+   * placeholder for a real, copyable `mars arc reflect <originId>` command
+   * instead of prose the operator has to retype by hand.
+   */
+  originId?: string | null
 }
 
-const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt }: RunStateBannerProps) => {
+const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt, originId = null }: RunStateBannerProps) => {
   const lastRan = lastReflectedAt ? `Last reflection: ${fmt(lastReflectedAt)} (${fmtRelative(lastReflectedAt)})` : 'No reflection has run yet.'
-  const triggerDesc =
+  const needsManualTrigger = autoRunReflect === 'off' || !autoEnqueue
+  const triggerLabel =
     autoRunReflect === 'off'
-      ? 'auto-reflect is OFF — reflection will not run automatically. Run manually with `mars arc reflect <originId>`.'
+      ? 'auto-reflect is OFF — reflection will not run automatically.'
       : autoEnqueue
         ? 'auto-reflect is ON and auto-trigger is ON — reflection runs automatically after each arc.'
-        : 'auto-reflect is ON but auto-trigger is OFF — reflection must be triggered manually with `mars arc reflect <originId>`.'
+        : 'auto-reflect is ON but auto-trigger is OFF — reflection must be triggered manually.'
+  const reflectCmd = originId ? `mars arc reflect ${originId}` : null
 
   return (
     <div
@@ -471,8 +482,27 @@ const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt }: RunSta
       <span className="text-muted-foreground">{lastRan}</span>
       {' · '}
       <span className={autoRunReflect === 'on' && autoEnqueue ? 'text-success' : 'text-warn'}>
-        {triggerDesc}
+        {triggerLabel}
       </span>
+      {needsManualTrigger && (
+        <span className="ml-1.5">
+          {reflectCmd ? (
+            <span className="inline-flex items-center gap-1.5 align-middle">
+              Run manually:
+              <CopyButton
+                text={reflectCmd}
+                label={reflectCmd}
+                aria-label={`Copy ${reflectCmd}`}
+                className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-micro text-primary/70 hover:bg-primary/10 hover:text-primary"
+              />
+            </span>
+          ) : (
+            <>
+              Run manually with <code>mars arc reflect &lt;originId&gt;</code>.
+            </>
+          )}
+        </span>
+      )}
     </div>
   )
 }
@@ -639,6 +669,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
         autoRunReflect={detail.autoRunReflect}
         autoEnqueue={detail.autoEnqueue}
         lastReflectedAt={detail.recordedAt}
+        originId={detail.originId}
       />
 
       {/* Origin and metadata */}
