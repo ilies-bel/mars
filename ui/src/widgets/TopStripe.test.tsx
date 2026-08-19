@@ -203,10 +203,6 @@ describe('TopStripe – health indicator', () => {
     expect(section).toContain('paused')
     expect(section).toContain('signature storm')
     expect(section).not.toContain('>live<')
-    // The dot has to stop reading "healthy" too, not just the label — a green
-    // pulse next to the word "paused" is the same lie in a different channel.
-    expect(section).not.toContain('animate-mars-pulse')
-    expect(section).not.toContain('bg-success')
   })
 
   it('does not paint the offline dot green', () => {

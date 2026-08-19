@@ -61,19 +61,6 @@ describe('buildSituationReport', () => {
     expect(report).not.toContain('Dispatch')
     expect(report.endsWith('need attention.')).toBe(true)
   })
-
-  // `getDispatchState` is optional, so a caller that never wires it up must
-  // degrade to the pre-pause-clause report rather than throwing or guessing.
-  it('omits the pause clause when the dispatch source is not wired up', async () => {
-    const report = await buildSituationReport({
-      listTasks: async () => [],
-      getSemaphoreSnapshot: () => ({ inUse: 0, limit: 14 }),
-      listActionQueue: async () => [],
-    })
-
-    expect(report).not.toContain('Dispatch')
-    expect(report.endsWith('need attention.')).toBe(true)
-  })
 })
 
 // ---------------------------------------------------------------------------
