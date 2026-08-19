@@ -321,12 +321,25 @@ export const resolvePlanText = (
  *
  * `readStdin` is injectable so tests can supply a pure function instead of
  * reading fd 0 (`readFileSync(0, 'utf8')`).
+ *
+ * Any leftover `positional` token starting with `--` is, by construction, a
+ * flag `parseArgs` did not recognise (every declared flag is already pulled
+ * into `flags`/`multiFlags` before `positional` is built). Folding it into
+ * the joined literal would silently discard the caller's intent — e.g.
+ * `mars proposal add @file.md --title x` would store the literal string
+ * `"@file.md --title x"` as the goal instead of expanding the file and
+ * rejecting the unknown flag. Reject it as a hard error instead.
  */
 export const resolvePromptSource = (
   positional: readonly string[],
   flags: Record<string, string>,
   readStdin: () => string = () => readFileSync(0, 'utf8'),
 ): FlagResult<string> => {
+  const unknownFlag = positional.find((p) => p.startsWith('--'))
+  if (unknownFlag !== undefined) {
+    return { ok: false, message: `[mars] error: unknown flag: ${unknownFlag}` }
+  }
+
   const promptFile = flags['--prompt-file']
   const singlePos = positional.length === 1 ? positional[0] : undefined
   const isFileRef = singlePos !== undefined && singlePos.startsWith('@')

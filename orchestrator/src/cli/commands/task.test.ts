@@ -259,6 +259,21 @@ describe('task add prompt input channels', () => {
     expect(r.err.join('\n')).toContain('/nonexistent/mars-test-path.txt')
   })
 
+  // (b2) an unrecognised flag after @file is rejected, not folded into the prompt
+  it('unrecognised flag after @file is rejected rather than absorbed into the prompt', async () => {
+    const filePath = join(repo, 'prompt.txt')
+    writeFileSync(filePath, 'prompt from file\n')
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-x', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', `@${filePath}`, '--title', 'x'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).not.toBe(0)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join('\n')).toContain('--title')
+  })
+
   // (c) --prompt-file reads file contents
   it('--prompt-file reads file contents verbatim into prompt', async () => {
     const filePath = join(repo, 'prompt-flag.txt')

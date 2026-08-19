@@ -18,6 +18,16 @@ const adrAdd: Command = {
   summary: 'add an ADR (daemon-routed write to docs/knowledge/decisions/)',
   usage: 'usage: mars adr add "<title>" "<body>" (body may be @path)',
   run: async (args, deps) => {
+    // Any leftover positional token starting with `--` is an unrecognised
+    // flag (parseArgs already pulled every declared flag out of positional).
+    // Without this guard it silently folds into the joined `bodyArg` string —
+    // e.g. `mars adr add "title" @file.md --unknown foo` would try to read
+    // the file "file.md --unknown foo" instead of rejecting `--unknown`.
+    const unknownFlag = args.positional.find((p) => p.startsWith('--'))
+    if (unknownFlag !== undefined) {
+      deps.err(`[mars] error: unknown flag: ${unknownFlag}`)
+      return { code: 2 }
+    }
     const title = args.positional[0]
     const bodyArg = args.positional.slice(1).join(' ')
     if (!title || !bodyArg) {

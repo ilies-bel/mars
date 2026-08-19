@@ -117,6 +117,20 @@ describe('task note — @file body input', () => {
     expect(r.code).not.toBe(0)
     expect(fake.calls).toHaveLength(0)
   })
+
+  it('rejects an unrecognised flag instead of folding it into the body', async () => {
+    const filePath = join(repo, 'note.txt')
+    writeFileSync(filePath, 'note body')
+    const fake = makeFakeDaemon(() => ({ id: 'note-abc' }))
+    const { store, ctx, runCommandInProcess } = await freshModules()
+    const r = await runCommandInProcess(
+      ['task', 'note', 'mars-task-1234', `@${filePath}`, '--title', 'x'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).not.toBe(0)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join(' ')).toContain('--title')
+  })
 })
 
 // ── proposal add ─────────────────────────────────────────────────────────────
@@ -174,6 +188,20 @@ describe('proposal add — @file goal input', () => {
     )
     expect(r.code).not.toBe(0)
   })
+
+  it('rejects an unrecognised flag instead of folding it into the goal', async () => {
+    const filePath = join(repo, 'goal.txt')
+    writeFileSync(filePath, 'goal from file')
+    const { store, ctx, runCommandInProcess } = await freshModules()
+    const { listProposals } = await import('../../../core/proposals')
+    const r = await runCommandInProcess(
+      ['proposal', 'add', `@${filePath}`, '--title', 'x'],
+      { store, ctx, daemon: makeFakeDaemon() },
+    )
+    expect(r.code).not.toBe(0)
+    expect(r.err.join(' ')).toContain('--title')
+    expect(await listProposals()).toHaveLength(0)
+  })
 })
 
 // ── glossary set ─────────────────────────────────────────────────────────────
@@ -220,5 +248,19 @@ describe('glossary set — @file definition input', () => {
     )
     expect(r.code).not.toBe(0)
     expect(fake.calls).toHaveLength(0)
+  })
+
+  it('rejects an unrecognised flag instead of folding it into the definition', async () => {
+    const filePath = join(repo, 'def.txt')
+    writeFileSync(filePath, 'definition from file')
+    const fake = makeFakeDaemon()
+    const { store, ctx, runCommandInProcess } = await freshModules()
+    const r = await runCommandInProcess(
+      ['glossary', 'set', 'myterm', `@${filePath}`, '--title', 'x'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).not.toBe(0)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join(' ')).toContain('--title')
   })
 })
