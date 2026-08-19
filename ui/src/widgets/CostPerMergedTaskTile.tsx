@@ -61,10 +61,17 @@ export const CostPerMergedTaskTile = () => {
   // change rather than the boundary between "no pricing" and "pricing".
   const priorValue = priced.length >= 2 ? priced[0].avgCostPerMerge : null
   const delta = priorValue !== null ? currentValue - priorValue : 0
-  // lower cost = improved → ↑ arrow (matches kpiDriftDirection for lower-is-better)
+  // The arrow is an IMPROVEMENT arrow (matches kpiDriftDirection /
+  // KpiDetailPage's ↑ Improved / ↓ Regressed convention for lower-is-better
+  // metrics), not a value-direction arrow — lower cost = improved = ↑, even
+  // though the sparkline is visibly descending. Spelling out "cheaper" /
+  // "dearer" next to it keeps that reading legible instead of relying on the
+  // reader to already know the convention (the other four KPI tiles use a
+  // ✓/⚠/× verdict chip, not an arrow, so there's no cross-tile precedent).
   const showArrow = Math.abs(delta) >= 0.001
   const isImproved = delta < 0
   const deltaArrow = isImproved ? '↑' : '↓'
+  const deltaWord = isImproved ? 'cheaper' : 'dearer'
   const deltaClass = isImproved ? 'text-success' : 'text-error'
 
   const sparklinePoints = trend.map((p) => p.avgCostPerMerge)
@@ -86,7 +93,9 @@ export const CostPerMergedTaskTile = () => {
         {showArrow && (
           <span className={`flex items-center gap-1 text-micro ${deltaClass}`}>
             <span aria-hidden="true">{deltaArrow}</span>
-            <span>{usdFormatter.format(Math.abs(delta))}</span>
+            <span>
+              {usdFormatter.format(Math.abs(delta))} {deltaWord}
+            </span>
           </span>
         )}
       </div>

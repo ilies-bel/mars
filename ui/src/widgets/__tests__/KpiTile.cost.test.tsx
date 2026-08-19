@@ -92,8 +92,15 @@ describe('CostPerMergedTaskTile — USD value formatting', () => {
 describe('CostPerMergedTaskTile — delta arrow', () => {
   beforeEach(() => { vi.resetAllMocks() })
 
-  it('shows ↑ arrow when cost improved (decreased)', () => {
-    // cost went from $3.00 to $1.50 → improved → ↑
+  // The arrow is an IMPROVEMENT arrow (↑ = better, matching kpiDriftDirection
+  // and KpiDetailPage's ↑ Improved / ↓ Regressed convention), not a
+  // value-direction arrow — for a lower-is-better metric like cost, a falling
+  // value is an *improvement* and gets ↑ even while the sparkline visibly
+  // descends. That reading is only legible if the tile also says the word
+  // ("cheaper"/"dearer") next to the arrow; a bare glyph reads as the
+  // literal-but-wrong "cost went up".
+  it('shows ↑ arrow with "cheaper" when cost improved (decreased)', () => {
+    // cost went from $3.00 to $1.50 → improved → ↑ $1.50 cheaper
     mockUseCost.mockReturnValue({
       data: makeTrend(7, 3.0, 1.5),
       isLoading: false,
@@ -102,10 +109,11 @@ describe('CostPerMergedTaskTile — delta arrow', () => {
     const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
     expect(html).toContain('↑')
     expect(html).not.toContain('↓')
+    expect(html).toContain('cheaper')
   })
 
-  it('shows ↓ arrow when cost regressed (increased)', () => {
-    // cost went from $1.00 to $2.00 → regressed → ↓
+  it('shows ↓ arrow with "dearer" when cost regressed (increased)', () => {
+    // cost went from $1.00 to $2.00 → regressed → ↓ $1.00 dearer
     mockUseCost.mockReturnValue({
       data: makeTrend(7, 1.0, 2.0),
       isLoading: false,
@@ -114,6 +122,7 @@ describe('CostPerMergedTaskTile — delta arrow', () => {
     const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
     expect(html).toContain('↓')
     expect(html).not.toContain('↑')
+    expect(html).toContain('dearer')
   })
 
   it('omits the delta arrow when cost is unchanged', () => {
