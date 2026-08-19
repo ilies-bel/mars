@@ -126,7 +126,10 @@ describe('snooze lifecycle', () => {
     await snoozeActionQueueItem(id, futureTs)
 
     const updated = await getActionQueueItem(id)
-    expect(updated?.snoozedUntil).toBe(futureTs)
+    // snoozedUntil is stored/returned as epoch-ms, not the ISO string that
+    // was passed in (see the field's doc comment on ActionQueueItem).
+    expect(updated?.snoozedUntil).toEqual(expect.any(Number))
+    expect(updated?.snoozedUntil).toBe(new Date(futureTs).getTime())
   })
 
   it('snoozed item is hidden from the open view until expiry', async () => {
@@ -193,7 +196,10 @@ describe('snooze lifecycle', () => {
 
     const found = visible.find((i) => i.id === id)
     expect(found).toBeDefined()
-    expect(found?.snoozedUntil).toBe(pastTs)
+    // snoozedUntil is stored/returned as epoch-ms, not the ISO string that
+    // was passed in (see the field's doc comment on ActionQueueItem).
+    expect(found?.snoozedUntil).toEqual(expect.any(Number))
+    expect(found?.snoozedUntil).toBe(new Date(pastTs).getTime())
   })
 
   it('snoozeActionQueueItem rejects an invalid timestamp', async () => {
