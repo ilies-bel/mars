@@ -355,7 +355,6 @@ export const buildAlertSegment = (
 
   if (isActionQueueKind(item.kind)) {
     // Registered kind: derive both humanSummary and actions from the recipe.
-    // RecipeVerb.style uses 'danger' where AlertSegmentAction uses 'destructive'.
     const recipe = lookupRecipe(item.kind)
     const ctx = {
       kind: item.kind,
@@ -370,7 +369,7 @@ export const buildAlertSegment = (
     actions = getRecipeVerbs(recipe, ctx).map((v) => ({
       op: v.op,
       label: v.label,
-      style: (v.style === 'danger' ? 'destructive' : v.style) as 'primary' | 'destructive' | 'default',
+      style: v.style,
     }))
   } else {
     // Unregistered kind: fall back to derivedRowActions or generic restart/dismiss.

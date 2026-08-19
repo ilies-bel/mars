@@ -148,6 +148,55 @@ describe('actionQueueResponseSchema — known kinds parse correctly', () => {
     expect(kinds).toContain('scorer-suggested')
     expect(kinds).toContain('failed')
   })
+
+  /**
+   * The fixtures above carry `verbs: []`, which is why they never caught the
+   * real defect: the daemon's `failed` recipe emits a destructive verb, its
+   * style word disagreed with this schema's enum, and one unrecognised style
+   * value fails the WHOLE row — the catch then rebuilt it minus `arcGoal`,
+   * `humanSummary` and `humanDetail`. Every failed alert rendered as a bare
+   * title with no cause, and both `at` and `kind` (all the tests above assert)
+   * survived that, so the suite stayed green.
+   *
+   * The verbs below are copied from the `failed` recipe in
+   * orchestrator/src/core/lib/action-queue-recipes.ts. If that recipe's style
+   * vocabulary drifts from `alertVerbSchema` again, this fails.
+   */
+  it('keeps the narrative fields on a failed row carrying real daemon verbs', () => {
+    const input = [
+      {
+        ...base,
+        kind: 'failed',
+        arcGoal: '# Some task prompt excerpt',
+        humanSummary: 'A task got stuck and Mars used up its retry.',
+        humanDetail: {
+          raisedAt: '2024-06-01T12:00:00.000Z',
+          entityId: 'entity-1',
+          failureSignature: 'code:context-exhausted/unclassified',
+          errorExcerpt: 'context budget exhausted (maxContextTokens) mid-code',
+          branch: 'task/entity-1',
+          worktree: '/repo/.mars/worktrees/entity-1',
+        },
+        verbs: [
+          { op: 'restart', label: 'Restart', style: 'primary' },
+          { op: 'purge', label: 'Discard task', style: 'destructive' },
+          { op: 'dismiss', label: 'Dismiss', style: 'default' },
+          { op: 'snooze', label: 'Snooze', style: 'default' },
+        ],
+      },
+    ]
+
+    const row = actionQueueResponseSchema.parse(input)[0]!
+
+    expect(row.kind).toBe('failed')
+    expect(row.verbs).toHaveLength(4)
+    // The fields the catch-sentinel drops. Their loss is what made the queue
+    // unreadable, and none of it is recoverable client-side.
+    expect(row.arcGoal).toBe('# Some task prompt excerpt')
+    expect(row.humanSummary).toBe('A task got stuck and Mars used up its retry.')
+    expect(row.humanDetail?.failureSignature).toBe('code:context-exhausted/unclassified')
+    expect(row.humanDetail?.branch).toBe('task/entity-1')
+  })
 })
 
 describe('actionQueueResponseSchema — at sentinel threading', () => {

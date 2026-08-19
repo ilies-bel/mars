@@ -40,8 +40,21 @@ export type RecipeVerb = {
   op: string
   /** Human-readable button label. */
   label: string
-  /** Visual style. */
-  style: 'primary' | 'danger' | 'default'
+  /**
+   * Visual style. Every value here MUST be accepted by the client's
+   * `alertVerbSchema.style` enum (`ui/src/shared/schemas.ts`), because a verb
+   * style the client does not recognise fails validation for the entire row,
+   * not just the button.
+   *
+   * This type used to say `danger` where the client said `destructive`. One
+   * consumer translated (`action-queue.ts`, the chat/alert path); the
+   * action-queue view did not, so every row carrying a destructive verb —
+   * every failed task, among others — was rejected by the client union and
+   * silently replaced with a fallback that dropped `arcGoal`, `humanSummary`
+   * and `humanDetail`. The queue rendered those rows with a bare title and no
+   * cause at all. Keep one vocabulary; do not reintroduce a translation layer.
+   */
+  style: 'primary' | 'destructive' | 'default'
 }
 
 /** A labelled daemon operation that Mars can preload as a Notice response chip. */
@@ -132,7 +145,7 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [
       { op: 'restart', label: 'Restart', style: 'primary' },
-      { op: 'purge', label: 'Discard task', style: 'danger' },
+      { op: 'purge', label: 'Discard task', style: 'destructive' },
     ],
   },
 
@@ -264,7 +277,7 @@ const RECIPE_DEFINITIONS = {
       uncommittedFiles: ctx.payload['uncommittedFiles'],
     }),
     verbs: [
-      { op: 'prune-worktree', label: 'Clean up worktree', style: 'danger' },
+      { op: 'prune-worktree', label: 'Clean up worktree', style: 'destructive' },
     ],
   },
 
@@ -283,7 +296,7 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [
       { op: 'land-work', label: 'Land work', style: 'primary' },
-      { op: 'prune-worktree', label: 'Discard unmerged work', style: 'danger' },
+      { op: 'prune-worktree', label: 'Discard unmerged work', style: 'destructive' },
     ],
   },
 
@@ -382,7 +395,7 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [
       { op: 'validate', label: 'Validate & merge', style: 'primary' },
-      { op: 'reject', label: 'Reject', style: 'danger' },
+      { op: 'reject', label: 'Reject', style: 'destructive' },
     ],
   },
 
@@ -398,7 +411,7 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [
       { op: 'validate', label: 'Validate & merge', style: 'primary' },
-      { op: 'reject', label: 'Reject', style: 'danger' },
+      { op: 'reject', label: 'Reject', style: 'destructive' },
     ],
   },
 
@@ -513,7 +526,7 @@ const RECIPE_DEFINITIONS = {
       missingOriginId: str(ctx.payload['missingOriginId']),
     }),
     verbs: [
-      { op: 'purge', label: 'Discard task', style: 'danger' },
+      { op: 'purge', label: 'Discard task', style: 'destructive' },
     ],
   },
 
@@ -740,7 +753,7 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [
       { op: 'promote-workflow', label: 'Promote', style: 'primary' },
-      { op: 'retire-workflow', label: 'Retire', style: 'danger' },
+      { op: 'retire-workflow', label: 'Retire', style: 'destructive' },
     ],
   },
 
@@ -776,7 +789,7 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [
       { op: 'approve-tool', label: 'Promote helper', style: 'primary' },
-      { op: 'reject-tool', label: 'Reject helper', style: 'danger' },
+      { op: 'reject-tool', label: 'Reject helper', style: 'destructive' },
     ],
   },
 
@@ -1036,7 +1049,7 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [
       { op: 'restart', label: 'Restart (wipe & re-run)', style: 'primary' },
-      { op: 'purge', label: 'Discard task', style: 'danger' },
+      { op: 'purge', label: 'Discard task', style: 'destructive' },
     ],
   },
 

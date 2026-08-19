@@ -260,7 +260,7 @@ describe('compound verb mapping', () => {
     const validate = verbs.find((v) => v.op === 'validate')
     const reject = verbs.find((v) => v.op === 'reject')
     expect(validate).toMatchObject({ style: 'primary' })
-    expect(reject).toMatchObject({ style: 'danger' })
+    expect(reject).toMatchObject({ style: 'destructive' })
   })
 
   it('tool-promotion has Promote (primary) and Reject (danger)', () => {
@@ -273,7 +273,7 @@ describe('compound verb mapping', () => {
     const promote = verbs.find((v) => v.op === 'approve-tool')
     const reject = verbs.find((v) => v.op === 'reject-tool')
     expect(promote).toMatchObject({ style: 'primary' })
-    expect(reject).toMatchObject({ style: 'danger' })
+    expect(reject).toMatchObject({ style: 'destructive' })
   })
 
   it('gate-enrichment has Approve and Retire verbs', () => {
