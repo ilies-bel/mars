@@ -1004,12 +1004,21 @@ const RECIPE_DEFINITIONS = {
         typeof ctx.payload['failingGateName'] === 'string'
           ? ctx.payload['failingGateName']
           : 'unknown gate'
-      return `Integration branch fails required gate "${gateName}" — dispatch is paused until the baseline is fixed.`
+      const caughtTaskCount =
+        typeof ctx.payload['caughtTaskCount'] === 'number' ? ctx.payload['caughtTaskCount'] : 0
+      const caughtSuffix =
+        caughtTaskCount > 0
+          ? ` — caught ${caughtTaskCount} task failure${caughtTaskCount === 1 ? '' : 's'} that would otherwise look unrelated`
+          : ''
+      return `Integration branch fails required gate "${gateName}"${caughtSuffix} — dispatch is paused until the baseline is fixed.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
       failingGateName: ctx.payload['failingGateName'],
+      installSignature: ctx.payload['installSignature'],
+      caughtTaskCount: ctx.payload['caughtTaskCount'],
+      caughtTaskIds: ctx.payload['caughtTaskIds'],
     }),
     verbs: [
       {

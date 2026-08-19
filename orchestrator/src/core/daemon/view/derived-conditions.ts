@@ -19,7 +19,8 @@ import { join } from 'node:path'
 import type { PersistedActionQueueRow, ConditionItemsSource } from './action-queue'
 import type { DispatchPauseState } from '../pause-state'
 import type { DbClient } from '../../lib/db'
-import { RECOVERY_EXHAUSTED_PREFIX } from '../../lib/failure-signature'
+import { RECOVERY_EXHAUSTED_PREFIX, classifyError } from '../../lib/failure-signature'
+import { findBaselineCaughtTaskIds } from '../../lib/baseline-attribution'
 
 // ── Stable ID helper ─────────────────────────────────────────────────────────
 
@@ -80,6 +81,13 @@ export interface ConditionsDeps {
  * surface.  We keep the row when the origin is itself `failed` — that is the
  * actionable case where recovery has been exhausted — or when the fix task has
  * no live origin.
+ *
+ * A task whose id is in `baselineCaughtTaskIds` (see baseline-attribution.ts)
+ * is ALSO suppressed here: its failure is already accounted for by the
+ * `baseline-broken` row (deriveBaselineBrokenConditions below), which names
+ * the count and lists the ids. Without this, the same failure would render as
+ * both one `baseline-broken` alert AND N independent `failed` alerts — the
+ * exact "N unrelated-looking failures" shape the 2026-08-18 incident produced.
  */
 /** Max chars of `tasks.error` carried into the alert's `errorExcerpt`. */
 const ERROR_EXCERPT_MAX = 600
@@ -101,6 +109,7 @@ const excerptError = (error: string | null): string => {
 async function deriveFailedConditions(
   client: DbClient,
   nowMs: number,
+  baselineCaughtTaskIds: ReadonlySet<string>,
 ): Promise<PersistedActionQueueRow[]> {
   const result = await client.execute(
     `SELECT t.id, t.failure_signature, t.prompt, t.updated_at, t.failure_reason_code,
@@ -117,7 +126,9 @@ async function deriveFailedConditions(
         )
       ORDER BY t.updated_at DESC`,
   )
-  return result.rows.map((r) => {
+  return result.rows
+    .filter((r) => !baselineCaughtTaskIds.has((r as { id: string }).id))
+    .map((r) => {
     const row = r as {
       id: string
       failure_signature: string | null
@@ -496,22 +507,51 @@ function deriveDaemonCodeDriftConditions(
  * Derive a `baseline-broken` row when the integration branch is poisoned.
  * The checker runs the required gates on a schedule; we read the synchronous
  * in-memory flag, not re-run the gates on every action-queue list.
+ *
+ * Carries `caughtTaskIds`/`caughtTaskCount` — the same set that
+ * {@link deriveFailedConditions} suppresses its own `failed` rows for — so the
+ * one row names how many task failures it is standing in for (the 2026-08-18
+ * incident's "N unrelated-looking failures" shape, collapsed to one row that
+ * says why). `installSignature` mirrors the per-task `setup:install/<class>`
+ * failure-signature family (see failure-signature.ts) for the one failing-gate
+ * case (`'dependency install'`) that maps onto it, computed from the same
+ * probe output via {@link classifyError} rather than re-deriving it from
+ * scratch — so the alert and the per-task signature the incident actually
+ * produced read as the same defect.
  */
 function deriveBaselineBrokenConditions(
   isBaselinePoisoned: (() => boolean) | undefined,
   baselineDetail: (() => { failingGateName?: string; output?: string } | null) | undefined,
+  baselineCaughtTaskIds: ReadonlySet<string>,
   nowMs: number,
 ): PersistedActionQueueRow[] {
   if (!isBaselinePoisoned?.()) return []
   const detail = baselineDetail?.() ?? {}
+  const failingGateName = detail.failingGateName ?? null
+  const output = detail.output ?? ''
+  const installSignature =
+    failingGateName === 'dependency install' && output.length > 0
+      ? `setup:install/${classifyError(output)}`
+      : null
+  const caughtTaskIds = Array.from(baselineCaughtTaskIds).sort()
+  const title =
+    caughtTaskIds.length > 0
+      ? `Integration branch fails required gate: ${failingGateName ?? 'unknown gate'} — caught ${caughtTaskIds.length} task failure${caughtTaskIds.length === 1 ? '' : 's'}`
+      : `Integration branch fails required gate: ${failingGateName ?? 'unknown gate'}`
   return [
     {
       id: deriveId('baseline-broken', 'baseline-broken'),
       kind: 'baseline-broken',
       priority: 'urgent',
-      title: `Integration branch fails required gate: ${detail.failingGateName ?? 'unknown gate'}`,
-      body: detail.output ?? '',
-      payload: { failingGateName: detail.failingGateName ?? null, output: detail.output ?? '' },
+      title,
+      body: output,
+      payload: {
+        failingGateName,
+        output,
+        installSignature,
+        caughtTaskCount: caughtTaskIds.length,
+        caughtTaskIds,
+      },
       context: {},
       raisedAt: nowMs,
       lastSeenAt: nowMs,
@@ -589,8 +629,21 @@ export const createConditionItemsSource = (deps: ConditionsDeps): ConditionItems
     const nowMs = deps.nowMs ?? Date.now()
     const client = deps.getClient()
 
+    // Computed once, shared by `failed` (suppresses the rows it accounts for)
+    // and `baseline-broken` (names how many it caught) — both need the exact
+    // same answer to "which failed tasks does the poisoned baseline explain",
+    // and a separately-computed set in each spot is exactly how they'd drift.
+    const baselineCaughtTaskIds =
+      wants('failed') || wants('baseline-broken')
+        ? await findBaselineCaughtTaskIds(
+            client,
+            deps.isBaselinePoisoned?.() ?? false,
+            deps.getPauseState?.() ?? null,
+          )
+        : new Set<string>()
+
     const results = await Promise.all([
-      wants('failed') ? deriveFailedConditions(client, nowMs) : [],
+      wants('failed') ? deriveFailedConditions(client, nowMs, baselineCaughtTaskIds) : [],
       wants('stale-queued') ? deriveStaleQueuedConditions(client, deps) : [],
       wants('gate-broken') ? deriveGateBrokenConditions(client, nowMs) : [],
       wants('subscriber-stalled') ? deriveSubscriberStalledConditions(client, nowMs) : [],
@@ -598,7 +651,12 @@ export const createConditionItemsSource = (deps: ConditionsDeps): ConditionItems
       wants('daemon-died') ? deriveDaemonDiedConditions(deps.crashMarkerPath, nowMs) : [],
       wants('daemon-code-drift') ? deriveDaemonCodeDriftConditions(deps.getCodeDrift, nowMs) : [],
       wants('baseline-broken')
-        ? deriveBaselineBrokenConditions(deps.isBaselinePoisoned, deps.baselineDetail, nowMs)
+        ? deriveBaselineBrokenConditions(
+            deps.isBaselinePoisoned,
+            deps.baselineDetail,
+            baselineCaughtTaskIds,
+            nowMs,
+          )
         : [],
       wants('stale-worktree') && deps.repoRoot
         ? deriveStaleWorktreeConditions(client, deps.repoRoot, nowMs)
