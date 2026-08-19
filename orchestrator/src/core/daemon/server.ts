@@ -5391,6 +5391,16 @@ export const startDaemon = async (
   const httpHandle = await startHttpServer({
     chatRunner,
     chatStreamHub,
+    // Without this, GET /kpi/cost-per-merged-task answered 503
+    // "getCostPerMergedTaskKpi not available" on every request — the dep is
+    // optional in HttpServerDeps and nothing ever supplied it, so the
+    // implementation (lib/kpi/cost-per-merged-task.ts, tested) was unreachable
+    // and the Control Room tile that reads it could never render.
+    getCostPerMergedTaskKpi: async ({ windowDays }) => {
+      const { getCostPerMergedTask } = await import('../lib/kpi/cost-per-merged-task')
+      const { resolveStateClient } = await import('../store/state-client.js')
+      return getCostPerMergedTask(resolveStateClient(), { windowDays })
+    },
     restartTask: async (id) => {
       const result = await coreRestart(id, new Set(['failed', 'done', 'vega-reconciling', 'merging']), makeWorkflowStore())
       if (result.status === 'queued') {

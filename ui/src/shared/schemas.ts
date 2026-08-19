@@ -887,10 +887,29 @@ export const costPerMergedTaskTrendPointSchema = z.object({
   avgCostPerMerge: z.number().nullable(),
 })
 
+/** Window aggregate — mirrors the daemon's `CostPerMergedTaskCurrent`. */
+export const costPerMergedTaskCurrentSchema = z.object({
+  costUsd: z.number(),
+  tokens: z.number(),
+  mergedCount: z.number(),
+  /** Null when no task in the window has computable pricing. */
+  avgCostPerMerge: z.number().nullable(),
+  /** Tasks excluded from avgCostPerMerge because their pricing was unknown. */
+  excludedNullCostCount: z.number(),
+})
+
+/**
+ * Shape of GET /api/kpi/cost-per-merged-task.
+ *
+ * This used to declare a top-level `excludedCostNullCount`, which the daemon
+ * has never sent: the field is `excludedNullCostCount` (the two middle words
+ * transposed) and it lives under `current`, not at the root. Every response
+ * therefore failed validation, and the tile rendered "insufficient data" —
+ * blaming the data for what was a contract mismatch.
+ */
 export const costPerMergedTaskResponseSchema = z.object({
+  current: costPerMergedTaskCurrentSchema,
   trend: z.array(costPerMergedTaskTrendPointSchema),
-  /** Number of merged tasks excluded because their cost field was null. */
-  excludedCostNullCount: z.number(),
 })
 
 export type CostPerMergedTaskTrendPoint = z.infer<typeof costPerMergedTaskTrendPointSchema>

@@ -13,7 +13,7 @@ const usdFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currenc
  * Shows: title, mini sparkline, current $/merge, and a 7-day delta arrow.
  */
 export const CostPerMergedTaskTile = () => {
-  const { data, isLoading } = useCostPerMergedTask(7)
+  const { data, isLoading, error } = useCostPerMergedTask(7)
 
   if (isLoading) {
     return (
@@ -21,12 +21,31 @@ export const CostPerMergedTaskTile = () => {
     )
   }
 
-  const trend = data?.trend ?? []
-  const currentPoint = trend[trend.length - 1]
-  const firstPoint = trend[0]
-  const currentValue = currentPoint?.avgCostPerMerge ?? null
+  // A failed fetch is not thin data. Reporting "insufficient data" for a broken
+  // request is how a schema mismatch went unnoticed: the tile looked like an
+  // honest statement about the repo instead of a bug.
+  if (error) {
+    return (
+      <a
+        href={kpiHash('cost-per-merged-task')}
+        data-testid="cost-per-merged-task-error"
+        className="flex w-[180px] min-h-[120px] flex-col items-center justify-center rounded border border-error/40 bg-card px-4 py-2 text-center font-mono text-body text-error no-underline hover:bg-error/5 focus:outline-none focus:ring-2 focus:ring-error/40"
+        aria-label="Cost / merged task failed to load"
+      >
+        Cost / merged task: failed to load
+      </a>
+    )
+  }
 
-  if (currentValue === null || trend.length < 2) {
+  const trend = data?.trend ?? []
+  // The freshest day that actually has pricing — not simply the last entry.
+  // Older tasks predate usage signals, so the tail of the window is populated
+  // while the head is null; keying off `trend[last]` alone blanked the tile
+  // whenever the most recent day had no priced task yet.
+  const priced = trend.filter((p) => p.avgCostPerMerge !== null)
+  const currentValue = priced[priced.length - 1]?.avgCostPerMerge ?? null
+
+  if (currentValue === null) {
     return (
       <a
         href={kpiHash('cost-per-merged-task')}
@@ -38,7 +57,9 @@ export const CostPerMergedTaskTile = () => {
     )
   }
 
-  const priorValue = firstPoint?.avgCostPerMerge ?? null
+  // Compare against the earliest PRICED day, so the delta measures a real
+  // change rather than the boundary between "no pricing" and "pricing".
+  const priorValue = priced.length >= 2 ? priced[0].avgCostPerMerge : null
   const delta = priorValue !== null ? currentValue - priorValue : 0
   // lower cost = improved → ↑ arrow (matches kpiDriftDirection for lower-is-better)
   const showArrow = Math.abs(delta) >= 0.001

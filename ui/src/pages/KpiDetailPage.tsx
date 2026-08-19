@@ -171,7 +171,7 @@ const CostPerMergedTaskDetailSection = () => {
 
   const trend = data.trend
   const sparklinePoints = trend.map((t) => t.avgCostPerMerge)
-  const excluded = data.excludedCostNullCount
+  const excluded = data.current.excludedNullCostCount
 
   return (
     <div className="flex flex-col gap-4">

@@ -28,7 +28,16 @@ const makeTrend = (days: number, startValue: number, endValue: number): CostPerM
     mergedCount: 3,
     avgCostPerMerge: startValue + ((endValue - startValue) * i) / Math.max(days - 1, 1),
   }))
-  return { trend, excludedCostNullCount: 0 }
+  return {
+    trend,
+    current: {
+      costUsd: 0,
+      tokens: 0,
+      mergedCount: days * 3,
+      avgCostPerMerge: endValue,
+      excludedNullCostCount: 0,
+    },
+  }
 }
 
 describe('CostPerMergedTaskTile — title and link', () => {
@@ -136,14 +145,58 @@ describe('CostPerMergedTaskTile — loading and low-confidence states', () => {
     expect(html).toContain('insufficient data')
   })
 
-  it('renders the low-confidence placeholder when trend has only one point', () => {
+  it('shows the value from a single priced day, with no delta', () => {
+    // One priced day is a real measurement. Suppressing it was the same
+    // over-caution that let a broken response read as thin data.
     mockUseCost.mockReturnValue({
-      data: { trend: [{ day: '2024-01-01', mergedCount: 5, avgCostPerMerge: 1.0 }], excludedCostNullCount: 0 },
+      data: {
+        trend: [{ day: '2024-01-01', mergedCount: 5, avgCostPerMerge: 1.0 }],
+        current: { costUsd: 5, tokens: 0, mergedCount: 5, avgCostPerMerge: 1.0, excludedNullCostCount: 0 },
+      },
       isLoading: false,
       error: null,
     })
     const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
-    expect(html).toContain('insufficient data')
+    expect(html).toContain('$1.00')
+    expect(html).not.toContain('insufficient data')
+    // No second priced day to compare against, so no delta arrow.
+    expect(html).not.toContain('↑')
+    expect(html).not.toContain('↓')
+  })
+
+  it('reads the freshest PRICED day, not simply the last entry', () => {
+    // Older tasks predate usage signals, so the head of the window is null
+    // while the tail is populated — and a day with no priced task yet must not
+    // blank a tile that has real numbers behind it.
+    mockUseCost.mockReturnValue({
+      data: {
+        trend: [
+          { day: '2024-01-01', mergedCount: 2, avgCostPerMerge: null },
+          { day: '2024-01-02', mergedCount: 5, avgCostPerMerge: 2.5 },
+          { day: '2024-01-03', mergedCount: 0, avgCostPerMerge: null },
+        ],
+        current: { costUsd: 12.5, tokens: 0, mergedCount: 7, avgCostPerMerge: 2.5, excludedNullCostCount: 2 },
+      },
+      isLoading: false,
+      error: null,
+    })
+    const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
+    expect(html).toContain('$2.50')
+    expect(html).not.toContain('insufficient data')
+  })
+
+  it('says it failed to load rather than blaming the data', () => {
+    // The schema declared a field the daemon never sent, so every response
+    // failed validation and the tile reported "insufficient data" — a
+    // statement about the repo, for what was a contract bug.
+    mockUseCost.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error('GET /api/kpi/cost-per-merged-task → schema mismatch'),
+    })
+    const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
+    expect(html).toContain('failed to load')
+    expect(html).not.toContain('insufficient data')
   })
 })
 

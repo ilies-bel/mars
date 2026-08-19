@@ -308,9 +308,18 @@ describe('KpiDetailPage — drift indicator', () => {
 // cost-per-merged-task detail page
 // ---------------------------------------------------------------------------
 
-const makeCostResponse = (trend: CostPerMergedTaskResponse['trend'], excludedCostNullCount = 0): CostPerMergedTaskResponse => ({
+const makeCostResponse = (
+  trend: CostPerMergedTaskResponse['trend'],
+  excludedNullCostCount = 0,
+): CostPerMergedTaskResponse => ({
   trend,
-  excludedCostNullCount,
+  current: {
+    costUsd: 0,
+    tokens: 0,
+    mergedCount: trend.reduce((n, t) => n + t.mergedCount, 0),
+    avgCostPerMerge: trend[trend.length - 1]?.avgCostPerMerge ?? null,
+    excludedNullCostCount,
+  },
 })
 
 describe('KpiDetailPage — cost-per-merged-task detail section', () => {
