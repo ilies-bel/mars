@@ -217,10 +217,47 @@ describe('StewardPage', () => {
     expect(html).toContain('I bumped implement workers from 15 to 16')
   })
 
-  it('renders the executing badge for the runtime tuning lane', () => {
+  it('does not claim the runtime tuning lane is "executing" — the page-level banner already says the Steward is not wired up, so this indicator must not contradict it', () => {
     const html = renderToStaticMarkup(<StewardPage />)
-    // The runtime tuning lane should have an 'executing' badge
-    expect(html).toContain('executing')
+    const laneMatch = /<article[^>]*data-testid="lane-runtime-tuning"[\s\S]*?<\/article>/.exec(html)
+    expect(laneMatch).not.toBeNull()
+    const headerMatch = /<header[\s\S]*?<\/header>/.exec(laneMatch![0])
+    expect(headerMatch).not.toBeNull()
+    const header = headerMatch![0]
+
+    // No form of "executing" (visible text or aria-label), and the status
+    // dot/chip themselves must not use success/green styling. (The card's
+    // ambient success-tinted theming — border, ack entries — is a separate,
+    // still-accurate signal that the underlying cap-ratchet mechanism is
+    // real; only the claim that *this is the Steward, executing* is wrong.)
+    expect(header).not.toContain('executing')
+    expect(header).not.toContain('bg-success')
+
+    // Instead it must state the age of the data it is showing.
+    expect(header).toContain('runtime-tuning-status-chip')
+    expect(header).toContain('last activity')
+  })
+
+  it('shows the age of the runtime tuning data so stale acks cannot read as current', () => {
+    vi.mocked(useStewardView).mockReturnValue({
+      data: makeStewardView({
+        runtimeTuning: {
+          ...makeStewardView().runtimeTuning,
+          acks: [
+            {
+              text: 'I bumped implement workers from 15 to 16.',
+              timestamp: '2026-01-03T00:00:00Z', // newest-first, per the API contract
+              pair: { from: 15, to: 16 },
+            },
+          ],
+        },
+      }),
+      isLoading: false,
+      error: null,
+    })
+    const html = renderToStaticMarkup(<StewardPage />)
+    const expectedLabel = `last activity ${new Date('2026-01-03T00:00:00Z').toLocaleDateString([], { month: 'short', day: 'numeric' })}`
+    expect(html).toContain(expectedLabel)
   })
 
   it('renders worker-cap history as a step chart with time axis, not a raw arrow run', () => {

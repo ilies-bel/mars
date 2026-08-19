@@ -51,15 +51,21 @@ const laneHeaderClass = (active: boolean): string =>
     active ? 'text-success' : 'text-muted-foreground',
   ].join(' ')
 
-const StatusDot = ({ active }: { active: boolean }) => (
+const StatusDot = ({ active, label }: { active: boolean; label?: string }) => (
   <span
-    aria-label={active ? 'executing' : 'not executing'}
+    aria-label={label ?? (active ? 'executing' : 'not executing')}
     className={[
       'inline-block h-2 w-2 rounded-full',
       active ? 'bg-success' : 'bg-muted-foreground/40',
     ].join(' ')}
   />
 )
+
+/** Formats a timestamp as a short, unambiguous "last activity" label. */
+const formatLastActivity = (timestamp: string | null): string =>
+  timestamp === null
+    ? 'no activity yet'
+    : `last activity ${new Date(timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}`
 
 // ---------------------------------------------------------------------------
 // Runtime tuning lane
@@ -270,13 +276,25 @@ const RuntimeTuningLane = ({ data }: { data: StewardView['runtimeTuning'] }) => 
       text: a.text,
     }))
 
+  // Acks are newest-first (see the ack list below and `steward-ack-latest`),
+  // so acks[0] is the most recent activity. This lane runs for real, but it
+  // is not the Steward — the page-level banner says the Steward isn't wired
+  // up, so this indicator must never claim "executing" or render green;
+  // showing the data's actual age is the honest alternative.
+  const lastActivity = acks.length > 0 ? acks[0]!.timestamp : null
+
   return (
     <article className={laneCardClass(true)} data-testid="lane-runtime-tuning">
       <header className="mb-4">
         <div className={laneHeaderClass(true)}>
-          <StatusDot active={true} />
+          <StatusDot active={false} label="not Steward-driven" />
           <span>Runtime tuning</span>
-          <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-micro text-success">executing</span>
+          <span
+            className="ml-auto rounded bg-muted/30 px-1.5 py-0.5 text-micro text-muted-foreground"
+            data-testid="runtime-tuning-status-chip"
+          >
+            {formatLastActivity(lastActivity)}
+          </span>
         </div>
         <p className="mt-1 font-mono text-micro text-muted-foreground">
           Trigger: backlog sustained {'>'} {Math.floor(liveCap * thresholdFactor)} tasks for {sustainMs / 1000}s —
