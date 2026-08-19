@@ -139,4 +139,72 @@ describe('deriveFailedConditions — recovery task suppression', { timeout: 60_0
     expect(failedIds).toContain('fix-task-done')
   })
 
+  // ── The payload/recipe contract ──────────────────────────────────────────
+
+  describe('diagnostic payload', () => {
+    /**
+     * The derived row and the `failed` recipe are two halves of one contract,
+     * joined only by string keys. They drifted: the row emitted `signature`
+     * while the recipe read `failureSignature`, and branch/worktree/error were
+     * never emitted at all. Nothing failed — the recipe just rendered empty
+     * strings, so every failed alert in the queue said a task broke and
+     * nothing about how. These tests pin the join.
+     */
+    it('carries the diagnostics the failed recipe reads', async () => {
+      await client.execute({
+        sql: `INSERT INTO tasks
+                (id, prompt, status, failure_signature, failure_reason_code,
+                 branch, worktree_path, error, created_at, updated_at)
+              VALUES (?, ?, 'failed', ?, ?, ?, ?, ?, NOW(), NOW())`,
+        args: [
+          'diag-task',
+          'task diag-task',
+          'code:context-exhausted/unclassified',
+          'code:context-exhausted/unclassified',
+          'task/diag-task',
+          '/repo/.mars/worktrees/diag-task',
+          'context budget exhausted (maxContextTokens) mid-code',
+        ],
+      })
+
+      const condSource = createConditionItemsSource({ getClient: () => client })
+      const rows = await condSource.derive({ kinds: new Set(['failed']) })
+      const row = rows.find((r) => r.payload['taskId'] === 'diag-task')
+      expect(row).toBeDefined()
+
+      const { lookupRecipe } = await import('../../lib/action-queue-recipes.js')
+      const detail = lookupRecipe('failed').humanDetail({
+        kind: 'failed',
+        entityId: 'diag-task',
+        payload: row!.payload,
+        context: row!.context,
+        title: '',
+        body: '',
+        raisedAt: new Date(row!.raisedAt).toISOString(),
+      })
+
+      expect(detail['failureSignature']).toBe('code:context-exhausted/unclassified')
+      expect(detail['branch']).toBe('task/diag-task')
+      expect(detail['worktree']).toBe('/repo/.mars/worktrees/diag-task')
+      expect(detail['errorExcerpt']).toContain('context budget exhausted')
+    })
+
+    it('clips a captured-output blob rather than carrying it whole', async () => {
+      // `tasks.error` holds full step output — one live row carries a 2000-char
+      // vitest dump. A queue row is not a transcript viewer.
+      await client.execute({
+        sql: `INSERT INTO tasks (id, prompt, status, error, created_at, updated_at)
+              VALUES (?, ?, 'failed', ?, NOW(), NOW())`,
+        args: ['blob-task', 'task blob-task', 'x'.repeat(5000)],
+      })
+
+      const condSource = createConditionItemsSource({ getClient: () => client })
+      const rows = await condSource.derive({ kinds: new Set(['failed']) })
+      const excerpt = rows.find((r) => r.payload['taskId'] === 'blob-task')!
+        .payload['errorExcerpt'] as string
+
+      expect(excerpt.length).toBeLessThan(700)
+      expect(excerpt.endsWith('…')).toBe(true)
+    })
+  })
 })

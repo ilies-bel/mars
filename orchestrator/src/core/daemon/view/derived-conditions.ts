@@ -66,8 +66,9 @@ export interface ConditionsDeps {
 
 /**
  * Derive `failed` rows from `tasks WHERE status='failed'`.
- * Each returned row has the same payload shape that the old raiser produced so
- * OPERATIONAL_ALERT_COPY renderers and `getActionQueueEntityId` both work unchanged.
+ * The payload carries every key the `failed` recipe reads, so the row renders
+ * with the same detail the stored raiser used to supply; `getActionQueueEntityId`
+ * works unchanged off `payload.taskId`.
  *
  * Recovery tasks (fix_for_task_id IS NOT NULL) whose origin is currently
  * non-terminal (i.e. the origin is queued/running/verifying/merging/blocked)
@@ -77,13 +78,30 @@ export interface ConditionsDeps {
  * actionable case where recovery has been exhausted — or when the fix task has
  * no live origin.
  */
+/** Max chars of `tasks.error` carried into the alert's `errorExcerpt`. */
+const ERROR_EXCERPT_MAX = 600
+
+/**
+ * Reduce a stored `tasks.error` blob to something an operator can read in a
+ * queue row. The column holds whole captured step output (one row currently
+ * carries a 2000-char truncated vitest dump), which is a transcript concern —
+ * the alert only needs the head of it to say what went wrong.
+ */
+const excerptError = (error: string | null): string => {
+  if (!error) return ''
+  const trimmed = error.trim()
+  return trimmed.length > ERROR_EXCERPT_MAX
+    ? `${trimmed.slice(0, ERROR_EXCERPT_MAX)}…`
+    : trimmed
+}
+
 async function deriveFailedConditions(
   client: DbClient,
   nowMs: number,
 ): Promise<PersistedActionQueueRow[]> {
   const result = await client.execute(
     `SELECT t.id, t.failure_signature, t.prompt, t.updated_at, t.failure_reason_code,
-            t.stall_diagnostics
+            t.stall_diagnostics, t.branch, t.worktree_path, t.error
        FROM tasks t
       WHERE t.status = 'failed'
         AND (
@@ -104,6 +122,9 @@ async function deriveFailedConditions(
       updated_at: string
       failure_reason_code: string | null
       stall_diagnostics: string | null
+      branch: string | null
+      worktree_path: string | null
+      error: string | null
     }
     const entityKey = row.id
     const raisedAt = row.updated_at ? Date.parse(row.updated_at) : nowMs
@@ -117,11 +138,20 @@ async function deriveFailedConditions(
       priority: 'high',
       title: `Task ${row.id} failed`,
       body: '',
+      // Keys here MUST match what the `failed` recipe in action-queue-recipes.ts
+      // reads. They drifted once already: this row emitted `signature` while the
+      // recipe read `failureSignature`, so every failed alert rendered an empty
+      // `humanDetail` — no cause, no branch, no error excerpt — even though the
+      // task row held all three. The operator got a red row saying only that
+      // something failed, and `deriveCause` had nothing to derive from.
       payload: {
         taskId: row.id,
-        signature: row.failure_signature,
+        failureSignature: row.failure_signature,
         failureReasonCode: row.failure_reason_code,
         stallDiagnostics,
+        branch: row.branch,
+        worktree: row.worktree_path,
+        errorExcerpt: excerptError(row.error),
       },
       context: { taskId: row.id },
       raisedAt,

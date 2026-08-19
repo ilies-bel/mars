@@ -485,6 +485,23 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: DEFAULT_ACTIONS,
       },
 
+      // ── code:context-exhausted ───────────────────────────────────────────
+      // The coder hit its context token budget mid-implementation
+      // (`coder-exit.ts` emits this signature and throws the terminal
+      // sentinel). It is a sibling of code:over-budget, but distinct in the
+      // one way that matters to the operator: the worktree still holds the
+      // partial work, so continuing beats restarting. Left unregistered, the
+      // step-family fallback rendered it as the shrug "The coder did not
+      // complete successfully", hiding both the cause and the remedy.
+      {
+        signature: 'code:context-exhausted/unclassified',
+        staticEncodable: notEncodable('orchestration'),
+        warmTitle: 'The coder ran out of context before finishing',
+        verboseReason:
+          'The code step exhausted its context token budget mid-implementation. The worktree still holds the in-progress work, so resuming it (`mars continue`) keeps that work; restarting discards it and walks back into the same limit. If it recurs on the same task, the task is too large for one run — split it.',
+        actions: DEFAULT_ACTIONS,
+      },
+
       // ── code:commit-contract ─────────────────────────────────────────────
       // The coder committed some work but exited without committing every path.
       // The gate (`detectPostCoderState` → `dirty-with-commits`) catches this
@@ -1047,6 +1064,19 @@ export const resolveFailureKind = (
 const TITLE_ERROR_HEAD_MAX = 98
 
 /**
+ * Render a signature for the title's discriminator slot.
+ *
+ * The signature earns its place because warm titles are many-to-one: eight
+ * distinct `verify:typecheck/*` signatures all read "The changes did not pass
+ * type-checking", and without the sub-class those rows are indistinguishable.
+ * But `/unclassified` is the taxonomy's way of saying there IS no sub-class, so
+ * printing it discriminates nothing — it just puts a jargon token in front of
+ * every row that has no finer classification. Drop it and keep the step family.
+ */
+const titleSignature = (signature: string): string =>
+  signature.endsWith('/unclassified') ? signature.slice(0, -'/unclassified'.length) : signature
+
+/**
  * Compose the operator-facing action-queue title for a FAILED task.
  *
  * A queue of sixteen failures is only triageable if each row says WHICH task
@@ -1086,7 +1116,7 @@ export const failedTaskTitle = (args: {
       kind !== null
         ? kind.warmTitle
         : unknownFailureKind(failingStepFromSignature(signature), capturedError).warmTitle
-    return kind !== null ? `${signature} — ${reason}${idPart}` : `${reason}${idPart}`
+    return kind !== null ? `${titleSignature(signature)} — ${reason}${idPart}` : `${reason}${idPart}`
   }
 
   const reason = unknownFailureKind('unknown', capturedError).warmTitle
