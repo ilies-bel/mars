@@ -53,8 +53,9 @@ interface EnqueueParams {
   workflow?: string
   /**
    * Task id this new task supersedes. Only set after CLI validation confirms
-   * the referenced task exists and is in status 'failed'.
-   * TODO(supersede-execution): consumed by slice N of PRD 94e2a82a.
+   * the referenced task exists and is in status 'failed'. Forwarded to the
+   * daemon's `add` RPC, which executes the supersede sequence in
+   * `Arc.createOrigin` (drops the superseded task, inherits its branch).
    */
   supersedes?: string
   /** QA mode for the review step: 'auto' (default) or 'manual'. */

@@ -25,9 +25,9 @@ export type DaemonRequest =
        * Task id this new task supersedes. When present the new task is an
        * operator-authored continuation of a failed arc whose automatic recovery
        * exhausted all options. Validated by the CLI (task must exist and be in
-       * status 'failed'); execution of the supersede sequence is a no-op stub
-       * until a later slice wires it up.
-       * TODO(supersede-execution): consumed by slice N of PRD 94e2a82a.
+       * status 'failed'); executed by `Arc.createOrigin`'s supersede preamble
+       * (see `EnqueueTaskOptions.supersedes` in `core/queue.ts`), which drops
+       * the superseded task and inherits its branch/worktree.
        */
       supersedes?: string
       /** QA mode for the review step: 'auto' (default) or 'manual'. */

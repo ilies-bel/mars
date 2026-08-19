@@ -59,6 +59,7 @@ const addHandler = handler('add', async (req, deps) => {
     req.workflow,
     req.qa,
     req.deferrable,
+    req.supersedes,
   )
   return { ok: true, data: task }
 })

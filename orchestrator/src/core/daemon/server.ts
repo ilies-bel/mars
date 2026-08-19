@@ -3431,6 +3431,7 @@ export const startDaemon = async (
     workflow?: string | null,
     qa?: 'auto' | 'manual',
     deferrable?: boolean,
+    supersedes?: string,
   ): Promise<Task> => {
     const opts: Parameters<typeof enqueueTask>[2] = {}
     if (skipTriage) opts.skipTriage = true
@@ -3443,6 +3444,7 @@ export const startDaemon = async (
     if (workflow != null) opts.workflow = workflow
     if (qa !== undefined) opts.qa = qa
     if (deferrable === true) opts.deferrable = true
+    if (supersedes !== undefined) opts.supersedes = supersedes
     // Arc inheritance (ADR-0050): when a task has exactly one blocker it is
     // almost always a continuation of that blocker's work (the canonical coder
     // follow-up pattern: `mars task add "..." --blocked-by $TASK_ID`). Inherit

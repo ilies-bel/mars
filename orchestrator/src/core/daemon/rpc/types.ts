@@ -136,6 +136,7 @@ export interface DaemonDeps {
     workflow?: string | null,
     qa?: 'auto' | 'manual',
     deferrable?: boolean,
+    supersedes?: string,
   ): Promise<Task>
   setTaskPriority(id: string, priority: number): Promise<Task>
   /**

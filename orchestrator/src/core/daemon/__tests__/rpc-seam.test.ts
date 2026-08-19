@@ -443,7 +443,30 @@ describe('drain gate and validation', () => {
     expect(res.ok).toBe(true)
     expect(handleAdd).toHaveBeenCalledWith(
       'do a thing',
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    )
+  })
+
+  it('forwards req.supersedes to deps.handleAdd (regression: was silently dropped)', async () => {
+    // Regression guard: the daemon's `add` RPC handler used to build its
+    // `deps.handleAdd(...)` call without ever reading `req.supersedes`, so
+    // `mars task add --supersede <id>` never reached Arc.createOrigin's
+    // supersede preamble — the origin was left in status='failed' forever
+    // (kept re-raising a `failed` action-queue alert with no verb to clear
+    // it). Assert the field survives the handler → deps boundary.
+    const addedTask = { id: 'mars-new', prompt: 'continuation', status: 'queued' }
+    const handleAdd = vi.fn().mockResolvedValue(addedTask) as unknown as DaemonDeps['handleAdd']
+    const { deps } = makeDeps({ handleAdd })
+    const res = await dispatchRpc(
+      rpcRegistry,
+      { op: 'add', prompt: 'continuation', supersedes: 'mars-old-failed' },
+      deps,
+    )
+    expect(res.ok).toBe(true)
+    expect(handleAdd).toHaveBeenCalledWith(
+      'continuation',
       undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      'mars-old-failed',
     )
   })
 

@@ -355,10 +355,20 @@ export class Arc {
         })
       }
 
-      // Step 2: mark superseded task dropped + clear its worktree_path in
-      // one atomic transaction (updateTask → Arc.applyStatusWrite).
+      // Step 2: mark superseded task dropped + clear its worktree_path.
+      // `superseded` is required to be 'failed' by the CLI's --supersede
+      // validation, and 'failed' is a TERMINAL_TASK_STATUSES member (ADR-0052
+      // terminal-immutability guard): a plain `updateTask` status write from a
+      // terminal status throws IllegalTransitionError. Route through the sole
+      // audited reopen seam first (mirrors the `mars restart` pattern in
+      // restart-task.ts) so the subsequent updateTask lands on a non-terminal
+      // previousStatus and the dropped transition is legal.
+      if (TERMINAL_TASK_STATUSES.has(superseded.status)) {
+        await Arc.reopenTerminalTask(supersededId, `superseded by new task ${id}`)
+      }
       await updateTask(supersededId, {
         status: 'dropped',
+        dropReason: 'superseded',
         worktreePath: null,
         failureReason: `superseded by new task ${id}`,
       })
