@@ -233,7 +233,16 @@ const TriageRow = ({ item }: TriageRowProps) => {
   const isTaskRecovery = TASK_RECOVERY_KINDS.has(item.kind)
   const isRecoveryExhausted =
     isTaskRecovery && (item.failureReasonCode?.startsWith(RECOVERY_EXHAUSTED_PREFIX) ?? false)
-  const verbs = item.verbs ?? []
+  // A task-recovery row renders its own restart affordance below: guarded by a
+  // confirm step that names the branch and says what is lost, or — once the
+  // single recovery attempt is spent — deliberately withheld in favour of the
+  // carry-forward verbs. The daemon ships a bare `restart` verb too, which
+  // fires immediately with no confirmation. Rendering both put two Restart
+  // buttons on every failed row, one of them destructive on first click, and
+  // sat a live Restart beside a panel stating that Restart will not help.
+  const verbs = (item.verbs ?? []).filter(
+    (verb) => !(isTaskRecovery && verb.op === 'restart'),
+  )
 
   const handleDecision = useCallback(
     async (d: Decision) => {

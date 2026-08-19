@@ -26,7 +26,12 @@ const STEP_PHRASE: Record<string, string> = {
 export const deriveCause = (detail: AlertHumanDetail | undefined): string | undefined => {
   const sig = detail?.failureSignature
   if (!sig) return undefined
-  const step = sig.split('/')[0] ?? ''
+  // A signature is `<step>[:<substep>]/<error-class>`. Splitting on '/' alone
+  // yields `code:context-exhausted`, which matches no phrase and leaks a raw
+  // step id into operator copy ("code:context-exhausted failed"). The step
+  // FAMILY is everything before the first ':' — that is what the phrase map is
+  // keyed on, and what a bare `verify/unclassified` already resolved to.
+  const step = (sig.split('/')[0] ?? '').split(':')[0] ?? ''
   const phrase = STEP_PHRASE[step] ?? (step ? `${step} failed` : 'failed')
 
   const excerpt = detail?.errorExcerpt ?? detail?.rawError

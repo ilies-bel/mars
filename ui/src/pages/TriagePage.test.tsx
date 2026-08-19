@@ -202,6 +202,52 @@ describe('TriageRow – failed kind shows Continue + Restart', () => {
   })
 })
 
+describe('TriageRow – the daemon restart verb does not double the Restart control', () => {
+  beforeEach(() => {
+    // What the `failed` recipe actually ships. The bare `restart` verb fires on
+    // first click; the row's own Restart is gated behind a confirm that names
+    // the branch and says what is lost. Rendering both put two Restart buttons
+    // side by side, the destructive one unguarded.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        verbs: [
+          { op: 'restart', label: 'Restart', style: 'primary' },
+          { op: 'purge', label: 'Discard task', style: 'destructive' },
+          { op: 'dismiss', label: 'Dismiss', style: 'default' },
+        ],
+      }),
+    ])
+  })
+
+  it('drops the daemon restart verb', () => {
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-verb-restart"]')).toBeNull()
+  })
+
+  it('keeps the guarded Restart control', () => {
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-restart"]')).not.toBeNull()
+  })
+
+  it('keeps every other daemon verb — only restart is duplicated', () => {
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-verb-purge"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-dismiss"]')).not.toBeNull()
+  })
+
+  it('leaves the restart verb alone on a kind with no built-in restart control', () => {
+    // daemon-code-drift is not a task-recovery kind, so its server verb is the
+    // only restart affordance there and must survive.
+    mockItems.mockReturnValue([
+      makeItem('daemon-code-drift', {
+        verbs: [{ op: 'restart', label: 'Restart daemon', style: 'primary' }],
+      }),
+    ])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-verb-restart"]')).not.toBeNull()
+  })
+})
+
 describe('TriageRow – daemon-code-drift does NOT show Continue/Restart', () => {
   beforeEach(() => {
     mockItems.mockReturnValue([
