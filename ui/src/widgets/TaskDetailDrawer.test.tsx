@@ -13,6 +13,7 @@ import type { RunTimeline, RunTimelineEntry, RunTimelineStep, StepSpan } from '.
 import {
   TaskDetailDrawer,
   TaskDetailBody,
+  RecoveryCommands,
   applyNavigate,
   crumbLabel,
 } from './TaskDetailDrawer'
@@ -2708,5 +2709,45 @@ describe('TaskDetailDrawer – proposal mode (slice-3 no-regression)', () => {
     const html = renderSlice3(<TaskDetailDrawer taskId="prop-x" onClose={() => {}} tasks={[slice3Task({ id: 'task-a', cluster: 'Done', parentProposalId: 'prop-x' })]} proposals={[slice3Proposal('prop-x')]} stepSpans={[]} />)
     expect(html).toContain('data-testid="step-group-proposal"')
     expect(html).not.toContain('data-testid="task-step-timeline"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Recovery commands. The drawer used to hand the operator exactly one
+// ready-to-copy command — `mars restart` — which wipes the worktree, the
+// branch and every commit the coder landed. `mars continue` is the documented
+// default and keeps that work, so it has to lead.
+// ---------------------------------------------------------------------------
+
+describe('RecoveryCommands', () => {
+  it('leads with continue and marks restart as the lossy one', () => {
+    const html = renderToStaticMarkup(
+      <RecoveryCommands taskId="mars-c7f01ce6" error="code:context-exhausted" />,
+    )
+    expect(html).toContain('mars continue mars-c7f01ce6')
+    expect(html).toContain('mars restart mars-c7f01ce6')
+    // Continue must appear first in document order.
+    expect(html.indexOf('mars continue')).toBeLessThan(html.indexOf('mars restart'))
+    // The destructive verb must say what it destroys.
+    expect(html).toContain('Discards the worktree, branch and all commits')
+  })
+
+  it('offers the carry-forward verbs when recovery is exhausted', () => {
+    // `mars continue` refuses on these, so suggesting it would send the
+    // operator into a non-zero exit — and reaching for restart from there
+    // discards a branch that has had a coder AND a full recovery spent on it.
+    const html = renderToStaticMarkup(
+      <RecoveryCommands
+        taskId="mars-bff7e039"
+        error="recovery_exhausted:fix-cb2b7dea"
+      />,
+    )
+    expect(html).toContain('mars remerge mars-bff7e039')
+    expect(html).toContain('mars task add --supersede mars-bff7e039')
+    // The prose names `mars continue` to explain that it refuses here — but it
+    // must never be offered as a copyable command.
+    expect(html).not.toContain('mars continue mars-bff7e039')
+    expect(html).toContain('will refuse')
+    expect(html.indexOf('mars remerge')).toBeLessThan(html.indexOf('mars restart'))
   })
 })

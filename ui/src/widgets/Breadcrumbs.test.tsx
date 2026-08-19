@@ -49,9 +49,17 @@ describe('deriveBreadcrumbs', () => {
     ])
   })
 
-  it('truncates long IDs in task crumbs', () => {
-    const crumbs = deriveBreadcrumbs('#/task/abcdefghijklmnop')
+  it('truncates genuinely long IDs in task crumbs', () => {
+    const crumbs = deriveBreadcrumbs('#/task/7daf8c8c-record-each-arc-s-behaviour-verification')
     expect(crumbs[0].label).toContain('…')
+  })
+
+  it('shows a task id whole — eliding one character is worse than showing it', () => {
+    // `mars-` + 8 hex = 13 chars. The old 12-char threshold rendered
+    // `mars-c7f…ce6`, which saved a single character and cost readability.
+    const crumbs = deriveBreadcrumbs('#/task/mars-c7f01ce6')
+    expect(crumbs[0].label).toBe('Task mars-c7f01ce6')
+    expect(crumbs[0].label).not.toContain('…')
   })
 })
 

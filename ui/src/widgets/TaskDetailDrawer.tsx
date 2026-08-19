@@ -501,6 +501,118 @@ const MetaCell = ({ label, value }: { label: string; value: ReactNode }) => (
  * Origins → Meta grid → Diagnostics. Every section after the header is omitted
  * entirely (no empty header) when its backing data is null/empty.
  */
+
+/**
+ * A failed task's escape hatches, in the order the CLI documents them.
+ *
+ * This used to offer exactly one command — `mars restart` — as a ready-to-copy
+ * suggestion. That is the destructive verb: it wipes the worktree and branch
+ * and discards every commit the coder landed. `mars continue` is the default:
+ * it resumes on the existing worktree and keeps that work. Offering only the
+ * destructive one, one click from the clipboard, points the operator at the
+ * lossy path by default — and for a context-exhausted coder, restarting from
+ * scratch walks into the same wall it just hit.
+ *
+ * `mars continue` refuses on a recovery-exhausted arc (its single recovery
+ * attempt is already spent), so that case gets the carry-forward verbs the CLI
+ * names in its refusal instead.
+ */
+const RECOVERY_EXHAUSTED_PREFIX = 'recovery_exhausted:'
+
+const RecoveryCommand = ({
+  cmd,
+  note,
+  tone,
+  testId,
+}: {
+  cmd: string
+  note: string
+  tone: 'primary' | 'destructive'
+  testId: string
+}) => (
+  <div className="mt-2">
+    <div className="flex items-center gap-2">
+      <code
+        data-testid={testId}
+        className={`flex-1 truncate rounded px-2 py-1 font-mono text-label ${
+          tone === 'primary'
+            ? 'bg-primary/10 text-primary'
+            : 'bg-error/10 text-error/70'
+        }`}
+      >
+        {cmd}
+      </code>
+      <CopyButton
+        text={cmd}
+        data-testid={`copy-${testId}`}
+        aria-label={`Copy: ${cmd}`}
+        className={`shrink-0 rounded border px-2 py-0.5 font-mono text-body ${
+          tone === 'primary'
+            ? 'border-primary/30 text-primary/70 hover:bg-primary/10'
+            : 'border-error/30 text-error/50 hover:bg-error/10'
+        }`}
+      />
+    </div>
+    <p className="mt-0.5 font-mono text-micro text-muted-foreground">{note}</p>
+  </div>
+)
+
+export const RecoveryCommands = ({
+  taskId,
+  error,
+}: {
+  taskId: string
+  error: string | null
+}) => {
+  const recoveryExhausted = error?.includes(RECOVERY_EXHAUSTED_PREFIX) ?? false
+
+  if (recoveryExhausted) {
+    return (
+      <div data-testid="recovery-commands">
+        <p className="mt-2 font-mono text-micro text-muted-foreground">
+          This arc has already spent its one recovery attempt, so{' '}
+          <code>mars continue</code> will refuse. Carry the work forward instead:
+        </p>
+        <RecoveryCommand
+          cmd={`mars remerge ${taskId}`}
+          note="If the branch holds real coder or human commits — merges them without re-running."
+          tone="primary"
+          testId="task-remerge-cmd"
+        />
+        <RecoveryCommand
+          cmd={`mars task add --supersede ${taskId}`}
+          note="If the branch holds only an auto-generated salvage checkpoint — inherits it onto a fresh task."
+          tone="primary"
+          testId="task-supersede-cmd"
+        />
+        <RecoveryCommand
+          cmd={`mars restart ${taskId}`}
+          note="Only when nothing on the branch is worth keeping — discards the worktree, branch and all commits."
+          tone="destructive"
+          testId="task-restart-cmd"
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div data-testid="recovery-commands">
+      <RecoveryCommand
+        cmd={`mars continue ${taskId}`}
+        note="Resumes on the existing worktree, keeping every commit the coder already landed."
+        tone="primary"
+        testId="task-continue-cmd"
+      />
+      <RecoveryCommand
+        cmd={`mars restart ${taskId}`}
+        note="Discards the worktree, branch and all commits, then re-runs from setup."
+        tone="destructive"
+        testId="task-restart-cmd"
+      />
+    </div>
+  )
+}
+
 export const TaskDetailBody = ({
   task,
   onNavigate,
@@ -615,22 +727,9 @@ export const TaskDetailBody = ({
               ) : null}
             </details>
           ) : null}
-          {/* Ready-made restart command — one click to copy, then paste into CLI. */}
+          {/* Ready-made recovery commands — one click to copy, then paste into CLI. */}
           {task.status === 'failed' ? (
-            <div className="mt-2 flex items-center gap-2">
-              <code
-                data-testid="task-restart-cmd"
-                className="flex-1 truncate rounded bg-error/10 px-2 py-1 font-mono text-label text-error/80"
-              >
-                {`mars restart ${task.id}`}
-              </code>
-              <CopyButton
-                text={`mars restart ${task.id}`}
-                data-testid="copy-restart-cmd"
-                aria-label={`Copy: mars restart ${task.id}`}
-                className="shrink-0 rounded border border-error/30 px-2 py-0.5 font-mono text-body text-error/60 hover:bg-error/10"
-              />
-            </div>
+            <RecoveryCommands taskId={task.id} error={task.error} />
           ) : null}
         </div>
       ) : null}

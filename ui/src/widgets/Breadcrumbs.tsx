@@ -22,8 +22,16 @@ const KPI_LABELS: Record<KpiKey, string> = {
   'cost-per-merged-task': 'Cost / merged task',
 }
 
+/**
+ * Shorten an id for the breadcrumb.
+ *
+ * The threshold is 20, not 12, because a task id is `mars-` + 8 hex = 13
+ * characters: at 12 it elided a single character and produced `mars-c7f…ce6`,
+ * which costs the reader more than the character it saved. Only genuinely long
+ * ids — `<8hex>-<slug>` idea ids and composed recovery ids — get elided.
+ */
 const truncateId = (id: string): string =>
-  id.length > 12 ? `${id.slice(0, 8)}…${id.slice(-3)}` : id
+  id.length > 20 ? `${id.slice(0, 12)}…${id.slice(-4)}` : id
 
 export function deriveBreadcrumbs(hash: string): Crumb[] {
   const kpiKey = parseKpiRoute(hash)
