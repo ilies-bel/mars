@@ -33,14 +33,14 @@ interface NavGroup {
  *   - 'proposals' links to the dedicated #/proposals page.
  *   - 'studio' has no top-level entry — it is accessed via #/studio/<taskId>
  *     from the task detail UI; while on that route the Progress entry highlights.
- *   - 'triage' ("Needs you") is the default landing page and carries the
+ *   - 'triage' ("Action Queue") is the default landing page and carries the
  *     pending-decision badge.
  */
 export const SHELL_NAV_GROUPS: NavGroup[] = [
   {
     label: 'Workspace',
     entries: [
-      { route: 'triage', label: 'Needs you', href: '#/triage', icon: '◉' },
+      { route: 'triage', label: 'Action Queue', href: '#/triage', icon: '◉' },
       { route: 'chat', label: 'Chat', href: '#/chat', icon: '⊙' },
       { route: 'progress', label: 'Progress', href: '#/progress', icon: '◈' },
       { route: 'control', label: 'Control Room', href: '#/control', icon: '⌂' },

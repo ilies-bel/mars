@@ -54,7 +54,7 @@ export const AlertsRail = ({ onOpen, openItemId, pendingItemId }: AlertsRailProp
       className="border-b border-primary/30 px-2 pb-2 pt-2"
     >
       <p className="flex items-center gap-1.5 px-1 pb-1 font-mono text-micro uppercase tracking-wide text-primary/50">
-        Needs you
+        Action Queue
         {alerts.length > 0 && (
           <span className="rounded-full bg-primary/20 px-1.5 font-mono text-micro leading-none text-primary">
             {alerts.length}

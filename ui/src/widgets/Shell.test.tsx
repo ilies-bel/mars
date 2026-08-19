@@ -3,7 +3,7 @@
  *
  * ShellSidebar is tested directly with controlled props (no hooks) to verify:
  *   - active route is highlighted (aria-current, flame bg, right-edge accent, amber text)
- *   - "Needs you" badge appears only when decisionBadge > 0
+ *   - "Action Queue" badge appears only when decisionBadge > 0
  *   - no badge on any other nav entry
  *   - proposals/progress mutual-exclusion logic
  *
@@ -19,7 +19,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 
 // ── Module mocks — must be registered before any import of the component ─────
 
-// useActionQueue — Shell uses this for the Needs you badge count.
+// useActionQueue — Shell uses this for the Action Queue badge count.
 // Mutable so tests can inject items and verify badge computation.
 let mockActionQueueItems: { id: string; kind: string; priority: string; at: string }[] = []
 mock.module('@/entities/actionQueue/useActionQueue', () => ({
@@ -66,17 +66,17 @@ describe('SHELL_NAV_GROUPS', () => {
     expect(total).toBe(9)
   })
 
-  it('Workspace group contains Needs you, Chat, Progress, Control Room', () => {
+  it('Workspace group contains Action Queue, Chat, Progress, Control Room', () => {
     const workspace = SHELL_NAV_GROUPS[0]
     const labels = workspace.entries.map((e) => e.label)
-    expect(labels).toContain('Needs you')
+    expect(labels).toContain('Action Queue')
     expect(labels).toContain('Chat')
     expect(labels).toContain('Progress')
     expect(labels).toContain('Control Room')
   })
 
-  it('Needs you is the first entry in the Workspace group', () => {
-    expect(SHELL_NAV_GROUPS[0].entries[0].label).toBe('Needs you')
+  it('Action Queue is the first entry in the Workspace group', () => {
+    expect(SHELL_NAV_GROUPS[0].entries[0].label).toBe('Action Queue')
     expect(SHELL_NAV_GROUPS[0].entries[0].href).toBe('#/triage')
   })
 
@@ -205,10 +205,10 @@ describe('ShellSidebar — Proposals route highlighting', () => {
   })
 })
 
-// ── ShellSidebar — Needs you badge ───────────────────────────────────────────
+// ── ShellSidebar — Action Queue badge ────────────────────────────────────────
 
-describe('ShellSidebar — Needs you badge', () => {
-  it('shows a numeric badge on Needs you when decisionBadge > 0', () => {
+describe('ShellSidebar — Action Queue badge', () => {
+  it('shows a numeric badge on Action Queue when decisionBadge > 0', () => {
     const html = renderToStaticMarkup(<ShellSidebar activeRoute="progress" decisionBadge={3} />)
     expect(html).toContain('>3<')
   })
@@ -224,7 +224,7 @@ describe('ShellSidebar — Needs you badge', () => {
     expect(html).not.toContain('decisions pending')
   })
 
-  it('renders the badge only once (on Needs you, not on other entries)', () => {
+  it('renders the badge only once (on Action Queue, not on other entries)', () => {
     const html = renderToStaticMarkup(<ShellSidebar activeRoute="triage" decisionBadge={5} />)
     const badgeMatches = html.match(/decisions pending/g)
     expect(badgeMatches).toHaveLength(1)
@@ -325,7 +325,7 @@ describe('Shell', () => {
 
 // ── Shell — badge computation (draft-proposal exclusion) ──────────────────────
 
-describe('Shell — Needs you badge computation', () => {
+describe('Shell — Action Queue badge computation', () => {
   const makeItem = (kind: string, id = `${kind}:1`) => ({
     id,
     kind,

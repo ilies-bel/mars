@@ -1,5 +1,5 @@
 /**
- * TriagePage — "Needs you" ranked triage view.
+ * TriagePage — "Action Queue" ranked triage view.
  *
  * Answers "what needs me right now" with a single ranked list of every open
  * action-queue item, ordered by priority then recency. Each row shows the
@@ -676,7 +676,7 @@ export const TriagePage = () => {
       {/* Header strip */}
       <div className="flex shrink-0 items-center border-b border-border px-5 py-3">
         <h1 className="font-mono text-body font-semibold text-foreground">
-          Needs you
+          Action Queue
         </h1>
         {needsYouCount > 0 && (
           <span

@@ -7,7 +7,7 @@ export type RouteName = 'progress' | 'events' | 'kpi' | 'studio' | 'chat' | 'ste
 /**
  * Derives the current route from the URL hash.
  *
- * (empty / root)        → triage (default landing page — "Needs you")
+ * (empty / root)        → triage (default landing page — "Action Queue")
  * #/triage              → triage
  * #/chat[/…]            → chat
  * #/progress[/…]        → progress
@@ -467,7 +467,7 @@ export const actionQueueCount = (payload: StaleWorktreesPayload): number =>
 export const pageTitle = (route: RouteName): string => {
   switch (route) {
     case 'triage':
-      return 'mars — needs you'
+      return 'mars — action queue'
     case 'chat':
       return 'mars — chat'
     case 'progress':

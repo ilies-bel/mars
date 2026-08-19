@@ -14,7 +14,7 @@ interface ShortcutsOverlayProps {
 
 const SHORTCUTS: ReadonlyArray<{ key: string; desc: string }> = [
   { key: '1-9', desc: 'Jump to task by position on the board' },
-  { key: 't', desc: 'Go to action queue (triage)' },
+  { key: 't', desc: 'Go to action queue' },
   { key: '?', desc: 'Open this shortcuts overlay' },
   { key: 'Esc', desc: 'Close any open overlay or drawer' },
 ]
