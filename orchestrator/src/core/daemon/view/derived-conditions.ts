@@ -36,6 +36,8 @@ interface DaemonCodeDriftState {
   sourceSha: string | null
   currentSha: string | null
   dependencyDrift: boolean
+  /** Commit distance sourceSha..currentSha, or null when it couldn't be computed. */
+  behindBy?: number | null
 }
 
 export interface ConditionsDeps {
@@ -462,7 +464,7 @@ function deriveDaemonCodeDriftConditions(
 ): PersistedActionQueueRow[] {
   const codeDrift = getCodeDrift?.()
   if (!codeDrift) return []
-  const { sourceSha, currentSha, dependencyDrift } = codeDrift
+  const { sourceSha, currentSha, dependencyDrift, behindBy = null } = codeDrift
   if (!sourceSha || !currentSha || sourceSha === currentSha) return []
 
   const shortSrc = sourceSha.slice(0, 7)
@@ -472,11 +474,16 @@ function deriveDaemonCodeDriftConditions(
       id: deriveId('daemon-code-drift', `${sourceSha}:${currentSha}`),
       kind: 'daemon-code-drift',
       priority: 'high',
-      title: `Daemon running stale code — ${shortSrc} → ${shortHead}`,
+      title: `Update available for the background engine — ${shortSrc} → ${shortHead}`,
       body: dependencyDrift
         ? `daemon running ${shortSrc}, main is at ${shortHead}; dependencies changed — run your package install, then \`mars daemon restart\``
         : `daemon running ${shortSrc}, main is at ${shortHead} — run \`mars daemon restart\` to load current verify/dispatch code`,
-      payload: { sourceSha, currentSha },
+      // Keys here MUST match what the `daemon-code-drift` recipe in
+      // action-queue-recipes.ts reads. They drifted once already: this row
+      // emitted `sourceSha`/`currentSha` while the recipe read
+      // `runningCommit`/`headCommit`, so the drift alert's detail panel
+      // always rendered empty even though the daemon held all three values.
+      payload: { runningCommit: sourceSha, headCommit: currentSha, behindBy, dependencyDrift },
       context: {},
       raisedAt: nowMs,
       lastSeenAt: nowMs,

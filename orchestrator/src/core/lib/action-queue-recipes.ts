@@ -462,16 +462,35 @@ const RECIPE_DEFINITIONS = {
   // ── Daemon and infrastructure ──────────────────────────────────────────────
 
   'daemon-code-drift': {
-    humanSummary: () =>
-      'The background engine is running old code — restart it to pick up your latest changes.',
+    humanSummary: (ctx) => {
+      const running = str(ctx.payload['runningCommit']).slice(0, 7)
+      const head = str(ctx.payload['headCommit']).slice(0, 7)
+      const behindBy = ctx.payload['behindBy']
+      const behindNote =
+        typeof behindBy === 'number'
+          ? ` (${behindBy} commit${behindBy === 1 ? '' : 's'} behind)`
+          : ''
+      const shaNote = running && head ? ` — ${running} → ${head}` : ''
+      return `An update is available for the background engine${behindNote}${shaNote}. Restart it to pick up your latest changes.`
+    },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
       runningCommit: str(ctx.payload['runningCommit']),
       headCommit: str(ctx.payload['headCommit']),
       behindBy: ctx.payload['behindBy'],
+      dependencyDrift: ctx.payload['dependencyDrift'],
     }),
-    verbs: [{ op: 'restart-daemon', label: 'Restart engine', style: 'primary' }],
+    verbs: (ctx) => {
+      const dependencyDrift = ctx.payload['dependencyDrift'] === true
+      return [
+        {
+          op: 'restart-daemon',
+          label: dependencyDrift ? 'Restart engine (after install)' : 'Restart engine',
+          style: 'primary',
+        },
+      ]
+    },
   },
 
   'workflow-install-drift': {
@@ -610,7 +629,11 @@ const RECIPE_DEFINITIONS = {
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
       verdict: str(ctx.payload['verdict']),
-      affectedCount: ctx.payload['affectedCount'],
+      // No derivation populates `affectedCount` (the `gate-broken` row's
+      // payload only ever carries gate/verdict/originTaskId/streak) — reading
+      // an unpopulated key here silently renders undefined forever. Dropped
+      // rather than left dangling; see mars-89537cf3 for the daemon-code-drift
+      // sibling of this same defect class.
     }),
     verbs: [],
   },
@@ -1126,7 +1149,7 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = Object.fromEntries(
     {
       ...recipe,
       preloadedResponses: (ctx) =>
-        recipe.verbs
+        (typeof recipe.verbs === 'function' ? recipe.verbs(ctx) : recipe.verbs)
           .filter(({ op }) => classifyMarsVerb(op) === 'safe')
           .map(({ op, label }) => ({
             id: op,

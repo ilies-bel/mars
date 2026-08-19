@@ -1056,6 +1056,11 @@ export const startDaemon = async (
   let currentSha: string | null = sourceSha
   let isStale = false
   let lastDependencyDrift = false
+  // Commit distance sourceSha..currentSha, refreshed alongside dependency
+  // drift below. Feeds the daemon-code-drift row's `behindBy` payload field
+  // so the alert can say how far behind, not just that it is behind. Left
+  // null on any git error — the row still renders without it.
+  let lastBehindBy: number | null = null
 
   let shuttingDown = false
   // When false, `drain()` is a no-op, new bus events skip enqueue, and
@@ -5369,7 +5374,7 @@ export const startDaemon = async (
         getPauseState: () => pause.get(),
         crashMarkerPath: crashMarker,
         getCodeDrift: () => isStale && sourceSha && currentSha && sourceSha !== currentSha
-          ? { sourceSha, currentSha, dependencyDrift: lastDependencyDrift }
+          ? { sourceSha, currentSha, dependencyDrift: lastDependencyDrift, behindBy: lastBehindBy }
           : null,
         isBaselinePoisoned: () => _baselineHealthChecker?.isBaselinePoisoned() ?? false,
         baselineDetail: () => {
@@ -6278,6 +6283,17 @@ export const startDaemon = async (
         isStale = true
         const dependencyDrift = await hasDevDependencyDrift(sourceSha, head, sourceRepoDir)
         lastDependencyDrift = dependencyDrift
+        try {
+          const { stdout: countOut } = await exec(
+            resolveGitBin(),
+            ['rev-list', '--count', `${sourceSha}..${head}`],
+            { cwd: sourceRepoDir ?? sourceDir },
+          )
+          const parsedCount = Number(countOut.trim())
+          lastBehindBy = Number.isFinite(parsedCount) ? parsedCount : null
+        } catch {
+          lastBehindBy = null
+        }
         const action = decideDevStalenessAction({
           sourceSha,
           currentSha: head,
