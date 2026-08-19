@@ -425,7 +425,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     // signature; the title also carries the signature and the failed task's
     // short id so a queue of failures is triageable row by row.
     expect(row!.title).toBe(
-      'verify:typecheck/typecheck-cannot-find-name — The changes did not pass type-checking [task T-typech]',
+      'verify:typecheck/typecheck-cannot-find-name — The changes did not pass type-checking [task T-typechec]',
     )
     expect(row!.body).toBe(
       'The verify step failed because the code references a name that is not in scope (TS2304).',
@@ -483,10 +483,13 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
-    // No failureSignature and no captured error → the generic wording, which
-    // is the genuine last resort. It still names the task.
+    // No failureSignature and no captured error: failedTaskTitle's
+    // capturedError comes from the task row's `error` column (not the
+    // event payload's `error` field), and insertTaskRow here leaves that
+    // column null — so the generic wording is the genuine last resort. It
+    // still names the task.
     // The fallback emits plain-English text — no raw step ids ('unknown').
-    expect(row!.title).toBe(`${GENERIC_FAILURE_LABEL} [task T-unknow]`)
+    expect(row!.title).toBe(`${GENERIC_FAILURE_LABEL} [task T-unknown]`)
     // Body is the verboseReason from unknownFailureKind.
     expect(row!.body).toContain(GENERIC_FAILURE_LABEL)
     // Payload's failureReasonCode mirrors the synthesised unknown signature.
@@ -573,7 +576,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     // title and body from Failure kind registry, with the signature and the
     // task id folded into the title
     expect(row!.title).toBe(
-      'code:timeout/install-timeout — The coder took too long [task T-droppe]',
+      'code:timeout/install-timeout — The coder took too long [task T-dropped]',
     )
     expect(row!.body).toContain('SIGKILL / exit 137')
     // payload's failureReasonCode mirrors the resolved signature
@@ -772,7 +775,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     // The warm reason still comes from the registry, prefixed by the signature
     // and suffixed with the task id so sibling failures stay distinguishable.
     expect(row!.title).toBe(
-      'setup:install/install-frozen-lockfile — The coding environment could not be set up [task T-setup-]',
+      'setup:install/install-frozen-lockfile — The coding environment could not be set up [task T-setup-lo]',
     )
   })
 
@@ -800,7 +803,7 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
-    expect(row!.title).toBe('A verification check did not pass [task T-verify]')
+    expect(row!.title).toBe('A verification check did not pass [task T-verify-t]')
     // A technical id is still reachable off the payload rather than the
     // operator-facing copy. Note it is the SYNTHESISED `<failingStep>/unknown`
     // from unknownFailureKind, not the original unregistered signature.
