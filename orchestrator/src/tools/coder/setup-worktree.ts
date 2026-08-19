@@ -468,8 +468,30 @@ export const setupWorktree = async (
         // registrations, probes git, and may recreate a branch from scratch.
         // A passing integrity check means the directory, git link, and branch
         // are all intact; we reuse it in place and save the overhead.
-        const expectedBranch = `task/${taskId}`
-        const expectedPath = resolve(getStateDir(), `worktrees/${taskId}`)
+        //
+        // The task row may already carry a pre-provisioned branch/worktreePath
+        // that does NOT follow the `task/<taskId>` naming convention: a
+        // supersede replacement (`mars task add --supersede <id>`) inherits the
+        // SUPERSEDED task's branch (e.g. `task/<supersededId>`) via
+        // `Arc.createOrigin`, which stamps it onto this task's row before
+        // dispatch. Trust the row over the naming convention whenever both
+        // fields are already set — mirroring the `task.branch ?? \`task/${task.id}\``
+        // fallback pattern used everywhere else branches are resolved (see e.g.
+        // `land-task.ts`, `phase-recovery.ts`, `restart-task.ts`). Without this,
+        // the integrity check below sees a branch mismatch (`reason:
+        // 'wrong-branch'`) against the hardcoded convention and silently falls
+        // through to `createWorktree`, which discards the inherited branch and
+        // carves a brand-new one off integration — the supersede promise ("the
+        // replacement inherits the branch") silently broken at dispatch time.
+        const preProvisioned = await store.getTask(taskId).catch(() => null)
+        const hasPreProvisionedWorktree =
+          preProvisioned?.branch != null && preProvisioned?.worktreePath != null
+        const expectedBranch = hasPreProvisionedWorktree
+          ? (preProvisioned!.branch as string)
+          : `task/${taskId}`
+        const expectedPath = hasPreProvisionedWorktree
+          ? (preProvisioned!.worktreePath as string)
+          : resolve(getStateDir(), `worktrees/${taskId}`)
         const integrity = await checkWorktreeIntegrity(expectedPath, expectedBranch)
         if (integrity.ok) {
           ref = { path: expectedPath, branch: expectedBranch }
