@@ -227,11 +227,44 @@ export const summarizeTraceEvent = (event: TraceEvent): string => {
     if (isClaudeEventFields(p.fields)) {
       return gistFromClaudeFields(p.fields)
     }
-    return typeof p.msg === 'string' ? p.msg : '(no message)'
+    const msg = typeof p.msg === 'string' ? p.msg : '(no message)'
+    // The workflow engine's own log lines (run.failed / step.failed) carry
+    // only a bare event-name msg — the actual failure text lives in
+    // payload.fields.err. Fold it in so the row reads as a message an
+    // operator can act on, not a bare event name behind a `fields` click.
+    if (isPlainObj(p.fields) && typeof p.fields.err === 'string') {
+      return `${msg}: ${p.fields.err}`
+    }
+    return msg
   }
 
   // Unknown kind — fall back to the kind name itself.
   return event.kind
+}
+
+/**
+ * Effective task id for a trace event, normalising two different envelope
+ * shapes into one:
+ *   - Most event kinds carry the real task id on the envelope's top-level
+ *     `taskId` field.
+ *   - The workflow engine's own `log_line` events (payload.source ===
+ *     'workflow', e.g. the `run.failed` / `step.failed` lines) are emitted
+ *     by a logger with no `taskId` binding, so the envelope's `taskId` is
+ *     always `null` — the task identity survives only as
+ *     `payload.fields.runId`, which the daemon always sets to the task's
+ *     own id when it starts the workflow run.
+ *
+ * Used both to render a task-id chip on rows that would otherwise show
+ * none, and to group the run/step/agent rows of one incident together
+ * (see `groupConsecutiveEvents` in EventsPage.tsx).
+ */
+export const traceEventTaskId = (event: TraceEvent): string | null => {
+  if (event.taskId !== null) return event.taskId
+  if (event.kind === 'log_line' && event.payload.source === 'workflow') {
+    const fields = event.payload.fields
+    if (isPlainObj(fields) && typeof fields.runId === 'string') return fields.runId
+  }
+  return null
 }
 
 /**

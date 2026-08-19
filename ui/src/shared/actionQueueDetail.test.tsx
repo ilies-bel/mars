@@ -13,6 +13,7 @@ import {
   summarizeTraceEvent,
   isMarsToolEvent,
   marsToolTextClass,
+  traceEventTaskId,
 } from './actionQueueDetail'
 import type { TraceEvent } from './schemas'
 
@@ -169,6 +170,82 @@ describe('summarizeTraceEvent', () => {
         }),
       ),
     ).toBe('something failed')
+  })
+
+  it('log_line: appends payload.fields.err when present, so a bare event-name msg still reads as a message', () => {
+    // The workflow engine's own run.failed/step.failed log lines carry only
+    // a bare msg ('run.failed') — the actual failure text lives in
+    // payload.fields.err. It must be folded into the summary.
+    expect(
+      summarizeTraceEvent(
+        make('log_line', {
+          level: 'error',
+          msg: 'run.failed',
+          source: 'workflow',
+          fields: { runId: 'mars-abc123', workflowId: 'implement', event: 'run.failed', err: 'connection reset' },
+        }),
+      ),
+    ).toBe('run.failed: connection reset')
+  })
+})
+
+describe('traceEventTaskId', () => {
+  const make = (
+    kind: TraceEvent['kind'],
+    payload: Record<string, unknown> = {},
+    taskId: string | null = null,
+  ): TraceEvent => ({
+    id: 'e1',
+    timestamp: 1_767_225_600_000,
+    kind,
+    severity: 'error',
+    taskId,
+    originId: null,
+    phase: null,
+    payload,
+  })
+
+  it('returns the envelope taskId when present', () => {
+    expect(traceEventTaskId(make('step_ended', { stepName: 'run-agent' }, 't-real'))).toBe('t-real')
+  })
+
+  it('falls back to payload.fields.runId for a workflow log_line with no envelope taskId', () => {
+    expect(
+      traceEventTaskId(
+        make('log_line', {
+          level: 'error',
+          msg: 'run.failed',
+          source: 'workflow',
+          fields: { runId: 'mars-run-id' },
+        }),
+      ),
+    ).toBe('mars-run-id')
+  })
+
+  it('returns null for a workflow log_line with no fields.runId', () => {
+    expect(
+      traceEventTaskId(make('log_line', { level: 'error', msg: 'run.failed', source: 'workflow' })),
+    ).toBeNull()
+  })
+
+  it('does not fall back to fields.runId for a non-workflow-sourced log_line', () => {
+    // Only the workflow engine's own logger omits taskId this way; other
+    // log_line sources (daemon/bus/sweeper) that happen to have a
+    // fields.runId key should not be misattributed.
+    expect(
+      traceEventTaskId(
+        make('log_line', {
+          level: 'error',
+          msg: 'something',
+          source: 'bus',
+          fields: { runId: 'not-a-task' },
+        }),
+      ),
+    ).toBeNull()
+  })
+
+  it('returns null for a non-log_line event with no envelope taskId', () => {
+    expect(traceEventTaskId(make('origin_created', { source: 'planner' }))).toBeNull()
   })
 })
 

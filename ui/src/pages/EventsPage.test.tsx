@@ -1280,6 +1280,117 @@ describe('groupConsecutiveEvents', () => {
     expect(rows[2].type).toBe('single')
     if (rows[2].type === 'single') expect(rows[2].event.id).toBe('tc-x3')
   })
+
+  // Incident grouping — the workflow engine's run.failed/step.failed log
+  // lines carry taskId: null (only payload.fields.runId identifies the
+  // task); the step_ended row for the same failure carries the real
+  // taskId. All three are one incident, not three unrelated rows.
+  describe('incident grouping', () => {
+    const runFailedLine = (overrides: Partial<TraceEvent> = {}): TraceEvent =>
+      makeEvent({
+        id: 'run-failed',
+        kind: 'log_line',
+        severity: 'error',
+        taskId: null,
+        phase: null,
+        payload: {
+          level: 'error',
+          msg: 'run.failed',
+          source: 'workflow',
+          fields: { runId: 'mars-inc-1', workflowId: 'implement', event: 'run.failed', err: 'boom' },
+        },
+        ...overrides,
+      })
+
+    const stepFailedLine = (overrides: Partial<TraceEvent> = {}): TraceEvent =>
+      makeEvent({
+        id: 'step-failed',
+        kind: 'log_line',
+        severity: 'error',
+        taskId: null,
+        phase: null,
+        payload: {
+          level: 'error',
+          msg: 'step.failed',
+          source: 'workflow',
+          fields: {
+            runId: 'mars-inc-1',
+            workflowId: 'implement',
+            step: 'run-agent',
+            event: 'step.failed',
+            err: 'run-agent step killed',
+          },
+        },
+        ...overrides,
+      })
+
+    const stepEndedKilled = (overrides: Partial<TraceEvent> = {}): TraceEvent =>
+      makeEvent({
+        id: 'step-ended',
+        kind: 'step_ended',
+        severity: 'warn',
+        taskId: 'mars-inc-1',
+        phase: 'code',
+        payload: {
+          stepName: 'run-agent',
+          workflowInstanceId: 'mars-inc-1',
+          workerName: 'Fixer',
+          outcome: 'killed',
+        },
+        ...overrides,
+      })
+
+    it('collapses the run/step/agent rows of one incident (shared runId/taskId) into one incident row', () => {
+      const events = [runFailedLine(), stepFailedLine(), stepEndedKilled()]
+      const rows = groupConsecutiveEvents(events)
+      expect(rows).toHaveLength(1)
+      expect(rows[0].type).toBe('incident')
+      if (rows[0].type === 'incident') {
+        expect(rows[0].events).toHaveLength(3)
+        expect(rows[0].events.map((e) => e.id)).toEqual(['run-failed', 'step-failed', 'step-ended'])
+      }
+    })
+
+    it('does not merge incident-shaped rows across different incidents (different runId/taskId)', () => {
+      const events = [
+        runFailedLine({ id: 'a-run-failed' }),
+        stepFailedLine({
+          id: 'b-step-failed',
+          payload: {
+            level: 'error',
+            msg: 'step.failed',
+            source: 'workflow',
+            fields: { runId: 'mars-inc-2', step: 'run-agent', event: 'step.failed', err: 'other' },
+          },
+        }),
+      ]
+      const rows = groupConsecutiveEvents(events)
+      expect(rows).toHaveLength(2)
+      expect(rows[0].type).toBe('single')
+      expect(rows[1].type).toBe('single')
+    })
+
+    it('does not treat two consecutive task_failed ERROR rows as an incident (task_failed is a standalone signal)', () => {
+      // Regression guard: incident grouping must stay narrow to log_line
+      // (workflow-sourced) + step_ended, not "any non-info event sharing a
+      // taskId" — otherwise ordinary task_failed rows (which already have
+      // their own identical-payload dedup) would be swept in too.
+      const events = [
+        makeEvent({ id: 'tf-a', kind: 'task_failed', severity: 'error', taskId: 't-1', payload: { failureReason: 'reason A' } }),
+        makeEvent({ id: 'tf-b', kind: 'task_failed', severity: 'error', taskId: 't-1', payload: { failureReason: 'reason B' } }),
+      ]
+      const rows = groupConsecutiveEvents(events)
+      expect(rows).toHaveLength(2)
+      expect(rows[0].type).toBe('single')
+      expect(rows[1].type).toBe('single')
+    })
+
+    it('a lone incident-shaped row (no matching partner) stays single, not a 1-item incident group', () => {
+      const rows = groupConsecutiveEvents([runFailedLine()])
+      expect(rows).toHaveLength(1)
+      expect(rows[0].type).toBe('single')
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1401,6 +1512,127 @@ describe('EventsPage — tool-call INFO event grouping', () => {
     expect(html).toContain('data-testid="event-row-tc-d1"')
     expect(html).toContain('data-testid="event-row-tc-d2"')
     expect(html).not.toContain('tool-group-row')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 5c. EventsPage — incident grouping (render)
+//
+// A single "run.failed" or "step.failed" workflow-engine log line has
+// taskId: null at the envelope level — the task identity lives only in
+// payload.fields.runId. These tests assert the row still surfaces a task-id
+// chip and a one-line message (including the payload.fields.err detail)
+// without expansion, and that the run/step/agent triple for one incident
+// collapses into a single expandable row.
+// ---------------------------------------------------------------------------
+
+describe('EventsPage — incident grouping', () => {
+  it("a lone log_line 'run.failed' row shows its task id and message without expansion", () => {
+    const qc = makeClient(
+      makeResponse([
+        makeEvent({
+          id: 'ev-run-failed',
+          kind: 'log_line',
+          severity: 'error',
+          taskId: null,
+          phase: null,
+          payload: {
+            level: 'error',
+            msg: 'run.failed',
+            source: 'workflow',
+            fields: { runId: 'mars-solo-1', workflowId: 'implement', event: 'run.failed', err: 'connection reset' },
+          },
+        }),
+      ]),
+    )
+    const html = renderPage(qc)
+    // Task id, derived from payload.fields.runId, links to the task drawer —
+    // no click-through required to identify which task failed.
+    expect(html).toContain('href="#/task/mars-solo-1?from=events"')
+    expect(html).toContain('mars-solo-1')
+    // The message includes the actual error detail, not just the bare event name.
+    expect(html).toContain('run.failed: connection reset')
+  })
+
+  it('collapses the run/step/agent rows of one incident into a single row, expandable to the three', () => {
+    const events = [
+      makeEvent({
+        id: 'inc-run-failed',
+        kind: 'log_line',
+        severity: 'error',
+        taskId: null,
+        phase: null,
+        payload: {
+          level: 'error',
+          msg: 'run.failed',
+          source: 'workflow',
+          fields: { runId: 'mars-inc-render', workflowId: 'implement', event: 'run.failed', err: 'boom' },
+        },
+      }),
+      makeEvent({
+        id: 'inc-step-failed',
+        kind: 'log_line',
+        severity: 'error',
+        taskId: null,
+        phase: null,
+        payload: {
+          level: 'error',
+          msg: 'step.failed',
+          source: 'workflow',
+          fields: {
+            runId: 'mars-inc-render',
+            step: 'run-agent',
+            event: 'step.failed',
+            err: 'run-agent step killed',
+          },
+        },
+      }),
+      makeEvent({
+        id: 'inc-step-ended',
+        kind: 'step_ended',
+        severity: 'warn',
+        taskId: 'mars-inc-render',
+        phase: 'code',
+        payload: {
+          stepName: 'run-agent',
+          workflowInstanceId: 'mars-inc-render',
+          workerName: 'Fixer',
+          outcome: 'killed',
+        },
+      }),
+    ]
+    const qc = makeClient(makeResponse(events))
+
+    // Collapsed state: one row for all three events.
+    const collapsedHtml = renderPage(qc)
+    expect(collapsedHtml).toContain('data-testid="incident-group-row-inc-run-failed"')
+    expect(collapsedHtml).toContain('×3')
+    expect(collapsedHtml).not.toContain('data-testid="event-row-inc-run-failed"')
+    expect(collapsedHtml).not.toContain('data-testid="event-row-inc-step-failed"')
+    expect(collapsedHtml).not.toContain('data-testid="event-row-inc-step-ended"')
+
+    // Expand the incident row — the three constituent events render individually.
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    document.body.appendChild(container)
+    act(() => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <EventsPage />
+        </QueryClientProvider>,
+      )
+    })
+    const incidentRow = container.querySelector<HTMLButtonElement>(
+      '[data-testid="incident-group-row-inc-run-failed"]',
+    )!
+    act(() => { incidentRow.click() })
+
+    expect(container.querySelector('[data-testid="event-row-inc-run-failed"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="event-row-inc-step-failed"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="event-row-inc-step-ended"]')).not.toBeNull()
+
+    act(() => { root.unmount() })
+    container.remove()
   })
 })
 

@@ -4,7 +4,7 @@ import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import { fetchEvents, type EventsFilter } from '@/shared/api'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { SkeletonList } from '@/components/Skeleton'
-import { severityColor, severityRowClass, summarizeTraceEvent, marsToolTextClass, humanizeKind, humanizePhase } from '@/shared/actionQueueDetail'
+import { severityColor, severityRowClass, summarizeTraceEvent, marsToolTextClass, humanizeKind, humanizePhase, traceEventTaskId } from '@/shared/actionQueueDetail'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { TraceEvent } from '@/shared/schemas'
 import { relativeTime, formatRelativeAge } from '@/shared/time'
@@ -246,8 +246,14 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
     typeof event.payload.stepName === 'string'
       ? event.payload.stepName
       : undefined
-  const href = event.taskId
-    ? taskHash(event.taskId, 'events', stepName)
+  // Most kinds carry taskId on the envelope; the workflow engine's own
+  // log_line events (run.failed/step.failed) only carry it inside
+  // payload.fields.runId — traceEventTaskId normalises both so every row
+  // that has an identifiable task shows its chip, not just the ones the
+  // daemon happened to tag at the envelope level.
+  const effectiveTaskId = traceEventTaskId(event)
+  const href = effectiveTaskId
+    ? taskHash(effectiveTaskId, 'events', stepName)
     : undefined
 
   const logLineSource =
@@ -288,13 +294,13 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
           {event.phase ? ` · ${humanizePhase(event.phase)}` : ''}
         </span>
         <div className="flex min-w-0 items-baseline gap-x-1">
-          {event.taskId ? (
+          {effectiveTaskId ? (
             <a
-              href={taskHash(event.taskId, 'events')}
+              href={taskHash(effectiveTaskId, 'events')}
               onClick={(e) => e.stopPropagation()}
               className="shrink-0 font-mono text-micro text-muted-foreground hover:text-foreground hover:underline"
             >
-              {truncateId(event.taskId)}
+              {truncateId(effectiveTaskId)}
             </a>
           ) : null}
           {logLineSource && logLineSource !== callerSource ? (
@@ -372,17 +378,40 @@ type EventListRow =
   | { type: 'group'; events: TraceEvent[] }
   /** Consecutive tool_invoked INFO events from the same task, ≥2 events. */
   | { type: 'tool-group'; events: TraceEvent[] }
+  /** Consecutive workflow-engine rows (run/step/agent) for one incident, ≥2 events. */
+  | { type: 'incident'; events: TraceEvent[] }
+
+/**
+ * True for the event shapes that make up a "workflow incident": the
+ * workflow engine's own `run.failed`/`step.failed` log lines, and the
+ * `step_ended` row (outcome `failed`/`killed`) for the worker step that
+ * caused them. These are the three rows one failure produces — see
+ * `traceEventTaskId` for why they don't already share a `taskId` column.
+ * Deliberately narrow (not "any non-info event"): task_failed, tool_invoked
+ * errors, and other WARN/ERROR kinds are real standalone incidents in their
+ * own right and must not be folded together just for sharing a task.
+ */
+const isIncidentEvent = (e: TraceEvent): boolean => {
+  if (e.severity === 'info') return false
+  if (e.kind === 'log_line') return e.payload.source === 'workflow'
+  return e.kind === 'step_ended'
+}
 
 /**
  * Collapse consecutive events into grouped rows.
  *
- * Two grouping criteria (checked in priority order):
+ * Three grouping criteria (checked in priority order):
  *
  * 1. **Tool-call noise reduction** — consecutive `tool_invoked` INFO events
  *    from the same task (same taskId, ≥2) are collapsed into a `tool-group`
  *    row showing "N tool calls · Xs". Renders as an expandable row.
  *
- * 2. **Identical-payload dedup** — other consecutive events whose payload
+ * 2. **Incident grouping** — consecutive workflow-incident rows (see
+ *    `isIncidentEvent`) sharing the same effective task id (via
+ *    `traceEventTaskId`, ≥2) are collapsed into an `incident` row. This is
+ *    the run/step/agent triple one failure emits — one incident, one row.
+ *
+ * 3. **Identical-payload dedup** — other consecutive events whose payload
  *    serialises to the same JSON string are collapsed into a `group` row.
  *    Groups require at least 2 events; a run of 1 is always `single`.
  */
@@ -405,6 +434,25 @@ const groupConsecutiveEvents = (events: readonly TraceEvent[]): EventListRow[] =
         rows.push({ type: 'tool-group', events: events.slice(i, j) })
         i = j
         continue
+      }
+    }
+
+    // Incident grouping: fold the run/step/agent rows of one failure into
+    // one row instead of three.
+    if (isIncidentEvent(e)) {
+      const incidentId = traceEventTaskId(e)
+      if (incidentId !== null) {
+        let j = i + 1
+        while (
+          j < events.length &&
+          isIncidentEvent(events[j]) &&
+          traceEventTaskId(events[j]) === incidentId
+        ) j++
+        if (j - i >= 2) {
+          rows.push({ type: 'incident', events: events.slice(i, j) })
+          i = j
+          continue
+        }
       }
     }
 
@@ -489,6 +537,114 @@ const GroupedRow = memo(({
       <span className="shrink-0 text-micro text-muted-foreground">{relativeTime(last.timestamp, now)}</span>
       <span className="shrink-0 rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-primary">×{events.length}</span>
       <span className="min-w-0 truncate text-label text-muted-foreground">{summarizeTraceEvent(first)}</span>
+    </button>
+  )
+})
+
+// ---------------------------------------------------------------------------
+// Incident group row — collapses the run/step/agent rows of one workflow
+// failure into a single expandable row.
+// ---------------------------------------------------------------------------
+
+/**
+ * Pick the most informative event in an incident to summarize the collapsed
+ * row: the `step_ended` row reads as a full sentence ("run-agent step
+ * killed"); failing that, prefer a `log_line` that carries an `err` detail
+ * (see `summarizeTraceEvent`'s log_line branch); otherwise fall back to the
+ * first event chronologically in the run.
+ */
+const incidentSummary = (events: TraceEvent[]): string => {
+  const stepEnded = events.find((e) => e.kind === 'step_ended')
+  if (stepEnded) return summarizeTraceEvent(stepEnded)
+  const withErr = events.find((e) => {
+    const fields = e.payload.fields
+    return (
+      e.kind === 'log_line' &&
+      typeof fields === 'object' &&
+      fields !== null &&
+      typeof (fields as Record<string, unknown>).err === 'string'
+    )
+  })
+  return summarizeTraceEvent(withErr ?? events[0])
+}
+
+const worstSeverityOf = (events: TraceEvent[]): TraceEvent['severity'] =>
+  events.some((e) => e.severity === 'error')
+    ? 'error'
+    : events.some((e) => e.severity === 'warn')
+      ? 'warn'
+      : 'info'
+
+interface IncidentGroupProps {
+  events: TraceEvent[]
+  groupId: string
+  expanded: boolean
+  onToggleGroup: (groupId: string) => void
+  now: number
+  fieldsExpandedSet: Set<string>
+  onToggleFields: (eventId: string) => void
+}
+
+/** Collapsed/expanded row for the run/step/agent rows of one workflow incident. */
+const IncidentGroup = memo(({
+  events,
+  groupId,
+  expanded,
+  onToggleGroup,
+  now,
+  fieldsExpandedSet,
+  onToggleFields,
+}: IncidentGroupProps) => {
+  const handleToggle = useCallback(() => onToggleGroup(groupId), [onToggleGroup, groupId])
+  const first = events[0]
+  const worst = worstSeverityOf(events)
+  const taskId = traceEventTaskId(first)
+  const summary = incidentSummary(events)
+
+  if (expanded) {
+    return (
+      <div>
+        <button
+          type="button"
+          onClick={handleToggle}
+          className={`mb-1 flex w-full items-center gap-2 rounded border px-3 py-1 font-mono text-micro hover:text-foreground ${severityRowClass(worst)}`}
+          data-testid={`incident-group-row-${first.id}`}
+        >
+          <span>▾</span>
+          <span className={`uppercase font-semibold ${severityColor(worst)}`}>{worst}</span>
+          <span className="rounded bg-primary/20 px-1 font-semibold">×{events.length}</span>
+          {taskId ? <span className="text-muted-foreground">{truncateId(taskId)}</span> : null}
+          <span className="min-w-0 truncate">{summary}</span>
+        </button>
+        <div className="flex flex-col gap-1">
+          {events.map((e) => (
+            <EventRow
+              key={e.id}
+              event={e}
+              now={now}
+              fieldsExpanded={fieldsExpandedSet.has(e.id)}
+              onToggleFields={onToggleFields}
+            />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleToggle}
+      className={`flex w-full items-center gap-2 rounded border px-3 py-1.5 font-mono text-body hover:bg-primary/15 ${severityRowClass(worst)}`}
+      data-testid={`incident-group-row-${first.id}`}
+    >
+      <span className="shrink-0 text-micro text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
+      <span className={`shrink-0 text-micro font-semibold uppercase ${severityColor(worst)}`}>{worst}</span>
+      <span className="shrink-0 rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-primary">×{events.length}</span>
+      {taskId ? (
+        <span className="shrink-0 font-mono text-micro text-muted-foreground">{truncateId(taskId)}</span>
+      ) : null}
+      <span className="min-w-0 truncate text-label text-muted-foreground">{summary}</span>
     </button>
   )
 })
@@ -1249,6 +1405,16 @@ export const EventsPage = () => {
                 >
                   {row.type === 'tool-group' ? (
                     <ToolCallGroup
+                      events={row.events}
+                      groupId={row.events[0].id}
+                      expanded={expandedGroupIds.has(row.events[0].id)}
+                      onToggleGroup={toggleGroupExpanded}
+                      now={now}
+                      fieldsExpandedSet={fieldsExpandedSet}
+                      onToggleFields={toggleFieldsExpanded}
+                    />
+                  ) : row.type === 'incident' ? (
+                    <IncidentGroup
                       events={row.events}
                       groupId={row.events[0].id}
                       expanded={expandedGroupIds.has(row.events[0].id)}
