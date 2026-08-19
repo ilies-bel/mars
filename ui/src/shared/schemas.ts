@@ -368,6 +368,13 @@ const actionQueueBaseSchema = z.object({
    */
   failureReasonCode: z.string().nullable().optional(),
   /**
+   * True when the task's single recovery attempt is already spent. Decided by
+   * the daemon, which owns the `recovery_exhausted:` convention and knows
+   * which column carries it — do not re-derive this client-side from
+   * `failureReasonCode`, which is a different column and never carries it.
+   */
+  recoveryExhausted: z.boolean().optional().default(false),
+  /**
    * When this row represents a fix/recovery task, the id of the origin task it
    * was spawned to fix. Null/absent for origin tasks or non-failed rows.
    * Drives the "Fix for: <origin>" navigable link in the failure card.
@@ -626,6 +633,7 @@ export const actionQueueResponseSchema = z.array(
       actions: [],
       diagnosis: null,
       failureReasonCode: null,
+      recoveryExhausted: false,
       humanSummary: '',
       verbs: [],
       decisions: [],
@@ -991,6 +999,7 @@ export const actionQueueHistoryResponseSchema = z.object({
         actions: [],
         diagnosis: null,
         failureReasonCode: null,
+        recoveryExhausted: false,
         humanSummary: '',
         verbs: [],
         decisions: [],

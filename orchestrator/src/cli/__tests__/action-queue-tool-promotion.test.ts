@@ -281,6 +281,7 @@ const makeToolPromotionRow = (
   toolPromotionDetail: detail,
   class: 'decision',
   noticeKey: null,
+  recoveryExhausted: false,
 })
 
 describe('action-queue show — tool-promotion rendering', () => {

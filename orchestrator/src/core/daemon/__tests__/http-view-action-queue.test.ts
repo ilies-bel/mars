@@ -611,6 +611,7 @@ describe('GET /view/action-queue via HTTP server', () => {
             verbs: [],
             class: 'decision',
             noticeKey: null,
+            recoveryExhausted: false,
           }
           return [row]
         },

@@ -300,6 +300,7 @@ describe('GET /view/action-queue/history via HTTP server', () => {
       },
       class: 'decision',
       noticeKey: null,
+      recoveryExhausted: false,
     }
 
     httpServer = await startHttpServer({

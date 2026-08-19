@@ -454,10 +454,16 @@ describe('TriageRow – task id is a link to the task detail drawer', () => {
 
 describe('TriageRow – recovery-exhausted rows surface carry-forward options', () => {
   beforeEach(() => {
+    // The daemon decides this and sends a boolean. This fixture used to set
+    // `failureReasonCode: 'recovery_exhausted:…'` — a shape production never
+    // produces, because the prefix is written onto `failure_reason` and
+    // `failureReasonCode` mirrors the different `failure_reason_code` column.
+    // The page's own prefix test therefore never fired on a real row: the one
+    // row whose branch holds salvageable commits was showing Restart.
     mockItems.mockReturnValue([
       makeItem('failed', {
         entityId: 'mars-abc123',
-        failureReasonCode: 'recovery_exhausted:verify/unclassified',
+        recoveryExhausted: true,
       }),
     ])
   })
@@ -478,6 +484,20 @@ describe('TriageRow – recovery-exhausted rows surface carry-forward options', 
     expect(panel).not.toBeNull()
     expect(panel?.textContent).toContain('mars remerge mars-abc123')
     expect(panel?.textContent).toContain('mars task add --supersede mars-abc123')
+  })
+
+  it('ignores a recovery_exhausted-looking failureReasonCode — the daemon decides', () => {
+    // Guards against re-deriving the verdict client-side from the wrong column.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        entityId: 'mars-abc123',
+        failureReasonCode: 'recovery_exhausted:verify/unclassified',
+        recoveryExhausted: false,
+      }),
+    ])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-recovery-exhausted"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-continue"]')).not.toBeNull()
   })
 })
 

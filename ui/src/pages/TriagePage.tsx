@@ -43,15 +43,6 @@ import { CopyButton } from '@/components/CopyButton'
 import type { ActionQueueItem } from '@/shared/schemas'
 import type { Decision } from '@/shared/schemas'
 
-/**
- * Prefix written onto `failureReasonCode` when a task's single recovery
- * attempt has already been spent (see CLAUDE.md "Blockers" / orchestrator's
- * `RECOVERY_EXHAUSTED_PREFIX`). `mars continue` refuses non-zero on such a
- * task — Continue/Restart would just error, so those rows get carry-forward
- * CLI hints (`mars remerge`, `mars task add --supersede`) instead.
- */
-const RECOVERY_EXHAUSTED_PREFIX = 'recovery_exhausted:'
-
 // ── Kind display ──────────────────────────────────────────────────────────────
 
 const KIND_ICON: Record<string, string> = {
@@ -231,8 +222,7 @@ const TriageRow = ({ item }: TriageRowProps) => {
     KIND_CHIP_CLASS[item.kind] ?? 'text-muted-foreground border-border'
   const isChatOnly = CHAT_ONLY_KINDS.has(item.kind)
   const isTaskRecovery = TASK_RECOVERY_KINDS.has(item.kind)
-  const isRecoveryExhausted =
-    isTaskRecovery && (item.failureReasonCode?.startsWith(RECOVERY_EXHAUSTED_PREFIX) ?? false)
+  const isRecoveryExhausted = isTaskRecovery && item.recoveryExhausted
   // A task-recovery row renders its own restart affordance below: guarded by a
   // confirm step that names the branch and says what is lost, or — once the
   // single recovery attempt is spent — deliberately withheld in favour of the

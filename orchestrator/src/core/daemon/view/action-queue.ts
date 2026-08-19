@@ -116,6 +116,17 @@ export interface ActionQueueRow {
    */
   failureReasonCode: string | null
   /**
+   * True when this task's single recovery attempt is already spent — i.e. its
+   * `failure_reason` carries the `recovery_exhausted:` prefix that
+   * `continue-task.ts` refuses on.
+   *
+   * Decided daemon-side on purpose: the prefix is written and read by the
+   * orchestrator, and it lives on `failure_reason`, NOT on the similarly-named
+   * `failure_reason_code`. A client re-implementing the string test picked the
+   * wrong column and the check never fired.
+   */
+  recoveryExhausted: boolean
+  /**
    * When this row represents a fix/recovery task, the id of the origin task it
    * was spawned to fix. Null/absent for origin tasks or non-task rows.
    * Drives the "Fix for: <origin>" navigable link in the UI.
@@ -1076,6 +1087,7 @@ export const buildActionQueueView = async ({
       typeof row.payload.failureReasonCode === 'string'
         ? row.payload.failureReasonCode
         : null
+    const recoveryExhausted = row.payload.recoveryExhausted === true
 
     // Task-failure rows derive their title and body from the failure-kind
     // registry rather than from the persisted row strings (see failedRowCopy,
@@ -1275,6 +1287,7 @@ export const buildActionQueueView = async ({
       leaseState,
       diagnosis,
       failureReasonCode,
+      recoveryExhausted,
       fixForTaskId,
       arcGoal,
       toolPromotionDetail,
@@ -1359,6 +1372,7 @@ export const buildActionQueueView = async ({
       leaseState: null,
       diagnosis: null,
       failureReasonCode: null,
+      recoveryExhausted: false,
       class: 'decision',
       noticeKey: null,
       humanSummary: daemonKilledRecipe.humanSummary(batchRecipeCtx),
@@ -1592,6 +1606,7 @@ export const buildActionQueueHistoryView = async ({
       typeof row.payload.failureReasonCode === 'string'
         ? row.payload.failureReasonCode
         : null
+    const recoveryExhausted = row.payload.recoveryExhausted === true
 
     // Title / body from the failure-kind registry for failed-task rows —
     // identical rule to the live view (see failedRowCopy).
@@ -1670,6 +1685,7 @@ export const buildActionQueueHistoryView = async ({
       leaseState: null,
       diagnosis,
       failureReasonCode,
+      recoveryExhausted,
       fixForTaskId,
       arcGoal,
       resolution,

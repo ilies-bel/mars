@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import type { PersistedActionQueueRow, ConditionItemsSource } from './action-queue'
 import type { DispatchPauseState } from '../pause-state'
 import type { DbClient } from '../../lib/db'
+import { RECOVERY_EXHAUSTED_PREFIX } from '../../lib/failure-signature'
 
 // ── Stable ID helper ─────────────────────────────────────────────────────────
 
@@ -101,7 +102,7 @@ async function deriveFailedConditions(
 ): Promise<PersistedActionQueueRow[]> {
   const result = await client.execute(
     `SELECT t.id, t.failure_signature, t.prompt, t.updated_at, t.failure_reason_code,
-            t.stall_diagnostics, t.branch, t.worktree_path, t.error
+            t.failure_reason, t.stall_diagnostics, t.branch, t.worktree_path, t.error
        FROM tasks t
       WHERE t.status = 'failed'
         AND (
@@ -121,6 +122,7 @@ async function deriveFailedConditions(
       prompt: string
       updated_at: string
       failure_reason_code: string | null
+      failure_reason: string | null
       stall_diagnostics: string | null
       branch: string | null
       worktree_path: string | null
@@ -152,6 +154,15 @@ async function deriveFailedConditions(
         branch: row.branch,
         worktree: row.worktree_path,
         errorExcerpt: excerptError(row.error),
+        // Decided here, not by the client. The `recovery_exhausted:` prefix is
+        // written onto `failure_reason` (see queue-fix-tasks.ts) and read off
+        // `failure_reason` by the guard that matters — continue-task.ts, which
+        // refuses non-zero on it. The UI was re-implementing the prefix test
+        // against `failureReasonCode`, a DIFFERENT column that never carries
+        // it, so the check silently never fired: the one row where Restart
+        // discards salvageable commits was also the row offering Restart, and
+        // Continue beside it could only error.
+        recoveryExhausted: (row.failure_reason ?? '').startsWith(RECOVERY_EXHAUSTED_PREFIX),
       },
       context: { taskId: row.id },
       raisedAt,
