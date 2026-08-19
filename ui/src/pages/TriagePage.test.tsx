@@ -109,7 +109,14 @@ vi.mock('@/shared/alertCause', () => ({
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Minimal valid ActionQueueItem fixture for any task-failure kind. */
+/**
+ * Minimal valid ActionQueueItem fixture for any task-failure kind. `dag`
+ * defaults to a populated (non-null) context — the common case of a row
+ * genuinely backed by a task row the drawer can resolve. Tests exercising a
+ * non-task-backed row (a signature slug, gate slug, or other non-task
+ * entityId) must override `dag: null` explicitly, matching what the daemon
+ * actually sends for those rows.
+ */
 const makeItem = (
   kind: string,
   overrides: Partial<ActionQueueItem> = {},
@@ -122,7 +129,7 @@ const makeItem = (
     title: `Title for ${kind}`,
     body: '',
     at: '2026-01-01T00:00:00Z',
-    dag: null,
+    dag: { blockers: [], blocking: [], descendants: [], proposalId: null, edges: [] },
     errorKind: kind,
     actions: [],
     decisions: [],
@@ -432,7 +439,7 @@ describe('TriageRow – Continue/Restart buttons fire invokeAction', () => {
 // ---------------------------------------------------------------------------
 
 describe('TriageRow – task id is a link to the task detail drawer', () => {
-  it('renders the entity id as a link into #/task/<id>', () => {
+  it('renders the entity id as a link into #/task/<id> (real task id, non-null dag)', () => {
     mockItems.mockReturnValue([makeItem('failed', { entityId: 'mars-bff7e039' })])
     const html = renderToStaticMarkup(<TriagePage />)
     expect(html).toContain('data-testid="triage-entity-link"')
@@ -441,9 +448,42 @@ describe('TriageRow – task id is a link to the task detail drawer', () => {
   })
 
   it('non-task-backed kinds (reflect-recommended) keep the entity id as plain text', () => {
-    mockItems.mockReturnValue([makeItem('reflect-recommended', { entityId: 'refl-1' })])
+    mockItems.mockReturnValue([
+      makeItem('reflect-recommended', { entityId: 'refl-1', dag: null }),
+    ])
     const html = renderToStaticMarkup(<TriagePage />)
     expect(html).not.toContain('data-testid="triage-entity-link"')
+  })
+
+  // Regression coverage: the link decision must be driven by hasResolvableTask
+  // (dag !== null), not by a per-kind allowlist. A kind-only check either
+  // dead-links non-task rows of task-failure kinds (signature-storm,
+  // gate-broken) or denies the link to real task rows of kinds it doesn't
+  // enumerate (gate-broken carries a task id on SOME rows and a gate slug on
+  // others — a single kind can't be classified either way).
+  it('signature-storm rows (entityId is a signature slug, no dag) keep plain text', () => {
+    mockItems.mockReturnValue([
+      makeItem('signature-storm', { entityId: 'signature-storm:unknown', dag: null }),
+    ])
+    const html = renderToStaticMarkup(<TriagePage />)
+    expect(html).not.toContain('data-testid="triage-entity-link"')
+    expect(html).toContain('signature-storm:unknown')
+  })
+
+  it('gate-broken rows with a gate-slug entityId (no dag) keep plain text', () => {
+    mockItems.mockReturnValue([
+      makeItem('gate-broken', { entityId: 'verify/typecheck', dag: null }),
+    ])
+    const html = renderToStaticMarkup(<TriagePage />)
+    expect(html).not.toContain('data-testid="triage-entity-link"')
+    expect(html).toContain('verify/typecheck')
+  })
+
+  it('gate-broken rows with a real task id AND a populated dag still link', () => {
+    mockItems.mockReturnValue([makeItem('gate-broken', { entityId: 'mars-84d1efb4' })])
+    const html = renderToStaticMarkup(<TriagePage />)
+    expect(html).toContain('data-testid="triage-entity-link"')
+    expect(html).toContain('href="#/task/mars-84d1efb4?from=triage"')
   })
 })
 

@@ -25,7 +25,7 @@ import {
   summarizeTraceEvent,
   marsToolTextClass,
 } from '@/shared/actionQueueDetail'
-import { isTaskFailureActionQueueKind } from '@/shared/schemas'
+import { hasResolvableTask, isTaskFailureActionQueueKind } from '@/shared/schemas'
 import type {
   ActionDescriptor,
   ActionQueueItem,
@@ -639,18 +639,12 @@ interface DetailProps {
 }
 
 export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
-  // A real failed task (not the daemon-killed-batch sentinel, carrying a
-  // non-empty entity id, AND backed by a real task in the store — dag !== null)
-  // can open the shared TaskDetailDrawer and render the OriginTree. Rows whose
-  // entityId is a signature slug (e.g. "daemon-code-drift") rather than a task
-  // id would 404 on /api/tasks/:id, trigger the purge handler, and immediately
-  // close the drawer. The `from=chat` tag keeps the chat page mounted behind
-  // the drawer and returns here on close.
+  // A real failed task (task-failure severity AND backed by a real task row
+  // the drawer can resolve — see `hasResolvableTask`) can open the shared
+  // TaskDetailDrawer and render the OriginTree. The `from=chat` tag keeps the
+  // chat page mounted behind the drawer and returns here on close.
   const isRealFailedTask =
-    isTaskFailureActionQueueKind(item.kind) &&
-    item.entityId !== '__daemon-killed-batch__' &&
-    item.entityId !== '' &&
-    item.dag !== null
+    isTaskFailureActionQueueKind(item.kind) && hasResolvableTask(item)
 
   const openTask = (id: string) => {
     window.location.hash = taskHash(id, 'chat')

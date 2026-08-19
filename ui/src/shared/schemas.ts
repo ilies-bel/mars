@@ -600,6 +600,26 @@ export const actionQueueItemSchema = z.union([
   taskFailureItemSchema,
 ])
 
+/**
+ * True when `item.entityId` is a task id the task detail drawer can resolve
+ * (GET /api/tasks/:id, OriginTree). `dag` is populated by the daemon only for
+ * rows backed by a real task row, so it is a reliable discriminator — unlike
+ * `kind`, which only classifies severity (see `isTaskFailureActionQueueKind`
+ * above) and is NOT 1:1 with "entityId is a task id". `gate-broken`, for
+ * instance, carries a task id on some rows and a bare gate slug on others;
+ * `signature-storm` always carries a signature slug
+ * (`signature-storm:unknown`), never a task id. Any surface that renders
+ * `entityId` as a link into the task drawer must gate on this, not on kind —
+ * a kind-only check would 404 on the non-task rows, trigger the purge
+ * handler, and immediately close the drawer.
+ */
+export const hasResolvableTask = (
+  item: Pick<z.infer<typeof actionQueueItemSchema>, 'entityId' | 'dag'>,
+): boolean =>
+  item.entityId !== '__daemon-killed-batch__' &&
+  item.entityId !== '' &&
+  item.dag !== null
+
 // Element-level catch: malformed rows must not reject an entire queue response.
 // Valid daemon task-failure kinds parse above with their persisted kind intact;
 // this fallback is only for invalid payloads and legacy failed-task rows.

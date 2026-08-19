@@ -175,6 +175,45 @@ describe('QueueThreadDetail – kind-specific detail', () => {
       renderDetail(makeItem({ entityId: '__daemon-killed-batch__', id: 'failed-task:batch' })),
     ).not.toContain('data-testid="aq-open-task-detail"')
   })
+
+  // Regression coverage: gated on hasResolvableTask (dag !== null), not on a
+  // per-kind allowlist. Both kinds classify as task-failure severity
+  // (isTaskFailureActionQueueKind), but their entityId is not always a task
+  // id the drawer can resolve.
+  it('does NOT render Open task detail for a signature-storm row (signature slug, no dag)', () => {
+    const html = renderDetail(
+      makeItem({
+        kind: 'signature-storm',
+        entityId: 'signature-storm:unknown',
+        id: 'signature-storm:unknown',
+        dag: null,
+      }),
+    )
+    expect(html).not.toContain('data-testid="aq-open-task-detail"')
+  })
+
+  it('does NOT render Open task detail for a gate-broken row with a gate-slug entityId (no dag)', () => {
+    const html = renderDetail(
+      makeItem({
+        kind: 'gate-broken',
+        entityId: 'verify/typecheck',
+        id: 'gate-broken:verify/typecheck',
+        dag: null,
+      }),
+    )
+    expect(html).not.toContain('data-testid="aq-open-task-detail"')
+  })
+
+  it('DOES render Open task detail for a gate-broken row that carries a real task id and dag', () => {
+    const html = renderDetail(
+      makeItem({
+        kind: 'gate-broken',
+        entityId: 'mars-84d1efb4',
+        id: 'gate-broken:mars-84d1efb4',
+      }),
+    )
+    expect(html).toContain('data-testid="aq-open-task-detail"')
+  })
 })
 
 // ---------------------------------------------------------------------------

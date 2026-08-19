@@ -43,6 +43,7 @@ import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { defaultAqUrlState, encodeAqState } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
 import { CopyButton } from '@/components/CopyButton'
+import { hasResolvableTask } from '@/shared/schemas'
 import type { ActionQueueItem } from '@/shared/schemas'
 import type { Decision } from '@/shared/schemas'
 
@@ -378,10 +379,14 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
 
       {/* Entity ID — links to the task detail drawer (prompt, failure signature,
           failure output, restart command) for task-backed rows so the operator
-          can see the evidence without leaving the UI. Non-task-backed kinds
-          (e.g. reflect-recommended) keep plain text since their entityId is
-          not a task id the drawer can resolve. */}
-      {isTaskRecovery ? (
+          can see the evidence without leaving the UI. Gated on hasResolvableTask
+          (dag !== null), NOT on kind or TASK_RECOVERY_KINDS — some kinds (e.g.
+          gate-broken) carry a task id on some rows and a non-task slug on
+          others, so a kind-only check would either dead-link the non-task rows
+          or (as TASK_RECOVERY_KINDS did) deny the link to valid task rows of
+          kinds it doesn't enumerate. See hasResolvableTask's doc comment in
+          shared/schemas.ts. */}
+      {hasResolvableTask(item) ? (
         <a
           href={taskHash(item.entityId, 'triage')}
           className="mb-2 block font-mono text-micro text-primary transition-colors hover:text-foreground hover:underline"
