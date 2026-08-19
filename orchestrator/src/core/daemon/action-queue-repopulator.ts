@@ -189,6 +189,12 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
     // updateTask at failure time — so the event is authoritative when both
     // exist, and the task row is the fallback for events predating this field.
     const sig = eventSignature ?? task.failureSignature ?? null
+    // Deliberately the task row's `error` column, NOT the event payload's
+    // `error` field (which is captured separately as `eventError` below and
+    // only lands in the payload). The two are not interchangeable: the row is
+    // empty for events whose task never recorded an error, so a signature-less
+    // failure legitimately titles as the generic wording even when the event
+    // carried an error string. Do not "fix" this to read eventError.
     const capturedError = task.error ?? ''
     const fk = resolveFailureKind(sig, capturedError)
 
