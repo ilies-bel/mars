@@ -59,6 +59,26 @@ is never silent and never implied. The bar is all of:
 When in doubt, enqueue. A redundant task is cheap; a silent commit on
 `main` is not.
 
+**Direct edits on `main` race the merge step.** The merge step
+fast-forwards into `main` — the same working tree you are editing — and
+it can fire at any moment, on a background task you enqueued minutes
+ago and forgot about. Two things follow:
+
+- Your uncommitted edits make the merge target dirty, which fails the
+  merge (`merge/uncommitted-changes`) and parks the queue behind the
+  dispatch-time dirty-main guard.
+- The merge step will not destroy those edits. When it finds the
+  integration checkout dirty after a merge it cannot positively
+  attribute to its own re-sync, it commits the tree to a per-merge
+  `refs/mars/checkpoint/merge/<task-id>` ref before cleaning it, and
+  the merge output names the ref plus the recovery command
+  (`git cherry-pick -n <ref>` then `git cherry-pick --quit`). Never
+  `git stash` — `refs/stash` is shared by every worktree in this repo.
+
+A checkpoint ref is a safety net, not a workflow. **Commit early** while
+editing `main` directly: a commit is durable and legible, a checkpoint
+ref is something you have to know to go looking for.
+
 ## Tasks
 
 Prefer `/mars:task <prompt>` from a Claude Code session for a

@@ -1168,16 +1168,32 @@ export const mergeBranch = async ({
           // The dirt is one of two very different things and they must NOT be
           // treated alike:
           //
-          //   a) merge-attributable dirt — Step 3's `reset --hard` failed or was
-          //      interrupted. HEAD already points at finalTaskSha, so resetting
-          //      to HEAD only materialises content that is already committed.
-          //      Nothing can be lost.
+          //   a) merge-attributable dirt — Step 3's `reset --hard` ran to
+          //      completion (didResyncWorkingTree === true) but was somehow
+          //      interrupted before the working tree fully settled. HEAD
+          //      already points at finalTaskSha, so resetting to HEAD only
+          //      materialises content that is already committed. Nothing can
+          //      be lost.
           //
-          //   b) the operator's uncommitted work — Step 3 saw it and explicitly
-          //      declined to clobber it ("a dirty tree is recoverable where lost
-          //      edits are not"). A `reset --hard` here silently destroys it and
-          //      undoes that decision. This really happened: edits made directly
-          //      on the integration checkout vanished mid-session, twice.
+          //   b) everything else — the operator's uncommitted work (Step 3 saw
+          //      it and explicitly declined to clobber it: "a dirty tree is
+          //      recoverable where lost edits are not"), OR Step 3 never got a
+          //      chance to classify the tree at all (its own HEAD/diff probes
+          //      threw, or the primary checkout was transiently not reporting
+          //      as `integrationBranch`). `operatorEditsPresent` is only set
+          //      to `true` inside that same guarded block, so a probe failure
+          //      leaves it `false` — indistinguishable, if we branch on it,
+          //      from "genuinely nothing to worry about". Branching on the
+          //      ABSENCE of that flag is exactly the bug that shipped once
+          //      already: a `reset --hard HEAD` here silently destroys
+          //      whatever is actually dirty and undoes Step 3's decision (or
+          //      papers over the fact Step 3 never got to make one). This
+          //      really happened: edits made directly on the integration
+          //      checkout vanished mid-session, twice.
+          //
+          //      So only (a) — positively confirmed by `didResyncWorkingTree`
+          //      — takes the plain-reset path. Every other case, including an
+          //      unclassified Step 3, defaults to (b): checkpoint first.
           //
           // For (b) we checkpoint instead of resetting. That still leaves a
           // clean tree — so the dispatch-time dirty-main guard does not park the
@@ -1189,7 +1205,7 @@ export const mergeBranch = async ({
           // could swallow the operator's edits. A checkpoint ref is per-merge and
           // is restored by object id.
           let preservedByCheckpoint = false
-          if (operatorEditsPresent) {
+          if (!didResyncWorkingTree) {
             try {
               const key = `merge/${traceCtx?.taskId ?? branch}`
               const checkpoint = await captureCheckpoint({
@@ -1220,8 +1236,11 @@ export const mergeBranch = async ({
               output += `\n[mergeBranch] could not checkpoint operator edits, leaving tree untouched: ${m.slice(0, 300)}`
             }
           } else {
-            // Attempt to restore the integration checkout to the current HEAD
-            // (which is finalTaskSha — the merge already landed via update-ref).
+            // didResyncWorkingTree === true: Step 3 positively confirmed it
+            // already reset this exact checkout to finalTaskSha. Any dirt
+            // found here can only be debris from that same reset being
+            // interrupted, so restoring to the current HEAD (== finalTaskSha,
+            // already landed via update-ref) cannot lose anything.
             try {
               const restored = await gexec(['reset', '--hard', 'HEAD'], repoRoot())
               output += `\n[mergeBranch] restored integration checkout to HEAD: ${restored.stdout.trim().slice(0, 200)}`
