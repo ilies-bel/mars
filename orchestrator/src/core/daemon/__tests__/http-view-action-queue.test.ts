@@ -471,10 +471,11 @@ describe('buildActionQueueView — daemon-killed-batch', () => {
     // 3 rows: batch + task-1 + task-2
     expect(rows).toHaveLength(3)
     const batchRow = rows[0]!
-    // The synthetic row's id is prefixed with its own `kind`, so it stays
-    // self-consistent with `batchRow.kind` ('daemon-killed') and cannot collide
-    // with a persisted row id. Every consumer keys off `entityId`, not the
-    // prefix.
+    // The synthetic row's id follows the `<kind>:<entityId>` shape used
+    // elsewhere in this builder, so it stays self-consistent with
+    // `batchRow.kind` ('daemon-killed', not the legacy 'failed-task' label) and
+    // cannot collide with a persisted row id. Nothing in production parses the
+    // prefix — every consumer keys off `entityId`.
     expect(batchRow.id).toBe('daemon-killed:__daemon-killed-batch__')
     expect(batchRow.entityId).toBe('__daemon-killed-batch__')
     expect(batchRow.errorKind).toBe('daemon-killed-batch')

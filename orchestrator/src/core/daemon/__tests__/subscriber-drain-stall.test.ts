@@ -10,10 +10,12 @@ import type { Client } from '@libsql/client'
  * that throws blocks the subscriber's cursor on the failing event, retries
  * on every wake, surfaces a subscriber-stalled action-queue item after K
  * consecutive failures, and withdraws it once the event finally processes.
+ * Crossing the threshold also emits a "stall threshold crossed" log line.
  *
  * Per ADR-0057 `subscriber-stalled` is a derived condition kind — there is no
- * stored action_queue_items row. These tests therefore assert on the operator
- * surface itself (the derived condition source), not on any table.
+ * stored action_queue_items row; the drain loop writes `subscriber_stalls` and
+ * the condition is derived on read from it. These tests therefore assert on the
+ * operator surface itself (the derived condition source), not on any table.
  */
 
 interface Loaded {
@@ -61,7 +63,6 @@ const openStalledCount = async (
   return rows.length
 }
 
-
 describe('drainWithStall — ADR-0032', () => {
   let repo: string
   beforeEach(() => {
@@ -72,7 +73,7 @@ describe('drainWithStall — ADR-0032', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('blocks the cursor on a throwing handler and raises a stalled row after K failures, then recovers', async () => {
+  it('blocks the cursor on a throwing handler, raises a stalled condition and logs at the threshold, then recovers', async () => {
     const { q, actionQueue, drain, subs, pub, conditions } = await load(repo)
     const client = q.resolveQueueClient()
 
@@ -93,23 +94,36 @@ describe('drainWithStall — ADR-0032', () => {
       return true
     }
 
-    // Drains 1 and 2: cursor stays blocked, no stalled row yet.
-    await drain.drainWithStall({ client, subscriberId: SUB, handle })
+    const logs: string[] = []
+    const log = (msg: string): void => {
+      logs.push(msg)
+    }
+    const stallLogged = (): boolean => logs.some((l) => l.includes('stall threshold crossed'))
+
+    // Drains 1 and 2: cursor stays blocked, no stalled condition, threshold
+    // not yet crossed.
+    await drain.drainWithStall({ client, subscriberId: SUB, handle, log })
     expect(await subs.getCursor(client, SUB)).toBe(cursorStart)
     expect(await openStalledCount(conditions, client)).toBe(0)
-    await drain.drainWithStall({ client, subscriberId: SUB, handle })
+    expect(stallLogged()).toBe(false)
+    await drain.drainWithStall({ client, subscriberId: SUB, handle, log })
     expect(await openStalledCount(conditions, client)).toBe(0)
+    expect(stallLogged()).toBe(false)
 
-    // Drain 3: K-th consecutive failure → stalled row raised, cursor still blocked.
-    await drain.drainWithStall({ client, subscriberId: SUB, handle })
+    // Drain 3: K-th consecutive failure → stalled condition raised and the
+    // threshold-crossed line logged, cursor still blocked.
+    await drain.drainWithStall({ client, subscriberId: SUB, handle, log })
     expect(await subs.getCursor(client, SUB)).toBe(cursorStart)
     expect(await openStalledCount(conditions, client)).toBe(1)
+    expect(stallLogged()).toBe(true)
 
-    // Drain 4: handler now succeeds → cursor advances, stalled row superseded.
+    // Drain 4: handler now succeeds → cursor advances, stalled condition
+    // withdrawn, event counted.
     const { processed } = await drain.drainWithStall({
       client,
       subscriberId: SUB,
       handle,
+      log,
     })
     expect(processed).toBe(1)
     expect(await subs.getCursor(client, SUB)).toBeGreaterThan(cursorStart)
@@ -156,7 +170,7 @@ describe('drainWithStall — ADR-0032', () => {
     expect(await openStalledCount(reloaded.conditions, client2)).toBe(0)
   })
 
-  it('a healthy subscriber advances its cursor and raises nothing', async () => {
+  it('a healthy subscriber advances its cursor, raises nothing and never logs a stall', async () => {
     const { q, actionQueue, drain, subs, pub, conditions } = await load(repo)
     const client = q.resolveQueueClient()
 
@@ -165,13 +179,16 @@ describe('drainWithStall — ADR-0032', () => {
     await pub.publishWithRetry(client, 'task.queued', { taskId: 'X-2' })
     const before = await subs.getCursor(client, SUB)
 
+    const logs: string[] = []
     const { processed } = await drain.drainWithStall({
       client,
       subscriberId: SUB,
       handle: async () => true,
+      log: (msg) => logs.push(msg),
     })
     expect(processed).toBe(1)
     expect(await subs.getCursor(client, SUB)).toBeGreaterThan(before)
     expect(await openStalledCount(conditions, client)).toBe(0)
+    expect(logs.some((l) => l.includes('stall threshold crossed'))).toBe(false)
   })
 })
