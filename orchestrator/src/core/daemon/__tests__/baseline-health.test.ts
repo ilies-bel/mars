@@ -183,6 +183,84 @@ describe('createBaselineHealthChecker', () => {
       expect(mocks.pause.get().reason).toBe('operator')
     })
 
+    it('does not overwrite an existing storm pause, and recovery does not clear it', async () => {
+      const gate = makeGate()
+      const { deps, mocks } = makeDeps()
+      mocks.loadGates.mockResolvedValue([gate])
+
+      // Signature-storm breaker pauses first
+      mocks.pause.pause('storm', 'signature storm: verify:has-diff/no-commits-ahead x3')
+
+      const checker = createBaselineHealthChecker(deps)
+
+      // Baseline fails too — pause.pause('baseline') returns false (already paused)
+      mocks.runGate.mockResolvedValue(failingResult(gate))
+      await checker.check()
+      expect(checker.isBaselinePoisoned()).toBe(true)
+      expect(mocks.pause.get().reason).toBe('storm')
+
+      // Baseline recovers — should NOT clear the storm pause
+      mocks.runGate.mockResolvedValue(passingResult(gate))
+      await checker.check()
+      expect(checker.isBaselinePoisoned()).toBe(false)
+      expect(mocks.pause.isPaused()).toBe(true)
+      expect(mocks.pause.get().reason).toBe('storm')
+    })
+
+    it('does not overwrite an existing quota pause, and recovery does not clear it', async () => {
+      const gate = makeGate()
+      const { deps, mocks } = makeDeps()
+      mocks.loadGates.mockResolvedValue([gate])
+
+      // Provider rate/spend rejection pauses first
+      mocks.pause.pause('quota', 'provider rate/spend limit')
+
+      const checker = createBaselineHealthChecker(deps)
+
+      // Baseline fails too — pause.pause('baseline') returns false (already paused)
+      mocks.runGate.mockResolvedValue(failingResult(gate))
+      await checker.check()
+      expect(checker.isBaselinePoisoned()).toBe(true)
+      expect(mocks.pause.get().reason).toBe('quota')
+
+      // Baseline recovers — should NOT clear the quota pause
+      mocks.runGate.mockResolvedValue(passingResult(gate))
+      await checker.check()
+      expect(checker.isBaselinePoisoned()).toBe(false)
+      expect(mocks.pause.isPaused()).toBe(true)
+      expect(mocks.pause.get().reason).toBe('quota')
+    })
+
+    it('re-pauses with reason=baseline on a fresh checker + pause controller when the gate is still broken (simulated daemon restart)', async () => {
+      const gate = makeGate()
+
+      // "Before restart": the running daemon already knows the baseline is
+      // broken and dispatch is paused.
+      const { deps: beforeDeps, mocks: beforeMocks } = makeDeps()
+      beforeMocks.loadGates.mockResolvedValue([gate])
+      beforeMocks.runGate.mockResolvedValue(failingResult(gate, 'TSC error'))
+      const before = createBaselineHealthChecker(beforeDeps)
+      await before.check()
+      expect(beforeMocks.pause.get().reason).toBe('baseline')
+
+      // "After restart": a brand-new process constructs a fresh pause
+      // controller (in-memory state does not survive a restart) and a fresh
+      // checker, wired to the same still-broken repo. server.ts runs this
+      // startup check before the first drain() — it must independently
+      // re-detect and re-pause without relying on any restored flag.
+      const { deps: afterDeps, mocks: afterMocks } = makeDeps()
+      afterMocks.loadGates.mockResolvedValue([gate])
+      afterMocks.runGate.mockResolvedValue(failingResult(gate, 'TSC error'))
+      const after = createBaselineHealthChecker(afterDeps)
+      expect(afterMocks.pause.isPaused()).toBe(false)
+
+      const result = await after.check()
+
+      expect(result.poisoned).toBe(true)
+      expect(afterMocks.pause.isPaused()).toBe(true)
+      expect(afterMocks.pause.get().reason).toBe('baseline')
+    })
+
     it('returns poisoned=false and does not pause when there are no required gates', async () => {
       const gate = makeGate({ required: false })
       const { deps, mocks } = makeDeps()

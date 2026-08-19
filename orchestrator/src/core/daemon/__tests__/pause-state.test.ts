@@ -44,6 +44,39 @@ describe('createPauseController', () => {
     expect(pause.get().detail).toBe('storm detail')
   })
 
+  it('records baseline as the reason dispatch is paused', () => {
+    const pause = createPauseController({
+      now: () => new Date('2026-07-31T12:00:00.000Z'),
+    })
+    expect(pause.pause('baseline', 'gate "typecheck" fails on integration branch')).toBe(true)
+    expect(pause.get()).toEqual({
+      paused: true,
+      reason: 'baseline',
+      since: '2026-07-31T12:00:00.000Z',
+      detail: 'gate "typecheck" fails on integration branch',
+    })
+  })
+
+  it('a baseline pause does not overwrite an existing storm or quota pause', () => {
+    const stormFirst = createPauseController()
+    expect(stormFirst.pause('storm', 'storm detail')).toBe(true)
+    expect(stormFirst.pause('baseline', 'integration branch broken')).toBe(false)
+    expect(stormFirst.get().reason).toBe('storm')
+
+    const quotaFirst = createPauseController()
+    expect(quotaFirst.pause('quota', 'quota detail')).toBe(true)
+    expect(quotaFirst.pause('baseline', 'integration branch broken')).toBe(false)
+    expect(quotaFirst.get().reason).toBe('quota')
+  })
+
+  it('an existing baseline pause is not overwritten by a later storm or quota pause', () => {
+    const pause = createPauseController()
+    expect(pause.pause('baseline', 'integration branch broken')).toBe(true)
+    expect(pause.pause('storm', 'storm detail')).toBe(false)
+    expect(pause.pause('quota', 'quota detail')).toBe(false)
+    expect(pause.get().reason).toBe('baseline')
+  })
+
   it('resume returns the cleared state so the caller can release the right half', () => {
     const pause = createPauseController()
     pause.pause('storm', 'signature storm: verify:has-diff/no-commits-ahead x3')
@@ -110,6 +143,16 @@ describe('describePauseState', () => {
     pause.pause('operator')
     expect(describePauseState(pause.get())).toBe(
       'reason: operator (since 2026-07-31T12:00:00.000Z)',
+    )
+  })
+
+  it('names baseline as the reason so `mars daemon status` can say WHY', () => {
+    const pause = createPauseController({
+      now: () => new Date('2026-07-31T12:00:00.000Z'),
+    })
+    pause.pause('baseline', 'gate "typecheck" fails on integration branch')
+    expect(describePauseState(pause.get())).toBe(
+      'reason: baseline — gate "typecheck" fails on integration branch (since 2026-07-31T12:00:00.000Z)',
     )
   })
 })
