@@ -106,4 +106,55 @@ describe('AlertsRail', () => {
     const row = container.querySelector<HTMLButtonElement>('[data-testid="alerts-rail-item"]')
     expect(row!.disabled).toBe(true)
   })
+
+  it('renders the arc goal as the headline so failed rows are distinguishable', async () => {
+    // The recipe generates the same humanSummary sentence for every failed
+    // task ("A task got stuck and Mars used up its retry — ..."); arcGoal is
+    // the one field that actually differs row to row.
+    mockItems.mockReturnValue([
+      item({
+        id: 'a',
+        kind: 'failed',
+        humanSummary: 'A task got stuck and Mars used up its retry — decide what to do (mars-a)',
+        arcGoal: '# UI consistency drift: Steward contradicts itself\nsome detail',
+      }),
+      item({
+        id: 'b',
+        kind: 'failed',
+        humanSummary: 'A task got stuck and Mars used up its retry — decide what to do (mars-b)',
+        arcGoal: '# Paused dispatch is invisible outside Control Room\nsome other detail',
+      }),
+    ])
+    await render()
+    const rows = container.querySelectorAll('[data-testid="alerts-rail-item"]')
+    expect(rows.length).toBe(2)
+    expect(rows[0].textContent).toContain('UI consistency drift')
+    expect(rows[1].textContent).toContain('Paused dispatch is invisible')
+    expect(rows[0].textContent).not.toBe(rows[1].textContent)
+  })
+
+  it('falls back to humanSummary, then title, when arcGoal is absent', async () => {
+    mockItems.mockReturnValue([
+      item({ id: 'a', arcGoal: null, humanSummary: 'A verify gate keeps failing' }),
+      item({ id: 'b', arcGoal: null, humanSummary: '', title: 'fallback title' }),
+    ])
+    await render()
+    const rows = container.querySelectorAll('[data-testid="alerts-rail-item"]')
+    expect(rows[0].textContent).toContain('A verify gate keeps failing')
+    expect(rows[1].textContent).toContain('fallback title')
+  })
+
+  it('shows the derived failure cause on the second line when a goal and detail are present', async () => {
+    mockItems.mockReturnValue([
+      item({
+        id: 'a',
+        kind: 'failed',
+        arcGoal: '# Fix the thing',
+        humanDetail: { failureSignature: 'verify/unclassified' } as ActionQueueItem['humanDetail'],
+      }),
+    ])
+    await render()
+    const row = container.querySelector('[data-testid="alerts-rail-item"]')
+    expect(row!.textContent).toContain('verify failed')
+  })
 })

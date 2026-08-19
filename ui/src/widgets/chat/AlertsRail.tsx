@@ -20,6 +20,7 @@ import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { sortItems } from '@/entities/actionQueue/clusterRows'
 import { useDaemonHealth } from '@/entities/daemon/useDaemonHealth'
 import { relativeTime } from '@/shared/time'
+import { deriveCause } from '@/shared/alertCause'
 import type { ActionQueueItem } from '@/shared/schemas'
 
 interface AlertsRailProps {
@@ -79,6 +80,14 @@ export const AlertsRail = ({ onOpen, openItemId, pendingItemId }: AlertsRailProp
           {alerts.map((item) => {
             const isOpen = item.id === openItemId
             const isPending = item.id === pendingItemId
+            // Every row of the same kind used to share one canned sentence
+            // (`humanSummary`), so four failed tasks were indistinguishable
+            // at a glance. `arcGoal` — the task's own prompt excerpt — is
+            // what actually differs row to row; prefer it, same as
+            // TriagePage and AlertCard already do.
+            const goal = item.arcGoal ?? null
+            const headline = goal ? goal.split('\n')[0]?.trim() || goal : item.humanSummary || item.title
+            const cause = goal ? deriveCause(item.humanDetail) : undefined
             return (
               <button
                 key={item.id}
@@ -101,16 +110,13 @@ export const AlertsRail = ({ onOpen, openItemId, pendingItemId }: AlertsRailProp
                     aria-hidden="true"
                     className={`h-1.5 w-1.5 flex-none rounded-full ${priorityDot(item.priority)}`}
                   />
-                  <span className="min-w-0 flex-1 truncate font-mono text-label">
-                    {item.humanSummary || item.title}
-                  </span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-label">{headline}</span>
                   <span className="flex-none font-mono text-micro text-muted-foreground">
                     {isPending ? '…' : relativeTime(item.at)}
                   </span>
                 </span>
                 <span className="truncate pl-[12px] font-mono text-micro text-muted-foreground">
-                  {item.kind}
-                  {item.entityId ? ` · ${item.entityId}` : ''}
+                  {cause ?? `${item.kind}${item.entityId ? ` · ${item.entityId}` : ''}`}
                 </span>
               </button>
             )
