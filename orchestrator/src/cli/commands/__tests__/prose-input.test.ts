@@ -202,6 +202,38 @@ describe('proposal add — @file goal input', () => {
     expect(r.err.join(' ')).toContain('--title')
     expect(await listProposals()).toHaveLength(0)
   })
+
+  it('rejects a leading @file followed by stray prose rather than folding it', async () => {
+    const filePath = join(repo, 'goal.txt')
+    writeFileSync(filePath, 'goal from file')
+    const { store, ctx, runCommandInProcess } = await freshModules()
+    const { listProposals } = await import('../../../core/proposals')
+    const r = await runCommandInProcess(
+      ['proposal', 'add', `@${filePath}`, 'stray', 'prose'],
+      { store, ctx, daemon: makeFakeDaemon() },
+    )
+    expect(r.code).not.toBe(0)
+    expect(await listProposals()).toHaveLength(0)
+  })
+})
+
+// ── resolvePromptSource — leading file/stdin token guard ─────────────────────
+
+describe('resolvePromptSource — leading @file / - token guard', () => {
+  it('rejects a leading @file token when further positionals follow', () => {
+    const result = resolvePromptSource(['@/tmp/body.md', 'stray', 'words'], {})
+    expect(result.ok).toBe(false)
+  })
+
+  it('rejects a leading - token when further positionals follow', () => {
+    const result = resolvePromptSource(['-', 'stray'], {}, () => 'stdin body')
+    expect(result.ok).toBe(false)
+  })
+
+  it('treats a mid-prose @mention as ordinary inline text', () => {
+    const result = resolvePromptSource(['ping', '@alice', 'about', 'this'], {})
+    expect(result).toEqual({ ok: true, value: 'ping @alice about this' })
+  })
 })
 
 // ── glossary set ─────────────────────────────────────────────────────────────

@@ -145,6 +145,30 @@ describe('mars adr add — unknown flag rejection', () => {
     expect(result.err.join(' ')).toContain('--title')
     expect(daemon.calls).toHaveLength(0)
   })
+
+  it('rejects a leading @file body followed by more positionals', async () => {
+    const bodyPath = resolve(repoRoot, 'body.md')
+    await writeFile(bodyPath, 'the real body')
+    const daemon = makeFakeDaemon()
+    const result = await runCommandInProcess(
+      ['adr', 'add', 'some title', `@${bodyPath}`, 'stray', 'words'],
+      { store: noopStore, daemon, ctx: makeCtx() },
+    )
+    expect(result.code).not.toBe(0)
+    expect(daemon.calls).toHaveLength(0)
+  })
+
+  it('still expands a lone @file body', async () => {
+    const bodyPath = resolve(repoRoot, 'body.md')
+    await writeFile(bodyPath, 'the real body')
+    const daemon = makeFakeDaemon()
+    const result = await runCommandInProcess(
+      ['adr', 'add', 'some title', `@${bodyPath}`],
+      { store: noopStore, daemon, ctx: makeCtx() },
+    )
+    expect(result.code).toBe(0)
+    expect(daemon.calls[0]).toMatchObject({ op: 'adr-add', title: 'some title', body: 'the real body' })
+  })
 })
 
 describe('mars adr (group help)', () => {

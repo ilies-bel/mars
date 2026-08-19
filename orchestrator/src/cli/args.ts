@@ -329,6 +329,13 @@ export const resolvePlanText = (
  * `mars proposal add @file.md --title x` would store the literal string
  * `"@file.md --title x"` as the goal instead of expanding the file and
  * rejecting the unknown flag. Reject it as a hard error instead.
+ *
+ * For the same reason a leading `@<path>` / `-` token followed by further
+ * positionals is rejected rather than folded: the operator wrote the
+ * documented file/stdin form and expects expansion, so quietly demoting it
+ * to a joined literal discards the prepared body with exit code 0. Only the
+ * *leading* token is checked — an `@mention` in the middle of inline prose is
+ * ordinary text, not a file reference.
  */
 export const resolvePromptSource = (
   positional: readonly string[],
@@ -338,6 +345,14 @@ export const resolvePromptSource = (
   const unknownFlag = positional.find((p) => p.startsWith('--'))
   if (unknownFlag !== undefined) {
     return { ok: false, message: `[mars] error: unknown flag: ${unknownFlag}` }
+  }
+
+  const lead = positional[0]
+  if (positional.length > 1 && lead !== undefined && (lead.startsWith('@') || lead === '-')) {
+    return {
+      ok: false,
+      message: `[mars] error: '${lead}' reads the body from ${lead === '-' ? 'stdin' : 'a file'}, so it must be the only positional argument (got ${positional.length}); quote the whole value if you meant it as inline text`,
+    }
   }
 
   const promptFile = flags['--prompt-file']

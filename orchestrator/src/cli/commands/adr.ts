@@ -28,8 +28,20 @@ const adrAdd: Command = {
       deps.err(`[mars] error: unknown flag: ${unknownFlag}`)
       return { code: 2 }
     }
+    const bodyPositional = args.positional.slice(1)
+    // A leading `@<path>` followed by more positionals must not be folded into
+    // the joined `bodyArg`: `readMaybeFile` would then try to open the file
+    // "file.md extra words" and the operator's prepared body is lost. Only the
+    // leading token is checked — a mid-prose `@mention` is ordinary text.
+    const leadBody = bodyPositional[0]
+    if (bodyPositional.length > 1 && leadBody?.startsWith('@')) {
+      deps.err(
+        `[mars] error: '${leadBody}' reads the body from a file, so it must be the only body argument (got ${bodyPositional.length}); quote the whole value if you meant it as inline text`,
+      )
+      return { code: 2 }
+    }
     const title = args.positional[0]
-    const bodyArg = args.positional.slice(1).join(' ')
+    const bodyArg = bodyPositional.join(' ')
     if (!title || !bodyArg) {
       deps.err(
         'usage: mars adr add "<title>" "<body>" (body may be @path to read a file)',
