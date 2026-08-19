@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { buildRenderedRows, countDistinctSubjects, sortItems } from './clusterRows'
+import { buildRenderedRows, countNeedsYou, sortItems } from './clusterRows'
 import type { ActionQueueItem } from '@/shared/schemas'
 
 const makeItem = (
@@ -150,9 +150,9 @@ describe('buildRenderedRows — entity grouping', () => {
   })
 })
 
-describe('countDistinctSubjects', () => {
+describe('countNeedsYou', () => {
   it('counts one task holding three conditions as one subject', () => {
-    expect(countDistinctSubjects(liveTripleForOneTask())).toBe(1)
+    expect(countNeedsYou(liveTripleForOneTask())).toBe(1)
   })
 
   it('matches the number of cards actually rendered', () => {
@@ -163,7 +163,7 @@ describe('countDistinctSubjects', () => {
       makeItem('awaiting-human', { id: 'ah', entityId: 'mars-cafe0001' }),
     ]
 
-    expect(countDistinctSubjects(items)).toBe(buildRenderedRows(sortItems(items)).length)
+    expect(countNeedsYou(items)).toBe(buildRenderedRows(sortItems(items)).length)
   })
 
   it('excludes draft proposals, which are a backlog rather than an alert', () => {
@@ -173,7 +173,7 @@ describe('countDistinctSubjects', () => {
       makeItem('draft-proposal', { id: 'p2', entityId: 'prop-2' }),
     ]
 
-    expect(countDistinctSubjects(items)).toBe(1)
+    expect(countNeedsYou(items)).toBe(1)
   })
 
   it('still counts distinct subjects that merely share a kind', () => {
@@ -183,6 +183,6 @@ describe('countDistinctSubjects', () => {
       makeItem('failed', { id: 'f3', entityId: 'task-c' }),
     ]
 
-    expect(countDistinctSubjects(items)).toBe(3)
+    expect(countNeedsYou(items)).toBe(3)
   })
 })

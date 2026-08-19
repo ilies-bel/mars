@@ -5,10 +5,9 @@
  * rendered-row grouping. The rendered-row COUNT is intentionally NOT used as
  * the cross-surface "needs you" badge count (see `countNeedsYou` below) —
  * clustering collapses high-cardinality kinds for display, which makes the
- * rendered-row count diverge from the true number of open, actionable items
- * whenever a non-draft-proposal kind exceeds CLUSTER_THRESHOLD. The triage
- * page header uses a different, page-local count instead — see
- * `countDistinctSubjects`.
+ * rendered-row count diverge from the true number of distinct subjects
+ * needing attention whenever a non-draft-proposal kind exceeds
+ * CLUSTER_THRESHOLD.
  */
 
 import { isTaskFailureActionQueueKind } from '@/shared/schemas'
@@ -17,39 +16,22 @@ import type { ActionQueueItem } from '@/shared/schemas'
 // ── Canonical "needs you" count ────────────────────────────────────────────
 
 /**
- * The single canonical "needs you" count: open action-queue items excluding
+ * The single canonical "needs you" count: distinct open subjects excluding
  * draft-proposal rows (a backlog of shaped ideas, not an operational alert
  * needing immediate action). Every surface that renders this concept — the
  * triage page badge, the sidebar badge, the chat greeting, the situation
  * card — derives from this same definition (mirrored server-side by
  * `countNeedsYou` in orchestrator/src/core/lib/situation-report.ts) so the
  * four surfaces can never disagree.
- */
-export function countNeedsYou(items: readonly { kind: string }[]): number {
-  return items.filter((item) => item.kind !== 'draft-proposal').length
-}
-
-/**
- * Distinct-subject count for the triage page header specifically (NOT the
- * cross-surface `countNeedsYou` above — see buildRenderedRows below for why).
  *
  * Several condition kinds (`failed`, `recovery-abandoned`, `gate-broken`, …)
  * derive independently per ADR-0057 with no reconciliation between them, so
- * one failed task can raise several open rows at once. `countNeedsYou` counts
- * those as several items, which is correct for its contract (raw open-item
- * count, shared byte-for-byte with the sidebar badge / chat greeting /
- * situation card) but wrong for a page whose whole job is to say how many
- * distinct THINGS need the operator — a task shown 3 times is one thing, not
- * three. This mirrors the entity-grouping `buildRenderedRows` performs so the
- * header integer always matches the number of cards actually rendered.
- *
- * Deliberately scoped to the triage page only: extending the same dedup to
- * the sidebar badge / chat greeting / situation card means also updating
- * their shared server-side counterpart (`countNeedsYou` in
- * orchestrator/src/core/lib/situation-report.ts) — a cross-repo change beyond
- * this fix, tracked as a follow-up rather than folded in here.
+ * one failed task can raise several open rows at once. A naive item count
+ * would report those as several items; this function collapses them to one,
+ * matching the entity-grouping `buildRenderedRows` performs — a task shown
+ * on three rows is one subject needing attention, not three.
  */
-export function countDistinctSubjects(items: readonly ActionQueueItem[]): number {
+export function countNeedsYou(items: readonly ActionQueueItem[]): number {
   const seenEntities = new Set<string>()
   let count = 0
   for (const item of items) {

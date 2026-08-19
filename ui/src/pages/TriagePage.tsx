@@ -11,15 +11,15 @@
  * individual rows since each represents a distinct entity needing attention.
  *
  * Badge = the number of distinct SUBJECTS needing attention (see
- * `countDistinctSubjects`), which is deliberately different from the
- * cross-surface `countNeedsYou` the sidebar badge / chat greeting / situation
- * card use. Kind-clustering (draft-proposal, or any other kind past
- * CLUSTER_THRESHOLD) never changes the count — those are many different
- * subjects sharing a kind. Entity grouping DOES change the count — several
- * condition kinds (failed, recovery-abandoned, gate-broken, …) can derive
- * independently for the SAME task (ADR-0057 kinds never reconcile with each
- * other), and a task shown on three rows is one subject, not three. See
- * `buildRenderedRows` in clusterRows.ts for how the two are told apart.
+ * `countNeedsYou` in clusterRows.ts) — the SAME cross-surface definition the
+ * sidebar badge, the chat greeting, and the chat situation card all use.
+ * Kind-clustering (draft-proposal, or any other kind past CLUSTER_THRESHOLD)
+ * never changes the count — those are many different subjects sharing a
+ * kind. Entity grouping DOES change the count — several condition kinds
+ * (failed, recovery-abandoned, gate-broken, …) can derive independently for
+ * the SAME task (ADR-0057 kinds never reconcile with each other), and a task
+ * shown on three rows is one subject, not three. See `buildRenderedRows` in
+ * clusterRows.ts for how the two are told apart.
  *
  * Empty state: "All quiet — N running, N done today". Shown ONLY when the
  * daemon actually answered and had nothing to report; when it is unreachable
@@ -29,7 +29,7 @@
 import { useState, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import { sortItems, buildRenderedRows, countDistinctSubjects } from '@/entities/actionQueue/clusterRows'
+import { sortItems, buildRenderedRows, countNeedsYou } from '@/entities/actionQueue/clusterRows'
 import { useProgress } from '@/hooks/useProgress'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { useDaemonHealth } from '@/entities/daemon/useDaemonHealth'
@@ -657,7 +657,7 @@ export const TriagePage = () => {
 
   const sorted = sortItems(items)
   const renderedRows = buildRenderedRows(sorted)
-  const needsYouCount = countDistinctSubjects(items)
+  const needsYouCount = countNeedsYou(items)
 
   // Only show the empty state when every feed succeeded AND there is genuinely
   // nothing to act on. A feed error is itself something to surface, so the

@@ -21,7 +21,7 @@ export interface SituationDispatchState {
 export interface SituationReportSources {
   listTasks: () => Promise<readonly SituationTask[]>
   getSemaphoreSnapshot: () => SituationSemaphoreSnapshot
-  listActionQueue: () => Promise<readonly { kind?: string }[]>
+  listActionQueue: () => Promise<readonly { kind?: string; entityId?: string }[]>
   /**
    * Dispatch pause state. Optional so existing callers keep working; when
    * absent the report simply omits the pause clause.
@@ -46,15 +46,83 @@ const plural = (count: number, singular: string, pluralNoun = `${singular}s`): s
   `${count} ${count === 1 ? singular : pluralNoun}`
 
 /**
- * The single canonical "needs you" count: open action-queue items excluding
+ * Kinds that are per-TASK conditions which can co-occur for the same task
+ * (ADR-0057 condition kinds are derived independently, with no
+ * reconciliation between them, so one failed task can raise several open
+ * rows at once). Manually mirrors the UI's `taskFailureKinds` (in
+ * ui/src/shared/schemas.ts) plus `recovery-abandoned` (which is deliberately
+ * absent from that list — see clusterRows.ts's EXTRA_GROUPABLE_CONDITION_KINDS
+ * for why) — the same duplication pattern that list itself already uses to
+ * mirror the daemon's own classification. Kept in lockstep by hand, not by
+ * import, because the UI and orchestrator are separate packages.
+ */
+const GROUPABLE_CONDITION_KINDS: ReadonlySet<string> = new Set([
+  'failed',
+  'steward-repeat',
+  'cancelled-blocker-cascade',
+  'diagnose-inconclusive',
+  'daemon-killed',
+  'coder-question',
+  'daemon-died',
+  'worktree-ahead',
+  'prerequisite-failed',
+  'slices-dropped',
+  'behaviour-unverified',
+  'subscriber-stalled',
+  'observability-store-oversize',
+  'orphaned-origin',
+  'phantom-task',
+  'outbox-lag',
+  'done-with-unmerged-commits',
+  'api-outage',
+  'daemon-code-drift',
+  'workflow-install-drift',
+  'provider-rate-limited',
+  'gate-broken',
+  'gate-enrichment',
+  'budget-window',
+  'budget-arc',
+  'promotion-decision',
+  'arc-verification-failed',
+  'signature-storm',
+  'gate-enrichment-stale',
+  'env-incident',
+  'stale-queued',
+  'stale-queued-summary',
+  'spend-control-notice',
+  'scheduling-decision',
+  'requeue-warning',
+  'recovery-abandoned',
+])
+
+/**
+ * The single canonical "needs you" count: distinct open subjects excluding
  * draft-proposal rows (a backlog of shaped ideas, not an operational alert
  * needing immediate action). Every UI surface that renders this concept
  * (the triage badge, the sidebar badge, the chat greeting, the situation
  * card) must derive from this same definition — see the fix for the
  * "four different counts" bug for the full rationale.
+ *
+ * Several condition kinds (failed, recovery-abandoned, gate-broken, …) can
+ * derive independently for the SAME task, so a naive item count would report
+ * one failed task as several items. This dedups those onto one, mirroring
+ * `countNeedsYou` in ui/src/entities/actionQueue/clusterRows.ts.
  */
-export const countNeedsYou = (actionQueue: readonly { kind?: string }[]): number =>
-  actionQueue.filter((item) => item.kind !== 'draft-proposal').length
+export const countNeedsYou = (
+  actionQueue: readonly { kind?: string; entityId?: string }[],
+): number => {
+  const seenEntities = new Set<string>()
+  let count = 0
+  for (const item of actionQueue) {
+    if (item.kind === 'draft-proposal') continue
+    if (item.entityId && item.kind && GROUPABLE_CONDITION_KINDS.has(item.kind)) {
+      if (seenEntities.has(item.entityId)) continue
+      seenEntities.add(item.entityId)
+    }
+    count++
+  }
+  return count
+}
 
 /** Read current stored state and render the first, zero-token Subthread message. */
 export const buildSituationReport = async (

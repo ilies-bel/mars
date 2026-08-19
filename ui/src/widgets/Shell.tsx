@@ -252,14 +252,15 @@ interface ShellProps {
 export const Shell = ({ hash, children }: ShellProps) => {
   const { items: actionQueueItems } = useActionQueue()
   const activeRoute = resolvePageRoute(hash)
-  // Badge = the canonical "needs you" count (open items, draft-proposals
-  // excluded) — the SAME definition the triage page badge, the chat
-  // greeting, and the chat situation card all use (see `countNeedsYou`).
-  // Draft proposals are a backlog of shaped ideas, not operational alerts
-  // that need immediate action, so they're excluded everywhere. This is
-  // deliberately the raw item count, NOT the clustered rendered-row count —
-  // clustering is a display concern for the triage list and must not change
-  // what the badge reports.
+  // Badge = the canonical "needs you" count (distinct open subjects,
+  // draft-proposals excluded) — the SAME definition the triage page badge,
+  // the chat greeting, and the chat situation card all use (see
+  // `countNeedsYou`). Draft proposals are a backlog of shaped ideas, not
+  // operational alerts that need immediate action, so they're excluded
+  // everywhere. Several condition kinds (failed, recovery-abandoned,
+  // gate-broken, …) can derive independently for the same task, so this is
+  // an entity-deduped count, NOT a raw item count — a task shown on three
+  // rows is one subject, not three.
   const nonProposalItems = actionQueueItems.filter((item) => item.kind !== 'draft-proposal')
   const decisionBadge = countNeedsYou(actionQueueItems)
 
@@ -271,14 +272,13 @@ export const Shell = ({ hash, children }: ShellProps) => {
   const clusterRowsList = renderedRows.filter(
     (r): r is Extract<RenderedRow, { type: 'cluster' }> => r.type === 'cluster',
   )
-  // Count the ITEMS not represented by a cluster row, not the rendered rows.
-  // Rendered rows under-count: entity grouping collapses several condition
-  // rows for one task onto a single card, so `renderedRows.length` is smaller
-  // than the number of items those rows stand for. Deriving from item counts
-  // keeps the documented invariant (alerts + every cluster count === badge)
-  // true regardless of how the triage list chooses to group for display.
-  const clusteredItemCount = clusterRowsList.reduce((n, c) => n + c.count, 0)
-  const alertCount = nonProposalItems.length - clusteredItemCount
+  // Count the rendered rows NOT represented by a cluster row (i.e. plain
+  // `item` rows plus entity-grouped `entityGroup` rows). `renderedRows`
+  // already applies the same entity dedup `countNeedsYou` applies internally
+  // — one row per distinct subject — so this stays in lockstep with
+  // decisionBadge: alertCount + every cluster's real item count === badge,
+  // regardless of how the triage list chooses to group for display.
+  const alertCount = renderedRows.length - clusterRowsList.length
   const badgeAriaLabel: string | undefined = (() => {
     if (decisionBadge === 0) return undefined
     const n = decisionBadge > 99 ? '99+' : String(decisionBadge)

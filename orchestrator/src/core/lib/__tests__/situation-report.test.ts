@@ -93,4 +93,21 @@ describe('countNeedsYou', () => {
     })
     expect(report).toContain('14 items need attention.')
   })
+
+  // Complementary fixture: ONE task (shared entityId) holding three
+  // independently-derived condition rows (failed + recovery-abandoned +
+  // gate-broken) — the ADR-0057 scenario that used to inflate every "needs
+  // you" surface to 3 for what is really one task needing attention. Mirrors
+  // ui/src/entities/actionQueue/needsYouParity.test.tsx's `groupedFixture`
+  // and clusterRows.test.ts's `liveTripleForOneTask`. `sharedFixture` above
+  // never exercises this path — every one of its rows lacks an entityId.
+  it('dedups several condition rows sharing one entityId to a single subject', () => {
+    const groupedFixture = [
+      { kind: 'failed', entityId: 'mars-shared-001' },
+      { kind: 'recovery-abandoned', entityId: 'mars-shared-001' },
+      { kind: 'gate-broken', entityId: 'mars-shared-001' },
+    ]
+
+    expect(countNeedsYou(groupedFixture)).toBe(1)
+  })
 })
