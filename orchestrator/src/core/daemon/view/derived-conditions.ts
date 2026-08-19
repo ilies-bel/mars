@@ -184,6 +184,16 @@ const MAX_STALE_QUEUED_ROWS = 20
  * Derive `stale-queued` rows from queued tasks that have waited past the
  * configured threshold.  Suppressed entirely when dispatch is deliberately
  * paused or the implement pool is saturated.
+ *
+ * The row's payload also carries `inFlightStatusCount` — the DB count of
+ * tasks in a running/verifying/merging/vega-reconciling status, mirroring
+ * the `phantomInFlightCount` computed for `mars daemon status`
+ * (server.ts's `handleStatus`). When that count meets/exceeds the implement
+ * cap while `activeWorkerCount` (the live tracker) is 0, the queue isn't
+ * actually saturated with real work — it's phantom in-flight-status rows
+ * left by a prior daemon (e.g. after `mars daemon restart`) blocking
+ * dispatch. The `stale-queued` recipe uses these two fields to attribute
+ * the alert correctly instead of blaming the queued task itself.
  */
 async function deriveStaleQueuedConditions(
   client: DbClient,
@@ -195,6 +205,13 @@ async function deriveStaleQueuedConditions(
   if (active >= cap) return []
 
   const now = deps.nowMs ?? Date.now()
+  const inFlightStatusResult = await client.execute(
+    `SELECT COUNT(*) AS n FROM tasks
+       WHERE status IN ('running', 'verifying', 'merging', 'vega-reconciling')`,
+  )
+  const inFlightStatusCount = Number(
+    (inFlightStatusResult.rows[0] as { n?: unknown } | undefined)?.n ?? 0,
+  )
   const result = await client.execute(
     `SELECT id, updated_at, prompt FROM tasks WHERE status = 'queued' ORDER BY updated_at ASC`,
   )
@@ -228,6 +245,7 @@ async function deriveStaleQueuedConditions(
         queuedAgeMs,
         activeWorkerCount: active,
         implementCap: cap,
+        inFlightStatusCount,
         queueDepth: result.rows.length,
         dispatchDecisionSummary: [],
       },

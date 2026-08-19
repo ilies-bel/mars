@@ -15,7 +15,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createConditionItemsSource } from '../derived-conditions.js'
-import type { DbClient } from '../../../lib/db.js'
+import { humanSummary as recipeHumanSummary } from '../../../lib/action-queue-recipes.js'
+import type { DbClient, DbStatement } from '../../../lib/db.js'
 
 // ── Minimal mock DbClient ─────────────────────────────────────────────────────
 // daemon-died derivation is filesystem-only; it never touches the DB.
@@ -111,5 +112,100 @@ describe('createConditionItemsSource — daemon-died derivation', () => {
     const rows = await source.derive({ kinds: new Set(['failed']) })
     // All DB queries return empty rows, so no 'failed' items either.
     expect(rows).toEqual([])
+  })
+})
+
+// ── stale-queued: phantom in-flight-status misattribution ──────────────────
+//
+// Incident shape (mars-6340b827 / mars-d039e664): a hard `mars daemon
+// restart` leaves N task rows in an in-flight DB status (running/verifying/
+// merging/vega-reconciling) with zero live jobs in the in-memory tracker.
+// `deriveStaleQueuedConditions` only suppressed the alert when the *live*
+// tracker count reached the implement cap, so it never suppressed — and the
+// generic recipe copy blamed "the worker pool may be saturated or the
+// dispatcher may be stuck" instead of naming the actual cause. These tests
+// assert the row's payload carries `inFlightStatusCount` and that the
+// recipe's `humanSummary` names the phantom rows (not the queued task) as
+// the cause when the mismatch is present, while staying generic when the
+// tracker genuinely holds the in-flight jobs.
+
+const IN_FLIGHT_STATUS_SQL_FRAGMENT = "IN ('running', 'verifying', 'merging', 'vega-reconciling')"
+
+/**
+ * A mock DbClient that answers the two queries `deriveStaleQueuedConditions`
+ * issues: the in-flight-status COUNT(*) and the queued-tasks SELECT.
+ */
+const makeStaleQueuedDbClient = (opts: {
+  inFlightStatusCount: number
+  queuedTasks: Array<{ id: string; updatedAtIso: string; prompt: string }>
+}): DbClient => ({
+  execute: async (stmt: DbStatement) => {
+    const sql = typeof stmt === 'string' ? stmt : stmt.sql
+    if (sql.includes(IN_FLIGHT_STATUS_SQL_FRAGMENT)) {
+      return { rows: [{ n: opts.inFlightStatusCount }], rowsAffected: 0 }
+    }
+    if (sql.includes("status = 'queued'")) {
+      return {
+        rows: opts.queuedTasks.map((t) => ({ id: t.id, updated_at: t.updatedAtIso, prompt: t.prompt })),
+        rowsAffected: 0,
+      }
+    }
+    return { rows: [], rowsAffected: 0 }
+  },
+  batch: async () => [],
+  close: async () => {},
+})
+
+describe('createConditionItemsSource — stale-queued phantom in-flight attribution', () => {
+  const NOW = Date.parse('2026-08-19T12:00:00.000Z')
+  const STALE_UPDATED_AT = new Date(NOW - 20 * 60_000).toISOString() // 20 min ago
+
+  it('attributes the alert to phantom in-flight rows when the tracker is empty but the DB shows the cap saturated', async () => {
+    const client = makeStaleQueuedDbClient({
+      inFlightStatusCount: 5,
+      queuedTasks: [{ id: 'mars-stale-1', updatedAtIso: STALE_UPDATED_AT, prompt: 'do the thing' }],
+    })
+    const source = createConditionItemsSource({
+      getClient: () => client,
+      getActiveWorkerCount: () => 0,
+      getImplementCap: () => 5,
+      nowMs: NOW,
+    })
+
+    const rows = await source.derive({ kinds: new Set(['stale-queued']) })
+    expect(rows).toHaveLength(1)
+    const row = rows[0]!
+    expect(row.payload['inFlightStatusCount']).toBe(5)
+    expect(row.payload['activeWorkerCount']).toBe(0)
+    expect(row.payload['implementCap']).toBe(5)
+
+    const summary = recipeHumanSummary('stale-queued', row.payload)
+    expect(summary).toContain('stuck in an in-flight status')
+    expect(summary).toContain('mars sync')
+    expect(summary).not.toContain('the worker pool may be saturated or the dispatcher may be stuck')
+  })
+
+  it('keeps the generic message when the tracker genuinely holds the in-flight jobs (no phantom mismatch)', async () => {
+    const client = makeStaleQueuedDbClient({
+      inFlightStatusCount: 2,
+      queuedTasks: [{ id: 'mars-stale-2', updatedAtIso: STALE_UPDATED_AT, prompt: 'do another thing' }],
+    })
+    const source = createConditionItemsSource({
+      getClient: () => client,
+      getActiveWorkerCount: () => 2,
+      getImplementCap: () => 5,
+      nowMs: NOW,
+    })
+
+    const rows = await source.derive({ kinds: new Set(['stale-queued']) })
+    expect(rows).toHaveLength(1)
+    const row = rows[0]!
+    expect(row.payload['inFlightStatusCount']).toBe(2)
+    expect(row.payload['activeWorkerCount']).toBe(2)
+
+    const summary = recipeHumanSummary('stale-queued', row.payload)
+    expect(summary).toContain('the worker pool may be saturated or the dispatcher may be stuck')
+    expect(summary).not.toContain('phantom')
+    expect(summary).not.toContain('mars sync')
   })
 })

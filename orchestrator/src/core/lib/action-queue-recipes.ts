@@ -820,6 +820,22 @@ const RECIPE_DEFINITIONS = {
       const taskId = str(ctx.payload['taskId']) || ctx.entityId
       const ageMs = ctx.payload['queuedAgeMs']
       const ageMin = typeof ageMs === 'number' ? Math.round(ageMs / 60_000) : '?'
+      const inFlightStatusCount = ctx.payload['inFlightStatusCount']
+      const activeWorkerCount = ctx.payload['activeWorkerCount']
+      const implementCap = ctx.payload['implementCap']
+      // When the DB shows in-flight-status rows saturating the implement cap
+      // but the live tracker holds zero jobs, the queue isn't actually
+      // saturated with real work — it's phantom in-flight rows left by a
+      // prior daemon (e.g. after `mars daemon restart`). Name that cause
+      // instead of blaming the queued task or a vague "dispatcher stuck".
+      if (
+        typeof inFlightStatusCount === 'number' &&
+        activeWorkerCount === 0 &&
+        typeof implementCap === 'number' &&
+        inFlightStatusCount >= implementCap
+      ) {
+        return `Task ${taskId} has been waiting in the queue for ${ageMin} min — ${inFlightStatusCount} task(s) are stuck in an in-flight status with 0 live jobs running, saturating the worker pool. Run \`mars sync\` to re-queue the phantom rows.`
+      }
       return `Task ${taskId} has been waiting in the queue for ${ageMin} min — the worker pool may be saturated or the dispatcher may be stuck.`
     },
     humanDetail: (ctx) => ({
@@ -828,6 +844,8 @@ const RECIPE_DEFINITIONS = {
       taskId: str(ctx.payload['taskId']),
       queuedAgeMs: ctx.payload['queuedAgeMs'],
       activeWorkerCount: ctx.payload['activeWorkerCount'],
+      implementCap: ctx.payload['implementCap'],
+      inFlightStatusCount: ctx.payload['inFlightStatusCount'],
       queueDepth: ctx.payload['queueDepth'],
       dispatchDecisionSummary: ctx.payload['dispatchDecisionSummary'],
     }),
