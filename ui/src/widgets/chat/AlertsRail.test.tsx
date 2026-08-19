@@ -23,6 +23,12 @@ vi.mock('@/entities/daemon/useDaemonHealth', () => ({
   useDaemonHealth: () => mockHealth(),
 }))
 
+// Rows are sorted priority-then-recency, so a shared wall-clock `at` would
+// make row order a millisecond race between two `new Date()` calls. Fixtures
+// state their own `at` whenever the test asserts on row position.
+const NEWER = '2026-08-17T15:50:00.000Z'
+const OLDER = '2026-08-17T15:40:00.000Z'
+
 const item = (over: Partial<ActionQueueItem>): ActionQueueItem =>
   ({
     id: 'q1',
@@ -31,7 +37,7 @@ const item = (over: Partial<ActionQueueItem>): ActionQueueItem =>
     priority: 'high',
     title: 'gate broken',
     body: '',
-    at: new Date().toISOString(),
+    at: NEWER,
     humanSummary: 'A verify gate keeps failing',
     verbs: [],
     decisions: [],
@@ -114,12 +120,14 @@ describe('AlertsRail', () => {
     mockItems.mockReturnValue([
       item({
         id: 'a',
+        at: NEWER,
         kind: 'failed',
         humanSummary: 'A task got stuck and Mars used up its retry — decide what to do (mars-a)',
         arcGoal: '# UI consistency drift: Steward contradicts itself\nsome detail',
       }),
       item({
         id: 'b',
+        at: OLDER,
         kind: 'failed',
         humanSummary: 'A task got stuck and Mars used up its retry — decide what to do (mars-b)',
         arcGoal: '# Paused dispatch is invisible outside Control Room\nsome other detail',
@@ -135,8 +143,8 @@ describe('AlertsRail', () => {
 
   it('falls back to humanSummary, then title, when arcGoal is absent', async () => {
     mockItems.mockReturnValue([
-      item({ id: 'a', arcGoal: null, humanSummary: 'A verify gate keeps failing' }),
-      item({ id: 'b', arcGoal: null, humanSummary: '', title: 'fallback title' }),
+      item({ id: 'a', at: NEWER, arcGoal: null, humanSummary: 'A verify gate keeps failing' }),
+      item({ id: 'b', at: OLDER, arcGoal: null, humanSummary: '', title: 'fallback title' }),
     ])
     await render()
     const rows = container.querySelectorAll('[data-testid="alerts-rail-item"]')
