@@ -181,19 +181,41 @@ const STALE_QUEUED_THRESHOLD_MS = (() => {
 const MAX_STALE_QUEUED_ROWS = 20
 
 /**
+ * DB statuses that represent a task actively occupying an implement-worker
+ * slot. Mirrors `phantom-in-flight-sweep`'s `IN_FLIGHT_STATUSES` in
+ * reconcilers.ts — kept as a separate literal here since importing across the
+ * daemon/view boundary would pull in the reconciler module's dependencies.
+ */
+const IN_FLIGHT_STATUSES_SQL = `'running', 'verifying', 'merging', 'vega-reconciling'`
+
+/**
  * Derive `stale-queued` rows from queued tasks that have waited past the
  * configured threshold.  Suppressed entirely when dispatch is deliberately
  * paused or the implement pool is saturated.
  *
- * The row's payload also carries `inFlightStatusCount` — the DB count of
- * tasks in a running/verifying/merging/vega-reconciling status, mirroring
- * the `phantomInFlightCount` computed for `mars daemon status`
- * (server.ts's `handleStatus`). When that count meets/exceeds the implement
- * cap while `activeWorkerCount` (the live tracker) is 0, the queue isn't
- * actually saturated with real work — it's phantom in-flight-status rows
- * left by a prior daemon (e.g. after `mars daemon restart`) blocking
- * dispatch. The `stale-queued` recipe uses these two fields to attribute
- * the alert correctly instead of blaming the queued task itself.
+ * Misattribution guard (incident 2026-08-17): when a prior daemon is hard-
+ * stopped, rows can be left behind in an in-flight status (`running`,
+ * `verifying`, `merging`, `vega-reconciling`) with no live job — the tracker's
+ * `getActiveWorkerCount()` reports 0 while the DB still shows the pool as
+ * occupied. Plain queued-age math then blames the queued tasks for sitting
+ * idle, when the real cause is those phantom rows. The boot reconcile clears
+ * them under normal operation, but this derivation still checks for the
+ * condition so a stale-queued alert names the phantom rows instead of
+ * pointing at innocent queued tasks whenever it observes it.
+ *
+ * Two complementary counts land in the row's payload, and both are read
+ * downstream:
+ *
+ * - `inFlightStatusCount` — the raw DB count of tasks in an in-flight status,
+ *   mirroring the `phantomInFlightCount` computed for `mars daemon status`
+ *   (server.ts's `handleStatus`). The `stale-queued` recipe compares it
+ *   against `activeWorkerCount` and `implementCap` to pick its `humanSummary`
+ *   copy, so an agent reading the item is pointed at `mars sync` rather than
+ *   at the queued task.
+ * - `phantomInFlightCount` — that count minus the live tracker's, i.e. the
+ *   rows the DB believes are in flight that no live job backs. It is the
+ *   sharper signal (it catches a partial mismatch, not just a saturated cap)
+ *   and drives this row's own title/body.
  */
 async function deriveStaleQueuedConditions(
   client: DbClient,
@@ -205,16 +227,18 @@ async function deriveStaleQueuedConditions(
   if (active >= cap) return []
 
   const now = deps.nowMs ?? Date.now()
-  const inFlightStatusResult = await client.execute(
-    `SELECT COUNT(*) AS n FROM tasks
-       WHERE status IN ('running', 'verifying', 'merging', 'vega-reconciling')`,
-  )
+  const [result, inFlightStatusResult] = await Promise.all([
+    client.execute(
+      `SELECT id, updated_at, prompt FROM tasks WHERE status = 'queued' ORDER BY updated_at ASC`,
+    ),
+    client.execute(`SELECT COUNT(*) AS n FROM tasks WHERE status IN (${IN_FLIGHT_STATUSES_SQL})`),
+  ])
+  // Raw DB count — what the recipe weighs against activeWorkerCount/implementCap.
   const inFlightStatusCount = Number(
     (inFlightStatusResult.rows[0] as { n?: unknown } | undefined)?.n ?? 0,
   )
-  const result = await client.execute(
-    `SELECT id, updated_at, prompt FROM tasks WHERE status = 'queued' ORDER BY updated_at ASC`,
-  )
+  // Rows the DB counts as in-flight that the live tracker doesn't know about.
+  const phantomInFlightCount = Math.max(0, inFlightStatusCount - active)
 
   const stale = result.rows
     .map((r) => {
@@ -234,12 +258,20 @@ async function deriveStaleQueuedConditions(
     const ageMinutes = Math.round(queuedAgeMs / 60_000)
     const shortGoal =
       row.prompt?.split('\n')[0]?.trim().replace(/[.,:;!?]+$/, '').slice(0, 60) || `task ${row.id}`
+    const title =
+      phantomInFlightCount > 0
+        ? `Stale-queued ${ageMinutes} min — ${phantomInFlightCount} phantom in-flight row(s) holding the cap: ${shortGoal}`
+        : `Stale-queued ${ageMinutes} min: ${shortGoal}`
+    const body =
+      phantomInFlightCount > 0
+        ? `"${shortGoal}" has been waiting ${ageMinutes} min, but this task is not at fault: ${phantomInFlightCount} task(s) are stuck in an in-flight DB status (running/verifying/merging/vega-reconciling) with no live job behind them — phantom rows most likely left by a prior daemon restart. Run \`mars sync\` to re-queue them.`
+        : `"${shortGoal}" has been waiting in the dispatch queue for ${ageMinutes} min (threshold: ${Math.round(STALE_QUEUED_THRESHOLD_MS / 60_000)} min).`
     return {
       id: deriveId('stale-queued', row.id),
       kind: 'stale-queued',
       priority: 'normal',
-      title: `Stale-queued ${ageMinutes} min: ${shortGoal}`,
-      body: `"${shortGoal}" has been waiting in the dispatch queue for ${ageMinutes} min (threshold: ${Math.round(STALE_QUEUED_THRESHOLD_MS / 60_000)} min).`,
+      title,
+      body,
       payload: {
         taskId: row.id,
         queuedAgeMs,
@@ -248,6 +280,7 @@ async function deriveStaleQueuedConditions(
         inFlightStatusCount,
         queueDepth: result.rows.length,
         dispatchDecisionSummary: [],
+        phantomInFlightCount,
       },
       context: { taskId: row.id },
       raisedAt: effectiveStart,

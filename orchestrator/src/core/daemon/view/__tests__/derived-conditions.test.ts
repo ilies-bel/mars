@@ -209,3 +209,103 @@ describe('createConditionItemsSource — stale-queued phantom in-flight attribut
     expect(summary).not.toContain('mars sync')
   })
 })
+
+// ── stale-queued derivation: the row's own title/body ───────────────────────
+//
+// Same incident, the layer above: `mars daemon status` showed 14 rows stuck in
+// an in-flight DB status (`verifying`) with the live tracker reporting
+// `inFlight: 0` — phantom rows left behind by a hard-stopped prior daemon. The
+// queued tasks waiting behind them got flagged by stale-queued as if they were
+// the problem, when the phantom rows were. Where the suite above covers the
+// recipe's `humanSummary`, these assert the derived row's own `title`/`body`
+// and its `phantomInFlightCount` — the DB count minus the live tracker count,
+// which catches a partial mismatch and not just a fully saturated cap.
+describe('createConditionItemsSource — stale-queued derivation', () => {
+  const NOW = Date.parse('2026-08-19T12:00:00.000Z')
+  const OLD_ENOUGH = new Date(NOW - 20 * 60_000).toISOString() // 20 min old > 10 min threshold
+
+  /** Builds a mock DbClient that answers the two queries stale-queued issues. */
+  const makeDbClient = (opts: {
+    queuedRows?: Array<{ id: string; updated_at: string; prompt: string }>
+    inFlightCount?: number
+  }): DbClient => ({
+    execute: async (stmt: DbStatement) => {
+      const sql = typeof stmt === 'string' ? stmt : stmt.sql
+      if (sql.includes("status = 'queued'")) {
+        return { rows: opts.queuedRows ?? [], rowsAffected: 0 }
+      }
+      if (sql.includes('IN (')) {
+        // Same `AS n` alias the derivation selects — see makeStaleQueuedDbClient.
+        return { rows: [{ n: opts.inFlightCount ?? 0 }], rowsAffected: 0 }
+      }
+      return { rows: [], rowsAffected: 0 }
+    },
+    batch: async () => [],
+    close: async () => {},
+  })
+
+  it('blames the queued task by default when nothing is phantom', async () => {
+    const client = makeDbClient({
+      queuedRows: [{ id: 'task-a', updated_at: OLD_ENOUGH, prompt: 'do the thing' }],
+      inFlightCount: 0,
+    })
+    const source = createConditionItemsSource({
+      getClient: () => client,
+      getActiveWorkerCount: () => 0,
+      getImplementCap: () => 6,
+      nowMs: NOW,
+    })
+
+    const rows = await source.derive({ kinds: new Set(['stale-queued']) })
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.title).not.toContain('phantom')
+    expect(rows[0]!.body).not.toContain('phantom')
+    expect((rows[0]!.payload as { phantomInFlightCount: number }).phantomInFlightCount).toBe(0)
+  })
+
+  it('names phantom in-flight rows instead of blaming the queued task', async () => {
+    // DB says 14 rows are in an in-flight status; the live tracker knows of
+    // none of them — exactly the incident's 14/0 split.
+    const client = makeDbClient({
+      queuedRows: [{ id: 'task-a', updated_at: OLD_ENOUGH, prompt: 'do the thing' }],
+      inFlightCount: 14,
+    })
+    const source = createConditionItemsSource({
+      getClient: () => client,
+      getActiveWorkerCount: () => 0,
+      getImplementCap: () => 6,
+      nowMs: NOW,
+    })
+
+    const rows = await source.derive({ kinds: new Set(['stale-queued']) })
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.title).toContain('phantom in-flight row')
+    expect(rows[0]!.title).toContain('14')
+    expect(rows[0]!.body).toContain('not at fault')
+    expect(rows[0]!.body).toContain('mars sync')
+    expect((rows[0]!.payload as { phantomInFlightCount: number }).phantomInFlightCount).toBe(14)
+  })
+
+  it('does not treat in-flight rows genuinely owned by live jobs as phantom', async () => {
+    // DB shows 3 in-flight rows and the tracker reports the same 3 active —
+    // no gap, so no phantom accusation even though the pool isn't empty.
+    const client = makeDbClient({
+      queuedRows: [{ id: 'task-a', updated_at: OLD_ENOUGH, prompt: 'do the thing' }],
+      inFlightCount: 3,
+    })
+    const source = createConditionItemsSource({
+      getClient: () => client,
+      getActiveWorkerCount: () => 3,
+      getImplementCap: () => 6,
+      nowMs: NOW,
+    })
+
+    const rows = await source.derive({ kinds: new Set(['stale-queued']) })
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.title).not.toContain('phantom')
+    expect((rows[0]!.payload as { phantomInFlightCount: number }).phantomInFlightCount).toBe(0)
+  })
+})
