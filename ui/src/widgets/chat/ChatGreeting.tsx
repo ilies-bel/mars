@@ -9,6 +9,13 @@ interface ChatGreetingProps extends GreetingCounts {
    *  board link, so clicking it opens the item's subthread directly. */
   nextMove?: OpenWorkItem | null
   onNextMove?: (item: OpenWorkItem) => void
+  /**
+   * False while the counts are placeholders — the first fetch is in flight or
+   * it failed. All four counts read zero in that state, which is
+   * indistinguishable from a genuinely idle system, so the greeting must not
+   * claim "All quiet." over it.
+   */
+  known?: boolean
 }
 
 /**
@@ -28,6 +35,7 @@ export const ChatGreeting = ({
   doneToday,
   nextMove,
   onNextMove,
+  known = true,
 }: ChatGreetingProps) => {
   const segments: string[] = []
   if (running > 0) segments.push(`${running} running`)
@@ -35,7 +43,14 @@ export const ChatGreeting = ({
   if (needYou > 0) segments.push(`${needYou} need you`)
   if (doneToday > 0) segments.push(`${doneToday} done today`)
 
-  const statusLine = segments.length === 0 ? 'All quiet.' : segments.join(' · ')
+  // "All quiet." is a claim about the system. Only make it when the counts are
+  // a real answer — with the daemon unreachable every count is zero, and
+  // reporting that as calm is the most damaging thing this line can do.
+  const statusLine = !known
+    ? "Can't reach Mars — status unknown."
+    : segments.length === 0
+      ? 'All quiet.'
+      : segments.join(' · ')
 
   return (
     <div data-testid="chat-greeting">

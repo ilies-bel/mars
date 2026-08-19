@@ -2821,8 +2821,8 @@ export const ChatPage = () => {
     [queueItems, taskSnapshot],
   )
 
-  const { running, recovering, needYou, doneToday } = useStatusCounts()
-  const greetingCounts = { running, recovering, needYou, doneToday }
+  const { running, recovering, needYou, doneToday, known } = useStatusCounts()
+  const greetingCounts = { running, recovering, needYou, doneToday, known }
 
   // Threads at the root so a deep-linked queue item can resolve to its merged
   // alert-origin conversation. React Query dedupes this against the sidebar's

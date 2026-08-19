@@ -82,3 +82,36 @@ describe('ChatGreeting', () => {
     act(() => root.unmount())
   })
 })
+
+// ---------------------------------------------------------------------------
+// Zero vs unknown. With the daemon unreachable every count reads zero, so a
+// greeting that cannot tell the two apart reports a failed fetch as calm.
+// Observed live: "All quiet." while fifteen items needed attention.
+// ---------------------------------------------------------------------------
+
+describe('ChatGreeting — unknown status', () => {
+  it('does not claim "All quiet." when the counts are not known', () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    act(() => {
+      root.render(
+        <ChatGreeting running={0} recovering={0} needYou={0} doneToday={0} known={false} />,
+      )
+    })
+    expect(container.textContent).not.toContain('All quiet.')
+    expect(container.textContent).toContain('status unknown')
+    act(() => root.unmount())
+  })
+
+  it('still says "All quiet." when the zeros are a real answer', () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    act(() => {
+      root.render(
+        <ChatGreeting running={0} recovering={0} needYou={0} doneToday={0} known={true} />,
+      )
+    })
+    expect(container.textContent).toContain('All quiet.')
+    act(() => root.unmount())
+  })
+})
