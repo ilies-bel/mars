@@ -33,6 +33,23 @@
  *      step is replaced with `verify:poisoned-baseline`, which (a) exempts it
  *      from the storm streak and (b) makes the failure clearly attributed.
  *
+ *   5. Install probe, fingerprint-gated. The required-gate list (typecheck,
+ *      tests, ...) assumes `node_modules` already matches the current
+ *      manifests — it does not itself prove the integration branch's
+ *      dependencies are installable, which is exactly what broke in the
+ *      motivating incident (an unsatisfiable version pin in a merged
+ *      `package.json`). `check()` runs a cheap, separate install probe
+ *      (`runInstallProbe`, e.g. `npm ci --dry-run`) against the integration
+ *      branch's current manifests before the gate list, and pauses dispatch
+ *      the same way a failing required gate would. Because most merges don't
+ *      touch `package.json`/lockfiles, the probe is skipped — a no-op —
+ *      whenever a fingerprint of the manifests/lockfiles (the same idea as
+ *      the per-worktree `depFingerprintPath` skip in `setup-worktree.ts`)
+ *      matches the one recorded at the last known-good check and the
+ *      baseline is not currently poisoned. This is reactive (startup + after
+ *      every successful merge — see server.ts), never a fixed-interval poll;
+ *      the required-gate run itself is unchanged and always runs.
+ *
  * All external dependencies are injected so the module is independently unit
  * testable without a real daemon or database.
  */
@@ -138,6 +155,25 @@ export interface BaselineHealthDeps {
   pause: PauseController
   /** Optional logger. */
   log?: (msg: string) => void
+  /**
+   * Compute a fingerprint of the integration branch's package manifests and
+   * lockfiles (mirrors the per-worktree dep-fingerprint used by
+   * `setup-worktree.ts`'s install-skip). Returns `null` when no manifest or
+   * lockfile is found. When the fingerprint matches the one recorded at the
+   * last known-good check, `check()` skips `runInstallProbe` rather than
+   * calling it. A `null` fingerprint never matches, so the probe always runs.
+   */
+  computeDepFingerprint: (repoRoot: string) => Promise<string | null>
+  /**
+   * Cheap probe of the integration branch's install state (e.g.
+   * `npm ci --dry-run` in `repoRoot`) — does not mutate `node_modules`.
+   * A non-zero exit poisons the baseline immediately, without waiting for
+   * the required-gate list (which assumes deps are already installed and
+   * would fail for an unhelpful, unrelated reason).
+   */
+  runInstallProbe: (
+    repoRoot: string,
+  ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
 }
 
 /** Public surface exposed to the rest of the daemon. */
@@ -171,16 +207,62 @@ export interface BaselineHealthChecker {
 export const createBaselineHealthChecker = (
   deps: BaselineHealthDeps,
 ): BaselineHealthChecker => {
-  const { repoRoot, loadGates, runGate, pause, log } = deps
+  const { repoRoot, loadGates, runGate, pause, log, computeDepFingerprint, runInstallProbe } = deps
 
   let _poisoned = false
   let _lastDetection: BaselineDetection | null = null
+  let _lastGoodFingerprint: string | null = null
 
   return {
     isBaselinePoisoned: () => _poisoned,
     getLastDetection: () => _lastDetection,
 
     async check(): Promise<{ poisoned: boolean }> {
+      let fingerprint: string | null = null
+      try {
+        fingerprint = await computeDepFingerprint(repoRoot)
+      } catch (err) {
+        // A fingerprint failure must not block the probe — fall through to a
+        // real install probe (equivalent to a fingerprint that never matches).
+        log?.(
+          `[baseline-health] could not compute dependency fingerprint (non-fatal): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        )
+      }
+
+      const skipInstallProbe =
+        !_poisoned && fingerprint !== null && fingerprint === _lastGoodFingerprint
+
+      if (skipInstallProbe) {
+        log?.(
+          '[baseline-health] dependency fingerprint unchanged since last known-good check — skipping install probe',
+        )
+      } else {
+        let install: { exitCode: number; stdout: string; stderr: string } | null = null
+        try {
+          install = await runInstallProbe(repoRoot)
+        } catch (err) {
+          // An unexpected execution error (e.g. binary not found) is not the
+          // same as an install failure — treat as pass (conservative), same
+          // policy as a gate that throws in isBaselineBroken.
+          log?.(
+            `[baseline-health] install probe errored (non-fatal, treated as pass): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          )
+        }
+
+        if (install && install.exitCode !== 0) {
+          const output = [install.stdout, install.stderr].filter(Boolean).join('\n').slice(0, 2000)
+          log?.('[baseline-health] dependency install FAILED on integration branch')
+          _lastDetection = { broken: true, failingGateName: 'dependency install', output }
+          _poisoned = true
+          pause.pause('baseline', 'dependency install fails on integration branch')
+          return { poisoned: true }
+        }
+      }
+
       const detection = await isBaselineBroken({ repoRoot, loadGates, runGate })
 
       if (detection.loadError) {
@@ -196,7 +278,11 @@ export const createBaselineHealthChecker = (
       _lastDetection = detection
 
       if (!detection.broken) {
-        // No required gates configured, or all required gates passed.
+        // No required gates configured, or all required gates (and the
+        // install probe, if it ran) passed. Record the fingerprint behind
+        // this healthy result so the next check() can skip the install probe
+        // if nothing changed.
+        if (fingerprint !== null) _lastGoodFingerprint = fingerprint
         if (_poisoned) {
           log?.('[baseline-health] all required gates pass — baseline recovered')
           _poisoned = false

@@ -5782,6 +5782,42 @@ export const startDaemon = async (
       const result = await execProbe(gate.cmd, gate.args, { cwd })
       return { gate, exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr }
     },
+    // Same idea as the per-worktree install-skip in setup-worktree.ts: cheap
+    // hash of package.json/lockfiles so a merge that doesn't touch deps
+    // doesn't re-pay the full required-gate run.
+    computeDepFingerprint: async (root) => {
+      const { computeDepFingerprint } = await import('../../workflows/lib/dep-fingerprint')
+      return computeDepFingerprint(root)
+    },
+    // Cheap probe of the integration branch's install state — catches an
+    // unsatisfiable dependency pin (the incident motivating this checker; see
+    // baseline-health.ts docstring point 5) before it burns N task dispatches
+    // on an identical setup:install failure. Scoped to the repo root only,
+    // mirroring computeDepFingerprint's root-only scope. Reuses the frozen
+    // install command already used for real worktree installs
+    // (installCommand in worktree-install.ts), adding each manager's
+    // dry-run/lockfile-only equivalent so node_modules is never mutated.
+    runInstallProbe: async (root) => {
+      const { execProbe } = await import('../lib/git/internal')
+      const { detectInstallSites, installCommand } = await import('../lib/worktree-install')
+      const [site] = await detectInstallSites(root, 0, ['.'])
+      if (!site) {
+        // No manifest/lockfile at the repo root — nothing to probe.
+        return { exitCode: 0, stdout: '', stderr: '' }
+      }
+      const [cmd, frozenArgs] = installCommand(site.manager)
+      const noMutateArgs: Record<typeof site.manager, readonly string[]> = {
+        npm: ['--dry-run'],
+        // pnpm has no --dry-run; --lockfile-only never touches node_modules,
+        // and combined with --frozen-lockfile it refuses to rewrite the
+        // lockfile too, so a broken pin surfaces without any mutation.
+        pnpm: ['--lockfile-only'],
+        yarn: ['--dry-run'],
+        bun: ['--dry-run'],
+      }
+      const args = [...frozenArgs, ...noMutateArgs[site.manager]]
+      return execProbe(cmd, args, { cwd: root })
+    },
     pause,
     log,
   })

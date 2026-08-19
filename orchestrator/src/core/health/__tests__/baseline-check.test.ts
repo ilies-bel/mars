@@ -206,6 +206,8 @@ describe('baseline.broken health check', () => {
       loadGates,
       runGate,
       pause: createPauseController(),
+      computeDepFingerprint: vi.fn().mockResolvedValue(null),
+      runInstallProbe: vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' }),
     })
     await checker.check()
     // Simulate the derivation layer surfacing the row with the same key

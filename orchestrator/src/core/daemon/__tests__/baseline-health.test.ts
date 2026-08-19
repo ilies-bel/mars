@@ -33,11 +33,20 @@ const failingResult = (gate: BaselineGate, stderr = 'Type error'): GateResult =>
   stderr,
 })
 
+const passingInstall = { exitCode: 0, stdout: '', stderr: '' }
+const failingInstall = (stderr = 'ETARGET: no matching version') => ({
+  exitCode: 1,
+  stdout: '',
+  stderr,
+})
+
 type Deps = {
   pause: ReturnType<typeof createPauseController>
   loadGates: ReturnType<typeof vi.fn>
   runGate: ReturnType<typeof vi.fn>
   log: ReturnType<typeof vi.fn>
+  computeDepFingerprint: ReturnType<typeof vi.fn>
+  runInstallProbe: ReturnType<typeof vi.fn>
 }
 
 const makeDeps = (overrides?: Partial<BaselineHealthDeps>): { deps: BaselineHealthDeps; mocks: Deps } => {
@@ -45,6 +54,12 @@ const makeDeps = (overrides?: Partial<BaselineHealthDeps>): { deps: BaselineHeal
   const loadGates = vi.fn()
   const runGate = vi.fn()
   const log = vi.fn()
+  // Default: a fixed, non-null fingerprint. Most tests don't exercise the
+  // skip path directly (they poison the baseline first, which always
+  // re-checks), but a stable default keeps them from accidentally depending
+  // on fingerprint churn.
+  const computeDepFingerprint = vi.fn().mockResolvedValue('fp-a')
+  const runInstallProbe = vi.fn().mockResolvedValue(passingInstall)
 
   const deps: BaselineHealthDeps = {
     repoRoot: '/repo',
@@ -52,9 +67,11 @@ const makeDeps = (overrides?: Partial<BaselineHealthDeps>): { deps: BaselineHeal
     runGate: runGate as (gate: BaselineGate, cwd: string) => Promise<GateResult>,
     pause,
     log,
+    computeDepFingerprint: computeDepFingerprint as (repoRoot: string) => Promise<string | null>,
+    runInstallProbe: runInstallProbe as BaselineHealthDeps['runInstallProbe'],
     ...overrides,
   }
-  return { deps, mocks: { pause, loadGates, runGate, log } }
+  return { deps, mocks: { pause, loadGates, runGate, log, computeDepFingerprint, runInstallProbe } }
 }
 
 // ─── tests ────────────────────────────────────────────────────────────────────
@@ -228,6 +245,141 @@ describe('createBaselineHealthChecker', () => {
       await checker.check()
 
       expect(mocks.runGate).toHaveBeenCalledWith(gate, '/repo')
+    })
+  })
+
+  describe('dependency-fingerprint-gated install probe', () => {
+    it('detects an unsatisfiable version pin via a failing install probe', async () => {
+      const gate = makeGate()
+      const { deps, mocks } = makeDeps()
+      mocks.loadGates.mockResolvedValue([gate])
+      mocks.runGate.mockResolvedValue(passingResult(gate))
+      mocks.runInstallProbe.mockResolvedValue(failingInstall('ETARGET No matching version found'))
+
+      const checker = createBaselineHealthChecker(deps)
+      const result = await checker.check()
+
+      expect(result.poisoned).toBe(true)
+      expect(mocks.pause.isPaused()).toBe(true)
+      expect(mocks.pause.get().reason).toBe('baseline')
+      // The gate run never runs — the install probe already proved broken.
+      expect(mocks.runGate).not.toHaveBeenCalled()
+      expect(checker.getLastDetection()?.failingGateName).toBe('dependency install')
+    })
+
+    it('skips the install probe on a second check when the fingerprint is unchanged', async () => {
+      const gate = makeGate()
+      const { deps, mocks } = makeDeps()
+      mocks.loadGates.mockResolvedValue([gate])
+      mocks.runGate.mockResolvedValue(passingResult(gate))
+      mocks.computeDepFingerprint.mockResolvedValue('fp-a')
+
+      const checker = createBaselineHealthChecker(deps)
+      await checker.check()
+      expect(mocks.runInstallProbe).toHaveBeenCalledTimes(1)
+
+      // Second check: fingerprint unchanged — install probe should be skipped
+      // entirely, even though this mock (if invoked) would now report failure.
+      mocks.runInstallProbe.mockResolvedValue(failingInstall())
+      const result = await checker.check()
+
+      expect(result.poisoned).toBe(false)
+      expect(mocks.runInstallProbe).toHaveBeenCalledTimes(1)
+      // The (unchanged) required-gate run still runs every check() call.
+      expect(mocks.runGate).toHaveBeenCalledTimes(2)
+    })
+
+    it('re-runs the install probe when the fingerprint changes', async () => {
+      const gate = makeGate()
+      const { deps, mocks } = makeDeps()
+      mocks.loadGates.mockResolvedValue([gate])
+      mocks.runGate.mockResolvedValue(passingResult(gate))
+      mocks.computeDepFingerprint.mockResolvedValue('fp-a')
+
+      const checker = createBaselineHealthChecker(deps)
+      await checker.check()
+      expect(mocks.runInstallProbe).toHaveBeenCalledTimes(1)
+
+      mocks.computeDepFingerprint.mockResolvedValue('fp-b')
+      mocks.runInstallProbe.mockResolvedValue(failingInstall())
+      const result = await checker.check()
+
+      expect(result.poisoned).toBe(true)
+      expect(mocks.runInstallProbe).toHaveBeenCalledTimes(2)
+    })
+
+    it('never skips the install probe when the fingerprint is null (no manifest found)', async () => {
+      const gate = makeGate()
+      const { deps, mocks } = makeDeps()
+      mocks.loadGates.mockResolvedValue([gate])
+      mocks.runGate.mockResolvedValue(passingResult(gate))
+      mocks.computeDepFingerprint.mockResolvedValue(null)
+
+      const checker = createBaselineHealthChecker(deps)
+      await checker.check()
+      await checker.check()
+
+      expect(mocks.runInstallProbe).toHaveBeenCalledTimes(2)
+    })
+
+    it('still catches a non-dependency regression via the always-run gate check, and re-arms the install probe once poisoned', async () => {
+      const gate = makeGate()
+      const { deps, mocks } = makeDeps()
+      mocks.loadGates.mockResolvedValue([gate])
+      mocks.computeDepFingerprint.mockResolvedValue('fp-a')
+
+      const checker = createBaselineHealthChecker(deps)
+
+      // First check: install probe passes, gate passes — healthy, and the
+      // fingerprint behind that healthy result is recorded.
+      mocks.runGate.mockResolvedValue(passingResult(gate))
+      await checker.check()
+      expect(mocks.runInstallProbe).toHaveBeenCalledTimes(1)
+
+      // Second check: fingerprint unchanged and not (yet) poisoned, so the
+      // install probe is skipped — but a regression that has nothing to do
+      // with dependencies is still caught by the required-gate run, which
+      // always runs regardless of the fingerprint.
+      mocks.runGate.mockResolvedValue(failingResult(gate))
+      const broken = await checker.check()
+      expect(broken.poisoned).toBe(true)
+      expect(mocks.runInstallProbe).toHaveBeenCalledTimes(1)
+      expect(mocks.runGate).toHaveBeenCalledTimes(2)
+
+      // Third check: now poisoned, so the install probe is no longer skipped
+      // even though the fingerprint still hasn't changed.
+      mocks.runGate.mockResolvedValue(passingResult(gate))
+      const recovered = await checker.check()
+      expect(recovered.poisoned).toBe(false)
+      expect(mocks.runInstallProbe).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not let an install-probe execution error block the probe (treated as pass)', async () => {
+      const gate = makeGate()
+      const { deps, mocks } = makeDeps()
+      mocks.loadGates.mockResolvedValue([gate])
+      mocks.runGate.mockResolvedValue(passingResult(gate))
+      mocks.runInstallProbe.mockRejectedValue(new Error('spawn ENOENT'))
+
+      const checker = createBaselineHealthChecker(deps)
+      const result = await checker.check()
+
+      expect(result.poisoned).toBe(false)
+      expect(mocks.pause.isPaused()).toBe(false)
+    })
+
+    it('does not let a fingerprint computation error block the probe', async () => {
+      const gate = makeGate()
+      const { deps, mocks } = makeDeps()
+      mocks.loadGates.mockResolvedValue([gate])
+      mocks.runGate.mockResolvedValue(passingResult(gate))
+      mocks.computeDepFingerprint.mockRejectedValue(new Error('fs error'))
+
+      const checker = createBaselineHealthChecker(deps)
+      const result = await checker.check()
+
+      expect(result.poisoned).toBe(false)
+      expect(mocks.runInstallProbe).toHaveBeenCalledTimes(1)
     })
   })
 
