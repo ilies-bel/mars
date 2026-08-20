@@ -7,7 +7,8 @@
  *                      that register before any context exists;
  *   `fiber-state.ts`   a runtime mirror of the `FiberState` const enum, which
  *                      does not survive compilation;
- *   `safe-listen.ts`   fault-isolated `emit`, which cordis's does not do;
+ *   `safe-listen.ts`   fault-isolated `emit` for the observer channel, which
+ *                      cordis's own dispatch does not guarantee;
  *   `sealed.ts`        the ADR-0052 write-funnel seal.
  *
  * `WorkflowCtx.container` (see `../workflow.ts`) is a root `Context` seeded from
@@ -30,8 +31,8 @@ export { createServiceRegistry, ServiceNotFoundError } from './registry.js';
 export { FiberState, fiberStateName, isActive, isDisposed } from './fiber-state.js';
 export type { FiberStateMirrorProof } from './fiber-state.js';
 
-export { safeEmit, safeOn } from './safe-listen.js';
-export type { ListenerErrorHandler, ListenerDisposer } from './safe-listen.js';
+export { safeEmit } from './safe-listen.js';
+export type { ListenerErrorHandler } from './safe-listen.js';
 
 export { SEALED_SERVICE_KEYS, isSealedName, sealService, readService } from './sealed.js';
 export type { SealedServiceKey } from './sealed.js';

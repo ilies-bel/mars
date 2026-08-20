@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { Context, isBailed, safeEmit, safeOn } from '../../src/ctx/index.js';
+import { Context, isBailed, safeEmit } from '../../src/ctx/index.js';
 
 describe('ctx.on', () => {
   it('registering returns a disposer that removes the listener', () => {
@@ -160,58 +160,6 @@ describe('safeEmit — fault-isolated dispatch (the engine channel)', () => {
       throw new Error('unobserved');
     });
     expect(() => safeEmit(ctx, 'ping', [])).not.toThrow();
-  });
-});
-
-describe('safeOn — a listener that can never throw into a dispatch', () => {
-  it('isolates a synchronous throw', () => {
-    const errors: unknown[] = [];
-    const ctx = new Context();
-    const order: string[] = [];
-
-    ctx.on('ping', () => order.push('first'));
-    safeOn(
-      ctx,
-      'ping',
-      () => {
-        throw new Error('guarded boom');
-      },
-      (error) => errors.push(error),
-    );
-    ctx.on('ping', () => order.push('third'));
-
-    expect(() => ctx.emit('ping', 0)).not.toThrow();
-    expect(order).toEqual(['first', 'third']);
-    expect((errors[0] as Error).message).toBe('guarded boom');
-  });
-
-  it('isolates an async rejection', async () => {
-    const errors: unknown[] = [];
-    const ctx = new Context();
-    safeOn(
-      ctx,
-      'ping',
-      async () => {
-        throw new Error('guarded async boom');
-      },
-      (error) => errors.push(error),
-    );
-
-    await ctx.parallel('ping', 0);
-
-    expect((errors[0] as Error).message).toBe('guarded async boom');
-  });
-
-  it('returns a working disposer', () => {
-    const ctx = new Context();
-    const fn = vi.fn();
-    const off = safeOn(ctx, 'ping', fn);
-
-    ctx.emit('ping', 0);
-    off();
-    ctx.emit('ping', 0);
-
-    expect(fn).toHaveBeenCalledTimes(1);
   });
 });
 

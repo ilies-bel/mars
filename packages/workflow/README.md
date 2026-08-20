@@ -334,9 +334,10 @@ Things worth knowing before you use it:
   down and re-applied as that changes. "Optional dependency" is simply not
   declaring it and reading `ctx.get(name)`, which never throws.
 - **`emit` is not fault-isolated.** cordis's `emit` calls listeners directly, so
-  a throwing listener reaches the emitter and skips the rest. Use `safeEmit`
-  (isolates a whole dispatch) or `safeOn` (isolates one observer) for observer
-  channels. The engine's own `mars/workflow.event` republication uses `safeEmit`.
+  a throwing listener reaches the emitter and skips the rest. `safeEmit`
+  isolates a whole dispatch and is a deliberate engine guarantee for the
+  observer channel: the engine's own `mars/workflow.event` republication uses
+  it, so a throwing plugin listener can never fail the run it is observing.
 - **`serial`/`bail` stop at the first *bailed* value** — anything that is not
   `null`, `false` or `undefined`. A listener returning `false` no longer wins.
 - **`waterfall` is onion middleware**, not a fold: listeners run outermost-first

@@ -54,8 +54,8 @@ export { awaitManualDone, resolveManualStep } from './manual-step.js';
 //
 // Mars-owned additions: `createServiceRegistry` (a fiber-free keyed registry
 // for module-level singletons), `FiberState` (a runtime mirror of a const enum
-// that does not survive compilation), `safeEmit`/`safeOn` (fault-isolated
-// dispatch), and the ADR-0052 seal. See ctx/index.ts.
+// that does not survive compilation), `safeEmit` (fault-isolated dispatch for
+// the observer channel), and the ADR-0052 seal. See ctx/index.ts.
 export {
   Context,
   CordisError,
@@ -74,7 +74,6 @@ export {
   readService,
   ReservedServiceNameError,
   safeEmit,
-  safeOn,
   sealService,
   SEALED_SERVICE_KEYS,
   ServiceNotFoundError,
@@ -90,7 +89,6 @@ export type {
   Events,
   Fiber,
   Inject,
-  ListenerDisposer,
   ListenerErrorHandler,
   Plugin,
   RunContainerOptions,
