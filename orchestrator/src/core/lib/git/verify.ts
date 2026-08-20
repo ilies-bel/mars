@@ -279,8 +279,16 @@ const runVerifyStep = async (
   // inspect them directly without stripping the prefix.
   const timedOut = stepTimeoutSignal?.aborted === true
   const rawOutput = r.stdout + r.stderr
+  // Name the command and the remedy on the marker line itself (not a
+  // trailing line): downstream consumers that recover this marker for the
+  // failure signature (`review.ts`'s timeoutMarkerLine) keep only the first
+  // line, so anything after a '\n' here never reaches the operator. A
+  // full-suite verify command (`npm test`, a bare `vitest run`) is the most
+  // common cause of a verify timeout — see mars-a98bec46 / mars-c1afdad3,
+  // which both burned their full 900s budget and their one recovery attempt
+  // on exactly this before the enqueue-time guard existed.
   const output = timedOut
-    ? `${VERIFY_TIMEOUT_MARKER} ${timeoutMs!}ms (exit ${r.exitCode ?? 'null'})\n${rawOutput}`
+    ? `${VERIFY_TIMEOUT_MARKER} ${timeoutMs!}ms (exit ${r.exitCode ?? 'null'}) running: ${commandLine} — a full-suite verify command is the usual cause; scope --verify to the files you touched, e.g. 'cd <dir> && npx vitest run <file>'\n${rawOutput}`
     : signal?.aborted
       ? `step killed by abort signal\n${rawOutput}`
       : r.exitCode === 143

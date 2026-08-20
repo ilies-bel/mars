@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { containsAbsoluteRepoPath, hasFlag, parseArgs } from '../args'
+import { containsAbsoluteRepoPath, hasFlag, isFullSuiteVerifyCmd, parseArgs } from '../args'
 
 describe('boolean flags', () => {
   it('reports a supplied boolean flag even though it is not positional', () => {
@@ -205,5 +205,49 @@ describe('containsAbsoluteRepoPath', () => {
 
   it('returns false when verifyCmd is empty', () => {
     expect(containsAbsoluteRepoPath('', '/home/user/my-project')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isFullSuiteVerifyCmd
+// ---------------------------------------------------------------------------
+
+describe('isFullSuiteVerifyCmd', () => {
+  it('returns true for bare npm test', () => {
+    expect(isFullSuiteVerifyCmd('npm test')).toBe(true)
+  })
+
+  it('returns true for bare npm run test', () => {
+    expect(isFullSuiteVerifyCmd('npm run test')).toBe(true)
+  })
+
+  it('returns true for npm test chained after a cd', () => {
+    expect(isFullSuiteVerifyCmd('cd orchestrator && npm test')).toBe(true)
+  })
+
+  it('returns true for a bare vitest run with no file arguments', () => {
+    expect(isFullSuiteVerifyCmd('cd orchestrator && npx vitest run')).toBe(true)
+  })
+
+  it('returns true for a bare vitest run with only flags (no file target)', () => {
+    expect(isFullSuiteVerifyCmd('npx vitest run --reporter=json')).toBe(true)
+  })
+
+  it('returns false for npm run test:unit (scoped script suffix)', () => {
+    expect(isFullSuiteVerifyCmd('cd orchestrator && npm run test:unit')).toBe(false)
+  })
+
+  it('returns false for a scoped vitest run with a file argument', () => {
+    expect(
+      isFullSuiteVerifyCmd('cd orchestrator && npx vitest run src/path/to/your.test.ts'),
+    ).toBe(false)
+  })
+
+  it('returns false for typecheck-only commands', () => {
+    expect(isFullSuiteVerifyCmd('cd orchestrator && npm run typecheck')).toBe(false)
+  })
+
+  it('returns false for an empty verifyCmd', () => {
+    expect(isFullSuiteVerifyCmd('')).toBe(false)
   })
 })

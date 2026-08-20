@@ -520,6 +520,44 @@ export const parseTaskSpec = (
 export const containsAbsoluteRepoPath = (verifyCmd: string, repoRoot: string): boolean =>
   repoRoot.length > 0 && verifyCmd.includes(repoRoot)
 
+/**
+ * Returns true when `verifyCmd` invokes an entire test suite rather than a
+ * scoped subset: bare `npm test` / `npm run test` (a script-name suffix like
+ * `test:unit` stays scoped, and args forwarded after `--` usually scope a
+ * runner down to specific files), or a bare `vitest run` with no test-file
+ * argument (flags alone, e.g. `--reporter=json`, still run everything).
+ *
+ * This project's full suite is known-red (dozens of pre-existing failures)
+ * and reliably exceeds the verify step's wall-clock budget, so a full-suite
+ * verify spec can never pass regardless of the task's own changes — see
+ * `CLAUDE.md` for the incident this guards against
+ * (`verify:timeout/spec-verify-cmd`, twice, 900s each).
+ *
+ * Inspects each `&&`/`;`/`||`/`|`-separated segment of `verifyCmd`
+ * independently so a `cd orchestrator && npm test` pipeline is still caught.
+ */
+export const isFullSuiteVerifyCmd = (verifyCmd: string): boolean => {
+  for (const raw of verifyCmd.split(/&&|\|\||;|\|/)) {
+    const tokens = raw.trim().split(/\s+/).filter(Boolean)
+    if (tokens.length === 0) continue
+
+    if (tokens[0] === 'npm') {
+      const isBareTest = tokens[1] === 'test'
+      const isBareRunTest = tokens[1] === 'run' && tokens[2] === 'test'
+      if (isBareTest && tokens.slice(2).length === 0) return true
+      if (isBareRunTest && tokens.slice(3).length === 0) return true
+    }
+
+    const runnerIdx = tokens.indexOf('vitest')
+    if (runnerIdx !== -1 && tokens[runnerIdx + 1] === 'run') {
+      const rest = tokens.slice(runnerIdx + 2)
+      const hasFileArg = rest.some((t) => !t.startsWith('-'))
+      if (!hasFileArg) return true
+    }
+  }
+  return false
+}
+
 /** `--blocked-by`: the repeatable blocker-id list (possibly empty). */
 export const parseBlockedBy = (
   args: Pick<ParsedArgs, 'multiFlags'>,

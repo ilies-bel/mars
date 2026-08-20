@@ -850,7 +850,7 @@ describe('task add no-commit guard: structural evidence bypass', () => {
         'task', 'add',
         '--prompt-file', promptFile,
         '--files', 'orchestrator/src/core/queue.ts',
-        '--verify', 'npx tsc --noEmit && npm test',
+        '--verify', 'npx tsc --noEmit && npx vitest run src/core/queue.test.ts',
       ],
       { store, ctx, daemon: fake },
     )
@@ -878,7 +878,7 @@ describe('task add no-commit guard: structural evidence bypass', () => {
         'task', 'add',
         '--prompt-file', promptFile,
         '--files', 'src/core/queue.ts',
-        '--verify', 'npm test',
+        '--verify', 'npx vitest run src/core/queue.test.ts',
       ],
       { store, ctx, daemon: fake },
     )
@@ -934,11 +934,11 @@ describe('task set-verify', () => {
   it('sends task.set-verify op with the supplied id and cmd', async () => {
     const fake = makeFakeDaemon(() => ({
       id: 'mars-abc123',
-      verifyCmd: 'cd orchestrator && npm run typecheck && npm test',
+      verifyCmd: 'cd orchestrator && npm run typecheck && npx vitest run src/foo.test.ts',
     }))
     const { store, ctx } = await loadStoreAndCtx()
     const r = await runCommandInProcess(
-      ['task', 'set-verify', 'mars-abc123', 'cd orchestrator && npm run typecheck && npm test'],
+      ['task', 'set-verify', 'mars-abc123', 'cd orchestrator && npm run typecheck && npx vitest run src/foo.test.ts'],
       { store, ctx, daemon: fake },
     )
     expect(r.code).toBe(0)
@@ -946,22 +946,35 @@ describe('task set-verify', () => {
     const req = fake.calls[0] as { op: string; id: string; verifyCmd: string | null }
     expect(req.op).toBe('task.set-verify')
     expect(req.id).toBe('mars-abc123')
-    expect(req.verifyCmd).toBe('cd orchestrator && npm run typecheck && npm test')
+    expect(req.verifyCmd).toBe('cd orchestrator && npm run typecheck && npx vitest run src/foo.test.ts')
   })
 
   it('prints the updated verifyCmd on stdout', async () => {
     const fake = makeFakeDaemon(() => ({
       id: 'mars-abc123',
-      verifyCmd: 'cd orchestrator && npm test',
+      verifyCmd: 'cd orchestrator && npx vitest run src/foo.test.ts',
     }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'set-verify', 'mars-abc123', 'cd orchestrator && npx vitest run src/foo.test.ts'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(r.out.join('\n')).toContain('mars-abc123')
+    expect(r.out.join('\n')).toContain('cd orchestrator && npx vitest run src/foo.test.ts')
+  })
+
+  it('rejects a whole-suite verify command (npm test)', async () => {
+    const fake = makeFakeDaemon()
     const { store, ctx } = await loadStoreAndCtx()
     const r = await runCommandInProcess(
       ['task', 'set-verify', 'mars-abc123', 'cd orchestrator && npm test'],
       { store, ctx, daemon: fake },
     )
-    expect(r.code).toBe(0)
-    expect(r.out.join('\n')).toContain('mars-abc123')
-    expect(r.out.join('\n')).toContain('cd orchestrator && npm test')
+    expect(r.code).toBe(2)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join('\n')).toContain('whole test suite')
+    expect(r.err.join('\n')).toContain('npx vitest run')
   })
 
   it('exits code 2 when id is missing', async () => {
@@ -1002,7 +1015,7 @@ describe('task set-verify', () => {
     })
     const { store, ctx } = await loadStoreAndCtx()
     const r = await runCommandInProcess(
-      ['task', 'set-verify', 'mars-xyz', 'cd orchestrator && npm test'],
+      ['task', 'set-verify', 'mars-xyz', 'cd orchestrator && npx vitest run src/foo.test.ts'],
       { store, ctx, daemon: fake },
     )
     expect(r.code).toBe(1)
@@ -1090,7 +1103,7 @@ describe('task add research-prompt guard', () => {
     const fake = makeFakeDaemon(() => ({ id: 'mars-task-v', status: 'queued' }))
     const { store, ctx } = await loadStoreAndCtx()
     const r = await runCommandInProcess(
-      ['task', 'add', '--verify', 'cd orchestrator && npm test', 'investigate and fix the queue deadlock'],
+      ['task', 'add', '--verify', 'cd orchestrator && npx vitest run src/core/queue.test.ts', 'investigate and fix the queue deadlock'],
       { store, ctx, daemon: fake },
     )
     expect(r.code).toBe(0)

@@ -19,6 +19,7 @@ import {
   parsePriority,
   parseTaskSpec,
   containsAbsoluteRepoPath,
+  isFullSuiteVerifyCmd,
   parseBlockedBy,
   parseTags,
   hasFlag,
@@ -254,7 +255,21 @@ const taskAdd: Command = {
           `[mars] absolute paths in --verify run against the integration branch, not the task worktree — use relative paths instead.`,
         )
         deps.err(
-          `[mars] example: --verify 'cd orchestrator && npm test'  (not --verify 'cd ${deps.ctx.repoRoot}/orchestrator && npm test')`,
+          `[mars] example: --verify 'cd orchestrator && npx vitest run src/path/to/your.test.ts'  (not --verify 'cd ${deps.ctx.repoRoot}/orchestrator && npm test')`,
+        )
+        return { code: 2 }
+      }
+      // Reject --verify values that run the whole test suite. The full suite
+      // is known-red and reliably exceeds the verify step's wall-clock
+      // budget, so a full-suite spec times out rather than passing or
+      // failing on the task's own changes — see CLAUDE.md for the incident
+      // (two arcs each burned 900s and their sole recovery attempt on this).
+      if (isFullSuiteVerifyCmd(specResult.value.verifyCmd)) {
+        deps.err(
+          `[mars] --verify runs the whole test suite, which is known-red here and exceeds the verify timeout.`,
+        )
+        deps.err(
+          `[mars] scope it to the files you touch, e.g.: --verify 'cd orchestrator && npx vitest run src/path/to/your.test.ts'`,
         )
         return { code: 2 }
       }
@@ -733,9 +748,11 @@ const taskSetVerify: Command = {
   usage: 'usage: mars task set-verify <id> "<cmd>"',
   helpBody: `mars task set-verify <id> "<cmd>"
 
-Update the verify command stored for a task. Applies the same relative-path
-validation as 'mars task add --verify': absolute repo-root paths are rejected
-because they bypass worktree isolation.
+Update the verify command stored for a task. Applies the same validation as
+'mars task add --verify': absolute repo-root paths are rejected because they
+bypass worktree isolation, and whole-suite commands ('npm test', bare
+'vitest run') are rejected because the full suite is known-red here and
+exceeds the verify timeout.
 
 Allowed for non-done, non-dropped tasks (including failed tasks whose verify
 spec needs repair before re-try). The change is journaled as a task note.
@@ -743,7 +760,7 @@ spec needs repair before re-try). The change is journaled as a task note.
 Use this to fix legacy specs that fail with "npm error Missing script" because
 the command was authored without a 'cd <subdir> &&' prefix:
 
-  mars task set-verify <id> 'cd orchestrator && npm run typecheck && npm test'`,
+  mars task set-verify <id> 'cd orchestrator && npx vitest run src/path/to/your.test.ts'`,
   run: async (args, deps) => {
     const id = args.positional[0]
     const cmd = args.positional[1]
@@ -759,7 +776,18 @@ the command was authored without a 'cd <subdir> &&' prefix:
         `[mars] absolute paths in --verify run against the integration branch, not the task worktree — use relative paths instead.`,
       )
       deps.err(
-        `[mars] example: mars task set-verify ${id} 'cd orchestrator && npm test'`,
+        `[mars] example: mars task set-verify ${id} 'cd orchestrator && npx vitest run src/path/to/your.test.ts'`,
+      )
+      return { code: 2 }
+    }
+    // Same full-suite rejection as `task add --verify` — a spec that runs the
+    // whole suite is known-red here and reliably times out.
+    if (isFullSuiteVerifyCmd(cmd)) {
+      deps.err(
+        `[mars] --verify runs the whole test suite, which is known-red here and exceeds the verify timeout.`,
+      )
+      deps.err(
+        `[mars] scope it to the files you touch, e.g.: mars task set-verify ${id} 'cd orchestrator && npx vitest run src/path/to/your.test.ts'`,
       )
       return { code: 2 }
     }

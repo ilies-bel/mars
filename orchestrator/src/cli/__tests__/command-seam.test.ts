@@ -143,7 +143,7 @@ describe('task add (daemon-routed)', () => {
         'task', 'add', 'structured',
         '--files', 'a.ts',
         '--done', 'compiles',
-        '--verify', 'npm test',
+        '--verify', 'npx vitest run src/foo.test.ts',
         '--type', 'checkpoint',
       ],
       { store, ctx, daemon: fake },
@@ -153,7 +153,7 @@ describe('task add (daemon-routed)', () => {
       op: 'add',
       spec: {
         files: ['a.ts'],
-        verifyCmd: 'npm test',
+        verifyCmd: 'npx vitest run src/foo.test.ts',
         doneCriteria: ['compiles'],
         taskType: 'checkpoint',
       },
@@ -180,14 +180,28 @@ describe('task add (daemon-routed)', () => {
     const fake = makeFakeDaemon(() => ({ id: 'mars-task-rel', status: 'queued' }))
     const { store, ctx } = await loadStoreAndCtx()
     const r = await runCommandInProcess(
-      ['task', 'add', 'fix something', '--verify', 'cd orchestrator && npm test'],
+      ['task', 'add', 'fix something', '--verify', 'cd orchestrator && npx vitest run src/foo.test.ts'],
       { store, ctx, daemon: fake },
     )
     expect(r.code).toBe(0)
     expect(fake.calls[0]).toMatchObject({
       op: 'add',
-      spec: expect.objectContaining({ verifyCmd: 'cd orchestrator && npm test' }),
+      spec: expect.objectContaining({ verifyCmd: 'cd orchestrator && npx vitest run src/foo.test.ts' }),
     })
+  })
+
+  it('rejects --verify that runs the whole suite (npm test)', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'fix something', '--verify', 'cd orchestrator && npm test'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain('whole test suite')
+    expect(r.err.join('\n')).toContain('npx vitest run')
+    // Daemon must NOT be called — the spec was rejected before enqueue.
+    expect(fake.calls).toHaveLength(0)
   })
 })
 
