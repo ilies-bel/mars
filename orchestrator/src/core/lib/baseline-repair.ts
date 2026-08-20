@@ -26,9 +26,18 @@
  *
  * ## Shape
  *
- * `probe → repair-agent → verify → commit`. No worktree is carved and no
- * branch is created: the repair runs in the integration-branch checkout
- * itself, which is precisely the privilege ordinary tasks do not have.
+ * `probe → resolve-or-repair-agent → verify → commit`. No worktree is carved
+ * and no branch is created: the repair runs in the integration-branch
+ * checkout itself, which is precisely the privilege ordinary tasks do not
+ * have.
+ *
+ * The `ETARGET / No matching version found` case named above is NOT handed
+ * to the repair-agent: `parseUnsatisfiablePin` (in `baseline-version-resolver.ts`)
+ * recognizes it from the probe output and `resolveManifestVersion` computes
+ * the replacement version deterministically — preferring a sibling manifest's
+ * already-published pin, falling back to the nearest published version, and
+ * escalating rather than ever guessing. The repair-agent path below still
+ * handles every other manifest/lockfile defect class.
  *
  * ## The constraints (bounded in code, not in the prompt)
  *
@@ -56,6 +65,12 @@
 import { basename } from 'node:path'
 
 import { classifyError } from './failure-signature'
+import {
+  findDependencyRange,
+  parseUnsatisfiablePin,
+  replaceDependencyRange,
+  resolveManifestVersion,
+} from './baseline-version-resolver'
 
 // ---------------------------------------------------------------------------
 // The allowlist and the cap — the two hard bounds on the privilege
@@ -126,6 +141,21 @@ export type BaselineRepairRefusal =
   | 'attempt-exhausted'
   /** `git add`/`git commit` failed after everything else passed. */
   | 'commit-failed'
+  /**
+   * A version-pin defect was detected (see {@link parseUnsatisfiablePin}) but
+   * no tracked manifest pins the exact offending range, so there is nothing
+   * to deterministically locate and rewrite.
+   */
+  | 'unlocatable-manifest-pin'
+  /**
+   * A version-pin defect was detected but {@link resolveManifestVersion}
+   * could not resolve it: no sibling manifest pins a published version, and
+   * no published version is close enough to the requested one to resolve to
+   * automatically. Never guessed — see the module doc.
+   */
+  | 'unresolvable-version'
+  /** The deterministically-resolved version could not be written to disk. */
+  | 'apply-failed'
 
 export type BaselineRepairOutcome =
   /** The install probe passes — there is nothing to repair. */
@@ -162,6 +192,22 @@ export interface BaselineRepairDeps {
   runAgentInPlace: (prompt: string) => Promise<{ exitCode: number }>
   /** Shell out to git inside {@link repoRoot}. Never given `push`. */
   git: (argv: readonly string[]) => Promise<ExecResult>
+  /**
+   * Read a file at a {@link repoRoot}-relative path from the working tree.
+   * Used only by the deterministic version-pin resolution path — the
+   * free-form repair-agent path edits the working tree itself and never
+   * goes through this.
+   */
+  readFile: (relPath: string) => Promise<string>
+  /** Write a file at a {@link repoRoot}-relative path in the working tree. */
+  writeFile: (relPath: string, content: string) => Promise<void>
+  /**
+   * Every version published for `packageName` (e.g. the output of
+   * `npm view <pkg> versions --json`). An empty array means "no data", not
+   * "nothing is published" — {@link resolveManifestVersion} treats it as
+   * unresolved rather than guessing.
+   */
+  listPublishedVersions: (packageName: string) => Promise<readonly string[]>
   /** Raise exactly one action-queue item. Returns its id. */
   raise: (item: {
     signature: string
@@ -277,9 +323,13 @@ const repairPrompt = (args: {
     '',
     '## What to do',
     '',
+    '(An unsatisfiable version pin — "No matching version found for X@Y" — is',
+    'already resolved deterministically before you run; you are only seeing',
+    'this prompt because the failure is a different defect class.)',
+    '',
     'Identify the class of defect and apply the smallest change that fixes it:',
-    'a version pin that was never published, a manifest and lockfile that disagree,',
-    'a dependency that moved or was unpublished. Prefer correcting the manifest',
+    'a manifest and lockfile that disagree, a dependency that moved, a lockfile',
+    'entry that no longer matches its manifest. Prefer correcting the manifest',
     'over regenerating the lockfile when the manifest is what is wrong.',
     '',
     '## What NOT to do',
@@ -394,6 +444,165 @@ export const createBaselineRepairer = (deps: BaselineRepairDeps): BaselineRepair
       )
     }
 
+    // ── verify + commit — shared by both repair paths below ────────────────
+    const verifyAndCommit = async (dirty: readonly DirtyPath[]): Promise<BaselineRepairOutcome> => {
+      if (dirty.length === 0) {
+        return escalate(
+          'empty-diff',
+          'The repair changed nothing. The install failure is unchanged.',
+          { installSignature: signature, probeOutput: probeOutput.slice(0, 2_000) },
+        )
+      }
+
+      const offending = disallowedPaths(dirty.map((d) => d.path))
+      if (offending.length > 0) {
+        await revert(dirty)
+        return escalate(
+          'disallowed-file',
+          `The repair touched ${offending.length} file(s) outside the dependency-manifest ` +
+            `allowlist: ${offending.join(', ')}. The whole change was reverted.`,
+          { installSignature: signature, disallowedFiles: offending },
+        )
+      }
+
+      const numstat = await deps.git(['diff', '--numstat', 'HEAD'])
+      const changedLines = numstat.exitCode === 0 ? sumNumstatLines(numstat.stdout) : 0
+      if (changedLines > cap) {
+        await revert(dirty)
+        return escalate(
+          'diff-too-large',
+          `The repair changed ${changedLines} lines, over the ${cap}-line cap for a ` +
+            'baseline repair. A human should look at a change this size.',
+          { installSignature: signature, changedLines, maxDiffLines: cap },
+        )
+      }
+
+      // Verify before commit — neither the agent's say-so nor the resolver's
+      // arithmetic is ever sufficient on its own.
+      const reprobe = await deps.probeInstall()
+      if (reprobe.exitCode !== 0) {
+        await revert(dirty)
+        return escalate(
+          'install-still-failing',
+          'A clean frozen install still fails after the repair. The change was reverted ' +
+            `so the branch is byte-identical to how the repair found it.\n\n` +
+            '```\n' +
+            `${reprobe.stderr}\n${reprobe.stdout}`.trim().slice(0, 2_000) +
+            '\n```',
+          { installSignature: signature, postRepairSignature: installSignature(reprobe) },
+        )
+      }
+
+      // ── commit ─────────────────────────────────────────────────────────
+      const files = dirty.map((d) => d.path)
+      const add = await deps.git(['add', '--', ...files])
+      const commit =
+        add.exitCode === 0
+          ? await deps.git(['commit', '-m', 'fix(deps): repair integration-branch dependency install'])
+          : add
+      if (commit.exitCode !== 0) {
+        await revert(dirty)
+        return escalate(
+          'commit-failed',
+          `git ${add.exitCode === 0 ? 'commit' : 'add'} failed: ${commit.stderr.trim()}`,
+          { installSignature: signature },
+        )
+      }
+
+      const sha = await deps.git(['rev-parse', 'HEAD'])
+      const commitSha = sha.exitCode === 0 ? sha.stdout.trim() : ''
+      log(`[baseline-repair] committed ${commitSha} to ${deps.integrationBranch}; resuming dispatch`)
+      deps.clearBaselinePause()
+      return { status: 'repaired', commit: commitSha, files }
+    }
+
+    // ── deterministic version-pin resolution ──────────────────────────────
+    //
+    // Checked BEFORE the free-form repair-agent: when the probe output names
+    // an unsatisfiable manifest pin, the replacement version comes ONLY from
+    // resolveManifestVersion's algorithm, never from an agent's guess. See
+    // the module doc on baseline-version-resolver.ts.
+    const pin = parseUnsatisfiablePin(probeOutput)
+    if (pin !== null) {
+      attempted.add(signature)
+      log(
+        `[baseline-repair] detected unsatisfiable version pin ${pin.packageName}@${pin.range}; ` +
+          'resolving deterministically',
+      )
+
+      const tracked = await deps.git(['ls-files'])
+      const manifestPaths =
+        tracked.exitCode === 0
+          ? tracked.stdout
+              .split('\n')
+              .map((p) => p.trim())
+              .filter((p) => p.length > 0 && basename(p) === 'package.json')
+          : []
+
+      const owners: string[] = []
+      const siblingRanges: string[] = []
+      for (const path of manifestPaths) {
+        let content: string
+        try {
+          content = await deps.readFile(path)
+        } catch {
+          continue
+        }
+        const range = findDependencyRange(content, pin.packageName)
+        if (range === undefined) continue
+        if (range === pin.range) owners.push(path)
+        else siblingRanges.push(range)
+      }
+
+      if (owners.length === 0) {
+        return escalate(
+          'unlocatable-manifest-pin',
+          `Detected an unsatisfiable pin \`${pin.packageName}@${pin.range}\` but no tracked ` +
+            'package.json pins that exact range. Refusing to guess which manifest to edit.',
+          { installSignature: signature, packageName: pin.packageName, range: pin.range },
+        )
+      }
+
+      const publishedVersions = await deps.listPublishedVersions(pin.packageName)
+      const resolution = resolveManifestVersion({
+        requestedRange: pin.range,
+        siblingRanges,
+        publishedVersions,
+      })
+
+      if (resolution.status === 'unresolved') {
+        return escalate(
+          'unresolvable-version',
+          `\`${pin.packageName}@${pin.range}\` has no satisfiable resolution: no sibling ` +
+            'manifest pins a published version, and no published version is close enough to ' +
+            'resolve to automatically. A human must choose the version.',
+          { installSignature: signature, packageName: pin.packageName, range: pin.range },
+        )
+      }
+
+      log(
+        `[baseline-repair] resolved ${pin.packageName}@${pin.range} -> ${resolution.range} ` +
+          `(${resolution.source})`,
+      )
+
+      try {
+        for (const path of owners) {
+          const content = await deps.readFile(path)
+          await deps.writeFile(path, replaceDependencyRange(content, pin.packageName, pin.range, resolution.range))
+        }
+      } catch (err) {
+        return escalate(
+          'apply-failed',
+          `Failed to write the resolved version to ${owners.join(', ')}: ${(err as Error).message}`,
+          { installSignature: signature, packageName: pin.packageName },
+        )
+      }
+
+      const after = await deps.git(['status', '--porcelain=v1', '--untracked-files=all'])
+      const dirty = after.exitCode === 0 ? parseDirtyPaths(after.stdout) : []
+      return verifyAndCommit(dirty)
+    }
+
     // ── repair-agent ────────────────────────────────────────────────────────
     attempted.add(signature)
     log(`[baseline-repair] attempting repair for ${signature} at ${deps.repoRoot}`)
@@ -406,7 +615,6 @@ export const createBaselineRepairer = (deps: BaselineRepairDeps): BaselineRepair
       }),
     )
 
-    // ── verify ──────────────────────────────────────────────────────────────
     const after = await deps.git(['status', '--porcelain=v1', '--untracked-files=all'])
     const dirty = after.exitCode === 0 ? parseDirtyPaths(after.stdout) : []
 
@@ -419,77 +627,7 @@ export const createBaselineRepairer = (deps: BaselineRepairDeps): BaselineRepair
       )
     }
 
-    if (dirty.length === 0) {
-      return escalate(
-        'empty-diff',
-        'The repair agent changed nothing. The install failure is unchanged.',
-        { installSignature: signature, probeOutput: probeOutput.slice(0, 2_000) },
-      )
-    }
-
-    const offending = disallowedPaths(dirty.map((d) => d.path))
-    if (offending.length > 0) {
-      await revert(dirty)
-      return escalate(
-        'disallowed-file',
-        `The repair touched ${offending.length} file(s) outside the dependency-manifest ` +
-          `allowlist: ${offending.join(', ')}. The whole change was reverted.`,
-        { installSignature: signature, disallowedFiles: offending },
-      )
-    }
-
-    const numstat = await deps.git(['diff', '--numstat', 'HEAD'])
-    const changedLines = numstat.exitCode === 0 ? sumNumstatLines(numstat.stdout) : 0
-    if (changedLines > cap) {
-      await revert(dirty)
-      return escalate(
-        'diff-too-large',
-        `The repair changed ${changedLines} lines, over the ${cap}-line cap for a ` +
-          'baseline repair. A human should look at a change this size.',
-        { installSignature: signature, changedLines, maxDiffLines: cap },
-      )
-    }
-
-    // Verify before commit — the agent's say-so is never sufficient.
-    const reprobe = await deps.probeInstall()
-    if (reprobe.exitCode !== 0) {
-      await revert(dirty)
-      return escalate(
-        'install-still-failing',
-        'A clean frozen install still fails after the repair. The change was reverted ' +
-          `so the branch is byte-identical to how the repair found it.\n\n` +
-          '```\n' +
-          `${reprobe.stderr}\n${reprobe.stdout}`.trim().slice(0, 2_000) +
-          '\n```',
-        { installSignature: signature, postRepairSignature: installSignature(reprobe) },
-      )
-    }
-
-    // ── commit ──────────────────────────────────────────────────────────────
-    const files = dirty.map((d) => d.path)
-    const add = await deps.git(['add', '--', ...files])
-    const commit =
-      add.exitCode === 0
-        ? await deps.git([
-            'commit',
-            '-m',
-            'fix(deps): repair integration-branch dependency install',
-          ])
-        : add
-    if (commit.exitCode !== 0) {
-      await revert(dirty)
-      return escalate(
-        'commit-failed',
-        `git ${add.exitCode === 0 ? 'commit' : 'add'} failed: ${commit.stderr.trim()}`,
-        { installSignature: signature },
-      )
-    }
-
-    const sha = await deps.git(['rev-parse', 'HEAD'])
-    const commitSha = sha.exitCode === 0 ? sha.stdout.trim() : ''
-    log(`[baseline-repair] committed ${commitSha} to ${deps.integrationBranch}; resuming dispatch`)
-    deps.clearBaselinePause()
-    return { status: 'repaired', commit: commitSha, files }
+    return verifyAndCommit(dirty)
   }
 
   return { repair }
