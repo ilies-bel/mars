@@ -2,14 +2,12 @@
 
 # Mars
 
-**An AFK agent team for your repo — on your laptop, using your agent CLI subscription.**
+**Cursor for engineers.**
 
-Mars runs Codex by default—or Claude Code or Gemini—as a fleet of parallel
-workers against a single repo:
-each task gets its own git worktree, gets coded, verified, and merged — while
-you do something else. No servers to stand up. No API keys. No per-token bill.
+Vibe coding traded your control for speed. Mars gives you the speed and keeps
+the control.
 
-[Why Mars](#why-mars) · [How it works](#how-it-works) · [Quick start](#quick-start) · [Features](#features) · [The UI](#the-ui) · [CLI reference](./orchestrator/README.md)
+[The problem](#the-problem) · [Quick start](#quick-start) · [Control](#control--the-pillar-that-matters) · [How it works](#how-it-works) · [The UI](#the-ui) · [CLI reference](./orchestrator/README.md)
 
 </div>
 
@@ -24,27 +22,154 @@ you do something else. No servers to stand up. No API keys. No per-token bill.
 
 ![Mars topology view — the live dependency graph of tasks and proposals](./docs/assets/ui-topology.png)
 
-## Why Mars
+## The problem
 
-**A real agent team, zero infrastructure.** Queue work and walk away.
-A local daemon picks up tasks, spawns an agent CLI worker per task in
-its own isolated git worktree, runs them in parallel, verifies each
-(typecheck → test → lint), and fast-forwards the passing ones into your
-branch. Merge conflicts go to a dedicated reconciler agent ("Vega"). It feels
-like a managed agent platform — but it's a single CLI and a local database
-next to your project. Nothing to deploy, nothing to log into, nothing in the
-cloud.
+Vibe coding works. That's the trap. You ship fast for three weeks and then
+you're maintaining a codebase you did not author — you approved diffs you
+skimmed, there's no record of why anything is the way it is, and the same
+concept has three names in four files because every session started from
+zero. The failure mode isn't bad code; modern agents write fine code. It's
+**lost authority** — you stopped being the engineer and became the approve
+button. The tools built for this optimise for accepting suggestions faster:
+a diff in front of you, asking you to say yes. Mars asks a different
+question: what would it take to let agents write most of your code and
+still be the engineer at the end of it?
 
-**Your subscription, not an API bill.** Every model call shells out to the
-selected authenticated agent CLI. Codex is the default and reuses the ChatGPT
-OAuth session created by `codex login`; Claude Code and Gemini remain selectable
-adapters. Mars has no provider SDK and never reads or copies provider credentials.
+## Quick start
 
-**Smart model routing.** Mars routes each Worker role through semantic model
-tiers—fast, balanced, and flagship—and resolves those tiers to provider-native
-models. The human-facing surface is a CLI,
-not a chat transcript, so orchestration state stays out of the context window
-instead of bloating it.
+```sh
+# 1 — install the mars CLI (once per machine; re-run to upgrade)
+curl -sSL https://github.com/ilies-bel/mars/releases/latest/download/get-mars.sh | bash
+
+# 2 — inside your repo: scaffold state + activate the mars:* skills
+mars init
+
+# 3 — add work and watch it run
+mars task add "implement X in src/foo.ts"   # daemon auto-spawns on first write
+mars list                                    # see live statuses
+mars ui                                      # open the dashboard
+```
+
+**Requirements:** `git`, Node >= 22.13, and an authenticated agent CLI on
+`PATH`. The default is Codex: install `codex`, then run `codex login` once.
+Use `mars init --provider claude` or `--provider gemini` to select another
+adapter.
+
+<!-- TODO: record a 30s terminal screencast of the quick-start flow above.
+     Tool suggestion: asciinema or vhs (https://github.com/charmbracelet/vhs)
+     Host the .gif or .svg in docs/assets/quickstart.* -->
+
+## Control — the pillar that matters
+
+Agents still write the code. Every unit of work passes an engineer's
+controls on the way in and on the way out.
+
+| Control | Mechanism | Proof |
+| --- | --- | --- |
+| A spec before code | `--files` / `--verify` / `--done` produce a typed spec; the implementor gets it as a checklist. The grill shapes fuzzy work into a PRD before a line is written. | `mars task add --help` |
+| A gate, not a vibe | typecheck → test → lint, fail-fast. Green merges. Nothing else does. | `orchestrator/src/tools/verify/` |
+| A defended vocabulary | The glossary is editable only through `mars glossary` and is read by every Worker. | `CONTEXT.md`, `orchestrator/src/cli/commands/glossary.ts` |
+| Defended decisions | ADRs — the trade-offs you already settled don't get re-litigated by an agent at 2am. | `docs/knowledge/decisions/` — 94 of them |
+| A record that survives | Every arc in local Postgres. "Why is this line here" has an answer six months later. | `psql "$(cat .mars/pg.dsn)"` |
+| Your branch is never raced | Merges serialize behind a file lock and fast-forward. A merge that finds a dirty tree it can't attribute commits it to a checkpoint ref rather than cleaning it. | `orchestrator/src/tools/merge/`, `orchestrator/src/core/lib/git/checkpoint.ts` |
+| Decisions, not diffs | The action queue surfaces what a machine genuinely cannot decide. You are not a rubber stamp on a diff queue. | `mars action-queue list` |
+| Bounded flailing | Exactly one recovery attempt per failure. Then it stops and asks you. No retry budget, no tunable knob. | ADR-0040 |
+
+Cursor asks you to approve a diff. Mars asks you to approve a decision — and
+only when there is genuinely one to make.
+
+## It grows into your repo
+
+An independent survey of nine open-source orchestrators named this as the
+gap the entire category has:
+
+> "OSS orchestrators lack **learning persistence** … No tool here maintains
+> reusable, improved agent configurations across sessions automatically."
+> — Augment Code, 2026
+
+Mars ships opinionated and then bends toward you:
+
+| Your input | What Mars keeps | Where |
+| --- | --- | --- |
+| A failure it has never seen | An Investigator writes a recovery recipe, so the second time is automatic | `orchestrator/src/init/recipes-seed.ts`, `orchestrator/src/outbox/subscribers/recovery-spawn.ts` |
+| Friction that recurs across tasks | A draft proposal for a new step in your workflow | `orchestrator/src/growth/step-suggestions.ts`, `orchestrator/src/growth/heuristics.ts` |
+| Terms you sharpened in the grill | A glossary every future Worker reads | `CONTEXT.md` |
+| Your Workers' measured performance | Rewritten prompt blocks, in a revertible ledger | `orchestrator/src/core/steward-prompt-optimizer.ts`, `orchestrator/src/core/steward-ledger.ts` |
+| Your habits | A notice — with the off-switch attached to the message | `orchestrator/src/core/levers/store.ts` |
+
+`orchestrator/src/growth/step-suggestions.ts:2` calls itself *"the 'grow with
+the user' surface."* That's not marketing language retrofitted onto code;
+the code said it first.
+
+Ships with opinions. After a month, they're yours.
+
+## Event-driven and traced
+
+Not a buzzword — a transactional outbox and a span per step. Together
+they're why the state you're shown is never a lie, and why every line of
+code in your repo has a paper trail leading back to the decision that
+caused it.
+
+**Event-driven:** the outbox (`orchestrator/src/outbox/`) is an `events`
+table, named subscribers, and a cursor that advances only when the handler
+succeeds — a crash mid-delivery replays, it never silently drops. Sixteen
+subscribers each own one consequence (`blocker-resolution`, `recovery-spawn`,
+`steward-runtime-tune`, `desktop-notify`, `transcript-append`, …); adding a
+consequence is a new subscriber, not a new branch in a god function. The
+dispatcher doubles as the spend throttle — it enforces the per-kind ceiling
+returned by the spend-control decision (`orchestrator/src/outbox/dispatcher.ts`).
+Out to the UI, `GET /view/stream` sends payload-free typed invalidation pings
+(`orchestrator/src/core/daemon/view/stream-hub.ts`) — the client learns a view
+changed and re-fetches, never a stale copy of state. And what needs no event
+at all: condition rows in the action queue are derived on read, a pure
+projection of entity state (ADR-0048) — a condition that does not hold is
+unrepresentable, so stale alerts cannot accumulate.
+
+**Traced:** every step is bracketed by a span, not just the model calls.
+`run-worker-with-span.ts` wraps LLM-backed Workers with the worker name,
+provider session id, token usage, and transcript; `runNonLlmStepWithSpan`
+wraps setup, verify, and merge the same way. The split is an enforced
+invariant, not a convention: *a Step span is a Session iff `worker IS NOT
+NULL`* (`orchestrator/src/core/lib/run-worker-with-span.ts`). It's your
+database — 77 tables, queryable with `psql "$(cat .mars/pg.dsn)"`, no
+vendor, no retention policy, no 30-day dashboard cutoff
+(`orchestrator/src/core/lib/pg-schema.ts`).
+
+Every commit traces back to the decision that caused it — and the database
+is on your disk.
+
+## Lean on tokens
+
+Most agent tools spend your budget on coordination. Mars is unusual in
+metering itself. Narration is deliberately kept outside the paid provider
+boundary — the situation report that opens a subthread is built from reads
+of the daemon's own stores, not a model call
+(`orchestrator/src/core/lib/situation-report.ts`). Worker roles route through
+semantic model tiers so routine judging doesn't run at flagship prices. Mars
+watches its own spend (`orchestrator/src/core/daemon/usage-sampler.ts` →
+`orchestrator/src/core/lib/notices/token-spend-trend.ts`) and compares the
+recent window against the one before it, and can pause dispatch outright on
+a provider quota rejection rather than quietly burning down your month. The
+`economize` skill (`.claude/skills/economize/`) targets 60-90% token
+reduction on typical sessions by routing you to codegraph and file ranges
+instead of grep+Read loops.
+
+The only agent orchestrator that tells you it's getting expensive.
+
+## Everything is swappable — except one thing
+
+The container **is** [cordis 4](https://www.npmjs.com/package/@deepseek-ai/cordis)
+(`@deepseek-ai/cordis@4.0.1` in `orchestrator/package.json`) — a real
+`Context`, a real `Fiber`, a real typed event bus, not a bespoke plugin
+system you have to learn. Swap a coder, a verify heuristic, a merge
+strategy, a provider, or a single workflow step from a
+`.mars/workflows/*.js` file — everything ships wired, so swapping is
+opt-in, never setup. One thing is sealed: `store` and `traceStore` are
+installed as cordis *accessors*, not services, so `ctx.provide('store', …)`
+throws — and the seal holds even under `ctx.isolate` (ADR-0052,
+`orchestrator/src/core/__tests__/sealed-write-funnel-guard.test.ts`).
+
+You can change what runs. You can never change whether it was recorded.
 
 ## How it works
 
@@ -84,29 +209,21 @@ For fuzzy work, there's a shaping lane (`mars proposal add` → grill → slice
 into tasks) that turns a one-line goal into a wired dependency graph of tasks.
 Both lanes end at the same dispatcher above.
 
-## Quick start
+## Compared to Bernstein
 
-```sh
-# 1 — install the mars CLI (once per machine; re-run to upgrade)
-curl -sSL https://github.com/ilies-bel/mars/releases/latest/download/get-mars.sh | bash
+Bernstein is the nearest architectural neighbour — same planning-to-merge
+pipeline, per-task worktrees, verify-then-merge. No model in its coordination
+loop, byte-identical replay, an HMAC audit chain, 40+ adapters. It wins on
+determinism.
 
-# 2 — inside your repo: scaffold state + activate the mars:* skills
-mars init
+| | Bernstein | Mars |
+| --- | --- | --- |
+| Optimises for | Reproducibility | Adaptation |
+| Ideal end state | Run #500 ≡ run #1 | Run #500 is nothing like run #1 |
+| Buyer | A compliance reviewer | One engineer and their repo |
 
-# 3 — add work and watch it run
-mars task add "implement X in src/foo.ts"   # daemon auto-spawns on first write
-mars list                                    # see live statuses
-mars ui                                      # open the dashboard
-```
-
-**Requirements:** `git`, Node >= 22.13, and an authenticated agent CLI on
-`PATH`. The default is Codex: install `codex`, then run `codex login` once.
-Use `mars init --provider claude` or `--provider gemini` to select another
-adapter.
-
-<!-- TODO: record a 30s terminal screencast of the quick-start flow above.
-     Tool suggestion: asciinema or vhs (https://github.com/charmbracelet/vhs)
-     Host the .gif or .svg in docs/assets/quickstart.* -->
+A tool that replays byte-identically cannot grow into your repo. That's the
+trade; Mars took the other side.
 
 ## Features
 
@@ -256,26 +373,6 @@ CLI is the only write surface — the UI never mutates state.
 - **Action queue** — the human-attention surface: pick a row, read the failure
   reason and full transcript, and resolve it (restart, drop, investigate).
 
-## Swapping modules
-
-Mars ships fully wired — one install, zero configuration, no external
-modules. Everything it does opinionated-by-default is also swappable, from
-inside a normal workflow file:
-
-```js
-// .mars/workflows/task-workflow.js
-import { defineWorkflow, review, useTool } from 'mars/workflow'
-
-useTool('verify', myVerifyTool)   // scoped to this workflow; returns a disposer
-```
-
-The same pattern swaps a coder, a merge strategy, or a verify heuristic. One
-thing is deliberately **not** swappable: whichever tool you plug in, Mars
-still records what happened to the task — you can change what runs, never
-whether it's tracked. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the
-module map and how the pieces fit together; that's also where to look before
-adding a provider, a worker, or a verify check.
-
 ## CLI reference
 
 | Command | Purpose |
@@ -301,6 +398,8 @@ Full reference with env vars and workflow internals:
 
 ## What Mars is not
 
+Personal by design: one operator, one machine, one repo.
+
 - **Not a cloud service.** No hosted control plane, no multi-tenant queue, no
   auth, no telemetry. State is a local Postgres instance per repo.
 - **Not an API wrapper.** Mars has no provider SDK. Every model call goes
@@ -309,6 +408,8 @@ Full reference with env vars and workflow internals:
 - **Not a managed agent runtime.** Mars is the plumbing — worktree isolation,
   parallel dispatch, verification gates, serialized merges, persistence, audit
   log — so you compose your own workflow on top.
+- **Not for teams.** No concurrency model for other humans, no hosted control
+  plane, no account. What happens on your laptop stays on your laptop.
 
 ## Documentation
 
@@ -322,6 +423,13 @@ Full reference with env vars and workflow internals:
 | [`CONTEXT.md`](./CONTEXT.md) | Domain glossary (edit via `mars glossary` only) |
 | [`docs/knowledge/decisions/`](./docs/knowledge/decisions/) | Architecture Decision Records (add via `mars adr` only) |
 | [`docs/architecture/modular-core.md`](./docs/architecture/modular-core.md) | The service-container/tools/registries rework: target and phase status |
+
+## Proof points
+
+A dated snapshot (2026-08-20), not a live counter: 3,187 tasks completed by
+Mars in Mars's own repo, 3,799 commits since 2026-04-27, 94 ADRs, 16 outbox
+subscribers, 77 tables in the local trace/state schema — ~4 months, one
+person. Mars grew into the repo that built it.
 
 ## License
 
