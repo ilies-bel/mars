@@ -90,3 +90,32 @@ provider connection drop (`API Error: Connection closed mid-response`, exit 1,
 empty stderr) with a clean worktree is textbook `continue` — this doc exists
 mainly to confirm that pattern held here across three stacked failures without
 a real defect ever entering the picture.
+
+
+## 5. Addendum — second rescue-operator dispatch (08-20 10:40)
+
+This exact rescue task (`mars-ed0e040e`) was dispatched a second time with the
+same brief, naming the same failed member `fix-3ae33675`. Re-checked live state
+via `psql` and `mars task show mars-8693f3a4`:
+
+```
+08-20 10:36:22  task.queued   mars-8693f3a4   (as recorded above)
+08-20 10:40:11  task.queued   mars-8693f3a4   (queued again)
+08-20 10:40:19  status=running                confirmed via `mars task show`
+```
+
+`mars-8693f3a4` is `running` right now, actively executing the "Baseline
+repair: deterministic manifest-version resolution" prompt — a live `continue`
+in progress. `fix-3ae33675` itself remains terminally `failed` (it is a leaf
+recovery task, non-recoverable by design; it does not re-run). Nothing here
+changes the verdict: **`continue`**, already in effect, no command issued from
+this task to avoid racing the in-flight coder.
+
+**Loose end:** this is the second rescue-operator dispatch for an arc that
+resolved itself before the first one finished landing. The rescue-operator
+trigger appears to fire again once a fixed/re-queued arc produces new
+downstream events (e.g. the re-queue itself), rather than checking first
+whether the named failed task's origin has already moved past `failed`. Worth
+a task: have the rescue dispatcher short-circuit to a no-op verdict when the
+named origin task is no longer in `failed`/`blocked` status at dispatch time,
+instead of re-running a full diagnosis.
