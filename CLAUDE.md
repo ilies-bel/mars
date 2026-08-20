@@ -496,6 +496,12 @@ recovery-spawn path itself.
   nothing. Alternatively work in a scratch clone. The orchestrator checkpoints
   to per-task refs (`refs/mars/checkpoint/<task-id>`, see
   `orchestrator/src/core/lib/git/checkpoint.ts`), never to the stash.
+  **Before reaching for the checkout dance at all, check whether you need
+  it.** If the path in question is not in your branch's diff
+  (`git diff --name-only $(git merge-base HEAD origin/main) HEAD`), any
+  failure in it is pre-existing by construction — say so and skip the
+  restore entirely; the checkout is for the genuine case where your branch
+  *does* touch that path.
 - Never `cd`. Bash CWD persists across tool calls, and `mars` resolves
   the repo from CWD upward — once shifted into `.mars/worktrees/<id>/`,
   every later `mars` call silently binds to that worktree's `.mars/` and

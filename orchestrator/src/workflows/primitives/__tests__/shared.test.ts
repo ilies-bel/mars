@@ -44,4 +44,14 @@ describe('DEVIATION_RULES — pre-existing-failure baseline', () => {
     expect(hasBranchTip).toBe(true)
     expect(hasBaseline).toBe(true)
   })
+
+  it('offers a diff-membership shortcut before the destructive checkout dance', () => {
+    // If the failing file was never touched by the branch, it is pre-existing
+    // by construction — the agent should be told to check this FIRST and skip
+    // the commit/checkout/restore dance entirely when it holds, rather than
+    // reaching straight for `git checkout <merge-base> -- <file>` (which is
+    // destructive to uncommitted work in that path, see the stash test above).
+    expect(DEVIATION_RULES).toContain('git diff --name-only $(git merge-base HEAD origin/main) HEAD')
+    expect(DEVIATION_RULES).toContain('pre-existing by construction')
+  })
 })
