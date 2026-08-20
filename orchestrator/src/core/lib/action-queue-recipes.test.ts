@@ -250,6 +250,30 @@ describe('compound verb mapping', () => {
     expect(verbs[0]).toMatchObject({ op: 'dismiss-daemon-died', label: 'Dismiss', style: 'primary' })
   })
 
+  it('gate-broken offers a Restore gate verb carrying the runnable restore command', () => {
+    const recipe = lookupRecipe('gate-broken')
+    const ctx = makeCtx({ kind: 'gate-broken', payload: { gate: 'gate-abc123' } })
+    const verbs = getRecipeVerbs(recipe, ctx)
+    const primary = verbs.find((v) => v.style === 'primary')
+    expect(primary).toMatchObject({
+      op: 'copy',
+      label: 'Restore gate',
+      hint: 'mars verify-gate restore gate-abc123',
+    })
+  })
+
+  it('every gate-broken verb op is one the client or daemon actually handles', () => {
+    // A bespoke op (e.g. 'restore-gate') renders a button that POSTs to
+    // /actions/<op>/:id and 404s with "Unknown action op" — indistinguishable
+    // to the operator from a restore that refused.
+    const recipe = lookupRecipe('gate-broken')
+    const ctx = makeCtx({ kind: 'gate-broken', payload: { gate: 'gate-abc123' } })
+    const handled = new Set(['copy', 'dismiss', 'snooze'])
+    for (const verb of getRecipeVerbs(recipe, ctx)) {
+      expect(handled).toContain(verb.op)
+    }
+  })
+
   it('failed has "Restart" and "Discard task" verbs', () => {
     const recipe = lookupRecipe('failed')
     const ctx = makeCtx({ kind: 'failed' })

@@ -61,6 +61,13 @@ export type RecipeVerb = {
    * cause at all. Keep one vocabulary; do not reintroduce a translation layer.
    */
   style: 'primary' | 'destructive' | 'default'
+  /**
+   * Text the client copies to the clipboard for an `op: 'copy'` verb — the
+   * runnable command behind a deliberate operator gesture. Ignored for every
+   * other op. Matches `alertVerbSchema.hint` (`ui/src/shared/schemas.ts`),
+   * which already accepted this field before any recipe emitted it.
+   */
+  hint?: string
 }
 
 /** A labelled daemon operation that Mars can preload as a Notice response chip. */
@@ -697,10 +704,29 @@ const RECIPE_DEFINITIONS = {
       // rather than left dangling; see mars-89537cf3 for the daemon-code-drift
       // sibling of this same defect class.
     }),
-    // `restore-gate` re-verifies the gate's own command and, if it now
-    // passes, clears quarantine — the same path as `mars verify-gate
-    // restore <id>`. Primary style: it's the row's whole reason to exist.
-    verbs: [{ op: 'restore-gate', label: 'Restore gate', style: 'primary' }],
+    // Restoring a gate re-runs that gate's own command — a full build or test
+    // suite that can take minutes. That does not belong inside a daemon HTTP
+    // request, so this is a `copy` verb handing the operator the exact runnable
+    // command, the same gesture `scorer-suggested` and `workflow-draft-pending`
+    // use for their deliberate mutations. Primary style: it's the row's whole
+    // reason to exist.
+    //
+    // The op MUST be one the daemon (or the client) actually handles. A bespoke
+    // `restore-gate` op renders an identical-looking button that POSTs to
+    // `/actions/restore-gate/:id` and 404s with `Unknown action op` — a dead
+    // button is worse than no button, since the operator reads it as "I tried
+    // to restore and it refused".
+    verbs: (ctx) => {
+      const gate = str(ctx.payload['gate'])
+      return [
+        {
+          op: 'copy',
+          label: 'Restore gate',
+          style: 'primary',
+          hint: `mars verify-gate restore ${gate || '<gate-id>'}`,
+        },
+      ]
+    },
   },
 
   'verify-uncovered': {

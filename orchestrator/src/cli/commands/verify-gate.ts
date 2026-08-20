@@ -413,28 +413,44 @@ const verifyGateRestore: Command = {
       // gate's own declared tier — an 'integration' tier would make
       // verifyChanges defer (and NOT run) the step, which would make
       // restore "pass" without actually checking anything.
-      const result = await verifyChanges({
-        cwd: deps.ctx.repoRoot,
-        steps: [
-          {
-            name: gate.name,
-            gateId: gate.id,
-            cmd: gate.cmd,
-            args: gate.args,
-            required: true,
-            dir: gate.scope,
-            tier: 'task',
-            ...(gate.timeoutMin !== null ? { timeoutMin: gate.timeoutMin } : {}),
-          },
-        ],
-      })
-      const step = result.steps.find((s) => s.gateId === gate.id) ?? result.steps[0]
-      if (!result.passed || !step?.passed) {
-        const signature = computeFailureSignature(`verify:${gate.name}`, step?.output ?? '')
+      // The re-verify can THROW rather than return a failed step — most
+      // commonly when the gate's scope directory no longer exists in this
+      // repo, which makes run-tool reject the spawn outright ("working
+      // directory no longer exists: <path>"). A gate pointing at a vanished
+      // directory is exactly the kind of gate an operator reaches for
+      // `restore` on, so it must read as "still failing", not as an uncaught
+      // crash out of the CLI.
+      let output: string
+      let passed: boolean
+      try {
+        const result = await verifyChanges({
+          cwd: deps.ctx.repoRoot,
+          steps: [
+            {
+              name: gate.name,
+              gateId: gate.id,
+              cmd: gate.cmd,
+              args: gate.args,
+              required: true,
+              dir: gate.scope,
+              tier: 'task',
+              ...(gate.timeoutMin !== null ? { timeoutMin: gate.timeoutMin } : {}),
+            },
+          ],
+        })
+        const step = result.steps.find((s) => s.gateId === gate.id) ?? result.steps[0]
+        passed = result.passed && (step?.passed ?? false)
+        output = step?.output ?? '(no output captured)'
+      } catch (error: unknown) {
+        passed = false
+        output = error instanceof Error ? error.message : String(error)
+      }
+      if (!passed) {
+        const signature = computeFailureSignature(`verify:${gate.name}`, output)
         deps.err(
           `verify gate ${gate.id} (${gate.scope}/${gate.name}) is still failing: ${signature}`,
         )
-        deps.err(step?.output ?? '(no output captured)')
+        deps.err(output)
         deps.err('re-run with --force to restore anyway')
         return { code: 1 }
       }

@@ -310,29 +310,43 @@ async function deriveGateBrokenConditions(
   client: DbClient,
   nowMs: number,
 ): Promise<PersistedActionQueueRow[]> {
+  // The LEFT JOIN is what keeps this row from outliving its subject. A gate's
+  // `last_failure_origin_id` is plain history: it is never cleared when the
+  // task it names is purged, so it routinely points at a task that no longer
+  // exists. Rendering that as a task link gave the operator a row whose
+  // "details" resolved to nothing. Resolve the reference here instead, and
+  // emit `originTaskId: null` when the task is gone — the gate's own identity
+  // (scope/name) is the stable subject of this row, not the failure that
+  // happened to trip it.
   const result = await client.execute(
-    `SELECT id, quarantine_signature, last_failure_at, last_failure_origin_id
-       FROM verify_gates WHERE state = 'quarantined'`,
+    `SELECT g.id, g.scope, g.name, g.quarantine_signature, g.last_failure_at,
+            t.id AS origin_task_id
+       FROM verify_gates g
+       LEFT JOIN tasks t ON t.id = g.last_failure_origin_id
+      WHERE g.state = 'quarantined'`,
   )
   return result.rows.map((r) => {
     const row = r as {
       id: string
+      scope: string | null
+      name: string | null
       quarantine_signature: string | null
       last_failure_at: number | null
-      last_failure_origin_id: string | null
+      origin_task_id: string | null
     }
     const verdict = row.quarantine_signature ?? row.id
     const raisedAt = row.last_failure_at ?? nowMs
+    const identity = row.name === null ? row.id : `${row.scope ?? '.'}/${row.name}`
     return {
       id: deriveId('gate-broken', row.id),
       kind: 'gate-broken',
       priority: 'high',
-      title: `Gate ${row.id} is broken`,
+      title: `Gate ${identity} is broken`,
       body: '',
       payload: {
         gate: row.id,
         verdict,
-        originTaskId: row.last_failure_origin_id,
+        originTaskId: row.origin_task_id,
         streak: null,
       },
       context: {},

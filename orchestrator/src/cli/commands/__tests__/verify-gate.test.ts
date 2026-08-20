@@ -701,6 +701,9 @@ describe('mars verify-gate restore', () => {
   })
 
   it('clears quarantine by --scope/--name when the gate now passes', async () => {
+    // A scoped gate runs its command in <repo>/<scope>, so that directory has
+    // to exist for the re-verify to spawn at all.
+    mkdirSync(resolve(repo, 'orchestrator'), { recursive: true })
     const { store, ctx } = await loadDeps()
     const daemon = await makeFake()
 
@@ -761,6 +764,52 @@ describe('mars verify-gate restore', () => {
     const out = listR.out.join('\n')
     expect(out).toContain('active')
     expect(out).not.toMatch(/QUARANTINED/)
+  })
+
+  it('reports a gate whose scope directory is missing as still failing', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    // No `vanished/` directory is ever created in the fixture repo, so the
+    // re-verify cannot even spawn. That must read as "still failing", not
+    // crash out of the CLI.
+    const addR = await run(
+      [
+        'verify-gate', 'add', '--scope', 'vanished', '--name', 'ok',
+        '--cmd', 'node', '--', '-e', 'process.exit(0)',
+      ],
+      { store, ctx, daemon },
+    )
+    const id = addR.out[0]!
+    await quarantine(id)
+
+    const restoreR = await run(['verify-gate', 'restore', id], { store, ctx, daemon })
+    expect(restoreR.code).toBe(1)
+    expect(restoreR.err.join('\n')).toContain('still failing')
+
+    const listR = await run(['verify-gate', 'list'], { store, ctx, daemon })
+    expect(listR.out.join('\n')).toContain('QUARANTINED')
+  })
+
+  it('--force restores a gate whose scope directory is missing', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const addR = await run(
+      [
+        'verify-gate', 'add', '--scope', 'vanished', '--name', 'ok',
+        '--cmd', 'node', '--', '-e', 'process.exit(0)',
+      ],
+      { store, ctx, daemon },
+    )
+    const id = addR.out[0]!
+    await quarantine(id)
+
+    const restoreR = await run(['verify-gate', 'restore', id, '--force'], { store, ctx, daemon })
+    expect(restoreR.code).toBe(0)
+
+    const listR = await run(['verify-gate', 'list'], { store, ctx, daemon })
+    expect(listR.out.join('\n')).not.toMatch(/QUARANTINED/)
   })
 
   it('exits 1 for an unknown id', async () => {
