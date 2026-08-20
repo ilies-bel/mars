@@ -188,7 +188,7 @@ message. Pick one via `mars action-queue list` or `/mars:action-queue`; the acti
 dispatches to the right resolver (`/mars:unblock`, `/mars:grill`, or
 terminal restart/purge). To see pending work, run `/mars:chat` or `/mars:action-queue`.
 
-**Action queue architecture (ADR-0057).** The queue has two distinct row
+**Action queue architecture (ADR-0094, building on ADR-0048).** The queue has two distinct row
 kinds:
 
 - **Condition kinds** (`failed`, `stale-queued`, `gate-broken`,
