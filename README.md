@@ -317,6 +317,7 @@ Full reference with env vars and workflow internals:
 | [`VISION.md`](./docs/knowledge/vision.md) | Target state, canonical loop, non-goals |
 | [`ARCHITECTURE.md`](./ARCHITECTURE.md) | Components and state as they exist today |
 | [`PRODUCT.md`](./PRODUCT.md) | Product purpose, users, design principles |
+| [`POSITIONING.md`](./POSITIONING.md) | Core value, pillars, messaging, competitive lane |
 | [`orchestrator/README.md`](./orchestrator/README.md) | Full CLI reference, workflow internals, env vars |
 | [`CONTEXT.md`](./CONTEXT.md) | Domain glossary (edit via `mars glossary` only) |
 | [`docs/knowledge/decisions/`](./docs/knowledge/decisions/) | Architecture Decision Records (add via `mars adr` only) |
