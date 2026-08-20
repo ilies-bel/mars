@@ -1,3 +1,5 @@
+import type { Disposable } from '@deepseek-ai/cordis';
+
 /**
  * Reversible registration.
  *
@@ -8,10 +10,14 @@
  * Mars public API (`ctx.provide`, `registerProvider`, `registerPrimitive`,
  * `registerVerifyHeuristic`, …), and four orchestrator modules import it.
  *
- * It is deliberately `() => void` rather than cordis's `Disposable<T = any>`:
- * a Mars registration disposer returns nothing, and the engine bans explicit
- * `any` (ADR-0052).
+ * It is defined in terms of cordis's own `Disposable<T = any>` rather than
+ * redeclared as a structurally identical `() => void`: pinning the type
+ * parameter to `void` resolves to exactly `() => void` and introduces no
+ * `any` at any call site, since the `any` default only applies when the
+ * parameter is omitted. The engine still bans explicit `any` (ADR-0052) —
+ * this doesn't touch that rule, it just gives cordis's type a
+ * domain-meaningful name.
  */
 
 /** Reverses one registration. Calling it more than once must be safe. */
-export type Disposer = () => void;
+export type Disposer = Disposable<void>;
