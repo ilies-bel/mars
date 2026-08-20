@@ -215,7 +215,7 @@ describe('action-queue list', () => {
     expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('filter=all'), expect.anything())
   })
 
-  it('outputs "action queue empty" when daemon returns empty array', async () => {
+  it('keeps stdout empty and reports "action queue empty" on stderr when daemon returns empty array', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [],
@@ -226,7 +226,10 @@ describe('action-queue list', () => {
     const r = await runCommandInProcess(['action-queue', 'list', 'open'], opts)
 
     expect(r.code).toBe(0)
-    expect(r.out.join('\n')).toContain('action queue empty')
+    // stdout must stay purely machine-readable (rows-only) so a poller that
+    // diffs stdout lines never mistakes the empty-state message for a row.
+    expect(r.out).toHaveLength(0)
+    expect(r.err.join('\n')).toContain('action queue empty')
   })
 
   it('rejects an unknown filter with code 2', async () => {

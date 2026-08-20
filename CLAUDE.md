@@ -220,8 +220,11 @@ Poll with the filtered listing — never by tailing the event stream:
 mars action-queue list open --kind failed,stale-queued
 ```
 
-It prints one tab-separated line per alert (`id  priority  kind  title`)
-and nothing at all when clear, so it is cheap enough to run often. The
+On stdout it prints one tab-separated line per alert (`id  priority  kind
+title`) and nothing at all when clear — stdout is purely machine-readable,
+so a poller can diff its lines safely. The human-readable confirmation
+(`action queue empty`) goes to stderr, not stdout, precisely so it can never
+be mistaken for a row; this is cheap enough to run often. The
 `GET /events` endpoint is a cursor-paginated JSON trace query (the response
 includes `events` and `nextCursor`), useful for after-the-fact inspection of
 a task's trace. The daemon's SSE channel is `GET /view/stream`; it sends
@@ -231,10 +234,11 @@ surface into a session for routine alert-watching; use the filtered listing
 above.
 
 The action queue is served by the daemon. If the daemon is down the
-command exits 1 with `action queue: daemon not running`, and against a
-stale `.mars/http.port` it can take minutes to say so. That is "unknown",
-not "no alerts" — report it as such rather than as a clean queue. Only
-`action queue empty` (exit 0) means there is nothing pending.
+command exits 1 with `action queue: daemon not running` on stderr, and
+against a stale `.mars/http.port` it can take minutes to say so. That is
+"unknown", not "no alerts" — report it as such rather than as a clean
+queue. Only exit 0 with empty stdout (echoed as `action queue empty` on
+stderr) means there is nothing pending.
 
 When a new alert appears, surface it unprompted — id, kind, title — and
 point at `/mars:alerts` for triage. Do not restart, purge, or remove a

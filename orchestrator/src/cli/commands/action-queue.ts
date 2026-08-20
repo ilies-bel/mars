@@ -209,7 +209,12 @@ const actionQueueList: Command = {
       rows = rows.filter((row) => row.kind !== 'draft-proposal')
     }
     if (rows.length === 0) {
-      deps.out('action queue empty')
+      // Machine-readable stdout stays empty on a clear queue — a poller that
+      // diffs stdout lines must never see this as a row. The human-readable
+      // confirmation goes to stderr so interactive operators still see it,
+      // and it stays distinguishable from the daemon-down case (also
+      // stderr, but exit 1 instead of exit 0).
+      deps.err('action queue empty')
       return { code: 0 }
     }
     if (lean) {
