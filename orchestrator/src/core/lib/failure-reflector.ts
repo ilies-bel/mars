@@ -21,6 +21,16 @@ and why each failed. Then:
 2. Suggest which recipes to apply (cite the recipe name).
 3. If no recipe fits, propose a novel improvement.
 
+Least-specific-valid-rule requirement: the rule behind each suggestion
+must be VALID on every failure instance you cite as evidence, and no
+MORE SPECIFIC than that evidence requires — do not narrow a rule to
+this arc's exact signature, file path, or task id when a broader
+pattern already covers it, and do not widen it past what the cited
+instances actually support. In "rationale", state explicitly (a) which
+failures/instances this rule COVERS — cite them — and (b) what it does
+NOT claim to cover (other signatures, tasks, or scenarios you have no
+evidence for).
+
 Output a JSON object:
 {
   "suggestions": [
