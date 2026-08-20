@@ -371,7 +371,8 @@ recovery-spawn path itself.
   `mars operator set dispatch off` suspends dispatch (in-flight tasks run to
   completion; no new work is dispatched); `mars operator set dispatch on`
   resumes. There is **no `mars daemon pause` / `mars daemon resume`** — the
-  `daemon` group is `start|stop|restart|kill|status|reload` only.
+  `daemon` group is `start|stop|restart|kill|status|reload|reset-breaker`
+  only.
   - The pause is **persisted** to `.mars/daemon.json` as a top-level
     `"paused": true`, so it survives a daemon auto-respawn (a restarted daemon
     comes up paused and logs `[pause] restored persisted paused state`).
@@ -379,10 +380,21 @@ recovery-spawn path itself.
     signature-storm circuit breaker (`reason: storm`) and a provider
     rate/spend rejection (`reason: quota`) both pause it. First cause wins —
     a second pause never overwrites the reason.
-  - `mars operator set dispatch on` is the single way out of **any** of the
-    three. It clears whichever cause holds the pause plus the durable
-    signature-storm `tripped` flag, so a later restart does not re-pause the
-    queue. Do not wait out the storm breaker's crash/hang fallback timer.
+  - `mars operator set dispatch on` is the general way out of **any** of the
+    three pause causes: it resumes dispatch unconditionally (operator, storm,
+    or quota) and also clears the durable signature-storm `tripped` flag as a
+    side effect, so a later restart does not re-pause the queue. Do not wait
+    out the storm breaker's crash/hang fallback timer.
+  - `mars daemon reset-breaker` is the purpose-built way to clear a **tripped
+    storm breaker specifically** — it is what `mars daemon status` itself
+    recommends when tripped (`run 'mars daemon reset-breaker' to clear`). It
+    always clears the durable `tripped`/streak state, but only resumes
+    dispatch if the current pause reason is `storm`; a pause held for
+    `operator` or `quota` is left completely untouched, so that pause still
+    needs `mars operator set dispatch on` (or resolving the quota condition)
+    to lift. Prefer `reset-breaker` when you only want to clear the breaker
+    without touching an unrelated pause; reach for `set dispatch on` when you
+    want dispatch running again regardless of cause.
   - Both `mars daemon status` and `mars operator status` render the same
     `DispatchPauseState`, so they always agree on whether dispatch is running
     and why it is not.
