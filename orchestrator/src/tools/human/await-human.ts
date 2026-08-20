@@ -186,10 +186,11 @@ export const awaitHuman = async (
         ? ` Lease re-granted to ${released} — continue in the worktree, then \`mars step done ${taskId}\`.`
         : ` Work in the worktree, then \`mars step done ${taskId}\` (or \`mars release ${taskId} --abort\` to bail).`),
     payload: {
+      situation: 'lease-park',
       taskId,
       leaseOwner,
       leasedAt: now,
-      leaseNote: note,
+      leaseNote: note ?? null,
       stepName,
       ...(opts.previewUrl != null ? { previewUrl: opts.previewUrl } : {}),
       ...(opts.logPath != null ? { logPath: opts.logPath } : {}),

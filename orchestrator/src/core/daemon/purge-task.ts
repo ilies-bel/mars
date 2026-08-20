@@ -16,7 +16,11 @@ import {
   listUniqueCommitsAhead,
   type OrphanCommit,
 } from '../lib/sweep'
-import { supersedeActionQueueItemsForOrigin, resolveAllRowsForTask } from '../lib/action-queue'
+import {
+  supersedeActionQueueItemsForOrigin,
+  resolveAllRowsForTask,
+  resolveRowsNamingDeletedTask,
+} from '../lib/action-queue'
 import { collectIntegrationEvidence, type IntegrationEvidence } from '../lib/collect-integration-evidence'
 import { buildCompensationPrompt } from './compensation-prompt'
 
@@ -211,6 +215,9 @@ export const corePurgeTask = async (
   // the daemon's event drain has not run yet. Both calls are idempotent with the
   // event-based closures (a row already resolved is a silent no-op).
   await resolveAllRowsForTask(id)
+  // Deletion-only widening: rows that merely *name* this task (in raised_by
+  // or anywhere in their payload) become unopenable once it is gone.
+  await resolveRowsNamingDeletedTask(id)
   await supersedeActionQueueItemsForOrigin(id, 'origin-purged', 'purge:pre-delete')
 
   const dropResult = opts?.releaseOrphanedDependents

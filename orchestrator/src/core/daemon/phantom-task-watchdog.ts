@@ -466,10 +466,11 @@ export const sweepExpiredLeases = async (
         `Lease holder: ${task.leaseOwner ?? 'unknown'}. ` +
         `Release the lease to resume the pipeline, or drop the task if the work is abandoned.`,
       payload: {
+        situation: 'lease-expired',
         taskId: task.id,
-        leaseOwner: task.leaseOwner,
-        leasedAt: task.leasedAt,
-        leaseNote: task.leaseNote,
+        leaseOwner: task.leaseOwner ?? null,
+        leasedAt: task.leasedAt ?? null,
+        leaseNote: task.leaseNote ?? null,
         ageMinutes,
       },
       context: { taskId: task.id },

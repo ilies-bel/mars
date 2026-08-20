@@ -8,6 +8,7 @@ import { derivedRowActions } from './derived-row-actions'
 import { lookupRecipe, getRecipeVerbs } from './action-queue-recipes'
 import { classifyMarsVerb } from './chat-mars-verbs'
 import { isActionQueueKind, type ActionQueueKind } from './action-queue-kinds'
+import type { PayloadFor, UnauditedPayload } from './action-queue-payloads'
 
 /** Idempotent PostgreSQL schema bootstrap retained for existing callers. */
 export const initActionQueue = async (): Promise<void> => {
@@ -56,13 +57,21 @@ export type LiveTaskLookup = (
   taskId: string,
 ) => Promise<{ status: string } | null>
 
-export interface RaiseActionQueueItem {
-  kind: ActionQueueKind
+/**
+ * A row to raise.
+ *
+ * Generic over the kind so `payload` is checked against that kind's contract
+ * in `action-queue-payloads.ts` — the same contract the kind's recipe reads
+ * through. A raiser that stops emitting a key its recipe renders no longer
+ * produces a silently blank detail panel; it fails to compile.
+ */
+export interface RaiseActionQueueItem<K extends ActionQueueKind = ActionQueueKind> {
+  kind: K
   category: ActionQueueCategory | string
   priority: ActionQueuePriority
   title: string
   body: string
-  payload: Record<string, unknown>
+  payload: PayloadFor<K>
   context: Record<string, unknown>
   raisedBy: string
   signature: string
@@ -406,8 +415,8 @@ export const buildAlertSegment = (
   }
 }
 
-export const raiseActionQueueItem = async (
-  item: RaiseActionQueueItem,
+export const raiseActionQueueItem = async <K extends ActionQueueKind>(
+  item: RaiseActionQueueItem<K>,
 ): Promise<string> => {
   const c = stateClient()
 
@@ -456,7 +465,7 @@ export const raiseActionQueueItem = async (
   }
 
   const id = generateActionQueueId()
-  const payload: Record<string, unknown> = { ...item.payload }
+  const payload: Record<string, unknown> = { ...(item.payload as UnauditedPayload) }
   if (item.occurrence) {
     const prior = Array.isArray(payload.occurrences)
       ? (payload.occurrences as unknown[])
@@ -1357,6 +1366,51 @@ export const resolveAllRowsForTask = async (
                       AND origin_task_id IS NULL))
              AND status = 'open'`,
     args: [Date.now(), taskId, taskId, taskId],
+  })
+}
+
+/**
+ * Close every open row that *names* a task which is about to be deleted.
+ *
+ * Distinct from {@link resolveAllRowsForTask}, which also runs when a task
+ * merely reaches a terminal status and therefore has to stay narrow: a
+ * `gate-enrichment` row naming its writer task is still a live decision after
+ * that writer is done, and must not be closed early.
+ *
+ * Deletion is different. Once the row is gone from `tasks`, every action-queue
+ * row referencing it is unopenable — the operator clicks it and gets "not
+ * found" (observed 2026-08-20 for `fix-d612292d` and `mars-6340b827`). Per
+ * ADR-0057, a stored operator-decision row must be closed by the same mutation
+ * that makes it unresolvable, so this runs inside the delete path.
+ *
+ * Three predicates beyond the terminal-status set, each covering a shape that
+ * previously stranded rows open forever:
+ *   - `raised_by = :id` / `raised_by LIKE '%:'||:id` — rows an agent raised
+ *     about itself through `mars action-queue raise` (`raised_by` is the bare
+ *     task id, or an `agent:recovery:<id>`-style qualified form).
+ *   - any top-level payload value equal to the id — catches every key name a
+ *     raiser might have chosen (`originTaskId`, `writerTaskId`, `origin_task`,
+ *     …) without this function having to enumerate them, which is the same
+ *     by-string-name coupling that produced the blank-panel defect class.
+ */
+export const resolveRowsNamingDeletedTask = async (
+  taskId: string,
+): Promise<void> => {
+  const c = stateClient()
+  await c.execute({
+    sql: `UPDATE action_queue_items
+             SET status = 'resolved',
+                 resolved_at = ?
+           WHERE (origin_task_id = ?
+                  OR signature = ?
+                  OR raised_by = ?
+                  OR raised_by LIKE '%:' || ?
+                  OR EXISTS (
+                       SELECT 1 FROM jsonb_each_text(payload::jsonb) AS kv
+                        WHERE kv.value = ?
+                     ))
+             AND status = 'open'`,
+    args: [Date.now(), taskId, taskId, taskId, taskId, taskId],
   })
 }
 

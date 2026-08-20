@@ -78,6 +78,7 @@ import { linkTaskToThread } from './daemon/chat-thread-tasks'
 import {
   raiseActionQueueItem,
   resolveAllRowsForTask,
+  resolveRowsNamingDeletedTask,
   supersedeActionQueueItemsForOrigin,
 } from './lib/action-queue'
 import {
@@ -1018,6 +1019,7 @@ export class Arc {
         `Work in the worktree, then run \`mars step done ${taskId}\` to hand off to verify+merge, or \`mars release --abort ${taskId}\` to exit without merging.` +
         (options.leaseNote ? ` Note: ${options.leaseNote}` : ''),
       payload: {
+        situation: 'lease-park',
         taskId,
         leaseOwner: options.leaseOwner,
         leasedAt: now,
@@ -2037,6 +2039,9 @@ export class Arc {
     // Both calls are idempotent with the event-based closures (a row already
     // resolved is a silent no-op).
     await resolveAllRowsForTask(id)
+    // Deletion-only widening: rows that merely *name* this task (in raised_by
+    // or anywhere in their payload) become unopenable once it is gone.
+    await resolveRowsNamingDeletedTask(id)
     await supersedeActionQueueItemsForOrigin(id, 'origin-dropped', 'drop:pre-delete')
 
     // Populated inside the atomic; consumed after so the action-queue raise

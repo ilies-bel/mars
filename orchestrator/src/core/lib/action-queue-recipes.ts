@@ -12,6 +12,12 @@
  */
 
 import type { ActionQueueKind } from './action-queue-kinds'
+import {
+  awaitingHumanSituation,
+  type LeaseExpiredPayload,
+  type LeaseParkPayload,
+  type PayloadFor,
+} from './action-queue-payloads'
 import { classifyMarsVerb } from './chat-mars-verbs'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -66,11 +72,18 @@ export type PreloadedResponse = {
     | { type: 'subthread'; title: string }
 }
 
-/** Context object passed to recipe functions. */
-export type RecipeContext = {
-  kind: ActionQueueKind
+/**
+ * Context object passed to recipe functions.
+ *
+ * Generic over the kind so `payload` carries that kind's declared contract
+ * from `action-queue-payloads.ts` — the same type its raiser is checked
+ * against. For a kind marked `typed` in `ACTION_QUEUE_PAYLOAD_AUDIT`, reading
+ * a key no raiser emits is a compile error rather than a blank detail panel.
+ */
+export type RecipeContext<K extends ActionQueueKind = ActionQueueKind> = {
+  kind: K
   entityId: string
-  payload: Record<string, unknown>
+  payload: PayloadFor<K>
   context: Record<string, unknown>
   title: string
   body: string
@@ -78,21 +91,21 @@ export type RecipeContext = {
 }
 
 /** A complete recipe for one action-queue kind. */
-export type Recipe = {
+export type Recipe<K extends ActionQueueKind = ActionQueueKind> = {
   /** One plain sentence a non-expert understands. */
-  humanSummary: (ctx: RecipeContext) => string
+  humanSummary: (ctx: RecipeContext<K>) => string
   /** Structured detail fields for the expandable section. */
-  humanDetail: (ctx: RecipeContext) => RecipeHumanDetail
+  humanDetail: (ctx: RecipeContext<K>) => RecipeHumanDetail
   /**
    * Ordered action verbs specific to this kind.
    * Dismiss and Snooze are appended automatically by getRecipeVerbs.
    */
-  verbs: RecipeVerb[] | ((ctx: RecipeContext) => RecipeVerb[])
+  verbs: RecipeVerb[] | ((ctx: RecipeContext<K>) => RecipeVerb[])
   /**
    * Responses Mars can offer when this recipe is rendered as a Notice.
    * Notice responses deliberately omit AlertCard-only presentation styling.
    */
-  preloadedResponses: PreloadedResponse[] | ((ctx: RecipeContext) => PreloadedResponse[])
+  preloadedResponses: PreloadedResponse[] | ((ctx: RecipeContext<K>) => PreloadedResponse[])
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -415,19 +428,65 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
+  /**
+   * Three situations raise this kind, and they need three different sentences.
+   * The recipe used to render the lease sentence unconditionally, so an
+   * agent-raised escalation ("recovery found its arc already done") got a
+   * summary that flatly contradicted its own title, over an empty detail panel
+   * — it read `payload.note` and `payload.branch`, which no raiser has ever
+   * emitted. Discriminate on the payload; never assume the lease case.
+   */
   'awaiting-human': {
     humanSummary: (ctx) => {
-      const owner = str(ctx.payload['leaseOwner']) || 'someone'
-      return `${owner} is working interactively on a task — it will resume automatically when the lease is released.`
+      switch (awaitingHumanSituation(ctx.payload)) {
+        case 'lease-park': {
+          // `Partial<…>` rather than a plain narrow: rows raised before the
+          // `situation` discriminator existed carry the lease keys without it,
+          // and must still render this sentence. Key names stay checked.
+          const p = ctx.payload as Partial<LeaseParkPayload>
+          const owner = str(p.leaseOwner) || 'someone'
+          const step = str(p.stepName)
+          return `${owner} is working interactively${step ? ` at step '${step}'` : ''} — the task resumes automatically when the lease is released.`
+        }
+        case 'lease-expired': {
+          const p = ctx.payload as Partial<LeaseExpiredPayload>
+          const owner = str(p.leaseOwner) || 'someone'
+          const age = typeof p.ageMinutes === 'number' ? ` for ${p.ageMinutes} min` : ''
+          return `A lease held by ${owner} has been idle${age} — nobody is working on this task. Continue in the worktree or release it.`
+        }
+        case 'escalation': {
+          // The escalating agent's own words are the only accurate summary
+          // here: the payload is free-form and is often empty entirely.
+          const sentence = ctx.body.trim().split(/(?<=[.!?])\s/)[0] ?? ''
+          return sentence ||
+            'An agent stopped and escalated this to a human — read the detail and decide what to do.'
+        }
+      }
     },
-    humanDetail: (ctx) => ({
-      raisedAt: ctx.raisedAt,
-      entityId: ctx.entityId,
-      leaseOwner: str(ctx.payload['leaseOwner']),
-      leasedAt: str(ctx.payload['leasedAt']),
-      note: str(ctx.payload['note']),
-      branch: str(ctx.payload['branch']),
-    }),
+    humanDetail: (ctx) => {
+      const situation = awaitingHumanSituation(ctx.payload)
+      const base = { raisedAt: ctx.raisedAt, entityId: ctx.entityId, situation }
+      if (situation === 'escalation') {
+        // Free-form and agent-authored: render every scalar it carries, plus
+        // the body, so an escalation can never present a blank panel.
+        const scalars = Object.entries(ctx.payload as Record<string, unknown>)
+          .filter(([k, v]) =>
+            k !== 'occurrences' && k !== 'situation' &&
+            (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'))
+        return { ...base, note: ctx.body, ...Object.fromEntries(scalars) }
+      }
+      const p = ctx.payload as Partial<LeaseParkPayload> & Partial<LeaseExpiredPayload>
+      return {
+        ...base,
+        taskId: str(p.taskId) || ctx.entityId,
+        leaseOwner: str(p.leaseOwner),
+        leasedAt: str(p.leasedAt),
+        leaseNote: str(p.leaseNote),
+        ...(situation === 'lease-park'
+          ? { stepName: str(p.stepName) }
+          : { ageMinutes: p.ageMinutes ?? 0 }),
+      }
+    },
     verbs: [],
   },
 
@@ -670,16 +729,38 @@ const RECIPE_DEFINITIONS = {
     verbs: [{ op: 'show-all', label: 'Show all', style: 'default' }],
   },
 
+  /**
+   * The row asks the operator to approve or retire a candidate check, so the
+   * candidate check is the one thing it must show. It used to read
+   * `payload.candidateCheck` and `payload.seenCount`, neither of which any
+   * raiser emits — the decision was requested while the thing being decided
+   * was withheld. The candidate lives in `stepSpec`, and it is an *object*:
+   * formatting it is the recipe's job, because `str()` on an object renders
+   * empty. (`seenCount` is a column on the row, never payload — dropped.)
+   */
   'gate-enrichment': {
-    humanSummary: () =>
-      "A new failure pattern was spotted — review the proposed gate check and approve it or retire the pattern.",
-    humanDetail: (ctx) => ({
-      raisedAt: ctx.raisedAt,
-      entityId: ctx.entityId,
-      signature: str(ctx.payload['signature']),
-      candidateCheck: str(ctx.payload['candidateCheck']),
-      seenCount: ctx.payload['seenCount'],
-    }),
+    humanSummary: (ctx) => {
+      const spec = ctx.payload.stepSpec
+      const cmd = spec ? [spec.cmd, ...spec.args].join(' ') : ''
+      return cmd
+        ? `Failure pattern ${ctx.payload.signature} recurred — approve \`${cmd}\` as a standing gate check, or retire the pattern.`
+        : 'A new failure pattern was spotted — review the proposed gate check and approve it or retire the pattern.'
+    },
+    humanDetail: (ctx) => {
+      const spec = ctx.payload.stepSpec
+      return {
+        raisedAt: ctx.raisedAt,
+        entityId: ctx.entityId,
+        signature: ctx.payload.signature,
+        candidateCheck: spec
+          ? `${[spec.cmd, ...spec.args].join(' ')} (dir: ${spec.dir ?? '.'})`
+          : 'none — no runnable check could be encoded for this signature',
+        encodableFamily: ctx.payload.encodableFamily ?? 'command',
+        failingStep: ctx.payload.failingStep,
+        originTaskId: ctx.payload.originTaskId ?? '',
+        writerTaskId: ctx.payload.writerTaskId ?? '',
+      }
+    },
     verbs: [
       { op: 'enrich-approve', label: 'Approve gate check', style: 'primary' },
       { op: 'enrich-retire', label: 'Retire pattern', style: 'default' },
@@ -1145,7 +1226,7 @@ const RECIPE_DEFINITIONS = {
       { op: 'reject', label: 'Keep as arc artefact only', style: 'default' },
     ],
   },
-} satisfies Record<ActionQueueKind, Omit<Recipe, 'preloadedResponses'>>
+} satisfies { [K in ActionQueueKind]: Omit<Recipe<K>, 'preloadedResponses'> }
 
 /**
  * The Alert verbs are the existing source of truth for each recipe's available
@@ -1153,20 +1234,28 @@ const RECIPE_DEFINITIONS = {
  * without AlertCard's destructive/primary styling or Dismiss/Snooze tail verbs.
  */
 const REGISTRY: Record<ActionQueueKind, Recipe> = Object.fromEntries(
-  Object.entries(RECIPE_DEFINITIONS).map(([kind, recipe]) => [
-    kind,
-    {
-      ...recipe,
-      preloadedResponses: (ctx) =>
-        (typeof recipe.verbs === 'function' ? recipe.verbs(ctx) : recipe.verbs)
-          .filter(({ op }) => classifyMarsVerb(op) === 'safe')
-          .map(({ op, label }) => ({
-            id: op,
-            label,
-            target: { type: 'verb' as const, op, entityId: ctx.entityId },
-          })),
-    },
-  ]),
+  Object.entries(RECIPE_DEFINITIONS).map((entry) => {
+    // Each definition is typed against its own kind's payload contract, so the
+    // entries union is not directly assignable to the kind-agnostic `Recipe`.
+    // Erasing to it here is the same widening the outer cast already performs:
+    // callers reach recipes through `lookupRecipe(kind)`, which hands back a
+    // row's unvalidated `Record<string, unknown>` payload either way.
+    const [kind, recipe] = entry as [ActionQueueKind, Omit<Recipe, 'preloadedResponses'>]
+    return [
+      kind,
+      {
+        ...recipe,
+        preloadedResponses: (ctx: RecipeContext) =>
+          (typeof recipe.verbs === 'function' ? recipe.verbs(ctx) : recipe.verbs)
+            .filter(({ op }) => classifyMarsVerb(op) === 'safe')
+            .map(({ op, label }) => ({
+              id: op,
+              label,
+              target: { type: 'verb' as const, op, entityId: ctx.entityId },
+            })),
+      },
+    ]
+  }),
 ) as Record<ActionQueueKind, Recipe>
 
 // ── Public API ────────────────────────────────────────────────────────────────

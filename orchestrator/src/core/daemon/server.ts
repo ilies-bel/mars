@@ -1768,7 +1768,14 @@ export const startDaemon = async (
                   `Task ${taskId} is parked at manual step '${stepName}'.` +
                   (guide ? ` Step guide: ${guide}.` : '') +
                   ` Lease: ${leaseOwner}. Run \`mars step done ${taskId}\` to continue.`,
-                payload: { taskId, leaseOwner, leasedAt: now, leaseNote: guide, stepName },
+                payload: {
+                  situation: 'lease-park',
+                  taskId,
+                  leaseOwner,
+                  leasedAt: now,
+                  leaseNote: guide ?? null,
+                  stepName,
+                },
                 context: { taskId },
                 raisedBy: 'primitive:manual-step',
                 signature: taskId,
