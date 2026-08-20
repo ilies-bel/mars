@@ -473,11 +473,17 @@ recovery-spawn path itself.
   worktree in this repo shares one stack addressed by shifting positions
   (`stash@{0}`, `stash@{1}`) — and the orchestrator's own checkpoints used to
   live there, so a `pop` can hand you another task's uncommitted work. To park
-  changes temporarily, restore individual paths with `git checkout <ref> --
-  <paths>` (e.g. `git checkout $(git merge-base HEAD origin/main) -- <file>`),
-  commit a wip commit on your own branch, or work in a scratch clone. The
-  orchestrator checkpoints to per-task refs (`refs/mars/checkpoint/<task-id>`,
-  see `orchestrator/src/core/lib/git/checkpoint.ts`), never to the stash.
+  changes temporarily, **commit a wip commit on your own branch first**, then
+  restore individual paths with `git checkout <ref> -- <paths>` (e.g.
+  `git checkout $(git merge-base HEAD origin/main) -- <file>`) — that command
+  overwrites both the worktree AND the index with no warning and no reflog
+  entry, so running it before committing silently destroys any
+  staged-but-uncommitted edits to those paths (this ate a staged refinement
+  during the recovery of `fix-f68469da`). Committing first makes the
+  restoring `git checkout HEAD -- <paths>` recover your real work instead of
+  nothing. Alternatively work in a scratch clone. The orchestrator checkpoints
+  to per-task refs (`refs/mars/checkpoint/<task-id>`, see
+  `orchestrator/src/core/lib/git/checkpoint.ts`), never to the stash.
 - Never `cd`. Bash CWD persists across tool calls, and `mars` resolves
   the repo from CWD upward — once shifted into `.mars/worktrees/<id>/`,
   every later `mars` call silently binds to that worktree's `.mars/` and
