@@ -95,6 +95,15 @@ hs_err_pid*
 failed-tasks-*
 /*.png
 
+# Playwright CLI page snapshots (the `browser` skill writes these into its CWD
+# as page-<iso-timestamp>.yml). Pure session scratch, never an input to a
+# build or test. Not root-anchored: the skill runs from whatever directory the
+# session is in, so a snapshot can land in a subdirectory just as easily.
+# Verified clean before adding: no `.playwright-cli/` path is tracked on main
+# (`git ls-tree -r main --name-only | grep playwright` → only the real
+# ui/playwright*.config.ts files, which are unaffected by a directory pattern).
+.playwright-cli/
+
 # Defensive: SqliteStore undefined-path artifacts (see PRD; validation lives in packages/workflow/src/store-sqlite.ts)
 /orchestrator/undefined
 /orchestrator/undefined-shm
