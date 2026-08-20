@@ -1347,6 +1347,31 @@ export const listUncommittedPaths = async (
     .filter((path) => path !== '')
 }
 
+/**
+ * Build the refusal a destructive verb should print when its task's worktree
+ * holds uncommitted work, or `null` when there is nothing to protect.
+ *
+ * Shared by `mars restart` and `mars drop` so both name the same facts in the
+ * same shape: how many paths, which ones, and the two ways out. Neither verb
+ * may proceed on a non-null result without `--force`.
+ */
+export const describeUncommittedWork = async (args: {
+  verb: 'restart' | 'drop'
+  taskId: string
+  worktreePath: string | null | undefined
+}): Promise<string | null> => {
+  const { verb, taskId, worktreePath } = args
+  const dirtyPaths = await listUncommittedPaths(worktreePath).catch(() => null)
+  if (dirtyPaths === null || dirtyPaths.length === 0) return null
+  return (
+    `refusing to ${verb} task ${taskId}: worktree ${worktreePath} has ` +
+    `${dirtyPaths.length} uncommitted path(s) that ${verb} would destroy:\n` +
+    dirtyPaths.map((path) => `  ${path}`).join('\n') +
+    `\nCommit them, resume on this worktree with \`mars continue ${taskId}\`, ` +
+    `or rerun with --force to discard them.`
+  )
+}
+
 export const removeWorktree = async (
   ref: WorktreeRef,
   force = true,

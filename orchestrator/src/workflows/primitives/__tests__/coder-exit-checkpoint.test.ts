@@ -165,6 +165,21 @@ function killedCoderResult(exitCode = 1) {
   }
 }
 
+/**
+ * Simulate a coder killed by the context-budget watchdog: the exit code and
+ * the stderr phrase `classifyCoderExit` keys the context-exhausted branch on.
+ */
+function contextExhaustedCoderResult() {
+  return {
+    exitCode: 138,
+    stderr: 'context budget exhausted (maxContextTokens)',
+    stdout: '',
+    sessionId: null,
+    conversation: [],
+    quotaRejected: null,
+  }
+}
+
 /** Initialize a temp git repo, return its path. */
 function initRepo(): string {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-checkpoint-'))
@@ -325,5 +340,98 @@ describe('coder-exit checkpoint — clean worktree', () => {
     const statusOutput = call.recipeContext.statusOutput
     expect(statusOutput).not.toContain('may be empty')
     expect(statusOutput).toContain('clean at exit')
+  })
+})
+
+/**
+ * Context exhaustion used to be the one code-phase failure that reported
+ * nothing about the worktree: the entire stored `failure_reason` was the bare
+ * string `context-exhausted`. It is also the failure mode MOST likely to leave
+ * substantial uncommitted work, because the coder was mid-task rather than
+ * bailing — mars-70dc2672 failed this way holding 145 uncommitted lines across
+ * three files, and survived only because an operator ran `git status` by hand
+ * before choosing between `continue` and `restart`.
+ */
+describe('coder-exit context-exhausted — worktree state is reported', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = initRepo()
+    vi.clearAllMocks()
+    mockUpdateTask.mockResolvedValue(undefined)
+    mockHandleTaskFailureWithFixTask.mockResolvedValue({ outcome: 'fix-task-spawned' })
+    mockResolveOriginIdForTask.mockImplementation(async (id: string) => id)
+    mockCleanWorktreeIfNoCommitsAhead.mockResolvedValue({
+      cleaned: false,
+      reason: 'skipped for test',
+      output: '',
+    })
+    mockFetchLessonsForTask.mockResolvedValue([])
+    mockListMergedWorkers.mockReturnValue([])
+    mockRecordSignals.mockResolvedValue(undefined)
+    mockRestoreWorktreeIfMissing.mockResolvedValue('present')
+  })
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('records the dirty path count on the task error, matching coder-exit wording', async () => {
+    writeFileSync(resolve(repo, 'checkpoint.ts'), 'export const a = 1\n')
+    writeFileSync(resolve(repo, 'coder-exit.ts'), 'export const b = 2\n')
+    writeFileSync(resolve(repo, 'merge.ts'), 'export const c = 3\n')
+
+    mockRunWorkerWithSpan.mockResolvedValue(contextExhaustedCoderResult())
+
+    const ctx = makeCtx('test-id', makeStore())
+    await expect(
+      runAgent(ctx, { worktree: { path: repo, branch: 'task/test-id' } }),
+    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+
+    const failedWrite = mockUpdateTask.mock.calls
+      .map((call) => call[1] as { status?: string; error?: string })
+      .find((patch) => patch.status === 'failed')
+    expect(failedWrite?.error).toContain('context-exhausted')
+    expect(failedWrite?.error).toContain('worktree had 3 uncommitted path(s)')
+  })
+
+  it('preserves the uncommitted work as a wip(checkpoint) commit at failure time', async () => {
+    writeFileSync(resolve(repo, 'work.ts'), 'export const work = true\n')
+
+    mockRunWorkerWithSpan.mockResolvedValue(contextExhaustedCoderResult())
+
+    const ctx = makeCtx('test-id', makeStore())
+    await expect(
+      runAgent(ctx, { worktree: { path: repo, branch: 'task/test-id' } }),
+    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+
+    // The whole point of checkpointing here rather than in `mars continue`:
+    // the work is durable BEFORE the operator picks a verb, so reaching for
+    // the destructive one first no longer loses it.
+    const subjects = gitLogSubjects(repo)
+    expect(subjects).toHaveLength(1)
+    expect(subjects[0]).toMatch(/^wip\(checkpoint\):/)
+    expect(subjects[0]).toContain('1 uncommitted path(s)')
+  })
+
+  it('records clean-at-exit when the worktree holds nothing, matching coder-exit wording', async () => {
+    mockRunWorkerWithSpan.mockResolvedValue(contextExhaustedCoderResult())
+
+    const ctx = makeCtx('test-id', makeStore())
+    await expect(
+      runAgent(ctx, { worktree: { path: repo, branch: 'task/test-id' } }),
+    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+
+    const failedWrite = mockUpdateTask.mock.calls
+      .map((call) => call[1] as { status?: string; error?: string })
+      .find((patch) => patch.status === 'failed')
+    expect(failedWrite?.error).toContain('worktree was clean at exit')
+
+    expect(gitLogSubjects(repo)).toHaveLength(0)
+
+    const call = mockHandleTaskFailureWithFixTask.mock.calls[0][0] as {
+      recipeContext: { statusOutput: string }
+    }
+    expect(call.recipeContext.statusOutput).toContain('clean at exit')
   })
 })

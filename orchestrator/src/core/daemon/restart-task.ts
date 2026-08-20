@@ -226,7 +226,7 @@ export const coreRestartTask = async (
   const { execFile } = await import('node:child_process')
   const { promisify } = await import('node:util')
   const exec = promisify(execFile)
-  const { removeWorktree, listUncommittedPaths } = await import('../lib/git/worktree')
+  const { removeWorktree, describeUncommittedWork } = await import('../lib/git/worktree')
   const { getRepoRoot } = await import('../context')
   const { listUniqueCommitsAhead } = await import('../lib/sweep')
   const { integrationBranchName } = await import('../blocker-resolution')
@@ -262,17 +262,12 @@ export const coreRestartTask = async (
   // 2026-08-20 three such tasks were one `mars restart` away from losing 145,
   // 8 and 4 files respectively, and nothing in this path would have said so.
   if (!force) {
-    const dirtyPaths = await listUncommittedPaths(task.worktreePath)
-    if (dirtyPaths !== null && dirtyPaths.length > 0) {
-      throw new RestartTaskError(
-        `refusing to restart task ${id}: worktree ${task.worktreePath} has ` +
-          `${dirtyPaths.length} uncommitted path(s) that restart would destroy:\n` +
-          dirtyPaths.map((path) => `  ${path}`).join('\n') +
-          `\nCommit or discard them, use \`mars continue ${id}\` to resume on this worktree, ` +
-          `or rerun with --force to discard them.`,
-        'WRONG_STATUS',
-      )
-    }
+    const refusal = await describeUncommittedWork({
+      verb: 'restart',
+      taskId: id,
+      worktreePath: task.worktreePath,
+    })
+    if (refusal !== null) throw new RestartTaskError(refusal, 'WRONG_STATUS')
   }
 
   // Worktree directories can be recreated from setup. Keep the branch during

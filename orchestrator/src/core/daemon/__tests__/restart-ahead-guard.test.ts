@@ -238,3 +238,98 @@ describe('coreRestartTask — commits-ahead guard', () => {
     expect(branchExists(repo, branch)).toBe(false)
   })
 })
+
+/**
+ * The commits-ahead guard above only sees work the coder committed. A worktree
+ * can sit at ahead=0 and still hold the whole substance of the task: that is
+ * the normal shape of a `context-exhausted` failure, where the coder was
+ * killed mid-task rather than bailing. On 2026-08-20 two tasks showed ahead=0
+ * while holding 8 and 4 uncommitted files, and `mars restart` would have
+ * deleted both worktrees without a word.
+ */
+describe('coreRestartTask — uncommitted-worktree guard', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.INTEGRATION_BRANCH
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  /** Register a real worktree at ahead=0 and leave `dirtyFiles` uncommitted in it. */
+  const setupDirtyWorktree = async (
+    q: QueueModule,
+    dirtyFiles: string[],
+  ): Promise<{ taskId: string; branch: string; wtPath: string }> => {
+    const task = await q.enqueueTask('task killed mid-edit', undefined, { skipTriage: true })
+    const branch = `task/${task.id}`
+    execFileSync('git', ['branch', branch], { cwd: repo })
+
+    const wtDir = resolve(repo, '.mars', 'worktrees')
+    mkdirSync(wtDir, { recursive: true })
+    const wtPath = resolve(wtDir, task.id)
+    execFileSync('git', ['worktree', 'add', wtPath, branch], { cwd: repo })
+
+    for (const name of dirtyFiles) {
+      writeFileSync(resolve(wtPath, name), 'work the coder never got to commit\n')
+    }
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed', branch = ?, worktree_path = ? WHERE id = ?`,
+      args: [branch, wtPath, task.id],
+    })
+    return { taskId: task.id, branch, wtPath }
+  }
+
+  it('refuses a dirty worktree at ahead=0 without force, naming every path at risk', async () => {
+    const { q, restart } = await loadModules(repo)
+    const { taskId, branch, wtPath } = await setupDirtyWorktree(q, [
+      'checkpoint.ts',
+      'coder-exit.ts',
+      'merge.ts',
+    ])
+
+    await expect(
+      restart.coreRestartTask(taskId, new Set(['failed']), new InMemoryStore()),
+    ).rejects.toThrow(/3 uncommitted path\(s\)/)
+
+    // The refusal must precede all cleanup — nothing is destroyed.
+    expect(branchExists(repo, branch)).toBe(true)
+    expect(
+      execFileSync('git', ['status', '--porcelain'], { cwd: wtPath }).toString().trim(),
+    ).not.toBe('')
+  })
+
+  it('names --force and mars continue as the two ways forward', async () => {
+    const { q, restart } = await loadModules(repo)
+    const { taskId } = await setupDirtyWorktree(q, ['work.ts'])
+
+    await expect(
+      restart.coreRestartTask(taskId, new Set(['failed']), new InMemoryStore()),
+    ).rejects.toThrow(/work\.ts[\s\S]*mars continue[\s\S]*--force/)
+  })
+
+  it('proceeds with force, discarding the dirty worktree', async () => {
+    const { q, restart } = await loadModules(repo)
+    const { taskId, branch } = await setupDirtyWorktree(q, ['work.ts'])
+
+    await restart.coreRestartTask(taskId, new Set(['failed']), new InMemoryStore(), {
+      force: true,
+    })
+
+    expect(branchExists(repo, branch)).toBe(false)
+  })
+
+  it('still restarts a clean worktree at ahead=0 without force', async () => {
+    const { q, restart } = await loadModules(repo)
+    const { taskId, branch } = await setupDirtyWorktree(q, [])
+
+    await restart.coreRestartTask(taskId, new Set(['failed']), new InMemoryStore())
+
+    expect(branchExists(repo, branch)).toBe(false)
+  })
+})
