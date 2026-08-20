@@ -21,7 +21,12 @@ import {
   MergeHardTimeoutError,
   type MergeResult,
 } from '../../core/lib/git/merge'
-import { checkpointRefFor, restoreCheckpoint, type Checkpoint } from '../../core/lib/git/checkpoint'
+import {
+  checkpointRefFor,
+  restoreCheckpoint,
+  isSalvageCheckpointCommit,
+  type Checkpoint,
+} from '../../core/lib/git/checkpoint'
 import { resolveContext, getStateDir } from '../../core/context'
 import { type AgentEvent } from '../../core/lib/claude-stream'
 import { IllegalTransitionError, updateTask } from '../../core/queue'
@@ -436,6 +441,88 @@ export const merge = async (
           throw new WorkflowTerminalError(
             'merge-zero-commit',
             `merge:zero-commit-branch: task ${taskId} branch ${branch} has zero commits ahead of ${integrationBranch}`,
+          )
+        }
+
+        // Salvage-checkpoint tip guard: refuse to fast-forward a branch whose
+        // TIP is still an orchestrator-authored salvage checkpoint (the
+        // "coder killed ... do not merge as-is" auto-commit written by
+        // coder-exit.ts when a coder is killed mid-run with uncommitted
+        // changes). That commit is a safety net for the *coder resume* path
+        // (`mars continue` rewinds to the coder on the same worktree so it
+        // can finish the work) — it was never meant to be shippable on its
+        // own. Identified STRUCTURALLY via the `Mars-Checkpoint: salvage`
+        // trailer the orchestrator writes at commit time (checkpoint.ts's
+        // isSalvageCheckpointCommit), not by matching the commit subject
+        // text — a human commit whose subject happens to say
+        // `wip(checkpoint):` carries no such trailer and is not refused. A
+        // checkpoint that is NOT the tip (the coder resumed and built real
+        // commits on top of it) is fine and merges normally.
+        const branchTipR = await runTool(
+          {
+            tool: 'git',
+            argv: ['rev-parse', branch],
+            cwd: mergeRepoRoot,
+            taskId,
+            originId: trace.originId,
+            phase: 'merge',
+          },
+          trace.traceStore,
+        )
+        const branchTipSha = branchTipR.exitCode === 0 ? branchTipR.stdout.trim() : null
+        if (
+          branchTipSha !== null &&
+          (await isSalvageCheckpointCommit(
+            mergeRepoRoot,
+            branchTipSha,
+            buildPhaseCtx(trace, taskId, 'merge'),
+          ))
+        ) {
+          const SALVAGE_TIP_SIGNATURE = 'merge:salvage-checkpoint-tip'
+          const errorMsg =
+            `branch tip is an unfinished salvage checkpoint (${branchTipSha.slice(0, 9)}) — resume the coder ` +
+            `with \`mars continue ${taskId}\`, or carry it forward with \`mars task add --supersede ${taskId}\``
+          await updateTask(
+            taskId,
+            {
+              status: 'failed',
+              error: errorMsg,
+              failedPhase: 'merge',
+              failureReason: SALVAGE_TIP_SIGNATURE,
+              failureReasonCode: SALVAGE_TIP_SIGNATURE,
+              failureSignature: SALVAGE_TIP_SIGNATURE,
+            },
+            store,
+          )
+          await raiseActionQueueItem({
+            kind: 'failed',
+            category: 'orchestrator',
+            priority: 'high',
+            title: `Task ${taskId}: merge blocked — branch tip is an unfinished checkpoint`,
+            body: [
+              `Task \`${taskId}\`'s branch \`${branch}\` is tipped by an orchestrator-authored salvage`,
+              `checkpoint commit (\`${branchTipSha.slice(0, 9)}\`) — the auto-commit written when a coder`,
+              `was killed mid-run with uncommitted changes. It is a safety net for the coder-resume path,`,
+              `not a finished diff, so the merge step refused to fast-forward it into \`${integrationBranch}\`.`,
+              '',
+              `**To unblock:**`,
+              `1. \`mars continue ${taskId}\` — resumes the coder on the existing worktree to finish the work.`,
+              `2. \`mars task add --supersede ${taskId}\` — carries the branch forward onto a fresh task for a coder to finish.`,
+            ].join('\n'),
+            payload: { taskId, branch, integrationBranch, branchTipSha },
+            context: { repoRoot: process.env.MARS_REPO ?? null },
+            raisedBy: 'merge:salvage-checkpoint-tip',
+            signature: `${taskId}:${SALVAGE_TIP_SIGNATURE}`,
+            originTaskId: taskId,
+            occurrence: {
+              at: new Date().toISOString(),
+              taskId,
+              integrationBranch,
+            },
+          })
+          throw new WorkflowTerminalError(
+            'merge-salvage-checkpoint-tip',
+            `merge:salvage-checkpoint-tip: task ${taskId} branch ${branch} tip ${branchTipSha} is an unfinished salvage checkpoint`,
           )
         }
 

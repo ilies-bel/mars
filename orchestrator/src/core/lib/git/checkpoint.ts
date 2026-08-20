@@ -77,6 +77,52 @@ export const CHECKPOINT_REF_PREFIX = 'refs/mars/checkpoint'
 export const SALVAGE_CHECKPOINT_SUBJECT_PREFIX = 'wip(checkpoint):'
 
 /**
+ * Git trailer key/value written in the BODY of every salvage checkpoint
+ * commit (see `coder-exit.ts`), alongside {@link SALVAGE_CHECKPOINT_SUBJECT_PREFIX}.
+ *
+ * The subject prefix is a human-legible label; this trailer is the
+ * STRUCTURAL marker. Merge-time gating (`isSalvageCheckpointCommit` below)
+ * reads the trailer back with `git log --format=%(trailers:...)`, a git
+ * primitive that parses the commit body's trailer block, rather than
+ * substring-matching the subject text. That distinction matters: a human
+ * commit whose subject happens to start with `wip(checkpoint):` has no
+ * `Mars-Checkpoint` trailer and must NOT be treated as an orchestrator
+ * salvage snapshot.
+ */
+export const SALVAGE_CHECKPOINT_TRAILER_KEY = 'Mars-Checkpoint'
+export const SALVAGE_CHECKPOINT_TRAILER_VALUE = 'salvage'
+
+/**
+ * True when `sha` (typically a branch tip, checked at merge time) carries
+ * the `Mars-Checkpoint: salvage` trailer — i.e. it is an orchestrator-written
+ * salvage checkpoint commit, not reviewed human-authored work. See
+ * {@link SALVAGE_CHECKPOINT_TRAILER_KEY} for why this is structural rather
+ * than a subject-line grep. Returns `false` (never throws) when `sha` does
+ * not resolve, so a bad ref fails open to "not a checkpoint" rather than
+ * blocking an unrelated merge.
+ */
+export const isSalvageCheckpointCommit = async (
+  cwd: string,
+  sha: string,
+  traceCtx?: TraceCtx,
+): Promise<boolean> => {
+  const git = resolveGitBin()
+  const result = await execProbe(
+    git,
+    [
+      'log',
+      '-1',
+      `--format=%(trailers:key=${SALVAGE_CHECKPOINT_TRAILER_KEY},valueonly)`,
+      sha,
+    ],
+    { cwd },
+    traceCtx,
+  )
+  if (result.exitCode !== 0) return false
+  return result.stdout.trim() === SALVAGE_CHECKPOINT_TRAILER_VALUE
+}
+
+/**
  * Identity used for the checkpoint commit object. Pinned via env so a repo
  * (or CI container) without `user.name` / `user.email` configured cannot make
  * `git commit-tree` fail and lose the work it was asked to preserve.

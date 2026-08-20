@@ -26,7 +26,11 @@
  *     (corrective coder turn, then the deterministic auto-commit net).
  */
 import { runTool } from '../../core/lib/run-tool'
-import { SALVAGE_CHECKPOINT_SUBJECT_PREFIX } from '../../core/lib/git/checkpoint'
+import {
+  SALVAGE_CHECKPOINT_SUBJECT_PREFIX,
+  SALVAGE_CHECKPOINT_TRAILER_KEY,
+  SALVAGE_CHECKPOINT_TRAILER_VALUE,
+} from '../../core/lib/git/checkpoint'
 import { autoCommitWorktreeIfDeterministic } from '../../core/lib/git/commit-main'
 import { type Worker } from '../../core/workers'
 import { extractLastStreamText, type AgentEvent } from '../../core/lib/claude-stream'
@@ -342,7 +346,12 @@ export const classifyCoderExit = async (args: {
             trace.traceStore,
           )
           if (addR.exitCode === 0) {
-            const commitMsg = `${SALVAGE_CHECKPOINT_SUBJECT_PREFIX} coder killed (exit ${r.exitCode}) with ${postState.dirtyFiles.length} uncommitted path(s) — do not merge as-is`
+            // The subject line is a human-legible label; the trailer below is
+            // the STRUCTURAL marker the merge step gates on (see
+            // checkpoint.ts's isSalvageCheckpointCommit) so a human commit
+            // that happens to start with the same subject text is never
+            // mistaken for an orchestrator salvage snapshot.
+            const commitMsg = `${SALVAGE_CHECKPOINT_SUBJECT_PREFIX} coder killed (exit ${r.exitCode}) with ${postState.dirtyFiles.length} uncommitted path(s) — do not merge as-is\n\n${SALVAGE_CHECKPOINT_TRAILER_KEY}: ${SALVAGE_CHECKPOINT_TRAILER_VALUE}`
             const commitR = await runTool(
               {
                 tool: 'git',
