@@ -326,6 +326,66 @@ export const quarantineVerifyGate = async (
 }
 
 /**
+ * Look up a single verify gate. Accepts either:
+ * - a gate `id` string, or
+ * - a `{ scope, name }` object to target the unique (scope, name) pair.
+ *
+ * Returns `null` if no matching gate exists.
+ */
+export const getVerifyGate = async (
+  idOrRef: string | { scope: string; name: string },
+): Promise<VerifyGate | null> => {
+  const c = resolveStateClient()
+  const columns = `id, scope, name, cmd, args_json, required, tier, source, created_at,
+            state, quarantined_at, quarantine_signature, last_failure_signature,
+            last_failure_at, last_failure_origin_id, timeout_min`
+  const r =
+    typeof idOrRef === 'string'
+      ? await c.execute(`SELECT ${columns} FROM verify_gates WHERE id = ?`, [idOrRef])
+      : await c.execute(`SELECT ${columns} FROM verify_gates WHERE scope = ? AND name = ?`, [
+          idOrRef.scope,
+          idOrRef.name,
+        ])
+  const rows = r.rows as unknown as VerifyGateRow[]
+  return rows.length > 0 ? rowToGate(rows[0]!) : null
+}
+
+/**
+ * Restore a quarantined gate back to `state = 'active'`, clearing the
+ * quarantine bookkeeping (`quarantined_at`, `quarantine_signature`).
+ *
+ * The gate's failure history (`last_failure_signature`/`last_failure_at`/
+ * `last_failure_origin_id`) is intentionally left in place — it is evidence
+ * of what happened, not quarantine state, so a later repeat failure still
+ * has prior context to compare against.
+ *
+ * Only flips a gate that is currently quarantined: returns `false` (no-op)
+ * for an unknown id/ref or a gate that is already active. Callers that need
+ * to distinguish "not found" from "not quarantined" should look the gate up
+ * first via {@link getVerifyGate}.
+ */
+export const restoreVerifyGate = async (
+  idOrRef: string | { scope: string; name: string },
+): Promise<boolean> => {
+  const c = resolveStateClient()
+  const r =
+    typeof idOrRef === 'string'
+      ? await c.execute(
+          `UPDATE verify_gates
+              SET state = 'active', quarantined_at = NULL, quarantine_signature = NULL
+            WHERE id = ? AND state = 'quarantined'`,
+          [idOrRef],
+        )
+      : await c.execute(
+          `UPDATE verify_gates
+              SET state = 'active', quarantined_at = NULL, quarantine_signature = NULL
+            WHERE scope = ? AND name = ? AND state = 'quarantined'`,
+          [idOrRef.scope, idOrRef.name],
+        )
+  return r.rowsAffected > 0
+}
+
+/**
  * Return all verify gates ordered by scope then creation time.
  */
 export const listVerifyGates = async (): Promise<VerifyGate[]> => {

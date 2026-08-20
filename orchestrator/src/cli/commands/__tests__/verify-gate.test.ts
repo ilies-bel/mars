@@ -663,3 +663,135 @@ describe('mars verify-gate set — update timeout by id', () => {
     expect(r.err.join('\n')).toContain('--timeout')
   })
 })
+
+// ---------------------------------------------------------------------------
+// 18. verify-gate restore
+// ---------------------------------------------------------------------------
+
+describe('mars verify-gate restore', () => {
+  const quarantine = async (
+    id: string,
+    signature = 'verify:x/exit-1',
+    originId = 'origin-abc',
+  ) => {
+    const { quarantineVerifyGate } = await import('../../../core/verify-gates')
+    const { getCompositionRootClient } = await import('../../../core/store/task-store')
+    await quarantineVerifyGate(getCompositionRootClient(), id, signature, originId)
+  }
+
+  it('clears quarantine by id when the gate now passes', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const addR = await run(
+      ['verify-gate', 'add', '--name', 'ok', '--cmd', 'node', '--', '-e', 'process.exit(0)'],
+      { store, ctx, daemon },
+    )
+    const id = addR.out[0]!
+    await quarantine(id)
+
+    const restoreR = await run(['verify-gate', 'restore', id], { store, ctx, daemon })
+    expect(restoreR.code).toBe(0)
+    expect(restoreR.out.join('\n')).toContain('restored')
+
+    const listR = await run(['verify-gate', 'list'], { store, ctx, daemon })
+    const out = listR.out.join('\n')
+    expect(out).toContain('active')
+    expect(out).not.toMatch(/QUARANTINED/)
+  })
+
+  it('clears quarantine by --scope/--name when the gate now passes', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const addR = await run(
+      [
+        'verify-gate', 'add', '--scope', 'orchestrator', '--name', 'ok',
+        '--cmd', 'node', '--', '-e', 'process.exit(0)',
+      ],
+      { store, ctx, daemon },
+    )
+    const id = addR.out[0]!
+    await quarantine(id)
+
+    const restoreR = await run(
+      ['verify-gate', 'restore', '--scope', 'orchestrator', '--name', 'ok'],
+      { store, ctx, daemon },
+    )
+    expect(restoreR.code).toBe(0)
+
+    const listR = await run(['verify-gate', 'list'], { store, ctx, daemon })
+    expect(listR.out.join('\n')).toContain('active')
+  })
+
+  it('refuses to restore a gate that is still failing, and leaves it quarantined', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const addR = await run(
+      ['verify-gate', 'add', '--name', 'broken', '--cmd', 'node', '--', '-e', 'process.exit(1)'],
+      { store, ctx, daemon },
+    )
+    const id = addR.out[0]!
+    await quarantine(id, 'verify:broken/exit-1')
+
+    const restoreR = await run(['verify-gate', 'restore', id], { store, ctx, daemon })
+    expect(restoreR.code).toBe(1)
+    expect(restoreR.err.join('\n')).toContain('still failing')
+
+    const listR = await run(['verify-gate', 'list'], { store, ctx, daemon })
+    expect(listR.out.join('\n')).toContain('QUARANTINED')
+  })
+
+  it('--force restores a still-failing gate anyway', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const addR = await run(
+      ['verify-gate', 'add', '--name', 'broken', '--cmd', 'node', '--', '-e', 'process.exit(1)'],
+      { store, ctx, daemon },
+    )
+    const id = addR.out[0]!
+    await quarantine(id)
+
+    const restoreR = await run(['verify-gate', 'restore', id, '--force'], { store, ctx, daemon })
+    expect(restoreR.code).toBe(0)
+
+    const listR = await run(['verify-gate', 'list'], { store, ctx, daemon })
+    const out = listR.out.join('\n')
+    expect(out).toContain('active')
+    expect(out).not.toMatch(/QUARANTINED/)
+  })
+
+  it('exits 1 for an unknown id', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(['verify-gate', 'restore', 'non-existent-uuid'], { store, ctx, daemon })
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('no verify gate')
+  })
+
+  it('exits 1 when the gate is not quarantined (already active)', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const addR = await run(
+      ['verify-gate', 'add', '--name', 'ok', '--cmd', 'node', '--', '-e', 'process.exit(0)'],
+      { store, ctx, daemon },
+    )
+    const id = addR.out[0]!
+
+    const r = await run(['verify-gate', 'restore', id], { store, ctx, daemon })
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('not quarantined')
+  })
+
+  it('exits 2 when no target is specified', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const r = await run(['verify-gate', 'restore'], { store, ctx, daemon })
+    expect(r.code).toBe(2)
+  })
+})

@@ -697,7 +697,10 @@ const RECIPE_DEFINITIONS = {
       // rather than left dangling; see mars-89537cf3 for the daemon-code-drift
       // sibling of this same defect class.
     }),
-    verbs: [],
+    // `restore-gate` re-verifies the gate's own command and, if it now
+    // passes, clears quarantine — the same path as `mars verify-gate
+    // restore <id>`. Primary style: it's the row's whole reason to exist.
+    verbs: [{ op: 'restore-gate', label: 'Restore gate', style: 'primary' }],
   },
 
   'verify-uncovered': {

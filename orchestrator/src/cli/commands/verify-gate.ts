@@ -1,12 +1,14 @@
 /**
  * `verify-gate` command group — operator management of the verify_gates table.
  *
- * Five subcommands:
- *   verify-gate list   — print all registered gates
- *   verify-gate add    — insert a new gate (--scope, --name, --cmd, [-- args...])
- *   verify-gate remove — delete a gate by id or by (--scope, --name) pair
- *   verify-gate check  — detect drift between supervisor manifest and verify_gates table
- *   verify-gate detect — propose gates from repository tooling without writing the table
+ * Subcommands:
+ *   verify-gate list    — print all registered gates
+ *   verify-gate add     — insert a new gate (--scope, --name, --cmd, [-- args...])
+ *   verify-gate remove  — delete a gate by id or by (--scope, --name) pair
+ *   verify-gate set     — update an existing gate (e.g. --timeout)
+ *   verify-gate restore — clear quarantine on a gate after re-verifying it passes
+ *   verify-gate check   — detect drift between supervisor manifest and verify_gates table
+ *   verify-gate detect  — propose gates from repository tooling without writing the table
  *
  * All registry commands call the core verify-gates functions directly (no daemon round-trip)
  * because these are direct DB writes/reads that do not require the daemon's
@@ -16,11 +18,14 @@
 import path from 'node:path'
 import {
   addVerifyGate,
+  getVerifyGate,
   listVerifyGates,
   removeVerifyGate,
+  restoreVerifyGate,
   updateVerifyGate,
 } from '../../core/verify-gates'
-import { loadVerifyScopes } from '../../core/lib/git/verify'
+import { loadVerifyScopes, verifyChanges } from '../../core/lib/git/verify'
+import { computeFailureSignature } from '../../core/lib/failure-signature'
 import { detectVerifyGates } from '../../init/detect-verify-gates'
 import { detectMalformedGateArgs } from '../../core/lib/gate-args-validation'
 import type { Command } from '../command'
@@ -42,6 +47,21 @@ const verifyGateList: Command = {
     if (gates.length === 0) {
       deps.out('(no verify gates configured)')
       return { code: 0 }
+    }
+    // A quarantined *required* gate is a disabled safety check, not a
+    // routine timestamp — surface it as an alarm above the table so it
+    // cannot be scrolled past unnoticed. Quarantined-but-optional gates
+    // don't gate anything so they don't warrant the banner.
+    const brokenRequired = gates.filter((g) => g.state === 'quarantined' && g.required)
+    if (brokenRequired.length > 0) {
+      deps.out(
+        `!! ${brokenRequired.length} required verify gate(s) are QUARANTINED and NOT enforcing !!`,
+      )
+      for (const g of brokenRequired) {
+        deps.out(`     ${g.id}  ${g.scope}/${g.name}  (${g.quarantineSignature ?? 'unknown reason'})`)
+      }
+      deps.out('     restore with: mars verify-gate restore <id>')
+      deps.out('')
     }
     // Header
     deps.out(
@@ -83,6 +103,9 @@ const verifyGateList: Command = {
       ].join('  '),
     )
     for (const g of gates) {
+      // A quarantined required gate reads as an alarm, not a status word —
+      // an optional gate quarantining is comparatively low-stakes.
+      const stateLabel = g.state === 'quarantined' && g.required ? 'QUARANTINED!!' : g.state
       deps.out(
         [
           g.id.padEnd(36),
@@ -94,7 +117,7 @@ const verifyGateList: Command = {
           g.tier.padEnd(12),
           g.source.slice(0, 10).padEnd(10),
           String(g.createdAt).padEnd(13),
-          g.state.padEnd(12),
+          stateLabel.padEnd(12),
           (g.quarantinedAt === null ? '—' : String(g.quarantinedAt)).padEnd(16),
           (g.lastFailureSignature ?? 'healthy').slice(0, 28).padEnd(28),
           (g.lastFailureOriginId ?? '—').slice(0, 20).padEnd(20),
@@ -342,12 +365,102 @@ const verifyGateSet: Command = {
   },
 }
 
+const verifyGateRestore: Command = {
+  path: 'verify-gate restore',
+  summary: 're-verify a quarantined gate and, if it passes, clear its quarantine',
+  usage:
+    'usage: mars verify-gate restore <id> [--force]\n' +
+    '       mars verify-gate restore --scope <s> --name <n> [--force]',
+  run: async (args, deps) => {
+    const id = args.positional[0]
+    const scope = args.flags['--scope']
+    const name = args.flags['--name']
+    const force = args.flags['--force'] !== undefined
+
+    let target: string | { scope: string; name: string }
+    if (id) {
+      target = id
+    } else if (scope && name) {
+      target = { scope, name }
+    } else {
+      deps.err(
+        'usage: mars verify-gate restore <id> [--force]\n' +
+          '       mars verify-gate restore --scope <s> --name <n> [--force]',
+      )
+      return { code: 2 }
+    }
+
+    const gate = await getVerifyGate(target)
+    if (!gate) {
+      deps.err(
+        typeof target === 'string'
+          ? `no verify gate with id ${target}`
+          : `no verify gate (${target.scope},${target.name})`,
+      )
+      return { code: 1 }
+    }
+
+    if (gate.state !== 'quarantined') {
+      deps.err(`verify gate ${gate.id} (${gate.scope}/${gate.name}) is not quarantined`)
+      return { code: 1 }
+    }
+
+    if (!force) {
+      // Re-run the gate's own command exactly as the real verify phase
+      // would, but as a single ad-hoc step: no branch/integrationBranch is
+      // passed, so the has-diff/worktree-hygiene gates are skipped and only
+      // this one command runs. `tier` is forced to 'task' regardless of the
+      // gate's own declared tier — an 'integration' tier would make
+      // verifyChanges defer (and NOT run) the step, which would make
+      // restore "pass" without actually checking anything.
+      const result = await verifyChanges({
+        cwd: deps.ctx.repoRoot,
+        steps: [
+          {
+            name: gate.name,
+            gateId: gate.id,
+            cmd: gate.cmd,
+            args: gate.args,
+            required: true,
+            dir: gate.scope,
+            tier: 'task',
+            ...(gate.timeoutMin !== null ? { timeoutMin: gate.timeoutMin } : {}),
+          },
+        ],
+      })
+      const step = result.steps.find((s) => s.gateId === gate.id) ?? result.steps[0]
+      if (!result.passed || !step?.passed) {
+        const signature = computeFailureSignature(`verify:${gate.name}`, step?.output ?? '')
+        deps.err(
+          `verify gate ${gate.id} (${gate.scope}/${gate.name}) is still failing: ${signature}`,
+        )
+        deps.err(step?.output ?? '(no output captured)')
+        deps.err('re-run with --force to restore anyway')
+        return { code: 1 }
+      }
+    }
+
+    const restored = await restoreVerifyGate(target)
+    if (!restored) {
+      // Lost a race with another restore/quarantine between the lookup
+      // above and this write — report it rather than claiming success.
+      deps.err(
+        `verify gate ${gate.id} (${gate.scope}/${gate.name}) was not restored (state changed concurrently)`,
+      )
+      return { code: 1 }
+    }
+
+    deps.out(`verify gate ${gate.id} (${gate.scope}/${gate.name}) restored — enforcing again`)
+    return { code: 0 }
+  },
+}
+
 const verifyGateGroup: Command = {
   path: 'verify-gate',
   summary: 'manage verify gate registrations',
-  usage: 'usage: mars verify-gate <list|add|remove|set|check|detect>',
+  usage: 'usage: mars verify-gate <list|add|remove|set|restore|check|detect>',
   run: (_args, deps) => {
-    deps.err('usage: mars verify-gate <list|add|remove|set|check|detect>')
+    deps.err('usage: mars verify-gate <list|add|remove|set|restore|check|detect>')
     return { code: 2 }
   },
 }
@@ -357,6 +470,7 @@ export const verifyGateCommands: readonly Command[] = [
   verifyGateAdd,
   verifyGateRemove,
   verifyGateSet,
+  verifyGateRestore,
   verifyGateCheck,
   verifyGateDetect,
   verifyGateGroup,
