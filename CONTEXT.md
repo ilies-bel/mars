@@ -613,3 +613,6 @@ _Avoid_: app shell, layout, chrome
 **Checker**:
 A swappable, per-surface inspector registered on a workflow run's container that reports findings as events and never decides their consequences.
 _Avoid_: plugin, QA plugin, validator, checker plugin, behaviour plugin
+
+**Port**:
+A swappable module boundary in Mars: a cordis service slot bound to an async TypeScript interface whose arguments and results are plain serializable data (no live handles, callbacks, or process artifacts). Local implementations wrap existing code behind the interface; remote implementations (e.g. verification in CI) are ordinary services filling the same slot, with the wire protocol confined to that one adapter. Callers resolve Ports through the context, never by importing a concrete implementation. Distinct from a registry (a set of fine-grained in-process extension points, e.g. verify heuristics): the Port rule governs module boundaries only.
