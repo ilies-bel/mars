@@ -387,3 +387,129 @@ export const discardWorkingTreeChanges = async (
   await exec(git, ['reset', '--hard', 'HEAD'], { cwd }, traceCtx)
   await exec(git, ['clean', '-fd'], { cwd }, traceCtx)
 }
+
+/**
+ * Cadence for {@link startPeriodicCheckpoint} below. Three minutes balances
+ * "durable soon enough that a hard kill loses little" against "don't shell
+ * out to `git` every few seconds for every in-flight coder". Override via
+ * `MARS_CODE_CHECKPOINT_INTERVAL_MS` (used by tests and available for a
+ * tighter recovery SLA in production).
+ */
+const DEFAULT_CODE_CHECKPOINT_INTERVAL_MS = 3 * 60 * 1000
+
+export interface PeriodicCheckpointArgs {
+  /** Working tree to snapshot on a cadence. May be the primary checkout or
+   *  any worktree. */
+  cwd: string
+  /** Namespacing key — same rules as {@link captureCheckpoint}'s `key`. */
+  key: string
+  /**
+   * Commit message prefix. A 1-based tick counter is appended (`"<prefix>
+   * #3"`) so successive snapshots are distinguishable in `git log --all` /
+   * `git reflog` on the checkpoint ref.
+   */
+  messagePrefix: string
+  /**
+   * Cadence in ms. Defaults to `MARS_CODE_CHECKPOINT_INTERVAL_MS` or
+   * {@link DEFAULT_CODE_CHECKPOINT_INTERVAL_MS}.
+   */
+  intervalMs?: number
+  traceCtx?: TraceCtx
+  /**
+   * Fired after each successful (non-null) capture. Best-effort — a throw
+   * here is swallowed, same as a capture failure, so a broken listener can
+   * never take down the run the checkpoint is protecting.
+   */
+  onCheckpoint?: (checkpoint: Checkpoint) => void
+  /**
+   * Fired when a capture attempt throws. Best-effort telemetry hook — a
+   * periodic checkpoint is a safety net and must never interrupt or fail
+   * the work it is protecting, so the error is reported here rather than
+   * thrown.
+   */
+  onError?: (err: unknown) => void
+}
+
+export interface PeriodicCheckpointHandle {
+  /**
+   * Stop the timer and await any in-flight capture before resolving, so a
+   * caller that immediately proceeds to read or commit the same worktree
+   * (e.g. the coder-exit classifier) never races a checkpoint that is still
+   * mid-write to its temporary index.
+   */
+  stop: () => Promise<void>
+}
+
+/**
+ * Snapshot `cwd`'s uncommitted state on a fixed cadence via
+ * {@link captureCheckpoint}, independent of whether or how the process
+ * producing that work eventually exits.
+ *
+ * Why this exists: a coder subprocess that is hard-killed (watchdog
+ * timeout, context exhaustion, OOM) never reaches any exit-time recovery
+ * hook — the only work that survives a kill like that is whatever was
+ * already committed. Observed on 2026-08-20: three `code:context-exhausted`
+ * failures in a row each left 100+ uncommitted lines with zero commits
+ * ahead, recoverable only because an operator happened to inspect the
+ * worktree by hand before picking a recovery verb. A periodic checkpoint
+ * makes that recovery automatic and operator-free: work lands on
+ * `refs/mars/checkpoint/<key>` as it is produced, not only after (and if)
+ * the process that produced it gets a chance to react to its own death.
+ *
+ * Never touches the working tree, the index, or the branch — identical
+ * capture semantics to a single {@link captureCheckpoint} call, just on a
+ * timer. Overlapping ticks are serialized (a slow capture plus a fast timer
+ * never runs two `git` invocations against the same `cwd` concurrently), a
+ * capture that throws is swallowed via `onError`, and a tree that hasn't
+ * changed since the last tick is a silent no-op (`captureCheckpoint`
+ * returns `null`) — so a coder that commits its own work on a normal
+ * cadence never gets a duplicate or conflicting checkpoint commit appended
+ * on top of it.
+ */
+export const startPeriodicCheckpoint = (
+  args: PeriodicCheckpointArgs,
+): PeriodicCheckpointHandle => {
+  const { cwd, key, messagePrefix, traceCtx, onCheckpoint, onError } = args
+  const intervalMs =
+    args.intervalMs ??
+    Number(process.env.MARS_CODE_CHECKPOINT_INTERVAL_MS ?? DEFAULT_CODE_CHECKPOINT_INTERVAL_MS)
+
+  let stopped = false
+  let tick = 0
+  // Chain every capture attempt onto whatever is already in flight so a slow
+  // capture and the next timer firing never run `git` against the same `cwd`
+  // concurrently.
+  let inFlight: Promise<void> = Promise.resolve()
+
+  const captureTick = (): void => {
+    inFlight = inFlight.then(async () => {
+      if (stopped) return
+      tick += 1
+      try {
+        const checkpoint = await captureCheckpoint({
+          cwd,
+          key,
+          message: `${messagePrefix} #${tick}`,
+          traceCtx,
+        })
+        if (checkpoint) onCheckpoint?.(checkpoint)
+      } catch (err) {
+        onError?.(err)
+      }
+    })
+  }
+
+  const timer = setInterval(captureTick, intervalMs)
+  // A periodic checkpoint must never be the reason a workflow step's process
+  // hangs at exit — it rides alongside the coder as a safety net, not a
+  // reason to keep the event loop alive on its own.
+  timer.unref?.()
+
+  return {
+    stop: async () => {
+      stopped = true
+      clearInterval(timer)
+      await inFlight
+    },
+  }
+}

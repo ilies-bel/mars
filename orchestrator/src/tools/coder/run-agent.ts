@@ -53,6 +53,7 @@ import {
   renderRestartCheckpoint,
   RESTART_CHECKPOINT_KIND,
 } from '../../core/coder/restart-checkpoint'
+import { startPeriodicCheckpoint } from '../../core/lib/git/checkpoint'
 
 // ---------------------------------------------------------------------------
 // runAgent
@@ -509,68 +510,94 @@ export const runAgent = async (
   // any post-loop read.
   let r!: Awaited<ReturnType<typeof runWorkerWithSpan>>
 
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    if (attempt > 1) sessionKey = buildSessionKey(taskId)
-    r = await runWorkerWithSpan({
-      worker,
-      prompt: fullPrompt,
-      runOptions: {
-        cwd: worktreePath,
-        sessionId: sessionKey,
-        systemPrompt: resolveWorkerSystemPrompt(primaryTag),
-        onEvent: async (event) => {
-          emit?.(event)
+  // Snapshot the worktree's uncommitted state on a fixed cadence while the
+  // coder subprocess runs, independent of how (or whether) it ever exits
+  // cleanly. A hard kill (watchdog timeout, context exhaustion, OOM) never
+  // reaches an exit-time recovery hook, so without this the only work that
+  // survives is whatever the coder itself already committed — observed
+  // 2026-08-20: three `code:context-exhausted` failures in a row each left
+  // 100+ uncommitted lines with zero commits ahead, recoverable only because
+  // an operator happened to inspect the worktree by hand. This makes that
+  // recovery automatic: see `startPeriodicCheckpoint` for the full rationale
+  // and the no-op-on-clean-tree guarantee that keeps a normally-committing
+  // coder unaffected.
+  const periodicCheckpoint = startPeriodicCheckpoint({
+    cwd: worktreePath,
+    key: `${taskId}-code-periodic`,
+    messagePrefix: `mars: periodic code-phase checkpoint (task ${taskId})`,
+    traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+  })
+  try {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      if (attempt > 1) sessionKey = buildSessionKey(taskId)
+      r = await runWorkerWithSpan({
+        worker,
+        prompt: fullPrompt,
+        runOptions: {
+          cwd: worktreePath,
+          sessionId: sessionKey,
+          systemPrompt: resolveWorkerSystemPrompt(primaryTag),
+          onEvent: async (event) => {
+            emit?.(event)
+          },
+          // Wire the spawn-time PID callback so the phantom-task watchdog can
+          // switch from the bare wall-clock ceiling (no-PID path, case a) to the
+          // alive-PID + heartbeat path (case b/c), preventing false ceiling kills
+          // of legitimately long-running coders.
+          onPid: ctx.services.onPid,
+          externalAbort: ctx.signal,
         },
-        // Wire the spawn-time PID callback so the phantom-task watchdog can
-        // switch from the bare wall-clock ceiling (no-PID path, case a) to the
-        // alive-PID + heartbeat path (case b/c), preventing false ceiling kills
-        // of legitimately long-running coders.
-        onPid: ctx.services.onPid,
-        externalAbort: ctx.signal,
-      },
-      traceStore: spanStore(trace),
-      stepName: 'run-agent',
-      workflowInstanceId: trace.workflowInstanceId,
-      originId,
-      taskId,
-      phase: 'code',
-      // Fix (recovery) tasks run flagship so high-risk repair has the
-      // strongest model available. Regular coder tasks inherit whatever
-      // modelTier the caller declared (opts.modelTier); when absent the
-      // Worker's own pinned tier applies.
-      modelTier: kind === 'fix' ? 'flagship' : undefined,
-    })
+        traceStore: spanStore(trace),
+        stepName: 'run-agent',
+        workflowInstanceId: trace.workflowInstanceId,
+        originId,
+        taskId,
+        phase: 'code',
+        // Fix (recovery) tasks run flagship so high-risk repair has the
+        // strongest model available. Regular coder tasks inherit whatever
+        // modelTier the caller declared (opts.modelTier); when absent the
+        // Worker's own pinned tier applies.
+        modelTier: kind === 'fix' ? 'flagship' : undefined,
+      })
 
-    // A task stop is an operator decision, not a coder failure. Bail out before
-    // the ordinary non-zero-exit recovery path can stamp or recover the task;
-    // the daemon already marked it failed with failureReason='cancelled'.
-    if (ctx.signal.aborted) throw new Error(`task ${taskId} stopped by operator`)
+      // A task stop is an operator decision, not a coder failure. Bail out before
+      // the ordinary non-zero-exit recovery path can stamp or recover the task;
+      // the daemon already marked it failed with failureReason='cancelled'.
+      if (ctx.signal.aborted) throw new Error(`task ${taskId} stopped by operator`)
 
-    // Classify the exit. Operator abort is already handled above so `aborted`
-    // is always false here — pass it explicitly for clarity and purity.
-    const disposition = classifyCoderExitDisposition({ r, aborted: false })
-    if (disposition.kind === 'retryable-transient' && attempt === 1) {
-      // Environmental kill or startup failure before any provider contact. The
-      // worktree is untouched so a single re-dispatch on a fresh session key is
-      // safe. Record a trace event so the action-queue and reflect signals can
-      // observe the retry before it happens.
-      trace.traceStore
-        .record({
-          kind: 'code-retry-attempt',
-          taskId,
-          originId,
-          phase: 'code',
-          payload: { reason: disposition.reason, attempt: 2, sessionKey },
-        })
-        .catch(() => {
-          // Telemetry is best-effort — a DB hiccup must never change the result.
-        })
-      continue
+      // Classify the exit. Operator abort is already handled above so `aborted`
+      // is always false here — pass it explicitly for clarity and purity.
+      const disposition = classifyCoderExitDisposition({ r, aborted: false })
+      if (disposition.kind === 'retryable-transient' && attempt === 1) {
+        // Environmental kill or startup failure before any provider contact. The
+        // worktree is untouched so a single re-dispatch on a fresh session key is
+        // safe. Record a trace event so the action-queue and reflect signals can
+        // observe the retry before it happens.
+        trace.traceStore
+          .record({
+            kind: 'code-retry-attempt',
+            taskId,
+            originId,
+            phase: 'code',
+            payload: { reason: disposition.reason, attempt: 2, sessionKey },
+          })
+          .catch(() => {
+            // Telemetry is best-effort — a DB hiccup must never change the result.
+          })
+        continue
+      }
+
+      // Any other disposition (success, terminal-recovery on attempt 1, any exit
+      // on attempt 2) falls through to the existing handlers below.
+      break
     }
-
-    // Any other disposition (success, terminal-recovery on attempt 1, any exit
-    // on attempt 2) falls through to the existing handlers below.
-    break
+  } finally {
+    // Stop the timer and await any in-flight capture before anything below
+    // reads or commits this worktree (classifyCoderExit, the commit-contract
+    // enforcement) — a periodic checkpoint never touches the branch or the
+    // working tree, but a still-running capture and a fast-following
+    // `git status`/`git commit` should never be allowed to race regardless.
+    await periodicCheckpoint.stop()
   }
 
   await classifyCoderExit({
