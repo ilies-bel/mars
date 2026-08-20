@@ -28,6 +28,19 @@ import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 import { mkdirSync, openSync, closeSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
+import { acquireSemaphore, releaseSemaphore, type SemaphorePermit } from './semaphore'
+
+// How long to wait for the `port:<n>` permit before proceeding anyway — the
+// port was just allocated by binding :0, so contention is rare; this only
+// covers the rare case of a genuine race with another holder of the exact
+// same OS-assigned port.
+const PORT_SEMAPHORE_WAIT_SEC = 10
+
+// Tracks the semaphore permit held for each dev server's port, keyed by the
+// server's pid. Populated in `startDevServer`, consumed and released in
+// `killDevServer` — the same module, since callers only ever pass a pid
+// across the boundary (the task row persists `{ url, pid }`, not a token).
+const portPermits = new Map<number, SemaphorePermit>()
 
 export interface DevServerHandle {
   /** OS process id of the detached dev-server process group leader. */
@@ -111,6 +124,17 @@ export const startDevServer = async (
       throw new Error(`dev server failed to spawn: ${opts.command}`)
     }
 
+    // Hold `port:<n>` for the server's lifetime. Tying the permit to the
+    // server's own pid means a crash that skips `killDevServer` still frees
+    // the slot: sem.mjs reclaims it once the pid is dead, no explicit
+    // release required.
+    const permit = await acquireSemaphore(`port:${port}`, {
+      holder: `mars:${opts.taskId}`,
+      pid: child.pid,
+      waitSec: PORT_SEMAPHORE_WAIT_SEC,
+    })
+    portPermits.set(child.pid, permit)
+
     return { pid: child.pid, url, logPath, port }
   } finally {
     // The child has inherited the fd; the parent no longer needs it.
@@ -160,15 +184,26 @@ export const killDevServer = async (pid: number | null): Promise<void> => {
     }
   }
 
-  if (!isDevServerAlive(pid)) return
-  signalGroup('SIGTERM')
+  try {
+    if (!isDevServerAlive(pid)) return
+    signalGroup('SIGTERM')
 
-  await new Promise<void>((resolveKill) => {
-    const timer = setTimeout(() => {
-      if (isDevServerAlive(pid)) signalGroup('SIGKILL')
-      resolveKill()
-    }, SIGKILL_GRACE_MS)
-    // Don't keep the daemon event loop alive purely for this grace timer.
-    timer.unref?.()
-  })
+    await new Promise<void>((resolveKill) => {
+      const timer = setTimeout(() => {
+        if (isDevServerAlive(pid)) signalGroup('SIGKILL')
+        resolveKill()
+      }, SIGKILL_GRACE_MS)
+      // Don't keep the daemon event loop alive purely for this grace timer.
+      timer.unref?.()
+    })
+  } finally {
+    // Release the port permit regardless of whether the process was still
+    // alive to signal — a permit leaked on any exit path looks exactly like
+    // a live holder, which is worse than no semaphore at all.
+    const permit = portPermits.get(pid)
+    if (permit) {
+      portPermits.delete(pid)
+      await releaseSemaphore(permit)
+    }
+  }
 }

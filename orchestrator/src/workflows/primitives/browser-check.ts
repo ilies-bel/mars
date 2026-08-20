@@ -48,7 +48,13 @@ export interface QaStepList {
 
 import { startDevServer, killDevServer } from '../../core/lib/dev-server'
 import type { DevServerHandle, StartDevServerOptions } from '../../core/lib/dev-server'
+import { acquireSemaphore, releaseSemaphore } from '../../core/lib/semaphore'
 import type { BootPlan } from './app-boot-discovery'
+
+// How long to wait for the shared `browser` permit before proceeding
+// anyway — the semaphore is advisory, so a stuck user-level browser skill
+// session must not hang (or fail) a Mars task indefinitely.
+const BROWSER_SEMAPHORE_WAIT_SEC = 20
 
 // ---------------------------------------------------------------------------
 // Minimal structural browser types
@@ -303,48 +309,59 @@ export async function runBrowserCheck(
 
     await deps.waitForReady(serverHandle.url)
 
-    const browser = await deps.openBrowser()
+    // Hold the shared `browser` permit for the Playwright session's
+    // lifetime. Acquired before openBrowser() and released in the outer
+    // finally so a leak on the launch-failure path is impossible.
+    const browserPermit = await acquireSemaphore('browser', {
+      holder: `mars:${taskId}`,
+      waitSec: BROWSER_SEMAPHORE_WAIT_SEC,
+    })
     try {
-      const results: CriterionResult[] = []
+      const browser = await deps.openBrowser()
+      try {
+        const results: CriterionResult[] = []
 
-      for (let i = 0; i < criteria.length; i++) {
-        const absPath = join(qaDir, `${i}.png`)
-        const relPath = relative(screenshotBase, absPath)
-        try {
-          const page = await browser.newPage()
+        for (let i = 0; i < criteria.length; i++) {
+          const absPath = join(qaDir, `${i}.png`)
+          const relPath = relative(screenshotBase, absPath)
           try {
-            await page.goto(serverHandle.url)
-            await page.screenshot({ path: absPath })
+            const page = await browser.newPage()
+            try {
+              await page.goto(serverHandle.url)
+              await page.screenshot({ path: absPath })
+              results.push({
+                criterion: criteria[i],
+                verdict: 'unverifiable',
+                screenshotPath: relPath,
+                note: 'screenshot captured; automated verdict not available',
+                steps: [],
+                stopAt: null,
+                stoppedAtStep: null,
+                stopReason: null,
+              })
+            } finally {
+              await page.close()
+            }
+          } catch (pageErr) {
             results.push({
               criterion: criteria[i],
               verdict: 'unverifiable',
-              screenshotPath: relPath,
-              note: 'screenshot captured; automated verdict not available',
+              screenshotPath: null,
+              note: `screenshot failed: ${String(pageErr)}`,
               steps: [],
               stopAt: null,
               stoppedAtStep: null,
               stopReason: null,
             })
-          } finally {
-            await page.close()
           }
-        } catch (pageErr) {
-          results.push({
-            criterion: criteria[i],
-            verdict: 'unverifiable',
-            screenshotPath: null,
-            note: `screenshot failed: ${String(pageErr)}`,
-            steps: [],
-            stopAt: null,
-            stoppedAtStep: null,
-            stopReason: null,
-          })
         }
-      }
 
-      return results
+        return results
+      } finally {
+        await browser.close()
+      }
     } finally {
-      await browser.close()
+      await releaseSemaphore(browserPermit)
     }
   } catch (err) {
     return allUnverifiable(String(err))
@@ -432,116 +449,127 @@ export async function runQaWalk(
     }
 
     // ── Browser launch ──────────────────────────────────────────────────────
-    let browser: MinimalBrowser
+    // Hold the shared `browser` permit for the whole launch-through-close
+    // lifetime; the outer finally releases it on every exit path, including
+    // a launch failure, so nothing leaks.
+    const browserPermit = await acquireSemaphore('browser', {
+      holder: `mars:${taskId}`,
+      waitSec: BROWSER_SEMAPHORE_WAIT_SEC,
+    })
     try {
-      browser = await deps.openBrowser()
-    } catch (browserErr) {
-      return allUnverifiable(String(browserErr), 'browser-launch')
-    }
+      let browser: MinimalBrowser
+      try {
+        browser = await deps.openBrowser()
+      } catch (browserErr) {
+        return allUnverifiable(String(browserErr), 'browser-launch')
+      }
 
-    // ── Per-criterion step walk ─────────────────────────────────────────────
-    try {
-      const results: CriterionResult[] = []
+      // ── Per-criterion step walk ───────────────────────────────────────────
+      try {
+        const results: CriterionResult[] = []
 
-      for (let i = 0; i < stepLists.length; i++) {
-        const { criterion, steps } = stepLists[i]
-        const criterionDir = join(qaDir, `${i}`)
-        mkdirSync(criterionDir, { recursive: true })
+        for (let i = 0; i < stepLists.length; i++) {
+          const { criterion, steps } = stepLists[i]
+          const criterionDir = join(qaDir, `${i}`)
+          mkdirSync(criterionDir, { recursive: true })
 
-        const stepResults: QaStepResult[] = []
-        let stoppedAtStep: number | null = null
-        let stopReason: CriterionResult['stopReason'] = null
+          const stepResults: QaStepResult[] = []
+          let stoppedAtStep: number | null = null
+          let stopReason: CriterionResult['stopReason'] = null
 
-        // Open a fresh page for this criterion.
-        let page: MinimalPage
-        try {
-          page = await browser.newPage()
-        } catch (pageErr) {
-          // Browser crash — cannot open page; abort this criterion.
-          results.push({
-            criterion,
-            verdict: 'unverifiable',
-            screenshotPath: null,
-            note: `page open failed: ${String(pageErr)}`,
-            steps: stepResults,
-            stopAt: { stepIndex: 0, reason: 'browser-launch' },
-            stoppedAtStep: 0,
-            stopReason: 'browser-launch',
-          })
-          continue
-        }
+          // Open a fresh page for this criterion.
+          let page: MinimalPage
+          try {
+            page = await browser.newPage()
+          } catch (pageErr) {
+            // Browser crash — cannot open page; abort this criterion.
+            results.push({
+              criterion,
+              verdict: 'unverifiable',
+              screenshotPath: null,
+              note: `page open failed: ${String(pageErr)}`,
+              steps: stepResults,
+              stopAt: { stepIndex: 0, reason: 'browser-launch' },
+              stoppedAtStep: 0,
+              stopReason: 'browser-launch',
+            })
+            continue
+          }
 
-        try {
-          for (const step of steps) {
-            const absPath = join(criterionDir, `${step.index}.png`)
-            const relPath = relative(screenshotBase, absPath)
+          try {
+            for (const step of steps) {
+              const absPath = join(criterionDir, `${step.index}.png`)
+              const relPath = relative(screenshotBase, absPath)
 
-            // Navigation — a failure here stops the walk for this criterion.
-            try {
-              await page.goto(serverHandle.url)
-            } catch (navErr) {
+              // Navigation — a failure here stops the walk for this criterion.
+              try {
+                await page.goto(serverHandle.url)
+              } catch (navErr) {
+                stepResults.push({
+                  stepIndex: step.index,
+                  text: step.text,
+                  screenshotPath: null,
+                  note: `navigation failed: ${String(navErr)}`,
+                })
+                stoppedAtStep = step.index
+                stopReason = 'navigation'
+                break
+              }
+
+              // Screenshot — a failure is page-level; walk continues.
+              let screenshotPath: string | null = null
+              try {
+                await page.screenshot({ path: absPath })
+                screenshotPath = relPath
+              } catch {
+                // page-level failure — continue to the next step
+              }
+
               stepResults.push({
                 stepIndex: step.index,
                 text: step.text,
-                screenshotPath: null,
-                note: `navigation failed: ${String(navErr)}`,
+                screenshotPath,
+                note: screenshotPath !== null ? 'screenshot captured' : 'screenshot failed',
               })
-              stoppedAtStep = step.index
-              stopReason = 'navigation'
-              break
             }
 
-            // Screenshot — a failure is page-level; walk continues.
-            let screenshotPath: string | null = null
-            try {
-              await page.screenshot({ path: absPath })
-              screenshotPath = relPath
-            } catch {
-              // page-level failure — continue to the next step
+            if (stoppedAtStep === null) {
+              stopReason = 'completed'
             }
-
-            stepResults.push({
-              stepIndex: step.index,
-              text: step.text,
-              screenshotPath,
-              note: screenshotPath !== null ? 'screenshot captured' : 'screenshot failed',
-            })
+          } finally {
+            await page.close()
           }
 
-          if (stoppedAtStep === null) {
-            stopReason = 'completed'
-          }
-        } finally {
-          await page.close()
+          // Overall screenshotPath for the criterion = last step that captured one.
+          const lastScreenshot = stepResults.reduceRight<string | null>(
+            (acc, s) => acc ?? s.screenshotPath,
+            null,
+          )
+
+          results.push({
+            criterion,
+            verdict: 'unverifiable',
+            screenshotPath: lastScreenshot,
+            note:
+              stopReason === 'completed'
+                ? 'all steps reached'
+                : `stopped at step ${stoppedAtStep}: ${stopReason}`,
+            steps: stepResults,
+            stopAt:
+              stoppedAtStep !== null
+                ? { stepIndex: stoppedAtStep, reason: stopReason ?? '' }
+                : null,
+            stoppedAtStep,
+            stopReason,
+          })
         }
 
-        // Overall screenshotPath for the criterion = last step that captured one.
-        const lastScreenshot = stepResults.reduceRight<string | null>(
-          (acc, s) => acc ?? s.screenshotPath,
-          null,
-        )
-
-        results.push({
-          criterion,
-          verdict: 'unverifiable',
-          screenshotPath: lastScreenshot,
-          note:
-            stopReason === 'completed'
-              ? 'all steps reached'
-              : `stopped at step ${stoppedAtStep}: ${stopReason}`,
-          steps: stepResults,
-          stopAt:
-            stoppedAtStep !== null
-              ? { stepIndex: stoppedAtStep, reason: stopReason ?? '' }
-              : null,
-          stoppedAtStep,
-          stopReason,
-        })
+        return results
+      } finally {
+        await browser.close()
       }
-
-      return results
     } finally {
-      await browser.close()
+      await releaseSemaphore(browserPermit)
     }
   } finally {
     await deps.killDevServer(serverHandle?.pid ?? null)

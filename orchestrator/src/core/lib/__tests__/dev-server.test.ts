@@ -4,16 +4,32 @@
  * and idempotent process-group kill.
  */
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+
+// dev-server.ts holds a `port:<n>` permit on the real user-level semaphore
+// (~/.claude/bin/sem.mjs) for the server's lifetime. Mock it here so this
+// suite never touches the operator's real ~/.claude/semaphores state — the
+// wrapper itself (degrade path + a real-binary round trip) is covered by
+// semaphore.test.ts.
+vi.mock('../semaphore', () => ({
+  acquireSemaphore: vi.fn(async (resource: string) => ({
+    resource,
+    token: `fake-token-${resource}`,
+    binPath: '',
+  })),
+  releaseSemaphore: vi.fn(async () => {}),
+}))
+
 import {
   allocatePort,
   startDevServer,
   isDevServerAlive,
   killDevServer,
 } from '../dev-server'
+import { acquireSemaphore, releaseSemaphore } from '../semaphore'
 
 const dirs: string[] = []
 const mkDir = (): string => {
@@ -65,6 +81,34 @@ describe('startDevServer / killDevServer', () => {
     // killDevServer resolves after the SIGKILL grace window; the process group
     // is gone by now.
     expect(isDevServerAlive(handle.pid)).toBe(false)
+  })
+
+  it('acquires a `port:<n>` permit tied to the server pid, then releases it on kill', async () => {
+    vi.mocked(acquireSemaphore).mockClear()
+    vi.mocked(releaseSemaphore).mockClear()
+
+    const cwd = mkDir()
+    const logDir = resolve(cwd, 'logs')
+    const handle = await startDevServer({
+      command: `node -e "setInterval(()=>{}, 1000)"`,
+      cwd,
+      taskId: 'task-permit',
+      logDir,
+    })
+
+    expect(acquireSemaphore).toHaveBeenCalledTimes(1)
+    expect(acquireSemaphore).toHaveBeenCalledWith(
+      `port:${handle.port}`,
+      expect.objectContaining({ holder: 'mars:task-permit', pid: handle.pid }),
+    )
+    expect(releaseSemaphore).not.toHaveBeenCalled()
+
+    await killDevServer(handle.pid)
+
+    expect(releaseSemaphore).toHaveBeenCalledTimes(1)
+    expect(releaseSemaphore).toHaveBeenCalledWith(
+      expect.objectContaining({ resource: `port:${handle.port}` }),
+    )
   })
 
   it('killDevServer is a no-op for null / already-dead pids', async () => {

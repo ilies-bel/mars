@@ -8,15 +8,30 @@
  * actually kills it by PID — not just that it recorded a call.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 
+// runBrowserCheck/runQaWalk hold a `browser` permit on the real user-level
+// semaphore (~/.claude/bin/sem.mjs) for the Playwright session's lifetime.
+// Mock it here so this suite never touches the operator's real
+// ~/.claude/semaphores state — the wrapper itself is covered by
+// semaphore.test.ts.
+vi.mock('../../../core/lib/semaphore', () => ({
+  acquireSemaphore: vi.fn(async (resource: string) => ({
+    resource,
+    token: `fake-token-${resource}`,
+    binPath: '',
+  })),
+  releaseSemaphore: vi.fn(async () => {}),
+}))
+
 import { runBrowserCheck, runQaWalk, type CriterionResult, type QaStepResult, type QaStepList } from '../browser-check'
 import { isDevServerAlive } from '../../../core/lib/dev-server'
 import type { DevServerHandle } from '../../../core/lib/dev-server'
+import { acquireSemaphore, releaseSemaphore } from '../../../core/lib/semaphore'
 import type { BootPlan } from '../app-boot-discovery'
 
 // ---------------------------------------------------------------------------
@@ -29,6 +44,8 @@ let tmpLogDir: string
 beforeEach(() => {
   tmpWorktree = mkdtempSync(join(tmpdir(), 'mars-bvc-wt-'))
   tmpLogDir = mkdtempSync(join(tmpdir(), 'mars-bvc-logs-'))
+  vi.mocked(acquireSemaphore).mockClear()
+  vi.mocked(releaseSemaphore).mockClear()
 })
 
 afterEach(() => {
@@ -288,6 +305,117 @@ describe('runBrowserCheck — teardown guarantee', () => {
     // killDevServer MUST be called with null (not skipped), so the finally
     // block is provably reached even when serverHandle is never assigned.
     expect(killedWith).toBe(null)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// `browser` semaphore acquire/release pairing
+//
+// A permit leaked on the error path is worse than no semaphore, because the
+// leak looks exactly like a live holder to every other caller of sem.mjs.
+// These tests assert release fires exactly once for every acquire, on both
+// the success path and every failure path through the browser session.
+// ---------------------------------------------------------------------------
+
+describe('runBrowserCheck / runQaWalk — browser semaphore acquire/release pairing', () => {
+  it('runBrowserCheck: acquires then releases on a successful run', async () => {
+    await runBrowserCheck(fakePlan, ['criterion A'], {
+      taskId: 'sem-ok',
+      worktreeDir: tmpWorktree,
+      logDir: tmpLogDir,
+      deps: {
+        startDevServer: async () => fakeHandle(),
+        killDevServer: async () => {},
+        waitForReady: async () => {},
+        openBrowser: async () => silentBrowser(),
+      },
+    })
+
+    expect(acquireSemaphore).toHaveBeenCalledTimes(1)
+    expect(acquireSemaphore).toHaveBeenCalledWith('browser', expect.objectContaining({ holder: 'mars:sem-ok' }))
+    expect(releaseSemaphore).toHaveBeenCalledTimes(1)
+  })
+
+  it('runBrowserCheck: releases the permit even when openBrowser throws mid-run', async () => {
+    await runBrowserCheck(fakePlan, ['criterion A'], {
+      taskId: 'sem-crash',
+      worktreeDir: tmpWorktree,
+      logDir: tmpLogDir,
+      deps: {
+        startDevServer: async () => fakeHandle(),
+        killDevServer: async () => {},
+        waitForReady: async () => {},
+        openBrowser: async () => { throw new Error('browser executable not found') },
+      },
+    })
+
+    // The permit was acquired before the failed launch, and MUST still be
+    // released — a leak here would look identical to a real held permit.
+    expect(acquireSemaphore).toHaveBeenCalledTimes(1)
+    expect(releaseSemaphore).toHaveBeenCalledTimes(1)
+  })
+
+  it('runBrowserCheck: does not acquire the browser permit when the dev server never starts', async () => {
+    await runBrowserCheck(fakePlan, ['criterion A'], {
+      taskId: 'sem-no-server',
+      worktreeDir: tmpWorktree,
+      logDir: tmpLogDir,
+      deps: {
+        startDevServer: async () => { throw new Error('spawn failed') },
+        killDevServer: async () => {},
+        waitForReady: async () => {},
+        openBrowser: async () => silentBrowser(),
+      },
+    })
+
+    // The browser session is never reached, so there is nothing to acquire
+    // or release.
+    expect(acquireSemaphore).not.toHaveBeenCalled()
+    expect(releaseSemaphore).not.toHaveBeenCalled()
+  })
+
+  it('runQaWalk: releases the permit even when openBrowser throws mid-run', async () => {
+    const stepLists: QaStepList[] = [
+      { criterion: 'criterion A', steps: [{ index: 1, text: 'step 1' }] },
+    ]
+
+    const results = await runQaWalk(fakePlan, stepLists, {
+      taskId: 'sem-walk-crash',
+      worktreeDir: tmpWorktree,
+      logDir: tmpLogDir,
+      deps: {
+        startDevServer: async () => fakeHandle(),
+        killDevServer: async () => {},
+        waitForReady: async () => {},
+        openBrowser: async () => { throw new Error('browser executable not found') },
+      },
+    })
+
+    expect(results[0].stopReason).toBe('browser-launch')
+    expect(acquireSemaphore).toHaveBeenCalledTimes(1)
+    expect(acquireSemaphore).toHaveBeenCalledWith('browser', expect.objectContaining({ holder: 'mars:sem-walk-crash' }))
+    expect(releaseSemaphore).toHaveBeenCalledTimes(1)
+  })
+
+  it('runQaWalk: acquires then releases exactly once on a clean walk', async () => {
+    const stepLists: QaStepList[] = [
+      { criterion: 'criterion A', steps: [{ index: 1, text: 'step 1' }] },
+    ]
+
+    await runQaWalk(fakePlan, stepLists, {
+      taskId: 'sem-walk-ok',
+      worktreeDir: tmpWorktree,
+      logDir: tmpLogDir,
+      deps: {
+        startDevServer: async () => fakeHandle(),
+        killDevServer: async () => {},
+        waitForReady: async () => {},
+        openBrowser: async () => silentBrowser(),
+      },
+    })
+
+    expect(acquireSemaphore).toHaveBeenCalledTimes(1)
+    expect(releaseSemaphore).toHaveBeenCalledTimes(1)
   })
 })
 
