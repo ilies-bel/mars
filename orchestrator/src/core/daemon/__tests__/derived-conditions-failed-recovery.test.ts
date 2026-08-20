@@ -8,6 +8,8 @@
  *  2. A failed fix task whose origin is itself `failed` still raises exactly one row
  *     (recovery exhausted — the actionable case).
  *  3. A plain failed task (fix_for_task_id IS NULL) always raises a row.
+ *  4. A failed fix task whose origin is `done` raises NO action-queue row — the
+ *     origin already succeeded, so the recovery attempt is moot.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -126,9 +128,13 @@ describe('deriveFailedConditions — recovery task suppression', { timeout: 60_0
     expect(rows.filter((r) => r.kind === 'failed')).toHaveLength(1)
   })
 
-  // ── Branch 4: origin done → fix task row is kept (actionable) ────────────
+  // ── Branch 4: origin done → fix task row is suppressed (moot) ────────────
 
-  it('keeps the failed row when the origin is done (fix task outlived its purpose)', async () => {
+  it('suppresses the failed row when the origin is done (recovery outlived its purpose)', async () => {
+    // A recovery task is not independently meaningful — it exists only to
+    // finish its origin's work. Once the origin succeeds, an earlier failed
+    // recovery attempt is moot: nothing is actionable about it, and it must
+    // not sit in the queue as a permanent high-priority alert.
     await seedTask(client, 'origin-done', 'done')
     await seedTask(client, 'fix-task-done', 'failed', { fixForTaskId: 'origin-done' })
 
@@ -136,7 +142,8 @@ describe('deriveFailedConditions — recovery task suppression', { timeout: 60_0
     const rows = await condSource.derive({ kinds: new Set(['failed']) })
 
     const failedIds = rows.map((r) => r.payload['taskId'])
-    expect(failedIds).toContain('fix-task-done')
+    expect(failedIds).not.toContain('fix-task-done')
+    expect(rows.filter((r) => r.kind === 'failed')).toHaveLength(0)
   })
 
   // ── The payload/recipe contract ──────────────────────────────────────────

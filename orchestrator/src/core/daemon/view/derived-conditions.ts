@@ -82,6 +82,16 @@ export interface ConditionsDeps {
  * actionable case where recovery has been exhausted — or when the fix task has
  * no live origin.
  *
+ * Also suppressed: an origin that has reached `done`. A recovery task is not
+ * independently meaningful — it exists only to finish its origin's work
+ * (`fix_for_task_id` records that relationship) — so once the origin
+ * succeeds, a `failed` row for its (necessarily earlier, now-moot) recovery
+ * attempt is pure noise: the work it existed to unblock is already finished.
+ * Without this, an origin that succeeds after its first recovery attempt
+ * failed leaves a permanent high-priority `failed` alert for a task nobody
+ * can or needs to act on (2026-08-20 incident: four such rows in one day,
+ * each requiring a manual `mars drop --force`).
+ *
  * A task whose id is in `baselineCaughtTaskIds` (see baseline-attribution.ts)
  * is ALSO suppressed here: its failure is already accounted for by the
  * `baseline-broken` row (deriveBaselineBrokenConditions below), which names
@@ -124,10 +134,17 @@ async function deriveFailedConditions(
       WHERE t.status = 'failed'
         AND (
           t.fix_for_task_id IS NULL
-          OR NOT EXISTS (
-            SELECT 1 FROM tasks origin
-             WHERE origin.id = t.fix_for_task_id
-               AND origin.status NOT IN ('done', 'failed', 'dropped')
+          OR (
+            NOT EXISTS (
+              SELECT 1 FROM tasks origin
+               WHERE origin.id = t.fix_for_task_id
+                 AND origin.status NOT IN ('done', 'failed', 'dropped')
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM tasks origin
+               WHERE origin.id = t.fix_for_task_id
+                 AND origin.status = 'done'
+            )
           )
         )
       ORDER BY t.updated_at DESC`,
