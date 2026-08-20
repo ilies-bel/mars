@@ -1819,6 +1819,18 @@ export interface DropTaskResult {
    * never reached the merge stage.
    */
   mergeJobsDeleted: number
+  /**
+   * Ids of non-terminal rows whose `origin_id` named the dropped task and
+   * were re-parented rather than left dangling. When the dropped task was
+   * itself an arc root (its own `origin_id` pointed at itself), each such
+   * dependent becomes its own new arc root; otherwise every dependent
+   * inherits the dropped task's own `origin_id`, preserving arc membership.
+   * Terminal rows (done/failed/dropped) and cascade-deleted fix tasks are
+   * excluded — reparenting them would rewrite inert history for no benefit.
+   * This is a separate accounting line from `edgesRemoved`: `origin_id` is
+   * not a `task_blockers` edge.
+   */
+  originsReparented: string[]
 }
 
 /**

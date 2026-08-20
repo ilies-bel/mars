@@ -117,6 +117,7 @@ export const corePurgeTask = async (
       edgesRemoved: { incoming: 0, outgoing: 0 },
       cascadedFixTaskIds: [],
       mergeJobsDeleted: 0,
+      originsReparented: [],
     }
   }
   const acceptedStatuses = opts?.acceptedStatuses ?? ['failed', 'done', 'dropped']

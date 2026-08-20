@@ -511,17 +511,23 @@ const drop: Command = {
           previousStatus: string
           edgesRemoved: { incoming: number; outgoing: number }
           cascadedFixTaskIds: string[]
+          originsReparented?: string[]
           worktreeRemoved: boolean
           branchDeleted: boolean
         }
+        const originsReparented = data.originsReparented ?? []
         const parts = [
           `dropped ${data.taskId} (was ${data.previousStatus})`,
           `worktree=${data.worktreeRemoved ? 'removed' : 'absent'}`,
           `branch=${data.branchDeleted ? 'deleted' : 'absent'}`,
           `edges=${data.edgesRemoved.incoming}in/${data.edgesRemoved.outgoing}out`,
+          `origins-reparented=${originsReparented.length}`,
         ]
         if (data.cascadedFixTaskIds.length > 0) {
           parts.push(`cascaded fix tasks: ${data.cascadedFixTaskIds.join(', ')}`)
+        }
+        if (originsReparented.length > 0) {
+          parts.push(`reparented: ${originsReparented.join(', ')}`)
         }
         deps.out(parts.join('; '))
         succeeded++

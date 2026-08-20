@@ -2050,14 +2050,25 @@ export class Arc {
 
     const result = await this.store.atomic(async (scope) => {
       const before = await scope.execute({
-        sql: `SELECT status FROM tasks WHERE id = ?`,
+        sql: `SELECT status, origin_id FROM tasks WHERE id = ?`,
         args: [id],
       })
       if (before.rows.length === 0) {
         throw new Error(`task ${id} not found`)
       }
-      const previousStatus = (before.rows[0] as unknown as { status: TaskStatus })
-        .status
+      const beforeRow = before.rows[0] as unknown as {
+        status: TaskStatus
+        origin_id: string | null
+      }
+      const previousStatus = beforeRow.status
+      // NULL origin_id means "self" throughout the schema (see getTask's
+      // coalesce and the orphan-guard comment below) — treat it the same way
+      // here so a never-explicitly-set root still reads as its own root.
+      const droppedOwnOriginId = beforeRow.origin_id ?? id
+      // The dropped task was itself an arc root: dependents naming it as
+      // their origin cannot inherit "itself" (that row is about to be
+      // deleted), so each becomes its own new arc root instead.
+      const droppedWasRoot = droppedOwnOriginId === id
 
       const incoming = await scope.execute({
         sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE blocker_task_id = ?`,
@@ -2409,6 +2420,38 @@ export class Arc {
       })
       mergeJobsDeleted += Number(originMergeJobsDel.rowsAffected ?? 0)
 
+      // Reparent dangling origin_id references (mars-eb5eab63): any row still
+      // naming the about-to-be-deleted task as its origin would otherwise be
+      // left pointing at a vanished row, later failing with
+      // orphaned_origin_at_unblock the moment an unrelated blocker of its own
+      // settles (see Arc.unblockByCompletion). Read this AFTER the orphan
+      // pre-pass/re-queue loop above and the cascaded-fix-task deletion loop,
+      // so it naturally excludes: dependents just failed as orphans (now
+      // 'failed', a terminal status) and cascaded fix tasks (already deleted,
+      // so absent from this SELECT). Terminal rows (done/failed/dropped) are
+      // left alone — reparenting inert history benefits no one.
+      const originRefRows = await scope.execute({
+        sql: `SELECT id, status FROM tasks WHERE origin_id = ? AND id <> ?`,
+        args: [id, id],
+      })
+      const originsReparented: string[] = []
+      for (const row of originRefRows.rows) {
+        const { id: depId, status: depStatus } = row as unknown as {
+          id: string
+          status: TaskStatus
+        }
+        if (TERMINAL_TASK_STATUSES.has(depStatus)) continue
+        // The dropped task was an arc root: each dependent becomes its own
+        // new root. Otherwise every dependent inherits the dropped task's own
+        // origin, preserving arc membership up the chain.
+        const newOriginId = droppedWasRoot ? depId : droppedOwnOriginId
+        await scope.execute({
+          sql: `UPDATE tasks SET origin_id = ? WHERE id = ?`,
+          args: [newOriginId, depId],
+        })
+        originsReparented.push(depId)
+      }
+
       await scope.execute({
         sql: `DELETE FROM tasks WHERE id = ?`,
         args: [id],
@@ -2420,6 +2463,7 @@ export class Arc {
         edgesRemoved: { incoming: incomingCount, outgoing: outgoingCount },
         cascadedFixTaskIds,
         mergeJobsDeleted,
+        originsReparented,
       }
     })
 
