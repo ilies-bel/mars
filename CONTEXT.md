@@ -609,3 +609,7 @@ Core UI product principle (operator-stated, 2026-08-14): every screen should be 
 **Shell**:
 The persistent chrome framing every UI page — the dark grouped sidebar (Workspace / Developer / Intel) and the dark topbar (wordmark, breadcrumb, project switcher, live indicator) — inside which page content renders on the light warm surface.
 _Avoid_: app shell, layout, chrome
+
+**Checker**:
+A swappable, per-surface inspector registered on a workflow run's container that reports findings as events and never decides their consequences.
+_Avoid_: plugin, QA plugin, validator, checker plugin, behaviour plugin
