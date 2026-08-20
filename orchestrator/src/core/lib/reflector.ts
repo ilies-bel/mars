@@ -790,6 +790,19 @@ export interface VerdictedSuggestion {
    * A verdict applied to an unbound suggestion is never filed.
    */
   outcome: SuggestionOutcome
+  /**
+   * Least-specific-valid-rule (mirrors the generalization discipline applied to
+   * {@link VerdictedScorerSuggestion.rubric}): the arc/task ids the evidence
+   * actually demonstrates this pattern in. Defaults to `[]` when the analyst
+   * omits it.
+   */
+  coversInstances: string[]
+  /**
+   * Least-specific-valid-rule: what this suggestion explicitly does NOT claim
+   * to generalize to (e.g. other Workflow kinds, fleet-wide frequency).
+   * Defaults to `''` when the analyst omits it.
+   */
+  doesNotClaim: string
 }
 
 export interface ApplyVerdictsResult {

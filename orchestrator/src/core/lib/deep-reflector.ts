@@ -152,6 +152,21 @@ Procedure:
    scheme as single-task mode: save | absorb | drop. Each suggestion's
    prompt MUST be self-contained and end with "Save your work."
 
+Least-specific-valid-rule (applies to every entry in \`suggestions[]\`, not
+only \`scorerSuggestions\`): state the narrowest true claim your evidence
+supports, not the broadest one you can imagine. Every suggestion MUST name
+which arcs/tasks it actually covers and what it explicitly does NOT claim
+to generalize to. Two fields carry this:
+- \`coversInstances\`: the arc/task ids your evidence directly demonstrates
+  the pattern in — do not list an id you have not seen exhibit it.
+- \`doesNotClaim\`: one sentence naming what remains unproven — e.g. "does
+  not claim this recurs on other Workflow kinds" or "observed only in this
+  arc; no evidence of fleet-wide frequency". Never leave this empty when
+  \`frequency\` is 1 or \`affectedTaskIds\` has a single id.
+This is the same discipline the scorer rubric below applies to \`rubric\`
+(step 6): prefer a narrow, defensible hypothesis over a broad one the
+evidence doesn't support.
+
 Environmental failure classification:
 - When a task's per-task digest (see below) sets \`environmentalFailure: true\`,
   classify that arc failure as **infrastructure** (quota, install, daemon),
@@ -273,6 +288,8 @@ Schema:
       "verdict": "save|absorb|drop",
       "target_id": "<id>|null",
       "dup_of": "<id>|null",
+      "coversInstances": ["mars-xxxxx"],
+      "doesNotClaim": "one sentence naming what remains unproven",
       "outcome": {
         "type": "lever",
         "lever": { "id": "caps.implement", "currentValue": "12", "proposedValue": "8" }
@@ -891,6 +908,10 @@ const parseSuggestions = (raw: unknown): VerdictedSuggestion[] => {
     const rawKind = o.kind
     const kind: 'mechanical' | 'architectural' =
       rawKind === 'mechanical' || rawKind === 'architectural' ? rawKind : 'mechanical'
+    const coversInstances = Array.isArray(o.coversInstances)
+      ? (o.coversInstances as unknown[]).filter((id): id is string => typeof id === 'string')
+      : []
+    const doesNotClaim = typeof o.doesNotClaim === 'string' ? o.doesNotClaim.trim() : ''
     if (!title || !prompt) continue
     const outcome = parseAndValidateOutcome(o.outcome, registry)
     if (!outcome) continue
@@ -907,6 +928,8 @@ const parseSuggestions = (raw: unknown): VerdictedSuggestion[] => {
       targetId,
       dupOf,
       outcome,
+      coversInstances,
+      doesNotClaim,
     })
   }
   return out

@@ -256,6 +256,8 @@ describe('reflector persist dedup', () => {
       verdict: 'save' as const,
       targetId: null,
       dupOf: null,
+      coversInstances: [],
+      doesNotClaim: '',
       outcome: baseOutcome,
     }
 
@@ -287,6 +289,8 @@ describe('reflector persist dedup', () => {
       verdict: 'save' as const,
       targetId: null,
       dupOf: null,
+      coversInstances: ['task-x', 'task-y'],
+      doesNotClaim: '',
       outcome: baseOutcome,
     }
 
@@ -327,6 +331,8 @@ describe('reflector persist dedup', () => {
       verdict: 'save' as const,
       targetId: null,
       dupOf: null,
+      coversInstances: ['task-a'],
+      doesNotClaim: '',
       outcome: {
         type: 'lever' as const,
         lever: {
