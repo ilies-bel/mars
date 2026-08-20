@@ -190,54 +190,35 @@ metering itself.
 **The line:** *The only agent orchestrator that tells you it's getting
 expensive.*
 
-### 5. Everything is swappable — so you stay on the frontier
+### 5. Cordis inside — always on the state of the art
 
-This is not an extensibility bullet for plugin authors. It is **obsolescence
-insurance**, and in this field that is a first-class product feature.
+Mars learns your repo continuously (see pillar 2). The models it runs on change
+every few weeks. Cordis is what lets both be true at once.
 
-The frontier model changes every few weeks. A tool that hard-codes its
-provider, its model ids, or its verify strategy is obsolete on a schedule —
-and every one that does forces the same bad trade on you eventually: keep the
-tool you've invested in, or move to the better model. Mars refuses the trade.
+The container **is** [cordis 4](https://www.npmjs.com/package/@deepseek-ai/cordis)
+(DeepSeek's) — real `Context`, real `Fiber`, real typed event bus. 688 lines of
+hand-rolled container were deleted to adopt it. So swapping what Mars runs on
+costs nothing:
 
-- **Closed unions were replaced with open registries.** `ProviderName` and
-  `WorkerName` are gone as hard-coded unions; providers and workers are now
-  seedable sets you `register()` into, and registration returns a disposer.
-  Nothing is a god list that has to be edited upstream.
+- **Providers and workers are open registries** you `register()` into, not
+  hard-coded unions. Registration returns a disposer.
   → `core/workers/provider-registry.ts`, `core/workers/worker-registry.ts`,
   `registries/verify-heuristics.ts`
-- **Models are addressed semantically, not by name.** Workers ask for a
-  *flagship* / *balanced* / *fast* tier; the provider adapter resolves the tier
-  to a native model id. A new model generation is a mapping change, not a code
-  change — and never a migration.
-- **There are no provider SDKs.** Every model call crosses one
-  provider-neutral boundary and then uses the CLI's own authentication. A
-  vendor shipping a breaking SDK change cannot break Mars, because Mars never
-  depended on their client library in the first place.
-- **The container is not bespoke.** It **is**
-  [cordis 4](https://www.npmjs.com/package/@deepseek-ai/cordis) (DeepSeek's) —
-  real `Context`, real `Fiber`, real typed event bus. 688 lines of hand-rolled
-  container were deleted to adopt it. Nothing proprietary to learn, and the
-  extension model is one someone else maintains.
+- **Models are addressed by tier** — flagship, balanced, fast — never by name.
+  A new model generation is a mapping change, not a migration.
+- **There are no provider SDKs.** Nothing a vendor ships can break Mars.
 - **Swap from outside the repo.** A coder, a verify heuristic, a merge
-  strategy, a provider, or a single step of a workflow — from a
-  `.mars/workflows/*.js` file. No fork. Everything ships wired, so swapping is
-  opt-in, never setup.
+  strategy, or one step of a workflow, from a `.mars/workflows/*.js` file. No
+  fork. Everything ships wired, so swapping is opt-in, never setup.
 
 *(Honest scope: providers and workers are fully open registries today; the
 primitive registry has not yet been extracted from `core/lib/primitive-catalog.ts`.
 Don't claim it is.)*
 
-**Where this compounds with pillar 2.** Growth accumulates value *in your
-repo* — recovery recipes, glossary terms, workflow steps, prompt overrides,
-years of trace history. Swappability guarantees that accumulated value is not
-hostage to whichever model happened to be best the month you started. When
-something better ships next month, you register an adapter and keep
-everything. **The engine swaps; the learning stays.**
+Something better ships next month — you point Mars at it, and everything it has
+learned about your repo comes with it.
 
-That pairing is the moat. A tool that only grows locks you in. A tool that
-only swaps never gets smarter. Mars does both, which is why the two pillars
-belong next to each other and should never be pitched apart.
+**Mars learns continuously. Cordis keeps it on the state of the art.**
 
 - **One thing is sealed.** `store` and `traceStore` are installed as cordis
   *accessors*, not services, so `ctx.provide('store', …)` throws — and the
@@ -312,7 +293,7 @@ the engineer."*
 
 **The claim that structures the debate** (pick one per piece):
 - "You can change what runs. You can never change whether it was recorded."
-- "The engine swaps; the learning stays."
+- "Mars learns continuously. Cordis keeps it on the state of the art."
 - "Stale alerts are unrepresentable."
 - "Coordination costs zero tokens."
 - "Every commit traces back to the decision that caused it."

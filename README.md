@@ -102,9 +102,9 @@ the user' surface."* That's not marketing language retrofitted onto code;
 the code said it first.
 
 Ships with opinions. After a month, they're yours. That accumulated value
-isn't hostage to whichever model happened to be best the month you started —
-see [Everything is swappable](#everything-is-swappable--so-you-stay-on-the-frontier).
-The engine swaps; the learning stays.
+doesn't depend on the model you started with —
+see [Cordis inside](#cordis-inside--always-on-the-state-of-the-art).
+Mars learns continuously. Cordis keeps it on the state of the art.
 
 ## Event-driven and traced
 
@@ -159,38 +159,38 @@ instead of grep+Read loops.
 
 The only agent orchestrator that tells you it's getting expensive.
 
-## Everything is swappable — so you stay on the frontier
+## Cordis inside — always on the state of the art
 
-The frontier model changes every few weeks. A tool that hard-codes its
-provider or its model ids is obsolete on a schedule — it eventually forces
-the same bad trade: keep the tool you've invested in, or move to the better
-model. Mars refuses the trade. This isn't a plugin-author bullet; it's
-obsolescence insurance, and [growth into your repo](#it-grows-into-your-repo)
-is what makes it pay off — the engine swaps, the learning stays.
+Mars learns your repo continuously (see [It grows into your
+repo](#it-grows-into-your-repo)). The models it runs on change every few
+weeks. Cordis is what lets both be true at once.
 
-- **Open registries, not closed unions.** `ProviderName` and `WorkerName`
-  are gone as hard-coded types; providers and workers are seedable sets you
-  `register()` into, and registration returns a disposer
+The container **is** [cordis 4](https://www.npmjs.com/package/@deepseek-ai/cordis)
+(`@deepseek-ai/cordis@4.0.1` in `orchestrator/package.json`) — a real
+`Context`, a real `Fiber`, a real typed event bus. So swapping what Mars
+runs on costs nothing:
+
+- **Providers and workers are open registries** you `register()` into, not
+  hard-coded unions. Registration returns a disposer
   (`orchestrator/src/core/workers/provider-registry.ts`,
   `worker-registry.ts`).
 - **Models are addressed by tier, not by name.** Workers ask for a
   *flagship* / *balanced* / *fast* tier; the provider adapter resolves it to
   a native model id. A new model generation is a mapping change, never a
   migration.
-- **No provider SDK is a dependency.** Every model call crosses one
-  provider-neutral boundary and rides the CLI's own authentication — a
-  vendor's breaking SDK change can't break Mars, because Mars never
-  depended on their client library.
+- **There are no provider SDKs.** Every model call crosses one
+  provider-neutral boundary and rides the CLI's own authentication —
+  nothing a vendor ships can break Mars.
 
-The container **is** [cordis 4](https://www.npmjs.com/package/@deepseek-ai/cordis)
-(`@deepseek-ai/cordis@4.0.1` in `orchestrator/package.json`) — a real
-`Context`, a real `Fiber`, a real typed event bus, not a bespoke plugin
-system you have to learn. Swap a coder, a verify heuristic, a merge
-strategy, a provider, or a single workflow step from a
-`.mars/workflows/*.js` file — everything ships wired, so swapping is
-opt-in, never setup. One thing is sealed: `store` and `traceStore` are
-installed as cordis *accessors*, not services, so `ctx.provide('store', …)`
-throws — and the seal holds even under `ctx.isolate` (ADR-0052,
+Swap a coder, a verify heuristic, a merge strategy, a provider, or a single
+workflow step from a `.mars/workflows/*.js` file — everything ships wired,
+so swapping is opt-in, never setup.
+
+Mars learns continuously. Cordis keeps it on the state of the art.
+
+One thing is sealed: `store` and `traceStore` are installed as cordis
+*accessors*, not services, so `ctx.provide('store', …)` throws — and the
+seal holds even under `ctx.isolate` (ADR-0052,
 `orchestrator/src/core/__tests__/sealed-write-funnel-guard.test.ts`).
 
 You can change what runs. You can never change whether it was recorded.
