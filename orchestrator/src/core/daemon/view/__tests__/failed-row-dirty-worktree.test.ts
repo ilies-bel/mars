@@ -19,6 +19,7 @@ import { resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createConditionItemsSource } from '../derived-conditions.js'
 import { humanSummary as recipeHumanSummary } from '../../../lib/action-queue-recipes.js'
+import type { ActionQueueKind } from '../../../lib/action-queue-kinds.js'
 import type { DbClient } from '../../../lib/db.js'
 
 let repo: string
@@ -58,7 +59,12 @@ const deriveFailedRow = async (worktreePath: string | null) => {
   })
   const rows = await source.derive({ kinds: new Set(['failed']) })
   expect(rows).toHaveLength(1)
-  return rows[0]!
+  const row = rows[0]!
+  // `derive` returns `PersistedActionQueueRow`, whose `kind` is a plain
+  // `string` because most callers deal in rows of arbitrary DB-persisted
+  // kind. This helper only ever asks for the `failed` condition kind, so
+  // narrow once here rather than casting `row.kind` at each call site.
+  return { ...row, kind: row.kind as ActionQueueKind }
 }
 
 beforeEach(() => {
