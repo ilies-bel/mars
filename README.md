@@ -22,8 +22,6 @@ you do something else. No servers to stand up. No API keys. No per-token bill.
                   + mars ui (show board updating live)
      Host on YouTube/Vimeo and embed here. -->
 
-https://github.com/user-attachments/assets/PLACEHOLDER-HERO-VIDEO
-
 ![Mars topology view — the live dependency graph of tasks and proposals](./docs/assets/ui-topology.png)
 
 ## Why Mars
@@ -244,8 +242,6 @@ CLI is the only write surface — the UI never mutates state.
      5. Switch to action queue, show a failed task with its failure reason
      Host on YouTube/Vimeo and embed here. -->
 
-https://github.com/user-attachments/assets/PLACEHOLDER-UI-WALKTHROUGH
-
 | Topology — the live dependency graph | Board — the AFK team at work |
 | :---: | :---: |
 | ![Topology view](./docs/assets/ui-topology.png) | ![Kanban board](./docs/assets/ui-board.png) |
@@ -318,7 +314,7 @@ Full reference with env vars and workflow internals:
 
 | Document | What's in it |
 | --- | --- |
-| [`VISION.md`](./VISION.md) | Target state, canonical loop, non-goals |
+| [`VISION.md`](./docs/knowledge/vision.md) | Target state, canonical loop, non-goals |
 | [`ARCHITECTURE.md`](./ARCHITECTURE.md) | Components and state as they exist today |
 | [`PRODUCT.md`](./PRODUCT.md) | Product purpose, users, design principles |
 | [`orchestrator/README.md`](./orchestrator/README.md) | Full CLI reference, workflow internals, env vars |
