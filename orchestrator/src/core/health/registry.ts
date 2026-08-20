@@ -6,11 +6,20 @@
  * satisfy; runChecks() runs the subset whose requirements are met and returns
  * 'skipped' entries with a machine-readable reason for the rest.
  *
+ * `CheckResult.status` is this module's spelling of the shared tri-state
+ * {@link VerificationOutcome} (ADR-0070): 'ok' is 'pass', 'finding' is 'fail'
+ * (positive evidence — the check ran and the condition was found broken),
+ * 'skipped' is 'cant-verify' (a missing prerequisite meant the check never
+ * ran at all, so absence is never reported as a finding). See
+ * `core/lib/verification-outcome.ts` for the shared contract.
+ *
  * Design constraints:
  *   - Each check id must be unique — registerCheck() throws on duplicates.
  *   - run() must never throw; catch all errors internally.
  *   - The registry has no side effects: no DB, no daemon reference.
  */
+
+import { verificationOutcomeLabels, type VerificationOutcome } from '../lib/verification-outcome.js'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -46,10 +55,24 @@ export interface CheckDef {
   run(ctx: CheckContext): Promise<CheckOutcome>
 }
 
+/**
+ * This module's status vocabulary, expressed as a relabelling of the shared
+ * {@link VerificationOutcome} tri-state (ADR-0070) — see the module doc for
+ * what each canonical state means here.
+ */
+const STATUS = verificationOutcomeLabels({
+  pass: 'ok',
+  fail: 'finding',
+  'cant-verify': 'skipped',
+})
+
+/** This module's on-the-wire status type: 'ok' | 'finding' | 'skipped'. */
+export type CheckStatus = (typeof STATUS)[VerificationOutcome]
+
 /** Per-check result returned by runChecks(). */
 export interface CheckResult {
   readonly id: CheckId
-  readonly status: 'ok' | 'finding' | 'skipped'
+  readonly status: CheckStatus
   /**
    * Set on 'skipped' results: 'prereq:<name>' identifies which missing
    * prerequisite caused the skip.
@@ -97,13 +120,13 @@ export async function runChecks(ctx: CheckContext): Promise<CheckResult[]> {
   for (const def of _checks.values()) {
     const missingPrereq = def.requires.find((p) => !ctx.prereqs.has(p))
     if (missingPrereq !== undefined) {
-      results.push({ id: def.id, status: 'skipped', reason: `prereq:${missingPrereq}` })
+      results.push({ id: def.id, status: STATUS['cant-verify'], reason: `prereq:${missingPrereq}` })
       continue
     }
     const outcome = await def.run(ctx)
     results.push({
       id: def.id,
-      status: outcome.ok ? 'ok' : 'finding',
+      status: outcome.ok ? STATUS.pass : STATUS.fail,
       outcome,
     })
   }

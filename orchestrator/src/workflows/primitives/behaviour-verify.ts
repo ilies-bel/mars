@@ -47,6 +47,10 @@ import { extname, isAbsolute, join, resolve } from 'node:path'
 
 import { discoverAppBoot, type BootPlan } from './app-boot-discovery'
 import { runBrowserCheck, type CriterionResult } from './browser-check'
+import {
+  verificationOutcomeLabels,
+  type VerificationOutcome,
+} from '../../core/lib/verification-outcome'
 
 const execFileAsync = promisify(execFile)
 
@@ -213,10 +217,26 @@ type UnverifiableReason =
   | 'verdict-unparseable'
   | 'no-exercisable-criteria'
 
+/**
+ * This module's decision vocabulary, expressed as a relabelling of the
+ * shared {@link VerificationOutcome} tri-state (ADR-0070): 'pass' and 'fail'
+ * keep their canonical spelling; 'cant-verify' is spelled 'unverifiable'
+ * here to match the Worker-facing verdict vocabulary
+ * (`criterionVerdictSchema` above).
+ */
+const DECISION = verificationOutcomeLabels({
+  pass: 'pass',
+  fail: 'fail',
+  'cant-verify': 'unverifiable',
+})
+
+/** This module's fold-decision type: 'pass' | 'fail' | 'unverifiable'. */
+export type VerdictDecision = (typeof DECISION)[VerificationOutcome]
+
 export type VerdictFold =
-  | { decision: 'pass'; passed: CriterionVerdict[] }
-  | { decision: 'fail'; failed: CriterionVerdict[] }
-  | { decision: 'unverifiable'; reason: UnverifiableReason }
+  | { decision: typeof DECISION.pass; passed: CriterionVerdict[] }
+  | { decision: typeof DECISION.fail; failed: CriterionVerdict[] }
+  | { decision: (typeof DECISION)['cant-verify']; reason: UnverifiableReason }
 
 /**
  * Fold per-criterion verdicts into the tri-state outcome. FAIL dominates:
@@ -229,10 +249,10 @@ export const foldVerdicts = (
   verdicts: readonly CriterionVerdict[],
 ): VerdictFold => {
   const failed = verdicts.filter((v) => v.verdict === 'fail')
-  if (failed.length > 0) return { decision: 'fail', failed }
+  if (failed.length > 0) return { decision: DECISION.fail, failed }
   const passed = verdicts.filter((v) => v.verdict === 'pass')
-  if (passed.length > 0) return { decision: 'pass', passed }
-  return { decision: 'unverifiable', reason: 'no-exercisable-criteria' }
+  if (passed.length > 0) return { decision: DECISION.pass, passed }
+  return { decision: DECISION['cant-verify'], reason: 'no-exercisable-criteria' }
 }
 
 // ---------------------------------------------------------------------------
