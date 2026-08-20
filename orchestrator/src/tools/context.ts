@@ -128,11 +128,13 @@ export interface MarsServices {
    * Hook registered by the daemon that routes merge requests through the
    * durable single-consumer merge worker. The `merge` primitive always
    * delegates to this hook; it must be present in all runtime contexts
-   * (daemon and integration tests). The hook enqueues a `merge_jobs` row,
-   * wakes the worker, and returns a Promise that resolves with the worker's
-   * outcome when the job completes.
+   * (daemon and integration tests) — there is no fallback path, so every
+   * `MarsServices` bag (including test fixtures and scaffolded workflows)
+   * must supply it. The hook enqueues a `merge_jobs` row, wakes the worker,
+   * and returns a Promise that resolves with the worker's outcome when the
+   * job completes.
    */
-  enqueueMergeJobAndAwait?: (args: {
+  enqueueMergeJobAndAwait: (args: {
     taskId: string
     branch: string
     worktreePath: string

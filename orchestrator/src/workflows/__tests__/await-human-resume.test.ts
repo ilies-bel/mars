@@ -84,6 +84,7 @@ function makeServices(parks: ParkArgs[]): MarsServices {
   return {
     store: null as never,
     traceStore: null as never,
+    enqueueMergeJobAndAwait: null as never,
     onManualPark: async (args: ParkArgs): Promise<void> => {
       parks.push(args)
       return awaitManualDone(args.runId, args.stepName)

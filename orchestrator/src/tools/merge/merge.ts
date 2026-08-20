@@ -639,9 +639,6 @@ export const merge = async (
         // single-consumer loop and the DB `FOR UPDATE SKIP LOCKED` claim, so
         // concurrent merge primitives don't race on the file lock.
         currentPhase = 'waiting-for-worker'
-        if (!ctx.services.enqueueMergeJobAndAwait) {
-          throw new Error('enqueueMergeJobAndAwait service hook is required — merge queue is always on')
-        }
 
         // Hard step-level wall-clock ceiling (PRD bf7bbd39, slice 2).
         // If the merge worker is wedged and enqueueMergeJobAndAwait does not
