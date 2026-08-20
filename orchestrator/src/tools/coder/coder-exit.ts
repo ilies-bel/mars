@@ -77,6 +77,180 @@ export type CoderTaskRow = Awaited<ReturnType<TaskStore['getTask']>> | null
 export type CommitSource = 'self' | 'corrected' | 'net' | 'no-work' | 'unknown'
 
 /**
+ * Attempt to preserve a dirty worktree as a `wip(checkpoint)` commit after a
+ * code-phase failure, and describe the outcome in one line reused for the
+ * task `error` column, the coder-failure artifact, and the recovery prompt.
+ *
+ * Shared by every code-phase failure path in {@link classifyCoderExit}
+ * (context-exhausted, coder-exit-nonzero, and any future terminal exit code)
+ * so an operator deciding between `mars continue` and the destructive
+ * `mars restart`/`mars drop` always sees the same "worktree was clean at
+ * exit" / "worktree had N uncommitted path(s)" wording regardless of which
+ * failure path fired — see the mars-b1f78349 incident note: a
+ * context-exhausted failure carrying 145 uncommitted lines reported nothing
+ * about them because only the coder-exit-nonzero path ran this check.
+ *
+ * Writing the checkpoint here (at failure time) rather than leaving it to
+ * `mars continue` means the work is durable and legible the moment it is at
+ * risk — an operator who reaches for `mars restart`/`mars drop` first (before
+ * `mars continue`) still sees it. `mars continue`'s own best-effort
+ * checkpoint-before-resume step is unaffected: it just finds nothing to add
+ * when this already ran.
+ */
+const checkpointDirtyWorktree = async (args: {
+  taskId: string
+  originId: string
+  branch: string
+  worktreePath: string
+  integrationBranch: string
+  trace: PrimitiveTraceArgs
+  exitCode: number
+  /** Short cause phrase for the commit subject, e.g. "coder killed" or "coder ran out of context". */
+  killCause: string
+}): Promise<{ checkpointFiles: string[] | null; worktreeNote: string }> => {
+  const { taskId, originId, branch, worktreePath, integrationBranch, trace, exitCode, killCause } =
+    args
+
+  // Before reporting failure, detect whether the coder did real work before
+  // it was killed. A watchdog kill, timeout, context-budget abort, or quota
+  // death can leave completed but uncommitted changes in the worktree — work
+  // that would be silently lost if the fixer starts from a clean tree (or an
+  // operator restarts/drops the task before ever looking). Preserve those
+  // changes as a wip(checkpoint) commit so the recovery fixer inherits a
+  // reviewable, rebuildable baseline. The marker is intentionally
+  // unambiguous so the fixer can distinguish checkpointed WIP from
+  // deliberate commits and knows not to merge as-is.
+  let checkpointFiles: string[] | null = null
+  try {
+    const postState = await detectPostCoderState({
+      worktreePath,
+      integrationBranch,
+      traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+    })
+    if (
+      postState.kind === 'dirty-no-commits' ||
+      postState.kind === 'dirty-with-commits'
+    ) {
+      // Branch-safety guard: the checkpoint commit must land ONLY on the
+      // task's own branch (task/<id>), never on the integration branch
+      // (`main`) or any other freeform branch. The 2026-08-05 incident
+      // (commit 93addc75) was caused by this path committing to `main` when
+      // the worktreePath resolved to the main checkout.
+      const headBranchR = await runTool(
+        {
+          tool: 'git',
+          argv: ['rev-parse', '--abbrev-ref', 'HEAD'],
+          cwd: worktreePath,
+          taskId,
+          originId,
+          phase: 'code',
+        },
+        trace.traceStore,
+      )
+      const headBranch = headBranchR.exitCode === 0 ? headBranchR.stdout.trim() : null
+      if (headBranch !== branch) {
+        const isOnMain = headBranch === 'main' || headBranch === 'master'
+        const refusalReason = isOnMain
+          ? `HEAD is on the integration branch '${headBranch}' — wip(checkpoint) commits must land on the task branch '${branch}'`
+          : `HEAD is on '${headBranch ?? '(detached)'}', expected task branch '${branch}'`
+        console.warn(
+          `[code] task ${taskId}: SKIPPING wip(checkpoint) commit — branch guard tripped: ${refusalReason}. ` +
+            `Dirty paths (${postState.dirtyFiles.length}): ${postState.dirtyFiles.slice(0, 10).join(', ')}`,
+        )
+        // Raise an operator alert so the uncommitted work is not silently lost.
+        await raiseActionQueueItem({
+          kind: 'failed',
+          category: 'orchestrator',
+          priority: 'urgent',
+          title: `Task ${taskId}: wip-checkpoint BLOCKED — wrong branch '${headBranch ?? '(detached)'}' (expected '${branch}')`,
+          body: [
+            `Task ${taskId}'s coder exited with exit code ${exitCode} leaving ${postState.dirtyFiles.length} uncommitted path(s),`,
+            `but the wip(checkpoint) commit was BLOCKED because the worktree HEAD is on`,
+            `'${headBranch ?? '(detached HEAD)'}' instead of the task's own branch '${branch}'.`,
+            '',
+            isOnMain
+              ? `This is the scenario that produced commit 93addc75 on main (2026-08-05 incident). Nothing was committed.`
+              : `Committing to a non-task branch would land work on an unowned branch.`,
+            '',
+            'The uncommitted work may be lost. Inspect the worktree manually:',
+            `  Worktree: ${worktreePath}`,
+            `  Actual HEAD branch: ${headBranch ?? '(detached HEAD)'}`,
+            `  Expected branch: ${branch}`,
+            '',
+            'Dirty paths:',
+            ...postState.dirtyFiles.map((f) => `  ${f}`),
+          ].join('\n'),
+          payload: {
+            taskId,
+            worktreePath,
+            actualBranch: headBranch,
+            expectedBranch: branch,
+            dirtyFiles: postState.dirtyFiles,
+            coderExitCode: exitCode,
+          },
+          context: { repoRoot: process.env.MARS_REPO ?? null },
+          raisedBy: 'workflow:code:wip-checkpoint-branch-guard',
+          signature: `wip-checkpoint-branch-guard:${taskId}`,
+          originTaskId: taskId,
+        }).catch((raiseErr) => {
+          console.error(
+            `[code] task ${taskId}: wip-checkpoint branch-guard action-queue raise errored:`,
+            raiseErr,
+          )
+        })
+      } else {
+        // Branch is correct — proceed with the checkpoint commit.
+        const addR = await runTool(
+          {
+            tool: 'git',
+            argv: ['add', '-A'],
+            cwd: worktreePath,
+            taskId,
+            originId,
+            phase: 'code',
+          },
+          trace.traceStore,
+        )
+        if (addR.exitCode === 0) {
+          // The subject line is a human-legible label; the trailer below is
+          // the STRUCTURAL marker the merge step gates on (see
+          // checkpoint.ts's isSalvageCheckpointCommit) so a human commit
+          // that happens to start with the same subject text is never
+          // mistaken for an orchestrator salvage snapshot.
+          const commitMsg = `${SALVAGE_CHECKPOINT_SUBJECT_PREFIX} ${killCause} (exit ${exitCode}) with ${postState.dirtyFiles.length} uncommitted path(s) — do not merge as-is\n\n${SALVAGE_CHECKPOINT_TRAILER_KEY}: ${SALVAGE_CHECKPOINT_TRAILER_VALUE}`
+          const commitR = await runTool(
+            {
+              tool: 'git',
+              argv: ['commit', '-m', commitMsg],
+              cwd: worktreePath,
+              taskId,
+              originId,
+              phase: 'code',
+            },
+            trace.traceStore,
+          )
+          if (commitR.exitCode === 0) {
+            checkpointFiles = postState.dirtyFiles
+            console.log(
+              `[code] task ${taskId}: checkpointed ${postState.dirtyFiles.length} uncommitted path(s) as wip(checkpoint) commit (exit ${exitCode})`,
+            )
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[code] task ${taskId}: checkpoint attempt failed, continuing:`, err)
+  }
+
+  const worktreeNote =
+    checkpointFiles !== null
+      ? `worktree had ${checkpointFiles.length} uncommitted path(s); preserved as wip(checkpoint) commit on branch ${branch}`
+      : 'worktree was clean at exit (no uncommitted work found)'
+
+  return { checkpointFiles, worktreeNote }
+}
+
+/**
  * Classify a finished coder run and fail the task when the run itself failed.
  *
  * Returns normally only when the coder exited 0; every other shape stamps the
@@ -108,11 +282,26 @@ export const classifyCoderExit = async (args: {
 
   // Context-budget hard abort: spawn a resume fix-task and throw the sentinel.
   if (r.exitCode === 138 && r.stderr.includes('context budget exhausted')) {
+    // Same worktree-dirt detection + wip(checkpoint) salvage as the
+    // coder-exit-nonzero path below. Context exhaustion is the failure mode
+    // most likely to leave substantial uncommitted work — the coder was
+    // mid-task, not bailing — so recording (and preserving) worktree state
+    // here matters at least as much as it does there.
+    const { checkpointFiles, worktreeNote } = await checkpointDirtyWorktree({
+      taskId,
+      originId,
+      branch,
+      worktreePath,
+      integrationBranch,
+      trace,
+      exitCode: r.exitCode,
+      killCause: 'coder ran out of context',
+    })
     await updateTask(
       taskId,
       {
         status: 'failed',
-        error: `context-exhausted: coder hit the context token budget limit`,
+        error: `context-exhausted: coder hit the context token budget limit. ${worktreeNote}`,
         failedPhase: 'code',
         failureReason: 'context-exhausted',
         failureReasonCode: 'context-exhausted',
@@ -129,18 +318,21 @@ export const classifyCoderExit = async (args: {
     await handleTaskFailureWithFixTask({
       taskId,
       failingStep: 'code:context-exhausted',
-      errorOutput: `context budget exhausted (maxContextTokens) mid-code; the worktree holds in-progress work to resume`,
+      errorOutput: `context budget exhausted (maxContextTokens) mid-code; ${worktreeNote}`,
       branch,
       store,
       recipeContext: {
         targetPath: worktreePath,
-        statusOutput: `The coder ran out of context budget mid-implementation. The worktree at ${worktreePath} holds whatever it committed before the kill — read it and continue.`,
+        statusOutput:
+          checkpointFiles !== null
+            ? `The coder ran out of context budget mid-implementation. The worktree had ${checkpointFiles.length} uncommitted path(s) which have been preserved as a wip(checkpoint) commit on branch ${branch}. Review the checkpoint (\`git -C ${worktreePath} log -p -1\`) and continue from there — do NOT redo work that is already in the checkpoint commit.`
+            : `The coder ran out of context budget mid-implementation. The worktree at ${worktreePath} was clean at exit (no uncommitted work found) — everything it did was already committed.`,
         targetBranch: branch,
         originalPrompt: '',
       },
     })
     console.log(
-      `[ctx] task ${taskId}: context-exhausted; recovery fix-task spawned to resume the existing worktree`,
+      `[ctx] task ${taskId}: context-exhausted; ${worktreeNote}; recovery fix-task spawned to resume the existing worktree`,
     )
     throw new WorkflowTerminalError('context-exhausted', CONTEXT_EXHAUSTED_ABORT_MESSAGE(taskId))
   }
@@ -246,140 +438,18 @@ export const classifyCoderExit = async (args: {
               : `stderr empty; no stream text captured`
           })()
 
-    // Before reporting failure, detect whether the coder did real work before
-    // it was killed. A watchdog kill, timeout, or quota death can leave
-    // completed but uncommitted changes in the worktree — work that would be
-    // silently lost if the fixer starts from a clean tree. Preserve those
-    // changes as a wip(checkpoint) commit so the recovery fixer inherits a
-    // reviewable, rebuildable baseline. The marker is intentionally
-    // unambiguous so the fixer can distinguish checkpointed WIP from
-    // deliberate commits and knows not to merge as-is.
-    let checkpointFiles: string[] | null = null
-    try {
-      const postState = await detectPostCoderState({
-        worktreePath,
-        integrationBranch,
-        traceCtx: buildPhaseCtx(trace, taskId, 'code'),
-      })
-      if (
-        postState.kind === 'dirty-no-commits' ||
-        postState.kind === 'dirty-with-commits'
-      ) {
-        // Branch-safety guard: the checkpoint commit must land ONLY on the
-        // task's own branch (task/<id>), never on the integration branch
-        // (`main`) or any other freeform branch. The 2026-08-05 incident
-        // (commit 93addc75) was caused by this path committing to `main` when
-        // the worktreePath resolved to the main checkout.
-        const headBranchR = await runTool(
-          {
-            tool: 'git',
-            argv: ['rev-parse', '--abbrev-ref', 'HEAD'],
-            cwd: worktreePath,
-            taskId,
-            originId,
-            phase: 'code',
-          },
-          trace.traceStore,
-        )
-        const headBranch = headBranchR.exitCode === 0 ? headBranchR.stdout.trim() : null
-        if (headBranch !== branch) {
-          const isOnMain = headBranch === 'main' || headBranch === 'master'
-          const refusalReason = isOnMain
-            ? `HEAD is on the integration branch '${headBranch}' — wip(checkpoint) commits must land on the task branch '${branch}'`
-            : `HEAD is on '${headBranch ?? '(detached)'}', expected task branch '${branch}'`
-          console.warn(
-            `[code] task ${taskId}: SKIPPING wip(checkpoint) commit — branch guard tripped: ${refusalReason}. ` +
-              `Dirty paths (${postState.dirtyFiles.length}): ${postState.dirtyFiles.slice(0, 10).join(', ')}`,
-          )
-          // Raise an operator alert so the uncommitted work is not silently lost.
-          await raiseActionQueueItem({
-            kind: 'failed',
-            category: 'orchestrator',
-            priority: 'urgent',
-            title: `Task ${taskId}: wip-checkpoint BLOCKED — wrong branch '${headBranch ?? '(detached)'}' (expected '${branch}')`,
-            body: [
-              `Task ${taskId}'s coder exited with exit code ${r.exitCode} leaving ${postState.dirtyFiles.length} uncommitted path(s),`,
-              `but the wip(checkpoint) commit was BLOCKED because the worktree HEAD is on`,
-              `'${headBranch ?? '(detached HEAD)'}' instead of the task's own branch '${branch}'.`,
-              '',
-              isOnMain
-                ? `This is the scenario that produced commit 93addc75 on main (2026-08-05 incident). Nothing was committed.`
-                : `Committing to a non-task branch would land work on an unowned branch.`,
-              '',
-              'The uncommitted work may be lost. Inspect the worktree manually:',
-              `  Worktree: ${worktreePath}`,
-              `  Actual HEAD branch: ${headBranch ?? '(detached HEAD)'}`,
-              `  Expected branch: ${branch}`,
-              '',
-              'Dirty paths:',
-              ...postState.dirtyFiles.map((f) => `  ${f}`),
-            ].join('\n'),
-            payload: {
-              taskId,
-              worktreePath,
-              actualBranch: headBranch,
-              expectedBranch: branch,
-              dirtyFiles: postState.dirtyFiles,
-              coderExitCode: r.exitCode,
-            },
-            context: { repoRoot: process.env.MARS_REPO ?? null },
-            raisedBy: 'workflow:code:wip-checkpoint-branch-guard',
-            signature: `wip-checkpoint-branch-guard:${taskId}`,
-            originTaskId: taskId,
-          }).catch((raiseErr) => {
-            console.error(
-              `[code] task ${taskId}: wip-checkpoint branch-guard action-queue raise errored:`,
-              raiseErr,
-            )
-          })
-        } else {
-          // Branch is correct — proceed with the checkpoint commit.
-          const addR = await runTool(
-            {
-              tool: 'git',
-              argv: ['add', '-A'],
-              cwd: worktreePath,
-              taskId,
-              originId,
-              phase: 'code',
-            },
-            trace.traceStore,
-          )
-          if (addR.exitCode === 0) {
-            // The subject line is a human-legible label; the trailer below is
-            // the STRUCTURAL marker the merge step gates on (see
-            // checkpoint.ts's isSalvageCheckpointCommit) so a human commit
-            // that happens to start with the same subject text is never
-            // mistaken for an orchestrator salvage snapshot.
-            const commitMsg = `${SALVAGE_CHECKPOINT_SUBJECT_PREFIX} coder killed (exit ${r.exitCode}) with ${postState.dirtyFiles.length} uncommitted path(s) — do not merge as-is\n\n${SALVAGE_CHECKPOINT_TRAILER_KEY}: ${SALVAGE_CHECKPOINT_TRAILER_VALUE}`
-            const commitR = await runTool(
-              {
-                tool: 'git',
-                argv: ['commit', '-m', commitMsg],
-                cwd: worktreePath,
-                taskId,
-                originId,
-                phase: 'code',
-              },
-              trace.traceStore,
-            )
-            if (commitR.exitCode === 0) {
-              checkpointFiles = postState.dirtyFiles
-              console.log(
-                `[code] task ${taskId}: checkpointed ${postState.dirtyFiles.length} uncommitted path(s) as wip(checkpoint) commit (exit ${r.exitCode})`,
-              )
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.warn(`[code] task ${taskId}: checkpoint attempt failed, continuing:`, err)
-    }
-
-    const worktreeNote =
-      checkpointFiles !== null
-        ? `worktree had ${checkpointFiles.length} uncommitted path(s); preserved as wip(checkpoint) commit on branch ${branch}`
-        : 'worktree was clean at exit (no uncommitted work found)'
+    // Detect-and-salvage the worktree before reporting failure. Identical to
+    // the context-exhausted path above — see `checkpointDirtyWorktree`.
+    const { checkpointFiles, worktreeNote } = await checkpointDirtyWorktree({
+      taskId,
+      originId,
+      branch,
+      worktreePath,
+      integrationBranch,
+      trace,
+      exitCode: r.exitCode,
+      killCause: 'coder killed',
+    })
 
     // --- Per-run artifact file -----------------------------------------------
     // Write a bounded head+tail of both stdout and stderr to a named file
