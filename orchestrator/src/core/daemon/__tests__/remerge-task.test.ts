@@ -252,9 +252,18 @@ describe('coreRemergeTask', () => {
       execFileSync('git', ['checkout', 'main'], { cwd: repo })
 
       // ...but a sibling recovery task already landed the IDENTICAL diff on
-      // main under a different SHA (simulated here with a cherry-pick, which
-      // reproduces a new commit object from the same patch content).
-      execFileSync('git', ['cherry-pick', branch], { cwd: repo })
+      // main under a different SHA. Re-committing the same content with a
+      // different message is the deterministic way to produce that: patch-id
+      // comes from the diff alone (so it matches), while the differing message
+      // guarantees a distinct commit object.
+      //
+      // NOT `git cherry-pick <branch>` — cherry-picking a commit whose parent
+      // is already HEAD reproduces a byte-identical commit object, so main and
+      // the branch end up at the SAME SHA, `main..branch` is empty, and this
+      // test races on whether the two commits land in the same second.
+      writeFileSync(resolve(repo, 'landed.ts'), 'export const landed = true\n')
+      execFileSync('git', ['add', 'landed.ts'], { cwd: repo })
+      execFileSync('git', ['commit', '-m', 'sibling recovery: land the same diff'], { cwd: repo })
 
       await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'failed', branch = ? WHERE id = ?`,

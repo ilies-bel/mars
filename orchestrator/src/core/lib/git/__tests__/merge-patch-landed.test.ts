@@ -54,9 +54,18 @@ describe('isBranchPatchLandedInIntegration', () => {
     git('checkout', 'main')
 
     // Simulate a sibling recovery task landing the identical diff on main
-    // under a DIFFERENT commit SHA (cherry-pick copies the patch, not the
-    // object — new SHA, same content).
-    git('cherry-pick', 'task/landed')
+    // under a DIFFERENT commit SHA. Re-committing the same content with a
+    // different message is the deterministic way to do this: patch-id is
+    // computed from the diff alone, so it matches, while the differing
+    // message guarantees a distinct commit object.
+    //
+    // NOT `git cherry-pick task/landed` — cherry-picking a commit whose
+    // parent is already HEAD reproduces a byte-identical commit object (same
+    // tree, parent, author, message; committer date usually lands in the same
+    // second), so the "copy" silently comes out with the SAME SHA. That makes
+    // `main..task/landed` empty and this whole scenario untestable — a race
+    // that passes or fails on which second the two commits land in.
+    commitFile('feature.txt', 'feature content', 'sibling recovery: land the same diff')
 
     const result = await isBranchPatchLandedInIntegration('task/landed', 'main', repoDir)
     expect(result).toBe(true)
@@ -86,8 +95,9 @@ describe('isBranchPatchLandedInIntegration', () => {
     commitFile('mixed-b.txt', 'b', 'mixed commit b')
     git('checkout', 'main')
 
-    // Land only the first commit's patch on main under a new SHA.
-    git('cherry-pick', 'task/mixed~1')
+    // Land only the FIRST commit's patch on main under a new SHA (same
+    // same-diff/different-message trick as above).
+    commitFile('mixed-a.txt', 'a', 'sibling recovery: land only mixed commit a')
 
     const result = await isBranchPatchLandedInIntegration('task/mixed', 'main', repoDir)
     expect(result).toBe(false)
