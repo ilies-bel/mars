@@ -101,7 +101,10 @@ Mars ships opinionated and then bends toward you:
 the user' surface."* That's not marketing language retrofitted onto code;
 the code said it first.
 
-Ships with opinions. After a month, they're yours.
+Ships with opinions. After a month, they're yours. That accumulated value
+isn't hostage to whichever model happened to be best the month you started —
+see [Everything is swappable](#everything-is-swappable--so-you-stay-on-the-frontier).
+The engine swaps; the learning stays.
 
 ## Event-driven and traced
 
@@ -156,7 +159,28 @@ instead of grep+Read loops.
 
 The only agent orchestrator that tells you it's getting expensive.
 
-## Everything is swappable — except one thing
+## Everything is swappable — so you stay on the frontier
+
+The frontier model changes every few weeks. A tool that hard-codes its
+provider or its model ids is obsolete on a schedule — it eventually forces
+the same bad trade: keep the tool you've invested in, or move to the better
+model. Mars refuses the trade. This isn't a plugin-author bullet; it's
+obsolescence insurance, and [growth into your repo](#it-grows-into-your-repo)
+is what makes it pay off — the engine swaps, the learning stays.
+
+- **Open registries, not closed unions.** `ProviderName` and `WorkerName`
+  are gone as hard-coded types; providers and workers are seedable sets you
+  `register()` into, and registration returns a disposer
+  (`orchestrator/src/core/workers/provider-registry.ts`,
+  `worker-registry.ts`).
+- **Models are addressed by tier, not by name.** Workers ask for a
+  *flagship* / *balanced* / *fast* tier; the provider adapter resolves it to
+  a native model id. A new model generation is a mapping change, never a
+  migration.
+- **No provider SDK is a dependency.** Every model call crosses one
+  provider-neutral boundary and rides the CLI's own authentication — a
+  vendor's breaking SDK change can't break Mars, because Mars never
+  depended on their client library.
 
 The container **is** [cordis 4](https://www.npmjs.com/package/@deepseek-ai/cordis)
 (`@deepseek-ai/cordis@4.0.1` in `orchestrator/package.json`) — a real
