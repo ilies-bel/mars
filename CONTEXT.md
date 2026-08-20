@@ -600,8 +600,8 @@ The single collapsed row left in the main transcript for a closed subthread. It 
 _Avoid_: replay, transcript-dump
 
 **Alert**:
-The operational subset of action queue rows — those raised by the framework observing its own execution — as distinct from draft proposals awaiting shaping.
-_Avoid_: notification, warning, inbox alert, operational alert
+A level-triggered action queue message representing a condition that currently holds and stops being shown only when that condition ceases.
+_Avoid_: warning, notification, alarm
 
 **Visual-first UI**:
 Core UI product principle (operator-stated, 2026-08-14): every screen should be as visual as possible — prefer visual encodings (status chips, timelines, progress bars, sparklines, diff stats, cards with clear hierarchy) over walls of text. Raw prose/markdown dumps are a last resort shown behind an expandable detail, never the primary rendering. Applies to chat responses, task/proposal drawers, events, and board. Sibling principles: calm (one accent color, red only for needs-you), low density, quiet empty states.
