@@ -2,7 +2,12 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
-import { parseClaudeStreamLine, extractQuotaRejected, type ClaudeEvent } from '../claude-stream'
+import {
+  parseClaudeStreamLine,
+  extractQuotaRejected,
+  extractTransportDropped,
+  type ClaudeEvent,
+} from '../claude-stream'
 import { getLatestContextSize } from '../claude-usage'
 import { FALLBACK_CLAUDE_PATH_DIRS, isExecutableFile } from './internal'
 import { apiCircuitBreaker } from '../api-circuit-breaker'
@@ -267,6 +272,15 @@ export interface RunAgentResult extends RunSubprocessResult {
    * failure — it consumes no recovery slot and the task re-queues for later.
    */
   quotaRejected: { resetsAt: number } | null
+  /**
+   * True when the Claude CLI's own stream shows the connection to the API
+   * being severed mid-response (see {@link extractTransportDropped}) — a
+   * transport failure, not a coder failure. Optional: only the Claude
+   * adapter (this file) currently detects and surfaces it; other provider
+   * adapters (codex, gemini) leave it unset, which downstream classifiers
+   * must treat as `false`, never as "unknown, assume worst".
+   */
+  transportDropped?: boolean
 }
 
 /** @deprecated Use RunAgentResult. Kept for backward compatibility. */
@@ -906,8 +920,9 @@ export const runClaudeCode = async ({
     extractSessionId(result.stdout) ??
     sessionId ??
     null
-  // Compute once; all return paths include it.
+  // Compute once; all return paths include them.
   const quotaRejected = extractQuotaRejected(conversation)
+  const transportDropped = extractTransportDropped(conversation)
   if (timedOut) {
     return {
       exitCode: 124,
@@ -916,6 +931,7 @@ export const runClaudeCode = async ({
       sessionId: detectedSessionId,
       conversation,
       quotaRejected,
+      transportDropped,
     }
   }
   if (ctxExhausted) {
@@ -926,6 +942,7 @@ export const runClaudeCode = async ({
       sessionId: detectedSessionId,
       conversation,
       quotaRejected,
+      transportDropped,
     }
   }
   if (externalAborted) {
@@ -936,7 +953,8 @@ export const runClaudeCode = async ({
       sessionId: detectedSessionId,
       conversation,
       quotaRejected,
+      transportDropped,
     }
   }
-  return { ...result, sessionId: detectedSessionId, conversation, quotaRejected }
+  return { ...result, sessionId: detectedSessionId, conversation, quotaRejected, transportDropped }
 }

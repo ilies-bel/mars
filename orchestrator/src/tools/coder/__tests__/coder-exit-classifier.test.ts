@@ -18,6 +18,13 @@
  *   - Natural non-zero exit with messages → terminal-recovery
  *   - Natural non-zero exit with zero messages → retryable-transient
  *   - exit 138 WITHOUT context-budget phrase → NOT context-exhausted path
+ *   - transportDropped=true → retryable-transient regardless of exit code or
+ *     message count (2026-08-20 mars-8693f3a4 incident: a dropped provider
+ *     connection was misclassified as a genuine coder failure because the
+ *     CLI's own "connection closed" text landed as a conversation entry,
+ *     defeating the zero-messages heuristic)
+ *   - a genuine non-zero exit with real stderr and no transport signal still
+ *     classifies as terminal-recovery (unaffected by the new rule)
  */
 import { describe, it, expect } from 'vitest'
 import {
@@ -225,6 +232,67 @@ describe('classifyCoderExitDisposition', () => {
         aborted: NOT_ABORTED,
       })
       expect(result.kind).toBe('terminal-recovery')
+    })
+  })
+
+  describe('retryable-transient — provider transport dropped', () => {
+    it('returns retryable-transient when transportDropped=true, even with messages exchanged', () => {
+      // The CLI's own "Connection closed mid-response" text can itself land
+      // as a conversation entry, so messageCount > 0 here — the exact shape
+      // that defeated the zero-messages heuristic in the 2026-08-20 incident.
+      const result = classifyCoderExitDisposition({
+        r: makeOutcome({ exitCode: 1, conversation: [{}], transportDropped: true }),
+        aborted: NOT_ABORTED,
+      })
+      expect(result.kind).toBe('retryable-transient')
+      if (result.kind !== 'retryable-transient') return
+      expect(result.reason).toBe('provider-transport-dropped')
+    })
+
+    it('returns retryable-transient for transportDropped=true regardless of exit code (SIGTERM)', () => {
+      const result = classifyCoderExitDisposition({
+        r: makeOutcome({ exitCode: 143, conversation: [{}, {}], transportDropped: true }),
+        aborted: NOT_ABORTED,
+      })
+      expect(result.kind).toBe('retryable-transient')
+      if (result.kind !== 'retryable-transient') return
+      expect(result.reason).toBe('provider-transport-dropped')
+    })
+
+    it('transportDropped beats natural-exit (checked before the message-count rules)', () => {
+      const result = classifyCoderExitDisposition({
+        r: makeOutcome({ exitCode: 1, conversation: [{}, {}, {}], transportDropped: true }),
+        aborted: NOT_ABORTED,
+      })
+      expect(result.kind).toBe('retryable-transient')
+    })
+
+    it('does NOT trigger when transportDropped is absent (undefined) — falls through to natural-exit', () => {
+      const result = classifyCoderExitDisposition({
+        r: makeOutcome({ exitCode: 1, conversation: [{}] }),
+        aborted: NOT_ABORTED,
+      })
+      expect(result.kind).toBe('terminal-recovery')
+      if (result.kind !== 'terminal-recovery') return
+      expect(result.reason).toBe('natural-exit')
+    })
+
+    it('a genuine coder failure with real stderr and no transport signal still classifies as terminal-recovery', () => {
+      // Requirement: transportDropped must not blur genuine coder failures —
+      // a real error (e.g. a syntax error the coder introduced) with no
+      // transport signal still spends the recovery attempt exactly as today.
+      const result = classifyCoderExitDisposition({
+        r: makeOutcome({
+          exitCode: 1,
+          stderr: 'SyntaxError: Unexpected token in src/foo.ts:12',
+          conversation: [{}, {}],
+          transportDropped: false,
+        }),
+        aborted: NOT_ABORTED,
+      })
+      expect(result.kind).toBe('terminal-recovery')
+      if (result.kind !== 'terminal-recovery') return
+      expect(result.reason).toBe('natural-exit')
     })
   })
 

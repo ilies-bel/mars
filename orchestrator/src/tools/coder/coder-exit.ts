@@ -180,16 +180,24 @@ export const classifyCoderExit = async (args: {
     // SIGTERM (143) come from `runSubprocessStreaming`'s fixed close handler
     // (which now maps `signal` to the conventional 128+N codes). 124 is the
     // timeout sentinel. 138 is context-budget exhaustion / external abort.
+    // `transportDropped` is checked FIRST, ahead of the exit-code ladder: a
+    // dropped provider connection can surface under any exit code, and
+    // reaching this point at all means the bounded immediate-retry loop in
+    // `run-agent.ts` already tried once and hit the same drop again — name
+    // the transport as the cause instead of blaming the coder or a generic
+    // "unclassified" exit.
     const terminationCause =
-      r.exitCode === 137
-        ? 'killed-by-SIGKILL'
-        : r.exitCode === 143
-          ? 'killed-by-SIGTERM'
-          : r.exitCode === 124
-            ? 'timed-out'
-            : r.exitCode === 138
-              ? 'aborted (context-budget or external cancel)'
-              : `natural-exit-or-unclassified (exit ${r.exitCode})`
+      r.transportDropped === true
+        ? 'provider-transport-dropped (connection closed mid-response)'
+        : r.exitCode === 137
+          ? 'killed-by-SIGKILL'
+          : r.exitCode === 143
+            ? 'killed-by-SIGTERM'
+            : r.exitCode === 124
+              ? 'timed-out'
+              : r.exitCode === 138
+                ? 'aborted (context-budget or external cancel)'
+                : `natural-exit-or-unclassified (exit ${r.exitCode})`
 
     // --- Zero-message detection ----------------------------------------------
     // When the coder did not exchange even one message with the provider it
@@ -914,6 +922,13 @@ export interface CoderRunOutcome {
    * the provider (startup, auth, or recursion-guard failure).
    */
   conversation: readonly unknown[]
+  /**
+   * True when the provider's own stream reported its connection severed
+   * mid-response (see `extractTransportDropped` in `claude-stream.ts`).
+   * Mirrors `RunAgentResult.transportDropped`. Optional/undefined is treated
+   * identically to `false` — only the Claude adapter currently populates it.
+   */
+  transportDropped?: boolean
 }
 
 /**
@@ -949,13 +964,17 @@ export type CoderExitDisposition =
  *    (has its own recovery path; must not enter the retry loop)
  * 4. `quotaRejected !== null` → `terminal-recovery`
  *    (has its own re-queue mechanism; must not enter the retry loop)
- * 5. SIGKILL (137) or SIGTERM (143) with zero messages → `retryable-transient`
+ * 5. `transportDropped === true` → `retryable-transient`
+ *    (the provider's own connection was severed mid-response — nothing about
+ *    the task was tested, regardless of exit code or message count; safe to
+ *    retry immediately rather than burn the recovery slot on a doomed repair)
+ * 6. SIGKILL (137) or SIGTERM (143) with zero messages → `retryable-transient`
  *    (environmental kill before provider contact; safe to retry)
- * 6. SIGKILL or SIGTERM with prior messages → `terminal-recovery`
+ * 7. SIGKILL or SIGTERM with prior messages → `terminal-recovery`
  *    (coder was making progress when killed; worktree may hold partial work)
- * 7. Any non-zero exit with zero messages → `retryable-transient`
+ * 8. Any non-zero exit with zero messages → `retryable-transient`
  *    (startup / auth / recursion-guard failure; retry is safe)
- * 8. Natural non-zero exit with messages → `terminal-recovery`
+ * 9. Natural non-zero exit with messages → `terminal-recovery`
  *    (coder ran and failed; fix-task recovery applies)
  *
  * @param r - Observable facts about the coder run.
@@ -990,27 +1009,40 @@ export function classifyCoderExitDisposition({
     return { kind: 'terminal-recovery', reason: 'quota-rejected' }
   }
 
-  // Rules 5–8 — non-zero exit (not aborted, not quota, not context-exhausted).
+  // Rule 5 — provider transport failure: the connection to the API was
+  // severed mid-response (see `extractTransportDropped`). This is checked
+  // BEFORE message-count logic on purpose: the CLI's own error text about the
+  // drop can itself land as a conversation entry, so a naive "messageCount ===
+  // 0" check would miss it and misclassify the run as `natural-exit` (Rule 9)
+  // — exactly the 2026-08-20 incident (mars-8693f3a4 and its recovery chain)
+  // that burned four recovery slots on a dropped socket, none of which ever
+  // reached real coding work.
+  if (r.transportDropped === true) {
+    return { kind: 'retryable-transient', reason: 'provider-transport-dropped' }
+  }
+
+  // Rules 6–9 — non-zero exit (not aborted, not quota, not context-exhausted,
+  // not a transport drop).
   const messageCount = r.conversation.length
 
   if (r.exitCode === 137 || r.exitCode === 143) {
     // Environmental signal kill.  Distinguishing factor: whether the coder had
     // already reached the provider before the kill.
     if (messageCount === 0) {
-      // Rule 5 — killed before any provider contact; safe to retry.
+      // Rule 6 — killed before any provider contact; safe to retry.
       return { kind: 'retryable-transient', reason: 'sigkill-no-progress' }
     }
-    // Rule 6 — killed while doing real work; worktree may hold partial commits.
+    // Rule 7 — killed while doing real work; worktree may hold partial commits.
     return { kind: 'terminal-recovery', reason: 'killed-with-progress' }
   }
 
   if (messageCount === 0) {
-    // Rule 7 — startup / auth / recursion-guard failure; the coder never
+    // Rule 8 — startup / auth / recursion-guard failure; the coder never
     // reached the provider so the worktree is untouched.  A retry is safe.
     return { kind: 'retryable-transient', reason: 'zero-messages' }
   }
 
-  // Rule 8 — natural non-zero exit after real work; fix-task recovery applies.
+  // Rule 9 — natural non-zero exit after real work; fix-task recovery applies.
   return { kind: 'terminal-recovery', reason: 'natural-exit' }
 }
 

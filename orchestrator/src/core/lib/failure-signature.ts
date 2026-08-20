@@ -458,6 +458,24 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     matchFull: /Unable to connect to API|API Error[^:]*:.*(?:ConnectionRefused|ECONNREFUSED)/i,
   },
   {
+    // code:coder-exit-nonzero/provider-transport-dropped fires when the
+    // Claude CLI's own connection to the API was severed mid-response — a
+    // dropped socket, not a network partition at connect time (that is
+    // `api-unreachable` above). The CLI exits non-zero and emits text like:
+    //   "API Error: Connection closed mid-response. The response above may
+    //    be incomplete."
+    // Nothing was wrong with the code; a lightweight bounded retry (see
+    // `classifyCoderExitDisposition` in tools/coder/coder-exit.ts) already
+    // ran before this signature is ever minted — reaching this rule means the
+    // drop recurred and the run is failing for real. Distinct from
+    // `api-unreachable` so the operator-facing cause names the right failure
+    // mode instead of a generic `/unclassified` blaming the coder (the
+    // 2026-08-20 mars-8693f3a4 incident: four recovery slots burned on this
+    // exact text with none of them ever reaching real coding work).
+    errorClass: 'provider-transport-dropped',
+    matchFull: /Connection closed mid-response/i,
+  },
+  {
     // verify:test/test-pg-connection-refused fires when a test cannot reach
     // the PostgreSQL server: 57P03 (cannot_connect_now — server starting up
     // or shutting down) or a plain TCP ECONNREFUSED (server absent, stale
@@ -1012,6 +1030,11 @@ const causeSentencesBySignature: Readonly<Record<string, CauseRenderer>> = {
   // Environmental: Claude's API was unreachable — nothing wrong with the code.
   'code:coder-exit-nonzero/api-unreachable': (taskId) =>
     `the coder couldn't reach Claude's API — nothing was wrong with the code. Retry once connectivity is back: mars restart ${taskId}`,
+  // Environmental: the provider's connection dropped mid-response. The
+  // orchestrator already retried once automatically before this signature
+  // was minted; reaching it means the drop recurred.
+  'code:coder-exit-nonzero/provider-transport-dropped': (taskId) =>
+    `the provider's connection was severed mid-response — nothing was wrong with the code. An automatic retry already ran; if connectivity has since recovered: mars continue ${taskId}`,
   // Operator-owned: the daemon could not execute the provider CLI at all.
   'code:coder-exit-nonzero/provider-binary-missing': (taskId) =>
     `the command the daemon spawned for the coder could not be executed (spawn failure / exit 127) — the step did no work. Check that the provider binary resolves in the daemon's environment (or pin MARS_<PROVIDER>_BIN to an absolute path), then mars restart ${taskId}`,

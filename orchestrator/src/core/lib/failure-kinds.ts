@@ -331,6 +331,24 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         ],
       },
 
+      // The provider-transport-dropped sub-class: the connection to the API
+      // was severed mid-response (not unreachable at connect time — that's
+      // api-unreachable above). A bounded, lightweight retry already ran
+      // in-process (see classifyCoderExitDisposition) before this signature
+      // is ever minted, so reaching the action queue means the drop
+      // recurred. Still environmental, not a code defect.
+      {
+        signature: 'code:coder-exit-nonzero/provider-transport-dropped',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: "The coder's connection to the provider dropped mid-response",
+        verboseReason:
+          "The code step failed because the provider's connection was severed mid-response (a dropped socket, not a code defect) — the task's code was not at fault. The orchestrator already retried automatically once before failing; if the connectivity issue has cleared, `mars continue` will pick up right where it left off.",
+        actions: [
+          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
+          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+        ],
+      },
+
       {
         // The command spawned for the coder could not be executed at all —
         // spawn ENOENT/EACCES, or exit 127. Environmental, not a code defect:

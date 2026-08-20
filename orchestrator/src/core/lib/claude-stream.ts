@@ -159,6 +159,61 @@ export const extractQuotaRejected = (
   return null
 }
 
+/**
+ * Regex for the Claude CLI's own report that the HTTP stream to the API was
+ * severed before a response finished — the literal text is
+ * "API Error: Connection closed mid-response." Kept module-private:
+ * `failure-signature.ts` deliberately carries its own copy of this pattern
+ * (see the `provider-transport-dropped` errorClassRule there) rather than
+ * importing it, because that module is a dependency-free leaf by design.
+ */
+const TRANSPORT_DROPPED_PATTERN = /Connection closed mid-response/i
+
+/**
+ * Detect whether the event stream shows the provider's own connection being
+ * severed mid-response — a transport failure, not a coder failure. Nothing
+ * about the task was tested when this fires, so callers must NOT treat it
+ * the same as a natural coder failure with real progress.
+ *
+ * Distinct from {@link extractQuotaRejected} (rate/spend rejection, which
+ * carries its own `rate_limit_event`) and from the `ConnectionRefused`
+ * circuit-breaker signal in `git/claude.ts` (a sustained-unreachable-at-
+ * connect-time cascade that trips `apiCircuitBreaker`): this is a single
+ * socket dropped mid-stream, observed as the literal phrase "Connection
+ * closed mid-response" in either a synthetic assistant message's text block
+ * or a `result` event's `result` string. A single occurrence is enough — no
+ * cascade threshold, since the immediate bounded retry (see
+ * `classifyCoderExitDisposition`) is cheap and safe.
+ */
+export const extractTransportDropped = (conversation: readonly AgentEvent[]): boolean => {
+  for (const event of conversation) {
+    if (event.type === 'assistant') {
+      const message = (event as { message?: unknown }).message
+      if (isObject(message) && Array.isArray(message.content)) {
+        for (const block of message.content as unknown[]) {
+          if (
+            isObject(block) &&
+            block.type === 'text' &&
+            typeof block.text === 'string' &&
+            TRANSPORT_DROPPED_PATTERN.test(block.text)
+          ) {
+            return true
+          }
+        }
+      }
+    } else if (event.type === 'result') {
+      // Read once as `unknown` and narrow with `typeof`. Casting straight to
+      // `{ result: string }` does not compile: `AgentEvent` has no `result`
+      // member, so the two types do not sufficiently overlap (TS2352).
+      const resultText = (event as { result?: unknown }).result
+      if (typeof resultText === 'string' && TRANSPORT_DROPPED_PATTERN.test(resultText)) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
 /** A single tool call made by a Claude Code agent, extracted from session transcript chunks. */
 export interface AgentToolCall {
   toolUseId: string

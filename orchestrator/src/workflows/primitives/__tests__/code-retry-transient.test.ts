@@ -11,6 +11,11 @@
  *   c) operator abort mid-attempt → no retry, throws "stopped by operator"
  *   d) context-exhausted first attempt → no retry
  *   e) quota-rejected first attempt → no retry
+ *   f) provider transport dropped (2026-08-20 mars-8693f3a4 incident): a
+ *      connection-closed-mid-response exit on attempt 1 retries for free
+ *      (no fix-task, no recovery-budget charge); two in a row still spend
+ *      exactly one recovery attempt, same as any other exhausted retry, but
+ *      the resulting failure signature names the transport as the cause.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -160,6 +165,28 @@ function successResult() {
     sessionId: null,
     conversation: [{ type: 'assistant', content: 'done' }] as unknown[],
     quotaRejected: null as null,
+  }
+}
+
+/**
+ * Provider-transport-dropped result: the CLI's own "Connection closed
+ * mid-response" text landed in the conversation (so messageCount > 0 — the
+ * exact shape that defeated the pre-fix zero-messages heuristic), stderr is
+ * empty, and the adapter surfaces `transportDropped: true`.
+ * `classifyCoderExitDisposition` classifies this as `retryable-transient`
+ * with reason `provider-transport-dropped`.
+ */
+function transportDroppedResult() {
+  return {
+    exitCode: 1,
+    stderr: '',
+    stdout: '',
+    sessionId: null,
+    conversation: [
+      { type: 'result', is_error: true, result: 'API Error: Connection closed mid-response.' },
+    ] as unknown[],
+    quotaRejected: null as null,
+    transportDropped: true as const,
   }
 }
 
@@ -373,6 +400,58 @@ describe('runAgent — at-most-two-attempt retry loop', () => {
       expect(mockRunWorkerWithSpan).toHaveBeenCalledTimes(1)
       // Quota rejection re-queues the task, NOT via handleTaskFailureWithFixTask.
       expect(mockHandleTaskFailureWithFixTask).not.toHaveBeenCalled()
+    })
+  })
+
+  // ── (f) provider transport dropped ─────────────────────────────────────────
+
+  describe('(f) provider transport dropped (2026-08-20 mars-8693f3a4 incident)', () => {
+    it('does not spawn a fix-task when attempt 1 is a transport drop and attempt 2 succeeds', async () => {
+      repo = initRepoWithCommit()
+
+      // Attempt 1: connection dropped mid-response.
+      mockRunWorkerWithSpan.mockResolvedValueOnce(transportDroppedResult())
+      // Attempt 2: success (exit 0) — the free retry recovered on its own,
+      // exactly what `mars continue` did by hand in the real incident.
+      mockRunWorkerWithSpan.mockResolvedValueOnce(successResult())
+
+      const ctx = makeCtx('test-id', makeStore())
+      const result = await runAgent(ctx, { worktree: { path: repo, branch: 'task/test-id' } })
+
+      expect(mockRunWorkerWithSpan).toHaveBeenCalledTimes(2)
+      // No fix-task spawned — the recovery budget was never touched.
+      expect(mockHandleTaskFailureWithFixTask).not.toHaveBeenCalled()
+      expect(result).toEqual({ sessionId: null })
+    })
+
+    it('spawns a fix-task exactly once when both attempts drop, naming the transport as cause', async () => {
+      repo = initRepo()
+
+      // Both attempts hit the identical connection-closed-mid-response exit.
+      mockRunWorkerWithSpan.mockResolvedValue(transportDroppedResult())
+
+      const ctx = makeCtx('test-id', makeStore())
+      await expect(
+        runAgent(ctx, { worktree: { path: repo, branch: 'task/test-id' } }),
+      ).rejects.toBeInstanceOf(WorkflowTerminalError)
+
+      // The free retry ran once (attempt 1 → attempt 2); attempt 2 failing
+      // for the same reason is where the bounded retry gives up "for real".
+      expect(mockRunWorkerWithSpan).toHaveBeenCalledTimes(2)
+      // Exactly one recovery attempt is spent — same budget as any other
+      // exhausted retry, never more, never silently skipped.
+      expect(mockHandleTaskFailureWithFixTask).toHaveBeenCalledTimes(1)
+
+      // The failure is attributed to the transport, not the coder: the
+      // `error` field passed to updateTask must name the drop rather than
+      // read as a generic/unclassified coder failure.
+      const failureCall = mockUpdateTask.mock.calls.find(
+        ([, patch]) => (patch as { status?: string }).status === 'failed',
+      )
+      expect(failureCall).toBeDefined()
+      const patch = failureCall?.[1] as { error?: string; failureSignature?: string }
+      expect(patch.error).toContain('provider-transport-dropped')
+      expect(patch.failureSignature).toBe('code:coder-exit-nonzero/provider-transport-dropped')
     })
   })
 })
