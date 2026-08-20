@@ -414,12 +414,14 @@ export const setupWorktree = async (
         }
       }
 
-      // Guard: rescue-operator tasks become obsolete when their arc origin
-      // reaches 'done' after the rescue was enqueued. Between spawn time and
-      // this dispatch point, a concurrent recovery can settle the arc — there
+      // Guard: rescue-operator tasks become obsolete once their arc origin
+      // moves off the 'failed'/'blocked' statuses that made the rescue
+      // relevant in the first place. Between spawn time and this dispatch
+      // point, a concurrent recovery (an operator's `mars continue`/`mars
+      // restart`, or another automatic recovery) can advance the arc — there
       // is then no valid RescueVerdict the worker can emit (restart, continue,
       // and supersede all presuppose a still-failing arc). Drop the rescue
-      // cleanly here rather than running the RescueOperator Worker.
+      // cleanly here rather than running the full RescueOperator diagnosis.
       //
       // Mirrors the analogous origin-terminal guard in `attachOriginWorktreeForFix`
       // (see lines above) for kind='fix' recovery tasks.
@@ -428,18 +430,31 @@ export const setupWorktree = async (
       // origin mars-291a4dc0 had already reached 'done', leaving the worker no
       // valid verdict to emit. The recovery (fix-0e4937b8) had to land an empty
       // commit to exit cleanly.
+      //
+      // Observed 2026-08-20: rescue mars-ed0e040e was dispatched TWICE for arc
+      // mars-8693f3a4. By the second dispatch the arc had already been
+      // `continue`'d externally and was `status=running` — but the original
+      // (done-only) guard let the full diagnosis agent run a second time to
+      // reach the same 'continue' no-op verdict it had already reached once.
+      // See docs/investigations/dead-arc-mars-8693f3a4-transient-api-disconnects.md
+      // section 5. Generalized the guard so ANY origin status other than
+      // 'failed'/'blocked' — not just 'done' — short-circuits before the
+      // worker runs.
       {
         const selfTask = await store.getTask(taskId).catch(() => null)
         if (selfTask?.tags?.includes(RESCUE_OPERATOR_TAG) && selfTask.originId !== taskId) {
           const arcOrigin = await getTask(selfTask.originId, store)
-          if (arcOrigin?.status === 'done') {
-            await updateTask(taskId, { status: 'dropped', dropReason: 'origin-succeeded' }, store)
+          if (arcOrigin !== null && arcOrigin.status !== 'failed' && arcOrigin.status !== 'blocked') {
+            const dropReason = arcOrigin.status === 'done' ? 'origin-succeeded' : 'arc-rescued'
+            await updateTask(taskId, { status: 'dropped', dropReason }, store)
             console.info(
-              `[setup] rescue-operator ${taskId} dropped — arc origin ${selfTask.originId} already done`,
+              `[setup] rescue-operator ${taskId} dropped — arc origin ${selfTask.originId} ` +
+                `status=${arcOrigin.status} (no longer 'failed'/'blocked') — no-op, already applied`,
             )
             throw new WorkflowTerminalError(
               'origin-terminal',
-              `Rescue-operator ${taskId} dropped: arc origin ${selfTask.originId} is already done`,
+              `Rescue-operator ${taskId} dropped: arc origin ${selfTask.originId} is ${arcOrigin.status}, ` +
+                `not 'failed'/'blocked' — no-op (continue already applied)`,
             )
           }
         }

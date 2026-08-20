@@ -467,4 +467,121 @@ describe('setupWorktree — rescue-operator origin-done guard', () => {
       expect(mockCreateWorktree).toHaveBeenCalledOnce()
     },
   )
+
+  // ── (E) Generalized: origin already re-queued/running (not done, not failed)
+  //       → rescue dropped as a no-op WITHOUT running the full diagnosis agent.
+  //
+  //       Observed 2026-08-20: rescue mars-ed0e040e was dispatched a second
+  //       time for arc mars-8693f3a4 after the arc had already been
+  //       `continue`'d externally and was `status=running`. The old guard only
+  //       checked for status='done', so the full diagnosis agent re-ran to
+  //       reach the same 'continue' no-op verdict it had already reached.
+
+  it(
+    "(E) drops rescue-operator with dropReason='arc-rescued' when arc origin is running (already continued externally)",
+    async () => {
+      const rescueTaskId = 'rescue-iii'
+      const originId = 'origin-jjj'
+
+      const storeGetTask = vi.fn().mockResolvedValue({
+        id: rescueTaskId,
+        tags: [RESCUE_OPERATOR_TAG],
+        originId,
+        status: 'running',
+      } as unknown as Task)
+
+      // Origin was re-queued and is actively running again — no longer
+      // 'failed', but also not 'done'.
+      mockGetTask.mockResolvedValue({
+        id: originId,
+        status: 'running',
+        tags: ['coder'],
+        originId,
+      } as unknown as Task)
+
+      const ctx = makeCtx(rescueTaskId, storeGetTask)
+
+      await expect(setupWorktree(ctx)).rejects.toThrow(WorkflowTerminalError)
+
+      const droppedCall = mockUpdateTask.mock.calls.find(
+        (c) => (c[1] as Record<string, unknown>)?.status === 'dropped',
+      )
+      expect(droppedCall).toBeDefined()
+      expect((droppedCall![1] as Record<string, unknown>).dropReason).toBe('arc-rescued')
+
+      // The full RescueOperator diagnosis (which runs off the created
+      // worktree) must never start.
+      expect(mockCreateWorktree).not.toHaveBeenCalled()
+    },
+  )
+
+  it(
+    "(E) drops rescue-operator with dropReason='arc-rescued' when arc origin is queued (already restarted externally)",
+    async () => {
+      const rescueTaskId = 'rescue-kkk'
+      const originId = 'origin-lll'
+
+      const storeGetTask = vi.fn().mockResolvedValue({
+        id: rescueTaskId,
+        tags: [RESCUE_OPERATOR_TAG],
+        originId,
+        status: 'running',
+      } as unknown as Task)
+
+      mockGetTask.mockResolvedValue({
+        id: originId,
+        status: 'queued',
+        tags: ['coder'],
+        originId,
+      } as unknown as Task)
+
+      const ctx = makeCtx(rescueTaskId, storeGetTask)
+
+      await expect(setupWorktree(ctx)).rejects.toThrow(WorkflowTerminalError)
+
+      const droppedCall = mockUpdateTask.mock.calls.find(
+        (c) => (c[1] as Record<string, unknown>)?.status === 'dropped',
+      )
+      expect(droppedCall).toBeDefined()
+      expect((droppedCall![1] as Record<string, unknown>).dropReason).toBe('arc-rescued')
+      expect(mockCreateWorktree).not.toHaveBeenCalled()
+    },
+  )
+
+  it(
+    '(E) does not drop rescue-operator when arc origin is blocked (still eligible for rescue)',
+    async () => {
+      const rescueTaskId = 'rescue-mmm'
+      const originId = 'origin-nnn'
+
+      const storeGetTask = vi.fn().mockResolvedValue({
+        id: rescueTaskId,
+        tags: [RESCUE_OPERATOR_TAG],
+        originId,
+        status: 'running',
+      } as unknown as Task)
+
+      // 'blocked' stays alongside 'failed' as a status that does NOT
+      // short-circuit the rescue — only a status that indicates the arc has
+      // moved on (running, queued, done, dropped, ...) does.
+      mockGetTask.mockResolvedValue({
+        id: originId,
+        status: 'blocked',
+        tags: ['coder'],
+        originId,
+      } as unknown as Task)
+
+      const ctx = makeCtx(rescueTaskId, storeGetTask)
+
+      const result = await setupWorktree(ctx)
+
+      expect(result).toMatchObject({ path: '/tmp/fake-worktree' })
+      expect(mockCreateWorktree).toHaveBeenCalledOnce()
+
+      const droppedCall = mockUpdateTask.mock.calls.find(
+        (c) => (c[1] as Record<string, unknown>)?.status === 'dropped',
+      )
+      expect(droppedCall).toBeUndefined()
+    },
+  )
 })
