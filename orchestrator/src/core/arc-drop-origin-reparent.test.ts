@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -63,14 +63,30 @@ const blockOn = async (
   })
 }
 
+/**
+ * PGlite boots from disk on the first query of a freshly-imported module graph,
+ * and the vitest config documents that cold start as 5-25 s (longer when several
+ * task worktrees run their suites at once). Paying it per test — `beforeEach` +
+ * `vi.resetModules()` — put all three cases at or past the 30 s `testTimeout`
+ * and wedged one mid-transaction, which then poisoned the next test with
+ * `atomic() cannot be nested`. One shared repo + module graph for the whole file
+ * pays that cost once. The cases stay independent because every fixture id comes
+ * from `enqueueTask`, so no two of them can collide on a row.
+ */
+const COLD_START_TIMEOUT_MS = 120_000
+
 describe('Arc.drop — dangling origin_id reparenting', () => {
   let repo: string
+  let q: QueueModule
+  let arc: ArcModule
+  let br: BlockerResolutionModule
 
-  beforeEach(() => {
+  beforeAll(async () => {
     repo = setupRepo()
-  })
+    ;({ q, arc, br } = await loadModules(repo))
+  }, COLD_START_TIMEOUT_MS)
 
-  afterEach(() => {
+  afterAll(() => {
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -86,8 +102,6 @@ describe('Arc.drop — dangling origin_id reparenting', () => {
     // Before the fix: drop(P) reported edges=0in/0out and said nothing; half an
     // hour later B completed and the unblock path failed D with
     // `orphaned_origin_at_unblock`.
-    const { q, arc, br } = await loadModules(repo)
-
     const P = await q.enqueueTask('origin task, work landed elsewhere', undefined, {
       skipTriage: true,
     })
@@ -142,8 +156,6 @@ describe('Arc.drop — dangling origin_id reparenting', () => {
   it('chains dependents up to the dropped task’s own origin when it was not an arc root', async () => {
     // G ← P ← D: dropping the middle member must not orphan D. It inherits P's
     // origin (G) so arc membership is preserved rather than reset.
-    const { q, arc } = await loadModules(repo)
-
     const G = await q.enqueueTask('grandparent arc root', undefined, { skipTriage: true })
     const P = await q.enqueueTask('arc member to drop', undefined, {
       skipTriage: true,
@@ -165,8 +177,6 @@ describe('Arc.drop — dangling origin_id reparenting', () => {
   it('leaves terminal rows that name the dropped task as origin alone', async () => {
     // A done/failed row cannot be dispatched again, so its stale origin_id is
     // inert — reparenting it would rewrite history for no benefit.
-    const { q, arc } = await loadModules(repo)
-
     const P = await q.enqueueTask('task to drop', undefined, { skipTriage: true })
     const T = await q.enqueueTask('already-done arc member', undefined, {
       skipTriage: true,
