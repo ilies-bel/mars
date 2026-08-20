@@ -415,6 +415,106 @@ describe('loadRecentTaskCorpus', () => {
     expect(corpus.costSummary.totalWeightedTokens).toBeCloseTo(1500)
   })
 
+  // ── baseline-attribution wiring ──────────────────────────────────────────
+  // `loadRecentTaskCorpus` delegates the "was this failure the baseline's
+  // fault" question to `findBaselineCaughtTaskIds` (baseline-attribution.ts) —
+  // the same helper the action queue's derived `baseline-broken`/`failed`
+  // conditions use (see derived-conditions-baseline-attribution.test.ts for
+  // coverage of the correlation logic itself). These tests only cover the
+  // wiring: does the corpus mark caught entries, and does costSummary exclude
+  // them from failureCount while still rolling them up in baselineCaughtCount.
+
+  it('excludes baseline-caught failures from failureCount but keeps them visible on entries', async () => {
+    const store = await makeStore()
+    const pauseSince = '2026-08-18T00:00:00.000Z'
+    // Three tasks died in setup with an identical signature after the
+    // baseline pause began — mirrors the 2026-08-18 incident.
+    await insertTask(store, {
+      id: 'caught-1',
+      status: 'failed',
+      createdAt: '2026-08-18T00:01:00.000Z',
+      failureSignature: 'setup:install/install-frozen-lockfile',
+    })
+    await insertTask(store, {
+      id: 'caught-2',
+      status: 'failed',
+      createdAt: '2026-08-18T00:02:00.000Z',
+      failureSignature: 'setup:install/install-frozen-lockfile',
+    })
+    await insertTask(store, {
+      id: 'caught-3',
+      status: 'failed',
+      createdAt: '2026-08-18T00:03:00.000Z',
+      failureSignature: 'setup:install/install-frozen-lockfile',
+    })
+
+    const corpus = await loadRecentTaskCorpus({
+      store,
+      isBaselinePoisoned: () => true,
+      getPauseState: () => ({
+        paused: true,
+        reason: 'baseline',
+        since: pauseSince,
+        detail: null,
+      }),
+    })
+
+    // All three still appear as entries — reflection should see them as an
+    // event, not have them silently disappear.
+    const caughtEntries = corpus.entries.filter((e) => e.taskId.startsWith('caught-'))
+    expect(caughtEntries).toHaveLength(3)
+    expect(caughtEntries.every((e) => e.baselineCaught)).toBe(true)
+
+    // But none of them count toward per-task failure attribution.
+    expect(corpus.costSummary.failureCount).toBe(0)
+    expect(corpus.costSummary.baselineCaughtCount).toBe(3)
+  })
+
+  it('attributes ordinary failures per-task exactly as before when the baseline is healthy', async () => {
+    const store = await makeStore()
+    await insertTask(store, {
+      id: 'task-real-defect',
+      status: 'failed',
+      createdAt: '2026-01-01T00:00:00Z',
+      failureSignature: 'verify:typecheck',
+    })
+
+    const corpus = await loadRecentTaskCorpus({ store })
+
+    const entry = corpus.entries.find((e) => e.taskId === 'task-real-defect')
+    expect(entry?.baselineCaught).toBe(false)
+    expect(corpus.costSummary.failureCount).toBe(1)
+    expect(corpus.costSummary.baselineCaughtCount).toBe(0)
+  })
+
+  it('does not attribute a failure to the baseline when it reached failed before the pause began', async () => {
+    const store = await makeStore()
+    // This task failed for its own reasons, well before the baseline pause
+    // that later caught the setup:install storm — must not be swept in.
+    await insertTask(store, {
+      id: 'task-pre-existing-failure',
+      status: 'failed',
+      createdAt: '2026-08-17T00:00:00.000Z',
+      failureSignature: 'verify:typecheck',
+    })
+
+    const corpus = await loadRecentTaskCorpus({
+      store,
+      isBaselinePoisoned: () => true,
+      getPauseState: () => ({
+        paused: true,
+        reason: 'baseline',
+        since: '2026-08-18T00:00:00.000Z',
+        detail: null,
+      }),
+    })
+
+    const entry = corpus.entries.find((e) => e.taskId === 'task-pre-existing-failure')
+    expect(entry?.baselineCaught).toBe(false)
+    expect(corpus.costSummary.failureCount).toBe(1)
+    expect(corpus.costSummary.baselineCaughtCount).toBe(0)
+  })
+
   it('groups arc siblings (origin + recovery) adjacent in the corpus', async () => {
     const store = await makeStore()
     // origin task

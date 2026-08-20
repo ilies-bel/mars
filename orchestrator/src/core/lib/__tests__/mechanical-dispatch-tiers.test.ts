@@ -141,6 +141,7 @@ const EMPTY_COST_SUMMARY = {
   taskCount: 1,
   successCount: 1,
   failureCount: 0,
+  baselineCaughtCount: 0,
   blockedCount: 0,
   droppedCount: 0,
   cacheHitRatio: 0,
@@ -184,6 +185,7 @@ const ONE_ENTRY_CORPUS: ReflectCorpus = {
       originId: null,
       toolErrorCount: 0,
       topErrorTool: null,
+      baselineCaught: false,
       signals: [],
       scorerResults: [],
       totals: {

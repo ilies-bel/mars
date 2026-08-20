@@ -20,6 +20,7 @@ const baseEntry = (overrides: Partial<ReflectCorpusEntry>): ReflectCorpusEntry =
   originId: null,
   toolErrorCount: 0,
   topErrorTool: null,
+  baselineCaught: false,
   signals: [],
   scorerResults: [],
   totals: {

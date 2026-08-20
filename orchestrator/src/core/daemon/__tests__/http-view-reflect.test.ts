@@ -78,6 +78,7 @@ const emptyCorpus: ReflectCorpus = {
     taskCount: 0,
     successCount: 0,
     failureCount: 0,
+    baselineCaughtCount: 0,
     blockedCount: 0,
     droppedCount: 0,
     cacheHitRatio: 0,
@@ -124,6 +125,7 @@ describe('GET /view/reflect', () => {
           originId: null,
           toolErrorCount: 0,
           topErrorTool: null,
+          baselineCaught: false,
           signals: [],
           scorerResults: [],
           totals: {
@@ -140,6 +142,7 @@ describe('GET /view/reflect', () => {
         taskCount: 1,
         successCount: 1,
         failureCount: 0,
+        baselineCaughtCount: 0,
         blockedCount: 0,
         droppedCount: 0,
         cacheHitRatio: 0.17,

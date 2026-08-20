@@ -11,6 +11,7 @@ const emptySummary = {
   taskCount: 0,
   successCount: 0,
   failureCount: 0,
+  baselineCaughtCount: 0,
   blockedCount: 0,
   droppedCount: 0,
   cacheHitRatio: 0,
@@ -36,6 +37,7 @@ const fixtureCorpus: ReflectCorpus = {
       originId: null,
       toolErrorCount: 0,
       topErrorTool: null,
+      baselineCaught: false,
       signals: [],
       scorerResults: [],
       totals: {

@@ -108,6 +108,17 @@ provided tokenSummary. Specifically:
   tasks consume ≥ 70% of a success's tokens, the loop is leaking tokens
   on dead ends.
 
+BASELINE-CAUGHT FAILURES: a corpus entry with \`baselineCaught: true\`
+reached \`failed\` because the integration baseline itself was broken
+(e.g. an unsatisfiable lockfile pin), not because of a defect in that
+task's own prompt or code. \`costSummary.failureCount\` already excludes
+these; \`costSummary.baselineCaughtCount\` gives their total. Never treat
+these entries as a failure cluster or emit a per-task/per-cluster
+suggestion about their individual behavior. If \`baselineCaughtCount\` >
+0, mention it in tokenAnalysis.notes as AT MOST ONE incident (e.g. "N
+tasks failed during a baseline outage, already excluded from
+failureCount") — never as N independent task defects.
+
 AGGREGATE BY ROOT CAUSE: emit ONE suggestion per root cause, not per
 affected task. If the same root cause (e.g. typecheck failures) is
 observed across multiple tasks, emit a SINGLE suggestion that cites all

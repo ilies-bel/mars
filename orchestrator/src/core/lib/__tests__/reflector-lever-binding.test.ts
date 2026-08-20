@@ -276,6 +276,7 @@ describe('buildPrompt — lever registry embedded', () => {
           originId: null,
           toolErrorCount: 0,
           topErrorTool: null,
+          baselineCaught: false,
           signals: [],
           scorerResults: [],
           totals: {
@@ -292,6 +293,7 @@ describe('buildPrompt — lever registry embedded', () => {
         taskCount: 0,
         successCount: 0,
         failureCount: 0,
+        baselineCaughtCount: 0,
         blockedCount: 0,
         droppedCount: 0,
         cacheHitRatio: 0,
@@ -312,8 +314,8 @@ describe('buildPrompt — lever registry embedded', () => {
   it('instructs the model to bind each suggestion to a lever or declare a gap', async () => {
     const { buildPrompt } = await import('../reflector')
     const corpus = {
-      entries: [{ taskId: 't1', status: 'done', promptPrefix: 'x', errorTail: null, createdAt: '', failureSignature: null, failureReasonCode: null, failedPhase: null, kind: null, fixForTaskId: null, originId: null, toolErrorCount: 0, topErrorTool: null, signals: [], scorerResults: [], totals: { inputTokens: 0, outputTokens: 0, cacheCreateTokens: 0, cacheReadTokens: 0, cacheHitRatio: 0 } }],
-      costSummary: { totalWeightedTokens: 0, taskCount: 0, successCount: 0, failureCount: 0, blockedCount: 0, droppedCount: 0, cacheHitRatio: 0, rateLimitRejections: 0, topTokenHeavyTasks: [], topExpensiveSteps: [], tokensByStep: [] },
+      entries: [{ taskId: 't1', status: 'done', promptPrefix: 'x', errorTail: null, createdAt: '', failureSignature: null, failureReasonCode: null, failedPhase: null, kind: null, fixForTaskId: null, originId: null, toolErrorCount: 0, topErrorTool: null, baselineCaught: false, signals: [], scorerResults: [], totals: { inputTokens: 0, outputTokens: 0, cacheCreateTokens: 0, cacheReadTokens: 0, cacheHitRatio: 0 } }],
+      costSummary: { totalWeightedTokens: 0, taskCount: 0, successCount: 0, failureCount: 0, baselineCaughtCount: 0, blockedCount: 0, droppedCount: 0, cacheHitRatio: 0, rateLimitRejections: 0, topTokenHeavyTasks: [], topExpensiveSteps: [], tokensByStep: [] },
     }
     const prompt = buildPrompt(corpus as Parameters<typeof buildPrompt>[0])
     const beforeCorpus = prompt.split('Token summary')[0]
@@ -368,8 +370,8 @@ describe('runReflector — suggestion rejected when outcome invalid', () => {
     } as never)
 
     const corpus = {
-      entries: [{ taskId: 't1', status: 'done', promptPrefix: 'x', errorTail: null, createdAt: '', failureSignature: null, failureReasonCode: null, failedPhase: null, kind: null, fixForTaskId: null, originId: null, toolErrorCount: 0, topErrorTool: null, signals: [], scorerResults: [], totals: { inputTokens: 0, outputTokens: 0, cacheCreateTokens: 0, cacheReadTokens: 0, cacheHitRatio: 0 } }],
-      costSummary: { totalWeightedTokens: 0, taskCount: 0, successCount: 0, failureCount: 0, blockedCount: 0, droppedCount: 0, cacheHitRatio: 0, rateLimitRejections: 0, topTokenHeavyTasks: [], topExpensiveSteps: [], tokensByStep: [] },
+      entries: [{ taskId: 't1', status: 'done', promptPrefix: 'x', errorTail: null, createdAt: '', failureSignature: null, failureReasonCode: null, failedPhase: null, kind: null, fixForTaskId: null, originId: null, toolErrorCount: 0, topErrorTool: null, baselineCaught: false, signals: [], scorerResults: [], totals: { inputTokens: 0, outputTokens: 0, cacheCreateTokens: 0, cacheReadTokens: 0, cacheHitRatio: 0 } }],
+      costSummary: { totalWeightedTokens: 0, taskCount: 0, successCount: 0, failureCount: 0, baselineCaughtCount: 0, blockedCount: 0, droppedCount: 0, cacheHitRatio: 0, rateLimitRejections: 0, topTokenHeavyTasks: [], topExpensiveSteps: [], tokensByStep: [] },
     }
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -425,8 +427,8 @@ describe('runReflector — suggestion rejected when outcome invalid', () => {
     } as never)
 
     const corpus = {
-      entries: [{ taskId: 't1', status: 'done', promptPrefix: 'x', errorTail: null, createdAt: '', failureSignature: null, failureReasonCode: null, failedPhase: null, kind: null, fixForTaskId: null, originId: null, toolErrorCount: 0, topErrorTool: null, signals: [], scorerResults: [], totals: { inputTokens: 0, outputTokens: 0, cacheCreateTokens: 0, cacheReadTokens: 0, cacheHitRatio: 0 } }],
-      costSummary: { totalWeightedTokens: 0, taskCount: 0, successCount: 0, failureCount: 0, blockedCount: 0, droppedCount: 0, cacheHitRatio: 0, rateLimitRejections: 0, topTokenHeavyTasks: [], topExpensiveSteps: [], tokensByStep: [] },
+      entries: [{ taskId: 't1', status: 'done', promptPrefix: 'x', errorTail: null, createdAt: '', failureSignature: null, failureReasonCode: null, failedPhase: null, kind: null, fixForTaskId: null, originId: null, toolErrorCount: 0, topErrorTool: null, baselineCaught: false, signals: [], scorerResults: [], totals: { inputTokens: 0, outputTokens: 0, cacheCreateTokens: 0, cacheReadTokens: 0, cacheHitRatio: 0 } }],
+      costSummary: { totalWeightedTokens: 0, taskCount: 0, successCount: 0, failureCount: 0, baselineCaughtCount: 0, blockedCount: 0, droppedCount: 0, cacheHitRatio: 0, rateLimitRejections: 0, topTokenHeavyTasks: [], topExpensiveSteps: [], tokensByStep: [] },
     }
 
     const result = await runReflector(corpus as Parameters<typeof runReflector>[0])
