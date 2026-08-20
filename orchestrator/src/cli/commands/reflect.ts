@@ -31,14 +31,38 @@ const reflect: Command = {
     const { runReflector, persistSuggestions } = await import(
       '../../core/lib/reflector'
     )
-    const corpus = await loadRecentTaskCorpus({ sinceIso, limit })
+    // Best-effort baseline-attribution wiring: `findBaselineCaughtTaskIds`
+    // (mars-dccf9bf0's shared helper) only fires when `pauseState.reason ===
+    // 'baseline'`, so deriving `isBaselinePoisoned` from that same field is
+    // exactly equivalent to asking the live `BaselineHealthChecker` — no new
+    // RPC surface needed. A down/unreachable daemon degrades to "not
+    // poisoned" (conservative — never over-suppresses a real defect).
+    let pauseState: import('../../core/daemon/pause-state').DispatchPauseState | null = null
+    try {
+      const status = (await deps.daemon.sendRequest({ op: 'status' })) as {
+        pause: import('../../core/daemon/pause-state').DispatchPauseState
+      }
+      pauseState = status.pause
+    } catch {
+      // Daemon down/unreachable — reflect still works over direct DB access.
+    }
+    const corpus = await loadRecentTaskCorpus({
+      sinceIso,
+      limit,
+      isBaselinePoisoned: () => pauseState?.reason === 'baseline',
+      getPauseState: () => pauseState,
+    })
     if (corpus.entries.length === 0) {
       deps.out('no completed tasks in window — nothing to reflect on')
       return { code: 0 }
     }
     const cs = corpus.costSummary
+    const baselineNote =
+      cs.baselineCaughtCount > 0
+        ? ` (+${cs.baselineCaughtCount} baseline-caused, counted as 1 incident, not a task defect)`
+        : ''
     deps.out(
-      `reflecting over ${corpus.entries.length} task(s) — ${cs.totalWeightedTokens.toFixed(0)} weighted tokens (${cs.successCount} done / ${cs.failureCount} failed)…`,
+      `reflecting over ${corpus.entries.length} task(s) — ${cs.totalWeightedTokens.toFixed(0)} weighted tokens (${cs.successCount} done / ${cs.failureCount} failed${baselineNote})…`,
     )
     // Surface KPI baseline so the operator can see whether reflect has cost
     // data to compare against, and flag staleness when the daemon has stopped

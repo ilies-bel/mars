@@ -209,6 +209,15 @@ export interface AppServicesDeps {
    * system state.  When absent the projection only shows row-backed kinds.
    */
   getConditionsSource?: () => import('./daemon/view/action-queue').ConditionItemsSource
+  /**
+   * Optional: whether the integration baseline currently fails a required
+   * gate — the daemon's `BaselineHealthChecker.isBaselinePoisoned()`. Shared
+   * with `getPauseState` by `viewReflect` so the Reflections page excludes
+   * baseline-caused failures from per-task attribution exactly like the
+   * action-queue's derived `baseline-broken`/`failed` conditions do. When
+   * absent, `viewReflect` treats the baseline as healthy (conservative).
+   */
+  isBaselinePoisoned?: () => boolean
 }
 
 /**
@@ -1440,7 +1449,11 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   }
 
   const viewReflect: AppServices['viewReflect'] = (opts) =>
-    loadRecentTaskCorpus(opts)
+    loadRecentTaskCorpus({
+      ...opts,
+      isBaselinePoisoned: deps.isBaselinePoisoned,
+      getPauseState: deps.getPauseState,
+    })
 
   const viewArcs: AppServices['viewArcs'] = (opts) =>
     listDeepReflectArcCandidates(opts)

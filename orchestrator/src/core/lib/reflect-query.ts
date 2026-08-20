@@ -3,6 +3,8 @@ import type { TaskSignalRow } from './reflect-signals'
 import { cacheWeightedTokens } from './kpi-compute.js'
 import { isReflectDisabled } from './reflect-signals'
 import type { ChatFeedbackEntry } from './chat-feedback-query'
+import { findBaselineCaughtTaskIds } from './baseline-attribution'
+import type { DispatchPauseState } from '../daemon/pause-state'
 
 export interface ReflectCorpusEntry {
   taskId: string
@@ -27,6 +29,20 @@ export interface ReflectCorpusEntry {
    * "toolName argv[0]" (argv[0] omitted when absent). Null when no errors.
    */
   topErrorTool: string | null
+  /**
+   * True when this entry's `failed` status correlates with a poisoned
+   * integration branch rather than the task's own defect — the same
+   * time-correlation `findBaselineCaughtTaskIds` (baseline-attribution.ts)
+   * uses to suppress the per-task `failed` action-queue row. Always false
+   * when the corpus was loaded without `isBaselinePoisoned`/`getPauseState`
+   * (e.g. a `mars reflect` CLI run against a down daemon).
+   *
+   * The entry itself is never dropped — it stays visible in the corpus —
+   * but it is excluded from `costSummary.failureCount` so N tasks caught by
+   * one baseline incident don't skew per-task failure attribution. See
+   * `costSummary.baselineCaughtCount` for the aggregate.
+   */
+  baselineCaught: boolean
   signals: ReadonlyArray<Omit<TaskSignalRow, 'taskId' | 'recordedAt'>>
   /**
    * Recorded Scorer results for this instance (PRD 6cf85bc9): the per-Workflow
@@ -54,7 +70,19 @@ interface ReflectCostSummary {
   totalWeightedTokens: number
   taskCount: number
   successCount: number
+  /**
+   * Count of `status === 'failed'` entries EXCLUDING those attributed to a
+   * poisoned baseline (`entry.baselineCaught`). Ordinary task failures are
+   * counted exactly as before; see `baselineCaughtCount` for the excluded set.
+   */
   failureCount: number
+  /**
+   * Count of entries excluded from `failureCount` because their failure
+   * correlates with a poisoned integration branch, not the task's own code
+   * (`entry.baselineCaught`). Reflection should read this as AT MOST ONE
+   * shared incident, never as `baselineCaughtCount` independent task defects.
+   */
+  baselineCaughtCount: number
   blockedCount: number
   droppedCount: number
   cacheHitRatio: number
@@ -118,6 +146,17 @@ export interface LoadCorpusOptions {
    * Defaults to `getRepoRoot()` when omitted. Primarily used in tests.
    */
   repoRoot?: string
+  /**
+   * Baseline-attribution inputs — mars-dccf9bf0's source of truth
+   * (baseline-attribution.ts's `findBaselineCaughtTaskIds`), shared verbatim
+   * with the action-queue's derived `baseline-broken`/`failed` conditions so
+   * the two surfaces never disagree on "was this failure the baseline's
+   * fault". Both are live daemon state, so only callers running inside (or
+   * talking to) the daemon can supply them; omitted entirely, they default
+   * to "not poisoned" — conservative, never over-suppresses a genuine defect.
+   */
+  isBaselinePoisoned?: () => boolean
+  getPauseState?: () => DispatchPauseState | null
 }
 
 const PROMPT_PREFIX_BYTES = 200
@@ -153,6 +192,7 @@ const buildCostSummary = (
       taskCount: 0,
       successCount: 0,
       failureCount: 0,
+      baselineCaughtCount: 0,
       blockedCount: 0,
       droppedCount: 0,
       cacheHitRatio: 0,
@@ -167,7 +207,13 @@ const buildCostSummary = (
   const totalWeightedTokens = entryWeights.reduce((a, b) => a + b, 0)
   const med = median(entryWeights)
   const successCount = entries.filter((e) => e.status === 'done').length
-  const failureCount = entries.filter((e) => e.status === 'failed').length
+  // Baseline-caught failures are a shared, transient incident, not per-task
+  // defects — excluded here so they don't skew per-task failure attribution.
+  // Still visible in `entries` (baselineCaught: true) and rolled up below.
+  const failureCount = entries.filter(
+    (e) => e.status === 'failed' && !e.baselineCaught,
+  ).length
+  const baselineCaughtCount = entries.filter((e) => e.baselineCaught).length
   const blockedCount = entries.filter((e) => e.status === 'blocked').length
   const droppedCount = entries.filter((e) => e.status === 'dropped').length
   const totalCacheCreate = entries.reduce((a, e) => a + e.totals.cacheCreateTokens, 0)
@@ -232,6 +278,7 @@ const buildCostSummary = (
     taskCount,
     successCount,
     failureCount,
+    baselineCaughtCount,
     blockedCount,
     droppedCount,
     cacheHitRatio,
@@ -275,6 +322,18 @@ export const loadRecentTaskCorpus = async (
 
   const queue = options.store ?? (await getDefaultTaskStore())
   const repoRoot = options.repoRoot
+
+  // Same time-correlation `findBaselineCaughtTaskIds` (baseline-attribution.ts)
+  // uses for the action-queue's `baseline-broken`/`failed` rows. `queue`
+  // (a `DomainTaskStore`) satisfies the narrow `DbTx` the helper needs — it
+  // short-circuits to an empty set (no query) whenever `isBaselinePoisoned`
+  // is omitted/false, so this is a no-op for callers that don't wire it
+  // (e.g. a `mars reflect` CLI run against a down daemon).
+  const baselineCaughtTaskIds = await findBaselineCaughtTaskIds(
+    queue,
+    options.isBaselinePoisoned?.() ?? false,
+    options.getPauseState?.() ?? null,
+  )
 
   // Include blocked and dropped in addition to done/failed so the reflector
   // can see stalled-task patterns (verify:completeness loops, dropped scope).
@@ -475,6 +534,7 @@ export const loadRecentTaskCorpus = async (
       originId,
       toolErrorCount: toolErr.count,
       topErrorTool: toolErr.topTool,
+      baselineCaught: baselineCaughtTaskIds.has(taskId),
       signals,
       scorerResults: scorerResultsByTask.get(taskId) ?? [],
       totals,

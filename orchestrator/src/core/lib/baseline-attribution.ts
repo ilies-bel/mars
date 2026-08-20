@@ -15,9 +15,10 @@
  *   1. The `baseline-broken` / `failed` derived action-queue rows
  *      (derived-conditions.ts) — so N task failures collapse into one
  *      baseline-attributed report instead of N independent alerts.
- *   2. The reflect corpus (reflect-query.ts, invoked from server.ts) — so a
- *      reflection pass never proposes a "fix" for a task whose only defect
- *      was running off a broken baseline.
+ *   2. The reflect corpus (reflect-query.ts, invoked from server.ts,
+ *      app-services.ts's `viewReflect`, and the `mars reflect` CLI) — so a
+ *      reflection pass never attributes N task defects to what was really
+ *      one shared, transient baseline incident.
  *
  * Correlation is on TIME, not on pattern-matching the failure text: a task
  * counts as baseline-caught when it reached `failed` at or after the
@@ -36,7 +37,7 @@
  * task's alert.
  */
 
-import type { DbClient } from './db'
+import type { DbTx } from './db'
 import type { DispatchPauseState } from '../daemon/pause-state'
 
 /**
@@ -44,9 +45,14 @@ import type { DispatchPauseState } from '../daemon/pause-state'
  * attributable to the poisoned baseline, per the correlation described above.
  * Returns an empty set whenever the baseline is not currently poisoned, or
  * the current pause is not held for `reason: 'baseline'`.
+ *
+ * Takes the narrow `DbTx` (single `execute`) rather than the full `DbClient`
+ * so callers that only have a `DomainTaskStore`/`Scope` handle (the reflect
+ * corpus loader runs over a `TaskStore`, not a raw `DbClient`) can pass it
+ * directly — both already expose a structurally-compatible `execute`.
  */
 export async function findBaselineCaughtTaskIds(
-  client: DbClient,
+  client: DbTx,
   isBaselinePoisoned: boolean,
   pauseState: DispatchPauseState | null,
 ): Promise<ReadonlySet<string>> {

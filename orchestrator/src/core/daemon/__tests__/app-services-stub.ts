@@ -71,6 +71,7 @@ export const stubAppServices = (
       taskCount: 0,
       successCount: 0,
       failureCount: 0,
+      baselineCaughtCount: 0,
       blockedCount: 0,
       droppedCount: 0,
       cacheHitRatio: 0,

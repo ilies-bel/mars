@@ -5396,6 +5396,7 @@ export const startDaemon = async (
     traceStore,
     buildAlertSources,
     getPauseState: () => pause.get(),
+    isBaselinePoisoned: () => _baselineHealthChecker?.isBaselinePoisoned() ?? false,
     getSituationSemaphoreSnapshot: () => {
       const workerSems = [...new Set([...Object.values(sems), verifySem])]
       return {
@@ -5609,7 +5610,15 @@ export const startDaemon = async (
       const { closeReflectRecommendedRow } = await import('../lib/self-evolve-trigger')
       const { insertReflectionTask } = await import('../queue')
       const { persistLastReflectRanAt } = await import('./config')
-      const corpus = await loadRecentTaskCorpus({ limit: 10 })
+      // Same baseline-attribution source as getConditionsSource's
+      // `isBaselinePoisoned`/`getPauseState` above — a poisoned-baseline
+      // failure storm must not skew this reflection pass's per-task stats
+      // any more than it skews the action queue's.
+      const corpus = await loadRecentTaskCorpus({
+        limit: 10,
+        isBaselinePoisoned: () => _baselineHealthChecker?.isBaselinePoisoned() ?? false,
+        getPauseState: () => pause.get(),
+      })
       let proposalsRaised = 0
       if (corpus.entries.length > 0) {
         const result = await runReflector(corpus)
@@ -6762,7 +6771,13 @@ export const startDaemon = async (
               const { closeReflectRecommendedRow: closeRow } = await import('../lib/self-evolve-trigger')
               const { insertReflectionTask } = await import('../queue')
               const { persistLastReflectRanAt } = await import('./config')
-              const corpus = await loadRecentTaskCorpus({ limit: 10 })
+              // Same baseline-attribution source as `runReflect` above and
+              // getConditionsSource's action-queue derivation.
+              const corpus = await loadRecentTaskCorpus({
+                limit: 10,
+                isBaselinePoisoned: () => _baselineHealthChecker?.isBaselinePoisoned() ?? false,
+                getPauseState: () => pause.get(),
+              })
               let proposalsRaised = 0
               if (corpus.entries.length > 0) {
                 const reflResult = await runReflector(corpus)
