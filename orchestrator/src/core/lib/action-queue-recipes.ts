@@ -458,8 +458,11 @@ const RECIPE_DEFINITIONS = {
           // The escalating agent's own words are the only accurate summary
           // here: the payload is free-form and is often empty entirely.
           const sentence = ctx.body.trim().split(/(?<=[.!?])\s/)[0] ?? ''
-          return sentence ||
-            'An agent stopped and escalated this to a human — read the detail and decide what to do.'
+          // A stub body ("parked", "Test body") is not a summary — fall back
+          // rather than passing a fragment off as one.
+          return sentence.length >= 20
+            ? sentence
+            : 'An agent stopped and escalated this to a human — read the detail and decide what to do.'
         }
       }
     },

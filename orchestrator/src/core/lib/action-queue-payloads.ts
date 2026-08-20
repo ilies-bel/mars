@@ -48,7 +48,7 @@ export type UnauditedPayload = Record<string, unknown>
  * `payload.occurrences`. Raisers never write this key themselves, so it is
  * optional on every contract that can be deduped.
  */
-export interface OccurrenceTrail {
+interface OccurrenceTrail {
   occurrences?: readonly Record<string, unknown>[]
 }
 
@@ -96,7 +96,7 @@ export interface LeaseExpiredPayload extends OccurrenceTrail {
  * `situation` is **required** so a built-in raiser cannot land here by
  * accident: falling into the open branch has to be a deliberate declaration.
  */
-export interface HumanEscalationPayload {
+interface HumanEscalationPayload {
   situation: 'escalation'
   [key: string]: unknown
 }
