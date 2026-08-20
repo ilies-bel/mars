@@ -231,6 +231,77 @@ describe('coreRemergeTask', () => {
     ).rejects.toMatchObject({ code: 'NO_COMMITS_AHEAD' })
   })
 
+  // ── Already-landed-by-patch (mars-a98bec46 regression) ──────────────────────
+
+  it(
+    'settles the task done (no dispatch) when the branch commits are already ' +
+      'patch-present in main under different SHAs',
+    async () => {
+      const { q, remerge } = await loadModules(repo)
+
+      const task = await q.enqueueTask('recovery attached, merged, then died', undefined, {
+        skipTriage: true,
+      })
+      const branch = `task/${task.id}`
+
+      // The task branch carries a commit not reachable from main BY SHA...
+      execFileSync('git', ['checkout', '-b', branch], { cwd: repo })
+      writeFileSync(resolve(repo, 'landed.ts'), 'export const landed = true\n')
+      execFileSync('git', ['add', 'landed.ts'], { cwd: repo })
+      execFileSync('git', ['commit', '-m', 'implement landed feature'], { cwd: repo })
+      execFileSync('git', ['checkout', 'main'], { cwd: repo })
+
+      // ...but a sibling recovery task already landed the IDENTICAL diff on
+      // main under a different SHA (simulated here with a cherry-pick, which
+      // reproduces a new commit object from the same patch content).
+      execFileSync('git', ['cherry-pick', branch], { cwd: repo })
+
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'failed', branch = ? WHERE id = ?`,
+        args: [branch, task.id],
+      })
+
+      const result = await remerge.coreRemergeTask(task.id, new Set(['failed']), new InMemoryStore())
+
+      expect(result.status).toBe('done')
+      expect(result.message).toMatch(/already/i)
+
+      const updated = await q.getTask(task.id)
+      expect(updated?.status).toBe('done')
+      expect(updated?.failureReasonCode).toBeNull()
+      expect(updated?.failureSignature).toBeNull()
+      expect(updated?.error).toBeNull()
+
+      // The now-superseded branch is cleaned up — its patch already lives on
+      // main under a different SHA, so nothing depends on it.
+      expect(branchExists(repo, branch)).toBe(false)
+    },
+  )
+
+  it('still fails a genuinely never-committed branch even after the patch-landed check', async () => {
+    const { q, remerge } = await loadModules(repo)
+
+    const task = await q.enqueueTask('never committed', undefined, { skipTriage: true })
+    const branch = `task/${task.id}`
+
+    execFileSync('git', ['branch', branch], { cwd: repo })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed', branch = ? WHERE id = ?`,
+      args: [branch, task.id],
+    })
+
+    await expect(
+      remerge.coreRemergeTask(task.id, new Set(['failed']), new InMemoryStore()),
+    ).rejects.toMatchObject({ code: 'NO_COMMITS_AHEAD' })
+
+    // Distinguishable from the already-landed case: the task is left in its
+    // pre-existing 'failed' status, not settled 'done', and the branch survives.
+    const after = await q.getTask(task.id)
+    expect(after?.status).toBe('failed')
+    expect(branchExists(repo, branch)).toBe(true)
+  })
+
   // ── Restart clears remerge workflow override ────────────────────────────────
 
   it('coreRestartTask clears workflow=remerge so a subsequent full restart runs the default pipeline', async () => {

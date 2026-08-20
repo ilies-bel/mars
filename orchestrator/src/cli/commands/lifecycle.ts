@@ -214,11 +214,24 @@ const remerge: Command = {
       return { code: 2 }
     }
     for (const id of ids) {
+      let res: unknown
       try {
-        await deps.daemon.sendRequest({ op: 'remerge', id })
+        res = await deps.daemon.sendRequest({ op: 'remerge', id })
       } catch (err) {
         deps.err(`${id}: ${errorMessage(err)}`)
         return { code: 1 }
+      }
+      // The already-landed path settles the task 'done' without dispatching.
+      // Printing "queued ... to re-verify and merge" there would be the same
+      // lie the merge gate used to tell: it points the operator at pending
+      // merge work for a branch whose patches are already in the integration
+      // branch. Report what was actually found instead.
+      if (res !== null && typeof res === 'object' && (res as { status?: string }).status === 'done') {
+        const detail = (res as { message?: string }).message
+        deps.out(
+          `${id}: already merged — ${detail ?? 'the branch commits are already present in the integration branch'}`,
+        )
+        continue
       }
       deps.out(`queued ${id} to re-verify and merge the existing branch (no re-code)`)
     }

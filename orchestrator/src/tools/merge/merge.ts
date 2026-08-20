@@ -411,9 +411,16 @@ export const merge = async (
               `2. \`syncWorktreeToIntegration\` reset the branch to the integration tip ` +
                 `(conflict-recreate policy) after the coder committed — parking real commits ` +
                 `on a checkpoint ref.`,
+              `3. The branch's commits already landed in \`${integrationBranch}\` under ` +
+                `different SHAs (e.g. a sibling recovery task committed and merged the same ` +
+                `diff first) and a rebase during this run silently dropped them as ` +
+                `already-applied. Before assuming data loss, check whether the work is ` +
+                `already in \`${integrationBranch}\`: \`git log ${integrationBranch} --grep ${taskId}\` ` +
+                `or diff the worktree's last known content against \`${integrationBranch}\`.`,
               '',
               `**To recover:** inspect the worktree at \`${worktreePath}\` for uncommitted ` +
-                `changes or checkpoint refs, then run \`mars continue ${taskId}\` to retry.`,
+                `changes or checkpoint refs, then run \`mars continue ${taskId}\` to retry — ` +
+                `or, if cause 3 applies, no action is needed.`,
             ].join('\n'),
             payload: { taskId, branch, integrationBranch, worktreePath },
             context: { repoRoot: process.env.MARS_REPO ?? null },

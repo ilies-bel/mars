@@ -3845,7 +3845,9 @@ export const startDaemon = async (
   // 'mars remerge <id>' re-enters the pipeline at verify on the task's
   // EXISTING branch, skipping setup + code. The branch must exist and be
   // ahead of the integration branch. See daemon/remerge-task.ts.
-  const handleRemerge = async (id: string): Promise<{ status: 'queued' }> => {
+  const handleRemerge = async (
+    id: string,
+  ): Promise<import('./remerge-task').RemergeResult> => {
     const { coreRemergeTask } = await import('./remerge-task')
     const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
     const result = await coreRemergeTask(
@@ -3853,7 +3855,14 @@ export const startDaemon = async (
       new Set(['failed', 'done', 'vega-reconciling', 'merging', 'verifying']),
       createQueueWorkflowStore(),
     )
-    bus.emit('task.queued', { taskId: id })
+    // Only emit task.queued when the task actually re-entered the pipeline. The
+    // already-landed path settles the task 'done' and clears its branch without
+    // dispatching anything; emitting task.queued there would hand the
+    // dispatcher a branchless done task and re-manufacture the very
+    // zero-commit-branch failure this guard exists to prevent.
+    if (result.status === 'queued') {
+      bus.emit('task.queued', { taskId: id })
+    }
     return result
   }
 
@@ -5461,8 +5470,12 @@ export const startDaemon = async (
       }
     },
     remergeTask: async (id) => {
-      await coreRemerge(id, new Set(['failed', 'done', 'vega-reconciling', 'merging', 'verifying']), makeWorkflowStore())
-      bus.emit('task.queued', { taskId: id })
+      const result = await coreRemerge(id, new Set(['failed', 'done', 'vega-reconciling', 'merging', 'verifying']), makeWorkflowStore())
+      // Same guard as handleRemerge above: the already-landed path settles
+      // 'done' without dispatching, so there is nothing to queue.
+      if (result.status === 'queued') {
+        bus.emit('task.queued', { taskId: id })
+      }
     },
     unblockTask: async (id) => {
       await handleUnblock(id)

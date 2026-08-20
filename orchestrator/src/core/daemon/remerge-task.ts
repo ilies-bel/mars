@@ -25,8 +25,15 @@ export class RemergeTaskError extends Error {
 
 /** The result returned by {@link coreRemergeTask}. */
 export interface RemergeResult {
-  /** The status the task was written to: always `'queued'`. */
-  status: 'queued'
+  /**
+   * The status the task was written to: `'queued'` for the normal path
+   * (setup → verify → merge dispatches), or `'done'` when the branch's
+   * commits turned out to already be patch-present in the integration
+   * branch under different SHAs — settled directly, nothing was dispatched.
+   */
+  status: 'queued' | 'done'
+  /** Present only when `status === 'done'`: explains why nothing was dispatched. */
+  message?: string
 }
 
 /**
@@ -39,9 +46,23 @@ export interface RemergeResult {
  * - Task must be in a terminal status (`failed`, `done`, `vega-reconciling`,
  *   `merging`, `verifying`).
  * - The branch `task/<id>` must exist in the repo.
- * - The branch must have at least one commit ahead of the integration branch.
- * - If the branch is contaminated (its tip is already an ancestor of the
- *   integration branch despite a positive commit count), the verify step in
+ * - The branch must have at least one commit ahead of the integration branch
+ *   (by SHA reachability). A branch with none is genuinely never-committed
+ *   work — this throws `NO_COMMITS_AHEAD`.
+ * - If every one of those commits is PATCH-equivalent to a commit already
+ *   reachable from the integration branch (`git cherry`), the branch's work
+ *   already landed under different SHAs — typically a sibling recovery task
+ *   committed and merged the identical diff first, then died before this
+ *   task settled. Dispatching setup+verify+merge in that case would rebase
+ *   those commits away to nothing (git's own "already applied" skip) and the
+ *   merge gate would then misreport the branch as `merge:zero-commit-branch`
+ *   — a false failure for work that is safely in `main` (see incident
+ *   mars-a98bec46). This is detected HERE, before setup's rebase mutates the
+ *   branch and destroys the patch-id evidence, and the task is settled
+ *   `done` directly without dispatching anything.
+ * - If the branch is contaminated in some other way (its tip is already an
+ *   ancestor of the integration branch despite a positive commit count, but
+ *   NOT because of patch-equivalence), the verify step in
  *   `remerge-workflow.js` will detect and reject it — no additional pre-check
  *   is needed here.
  *
@@ -107,6 +128,54 @@ export const coreRemergeTask = async (
         `Run \`mars restart ${id}\` to start fresh from setup.`,
       'NO_COMMITS_AHEAD',
     )
+  }
+
+  // Guard 2b: the branch's commits-ahead (by SHA) may already be
+  // PATCH-present in the integration branch under different SHAs — e.g. a
+  // sibling recovery task committed and merged the identical diff before
+  // this remerge ran. Detect this BEFORE setup's rebase mutates the branch:
+  // once that rebase drops the already-applied commits, the merge gate can
+  // no longer tell "already landed" apart from "never had commits" (see
+  // `isBranchPatchLandedInIntegration`'s doc comment). Settle done here
+  // instead of dispatching a pipeline that would misreport this branch as a
+  // `merge:zero-commit-branch` failure.
+  const { isBranchPatchLandedInIntegration } = await import('../lib/git/merge')
+  const alreadyLanded = await isBranchPatchLandedInIntegration(branch, integrationBranch, repoRoot)
+  if (alreadyLanded) {
+    if (task.worktreePath && exists(task.worktreePath)) {
+      await removeWorktree({ path: task.worktreePath, branch }, true, false).catch(() => {})
+    }
+    // Ensure the branch itself is gone before the updateTask(done) call below.
+    // updateTask's done-implies-merged invariant (queue.ts) runs
+    // `git rev-list --count integration..branch` and would see this branch as
+    // AHEAD (it is, by SHA — that is exactly why this guard fired) and
+    // redirect the done transition to 'failed' with
+    // 'done-with-unmerged-commits' unless the branch ref no longer exists (a
+    // missing branch reads as 0-ahead there). removeWorktree above already
+    // deletes the branch when a worktree was present; this covers the case
+    // where there was none (or its removal silently failed).
+    const { execProbe, resolveGitBin } = await import('../lib/git/internal')
+    await execProbe(resolveGitBin(), ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})
+    if (TERMINAL_TASK_STATUSES.has(task.status)) {
+      await reopenTerminalTask(id, 'mars remerge: branch already landed')
+    }
+    const message =
+      `branch '${branch}' is empty after accounting for already-applied patches — ` +
+      `its ${commitsAhead.length} commit(s) are already present in '${integrationBranch}' ` +
+      `under different SHAs. Nothing to merge; settling done.`
+    await updateTask(id, {
+      status: 'done',
+      workflow: null,
+      worktreePath: null,
+      branch: null,
+      claudeSessionId: null,
+      error: null,
+      failedPhase: null,
+      failureReason: null,
+      failureSignature: null,
+      failureReasonCode: null,
+    })
+    return { status: 'done', message }
   }
 
   // Remove the existing worktree directory (if present) so setupWorktree can

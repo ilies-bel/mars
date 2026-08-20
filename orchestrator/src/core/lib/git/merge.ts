@@ -1385,3 +1385,51 @@ export const isZeroCommitBranch = async (
     return false
   }
 }
+
+/**
+ * PATCH-CONTENT comparison of `branch` against `integrationBranch`, using
+ * `git cherry` (patch-id) rather than commit-object identity.
+ *
+ * The zero-commit-branch collapse (see `isZeroCommitBranch`) is
+ * irreversible-looking once it has happened: after a rebase silently drops a
+ * branch's commits because they are already patch-equivalent-present
+ * upstream (e.g. a sibling recovery task committed and merged the identical
+ * diff under different SHAs first), the branch tip equals the integration
+ * tip and there is no git state left that distinguishes "already landed" from
+ * "never had any commits" — both converge to the same rev-parse/merge-base
+ * answer. This function must therefore be called BEFORE that rebase mutates
+ * the branch (e.g. at the `mars remerge` entry point), while the branch's
+ * original commits are still intact and comparable by patch-id.
+ *
+ * Returns `true` only when `branch` has at least one commit not reachable
+ * from `integrationBranch` (by SHA) AND every one of those commits is
+ * patch-equivalent to a commit `git cherry` already finds reachable from
+ * `integrationBranch` (i.e. `git cherry` marks every line `-`). Returns
+ * `false` when `branch` has no commits ahead of `integrationBranch` at all
+ * (nothing to compare — that is the "never had commits" shape, a distinct
+ * condition callers should detect separately via plain SHA reachability) or
+ * when at least one commit ahead is genuinely new (`+`).
+ */
+export const isBranchPatchLandedInIntegration = async (
+  branch: string,
+  integrationBranch: string,
+  repoRoot: string,
+  traceCtx?: TraceCtx,
+): Promise<boolean> => {
+  try {
+    const { stdout } = await exec(
+      resolveGitBin(),
+      ['cherry', integrationBranch, branch],
+      { cwd: repoRoot },
+      traceCtx,
+    )
+    const lines = stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+    if (lines.length === 0) return false
+    return lines.every((line) => line.startsWith('-'))
+  } catch {
+    return false
+  }
+}

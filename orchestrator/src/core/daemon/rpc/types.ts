@@ -148,7 +148,7 @@ export interface DaemonDeps {
   handleContinue(id: string): Promise<ContinueResult>
   handleStop(id: string): Promise<void>
   handleRestart(id: string, force?: boolean): Promise<{ status: 'queued' | 'blocked' }>
-  handleRemerge(id: string): Promise<{ status: 'queued' }>
+  handleRemerge(id: string): Promise<import('../remerge-task').RemergeResult>
   handlePurge(id: string, force: boolean): Promise<{ compensationTaskId?: string }>
   handleArcPurge(
     id: string,
