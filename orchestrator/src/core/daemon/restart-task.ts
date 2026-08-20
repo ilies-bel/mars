@@ -226,7 +226,7 @@ export const coreRestartTask = async (
   const { execFile } = await import('node:child_process')
   const { promisify } = await import('node:util')
   const exec = promisify(execFile)
-  const { removeWorktree } = await import('../lib/git/worktree')
+  const { removeWorktree, listUncommittedPaths } = await import('../lib/git/worktree')
   const { getRepoRoot } = await import('../context')
   const { listUniqueCommitsAhead } = await import('../lib/sweep')
   const { integrationBranchName } = await import('../blocker-resolution')
@@ -253,6 +253,26 @@ export const coreRestartTask = async (
         `Review or land the branch, or rerun with --force to discard it.`,
       'WRONG_STATUS',
     )
+  }
+
+  // The commits-ahead check above only sees work the coder committed. A
+  // worktree can sit at ahead=0 and still hold the entire substance of the
+  // task uncommitted — that is the normal shape of a `context-exhausted`
+  // failure, where the coder was killed mid-task rather than bailing. On
+  // 2026-08-20 three such tasks were one `mars restart` away from losing 145,
+  // 8 and 4 files respectively, and nothing in this path would have said so.
+  if (!force) {
+    const dirtyPaths = await listUncommittedPaths(task.worktreePath)
+    if (dirtyPaths !== null && dirtyPaths.length > 0) {
+      throw new RestartTaskError(
+        `refusing to restart task ${id}: worktree ${task.worktreePath} has ` +
+          `${dirtyPaths.length} uncommitted path(s) that restart would destroy:\n` +
+          dirtyPaths.map((path) => `  ${path}`).join('\n') +
+          `\nCommit or discard them, use \`mars continue ${id}\` to resume on this worktree, ` +
+          `or rerun with --force to discard them.`,
+        'WRONG_STATUS',
+      )
+    }
   }
 
   // Worktree directories can be recreated from setup. Keep the branch during

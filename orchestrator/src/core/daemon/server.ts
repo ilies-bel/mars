@@ -4024,6 +4024,20 @@ export const startDaemon = async (
             `Review or land the branch, or rerun with --force to discard it.`,
         )
       }
+
+      // Commits ahead are only half the exposure — see the matching guard in
+      // restart-task.ts. A worktree at ahead=0 can still hold every line the
+      // coder wrote before it was killed.
+      const { listUncommittedPaths } = await import('../lib/git/worktree')
+      const dirtyPaths = await listUncommittedPaths(task.worktreePath)
+      if (dirtyPaths !== null && dirtyPaths.length > 0) {
+        throw new Error(
+          `refusing to drop task ${id}: worktree ${task.worktreePath} has ` +
+            `${dirtyPaths.length} uncommitted path(s) that drop would destroy:\n` +
+            dirtyPaths.map((path) => `  ${path}`).join('\n') +
+            `\nCommit or discard them, or rerun with --force to discard them.`,
+        )
+      }
     }
 
     // Guard: skip worktree+branch removal when another non-terminal task shares

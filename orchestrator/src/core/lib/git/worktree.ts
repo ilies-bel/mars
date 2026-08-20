@@ -1314,6 +1314,39 @@ export const syncWorktreeToIntegration = async (args: {
   return { kind: 'rebased', from, to, checkpointRef: checkpoint?.ref ?? null }
 }
 
+/**
+ * List the uncommitted paths in a worktree, newest state as of right now.
+ *
+ * Returns `[]` for a clean tree and `null` when the answer is unknown — the
+ * path is absent, is not a git worktree, or `git status` failed. `null` is
+ * deliberately distinct from `[]`: the destructive-verb guards below must not
+ * read "I could not look" as "there is nothing there".
+ *
+ * Shared by the three surfaces that have to answer "would this destroy
+ * uncommitted work?" — the `mars restart` guard, the `mars drop` guard, and
+ * the derived `failed` action-queue row. Before this existed only the
+ * commits-ahead half of that question was asked, so a task sitting at
+ * `ahead=0` with a worktree full of uncommitted work looked, to all three,
+ * exactly like a task with nothing to lose.
+ */
+export const listUncommittedPaths = async (
+  worktreePath: string | null | undefined,
+): Promise<string[] | null> => {
+  if (!worktreePath) return null
+  if (!(await pathExists(worktreePath))) return null
+  const git = resolveGitBin()
+  const status = await execProbe(
+    git,
+    ['status', '--porcelain'],
+    { cwd: worktreePath, timeout: WORKTREE_GIT_TIMEOUT_MS },
+  )
+  if (status.exitCode !== 0) return null
+  return status.stdout
+    .split('\n')
+    .map((line) => line.slice(3).trim())
+    .filter((path) => path !== '')
+}
+
 export const removeWorktree = async (
   ref: WorktreeRef,
   force = true,

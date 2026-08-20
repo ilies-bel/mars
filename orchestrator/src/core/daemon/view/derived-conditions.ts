@@ -92,6 +92,12 @@ export interface ConditionsDeps {
 /** Max chars of `tasks.error` carried into the alert's `errorExcerpt`. */
 const ERROR_EXCERPT_MAX = 600
 
+/** Newest-first cap on how many failed rows get a live dirty-worktree probe. */
+const MAX_DIRTY_PROBES = 40
+
+/** Git subprocesses the dirty-worktree probe may have in flight at once. */
+const DIRTY_PROBE_CONCURRENCY = 8
+
 /**
  * Reduce a stored `tasks.error` blob to something an operator can read in a
  * queue row. The column holds whole captured step output (one row currently
@@ -126,7 +132,7 @@ async function deriveFailedConditions(
         )
       ORDER BY t.updated_at DESC`,
   )
-  return result.rows
+  const rows = result.rows
     .filter((r) => !baselineCaughtTaskIds.has((r as { id: string }).id))
     .map((r) => {
     const row = r as {
@@ -176,6 +182,9 @@ async function deriveFailedConditions(
         // discards salvageable commits was also the row offering Restart, and
         // Continue beside it could only error.
         recoveryExhausted: (row.failure_reason ?? '').startsWith(RECOVERY_EXHAUSTED_PREFIX),
+        // Filled in by the live probe below. Absent/null means "not looked at",
+        // which the recipe renders as nothing rather than as "clean".
+        worktreeDirtyCount: null as number | null,
       },
       context: { taskId: row.id },
       raisedAt,
@@ -183,6 +192,42 @@ async function deriveFailedConditions(
       signature: `failed:${row.id}`,
     }
   })
+
+  // Whether the worktree holds uncommitted work is the single fact that
+  // decides between `mars continue` and the destructive `mars restart` /
+  // `mars drop`, and until now the row said nothing about it — an operator
+  // reading this alert had to go run `git status` in the worktree by hand to
+  // find out what a one-word verb was about to delete.
+  //
+  // Probed live rather than stored, because the answer changes underneath a
+  // stored row: the operator commits the work, or `mars continue` checkpoints
+  // it, and a stored "holds uncommitted work" would keep saying so forever.
+  // That is the ADR-0057 rule — a row carries only what cannot be recomputed.
+  //
+  // Bounded, because each probe is a git subprocess and this runs on every
+  // action-queue read. Rows are ordered newest-first, so the cap keeps the
+  // freshest failures — the ones an operator is actually about to act on.
+  const { listUncommittedPaths } = await import('../../lib/git/worktree')
+  const probeTargets = rows.slice(0, MAX_DIRTY_PROBES)
+  for (let i = 0; i < probeTargets.length; i += DIRTY_PROBE_CONCURRENCY) {
+    const batch = probeTargets.slice(i, i + DIRTY_PROBE_CONCURRENCY)
+    await Promise.all(
+      batch.map(async (queueRow) => {
+        const paths = await listUncommittedPaths(
+          typeof queueRow.payload.worktree === 'string' ? queueRow.payload.worktree : null,
+        ).catch(() => null)
+        if (paths !== null) queueRow.payload.worktreeDirtyCount = paths.length
+      }),
+    )
+  }
+  if (rows.length > MAX_DIRTY_PROBES) {
+    console.warn(
+      `[action-queue] ${rows.length - MAX_DIRTY_PROBES} failed row(s) beyond the newest ` +
+        `${MAX_DIRTY_PROBES} were not probed for uncommitted work; their rows omit it rather than claim clean`,
+    )
+  }
+
+  return rows
 }
 
 const STALE_QUEUED_THRESHOLD_MS = (() => {

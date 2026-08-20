@@ -36,6 +36,12 @@ export type RecipeHumanDetail = {
   errorExcerpt?: string
   /** Changelog text (for update-style kinds). */
   changelog?: string
+  /**
+   * Uncommitted paths sitting in the task's worktree right now, or `null` when
+   * it was not probed. `null` means "unknown", never "clean" — the destructive
+   * verbs on this card must not read a failed probe as nothing to lose.
+   */
+  worktreeDirtyCount?: number | null
   /** Additional kind-specific structured fields. */
   [key: string]: unknown
 }
@@ -153,7 +159,17 @@ const RECIPE_DEFINITIONS = {
   failed: {
     humanSummary: (ctx) => {
       const taskId = str(ctx.payload['taskId']) || ctx.entityId
-      return `A task got stuck and Mars used up its retry — decide what to do with it (${taskId}).`
+      const base = `A task got stuck and Mars used up its retry — decide what to do with it (${taskId}).`
+      // The dirty-worktree count belongs in the SUMMARY, not just the detail:
+      // it is the fact that decides between `continue` and the destructive
+      // verbs, and the destructive verbs sit one click away in this same row.
+      // A summary that omits it invites `Restart` on a worktree holding the
+      // whole task (the 2026-08-20 mars-70dc2672 near-miss: 145 uncommitted
+      // lines, and the alert mentioned none of them).
+      const dirty = ctx.payload['worktreeDirtyCount']
+      return typeof dirty === 'number' && dirty > 0
+        ? `${base} Its worktree holds ${dirty} uncommitted path(s) — Restart and Discard would destroy them; use Continue to keep them.`
+        : base
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -162,6 +178,10 @@ const RECIPE_DEFINITIONS = {
       errorExcerpt: str(ctx.payload['errorExcerpt']),
       branch: str(ctx.payload['branch']),
       worktree: str(ctx.payload['worktree']),
+      worktreeDirtyCount:
+        typeof ctx.payload['worktreeDirtyCount'] === 'number'
+          ? ctx.payload['worktreeDirtyCount']
+          : null,
     }),
     verbs: [
       { op: 'restart', label: 'Restart', style: 'primary' },
