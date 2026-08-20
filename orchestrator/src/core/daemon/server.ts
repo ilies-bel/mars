@@ -2244,6 +2244,13 @@ export const startDaemon = async (
             // a fix-task. Suppress the generic implement:crashed re-update.
             log(`[implement] ${task.id} merge-hard-timeout abort (exception path); task already marked failed, fix-task spawned`)
             break
+          case 'merge-salvage-checkpoint-tip':
+            // The merge gate found the branch tip to still be an unfinished
+            // salvage checkpoint; already marked failed + raised an action-queue
+            // item naming `mars continue` / `--supersede`. Suppress the generic
+            // re-update so the operator-facing error is not overwritten.
+            log(`[implement] ${task.id} merge-salvage-checkpoint-tip abort (exception path); task already marked failed, item raised`)
+            break
         }
       } else {
         log(`[implement] ${task.id} failed: ${message}`)

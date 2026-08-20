@@ -458,18 +458,32 @@ export const merge = async (
         // `wip(checkpoint):` carries no such trailer and is not refused. A
         // checkpoint that is NOT the tip (the coder resumed and built real
         // commits on top of it) is fine and merges normally.
-        const branchTipR = await runTool(
-          {
-            tool: 'git',
-            argv: ['rev-parse', branch],
-            cwd: mergeRepoRoot,
-            taskId,
-            originId: trace.originId,
-            phase: 'merge',
-          },
-          trace.traceStore,
-        )
-        const branchTipSha = branchTipR.exitCode === 0 ? branchTipR.stdout.trim() : null
+        // Best-effort: this is a preflight safety check, not the merge itself.
+        // A git failure here (including a spawn-level throw, e.g. a worktree
+        // whose cwd vanished underneath it) must fail OPEN — skip the guard
+        // and let the real merge machinery below run its own, more
+        // authoritative checks — rather than aborting the whole merge step on
+        // an inability to answer "is the tip a salvage checkpoint".
+        let branchTipSha: string | null = null
+        try {
+          const branchTipR = await runTool(
+            {
+              tool: 'git',
+              argv: ['rev-parse', branch],
+              cwd: mergeRepoRoot,
+              taskId,
+              originId: trace.originId,
+              phase: 'merge',
+            },
+            trace.traceStore,
+          )
+          branchTipSha = branchTipR.exitCode === 0 ? branchTipR.stdout.trim() : null
+        } catch (err) {
+          console.warn(
+            `[merge] task ${taskId}: salvage-checkpoint-tip preflight could not resolve branch tip (${branch}); skipping guard:`,
+            err,
+          )
+        }
         if (
           branchTipSha !== null &&
           (await isSalvageCheckpointCommit(

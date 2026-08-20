@@ -83,6 +83,17 @@ export type WorkflowTerminalKind =
    * the generic `implement:crashed` re-update.
    */
   | 'merge-hard-timeout'
+  /**
+   * The merge step found the task branch's TIP to be an orchestrator-authored
+   * salvage checkpoint — the "coder killed … do not merge as-is" auto-commit
+   * `coder-exit.ts` writes when a coder dies with uncommitted changes. That
+   * commit is a safety net for the coder-resume path, not a finished diff, so
+   * fast-forwarding it into the integration branch is refused. Identified
+   * structurally via the `Mars-Checkpoint: salvage` commit trailer, never by
+   * matching subject text. Resolve with `mars continue <id>` (resume the coder
+   * on the existing worktree) or `mars task add --supersede <id>`.
+   */
+  | 'merge-salvage-checkpoint-tip'
 
 export interface WorkflowTerminalMeta {
   /** Unix epoch seconds at which the provider quota resets. Only set for `quota-rejected`. */

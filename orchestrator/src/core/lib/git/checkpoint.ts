@@ -107,19 +107,28 @@ export const isSalvageCheckpointCommit = async (
   traceCtx?: TraceCtx,
 ): Promise<boolean> => {
   const git = resolveGitBin()
-  const result = await execProbe(
-    git,
-    [
-      'log',
-      '-1',
-      `--format=%(trailers:key=${SALVAGE_CHECKPOINT_TRAILER_KEY},valueonly)`,
-      sha,
-    ],
-    { cwd },
-    traceCtx,
-  )
-  if (result.exitCode !== 0) return false
-  return result.stdout.trim() === SALVAGE_CHECKPOINT_TRAILER_VALUE
+  try {
+    const result = await execProbe(
+      git,
+      [
+        'log',
+        '-1',
+        `--format=%(trailers:key=${SALVAGE_CHECKPOINT_TRAILER_KEY},valueonly)`,
+        sha,
+      ],
+      { cwd },
+      traceCtx,
+    )
+    if (result.exitCode !== 0) return false
+    return result.stdout.trim() === SALVAGE_CHECKPOINT_TRAILER_VALUE
+  } catch {
+    // `execProbe` throws (rather than returning a non-zero exit) on a
+    // spawn-level failure — e.g. `cwd` no longer exists. That is exactly the
+    // kind of "cannot answer" this function's contract already promises to
+    // fail open on, so a thrown spawn error is caught here too rather than
+    // propagating and aborting an unrelated merge.
+    return false
+  }
 }
 
 /**
