@@ -1,7 +1,7 @@
 # Vision
 
 > Forward-looking. Describes the target state of Mars, not the current code.
-> For "what exists today," see [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+> For "what exists today," see [`ARCHITECTURE.md`](../../ARCHITECTURE.md).
 
 ## What Mars is
 
@@ -22,52 +22,58 @@ local database they can inspect, back up, and restore themselves.
 ## The canonical loop
 
 ```
-draft  ──► queued  ──► running  ──► verifying  ──► merging  ──► done | failed
-  │          ▲
-  │          │
-  └── chat ──┘
+grill/shape ──► draft ──► triaging ──┐
+                                      ├──► queued ──► running ──► verifying ──► merging ──► done | failed
+              mars task add ─────────┘
 ```
 
-1. **Draft.** I jot down a feature idea: `mars add --draft "<spec>"`. The
-   task lands in the DB as `draft` with empty `plan_functional` and
-   `plan_technical` columns.
-2. **Chat.** I open a chat skill (`/mars:feature:chat`) inside Claude Code.
-   The skill grills me one question at a time, writing my answers directly
-   into the task's plan columns in the Mars database. No markdown specs on disk.
-   The conversation challenges fuzzy terms, cross-references the codebase,
-   and refuses to move on until the plan is precise.
-3. **Queued.** When I'm satisfied, the task transitions to `queued`. The
-   plan is locked-in input for execution.
-4. **Daemon pickup.** A long-running `mars daemon` polls `queued`,
+1. **Shape (optional, for hard or cross-repo work).** I open `/mars:grill`
+   inside Claude Code. It challenges fuzzy terms against the domain model,
+   cross-references the codebase, and writes decisions straight into
+   `CONTEXT.md` and ADRs as they crystallise — conversation only, no
+   markdown specs on disk. When the conversation settles, `/mars:to-prd`
+   synthesises it into a proposal (`mars proposal add`), which I then
+   `mars proposal promote` and `mars proposal slice` into vertical-slice
+   tasks.
+2. **Enqueue.** For everything else, `mars task add "<prompt>"` lands a
+   task directly in the DB, skipping triage. Plan text — what and why,
+   where and how — lives in the `plan_functional` / `plan_technical`
+   columns, set via `mars task set-functional` / `set-technical` (or the
+   inline plan flags on `task add`), not in markdown files.
+3. **Daemon pickup.** A long-running `mars daemon` polls `queued`,
    claims a task atomically, and dispatches it through the implement
    workflow. I don't trigger anything by hand — the daemon is the dispatcher.
-5. **Implement.** Worktree on `task/<id>` off `integration` → selected agent CLI
-   with the prompt + plan → typecheck/test/lint → fast-forward into
-   `integration`. Conflicts go to a bundled supervisor agent for
+4. **Implement.** Worktree on `task/<id>` off `main` (override with
+   `INTEGRATION_BRANCH`) → selected agent CLI with the prompt + plan →
+   typecheck/test/lint → fast-forward into `main`, serialized via file
+   lock. Conflicts go to the bundled `vcs-supervisor` agent ("Vega") for
    reconciliation.
-6. **Done or failed.** Worktree removed on success; retained for inspection
+5. **Done or failed.** Worktree removed on success; retained for inspection
    on failure.
 
 This is the only loop. There is no synchronous batch mode in the target
-state — `mars run` (current code) collapses into the watcher.
+state — the old `mars run` synchronous batch dispatcher has already been
+removed from the code; `mars daemon` is the sole entry point.
 
 ## Glossary (intentionally small)
 
 - **Task.** The unit of work. A row in the Mars database. Carries a prompt, a
   plan (functional + technical), a status, a worktree path, and a session id.
 - **Plan.** Two free-text columns on a task: `plan_functional` (what and why)
-  and `plan_technical` (where and how). Filled by the chat skill.
+  and `plan_technical` (where and how). Filled via `set-functional` /
+  `set-technical` or by the shaping skills (`/mars:grill`, `/mars:to-prd`).
 - **Supervisor.** A generated system prompt in `.mars/supervisors/`,
   tailored to the project's stack at `mars init` time. Agents read these
   to know the project's idioms.
 - **Worktree.** A throwaway git worktree at `.mars/worktrees/<task-id>` on
-  branch `task/<id>` off `integration`. One per running task.
+  branch `task/<id>` off `main`. One per running task.
 - **Integration branch.** The merge target inside the orchestrator. `main`
-  is reserved for human PRs.
+  by default, overridable per-invocation with `INTEGRATION_BRANCH`.
 
 No "feature" layer. No markdown specs on disk. No "ready" state separate
-from "queued." If the chat skill currently talks about `features/<id>.md`
-or `mars feature refine`, that's drift to be corrected in code.
+from "queued." Plan text lives in the `plan_functional` / `plan_technical`
+columns, never in a `features/<id>.md` file, and there is no
+`mars feature refine` command.
 
 ## Non-goals
 
@@ -77,8 +83,9 @@ or `mars feature refine`, that's drift to be corrected in code.
 - **No cloud or multi-tenant features.** No hosted control plane, no
   shared queues, no Mars account, no telemetry. State is embedded PostgreSQL
   per repo; provider authentication remains owned by the provider CLI.
-- **No managed agent runtime.** Mars does not try to be Mastra Cloud,
-  LangSmith, or AutoGPT. It uses Mastra as a local workflow runtime and
+- **No managed agent runtime.** Mars does not try to be a hosted agent
+  platform like LangSmith or AutoGPT. Workflows run on the in-house
+  `@mars/workflow` engine (`packages/workflow/`) as a local runtime and
   nothing more.
 - **No write surface in the UI.** `mars ui` is a read-only viewer over
   the Mars database. The CLI is the only way to mutate state.
@@ -101,17 +108,16 @@ surface area small enough for one person to hold in their head.
 
 ## Open questions
 
-Things the docs have a position on but the code hasn't caught up to. These
-will be reconciled in subsequent passes.
+Previously-open items. Both have since landed in code; kept here as
+history rather than deleted outright.
 
-- **Chat skill ↔ orchestrator drift.** `.claude/commands/mars/feature/chat.md`
-  describes a markdown-first model (`features/<id>.md`, `mars feature refine`,
-  `.mars/state.db`). Vision is DB-first. The skill needs to be rewritten to
-  edit the Mars database directly via `mars set-functional` / `mars
-  set-technical` (or equivalent), not write markdown files.
-- **`mars run` vs `mars daemon`.** Current code has both: `run` is a
-  one-shot batch dispatcher, `daemon` is the long-running dispatcher.
-  Vision says the daemon is canonical. Decide whether to keep `run` as a
-  debug tool or remove it.
+- ~~**Chat skill ↔ orchestrator drift.**~~ Resolved: there is no
+  `features/<id>.md` and no `mars feature refine`. Plan text is set via
+  `mars task set-functional` / `set-technical` (or the inline plan flags
+  on `mars task add`), and shaping happens conversationally through
+  `/mars:chat` → `/mars:grill` → `/mars:to-prd`, which write straight to
+  the proposals and task tables.
+- ~~**`mars run` vs `mars daemon`.**~~ Resolved: `mars run` was removed.
+  `mars daemon` is the sole dispatcher.
 - ~~**`state.db` vs `queue.db`.**~~ Resolved: both merged into `mars.db`,
   since imported into the embedded Postgres store.
