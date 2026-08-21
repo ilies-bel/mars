@@ -103,47 +103,90 @@ describe('summarizeTraceEvent', () => {
     ).toBe('merge step completed')
   })
 
-  // task.failed
-  it('task.failed: prefers failureReason prose over the code', () => {
+  // task.failed — payload is the canonical bus shape (ADR-0097): prose in
+  // `error`, machine signature in `failureSignature`.
+  it('task.failed: prefers the error prose over the signature', () => {
     expect(
       summarizeTraceEvent(
         make('task.failed', {
-          failureReasonCode: 'verify:typecheck',
-          failureReason: 'TypeScript type-check failed',
+          taskId: 'mars-9c045304',
+          error: 'TypeScript type-check failed',
+          failureSignature: 'verify:typecheck',
         }),
       ),
     ).toBe('TypeScript type-check failed')
   })
 
-  it('task.failed: humanizes a step:detail code when no prose is present', () => {
+  it('task.failed: humanizes a step:detail signature when no prose is present', () => {
     expect(
       summarizeTraceEvent(
-        make('task.failed', { failureReasonCode: 'verify:typecheck' }),
+        make('task.failed', { taskId: 'mars-9c045304', failureSignature: 'verify:typecheck' }),
       ),
     ).toBe('typecheck (verify step)')
   })
 
-  it('task.failed: humanizes a bare code with no colon separator', () => {
+  it('task.failed: humanizes a bare signature with no colon separator', () => {
     expect(
       summarizeTraceEvent(
-        make('task.failed', { failureReasonCode: 'tool_timeout' }),
+        make('task.failed', { taskId: 'mars-9c045304', failureSignature: 'tool_timeout' }),
       ),
     ).toBe('tool timeout')
   })
 
-  // task.blocked
-  it('task.blocked: frames the blocker id with "waiting on"', () => {
-    expect(
-      summarizeTraceEvent(
-        make('task.blocked', { blockerTaskId: 'mars-9c045304' }),
-      ),
-    ).toBe('waiting on mars-9c045304')
+  it('task.failed: falls back when neither prose nor signature is present', () => {
+    expect(summarizeTraceEvent(make('task.failed', { taskId: 'mars-9c045304' }))).toBe(
+      'task failed',
+    )
   })
 
-  it('falls back to origin.created form unchanged', () => {
-    expect(summarizeTraceEvent(make('origin.created', { source: 'cli' }))).toBe(
-      'origin (cli)',
-    )
+  // task.blocked — the blocked task waits on the recovery named by `fixTaskId`.
+  it('task.blocked: frames the recovery id with "waiting on"', () => {
+    expect(
+      summarizeTraceEvent(
+        make('task.blocked', {
+          taskId: 'mars-1111',
+          fixTaskId: 'fix-9c045304',
+          failureSignature: 'merge/uncommitted-changes',
+          failingStep: 'merge',
+        }),
+      ),
+    ).toBe('waiting on fix-9c045304')
+  })
+
+  it('task.blocked: reads as bare "blocked" when no recovery is named', () => {
+    expect(
+      summarizeTraceEvent(
+        make('task.blocked', {
+          taskId: 'mars-1111',
+          fixTaskId: null,
+          failureSignature: 'merge/uncommitted-changes',
+          failingStep: 'merge',
+        }),
+      ),
+    ).toBe('blocked')
+  })
+
+  // recovery.spawned — `taskId` is the newly spawned recovery.
+  it('recovery.spawned: names the spawned recovery task', () => {
+    expect(
+      summarizeTraceEvent(
+        make('recovery.spawned', {
+          taskId: 'fix-9c045304',
+          sourceTaskId: 'mars-1111',
+          originId: 'mars-1111',
+          recipe: 'main-commiter',
+          dispatchPhase: 'merge',
+        }),
+      ),
+    ).toBe('recovery fix-9c045304')
+  })
+
+  it('origin.created: names the origin id', () => {
+    expect(
+      summarizeTraceEvent(
+        make('origin.created', { taskId: 'mars-1111', originId: 'mars-1111' }),
+      ),
+    ).toBe('origin mars-1111')
   })
 
   // log_line
@@ -245,7 +288,9 @@ describe('traceEventTaskId', () => {
   })
 
   it('returns null for a non-log_line event with no envelope taskId', () => {
-    expect(traceEventTaskId(make('origin.created', { source: 'planner' }))).toBeNull()
+    expect(
+      traceEventTaskId(make('origin.created', { taskId: 'mars-1111', originId: 'mars-1111' })),
+    ).toBeNull()
   })
 })
 

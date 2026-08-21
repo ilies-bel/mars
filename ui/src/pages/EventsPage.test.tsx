@@ -67,7 +67,7 @@ const makeEvent = (overrides: Partial<TraceEvent> = {}): TraceEvent => ({
   taskId: 't-1',
   originId: null,
   phase: 'verify',
-  payload: { failureReasonCode: 'verify:typecheck' },
+  payload: { taskId: 't-1', failureSignature: 'verify:typecheck' },
   ...overrides,
 })
 
@@ -393,7 +393,7 @@ describe('EventsPage render', () => {
           kind: 'origin.created',
           phase: null,
           severity: 'info',
-          payload: { source: 'planner' },
+          payload: { taskId: 't-1', originId: 't-1' },
         }),
       ]),
     )
@@ -700,7 +700,7 @@ describe('EventRow severity styling', () => {
           kind: 'origin.created',
           taskId: null,
           phase: null,
-          payload: { source: 'planner' },
+          payload: { taskId: 't-1', originId: 't-1' },
         }),
       ]),
     )
@@ -748,7 +748,7 @@ describe('EventRow severity styling', () => {
           kind: 'origin.created',
           taskId: null,
           phase: null,
-          payload: { source: 'planner' },
+          payload: { taskId: 't-1', originId: 't-1' },
         }),
       ]),
     )
@@ -1376,8 +1376,8 @@ describe('groupConsecutiveEvents', () => {
       // taskId" — otherwise ordinary task.failed rows (which already have
       // their own identical-payload dedup) would be swept in too.
       const events = [
-        makeEvent({ id: 'tf-a', kind: 'task.failed', severity: 'error', taskId: 't-1', payload: { failureReason: 'reason A' } }),
-        makeEvent({ id: 'tf-b', kind: 'task.failed', severity: 'error', taskId: 't-1', payload: { failureReason: 'reason B' } }),
+        makeEvent({ id: 'tf-a', kind: 'task.failed', severity: 'error', taskId: 't-1', payload: { taskId: 't-1', error: 'reason A' } }),
+        makeEvent({ id: 'tf-b', kind: 'task.failed', severity: 'error', taskId: 't-1', payload: { taskId: 't-1', error: 'reason B' } }),
       ]
       const rows = groupConsecutiveEvents(events)
       expect(rows).toHaveLength(2)
@@ -1455,7 +1455,7 @@ describe('EventsPage — consecutive identical event grouping', () => {
     // The collapsed GroupedRow renders summarizeTraceEvent(first) as its label.
     // This test verifies that the human-readable summary is present in the DOM
     // so users can identify what the collapsed group represents at a glance.
-    const payload = { failureReasonCode: 'verify:typecheck' }
+    const payload = { taskId: 't-1', failureSignature: 'verify:typecheck' }
     const events = [
       makeEvent({ id: 'grp-sum-a', kind: 'task.failed', severity: 'error', payload }),
       makeEvent({ id: 'grp-sum-b', kind: 'task.failed', severity: 'error', payload }),

@@ -193,32 +193,32 @@ export const summarizeTraceEvent = (event: TraceEvent): string => {
     return parts.join(' ')
   }
 
+  // The four kinds below read the single canonical payload defined by the bus
+  // registry (`EventMap` in the orchestrator's `bus/events.ts`). They used to
+  // read the retired trace-only shape (`failureReason`, `blockerTaskId`,
+  // `recoveryTaskId`, `source`); those field names no longer reach the wire
+  // now that one occurrence writes exactly one row (ADR-0097).
+
   if (event.kind === 'task.failed') {
-    // Prefer human-readable prose; only fall through to the machine code when
-    // no prose is available, and humanize even then.
-    if (typeof p.failureReason === 'string') return p.failureReason
-    if (typeof p.failureReasonCode === 'string') return humanizeFailureCode(p.failureReasonCode)
+    // `error` is the schema's prose field; the machine signature is the
+    // fallback, humanized the same way as any other failure code.
+    if (typeof p.error === 'string' && p.error !== '') return p.error
+    if (typeof p.failureSignature === 'string') return humanizeFailureCode(p.failureSignature)
     return 'task failed'
   }
 
   if (event.kind === 'task.blocked') {
-    const blockedBy =
-      typeof p.blockerTaskId === 'string'
-        ? p.blockerTaskId
-        : Array.isArray(p.blockedBy)
-          ? (p.blockedBy as unknown[]).filter((s) => typeof s === 'string').join(', ')
-          : null
-    return blockedBy ? `waiting on ${blockedBy}` : 'blocked'
+    // The blocked task waits on the recovery spawned to unblock it.
+    return typeof p.fixTaskId === 'string' ? `waiting on ${p.fixTaskId}` : 'blocked'
   }
 
   if (event.kind === 'recovery.spawned') {
-    const recoveryId =
-      typeof p.recoveryTaskId === 'string' ? p.recoveryTaskId : null
-    return recoveryId ? `recovery ${recoveryId}` : 'recovery spawned'
+    // `taskId` is the newly spawned recovery; `sourceTaskId` is what it fixes.
+    return typeof p.taskId === 'string' ? `recovery ${p.taskId}` : 'recovery spawned'
   }
 
   if (event.kind === 'origin.created') {
-    return typeof p.source === 'string' ? `origin (${p.source})` : 'origin'
+    return typeof p.originId === 'string' ? `origin ${p.originId}` : 'origin'
   }
 
   if (event.kind === 'log_line') {
