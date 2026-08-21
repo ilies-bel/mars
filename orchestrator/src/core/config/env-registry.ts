@@ -61,6 +61,14 @@ export interface EnvKnob {
   /** Value used when the knob is absent from both daemon.json and env. */
   default: unknown
   /**
+   * One-line, human-readable description of what this knob controls.
+   * Required (not optional) so the generated `docs/reference/configuration.md`
+   * can never carry a blank row — `scripts/gen-config-reference.mjs` refuses
+   * to generate the reference when any knob is missing one. See
+   * `src/core/config/reference.ts`.
+   */
+  description: string
+  /**
    * Legacy/alternate dot-paths to also check when reading `daemon.json`
    * (checked in order, first match wins), for fields `daemonConfigSchema`
    * accepts under more than one key — e.g. `caps.setupInstall` vs the
@@ -101,18 +109,21 @@ export const ENV_KNOBS: readonly EnvKnob[] = [
     schema: positiveIntFromEnv,
     path: 'caps.implement',
     default: DEFAULTS.implement,
+    description: 'Maximum concurrent Coder (implement) worktrees the dispatcher runs at once.',
   },
   {
     name: 'MARS_MAX_TRIAGE',
     schema: positiveIntFromEnv,
     path: 'caps.triage',
     default: DEFAULTS.triage,
+    description: 'Maximum concurrent Triage workers.',
   },
   {
     name: 'MARS_MAX_REFINE',
     schema: positiveIntFromEnv,
     path: 'caps.refine',
     default: DEFAULTS.refine,
+    description: 'Maximum concurrent Refine (Slicer) workers.',
   },
   {
     name: 'MARS_MAX_SETUP_INSTALL',
@@ -120,12 +131,15 @@ export const ENV_KNOBS: readonly EnvKnob[] = [
     path: 'caps.setupInstall',
     default: DEFAULTS.setupInstall,
     fileAliases: ['caps.setupInstall', 'caps.setup-install'],
+    description: 'Maximum concurrent worktree dependency installs during setup.',
   },
   {
     name: 'MARS_MAX_VERIFY',
     schema: positiveIntFromEnv,
     path: 'caps.verify',
     default: DEFAULTS.verify,
+    description:
+      'Maximum concurrent verify steps. Defaults to 1 because parallel test suites share ports and snapshot dirs and interfere with each other; raise only for explicitly parallel-safe suites.',
   },
   {
     name: 'MARS_SELF_EVOLVE_AUTO_TRIGGER',
@@ -133,41 +147,53 @@ export const ENV_KNOBS: readonly EnvKnob[] = [
     path: 'selfEvolve.autoEnqueue',
     default: DEFAULT_SELF_EVOLVE.autoEnqueue,
     fileAliases: ['selfEvolve.autoEnqueue', 'selfEvolve.autoTrigger'],
+    description:
+      "When true, a high-confidence 'mechanical' reflection suggestion is auto-enqueued as a Task instead of left as a draft proposal.",
   },
   {
     name: 'MARS_SELF_EVOLVE_DRIFT_THRESHOLD',
     schema: positiveNumberFromEnv,
     path: 'selfEvolve.driftThresholdPct',
     default: DEFAULT_SELF_EVOLVE.driftThresholdPct,
+    description: 'Percent drift threshold that triggers a self-evolve suggestion.',
   },
   {
     name: 'MARS_SELF_EVOLVE_TASK_CONFIDENCE_THRESHOLD',
     schema: unitIntervalFromEnv,
     path: 'selfEvolve.taskConfidenceThreshold',
     default: DEFAULT_SELF_EVOLVE.taskConfidenceThreshold,
+    description:
+      "Minimum confidence (0..1) for a 'mechanical' reflection suggestion to be auto-enqueued as a Task when autoEnqueue is true.",
   },
   {
     name: 'MARS_SCORING_AUTO_TRIGGER',
     schema: boolFromEnv,
     path: 'scoring.autoTrigger',
     default: DEFAULT_SCORING.autoTrigger,
+    description:
+      'When true, a sustained low score trend raises one draft proposal suggesting a revision of that pipeline.',
   },
   {
     name: 'MARS_SCORING_LOW_TREND_THRESHOLD',
     schema: unitIntervalFromEnv,
     path: 'scoring.lowTrendThreshold',
     default: DEFAULT_SCORING.lowTrendThreshold,
+    description: 'Rolling-median score floor below which the low-trend scoring trigger fires.',
   },
   {
     name: 'MARS_SCORING_LOW_TREND_WINDOW',
     schema: positiveIntFromEnv,
     path: 'scoring.lowTrendWindow',
     default: DEFAULT_SCORING.lowTrendWindow,
+    description:
+      'Number of consecutive scored workflow instances the rolling-median score trend is computed over.',
   },
   {
     name: 'MARS_WORKER_PROVIDER',
     schema: providerFromEnv,
     path: 'defaultProvider',
     default: DEFAULT_PROVIDER,
+    description:
+      'Overrides the default agent provider (claude/gemini/codex) for every un-pinned Worker in this daemon process.',
   },
 ]

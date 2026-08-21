@@ -22,6 +22,7 @@
     "cli": "tsx src/cli.ts",
     "build:binary": "tsx scripts/build-binary.ts",
     "typecheck": "tsc --noEmit",
+    "docs:config": "tsx ../scripts/gen-config-reference.mjs",
     "knip": "knip --no-exit-code",
     "postinstall": "node scripts/fix-pty-perms.mjs"
   },
