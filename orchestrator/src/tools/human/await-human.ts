@@ -55,6 +55,32 @@ export interface AwaitHumanOpts {
  * `mars step done` without a re-dispatch. `awaitHuman` remains for backward
  * compatibility and as the fallback when no `onManualPark` hook is registered.
  *
+ * **The two park paths are being collapsed into one.** PRD
+ * ae17340a-modular-core-program-make-every-mars-mod slice 27 requires that a
+ * task needing a human parks through exactly one mechanism. That work is
+ * sequenced as three bounded tasks, in order:
+ *
+ *   1. `mars-f19f0ecd` — extract the duplicated `updateTask` +
+ *      `raiseActionQueueItem` park body shared by the sentinel branch below
+ *      and the daemon's `onManualPark` hook into one helper. No behaviour
+ *      change, no dispatch change.
+ *   2. `mars-18e6e0b5` — carry `previewUrl`/`logPath` through `onManualPark`
+ *      so the guard at the promise-path branch below can collapse to a bare
+ *      `ctx.services.onManualPark != null`. The preview payload gap is the
+ *      only reason a daemon-backed run still takes the sentinel path.
+ *   3. `mars-9dd152c7` — delete the sentinel-throw fallback and
+ *      `AWAIT_HUMAN_MESSAGE`, and make `onManualPark` required (test and
+ *      scaffolded contexts get a default implementation rather than an
+ *      escape hatch).
+ *
+ * Note for step 3: `AWAIT_HUMAN_SENTINEL` is NOT the throw sentinel despite
+ * the name — it is the *lease-owner* value both paths write, and it survives
+ * the unification. `AWAIT_HUMAN_MESSAGE` is the one that goes away.
+ *
+ * The "exactly one action-queue row + exactly one durable event" invariant all
+ * three steps must preserve is pinned by
+ * `core/lib/__tests__/unified-park.test.ts`.
+ *
  * **Behaviour:**
  *   1. Transitions the task to `'awaiting-human'` via `updateTask` (Arc
  *      funnel, ADR-0052) and raises an `'awaiting-human'` action-queue row so
