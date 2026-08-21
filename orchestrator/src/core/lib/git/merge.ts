@@ -14,6 +14,7 @@ import { acquireLock } from './lock'
 import { captureCheckpoint, discardWorkingTreeChanges } from './checkpoint'
 import { readLastSyncedSha, writeLastSyncedSha } from './last-synced-sha'
 import { attributeIntegrationDirt } from './stale-tree-attribution'
+import { autoCommitOperatorDirt as autoCommitOperatorDirtGit } from './operator-auto-commit'
 import {
   runSubprocessStreaming,
   resolveClaudeBin,
@@ -195,9 +196,12 @@ export const lastSyncedRef = (integrationBranch: string): string =>
  * checkout is auto-committed to unblock a merge (ADR-0100). Operator-visible
  * and therefore pinned: the operator greps for it, the Notice quotes it, and
  * `mars` tooling recognises an auto-commit by it.
+ *
+ * Defined in `./operator-auto-commit` (the module that actually performs the
+ * commit) and re-exported here so existing importers of `./merge` keep
+ * working — `operatorWipCommitMessage` predates that module's extraction.
  */
-export const operatorWipCommitMessage = (taskId: string): string =>
-  `wip(operator): auto-committed to unblock merge of ${taskId}`
+export { operatorWipCommitMessage } from './operator-auto-commit'
 
 /**
  * Outcome of a caller-supplied gate that runs a command on a tree and either
@@ -821,6 +825,9 @@ export const mergeBranch = async ({
   onVerifyRebasedTree,
   onPhase,
   onHeartbeat,
+  autoCommitOperatorDirt: autoCommitOperatorDirtEnabled,
+  onOperatorAutoCommit,
+  onProbeIntegrationAfterAutoCommit,
   traceCtx,
 }: MergeArgs): Promise<MergeResult> => {
   const mergeCtx: TraceCtx | undefined = traceCtx
@@ -1518,7 +1525,78 @@ export const mergeBranch = async ({
           }
 
           // attribution.kind === 'operator-dirt' (including attributeIntegrationDirt's
-          // own fail-safe default on an unattributable last-synced sha) — pre-existing
+          // own fail-safe default on an unattributable last-synced sha).
+          //
+          // ADR-0100 slice 6: when the operatorAutoCommit lever is on (the
+          // caller resolves it via `isOperatorAutoCommitDisabled(resolveControlLevers())`
+          // and passes the answer as `autoCommitOperatorDirt`; omitted/`true`
+          // both mean "attempt it" — see the field's doc comment), sweep the
+          // dirt into a single `wip(operator)` commit rather than running the
+          // checkpoint-and-continue dance below. This unblocks the merge
+          // without a checkpoint ref the operator has to know to go recover.
+          if (autoCommitOperatorDirtEnabled !== false) {
+            const autoCommit = await autoCommitOperatorDirtGit({
+              repoRoot: repoRoot(),
+              taskId: traceCtx?.taskId ?? branch,
+              traceCtx: mergeCtx,
+            })
+            if (autoCommit.committed) {
+              // The wip(operator) commit is now the tree's true state — record
+              // it as the new last-synced sha so a later `attributeIntegrationDirt`
+              // call has the right baseline, and because `git commit` just
+              // advanced `integrationBranch`'s own ref in the ordinary way, any
+              // concurrent merge's CAS fast-forward check observes this commit
+              // and redoes its rebase rather than clobbering it — no special
+              // handling needed beyond doing a normal commit here.
+              writeLastSyncedSha(autoCommit.sha)
+              output +=
+                `\n[mergeBranch] auto-committed operator dirt as ${autoCommit.sha.slice(0, 9)} ` +
+                `(${autoCommit.files.length} path(s)): ${autoCommit.files.join(', ').slice(0, 200)}`
+
+              let probe: MergeGateOutcome | null = null
+              if (onProbeIntegrationAfterAutoCommit) {
+                try {
+                  probe = await onProbeIntegrationAfterAutoCommit({ commitSha: autoCommit.sha })
+                } catch (probeErr: unknown) {
+                  const m = probeErr instanceof Error ? probeErr.message : String(probeErr)
+                  output += `\n[mergeBranch] post-auto-commit probe threw: ${m.slice(0, 300)}`
+                }
+              }
+              if (onOperatorAutoCommit) {
+                try {
+                  const reported = onOperatorAutoCommit({
+                    commitSha: autoCommit.sha,
+                    files: autoCommit.files,
+                    probe,
+                  })
+                  if (reported instanceof Promise) await reported
+                } catch {
+                  // Best-effort per MergeArgs.onOperatorAutoCommit's contract —
+                  // the commit already landed; a reporting failure must never
+                  // undo the merge.
+                }
+              }
+
+              return {
+                merged: true,
+                conflictResolved,
+                aborted: false,
+                output,
+                supervisorConversation,
+                vegaSessionId,
+                retriesAttempted,
+                mergePreSha: finalIntegrationSha,
+                mergePostSha: finalTaskSha,
+                operatorAutoCommitSha: autoCommit.sha,
+              }
+            }
+            // Auto-commit declined (nothing-to-commit, a transient git
+            // failure) — fall through to the pre-existing handling below
+            // unchanged, exactly as the lever-off path does.
+            output += `\n[mergeBranch] auto-commit declined: ${autoCommit.reason}`
+          }
+
+          // Lever off, or the auto-commit attempt above declined — pre-existing
           // behaviour, unchanged in this slice. The dirt is one of two very
           // different things and they must NOT be treated alike:
           //

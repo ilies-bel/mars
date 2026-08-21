@@ -21,6 +21,12 @@
  * shared by every linked worktree and addressed by position, so a parallel
  * task's pop could swallow the operator's edits. This test also pins that the
  * stash stack stays empty.
+ *
+ * Passes `autoCommitOperatorDirt: false` explicitly: ADR-0100 slice 6 added a
+ * lever-gated auto-commit path that is now the *default* for genuine operator
+ * dirt (see `operatorWipCommitMessage` / `merge-operator-auto-commit.test.ts`).
+ * This test exercises the checkpoint-and-preserve fallback specifically, i.e.
+ * what still happens with the lever off.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -92,6 +98,7 @@ describe('mergeBranch — uncommitted operator edits on the integration checkout
       worktreePath: worktreeDir,
       integrationBranch: 'main',
       lockTimeoutMs: 30_000,
+      autoCommitOperatorDirt: false,
     })
 
     // The merge itself must still land.
