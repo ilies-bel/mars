@@ -198,9 +198,33 @@ export interface VerifyArgs {
    * tracking (pre-fix behaviour; watchdog falls back to the updatedAt ceiling).
    */
   onChildPid?: (pid: number) => void
+  /**
+   * Which provider/model produced the code under verification. Optional:
+   * supplied by the caller (the Coder shell), never derived by verify.ts
+   * itself. Echoed onto the returned {@link VerifyResult} unchanged — see
+   * {@link VerifyModelAttribution} for why.
+   */
+  modelAttribution?: VerifyModelAttribution
 }
 
 type VerifyVerdict = 'PASS' | 'FAIL' | "CAN'T-VERIFY"
+
+/**
+ * Which provider/model produced the code a verify run is checking. Plain
+ * serializable data (ADR-0097's Port acceptance test) — no live handles.
+ *
+ * verify.ts has no way to derive this itself; the caller (the Coder shell,
+ * which knows which Worker/model ran) supplies it on {@link VerifyArgs} and
+ * it is threaded through unchanged onto {@link VerifyResult}. This closes
+ * the gap named in ADR-0097 ("One typed event emitter…"): verify output and
+ * model attribution today live only in ephemeral trace_events (pruned at
+ * ~30 days); carrying attribution on the result lets a durable write persist
+ * both together instead of only the ephemeral trace.
+ */
+export interface VerifyModelAttribution {
+  provider: string
+  model: string
+}
 
 /**
  * The task-level verification decision. A CAN'T-VERIFY verdict still permits
@@ -211,6 +235,42 @@ export interface VerifyResult {
   passed: boolean
   verdict: VerifyVerdict
   steps: VerifyStep[]
+  /**
+   * Echoed from {@link VerifyArgs.modelAttribution} when the caller supplied
+   * one. Absent when the caller did not (e.g. a verify run with no
+   * associated Coder pass).
+   */
+  modelAttribution?: VerifyModelAttribution
+}
+
+/**
+ * The Port-legal request shape for a {@link VerifierPort} (ADR-0097: "Every
+ * seam is a cordis service Port with serializable contracts"). Identical to
+ * {@link VerifyArgs} minus the fields that fail the Port acceptance test —
+ * a live `AbortSignal`, a process-artifact callback (`onChildPid`), and the
+ * in-process-only `traceCtx` — so the request can cross a remote adapter
+ * (HTTP/webhook/queue) unchanged, not just an in-process call.
+ *
+ * A local implementation still wants cancellation and PID tracking; it may
+ * accept them as an out-of-band second argument to `verify()` rather than on
+ * the request itself, the same way a remote adapter would accept a deadline
+ * instead of a signal. That reshaping is the consumer slice's job — this
+ * type only fixes the wire-crossing request shape all implementations share.
+ */
+export type VerifyPortRequest = Omit<
+  VerifyArgs,
+  'traceCtx' | 'signal' | 'onChildPid'
+>
+
+/**
+ * The Port contract for a verifier (ADR-0097). Callers resolve this through
+ * the cordis context (`ctx.get(...)` / a sealed accessor), never by
+ * importing a concrete implementation. The local subprocess implementation
+ * wraps {@link verifyChanges}; a remote implementation (e.g. "verify in CI")
+ * fills the same slot behind one adapter file, invisible to callers.
+ */
+export interface VerifierPort {
+  verify(request: VerifyPortRequest): Promise<VerifyResult>
 }
 
 const runVerifyStep = async (
@@ -588,6 +648,7 @@ export const verifyChanges = async (
         passed: false,
         verdict: 'FAIL',
         steps: [{ name: WORKTREE_HYGIENE_STEP, passed: false, output: msg }],
+        modelAttribution: args.modelAttribution,
       }
     }
   }
@@ -604,7 +665,12 @@ export const verifyChanges = async (
       verifyCtx,
     )
     if (!diffStep.passed) {
-      return { passed: false, verdict: 'FAIL', steps: [diffStep] }
+      return {
+        passed: false,
+        verdict: 'FAIL',
+        steps: [diffStep],
+        modelAttribution: args.modelAttribution,
+      }
     }
     // Include the passing has-diff gate in results so gate-outcomes correctly
     // reflects what ran rather than silently dropping built-in gates that pass.
@@ -636,7 +702,12 @@ export const verifyChanges = async (
         commandLine: verifyCmdRaw,
         stepDir: args.cwd,
       })
-      return { passed: false, verdict: 'FAIL', steps: results }
+      return {
+        passed: false,
+        verdict: 'FAIL',
+        steps: results,
+        modelAttribution: args.modelAttribution,
+      }
     }
     const cmdStart = performance.now()
     const cmdResult = await runVerifyStep(
@@ -655,7 +726,12 @@ export const verifyChanges = async (
     // so callers see what the task author wrote rather than the implementation detail.
     results.push({ ...cmdResult, tier: 'task', duration: cmdDuration, commandLine: verifyCmdRaw })
     if (!cmdResult.passed) {
-      return { passed: false, verdict: 'FAIL', steps: results }
+      return {
+        passed: false,
+        verdict: 'FAIL',
+        steps: results,
+        modelAttribution: args.modelAttribution,
+      }
     }
   }
 
@@ -874,6 +950,7 @@ export const verifyChanges = async (
     passed,
     verdict: !passed ? 'FAIL' : lacksTaskTierCoverage ? "CAN'T-VERIFY" : 'PASS',
     steps: results,
+    modelAttribution: args.modelAttribution,
   }
 }
 
