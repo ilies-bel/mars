@@ -177,6 +177,7 @@ import { resolveStateClient } from '../store/state-client'
 import {
   createTaskFlightTracker,
   type DispatchKind,
+  type TaskFlightTracker,
 } from './task-flight-tracker'
 import { registerDispatchHint } from './dispatch-hint'
 import { setWorkerLivenessProbe } from '../lib/worker-liveness'
@@ -235,6 +236,41 @@ export interface DaemonHandle {
 export interface DaemonOptions {
   integrationBranch?: string
   log?: (line: string) => void
+}
+
+/**
+ * Named type for the daemon's per-kind dispatch semaphores. Pulled out of an
+ * inline literal so the modules later slices extract from this file — the
+ * scheduling/sweep closures and the HTTP route-registration deps, both of
+ * which read `sems` today — can reference the same shape instead of each
+ * re-deriving it structurally.
+ */
+export type DaemonSemaphores = Record<
+  Exclude<
+    DispatchKind,
+    'merge' | 'arc-verify' | 'glossary-write' | 'adr-add' | 'adr-supersede' | 'vision'
+  >,
+  Semaphore
+> & {
+  arcVerify: Semaphore
+}
+
+/**
+ * Shared dependency shape for the daemon's periodic sweep/schedule closures
+ * (stale-merge sweep, running-committer lifetime sweep, reflect-detector
+ * sweep, proposal expiry, outbox drains, …). Every one of those closures,
+ * defined inline in `startDaemon` today, reads exactly this set. Established
+ * here as the contract a future "extract scheduling and sweeps" slice
+ * targets when it lifts them out into their own module(s) — this list will
+ * grow as each sweep is actually moved, but starts scoped to what every
+ * sweep already needs so extraction is additive, not a redesign.
+ */
+export interface DaemonScheduleDeps {
+  bus: EventEmitter
+  viewStreamHub: ViewStreamHub
+  tracker: TaskFlightTracker
+  sems: DaemonSemaphores
+  log: (line: string) => void
 }
 
 /**
@@ -1172,15 +1208,7 @@ export const startDaemon = async (
   const docCoordinator = new DocumentWriteCoordinator()
   // 'merge' is a tracker-only kind (no per-kind semaphore); excluded here.
   // Document-write kinds use docCoordinator rather than semaphores.
-  const sems: Record<
-    Exclude<
-      DispatchKind,
-      'merge' | 'arc-verify' | 'glossary-write' | 'adr-add' | 'adr-supersede' | 'vision'
-    >,
-    Semaphore
-  > & {
-    arcVerify: Semaphore
-  } = {
+  const sems: DaemonSemaphores = {
     triage: makeSem(initialCaps.triage),
     implement: makeSem(initialCaps.implement),
     refine: makeSem(initialCaps.refine),
