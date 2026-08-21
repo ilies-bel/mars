@@ -17,3 +17,13 @@
  */
 export { publish, publishWithRetry, buildEventInsert, withWriteTx } from '../../bus/publisher.js'
 export type { EventName, EventPayload } from '../../bus/events.js'
+
+/**
+ * Re-exported for the same reason as the publisher helpers above: `emitEvent`
+ * (`bus/emit.ts`) is the unified write path for both the `trace_events` log
+ * and, when the kind is also a bus `EventName`, the `events` outbox — the
+ * single sanctioned replacement for a hand-rolled `INSERT INTO trace_events`.
+ * Pass `opts.tx` to enlist in a caller-open transaction so a state write and
+ * the emitted event(s) commit or roll back together.
+ */
+export { emitEvent } from '../../bus/emit.js'

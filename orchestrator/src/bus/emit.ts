@@ -117,10 +117,14 @@ async function writeTraceRow(
  *
  * Pass `opts.tx` to enlist in a caller-supplied transaction so a state write
  * and this event land atomically; omit it to have `emitEvent` open and
- * commit its own transaction.
+ * commit its own transaction — in that case `client` is required. When
+ * `opts.tx` is supplied, `client` is never touched (no transaction is opened)
+ * and may be `null` — callers whose only client handle is behind an opaque
+ * store seam (e.g. `TaskStore.atomic`'s `Scope`) don't need to reach for an
+ * unrelated ambient client just to satisfy the parameter.
  */
 export async function emitEvent<K extends UnifiedEventKind>(
-  client: DbClient,
+  client: DbClient | null,
   kind: K,
   payload: UnifiedEventPayload<K>,
   opts: EmitEventOpts = {},
@@ -154,6 +158,9 @@ export async function emitEvent<K extends UnifiedEventKind>(
   if (opts.tx) {
     await run(opts.tx);
     return;
+  }
+  if (!client) {
+    throw new Error('emitEvent: client is required when opts.tx is not supplied');
   }
   await withTransaction(client, run);
 }

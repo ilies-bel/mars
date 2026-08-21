@@ -1,5 +1,4 @@
 import { execFile } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
 import { gzip } from 'node:zlib'
 import { promisify } from 'node:util'
 import { resolveContext, resolveDbTarget } from './context'
@@ -7,7 +6,7 @@ import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
 import { markSchemaReady, openDb, type DbClient, type DbInValue, type DbStatement } from './lib/db'
 import { ensureSchema } from './lib/pg-schema'
-import { buildEventInsert } from './lib/outbox'
+import { buildEventInsert, emitEvent, withWriteTx } from './lib/outbox'
 import {
   asStepId,
   computeFailureSignature,
@@ -710,21 +709,14 @@ export const upsertTranscript = async (
   store?: TaskStore,
 ): Promise<void> => {
   const now = Date.now()
-  const execute = async (stmt: { sql: string; args: DbInValue[] }) => {
-    if (store) {
-      await store.execute(stmt)
-    } else {
-      await ensureQueueSchema()
-      await resolveQueueClient().execute(stmt)
-    }
-  }
 
   // Write transcript as a gzip-compressed bytea to the dedicated table.
   // This keeps step_ended payloads small so hot aggregate queries are fast.
+  let conversationStmt: DbStatement | null = null
   if (input.conversationJson !== undefined) {
     const capped = capConversationJson(input.conversationJson)
     const compressed = await gzipAsyncQ(Buffer.from(capped, 'utf8'))
-    await execute({
+    conversationStmt = {
       sql: `INSERT INTO task_durable_transcripts
               (task_id, session_id, step_name, created_at, transcript, byte_len)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -735,31 +727,57 @@ export const upsertTranscript = async (
               transcript = excluded.transcript,
               byte_len   = excluded.byte_len`,
       args: [input.taskId, '', 'code', now, compressed, capped.length],
-    })
+    }
   }
 
   // Write verifyOutput to a step_ended event (it is small — at most 64 KB).
   // The transcript field is never written to step_ended any more.
-  if (input.verifyOutput !== undefined && input.verifyOutput !== null) {
-    const cappedVerify =
-      input.verifyOutput.length > 64 * 1024
-        ? input.verifyOutput.slice(0, 64 * 1024)
-        : input.verifyOutput
-    const payloadObj = {
-      stepName: 'code',
-      workflowInstanceId: `upsert-${input.taskId}`,
-      outcome: 'success',
-      durationMs: 0,
-      verifyOutput: cappedVerify,
-    }
-    const id = `upsert-${input.taskId}-${randomUUID()}`
-    await execute({
-      sql: `INSERT INTO trace_events
-              (id, timestamp, kind, severity, task_id, phase, payload)
-            VALUES (?, ?, 'step_ended', 'info', ?, 'code', ?)`,
-      args: [id, Date.now(), input.taskId, JSON.stringify(payloadObj)],
+  const verifyEventPayload =
+    input.verifyOutput !== undefined && input.verifyOutput !== null
+      ? {
+          stepName: 'code',
+          workflowInstanceId: `upsert-${input.taskId}`,
+          outcome: 'success' as const,
+          durationMs: 0,
+          verifyOutput:
+            input.verifyOutput.length > 64 * 1024
+              ? input.verifyOutput.slice(0, 64 * 1024)
+              : input.verifyOutput,
+        }
+      : null
+
+  if (conversationStmt === null && verifyEventPayload === null) return
+
+  // The transcript row and its step_ended event share one write transaction:
+  // a failure partway through (e.g. a constraint violation on the transcript
+  // write) rolls back both, so no orphan event row can ever describe a
+  // transcript write that never landed.
+  if (store) {
+    await store.atomic(async (scope) => {
+      if (conversationStmt) await scope.execute(conversationStmt)
+      if (verifyEventPayload) {
+        await emitEvent(null, 'step_ended', verifyEventPayload, {
+          tx: scope,
+          taskId: input.taskId,
+          phase: 'code',
+        })
+      }
     })
+    return
   }
+
+  await ensureQueueSchema()
+  const client = resolveQueueClient()
+  await withWriteTx(client, async (tx) => {
+    if (conversationStmt) await tx.execute(conversationStmt)
+    if (verifyEventPayload) {
+      await emitEvent(client, 'step_ended', verifyEventPayload, {
+        tx,
+        taskId: input.taskId,
+        phase: 'code',
+      })
+    }
+  })
 }
 
 export interface TaskTranscriptRow {
