@@ -1,4 +1,5 @@
 import type { MonitorDb } from './gate-meta-monitor'
+import type { GateReplayResult } from './gate-replay'
 
 /**
  * Shadow-mode burn-in for verify gates (draft proposal acd01d23, item 2).
@@ -69,11 +70,44 @@ export interface GateBurnInStatus {
   inShadow: boolean
   /** Number of clean parses recorded so far. */
   parseCount: number
+  /**
+   * The last {@link GateReplayResult} computed for this gate (ADR-0099:
+   * promotion requires a replay pass over the gate's motivating-failure
+   * fixtures, not clean-parse count alone). `null` when no replay has been
+   * recorded yet — either the gate has never reached the burn-in threshold,
+   * or it has no motivating-failure fixtures to replay against.
+   */
+  replay: GateReplayResult | null
+}
+
+/**
+ * Runtime shape guard for a stored {@link GateReplayResult} — the column is
+ * free-form JSON, never trust it blindly on read.
+ */
+const isGateReplayResult = (value: unknown): value is GateReplayResult => {
+  if (typeof value !== 'object' || value === null) return false
+  const o = value as Record<string, unknown>
+  return (
+    typeof o.caught === 'number' &&
+    typeof o.missed === 'number' &&
+    typeof o.total === 'number' &&
+    Array.isArray(o.misses)
+  )
+}
+
+const parseGateReplayResult = (raw: string | null): GateReplayResult | null => {
+  if (raw === null) return null
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    return isGateReplayResult(parsed) ? parsed : null
+  } catch {
+    return null
+  }
 }
 
 /**
  * Read the current burn-in status for a gate. A gate that has never been seen
- * is treated as fully in shadow mode (parseCount = 0).
+ * is treated as fully in shadow mode (parseCount = 0, replay = null).
  */
 export const getGateBurnInStatus = async (
   client: MonitorDb,
@@ -81,20 +115,45 @@ export const getGateBurnInStatus = async (
 ): Promise<GateBurnInStatus> => {
   await ensureGateBurnInSchema(client)
   const r = await client.execute({
-    sql: `SELECT parse_count, promoted_at FROM gate_burn_in WHERE gate_name = ?`,
+    sql: `SELECT parse_count, promoted_at, last_replay_result FROM gate_burn_in WHERE gate_name = ?`,
     args: [gateName],
   })
   if (r.rows.length === 0) {
-    return { inShadow: true, parseCount: 0 }
+    return { inShadow: true, parseCount: 0, replay: null }
   }
   const row = r.rows[0] as unknown as {
     parse_count: number
     promoted_at: number | null
+    last_replay_result: string | null
   }
   return {
     inShadow: row.promoted_at === null,
     parseCount: row.parse_count,
+    replay: parseGateReplayResult(row.last_replay_result),
   }
+}
+
+/**
+ * Persist the last {@link GateReplayResult} computed for a gate (ADR-0099),
+ * so it is readable per-gate via {@link getGateBurnInStatus} regardless of
+ * whether the replay led to promotion. Upserts the `gate_burn_in` row —
+ * safe to call even before {@link recordGateParse} has ever run for this
+ * gate name, though in practice replay is only computed once burn-in has
+ * already created the row.
+ */
+export const recordGateReplayResult = async (
+  client: MonitorDb,
+  gateName: string,
+  result: GateReplayResult,
+): Promise<void> => {
+  await ensureGateBurnInSchema(client)
+  await client.execute({
+    sql: `INSERT INTO gate_burn_in (gate_name, parse_count, last_replay_result)
+          VALUES (?, 0, ?)
+          ON CONFLICT(gate_name) DO UPDATE SET
+            last_replay_result = excluded.last_replay_result`,
+    args: [gateName, JSON.stringify(result)],
+  })
 }
 
 export interface RecordGateParseResult {

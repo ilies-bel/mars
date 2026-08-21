@@ -1,6 +1,10 @@
 import { isAbsolute, relative } from 'node:path'
 import type { MonitorDb } from './gate-meta-monitor'
-import { recordGateParse, getGateBurnInStatus } from './gate-burn-in'
+import {
+  recordGateParse,
+  getGateBurnInStatus,
+  recordGateReplayResult,
+} from './gate-burn-in'
 import type { VerifyScope, VerifyStep, VerifyStepSpec } from './git/verify'
 import {
   lookupFailureKind,
@@ -9,9 +13,15 @@ import {
   type NonEncodableReason,
   type StaticEncodability,
 } from './failure-kinds'
+import { computeFailureSignature, isSameFailureFamily } from './failure-signature'
 import { raiseActionQueueItem } from './action-queue'
 import type { RanVerifyStep } from './derive-repro-command'
-import { makeFixture, type GateReplayFixture } from './gate-replay'
+import {
+  makeFixture,
+  replayGateAgainstFixtures,
+  type GateReplayFixture,
+  type GateReplayResult,
+} from './gate-replay'
 import { wouldHaveFiredOnMany, type MatcherBreadth } from './matcher-breadth'
 
 /**
@@ -294,6 +304,11 @@ export interface EnrichmentListEntry extends EnrichmentRecord {
   /** Clean parses recorded so far (shadow rows only advance this). */
   burnInParseCount: number
   /**
+   * The last replay-against-motivating-failures verdict (ADR-0099), or
+   * `null` when no replay has been recorded yet for this signature.
+   */
+  burnInReplay: GateReplayResult | null
+  /**
    * ADR-0099 breadth: how many past recorded task failures this signature
    * would have fired on, at both the exact-string and family level (see
    * {@link import('./matcher-breadth').wouldHaveFiredOnMany}). Surfaces a
@@ -329,10 +344,11 @@ export const listEnrichments = async (
     const burnIn = await getGateBurnInStatus(
       client,
       enrichStepName(rec.signature),
-    ).catch(() => ({ inShadow: true, parseCount: 0 }))
+    ).catch(() => ({ inShadow: true, parseCount: 0, replay: null }))
     out.push({
       ...rec,
       burnInParseCount: burnIn.parseCount,
+      burnInReplay: burnIn.replay,
       breadth: breadthBySignature.get(rec.signature) ?? {
         exact: 0,
         family: 0,
@@ -820,13 +836,9 @@ export interface ShadowRunEffects {
  * may promote to enforcing (ADR-0099: promotion requires replay against
  * motivating failures, not clean-parse count alone).
  *
- * This owner slice establishes the fixture storage ({@link
- * GateReplayFixture}, {@link getMotivatingFailures}) and this seam; it does
- * NOT implement the matcher-driven replay itself (running the record's
- * `stepSpec` command against each fixture and feeding the verdicts through
- * {@link import('./gate-replay').replayGateAgainstFixtures}) — that
- * execution logic belongs to the "gate promotion requires replay" consumer
- * slice, which supplies its own default here in production wiring.
+ * The production implementation is {@link productionReplayBeforePromotion};
+ * tests may inject an alternative via `effects.replayBeforePromotion` to
+ * control the promotion decision without wiring real fixtures.
  */
 export type ReplayBeforePromotion = (
   record: EnrichmentRecord,
@@ -834,11 +846,63 @@ export type ReplayBeforePromotion = (
 ) => Promise<boolean> | boolean
 
 /**
- * Permissive placeholder default: always allows promotion. Keeps existing
- * burn-in-only promotion behaviour unchanged until a caller supplies a real
- * {@link ReplayBeforePromotion} via `effects`.
+ * Pure replay matcher (ADR-0099): a {@link GateReplayFixture} only carries
+ * captured text (`verifyOutput`), never a reproducible worktree snapshot, so
+ * there is no repo state to re-run the record's `stepSpec` command against.
+ * The meaningful pure replay is instead to re-derive the failure signature
+ * from that captured text through the SAME deterministic classification
+ * pipeline (`computeFailureSignature`) that produced the record's own
+ * signature in the first place, and check whether it still lands in the
+ * same family (`isSameFailureFamily`) — i.e. "does this motivating failure's
+ * evidence still get recognised as the class this check exists to catch?"
+ * No execution, no DB — mirrors gate-replay.ts's pure design.
  */
-const defaultReplayBeforePromotion: ReplayBeforePromotion = () => true
+const buildReplayMatcher = (
+  record: EnrichmentRecord,
+): ((output: string) => boolean) => {
+  const failingStep = failingStepFromSignature(record.signature)
+  return (output: string): boolean =>
+    isSameFailureFamily(
+      computeFailureSignature(failingStep, output),
+      record.signature,
+    )
+}
+
+/**
+ * Replay a record's captured motivating-failure fixtures (ADR-0099) through
+ * {@link buildReplayMatcher} via {@link replayGateAgainstFixtures}.
+ *
+ * Fixtures with blank `verifyOutput` (observations that never captured
+ * `errorOutput` — common for hardcoded/pre-ADR-0099 call sites) carry no
+ * replayable evidence and are excluded before replay, rather than counted as
+ * misses: excluding them is what keeps a signature with no real evidence
+ * captured yet permissive, matching pre-existing burn-in-only promotion
+ * behaviour. Returns `null` when nothing is left to replay against.
+ */
+const computeReplayResult = (
+  record: EnrichmentRecord,
+  fixtures: readonly GateReplayFixture[],
+): GateReplayResult | null => {
+  const replayable = fixtures.filter((f) => f.verifyOutput.trim().length > 0)
+  if (replayable.length === 0) return null
+  return replayGateAgainstFixtures(buildReplayMatcher(record), replayable)
+}
+
+/**
+ * Real (production) {@link ReplayBeforePromotion} — the "gate promotion
+ * requires replay" consumer slice (ADR-0099): promote only when the replay
+ * caught at least one motivating-failure fixture and missed none. A
+ * signature with nothing replayable yet has no evidence to disprove the
+ * check with, so it stays permissive (keeps hardcoded gate names and
+ * pre-ADR-0099 observations promoting exactly as before).
+ */
+const productionReplayBeforePromotion: ReplayBeforePromotion = (
+  record,
+  fixtures,
+) => {
+  const result = computeReplayResult(record, fixtures)
+  return result === null || (result.caught > 0 && result.missed === 0)
+}
 
 /**
  * Default (production) stale-row raiser — calls `raiseActionQueueItem`
@@ -983,7 +1047,7 @@ export const recordEnrichmentShadowRuns = async (
 ): Promise<void> => {
   const raiseStale = effects?.raiseStaleRow ?? defaultRaiseStaleRow
   const replayCheck =
-    effects?.replayBeforePromotion ?? defaultReplayBeforePromotion
+    effects?.replayBeforePromotion ?? productionReplayBeforePromotion
   for (const step of steps) {
     const signature = signatureFromEnrichStepName(step.name)
     if (signature === null) continue
@@ -1001,8 +1065,18 @@ export const recordEnrichmentShadowRuns = async (
           if (fresh !== null && fresh.status === 'shadow') {
             // ADR-0099: clean-parse burn-in is necessary but not sufficient
             // — replay against the recorded motivating failures before
-            // promoting. A decline leaves the record in shadow; the burn-in
-            // counter is untouched, so the next clean parse retries.
+            // promoting. The verdict is persisted alongside the burn-in row
+            // regardless of outcome, so `mars enrich` can render it even
+            // when promotion is declined. A decline leaves the record in
+            // shadow; the burn-in counter is untouched, so the next clean
+            // parse retries.
+            const replayResult = computeReplayResult(
+              fresh,
+              fresh.motivatingFailures,
+            )
+            if (replayResult !== null) {
+              await recordGateReplayResult(client, step.name, replayResult)
+            }
             const mayPromote = await replayCheck(
               fresh,
               fresh.motivatingFailures,

@@ -1335,10 +1335,16 @@ const DDL: readonly string[] = [
   // pre-existing installs; the CREATE TABLE above covers greenfield ones.
   `ALTER TABLE gate_enrichment ADD COLUMN IF NOT EXISTS motivating_failures text`,
   `CREATE TABLE IF NOT EXISTS gate_burn_in (
-    gate_name   text   PRIMARY KEY,
-    parse_count bigint NOT NULL DEFAULT 0,
-    promoted_at bigint
+    gate_name           text   PRIMARY KEY,
+    parse_count         bigint NOT NULL DEFAULT 0,
+    promoted_at         bigint,
+    last_replay_result  text
   )`,
+  // ADR-0099: the last {@link GateReplayResult} (JSON) computed for this gate
+  // — replay against motivating-failure fixtures at the burn-in threshold.
+  // Migration for pre-existing installs; the CREATE TABLE above covers
+  // greenfield ones.
+  `ALTER TABLE gate_burn_in ADD COLUMN IF NOT EXISTS last_replay_result text`,
   `DROP TABLE IF EXISTS gate_suppressed_verdicts`,
   `DROP TABLE IF EXISTS gate_verdict_monitor`,
   // Signature-storm circuit breaker: singleton streak row that counts
