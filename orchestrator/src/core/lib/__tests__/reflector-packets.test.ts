@@ -15,6 +15,7 @@ vi.mock('../../store/memory-packet-store', () => ({
 
 vi.mock('../../proposals', () => ({
   createProposal: vi.fn().mockResolvedValue({ id: 'prop-1' }),
+  addProposalUserStory: vi.fn().mockResolvedValue(undefined),
   findOpenReflectionDraftByFingerprint: vi.fn().mockResolvedValue(null),
   appendProposalNotes: vi.fn().mockResolvedValue(undefined),
   findOpenTasksMatchingTitle: vi.fn().mockResolvedValue([]),
