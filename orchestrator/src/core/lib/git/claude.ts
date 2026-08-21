@@ -1,7 +1,7 @@
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { dirname, isAbsolute, join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import {
   parseClaudeStreamLine,
   extractQuotaRejected,
