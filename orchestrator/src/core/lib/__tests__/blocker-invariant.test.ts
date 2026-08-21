@@ -230,7 +230,7 @@ describe('ADR-0040 recovery-leaf guard', () => {
     // we simulate it via a raw INSERT bypassing the guard so the assertion
     // below tests the leaf-side (no edges OUT of the recovery), not the
     // guard at the user-facing writers.
-    const now = new Date().toISOString()
+    const now = Date.now()
     await q.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
       args: [origin.id, fixId, now],
@@ -260,7 +260,7 @@ describe('ADR-0040 recovery-leaf guard', () => {
     const other = await q.enqueueTask('other', undefined, { skipTriage: true })
     // Bypass the user-facing guard to simulate a row inserted before the
     // ADR-0040 enforcement landed: raw INSERT both directions.
-    const now = new Date().toISOString()
+    const now = Date.now()
     await q.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
       args: [fixId, other.id, now],
@@ -279,7 +279,7 @@ describe('ADR-0040 recovery-leaf guard', () => {
     const { q, inv } = await loadModules(repo)
     const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
     const fixId = await insertFixTaskRow(q, origin.id)
-    const now = new Date().toISOString()
+    const now = Date.now()
     await q.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
       args: [origin.id, fixId, now],
@@ -296,7 +296,7 @@ describe('ADR-0040 recovery-leaf guard', () => {
     const fixId = await insertFixTaskRow(q, origin.id)
     const unrelated = await q.enqueueTask('unrelated', undefined, { skipTriage: true })
     // Insert: unrelated is blocked by fixId, but fixId.fix_for_task_id = origin.id ≠ unrelated.id
-    const now = new Date().toISOString()
+    const now = Date.now()
     await q.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
       args: [unrelated.id, fixId, now],
@@ -318,7 +318,11 @@ describe('ADR-0040 recovery-leaf guard', () => {
     const { q, inv } = await loadModules(repo)
     const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
     const sibling = await q.enqueueTask('sibling', undefined, { skipTriage: true })
-    const now = new Date().toISOString()
+    // tasks.created_at/updated_at is timestamptz (ISO string); task_blockers.created_at
+    // is bigint epoch-milliseconds. These are different encodings — see CLAUDE.md's
+    // timestamp encoding registry — so they need two separate "now" values.
+    const nowIso = new Date().toISOString()
+    const nowMs = Date.now()
     const committerId = `fix-${Math.random().toString(36).slice(2, 10)}`
     // A main-commiter fix row: kind='fix', fix_for_task_id=origin, and a
     // recovery_payload carrying the main-commiter recipe (the committer marker).
@@ -330,18 +334,18 @@ describe('ADR-0040 recovery-leaf guard', () => {
         origin.id,
         origin.id,
         JSON.stringify({ recipe: 'main-commiter', integrationBranch: 'main' }),
-        now,
-        now,
+        nowIso,
+        nowIso,
       ],
     })
     // Both origin AND sibling attached to the one shared committer.
     await q.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-      args: [origin.id, committerId, now],
+      args: [origin.id, committerId, nowMs],
     })
     await q.resolveQueueClient().execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-      args: [sibling.id, committerId, now],
+      args: [sibling.id, committerId, nowMs],
     })
     const violations = await inv.scanRecoveryBlockerEdges()
     expect(violations).toEqual([])
