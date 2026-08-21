@@ -127,6 +127,123 @@ export const checkMergeTargetStatus = async (
   }
 }
 
+// ---------------------------------------------------------------------------
+// ADR-0100 shared contract — "Merges are rebase→verify→ff CAS loops; main stays
+// a live checkout".
+//
+// Everything between this banner and the {@link MergeArgs} declaration is the
+// vocabulary the ADR-0100 rewrite is expressed in. It is declared here, once,
+// so each of the seven behavioural slices can branch off a `main` that already
+// agrees on the names and shapes:
+//
+//   1. Record lastSyncedSha for the integration checkout
+//        → {@link LAST_SYNCED_REF_PREFIX}, {@link lastSyncedRef},
+//          {@link MergeResult.lastSyncedSha}
+//   2. Reset stale-tree debris instead of checkpointing it
+//        → `attributeIntegrationDirt` (already landed in
+//          `./stale-tree-attribution`) consumes {@link lastSyncedRef}'s value
+//   3. Run full verify on the rebased tree, outside the merge lock
+//        → {@link MergeArgs.onVerifyRebasedTree}, {@link MergeGateOutcome},
+//          {@link MergeResult.rebasedVerifyOutput}
+//   4. CAS fast-forward under the lock with redo on base mismatch
+//        → {@link MergeResult.retriesAttempted} (the ADR's "redo"),
+//          {@link MergeFailureReason}
+//   5. Delete the Step 3 re-sync / dirty-classification / checkpoint machinery
+//        → retires `'merge-left-dirty-tree'` from {@link MergeFailureReason}
+//   6. Auto-commit genuine operator dirt as a wip(operator) commit + Notice
+//        → {@link MergeArgs.autoCommitOperatorDirt},
+//          {@link MergeArgs.onOperatorAutoCommit},
+//          {@link OperatorAutoCommitInfo}, {@link operatorWipCommitMessage}
+//   7. Typecheck probe on main after an operator auto-commit
+//        → {@link MergeArgs.onProbeIntegrationAfterAutoCommit},
+//          {@link MergeGateOutcome}
+//
+// This slice declares the contract only. The behaviour behind each hook lands
+// in the consumer slice named above it.
+// ---------------------------------------------------------------------------
+
+/**
+ * Ref namespace under which the merge step records the SHA it last synced the
+ * integration checkout's *working tree* to.
+ *
+ * A git ref (rather than a file under `.mars/`) because it is written with the
+ * same atomic `update-ref` CAS the merge itself uses, lives in the repo the
+ * checkout belongs to, and survives a daemon restart or crash. It mirrors
+ * `CHECKPOINT_REF_PREFIX` in `./checkpoint`, including its key sanitisation.
+ *
+ * This value is what makes `attributeIntegrationDirt`'s stale-tree test
+ * decidable: without a recorded last-synced SHA the predicate has no basis for
+ * the inverse-diff comparison and fails safe to `operator-dirt` (ADR-0100,
+ * "The merge step records the sha it last synced the tree to precisely so this
+ * test is decidable").
+ */
+export const LAST_SYNCED_REF_PREFIX = 'refs/mars/last-synced'
+
+/**
+ * The {@link LAST_SYNCED_REF_PREFIX} ref for one integration branch. Branch
+ * names may legally contain `/`, which would nest the ref and collide with a
+ * sibling; sanitise exactly as `./checkpoint` sanitises its key so
+ * `refs/mars/last-synced/<branch>` is always a single, flat ref level.
+ */
+export const lastSyncedRef = (integrationBranch: string): string =>
+  `${LAST_SYNCED_REF_PREFIX}/${integrationBranch.replace(/[^A-Za-z0-9._-]/g, '-')}`
+
+/**
+ * The exact commit subject used when genuine operator dirt on the integration
+ * checkout is auto-committed to unblock a merge (ADR-0100). Operator-visible
+ * and therefore pinned: the operator greps for it, the Notice quotes it, and
+ * `mars` tooling recognises an auto-commit by it.
+ */
+export const operatorWipCommitMessage = (taskId: string): string =>
+  `wip(operator): auto-committed to unblock merge of ${taskId}`
+
+/**
+ * Outcome of a caller-supplied gate that runs a command on a tree and either
+ * passes or reports why it did not. Shared by the two ADR-0100 gates so they
+ * cannot drift apart:
+ *
+ *  - {@link MergeArgs.onVerifyRebasedTree} — the full verify of the rebased
+ *    task tree, run OUTSIDE the merge lock (slice 3).
+ *  - {@link MergeArgs.onProbeIntegrationAfterAutoCommit} — the cheap typecheck
+ *    probe of `main` after an operator auto-commit (slice 7).
+ */
+export type MergeGateOutcome =
+  | { passed: true }
+  | { passed: false; output: string }
+
+/** Payload delivered to {@link MergeArgs.onOperatorAutoCommit}. */
+export interface OperatorAutoCommitInfo {
+  /** SHA of the `wip(operator)` commit just created on the integration branch. */
+  commitSha: string
+  /** Tracked paths swept into that commit, in `git status --porcelain` order. */
+  files: string[]
+  /**
+   * Outcome of the post-auto-commit typecheck probe (slice 7), or `null` when
+   * no {@link MergeArgs.onProbeIntegrationAfterAutoCommit} was supplied. The
+   * merge proceeds either way — a failing probe raises an Alert, it does not
+   * block the merge.
+   */
+  probe: MergeGateOutcome | null
+}
+
+/**
+ * Machine-readable reason for a `merged: false` {@link MergeResult} that is
+ * neither an abort nor an integration-gate failure.
+ *
+ * - `'merge-left-dirty-tree'` — the post-merge working-tree assertion found
+ *   the integration checkout dirty. **Retired by slice 5**: once the Step 3
+ *   re-sync / dirty-classification / checkpoint machinery is deleted, dirt is
+ *   attributed (stale-tree debris → reset, operator dirt → auto-commit) rather
+ *   than reported as a merge failure. Kept in the union until that slice lands
+ *   so the deletion is a single, legible change.
+ * - `'rebased-verify-failed'` — {@link MergeArgs.onVerifyRebasedTree} rejected
+ *   the rebased tree, so nothing was fast-forwarded. `main` is untouched and
+ *   the failure belongs to the task branch, not to the merge target.
+ */
+export type MergeFailureReason =
+  | 'merge-left-dirty-tree'
+  | 'rebased-verify-failed'
+
 /**
  * Interval (ms) at which {@link MergeArgs.onHeartbeat} fires while the merge
  * lock is held.
@@ -220,6 +337,64 @@ export interface MergeArgs {
    * it must never abort or slow a merge.
    */
   onHeartbeat?: (info: MergeHeartbeatInfo) => void | Promise<void>
+  /**
+   * ADR-0100 step 2 (slice 3): run the FULL verify suite against the rebased
+   * task tree, in the task's own worktree, **outside** the merge lock.
+   *
+   * What lands on `main` is then byte-for-byte the tree this callback passed,
+   * so the fast-forward is safe by construction and the semantic-conflict
+   * window — two individually-green branches composing into a broken `main` —
+   * is closed. It runs per attempt: a CAS redo re-rebases and therefore
+   * re-verifies, which is the cost the ADR explicitly accepts.
+   *
+   * Returning `{ passed: false }` ends the merge with `merged: false` and
+   * `reason: 'rebased-verify-failed'`; `main` is left untouched.
+   *
+   * Omit to skip the gate entirely (the pre-ADR-0100 behaviour).
+   */
+  onVerifyRebasedTree?: (info: {
+    /** The integration tip the task branch was just rebased onto. */
+    baseSha: string
+    /** The rebased task-branch tip whose tree is under test. */
+    taskSha: string
+    /** 1-indexed rebase+fast-forward attempt number. */
+    attempt: number
+  }) => Promise<MergeGateOutcome>
+  /**
+   * ADR-0100 operator-dirt automation lever (slice 6). When `true` (the
+   * default), genuine operator dirt on the integration checkout — dirt that
+   * survives the `attributeIntegrationDirt` stale-tree test — is swept into a
+   * {@link operatorWipCommitMessage} commit so the merge can proceed.
+   *
+   * When `false`, the behaviour degrades to raising an Alert and parking the
+   * queue. This is the flag {@link onOperatorAutoCommit}'s Notice offers to
+   * flip; the caller resolves it from operator state and passes the answer in.
+   */
+  autoCommitOperatorDirt?: boolean
+  /**
+   * Fired once, after a `wip(operator)` commit has been created on the
+   * integration branch (slice 6). The caller speaks the Notice that tells the
+   * operator it happened and offers to disable the automation, and raises an
+   * Alert when `info.probe` reports a failure (slice 7).
+   *
+   * Best-effort: a throw is swallowed. The commit has already landed and the
+   * merge must not be undone by a reporting failure.
+   */
+  onOperatorAutoCommit?: (info: OperatorAutoCommitInfo) => void | Promise<void>
+  /**
+   * ADR-0100 slice 7: a cheap gate (typecheck) probing `main` immediately
+   * after an operator auto-commit, bounding detection latency for a broken
+   * auto-committed baseline to seconds.
+   *
+   * The merge proceeds regardless of the outcome — the result is reported
+   * through {@link OperatorAutoCommitInfo.probe} so the caller can raise an
+   * Alert and the operator can amend before anything builds on it. Omit to
+   * skip the probe.
+   */
+  onProbeIntegrationAfterAutoCommit?: (info: {
+    /** SHA of the `wip(operator)` commit to probe. */
+    commitSha: string
+  }) => Promise<MergeGateOutcome>
 }
 
 export interface MergeResult {
@@ -266,12 +441,34 @@ export interface MergeResult {
   vegaTimedOut?: boolean
   /**
    * Machine-readable reason for a `merged: false` outcome that is not an abort
-   * or integration-gate failure. Currently only `'merge-left-dirty-tree'`:
-   * the ref advanced correctly but the post-merge working-tree assertion found
-   * the integration checkout dirty. The working tree has been restored to HEAD
-   * before this result is returned.
+   * or integration-gate failure. See {@link MergeFailureReason} for the closed
+   * vocabulary and what each member means.
    */
-  reason?: string
+  reason?: MergeFailureReason
+  /**
+   * Verify output from {@link MergeArgs.onVerifyRebasedTree} when it rejected
+   * the rebased tree. Set exactly when `reason === 'rebased-verify-failed'`,
+   * and used to seed the recovery task the way `integrationGateOutput` is.
+   */
+  rebasedVerifyOutput?: string
+  /**
+   * The SHA the integration checkout's working tree was synced to by this
+   * merge, mirrored from {@link lastSyncedRef}. Set on a successful
+   * fast-forward that also re-synced the checkout; absent when the merge did
+   * not touch the tree (aborted, no-op, or the primary checkout was not on the
+   * integration branch).
+   *
+   * Callers must treat the ref as the source of truth — this field is the
+   * convenience mirror for the merge that just ran, not a general reader.
+   */
+  lastSyncedSha?: string
+  /**
+   * SHA of the `wip(operator)` commit created to sweep genuine operator dirt
+   * off the integration checkout, or absent when no auto-commit happened
+   * (clean tree, stale-tree debris that was simply reset, or
+   * {@link MergeArgs.autoCommitOperatorDirt} disabled).
+   */
+  operatorAutoCommitSha?: string
   /**
    * The integration-branch SHA just before the fast-forward (i.e. the old tip
    * of `integrationBranch`). Set only on a successful fast-forward merge so the
