@@ -6,7 +6,7 @@ import {
   parseClaudeStreamLine,
   extractQuotaRejected,
   extractTransportDropped,
-  type ClaudeEvent,
+  type AgentEvent,
 } from '../claude-stream'
 import { getLatestContextSize } from '../claude-usage'
 import { FALLBACK_CLAUDE_PATH_DIRS, isExecutableFile } from './internal'
@@ -186,7 +186,7 @@ export const runSubprocessStreaming = (
     })
   })
 
-export interface RunClaudeArgs {
+export interface RunAgentArgs {
   cwd: string
   prompt: string
   /**
@@ -201,8 +201,8 @@ export interface RunClaudeArgs {
   // Per-Worker pinned config (claude -p flags). All optional; the wrapper
   // applies them on top of the existing argv. Agent-to-user denials always
   // remain in --disallowedTools regardless of caller-supplied disallowedTools.
-  effort?: ClaudeEffort
-  permissionMode?: ClaudePermissionMode
+  effort?: AgentEffort
+  permissionMode?: AgentPermissionMode
   bare?: boolean
   agent?: string
   disallowedTools?: ReadonlyArray<string>
@@ -253,14 +253,19 @@ export interface RunClaudeArgs {
   taskId?: string
 }
 
-export type ClaudeEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-export type ClaudePermissionMode =
+export type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type AgentPermissionMode =
   | 'acceptEdits'
   | 'auto'
   | 'bypassPermissions'
   | 'default'
   | 'dontAsk'
   | 'plan'
+
+/** @deprecated Use AgentEffort. Kept for backward compatibility. */
+export type ClaudeEffort = AgentEffort
+/** @deprecated Use AgentPermissionMode. Kept for backward compatibility. */
+export type ClaudePermissionMode = AgentPermissionMode
 
 export interface RunAgentResult extends RunSubprocessResult {
   sessionId: string | null
@@ -285,6 +290,38 @@ export interface RunAgentResult extends RunSubprocessResult {
 
 /** @deprecated Use RunAgentResult. Kept for backward compatibility. */
 export type RunClaudeResult = RunAgentResult
+
+/** @deprecated Use RunAgentArgs. Kept for backward compatibility. */
+export type RunClaudeArgs = RunAgentArgs
+
+/**
+ * The Port-legal request shape for an {@link ExecutorPort} (ADR-0097: "Every
+ * seam is a cordis service Port with serializable contracts"). Identical to
+ * {@link RunAgentArgs} minus the fields that fail the Port acceptance test —
+ * the streaming callback (`onEvent`), a live `AbortSignal` (`externalAbort`),
+ * and a process-artifact callback (`onPid`) — so the request can cross a
+ * remote adapter (HTTP/webhook/queue) unchanged, not just an in-process call.
+ *
+ * A local implementation still wants streaming, cancellation, and PID
+ * tracking; it may accept them as an out-of-band second argument to
+ * `run()` rather than on the request itself, the same way a remote adapter
+ * would accept a deadline instead of a signal. That reshaping is the
+ * consumer slice's job — this type only fixes the wire-crossing request
+ * shape all implementations share.
+ */
+export type ExecutorPortRequest = Omit<RunAgentArgs, 'onEvent' | 'externalAbort' | 'onPid'>
+
+/**
+ * The Port contract for an agent executor (ADR-0097). Callers resolve this
+ * through the cordis context (`ctx.get(...)` / a sealed accessor), never by
+ * importing a concrete implementation. The local subprocess implementation
+ * wraps {@link runClaudeCode} (and its codex/gemini siblings); a remote
+ * implementation (e.g. "run the agent in a managed sandbox") fills the same
+ * slot behind one adapter file, invisible to callers.
+ */
+export interface ExecutorPort {
+  run(request: ExecutorPortRequest): Promise<RunAgentResult>
+}
 
 /**
  * First line of the synthetic stderr every headless adapter emits when it is
@@ -351,8 +388,8 @@ interface ClaudeStreamArgsOptions {
   model?: string
   systemPrompt?: string
   sessionId?: string
-  effort?: ClaudeEffort
-  permissionMode?: ClaudePermissionMode
+  effort?: AgentEffort
+  permissionMode?: AgentPermissionMode
   bare?: boolean
   agent?: string
   // Caller-supplied disallowed tools. Unioned with AGENT_TO_USER_DENIED_TOOLS;
@@ -515,7 +552,7 @@ const composeSystemPrompt = (caller?: string): string => {
 // The default (no caller pin) preserves the historical behaviour of running
 // dispatched workers under `--dangerously-skip-permissions` inside a fresh
 // worktree.
-const permissionFlags = (mode: ClaudePermissionMode | undefined): readonly string[] => {
+const permissionFlags = (mode: AgentPermissionMode | undefined): readonly string[] => {
   if (mode === undefined || mode === 'bypassPermissions') {
     return ['--dangerously-skip-permissions']
   }
@@ -758,7 +795,7 @@ export const runClaudeCode = async ({
   externalAbort,
   onPid,
   taskId,
-}: RunClaudeArgs): Promise<RunAgentResult> => {
+}: RunAgentArgs): Promise<RunAgentResult> => {
   // Refuse before spawning: `claude -p ''` reads the prompt from stdin, which
   // is /dev/null for dispatched workers. See EMPTY_PROMPT_REFUSAL.
   if (isBlankPrompt(prompt)) return emptyPromptResult('claude')
