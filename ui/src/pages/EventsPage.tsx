@@ -50,13 +50,13 @@ const sinceFromRange = (range: TimeRange, now = Date.now()): string | undefined 
 
 /** Closed vocabulary — must stay in sync with the daemon's TRACE_EVENT_KINDS. */
 const KIND_OPTIONS = [
-  'origin_created',
+  'origin.created',
   'step_started',
   'step_ended',
   'tool_invoked',
-  'task_blocked',
-  'recovery_spawned',
-  'task_failed',
+  'task.blocked',
+  'recovery.spawned',
+  'task.failed',
   'log_line',
   'cli-invocation',
 ] as const
@@ -67,7 +67,7 @@ type Severity = (typeof SEVERITY_OPTIONS)[number]
 
 /**
  * Phase options surface a synthetic `(n/a)` entry so the operator can
- * include events with no phase (e.g. `origin_created`) without having to
+ * include events with no phase (e.g. `origin.created`) without having to
  * leave the filter unset. The synthetic value never reaches the endpoint;
  * we just omit it when normalising to the wire filter — and when ALL real
  * phases are selected alongside it, that matches the unfiltered default,
@@ -387,7 +387,7 @@ type EventListRow =
  * `step_ended` row (outcome `failed`/`killed`) for the worker step that
  * caused them. These are the three rows one failure produces — see
  * `traceEventTaskId` for why they don't already share a `taskId` column.
- * Deliberately narrow (not "any non-info event"): task_failed, tool_invoked
+ * Deliberately narrow (not "any non-info event"): task.failed, tool_invoked
  * errors, and other WARN/ERROR kinds are real standalone incidents in their
  * own right and must not be folded together just for sharing a task.
  */
@@ -871,7 +871,7 @@ const TimelineTaskGroup = ({ group, now }: TimelineTaskGroupProps) => {
       </button>
       {expanded && (
         <div className="flex flex-col gap-0.5 pb-1">
-          {/* Non-step events (task_failed, task_blocked, recovery_spawned, etc.) */}
+          {/* Non-step events (task.failed, task.blocked, recovery.spawned, etc.) */}
           {nonStepEvents.map((e) => (
             <div
               key={e.id}

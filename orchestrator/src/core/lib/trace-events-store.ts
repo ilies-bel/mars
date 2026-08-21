@@ -24,14 +24,26 @@ const gunzipAsync = promisify(gunzip)
  * derivation rule in `deriveSeverity` if it is not `info`.
  */
 
-/** Closed enum. New kinds land here and nowhere else. */
+/**
+ * Closed enum. New kinds land here and nowhere else.
+ *
+ * Four entries are dot-form names shared with the bus registry
+ * (`EventMap` in `bus/events.ts`): `origin.created`, `task.blocked`,
+ * `recovery.spawned` and `task.failed`. Each of those used to exist twice —
+ * once here under an underscore name with a free-form payload, once on the
+ * bus with a zod schema — so one real-world occurrence produced two rows in
+ * two shapes. They are now one kind with one canonical name and one schema
+ * (the bus one); `emitEvent` writes a single `trace_events` row per
+ * occurrence under the name below (ADR-0097). The underscore forms are gone
+ * — no alias.
+ */
 export const TRACE_EVENT_KINDS = [
-  'origin_created',
+  'origin.created',
   'step_started',
   'step_ended',
-  'task_blocked',
-  'recovery_spawned',
-  'task_failed',
+  'task.blocked',
+  'recovery.spawned',
+  'task.failed',
   'tool_invoked',
   'log_line',
   'worker-model-mismatch',
@@ -263,8 +275,8 @@ export interface TraceEventStore {
 /**
  * Map `(kind, payload)` to a severity level. Single source of truth.
  *
- * - `task_blocked`, `recovery_spawned` → `warn`
- * - `task_failed`, `step_ended` with `payload.outcome === 'failed'` → `error`
+ * - `task.blocked`, `recovery.spawned` → `warn`
+ * - `task.failed`, `step_ended` with `payload.outcome === 'failed'` → `error`
  * - `step_ended` with `payload.outcome === 'killed'` → `warn`
  *   (watchdog-killed runs are problems but not hard failures)
  * - `tool_invoked` with `payload.exitCode === 0` → `info`
@@ -289,10 +301,10 @@ export const deriveSeverity = (
   kind: TraceEventKind,
   payload: Record<string, unknown>,
 ): TraceEventSeverity => {
-  if (kind === 'task_failed') return 'error'
+  if (kind === 'task.failed') return 'error'
   if (kind === 'step_ended' && payload.outcome === 'failed') return 'error'
   if (kind === 'step_ended' && payload.outcome === 'killed') return 'warn'
-  if (kind === 'task_blocked' || kind === 'recovery_spawned') return 'warn'
+  if (kind === 'task.blocked' || kind === 'recovery.spawned') return 'warn'
   if (kind === 'tool_invoked') {
     const exitCode = payload.exitCode
     if (typeof exitCode === 'number' && exitCode === 0) return 'info'

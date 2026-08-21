@@ -103,11 +103,11 @@ describe('summarizeTraceEvent', () => {
     ).toBe('merge step completed')
   })
 
-  // task_failed
-  it('task_failed: prefers failureReason prose over the code', () => {
+  // task.failed
+  it('task.failed: prefers failureReason prose over the code', () => {
     expect(
       summarizeTraceEvent(
-        make('task_failed', {
+        make('task.failed', {
           failureReasonCode: 'verify:typecheck',
           failureReason: 'TypeScript type-check failed',
         }),
@@ -115,33 +115,33 @@ describe('summarizeTraceEvent', () => {
     ).toBe('TypeScript type-check failed')
   })
 
-  it('task_failed: humanizes a step:detail code when no prose is present', () => {
+  it('task.failed: humanizes a step:detail code when no prose is present', () => {
     expect(
       summarizeTraceEvent(
-        make('task_failed', { failureReasonCode: 'verify:typecheck' }),
+        make('task.failed', { failureReasonCode: 'verify:typecheck' }),
       ),
     ).toBe('typecheck (verify step)')
   })
 
-  it('task_failed: humanizes a bare code with no colon separator', () => {
+  it('task.failed: humanizes a bare code with no colon separator', () => {
     expect(
       summarizeTraceEvent(
-        make('task_failed', { failureReasonCode: 'tool_timeout' }),
+        make('task.failed', { failureReasonCode: 'tool_timeout' }),
       ),
     ).toBe('tool timeout')
   })
 
-  // task_blocked
-  it('task_blocked: frames the blocker id with "waiting on"', () => {
+  // task.blocked
+  it('task.blocked: frames the blocker id with "waiting on"', () => {
     expect(
       summarizeTraceEvent(
-        make('task_blocked', { blockerTaskId: 'mars-9c045304' }),
+        make('task.blocked', { blockerTaskId: 'mars-9c045304' }),
       ),
     ).toBe('waiting on mars-9c045304')
   })
 
-  it('falls back to origin_created form unchanged', () => {
-    expect(summarizeTraceEvent(make('origin_created', { source: 'cli' }))).toBe(
+  it('falls back to origin.created form unchanged', () => {
+    expect(summarizeTraceEvent(make('origin.created', { source: 'cli' }))).toBe(
       'origin (cli)',
     )
   })
@@ -245,7 +245,7 @@ describe('traceEventTaskId', () => {
   })
 
   it('returns null for a non-log_line event with no envelope taskId', () => {
-    expect(traceEventTaskId(make('origin_created', { source: 'planner' }))).toBeNull()
+    expect(traceEventTaskId(make('origin.created', { source: 'planner' }))).toBeNull()
   })
 })
 

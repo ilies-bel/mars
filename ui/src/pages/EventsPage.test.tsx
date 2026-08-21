@@ -62,7 +62,7 @@ const {
 const makeEvent = (overrides: Partial<TraceEvent> = {}): TraceEvent => ({
   id: 'ev-1',
   timestamp: Date.now(),
-  kind: 'task_failed',
+  kind: 'task.failed',
   severity: 'error',
   taskId: 't-1',
   originId: null,
@@ -132,7 +132,7 @@ describe('toWireFilter', () => {
     // kind filter IS set — all 8 non-CLI kinds
     expect(wire.kind).toBeDefined()
     expect(wire.kind).not.toContain('cli-invocation')
-    expect(wire.kind).toContain('origin_created')
+    expect(wire.kind).toContain('origin.created')
     expect(wire.kind).toContain('log_line')
     expect(wire.phase).toBeUndefined()
     expect(wire.since).toBeUndefined()
@@ -158,10 +158,10 @@ describe('toWireFilter', () => {
   it('passes the reduced kind multi-select through', () => {
     const state = {
       ...initialFilterState(),
-      kinds: new Set(['task_failed' as const]),
+      kinds: new Set(['task.failed' as const]),
     }
     const wire = toWireFilter(state, null, 100)
-    expect(wire.kind).toEqual(['task_failed'])
+    expect(wire.kind).toEqual(['task.failed'])
   })
 
   it('passes the reduced severity multi-select through', () => {
@@ -262,13 +262,13 @@ describe('applyLocalPhaseFilter', () => {
 describe('KIND_OPTIONS vocabulary', () => {
   it('includes cli-invocation alongside all other trace event kinds', () => {
     expect(KIND_OPTIONS).toEqual([
-      'origin_created',
+      'origin.created',
       'step_started',
       'step_ended',
       'tool_invoked',
-      'task_blocked',
-      'recovery_spawned',
-      'task_failed',
+      'task.blocked',
+      'recovery.spawned',
+      'task.failed',
       'log_line',
       'cli-invocation',
     ])
@@ -378,7 +378,7 @@ describe('EventsPage render', () => {
   })
 
   it('does not include step= for non-step events (only from= is present)', () => {
-    const qc = makeClient(makeResponse([makeEvent({ taskId: 't-other', kind: 'task_failed' })]))
+    const qc = makeClient(makeResponse([makeEvent({ taskId: 't-other', kind: 'task.failed' })]))
     const html = renderPage(qc)
     expect(html).toContain('href="#/task/t-other?from=events"')
     expect(html).not.toContain('step=')
@@ -390,7 +390,7 @@ describe('EventsPage render', () => {
         makeEvent({
           id: 'ev-no-task',
           taskId: null,
-          kind: 'origin_created',
+          kind: 'origin.created',
           phase: null,
           severity: 'info',
           payload: { source: 'planner' },
@@ -680,7 +680,7 @@ describe('EventRow severity styling', () => {
         makeEvent({
           id: 'ev-warn',
           severity: 'warn',
-          kind: 'task_blocked',
+          kind: 'task.blocked',
           taskId: null,
           payload: {},
         }),
@@ -697,7 +697,7 @@ describe('EventRow severity styling', () => {
         makeEvent({
           id: 'ev-info',
           severity: 'info',
-          kind: 'origin_created',
+          kind: 'origin.created',
           taskId: null,
           phase: null,
           payload: { source: 'planner' },
@@ -717,7 +717,7 @@ describe('EventRow severity styling', () => {
         makeEvent({
           id: 'ev-warn-bold',
           severity: 'warn',
-          kind: 'task_blocked',
+          kind: 'task.blocked',
           taskId: null,
           payload: {},
         }),
@@ -745,7 +745,7 @@ describe('EventRow severity styling', () => {
         makeEvent({
           id: 'ev-info-quiet',
           severity: 'info',
-          kind: 'origin_created',
+          kind: 'origin.created',
           taskId: null,
           phase: null,
           payload: { source: 'planner' },
@@ -962,14 +962,14 @@ describe('fetchEvents URL shape via toWireFilter', () => {
     expect(url).toContain('severity=error')
   })
 
-  it('reducing kind to {task_failed} narrows the URL to kind=task_failed', async () => {
+  it('reducing kind to {task.failed} narrows the URL to kind=task.failed', async () => {
     const state = {
       ...initialFilterState(),
-      kinds: new Set(['task_failed' as const]),
+      kinds: new Set(['task.failed' as const]),
     }
     await fetchEvents(toWireFilter(state, null, 100))
     const url = fetchSpy.mock.calls[0]![0] as string
-    expect(url).toContain('kind=task_failed')
+    expect(url).toContain('kind=task.failed')
   })
 
   it('a time range adds a `since` ISO param', async () => {
@@ -1268,7 +1268,7 @@ describe('groupConsecutiveEvents', () => {
     const events = [
       makeEvent({ id: 'tc-x1', kind: 'tool_invoked', severity: 'info', taskId: 't-1', payload: { tool: 'a' }, timestamp: now }),
       makeEvent({ id: 'tc-x2', kind: 'tool_invoked', severity: 'info', taskId: 't-1', payload: { tool: 'b' }, timestamp: now + 500 }),
-      makeEvent({ id: 'ev-fail', kind: 'task_failed', severity: 'error', taskId: 't-1', payload: { code: 'x' }, timestamp: now + 1000 }),
+      makeEvent({ id: 'ev-fail', kind: 'task.failed', severity: 'error', taskId: 't-1', payload: { code: 'x' }, timestamp: now + 1000 }),
       makeEvent({ id: 'tc-x3', kind: 'tool_invoked', severity: 'info', taskId: 't-1', payload: { tool: 'c' }, timestamp: now + 1500 }),
     ]
     const rows = groupConsecutiveEvents(events)
@@ -1370,14 +1370,14 @@ describe('groupConsecutiveEvents', () => {
       expect(rows[1].type).toBe('single')
     })
 
-    it('does not treat two consecutive task_failed ERROR rows as an incident (task_failed is a standalone signal)', () => {
+    it('does not treat two consecutive task.failed ERROR rows as an incident (task.failed is a standalone signal)', () => {
       // Regression guard: incident grouping must stay narrow to log_line
       // (workflow-sourced) + step_ended, not "any non-info event sharing a
-      // taskId" — otherwise ordinary task_failed rows (which already have
+      // taskId" — otherwise ordinary task.failed rows (which already have
       // their own identical-payload dedup) would be swept in too.
       const events = [
-        makeEvent({ id: 'tf-a', kind: 'task_failed', severity: 'error', taskId: 't-1', payload: { failureReason: 'reason A' } }),
-        makeEvent({ id: 'tf-b', kind: 'task_failed', severity: 'error', taskId: 't-1', payload: { failureReason: 'reason B' } }),
+        makeEvent({ id: 'tf-a', kind: 'task.failed', severity: 'error', taskId: 't-1', payload: { failureReason: 'reason A' } }),
+        makeEvent({ id: 'tf-b', kind: 'task.failed', severity: 'error', taskId: 't-1', payload: { failureReason: 'reason B' } }),
       ]
       const rows = groupConsecutiveEvents(events)
       expect(rows).toHaveLength(2)
@@ -1457,14 +1457,14 @@ describe('EventsPage — consecutive identical event grouping', () => {
     // so users can identify what the collapsed group represents at a glance.
     const payload = { failureReasonCode: 'verify:typecheck' }
     const events = [
-      makeEvent({ id: 'grp-sum-a', kind: 'task_failed', severity: 'error', payload }),
-      makeEvent({ id: 'grp-sum-b', kind: 'task_failed', severity: 'error', payload }),
+      makeEvent({ id: 'grp-sum-a', kind: 'task.failed', severity: 'error', payload }),
+      makeEvent({ id: 'grp-sum-b', kind: 'task.failed', severity: 'error', payload }),
     ]
     const qc = makeClient(makeResponse(events))
     const html = renderPage(qc)
     // Group row exists
     expect(html).toContain('data-testid="group-row-grp-sum-a"')
-    // summarizeTraceEvent for task_failed with verify:typecheck → "typecheck (verify step)"
+    // summarizeTraceEvent for task.failed with verify:typecheck → "typecheck (verify step)"
     expect(html).toContain('typecheck (verify step)')
     // Count badge
     expect(html).toContain('×2')

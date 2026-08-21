@@ -8,7 +8,7 @@ import { eventsResponseSchema, traceEventSchema } from './schemas'
 const daemonTraceEvent = {
   id: 'evt-1',
   timestamp: 1_785_675_704_026,
-  kind: 'task_failed',
+  kind: 'task.failed',
   severity: 'error',
   taskId: 'task-1',
   originId: null,

@@ -193,7 +193,7 @@ export const summarizeTraceEvent = (event: TraceEvent): string => {
     return parts.join(' ')
   }
 
-  if (event.kind === 'task_failed') {
+  if (event.kind === 'task.failed') {
     // Prefer human-readable prose; only fall through to the machine code when
     // no prose is available, and humanize even then.
     if (typeof p.failureReason === 'string') return p.failureReason
@@ -201,7 +201,7 @@ export const summarizeTraceEvent = (event: TraceEvent): string => {
     return 'task failed'
   }
 
-  if (event.kind === 'task_blocked') {
+  if (event.kind === 'task.blocked') {
     const blockedBy =
       typeof p.blockerTaskId === 'string'
         ? p.blockerTaskId
@@ -211,13 +211,13 @@ export const summarizeTraceEvent = (event: TraceEvent): string => {
     return blockedBy ? `waiting on ${blockedBy}` : 'blocked'
   }
 
-  if (event.kind === 'recovery_spawned') {
+  if (event.kind === 'recovery.spawned') {
     const recoveryId =
       typeof p.recoveryTaskId === 'string' ? p.recoveryTaskId : null
     return recoveryId ? `recovery ${recoveryId}` : 'recovery spawned'
   }
 
-  if (event.kind === 'origin_created') {
+  if (event.kind === 'origin.created') {
     return typeof p.source === 'string' ? `origin (${p.source})` : 'origin'
   }
 
@@ -327,13 +327,13 @@ export const severityRowClass = (severity: TraceEvent['severity']): string => {
  * (step_started, tool_invoked) with scannable labels in the Events page.
  */
 export const KIND_LABELS: Record<string, string> = {
-  origin_created: 'Origin',
+  'origin.created': 'Origin',
   step_started: 'Step start',
   step_ended: 'Step end',
   tool_invoked: 'Tool',
-  task_blocked: 'Blocked',
-  recovery_spawned: 'Recovery',
-  task_failed: 'Failed',
+  'task.blocked': 'Blocked',
+  'recovery.spawned': 'Recovery',
+  'task.failed': 'Failed',
   log_line: 'Log',
   'cli-invocation': 'CLI',
   scorer_result: 'Score',

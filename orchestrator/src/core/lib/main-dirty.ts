@@ -679,7 +679,7 @@ export interface SpawnOrAttachInput {
   recipePrompt: string
   /** Origin id of the source, so the recovery row inherits it. */
   sourceOriginId: string
-  /** Trace event store for the `recovery_spawned` emit. */
+  /** Trace event store for step spans and diagnostic trace kinds. */
   traceStore: TraceEventStore
   store?: TaskStore
 }
@@ -790,7 +790,6 @@ export const spawnOrAttachMainCommitter = async (
       dispatchPhase: input.dispatchPhase,
       recipePrompt: input.recipePrompt,
       sourceOriginId: input.sourceOriginId,
-      traceStore: input.traceStore,
       checkpointedPaths,
     })
     // The structural assert seam stays on the aggregate (`./arc/recovery.ts`

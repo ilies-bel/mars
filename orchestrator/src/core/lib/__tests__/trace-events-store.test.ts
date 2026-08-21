@@ -19,9 +19,9 @@ const tmpDbPath = (): string => {
 }
 
 describe('deriveSeverity', () => {
-  it('returns error for task_failed regardless of payload', () => {
-    expect(deriveSeverity('task_failed', {})).toBe('error')
-    expect(deriveSeverity('task_failed', { failureReason: 'x' })).toBe('error')
+  it('returns error for task.failed regardless of payload', () => {
+    expect(deriveSeverity('task.failed', {})).toBe('error')
+    expect(deriveSeverity('task.failed', { failureReason: 'x' })).toBe('error')
   })
 
   it('returns error for step_ended with outcome=failed', () => {
@@ -51,13 +51,13 @@ describe('deriveSeverity', () => {
     ).toBe('info')
   })
 
-  it('returns warn for task_blocked and recovery_spawned', () => {
-    expect(deriveSeverity('task_blocked', {})).toBe('warn')
-    expect(deriveSeverity('recovery_spawned', {})).toBe('warn')
+  it('returns warn for task.blocked and recovery.spawned', () => {
+    expect(deriveSeverity('task.blocked', {})).toBe('warn')
+    expect(deriveSeverity('recovery.spawned', {})).toBe('warn')
   })
 
-  it('returns info for origin_created and step_started', () => {
-    expect(deriveSeverity('origin_created', { kind: 'task', id: 't1', source: 'cli' })).toBe('info')
+  it('returns info for origin.created and step_started', () => {
+    expect(deriveSeverity('origin.created', { kind: 'task', id: 't1', source: 'cli' })).toBe('info')
     expect(deriveSeverity('step_started', { stepName: 'code' })).toBe('info')
   })
 
@@ -183,7 +183,7 @@ describe('openTraceEventStore — record + query roundtrip', () => {
   it('derives severity at write time from kind+payload', async () => {
     const store = await openTraceEventStore(tmpDbPath())
     try {
-      await store.record({ kind: 'task_failed', taskId: 'a' })
+      await store.record({ kind: 'task.failed', taskId: 'a' })
       await store.record({
         kind: 'step_ended',
         taskId: 'a',
@@ -199,8 +199,8 @@ describe('openTraceEventStore — record + query roundtrip', () => {
         taskId: 'a',
         payload: { stepName: 'code', outcome: 'killed', durationMs: 3 },
       })
-      await store.record({ kind: 'task_blocked', taskId: 'a' })
-      await store.record({ kind: 'recovery_spawned', taskId: 'a' })
+      await store.record({ kind: 'task.blocked', taskId: 'a' })
+      await store.record({ kind: 'recovery.spawned', taskId: 'a' })
       await store.record({ kind: 'step_started', taskId: 'a' })
 
       const events = await store.query({ taskId: 'a', limit: 50 })
@@ -211,12 +211,12 @@ describe('openTraceEventStore — record + query roundtrip', () => {
       }))
       expect(byKindOutcome).toEqual(
         expect.arrayContaining([
-          { kind: 'task_failed', outcome: null, severity: 'error' },
+          { kind: 'task.failed', outcome: null, severity: 'error' },
           { kind: 'step_ended', outcome: 'failed', severity: 'error' },
           { kind: 'step_ended', outcome: 'completed', severity: 'info' },
           { kind: 'step_ended', outcome: 'killed', severity: 'warn' },
-          { kind: 'task_blocked', outcome: null, severity: 'warn' },
-          { kind: 'recovery_spawned', outcome: null, severity: 'warn' },
+          { kind: 'task.blocked', outcome: null, severity: 'warn' },
+          { kind: 'recovery.spawned', outcome: null, severity: 'warn' },
           { kind: 'step_started', outcome: null, severity: 'info' },
         ]),
       )
@@ -228,9 +228,9 @@ describe('openTraceEventStore — record + query roundtrip', () => {
   it('null taskId and null originId are accepted and round-trip', async () => {
     const store = await openTraceEventStore(tmpDbPath())
     try {
-      // origin_created before a task exists: both ids may be null.
+      // origin.created before a task exists: both ids may be null.
       await store.record({
-        kind: 'origin_created',
+        kind: 'origin.created',
         payload: { kind: 'idea', id: 'i-1', source: 'reflection' },
       })
       const all = await store.query({})
@@ -251,7 +251,7 @@ describe('openTraceEventStore — record + query roundtrip', () => {
   it('omitted payload defaults to {}', async () => {
     const store = await openTraceEventStore(tmpDbPath())
     try {
-      await store.record({ kind: 'task_failed', taskId: 'a' })
+      await store.record({ kind: 'task.failed', taskId: 'a' })
       const events = await store.query({ taskId: 'a' })
       expect(events[0].payload).toEqual({})
     } finally {
@@ -354,11 +354,11 @@ describe('openTraceEventStore — filters', () => {
         payload: { stepName: 'verify', outcome: 'failed', durationMs: 1 },
       })
       await store.record({
-        kind: 'task_blocked',
+        kind: 'task.blocked',
         taskId: 't2',
         originId: 'origin-2',
       })
-      await store.record({ kind: 'task_failed', taskId: 't3', originId: 'origin-1' })
+      await store.record({ kind: 'task.failed', taskId: 't3', originId: 'origin-1' })
 
       const kinds: TraceEventKind[] = ['step_started', 'step_ended']
       const byKind = await store.query({ kind: kinds })
@@ -366,7 +366,7 @@ describe('openTraceEventStore — filters', () => {
 
       const bySeverity = await store.query({ severity: ['warn'] })
       expect(bySeverity).toHaveLength(1)
-      expect(bySeverity[0].kind).toBe('task_blocked')
+      expect(bySeverity[0].kind).toBe('task.blocked')
 
       const byPhase = await store.query({ phase: ['verify'] })
       expect(byPhase).toHaveLength(1)
@@ -376,7 +376,7 @@ describe('openTraceEventStore — filters', () => {
       expect(byOrigin.map((e) => e.kind).sort()).toEqual([
         'step_ended',
         'step_started',
-        'task_failed',
+        'task.failed',
       ])
 
       const future = Date.now() + 60_000
@@ -404,8 +404,8 @@ describe('openTraceEventStore — filters', () => {
         taskId: 'tA',
         payload: { stepName: 'verify', outcome: 'completed', durationMs: 2 },
       })
-      await store.record({ kind: 'task_blocked', taskId: 'tA' })
-      await store.record({ kind: 'task_failed', taskId: 'tB' })
+      await store.record({ kind: 'task.blocked', taskId: 'tA' })
+      await store.record({ kind: 'task.failed', taskId: 'tB' })
 
       const errOnA = await store.query({
         taskId: 'tA',
@@ -639,15 +639,15 @@ describe('openTraceEventStore — log_line write-time filtering', () => {
     const store = await openTraceEventStore(tmpDbPath())
     try {
       // One real event and several info log_lines that should be silently dropped.
-      await store.record({ kind: 'task_failed', taskId: 'x' })
+      await store.record({ kind: 'task.failed', taskId: 'x' })
       await store.record({ kind: 'log_line', payload: { level: 'info', msg: 'tick', source: 'daemon' } })
       await store.record({ kind: 'log_line', payload: { level: 'info', msg: 'tock', source: 'bus' } })
       await store.record({ kind: 'log_line', payload: { level: 'warn', msg: 'alert', source: 'sweeper' } })
 
       const all = await store.query({})
-      // Only task_failed and the warn log_line should be present.
+      // Only task.failed and the warn log_line should be present.
       expect(all).toHaveLength(2)
-      expect(all.map((e) => e.kind).sort()).toEqual(['log_line', 'task_failed'])
+      expect(all.map((e) => e.kind).sort()).toEqual(['log_line', 'task.failed'])
     } finally {
       await store.close()
     }

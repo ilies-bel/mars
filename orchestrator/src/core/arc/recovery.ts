@@ -30,10 +30,10 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { getTask, MAX_PRIORITY } from '../queue'
+import { getTask, MAX_PRIORITY, resolveQueueClient } from '../queue'
 import type { DomainTaskStore } from '../store/task-store'
 import { getRecipeOrGeneric, type FixRecipeContext } from '../lib/fix-recipes'
-import { buildEventInsert } from '../lib/outbox'
+import { buildEventInsert, emitEvent } from '../lib/outbox'
 import {
   MAIN_COMMITER_RECIPE,
   SOURCE_ERROR_SUMMARY,
@@ -41,7 +41,6 @@ import {
   serialiseMainCommiterPayload,
   type MainCommiterPayload,
 } from '../lib/main-commiter-payload'
-import type { TraceEventStore } from '../lib/trace-events-store'
 import { internalBus } from '../../internal-bus'
 import { hintDispatch } from '../daemon/dispatch-hint'
 
@@ -477,7 +476,7 @@ export const attachToRecovery = async (
  *   - NO `self_heal_attempts` ledger append (intentional, slice F.2 — the
  *     branch-keyed singleton (ADR-0071), not the per-(parent,signature) cap,
  *     governs committer identity);
- *   - the `recovery_spawned` trace emit and the `internalBus().emit` stay
+ *   - the `recovery.spawned` emit and the `internalBus().emit` stay
  *     OUTSIDE the batch (best-effort wake hints).
  *
  * F.1 EXEMPTION (ADR-0040): the origin → recovery `task_blockers` edge is
@@ -493,7 +492,6 @@ export const spawnMainCommitterRecovery = async (
     dispatchPhase: 'dispatch' | 'verify' | 'merge'
     recipePrompt: string
     sourceOriginId: string
-    traceStore: TraceEventStore
     /** Dirty paths parsed from the detection snapshot (see spawnOrAttachMainCommitter). */
     checkpointedPaths?: string[]
   },
@@ -577,25 +575,29 @@ export const spawnMainCommitterRecovery = async (
     'write',
   )
 
-  // Emit the canonical recovery_spawned trace event (kind already in the
-  // vocabulary since slice B) so the trace surface reflects the new
-  // recovery exactly like every other recipe-driven spawn.
-  await input.traceStore
-    .record({
-      kind: 'recovery_spawned',
+  // Emit the canonical `recovery.spawned` event through the unified write
+  // path so the trace surface reflects the new recovery exactly like every
+  // other recipe-driven spawn. One occurrence, one `trace_events` row
+  // (ADR-0097) — this used to be a separate, unvalidated trace kind.
+  await emitEvent(
+    resolveQueueClient(),
+    'recovery.spawned',
+    {
+      taskId: fixTaskId,
+      sourceTaskId: input.sourceTaskId,
+      originId: input.sourceOriginId,
+      recipe: MAIN_COMMITER_RECIPE,
+      integrationBranch: input.integrationBranch,
+      dispatchPhase: input.dispatchPhase,
+    },
+    {
       taskId: fixTaskId,
       originId: input.sourceOriginId,
       phase: input.dispatchPhase === 'verify' ? 'verify' : input.dispatchPhase === 'merge' ? 'merge' : 'setup',
-      payload: {
-        recipe: MAIN_COMMITER_RECIPE,
-        sourceTaskId: input.sourceTaskId,
-        integrationBranch: input.integrationBranch,
-        dispatchPhase: input.dispatchPhase,
-      },
-    })
-    .catch(() => {
-      // Trace emission is best-effort; never fail a recovery spawn on it.
-    })
+    },
+  ).catch(() => {
+    // Event emission is best-effort; never fail a recovery spawn on it.
+  })
 
   internalBus().emit('task.blocked', {
     taskId: input.sourceTaskId,

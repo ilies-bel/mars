@@ -3,7 +3,7 @@
  *
  * Verifies the unified "while you were away" delta route assembles from:
  *   1. Merged arcs (via stubbed appServices.viewReleaseNotes)
- *   2. Failed-and-recovered tasks (via real TraceEventStore, recovery_spawned)
+ *   2. Failed-and-recovered tasks (via real TraceEventStore, recovery.spawned)
  *   3. Auto-recipe runs (via real learned-recipes PGlite store)
  *   4. Throttled chat threads (via real chat-store PGlite)
  *   5. Evaporated chat threads (via real chat-store PGlite)
@@ -163,7 +163,7 @@ describe('GET /view/wywa-delta — basic shape', () => {
   })
 })
 
-// ── recovery_spawned events ───────────────────────────────────────────────────
+// ── recovery.spawned events ───────────────────────────────────────────────────
 
 describe('GET /view/wywa-delta — recovery events', () => {
   let repo: string
@@ -185,9 +185,9 @@ describe('GET /view/wywa-delta — recovery events', () => {
     rmSync(dbDir, { recursive: true, force: true })
   })
 
-  it('surfaces recovery_spawned trace events as failure-recovered items', async () => {
+  it('surfaces recovery.spawned trace events as failure-recovered items', async () => {
     await traceStore.record({
-      kind: 'recovery_spawned',
+      kind: 'recovery.spawned',
       taskId: 'fix-task-1',
       originId: 'arc-abc',
     })
@@ -212,7 +212,7 @@ describe('GET /view/wywa-delta — recovery events', () => {
     // Record two events with distinct timestamps via the store (no direct SQL needed —
     // the store auto-stamps; we rely on them both being recent and then use a far-future
     // since to filter them both out).
-    await traceStore.record({ kind: 'recovery_spawned', taskId: 'fix-old', originId: 'old-arc' })
+    await traceStore.record({ kind: 'recovery.spawned', taskId: 'fix-old', originId: 'old-arc' })
     const { httpServer } = await loadModules(repo)
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({ traceStore }),

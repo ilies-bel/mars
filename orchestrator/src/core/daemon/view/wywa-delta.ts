@@ -5,7 +5,7 @@
  * existing stores and shapes each item into a plain-English one-liner:
  *
  *  1. Merges landed       – done arcs from the task store (release notes feed)
- *  2. Failed & recovered  – `recovery_spawned` trace events
+ *  2. Failed & recovered  – `recovery.spawned` trace events
  *  3. Auto-recipe runs    – rows from `auto_recipe_runs`
  *  4. Throttle events     – chat threads currently in `status='throttled'`
  *  5. Closed Subthreads     – chat threads whose `closed_at` falls after `since`
@@ -112,7 +112,7 @@ export const assembleDelta = (
     events.push({ kind: 'merge', summary: `Merged: ${rn.title}`, at: rn.landedAt })
   }
 
-  // 2. Failed and recovered (recovery_spawned trace events)
+  // 2. Failed and recovered (`recovery.spawned` trace events)
   for (const ev of input.recoveryEvents) {
     const timestamp = new Date(ev.timestamp).toISOString()
     if (!after(timestamp, since)) continue

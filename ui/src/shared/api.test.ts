@@ -545,7 +545,7 @@ describe('fetchEvents', () => {
           {
             id: 'e1',
             timestamp: Date.now(),
-            kind: 'task_failed',
+            kind: 'task.failed',
             severity: 'error',
             taskId: 't1',
             originId: null,
@@ -569,7 +569,7 @@ describe('fetchEvents', () => {
     expect(traceEventSchema.safeParse({
       id: 'e1',
       timestamp: 1_785_675_704_026,
-      kind: 'task_failed',
+      kind: 'task.failed',
       severity: 'error',
       taskId: 't1',
       originId: null,

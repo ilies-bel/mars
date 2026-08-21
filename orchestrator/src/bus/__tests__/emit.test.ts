@@ -114,10 +114,10 @@ describe('emitEvent', () => {
     });
 
     it('derives severity via deriveSeverity for a trace-only kind', async () => {
-      await emitEvent(client, 'task_failed', { error: 'boom' });
+      await emitEvent(client, 'worker-model-mismatch', { expected: 'a', actual: 'b' });
 
-      const trace = await traceRows(client, 'task_failed');
-      expect(trace[0].severity).toBe('error');
+      const trace = await traceRows(client, 'worker-model-mismatch');
+      expect(trace[0].severity).toBe('warn');
     });
 
     it('honours an explicit severity override', async () => {

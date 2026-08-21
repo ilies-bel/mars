@@ -149,15 +149,12 @@ export const VIEW_CHANNEL_FOR: Record<
   'step.started': ['live-task'],
   'step.ended': ['live-task', 'tasks'],
 
-  // --- Legacy trace-only duplicates (pre-ADR-0097 underscore-form kinds;
-  // see the "shared shape" comment in ../bus/events.ts). Same real-world
-  // occurrence as their dot-form counterparts above, so same channels. ---
-  origin_created: ['tasks'],
+  // --- Trace-only step-span kinds. The four underscore-form duplicates that
+  // used to sit here alongside them were collapsed onto their dot-form
+  // counterparts above (ADR-0097): one kind, one shape, one row per
+  // occurrence. See the ADR-0097 note in ./events.ts. ---
   step_started: ['live-task'],
   step_ended: ['live-task', 'tasks'],
-  task_blocked: ['tasks'],
-  recovery_spawned: ['tasks', 'action-queue'],
-  task_failed: ['tasks', 'progress'],
 
   // --- Remaining trace-only diagnostic kinds: no dedicated UI surface
   // today. Listed explicitly (rather than defaulted) so a future UI surface

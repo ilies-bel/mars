@@ -259,16 +259,21 @@ export const EventMap = {
   // `trace_events` (see `core/lib/trace-events-store.ts`) is a second,
   // loosely-typed event store (`payload: Record<string, unknown>`, no
   // per-kind schema) with its own closed vocabulary (`TRACE_EVENT_KINDS`)
-  // and its own retention policy. Four of its kinds duplicate a bus kind's
-  // intent with a different, unvalidated shape: `task_failed` and
-  // `task_blocked` duplicate `task.failed` / `task.blocked` above (those two
-  // are already this pair's single shared shape); `recovery_spawned` and
-  // `origin_created` have no bus equivalent. The kinds below are that
-  // shared shape for the latter two, plus the step-lifecycle kinds that
-  // carry verify output and worker model/provider attribution — previously
-  // available only inside the untyped, ~30-day-pruned `step_ended` trace
-  // payload. Consumers migrate emit call sites onto these and delete the
-  // parallel `trace_events` vocabulary in the same change (hard cut).
+  // and its own retention policy. Four kinds used to exist in BOTH
+  // registries under two names with two shapes, so one real-world
+  // occurrence produced two rows: `task_failed` / `task_blocked` duplicated
+  // `task.failed` / `task.blocked` above, and `origin_created` /
+  // `recovery_spawned` duplicated `origin.created` / `recovery.spawned`
+  // below. Those four are now collapsed — the dot-form name here is the one
+  // canonical name, the zod schema here is the one schema, and
+  // `TRACE_EVENT_KINDS` lists the same dot-form name so the trace store can
+  // read the single row `emitEvent` writes. The underscore forms are gone;
+  // there is no alias.
+  //
+  // `step.started` / `step.ended` additionally carry verify output and
+  // worker model/provider attribution on a durable, zod-typed payload —
+  // previously available only inside the untyped, ~30-day-pruned
+  // `step_ended` trace payload.
   'origin.created': z.object({
     taskId: z.string(),
     originId: z.string(),

@@ -2138,7 +2138,7 @@ export const createHttpRequestListener = (
 
     // GET /view/wywa-delta?since=<ISO>&limit=<n> — unified "while you were away"
     // delta assembled from six existing stores: merged arcs (release notes),
-    // recovery_spawned trace events, auto-recipe runs, throttled chat threads, and
+    // `recovery.spawned` trace events, auto-recipe runs, throttled chat threads, and
     // evaporated chat threads, and Steward interventions. Newest-first, capped at
     // `limit` (default 30, max 100)
     // with `andMore` count. Pure read; no draining gate.
@@ -2152,7 +2152,7 @@ export const createHttpRequestListener = (
       Promise.all([
         deps.appServices.viewReleaseNotes(),
         deps.traceStore.query({
-          kind: ['recovery_spawned'],
+          kind: ['recovery.spawned'],
           ...(since !== null ? { sinceMs: Date.parse(since) } : {}),
           limit: 200,
         }),
