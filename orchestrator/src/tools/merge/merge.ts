@@ -218,10 +218,16 @@ export const merge = async (
   let capturedMergeShas: { mergePreSha: string; mergePostSha: string } | null =
     null
 
-  // Integration-gate runner: called inside the merge lock (inside mergeBranch)
-  // after the fast-forward and working-tree resync, BEFORE the lock releases.
+  // Integration-gate runner: `mergeBranch`'s `onAfterFastForward`, called after
+  // the fast-forward and working-tree resync, BEFORE the merge lock releases.
   // Serialisation is therefore inherited — at most one full suite at a time.
   // Repos whose recipe defines no integration-tier steps are a true no-op.
+  //
+  // This is NOT the ADR-0100 full verify. That one is `onVerifyRebasedTree`:
+  // it runs in the task's own worktree on the rebased tree, before the lock is
+  // taken at all, so a failure leaves the integration branch untouched. This
+  // runner stays inside the lock on purpose — integration-tier steps test the
+  // merged composition of `main` itself, which only exists post-fast-forward.
   const integrationGateRunner = async (info: {
     finalTaskSha: string
     finalIntegrationSha: string

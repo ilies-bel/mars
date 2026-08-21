@@ -326,15 +326,20 @@ export interface MergeArgs {
   }) => Promise<void>
   /**
    * Best-effort callback fired at key sub-phase transitions within the merge:
-   * `acquire-lock`, `rebase`, `vega`, `fast-forward`, `integration-gate`.
+   * `rebase`, `vega`, `verify-rebased-tree`, `acquire-lock`, `fast-forward`,
+   * `integration-gate`. Note the order: since ADR-0100 step 2 the lock is
+   * acquired lazily, so `acquire-lock` fires AFTER `rebase` and
+   * `verify-rebased-tree`, not before them.
    * A reporting failure (throw or rejected promise) is silently swallowed —
    * it must never abort or slow a merge.
    */
   onPhase?: (phase: string) => void | Promise<void>
   /**
-   * Fired every {@link MERGE_HEARTBEAT_INTERVAL_MS} while the merge lock is
-   * held. Use to emit keep-alive events so the UI and operator tooling know
-   * the merge is still in progress during long vcs-supervisor sessions.
+   * Fired every {@link MERGE_HEARTBEAT_INTERVAL_MS} while the merge is in
+   * flight. Use to emit keep-alive events so the UI and operator tooling know
+   * the merge is still in progress during long vcs-supervisor sessions and
+   * long rebased-tree verifies. `elapsedMs` counts from the start of the
+   * merge, which since ADR-0100 step 2 precedes the merge lock.
    * A reporting failure (throw or rejected promise) is silently swallowed —
    * it must never abort or slow a merge.
    */
@@ -859,18 +864,22 @@ export const mergeBranch = async ({
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
     execProbe(resolveGitBin(), args, { cwd, signal: combinedSignal }, mergeCtx)
 
+  // ADR-0100 step 2: the merge lock is acquired LAZILY, immediately before the
+  // CAS fast-forward, rather than at the top of the merge. Everything that
+  // precedes the fast-forward — the rebase and the full verify of the rebased
+  // tree — happens inside the task's own worktree and mutates no shared state,
+  // so serialising it bought nothing while holding the lock for the entire
+  // duration of a test suite. `releaseLock` is null whenever the lock is not
+  // held; the outer `finally` and every retry path go through
+  // {@link releaseMergeLock}.
+  let releaseLock: (() => Promise<void>) | null = null
+  const releaseMergeLock = async (): Promise<void> => {
+    const release = releaseLock
+    releaseLock = null
+    if (release) await release()
+  }
+
   try {
-    lastStep = 'acquire-lock'
-    firePhase('acquire-lock')
-    // Belt-and-suspenders single-daemon guard: the merge queue's
-    // single-consumer loop already serialises merges, so this file lock is
-    // only a safety net against a second daemon process accidentally running
-    // alongside the first. The caller (merge-worker) passes lockTimeoutMs=30s,
-    // which is sufficient for a transient conflict without blocking long.
-    const release = await acquireLock(
-      resolve(getStateDir(), '.merge.lock'),
-      lockTimeoutMs,
-    )
     // Race the merge body against an abort-signal rejection so the lock is
     // guaranteed to be released even when a callback (e.g. the DB call inside
     // onVegaStart / onAfterFastForward) hangs after a connection reset.
@@ -889,16 +898,16 @@ export const mergeBranch = async ({
       }
     })
 
-    // Heartbeat timer: fires every MERGE_HEARTBEAT_INTERVAL_MS while the lock
-    // is held so callers can emit keep-alive events during long vcs-supervisor
-    // sessions. Reads `lastStep` and `currentAttempt` from the enclosing scope,
-    // both of which are updated in-place by the merge body as it progresses.
-    const lockAcquiredAt = Date.now()
+    // Heartbeat timer: fires every MERGE_HEARTBEAT_INTERVAL_MS for the whole
+    // merge so callers can emit keep-alive events during long vcs-supervisor
+    // sessions and long rebased-tree verifies. Reads `lastStep` and
+    // `currentAttempt` from the enclosing scope, both of which are updated
+    // in-place by the merge body as it progresses.
     let heartbeatTimer: ReturnType<typeof setInterval> | undefined
     if (onHeartbeat) {
       heartbeatTimer = setInterval(() => {
         try {
-          const r = onHeartbeat({ elapsedMs: Date.now() - lockAcquiredAt, phase: lastStep, attempt: currentAttempt })
+          const r = onHeartbeat({ elapsedMs: Date.now() - startedAt, phase: lastStep, attempt: currentAttempt })
           if (r instanceof Promise) r.catch(() => {})
         } catch {
           // intentionally swallowed — heartbeat must never abort a merge
@@ -920,6 +929,13 @@ export const mergeBranch = async ({
     // (success) or return (abort), so these are always set before Step 3 runs.
     let finalTaskSha = ''
     let finalIntegrationSha = ''
+
+    // The rebased task-branch sha that `onVerifyRebasedTree` passed, carried
+    // from the verify (outside the lock) into the CAS step (inside it) so the
+    // two can be compared: only a tree that was actually verified may land.
+    // Null when no gate was supplied, or on an attempt that has not verified
+    // yet — a re-rebase resets it, so a stale pass cannot carry over.
+    let verifiedSha: string | null = null
 
     // Step 0: already-merged short-circuit. When the task branch is fully
     // contained in the integration branch (0 commits ahead), its work is
@@ -969,6 +985,9 @@ export const mergeBranch = async ({
     for (let attempt = 1; attempt <= MAX_MERGE_ATTEMPTS; attempt++) {
       // Keep the heartbeat closure up-to-date with the current attempt number.
       currentAttempt = attempt
+      // This attempt rebases onto a (possibly new) tip, so last attempt's pass
+      // says nothing about the composition about to be tested.
+      verifiedSha = null
       // Capture the integration tip BEFORE rebasing so we can later distinguish
       // a retryable forward advance from a non-retryable divergent state when
       // the ancestry check or CAS indicates integration has moved.
@@ -1110,15 +1129,69 @@ export const mergeBranch = async ({
         vegaSessionId = extractSessionIdFromConversation(supervisorConversation)
       }
 
+      // The rebased task-branch tip: the exact tree that will fast-forward.
+      // Read once here, before the verify, so the tree that is tested and the
+      // tree that lands are named by the same sha.
+      const taskSha = (
+        await gexec(['rev-parse', branch], repoRoot())
+      ).stdout.trim()
+
+      // ADR-0100 step 2: verify the REBASED tree, in the task's own worktree,
+      // BEFORE the merge lock is taken. `git rebase` above already moved the
+      // worktree to `taskSha`, so what the gate runs against is byte-for-byte
+      // what fast-forwards — the composition of this branch with the current
+      // `main`, not the pre-rebase branch some earlier verify saw. A failure
+      // here ends the merge with `main` untouched and the lock never taken.
+      //
+      // This runs per attempt by design: a CAS redo re-rebases onto a new tip,
+      // which is a different composition and therefore needs a fresh verify.
+      if (onVerifyRebasedTree) {
+        lastStep = 'verify-rebased-tree'
+        firePhase('verify-rebased-tree')
+        const verdict = await onVerifyRebasedTree({
+          baseSha: rebaseBaseSha,
+          taskSha,
+          attempt,
+        })
+        if (!verdict.passed) {
+          return {
+            merged: false,
+            conflictResolved,
+            aborted: false,
+            reason: 'rebased-verify-failed',
+            rebasedVerifyOutput: verdict.output,
+            output:
+              output +
+              `\n[merge:rebased-verify] verify failed on rebased tree ${taskSha.slice(0, 9)} ` +
+              `(rebased onto ${rebaseBaseSha.slice(0, 9)}); ${integrationBranch} untouched, merge lock never taken.`,
+            supervisorConversation,
+            vegaSessionId,
+            retriesAttempted,
+          }
+        }
+        verifiedSha = taskSha
+      }
+
+      // Everything from here on reads or writes the shared integration ref, so
+      // this is where the lock belongs. Belt-and-suspenders single-daemon
+      // guard: the merge queue's single-consumer loop already serialises
+      // merges, so this file lock is only a safety net against a second daemon
+      // process accidentally running alongside the first. The caller
+      // (merge-worker) passes lockTimeoutMs=30s, which is sufficient for a
+      // transient conflict without blocking long.
+      lastStep = 'acquire-lock'
+      firePhase('acquire-lock')
+      releaseLock = await acquireLock(
+        resolve(getStateDir(), '.merge.lock'),
+        lockTimeoutMs,
+      )
+
       // Step 2: fast-forward integration to the (now-rebased) task branch via a
       // working-tree-free ref update. Unlike `git checkout` + `git merge --ff-only`,
       // `git update-ref` never touches any working tree, so it succeeds even when
       // the main working tree has uncommitted tracked changes or is checked out on
       // a different branch.
       lastStep = 'fast-forward-ancestry'
-      const taskSha = (
-        await gexec(['rev-parse', branch], repoRoot())
-      ).stdout.trim()
       const integrationSha = (
         await gexec(['rev-parse', integrationBranch], repoRoot())
       ).stdout.trim()
@@ -1148,6 +1221,9 @@ export const mergeBranch = async ({
         if (isForwardAdvance) {
           retriesAttempted++
           output += `\n[merge attempt ${attempt}/${MAX_MERGE_ATTEMPTS}] integration advanced ${rebaseBaseSha.slice(0, 9)}->${integrationSha.slice(0, 9)}; re-rebasing...`
+          // Drop the lock before looping: the retry re-rebases and re-verifies,
+          // and neither may run while holding it.
+          await releaseMergeLock()
           await new Promise<void>(r => setTimeout(r, attempt * 150))
           continue
         }
@@ -1160,6 +1236,32 @@ export const mergeBranch = async ({
           supervisorConversation,
           vegaSessionId,
           retriesAttempted,
+        }
+      }
+
+      // Only a verified tree may land. `verifiedSha` was captured outside the
+      // lock; re-read the branch tip now that the lock is held and refuse to
+      // fast-forward anything else, so a commit that landed on the task branch
+      // after the verify (a late coder commit, a `mars continue`) cannot ride
+      // in on someone else's green run. Re-rebasing would not help — the tip
+      // itself changed — so this is terminal rather than a retry.
+      if (verifiedSha !== null) {
+        lastStep = 'verified-sha-check'
+        const casSha = (
+          await gexec(['rev-parse', branch], repoRoot())
+        ).stdout.trim()
+        if (casSha !== verifiedSha) {
+          return {
+            merged: false,
+            conflictResolved,
+            aborted: true,
+            output:
+              `task branch ${branch} moved ${verifiedSha.slice(0, 9)}->${casSha.slice(0, 9)} ` +
+              `between the rebased-tree verify and the fast-forward; refusing to land an unverified tree.\n${output}`,
+            supervisorConversation,
+            vegaSessionId,
+            retriesAttempted,
+          }
         }
       }
 
@@ -1200,6 +1302,9 @@ export const mergeBranch = async ({
           // Retryable forward advance with remaining budget.
           retriesAttempted++
           output += `\n[merge attempt ${attempt}/${MAX_MERGE_ATTEMPTS}] CAS rejected: integration advanced ${rebaseBaseSha.slice(0, 9)}->${currentIntegrationSha.slice(0, 9)}; re-rebasing...`
+          // Drop the lock before looping: the retry re-rebases and re-verifies,
+          // and neither may run while holding it.
+          await releaseMergeLock()
           await new Promise<void>(r => setTimeout(r, attempt * 150))
           continue
         }
@@ -1537,9 +1642,11 @@ export const mergeBranch = async ({
     ])
     } finally {
       // Clear the heartbeat timer and release the merge lock regardless of how
-      // the merge body exits — success, early return, or abort.
+      // the merge body exits — success, early return, or abort. A merge that
+      // failed before the lazy acquisition never held the lock, so
+      // releaseMergeLock is a no-op there.
       if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer)
-      await release()
+      await releaseMergeLock()
     }
   } catch (err: unknown) {
     // Convert an abort (watchdog OR caller signal) into a MergeAbortedError.
