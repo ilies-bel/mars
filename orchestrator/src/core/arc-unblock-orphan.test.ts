@@ -16,8 +16,8 @@ interface ArcModule {
   Arc: typeof import('./arc').Arc
 }
 
-interface ActionQueueModule {
-  listActionQueueItems: typeof import('./lib/action-queue').listActionQueueItems
+interface ConditionsModule {
+  createConditionItemsSource: typeof import('./daemon/view/derived-conditions').createConditionItemsSource
 }
 
 interface BlockerResolutionModule {
@@ -40,7 +40,7 @@ const setupRepo = (): string => {
 
 const loadModules = async (
   repo: string,
-): Promise<{ q: QueueModule; arc: ArcModule; actionQueue: ActionQueueModule; br: BlockerResolutionModule; proposals: ProposalsModule }> => {
+): Promise<{ q: QueueModule; arc: ArcModule; conditions: ConditionsModule; br: BlockerResolutionModule; proposals: ProposalsModule }> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('./queue')) as unknown as QueueModule
@@ -48,9 +48,9 @@ const loadModules = async (
   const proposals = (await import('./proposals')) as unknown as ProposalsModule
   await proposals.initProposals()
   const arc = (await import('./arc')) as unknown as ArcModule
-  const actionQueue = (await import('./lib/action-queue')) as unknown as ActionQueueModule
+  const conditions = (await import('./daemon/view/derived-conditions')) as unknown as ConditionsModule
   const br = (await import('./blocker-resolution')) as unknown as BlockerResolutionModule
-  return { q, arc, actionQueue, br, proposals }
+  return { q, arc, conditions, br, proposals }
 }
 
 const blockTask = async (
@@ -89,7 +89,7 @@ describe('Arc.unblockByCompletion — orphaned origin guard', () => {
     // at O, but O was deleted. D must be failed (ORPHANED_ORIGIN) — not queued.
 
     process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, arc, actionQueue, br } = await loadModules(repo)
+    const { q, arc, conditions, br } = await loadModules(repo)
 
     // Create O, B, and D (D has origin_id = O.id).
     const O = await q.enqueueTask('origin task', undefined, { skipTriage: true })
@@ -133,15 +133,21 @@ describe('Arc.unblockByCompletion — orphaned origin guard', () => {
     expect(result.outcomes[0].outcome).toBe('failed')
     expect(result.outcomes[0].failureReason).toBe(br.ORPHANED_ORIGIN_FAILURE_REASON)
 
-    // Exactly one action-queue item naming both D and O must be present.
-    const open = await actionQueue.listActionQueueItems('open')
-    const orphanItems = open.filter(
-      (i) =>
-        i.kind === 'orphaned-origin' &&
-        (i.payload as Record<string, unknown>).taskId === D.id &&
-        (i.payload as Record<string, unknown>).originId === O.id,
+    // Per ADR-0094, 'orphaned-origin' is a condition kind: no row is ever
+    // stored for it (raiseOrphanedOriginActionQueue in blocker-resolution.ts
+    // is a documented no-op). The task is set to status='failed' before that
+    // call, so the actionable surface is the derived 'failed' condition row —
+    // computed live from `tasks WHERE status = 'failed'`, the same surface
+    // exercised by derived-conditions-failed-recovery.test.ts. Exactly one
+    // such row naming D must be present.
+    const condSource = conditions.createConditionItemsSource({
+      getClient: () => q.resolveQueueClient(),
+    })
+    const rows = await condSource.derive({ kinds: new Set(['failed']) })
+    const failedForD = rows.filter(
+      (r) => r.kind === 'failed' && (r.payload as Record<string, unknown>).taskId === D.id,
     )
-    expect(orphanItems).toHaveLength(1)
+    expect(failedForD).toHaveLength(1)
 
     // Zero task.unblocked events must have been written for D.
     const events = await q.resolveQueueClient().execute({
