@@ -14,6 +14,19 @@
  * integration-branch repo root and is the right writer for the
  * recovery-task INSERT. The verify-time check ships separately, inside
  * the workflow's verify step.
+ *
+ * ADR-0100 slice 12: narrowing to the residual case. `classifyIntegrationDirtState`
+ * still separates 'unrelated' dirt (ignored entries, conflicts, submodule
+ * gitlinks — nothing a committer or an auto-commit can resolve; always blocks,
+ * unchanged) from 'committer-scope' dirt (modified tracked files, plain
+ * untracked files). For 'committer-scope' dirt specifically, the system now
+ * handles two shapes on its own: stale-tree debris (the primary checkout is
+ * one merge behind its own HEAD — the merge path's post-merge re-sync resets
+ * it) and auto-committable operator dirt (the merge step sweeps it into a
+ * `wip(operator)` commit when the `operatorAutoCommit` lever is on). Before
+ * parking dispatch behind a fresh committer, `attributeIntegrationDirt`
+ * classifies which of those it is; only dirt it cannot explain (operator-dirt)
+ * with the lever off is the genuine residual that still needs to block.
  */
 import { resolveContext } from '../context'
 import {
@@ -27,6 +40,10 @@ import {
   raiseUnrelatedDirtActionQueue,
 } from './main-dirty-action-queue'
 import { resolveOriginIdForTask } from '../lib/origin'
+import { attributeIntegrationDirt } from '../lib/git/stale-tree-attribution'
+import { readLastSyncedSha } from '../lib/git/last-synced-sha'
+import { execProbe, resolveGitBin } from '../lib/git/internal'
+import { resolveControlLevers, isOperatorAutoCommitDisabled } from '../config/levers'
 import type { RecipeCatalog } from '../lib/recipes'
 import type { TraceEventStore } from '../lib/trace-events-store'
 import type { Task } from '../queue'
@@ -47,7 +64,11 @@ export type MainDirtyDispatchResult =
 
 /**
  * Run the dispatch-time dirty-main probe. Returns `{ parked: false }` when:
- * - the integration branch is clean, or
+ * - the integration branch is clean;
+ * - committer-scope dirt attributes to `stale-tree-debris` (the checkout is
+ *   one merge behind its own HEAD — the merge path's re-sync resets it);
+ * - committer-scope dirt attributes to `operator-dirt` but the
+ *   `operatorAutoCommit` lever is on (the merge step will auto-commit it); or
  * - the recipe is missing from the catalog (verify-time check still applies).
  *
  * Returns `{ parked: true, fixTaskId, spawned }` when the task was parked
@@ -97,6 +118,46 @@ export const runMainDirtyDispatchCheck = async (
   }
 
   // kind === 'committer-scope': dirty files a committer can stage and commit.
+  //
+  // Before parking behind a committer, ask whether this dirt is the residual
+  // the guard exists for, or one of the two shapes the system now handles on
+  // its own (see the module doc comment, ADR-0100 slice 12).
+  const headShaProbe = await execProbe(
+    resolveGitBin(),
+    ['rev-parse', 'HEAD'],
+    { cwd: repoRoot },
+    { taskId: task.id, originId, phase: 'setup', store: traceStore },
+  )
+  if (headShaProbe.exitCode === 0) {
+    const headSha = headShaProbe.stdout.trim()
+    const attribution = await attributeIntegrationDirt({
+      repoRoot,
+      lastSyncedSha: readLastSyncedSha(repoRoot),
+      headSha,
+      traceCtx: { taskId: task.id, originId, phase: 'setup', store: traceStore },
+    })
+
+    if (attribution.kind === 'clean' || attribution.kind === 'stale-tree-debris') {
+      log(
+        `[main-dirty] dispatch-time: integration branch ${integrationBranch} dirt attributed to '${attribution.kind}' for task ${task.id}; proceeding to dispatch (the merge path resets stale-tree debris)`,
+      )
+      return { parked: false }
+    }
+
+    // attribution.kind === 'operator-dirt' — including its own fail-safe
+    // default when lastSyncedSha is unknown/unattributable.
+    const levers = resolveControlLevers()
+    if (!isOperatorAutoCommitDisabled(levers)) {
+      log(
+        `[main-dirty] dispatch-time: integration branch ${integrationBranch} has operator dirt for task ${task.id}, but the operatorAutoCommit lever is on; proceeding to dispatch (the merge step will auto-commit it)`,
+      )
+      return { parked: false }
+    }
+    // Lever off: fall through to the existing block-and-raise path below.
+  }
+  // headShaProbe failure is unattributable — fail safe by falling through to
+  // the existing block-and-raise path, same as an off lever.
+
   const recipe = recipeCatalog.get(MAIN_COMMITER_RECIPE)
   if (!recipe) {
     // Recipe missing means the binary was shipped without its built-in

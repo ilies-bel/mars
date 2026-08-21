@@ -11,9 +11,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { isDispatchDirtyMainExempt } from '../server'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+import { writeLastSyncedSha } from '../../lib/git/last-synced-sha'
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-dispatch-check-test-'))
@@ -88,6 +89,15 @@ describe('runMainDirtyDispatchCheck', () => {
       // A done committer only proves main was clean when it verified; if main is
       // dirty again, a fresh committer must clean it. The source task must be
       // parked behind the fresh committer (not the dead done one).
+      //
+      // ADR-0100 slice 12: this dirt is unattributable operator-dirt (no
+      // .mars/last-synced-sha recorded), which now only blocks dispatch when
+      // the operatorAutoCommit lever is off. Pin it off here so this test
+      // keeps exercising the block-and-raise path it was written to cover.
+      writeFileSync(
+        resolve(repo, '.mars', 'daemon.json'),
+        JSON.stringify({ controlLevers: { operatorAutoCommit: 'off' } }),
+      )
       writeFileSync(resolve(repo, 'README.md'), 'dirty\n')
 
       const { checkIntegrationBranchDirty, spawnOrAttachMainCommitter, MAIN_COMMITER_RECIPE } =
@@ -170,6 +180,117 @@ describe('runMainDirtyDispatchCheck', () => {
 
       // Log must include "parked blocked" (not "not attached").
       expect(logs.some((l) => l.includes('parked blocked'))).toBe(true)
+    },
+    30_000,
+  )
+
+  // ---------------------------------------------------------------------------
+  // ADR-0100 slice 12: narrow the guard to the genuine residual.
+  // ---------------------------------------------------------------------------
+
+  it(
+    'stale-tree debris proceeds to dispatch without parking or spawning a committer',
+    async () => {
+      // Advance main past the seed commit `setupRepo` already made, so there is
+      // a real lastSyncedSha..headSha range to be the inverse of.
+      const lastSyncedSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: repo,
+        encoding: 'utf8',
+      }).trim()
+      writeFileSync(resolve(repo, 'added-by-merge.txt'), 'brand new content\n')
+      execFileSync('git', ['add', 'added-by-merge.txt'], { cwd: repo })
+      execFileSync('git', ['commit', '-q', '-m', 'advance main'], { cwd: repo })
+      writeLastSyncedSha(lastSyncedSha, repo)
+
+      // Simulate a checkout that never caught up past lastSyncedSha: the file
+      // the advance added is missing from disk (still tracked in the index),
+      // which `git status`/`git diff HEAD` reports as a deletion — exactly the
+      // inverse of the range the checkout just fast-forwarded through.
+      unlinkSync(resolve(repo, 'added-by-merge.txt'))
+
+      const queue = await import('../../queue')
+      await queue.migrateQueueSchema()
+      const { nullTraceStore } = await import('../../lib/run-tool')
+      const { MAIN_COMMITER_RECIPE } = await import('../../lib/main-dirty')
+
+      const sourceTask = await queue.enqueueTask('source task', undefined, { skipTriage: true })
+
+      const mockCatalog = {
+        get: (name: string) =>
+          name === MAIN_COMMITER_RECIPE
+            ? { name: MAIN_COMMITER_RECIPE, description: 'test', prompt: 'fake prompt', tools: [] as const, source: 'built-in' as const }
+            : null,
+        list: () => [],
+      }
+
+      const fixTasksBefore = (
+        await queue.resolveQueueClient().execute(`SELECT COUNT(*) AS n FROM tasks WHERE kind = 'fix'`)
+      ).rows[0] as unknown as { n: number }
+
+      const { runMainDirtyDispatchCheck } = await import('../main-dirty-dispatch')
+      const result = await runMainDirtyDispatchCheck({
+        task: sourceTask,
+        integrationBranch: 'main',
+        traceStore: nullTraceStore,
+        recipeCatalog: mockCatalog as import('../../lib/recipes').RecipeCatalog,
+        log: () => {},
+      })
+
+      expect(result).toEqual({ parked: false })
+
+      const fixTasksAfter = (
+        await queue.resolveQueueClient().execute(`SELECT COUNT(*) AS n FROM tasks WHERE kind = 'fix'`)
+      ).rows[0] as unknown as { n: number }
+      expect(Number(fixTasksAfter.n)).toBe(Number(fixTasksBefore.n))
+    },
+    30_000,
+  )
+
+  it(
+    'operator dirt with the operatorAutoCommit lever on proceeds to dispatch without parking',
+    async () => {
+      // No .mars/daemon.json is written, so the lever defaults to 'on'. No
+      // .mars/last-synced-sha is written either, so attributeIntegrationDirt
+      // fails safe straight to operator-dirt — the lever alone decides.
+      writeFileSync(resolve(repo, 'README.md'), 'dirty\n')
+
+      const queue = await import('../../queue')
+      await queue.migrateQueueSchema()
+      const { nullTraceStore } = await import('../../lib/run-tool')
+      const { MAIN_COMMITER_RECIPE } = await import('../../lib/main-dirty')
+
+      const sourceTask = await queue.enqueueTask('source task', undefined, { skipTriage: true })
+
+      const mockCatalog = {
+        get: (name: string) =>
+          name === MAIN_COMMITER_RECIPE
+            ? { name: MAIN_COMMITER_RECIPE, description: 'test', prompt: 'fake prompt', tools: [] as const, source: 'built-in' as const }
+            : null,
+        list: () => [],
+      }
+
+      const fixTasksBefore = (
+        await queue.resolveQueueClient().execute(`SELECT COUNT(*) AS n FROM tasks WHERE kind = 'fix'`)
+      ).rows[0] as unknown as { n: number }
+
+      const { runMainDirtyDispatchCheck } = await import('../main-dirty-dispatch')
+      const result = await runMainDirtyDispatchCheck({
+        task: sourceTask,
+        integrationBranch: 'main',
+        traceStore: nullTraceStore,
+        recipeCatalog: mockCatalog as import('../../lib/recipes').RecipeCatalog,
+        log: () => {},
+      })
+
+      expect(result).toEqual({ parked: false })
+
+      const fixTasksAfter = (
+        await queue.resolveQueueClient().execute(`SELECT COUNT(*) AS n FROM tasks WHERE kind = 'fix'`)
+      ).rows[0] as unknown as { n: number }
+      expect(Number(fixTasksAfter.n)).toBe(Number(fixTasksBefore.n))
+
+      const sourceTaskAfter = await queue.getTask(sourceTask.id)
+      expect(sourceTaskAfter?.status).not.toBe('blocked')
     },
     30_000,
   )
