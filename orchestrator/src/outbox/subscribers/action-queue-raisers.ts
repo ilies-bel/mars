@@ -159,28 +159,57 @@ function taskBlockedActionQueueRaiser(client: DbClient): Subscriber {
       // manual intervention. On success, log and publish the auto-run so the
       // continuous conversation can narrate it and WYWA retains it historically.
       if (p.failureSignature) {
-        const { getLearnedRecipe, executeLearnedOp, logAutoRecipeRun } =
-          await import('../../core/lib/learned-recipes.js');
+        const {
+          getLearnedRecipe,
+          executeLearnedOp,
+          logAutoRecipeRun,
+          recordAutoRecipeOutcome,
+          listAutoRecipeRuns,
+        } = await import('../../core/lib/learned-recipes.js');
         const learned = await getLearnedRecipe(p.failureSignature);
         if (learned !== null) {
-          try {
-            await executeLearnedOp(p.taskId, learned.actionOp);
-            await logAutoRecipeRun({
-              signature: p.failureSignature,
-              actionOp: learned.actionOp,
-              taskId: p.taskId,
-            });
-            const { emitRecipeAutoRun } = await import('../../core/recipes/teach.js');
-            await emitRecipeAutoRun(client, {
-              recipeId: learned.failureSignature,
-              failureKind: p.failureSignature,
-              targetTaskId: p.taskId,
-              at: new Date().toISOString(),
-            });
-            // Auto-run succeeded.
-            return;
-          } catch {
-            // Auto-run failed — continue (the task is still visibly failed).
+          // ADR-0099: consult the outcome log before re-firing. A recipe
+          // whose most recent auto-run resolved as a failure has already
+          // demonstrated it does not resolve this signature — skip the
+          // auto-run and fall through to raising a manual card instead of
+          // repeating a known-bad action.
+          const [mostRecentRun] = await listAutoRecipeRuns({
+            signature: p.failureSignature,
+            limit: 1,
+          });
+
+          if (mostRecentRun?.outcome !== 'failure') {
+            try {
+              await executeLearnedOp(p.taskId, learned.actionOp);
+              const runId = await logAutoRecipeRun({
+                signature: p.failureSignature,
+                actionOp: learned.actionOp,
+                taskId: p.taskId,
+              });
+              // The op executed without throwing — record it as a success
+              // (ADR-0099: the outcome log must reflect every auto-recipe
+              // run, not just count them).
+              await recordAutoRecipeOutcome(runId, 'success');
+              const { emitRecipeAutoRun } = await import('../../core/recipes/teach.js');
+              await emitRecipeAutoRun(client, {
+                recipeId: learned.failureSignature,
+                failureKind: p.failureSignature,
+                targetTaskId: p.taskId,
+                at: new Date().toISOString(),
+              });
+              // Auto-run succeeded.
+              return;
+            } catch {
+              // Auto-run failed — log and resolve it as a failure so the
+              // outcome log has a record of every attempt, then continue
+              // (the task is still visibly failed).
+              const runId = await logAutoRecipeRun({
+                signature: p.failureSignature,
+                actionOp: learned.actionOp,
+                taskId: p.taskId,
+              });
+              await recordAutoRecipeOutcome(runId, 'failure');
+            }
           }
         }
       }

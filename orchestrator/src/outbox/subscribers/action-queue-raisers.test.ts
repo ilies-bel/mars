@@ -781,16 +781,21 @@ describe('learned-recipe auto-run via task.blocked subscriber', () => {
   const mockGetLearnedRecipe = vi.fn();
   const mockExecuteLearnedOp = vi.fn();
   const mockLogAutoRecipeRun = vi.fn();
+  const mockRecordAutoRecipeOutcome = vi.fn();
+  const mockListAutoRecipeRuns = vi.fn();
 
   beforeEach(async () => {
     tmpDir = setupRepo();
     process.env.MARS_REPO = tmpDir;
     vi.resetModules();
 
-    // Default implementations: no recipe stored, auto-run succeeds.
+    // Default implementations: no recipe stored, auto-run succeeds, no prior
+    // outcome-log history for the signature.
     mockGetLearnedRecipe.mockReset().mockResolvedValue(null);
     mockExecuteLearnedOp.mockReset().mockResolvedValue(undefined);
-    mockLogAutoRecipeRun.mockReset().mockResolvedValue(undefined);
+    mockLogAutoRecipeRun.mockReset().mockResolvedValue('run-id');
+    mockRecordAutoRecipeOutcome.mockReset().mockResolvedValue(undefined);
+    mockListAutoRecipeRuns.mockReset().mockResolvedValue([]);
 
     // Mock the entire learned-recipes module. The action-queue-raiser handler
     // does a dynamic `import('...learned-recipes.js')` at runtime; vi.doMock
@@ -799,6 +804,8 @@ describe('learned-recipe auto-run via task.blocked subscriber', () => {
       getLearnedRecipe: mockGetLearnedRecipe,
       executeLearnedOp: mockExecuteLearnedOp,
       logAutoRecipeRun: mockLogAutoRecipeRun,
+      recordAutoRecipeOutcome: mockRecordAutoRecipeOutcome,
+      listAutoRecipeRuns: mockListAutoRecipeRuns,
     }));
 
     client = await makeClient(tmpDir);
@@ -837,7 +844,43 @@ describe('learned-recipe auto-run via task.blocked subscriber', () => {
         taskId: 'task-recipe-alpha',
       }),
     );
+    // ADR-0099: the outcome log is resolved to 'success' once the op ran
+    // without throwing.
+    expect(mockRecordAutoRecipeOutcome).toHaveBeenCalledWith('run-id', 'success');
     // No human action required — card must NOT be raised.
+    expect(await openRowCount(client)).toBe(0);
+  });
+
+  it('skips the auto-run when the recipe was most recently discredited by a failure', async () => {
+    mockGetLearnedRecipe.mockResolvedValue({
+      failureSignature: 'verify:typecheck/type-mismatch',
+      actionOp: 'restart',
+      learnedAt: new Date().toISOString(),
+    });
+    // ADR-0099: the outcome log is consulted before re-firing — a recipe
+    // whose most recent run failed must not be blindly retried.
+    mockListAutoRecipeRuns.mockResolvedValue([
+      {
+        id: 'prior-run',
+        signature: 'verify:typecheck/type-mismatch',
+        actionOp: 'restart',
+        taskId: 'task-recipe-prior',
+        ranAt: new Date().toISOString(),
+        outcome: 'failure',
+      },
+    ]);
+
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    await subscriber.handler(
+      blockedEvent(1005, 'task-recipe-epsilon', {
+        failureSignature: 'verify:typecheck/type-mismatch',
+      }),
+    );
+
+    // The discredited recipe was not re-fired.
+    expect(mockExecuteLearnedOp).not.toHaveBeenCalled();
+    expect(mockLogAutoRecipeRun).not.toHaveBeenCalled();
+    // ADR-0057: `failed` is a derived condition; no stored row is written.
     expect(await openRowCount(client)).toBe(0);
   });
 
@@ -874,8 +917,17 @@ describe('learned-recipe auto-run via task.blocked subscriber', () => {
     // ADR-0057: `failed` is a derived condition; no stored row is written even
     // when the auto-run fallback fires.
     expect(await openRowCount(client)).toBe(0);
-    // Log was NOT called because execution failed before it could run.
-    expect(mockLogAutoRecipeRun).not.toHaveBeenCalled();
+    // ADR-0099: the outcome log records every attempt, including ones where
+    // the op itself threw — resolved as 'failure' so a future occurrence of
+    // this signature can consult the log before re-firing.
+    expect(mockLogAutoRecipeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signature: 'verify:typecheck/type-mismatch',
+        actionOp: 'restart',
+        taskId: 'task-recipe-gamma',
+      }),
+    );
+    expect(mockRecordAutoRecipeOutcome).toHaveBeenCalledWith('run-id', 'failure');
   });
 
   it('does not auto-run when failureSignature is absent from the event payload', async () => {
