@@ -265,7 +265,7 @@ export const DEVIATION_RULES = [
   'You WILL discover work not in the brief. Apply these rules without asking. Bailing out without filing one of the artifacts below is not in the menu.',
   '',
   '**Worker coordination.** Use the worker-safe Mars MCP tools as the primary path: `mars_task_note` to journal progress or blockers, `mars_task_check` to mark done criteria, `mars_task_add_blocked_followup` to file a follow-up blocked by this task, and `mars_proposal_add_draft` to capture a deferred proposal.',
-  'If the MCP server is unavailable, fall back to `mars task note`, `mars task check`, `mars task add --blocked-by $TASK_ID`, and `mars proposal add` respectively.',
+  'If the MCP server is unavailable, fall back to `mars task note`, `mars task check`, and `mars proposal add` respectively. For a blocked follow-up, fall back to `mars task add --blocked-by $TASK_ID` — UNLESS the current task is itself a recovery task (its id is prefixed `fix-`), in which case ADR-0040 forbids a recovery task from being anyone\'s blocker: omit `--blocked-by` and file the follow-up as a plain, unblocked `mars task add "..."` instead.',
   '',
   '**Rule 1 — Auto-fix bugs.** If the code you touched in scope doesn\'t work (wrong logic, type errors, null deref, broken validation, race), fix it inline. No permission needed. Log the fix in your final commit message.',
   '',
