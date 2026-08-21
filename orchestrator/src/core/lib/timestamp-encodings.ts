@@ -20,6 +20,15 @@ export const FIXTURE_TIMESTAMP_ENCODINGS = {
   self_heal_attempts: {
     created_at: 'epoch-millis',
   },
+  trace_events: {
+    timestamp: 'epoch-millis',
+  },
+  events: {
+    ts: 'epoch-millis',
+  },
+  task_transcripts: {
+    ts: 'epoch-millis',
+  },
 } as const
 
 export type FixtureTimestampEncoding =
