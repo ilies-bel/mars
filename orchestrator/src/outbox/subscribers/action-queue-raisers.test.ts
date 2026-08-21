@@ -783,6 +783,8 @@ describe('learned-recipe auto-run via task.blocked subscriber', () => {
   const mockLogAutoRecipeRun = vi.fn();
   const mockRecordAutoRecipeOutcome = vi.fn();
   const mockListAutoRecipeRuns = vi.fn();
+  const mockRecipeOutcomeStats = vi.fn();
+  const mockShouldSuppressRecipe = vi.fn();
 
   beforeEach(async () => {
     tmpDir = setupRepo();
@@ -796,6 +798,12 @@ describe('learned-recipe auto-run via task.blocked subscriber', () => {
     mockLogAutoRecipeRun.mockReset().mockResolvedValue('run-id');
     mockRecordAutoRecipeOutcome.mockReset().mockResolvedValue(undefined);
     mockListAutoRecipeRuns.mockReset().mockResolvedValue([]);
+    // PRD 1e904a61: no adverse task-fate history by default — the
+    // suppression gate must not fire unless a test opts in.
+    mockRecipeOutcomeStats
+      .mockReset()
+      .mockResolvedValue({ fired: 0, helped: 0, didNotHelp: 0, unknown: 0, recentOutcomes: [] });
+    mockShouldSuppressRecipe.mockReset().mockReturnValue(false);
 
     // Mock the entire learned-recipes module. The action-queue-raiser handler
     // does a dynamic `import('...learned-recipes.js')` at runtime; vi.doMock
@@ -806,6 +814,8 @@ describe('learned-recipe auto-run via task.blocked subscriber', () => {
       logAutoRecipeRun: mockLogAutoRecipeRun,
       recordAutoRecipeOutcome: mockRecordAutoRecipeOutcome,
       listAutoRecipeRuns: mockListAutoRecipeRuns,
+      recipeOutcomeStats: mockRecipeOutcomeStats,
+      shouldSuppressRecipe: mockShouldSuppressRecipe,
     }));
 
     client = await makeClient(tmpDir);
@@ -881,6 +891,43 @@ describe('learned-recipe auto-run via task.blocked subscriber', () => {
     expect(mockExecuteLearnedOp).not.toHaveBeenCalled();
     expect(mockLogAutoRecipeRun).not.toHaveBeenCalled();
     // ADR-0057: `failed` is a derived condition; no stored row is written.
+    expect(await openRowCount(client)).toBe(0);
+  });
+
+  it('skips the auto-run when recipeOutcomeStats shows 2 consecutive did-not-help outcomes', async () => {
+    // PRD 1e904a61: the auto-recipe path reads recipeOutcomeStats for the
+    // signature before executing, and shouldSuppressRecipe gates on it —
+    // independent of the op-execution outcome log checked above.
+    mockGetLearnedRecipe.mockResolvedValue({
+      failureSignature: 'verify:typecheck/type-mismatch',
+      actionOp: 'restart',
+      learnedAt: new Date().toISOString(),
+    });
+    const stats = {
+      fired: 2,
+      helped: 0,
+      didNotHelp: 2,
+      unknown: 0,
+      recentOutcomes: ['did-not-help', 'did-not-help'],
+    };
+    mockRecipeOutcomeStats.mockResolvedValue(stats);
+    mockShouldSuppressRecipe.mockReturnValue(true);
+
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    await subscriber.handler(
+      blockedEvent(1006, 'task-recipe-zeta', {
+        failureSignature: 'verify:typecheck/type-mismatch',
+      }),
+    );
+
+    // recipeOutcomeStats was consulted for this exact signature, and the
+    // recipe was not re-fired as a result.
+    expect(mockRecipeOutcomeStats).toHaveBeenCalledWith('verify:typecheck/type-mismatch');
+    expect(mockShouldSuppressRecipe).toHaveBeenCalledWith(stats);
+    expect(mockExecuteLearnedOp).not.toHaveBeenCalled();
+    expect(mockLogAutoRecipeRun).not.toHaveBeenCalled();
+    // Falls through to the ordinary action-queue path. ADR-0057: `failed` is
+    // a derived condition; no stored row is written here either way.
     expect(await openRowCount(client)).toBe(0);
   });
 

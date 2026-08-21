@@ -63,7 +63,13 @@ describe('recordAutoRecipeTaskOutcome / recipeOutcomeStats', () => {
     await m.recordAutoRecipeTaskOutcome('task-abc', 'helped')
 
     const stats = await m.recipeOutcomeStats(signature)
-    expect(stats).toEqual({ fired: 1, helped: 1, didNotHelp: 0, unknown: 0 })
+    expect(stats).toEqual({
+      fired: 1,
+      helped: 1,
+      didNotHelp: 0,
+      unknown: 0,
+      recentOutcomes: ['helped'],
+    })
 
     const runs = await m.listAutoRecipeRuns({ signature })
     expect(runs[0]!.taskOutcome).toBe('helped')
@@ -78,7 +84,13 @@ describe('recordAutoRecipeTaskOutcome / recipeOutcomeStats', () => {
     await m.recordAutoRecipeTaskOutcome('task-xyz', 'did-not-help')
 
     const stats = await m.recipeOutcomeStats(signature)
-    expect(stats).toEqual({ fired: 1, helped: 0, didNotHelp: 1, unknown: 0 })
+    expect(stats).toEqual({
+      fired: 1,
+      helped: 0,
+      didNotHelp: 1,
+      unknown: 0,
+      recentOutcomes: ['did-not-help'],
+    })
   })
 
   it('a run whose task has not yet settled counts as unknown, not fired-and-lost', async () => {
@@ -87,7 +99,13 @@ describe('recordAutoRecipeTaskOutcome / recipeOutcomeStats', () => {
     await m.logAutoRecipeRun({ signature, actionOp: 'restart', taskId: 'task-pending' })
 
     const stats = await m.recipeOutcomeStats(signature)
-    expect(stats).toEqual({ fired: 1, helped: 0, didNotHelp: 0, unknown: 1 })
+    expect(stats).toEqual({
+      fired: 1,
+      helped: 0,
+      didNotHelp: 0,
+      unknown: 1,
+      recentOutcomes: [null],
+    })
   })
 
   it('is a no-op for a task with no open run', async () => {
@@ -113,12 +131,26 @@ describe('recordAutoRecipeTaskOutcome / recipeOutcomeStats', () => {
     expect(byId.get(second)!.taskOutcome).toBe('helped')
 
     const stats = await m.recipeOutcomeStats(signature)
-    expect(stats).toEqual({ fired: 2, helped: 1, didNotHelp: 1, unknown: 0 })
+    expect(stats.fired).toBe(2)
+    expect(stats.helped).toBe(1)
+    expect(stats.didNotHelp).toBe(1)
+    expect(stats.unknown).toBe(0)
+    // Both runs are within the RECIPE_SUPPRESSION_STREAK window; order
+    // between them is not asserted here (may tie on ran_at ms-precision) —
+    // ordering semantics are covered explicitly in
+    // learned-recipes-suppression.test.ts.
+    expect(stats.recentOutcomes.sort()).toEqual(['did-not-help', 'helped'])
   })
 
   it('recipeOutcomeStats for an unknown signature reports all zeros', async () => {
     const m = await loadModule()
     const stats = await m.recipeOutcomeStats('no-such-signature')
-    expect(stats).toEqual({ fired: 0, helped: 0, didNotHelp: 0, unknown: 0 })
+    expect(stats).toEqual({
+      fired: 0,
+      helped: 0,
+      didNotHelp: 0,
+      unknown: 0,
+      recentOutcomes: [],
+    })
   })
 })

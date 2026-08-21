@@ -43,7 +43,12 @@
  *    nothing.
  *
  * `listAutoRecipeRuns({ signature })` can be checked before trusting the
- * recipe again.
+ * recipe again. So can `recipeOutcomeStats(signature)` directly:
+ * `shouldSuppressRecipe(stats)` returns true once the most recent
+ * `RECIPE_SUPPRESSION_STREAK` runs all resolved `'did-not-help'`, at which
+ * point the autonomous auto-recipe path (`action-queue-raisers.ts`) skips
+ * execution and falls through to the ordinary action-queue path instead of
+ * repeating a known-ineffective action.
  */
 
 import { randomUUID } from 'node:crypto'
@@ -363,13 +368,40 @@ export async function recordAutoRecipeTaskOutcome(
 }
 
 /**
+ * Number of consecutive-most-recent `'did-not-help'` outcomes (PRD
+ * 1e904a61 "align self-improvement loops with weakest-valid-hypothesis
+ * induction") that suppress a recipe's autonomous re-fire. A recipe that has
+ * failed to help the last {@link RECIPE_SUPPRESSION_STREAK} times running
+ * has demonstrated, empirically, that it does not resolve this signature —
+ * the failure should fall through to the ordinary action-queue path instead
+ * of repeating a known-ineffective action.
+ */
+export const RECIPE_SUPPRESSION_STREAK = 2
+
+/** Aggregate task-fate outcome counts for a failure signature, plus recency detail. */
+export interface RecipeOutcomeStats {
+  fired: number
+  helped: number
+  didNotHelp: number
+  unknown: number
+  /**
+   * The most recent {@link RECIPE_SUPPRESSION_STREAK} `taskOutcome` values
+   * for this signature, newest-first. `null` entries are runs whose task
+   * has not yet settled. Consulted by {@link shouldSuppressRecipe} — kept
+   * separate from the aggregate counts above because a signature can have
+   * `didNotHelp >= 2` from outcomes scattered across its history while its
+   * *most recent* runs were actually `'helped'`; only a genuine consecutive
+   * streak at the tail of the log should suppress auto-fire.
+   */
+  recentOutcomes: AutoRecipeTaskOutcome[]
+}
+
+/**
  * Aggregate task-fate outcomes (ADR-0099 / PRD 1e904a61) across every
  * auto-run of `failureSignature`, so an operator (or a future auto-run gate)
  * can tell a recipe that helps from one that does nothing.
  */
-export async function recipeOutcomeStats(
-  failureSignature: string,
-): Promise<{ fired: number; helped: number; didNotHelp: number; unknown: number }> {
+export async function recipeOutcomeStats(failureSignature: string): Promise<RecipeOutcomeStats> {
   const client = resolveStateClient()
   const result = await client.execute({
     sql: `SELECT
@@ -387,12 +419,43 @@ export async function recipeOutcomeStats(
     did_not_help: number | string
     unknown: number | string
   }
+
+  const recent = await client.execute({
+    sql: `SELECT task_outcome
+          FROM auto_recipe_runs
+          WHERE signature = ?
+          ORDER BY ran_at DESC
+          LIMIT ?`,
+    args: [failureSignature, RECIPE_SUPPRESSION_STREAK],
+  })
+  const recentOutcomes = recent.rows.map(
+    (r) => (r as unknown as { task_outcome: AutoRecipeTaskOutcome }).task_outcome,
+  )
+
   return {
     fired: Number(row.fired),
     helped: Number(row.helped),
     didNotHelp: Number(row.did_not_help),
     unknown: Number(row.unknown),
+    recentOutcomes,
   }
+}
+
+/**
+ * ADR-0099 / PRD 1e904a61: should the autonomous auto-recipe path refuse to
+ * fire again for this signature? True when the most recent
+ * {@link RECIPE_SUPPRESSION_STREAK} logged runs all resolved as
+ * `'did-not-help'` — i.e. the recipe has consecutively failed to help the
+ * last N times it ran, regardless of how many times it has helped further
+ * back in its history. A signature with fewer than
+ * {@link RECIPE_SUPPRESSION_STREAK} runs never suppresses (there is no
+ * streak yet to judge).
+ */
+export function shouldSuppressRecipe(stats: Pick<RecipeOutcomeStats, 'recentOutcomes'>): boolean {
+  return (
+    stats.recentOutcomes.length >= RECIPE_SUPPRESSION_STREAK &&
+    stats.recentOutcomes.every((outcome) => outcome === 'did-not-help')
+  )
 }
 
 // ── Auto-run execution ────────────────────────────────────────────────────────
