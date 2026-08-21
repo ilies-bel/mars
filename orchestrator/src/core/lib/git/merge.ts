@@ -808,6 +808,7 @@ export const mergeBranch = async ({
   onVegaStart,
   onBeforeFastForward,
   onAfterFastForward,
+  onVerifyRebasedTree,
   onPhase,
   onHeartbeat,
   traceCtx,
