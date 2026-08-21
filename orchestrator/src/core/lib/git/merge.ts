@@ -694,10 +694,15 @@ const MAX_MERGE_ATTEMPTS = 3 // 1 initial attempt + 2 retries
 const MERGE_GIT_BUDGET_MS = 5 * 60 * 1000
 
 /**
- * Default watchdog budget for one {@link mergeBranch} call holding the
- * `.merge.lock`. Sized to comfortably contain a full vcs-supervisor session
- * plus the git work around it — enforced by the
- * `merge-watchdog-budget.test.ts` invariants.
+ * Default watchdog budget for one {@link mergeBranch} call. Sized to
+ * comfortably contain a full vcs-supervisor session plus the git work around
+ * it — enforced by the `merge-watchdog-budget.test.ts` invariants.
+ *
+ * Note this budget spans the WHOLE call, which since ADR-0100 step 2 is wider
+ * than the window in which `.merge.lock` is held: it also covers
+ * {@link MergeArgs.onVerifyRebasedTree}. Callers that supply a gate running a
+ * full test suite must pass a `watchdogMs` that accounts for it — this default
+ * does not.
  */
 export const DEFAULT_WATCHDOG_MS = VCS_SUPERVISOR_TIMEOUT_MS + MERGE_GIT_BUDGET_MS
 
