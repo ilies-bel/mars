@@ -75,12 +75,74 @@ interface TokenAnalysis {
   notes: string
 }
 
-export interface ReflectionResult {
-  tokenAnalysis: TokenAnalysis | null
-  suggestions: ReflectionSuggestion[]
+/**
+ * Shared envelope every reflector's result carries: the raw provider text
+ * and its exit code, alongside a kind-specific parsed payload (ADR-0097's
+ * Port acceptance test — plain serializable data, no live handles). All
+ * three reflectors already produce this shape today — this module's
+ * token/lever synthesis ({@link ReflectionResult}), deep-reflector.ts's
+ * arc/session post-mortems (`DeepReflectionResult`), and
+ * failure-reflector.ts's harness-improvement analysis — so naming it here
+ * lets each conform to {@link ReflectorPort} without reshaping its own
+ * result type.
+ */
+export interface ReflectorRunOutcome {
   rawOutput: string
   exitCode: number
 }
+
+export interface ReflectionResult extends ReflectorRunOutcome {
+  tokenAnalysis: TokenAnalysis | null
+  suggestions: ReflectionSuggestion[]
+}
+
+/**
+ * Discriminates the three reflector implementations that bind to
+ * {@link ReflectorPort} (the "Reflector port over the three reflectors"
+ * slice): token/lever reflection (this module), arc- and session-scoped
+ * deep reflection (`deep-reflector.ts`), and failure-triggered harness
+ * reflection (`failure-reflector.ts`). A cordis registry keyed on this
+ * literal is how a caller resolves "the reflector for this corpus" without
+ * importing a concrete module.
+ */
+export type ReflectorKind = 'token' | 'deep-arc' | 'deep-session' | 'failure'
+
+/**
+ * The Port contract for a reflector (ADR-0097: "Every seam is a cordis
+ * service Port with serializable contracts"). Callers resolve an
+ * implementation through the cordis context (`ctx.get(...)` / a sealed
+ * accessor) keyed by {@link ReflectorKind}, never by importing
+ * `runReflector` / `runDeepReflectorArc` / `spawnFailureReflector` directly
+ * — that indirection is what the "Route reflector.ts through the Worker
+ * layer" slice uses to move each reflector's persistence side effects
+ * (proposal writes, task enqueues, memory-packet inserts — see
+ * {@link persistSuggestions} and {@link applyVerdicts}) out of the reflector
+ * module and into the Worker layer that calls the Port, so a reflector
+ * implementation only computes.
+ *
+ * `TRequest` is intentionally per-kind rather than one shared shape: the
+ * three corpora ({@link ReflectCorpus}, an arc/session digest, and
+ * `SpawnFailureReflectorOpts`) are structurally unrelated. Every
+ * implementation's request and result MUST still pass the Port acceptance
+ * test that {@link ReflectorRunOutcome} anchors: plain serializable data, no
+ * `AbortSignal`, no PID/stream callbacks, no live process handles — the same
+ * test `VerifierPort` (`git/verify.ts`) applies.
+ */
+export interface ReflectorPort<TRequest, TResult extends ReflectorRunOutcome> {
+  readonly kind: ReflectorKind
+  reflect(request: TRequest): Promise<TResult>
+}
+
+/**
+ * The Port-legal request for the token/lever reflector: already plain
+ * serializable data (a corpus of past task records — no live handles), so
+ * no field needs stripping the way {@link ReflectorPort}'s doc references
+ * `VerifyPortRequest` stripping `VerifyArgs` in `git/verify.ts`. Aliased so
+ * the "Reflector port over the three reflectors" slice has a named type to
+ * bind `runReflector` to
+ * `ReflectorPort<TokenReflectorPortRequest, ReflectionResult>`.
+ */
+export type TokenReflectorPortRequest = ReflectCorpus
 
 const SYNTHESIS_INSTRUCTIONS = `You are a workflow and token optimizer for the Mars task orchestrator. You
 will be given a precomputed token summary and a recent task corpus
