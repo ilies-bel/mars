@@ -321,11 +321,22 @@ function scanEnvReadsByFile() {
   return counts;
 }
 
+/**
+ * `{ violations, declaredTotal }`, or null when the allowlist file is absent.
+ * `declaredTotal` is the file's own `totalViolations` header (null if absent or
+ * non-numeric); `checkEnvReads()` cross-checks it against the per-file map so a
+ * hand-edit that drains a site but forgets the header cannot pass silently.
+ */
 function loadEnvAllowlist() {
   if (!existsSync(ENV_ALLOWLIST_PATH)) return null;
   const parsed = JSON.parse(readFileSync(ENV_ALLOWLIST_PATH, 'utf8'));
-  return parsed.violations ?? {};
+  return {
+    violations: parsed.violations ?? {},
+    declaredTotal: typeof parsed.totalViolations === 'number' ? parsed.totalViolations : null,
+  };
 }
+
+const sumCounts = (counts) => Object.values(counts).reduce((a, b) => a + b, 0);
 
 /**
  * Compare today's `process.env` reads (outside the config loader) against
@@ -335,8 +346,8 @@ function loadEnvAllowlist() {
  * without updating the allowlist is caught, not silently accepted.
  */
 function checkEnvReads() {
-  const recorded = loadEnvAllowlist();
-  if (recorded === null) {
+  const allowlist = loadEnvAllowlist();
+  if (allowlist === null) {
     console.error(
       `\n  ✗ arch [env-reads]: missing ${relative(REPO_ROOT, ENV_ALLOWLIST_PATH)}.\n` +
         `\n    This file is the ratchet for \`process.env\` reads outside ` +
@@ -346,18 +357,33 @@ function checkEnvReads() {
     return false;
   }
 
+  const recorded = allowlist.violations;
+  const recordedTotal = sumCounts(recorded);
+
+  // The file's own header must agree with its per-file map. Draining a site by
+  // hand-editing `violations` without lowering `totalViolations` would otherwise
+  // leave the allowlist quietly self-contradicting, and the `allowlist total`
+  // printed below (computed from the map) would disagree with the file on disk.
+  if (allowlist.declaredTotal !== null && allowlist.declaredTotal !== recordedTotal) {
+    console.error(
+      `\n  ✗ arch [env-reads]: ${relative(REPO_ROOT, ENV_ALLOWLIST_PATH)} is self-inconsistent:\n` +
+        `\n      totalViolations says ${allowlist.declaredTotal}, but its own ` +
+        `\`violations\` map sums to ${recordedTotal}.\n` +
+        `\n    The header and the per-file map must agree. Regenerate the allowlist with ` +
+        `\`node scripts/arch-guard.mjs --env-baseline\` rather than hand-editing it.\n`,
+    );
+    return false;
+  }
+
   const actual = scanEnvReadsByFile();
+  const actualTotal = sumCounts(actual);
   const allFiles = new Set([...Object.keys(recorded), ...Object.keys(actual)]);
   const newSites = [];
   const staleSites = [];
-  let recordedTotal = 0;
-  let actualTotal = 0;
 
   for (const file of allFiles) {
     const rec = recorded[file] ?? 0;
     const act = actual[file] ?? 0;
-    recordedTotal += rec;
-    actualTotal += act;
     if (act > rec) newSites.push({ file, recorded: rec, actual: act });
     else if (act < rec) staleSites.push({ file, recorded: rec, actual: act });
   }
@@ -392,11 +418,10 @@ function checkEnvReads() {
 
 /** Regenerate `.arch-guard-env-allowlist.json` from today's actual `process.env` reads. */
 function envBaseline() {
-  const before = loadEnvAllowlist() ?? {};
-  const beforeTotal = Object.values(before).reduce((a, b) => a + b, 0);
+  const beforeTotal = sumCounts(loadEnvAllowlist()?.violations ?? {});
 
   const actual = scanEnvReadsByFile();
-  const afterTotal = Object.values(actual).reduce((a, b) => a + b, 0);
+  const afterTotal = sumCounts(actual);
 
   const sortedViolations = Object.fromEntries(
     Object.keys(actual)
