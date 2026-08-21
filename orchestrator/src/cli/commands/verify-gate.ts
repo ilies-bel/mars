@@ -24,7 +24,8 @@ import {
   restoreVerifyGate,
   updateVerifyGate,
 } from '../../core/verify-gates'
-import { loadVerifyScopes, verifyChanges } from '../../core/lib/git/verify'
+import { loadVerifyScopes } from '../../core/ports/verifier/verify-helpers'
+import { resolveVerifier } from '../../core/ports/verifier/registry'
 import { computeFailureSignature } from '../../core/lib/failure-signature'
 import { detectVerifyGates } from '../../init/detect-verify-gates'
 import { detectMalformedGateArgs } from '../../core/lib/gate-args-validation'
@@ -423,7 +424,7 @@ const verifyGateRestore: Command = {
       let output: string
       let passed: boolean
       try {
-        const result = await verifyChanges({
+        const result = await resolveVerifier().run({
           cwd: deps.ctx.repoRoot,
           steps: [
             {

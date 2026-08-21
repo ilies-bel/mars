@@ -109,7 +109,7 @@ module.exports = {
     // =========================================================================
     // MODULAR-CORE BOUNDARIES (rework/modular-core)
     // =========================================================================
-    // Four rules enforcing the seams the modular-core rework depends on. Each
+    // Five rules enforcing the seams the modular-core rework depends on. Each
     // is scoped to pass CLEAN on today's tree — no baseline growth — by
     // excluding the one or two files that ARE the seam (the registry/shell
     // modules a rule's own boundary requires to cross it). Widening a `from`/
@@ -219,12 +219,47 @@ module.exports = {
       to: { path: '^orchestrator/src/core/workers/' },
     },
 
+    {
+      name: 'verifier-port-only',
+      severity: 'error',
+      comment:
+        'Verification internals are reachable only through the Verifier Port ' +
+        '(core/ports/verifier/*, ADR-0097). `core/lib/git/verify.ts` (the local subprocess gate ' +
+        'runner) and `tools/verify/review.ts` (the review shell that wraps it — worktree/dirty-main ' +
+        'preflight, gate selection *and* execution, fix-task dispatch, the LLM full-review path, and ' +
+        'the manual-QA park) are the two concrete implementations the port fronts. Importing either ' +
+        'directly from outside core/ports/verifier/ lets a caller bypass the swappable seam — e.g. a ' +
+        'future remote-http Verifier binding would silently stop covering that caller. Resolve a ' +
+        'Verifier through registry.ts (`resolveVerifier`/`requireVerifier`) to run gates, or — for ' +
+        'the non-`run()` verify vocabulary (step specs, scope loading, worktree cleanup) — through ' +
+        'the port\'s `types.ts`/`verify-helpers.ts` re-exports. `tools/verify/review.ts` is excepted ' +
+        'from `from` (not just `to`): it is itself one of the two wrapped modules and legitimately ' +
+        'imports helper vocabulary straight out of `verify.ts`, the same way `core-no-direct-' +
+        'provider-impl` above excepts a provider\'s own self-registration module. Test files are ' +
+        'excepted the same way every other rule in this section excepts them: a unit test\'s ' +
+        '`vi.mock(\'.../core/lib/git/verify\', ...)` must name the concrete module\'s real resolved ' +
+        'path to intercept what the port\'s `local` implementation actually calls — mocking the ' +
+        'port re-export instead would not intercept anything.',
+      from: {
+        path: '^orchestrator/src/',
+        pathNot: [
+          '^orchestrator/src/core/ports/verifier/',
+          '^orchestrator/src/tools/verify/review\\.ts$',
+          '(^|/)__tests__/',
+          '\\.(test|spec)\\.ts$',
+        ],
+      },
+      to: {
+        path: '^orchestrator/src/core/lib/git/verify\\.ts$|^orchestrator/src/tools/verify/review\\.ts$',
+      },
+    },
+
     // =========================================================================
     // STUB — MODULAR-CORE PORT BOUNDARIES (PRD ae17340a). INTENTIONALLY
     // DISABLED. DO NOT ENABLE YET.
     // =========================================================================
     // Contract slice for ADR-0097 ("every seam is a cordis service Port with
-    // serializable contracts"). Four consumer slices each thicken one of the
+    // serializable contracts"). Three consumer slices each thicken one of the
     // rules below by (a) building/finishing the named `core/ports/<name>/`
     // module — mirroring the existing `core/ports/{code-index,reflector,
     // verifier}/` shape (types.ts + registry.ts + one file per impl kind +
@@ -236,15 +271,22 @@ module.exports = {
     // `main` for every task that branches afterward — the opposite of what an
     // owner slice landing ahead of its consumers is for. A consumer slice
     // uncomments its own rule as part of proving its own boundary; it does
-    // NOT touch the other three.
+    // NOT touch the others.
     //
     // Do not "fix" this by pre-populating `pathNot` with every current
     // caller: for CLI (~46 files) and the not-yet-built Executor/VCS ports
     // that defeats the rule (it would pass by excluding everything it exists
-    // to catch). Verifier is the one exception close enough to activate with
-    // a small, real `pathNot` carve-out today — left commented anyway so all
-    // four land the same way and no rule goes live without its slice's own
-    // verify proving it.
+    // to catch).
+    //
+    // The fourth rule this stub used to describe, `no-direct-verifier-
+    // internals`, is DONE and lives above as the active `verifier-port-only`
+    // rule (not here, and not disabled) — its consumer slice migrated every
+    // real caller (cli/commands/verify-gate.ts, tools/coder/run-agent.ts,
+    // tools/merge/merge.ts, tools/verify/selection.ts,
+    // workflows/primitives/shared.ts, plus one test that drove verifyChanges
+    // directly) onto core/ports/verifier and landed the rule clean, with no
+    // baseline seed and no pathNot carve-outs beyond the port dir, verify.ts's
+    // own tests, and review.ts's documented self-import exception.
 
     // {
     //   name: 'cli-no-orchestrator-internals',
@@ -272,37 +314,6 @@ module.exports = {
     //       '^orchestrator/src/tools/',
     //     ],
     //   },
-    // },
-    // {
-    //   name: 'no-direct-verifier-internals',
-    //   severity: 'error',
-    //   comment:
-    //     'Consumer slice: "Arch-guard: no direct imports of the verifier internals". The Verifier ' +
-    //     'port (core/ports/verifier/{types,registry,local-subprocess,remote-http,review-verifier}.ts) ' +
-    //     'already wraps core/lib/git/verify.ts (verifyChanges, loadVerifyScopes, ' +
-    //     'cleanWorktreeIfNoCommitsAhead, selectVerifySteps) and tools/verify/review.ts — reach ' +
-    //     'those directly from anywhere else and a verify strategy swap (e.g. remote-http) silently ' +
-    //     'stops covering that caller. Today\'s real remaining violators — narrow enough to carve out ' +
-    //     'directly instead of a baseline seed — are cli/commands/verify-gate.ts, ' +
-    //     'tools/coder/run-agent.ts, tools/merge/merge.ts, tools/verify/selection.ts, and ' +
-    //     'workflows/primitives/shared.ts. TO ENABLE: migrate each onto core/ports/verifier, then ' +
-    //     'delete this rule\'s temporary pathNot entries one by one as each caller moves.',
-    //   from: {
-    //     path: '^orchestrator/src/',
-    //     pathNot: [
-    //       '^orchestrator/src/core/lib/git/verify\\.ts$',
-    //       '^orchestrator/src/core/ports/verifier/',
-    //       '^orchestrator/src/tools/verify/review\\.ts$',
-    //       '^orchestrator/src/cli/commands/verify-gate\\.ts$', // TODO(consumer slice): migrate, then drop
-    //       '^orchestrator/src/tools/coder/run-agent\\.ts$', // TODO(consumer slice): migrate, then drop
-    //       '^orchestrator/src/tools/merge/merge\\.ts$', // TODO(consumer slice): migrate, then drop
-    //       '^orchestrator/src/tools/verify/selection\\.ts$', // TODO(consumer slice): migrate, then drop
-    //       '^orchestrator/src/workflows/primitives/shared\\.ts$', // TODO(consumer slice): migrate, then drop
-    //       '(^|/)__tests__/',
-    //       '\\.(test|spec)\\.ts$',
-    //     ],
-    //   },
-    //   to: { path: '^orchestrator/src/core/lib/git/verify\\.ts$' },
     // },
     // {
     //   name: 'agent-execution-through-executor-port',

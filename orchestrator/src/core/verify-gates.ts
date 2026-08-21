@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { resolveStateClient } from './store/state-client.js'
 import type { DbTx } from './lib/db.js'
-import type { VerifyScope, VerifyStepSpec } from './lib/git/verify.js'
+import type { VerifyScope, VerifyStepSpec } from './ports/verifier/types.js'
 
 // The specific DDL for this table — kept here so callers can ensure just this
 // table without pulling in the full canonical schema.

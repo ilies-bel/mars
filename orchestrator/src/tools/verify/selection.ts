@@ -2,7 +2,8 @@
  * Verify step selection helpers shared by the `review` shell and consumer
  * slices. Split out of `workflows/primitives/index.ts` (TARGET §2.1).
  */
-import { SPEC_VERIFY_CMD_STEP, type VerifyStepSpec } from '../../core/lib/git/verify'
+import { SPEC_VERIFY_CMD_STEP } from '../../core/ports/verifier/verify-helpers'
+import type { VerifyStepSpec } from '../../core/ports/verifier/types'
 
 // ---------------------------------------------------------------------------
 // Spec-verifyCmd step builder (shared contract for consumer slices)

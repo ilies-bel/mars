@@ -13,7 +13,7 @@ import {
   ResumeWorktreeUnrecoverable,
   type WorktreeRef,
 } from '../../core/lib/git/worktree'
-import { cleanWorktreeIfNoCommitsAhead, selectVerifySteps } from '../../core/lib/git/verify'
+import { cleanWorktreeIfNoCommitsAhead, selectVerifySteps } from '../../core/ports/verifier/verify-helpers'
 import { createWorker, pickWorkerForTags, Workers, type Worker } from '../../core/workers'
 import { resolveContext } from '../../core/context'
 import { type AgentEvent } from '../../core/lib/claude-stream'

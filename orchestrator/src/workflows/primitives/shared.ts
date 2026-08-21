@@ -24,7 +24,7 @@ import { readWorkerPromptOverride } from '../../core/daemon/config'
 import { composeCodexPrompt } from '../../core/workers/providers/codex-headless'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
 import type { WorkerName } from '../../core/workers'
-import type { VerifyStepSpec } from '../../core/lib/git/verify'
+import type { VerifyStepSpec } from '../../core/ports/verifier/types'
 
 // ---------------------------------------------------------------------------
 // Schemas mirrored from the workflow input contract

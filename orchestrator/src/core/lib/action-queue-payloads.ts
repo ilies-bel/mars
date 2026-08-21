@@ -30,7 +30,7 @@
  */
 
 import type { ActionQueueKind } from './action-queue-kinds'
-import type { VerifyStepSpec } from './git/verify'
+import type { VerifyStepSpec } from '../ports/verifier/types'
 
 // ── Shared shapes ─────────────────────────────────────────────────────────────
 

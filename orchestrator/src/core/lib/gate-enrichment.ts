@@ -5,7 +5,7 @@ import {
   getGateBurnInStatus,
   recordGateReplayResult,
 } from './gate-burn-in'
-import type { VerifyScope, VerifyStep, VerifyStepSpec } from './git/verify'
+import type { VerifyScope, VerifyStep, VerifyStepSpec } from '../ports/verifier/types'
 import {
   lookupFailureKind,
   failingStepFromSignature,

@@ -11,7 +11,7 @@ import {
   removeWorktree,
   type WorktreeRef,
 } from '../../core/lib/git/worktree'
-import { verifyChanges } from '../../core/lib/git/verify'
+import { resolveVerifier } from '../../core/ports/verifier/registry'
 import {
   checkMergeTargetStatus,
   isZeroCommitBranch,
@@ -231,16 +231,20 @@ export const merge = async (
     // >= 22.13.0, so it is always safe to call here.
     const gateSignal = AbortSignal.timeout(INTEGRATION_GATE_TIMEOUT_MS)
 
-    // Run gates via verifyChanges, remapping tier to 'task' so the function
-    // actually executes them (verifyChanges defers integration-tier steps to
-    // this boundary).
-    const gateResult = await verifyChanges({
-      cwd: worktreePath,
-      steps: integrationSteps.map((s) => ({ ...s, tier: 'task' as const })),
-      // No branch/integrationBranch — skip the has-diff gate for this run.
-      traceCtx: buildPhaseCtx(trace, taskId, 'merge'),
-      signal: gateSignal,
-    })
+    // Run gates via the Verifier port, remapping tier to 'task' so the
+    // implementation actually executes them (the underlying runner defers
+    // integration-tier steps to this boundary).
+    const gateResult = await resolveVerifier().run(
+      {
+        cwd: worktreePath,
+        steps: integrationSteps.map((s) => ({ ...s, tier: 'task' as const })),
+        // No branch/integrationBranch — skip the has-diff gate for this run.
+      },
+      {
+        traceCtx: buildPhaseCtx(trace, taskId, 'merge'),
+        signal: gateSignal,
+      },
+    )
 
     // Build the formatted output and structured gate-outcomes block, recorded
     // with tier:'integration' so the run-timeline view can distinguish them

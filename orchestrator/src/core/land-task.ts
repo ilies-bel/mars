@@ -33,11 +33,8 @@ import {
 import { getRepoRoot, getStateDir } from './context'
 import { acquireLock } from './lib/git/lock'
 import { resolveAllRowsForTask } from './lib/action-queue'
-import {
-  getChangedFiles,
-  selectVerifySteps,
-  verifyChanges,
-} from './lib/git/verify'
+import { getChangedFiles, selectVerifySteps } from './ports/verifier/verify-helpers'
+import { resolveVerifier } from './ports/verifier/registry'
 import { loadVerifyGates } from './verify-gates'
 import { removeWorktree } from './lib/git/worktree'
 import { provisionWorktreeDeps } from './lib/worktree-deps'
@@ -140,7 +137,7 @@ export const landTask = async (
   const changedFiles = await getChangedFiles(worktreePath, integrationBranch, branch)
   const steps = selectVerifySteps(scopes, changedFiles)
 
-  const verifyResult = await verifyChanges({
+  const verifyResult = await resolveVerifier().run({
     cwd: worktreePath,
     steps,
     branch,

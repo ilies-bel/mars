@@ -2,8 +2,8 @@
  * Regression test — mars-f65e20f9 (slice 3 of 5)
  *
  * Proves that a filtered pipeline cannot silently mask a failing typecheck
- * by driving verifyChanges with a real subprocess (a PATH-shadowed npm shim
- * that exits 2 and writes a TypeScript diagnostic to stderr).
+ * by driving the (local) Verifier Port with a real subprocess (a PATH-shadowed
+ * npm shim that exits 2 and writes a TypeScript diagnostic to stderr).
  *
  * The incident: a task's spec-verify-cmd was
  *   npm run typecheck 2>&1 | grep "error TS" | head -10
@@ -16,11 +16,11 @@
  * any pipeline, preventing the false green from recurring.
  *
  * Two cases verified here:
- *  1. Direct command ('npm run typecheck') — verifyChanges returns
+ *  1. Direct command ('npm run typecheck') — the Verifier returns
  *     passed:false and exitCode:2 on the spec-verify-cmd step.
  *  2. Incident-verbatim filtered pipeline — with bash -o pipefail the
  *     leftmost non-zero exit (npm's 2) propagates through grep | head,
- *     so verifyChanges still returns passed:false and exitCode:2.
+ *     so the Verifier still returns passed:false and exitCode:2.
  *
  * The rendered verifyOutput (from the review primitive, slice 1) for a step
  * with exitCode=2 contains the token 'exit=2' (format:
@@ -31,7 +31,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { verifyChanges } from '../../../core/lib/git/verify'
+import { resolveVerifier } from '../../../core/ports/verifier/registry'
 
 // ---------------------------------------------------------------------------
 // PATH shim: a fake npm binary that exits 2 on 'npm run typecheck'
@@ -88,7 +88,7 @@ describe('verify — filtered pipeline cannot mask a failing typecheck', () => {
   it(
     'scenario 1: direct npm run typecheck — passed:false, exitCode:2',
     async () => {
-      const result = await verifyChanges({
+      const result = await resolveVerifier().run({
         cwd: tmpDir,
         steps: [makeSpecVerifyStep('npm run typecheck')],
       })
@@ -120,7 +120,7 @@ describe('verify — filtered pipeline cannot mask a failing typecheck', () => {
       // With bash -o pipefail the leftmost non-zero exit (npm's 2) propagates.
       const incidentCmd = 'npm run typecheck 2>&1 | grep "error TS" | head -10'
 
-      const result = await verifyChanges({
+      const result = await resolveVerifier().run({
         cwd: tmpDir,
         steps: [makeSpecVerifyStep(incidentCmd)],
       })
