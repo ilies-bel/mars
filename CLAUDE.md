@@ -468,6 +468,20 @@ recovery-spawn path itself.
   a coder *and* a full recovery attempt spent on it, so it is exactly the
   kind of branch most likely to be carrying substantial, easily-discarded
   partial work.
+  **A rescue-operator brief's arc listing is a snapshot, not live state —
+  re-read every id before acting.** The `[rescue-operator]` prompt inlines
+  its "Arc members (id | status | ...)" table as captured when the arc
+  dead-ended, and it can be minutes to hours stale by dispatch. Observed on
+  arc `ae17340a`: the brief listed the origin `mars-9dd152c7` as `queued`
+  when it had already been `dropped`, and the failed task's worktree had
+  been removed with no tombstone. Choosing between `restart`, `continue`
+  and `supersede` from that table alone picks the wrong verb — and two of
+  those three verbs destroy commits. Before acting, confirm with
+  `mars --repo <root> show <id>` (status, branch, worktree) and
+  `git rev-list --count main..<branch>` (is anything actually ahead?). In
+  particular a **missing worktree silently degrades `continue` into a
+  destructive `restart`**, so "continue is the safe default" stops being
+  true exactly when the branch has work worth keeping.
 - **Deleting tasks: `purge` vs `drop`.** `mars purge <id>` only accepts
   terminal tasks (`failed`/`done`/`dropped`) — it refuses anything it
   considers in-flight, and `queued` counts as in-flight. `mars drop <id>
