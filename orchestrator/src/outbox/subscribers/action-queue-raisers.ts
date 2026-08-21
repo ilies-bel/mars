@@ -22,6 +22,14 @@ export const DROPPED_VIA_SUPERSEDE_CLEARER_SUBSCRIBER = 'action-queue-raiser:tas
 registerSubscriberName(DROPPED_VIA_SUPERSEDE_CLEARER_SUBSCRIBER);
 
 /**
+ * Unique name for the durable subscriber that writes back the task-fate
+ * outcome (PRD 1e904a61) of a fired learned recipe once its acted-on task
+ * reaches a terminal state.
+ */
+export const LEARNED_RECIPE_OUTCOME_RESOLVER_SUBSCRIBER = 'action-queue-raiser:task.terminal-recipe-outcome';
+registerSubscriberName(LEARNED_RECIPE_OUTCOME_RESOLVER_SUBSCRIBER);
+
+/**
  * Fix task statuses that indicate recovery is actively in progress and no
  * human action is required. Matches the "outstanding" set described in the
  * invariant (ADR-0051): the alert surface must be clear while automated
@@ -63,6 +71,7 @@ export function buildActionQueueRaiserSubscribers(client: DbClient): Subscriber[
   return [
     taskBlockedActionQueueRaiser(client),
     droppedViaSupersedeClearer(client),
+    learnedRecipeOutcomeResolver(client),
   ];
 }
 
@@ -266,6 +275,49 @@ function droppedViaSupersedeClearer(client: DbClient): Subscriber {
         'origin-dropped',
         `outbox:${DROPPED_VIA_SUPERSEDE_CLEARER_SUBSCRIBER}`,
       );
+    },
+  };
+}
+
+/**
+ * Subscriber that writes the eventual fate of a task back onto its
+ * most-recent fired learned-recipe run (PRD 1e904a61), so the system can
+ * later tell a recipe that helps from one that does nothing
+ * (`recipeOutcomeStats`).
+ *
+ * Listens for `task.terminal`. `reason: 'done'` resolves the task's open
+ * auto-recipe run (if any) as `'helped'`; `reason: 'failed'` resolves it as
+ * `'did-not-help'` — the recipe fired for this task and the task went on to
+ * fail again regardless. `'dropped'` / `'purged'` are not a resolved
+ * signal (the task's fate was never actually settled by running to
+ * completion) and are left open (`null`).
+ *
+ * `recordAutoRecipeTaskOutcome` is itself a no-op when the task has no open
+ * run, so this subscriber costs nothing for the overwhelming majority of
+ * terminal tasks that never had a recipe fire on them.
+ */
+function learnedRecipeOutcomeResolver(client: DbClient): Subscriber {
+  return {
+    name: LEARNED_RECIPE_OUTCOME_RESOLVER_SUBSCRIBER,
+    handler: async (event: BusEvent): Promise<void> => {
+      if (event.type !== 'task.terminal') return;
+
+      const p = event.payload as { taskId: string; reason: 'done' | 'dropped' | 'failed' | 'purged' };
+      if (p.reason !== 'done' && p.reason !== 'failed') return;
+
+      const { ran } = await processedOnce({
+        client,
+        subscriberId: LEARNED_RECIPE_OUTCOME_RESOLVER_SUBSCRIBER,
+        eventId: event.id,
+        sideEffect: async (_tx) => {
+          // Event-level dedup only; the write happens outside via the
+          // module-level state client, mirroring the other subscribers here.
+        },
+      });
+      if (!ran) return;
+
+      const { recordAutoRecipeTaskOutcome } = await import('../../core/lib/learned-recipes.js');
+      await recordAutoRecipeTaskOutcome(p.taskId, p.reason === 'done' ? 'helped' : 'did-not-help');
     },
   };
 }

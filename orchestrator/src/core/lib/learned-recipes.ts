@@ -29,10 +29,21 @@
  *    one historic failure) or broad, without waiting for it to actually fire
  *    again.
  *
- * The outcome log itself: each auto-run starts `outcome: 'pending'` and is
- * later resolved via `recordAutoRecipeOutcome` once the acted-on task's fate
- * is known, so `listAutoRecipeRuns({ signature })` can be checked before
- * trusting the recipe again.
+ * The outcome log tracks two distinct signals per run:
+ *
+ *  - `outcome` — did the recipe's op *execute* without throwing? Starts
+ *    `'pending'`, resolved synchronously via `recordAutoRecipeOutcome` the
+ *    moment `executeLearnedOp` returns or throws.
+ *  - `taskOutcome` (PRD 1e904a61) — did firing the recipe actually *help*
+ *    the acted-on task, i.e. did the task go on to reach `done`, or did it
+ *    fail again? Starts `null`, resolved later via
+ *    `recordAutoRecipeTaskOutcome` once the task's eventual fate is known.
+ *    `recipeOutcomeStats(signature)` aggregates this across every run of a
+ *    signature so a recipe that helps can be told apart from one that does
+ *    nothing.
+ *
+ * `listAutoRecipeRuns({ signature })` can be checked before trusting the
+ * recipe again.
  */
 
 import { randomUUID } from 'node:crypto'
@@ -77,6 +88,17 @@ export interface LearnedRecipe {
  */
 export type AutoRecipeOutcome = 'pending' | 'success' | 'failure'
 
+/**
+ * Task-fate outcome of a fired auto-recipe (ADR-0099 / PRD 1e904a61): did
+ * acting on the recipe actually help the acted-on task, or did it not help
+ * (the task failed again after the recipe ran)? Distinct from
+ * {@link AutoRecipeOutcome}, which reflects only whether the recipe's op
+ * *executed* without throwing — resolved synchronously at run time.
+ * `task_outcome` is resolved later, once the task reaches a terminal state,
+ * via `recordAutoRecipeTaskOutcome`. `null` means not yet known.
+ */
+export type AutoRecipeTaskOutcome = 'helped' | 'did-not-help' | null
+
 /** One logged auto-run entry persisted in `auto_recipe_runs`. */
 export interface AutoRecipeRun {
   id: string
@@ -90,6 +112,10 @@ export interface AutoRecipeRun {
   ranAt: string
   /** Outcome feedback (ADR-0099), resolved after the fact via `recordAutoRecipeOutcome`. */
   outcome: AutoRecipeOutcome
+  /** Task-fate outcome (ADR-0099), resolved after the fact via `recordAutoRecipeTaskOutcome`. */
+  taskOutcome: AutoRecipeTaskOutcome
+  /** ISO-8601 timestamp when `taskOutcome` was resolved, or null while pending. */
+  taskOutcomeAt: string | null
 }
 
 // ── CRUD ──────────────────────────────────────────────────────────────────────
@@ -273,7 +299,8 @@ export async function listAutoRecipeRuns(
     conditions.push(`ran_at > ?`)
     args.push(opts.since)
   }
-  let sql = `SELECT id, signature, action_op, task_id, ran_at, outcome FROM auto_recipe_runs`
+  let sql = `SELECT id, signature, action_op, task_id, ran_at, outcome, task_outcome, task_outcome_at
+             FROM auto_recipe_runs`
   if (conditions.length > 0) {
     sql += ` WHERE ${conditions.join(' AND ')}`
   }
@@ -288,6 +315,8 @@ export async function listAutoRecipeRuns(
       task_id: string | null
       ran_at: string
       outcome: AutoRecipeOutcome
+      task_outcome: AutoRecipeTaskOutcome
+      task_outcome_at: string | null
     }
     return {
       id: r.id,
@@ -296,8 +325,74 @@ export async function listAutoRecipeRuns(
       taskId: r.task_id,
       ranAt: r.ran_at,
       outcome: r.outcome,
+      taskOutcome: r.task_outcome,
+      taskOutcomeAt: r.task_outcome_at,
     }
   })
+}
+
+// ── Task-fate outcome (ADR-0099 / PRD 1e904a61) ────────────────────────────────
+
+/**
+ * Resolve the task-fate outcome of the most recent *open* auto-recipe run
+ * for `taskId` — "open" meaning `task_outcome IS NULL`, i.e. not yet
+ * resolved. Called once the acted-on task's eventual fate is known (it
+ * reached `done`, or failed again after the recipe fired), so a recipe that
+ * helps can be told apart from one that does nothing.
+ *
+ * No-op when `taskId` has no open run — e.g. no recipe ever fired for this
+ * task, or its most recent run was already resolved.
+ */
+export async function recordAutoRecipeTaskOutcome(
+  taskId: string,
+  outcome: Exclude<AutoRecipeTaskOutcome, null>,
+): Promise<void> {
+  const client = resolveStateClient()
+  const openRun = await client.execute({
+    sql: `SELECT id FROM auto_recipe_runs
+          WHERE task_id = ? AND task_outcome IS NULL
+          ORDER BY ran_at DESC LIMIT 1`,
+    args: [taskId],
+  })
+  if (openRun.rows.length === 0) return
+  const { id } = openRun.rows[0] as unknown as { id: string }
+  await client.execute({
+    sql: `UPDATE auto_recipe_runs SET task_outcome = ?, task_outcome_at = ? WHERE id = ?`,
+    args: [outcome, new Date().toISOString(), id],
+  })
+}
+
+/**
+ * Aggregate task-fate outcomes (ADR-0099 / PRD 1e904a61) across every
+ * auto-run of `failureSignature`, so an operator (or a future auto-run gate)
+ * can tell a recipe that helps from one that does nothing.
+ */
+export async function recipeOutcomeStats(
+  failureSignature: string,
+): Promise<{ fired: number; helped: number; didNotHelp: number; unknown: number }> {
+  const client = resolveStateClient()
+  const result = await client.execute({
+    sql: `SELECT
+            COUNT(*) AS fired,
+            COUNT(*) FILTER (WHERE task_outcome = 'helped') AS helped,
+            COUNT(*) FILTER (WHERE task_outcome = 'did-not-help') AS did_not_help,
+            COUNT(*) FILTER (WHERE task_outcome IS NULL) AS unknown
+          FROM auto_recipe_runs
+          WHERE signature = ?`,
+    args: [failureSignature],
+  })
+  const row = result.rows[0] as unknown as {
+    fired: number | string
+    helped: number | string
+    did_not_help: number | string
+    unknown: number | string
+  }
+  return {
+    fired: Number(row.fired),
+    helped: Number(row.helped),
+    didNotHelp: Number(row.did_not_help),
+    unknown: Number(row.unknown),
+  }
 }
 
 // ── Auto-run execution ────────────────────────────────────────────────────────

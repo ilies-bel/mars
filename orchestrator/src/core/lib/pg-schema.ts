@@ -1741,6 +1741,19 @@ const DDL: readonly string[] = [
   `ALTER TABLE auto_recipe_runs ADD COLUMN IF NOT EXISTS outcome_note text`,
   `CREATE INDEX IF NOT EXISTS idx_auto_recipe_runs_signature_outcome
      ON auto_recipe_runs(signature, outcome)`,
+  // PRD 1e904a61 ("align self-improvement loops with weakest-valid-hypothesis
+  // induction"): the columns above already track whether the auto-run *op
+  // itself* executed without throwing (`outcome`, resolved synchronously the
+  // moment `executeLearnedOp` returns — see action-queue-raisers.ts). That is
+  // a different question from whether firing the recipe actually helped the
+  // *task*: a restart can execute cleanly and the task can still fail again
+  // right after. `task_outcome`/`task_outcome_at` track that second,
+  // later-resolved signal — null until the acted-on task reaches a terminal
+  // state, so both columns are nullable for historic rows by construction.
+  `ALTER TABLE auto_recipe_runs ADD COLUMN IF NOT EXISTS task_outcome text`,
+  `ALTER TABLE auto_recipe_runs ADD COLUMN IF NOT EXISTS task_outcome_at text`,
+  `CREATE INDEX IF NOT EXISTS idx_auto_recipe_runs_task_outcome
+     ON auto_recipe_runs(task_id, task_outcome)`,
 
   // ── candidate lessons (under-corroborated inductions, ADR-0099) ──────────
   // An induction that does not yet clear the corroboration floor (the
