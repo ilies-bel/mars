@@ -1165,6 +1165,53 @@ export const findOpenReflectionDraftByFingerprint = async (
   return { id: row.id, notes: row.notes ?? '' }
 }
 
+/** What became of a past reflection-sourced proposal. */
+export type ProposalFate = 'promoted' | 'dismissed' | 'open'
+
+export interface PriorProposalOutcome {
+  fingerprint: string
+  title: string
+  fate: ProposalFate
+}
+
+const fateForProposalStatus = (status: string): ProposalFate => {
+  if (status === 'dismissed' || status === 'expired') return 'dismissed'
+  if (status === 'draft') return 'open'
+  // 'prd-ready' | 'slicing' | 'sliced' | 'taken' — moved past the operator's
+  // draft gate, i.e. accepted and acted on.
+  return 'promoted'
+}
+
+/**
+ * Recent reflection-sourced proposals (fingerprinted ones only) with their
+ * lifecycle fate, newest-updated first. Feeds the reflector's
+ * prior-suggestion-outcome prompt section (PRD 1e904a61 slice 16) so each
+ * reflect run can see what happened to its predecessor's suggestions —
+ * promoted, dismissed, or still open — instead of re-proposing an idea the
+ * operator already rejected.
+ */
+export const listRecentReflectionOutcomes = async (
+  limit = 20,
+): Promise<PriorProposalOutcome[]> => {
+  await initProposals()
+  const c = stateClient()
+  const r = await c.execute({
+    sql: `SELECT fingerprint, title, status FROM proposals
+           WHERE source = 'reflection' AND fingerprint IS NOT NULL
+           ORDER BY updated_at DESC
+           LIMIT ?`,
+    args: [limit],
+  })
+  return r.rows.map((row) => {
+    const r2 = row as unknown as Record<string, unknown>
+    return {
+      fingerprint: (r2.fingerprint as string | null) ?? '',
+      title: (r2.title as string | null) ?? '',
+      fate: fateForProposalStatus((r2.status as string | null) ?? 'draft'),
+    }
+  })
+}
+
 /**
  * Return ids of open (non-done, non-dropped) tasks whose prompt shares at
  * least 2 distinctive keywords with the given suggestion title. Used by the

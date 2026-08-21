@@ -361,6 +361,41 @@ Rated exchanges (newest first):
 <EXCHANGES>
 --- End Chat Feedback ---`
 
+const PRIOR_OUTCOMES_INSTRUCTIONS = `
+
+--- Prior Reflection Suggestions (what happened to them) ---
+
+The list below shows recent suggestions this reflector previously emitted,
+identified by their stable \`rootCauseKey\` fingerprint, and what became of
+each one:
+
+- "promoted": the operator accepted it (moved the draft proposal past
+  'draft', e.g. to prd-ready/sliced/taken).
+- "dismissed": the operator explicitly rejected it.
+- "open": still an unresolved draft awaiting an operator decision.
+
+Do NOT re-emit a suggestion whose predecessor is listed as "dismissed"
+unless you can name NEW affected task instances beyond the ones already
+cited for that fingerprint — the operator already said no to the pattern
+as previously described. If new instances justify raising it again, name
+them explicitly in the suggestion's rationale so the operator can see why
+this time is different. Suggestions listed as "open" or "promoted" are not
+gated this way — an "open" one may still be worth restating with fresh
+evidence, and a "promoted" one may resurface if the pattern regresses.
+
+Prior suggestions (fingerprint | title | fate):
+<PRIOR_OUTCOMES>
+--- End Prior Reflection Suggestions ---`
+
+const formatPriorOutcomesSection = (
+  priorOutcomes: readonly import('../proposals').PriorProposalOutcome[],
+): string => {
+  const lines = priorOutcomes
+    .map((o) => `${o.fingerprint} | ${o.title} | ${o.fate}`)
+    .join('\n')
+  return PRIOR_OUTCOMES_INSTRUCTIONS.replace('<PRIOR_OUTCOMES>', lines)
+}
+
 const formatChatFeedbackSection = (
   chatFeedback: readonly import('./chat-feedback-query').ChatFeedbackEntry[],
   chatSystemPrompt: string,
@@ -405,13 +440,19 @@ ${summaryJson}
 Recent task corpus (newest first):
 ${entriesJson}`
 
+  const priorOutcomes = corpus.priorOutcomes
+  const withPriorOutcomes =
+    priorOutcomes && priorOutcomes.length > 0
+      ? `${base}${formatPriorOutcomesSection(priorOutcomes)}`
+      : base
+
   const feedback = corpus.chatFeedback
   if (!feedback || feedback.length === 0) {
-    return base
+    return withPriorOutcomes
   }
 
   const systemPrompt = corpus.chatSystemPrompt ?? ''
-  return `${base}${formatChatFeedbackSection(feedback, systemPrompt)}`
+  return `${withPriorOutcomes}${formatChatFeedbackSection(feedback, systemPrompt)}`
 }
 
 interface ParsedDocument {

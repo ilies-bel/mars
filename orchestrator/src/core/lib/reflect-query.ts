@@ -5,6 +5,7 @@ import { isReflectDisabled } from './reflect-signals'
 import type { ChatFeedbackEntry } from './chat-feedback-query'
 import { findBaselineCaughtTaskIds } from './baseline-attribution'
 import type { DispatchPauseState } from '../daemon/pause-state'
+import type { PriorProposalOutcome } from '../proposals'
 
 export interface ReflectCorpusEntry {
   taskId: string
@@ -130,6 +131,14 @@ export interface ReflectCorpus {
    * alongside the rated exchanges. Undefined when there is no chat feedback.
    */
   chatSystemPrompt?: string
+  /**
+   * Recent reflection-sourced proposals and what became of them (promoted /
+   * dismissed / still open). Populated by `loadRecentTaskCorpus` so `buildPrompt`
+   * can tell the model not to re-emit a suggestion whose predecessor was
+   * already dismissed, unless new instances justify it (PRD 1e904a61 slice 16).
+   * Empty array when there is no reflection history yet.
+   */
+  priorOutcomes?: readonly PriorProposalOutcome[]
 }
 
 export interface LoadCorpusOptions {
@@ -569,10 +578,22 @@ export const loadRecentTaskCorpus = async (
     }
   }
 
+  // Prior reflection-suggestion outcomes — best-effort like chat feedback
+  // above: a store that predates the proposals schema (fresh test store)
+  // must degrade to an empty list, never fail the main corpus load.
+  let priorOutcomes: readonly PriorProposalOutcome[] = []
+  try {
+    const { listRecentReflectionOutcomes } = await import('../proposals.js')
+    priorOutcomes = await listRecentReflectionOutcomes()
+  } catch {
+    // proposals table absent (test store, fresh install) — skip gracefully
+  }
+
   return {
     entries: grouped,
     costSummary: buildCostSummary(grouped, rateLimitRejections),
     chatFeedback,
     chatSystemPrompt,
+    priorOutcomes,
   }
 }
