@@ -210,6 +210,11 @@ export const buildRescueOperatorPrompt = (input: RescueOperatorPromptInput): str
     `Arc context is partial: ${omittedMembers} older members omitted. ` +
     `Members below are newest first and contain structured failure summaries only. ` +
     `Raw task prompts and transcripts are not inlined; inspect a task id or its worktree selectively if needed.\n\n` +
+    `STALE SNAPSHOT WARNING: the statuses below were captured when the arc dead-ended and may ` +
+    `be out of date by dispatch time. Before choosing an action, re-read live state for every id ` +
+    `you are about to act on: \`mars show <id>\` (status, branch, worktree) and ` +
+    `\`git rev-list --count main..<branch>\` (is anything actually ahead?). A missing worktree ` +
+    `silently degrades \`continue\` into a destructive \`restart\`.\n\n` +
     `Arc members (id | status | failure_signature | failure_reason):\n` +
     (members.length === 0
       ? '(no persisted arc members found)\n'

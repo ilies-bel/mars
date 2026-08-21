@@ -244,6 +244,27 @@ describe('buildRescueOperatorPrompt', () => {
     expect(prompt).toContain('verify:failure-12 | failure reason 12')
     expect(prompt).not.toContain('raw task prompt must not be inlined')
   })
+
+  it('warns that arc member statuses are a stale snapshot and names the verification commands', () => {
+    const prompt = buildRescueOperatorPrompt({
+      failedTaskId: 'mars-failed-01',
+      originId: 'mars-origin-01',
+      failureSignature: 'verify:typecheck',
+      arcMembers: [
+        {
+          id: 'mars-failed-01',
+          status: 'failed',
+          failureSignature: 'verify:typecheck',
+          failureReason: 'type error',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    })
+
+    expect(prompt).toMatch(/stale/i)
+    expect(prompt).toContain('mars show <id>')
+    expect(prompt).toContain('git rev-list --count main..<branch>')
+  })
 })
 
 // ---------------------------------------------------------------------------
