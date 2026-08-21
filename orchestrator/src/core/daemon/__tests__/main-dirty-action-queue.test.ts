@@ -475,6 +475,15 @@ describe('failed main-committer source cohort', () => {
     expect(rows[0]!.body).toContain(src2.id)
   }, 60_000)
 
+  // mars-c8f32367: every test in this describe pays the same per-`it()` PGlite
+  // cold-start as the daemon test above — `beforeEach` calls `vi.resetModules()`
+  // and each test re-imports `../../queue` + `migrateQueueSchema()`. That cost
+  // is 1-3s idle but 5-25s under full-suite load (see vitest.config.ts), so the
+  // 30s global `testTimeout` is not headroom, it is a coin flip: this test was
+  // observed timing out at 30s on the merge gate while passing in ~2.8s in
+  // isolation. The sanctioned move is the same local override the daemon test
+  // already carries — the global is a guarded merge-gate constraint and must
+  // not be raised.
   it('leaves a task blocked when other active blockers remain', async () => {
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
@@ -525,7 +534,7 @@ describe('failed main-committer source cohort', () => {
     )
     expect(blockers).not.toContain(res.fixTaskId)
     expect(blockers).toContain(prereq.id)
-  })
+  }, 60_000)
 
   it('newly-enqueued task is NOT permanently blocked on a failed committer for the same branch', async () => {
     // This is the regression test for the reported deadlock:
@@ -578,7 +587,7 @@ describe('failed main-committer source cohort', () => {
       args: [t2.id, first.fixTaskId],
     })
     expect(Number((poisonEdge.rows[0] as unknown as { n: number }).n)).toBe(0)
-  })
+  }, 60_000)
 
   // -------------------------------------------------------------------------
   // Core invariant: failed committers keep their parked source cohort
@@ -628,7 +637,7 @@ describe('failed main-committer source cohort', () => {
       args: [res.fixTaskId],
     })
     expect(Number((edges.rows[0] as unknown as { n: number }).n)).toBe(1)
-  })
+  }, 60_000)
 
 })
 
