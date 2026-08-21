@@ -1708,6 +1708,12 @@ const DDL: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_auto_recipe_runs_ran_at
      ON auto_recipe_runs(ran_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_auto_recipe_runs_signature
+     ON auto_recipe_runs(signature, ran_at DESC)`,
+  // Outcome feedback (ADR-0099): every auto-run is logged as 'pending' and
+  // later resolved to 'success' | 'failure' once the acted-on task's fate is
+  // known, so the recipe's outcome log can be consulted before re-firing.
+  `ALTER TABLE auto_recipe_runs ADD COLUMN IF NOT EXISTS outcome text NOT NULL DEFAULT 'pending'`,
 
   // ── Steward intervention ledger ─────────────────────────────────────────
   // Append-only evidence for every proactive Steward action. The target

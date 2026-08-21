@@ -47,6 +47,7 @@ describe('learned-recipes — teach / get / unlearn', () => {
     expect(recipe!.failureSignature).toBe('verify:typecheck/typecheck-type-mismatch')
     expect(recipe!.actionOp).toBe('restart')
     expect(typeof recipe!.learnedAt).toBe('string')
+    expect(recipe!.breadth).toBe(0)
   })
 
   it('getLearnedRecipe returns null for unknown signature', async () => {
@@ -105,6 +106,29 @@ describe('learned-recipes — listLearnedRecipes', () => {
     const list = await m.listLearnedRecipes()
     expect(list).toHaveLength(1)
     expect(list[0]!.failureSignature).toBe('verify:typecheck/typecheck-type-mismatch')
+  })
+
+  it('breadth reflects the number of logged auto-runs for the signature', async () => {
+    const m = await loadModule()
+    await m.teachRecipe('verify:typecheck/typecheck-type-mismatch', 'restart')
+    await m.teachRecipe('setup:install/install-frozen-lockfile', 'restart')
+    await m.logAutoRecipeRun({
+      signature: 'verify:typecheck/typecheck-type-mismatch',
+      actionOp: 'restart',
+      taskId: 'task-1',
+    })
+    await m.logAutoRecipeRun({
+      signature: 'verify:typecheck/typecheck-type-mismatch',
+      actionOp: 'restart',
+      taskId: 'task-2',
+    })
+    const list = await m.listLearnedRecipes()
+    const byOp = new Map(list.map((r) => [r.failureSignature, r.breadth]))
+    expect(byOp.get('verify:typecheck/typecheck-type-mismatch')).toBe(2)
+    expect(byOp.get('setup:install/install-frozen-lockfile')).toBe(0)
+
+    const single = await m.getLearnedRecipe('verify:typecheck/typecheck-type-mismatch')
+    expect(single!.breadth).toBe(2)
   })
 })
 
@@ -180,5 +204,45 @@ describe('learned-recipes — auto-run log', () => {
     const runs = await m.listAutoRecipeRuns()
     expect(runs[0]!.signature).toBe('sig/second')
     expect(runs[1]!.signature).toBe('sig/first')
+  })
+
+  it('logAutoRecipeRun starts a run as pending and returns its id', async () => {
+    const m = await loadModule()
+    const id = await m.logAutoRecipeRun({
+      signature: 'verify:typecheck/typecheck-type-mismatch',
+      actionOp: 'restart',
+      taskId: 'task-abc',
+    })
+    expect(typeof id).toBe('string')
+    const runs = await m.listAutoRecipeRuns()
+    expect(runs[0]!.id).toBe(id)
+    expect(runs[0]!.outcome).toBe('pending')
+  })
+
+  it('recordAutoRecipeOutcome resolves a pending run', async () => {
+    const m = await loadModule()
+    const id = await m.logAutoRecipeRun({
+      signature: 'verify:typecheck/typecheck-type-mismatch',
+      actionOp: 'restart',
+      taskId: 'task-abc',
+    })
+    await m.recordAutoRecipeOutcome(id, 'success')
+    const runs = await m.listAutoRecipeRuns()
+    expect(runs[0]!.outcome).toBe('success')
+  })
+
+  it('recordAutoRecipeOutcome is a no-op for an unknown id', async () => {
+    const m = await loadModule()
+    await expect(m.recordAutoRecipeOutcome('no-such-id', 'failure')).resolves.toBeUndefined()
+  })
+
+  it('listAutoRecipeRuns filters by signature so a recipe can consult its own log', async () => {
+    const m = await loadModule()
+    await m.logAutoRecipeRun({ signature: 'sig/a', actionOp: 'restart', taskId: null })
+    await m.logAutoRecipeRun({ signature: 'sig/b', actionOp: 'restart', taskId: null })
+    await m.logAutoRecipeRun({ signature: 'sig/a', actionOp: 'restart', taskId: null })
+    const runs = await m.listAutoRecipeRuns({ signature: 'sig/a' })
+    expect(runs).toHaveLength(2)
+    expect(runs.every((r) => r.signature === 'sig/a')).toBe(true)
   })
 })

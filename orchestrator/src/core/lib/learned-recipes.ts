@@ -12,6 +12,14 @@
  * startup via `ensureSchema`.
  *
  * Scope: per failure signature, global (not per-project or per-task).
+ *
+ * ADR-0099 ("Self-improvement loops induce the weakest valid hypothesis")
+ * requires every autonomous recipe to carry a measurable breadth (how many
+ * past instances it has fired on, `LearnedRecipe.breadth`) and an outcome
+ * log consulted before re-firing: each auto-run starts `outcome: 'pending'`
+ * and is later resolved via `recordAutoRecipeOutcome` once the acted-on
+ * task's fate is known, so `listAutoRecipeRuns({ signature })` can be
+ * checked before trusting the recipe again.
  */
 
 import { randomUUID } from 'node:crypto'
@@ -28,7 +36,24 @@ export interface LearnedRecipe {
   actionOp: string
   /** ISO-8601 timestamp when the recipe was last taught or updated. */
   learnedAt: string
+  /**
+   * Breadth metric (ADR-0099): the number of past instances (logged
+   * `auto_recipe_runs` rows) this recipe has fired on. Lets an operator see
+   * whether a recipe is over-narrow (breadth 0-1, essentially untested) or
+   * well-exercised, without changing the exact-match semantics of when it
+   * fires.
+   */
+  breadth: number
 }
+
+/**
+ * The resolved effect of an auto-executed recipe, once known.
+ * - `pending` — logged at run time; the acted-on task's fate is not yet known.
+ * - `success` — the recipe's action resolved the failure (the task recovered).
+ * - `failure` — the recipe's action did not resolve the failure (e.g. the
+ *   task failed again, possibly with the same signature).
+ */
+export type AutoRecipeOutcome = 'pending' | 'success' | 'failure'
 
 /** One logged auto-run entry persisted in `auto_recipe_runs`. */
 export interface AutoRecipeRun {
@@ -41,6 +66,8 @@ export interface AutoRecipeRun {
   taskId: string | null
   /** ISO-8601 timestamp when the auto-run executed. */
   ranAt: string
+  /** Outcome feedback (ADR-0099), resolved after the fact via `recordAutoRecipeOutcome`. */
+  outcome: AutoRecipeOutcome
 }
 
 // ── CRUD ──────────────────────────────────────────────────────────────────────
@@ -86,9 +113,15 @@ export async function getLearnedRecipe(
 ): Promise<LearnedRecipe | null> {
   const client = resolveStateClient()
   const result = await client.execute({
-    sql: `SELECT failure_signature, action_op, learned_at
-          FROM learned_recipes
-          WHERE failure_signature = ?`,
+    sql: `SELECT lr.failure_signature, lr.action_op, lr.learned_at,
+                 COALESCE(arr.breadth, 0) AS breadth
+          FROM learned_recipes lr
+          LEFT JOIN (
+            SELECT signature, COUNT(*) AS breadth
+            FROM auto_recipe_runs
+            GROUP BY signature
+          ) arr ON arr.signature = lr.failure_signature
+          WHERE lr.failure_signature = ?`,
     args: [failureSignature],
   })
   if (result.rows.length === 0) return null
@@ -96,11 +129,13 @@ export async function getLearnedRecipe(
     failure_signature: string
     action_op: string
     learned_at: string
+    breadth: number | string
   }
   return {
     failureSignature: row.failure_signature,
     actionOp: row.action_op,
     learnedAt: row.learned_at,
+    breadth: Number(row.breadth),
   }
 }
 
@@ -110,17 +145,29 @@ export async function getLearnedRecipe(
 export async function listLearnedRecipes(): Promise<LearnedRecipe[]> {
   const client = resolveStateClient()
   const result = await client.execute({
-    sql: `SELECT failure_signature, action_op, learned_at
-          FROM learned_recipes
-          ORDER BY learned_at DESC`,
+    sql: `SELECT lr.failure_signature, lr.action_op, lr.learned_at,
+                 COALESCE(arr.breadth, 0) AS breadth
+          FROM learned_recipes lr
+          LEFT JOIN (
+            SELECT signature, COUNT(*) AS breadth
+            FROM auto_recipe_runs
+            GROUP BY signature
+          ) arr ON arr.signature = lr.failure_signature
+          ORDER BY lr.learned_at DESC`,
     args: [],
   })
   return result.rows.map((row: unknown) => {
-    const r = row as { failure_signature: string; action_op: string; learned_at: string }
+    const r = row as {
+      failure_signature: string
+      action_op: string
+      learned_at: string
+      breadth: number | string
+    }
     return {
       failureSignature: r.failure_signature,
       actionOp: r.action_op,
       learnedAt: r.learned_at,
+      breadth: Number(r.breadth),
     }
   })
 }
@@ -130,43 +177,73 @@ export async function listLearnedRecipes(): Promise<LearnedRecipe[]> {
 /**
  * Persist a record of an auto-executed learned recipe. Called after the
  * auto-run succeeds so the WYWA panel can surface it to the operator.
+ *
+ * The row starts with `outcome: 'pending'` (ADR-0099) — the auto-run
+ * mechanics only confirm the op itself executed without throwing, not that
+ * it resolved the underlying failure. Callers that observe the acted-on
+ * task's eventual fate should follow up with `recordAutoRecipeOutcome`
+ * using the id returned here.
+ *
+ * @returns the id of the inserted `auto_recipe_runs` row.
  */
 export async function logAutoRecipeRun(params: {
   signature: string
   actionOp: string
   taskId: string | null
-}): Promise<void> {
+}): Promise<string> {
+  const client = resolveStateClient()
+  const id = randomUUID()
+  await client.execute({
+    sql: `INSERT INTO auto_recipe_runs (id, signature, action_op, task_id, ran_at, outcome)
+          VALUES (?, ?, ?, ?, ?, 'pending')`,
+    args: [id, params.signature, params.actionOp, params.taskId, new Date().toISOString()],
+  })
+  return id
+}
+
+/**
+ * Resolve the outcome of a previously logged auto-run once the acted-on
+ * task's fate is known. No-op when `id` does not match a logged row.
+ */
+export async function recordAutoRecipeOutcome(
+  id: string,
+  outcome: Exclude<AutoRecipeOutcome, 'pending'>,
+): Promise<void> {
   const client = resolveStateClient()
   await client.execute({
-    sql: `INSERT INTO auto_recipe_runs (id, signature, action_op, task_id, ran_at)
-          VALUES (?, ?, ?, ?, ?)`,
-    args: [
-      randomUUID(),
-      params.signature,
-      params.actionOp,
-      params.taskId,
-      new Date().toISOString(),
-    ],
+    sql: `UPDATE auto_recipe_runs SET outcome = ? WHERE id = ?`,
+    args: [outcome, id],
   })
 }
 
 /**
- * List recent auto-run log entries, newest-first.
+ * List recent auto-run log entries, newest-first. Passing `signature`
+ * consults a single recipe's outcome log — e.g. to check for recent
+ * `failure` outcomes before trusting it to auto-run again (ADR-0099).
  *
+ * @param opts.signature  Restrict to auto-runs of this failure signature.
  * @param opts.since  ISO-8601 lower bound (exclusive). Only entries with
  *   `ran_at > since` are returned.
  * @param opts.limit  Maximum rows to return. Defaults to 50.
  */
 export async function listAutoRecipeRuns(
-  opts: { since?: string; limit?: number } = {},
+  opts: { signature?: string; since?: string; limit?: number } = {},
 ): Promise<AutoRecipeRun[]> {
   const client = resolveStateClient()
   const limit = opts.limit ?? 50
   const args: DbInValue[] = []
-  let sql = `SELECT id, signature, action_op, task_id, ran_at FROM auto_recipe_runs`
+  const conditions: string[] = []
+  if (opts.signature) {
+    conditions.push(`signature = ?`)
+    args.push(opts.signature)
+  }
   if (opts.since) {
-    sql += ` WHERE ran_at > ?`
+    conditions.push(`ran_at > ?`)
     args.push(opts.since)
+  }
+  let sql = `SELECT id, signature, action_op, task_id, ran_at, outcome FROM auto_recipe_runs`
+  if (conditions.length > 0) {
+    sql += ` WHERE ${conditions.join(' AND ')}`
   }
   sql += ` ORDER BY ran_at DESC LIMIT ?`
   args.push(limit)
@@ -178,6 +255,7 @@ export async function listAutoRecipeRuns(
       action_op: string
       task_id: string | null
       ran_at: string
+      outcome: AutoRecipeOutcome
     }
     return {
       id: r.id,
@@ -185,6 +263,7 @@ export async function listAutoRecipeRuns(
       actionOp: r.action_op,
       taskId: r.task_id,
       ranAt: r.ran_at,
+      outcome: r.outcome,
     }
   })
 }
