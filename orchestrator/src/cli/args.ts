@@ -131,6 +131,9 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // mars eval --fixture <name>: run a single named fixture instead of the
   // whole suite under src/eval/fixtures/.
   '--fixture',
+  // mars proposal add --title "<text>": explicit proposal title, stored
+  // verbatim instead of derived from the goal's first line / heading.
+  '--title',
 ])
 
 /**
@@ -332,8 +335,8 @@ export const resolvePlanText = (
  * flag `parseArgs` did not recognise (every declared flag is already pulled
  * into `flags`/`multiFlags` before `positional` is built). Folding it into
  * the joined literal would silently discard the caller's intent — e.g.
- * `mars proposal add @file.md --title x` would store the literal string
- * `"@file.md --title x"` as the goal instead of expanding the file and
+ * `mars proposal add @file.md --bogus x` would store the literal string
+ * `"@file.md --bogus x"` as the goal instead of expanding the file and
  * rejecting the unknown flag. Reject it as a hard error instead.
  *
  * For the same reason a leading `@<path>` / `-` token followed by further

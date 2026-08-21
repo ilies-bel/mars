@@ -138,11 +138,11 @@ describe('mars adr add — unknown flag rejection', () => {
   it('rejects an unrecognised flag instead of folding it into the body', async () => {
     const daemon = makeFakeDaemon()
     const result = await runCommandInProcess(
-      ['adr', 'add', 'some title', 'some body', '--title', 'x'],
+      ['adr', 'add', 'some title', 'some body', '--not-a-real-flag', 'x'],
       { store: noopStore, daemon, ctx: makeCtx() },
     )
     expect(result.code).not.toBe(0)
-    expect(result.err.join(' ')).toContain('--title')
+    expect(result.err.join(' ')).toContain('--not-a-real-flag')
     expect(daemon.calls).toHaveLength(0)
   })
 

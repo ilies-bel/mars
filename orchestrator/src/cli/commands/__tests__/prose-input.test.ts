@@ -124,12 +124,12 @@ describe('task note — @file body input', () => {
     const fake = makeFakeDaemon(() => ({ id: 'note-abc' }))
     const { store, ctx, runCommandInProcess } = await freshModules()
     const r = await runCommandInProcess(
-      ['task', 'note', 'mars-task-1234', `@${filePath}`, '--title', 'x'],
+      ['task', 'note', 'mars-task-1234', `@${filePath}`, '--not-a-real-flag', 'x'],
       { store, ctx, daemon: fake },
     )
     expect(r.code).not.toBe(0)
     expect(fake.calls).toHaveLength(0)
-    expect(r.err.join(' ')).toContain('--title')
+    expect(r.err.join(' ')).toContain('--not-a-real-flag')
   })
 })
 
@@ -195,12 +195,48 @@ describe('proposal add — @file goal input', () => {
     const { store, ctx, runCommandInProcess } = await freshModules()
     const { listProposals } = await import('../../../core/proposals')
     const r = await runCommandInProcess(
-      ['proposal', 'add', `@${filePath}`, '--title', 'x'],
+      ['proposal', 'add', `@${filePath}`, '--not-a-real-flag', 'x'],
       { store, ctx, daemon: makeFakeDaemon() },
     )
     expect(r.code).not.toBe(0)
-    expect(r.err.join(' ')).toContain('--title')
+    expect(r.err.join(' ')).toContain('--not-a-real-flag')
     expect(await listProposals()).toHaveLength(0)
+  })
+
+  it('accepts --title and stores it verbatim instead of deriving from the goal', async () => {
+    const { store, ctx, runCommandInProcess } = await freshModules()
+    const { getProposal } = await import('../../../core/proposals')
+    const r = await runCommandInProcess(
+      [
+        'proposal',
+        'add',
+        'this first line would normally become the title',
+        '--title',
+        'A deliberate title',
+      ],
+      { store, ctx, daemon: makeFakeDaemon() },
+    )
+    expect(r.code).toBe(0)
+    const proposalId = r.out[0]?.split(' ')[0]
+    const proposal = await getProposal(proposalId!)
+    expect(proposal?.title).toBe('A deliberate title')
+    expect(proposal?.problem).toBe('this first line would normally become the title')
+  })
+
+  it('falls back to deriving from a leading # heading when --title is absent', async () => {
+    const filePath = join(repo, 'heading-goal.txt')
+    writeFileSync(filePath, '# Heading title\n\nbody text')
+    const { store, ctx, runCommandInProcess } = await freshModules()
+    const { getProposal } = await import('../../../core/proposals')
+    const r = await runCommandInProcess(
+      ['proposal', 'add', `@${filePath}`],
+      { store, ctx, daemon: makeFakeDaemon() },
+    )
+    expect(r.code).toBe(0)
+    const proposalId = r.out[0]?.split(' ')[0]
+    const proposal = await getProposal(proposalId!)
+    expect(proposal?.title).toBe('Heading title')
+    expect(proposal?.problem).toBe('body text')
   })
 
   it('rejects a leading @file followed by stray prose rather than folding it', async () => {
@@ -288,11 +324,11 @@ describe('glossary set — @file definition input', () => {
     const fake = makeFakeDaemon()
     const { store, ctx, runCommandInProcess } = await freshModules()
     const r = await runCommandInProcess(
-      ['glossary', 'set', 'myterm', `@${filePath}`, '--title', 'x'],
+      ['glossary', 'set', 'myterm', `@${filePath}`, '--not-a-real-flag', 'x'],
       { store, ctx, daemon: fake },
     )
     expect(r.code).not.toBe(0)
     expect(fake.calls).toHaveLength(0)
-    expect(r.err.join(' ')).toContain('--title')
+    expect(r.err.join(' ')).toContain('--not-a-real-flag')
   })
 })

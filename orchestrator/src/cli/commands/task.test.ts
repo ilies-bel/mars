@@ -266,12 +266,12 @@ describe('task add prompt input channels', () => {
     const fake = makeFakeDaemon(() => ({ id: 'mars-task-x', status: 'queued' }))
     const { store, ctx } = await loadStoreAndCtx()
     const r = await runCommandInProcess(
-      ['task', 'add', `@${filePath}`, '--title', 'x'],
+      ['task', 'add', `@${filePath}`, '--not-a-real-flag', 'x'],
       { store, ctx, daemon: fake },
     )
     expect(r.code).not.toBe(0)
     expect(fake.calls).toHaveLength(0)
-    expect(r.err.join('\n')).toContain('--title')
+    expect(r.err.join('\n')).toContain('--not-a-real-flag')
   })
 
   // (c) --prompt-file reads file contents

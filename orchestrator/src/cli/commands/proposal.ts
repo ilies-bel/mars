@@ -117,10 +117,13 @@ export const renderProposalDetail = async (
   }
 }
 
+const proposalAddUsage =
+  'usage: mars proposal add ("<goal>" | @<file> | -) [--author kind:name] [--title "<text>"]'
+
 const proposalAdd: Command = {
   path: 'proposal add',
   summary: 'create a proposal/plan (author detected from env/git)',
-  usage: 'usage: mars proposal add ("<goal>" | @<file> | -) [--author kind:name]',
+  usage: proposalAddUsage,
   run: async (args, deps) => {
     const goalResult = resolvePromptSource(args.positional, args.flags)
     if (!goalResult.ok) {
@@ -129,13 +132,20 @@ const proposalAdd: Command = {
     }
     const goal = goalResult.value
     if (!goal) {
-      deps.err('usage: mars proposal add ("<goal>" | @<file> | -) [--author kind:name]')
+      deps.err(proposalAddUsage)
       return { code: 2 }
     }
     const author = resolveAuthor(args.flags['--author'])
     const originSessionId = detectOriginSession()
+    // Explicit title, stored verbatim (no slug truncation for display) instead
+    // of deriving one from the goal's first line / leading `#` heading.
+    const titleFlag = args.flags['--title']
     try {
-      const idea = await createProposal(goal, { author, originSessionId })
+      const idea = await createProposal(goal, {
+        author,
+        originSessionId,
+        ...(titleFlag !== undefined && { explicitTitle: titleFlag }),
+      })
       deps.out(`${idea.id} (author: ${formatAuthor(author)})`)
     } catch (error: unknown) {
       deps.err(errorMessage(error))

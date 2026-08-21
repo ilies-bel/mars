@@ -157,6 +157,25 @@ export const generateProposalId = (title: string): string => {
 export const PROPOSAL_TITLE_LIMIT = 120
 
 /**
+ * Word-boundary-truncate `raw` to {@link PROPOSAL_TITLE_LIMIT} characters,
+ * appending an ellipsis when a cut occurred. Shared by the derived-title path
+ * ({@link splitProposalProse}) and the explicit `--title` flag path
+ * (`createProposal`'s `explicitTitle` option) so an operator-supplied title
+ * gets the same legibility guarantee as a derived one, and a derived title
+ * never exceeds the limit the pg-schema backfill re-matches on.
+ */
+const truncateProposalTitle = (raw: string): string => {
+  if (raw.length <= PROPOSAL_TITLE_LIMIT) return raw
+  const truncated = raw.slice(0, PROPOSAL_TITLE_LIMIT)
+  const lastSpace = truncated.lastIndexOf(' ')
+  // The no-word-boundary fallback cuts one char short of the limit so that
+  // appending the ellipsis still lands at exactly PROPOSAL_TITLE_LIMIT.
+  const cut =
+    lastSpace > 0 ? truncated.slice(0, lastSpace) : raw.slice(0, PROPOSAL_TITLE_LIMIT - 1)
+  return `${cut.trimEnd()}…`
+}
+
+/**
  * Split a raw prose blob (as typed by a human or an agent via
  * `mars proposal add`) into a short, single-line title and a body.
  *
@@ -190,19 +209,7 @@ export const splitProposalProse = (prose: string): { title: string; body: string
   const headingStripped = (lines[idx] ?? '').trim().replace(/^#{1,6}\s+/, '')
   const head = headingStripped.trim()
 
-  let title = head
-  if (title.length > PROPOSAL_TITLE_LIMIT) {
-    const truncated = title.slice(0, PROPOSAL_TITLE_LIMIT)
-    const lastSpace = truncated.lastIndexOf(' ')
-    // The no-word-boundary fallback cuts one char short of the limit so that
-    // appending the ellipsis still lands at exactly PROPOSAL_TITLE_LIMIT. A
-    // derived title must never exceed the limit: the pg-schema backfill
-    // selects rows on `char_length(title) > 120`, so an over-long result
-    // would re-match and rewrite itself on every daemon boot.
-    const cut =
-      lastSpace > 0 ? truncated.slice(0, lastSpace) : title.slice(0, PROPOSAL_TITLE_LIMIT - 1)
-    title = `${cut.trimEnd()}…`
-  }
+  const title = truncateProposalTitle(head)
 
   const body = lines.slice(idx + 1).join('\n').trim()
   return { title, body }
@@ -375,6 +382,16 @@ const loadUserStories = async (
 export interface CreateProposalOptions {
   author?: Author
   source?: ProposalSource
+  /**
+   * Explicit title (e.g. from `mars proposal add --title "<text>"`), stored
+   * verbatim (word-boundary-truncated only if it exceeds
+   * {@link PROPOSAL_TITLE_LIMIT}) instead of being derived from `title`'s
+   * first line / leading heading. When set, the entire `title` argument is
+   * treated as body prose rather than split for a title line. A blank
+   * (whitespace-only) value is treated as not supplied — the usual
+   * derivation runs instead.
+   */
+  explicitTitle?: string
   problem?: string
   solution?: string
   outOfScope?: string
@@ -408,7 +425,15 @@ export const createProposal = async (
   // multi-paragraph documents in `title` — see `mars proposal add`. An
   // all-blank `title` derives nothing usable, so fall back to the raw
   // (trimmed) input rather than silently substituting an empty title.
-  const { title: derivedTitle, body: derivedBody } = splitProposalProse(title)
+  //
+  // An explicit `--title` overrides derivation entirely: the caller-supplied
+  // text becomes the title verbatim (truncated only past the length limit)
+  // and the whole `title` argument becomes body prose instead of being split.
+  const explicitTitle = opts?.explicitTitle?.trim()
+  const { title: derivedTitle, body: derivedBody } =
+    explicitTitle && explicitTitle.length > 0
+      ? { title: truncateProposalTitle(explicitTitle), body: title.trim() }
+      : splitProposalProse(title)
   const effectiveTitle = derivedTitle.length > 0 ? derivedTitle : title.trim()
 
   const id = generateProposalId(effectiveTitle)

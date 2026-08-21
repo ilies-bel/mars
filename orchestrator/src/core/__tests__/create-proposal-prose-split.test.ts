@@ -129,3 +129,62 @@ describe('createProposal — prose blob split', () => {
     expect(proposal.problem).toBe('leftover body text\n\nthe structured problem')
   })
 })
+
+describe('createProposal — explicit `--title` override', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('stores an explicit title verbatim and treats the whole goal as body', async () => {
+    const p = await loadMods(repo)
+    const proposal = await p.createProposal(
+      'this first line would normally become the title',
+      { source: 'human', explicitTitle: 'A deliberate title' },
+    )
+
+    expect(proposal.title).toBe('A deliberate title')
+    expect(proposal.problem).toBe('this first line would normally become the title')
+  })
+
+  it('word-boundary-truncates an over-long explicit title at the same limit as a derived one', async () => {
+    const p = await loadMods(repo)
+    const longTitle = 'word '.repeat(40).trim() // 199 chars
+    const proposal = await p.createProposal('goal body', {
+      source: 'human',
+      explicitTitle: longTitle,
+    })
+
+    expect(proposal.title.length).toBeLessThanOrEqual(p.PROPOSAL_TITLE_LIMIT)
+    expect(proposal.title.endsWith('…')).toBe(true)
+  })
+
+  it('falls back to derivation when explicitTitle is blank/whitespace-only', async () => {
+    const p = await loadMods(repo)
+    const proposal = await p.createProposal('# Heading wins\n\nbody text', {
+      source: 'human',
+      explicitTitle: '   ',
+    })
+
+    expect(proposal.title).toBe('Heading wins')
+    expect(proposal.problem).toBe('body text')
+  })
+
+  it('does not truncate the id slug boundary onto the display title', async () => {
+    const p = await loadMods(repo)
+    // Longer than generateProposalId's 40-char slug cap but under the title limit.
+    const title = 'A title that is definitely longer than forty characters long'
+    const proposal = await p.createProposal('goal body', {
+      source: 'human',
+      explicitTitle: title,
+    })
+
+    expect(proposal.title).toBe(title)
+  })
+})
