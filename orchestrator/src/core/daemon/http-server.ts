@@ -11,13 +11,12 @@ import { buildOriginTree } from '../lib/origin-tree'
 import type { DerivedActionQueueFilter } from './view/action-queue'
 import {
   cursorAfter,
-  TRACE_EVENT_KINDS,
   type TraceEventFilter,
-  type TraceEventKind,
   type TraceEventPhase,
   type TraceEventSeverity,
   type TraceEventStore,
 } from '../lib/trace-events-store'
+import { isUnifiedEventKind, type UnifiedEventKind } from '../../bus/emit.js'
 import { type KpiKey } from './kpi-store'
 import type { RestartTaskError } from './restart-task'
 import { SelfUpdateError, SELF_UPDATE_ERRORS } from './self-update'
@@ -812,7 +811,6 @@ type EntityOp =
   | 'reject'
   | 'land-work'
 
-const TRACE_EVENT_KIND_SET = new Set<TraceEventKind>(TRACE_EVENT_KINDS)
 const TRACE_EVENT_SEVERITIES: readonly TraceEventSeverity[] = [
   'info',
   'warn',
@@ -830,10 +828,13 @@ const TRACE_EVENT_PHASES: readonly TraceEventPhase[] = [
 const EVENTS_DEFAULT_LIMIT = 200
 const EVENTS_MAX_LIMIT = 1000
 
-const filterKinds = (raw: string[]): TraceEventKind[] =>
-  raw.filter((v): v is TraceEventKind =>
-    TRACE_EVENT_KIND_SET.has(v as TraceEventKind),
-  )
+/**
+ * Accept any kind in the unified union (bus `EventName` ∪ trace-only
+ * `TraceEventKind`, see `bus/emit.ts`) — `GET /events` reads the unified
+ * `trace_events` store, which now carries rows for both halves.
+ */
+const filterKinds = (raw: string[]): UnifiedEventKind[] =>
+  raw.filter((v): v is UnifiedEventKind => isUnifiedEventKind(v))
 
 const filterSeverities = (raw: string[]): TraceEventSeverity[] =>
   raw.filter((v): v is TraceEventSeverity =>
@@ -880,9 +881,12 @@ const parseEventsFilter = (params: URLSearchParams): TraceEventFilter => {
 }
 
 /**
- * Handle a `GET /events?...` request. Reads from the trace store with the
- * parsed filter, then attaches `nextCursor` (the cursor pointing one past
- * the last row) when the page is full — signalling more rows are available.
+ * Handle a `GET /events?...` request. Reads from the unified `trace_events`
+ * store with the parsed filter — every `UnifiedEventKind` (bus `EventName`s
+ * written by `emitEvent` alongside their `events` outbox row, plus the
+ * trace-only kinds) is reachable here, not just the formerly bus-only kinds'
+ * subscribers — then attaches `nextCursor` (the cursor pointing one past the
+ * last row) when the page is full — signalling more rows are available.
  */
 const handleEventsRequest = async (
   url: string,
@@ -1117,11 +1121,14 @@ export const createHttpRequestListener = (
       return
     }
 
-    // GET /events — unified trace events. Supports multi-filter querying
-    // (taskId, originId, kind[], severity[], phase[], since, until, q) plus
-    // cursor pagination. Newest-first ordering. The per-task actionQueue panel
-    // always passes `?taskId=...&limit=50`; the dedicated Events tab uses
-    // the broader filter surface. Pure read; no draining gate.
+    // GET /events — unified event surface (bus + trace). Supports multi-filter
+    // querying (taskId, originId, kind[], severity[], phase[], since, until,
+    // q) plus cursor pagination. `kind` accepts any `UnifiedEventKind` — a
+    // bus `EventName` (e.g. 'step.started') or a trace-only kind — since
+    // `emitEvent` (bus/emit.ts) writes both into the same `trace_events`
+    // table. Newest-first ordering. The per-task actionQueue panel always
+    // passes `?taskId=...&limit=50`; the dedicated Events tab uses the
+    // broader filter surface. Pure read; no draining gate.
     if (req.method === 'GET' && req.url && req.url.startsWith('/events')) {
       handleEventsRequest(req.url, deps.traceStore)
         .then((body) => sendJson(res, 200, body))

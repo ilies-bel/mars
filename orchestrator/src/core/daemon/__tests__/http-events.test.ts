@@ -1,7 +1,11 @@
 /**
- * Tests for GET /events — the unified trace-event surface. Pin the
- * per-task filter (the slice-H caller) and the cursor-paginated
- * load-more contract that the actionQueue detail panel uses.
+ * Tests for GET /events — the unified event surface (ADR "Every seam is a
+ * cordis service Port…" / "One typed event…", slice 5). Pin the per-task
+ * filter (the slice-H caller), the cursor-paginated load-more contract the
+ * actionQueue detail panel uses, and that a lifecycle kind written only via
+ * `emitEvent` (bus/emit.ts) — previously reachable only through the durable
+ * `events` outbox, never over HTTP — now round-trips through this route
+ * alongside trace-only kinds.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
@@ -10,6 +14,8 @@ import { join, resolve } from 'node:path'
 import type { HttpServerDeps } from '../http-server'
 import { stubAppServices, stubChatRunner } from './app-services-stub'
 import { loadRecipeCatalog } from '../../lib/recipes'
+import { openDb, type DbClient } from '../../lib/db'
+import { emitEvent } from '../../../bus/emit'
 import {
   openTraceEventStore,
   type TraceEvent,
@@ -60,11 +66,22 @@ const makeDeps = (
 describe('GET /events', () => {
   let dbDir: string
   let store: TraceEventStore
+  // Same dbTarget as `store` — `openDb` dedupes onto the same pooled client,
+  // so writes through `emitEvent(dbClient, ...)` land in the identical
+  // `trace_events` table `store.query()` reads.
+  let dbClient: DbClient
 
   beforeEach(async () => {
     dbDir = mkdtempSync(resolve(tmpdir(), 'mars-http-ev-'))
     mkdirSync(dbDir, { recursive: true })
     store = await openTraceEventStore(join(dbDir, 'mars.db'))
+    dbClient = openDb(join(dbDir, 'mars.db'))
+    // `emitEvent` without `opts.tx` opens its own transaction via
+    // `withTransaction`, which — unlike `client.execute()` — bypasses the
+    // lazy schema bootstrap (see db.ts's `ensureClientSchema` doc comment).
+    // Warm the client with a plain query first so schema is guaranteed
+    // ready before any test calls `emitEvent` directly.
+    await dbClient.execute('SELECT 1')
   })
 
   afterEach(async () => {
@@ -227,6 +244,84 @@ describe('GET /events', () => {
       expect(ev.payload.msg).toBe('connection retry')
       expect(ev.payload.source).toBe('daemon')
       expect(ev.payload.fields).toEqual({ attempt: 3, host: 'localhost' })
+    } finally {
+      await close()
+    }
+  })
+
+  it('serves a formerly bus-only lifecycle kind written via emitEvent', async () => {
+    // `task.completed` is a bus `EventName` (bus/events.ts) — before the
+    // unified store, it was written only to the `events` outbox, never to
+    // `trace_events`, so GET /events could never surface it. `emitEvent`
+    // (bus/emit.ts) now writes it to trace_events too.
+    await emitEvent(
+      dbClient,
+      'task.completed',
+      { taskId: 'task-F', result: { ok: true } },
+      { taskId: 'task-F' },
+    )
+
+    const { startHttpServer } = await import('../http-server')
+    const { port, close } = await startHttpServer(makeDeps(store))
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/events?kind=task.completed`)
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { events: TraceEvent[]; nextCursor: string | null }
+      expect(body.events).toHaveLength(1)
+      const ev = body.events[0]!
+      expect(ev.kind).toBe('task.completed')
+      expect(ev.taskId).toBe('task-F')
+      expect(ev.payload).toEqual({ taskId: 'task-F', result: { ok: true } })
+    } finally {
+      await close()
+    }
+  })
+
+  it('mixes trace-only and formerly bus-only kinds for one task, paginating correctly', async () => {
+    // A trace-only kind (already reachable pre-slice)...
+    await store.record({
+      kind: 'step_started',
+      taskId: 'task-G',
+      phase: 'code',
+      payload: { stepName: 'code' },
+    })
+    // ...alongside two bus-only lifecycle kinds, written the unified way.
+    await emitEvent(dbClient, 'task.queued', { taskId: 'task-G' }, { taskId: 'task-G' })
+    await emitEvent(
+      dbClient,
+      'task.completed',
+      { taskId: 'task-G', result: null },
+      { taskId: 'task-G' },
+    )
+
+    const { startHttpServer } = await import('../http-server')
+    const { port, close } = await startHttpServer(makeDeps(store))
+    try {
+      const first = (await (
+        await fetch(`http://127.0.0.1:${port}/events?taskId=task-G&limit=2`)
+      ).json()) as { events: TraceEvent[]; nextCursor: string | null }
+      expect(first.events).toHaveLength(2)
+      expect(first.nextCursor).not.toBeNull()
+
+      const second = (await (
+        await fetch(
+          `http://127.0.0.1:${port}/events?taskId=task-G&limit=2&cursor=${encodeURIComponent(first.nextCursor!)}`,
+        )
+      ).json()) as { events: TraceEvent[]; nextCursor: string | null }
+      expect(second.events).toHaveLength(1)
+      // Partial page → no further cursor.
+      expect(second.nextCursor).toBeNull()
+
+      // All three events — mixing trace-only and formerly bus-only kinds —
+      // are returned across the two pages with no gaps or duplicates.
+      const allEvents = [...first.events, ...second.events]
+      expect(new Set(allEvents.map((e) => e.id)).size).toBe(3)
+      expect(allEvents.map((e) => e.kind).sort()).toEqual(
+        ['step_started', 'task.completed', 'task.queued'].sort(),
+      )
+      for (const e of allEvents) {
+        expect(e.taskId).toBe('task-G')
+      }
     } finally {
       await close()
     }

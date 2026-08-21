@@ -52,7 +52,6 @@ export type TraceEventSeverity = 'info' | 'warn' | 'error'
 
 export type TraceEventPhase = 'setup' | 'code' | 'verify' | 'merge' | 'reflect'
 
-const TRACE_EVENT_KIND_SET: ReadonlySet<string> = new Set(TRACE_EVENT_KINDS)
 const TRACE_EVENT_PHASES: readonly TraceEventPhase[] = [
   'setup',
   'code',
@@ -61,12 +60,22 @@ const TRACE_EVENT_PHASES: readonly TraceEventPhase[] = [
 ] as const
 const TRACE_EVENT_PHASE_SET: ReadonlySet<string> = new Set(TRACE_EVENT_PHASES)
 
-/** Row shape returned by `query`. */
+/**
+ * Row shape returned by `query`.
+ *
+ * `kind` is a plain `string`, not the closed `TraceEventKind` union: this
+ * table is the unified event log (`emitEvent` in `bus/emit.ts`) writes a row
+ * here for every `UnifiedEventKind` — the 18 trace-only kinds below plus
+ * every bus `EventName` (e.g. `'step.started'`, `'task.failed'`). Narrowing
+ * to `UnifiedEventKind` here would create a circular import (`bus/emit.ts`
+ * already imports `TRACE_EVENT_KINDS`/`deriveSeverity` from this module), so
+ * the read path stays loosely typed; `bus/emit.ts` owns the closed union.
+ */
 export interface TraceEvent {
   id: string
   /** Epoch-millisecond timestamp. */
   timestamp: number
-  kind: TraceEventKind
+  kind: string
   severity: TraceEventSeverity
   taskId: string | null
   originId: string | null
@@ -86,7 +95,14 @@ export interface TraceEventInput {
 export interface TraceEventFilter {
   taskId?: string
   originId?: string
-  kind?: readonly TraceEventKind[]
+  /**
+   * Widened to `readonly string[]` (not `TraceEventKind[]`) for the same
+   * reason as {@link TraceEvent.kind} — a caller filtering on a bus-only
+   * `UnifiedEventKind` (e.g. `'step.started'`) must be able to pass it
+   * through; the `IN (...)` clause this builds never validates its values
+   * against the closed vocabulary.
+   */
+  kind?: readonly string[]
   severity?: readonly TraceEventSeverity[]
   phase?: readonly TraceEventPhase[]
   sinceMs?: number
@@ -258,9 +274,6 @@ const parsePayload = (raw: string | null): Record<string, unknown> => {
   }
 }
 
-const isTraceEventKind = (value: unknown): value is TraceEventKind =>
-  typeof value === 'string' && TRACE_EVENT_KIND_SET.has(value)
-
 const isPhase = (value: unknown): value is TraceEventPhase =>
   typeof value === 'string' && TRACE_EVENT_PHASE_SET.has(value)
 
@@ -269,10 +282,11 @@ const isSeverity = (value: unknown): value is TraceEventSeverity =>
 
 const rowToEvent = (row: Record<string, unknown>): TraceEvent => {
   const kind = row.kind
-  if (!isTraceEventKind(kind)) {
-    // A row carrying an unknown kind shouldn't exist (the writer enforces
-    // the enum) but if it ever does we'd rather surface it than crash.
-    throw new Error(`trace_events: unknown kind ${String(kind)}`)
+  if (typeof kind !== 'string' || kind.length === 0) {
+    // A row carrying a non-string/empty kind shouldn't exist (every writer —
+    // `record()` and `emitEvent()` alike — always sets one) but if it ever
+    // does we'd rather surface it than crash on a downstream `.kind` read.
+    throw new Error(`trace_events: invalid kind ${String(kind)}`)
   }
   const severity = row.severity
   if (!isSeverity(severity)) {
