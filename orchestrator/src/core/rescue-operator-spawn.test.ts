@@ -743,4 +743,67 @@ describe('rescue-operator-spawn', () => {
     })
     expect(Number((aqRows.rows[0] as unknown as { n: number | bigint }).n)).toBe(0)
   })
+
+  // ── Regression: recovery Chore's fix target already done, in a fan-out Arc ──
+  //
+  // Observed 2026-08-21: fix-c92bb4e6 was the recovery Chore for mars-10a58ad1,
+  // both members of the fan-out/proposal-slug Arc
+  // "1e904a61-align-self-improvement-loops-with-weakes". mars-10a58ad1 reached
+  // `done` on its own at 02:02, before fix-c92bb4e6's coder ran at 02:18 and
+  // (correctly) produced an empty diff. Because the (g) origin-done check
+  // looked up `failedTask.originId` — the Arc's synthetic proposal-slug root,
+  // which is never a real task row in a fan-out Arc — it silently no-op'd and
+  // still spawned a rescue (mars-fa61295d), which itself dead-ended into two
+  // more empty-diff failures. The fix: check `failedTask.fixForTaskId` (the
+  // task the recovery Chore actually exists to fix) ahead of `originId`.
+
+  it('(h) recovery Chore fix target already done in a fan-out Arc: no rescue spawned', async () => {
+    const { q, rescue } = await loadModules(repo)
+
+    const proposalSlug = 'fan-out-test-proposal-slug'
+
+    // The task the recovery Chore was created to fix — reaches `done` on its
+    // own, independent of the recovery Chore, exactly as mars-10a58ad1 did.
+    const target = await q.enqueueTask('original work', undefined, {
+      skipTriage: true,
+      originId: proposalSlug,
+    })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+      args: [target.id],
+    })
+
+    // The recovery Chore itself: origin_id is the Arc's proposal-slug root
+    // (shared by every fan-out member, never a task row), fix_for_task_id
+    // points at `target`.
+    const recovery = await q.enqueueTask('recover the thing', undefined, {
+      skipTriage: true,
+      originId: proposalSlug,
+    })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET fix_for_task_id = ?, kind = 'fix' WHERE id = ?`,
+      args: [target.id, recovery.id],
+    })
+
+    const loadedRecovery = await q.getTask(recovery.id)
+    if (!loadedRecovery) throw new Error('recovery task not found')
+    expect(loadedRecovery.fixForTaskId).toBe(target.id)
+    expect(loadedRecovery.originId).toBe(proposalSlug)
+
+    const result = await rescue.maybeSpawnRescueOperator({
+      failedTask: loadedRecovery,
+      failureSignature: 'code/empty-diff',
+    })
+
+    expect(result.spawned).toBe(false)
+    expect(result.rescueTaskId).toBeUndefined()
+    expect(await countRescueTasks(q)).toBe(0)
+    expect(await readArcRescueAttempts(q, proposalSlug)).toBe(0)
+
+    const aqRows = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM action_queue_items WHERE status = 'open'`,
+      args: [],
+    })
+    expect(Number((aqRows.rows[0] as unknown as { n: number | bigint }).n)).toBe(0)
+  })
 })

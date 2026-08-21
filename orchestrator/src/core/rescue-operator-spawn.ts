@@ -113,19 +113,33 @@ export const maybeSpawnRescueOperator = async (
   // root origin task's id; for a root origin task, it is the task's own id.
   const originId = failedTask.originId
 
-  // Origin-done early exit: if the arc root is already terminal `done`, the
-  // work that was failing has completed on its own (e.g. via auto-remerge or a
-  // concurrent task). Spawning a rescue is pointless — the agent would enter a
-  // clean worktree, find nothing to do, and dead-end into an awaiting-human row
-  // (observed 2026-08-17: recovery fix-fc05f779 / rescue mars-a6f6fd91 /
-  // origin mars-2eb61bfd). Drop silently without claiming the arc-rescue counter
-  // or raising any action-queue row.
+  // Origin-done early exit: if the task that actually mattered here is
+  // already terminal `done`, the work that was failing has completed on its
+  // own (e.g. via auto-remerge or a concurrent task). Spawning a rescue is
+  // pointless — the agent would enter a clean worktree, find nothing to do,
+  // and dead-end into an awaiting-human row (observed 2026-08-17: recovery
+  // fix-fc05f779 / rescue mars-a6f6fd91 / origin mars-2eb61bfd). Drop
+  // silently without claiming the arc-rescue counter or raising any
+  // action-queue row.
+  //
+  // For a recovery Chore (`fixForTaskId !== null`), the task worth checking
+  // is the one it was created to fix, NOT `originId` — in a fan-out/
+  // proposal-slug Arc, `originId` is the Arc's synthetic root id shared by
+  // every member and never resolves to a task row, so checking it silently
+  // no-ops and an already-resolved recovery Chore respawns a rescue every
+  // time it fails (observed 2026-08-21: fix-c92bb4e6's fix target
+  // mars-10a58ad1 reached `done` independently at 02:02, but the recovery
+  // Chore's own failure at 02:18 still spawned rescue mars-fa61295d because
+  // `store.getTask(originId)` looked up the proposal-slug Arc root instead
+  // of mars-10a58ad1, and the rescue agent dead-ended into empty-diff
+  // failures twice more before this fix).
   {
-    const arcOriginTask = await store.getTask(originId)
-    if (arcOriginTask?.status === 'done') {
+    const targetTaskId = failedTask.fixForTaskId ?? originId
+    const targetTask = await store.getTask(targetTaskId)
+    if (targetTask?.status === 'done') {
       // eslint-disable-next-line no-console
       console.info(
-        `[rescue-operator] arc ${originId} origin already done — rescue superseded, not spawning`,
+        `[rescue-operator] arc ${originId} target ${targetTaskId} already done — rescue superseded, not spawning`,
       )
       return { spawned: false }
     }
