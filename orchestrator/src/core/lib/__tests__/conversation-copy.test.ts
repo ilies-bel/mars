@@ -40,6 +40,12 @@ const payloads: { [K in AutonomousNoticeKind]: AutonomousNoticePayloads[K] } = {
   'observation.manual-push': { commits: 6, windowDays: 14, branch: 'main' },
   'trend.token-spend': { changePct: 38, windowDays: 14 },
   'gate.main-broken': { failingCheck: 'npm test', blockedTasks: 4 },
+  'merge.operator-auto-commit': {
+    taskId: 'mars-abc123',
+    branch: 'main',
+    commitSha: '0123456789abcdef0123456789abcdef01234567',
+    fileCount: 2,
+  },
 }
 
 const bodyFor = (kind: AutonomousNoticeKind): string =>

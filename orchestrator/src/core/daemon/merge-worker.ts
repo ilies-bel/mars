@@ -34,6 +34,8 @@ import type { MergeArgs, MergeResult } from '../lib/git/merge.js'
 import { mergeBranch, MergeAbortedError, DEFAULT_WATCHDOG_MS } from '../lib/git/merge.js'
 import type { MergeJob, MergeJobStore, EnqueueMergeJobInput } from '../store/merge-job-store.js'
 import type { AgentEvent } from '../lib/claude-stream.js'
+import { isOperatorAutoCommitDisabled, resolveControlLevers } from '../config/levers.js'
+import { speakOperatorAutoCommitNotice } from '../lib/notices/operator-auto-commit.js'
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -297,6 +299,20 @@ async function runMergeJob(
             }
           }
         : undefined,
+      // ADR-0100: the operator's own uncommitted edits on the integration
+      // checkout are swept into a wip(operator) commit so the queue keeps
+      // moving. Resolved per job rather than per daemon so `mars operator set
+      // operator-auto-commit off` takes effect on the next merge without a
+      // restart — the same live-effect guarantee every other control lever has.
+      autoCommitOperatorDirt: !isOperatorAutoCommitDisabled(resolveControlLevers()),
+      onOperatorAutoCommit: async (info) => {
+        await speakOperatorAutoCommitNotice({
+          taskId: job.taskId,
+          branch: job.integrationBranch,
+          commitSha: info.commitSha,
+          files: info.files,
+        })
+      },
     })
     result = { status: 'done', result: mergeResult }
     // Where the integration branch now points. Recorded here rather than

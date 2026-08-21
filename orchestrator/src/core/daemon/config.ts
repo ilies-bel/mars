@@ -65,12 +65,12 @@ export interface ControlLevers {
    */
   autoRunReflect: ControlLeverValue
   /**
-   * Lever surface only — nothing reads this yet (PRD
-   * ce46f01e-concurrent-writing-on-main-rebase-verify slice 9). It will
-   * eventually gate whether the daemon may auto-commit dirty operator edits
-   * on `main` before a merge fast-forward. Default 'on' (current
-   * auto-commit-on-merge behaviour, unchanged, until a later slice wires
-   * this in). No env override.
+   * Gates whether a merge may sweep the operator's dirty edits on the
+   * integration checkout into a `wip(operator)` commit so it can land
+   * (ADR-0100). Read by the merge worker, which passes the answer to
+   * `mergeBranch` as `autoCommitOperatorDirt`; when 'off' the merge falls
+   * back to preserving the edits on a checkpoint ref. Default 'on'. No env
+   * override.
    * Gesture: `mars operator set operator-auto-commit <on|off>`.
    */
   operatorAutoCommit: ControlLeverValue

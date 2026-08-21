@@ -24,7 +24,7 @@
  *
  * Passes `autoCommitOperatorDirt: false` explicitly: ADR-0100 slice 6 added a
  * lever-gated auto-commit path that is now the *default* for genuine operator
- * dirt (see `operatorWipCommitMessage` / `merge-operator-auto-commit.test.ts`).
+ * dirt (see `operatorWipCommitMessage` / `operator-auto-commit.test.ts`).
  * This test exercises the checkpoint-and-preserve fallback specifically, i.e.
  * what still happens with the lever off.
  */

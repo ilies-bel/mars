@@ -1538,17 +1538,31 @@ export const mergeBranch = async ({
             const autoCommit = await autoCommitOperatorDirtGit({
               repoRoot: repoRoot(),
               taskId: traceCtx?.taskId ?? branch,
+              // The checkout's content is based on the sha it was last synced
+              // to; without a recorded one, on the integration sha this merge
+              // just advanced away from. Anything the working tree differs
+              // from THAT by is the operator's own work.
+              baseSha: readLastSyncedSha() ?? finalIntegrationSha,
+              headSha: finalTaskSha,
               traceCtx: mergeCtx,
             })
             if (autoCommit.committed) {
-              // The wip(operator) commit is now the tree's true state — record
-              // it as the new last-synced sha so a later `attributeIntegrationDirt`
-              // call has the right baseline, and because `git commit` just
-              // advanced `integrationBranch`'s own ref in the ordinary way, any
-              // concurrent merge's CAS fast-forward check observes this commit
-              // and redoes its rebase rather than clobbering it — no special
-              // handling needed beyond doing a normal commit here.
-              writeLastSyncedSha(autoCommit.sha)
+              // The operator's work is a commit now, so materialising the
+              // merged content over the stale checkout can no longer lose
+              // anything — and it has to happen, or the merge returns success
+              // over a dirty tree and the dirty-main guard parks the queue.
+              // The wip(operator) commit is then the tree's true state, so
+              // record it as the new last-synced sha; and because `git commit`
+              // advanced `integrationBranch`'s own ref in the ordinary way,
+              // any concurrent merge's CAS fast-forward check observes this
+              // commit and redoes its rebase rather than clobbering it — no
+              // special handling needed beyond doing a normal commit here.
+              const resync = await gprobe(['reset', '--hard', autoCommit.sha], repoRoot())
+              if (resync.exitCode === 0) {
+                writeLastSyncedSha(autoCommit.sha)
+              } else {
+                output += `\n[mergeBranch] post-auto-commit resync failed: ${resync.stderr.trim().slice(0, 300)}`
+              }
               output +=
                 `\n[mergeBranch] auto-committed operator dirt as ${autoCommit.sha.slice(0, 9)} ` +
                 `(${autoCommit.files.length} path(s)): ${autoCommit.files.join(', ').slice(0, 200)}`

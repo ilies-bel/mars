@@ -31,6 +31,7 @@ export const AutonomousNoticeKindSchema = z.enum([
   'observation.manual-push',
   'trend.token-spend',
   'gate.main-broken',
+  'merge.operator-auto-commit',
 ])
 
 export type AutonomousNoticeKind = z.infer<typeof AutonomousNoticeKindSchema>
@@ -75,6 +76,17 @@ export interface AutonomousNoticePayloads {
   'trend.token-spend': { changePct: number; windowDays: number }
   /** The integration branch is failing, so incoming work cannot verify. */
   'gate.main-broken': { failingCheck: string; blockedTasks: number }
+  /**
+   * Mars committed the operator's own uncommitted edits on the integration
+   * branch so a merge could land (ADR-0100). The sha is the whole point: it
+   * is how the operator finds work they did not commit themselves.
+   */
+  'merge.operator-auto-commit': {
+    taskId: string
+    branch: string
+    commitSha: string
+    fileCount: number
+  }
 }
 
 export type AutonomousConversationNoticeInput = {
@@ -251,6 +263,34 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
         id: 'fix',
         label: 'Fix it',
         target: { type: 'subject', title: 'Fix the integration branch' },
+      },
+      ack(),
+    ],
+  },
+  'merge.operator-auto-commit': {
+    act: 'announcement',
+    render: (p) => {
+      const files = p.fileCount === 1 ? '1 uncommitted file' : `${p.fileCount} uncommitted files`
+      return (
+        `I committed ${files} of yours on ${sentenceValue(p.branch)} as ` +
+        `${sentenceValue(p.commitSha).slice(0, 9)} because they were blocking the merge of ` +
+        `${sentenceValue(p.taskId)} — reply "stop auto-committing" and I will park the queue ` +
+        `and leave your edits alone instead.`
+      )
+    },
+    // No `lever` facet: the off-switch here is the `operatorAutoCommit`
+    // control lever (`mars operator set operator-auto-commit off`), not an
+    // Autonomy level, and a lever-target chip writes Autonomy levels only —
+    // offering one would be a button that changes nothing. The reply is the
+    // honest gesture, so the Offer opens a Subject to carry it out.
+    offers: (p) => [
+      {
+        id: 'stop',
+        label: 'Stop auto-committing',
+        target: {
+          type: 'subject',
+          title: `Stop auto-committing my edits on ${sentenceValue(p.branch)}`,
+        },
       },
       ack(),
     ],

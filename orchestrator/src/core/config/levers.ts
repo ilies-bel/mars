@@ -63,9 +63,11 @@ export const isRecoveryDisabled = (levers: ControlLevers): boolean => levers.rec
 /**
  * True when the operator has disabled auto-commit of dirty operator edits on
  * `main` before a merge fast-forward. No env override — `operatorAutoCommit`
- * is absent from `LEVER_ENV_OVERRIDES`. Nothing consumes this yet (lever
- * surface only, PRD ce46f01e-concurrent-writing-on-main-rebase-verify
- * slice 9); a later slice wires the behaviour in.
+ * is absent from `LEVER_ENV_OVERRIDES`.
+ *
+ * Consumed by the merge worker (`src/core/daemon/merge-worker.ts`), which
+ * resolves it per job and passes the answer to `mergeBranch` as
+ * `autoCommitOperatorDirt`.
  */
 export const isOperatorAutoCommitDisabled = (levers: ControlLevers): boolean =>
   levers.operatorAutoCommit === 'off'
