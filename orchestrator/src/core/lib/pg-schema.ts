@@ -1743,27 +1743,42 @@ const DDL: readonly string[] = [
      ON auto_recipe_runs(signature, outcome)`,
 
   // ── candidate lessons (under-corroborated inductions, ADR-0099) ──────────
-  // deep-reflect single-arc suggestions need corroboration (the skill-forge
-  // >=3-distinct-arc pattern) or reduced standing. Rather than silently
-  // discarding a lesson cluster that has not yet crossed that bar,
-  // `skill-forge scan` parks it here keyed by its lesson key and keeps
-  // accumulating distinct arc origin ids across runs until it either
-  // crosses the corroboration threshold (promoted, linked to the filed
-  // proposal) or is explicitly dismissed.
+  // An induction that does not yet clear the corroboration floor (the
+  // skill-forge >=3-distinct-arc pattern) is not thrown away: it accumulates
+  // here keyed by a fingerprint derived from its root cause, gaining an
+  // observation each time the same lesson is induced again (from a new arc
+  // or a repeat of one already seen — `recordCandidateLesson` in
+  // `core/lib/candidate-lessons.ts` owns the upsert semantics).
+  //
+  // This table previously shipped (migration v0038) keyed by `lesson_key`
+  // with a `status`/`promoted_proposal_id` promotion lifecycle. That shape
+  // had no reader or writer anywhere in the codebase, so per the project's
+  // hard-cut policy (no back-compat shims pre-1.0) it is replaced outright
+  // rather than grown alongside a second, competing shape. The guarded block
+  // below only fires against a database that still has the old column, so
+  // it is a no-op on every database created after this migration landed.
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'candidate_lessons'
+          AND column_name = 'lesson_key'
+     ) THEN
+       DROP TABLE candidate_lessons;
+     END IF;
+   END
+   $$`,
   `CREATE TABLE IF NOT EXISTS candidate_lessons (
-    lesson_key           text   PRIMARY KEY,
-    title                text   NOT NULL,
-    summary              text   NOT NULL,
-    root_cause_key       text   NOT NULL,
-    arc_origin_ids       text   NOT NULL DEFAULT '[]',
-    status               text   NOT NULL DEFAULT 'candidate'
-                                CHECK (status IN ('candidate', 'promoted', 'dismissed')),
-    promoted_proposal_id text   REFERENCES proposals(id),
-    first_seen_at        bigint NOT NULL,
-    last_seen_at         bigint NOT NULL
+    fingerprint       text        PRIMARY KEY,
+    title             text        NOT NULL,
+    body              text        NOT NULL,
+    arc_ids           text        NOT NULL DEFAULT '[]',
+    observation_count integer     NOT NULL DEFAULT 1,
+    first_seen_at     timestamptz NOT NULL,
+    last_seen_at      timestamptz NOT NULL
   )`,
-  `CREATE INDEX IF NOT EXISTS idx_candidate_lessons_status
-     ON candidate_lessons(status)`,
+  `CREATE INDEX IF NOT EXISTS idx_candidate_lessons_observation_count
+     ON candidate_lessons(observation_count DESC)`,
 
   // ── Steward intervention ledger ─────────────────────────────────────────
   // Append-only evidence for every proactive Steward action. The target
