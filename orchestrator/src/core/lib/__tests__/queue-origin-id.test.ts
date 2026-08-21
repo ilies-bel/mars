@@ -1,9 +1,28 @@
+/**
+ * queue.origin_id migration/default coverage.
+ *
+ * Pre-migration-0002 (SQLite/libsql), `migrateQueueSchema` was a ~1300-line
+ * imperative introspection engine that added `origin_id` to a stale DB and
+ * backfilled existing rows. Post-0002 the store is embedded PostgreSQL
+ * (PGlite in tests) and `migrateQueueSchema` is a compatibility alias for
+ * `ensureQueueSchema`, which just runs the canonical, idempotent DDL from
+ * `core/lib/pg-schema.ts` (see queue.ts:658-687) — the `tasks` table is
+ * always created with `origin_id` already present, so there is no "legacy
+ * DB missing the column" state to backfill any more. That coverage was
+ * dropped rather than ported; what remains here is schema idempotency plus
+ * the default/explicit `origin_id` behaviour on insert.
+ */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { execFileSync } from 'node:child_process'
-import { createClient } from '@libsql/client'
+
+interface QueueMod {
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  enqueueTask: typeof import('../../queue').enqueueTask
+}
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-origin-id-'))
@@ -12,12 +31,12 @@ const setupRepo = (): string => {
   return repo
 }
 
-const loadQueue = async (repo: string) => {
+const loadQueue = async (repo: string): Promise<QueueMod> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const mod = await import('../../queue')
   await mod.migrateQueueSchema()
-  return mod
+  return mod as unknown as QueueMod
 }
 
 describe('queue.origin_id migration', () => {
@@ -37,13 +56,11 @@ describe('queue.origin_id migration', () => {
     await q.migrateQueueSchema()
     await q.migrateQueueSchema()
 
-    const dbPath = resolve(repo, '.mars/mars.db')
-    const direct = createClient({ url: `file:${dbPath}` })
-    const cols = await direct.execute(`PRAGMA table_info(tasks)`)
-    const originIdCols = cols.rows.filter(
-      (r) => (r as unknown as { name: string }).name === 'origin_id',
-    )
-    expect(originIdCols).toHaveLength(1)
+    const cols = await q.resolveQueueClient().execute({
+      sql: `SELECT column_name FROM information_schema.columns WHERE table_name = 'tasks' AND column_name = 'origin_id'`,
+      args: [],
+    })
+    expect(cols.rows).toHaveLength(1)
   })
 
   it('new tasks get origin_id = id by default (direct mars task add)', async () => {
@@ -51,9 +68,7 @@ describe('queue.origin_id migration', () => {
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
     expect(t.originId).toBe(t.id)
 
-    const dbPath = resolve(repo, '.mars/mars.db')
-    const direct = createClient({ url: `file:${dbPath}` })
-    const r = await direct.execute({
+    const r = await q.resolveQueueClient().execute({
       sql: `SELECT origin_id FROM tasks WHERE id = ?`,
       args: [t.id],
     })
@@ -68,37 +83,5 @@ describe('queue.origin_id migration', () => {
       originId: proposalId,
     })
     expect(t.originId).toBe(proposalId)
-  })
-
-  it('backfills origin_id on legacy rows (column added on stale DB → origin_id = id)', async () => {
-    // Simulate a pre-migration DB by creating tasks WITHOUT origin_id and
-    // dropping the column before migrateQueueSchema runs the migration.
-    const dbPath = resolve(repo, '.mars/mars.db')
-    const direct = createClient({ url: `file:${dbPath}` })
-    const now = new Date().toISOString()
-    // Mimic the legacy schema (no origin_id column).
-    await direct.execute(`
-      CREATE TABLE tasks (
-        id TEXT PRIMARY KEY,
-        prompt TEXT NOT NULL,
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    `)
-    await direct.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-      args: ['legacy01', 'old', 'queued', now, now],
-    })
-    // Now run migrateQueueSchema which should migrate + backfill.
-    const q = await loadQueue(repo)
-    void q
-    const r = await direct.execute({
-      sql: `SELECT origin_id FROM tasks WHERE id = ?`,
-      args: ['legacy01'],
-    })
-    expect((r.rows[0] as unknown as { origin_id: string }).origin_id).toBe(
-      'legacy01',
-    )
   })
 })
