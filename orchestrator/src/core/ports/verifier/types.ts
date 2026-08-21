@@ -10,10 +10,12 @@
  * redesign. `__tests__/serializable.test.ts` pins that property with a
  * `JSON.parse(JSON.stringify(args))` round-trip.
  *
- * One implementation exists today (see `registry.ts`):
+ * Two implementations exist today (see `registry.ts`):
  *   - `local` — wraps `verifyChanges` (`../../lib/git/verify`), spawning each
  *     verify step as a local subprocess. This is the default binding, so
  *     behaviour is identical to calling the runner directly.
+ *   - `remote-http` (`./remote-http.ts`) — POSTs the args to a configured
+ *     HTTP endpoint (e.g. CI) and reports back its `VerifierRunResult`.
  *
  * The active implementation is selected by `MARS_VERIFIER_KIND`
  * (see `../../config/registry.ts`'s `verifier` Port entry).

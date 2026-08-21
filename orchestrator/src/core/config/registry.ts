@@ -120,7 +120,7 @@ const REGISTRY: readonly PortRegistryEntry[] = [
         kind: 'remote-http',
         description: 'Delegates verification to a remote HTTP service (e.g. CI).',
         remote: true,
-        envVars: ['MARS_VERIFIER_REMOTE_URL', 'MARS_VERIFIER_REMOTE_TOKEN'],
+        envVars: ['MARS_VERIFIER_REMOTE_URL', 'MARS_VERIFIER_REMOTE_TOKEN', 'MARS_VERIFIER_REMOTE_TIMEOUT_MS'],
       },
     ],
   },

@@ -6,16 +6,17 @@
  * of returning `undefined`; `changes` lets a future consumer react to a
  * registration without polling).
  *
- * `local` self-registers at the bottom of this module as a side effect of
- * importing it — the same "built-ins self-register at import time" shape
- * `provider-registry.ts` documents for providers. The active implementation
- * is selected via `resolvePortKind('verifier', env)`
+ * `local` and `remote-http` both self-register at the bottom of this module
+ * as a side effect of importing it — the same "built-ins self-register at
+ * import time" shape `provider-registry.ts` documents for providers. The
+ * active implementation is selected via `resolvePortKind('verifier', env)`
  * (`../../config/registry.ts`'s shared Port catalog, `MARS_VERIFIER_KIND`,
  * default `'local'`) and wired through {@link resolveVerifier} below.
  */
 import { createServiceRegistry, type Disposer } from '@mars/workflow'
 import { resolvePortKind } from '../../config/registry'
 import { localSubprocessVerifier } from './local-subprocess'
+import { remoteHttpVerifier } from './remote-http'
 import type { Verifier } from './types'
 
 type VerifierMap = Record<string, Verifier>
@@ -43,6 +44,7 @@ export const listVerifiers = (): readonly Verifier[] => registry.keys().map((kin
 
 // Built-ins self-register at import time.
 registerVerifier(localSubprocessVerifier)
+registerVerifier(remoteHttpVerifier)
 
 /**
  * Resolves the active `Verifier` implementation from `env` (typically

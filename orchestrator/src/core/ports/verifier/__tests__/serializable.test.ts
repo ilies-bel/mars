@@ -144,11 +144,7 @@ describe('resolveVerifier()', () => {
     )
   })
 
-  it('throws when a declared kind has no implementation registered here', () => {
-    // `remote-http` is declared in the shared Port catalog but its adapter is
-    // a later slice — resolution must surface that, not silently fall back.
-    expect(() => resolveVerifier({ MARS_VERIFIER_KIND: 'remote-http' })).toThrow(
-      /Unknown Verifier implementation 'remote-http'/,
-    )
+  it('resolves the remote-http implementation when selected', () => {
+    expect(resolveVerifier({ MARS_VERIFIER_KIND: 'remote-http' }).kind).toBe('remote-http')
   })
 })

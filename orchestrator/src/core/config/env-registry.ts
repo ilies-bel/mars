@@ -92,6 +92,7 @@ const boolFromEnv = z.string().transform((raw, ctx) => {
 const positiveIntFromEnv = z.coerce.number().int().positive()
 const positiveNumberFromEnv = z.coerce.number().positive()
 const unitIntervalFromEnv = z.coerce.number().min(0).max(1)
+const nonEmptyStringFromEnv = z.string().min(1)
 
 const providerFromEnv = z.string().refine(
   (raw: string) => VALID_PROVIDER_NAMES.has(raw),
@@ -195,5 +196,32 @@ export const ENV_KNOBS: readonly EnvKnob[] = [
     default: DEFAULT_PROVIDER,
     description:
       'Overrides the default agent provider (claude/gemini/codex) for every un-pinned Worker in this daemon process.',
+  },
+  // ---------------------------------------------------------------------
+  // `remote-http` Verifier implementation (`../ports/verifier/remote-http.ts`).
+  // These three are the "endpoint URL, auth header and timeout" knobs the
+  // adapter reads through `loadConfig()` — never via an ad-hoc env read in
+  // the adapter itself. The Port *selector* var stays in the separate Port
+  // catalog (`./registry.ts`) per the split documented at the top of this
+  // file; these three are typed `MarsConfig` value overrides, so they
+  // belong here.
+  // ---------------------------------------------------------------------
+  {
+    name: 'MARS_VERIFIER_REMOTE_URL',
+    schema: nonEmptyStringFromEnv,
+    path: 'verifier.remoteUrl',
+    default: null,
+  },
+  {
+    name: 'MARS_VERIFIER_REMOTE_TOKEN',
+    schema: nonEmptyStringFromEnv,
+    path: 'verifier.remoteAuthToken',
+    default: null,
+  },
+  {
+    name: 'MARS_VERIFIER_REMOTE_TIMEOUT_MS',
+    schema: positiveIntFromEnv,
+    path: 'verifier.remoteTimeoutMs',
+    default: 30_000,
   },
 ]

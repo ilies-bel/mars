@@ -41,6 +41,14 @@ export interface MarsConfig {
     lowTrendWindow: number
   }
   defaultProvider: ProviderName
+  verifier: {
+    /** Endpoint the `remote-http` Verifier POSTs a `VerifierRunArgs` to. `null` when unconfigured. */
+    remoteUrl: string | null
+    /** Value sent as the `authorization` header's token (`Bearer <token>`). `null` when unconfigured. */
+    remoteAuthToken: string | null
+    /** Wall-clock timeout in ms before the remote request is aborted. */
+    remoteTimeoutMs: number
+  }
 }
 
 /**
