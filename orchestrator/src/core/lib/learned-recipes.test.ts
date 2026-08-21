@@ -47,7 +47,7 @@ describe('learned-recipes — teach / get / unlearn', () => {
     expect(recipe!.failureSignature).toBe('verify:typecheck/typecheck-type-mismatch')
     expect(recipe!.actionOp).toBe('restart')
     expect(typeof recipe!.learnedAt).toBe('string')
-    expect(recipe!.breadth).toBe(0)
+    expect(recipe!.autoRunCount).toBe(0)
   })
 
   it('getLearnedRecipe returns null for unknown signature', async () => {
@@ -108,7 +108,7 @@ describe('learned-recipes — listLearnedRecipes', () => {
     expect(list[0]!.failureSignature).toBe('verify:typecheck/typecheck-type-mismatch')
   })
 
-  it('breadth reflects the number of logged auto-runs for the signature', async () => {
+  it('autoRunCount reflects the number of logged auto-runs for the signature', async () => {
     const m = await loadModule()
     await m.teachRecipe('verify:typecheck/typecheck-type-mismatch', 'restart')
     await m.teachRecipe('setup:install/install-frozen-lockfile', 'restart')
@@ -123,12 +123,23 @@ describe('learned-recipes — listLearnedRecipes', () => {
       taskId: 'task-2',
     })
     const list = await m.listLearnedRecipes()
-    const byOp = new Map(list.map((r) => [r.failureSignature, r.breadth]))
+    const byOp = new Map(list.map((r) => [r.failureSignature, r.autoRunCount]))
     expect(byOp.get('verify:typecheck/typecheck-type-mismatch')).toBe(2)
     expect(byOp.get('setup:install/install-frozen-lockfile')).toBe(0)
 
     const single = await m.getLearnedRecipe('verify:typecheck/typecheck-type-mismatch')
-    expect(single!.breadth).toBe(2)
+    expect(single!.autoRunCount).toBe(2)
+  })
+
+  it('breadth is populated for every row via one batched call', async () => {
+    const m = await loadModule()
+    await m.teachRecipe('verify:typecheck/typecheck-type-mismatch', 'restart')
+    await m.teachRecipe('setup:install/install-frozen-lockfile', 'restart')
+    const list = await m.listLearnedRecipes()
+    expect(list).toHaveLength(2)
+    for (const recipe of list) {
+      expect(recipe.breadth).toEqual({ exact: 0, family: 0 })
+    }
   })
 })
 

@@ -982,7 +982,11 @@ export const startHttpServer = async (
 
     // GET /failure-kinds/learned-recipes — list all operator-taught auto-run
     // rules (signature → op). Used by the UI's un-teach affordance and the
-    // WYWA delta. Pure read; no draining gate.
+    // WYWA delta. Each row carries `autoRunCount` (past actual firings) and
+    // `breadth` (ADR-0099 MatcherBreadth: past failures this signature would
+    // have exactly/family-matched, computed by `listLearnedRecipes()` itself)
+    // — both flow through verbatim, no extra shaping needed here. Pure read;
+    // no draining gate.
     if (req.method === 'GET' && req.url === '/failure-kinds/learned-recipes') {
       import('../lib/learned-recipes.js')
         .then((m) => m.listLearnedRecipes())

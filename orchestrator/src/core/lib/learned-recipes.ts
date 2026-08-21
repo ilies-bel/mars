@@ -14,17 +14,31 @@
  * Scope: per failure signature, global (not per-project or per-task).
  *
  * ADR-0099 ("Self-improvement loops induce the weakest valid hypothesis")
- * requires every autonomous recipe to carry a measurable breadth (how many
- * past instances it has fired on, `LearnedRecipe.breadth`) and an outcome
- * log consulted before re-firing: each auto-run starts `outcome: 'pending'`
- * and is later resolved via `recordAutoRecipeOutcome` once the acted-on
- * task's fate is known, so `listAutoRecipeRuns({ signature })` can be
- * checked before trusting the recipe again.
+ * requires every autonomous recipe to carry a measurable breadth and an
+ * outcome log consulted before re-firing. Two distinct breadth metrics are
+ * tracked here:
+ *
+ *  - `LearnedRecipe.autoRunCount` — how many times this recipe has actually
+ *    auto-fired (a count of logged `auto_recipe_runs` rows). Zero for a
+ *    freshly-taught recipe.
+ *  - `LearnedRecipe.breadth` — {@link MatcherBreadth}: how many PAST
+ *    failures this recipe's signature would have matched, exactly and by
+ *    family, regardless of whether the recipe existed at the time. Computed
+ *    by `listLearnedRecipes()` via `wouldHaveFiredOnMany` so an operator can
+ *    see whether a recipe taught from one click is narrow (matches exactly
+ *    one historic failure) or broad, without waiting for it to actually fire
+ *    again.
+ *
+ * The outcome log itself: each auto-run starts `outcome: 'pending'` and is
+ * later resolved via `recordAutoRecipeOutcome` once the acted-on task's fate
+ * is known, so `listAutoRecipeRuns({ signature })` can be checked before
+ * trusting the recipe again.
  */
 
 import { randomUUID } from 'node:crypto'
 import { resolveStateClient } from '../store/state-client.js'
 import type { DbClient, DbInValue } from './db.js'
+import { type MatcherBreadth, wouldHaveFiredOnMany } from './matcher-breadth.js'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -37,13 +51,21 @@ export interface LearnedRecipe {
   /** ISO-8601 timestamp when the recipe was last taught or updated. */
   learnedAt: string
   /**
-   * Breadth metric (ADR-0099): the number of past instances (logged
-   * `auto_recipe_runs` rows) this recipe has fired on. Lets an operator see
-   * whether a recipe is over-narrow (breadth 0-1, essentially untested) or
+   * The number of past instances (logged `auto_recipe_runs` rows) this
+   * recipe has actually fired on. Lets an operator see whether a recipe is
    * well-exercised, without changing the exact-match semantics of when it
    * fires.
    */
-  breadth: number
+  autoRunCount: number
+  /**
+   * Matcher breadth (ADR-0099): how many PAST failures (by
+   * `tasks.failure_signature`) this recipe's signature would have matched,
+   * exactly and by family — see {@link MatcherBreadth}. Populated by
+   * `listLearnedRecipes()` in one batched query; `getLearnedRecipe()` (the
+   * exact-match single-row lookup autonomous firing uses) leaves it
+   * `undefined`.
+   */
+  breadth?: MatcherBreadth
 }
 
 /**
@@ -114,10 +136,10 @@ export async function getLearnedRecipe(
   const client = resolveStateClient()
   const result = await client.execute({
     sql: `SELECT lr.failure_signature, lr.action_op, lr.learned_at,
-                 COALESCE(arr.breadth, 0) AS breadth
+                 COALESCE(arr.auto_run_count, 0) AS auto_run_count
           FROM learned_recipes lr
           LEFT JOIN (
-            SELECT signature, COUNT(*) AS breadth
+            SELECT signature, COUNT(*) AS auto_run_count
             FROM auto_recipe_runs
             GROUP BY signature
           ) arr ON arr.signature = lr.failure_signature
@@ -129,47 +151,57 @@ export async function getLearnedRecipe(
     failure_signature: string
     action_op: string
     learned_at: string
-    breadth: number | string
+    auto_run_count: number | string
   }
   return {
     failureSignature: row.failure_signature,
     actionOp: row.action_op,
     learnedAt: row.learned_at,
-    breadth: Number(row.breadth),
+    autoRunCount: Number(row.auto_run_count),
   }
 }
 
 /**
- * List all stored learned recipes, newest-first by `learned_at`.
+ * List all stored learned recipes, newest-first by `learned_at`. Populates
+ * `breadth` (ADR-0099) for every row via a single batched
+ * {@link wouldHaveFiredOnMany} call — never one query per row.
  */
 export async function listLearnedRecipes(): Promise<LearnedRecipe[]> {
   const client = resolveStateClient()
   const result = await client.execute({
     sql: `SELECT lr.failure_signature, lr.action_op, lr.learned_at,
-                 COALESCE(arr.breadth, 0) AS breadth
+                 COALESCE(arr.auto_run_count, 0) AS auto_run_count
           FROM learned_recipes lr
           LEFT JOIN (
-            SELECT signature, COUNT(*) AS breadth
+            SELECT signature, COUNT(*) AS auto_run_count
             FROM auto_recipe_runs
             GROUP BY signature
           ) arr ON arr.signature = lr.failure_signature
           ORDER BY lr.learned_at DESC`,
     args: [],
   })
-  return result.rows.map((row: unknown) => {
+  const rows = result.rows.map((row: unknown) => {
     const r = row as {
       failure_signature: string
       action_op: string
       learned_at: string
-      breadth: number | string
+      auto_run_count: number | string
     }
     return {
       failureSignature: r.failure_signature,
       actionOp: r.action_op,
       learnedAt: r.learned_at,
-      breadth: Number(r.breadth),
+      autoRunCount: Number(r.auto_run_count),
     }
   })
+  if (rows.length === 0) return rows
+
+  // wouldHaveFiredOnMany guarantees one map entry per input signature.
+  const breadthBySignature = await wouldHaveFiredOnMany(rows.map((r) => r.failureSignature))
+  return rows.map((r) => ({
+    ...r,
+    breadth: breadthBySignature.get(r.failureSignature)!,
+  }))
 }
 
 // ── Auto-run log ──────────────────────────────────────────────────────────────

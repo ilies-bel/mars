@@ -146,6 +146,29 @@ describe('GET /failure-kinds/learned-recipes', () => {
       await close()
     }
   })
+
+  it('returns breadth (ADR-0099 MatcherBreadth) for every recipe row', async () => {
+    const { httpServer, lr } = await loadModules(repo)
+    await lr.teachRecipe('verify:typecheck/type-mismatch', 'restart')
+    const { port, close } = await httpServer.startHttpServer(makeDeps())
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/failure-kinds/learned-recipes`)
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        ok: boolean
+        learnedRecipes: Array<{
+          failureSignature: string
+          breadth?: { exact: number; family: number }
+        }>
+      }
+      const recipe = body.learnedRecipes.find(
+        (r) => r.failureSignature === 'verify:typecheck/type-mismatch',
+      )
+      expect(recipe?.breadth).toEqual({ exact: 0, family: 0 })
+    } finally {
+      await close()
+    }
+  })
 })
 
 // ── POST /failure-kinds/:sig/recipe ──────────────────────────────────────────
