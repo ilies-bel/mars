@@ -86,13 +86,22 @@ describe('runWorkerWithSpan — Coder run', () => {
       taskId: 'task-coder-abc',
     })
 
-    const events = await traceStore.query({ taskId: 'task-coder-abc' })
+    const events = await traceStore.query({
+      taskId: 'task-coder-abc',
+      kind: ['step_started', 'step_ended'],
+    })
     expect(events).toHaveLength(2)
     expect(events.map((e) => e.kind).sort()).toEqual(['step_ended', 'step_started'])
     for (const e of events) {
       expect(e.payload.workerName).toBe('Coder')
       expect(e.payload.stepName).toBe('run-claude-code')
     }
+
+    const attributed = await traceStore.query({
+      taskId: 'task-coder-abc',
+      kind: ['worker.model.attributed'],
+    })
+    expect(attributed).toHaveLength(1)
   })
 
   it('records the session id on the step_ended event', async () => {
@@ -922,7 +931,10 @@ describe('runWorkerWithSpan — taskId stamps spans with the real task id', () =
     })
 
     // Spans attributed to the real task id
-    const byTaskId = await traceStore.query({ taskId: 'task-child-bbb' })
+    const byTaskId = await traceStore.query({
+      taskId: 'task-child-bbb',
+      kind: ['step_started', 'step_ended'],
+    })
     expect(byTaskId).toHaveLength(2)
 
     // NOT attributed to the origin id
@@ -1274,7 +1286,10 @@ describe('implement-arc span attribution — all 4 steps attribute to the slice 
     })
 
     // 4 steps × 2 events each = 8 events; ALL must carry the slice task id.
-    const bySlice = await traceStore.query({ taskId: sliceTaskId })
+    const bySlice = await traceStore.query({
+      taskId: sliceTaskId,
+      kind: ['step_started', 'step_ended'],
+    })
     expect(bySlice).toHaveLength(8)
 
     const stepNames = new Set(bySlice.map((e) => e.payload.stepName as string))
