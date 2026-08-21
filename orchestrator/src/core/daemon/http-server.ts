@@ -713,6 +713,16 @@ export interface HttpServerDeps {
    * Optional — omitted from test stubs.
    */
   drainDispatch?: () => void
+  /**
+   * Raise a `task.question` outbox event for `id`, converted by the
+   * question-raise subscriber into a `coder-question` action-queue item.
+   * Backs `POST /tasks/:id/question` — the daemon-owned write path that lets
+   * the CLI's `mars task ask` publish through the daemon's HTTP API instead
+   * of opening a write transaction on the state client directly from the CLI
+   * process (the daemon is meant to be the single writer). Optional — when
+   * absent the endpoint returns 501 Not Implemented (safe for test stubs).
+   */
+  raiseTaskQuestion?: (id: string, question: string) => Promise<void>
 }
 
 export interface HttpServerHandle {
@@ -891,6 +901,7 @@ const handleEventsRequest = async (
  *   GET  /alerts/next            → the top Alert for the hero next-action shortcut
  *   GET  /alerts/:arcId          → the single arc-rooted Alert (or 404)
  *   POST /alerts/:arcId/thread   → pull an Alert into a chat thread ({ threadId })
+ *   POST /tasks/:id/question     → raise a task.question outbox event ({ question })
  *   POST /actions/restart/:id    → re-queue a failed/daemon-killed task
  *   POST /actions/unblock/:id    → phantom-recover a blocked task
  *   POST /actions/purge/:id      → drop a task + worktree
@@ -910,9 +921,24 @@ const handleEventsRequest = async (
  * the returned {@link HttpServerHandle}, which the daemon also writes to
  * `.mars/http.port` for the read-only UI to read.
  */
-export const startHttpServer = async (
+
+/** Signature Node's `http.createServer` accepts as its request listener. */
+export type HttpRequestListener = (
+  req: import('node:http').IncomingMessage,
+  res: import('node:http').ServerResponse,
+) => void
+
+/**
+ * Build the daemon's local HTTP API route table as a plain request listener,
+ * decoupled from binding/listening a socket. This is the seam a caller
+ * splitting the daemon's transport concerns (route registration vs.
+ * UI-serving vs. socket lifecycle) composes against instead of reaching into
+ * {@link startHttpServer}, which additionally owns listen()/close() and the
+ * open-socket tracking needed for a clean shutdown.
+ */
+export const createHttpRequestListener = (
   deps: HttpServerDeps,
-): Promise<HttpServerHandle> => {
+): { listener: HttpRequestListener; openSockets: Set<import('node:net').Socket> } => {
   const entityHandlers: Record<EntityOp, (id: string) => Promise<void>> = {
     restart: deps.restartTask,
     remerge: deps.remergeTask,
@@ -935,9 +961,12 @@ export const startHttpServer = async (
   // the /view/stream SSE channel) instead of hanging forever: Node's
   // server.close() stops accepting new connections but only invokes its
   // callback once every existing connection ends on its own, and a
-  // keep-alive SSE client never ends one voluntarily.
+  // keep-alive SSE client never ends one voluntarily. Ownership of this set
+  // is handed back to the caller (see {@link startHttpServer}) because only
+  // the listen()/close() owner can register the 'connection' listener that
+  // populates it.
   const openSockets = new Set<import('node:net').Socket>()
-  const server: Server = createServer((req, res) => {
+  const listener: HttpRequestListener = (req, res) => {
     // GET /healthz — liveness probe. Pure read; no draining gate so the UI
     // correctly shows the daemon as live even while it is draining.
     if (req.method === 'GET' && req.url === '/healthz') {
@@ -3597,6 +3626,44 @@ export const startHttpServer = async (
       }
     }
 
+    // POST /tasks/:id/question — raise a task.question outbox event. Body:
+    // { question: string }. The daemon-owned counterpart to the CLI's
+    // `mars task ask`, so that command can publish through this HTTP route
+    // instead of writing to the outbox directly from the CLI process.
+    {
+      const questionMatch = req.url?.match(/^\/tasks\/([^/?]+)\/question(?:\?.*)?$/)
+      if (req.method === 'POST' && questionMatch && questionMatch[1]) {
+        if (!deps.raiseTaskQuestion) {
+          sendJson(res, 501, { ok: false, error: 'raiseTaskQuestion not implemented' })
+          return
+        }
+        const id = decodeURIComponent(questionMatch[1])
+        let rawBody = ''
+        req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+        req.on('end', () => {
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(rawBody)
+          } catch {
+            sendJson(res, 400, { ok: false, error: 'Invalid JSON body' })
+            return
+          }
+          const questionSchema = z.object({ question: z.string().min(1) })
+          const result = questionSchema.safeParse(parsed)
+          if (!result.success) {
+            sendJson(res, 400, { ok: false, error: 'Body must be { question: non-empty string }' })
+            return
+          }
+          deps
+            .raiseTaskQuestion!(id, result.data.question)
+            .then(() => sendJson(res, 200, { ok: true }))
+            .catch((err: unknown) => sendError(res, err))
+        })
+        req.on('error', (err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
     // POST /actions/:op/:id — per-entity verbs.
     const match = req.url?.match(/^\/actions\/([^/]+)\/([^/]+)$/)
     if (!match || !match[1] || !match[2]) {
@@ -3671,7 +3738,16 @@ export const startHttpServer = async (
     handler(id)
       .then(() => sendJson(res, 200, { ok: true }))
       .catch((err: unknown) => sendError(res, err))
-  })
+  }
+
+  return { listener, openSockets }
+}
+
+export const startHttpServer = async (
+  deps: HttpServerDeps,
+): Promise<HttpServerHandle> => {
+  const { listener, openSockets } = createHttpRequestListener(deps)
+  const server: Server = createServer(listener)
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
