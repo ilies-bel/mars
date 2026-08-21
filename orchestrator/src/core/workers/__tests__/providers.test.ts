@@ -243,8 +243,9 @@ describe('WORKER_CONFIGS provider field', () => {
   })
 
   it('all Workers are un-pinned: every one inherits the same resolved default provider', () => {
-    // RescueOperator (8th) added in PRD 94e2a82a; update this count if more workers are added.
-    expect(workerNames).toHaveLength(8)
+    // Reflector (9th) added when lib/reflector.ts moved onto the Worker layer;
+    // update this count if more workers are added.
+    expect(workerNames).toHaveLength(9)
     // Deliberately does not assert which provider is active — `defaultProvider`
     // in .mars/daemon.json is a legitimate, machine-local operator setting
     // (see resolveWorkerProvider in providers.ts). The invariant under test is

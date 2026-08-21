@@ -269,7 +269,7 @@ describe('WorkerDeclaration runtime:pty round-trip', () => {
 // ---------------------------------------------------------------------------
 
 describe('listMergedWorkers', () => {
-  it('returns exactly the seven default workers when no registry file exists', () => {
+  it('returns exactly the nine default workers when no registry file exists', () => {
     const workers = listMergedWorkers(stateDir)
     const names = workers.map((w) => w.config.name)
     expect(names).toContain('Coder')
@@ -280,8 +280,10 @@ describe('listMergedWorkers', () => {
     expect(names).toContain('BehaviourVerifier')
     expect(names).toContain('Scorer')
     expect(names).toContain('RescueOperator')
-    // RescueOperator (8th) added in PRD 94e2a82a; update this count if more workers are added.
-    expect(workers).toHaveLength(8)
+    expect(names).toContain('Reflector')
+    // Reflector (9th) added when lib/reflector.ts moved onto the Worker layer;
+    // update this count if more workers are added.
+    expect(workers).toHaveLength(9)
   })
 
   it('includes a novel registry worker alongside the defaults', () => {

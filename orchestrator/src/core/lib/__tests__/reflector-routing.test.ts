@@ -25,8 +25,12 @@ vi.mock('../../queue', async (importOriginal) => {
   }
 })
 
-// Also stub the provider boundary so runReflector is importable in CI.
-vi.mock('../../workers/providers', () => ({ runHeadlessProvider: vi.fn() }))
+// Also stub the Worker dispatch boundary so runReflector is importable in CI.
+vi.mock('../run-worker-with-span', () => ({ runWorkerWithSpan: vi.fn() }))
+vi.mock('../trace-events-store', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../trace-events-store')>()
+  return { ...orig, openTraceEventStore: vi.fn().mockResolvedValue(undefined) }
+})
 vi.mock('../../context', () => ({
   getRepoRoot: vi.fn().mockReturnValue('/tmp'),
   resolveContext: vi.fn().mockReturnValue({ stateDir: '/tmp' }),

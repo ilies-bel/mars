@@ -106,7 +106,7 @@ export const FIXER_BACKLOG_DENIED_TOOLS: readonly string[] = [
  */
 export type WorkerName = string
 
-/** The eight built-in Worker names, for call sites that specifically want the shipped set. */
+/** The nine built-in Worker names, for call sites that specifically want the shipped set. */
 export const BUILT_IN_WORKER_NAMES = [
   'Coder',
   'Planner',
@@ -116,6 +116,7 @@ export const BUILT_IN_WORKER_NAMES = [
   'BehaviourVerifier',
   'Scorer',
   'RescueOperator',
+  'Reflector',
 ] as const
 
 // Execution runtime for a Worker. 'headless' runs via the selected provider's
@@ -400,7 +401,7 @@ const GENEROUS_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(180_000)
 const FOCUSED_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(100_000)
 const TRIAGER_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(80_000)
 
-// The eight built-in Worker configs. Not exported directly — see
+// The nine built-in Worker configs. Not exported directly — see
 // `WORKER_CONFIGS` below, the registry-backed compatibility view built from
 // the Workers these configs are used to construct and register.
 const BUILT_IN_WORKER_CONFIGS: Readonly<Record<string, WorkerConfig>> = {
@@ -536,6 +537,36 @@ const BUILT_IN_WORKER_CONFIGS: Readonly<Record<string, WorkerConfig>> = {
     runtime: 'headless',
     provider: WORKER_PROVIDER,
     tags: ['scorer'],
+  },
+  // Reflector Worker: the corpus-level token/lever synthesis pass behind
+  // `mars reflect` (`lib/reflector.ts`, the `token` Reflector Port
+  // implementation). It used to call `runHeadlessProvider` directly, which
+  // meant its model came from an ad-hoc tier argument and its run emitted no
+  // Session span — invisible to spend accounting and to the event query path.
+  // Registering it here puts it on the same footing as every other agent
+  // consumer: tier→model translation via the ambient provider, and
+  // provider/model attribution stamped on its span by runWorkerWithSpan.
+  //
+  // Fast tier / read-only, matching the posture the direct call already used.
+  // The context budget is the GENEROUS one, not the FOCUSED one every other
+  // read-only role gets: the reflect prompt embeds a whole task corpus, so a
+  // 100k ceiling would fail the pre-flight prompt-fit check on runs that
+  // previously dispatched fine.
+  //
+  // No `tags` entry: a reflect run is not a Task, so this Worker must never be
+  // selectable by `pickWorkerForTags`. Callers resolve it by name.
+  Reflector: {
+    name: 'Reflector',
+    model: providerModel(WORKER_PROVIDER, 'fast'),
+    modelTier: 'fast',
+    effort: 'medium',
+    permissionMode: 'default',
+    bare: false,
+    disallowedTools: READ_ONLY_DENIED_TOOLS,
+    outputFormat: 'stream-json',
+    maxContextTokens: GENEROUS_CONTEXT_TOKENS,
+    runtime: 'headless',
+    provider: WORKER_PROVIDER,
   },
   // RescueOperator Worker: court of last resort for a dead-ended Arc.
   // Dispatched when an Arc has no automatic move left (no fix recipe, or
@@ -686,7 +717,7 @@ const buildWorker = (config: WorkerConfig): Worker => {
   }
 }
 
-// Build and self-register the eight built-in Workers into the open worker
+// Build and self-register the nine built-in Workers into the open worker
 // registry (register/get/require/list — see worker-registry.ts). Any later
 // `registerWorker(...)` call (persisted-registry.ts's operator-declared
 // Workers do NOT call this — see its module doc — but the seam is real, and

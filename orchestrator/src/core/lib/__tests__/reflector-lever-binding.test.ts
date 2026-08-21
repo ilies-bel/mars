@@ -35,7 +35,13 @@ vi.mock('../../queue', async (importOriginal) => {
   }
 })
 
-vi.mock('../../workers/providers', () => ({ runHeadlessProvider: vi.fn() }))
+// runReflector dispatches through the Worker layer; stub that seam rather than
+// the raw provider so no agent subprocess is started.
+vi.mock('../run-worker-with-span', () => ({ runWorkerWithSpan: vi.fn() }))
+vi.mock('../trace-events-store', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../trace-events-store')>()
+  return { ...orig, openTraceEventStore: vi.fn().mockResolvedValue(undefined) }
+})
 vi.mock('../../context', () => ({
   getRepoRoot: vi.fn().mockReturnValue('/tmp'),
   resolveContext: vi.fn().mockReturnValue({ stateDir: '/tmp' }),
@@ -325,14 +331,14 @@ describe('buildPrompt — lever registry embedded', () => {
   })
 })
 
-// ─── runReflector end-to-end with mocked provider ─────────────────────────────
+// ─── runReflector end-to-end with a mocked Worker dispatch ────────────────────
 
 describe('runReflector — suggestion rejected when outcome invalid', () => {
   it('drops suggestions where lever id is not in registry', async () => {
-    const { runHeadlessProvider } = await import('../../workers/providers')
+    const { runWorkerWithSpan } = await import('../run-worker-with-span')
     const { runReflector } = await import('../reflector')
 
-    vi.mocked(runHeadlessProvider).mockResolvedValueOnce({
+    vi.mocked(runWorkerWithSpan).mockResolvedValueOnce({
       exitCode: 0,
       stdout: '',
       conversation: [
@@ -382,10 +388,10 @@ describe('runReflector — suggestion rejected when outcome invalid', () => {
   })
 
   it('accepts a leverGap suggestion from a provider response', async () => {
-    const { runHeadlessProvider } = await import('../../workers/providers')
+    const { runWorkerWithSpan } = await import('../run-worker-with-span')
     const { runReflector } = await import('../reflector')
 
-    vi.mocked(runHeadlessProvider).mockResolvedValueOnce({
+    vi.mocked(runWorkerWithSpan).mockResolvedValueOnce({
       exitCode: 0,
       stdout: '',
       conversation: [

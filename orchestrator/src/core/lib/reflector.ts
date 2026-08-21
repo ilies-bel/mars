@@ -1,6 +1,13 @@
-import { runHeadlessProvider } from '../workers/providers'
-import { getRepoRoot } from '../context'
-import { createHash } from 'node:crypto'
+// Load-bearing side-effect import: the built-in Workers — `Reflector` among
+// them — self-register into the worker registry when `../workers` is imported.
+// Importing only `./worker-registry` would resolve against an empty registry.
+import '../workers'
+import { requireWorker } from '../workers/worker-registry'
+import { runWorkerWithSpan } from './run-worker-with-span'
+import { openTraceEventStore, type TraceEventStore } from './trace-events-store'
+import type { RunClaudeResult } from './git/claude'
+import { getRepoRoot, resolveDbTarget } from '../context'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   createProposal,
   addProposalUserStory,
@@ -588,13 +595,43 @@ export const runReflector = async (
     return { tokenAnalysis: null, suggestions: [], rawOutput: '', exitCode: 0 }
   }
 
+  // Dispatched through the Worker layer like every other agent consumer: the
+  // `Reflector` Worker (`../workers/index.ts`) owns the tier→model
+  // translation, the read-only tool posture and the context budget, and
+  // `runWorkerWithSpan` stamps provider/model attribution on a Session span so
+  // the run shows up in the event query path and in spend accounting. It used
+  // to call `runHeadlessProvider` directly, which did neither.
+  //
+  // A reflect run is not a Task, so `taskId` is null and the span is anchored
+  // on a synthetic origin id — the same shape the Scorer uses for its
+  // non-Task judge runs, minus the borrowed task attribution.
+  //
   // No wall-clock timeout: reflect synthesis must run to completion.
   // The only way to stop it is Ctrl-C.
-  const r = await runHeadlessProvider(buildPrompt(corpus), {
-    cwd: getRepoRoot(),
-    modelTier: 'fast',
-    disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
-  })
+  const reflectRunId = `reflect-${randomUUID()}`
+  // Trace capture is best-effort — an unreachable DB (no daemon, no published
+  // DSN) must degrade to an untraced run, never fail the reflection.
+  let traceStore: TraceEventStore | undefined
+  try {
+    traceStore = await openTraceEventStore(resolveDbTarget())
+  } catch {
+    traceStore = undefined
+  }
+  let r: RunClaudeResult
+  try {
+    r = await runWorkerWithSpan({
+      worker: requireWorker('Reflector'),
+      prompt: buildPrompt(corpus),
+      runOptions: { cwd: getRepoRoot() },
+      traceStore,
+      stepName: 'reflect',
+      workflowInstanceId: reflectRunId,
+      originId: reflectRunId,
+      taskId: null,
+    })
+  } finally {
+    await traceStore?.close().catch(() => {})
+  }
 
   const text = collectAssistantText(r.conversation) || r.stdout
   const parsed = extractFirstJsonDocument(text) as ParsedDocument | null

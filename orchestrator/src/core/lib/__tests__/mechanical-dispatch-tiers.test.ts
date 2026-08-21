@@ -3,11 +3,13 @@
  *
  * Observable behaviour under test:
  *   Each mechanical dispatch site — commit-correction, failure-reflector,
- *   reflector, deep-reflector arc, deep-reflector session — must reach the
- *   provider boundary with modelTier: 'fast'.
+ *   reflector, deep-reflector arc, deep-reflector session — must dispatch at
+ *   the fast tier. Sites that still call the provider directly assert
+ *   `modelTier: 'fast'` on the call; sites routed through the Worker layer
+ *   (commit-correction, reflector) assert the dispatched Worker's pinned tier.
  *
- * runHeadlessProvider and runWorkerWithSpan are spied at the provider
- * dispatch seam. No real provider process is started.
+ * runHeadlessProvider and runWorkerWithSpan are spied at the dispatch seam.
+ * No real provider process is started.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -58,10 +60,17 @@ vi.mock('../../workers/providers', async (importOriginal) => {
   return { ...orig, runHeadlessProvider: mockRunHeadlessProvider }
 })
 
-// Provider boundary — intercepted for commit-correction
+// Worker boundary — intercepted for commit-correction and the reflector
 vi.mock('../run-worker-with-span', async (importOriginal) => {
   const orig = await importOriginal<typeof import('../run-worker-with-span')>()
   return { ...orig, runWorkerWithSpan: mockRunWorkerWithSpan }
+})
+
+// The reflector opens a trace store for its span; keep that off the real DB so
+// the tier assertion does not pay a PGlite cold start.
+vi.mock('../trace-events-store', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../trace-events-store')>()
+  return { ...orig, openTraceEventStore: vi.fn().mockResolvedValue(undefined) }
 })
 
 // Proposals — bypass DB for failure-reflector admission control
@@ -274,15 +283,23 @@ describe('failure-reflector dispatch tier', () => {
 describe('reflector dispatch tier', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockRunHeadlessProvider.mockResolvedValue(makeProviderResult())
+    mockRunWorkerWithSpan.mockResolvedValue(makeProviderResult())
   })
 
-  it('reaches runHeadlessProvider with modelTier fast', async () => {
+  // The reflector dispatches through the Worker layer, so its tier comes from
+  // the pinned `Reflector` Worker rather than a per-call `modelTier` argument.
+  it('reaches runWorkerWithSpan on the fast-tier Reflector Worker', async () => {
     const { runReflector } = await import('../reflector')
     await runReflector(ONE_ENTRY_CORPUS)
 
-    expect(mockRunHeadlessProvider).toHaveBeenCalledOnce()
-    expect(mockRunHeadlessProvider.mock.calls[0]![1]).toMatchObject({ modelTier: 'fast' })
+    expect(mockRunWorkerWithSpan).toHaveBeenCalledOnce()
+    const dispatch = mockRunWorkerWithSpan.mock.calls[0]![0] as {
+      worker: { config: { name: string; modelTier?: string } }
+      stepName: string
+    }
+    expect(dispatch.stepName).toBe('reflect')
+    expect(dispatch.worker.config.name).toBe('Reflector')
+    expect(dispatch.worker.config.modelTier).toBe('fast')
   })
 })
 

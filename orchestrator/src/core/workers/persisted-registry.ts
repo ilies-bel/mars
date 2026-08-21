@@ -1,6 +1,6 @@
 // Persisted Worker declaration registry — operator-defined workers stored in
 // .mars/worker-registry.json. At daemon start the file is loaded if present;
-// if absent, the eight built-in Workers registered in `./index` (via
+// if absent, the nine built-in Workers registered in `./index` (via
 // `./worker-registry`) continue to serve as defaults (the registry shadows
 // but does not replace them when missing).
 //
