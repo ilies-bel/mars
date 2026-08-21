@@ -66,6 +66,8 @@ const mechanical = {
   frequency: 3,
   confidence: 0.9,
   kind: 'mechanical' as const,
+  coversInstances: ['task-a', 'task-b', 'task-c'],
+  doesNotClaim: '',
   outcome: {
     type: 'lever' as const,
     lever: { id: 'verify.add-typecheck', currentValue: '(see mars verify-gate list)', proposedValue: 'add' },

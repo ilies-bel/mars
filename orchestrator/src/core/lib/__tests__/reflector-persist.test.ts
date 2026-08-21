@@ -69,6 +69,8 @@ describe('reflector persist dedup', () => {
           frequency: 2,
           confidence: 0,
           kind: 'mechanical' as const,
+          coversInstances: ['task-a', 'task-b'],
+          doesNotClaim: '',
           outcome: baseOutcome,
         },
       ],
@@ -90,6 +92,8 @@ describe('reflector persist dedup', () => {
       frequency: 2,
       confidence: 0,
       kind: 'mechanical' as const,
+      coversInstances: ['task-a', 'task-b'],
+      doesNotClaim: '',
       outcome: baseOutcome,
     }
 
@@ -138,6 +142,8 @@ describe('reflector persist dedup', () => {
           frequency: 1,
           confidence: 0,
           kind: 'mechanical' as const,
+          coversInstances: ['task-a'],
+          doesNotClaim: '',
           outcome: baseOutcome,
         },
         {
@@ -149,6 +155,8 @@ describe('reflector persist dedup', () => {
           frequency: 1,
           confidence: 0,
           kind: 'mechanical' as const,
+          coversInstances: ['task-b'],
+          doesNotClaim: '',
           outcome: {
             type: 'leverGap' as const,
             leverGap: { proposedLeverId: 'cache.warmup-policy', family: 'workflow', whatItWouldControl: 'cache warm-up strategy on the code step' },
@@ -176,6 +184,8 @@ describe('reflector persist dedup', () => {
       frequency: 1,
       confidence: 0,
       kind: 'mechanical' as const,
+      coversInstances: [],
+      doesNotClaim: '',
       outcome: baseOutcome,
     }
 
@@ -200,6 +210,8 @@ describe('reflector persist dedup', () => {
       frequency: 1,
       confidence: 0,
       kind: 'mechanical' as const,
+      coversInstances: [],
+      doesNotClaim: '',
       outcome: baseOutcome,
     }
 
@@ -371,6 +383,8 @@ describe('reflector persist dedup', () => {
           frequency: 2,
           confidence: 0.9,
           kind: 'mechanical' as const,
+          coversInstances: ['task-a', 'task-b'],
+          doesNotClaim: '',
           outcome: baseOutcome,
         },
       ],

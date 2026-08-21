@@ -63,6 +63,18 @@ export interface ReflectionSuggestion {
    * rejected during parsing and never filed.
    */
   outcome: SuggestionOutcome
+  /**
+   * Least-specific-valid-rule (mirrors {@link VerdictedSuggestion.coversInstances}):
+   * the task ids the evidence actually demonstrates this pattern in. Defaults
+   * to `affectedTaskIds` when the model omits it.
+   */
+  coversInstances: string[]
+  /**
+   * Least-specific-valid-rule (mirrors {@link VerdictedSuggestion.doesNotClaim}):
+   * what this suggestion explicitly does NOT claim to generalize to. Defaults
+   * to `''` when the model omits it.
+   */
+  doesNotClaim: string
 }
 
 interface TokenAnalysis {
@@ -149,6 +161,20 @@ FREQUENCY FLOOR: skip a pattern that affects only ONE task unless:
 Single-task observations that don't meet this bar belong in
 tokenAnalysis.notes only, not in suggestions.
 
+Least-specific-valid-rule (applies to every entry in \`suggestions[]\`):
+the rule you induce MUST cover EVERY task id in that suggestion's
+\`affectedTaskIds\` — and must be no MORE specific than that coverage
+requires. State the narrowest true claim your evidence supports, not the
+broadest one you can imagine. Two fields carry this discipline:
+- \`coversInstances\`: the task ids your evidence directly demonstrates
+  the pattern in — do not list an id you have not seen exhibit it. This
+  MUST be a superset-safe subset of \`affectedTaskIds\`: every id in
+  \`affectedTaskIds\` must appear here too.
+- \`doesNotClaim\`: one sentence naming what remains unproven — e.g.
+  "does not claim this recurs on other Workflow kinds" or "observed only
+  in this window; no evidence of fleet-wide frequency". Never leave this
+  empty when \`frequency\` is 1 or \`affectedTaskIds\` has a single id.
+
 For each suggestion, prefer token-grounded ones over generic cleanups.
 Categories, in priority order:
 (a) **token sinks**: a specific step or task pattern that is burning
@@ -216,6 +242,8 @@ no markdown — just the JSON. Shape:
       "frequency": 2,
       "confidence": 0.85,
       "kind": "mechanical",
+      "coversInstances": ["task-id-1", "task-id-2"],
+      "doesNotClaim": "one sentence naming what remains unproven",
       "outcome": {
         "type": "lever",
         "lever": { "id": "caps.implement", "currentValue": "12", "proposedValue": "8" }
@@ -238,6 +266,8 @@ Rules:
   clear cause should be ≤ 0.5.
 - \`kind\` must be 'mechanical' or 'architectural' exactly (lowercase). When
   in doubt, choose 'architectural'.
+- \`coversInstances\` must cover every id in \`affectedTaskIds\` and name no
+  wider a claim than the evidence supports.
 - If there are no high-quality suggestions, return {"suggestions": []}
   but still fill tokenAnalysis.
 
@@ -589,6 +619,84 @@ export const parseAndValidateOutcome = (
   return null
 }
 
+export interface ParsedReflectionResponse {
+  tokenAnalysis: TokenAnalysis | null
+  suggestions: ReflectionSuggestion[]
+}
+
+/**
+ * Parse a raw reflector model response into a token analysis plus validated
+ * suggestions. Extracted from {@link runReflector} so the parsing/validation
+ * path is testable without dispatching the underlying Worker — mirrors
+ * {@link parseDeepReflectionReport} in `deep-reflector.ts`.
+ */
+export const parseReflectionResponse = (text: string): ParsedReflectionResponse => {
+  const parsed = extractFirstJsonDocument(text) as ParsedDocument | null
+  if (!parsed || !Array.isArray(parsed.suggestions)) {
+    return {
+      tokenAnalysis: parseTokenAnalysis(parsed?.tokenAnalysis),
+      suggestions: [],
+    }
+  }
+  const tokenAnalysis = parseTokenAnalysis(parsed.tokenAnalysis)
+  const registry = loadLeverRegistry()
+
+  const suggestions: ReflectionSuggestion[] = []
+  for (const raw of parsed.suggestions) {
+    if (!raw || typeof raw !== 'object') continue
+    const obj = raw as Record<string, unknown>
+    const title = typeof obj.title === 'string' ? obj.title.trim() : ''
+    const prompt = typeof obj.prompt === 'string' ? obj.prompt.trim() : ''
+    const rationale = typeof obj.rationale === 'string' ? obj.rationale.trim() : null
+    const rootCauseKey =
+      typeof obj.rootCauseKey === 'string' ? obj.rootCauseKey.trim() : ''
+    const affectedTaskIds = Array.isArray(obj.affectedTaskIds)
+      ? (obj.affectedTaskIds as unknown[]).filter(
+          (id): id is string => typeof id === 'string',
+        )
+      : []
+    const frequency =
+      typeof obj.frequency === 'number'
+        ? obj.frequency
+        : affectedTaskIds.length || 1
+    const rawConfidence = obj.confidence
+    const confidence =
+      typeof rawConfidence === 'number' &&
+      Number.isFinite(rawConfidence) &&
+      rawConfidence >= 0 &&
+      rawConfidence <= 1
+        ? rawConfidence
+        : 0
+    const rawKind = obj.kind
+    const kind: 'mechanical' | 'architectural' =
+      rawKind === 'mechanical' || rawKind === 'architectural' ? rawKind : 'mechanical'
+    const coversInstances = Array.isArray(obj.coversInstances)
+      ? (obj.coversInstances as unknown[]).filter(
+          (id): id is string => typeof id === 'string',
+        )
+      : affectedTaskIds
+    const doesNotClaim = typeof obj.doesNotClaim === 'string' ? obj.doesNotClaim.trim() : ''
+    if (!title || !prompt) continue
+    const outcome = parseAndValidateOutcome(obj.outcome, registry)
+    if (!outcome) continue
+    suggestions.push({
+      title,
+      prompt,
+      rationale: rationale || null,
+      rootCauseKey,
+      affectedTaskIds,
+      frequency,
+      confidence,
+      kind,
+      outcome,
+      coversInstances,
+      doesNotClaim,
+    })
+  }
+
+  return { tokenAnalysis, suggestions: suggestions.slice(0, 5) }
+}
+
 export const runReflector = async (
   corpus: ReflectCorpus,
 ): Promise<ReflectionResult> => {
@@ -635,66 +743,11 @@ export const runReflector = async (
   }
 
   const text = collectAssistantText(r.conversation) || r.stdout
-  const parsed = extractFirstJsonDocument(text) as ParsedDocument | null
-  if (!parsed || !Array.isArray(parsed.suggestions)) {
-    return {
-      tokenAnalysis: parseTokenAnalysis(parsed?.tokenAnalysis),
-      suggestions: [],
-      rawOutput: text,
-      exitCode: r.exitCode,
-    }
-  }
-  const tokenAnalysis = parseTokenAnalysis(parsed.tokenAnalysis)
-  const registry = loadLeverRegistry()
-
-  const suggestions: ReflectionSuggestion[] = []
-  for (const raw of parsed.suggestions) {
-    if (!raw || typeof raw !== 'object') continue
-    const obj = raw as Record<string, unknown>
-    const title = typeof obj.title === 'string' ? obj.title.trim() : ''
-    const prompt = typeof obj.prompt === 'string' ? obj.prompt.trim() : ''
-    const rationale = typeof obj.rationale === 'string' ? obj.rationale.trim() : null
-    const rootCauseKey =
-      typeof obj.rootCauseKey === 'string' ? obj.rootCauseKey.trim() : ''
-    const affectedTaskIds = Array.isArray(obj.affectedTaskIds)
-      ? (obj.affectedTaskIds as unknown[]).filter(
-          (id): id is string => typeof id === 'string',
-        )
-      : []
-    const frequency =
-      typeof obj.frequency === 'number'
-        ? obj.frequency
-        : affectedTaskIds.length || 1
-    const rawConfidence = obj.confidence
-    const confidence =
-      typeof rawConfidence === 'number' &&
-      Number.isFinite(rawConfidence) &&
-      rawConfidence >= 0 &&
-      rawConfidence <= 1
-        ? rawConfidence
-        : 0
-    const rawKind = obj.kind
-    const kind: 'mechanical' | 'architectural' =
-      rawKind === 'mechanical' || rawKind === 'architectural' ? rawKind : 'mechanical'
-    if (!title || !prompt) continue
-    const outcome = parseAndValidateOutcome(obj.outcome, registry)
-    if (!outcome) continue
-    suggestions.push({
-      title,
-      prompt,
-      rationale: rationale || null,
-      rootCauseKey,
-      affectedTaskIds,
-      frequency,
-      confidence,
-      kind,
-      outcome,
-    })
-  }
+  const { tokenAnalysis, suggestions } = parseReflectionResponse(text)
 
   return {
     tokenAnalysis,
-    suggestions: suggestions.slice(0, 5),
+    suggestions,
     rawOutput: text,
     exitCode: r.exitCode,
   }

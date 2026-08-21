@@ -132,6 +132,8 @@ describe('auto-reflect gate', () => {
           frequency: 1,
           confidence: 0.8,
           kind: 'mechanical',
+          coversInstances: [],
+          doesNotClaim: '',
           outcome: {
             type: 'leverGap' as const,
             leverGap: { proposedLeverId: 'test.auto-reflect', family: 'operator', whatItWouldControl: 'auto-reflect test lever' },

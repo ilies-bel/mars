@@ -34,6 +34,8 @@ const twoLessons: ReflectionSuggestion[] = [
     frequency: 2,
     confidence: 0.8,
     kind: 'mechanical',
+    coversInstances: ['task-aaa', 'task-bbb'],
+    doesNotClaim: '',
     outcome: {
       type: 'leverGap',
       leverGap: { proposedLeverId: 'cache.warmup-policy', family: 'workflow', whatItWouldControl: 'how the code step warms the prompt cache' },
@@ -48,6 +50,8 @@ const twoLessons: ReflectionSuggestion[] = [
     frequency: 3,
     confidence: 0.9,
     kind: 'architectural',
+    coversInstances: ['task-ccc', 'task-ddd', 'task-eee'],
+    doesNotClaim: '',
     outcome: {
       type: 'lever',
       lever: { id: 'verify.add-typecheck', currentValue: '(see mars verify-gate list)', proposedValue: 'add' },
@@ -99,6 +103,8 @@ describe('persistSuggestions — memory packet emission', () => {
       frequency: 1,
       confidence: 0,
       kind: 'mechanical',
+      coversInstances: [],
+      doesNotClaim: '',
       outcome: {
         type: 'leverGap',
         leverGap: { proposedLeverId: 'test.unscored', family: 'operator', whatItWouldControl: 'unscored pattern threshold' },

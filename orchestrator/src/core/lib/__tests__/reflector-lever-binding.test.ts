@@ -219,6 +219,8 @@ describe('persistSuggestions — lever binding rendered in proposal notes', () =
       frequency: 1,
       confidence: 0.7,
       kind: 'mechanical' as const,
+      coversInstances: [],
+      doesNotClaim: '',
       outcome: {
         type: 'lever' as const,
         lever: { id: 'caps.implement', currentValue: '12', proposedValue: '8' },
@@ -242,6 +244,8 @@ describe('persistSuggestions — lever binding rendered in proposal notes', () =
       frequency: 7,
       confidence: 0.85,
       kind: 'architectural' as const,
+      coversInstances: [],
+      doesNotClaim: '',
       outcome: {
         type: 'leverGap' as const,
         leverGap: {
