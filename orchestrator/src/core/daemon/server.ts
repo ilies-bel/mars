@@ -97,7 +97,7 @@ import { readAllTranscriptsForTask } from '../lib/claude-transcript'
 import type { AgentEvent } from '../lib/claude-stream'
 import { createHash } from 'node:crypto'
 import type { Logger, WorkflowEvent } from '@mars/workflow'
-import { resolveManualStep, awaitManualDone } from '@mars/workflow'
+import { resolveManualStep } from '@mars/workflow'
 import { scanRecoveryBlockerEdges } from '../lib/blocker-invariant'
 import { createScoringPool, resolveScoringLimit } from './scoring-pool'
 import { exec, resolveGitBin } from '../lib/git/internal'
@@ -133,8 +133,7 @@ import {
   resolveStaleStructuredWriteDirtyMainRows,
 } from './main-dirty-action-queue'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
-import { AWAIT_HUMAN_SENTINEL } from '../lib/sentinels'
-import { parkTaskForHuman } from '../lib/park-for-human'
+import { createDefaultManualPark } from '../lib/park-for-human'
 import { computeFailureSignature } from '../lib/failure-signature'
 import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, type TraceEventPhase } from '../lib/trace-events-store'
 import { setBusLogSink } from '../../bus/log'
@@ -1668,42 +1667,15 @@ export const startDaemon = async (
             // healthy because recordPid was defined but never called from the
             // dispatch path.
             onPid: (pid: number) => tracker.recordPid(task.id, pid),
-            // Promise-based manual step park/resume hook (ADR-0052 write funnel).
-            // Called by runAgent/verify when mode === 'manual'; parks the task and
+            // The manual step park/resume hook (ADR-0052 write funnel) — the
+            // single park mechanism, shared verbatim with every non-daemon
+            // services bag. Called by runAgent/verify when mode === 'manual'
+            // and by the awaitHuman primitive; parks the task (preserving the
+            // prior lease owner across manual steps, so the same Foreground
+            // operator re-receives the lease at the next park without
+            // re-attaching — 'mars step done' keepLease:true kept it) and
             // suspends the workflow until handleStepDone resolves the promise.
-            // Preserves lease_owner and origin_session_id across parks so the
-            // Foreground session walks the runbook without re-attaching.
-            onManualPark: async ({
-              runId,
-              taskId,
-              stepName,
-              guide,
-              previewUrl,
-              logPath,
-            }: {
-              runId: string
-              taskId: string
-              stepName: string
-              guide: string | null
-              previewUrl?: string | null
-              logPath?: string | null
-            }): Promise<void> => {
-              // updateTask + raise the action-queue row — the body shared
-              // with await-human.ts's sentinel-throw fallback
-              // (core/lib/park-for-human.ts). Preserves the prior lease
-              // owner across manual steps so the same Foreground operator
-              // re-receives the lease at the next park without re-attaching
-              // ('mars step done' keepLease:true kept it). previewUrl/logPath
-              // (the local-preview QA gate) land in the raised row's payload
-              // exactly as the sentinel-throw path builds it.
-              await parkTaskForHuman(taskId, stepName, guide, taskStore, {
-                variant: 'promise',
-                raisedBy: 'primitive:manual-step',
-                previewUrl,
-                logPath,
-              })
-              return awaitManualDone(runId, stepName)
-            },
+            onManualPark: createDefaultManualPark(taskStore),
             // Verify-slot hooks. The review primitive (auto path) calls
             // acquireVerifySlot() before running verifyChanges and
             // releaseVerifySlot() in its finally block.
@@ -2026,37 +1998,6 @@ export const startDaemon = async (
             log(`[implement] ${task.id} dropped: its Chore origin already reached a terminal state`)
             return
 
-          case 'await-human': {
-            // The primitive parked the task in 'awaiting-human', raised the
-            // action-queue row, and threw this sentinel so the step does NOT
-            // checkpoint as 'completed'. Patch the step record to 'completed' now
-            // so the engine short-circuits it on re-dispatch.
-            const stepName = resultTerminal.meta.stepName ?? null
-            if (stepName !== null) {
-              try {
-                const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
-                const wfStore = createQueueWorkflowStore()
-                const step = await wfStore.getStep(task.id, stepName)
-                if (step !== undefined && step.status !== 'completed') {
-                  await wfStore.putStep({
-                    ...step,
-                    status: 'completed',
-                    finishedAt: Date.now(),
-                    resultJson: JSON.stringify({ parkedForHuman: true }),
-                  })
-                }
-              } catch (patchErr) {
-                log(
-                  `[implement] ${task.id} await-human: step-completion patch errored (non-fatal): ${
-                    patchErr instanceof Error ? patchErr.message : String(patchErr)
-                  }`,
-                )
-              }
-            }
-            log(`[implement] ${task.id} parked awaiting-human: lease holder = ${AWAIT_HUMAN_SENTINEL}`)
-            return
-          }
-
           case 'coder-exit-nonzero':
           case 'coder-uncommitted':
             // These are self-handled in the code step (it already marked the task
@@ -2143,10 +2084,6 @@ export const startDaemon = async (
           case 'coder-empty-diff':
             // The code step already marked this task failed and spawned recovery.
             log(`[implement] ${task.id} coder self-handled abort (exception path); task already marked failed, recovery spawned`)
-            break
-          case 'await-human':
-            // The awaitHuman primitive already parked the task.
-            log(`[implement] ${task.id} await-human abort (exception path); task already parked awaiting-human`)
             break
           case 'quota-rejected': {
             const resetsAt = err.meta.resetsAt ?? 0

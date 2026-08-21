@@ -19,9 +19,10 @@
  *      re-queuing. A fresh runWorkflow call with the same runId short-circuits
  *      the 'code' step without re-parking.
  *
- *   3. Sentinel-restart case — awaitHuman threw the sentinel (no onManualPark),
- *      runStep wrote the step as 'failed'. handleStepDone Path 2 patches the
- *      step to 'completed' before re-queuing. Fresh runWorkflow short-circuits.
+ *   3. Same window, but the step record is 'failed' rather than 'running' —
+ *      the park's process died in a way runStep saw as a step failure. The
+ *      Path 2 patch and the short-circuit must behave identically from that
+ *      pre-state, which is a different engine branch than case 2's 'running'.
  */
 import { describe, it, expect, vi } from 'vitest'
 import { runWorkflow, InMemoryStore, awaitManualDone, resolveManualStep } from '@mars/workflow'
@@ -257,33 +258,30 @@ describe('awaitHuman: daemon-restart case — step running, Path 2 patch + re-di
 })
 
 // ---------------------------------------------------------------------------
-// Test 3: sentinel-restart case — step is 'failed' because awaitHuman threw
-// the sentinel and runStep wrote 'failed', then the daemon crashed before its
-// case 'await-human' patch ran.  handleStepDone Path 2 patches 'failed' →
-// 'completed' before re-queuing.  A fresh runWorkflow call short-circuits
-// the 'code' step without re-parking.
+// Test 3: same restart window as test 2, but the 'code' step record is 'failed'
+// rather than 'running' — the suspended park's process died in a way runStep
+// saw as a step failure (an onManualPark rejection, or a crash mid-step).
+// handleStepDone Path 2 patches 'failed' → 'completed' before re-queuing, and
+// a fresh runWorkflow call must short-circuit 'code' without re-parking.
 //
-// The setup here directly pre-populates the step records rather than running
-// awaitHuman with a null store (which would try to hit the real DB).  This
-// mirrors exactly what runStep writes in its catch path after a sentinel throw:
-//   setup → completed, code → failed (error = sentinel message)
+// Short-circuiting a previously-'failed' step is a different engine branch
+// than test 2's previously-'running' step, which is why both are pinned.
+//
+// The setup pre-populates the step records directly rather than driving a real
+// park, so no DB is touched: setup → completed, code → failed.
 // ---------------------------------------------------------------------------
 
-describe('awaitHuman: sentinel-restart case — step failed, Path 2 patch + re-dispatch', () => {
+describe('awaitHuman: restart case — step failed, Path 2 patch + re-dispatch', () => {
   it('patching failed step to completed makes re-dispatch skip code without re-parking', async () => {
-    const taskId = `await-human-sentinel-${Date.now()}`
+    const taskId = `await-human-failed-step-${Date.now()}`
     const store = new InMemoryStore()
 
-    // ── Pre-populate the store as runStep would after a sentinel throw ───────
-    // setup: completed (ran on the first dispatch before the sentinel park)
-    // code: failed — runStep's catch path writes 'failed' when awaitHuman
-    // threw the sentinel, because WorkflowTerminalError IS re-thrown by runStep.
     await seedStore(store, taskId, [
       { name: 'setup', status: 'completed', resultJson: '{}' },
       {
         name: 'code',
         status: 'failed',
-        errorSummary: `task ${taskId} parked at await-human step 'code'; awaiting lease release`,
+        errorSummary: `task ${taskId} park at step 'code' did not complete`,
       },
     ])
 

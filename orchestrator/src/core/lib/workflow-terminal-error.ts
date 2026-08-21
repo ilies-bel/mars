@@ -8,7 +8,7 @@
  * string-matching predicate functions.
  *
  * The `.meta` bag carries kind-specific data without requiring a union of
- * subclasses: only `resetsAt` (quota-rejected) and `stepName` (await-human)
+ * subclasses: only `resetsAt` (quota-rejected) and `stepName` (preview-gate)
  * are defined today.
  */
 
@@ -38,7 +38,6 @@ export type WorkflowTerminalKind =
   | 'main-dirty-verify'
   | 'main-dirty-merge'
   | 'preview-gate'
-  | 'await-human'
   | 'committer-still-dirty'
   /**
    * The setup step found uncommitted changes on the integration branch before
@@ -119,7 +118,10 @@ export type WorkflowTerminalKind =
 export interface WorkflowTerminalMeta {
   /** Unix epoch seconds at which the provider quota resets. Only set for `quota-rejected`. */
   resetsAt?: number
-  /** The await-human step name. Only set for `await-human`. */
+  /**
+   * The name of the step that parked. Only set for `preview-gate`, whose
+   * daemon handler uses it to locate and patch the `workflow_step_runs` row.
+   */
   stepName?: string
 }
 

@@ -6,17 +6,22 @@
  * workflow never checked spec.mergeMode before entering the merge step.
  *
  * Coverage:
- *  1. With merge_mode='gated', the workflow parks at 'merge-gate' (raises
- *     WorkflowTerminalError kind='await-human') and the merge primitive is
- *     never called.
- *  2. After the operator patches the 'merge-gate' step to 'completed'
- *     (simulating `mars step done`), the workflow re-enters, short-circuits
- *     the gate, and proceeds to call merge.
+ *  1. With merge_mode='gated', the workflow suspends at 'merge-gate' — the
+ *     task is parked in 'awaiting-human', an action-queue row is raised, and
+ *     the merge primitive is not called until the operator resolves the step.
+ *  2. If the daemon dies while the gate is suspended, patching the
+ *     'merge-gate' step to 'completed' (what `mars step done` Path 2 does)
+ *     makes a re-dispatch short-circuit the gate and proceed to merge.
  *  3. With merge_mode='auto' (or no spec), the workflow skips the gate and
  *     calls merge directly — no parking.
+ *
+ * Since PRD ae17340a-modular-core-program-make-every-mars-mod slice 27 there
+ * is exactly ONE park mechanism: `awaitHuman` delegates to the required
+ * `services.onManualPark`, which parks and then suspends on
+ * `awaitManualDone(runId, stepName)`. The gate no longer throws a terminal
+ * sentinel, so a gated run stays in-flight rather than ending 'failed'.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
 import { AWAIT_HUMAN_SENTINEL } from '../../core/lib/sentinels'
 
 // ---------------------------------------------------------------------------
@@ -78,8 +83,9 @@ vi.mock('../../core/lib/action-queue', () => ({
 // Dynamic imports — must come AFTER vi.mock() calls.
 // ---------------------------------------------------------------------------
 
-const { runWorkflow } = await import('@mars/workflow')
+const { runWorkflow, resolveManualStep } = await import('@mars/workflow')
 const { implementWorkflow, implementInputSchema } = await import('../implement-workflow')
+const { createDefaultManualPark } = await import('../../core/lib/park-for-human')
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -172,12 +178,35 @@ function makeMemStore() {
   }
 }
 
-/** Minimal task-store stub for services.store (used by awaitHuman side-effects). */
+/** Minimal task-store stub for services.store (used by the park side-effects). */
 const makeTaskStoreStub = () => ({
   query: vi.fn().mockResolvedValue({ rows: [{ id: 'gated-task-id', status: 'running' }] }),
   execute: vi.fn().mockResolvedValue({ rows: [] }),
   batch: vi.fn().mockResolvedValue([]),
 })
+
+/**
+ * MarsServices bag with the real default park hook bound to the stub store —
+ * the same hook the daemon installs, so the gate exercises the production park
+ * body (updateTask + raiseActionQueueItem, both mocked above) and then suspends
+ * on `awaitManualDone` until `resolveManualStep` fires.
+ */
+const makeServices = (taskStore: ReturnType<typeof makeTaskStoreStub>) => ({
+  store: taskStore,
+  traceStore: null,
+  onManualPark: createDefaultManualPark(taskStore as never),
+})
+
+/**
+ * Release a suspended gate the way `mars step done` Path 1 does, retrying
+ * until the park has registered its resolver (the park raises its row a few
+ * microtasks before `awaitManualDone` registers).
+ */
+const releaseGate = async (runId: string): Promise<void> => {
+  await vi.waitFor(() => expect(resolveManualStep(runId, 'merge-gate')).toBe(true), {
+    timeout: 2000,
+  })
+}
 
 /** Minimal valid workflow input with merge_mode='gated'.
  *
@@ -223,26 +252,23 @@ describe('merge_mode=gated gate', () => {
     mockMerge.mockClear()
   })
 
-  it('gated task parks at merge-gate — workflow ends awaiting-human, merge is never called', async () => {
+  it('gated task parks at merge-gate — merge waits for the operator, then runs', async () => {
     const store = makeMemStore()
     const taskStore = makeTaskStoreStub()
 
-    const result = await runWorkflow(
+    // The gate suspends, so the run stays in flight until the gate is released.
+    const resultPromise = runWorkflow(
       implementWorkflow,
       gatedInput,
       {
         store: store as never,
         runId: 'gated-task-id',
-        services: { store: taskStore, traceStore: null } as never,
+        services: makeServices(taskStore) as never,
       },
     )
 
-    // The workflow must NOT complete — it parks.
-    expect(result.status).toBe('failed')
-
-    // The thrown error must be the await-human sentinel.
-    expect(result.error).toBeInstanceOf(WorkflowTerminalError)
-    expect((result.error as WorkflowTerminalError).kind).toBe('await-human')
+    // Wait for the park to land its action-queue row.
+    await vi.waitFor(() => expect(mockRaiseActionQueueItem).toHaveBeenCalled(), { timeout: 2000 })
 
     // The task must have been transitioned to 'awaiting-human', NOT 'done'.
     expect(mockUpdateTask).toHaveBeenCalledWith(
@@ -260,7 +286,7 @@ describe('merge_mode=gated gate', () => {
       expect.objectContaining({ kind: 'awaiting-human', originTaskId: 'gated-task-id' }),
     )
 
-    // The merge primitive must NOT have been called.
+    // The merge primitive must NOT have been called while the gate is parked.
     expect(mockMerge).not.toHaveBeenCalled()
 
     // The preceding steps all ran — gate fires after verify, not before.
@@ -268,6 +294,12 @@ describe('merge_mode=gated gate', () => {
     expect(mockRunAgent).toHaveBeenCalledTimes(1)
     expect(mockReview).toHaveBeenCalledTimes(1)
     expect(mockBehaviourVerify).toHaveBeenCalledTimes(1)
+
+    // The operator approves — only now does the merge run.
+    await releaseGate('gated-task-id')
+    const result = await resultPromise
+    expect(result.status).toBe('completed')
+    expect(mockMerge).toHaveBeenCalledTimes(1)
   })
 
   it('after operator patches merge-gate to completed, re-dispatch calls merge and completes', async () => {
@@ -276,13 +308,21 @@ describe('merge_mode=gated gate', () => {
     const runOpts = {
       store: store as never,
       runId: 'gated-task-id',
-      services: { store: taskStore, traceStore: null } as never,
+      services: {
+        store: taskStore,
+        traceStore: null,
+        // The daemon dies while the gate is suspended: the step never
+        // checkpoints, so runStep records it 'failed'. That is exactly the
+        // pre-state `mars step done` Path 2 patches before re-queuing.
+        onManualPark: (): Promise<void> =>
+          Promise.reject(new Error('daemon died while the merge-gate park was suspended')),
+      } as never,
     }
 
-    // First run: parks at merge-gate.
+    // First dispatch: reaches the gate and does not merge.
     const result1 = await runWorkflow(implementWorkflow, gatedInput, runOpts)
     expect(result1.status).toBe('failed')
-    expect((result1.error as WorkflowTerminalError)?.kind).toBe('await-human')
+    expect(mockMerge).not.toHaveBeenCalled()
 
     // Simulate `mars step done`: the daemon patches merge-gate to 'completed'.
     const gateKey = store._stepKey('gated-task-id', 'merge-gate')
@@ -300,7 +340,8 @@ describe('merge_mode=gated gate', () => {
     mockRaiseActionQueueItem.mockClear()
     mockMerge.mockClear()
 
-    // Second run (re-dispatch after approval): merge-gate is short-circuited.
+    // Second run (re-dispatch after approval): merge-gate is short-circuited,
+    // so the rejecting hook above is never reached again.
     const result2 = await runWorkflow(implementWorkflow, gatedInput, runOpts)
 
     // The workflow must complete successfully.
@@ -309,7 +350,7 @@ describe('merge_mode=gated gate', () => {
     // The merge primitive must have been called this time.
     expect(mockMerge).toHaveBeenCalledTimes(1)
 
-    // awaitHuman must NOT have been called again (no double-park).
+    // The gate must NOT have parked again (no double-park).
     expect(mockUpdateTask).not.toHaveBeenCalledWith(
       'gated-task-id',
       expect.objectContaining({ status: 'awaiting-human' }),
@@ -328,7 +369,7 @@ describe('merge_mode=gated gate', () => {
       {
         store: store as never,
         runId: 'auto-task-id',
-        services: { store: taskStore, traceStore: null } as never,
+        services: makeServices(taskStore) as never,
       },
     )
 
@@ -363,7 +404,7 @@ describe('merge_mode=gated gate', () => {
       {
         store: store as never,
         runId: 'no-spec-task-id',
-        services: { store: taskStore, traceStore: null } as never,
+        services: makeServices(taskStore) as never,
       },
     )
 
@@ -374,30 +415,34 @@ describe('merge_mode=gated gate', () => {
 
   it('leaseOwner in awaiting-human row is the AWAIT_HUMAN_SENTINEL (no prior human owner)', async () => {
     const store = makeMemStore()
-    // Store returns a row with no lease_owner so awaitHuman falls back to sentinel.
-    const taskStore = {
-      query: vi.fn().mockResolvedValue({ rows: [{ id: 'gated-task-id', status: 'running' }] }),
-      execute: vi.fn().mockResolvedValue({ rows: [] }),
-      batch: vi.fn().mockResolvedValue([]),
-    }
+    // Store returns a row with no lease_owner so the park falls back to the
+    // sentinel identity rather than re-granting a prior human's lease.
+    const taskStore = makeTaskStoreStub()
 
-    await runWorkflow(
+    const resultPromise = runWorkflow(
       implementWorkflow,
       gatedInput,
       {
         store: store as never,
         runId: 'gated-task-id',
-        services: { store: taskStore, traceStore: null } as never,
+        services: makeServices(taskStore) as never,
       },
     )
 
-    expect(mockUpdateTask).toHaveBeenCalledWith(
-      'gated-task-id',
-      expect.objectContaining({
-        status: 'awaiting-human',
-        leaseOwner: AWAIT_HUMAN_SENTINEL,
-      }),
-      expect.anything(),
+    await vi.waitFor(
+      () =>
+        expect(mockUpdateTask).toHaveBeenCalledWith(
+          'gated-task-id',
+          expect.objectContaining({
+            status: 'awaiting-human',
+            leaseOwner: AWAIT_HUMAN_SENTINEL,
+          }),
+          expect.anything(),
+        ),
+      { timeout: 2000 },
     )
+
+    await releaseGate('gated-task-id')
+    await resultPromise
   })
 })

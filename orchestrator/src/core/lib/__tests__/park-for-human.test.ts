@@ -1,14 +1,13 @@
 /**
- * Coverage for `parkTaskForHuman`'s `variant: 'promise'` path — the body the
- * daemon's `onManualPark` hook (`core/daemon/server.ts`) calls.
+ * Coverage for `parkTaskForHuman` — the one park body, called by
+ * `createDefaultManualPark` (and so by every `onManualPark` hook).
  *
  * Follow-up 2/3 of the HITL park-path unification (PRD
  * ae17340a-modular-core-program-make-every-mars-mod slice 27, task
- * `mars-18e6e0b5`) threads `previewUrl`/`logPath` through `onManualPark` so a
- * park taken through the promise-based path raises the same richer
- * action-queue payload the sentinel-throw fallback in `tools/human/
- * await-human.ts` always raised. This pins that the payload actually lands
- * on the raised row for the `'promise'` variant, not just `'sentinel'`.
+ * `mars-18e6e0b5`) threaded `previewUrl`/`logPath` through `onManualPark` so a
+ * park raises the richer action-queue payload the since-deleted sentinel-throw
+ * fallback used to build. This pins that the payload actually lands on the
+ * raised row.
  *
  * `raiseActionQueueItem` is mocked (rather than driven through a real DB)
  * because `parkTaskForHuman` fires it off without awaiting the result (it is
@@ -50,7 +49,6 @@ describe('parkTaskForHuman: previewUrl/logPath on the promise-based variant', ()
 
   it('raises an action-queue row whose payload carries previewUrl and logPath', async () => {
     await parkTaskForHuman('test-task-id', 'review', 'QA the preview', makeStubStore() as never, {
-      variant: 'promise',
       raisedBy: 'primitive:manual-step',
       previewUrl: 'http://localhost:3000',
       logPath: '/fake/.mars/previews/preview.log',
@@ -71,7 +69,6 @@ describe('parkTaskForHuman: previewUrl/logPath on the promise-based variant', ()
 
   it('omits previewUrl/logPath from the payload when not provided', async () => {
     await parkTaskForHuman('test-task-id', 'code', 'do the work', makeStubStore() as never, {
-      variant: 'promise',
       raisedBy: 'primitive:manual-step',
     })
 

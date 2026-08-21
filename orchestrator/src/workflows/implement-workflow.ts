@@ -116,10 +116,11 @@ export const implementWorkflow = defineWorkflow<
     await ctx.step('behaviour-verify', () => behaviourVerifyPrimitive(ctx))
     // Gate: if the task's merge_mode is 'gated', park for human approval
     // before the merge step. The awaitHuman primitive transitions the task to
-    // 'awaiting-human', raises an action-queue row, and throws a
-    // WorkflowTerminalError so the pipeline suspends. On re-dispatch after the
-    // operator runs `mars step done <id>`, the engine short-circuits the
-    // 'completed' merge-gate step and falls straight through to merge.
+    // 'awaiting-human', raises an action-queue row, and suspends the step
+    // until `mars step done <id>` resolves it — the step then completes
+    // normally and the run falls straight through to merge. If the daemon
+    // dies while suspended, the operator's `step done` patches the merge-gate
+    // step to 'completed' and the engine short-circuits it on re-dispatch.
     if ((ctx.input.spec?.mergeMode ?? 'auto') === 'gated') {
       await ctx.step('merge-gate', () =>
         awaitHuman(ctx, {

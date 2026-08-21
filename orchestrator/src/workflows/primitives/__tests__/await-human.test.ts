@@ -1,51 +1,25 @@
 /**
- * Tests for the `awaitHuman` primitive and its sentinel helpers.
+ * Tests for the `awaitHuman` primitive — the one park mechanism.
+ *
+ * `awaitHuman` delegates to the required `ctx.services.onManualPark` hook and
+ * suspends until the operator runs `mars step done` (which calls
+ * `resolveManualStep`). There is no sentinel throw any more, so a park is
+ * driven to completion here by starting it, waiting for the resolver to
+ * register, and then resolving it — see {@link parkAndRelease}.
  *
  * Coverage:
- *  1. Sentinel helpers (pure) — AWAIT_HUMAN_MESSAGE, isAwaitHumanError,
- *     extractAwaitHumanStepName
- *  2. `awaitHuman` throws the sentinel and parks the task (stubbed store)
- *  3. Restart-idempotency: after the engine patches the step to 'completed',
+ *  1. `awaitHuman` parks the task through the default hook (stubbed store)
+ *  2. previewUrl/logPath forwarding into the hook
+ *  3. Restart-idempotency: after the daemon patches the step to 'completed',
  *     re-running the workflow short-circuits the step without re-parking.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { AWAIT_HUMAN_MESSAGE } from '../shared'
+import { resolveManualStep } from '@mars/workflow'
 import { WorkflowTerminalError } from '../../../core/lib/workflow-terminal-error'
 import { AWAIT_HUMAN_SENTINEL } from '../../../core/lib/sentinels'
 
 // ---------------------------------------------------------------------------
-// 1. Sentinel helpers (pure — no mocks needed)
-// ---------------------------------------------------------------------------
-
-describe('AWAIT_HUMAN_MESSAGE / WorkflowTerminalError await-human discriminant', () => {
-  it('AWAIT_HUMAN_MESSAGE embeds taskId and stepName', () => {
-    const msg = AWAIT_HUMAN_MESSAGE('mars-abc12345', 'await-human')
-    expect(msg).toContain('mars-abc12345')
-    expect(msg).toContain("await-human step 'await-human'")
-  })
-
-  it('WorkflowTerminalError await-human carries the correct kind and stepName in meta', () => {
-    const err = new WorkflowTerminalError('await-human', AWAIT_HUMAN_MESSAGE('task-1', 'my-step'), { stepName: 'my-step' })
-    expect(err).toBeInstanceOf(WorkflowTerminalError)
-    expect(err.kind).toBe('await-human')
-    expect(err.meta.stepName).toBe('my-step')
-    expect(err.message).toContain('my-step')
-  })
-
-  it('plain Error is not instanceof WorkflowTerminalError', () => {
-    const err = new Error(AWAIT_HUMAN_MESSAGE('task-1', 'my-step'))
-    expect(err instanceof WorkflowTerminalError).toBe(false)
-  })
-
-  it('stepName defaults to undefined when not provided in meta', () => {
-    const err = new WorkflowTerminalError('await-human', 'parked')
-    expect(err.kind).toBe('await-human')
-    expect(err.meta.stepName).toBeUndefined()
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 2. awaitHuman primitive — stubbed store + mocked side-effect imports
+// 1. awaitHuman primitive — stubbed store + mocked side-effect imports
 // ---------------------------------------------------------------------------
 
 // Use vi.hoisted() so mocks are accessible in the vi.mock factory AND in tests.
@@ -65,6 +39,7 @@ vi.mock('../../../core/lib/action-queue', () => ({
 
 // Import the primitives AFTER the mocks are registered.
 const { awaitHuman, runAgent, review } = await import('../index')
+const { createDefaultManualPark } = await import('../../../core/lib/park-for-human')
 
 /** Minimal TaskStore stub — only `query` (used by updateTask's before-read). */
 const makeStubStore = () => ({
@@ -73,27 +48,56 @@ const makeStubStore = () => ({
   batch: vi.fn().mockResolvedValue([]),
 })
 
-/** Minimal MarsCtx stub for testing awaitHuman. */
-const makeCtx = (stepName = 'await-human') => ({
-  runId: 'test-task-id',
-  workflowId: 'task',
-  input: { taskId: 'test-task-id' },
-  logger: { child: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }) },
-  signal: new AbortController().signal,
-  services: { store: makeStubStore(), traceStore: null },
-  currentStep: stepName
-    ? {
-        name: stepName,
-        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-        signal: new AbortController().signal,
-        setSha: vi.fn(),
-        setTranscriptKey: vi.fn(),
-        setSummary: vi.fn(),
-      }
-    : null,
-  emit: vi.fn(),
-  step: vi.fn(),
-})
+/**
+ * Minimal MarsCtx stub for testing awaitHuman, wired with the default park
+ * hook — the same one every non-daemon services bag gets.
+ */
+const makeCtx = (stepName = 'await-human') => {
+  const store = makeStubStore()
+  return {
+    runId: 'test-task-id',
+    workflowId: 'task',
+    input: { taskId: 'test-task-id' },
+    logger: { child: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }) },
+    signal: new AbortController().signal,
+    services: {
+      store,
+      traceStore: null,
+      onManualPark: createDefaultManualPark(store as never),
+    },
+    currentStep: stepName
+      ? {
+          name: stepName,
+          logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+          signal: new AbortController().signal,
+          setSha: vi.fn(),
+          setTranscriptKey: vi.fn(),
+          setSummary: vi.fn(),
+        }
+      : null,
+    emit: vi.fn(),
+    step: vi.fn(),
+  }
+}
+
+/**
+ * Drive one park to completion: start the (suspending) park, poll until its
+ * resolver is registered, then signal `mars step done`. Returns once the
+ * primitive's promise settles, so the park's side effects have all landed.
+ *
+ * Polling on `resolveManualStep`'s own return value is what makes this
+ * deterministic: it flips to `true` exactly when `awaitManualDone` has
+ * registered, which is strictly after the park body finished.
+ */
+const parkAndRelease = async (
+  start: () => Promise<unknown>,
+  runId: string,
+  stepName: string,
+): Promise<void> => {
+  const pending = start()
+  await vi.waitFor(() => expect(resolveManualStep(runId, stepName)).toBe(true))
+  await pending
+}
 
 describe('awaitHuman primitive', () => {
   beforeEach(() => {
@@ -101,28 +105,37 @@ describe('awaitHuman primitive', () => {
     mockRaiseActionQueueItem.mockClear()
   })
 
-  it('throws a WorkflowTerminalError with kind=await-human', async () => {
+  it('suspends until the operator signals step done, then returns normally', async () => {
     const ctx = makeCtx('await-human')
-    await expect(awaitHuman(ctx as never)).rejects.toBeInstanceOf(WorkflowTerminalError)
-    await expect(awaitHuman(ctx as never)).rejects.toSatisfy(
-      (err: unknown) => err instanceof WorkflowTerminalError && err.kind === 'await-human',
-    )
+    const pending = awaitHuman(ctx as never)
+    let settled = false
+    void pending.then(() => {
+      settled = true
+    })
+
+    // Still parked: nothing resolves the step yet.
+    await vi.waitFor(() => expect(mockUpdateTask).toHaveBeenCalled())
+    expect(settled).toBe(false)
+
+    // `mars step done` — the park resolves and the step returns (no throw), so
+    // runStep checkpoints it 'completed' itself.
+    expect(resolveManualStep('test-task-id', 'await-human')).toBe(true)
+    await expect(pending).resolves.toBeUndefined()
   })
 
-  it('embeds the step name in the thrown sentinel via meta.stepName', async () => {
+  it('parks under the step name so `mars step done` can resolve it', async () => {
     const ctx = makeCtx('my-qa-gate')
-    let thrown: unknown
-    try {
-      await awaitHuman(ctx as never)
-    } catch (err) {
-      thrown = err
-    }
-    expect(thrown instanceof WorkflowTerminalError ? thrown.meta.stepName : null).toBe('my-qa-gate')
+    await parkAndRelease(() => awaitHuman(ctx as never), 'test-task-id', 'my-qa-gate')
+    expect(mockUpdateTask).toHaveBeenCalledWith(
+      'test-task-id',
+      expect.objectContaining({ currentStepName: 'my-qa-gate' }),
+      expect.anything(),
+    )
   })
 
   it('calls updateTask with status=awaiting-human', async () => {
     const ctx = makeCtx('await-human')
-    await expect(awaitHuman(ctx as never)).rejects.toBeInstanceOf(WorkflowTerminalError)
+    await parkAndRelease(() => awaitHuman(ctx as never), 'test-task-id', 'await-human')
     expect(mockUpdateTask).toHaveBeenCalledWith(
       'test-task-id',
       expect.objectContaining({ status: 'awaiting-human', leaseOwner: AWAIT_HUMAN_SENTINEL }),
@@ -132,9 +145,11 @@ describe('awaitHuman primitive', () => {
 
   it('passes note to leaseNote when provided', async () => {
     const ctx = makeCtx('await-human')
-    await expect(
-      awaitHuman(ctx as never, { note: 'QA this feature' }),
-    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+    await parkAndRelease(
+      () => awaitHuman(ctx as never, { note: 'QA this feature' }),
+      'test-task-id',
+      'await-human',
+    )
     expect(mockUpdateTask).toHaveBeenCalledWith(
       'test-task-id',
       expect.objectContaining({ leaseNote: 'QA this feature' }),
@@ -144,7 +159,7 @@ describe('awaitHuman primitive', () => {
 
   it('raises an action-queue row with kind=awaiting-human', async () => {
     const ctx = makeCtx('await-human')
-    await expect(awaitHuman(ctx as never)).rejects.toBeInstanceOf(WorkflowTerminalError)
+    await parkAndRelease(() => awaitHuman(ctx as never), 'test-task-id', 'await-human')
     expect(mockRaiseActionQueueItem).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'awaiting-human', originTaskId: 'test-task-id' }),
     )
@@ -153,13 +168,12 @@ describe('awaitHuman primitive', () => {
   it('falls back to "await-human" step name when currentStep is null', async () => {
     const ctx = makeCtx('my-step')
     ;(ctx as { currentStep: null }).currentStep = null
-    let thrown: unknown
-    try {
-      await awaitHuman(ctx as never)
-    } catch (err) {
-      thrown = err
-    }
-    expect(thrown instanceof WorkflowTerminalError ? thrown.meta.stepName : null).toBe('await-human')
+    await parkAndRelease(() => awaitHuman(ctx as never), 'test-task-id', 'await-human')
+    expect(mockUpdateTask).toHaveBeenCalledWith(
+      'test-task-id',
+      expect.objectContaining({ currentStepName: 'await-human' }),
+      expect.anything(),
+    )
   })
 
   it('re-grants the lease to the prior human owner (auto re-lease across manual steps)', async () => {
@@ -177,7 +191,7 @@ describe('awaitHuman primitive', () => {
     ;(ctx.services.store.query as ReturnType<typeof vi.fn>).mockResolvedValue({
       rows: [row],
     })
-    await expect(awaitHuman(ctx as never)).rejects.toBeInstanceOf(WorkflowTerminalError)
+    await parkAndRelease(() => awaitHuman(ctx as never), 'test-task-id', 'code')
     expect(mockUpdateTask).toHaveBeenCalledWith(
       'test-task-id',
       expect.objectContaining({
@@ -190,10 +204,10 @@ describe('awaitHuman primitive', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 2a. Promise-based path (onManualPark) — previewUrl/logPath forwarding
+// 2. onManualPark delegation — previewUrl/logPath forwarding
 // ---------------------------------------------------------------------------
 
-describe('awaitHuman: promise-based onManualPark path', () => {
+describe('awaitHuman: onManualPark delegation', () => {
   beforeEach(() => {
     mockUpdateTask.mockClear()
     mockRaiseActionQueueItem.mockClear()
@@ -205,13 +219,13 @@ describe('awaitHuman: promise-based onManualPark path', () => {
     services: { store: makeStubStore(), traceStore: null, onManualPark },
   })
 
-  it('takes the promise path (not the sentinel throw) whenever onManualPark is present', async () => {
+  it('delegates the whole park to onManualPark — no park body of its own', async () => {
     const onManualPark = vi.fn().mockResolvedValue(undefined)
     const ctx = makeCtxWithOnManualPark(onManualPark)
     await awaitHuman(ctx as never, { note: 'QA this' })
     expect(onManualPark).toHaveBeenCalledTimes(1)
-    // No sentinel throw: park + updateTask happen inside the daemon's own
-    // hook, not in await-human.ts's fallback body.
+    // awaitHuman is a thin delegation: every write happens inside the hook,
+    // so a hook that writes nothing means nothing is written.
     expect(mockUpdateTask).not.toHaveBeenCalled()
     expect(mockRaiseActionQueueItem).not.toHaveBeenCalled()
   })
@@ -260,27 +274,35 @@ const makeManualCtx = (
   worktreePath: string,
   previewCmd: string | null,
   previewSpawn: (args: { taskId: string; cmd: string; cwd: string }) => Promise<{ pid: number; logPath: string; url?: string }>,
-) => ({
-  runId: 'test-task-id',
-  workflowId: 'task',
-  input: {
-    taskId: 'test-task-id',
-    spec: previewCmd !== null ? { previewCmd } : null,
-  },
-  logger: { child: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }) },
-  signal: new AbortController().signal,
-  services: { store: makeStubStore(), traceStore: null, previewSpawn },
-  currentStep: {
-    name: 'review',
-    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+) => {
+  const store = makeStubStore()
+  return {
+    runId: 'test-task-id',
+    workflowId: 'task',
+    input: {
+      taskId: 'test-task-id',
+      spec: previewCmd !== null ? { previewCmd } : null,
+    },
+    logger: { child: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }) },
     signal: new AbortController().signal,
-    setSha: vi.fn(),
-    setTranscriptKey: vi.fn(),
-    setSummary: vi.fn(),
-  },
-  emit: vi.fn(),
-  step: vi.fn(),
-})
+    services: {
+      store,
+      traceStore: null,
+      previewSpawn,
+      onManualPark: createDefaultManualPark(store as never),
+    },
+    currentStep: {
+      name: 'review',
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      signal: new AbortController().signal,
+      setSha: vi.fn(),
+      setTranscriptKey: vi.fn(),
+      setSummary: vi.fn(),
+    },
+    emit: vi.fn(),
+    step: vi.fn(),
+  }
+}
 
 describe('review with reviewType:manual', () => {
   const fakeWorktree = { path: '/fake/worktree', branch: 'task/test-task-id' }
@@ -297,9 +319,11 @@ describe('review with reviewType:manual', () => {
       url: 'http://localhost:3000',
     })
     const ctx = makeManualCtx('/fake/worktree', 'npm run dev', mockSpawn)
-    await expect(
-      review(ctx as never, { reviewType: 'manual', worktree: fakeWorktree }),
-    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+    await parkAndRelease(
+      () => review(ctx as never, { reviewType: 'manual', worktree: fakeWorktree }),
+      'test-task-id',
+      'review',
+    )
     expect(mockSpawn).toHaveBeenCalledWith(
       expect.objectContaining({ cwd: '/fake/worktree', cmd: 'npm run dev', taskId: 'test-task-id' }),
     )
@@ -312,9 +336,11 @@ describe('review with reviewType:manual', () => {
       url: 'http://localhost:3000',
     })
     const ctx = makeManualCtx('/fake/worktree', 'npm run dev', mockSpawn)
-    await expect(
-      review(ctx as never, { reviewType: 'manual', worktree: fakeWorktree }),
-    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+    await parkAndRelease(
+      () => review(ctx as never, { reviewType: 'manual', worktree: fakeWorktree }),
+      'test-task-id',
+      'review',
+    )
     expect(mockRaiseActionQueueItem).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'awaiting-human',
@@ -333,9 +359,11 @@ describe('review with reviewType:manual', () => {
       url: 'http://localhost:3000',
     })
     const ctx = makeManualCtx('/fake/worktree', 'npm run dev', mockSpawn)
-    await expect(
-      review(ctx as never, { reviewType: 'manual', worktree: fakeWorktree }),
-    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+    await parkAndRelease(
+      () => review(ctx as never, { reviewType: 'manual', worktree: fakeWorktree }),
+      'test-task-id',
+      'review',
+    )
     expect(mockUpdateTask).toHaveBeenCalledWith(
       'test-task-id',
       expect.objectContaining({ status: 'awaiting-human' }),
@@ -360,9 +388,11 @@ describe('review with reviewType:manual', () => {
       // url intentionally absent
     })
     const ctx = makeManualCtx('/fake/worktree', 'npm run dev', mockSpawn)
-    await expect(
-      review(ctx as never, { reviewType: 'manual', worktree: fakeWorktree }),
-    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+    await parkAndRelease(
+      () => review(ctx as never, { reviewType: 'manual', worktree: fakeWorktree }),
+      'test-task-id',
+      'review',
+    )
     expect(mockRaiseActionQueueItem).toHaveBeenCalledWith(
       expect.objectContaining({
         payload: expect.objectContaining({
@@ -472,9 +502,18 @@ describe('awaitHuman idempotency via step-completion patch', () => {
       await awaitHuman(ctx, { note: 'idempotency test' })
     }
 
-    const minimalServices = { store: makeStubStore(), traceStore: null }
+    // Models the daemon-restart window: the task parked, then the daemon died
+    // with the in-memory resolver still pending, so the suspended step never
+    // returns and the run ends 'failed'. handleStepDone Path 2 /
+    // handleReleaseLease patch the step to 'completed' before re-queuing —
+    // simulated below — and the engine must then short-circuit it.
+    const minimalServices = {
+      store: makeStubStore(),
+      traceStore: null,
+      onManualPark: () => Promise.reject(new Error('daemon restarted while parked')),
+    }
 
-    // First run: awaitHuman parks and throws → step ends in 'failed'.
+    // First run: the park never completes → step ends in 'failed'.
     const result1 = await runWorkflow(
       {
         id: 'task',
@@ -486,7 +525,8 @@ describe('awaitHuman idempotency via step-completion patch', () => {
     expect(result1.status).toBe('failed')
     expect(parkCallCount).toBe(1)
 
-    // Simulate the daemon patching the step record to 'completed'.
+    // Simulate handleStepDone / handleReleaseLease patching the step record to
+    // 'completed' before re-queuing the task.
     const failedStep = await memStore.getStep(taskId, 'await-human')
     expect(failedStep).toBeDefined()
     if (failedStep) {
@@ -527,14 +567,17 @@ describe('live pipeline code step transitions task to awaiting-human', () => {
 
   it('awaitHuman in the code step parks the task to awaiting-human, not a worker span', async () => {
     // Replicate the fixed live-workflow code step shape: awaitHuman, not runAgent.
-    // If runAgent were called here instead, it would not throw WorkflowTerminalError
-    // and would not set status=awaiting-human — it would dispatch a worker span.
+    // If runAgent were called here instead, it would not park the task — it
+    // would dispatch a worker span and never set status=awaiting-human.
     const ctx = makeCtx('code')
-    await expect(
-      awaitHuman(ctx as never, {
-        note: 'Implement the task in this worktree. Journal decisions with `mars task note`, tick done-criteria with `mars task check`, commit as you go, then run `mars step done`.',
-      }),
-    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+    await parkAndRelease(
+      () =>
+        awaitHuman(ctx as never, {
+          note: 'Implement the task in this worktree. Journal decisions with `mars task note`, tick done-criteria with `mars task check`, commit as you go, then run `mars step done`.',
+        }),
+      'test-task-id',
+      'code',
+    )
     // The task was parked — not dispatched to a headless coder.
     expect(mockUpdateTask).toHaveBeenCalledWith(
       'test-task-id',

@@ -468,13 +468,13 @@ describe('WorkflowTerminalError — discriminant dispatch', () => {
     expect(err.meta.resetsAt).toBe(1234567)
   })
 
-  it('await-human: stores stepName in meta', () => {
-    const err = new WorkflowTerminalError('await-human', 'parked', { stepName: 'review' })
-    expect(err.kind).toBe('await-human')
+  it('preview-gate: stores stepName in meta', () => {
+    const err = new WorkflowTerminalError('preview-gate', 'parked', { stepName: 'review' })
+    expect(err.kind).toBe('preview-gate')
     expect(err.meta.stepName).toBe('review')
   })
 
-  it('all ten kinds are accepted by the WorkflowTerminalError constructor', () => {
+  it('all nine kinds are accepted by the WorkflowTerminalError constructor', () => {
     const kinds = [
       'blockers-abort',
       'context-exhausted',
@@ -485,7 +485,6 @@ describe('WorkflowTerminalError — discriminant dispatch', () => {
       'main-dirty-verify',
       'main-dirty-merge',
       'preview-gate',
-      'await-human',
     ] as const
     for (const kind of kinds) {
       const err = new WorkflowTerminalError(kind, 'test')

@@ -17,6 +17,7 @@
 import type { WorkflowCtx } from '@mars/workflow'
 
 import { nullTraceStore, type TraceCtx } from '../core/lib/run-tool'
+import { type ManualParkArgs } from '../core/lib/park-for-human'
 import { type WorktreeRef } from '../core/lib/git/worktree'
 import { type MergeResult } from '../core/lib/git/merge'
 import { getTask, type TaskTag, type TaskSpec } from '../core/queue'
@@ -40,35 +41,20 @@ export interface MarsServices {
   /** Workflow-level trace store; `nullTraceStore` disables span/event capture. */
   traceStore: TraceEventStore
   /**
-   * Optional hook registered by the daemon for the promise-based manual step
-   * park/resume mechanism. When present, a step with `mode === 'manual'` calls
-   * this hook instead of the legacy `awaitHuman` sentinel-throw path. The hook
+   * The park mechanism — required, and the only one. A step with
+   * `mode === 'manual'` (and the `awaitHuman` primitive) calls this hook: it
    * parks the task (writes `current_step_name` / `current_step_guide` via the
    * Arc write funnel, raises an action-queue row) and returns a Promise that
    * resolves when the operator fires `mars step done` for that step name.
    *
-   * When absent, the primitives fall back to {@link awaitHuman} (sentinel
-   * throw). This keeps the primitives usable in scaffolded workflows and test
-   * contexts that do not wire up the full daemon.
+   * There is no fallback. The sentinel-throw park path was deleted (PRD
+   * ae17340a-modular-core-program-make-every-mars-mod slice 27), so every
+   * `MarsServices` bag must supply this hook — the daemon supplies its own
+   * lease/re-dispatch-wired version, everything else (scaffolded workflows,
+   * test contexts) uses `createDefaultManualPark(store)` from
+   * `core/lib/park-for-human`.
    */
-  onManualPark?: (args: {
-    runId: string
-    taskId: string
-    stepName: string
-    guide: string | null
-    /**
-     * Preview URL for a manual-QA row (the local-preview review gate).
-     * Null when no preview was started. Forwarded into the raised
-     * action-queue row's payload — see `LeaseParkPayload.previewUrl`.
-     */
-    previewUrl?: string | null
-    /**
-     * Preview process log path for a manual-QA row. Null when no preview
-     * was started. Forwarded into the raised action-queue row's payload —
-     * see `LeaseParkPayload.logPath`.
-     */
-    logPath?: string | null
-  }) => Promise<void>
+  onManualPark: (args: ManualParkArgs) => Promise<void>
   /**
    * Optional callback invoked immediately after the coder/fixer child subprocess
    * is spawned, with the child's OS PID. The daemon registers this to call

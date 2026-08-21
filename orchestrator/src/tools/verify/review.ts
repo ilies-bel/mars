@@ -446,8 +446,9 @@ export const review = async (
       previewUrl: previewUrl ?? null,
       logPath,
     })
-    // awaitHuman always throws WorkflowTerminalError; this return is unreachable
-    // but satisfies the Promise<ReviewResult> return type.
+    // awaitHuman suspends until the operator runs `mars step done`. Reaching
+    // here means they passed the QA gate (an abort releases the lease and
+    // terminates the run instead), so the manual review verified.
     return { verified: true }
   }
   // Resolve dispatch facts: explicit opts → ctx.input → hard default.

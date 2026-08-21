@@ -204,17 +204,6 @@ export const QUOTA_REJECTED_ABORT_MESSAGE = (
 ): string =>
   `task ${taskId} env-rejected: provider rate limit reached (resetsAt=${resetsAt})`
 
-// Thrown by the awaitHuman primitive when a task is parked for live human work.
-//
-// The sentinel embeds the step name so the daemon can locate the correct
-// workflow_step_runs row and patch it to 'completed'. Once 'completed', the
-// engine short-circuits the step on every future re-dispatch (after the
-// operator releases the lease), making the park idempotent keyed on
-// (runId, stepName). This mirrors the preview-gate sentinel but for the
-// 'awaiting-human' status instead of 'awaiting-validation'.
-export const AWAIT_HUMAN_MESSAGE = (taskId: string, stepName: string): string =>
-  `task ${taskId} parked at await-human step '${stepName}'; awaiting lease release`
-
 // ---------------------------------------------------------------------------
 // Prompt briefs + system-prompt assembly
 // ---------------------------------------------------------------------------
