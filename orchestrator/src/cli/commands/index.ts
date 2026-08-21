@@ -52,6 +52,7 @@ import { leverCommands } from './lever'
 import { healthCommands } from './health'
 import { kpiCommands } from './kpi-compare'
 import { enterCommands } from './enter'
+import { evalCommands } from './eval'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
@@ -99,6 +100,7 @@ export const allCommands: readonly Command[] = [
   ...healthCommands,
   ...kpiCommands,
   ...enterCommands,
+  ...evalCommands,
 ]
 
 export const registry: CommandRegistry = buildRegistry(allCommands)

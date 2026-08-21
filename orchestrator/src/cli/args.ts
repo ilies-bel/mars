@@ -128,6 +128,9 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--reason',
   // mars verify-gate add/set --timeout <minutes>: per-gate wall-clock timeout.
   '--timeout',
+  // mars eval --fixture <name>: run a single named fixture instead of the
+  // whole suite under src/eval/fixtures/.
+  '--fixture',
 ])
 
 /**
@@ -193,6 +196,9 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   // task on the default implement pipeline even when the prompt matches a
   // research marker and no --verify/--done spec is present.
   '--implement',
+  // mars eval --baseline: record the current scores as the baseline instead
+  // of diffing against the last recorded one.
+  '--baseline',
 ])
 
 // Short aliases are normalised to their long form before flag lookup.
