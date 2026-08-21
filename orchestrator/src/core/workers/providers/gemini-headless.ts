@@ -13,7 +13,7 @@ import {
   type RunClaudeResult,
 } from '../../lib/git/claude'
 import type { ClaudeEvent } from '../../lib/claude-stream'
-import type { HeadlessAdapter, HeadlessRunOpts } from '../provider-types'
+import type { HeadlessAdapter, HeadlessRunContext, HeadlessRunOpts } from '../provider-types'
 import { providerBinPath } from '../provider-bin'
 
 /**
@@ -53,7 +53,11 @@ export const geminiHeadless: HeadlessAdapter = {
   },
   readOutput: readGeminiOutput,
 
-  run: async (prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult> => {
+  run: async (
+    prompt: string,
+    opts: HeadlessRunOpts,
+    ctx?: HeadlessRunContext,
+  ): Promise<RunClaudeResult> => {
     // Refuse before spawning: `gemini -p ''` falls back to reading the prompt
     // from stdin, which is /dev/null for dispatched workers. See
     // EMPTY_PROMPT_REFUSAL.
@@ -62,11 +66,11 @@ export const geminiHeadless: HeadlessAdapter = {
     const conversation: ClaudeEvent[] = []
     const abort = new AbortController()
 
-    if (opts.externalAbort) {
-      if (opts.externalAbort.aborted) {
+    if (ctx?.externalAbort) {
+      if (ctx.externalAbort.aborted) {
         abort.abort()
       } else {
-        opts.externalAbort.addEventListener('abort', () => abort.abort(), { once: true })
+        ctx.externalAbort.addEventListener('abort', () => abort.abort(), { once: true })
       }
     }
 
@@ -81,11 +85,11 @@ export const geminiHeadless: HeadlessAdapter = {
         const ev = parseGeminiEventLine(line)
         if (!ev) return
         conversation.push(ev)
-        if (opts.onEvent) await opts.onEvent(ev)
+        if (ctx?.onEvent) await ctx.onEvent(ev)
       },
       abort.signal,
       buildWorkerEnv(),
-      opts.onPid,
+      ctx?.onPid,
     )
 
     // Synthesise a result event. On nonzero exit, mark it as an error and
@@ -95,7 +99,7 @@ export const geminiHeadless: HeadlessAdapter = {
         ? { type: 'result', is_error: true, result: result.stderr }
         : { type: 'result', is_error: false }
     conversation.push(resultEvent)
-    if (opts.onEvent) await opts.onEvent(resultEvent)
+    if (ctx?.onEvent) await ctx.onEvent(resultEvent)
 
     return {
       ...result,

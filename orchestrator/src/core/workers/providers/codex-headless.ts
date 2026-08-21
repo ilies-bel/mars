@@ -19,7 +19,7 @@ import {
   type RunClaudeResult,
 } from '../../lib/git/claude'
 import type { ClaudeEvent } from '../../lib/claude-stream'
-import type { HeadlessAdapter, HeadlessRunOpts } from '../provider-types'
+import type { HeadlessAdapter, HeadlessRunContext, HeadlessRunOpts } from '../provider-types'
 import { providerBinPath } from '../provider-bin'
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -246,7 +246,11 @@ export const codexHeadless: HeadlessAdapter = {
   },
   readOutput: readCodexOutput,
 
-  run: async (prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult> => {
+  run: async (
+    prompt: string,
+    opts: HeadlessRunOpts,
+    ctx?: HeadlessRunContext,
+  ): Promise<RunClaudeResult> => {
     // Refuse before spawning: `codex exec` with no prompt argument falls back
     // to reading stdin, which is /dev/null for dispatched workers, so it reads
     // EOF and exits 1 with no usable diagnostic. See EMPTY_PROMPT_REFUSAL.
@@ -257,12 +261,12 @@ export const codexHeadless: HeadlessAdapter = {
     const abort = new AbortController()
     let externalAborted = false
 
-    if (opts.externalAbort) {
-      if (opts.externalAbort.aborted) {
+    if (ctx?.externalAbort) {
+      if (ctx.externalAbort.aborted) {
         externalAborted = true
         abort.abort()
       } else {
-        opts.externalAbort.addEventListener('abort', () => {
+        ctx.externalAbort.addEventListener('abort', () => {
           externalAborted = true
           abort.abort()
         }, { once: true })
@@ -346,11 +350,11 @@ export const codexHeadless: HeadlessAdapter = {
         const ev = parseCodexEventLine(line)
         if (!ev) return
         conversation.push(ev)
-        if (opts.onEvent) await opts.onEvent(ev)
+        if (ctx?.onEvent) await ctx.onEvent(ev)
       },
       abort.signal,
       buildWorkerEnv(),
-      opts.onPid,
+      ctx?.onPid,
     )
 
     if (externalAborted) {

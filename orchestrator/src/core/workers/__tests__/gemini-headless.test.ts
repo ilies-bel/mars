@@ -137,11 +137,11 @@ describe('geminiHeadless.run — (b) resolveClaudeBin not called', () => {
 describe('geminiHeadless.run — (c) event normalisation and onEvent forwarding', () => {
   it('forwards stdout text lines as assistant events (ignores stderr)', async () => {
     const received: ClaudeEvent[] = []
-    await geminiHeadless.run('task', {
-      cwd: '/tmp',
-      model: 'gemini-2.5-pro',
-      onEvent: (ev) => { received.push(ev) },
-    })
+    await geminiHeadless.run(
+      'task',
+      { cwd: '/tmp', model: 'gemini-2.5-pro' },
+      { onEvent: (ev) => { received.push(ev) } },
+    )
 
     const assistantEvents = received.filter((ev) => ev.type === 'assistant')
     expect(assistantEvents).toHaveLength(1)
@@ -154,11 +154,11 @@ describe('geminiHeadless.run — (c) event normalisation and onEvent forwarding'
 
   it('conversation in the returned result matches events forwarded to onEvent', async () => {
     const fromHook: ClaudeEvent[] = []
-    const result = await geminiHeadless.run('task', {
-      cwd: '/tmp',
-      model: 'gemini-2.5-pro',
-      onEvent: (ev) => { fromHook.push(ev) },
-    })
+    const result = await geminiHeadless.run(
+      'task',
+      { cwd: '/tmp', model: 'gemini-2.5-pro' },
+      { onEvent: (ev) => { fromHook.push(ev) } },
+    )
 
     expect(result.conversation).toHaveLength(fromHook.length)
     for (let i = 0; i < fromHook.length; i++) {
@@ -174,11 +174,11 @@ describe('geminiHeadless.run — (c) event normalisation and onEvent forwarding'
     })
 
     const received: ClaudeEvent[] = []
-    await geminiHeadless.run('task', {
-      cwd: '/tmp',
-      model: 'gemini-2.5-pro',
-      onEvent: (ev) => { received.push(ev) },
-    })
+    await geminiHeadless.run(
+      'task',
+      { cwd: '/tmp', model: 'gemini-2.5-pro' },
+      { onEvent: (ev) => { received.push(ev) } },
+    )
 
     const resultEvents = received.filter((ev) => ev.type === 'result')
     expect(resultEvents).toHaveLength(1)

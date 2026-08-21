@@ -16,6 +16,7 @@ import { geminiHeadless } from './providers/gemini-headless'
 import {
   type ConversationMemoryFacts,
   type HeadlessAdapter,
+  type HeadlessRunContext,
   type HeadlessRunOpts,
   type ProcessHandle,
   type ProviderName,
@@ -207,8 +208,11 @@ const CLAUDE_PROVIDER: ProviderDescriptor = {
         quotaRejected: true,
         sessionId: true,
       },
-      run: (prompt: string, opts: HeadlessRunOpts): Promise<RunAgentResult> =>
-        runClaudeCode({ prompt, ...opts }),
+      run: (
+        prompt: string,
+        opts: HeadlessRunOpts,
+        ctx?: HeadlessRunContext,
+      ): Promise<RunAgentResult> => runClaudeCode({ prompt, ...opts, ...ctx }),
       readOutput: readClaudeOutput,
     },
 }
@@ -332,12 +336,23 @@ export const runHeadlessProvider = async (
       : undefined
 
   try {
-    const { provider: _provider, modelTier = 'balanced', timeoutMs: _timeoutMs, ...runOpts } = opts
-    return await provider.headless.run(prompt, {
-      ...runOpts,
-      model: opts.model ?? provider.models[modelTier],
-      externalAbort: abort.signal,
-    })
+    const {
+      provider: _provider,
+      modelTier = 'balanced',
+      timeoutMs: _timeoutMs,
+      onEvent,
+      externalAbort: _externalAbort,
+      onPid,
+      ...runOpts
+    } = opts
+    return await provider.headless.run(
+      prompt,
+      {
+        ...runOpts,
+        model: opts.model ?? provider.models[modelTier],
+      },
+      { onEvent, externalAbort: abort.signal, onPid },
+    )
   } finally {
     if (timeout !== undefined) clearTimeout(timeout)
     opts.externalAbort?.removeEventListener('abort', onExternalAbort)

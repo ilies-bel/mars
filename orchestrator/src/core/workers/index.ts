@@ -692,27 +692,34 @@ const buildWorker = (config: WorkerConfig): Worker => {
             agent: config.agent,
             appendSystemPrompt: config.appendSystemPrompt,
           })
-        : provider.headless.run(prompt, {
-            cwd: options.cwd,
-            sessionId: options.sessionId,
-            onEvent: options.onEvent,
-            model: options.model ?? config.model,
-            systemPrompt: options.systemPrompt ?? config.systemPrompt ?? config.appendSystemPrompt,
-            effort: config.effort,
-            permissionMode: config.permissionMode,
-            bare: config.bare,
-            agent: config.agent,
-            disallowedTools: config.disallowedTools,
-            forceSandbox: config.forceSandbox,
-            maxContextTokens: meteredContextBudget,
-            mcpServers: config.mcpConfig,
-            externalAbort: options.externalAbort,
-            onPid: options.onPid,
-            // Passing a taskId is what injects the mars-worker (and, with it,
-            // codegraph) MCP servers. A Worker that denies the whole tool
-            // surface must not get them back through MCP — see deniesAllToolUse.
-            taskId: deniesAllToolUse(config) ? undefined : options.taskId,
-          })
+        : provider.headless.run(
+            prompt,
+            {
+              cwd: options.cwd,
+              sessionId: options.sessionId,
+              model: options.model ?? config.model,
+              systemPrompt:
+                options.systemPrompt ?? config.systemPrompt ?? config.appendSystemPrompt,
+              effort: config.effort,
+              permissionMode: config.permissionMode,
+              bare: config.bare,
+              agent: config.agent,
+              disallowedTools: config.disallowedTools,
+              forceSandbox: config.forceSandbox,
+              maxContextTokens: meteredContextBudget,
+              mcpServers: config.mcpConfig,
+              // Passing a taskId is what injects the mars-worker (and, with
+              // it, codegraph) MCP servers. A Worker that denies the whole
+              // tool surface must not get them back through MCP — see
+              // deniesAllToolUse.
+              taskId: deniesAllToolUse(config) ? undefined : options.taskId,
+            },
+            {
+              onEvent: options.onEvent,
+              externalAbort: options.externalAbort,
+              onPid: options.onPid,
+            },
+          )
     },
   }
 }

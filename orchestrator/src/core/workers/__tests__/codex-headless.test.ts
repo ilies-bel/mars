@@ -298,11 +298,11 @@ describe('codexHeadless.run — (b) resolveClaudeBin not called', () => {
 describe('codexHeadless.run — (c) JSONL normalisation and onEvent forwarding', () => {
   it('forwards only stdout lines (not stderr) through parseCodexEventLine to onEvent', async () => {
     const received: ClaudeEvent[] = []
-    await codexHeadless.run('task', {
-      cwd: '/tmp',
-      model: 'gpt-5.5',
-      onEvent: (ev) => { received.push(ev) },
-    })
+    await codexHeadless.run(
+      'task',
+      { cwd: '/tmp', model: 'gpt-5.5' },
+      { onEvent: (ev) => { received.push(ev) } },
+    )
 
     // Only the two stdout lines should produce events (the stderr line is dropped)
     expect(received).toHaveLength(2)
@@ -312,11 +312,11 @@ describe('codexHeadless.run — (c) JSONL normalisation and onEvent forwarding',
 
   it('normalises agent_message to assistant event with the correct text', async () => {
     const received: ClaudeEvent[] = []
-    await codexHeadless.run('task', {
-      cwd: '/tmp',
-      model: 'gpt-5.5',
-      onEvent: (ev) => { received.push(ev) },
-    })
+    await codexHeadless.run(
+      'task',
+      { cwd: '/tmp', model: 'gpt-5.5' },
+      { onEvent: (ev) => { received.push(ev) } },
+    )
 
     const assistantEv = received[0] as unknown as {
       type: string
@@ -328,11 +328,11 @@ describe('codexHeadless.run — (c) JSONL normalisation and onEvent forwarding',
 
   it('normalises turn.completed to result event with is_error: false', async () => {
     const received: ClaudeEvent[] = []
-    await codexHeadless.run('task', {
-      cwd: '/tmp',
-      model: 'gpt-5.5',
-      onEvent: (ev) => { received.push(ev) },
-    })
+    await codexHeadless.run(
+      'task',
+      { cwd: '/tmp', model: 'gpt-5.5' },
+      { onEvent: (ev) => { received.push(ev) } },
+    )
 
     const resultEv = received[1] as unknown as { type: string; is_error: boolean }
     expect(resultEv.is_error).toBe(false)
@@ -340,11 +340,11 @@ describe('codexHeadless.run — (c) JSONL normalisation and onEvent forwarding',
 
   it('conversation in the returned result matches events forwarded to onEvent', async () => {
     const fromHook: ClaudeEvent[] = []
-    const result = await codexHeadless.run('task', {
-      cwd: '/tmp',
-      model: 'gpt-5.5',
-      onEvent: (ev) => { fromHook.push(ev) },
-    })
+    const result = await codexHeadless.run(
+      'task',
+      { cwd: '/tmp', model: 'gpt-5.5' },
+      { onEvent: (ev) => { fromHook.push(ev) } },
+    )
 
     expect(result.conversation).toHaveLength(fromHook.length)
     for (let i = 0; i < fromHook.length; i++) {
