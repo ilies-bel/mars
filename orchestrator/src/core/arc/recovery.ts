@@ -2,32 +2,35 @@
  * Arc recovery concern (ADR-0052 modular-core follow-on, "Split arc.ts:
  * extract the recovery concern").
  *
- * Holds the recovery-spawn write funnels that used to live inline on the
- * `Arc` aggregate in `../arc.ts`: spawning a fresh fix-task for a failed
- * source, attaching a source to an already-outstanding fix-task, spawning a
- * `main-commiter` recovery, and propagating a completed recovery's `done`
- * status back onto its origin. `Arc`'s instance methods of the same names
- * ({@link Arc.spawnRecovery}, {@link Arc.attachToRecovery},
- * {@link Arc.spawnMainCommitterRecovery}, {@link Arc.propagateRecoveryDone})
- * are now thin delegates onto the functions here — see `../arc.ts`'s
- * "Concern manifest" comment for the full boundary contract.
+ * Holds the three recovery-spawn write funnels that used to live inline on
+ * the `Arc` aggregate in `../arc.ts`: spawning a fresh fix-task for a failed
+ * source ({@link spawnRecovery}), attaching a source to an
+ * already-outstanding fix-task ({@link attachToRecovery}), and spawning a
+ * `main-commiter` recovery ({@link spawnMainCommitterRecovery}). `../arc.ts`
+ * keeps only task lifecycle; see its "Concern manifest" comment for the full
+ * boundary contract.
  *
- * `propagateRecoveryDone` is the one function here that reaches back into
- * lifecycle/blocker primitives owned by `Arc` itself
- * (`setTaskStatus`/`reopenTerminalTask`/`unblockByCompletion`). Rather than
- * importing `../arc.ts` — which would recreate the exact cycle this split is
- * meant to break — the caller injects those three functions via
- * {@link PropagateRecoveryDoneDeps}. `../arc.ts`'s wrapper passes its own
- * static methods; a test can pass fakes.
+ * BOUNDARY DIRECTION (load-bearing). This module imports `../queue` and
+ * `../store/task-store`, both of which import `../arc.ts` — so `../arc.ts`
+ * MUST NOT import this file, or the split recreates the very cycle it exists
+ * to break. The dependency therefore runs caller → recovery, never
+ * arc → recovery: `../queue-fix-tasks.ts` and `../lib/main-dirty.ts` call
+ * these functions directly and run `Arc.maybeAssertArcInvariant` themselves
+ * afterwards (the debug-assert seam stays on the aggregate — it is shared by
+ * every mutating Arc write, not just the recovery ones).
+ *
+ * `Arc.propagateRecoveryDone` deliberately did NOT move here: it is a
+ * lifecycle transition on the *origin* row (flip to `done`, then unblock its
+ * dependents) and `Arc.unblockByCompletion` calls it inline, which would
+ * force exactly the arc → recovery import this boundary forbids.
+ *
+ * Sole-writer note (ADR-0052): the `tasks` / `task_blockers` writes below are
+ * part of the Arc aggregate, so `core/arc/recovery.ts` is allowlisted
+ * alongside `core/arc.ts` in `../__tests__/arc-sole-writer.test.ts`.
  */
 
 import { randomUUID } from 'node:crypto'
-import {
-  getTask,
-  MAX_PRIORITY,
-  type DomainTaskStore as _DomainTaskStoreUnused, // re-declared below via store/task-store for the canonical type
-} from '../queue'
-import type { TaskDropReason, TaskStatus } from '../queue'
+import { getTask, MAX_PRIORITY } from '../queue'
 import type { DomainTaskStore } from '../store/task-store'
 import { getRecipeOrGeneric, type FixRecipeContext } from '../lib/fix-recipes'
 import { buildEventInsert } from '../lib/outbox'
@@ -41,10 +44,6 @@ import {
 import type { TraceEventStore } from '../lib/trace-events-store'
 import { internalBus } from '../../internal-bus'
 import { hintDispatch } from '../daemon/dispatch-hint'
-import type {
-  PropagateRecoveryDoneResult,
-  UnblockByTaskResult,
-} from '../blocker-resolution'
 
 const truncate = (s: string, max: number): string =>
   s.length <= max ? s : `${s.slice(0, max)}…`
@@ -93,8 +92,7 @@ export interface UpsertFixTaskResult {
 /**
  * Attach-to-existing-recovery input. Mirrors the historic
  * `attachToExistingFixTask(input)` parameter shape so the queue-fix-tasks.ts
- * wrapper can delegate without reshaping arguments. Re-exported from
- * queue-fix-tasks.ts for back-compat.
+ * wrapper can delegate without reshaping arguments.
  */
 export interface AttachToExistingFixTaskInput {
   sourceTaskId: string
@@ -175,10 +173,10 @@ const findSharedFixTask = async (
  * `task_blockers` writer goes through `assertNotRecoveryEdge`). The edge
  * here is the canonical attach mechanism; the guard does not apply.
  *
- * Callers (`../arc.ts`'s `Arc.spawnRecovery`) run the Arc invariant
- * assertion AFTER this resolves — that debug-assert seam stays on the
- * aggregate rather than moving here, since it is shared by every mutating
- * Arc write method, not just the recovery ones.
+ * Callers (`../queue-fix-tasks.ts`'s `upsertFixTask`) run
+ * `Arc.maybeAssertArcInvariant` AFTER this resolves — that debug-assert seam
+ * stays on the aggregate rather than moving here, since it is shared by every
+ * mutating Arc write method, not just the recovery ones.
  */
 export const spawnRecovery = async (
   store: DomainTaskStore,
@@ -609,134 +607,4 @@ export const spawnMainCommitterRecovery = async (
   hintDispatch(fixTaskId, 'implement')
 
   return { fixTaskId }
-}
-
-/**
- * Lifecycle primitives `propagateRecoveryDone` reaches back into. Injected
- * by the caller (`../arc.ts`'s `Arc.propagateRecoveryDone`, which passes its
- * own static methods) rather than imported directly, so this module never
- * imports `../arc.ts` — that import would recreate the arc.ts ⇄
- * arc/recovery.ts cycle the split exists to avoid.
- */
-export interface PropagateRecoveryDoneDeps {
-  reopenTerminalTask: (
-    id: string,
-    reason: string,
-    store?: DomainTaskStore,
-  ) => Promise<void>
-  setTaskStatus: (
-    taskId: string,
-    newStatus: TaskStatus,
-    extras?: { error?: string; result?: unknown; dropReason?: TaskDropReason },
-    store?: DomainTaskStore,
-  ) => Promise<void>
-  unblockByCompletion: (blockerTaskId: string) => Promise<UnblockByTaskResult>
-}
-
-/**
- * Propagate-recovery-done write funnel (ADR-0052 sole-writer). When a
- * recovery task (kind='fix', non-null fixForTaskId) reaches `done`, the work
- * the operator was waiting on has shipped. Flip the origin row
- * (`originTaskId`) to `done`, close actionQueue items keyed on the origin,
- * and propagate the unblock signal so dependents waiting on the origin leave
- * `blocked`.
- *
- * Idempotent only for `done`: returns early when origin is already `done`.
- * For `failed` and `dropped` origins this function proceeds to reconcile
- * status to `done` — a successful recovery is authoritative regardless of
- * what the retry-budget guard previously stamped (fix: mars-f109e203 /
- * commit 834fdaa1 — late recovery success must resurrect its origin to done).
- * If the fixForTaskId points at a missing row the method is a no-op.
- *
- * CLAUDE.md contract: "a successful recovery counts as its origin
- * reaching done, so a recovered blocker unblocks the whole chain."
- *
- * PARITY: the two-tx structure is preserved bit-for-bit — first
- * `deps.setTaskStatus` routes the status change + paired `task.completed`
- * event through the single-writer chokepoint, then a second `store.atomic`
- * clears `error = NULL` and emits `task.terminal`. The sole immutability
- * guard is the caller-side pre-check for `done` (the only true idempotent
- * case); `setTaskStatus` does NOT enforce terminal immutability (ADR-0052).
- *
- * PARITY: like the historic instance method, this reads via
- * `getDefaultTaskStore()` rather than an injected store — the recovery-done
- * propagation path has never threaded a caller-supplied store.
- */
-export const propagateRecoveryDone = async (
-  originTaskId: string,
-  deps: PropagateRecoveryDoneDeps,
-): Promise<PropagateRecoveryDoneResult> => {
-  const { getDefaultTaskStore } = await import('../store/task-store')
-  const { supersedeActionQueueItemsForOrigin } = await import('../lib/action-queue')
-
-  const origin = await getTask(originTaskId)
-
-  // Close any actionQueue row keyed to the origin regardless of whether we
-  // flip its status. The origin may be missing (purged, or the
-  // recovery's fixForTaskId was a PRD slug rather than a task row),
-  // or already terminal (the retry-budget guard parked it in
-  // `failed` before the recovery finished). In either case the
-  // operator no longer needs to see a stale "recovery-failed" row:
-  // the recovery just succeeded, the underlying work shipped.
-  let actionQueueItemsClosed = 0
-  try {
-    const closed = await supersedeActionQueueItemsForOrigin(originTaskId, 'origin-done')
-    actionQueueItemsClosed = closed.length
-  } catch {
-    // best-effort: actionQueue closing must not block dependent unblock
-  }
-
-  if (!origin) {
-    return {
-      originTaskId,
-      originFlipped: false,
-      unblock: null,
-      actionQueueItemsClosed,
-    }
-  }
-  if (origin.status === 'done') {
-    // A completed origin is the only true idempotent case. A successful
-    // recovery remains authoritative for origins previously marked failed
-    // or dropped, so those statuses are reconciled to done below.
-    return {
-      originTaskId,
-      originFlipped: false,
-      unblock: null,
-      actionQueueItemsClosed,
-    }
-  }
-  // Route the status change and its paired event through the single-writer
-  // chokepoint (setTaskStatus) so they commit atomically. We intentionally
-  // reconcile 'failed' and 'dropped' origins to 'done' here — a successful
-  // recovery shipping the work is the authoritative signal that the origin
-  // reached done, regardless of what the retry-budget guard or any other
-  // upstream writer previously stamped. Failed and dropped rows must first
-  // cross the audited reopen seam so the database trigger permits the
-  // terminal transition.
-  const store = await getDefaultTaskStore()
-  if (origin.status === 'failed' || origin.status === 'dropped') {
-    await deps.reopenTerminalTask(originTaskId, 'successful recovery', store)
-  }
-  await deps.setTaskStatus(originTaskId, 'done', { result: { via: 'recovery' } }, store)
-  // Clear the error field and emit the terminal event in a second transaction.
-  const now = new Date().toISOString()
-  await store.atomic(async (scope) => {
-    await scope.execute({
-      sql: `UPDATE tasks SET error = NULL, updated_at = ? WHERE id = ?`,
-      args: [now, originTaskId],
-    })
-    await scope.execute(
-      buildEventInsert('task.terminal', {
-        taskId: originTaskId,
-        reason: 'done',
-      }),
-    )
-  })
-  const unblock = await deps.unblockByCompletion(originTaskId)
-  return {
-    originTaskId,
-    originFlipped: true,
-    unblock,
-    actionQueueItemsClosed,
-  }
 }

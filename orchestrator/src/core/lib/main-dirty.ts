@@ -24,6 +24,7 @@ import { probeWorkerLiveness } from './worker-liveness'
 import { attachToExistingFixTask } from '../queue-fix-tasks'
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store'
 import { Arc } from '../arc'
+import { spawnMainCommitterRecovery } from '../arc/recovery'
 import type { TraceEventStore } from './trace-events-store'
 import {
   MAIN_COMMITER_RECIPE,
@@ -772,7 +773,6 @@ export const spawnOrAttachMainCommitter = async (
   // 23505 violation on that specific constraint, re-resolve to find the winner,
   // and attach to it. One retry is enough: if the second resolve also returns
   // `none`, that is a genuine anomaly we surface rather than loop.
-  const arc = Arc.load(input.sourceOriginId, s)
   // Parse dirty paths from the detection snapshot so the committer's
   // recovery_payload records exactly what it is responsible for cleaning.
   // At verify time these are compared against the live dirty state so the
@@ -784,7 +784,7 @@ export const spawnOrAttachMainCommitter = async (
     .filter(Boolean)
   let fixTaskId: string
   try {
-    const spawned = await arc.spawnMainCommitterRecovery({
+    const spawned = await spawnMainCommitterRecovery(s, {
       sourceTaskId: input.sourceTaskId,
       integrationBranch: input.integrationBranch,
       dispatchPhase: input.dispatchPhase,
@@ -793,6 +793,9 @@ export const spawnOrAttachMainCommitter = async (
       traceStore: input.traceStore,
       checkpointedPaths,
     })
+    // The structural assert seam stays on the aggregate (`./arc/recovery.ts`
+    // cannot import `../arc.ts`), so the caller runs it after the write.
+    await Arc.maybeAssertArcInvariant(input.sourceTaskId, s)
     fixTaskId = spawned.fixTaskId
   } catch (err) {
     if (!isActiveCommitterUniqueViolation(err)) throw err

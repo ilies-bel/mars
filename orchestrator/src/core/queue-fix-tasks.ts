@@ -16,12 +16,14 @@ import {
   raiseRecoveryExhaustedActionQueue,
 } from './queue-retry'
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/task-store'
+import { Arc } from './arc'
 import {
-  Arc,
+  attachToRecovery,
+  spawnRecovery,
   type UpsertFixTaskInput,
   type UpsertFixTaskResult,
   type AttachToExistingFixTaskInput,
-} from './arc'
+} from './arc/recovery'
 // Every terminal-verdict prefix this file writes comes from the shared
 // vocabulary, never from an inline literal — a literal here is invisible to the
 // guards that read `TERMINAL_VERDICT_PREFIXES`, which is how a self-written
@@ -55,13 +57,14 @@ import { raiseStewardRepeatActionQueueItem, shouldStewardFire } from './steward-
  */
 export const MAX_ENV_RESTART_ATTEMPTS = 3
 
-// Recovery-spawn types live on the Arc aggregate (ADR-0052); re-exported here
-// so existing callers and tests keep importing them from queue-fix-tasks.
+// Recovery-spawn types live in the Arc aggregate's recovery concern
+// (`./arc/recovery.ts`); re-exported here so existing callers and tests keep
+// importing them from queue-fix-tasks.
 export type {
   UpsertFixTaskInput,
   UpsertFixTaskResult,
   AttachToExistingFixTaskInput,
-} from './arc'
+} from './arc/recovery'
 
 export const RECOVERY_FAILED_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
 export const UNKNOWN_FAILURE_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
@@ -306,13 +309,16 @@ export const countFixTaskAttempts = async (
 }
 
 /**
- * Recovery-spawn write path. Thin wrapper over {@link Arc.spawnRecovery}
+ * Recovery-spawn write path. Thin wrapper over {@link spawnRecovery}
  * (ADR-0052): the recovery-spawn batch logic — recipe lookup, shared-flag
  * dedup, the by-construction origin → fix `task_blockers` edge (the documented
  * ADR-0040 leaf-node exemption), the `self_heal_attempts` ledger row, and the
- * atomic `task.blocked` event — now lives on the Arc aggregate. This wrapper
- * resolves the store and delegates so the exported signature stays identical
- * for existing callers and tests.
+ * atomic `task.blocked` event — lives in the Arc aggregate's recovery concern
+ * (`./arc/recovery.ts`). This wrapper resolves the store, delegates so the
+ * exported signature stays identical for existing callers and tests, and runs
+ * the aggregate's structural assert afterwards (the assert seam stays on
+ * `Arc`, which `./arc/recovery.ts` cannot import — see the concern manifest
+ * in `arc.ts`).
  *
  * Atomically:
  *  - INSERT a new runnable fix-task row (status='queued', skip triage),
@@ -323,22 +329,26 @@ export const countFixTaskAttempts = async (
  * outstanding for that pair, the existing task is reused.
  *
  * Caller must guarantee a recipe exists for `input.failureSignature` —
- * `Arc.spawnRecovery` will throw if it doesn't. Use `hasRecipe(signature)`
+ * `spawnRecovery` will throw if it doesn't. Use `hasRecipe(signature)`
  * before calling.
  */
 export const upsertFixTask = async (
   input: UpsertFixTaskInput,
 ): Promise<UpsertFixTaskResult> => {
   const store = input.store ?? (await getDefaultTaskStore())
-  return Arc.load(input.sourceTaskId, store).spawnRecovery(input)
+  const result = await spawnRecovery(store, input)
+  await Arc.maybeAssertArcInvariant(input.sourceTaskId, store)
+  return result
 }
 
 /**
  * Slice F.2: attach a new blocked source to an EXISTING recovery (fix) task
  * without spawning a fresh recovery row. Thin wrapper over
- * {@link Arc.attachToRecovery} (ADR-0052) — the F.2 attach batch logic lives
- * on the Arc aggregate; this wrapper resolves the store and delegates so the
- * exported signature stays identical for `main-dirty.ts` and its tests.
+ * {@link attachToRecovery} (ADR-0052) — the F.2 attach batch logic lives in
+ * the Arc aggregate's recovery concern (`./arc/recovery.ts`); this wrapper
+ * resolves the store, delegates so the exported signature stays identical for
+ * `main-dirty.ts` and its tests, and runs the aggregate's structural assert
+ * afterwards.
  *
  * Background. `spawnRecovery` is the canonical origin → recovery edge writer
  * and is the documented exemption from F.1's ADR-0040 leaf-node guard (every
@@ -357,7 +367,8 @@ export const attachToExistingFixTask = async (
   input: AttachToExistingFixTaskInput,
 ): Promise<void> => {
   const store = input.store ?? (await getDefaultTaskStore())
-  return Arc.load(input.sourceTaskId, store).attachToRecovery(input)
+  await attachToRecovery(store, input)
+  await Arc.maybeAssertArcInvariant(input.sourceTaskId, store)
 }
 
 const buildRecoveryEscalationBody = (input: {

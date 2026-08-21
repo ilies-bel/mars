@@ -96,8 +96,13 @@ const UPDATE_WRITE_PATTERN = /UPDATE\s+tasks\s+SET\b/i
 const DELETE_PATTERN = /DELETE\s+FROM\s+tasks\b/i
 
 // After path.sep normalization, the ONLY legitimate task-table and
-// task_blockers-table writer.
-const ALLOWLIST = ['core/arc.ts'].map((p) => p.split('/').join(sep))
+// task_blockers-table writers. The Arc aggregate spans two files since the
+// recovery concern was split out: `core/arc.ts` (task lifecycle) and
+// `core/arc/recovery.ts` (recovery spawn/attach). Both are the aggregate;
+// nothing else may write these tables.
+const ALLOWLIST = ['core/arc.ts', 'core/arc/recovery.ts'].map((p) =>
+  p.split('/').join(sep),
+)
 
 // Honored migration-only markers. A physical line bearing either is dropped
 // BEFORE comment-stripping (line-scoped; cannot blanket-disable patterns).
@@ -214,7 +219,7 @@ describe('ADR-0052: the Arc aggregate is the sole task-table writer', () => {
   it('no out-of-allowlist file INSERTs / UPDATEs (any column) / DELETEs tasks', () => {
     const offenders = collectWriters()
       .map((h) => h.rel)
-      .filter((rel) => rel !== ALLOWLIST[0])
+      .filter((rel) => !ALLOWLIST.includes(rel))
     expect(
       offenders,
       'These files INSERT INTO tasks / UPDATE tasks SET <any column> / DELETE FROM tasks ' +
@@ -241,8 +246,9 @@ describe('ADR-0052: the Arc aggregate is the sole task-table writer', () => {
   it('insertReflection calls maybeAssertArcInvariant after its INSERT (ADR-0052 write-path coverage)', () => {
     // Every Arc write path must call maybeAssertArcInvariant after its INSERT so
     // a future change cannot strand an entity without tripping the structural
-    // assert. createOrigin and spawnRecovery both call it; this guards
-    // insertReflection from regressing silently.
+    // assert. createOrigin calls it inline, and the recovery-spawn callers in
+    // queue-fix-tasks.ts / main-dirty.ts call it after delegating to
+    // core/arc/recovery.ts; this guards insertReflection from regressing.
     const arcPath = resolve(SRC_ROOT, 'core', 'arc.ts')
     const raw = readFileSync(arcPath, 'utf8')
     const idx = raw.indexOf('async insertReflection(')
@@ -253,7 +259,7 @@ describe('ADR-0052: the Arc aggregate is the sole task-table writer', () => {
       methodWindow.includes('maybeAssertArcInvariant'),
       'insertReflection must call maybeAssertArcInvariant after its INSERT INTO tasks ' +
         '(ADR-0052: every Arc write path runs assertArcInvariant; createOrigin and ' +
-        'spawnRecovery both do — insertReflection must too)',
+        'the recovery-spawn callers both do — insertReflection must too)',
     ).toBe(true)
   })
 })
@@ -262,7 +268,7 @@ describe('ADR-0052: the Arc aggregate is the sole task_blockers writer', () => {
   it('no out-of-allowlist file INSERTs / UPDATEs / DELETEs task_blockers', () => {
     const offenders = collectTBWriters()
       .map((h) => h.rel)
-      .filter((rel) => rel !== ALLOWLIST[0])
+      .filter((rel) => !ALLOWLIST.includes(rel))
     expect(
       offenders,
       'These files INSERT / UPDATE / DELETE task_blockers outside the Arc aggregate ' +
