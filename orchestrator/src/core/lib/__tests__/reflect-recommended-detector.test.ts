@@ -233,7 +233,7 @@ describe('runReflectRecommendedDetector', () => {
 
     expect(result.raised).toBe(true)
     expect(result.evidence?.failureClusters.length).toBeGreaterThan(0)
-    expect(result.evidence?.failureClusters[0]?.signature).toBe('code/timeout')
+    expect(result.evidence?.failureClusters[0]?.family).toBe('code/timeout')
     expect(result.evidence?.failureClusters[0]?.count).toBeGreaterThanOrEqual(3)
 
     expect(await ctx.countOpenReflectRows()).toBe(1)

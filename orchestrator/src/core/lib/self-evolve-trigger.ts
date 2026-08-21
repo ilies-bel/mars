@@ -11,13 +11,16 @@
  * level-triggered 'reflect-recommended' action-queue row with evidence. When
  * no signal fires, or autoEnqueue is on, the row is closed. Three detectors:
  *   1. KPI drift (reuses detectKpiDrift)
- *   2. ≥3 recent tasks share a failure signature
+ *   2. ≥3 recent tasks share a failure signature FAMILY (`<gate>/<errorClass>`,
+ *      see failureSignatureFamilySql) — rewordings of the same gate error at
+ *      different step granularities collapse into one cluster
  *   3. Any recent task's token spend ≥2× the window median
  *
  * No tasks are ever queued from either path.
  */
 
 import { detectKpiDrift, type KpiSnapshot as DriftSnapshot, type KpiEntry } from './kpi-drift.js'
+import { failureSignatureFamilySql } from './failure-signature.js'
 import { findOpenReflectionDraftForKpi, createProposal } from '../proposals.js'
 import { loadDaemonConfig } from '../daemon/config.js'
 import type { KpiSnapshot as PersistedSnapshot } from './kpi-snapshots.js'
@@ -215,7 +218,7 @@ const FAILURE_CLUSTER_MIN = 3
  */
 interface ReflectWorthinessEvidence {
   kpiDrift: Array<{ kpi: string; deltaPct: number }>
-  failureClusters: Array<{ signature: string; count: number }>
+  failureClusters: Array<{ family: string; count: number }>
   tokenSpike: { taskId: string; weightedTokens: number; multipleOfMedian: number } | null
 }
 
@@ -286,28 +289,34 @@ const computeTaskTokenSpend = async (
 }
 
 /**
- * Find failure-signature clusters: task groups sharing the same failure_signature
- * with ≥ FAILURE_CLUSTER_MIN occurrences in the rolling window.
+ * Find failure-signature-FAMILY clusters: task groups sharing the same
+ * `<gate>/<errorClass>` family (see {@link failureSignatureFamilySql}) with
+ * ≥ FAILURE_CLUSTER_MIN occurrences in the rolling window. Grouping on the
+ * family rather than the raw `failure_signature` column means three
+ * rewordings of the same gate error at different step granularities
+ * (`code:commit-contract/uncommitted-changes` vs `code/uncommitted-changes`)
+ * collapse into one cluster instead of three clusters of one.
  */
 const detectFailureClusters = async (
   store: TaskStore,
   windowStart: string,
-): Promise<Array<{ signature: string; count: number }>> => {
+): Promise<Array<{ family: string; count: number }>> => {
+  const familyExpr = failureSignatureFamilySql('failure_signature')
   const r = await store.query({
-    sql: `SELECT failure_signature, COUNT(*) AS cnt
+    sql: `SELECT ${familyExpr} AS family, COUNT(*) AS cnt
             FROM tasks
            WHERE failure_signature IS NOT NULL
              AND status = 'failed'
              AND created_at > ?
-           GROUP BY failure_signature
+           GROUP BY ${familyExpr}
           HAVING COUNT(*) >= ?
            ORDER BY cnt DESC
            LIMIT 10`,
     args: [windowStart, FAILURE_CLUSTER_MIN],
   })
   return r.rows.map((row) => {
-    const r0 = row as unknown as { failure_signature: string; cnt: number }
-    return { signature: r0.failure_signature, count: r0.cnt }
+    const r0 = row as unknown as { family: string; cnt: number }
+    return { family: r0.family, count: r0.cnt }
   })
 }
 
@@ -460,8 +469,8 @@ export const runReflectRecommendedDetector = async (opts?: {
   }
   if (evidence.failureClusters.length > 0) {
     evidenceParts.push(
-      `Failure clusters: ${evidence.failureClusters
-        .map((c) => `${c.signature} ×${c.count}`)
+      `Failure families: ${evidence.failureClusters
+        .map((c) => `${c.family} ×${c.count}`)
         .join(', ')}`,
     )
   }
