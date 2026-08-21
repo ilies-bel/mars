@@ -44,7 +44,6 @@ export const TRACE_EVENT_KINDS = [
   'merge-heartbeat',
   'code-retry-attempt',
   'restart-checkpoint',
-  'lifecycle-note',
 ] as const
 
 export type TraceEventKind = (typeof TRACE_EVENT_KINDS)[number]
@@ -82,47 +81,6 @@ export interface TraceEventInput {
   originId?: string | null
   phase?: TraceEventPhase | null
   payload?: Record<string, unknown>
-}
-
-/**
- * Unified payload shape for the `lifecycle-note` kind — a coder/merge
- * sub-phase micro-event ("this step reached this point, optionally after N
- * attempts or with this counter"). Consolidates four previously-separate
- * kinds that shared this same shape under different names and were each
- * emitted from a single call site: `merge-idempotent-skip` (merge.ts),
- * `merge-heartbeat` (merge.ts), `code-retry-attempt` (run-agent.ts) and
- * `restart-checkpoint` (run-agent.ts). All four are best-effort,
- * non-schema-enforced telemetry describing "what happened at this
- * sub-phase" — one payload shape now covers all of them via the optional
- * fields below; `note` carries which sub-phase/event this is (e.g.
- * `'merge-heartbeat'`, `'code-retry-attempt'`) so existing queries that
- * used to filter by `kind` can filter by `payload.note` instead.
- *
- * The four old kinds stay in `TRACE_EVENT_KINDS` until their call sites are
- * migrated to `lifecycle-note` and the old kinds are deleted — this is an
- * additive step, not yet the hard cut.
- */
-export interface LifecycleNotePayload {
-  /** Which sub-phase/event this note describes, e.g. 'merge-heartbeat'. */
-  note: string
-  /** Free-form reason, e.g. why a retry happened (was `code-retry-attempt.reason`). */
-  reason?: string
-  /** Merge/coder sub-phase label (was `merge-heartbeat.subPhase`). */
-  subPhase?: string
-  /** Elapsed time in ms since the phase/step started (was `merge-heartbeat.elapsedMs`). */
-  elapsedMs?: number
-  /** Retry attempt number (was `code-retry-attempt.attempt`). */
-  attempt?: number
-  /** Session key correlating retries (was `code-retry-attempt.sessionKey`). */
-  sessionKey?: string
-  /** Task status prior to an idempotent skip (was `merge-idempotent-skip.priorStatus`). */
-  priorStatus?: string
-  /** Restart-checkpoint counters (was `restart-checkpoint.*`). */
-  commitCount?: number
-  changedPathCount?: number
-  outstandingCount?: number
-  hadPriorVerify?: boolean
-  renderedBytes?: number
 }
 
 export interface TraceEventFilter {
@@ -284,30 +242,6 @@ export const deriveSeverity = (
   if (kind === 'worker-model-mismatch') return 'warn'
   return 'info'
 }
-
-/**
- * Canonical age-based retention window (in days) for `trace_events` rows —
- * the single source of truth for "how long do we keep telemetry".
- *
- * Consolidates two previously-independent policies that both pruned
- * `trace_events` on the daemon's periodic sweep with different, disagreeing
- * defaults: `observability-prune.ts`'s `sweepObservability` (3-day window,
- * `OBSERVABILITY_RETENTION_DAYS`) and `retention-prune.ts`'s `pruneRetention`
- * (30-day window, `RETENTION_DAYS_DEFAULT`). This constant is the one
- * retention policy going forward; both prune paths converge on it (override
- * via `MARS_RETENTION_DAYS`, unchanged).
- */
-export const TRACE_EVENT_RETENTION_DAYS = 30
-
-/**
- * Tighter age-based retention (in days) for warn/error `log_line` rows.
- * Info-level `log_line` rows are never persisted (see `record` below,
- * which drops them before the INSERT); warn/error rows are kept but pruned
- * sooner than the general `TRACE_EVENT_RETENTION_DAYS` window since they
- * duplicate watch.log. Matches `retention-prune.ts`'s
- * `LOG_LINE_RETENTION_DAYS`.
- */
-export const LOG_LINE_RETENTION_DAYS = 2
 
 /**
  * Number of days to retain `task_transcripts` rows before they are eligible
@@ -677,34 +611,6 @@ export const openTraceEventStore = async (
 /** Build a cursor pointing at the last event in a page so the next call resumes after it. */
 export const cursorAfter = (event: TraceEvent): string =>
   encodeCursor({ ts: event.timestamp, id: event.id })
-
-/**
- * The one typed emit surface for best-effort telemetry. Calls
- * `store.record(event)` and swallows any error — telemetry must never break
- * a caller's control flow.
- *
- * Every production call site is expected to route through this function
- * instead of hand-rolling its own guard. Before this it was duplicated
- * independently at least three times: `safeRecord` (private to
- * `run-worker-with-span.ts`), `safeTrace` (private to
- * `scorer-runtime.ts`, wrapping the single `scorer_result` emit), and
- * inline `.record(...).catch(() => {})` at every other call site (merge.ts,
- * review.ts, finalize-mockup.ts, finalize-report.ts, setup-worktree.ts,
- * await-human.ts, arc.ts, server.ts, run-tool.ts, cli.ts,
- * triage-workflow.ts, slice-workflow.ts). `event` is typed against the
- * closed `TraceEventKind` union, so this is also the compiler-enforced
- * boundary for what a caller may emit.
- */
-export const emitTraceEvent = async (
-  store: TraceEventStore,
-  event: TraceEventInput,
-): Promise<void> => {
-  try {
-    await store.record(event)
-  } catch {
-    // best-effort telemetry; never propagate to the caller
-  }
-}
 
 /**
  * Find every step_started event that has no corresponding step_ended with the
