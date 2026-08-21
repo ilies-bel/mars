@@ -262,9 +262,19 @@ export type AgentPermissionMode =
   | 'dontAsk'
   | 'plan'
 
-/** @deprecated Use AgentEffort. Kept for backward compatibility. */
+/**
+ * @deprecated Use {@link AgentEffort}. Retained only until the "Delete the
+ * Claude-named dual types" consumer slice migrates every remaining
+ * `ClaudeEffort` import (provider-types.ts, run-pty-session.ts,
+ * workers/index.ts, persisted-registry.ts) to the neutral name and deletes
+ * this alias — not a general backward-compatibility guarantee.
+ */
 export type ClaudeEffort = AgentEffort
-/** @deprecated Use AgentPermissionMode. Kept for backward compatibility. */
+/**
+ * @deprecated Use {@link AgentPermissionMode}. Same removal path as
+ * {@link ClaudeEffort} — deleted by the "Delete the Claude-named dual
+ * types" consumer slice, not kept for external compatibility.
+ */
 export type ClaudePermissionMode = AgentPermissionMode
 
 export interface RunAgentResult extends RunSubprocessResult {
@@ -288,10 +298,20 @@ export interface RunAgentResult extends RunSubprocessResult {
   transportDropped?: boolean
 }
 
-/** @deprecated Use RunAgentResult. Kept for backward compatibility. */
+/**
+ * @deprecated Use {@link RunAgentResult}. Retained only until the "Delete
+ * the Claude-named dual types" consumer slice migrates its remaining
+ * production consumers (run-worker-with-span.ts, codex-headless.ts,
+ * gemini-headless.ts, run-pty-session.ts) to the neutral name and deletes
+ * this alias — not a general backward-compatibility guarantee.
+ */
 export type RunClaudeResult = RunAgentResult
 
-/** @deprecated Use RunAgentArgs. Kept for backward compatibility. */
+/**
+ * @deprecated Use {@link RunAgentArgs}. Same removal path as
+ * {@link RunClaudeResult} — deleted by the "Delete the Claude-named dual
+ * types" consumer slice, not kept for external compatibility.
+ */
 export type RunClaudeArgs = RunAgentArgs
 
 /**
@@ -318,6 +338,17 @@ export type ExecutorPortRequest = Omit<RunAgentArgs, 'onEvent' | 'externalAbort'
  * wraps {@link runClaudeCode} (and its codex/gemini siblings); a remote
  * implementation (e.g. "run the agent in a managed sandbox") fills the same
  * slot behind one adapter file, invisible to callers.
+ *
+ * This interface is the shared contract the "Arch-guard: route all agent
+ * execution through the Executor port" consumer slice builds on: it still
+ * needs to add `src/core/ports/executor/` (mirroring the existing
+ * `ports/verifier/` and `ports/code-index/` local/registry pair), reroute
+ * the two remaining direct `runClaudeCode` call sites
+ * (`core/daemon/server.ts`, `core/workers/providers.ts`) through it, and
+ * generalize the direct-import guard already proven in
+ * `src/workflows/__tests__/worker-stage-bindings.test.ts` into a repo-wide
+ * check. None of that wiring belongs in this file — only the request/result
+ * shape does.
  */
 export interface ExecutorPort {
   run(request: ExecutorPortRequest): Promise<RunAgentResult>
