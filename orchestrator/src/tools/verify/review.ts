@@ -3,8 +3,9 @@
  * the primitive registry).
  *
  * Split out of `workflows/primitives/index.ts` (TARGET §2.1). Framework-owned:
- * gate selection and gate execution are delegated (`selectVerifySteps` /
- * `verifyChanges`), but every task-state write below goes through
+ * gate selection and gate execution are delegated (`selectVerifySteps` and
+ * the Verifier Port resolved via `resolveVerifier`), but every task-state
+ * write below goes through
  * `ctx.services.store` (the Arc aggregate, ADR-0052) inside this shell. A
  * plugin that swaps the gates cannot change whether the outcome is recorded.
  */
@@ -152,7 +153,8 @@ export interface ReviewResult {
  *       throw the `verify:main-dirty` sentinel,
  *     - selects root gates plus path-covered scoped gates from the task's actual diff
  *       (a main-commiter recovery skips all test/typecheck/lint steps),
- *     - runs `verifyChanges` (the has-diff / commits-ahead gate always runs),
+ *     - runs the gates through the Verifier Port (the has-diff / commits-ahead
+ *       gate always runs),
  *     - on failure stamps the task, spawns the recovery fix-task through `store`,
  *       and throws.
  *   - `reviewType:'manual'` — boots the stack and parks for human QA via `awaitHuman`.
