@@ -255,6 +255,64 @@ export const EventMap = {
     fromMs: z.number().int(),
     toMs: z.number().int(),
   }),
+  // --- Unified trace/bus surface (ADR-0097) ---
+  // `trace_events` (see `core/lib/trace-events-store.ts`) is a second,
+  // loosely-typed event store (`payload: Record<string, unknown>`, no
+  // per-kind schema) with its own closed vocabulary (`TRACE_EVENT_KINDS`)
+  // and its own retention policy. Four of its kinds duplicate a bus kind's
+  // intent with a different, unvalidated shape: `task_failed` and
+  // `task_blocked` duplicate `task.failed` / `task.blocked` above (those two
+  // are already this pair's single shared shape); `recovery_spawned` and
+  // `origin_created` have no bus equivalent. The kinds below are that
+  // shared shape for the latter two, plus the step-lifecycle kinds that
+  // carry verify output and worker model/provider attribution — previously
+  // available only inside the untyped, ~30-day-pruned `step_ended` trace
+  // payload. Consumers migrate emit call sites onto these and delete the
+  // parallel `trace_events` vocabulary in the same change (hard cut).
+  'origin.created': z.object({
+    taskId: z.string(),
+    originId: z.string(),
+  }),
+  'recovery.spawned': z.object({
+    /** The newly spawned recovery/fix task id. */
+    taskId: z.string(),
+    /** The task the recovery was spawned to fix. */
+    sourceTaskId: z.string(),
+    originId: z.string(),
+    recipe: z.string(),
+    dispatchPhase: z.enum(['dispatch', 'verify', 'merge']),
+    integrationBranch: z.string().optional(),
+  }),
+  'step.started': z.object({
+    taskId: z.string(),
+    originId: z.string().optional(),
+    phase: z.enum(['setup', 'code', 'verify', 'merge', 'reflect']),
+    stepName: z.string(),
+    workflowInstanceId: z.string(),
+    workerName: z.string().optional(),
+  }),
+  /**
+   * Terminal event for one workflow step span. Carries `verifyOutput` and
+   * worker model/provider attribution directly on this durable, zod-typed
+   * payload, so both survive on the same audit trail as every other bus
+   * event instead of only inside the untyped, retention-pruned
+   * `trace_events` `step_ended` payload blob.
+   */
+  'step.ended': z.object({
+    taskId: z.string(),
+    originId: z.string().optional(),
+    phase: z.enum(['setup', 'code', 'verify', 'merge', 'reflect']),
+    stepName: z.string(),
+    workflowInstanceId: z.string(),
+    outcome: z.enum(['success', 'failed', 'killed']),
+    durationMs: z.number(),
+    /** Captured verify-step output. Capped by the writer (historically 64 KB). */
+    verifyOutput: z.string().nullable().optional(),
+    /** Model/provider attribution for the worker that produced this step. */
+    modelId: z.string().optional(),
+    provider: z.string().optional(),
+    workerName: z.string().optional(),
+  }),
 } as const;
 
 /** Union of every registered event type name. */
