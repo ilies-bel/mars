@@ -128,6 +128,66 @@
   },
   {
     "type": "cycle",
+    "from": "orchestrator/src/core/arc/blockers.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "../queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc/blockers.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/arc/blockers.ts",
+    "to": "orchestrator/src/core/store/task-store.ts",
+    "unresolvedTo": "../store/task-store",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/store/task-store.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc/blockers.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
     "from": "orchestrator/src/core/blocker-resolution.ts",
     "to": "orchestrator/src/core/queue-retry.ts",
     "unresolvedTo": "./queue-retry",
@@ -283,6 +343,36 @@
       },
       {
         "name": "orchestrator/src/core/queue-retry.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/queue.ts",
+    "to": "orchestrator/src/core/store/task-store.ts",
+    "unresolvedTo": "./store/task-store",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/store/task-store.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
         "dependencyTypes": [
           "local",
           "import"
