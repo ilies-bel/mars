@@ -2,13 +2,10 @@
  * Verifies that proposal lifecycle bus events trigger 'progress' SSE
  * broadcasts so the Progress tab updates in place without a page reload.
  *
- * The wiring being tested (from server.ts):
- *   bus.on('proposal.added',    () => viewStreamHub.broadcast('progress'))
- *   bus.on('proposal.updated',  () => viewStreamHub.broadcast('progress'))
- *   bus.on('proposal.dismissed',() => viewStreamHub.broadcast('progress'))
- *   bus.on('proposal.promoted', () => viewStreamHub.broadcast('progress'))
- *   bus.on('proposal.sliced',   () => viewStreamHub.broadcast('progress'))
- *   bus.on('proposal.deleted',  () => viewStreamHub.broadcast('progress'))
+ * The wiring being tested is the real one: `registerViewInvalidation` reading
+ * the `proposal.*` rows of `VIEW_CHANNEL_FOR`. server.ts no longer hand-wires
+ * any `bus.on(...) => hub.broadcast(...)` pair, so this file exercises the
+ * subscriber directly rather than a local copy of the wiring.
  *
  * The hub itself (fan-out to SSE clients) is tested in http-view-stream.test.ts.
  * This file focuses purely on the bus-event → hub mapping.
@@ -21,22 +18,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { ViewStreamHub } from '../view/stream-hub'
-
-// ---------------------------------------------------------------------------
-// Helper: apply the same wiring that server.ts installs in startDaemon.
-//
-// This mirrors lines ~1075-1087 of server.ts so that the spec stays honest —
-// the test names describe the contract, not the implementation. If the wiring
-// moves or changes in server.ts, update this helper in lockstep.
-// ---------------------------------------------------------------------------
-function wireProposalBroadcasts(bus: EventEmitter, hub: ViewStreamHub): void {
-  bus.on('proposal.added',     () => { hub.broadcast('progress') })
-  bus.on('proposal.updated',   () => { hub.broadcast('progress') })
-  bus.on('proposal.dismissed', () => { hub.broadcast('progress') })
-  bus.on('proposal.promoted',  () => { hub.broadcast('progress') })
-  bus.on('proposal.sliced',    () => { hub.broadcast('progress') })
-  bus.on('proposal.deleted',   () => { hub.broadcast('progress') })
-}
+import { registerViewInvalidation } from '../../../bus/view-invalidation'
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -55,7 +37,7 @@ describe('proposal lifecycle → SSE progress broadcast', () => {
     const hub = new ViewStreamHub()
     const broadcastSpy = vi.spyOn(hub, 'broadcast')
 
-    wireProposalBroadcasts(bus, hub)
+    registerViewInvalidation(bus, hub)
     bus.emit(event)
 
     expect(broadcastSpy).toHaveBeenCalledWith('progress')
@@ -71,7 +53,7 @@ describe('proposal lifecycle → SSE progress broadcast', () => {
     const hub = new ViewStreamHub()
     const broadcastSpy = vi.spyOn(hub, 'broadcast')
 
-    wireProposalBroadcasts(bus, hub)
+    registerViewInvalidation(bus, hub)
     bus.emit(event)
 
     expect(broadcastSpy).not.toHaveBeenCalledWith('tasks')
@@ -85,7 +67,7 @@ describe('proposal lifecycle → SSE progress broadcast', () => {
     const hub = new ViewStreamHub()
     const broadcastSpy = vi.spyOn(hub, 'broadcast')
 
-    wireProposalBroadcasts(bus, hub)
+    registerViewInvalidation(bus, hub)
     bus.emit('proposal.added')
     bus.emit('proposal.promoted')
     bus.emit('proposal.sliced')
@@ -101,9 +83,8 @@ describe('proposal lifecycle → SSE progress broadcast', () => {
     const hub = new ViewStreamHub()
     const broadcastSpy = vi.spyOn(hub, 'broadcast')
 
-    // Wire both task and proposal handlers as server.ts does.
-    bus.on('task.added', () => { hub.broadcast('tasks') })
-    wireProposalBroadcasts(bus, hub)
+    // One subscriber wires every kind — task and proposal alike.
+    registerViewInvalidation(bus, hub)
 
     bus.emit('task.added')
     bus.emit('proposal.added')

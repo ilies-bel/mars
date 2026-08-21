@@ -1040,13 +1040,13 @@ export const startDaemon = async (
   // re-fetch the relevant view endpoint on receipt.
   const viewStreamHub = new ViewStreamHub()
 
-  // Derive most SSE invalidation from `bus` events via the single
-  // kind→channel table in `bus/view-invalidation.ts`, so a new event kind
-  // gets UI invalidation without a hand-wired `bus.on(...)` call here.
-  // Additive: the hand-wired `bus.on('task.*'|'proposal.*', ...)` blocks
-  // further below stay in place for now (a later slice retires them);
-  // registering both just means an event kind covered by both fires an
-  // extra, harmless broadcast to the same channel.
+  // The ONE place SSE invalidation is broadcast from. Every channel refresh is
+  // derived from a `bus` event via the kind→channel table in
+  // `bus/view-invalidation.ts`; nothing in the daemon calls
+  // `viewStreamHub.broadcast(...)` by hand any more (the guard test
+  // `core/daemon/__tests__/no-manual-broadcast.test.ts` enforces that). A
+  // mutation with no domain event of its own emits a `view.*-invalidated`
+  // kind instead — see VIEW_INVALIDATION_KINDS.
   registerViewInvalidation(bus, viewStreamHub)
 
   // The TaskFlightTracker owns the four dispatch-bookkeeping collections
@@ -1143,7 +1143,7 @@ export const startDaemon = async (
         blockedTasks: Number((blocked.rows[0] as { n?: unknown } | undefined)?.n ?? 0),
       },
       priority: 'urgent',
-      viewStreamHub,
+      bus,
     })
   }
 
@@ -2909,7 +2909,7 @@ export const startDaemon = async (
       if (pause.get().reason !== 'quota') return
       pause.resume()
       log(`[quota] dispatch resumed after rate-limit window`)
-      viewStreamHub.broadcast('tasks')
+      bus.emit('view.tasks-invalidated')
       void drain()
     }, resumeMs - nowMs)
     resumeTimer.unref()
@@ -2929,7 +2929,7 @@ export const startDaemon = async (
         raisedBy: 'daemon:quota-rejection',
         signature: 'provider-rate-limited:auto',
       })
-      viewStreamHub.broadcast('action-queue')
+      bus.emit('view.action-queue-invalidated')
     } catch (aqErr) {
       log(
         `[quota] action-queue raise failed (non-fatal): ${
@@ -3177,8 +3177,8 @@ export const startDaemon = async (
       await resetFailureSignatureStreak(await getDefaultTaskStore())
     },
     onResumed: () => {
-      viewStreamHub.broadcast('tasks')
-      viewStreamHub.broadcast('action-queue')
+      bus.emit('view.tasks-invalidated')
+      bus.emit('view.action-queue-invalidated')
       void drain()
     },
     runSteward: (trip) => runStormSteward(trip),
@@ -3196,8 +3196,8 @@ export const startDaemon = async (
     lastTaskId: string
   }): void => {
     stormBreaker.onTrip(trip)
-    viewStreamHub.broadcast('action-queue')
-    viewStreamHub.broadcast('tasks')
+    bus.emit('view.action-queue-invalidated')
+    bus.emit('view.tasks-invalidated')
   }
 
   // A quarantined registry gate is advisory-only: this Steward can inspect the
@@ -3242,8 +3242,8 @@ export const startDaemon = async (
         return output
       },
     })
-    viewStreamHub.broadcast('chat')
-    viewStreamHub.broadcast('action-queue')
+    bus.emit('view.chat-invalidated')
+    bus.emit('view.action-queue-invalidated')
     return outcome
   }
 
@@ -3281,14 +3281,8 @@ export const startDaemon = async (
     void drain()
   })
 
-  // Broadcast invalidations to connected SSE clients on every task lifecycle
-  // event so the UI re-fetches the tasks/progress views without polling.
-  bus.on('task.added', () => { viewStreamHub.broadcast('tasks') })
-  bus.on('task.queued', () => { viewStreamHub.broadcast('tasks'); viewStreamHub.broadcast('progress') })
-  bus.on('task.completed', () => { viewStreamHub.broadcast('tasks'); viewStreamHub.broadcast('progress') })
-  bus.on('task.failed', () => { viewStreamHub.broadcast('tasks'); viewStreamHub.broadcast('progress') })
-  bus.on('task.blocked', () => { viewStreamHub.broadcast('tasks') })
-  bus.on('task.unblocked', () => { viewStreamHub.broadcast('tasks') })
+  // (SSE invalidation for every task lifecycle event is derived from
+  // VIEW_CHANNEL_FOR by registerViewInvalidation above — no hand-wiring here.)
 
   // Signature-storm streak reset: a successful task completion clears the
   // consecutive-failure streak so a future storm (same or different signature)
@@ -3339,13 +3333,8 @@ export const startDaemon = async (
     })()
   })
 
-  // Proposal lifecycle events update the Progress-tab DAG in place.
-  bus.on('proposal.added',     () => { viewStreamHub.broadcast('progress') })
-  bus.on('proposal.updated',   () => { viewStreamHub.broadcast('progress') })
-  bus.on('proposal.dismissed', () => { viewStreamHub.broadcast('progress') })
-  bus.on('proposal.promoted',  () => { viewStreamHub.broadcast('progress') })
-  bus.on('proposal.sliced',    () => { viewStreamHub.broadcast('progress') })
-  bus.on('proposal.deleted',   () => { viewStreamHub.broadcast('progress') })
+  // (Proposal lifecycle events update the Progress-tab DAG in place via the
+  // 'progress' channel their VIEW_CHANNEL_FOR rows name.)
 
   // Durable transcript append (deep-reflect durability). On every
   // task.completed, persist the resolved Claude transcript for the task into
@@ -5593,7 +5582,7 @@ export const startDaemon = async (
       // daemon-died derived row. The row vanishes on the next action-queue read.
       rmSync(crashMarker, { force: true })
       log('[dismiss-daemon-died] crash marker cleared by operator')
-      viewStreamHub.broadcast('action-queue')
+      bus.emit('view.action-queue-invalidated')
     },
     promoteProposal: async (id) => {
       // Flip draft → prd-ready, then await the slicer so the HTTP caller
@@ -5712,14 +5701,14 @@ export const startDaemon = async (
           await persistSuggestions(result.suggestions, sourceTaskId)
           proposalsRaised = result.suggestions.length
           log(`[run-reflect] raised ${proposalsRaised} proposal(s)`)
-          viewStreamHub.broadcast('proposals')
-          viewStreamHub.broadcast('action-queue')
+          bus.emit('view.proposals-invalidated')
+          bus.emit('view.action-queue-invalidated')
         }
       }
       // Close the reflect-recommended row regardless of whether proposals were raised.
       await closeReflectRecommendedRow()
       persistLastReflectRanAt(new Date().toISOString())
-      viewStreamHub.broadcast('action-queue')
+      bus.emit('view.action-queue-invalidated')
       return { proposalsRaised }
     },
     enableAutoReflect: async () => {
@@ -5728,13 +5717,13 @@ export const startDaemon = async (
       persistSelfEvolveAutoEnqueue(true)
       log('[enable-auto-reflect] selfEvolve.autoEnqueue set to true in daemon.json')
       await closeReflectRecommendedRow()
-      viewStreamHub.broadcast('action-queue')
+      bus.emit('view.action-queue-invalidated')
     },
     disableAutoReflect: async () => {
       const { persistSelfEvolveAutoEnqueue } = await import('./config')
       persistSelfEvolveAutoEnqueue(false)
       log('[disable-auto-reflect] selfEvolve.autoEnqueue set to false in daemon.json')
-      viewStreamHub.broadcast('action-queue')
+      bus.emit('view.action-queue-invalidated')
     },
     isAcceptingWork: () => acceptingWork,
     inFlightCount: () => tracker.inFlightCount(),
@@ -5807,7 +5796,7 @@ export const startDaemon = async (
     snoozeItem: async (id: string, until: string) => {
       const { snoozeActionQueueItem } = await import('../lib/action-queue')
       await snoozeActionQueueItem(id, until)
-      viewStreamHub.broadcast('action-queue')
+      bus.emit('view.action-queue-invalidated')
     },
     // Daemon-owned counterpart to the CLI's `mars task ask` (ADR "Every seam
     // is a cordis service Port" — modular-core slice: move the CLI's outbox
@@ -5823,6 +5812,7 @@ export const startDaemon = async (
     recipeCatalog,
     traceStore,
     viewStreamHub,
+    bus,
     appServices,
     getStewardRuntimeState: () => ({
       liveCap: sems.implement.limit,
@@ -6171,7 +6161,7 @@ export const startDaemon = async (
       )
       if (processed > 0) {
         log(`[action-queue-repopulator] applied ${processed} actionQueue mutation(s) on boot`)
-        viewStreamHub.broadcast('action-queue')
+        bus.emit('view.action-queue-invalidated')
       }
     } catch (err) {
       log(`[action-queue-repopulator] boot drain failed: ${(err as Error).message}`)
@@ -6260,7 +6250,7 @@ export const startDaemon = async (
       await ensureSubthreadCloser(getCompositionRootClient())
       const { processed } = await drainSubthreadCloser(getCompositionRootClient(), log)
       if (processed > 0) {
-        viewStreamHub.broadcast('chat')
+        bus.emit('view.chat-invalidated')
         log(`[subthread-closer] closed ${processed} Subthread(s) on boot`)
       }
     } catch (err) {
@@ -6276,7 +6266,7 @@ export const startDaemon = async (
       await ensureArchivePrompter(getCompositionRootClient())
       const { processed } = await drainArchivePrompter(getCompositionRootClient(), log)
       if (processed > 0) {
-        viewStreamHub.broadcast('chat')
+        bus.emit('view.chat-invalidated')
         log(`[archive-prompter] raised ${processed} archive prompt(s) on boot`)
       }
     } catch (err) {
@@ -6567,8 +6557,8 @@ export const startDaemon = async (
         const raised = await detectAndRaiseStaleWorktrees(resolveContext().repoRoot)
         if (raised.length > 0) {
           log(`[stale-sweep] raised/bumped ${raised.length} stale-worktree actionQueue item(s)`)
-          viewStreamHub.broadcast('proposals')
-          viewStreamHub.broadcast('action-queue')
+          bus.emit('view.proposals-invalidated')
+          bus.emit('view.action-queue-invalidated')
         }
       } catch (err) {
         log(`[stale-sweep] errored: ${(err as Error).message}`)
@@ -6634,13 +6624,13 @@ export const startDaemon = async (
             log(
               `[stale-merging-sweep] requeued ${r.requeued.length} task(s) from stale merging state`,
             )
-            viewStreamHub.broadcast('tasks')
+            bus.emit('view.tasks-invalidated')
           }
           if (r.finalized > 0) {
             log(
               `[stale-merging-sweep] finalized ${r.finalized} task(s) whose FF already landed`,
             )
-            viewStreamHub.broadcast('tasks')
+            bus.emit('view.tasks-invalidated')
           }
         }
 
@@ -6659,13 +6649,13 @@ export const startDaemon = async (
             log(
               `[stale-merging-sweep] requeued ${rv.requeued.length} vega-reconciling task(s) from stale state`,
             )
-            viewStreamHub.broadcast('tasks')
+            bus.emit('view.tasks-invalidated')
           }
           if (rv.finalized > 0) {
             log(
               `[stale-merging-sweep] finalized ${rv.finalized} vega-reconciling task(s) whose FF already landed`,
             )
-            viewStreamHub.broadcast('tasks')
+            bus.emit('view.tasks-invalidated')
           }
         }
       } catch (err) {
@@ -6786,7 +6776,6 @@ export const startDaemon = async (
                 `[running-committer-sweep] committer ${row.id}: branch '${payload.integrationBranch}' is now clean after ${lifetimeMin}+ min; settled done`,
               )
               bus.emit('task.completed', { taskId: row.id, status: 'done' as const })
-              viewStreamHub.broadcast('tasks')
             } else {
               // Branch still dirty but committer has exceeded its lifetime.
               // Fail it so the operator can investigate and blocked dependents
@@ -6804,7 +6793,6 @@ export const startDaemon = async (
                 error: `main-committer exceeded ${lifetimeMin}-minute lifetime; integration branch '${payload.integrationBranch}' is still dirty`,
               })
               bus.emit('task.failed', { taskId: row.id, error: 'committer:lifetime-exceeded' })
-              viewStreamHub.broadcast('tasks')
               try {
                 const { raiseActionQueueItem: raiseItem } = await import('../lib/action-queue')
                 await raiseItem({
@@ -6818,7 +6806,7 @@ export const startDaemon = async (
                   raisedBy: 'daemon:running-committer-lifetime-sweep',
                   signature: `committer:lifetime-exceeded:${row.id}`,
                 })
-                viewStreamHub.broadcast('action-queue')
+                bus.emit('view.action-queue-invalidated')
               } catch (alertErr) {
                 log(
                   `[running-committer-sweep] alert raise for ${row.id} failed (non-fatal): ${(alertErr as Error).message}`,
@@ -6855,7 +6843,7 @@ export const startDaemon = async (
           log(
             `[reflect-detector] raised reflect-recommended row (row=${result.rowId})`,
           )
-          viewStreamHub.broadcast('action-queue')
+          bus.emit('view.action-queue-invalidated')
           // When auto-run-reflect is on, immediately run the reflection pipeline
           // instead of waiting for an operator action on the row.
           const { loadDaemonConfig: getLatestCfg } = await import('./config')
@@ -6885,13 +6873,13 @@ export const startDaemon = async (
                   const sourceTaskId = await insertReflectionTask(corpus.entries.length)
                   await persistSuggestions(reflResult.suggestions, sourceTaskId)
                   proposalsRaised = reflResult.suggestions.length
-                  viewStreamHub.broadcast('proposals')
-                  viewStreamHub.broadcast('action-queue')
+                  bus.emit('view.proposals-invalidated')
+                  bus.emit('view.action-queue-invalidated')
                 }
               }
               await closeRow()
               persistLastReflectRanAt(new Date().toISOString())
-              viewStreamHub.broadcast('action-queue')
+              bus.emit('view.action-queue-invalidated')
               log(`[reflect-detector] auto-reflect completed (proposals=${proposalsRaised})`)
             } catch (reflectErr) {
               log(`[reflect-detector] auto-reflect errored: ${(reflectErr as Error).message}`)
@@ -6943,7 +6931,7 @@ export const startDaemon = async (
     })
     if (result.posted > 0) {
       log(`[notice-sweep] spoke ${result.posted} Notice(s)`)
-      viewStreamHub.broadcast('chat')
+      bus.emit('view.chat-invalidated')
     }
   }
   const noticeSweep = setInterval(() => {
@@ -7059,7 +7047,7 @@ export const startDaemon = async (
           log(
             `[observability-watchdog] store oversize — raised/bumped action-queue item ${itemId}`,
           )
-          viewStreamHub.broadcast('action-queue')
+          bus.emit('view.action-queue-invalidated')
         }
       } catch (err) {
         log(`[observability-watchdog] errored: ${(err as Error).message}`)
@@ -7214,8 +7202,8 @@ export const startDaemon = async (
           log(
             `[phantom-watchdog] auto-failed ${failed.length} phantom in-flight task(s): ${failed.join(', ')}`,
           )
-          viewStreamHub.broadcast('action-queue')
-          viewStreamHub.broadcast('tasks')
+          bus.emit('view.action-queue-invalidated')
+          bus.emit('view.tasks-invalidated')
           void drain()
         }
         if (requeued.length > 0) {
@@ -7225,7 +7213,6 @@ export const startDaemon = async (
           for (const taskId of requeued) {
             bus.emit('task.queued', { taskId })
           }
-          viewStreamHub.broadcast('tasks')
           void drain()
         }
       } catch (err) {
@@ -7267,7 +7254,7 @@ export const startDaemon = async (
           log(
             `[stale-queued-watchdog] raised alert for ${alerted.length} stale-queued task(s): ${alerted.join(', ')}`,
           )
-          viewStreamHub.broadcast('action-queue')
+          bus.emit('view.action-queue-invalidated')
         }
       } catch (err) {
         log(`[stale-queued-watchdog] errored: ${(err as Error).message}`)
@@ -7289,8 +7276,8 @@ export const startDaemon = async (
           log(
             `[awaiting-validation-watchdog] demoted ${demoted.length} dead preview(s); expired ${failed.length} task(s)`,
           )
-          viewStreamHub.broadcast('action-queue')
-          viewStreamHub.broadcast('tasks')
+          bus.emit('view.action-queue-invalidated')
+          bus.emit('view.tasks-invalidated')
         }
       } catch (err) {
         log(`[awaiting-validation-watchdog] errored: ${(err as Error).message}`)
@@ -7420,7 +7407,7 @@ export const startDaemon = async (
     singleFlight(async () => {
       try {
         const { processed } = await drainActionQueueRepopulations(getCompositionRootClient(), log)
-        if (processed > 0) viewStreamHub.broadcast('action-queue')
+        if (processed > 0) bus.emit('view.action-queue-invalidated')
       } catch (err) {
         log(`[action-queue-repopulator] drain errored: ${(err as Error).message}`)
       }
@@ -7526,7 +7513,7 @@ export const startDaemon = async (
     singleFlight(async () => {
       try {
         const { processed } = await drainSubthreadCloser(getCompositionRootClient(), log)
-        if (processed > 0) viewStreamHub.broadcast('chat')
+        if (processed > 0) bus.emit('view.chat-invalidated')
       } catch (err) {
         log(`[subthread-closer] drain errored: ${(err as Error).message}`)
       }
@@ -7543,7 +7530,7 @@ export const startDaemon = async (
     singleFlight(async () => {
       try {
         const { processed } = await drainArchivePrompter(getCompositionRootClient(), log)
-        if (processed > 0) viewStreamHub.broadcast('chat')
+        if (processed > 0) bus.emit('view.chat-invalidated')
       } catch (err) {
         log(`[archive-prompter] drain errored: ${(err as Error).message}`)
       }

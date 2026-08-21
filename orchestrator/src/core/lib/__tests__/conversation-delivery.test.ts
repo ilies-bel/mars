@@ -283,27 +283,27 @@ describe('conversation notice delivery', () => {
     ])
   })
 
-  it('broadcasts a chat invalidation once per delivered Notice', async () => {
+  it('requests a chat invalidation once per delivered Notice', async () => {
     const { delivery } = await loadStores(repo)
-    const broadcast = vi.fn()
-    const viewStreamHub = { broadcast }
+    const emit = vi.fn(() => true)
+    const bus = { emit }
 
     await delivery.postConversationNotice({
       body: 'Delivered right away.',
       priority: 'urgent',
-      viewStreamHub,
+      bus,
     })
-    expect(broadcast.mock.calls).toEqual([['chat']])
+    expect(emit.mock.calls).toEqual([['view.chat-invalidated']])
 
     await delivery.postConversationNotice({
       body: 'Held for the pause.',
       priority: 'routine',
       hasActiveRuns: () => true,
-      viewStreamHub,
+      bus,
     })
-    expect(broadcast.mock.calls).toEqual([['chat']])
+    expect(emit.mock.calls).toEqual([['view.chat-invalidated']])
 
-    await delivery.flushRoutineConversationNotices(() => false, viewStreamHub)
-    expect(broadcast.mock.calls).toEqual([['chat'], ['chat']])
+    await delivery.flushRoutineConversationNotices(() => false, bus)
+    expect(emit.mock.calls).toEqual([['view.chat-invalidated'], ['view.chat-invalidated']])
   })
 })

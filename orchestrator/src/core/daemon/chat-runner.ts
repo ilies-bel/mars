@@ -47,7 +47,7 @@ import {
   type ChatMessage,
   type CompactionSegment,
 } from '../lib/chat-store'
-import type { ViewStreamHub } from './view/stream-hub'
+import type { ViewInvalidationBus } from '../../bus/view-invalidation.js'
 import type { ChatSegment, ChatStreamHub } from './chat-contracts'
 import { resolveChatSystemPrompt } from './chat-system-prompt'
 import { buildMainThreadPrefix, MAIN_THREAD_PROVIDER_REQUEST_IDENTITY } from './chat-context'
@@ -699,7 +699,7 @@ export class ChatRunner {
    * Clear the global auth-failure flag and re-queue all throttled threads.
    * Call this after the user has re-authenticated so stalled threads resume.
    */
-  clearAuthFailure(repoRoot: string, hub: ViewStreamHub | undefined): void {
+  clearAuthFailure(repoRoot: string, bus: ViewInvalidationBus | undefined): void {
     if (!this.codexAuthFailed) return
     this.codexAuthFailed = false
     for (const listener of this.authListeners) listener(false)
@@ -710,7 +710,7 @@ export class ChatRunner {
       this.throttledRetries.delete(threadId)
       const abort = new AbortController()
       this.activeRuns.set(threadId, abort)
-      const runPromise = this._run(threadId, '', repoRoot, hub, abort, undefined, 0)
+      const runPromise = this._run(threadId, '', repoRoot, bus, abort, undefined, 0)
         .catch(() => { this.activeRuns.delete(threadId) })
         .finally(() => { this._activeRunPromises.delete(threadId) })
       this._activeRunPromises.set(threadId, runPromise)
@@ -739,7 +739,7 @@ export class ChatRunner {
     threadId: string,
     content: string,
     repoRoot: string,
-    hub: ViewStreamHub | undefined,
+    bus: ViewInvalidationBus | undefined,
     attachments?: AttachmentInfo[],
     opts?: { userMessagePersisted?: boolean },
   ): Promise<{ alreadyRunning: boolean }> {
@@ -761,7 +761,7 @@ export class ChatRunner {
       threadId,
       content,
       repoRoot,
-      hub,
+      bus,
       abort,
       attachments,
       0,
@@ -856,7 +856,7 @@ export class ChatRunner {
     threadId: string,
     content: string,
     repoRoot: string,
-    hub: ViewStreamHub | undefined,
+    bus: ViewInvalidationBus | undefined,
     attachments: AttachmentInfo[] | undefined,
     retryCount: number,
     userMessagePersisted: boolean,
@@ -872,19 +872,19 @@ export class ChatRunner {
         'Codex is temporarily unavailable. Please try again later.',
         [{ type: 'error', message: 'Codex is temporarily unavailable (rate/usage limit). Retries exhausted.' }],
       )
-      hub?.broadcast('chat')
+      bus?.emit('view.chat-invalidated')
       return
     }
 
     await setThreadStatus(threadId, 'throttled')
-    hub?.broadcast('chat')
+    bus?.emit('view.chat-invalidated')
 
     const delay = THROTTLE_BACKOFF_MS[retryCount]
     const timer = setTimeout(() => {
       this.throttledRetries.delete(threadId)
       const abort = new AbortController()
       this.activeRuns.set(threadId, abort)
-      const runPromise = this._run(threadId, content, repoRoot, hub, abort, attachments, retryCount + 1, userMessagePersisted)
+      const runPromise = this._run(threadId, content, repoRoot, bus, abort, attachments, retryCount + 1, userMessagePersisted)
         .catch(() => { this.activeRuns.delete(threadId) })
         .finally(() => { this._activeRunPromises.delete(threadId) })
       this._activeRunPromises.set(threadId, runPromise)
@@ -896,7 +896,7 @@ export class ChatRunner {
     threadId: string,
     content: string,
     repoRoot: string,
-    hub: ViewStreamHub | undefined,
+    bus: ViewInvalidationBus | undefined,
     abort: AbortController,
     attachments: AttachmentInfo[] | undefined,
     retryCount: number,
@@ -957,7 +957,7 @@ export class ChatRunner {
       const { flushRoutineConversationNotices } = await import('../lib/conversation-delivery.js')
       await flushRoutineConversationNotices(() => this.hasActiveRuns())
       // Invalidation ping so the sidebar re-fetches the thread list.
-      hub?.broadcast('chat')
+      bus?.emit('view.chat-invalidated')
     }
 
     // Open the UIMessage-chunk buffer up-front so EVERY exit path (including an
@@ -1021,12 +1021,12 @@ export class ChatRunner {
       if (!threadData.thread.title && (!hasMessages || userMessagePersisted)) {
         const title = content.slice(0, 60)
         await updateThreadTitle(threadId, title)
-        hub?.broadcast('chat')
+        bus?.emit('view.chat-invalidated')
       }
 
       // Mark thread as running.
       await setThreadStatus(threadId, 'running')
-      hub?.broadcast('chat')
+      bus?.emit('view.chat-invalidated')
 
       // Replay the persisted transcript as conversation input. On a throttle
       // retry the current user message is already persisted — drop it from the
@@ -1149,7 +1149,7 @@ export class ChatRunner {
                   'System: This conversation is now in grill posture. I can use glossary, ADR, and PRD tools as we shape the work.',
                   [{ type: 'system', message: 'Grill posture enabled.' }],
                 )
-                hub?.broadcast('chat')
+                bus?.emit('view.chat-invalidated')
                 result = { content: 'grill posture enabled', isError: false }
               }
             } else if (call.tool === 'override_end_grill') {
@@ -1168,7 +1168,7 @@ export class ChatRunner {
                   `System: I left grill posture and queued task ${task.id}.`,
                   [{ type: 'system', message: `Grill override queued task ${task.id}.` }],
                 )
-                hub?.broadcast('chat')
+                bus?.emit('view.chat-invalidated')
                 result = { content: `queued task ${task.id}; grill posture ended`, isError: false }
               }
             } else if (call.tool === 'override_reshape_as_proposal') {
@@ -1199,7 +1199,7 @@ export class ChatRunner {
                     `System: I replaced task ${originalTaskId} with proposal ${proposal.id}.`,
                     [{ type: 'system', message: `Task ${originalTaskId} reshaped as proposal ${proposal.id}.` }],
                   )
-                  hub?.broadcast('chat')
+                  bus?.emit('view.chat-invalidated')
                   result = { content: `purged task ${originalTaskId}; created proposal ${proposal.id}`, isError: false }
                 }
               }
@@ -1302,12 +1302,12 @@ export class ChatRunner {
               this.codexAuthFailed = true
               for (const listener of this.authListeners) listener(true)
             }
-            await this._scheduleThrottle(threadId, content, repoRoot, hub, attachments, retryCount, userMessagePersisted)
+            await this._scheduleThrottle(threadId, content, repoRoot, bus, attachments, retryCount, userMessagePersisted)
             return
           }
           // ── Rate/usage limit: throttle + auto-retry with backoff. ───────────
           if (err.kind === 'rate-limit') {
-            await this._scheduleThrottle(threadId, content, repoRoot, hub, attachments, retryCount, userMessagePersisted)
+            await this._scheduleThrottle(threadId, content, repoRoot, bus, attachments, retryCount, userMessagePersisted)
             return
           }
           // ── http/network: terminal error (user-safe, no provider details). ──

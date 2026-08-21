@@ -22,6 +22,7 @@ import { type KpiKey } from './kpi-store'
 import type { RestartTaskError } from './restart-task'
 import { SelfUpdateError, SELF_UPDATE_ERRORS } from './self-update'
 import type { ViewStreamHub } from './view/stream-hub'
+import type { ViewInvalidationBus } from '../../bus/view-invalidation.js'
 import type { LoadCorpusOptions } from '../lib/reflect-query'
 import type { ProposalSource } from '../proposals'
 import type { AppServices } from '../app-services'
@@ -641,6 +642,14 @@ export interface HttpServerDeps {
    * the HTTP transport's deps rather than on {@link AppServices}.
    */
   viewStreamHub?: ViewStreamHub
+  /**
+   * The daemon's in-process event bus, narrowed to the one gesture a transport
+   * needs: asking for a view refresh. Mutation routes below emit a
+   * `view.*-invalidated` kind rather than reaching into {@link viewStreamHub}
+   * — `registerViewInvalidation` is the only thing that broadcasts.
+   * Omitting this dep makes those refresh requests no-ops.
+   */
+  bus?: ViewInvalidationBus
   /**
    * The in-process application-service layer (ADR-0055). Every read route below
    * resolves to one named function on this object; the daemon constructs it once
@@ -2476,7 +2485,7 @@ export const createHttpRequestListener = (
       return
     }
     if (req.method === 'POST' && req.url === '/codex-auth/refresh') {
-      deps.chatRunner.clearAuthFailure(getRepoRoot(), deps.viewStreamHub)
+      deps.chatRunner.clearAuthFailure(getRepoRoot(), deps.bus)
       sendJson(res, 200, { ok: true })
       return
     }
@@ -2531,7 +2540,7 @@ export const createHttpRequestListener = (
               return
             }
             await closeSubject(id)
-            deps.viewStreamHub?.broadcast('chat')
+            deps.bus?.emit('view.chat-invalidated')
             sendJson(res, 200, { ok: true })
           })
           .catch((err: unknown) => sendError(res, err))
@@ -2553,7 +2562,7 @@ export const createHttpRequestListener = (
           : archiveSubthread(id)
         action
           .then(() => {
-            deps.viewStreamHub?.broadcast('chat')
+            deps.bus?.emit('view.chat-invalidated')
             sendJson(res, 200, { ok: true })
           })
           .catch((err: unknown) => sendError(res, err))
@@ -2573,7 +2582,7 @@ export const createHttpRequestListener = (
         const id = decodeURIComponent(deleteMatch[1])
         deleteSubthread(id)
           .then(() => {
-            deps.viewStreamHub?.broadcast('chat')
+            deps.bus?.emit('view.chat-invalidated')
             sendJson(res, 200, { ok: true })
           })
           .catch((err: unknown) => sendError(res, err))
@@ -2744,12 +2753,12 @@ export const createHttpRequestListener = (
               thread.id,
               result.data.message,
               getRepoRoot(),
-              deps.viewStreamHub,
+              deps.bus,
               result.data.attachments,
               { userMessagePersisted: true },
             )
             if (run.alreadyRunning) throw new Error('new Subthread unexpectedly has an active run')
-            deps.viewStreamHub?.broadcast('chat')
+            deps.bus?.emit('view.chat-invalidated')
             sendJson(res, 202, toThreadApiView(thread))
           })
           .catch((err: unknown) => sendError(res, err))
@@ -2796,7 +2805,7 @@ export const createHttpRequestListener = (
             ),
           )
           .then((thread) => {
-            deps.viewStreamHub?.broadcast('chat')
+            deps.bus?.emit('view.chat-invalidated')
             sendJson(res, 200, toThreadApiView(thread))
           })
           .catch((err: unknown) => sendError(res, err))
@@ -2831,7 +2840,7 @@ export const createHttpRequestListener = (
         deps.appServices.buildSituationReport()
           .then((situation) => createThread(result.data.title, undefined, undefined, situation))
           .then((thread) => {
-            deps.viewStreamHub?.broadcast('chat')
+            deps.bus?.emit('view.chat-invalidated')
             sendJson(res, 200, toThreadApiView(thread))
           })
           .catch((err: unknown) => sendError(res, err))
@@ -2868,7 +2877,7 @@ export const createHttpRequestListener = (
           }
           forkThread({ sourceThreadId, goal: result.data.goal, idempotencyKey: result.data.idempotencyKey, files: result.data.files })
             .then(({ thread }) => {
-              deps.viewStreamHub?.broadcast('chat')
+              deps.bus?.emit('view.chat-invalidated')
               sendJson(res, 200, { threadId: thread.id })
             })
             .catch((err: unknown) => sendError(res, err))
@@ -2902,7 +2911,7 @@ export const createHttpRequestListener = (
           }
           updateThreadTitle(id, result.data.title)
             .then(() => {
-              deps.viewStreamHub?.broadcast('chat')
+              deps.bus?.emit('view.chat-invalidated')
               sendJson(res, 200, { ok: true })
             })
             .catch((err: unknown) => sendError(res, err))
@@ -3083,7 +3092,7 @@ export const createHttpRequestListener = (
             return
           }
           deps.chatRunner
-            .sendMessage(id, result.data.content, getRepoRoot(), deps.viewStreamHub, result.data.attachments)
+            .sendMessage(id, result.data.content, getRepoRoot(), deps.bus, result.data.attachments)
             .then(({ alreadyRunning }) => {
               if (alreadyRunning) {
                 sendJson(res, 409, { ok: false, error: 'thread already has an active run', errorCode: 'ALREADY_RUNNING' })
@@ -3177,7 +3186,7 @@ export const createHttpRequestListener = (
                   // intentionally silent — archive is non-fatal by contract
                 })
               }
-              deps.viewStreamHub?.broadcast('chat')
+              deps.bus?.emit('view.chat-invalidated')
               sendJson(res, 200, { ok: true })
               return
             }
@@ -3214,7 +3223,7 @@ export const createHttpRequestListener = (
                 [{ type: 'text', text: response.label }],
                 { kind: 'acknowledgment', contextScope: 'main' },
               )
-              deps.viewStreamHub?.broadcast('chat')
+              deps.bus?.emit('view.chat-invalidated')
               sendJson(res, 200, { ok: true })
               return
             }
@@ -3222,7 +3231,7 @@ export const createHttpRequestListener = (
               title: response.target.title,
               acknowledgment: response.label,
             })
-            deps.viewStreamHub?.broadcast('chat')
+            deps.bus?.emit('view.chat-invalidated')
             sendJson(res, 200, { ok: true, threadId: subthread.threadId })
           })
           .catch((err: unknown) => sendError(res, err))
@@ -3263,7 +3272,7 @@ export const createHttpRequestListener = (
           const note = result.data.note !== undefined ? result.data.note.trim() : null
           setMessageFeedback(messageId, result.data.rating, note === '' ? null : note)
             .then((feedback) => {
-              deps.viewStreamHub?.broadcast('chat')
+              deps.bus?.emit('view.chat-invalidated')
               sendJson(res, 200, { ok: true, feedback })
             })
             .catch((err: unknown) => {
@@ -3291,7 +3300,7 @@ export const createHttpRequestListener = (
         const messageId = decodeURIComponent(chatFeedbackClearMatch[1])
         clearMessageFeedback(messageId)
           .then((cleared) => {
-            deps.viewStreamHub?.broadcast('chat')
+            deps.bus?.emit('view.chat-invalidated')
             sendJson(res, 200, { ok: true, cleared })
           })
           .catch((err: unknown) => sendError(res, err))

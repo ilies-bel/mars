@@ -15,6 +15,7 @@ import { z } from 'zod'
 import { resolveStateClient } from '../store/state-client'
 import { appendMessage } from './chat-store'
 import { MAIN_THREAD_ID } from './pg-schema.js'
+import type { ViewInvalidationBus } from '../../bus/view-invalidation.js'
 import {
   renderConversationNotice,
   offersForConversationNotice,
@@ -25,14 +26,6 @@ const stateClient = resolveStateClient
 
 const ConversationPrioritySchema = z.enum(['urgent', 'routine'])
 export type ConversationPriority = z.infer<typeof ConversationPrioritySchema>
-
-/**
- * The slice of the daemon's view stream hub a delivery needs. Injected rather
- * than imported so this module keeps no dependency on the daemon process.
- */
-export interface ConversationNoticeBroadcaster {
-  broadcast: (channel: 'chat') => void
-}
 
 /** The delivery-side facts, shared by both ways of authoring a Notice. */
 interface ConversationNoticeDelivery {
@@ -45,7 +38,7 @@ interface ConversationNoticeDelivery {
   /** Supplied by the daemon when it has an in-memory ChatRunner. */
   hasActiveRuns?: () => boolean
   /** Supplied by the daemon so a delivered Notice invalidates live UI views. */
-  viewStreamHub?: ConversationNoticeBroadcaster
+  bus?: ViewInvalidationBus
 }
 
 export type ConversationNoticeInput =
@@ -89,7 +82,7 @@ const resolveDeliveryThreadId = async (): Promise<string> => {
 
 const deliverPendingNotice = async (
   notice: PendingConversationNotice,
-  viewStreamHub?: ConversationNoticeBroadcaster,
+  bus?: ViewInvalidationBus,
 ): Promise<void> => {
   const c = stateClient()
   const threadId = await resolveDeliveryThreadId()
@@ -115,7 +108,7 @@ const deliverPendingNotice = async (
   })
   // The message is durable before the ping: a client that re-fetches on this
   // event always finds it.
-  viewStreamHub?.broadcast('chat')
+  bus?.emit('view.chat-invalidated')
 }
 
 /**
@@ -157,7 +150,7 @@ export const postConversationNotice = async (
 
   await deliverPendingNotice(
     { id, body, segments: JSON.stringify(segments), backing_entity_id: backingEntityId },
-    input.viewStreamHub,
+    input.bus,
   )
   return { id, delivered: true }
 }
@@ -172,7 +165,7 @@ export const postConversationNotice = async (
  */
 export const flushRoutineConversationNotices = async (
   hasActiveRuns: () => boolean,
-  viewStreamHub?: ConversationNoticeBroadcaster,
+  bus?: ViewInvalidationBus,
 ): Promise<number> => {
   const paused = !hasActiveRuns()
   const c = stateClient()
@@ -183,7 +176,7 @@ export const flushRoutineConversationNotices = async (
   `)
   let delivered = 0
   for (const row of result.rows as unknown as PendingConversationNotice[]) {
-    await deliverPendingNotice(row, viewStreamHub)
+    await deliverPendingNotice(row, bus)
     delivered++
   }
   return delivered

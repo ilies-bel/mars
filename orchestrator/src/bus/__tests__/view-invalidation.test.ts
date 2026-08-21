@@ -12,7 +12,11 @@ import { EventEmitter } from 'node:events';
 import { ViewStreamHub } from '../../core/daemon/view/stream-hub.js';
 import { EventMap } from '../events.js';
 import { TRACE_EVENT_KINDS } from '../../core/lib/trace-events-store.js';
-import { VIEW_CHANNEL_FOR, registerViewInvalidation } from '../view-invalidation.js';
+import {
+  VIEW_CHANNEL_FOR,
+  VIEW_INVALIDATION_KINDS,
+  registerViewInvalidation,
+} from '../view-invalidation.js';
 
 describe('VIEW_CHANNEL_FOR', () => {
   it('has an entry for every registered bus EventName', () => {
@@ -27,10 +31,30 @@ describe('VIEW_CHANNEL_FOR', () => {
     }
   });
 
-  it('is exhaustive over the union — no stray keys beyond the two registries', () => {
-    const known = new Set<string>([...Object.keys(EventMap), ...TRACE_EVENT_KINDS]);
+  it('has an entry for every view-invalidation-only kind', () => {
+    for (const kind of VIEW_INVALIDATION_KINDS) {
+      expect(VIEW_CHANNEL_FOR[kind].length).toBeGreaterThan(0);
+    }
+  });
+
+  it('is exhaustive over the union — no stray keys beyond the three registries', () => {
+    const known = new Set<string>([
+      ...Object.keys(EventMap),
+      ...TRACE_EVENT_KINDS,
+      ...VIEW_INVALIDATION_KINDS,
+    ]);
     for (const key of Object.keys(VIEW_CHANNEL_FOR)) {
       expect(known.has(key)).toBe(true);
+    }
+  });
+
+  it('keeps view-invalidation kinds out of the durable trace vocabulary', () => {
+    // A `view.*-invalidated` ping is transient UI plumbing, not operational
+    // history: it must never become a persistable `trace_events` kind (nor a
+    // value `/events?kind=` accepts).
+    for (const kind of VIEW_INVALIDATION_KINDS) {
+      expect(TRACE_EVENT_KINDS as readonly string[]).not.toContain(kind);
+      expect(Object.keys(EventMap)).not.toContain(kind);
     }
   });
 });

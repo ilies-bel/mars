@@ -7,10 +7,14 @@ import type { ViewStreamHub, StreamChannel } from '../core/daemon/view/stream-hu
  *
  * Before this module, every write site that wanted the UI to refresh had to
  * remember to call `viewStreamHub.broadcast(<channel>)` by hand next to its
- * mutation (see the `bus.on('proposal.added', () => hub.broadcast('progress'))`
- * style wiring still present in `server.ts`). That hand-wiring is correct but
- * silent: a new event kind that nobody remembers to wire simply never
+ * mutation — some ~76 such calls across `server.ts`, `http-server.ts`,
+ * `chat-runner.ts` and `conversation-delivery.ts`. That hand-wiring is correct
+ * but silent: a new event kind that nobody remembers to wire simply never
  * refreshes any UI surface, and nothing fails to say so.
+ *
+ * Those call sites are gone. `registerViewInvalidation` is now the only
+ * broadcaster in the daemon, enforced by
+ * `core/daemon/__tests__/no-manual-broadcast.test.ts`.
  *
  * This module inverts that: {@link VIEW_CHANNEL_FOR} is a single table from
  * every {@link UnifiedEventKind} (the full bus ∪ trace union — see
@@ -33,11 +37,50 @@ import type { ViewStreamHub, StreamChannel } from '../core/daemon/view/stream-hu
 export type ViewChannel = StreamChannel;
 
 /**
- * Kind → channel(s) table. Exhaustive over {@link UnifiedEventKind}: a kind
- * added to `EventMap` (`../bus/events.ts`) or `TRACE_EVENT_KINDS`
- * (`../core/lib/trace-events-store.ts`) that is missing here fails `tsc`.
+ * Kinds that exist *only* to invalidate a view.
+ *
+ * Deliberately not part of `TRACE_EVENT_KINDS`: a trace kind is durable
+ * operational history (`emitEvent` persists one `trace_events` row per kind,
+ * and `/events?kind=` accepts the whole vocabulary). These are neither —
+ * they are transient in-process pings on the daemon's `EventEmitter`, emitted
+ * by a mutation that has no domain event of its own (a chat-thread rename, a
+ * dispatch resume, a signature-storm trip). Registering them here rather than
+ * in the trace vocabulary keeps "what Mars records" and "what refreshes the
+ * UI" from bleeding into each other.
+ *
+ * Prefer a real domain event. Reach for one of these only when the mutation
+ * genuinely has none.
  */
-export const VIEW_CHANNEL_FOR: Record<UnifiedEventKind, readonly ViewChannel[]> = {
+export const VIEW_INVALIDATION_KINDS = [
+  'view.tasks-invalidated',
+  'view.action-queue-invalidated',
+  'view.chat-invalidated',
+  'view.proposals-invalidated',
+] as const;
+
+export type ViewInvalidationKind = (typeof VIEW_INVALIDATION_KINDS)[number];
+
+/**
+ * The narrow slice of the daemon's `EventEmitter` a module needs in order to
+ * ask for a view refresh. Injected (never imported) so modules outside
+ * `core/daemon/` — `core/lib/conversation-delivery.ts`, for one — stay free of
+ * any dependency on the daemon process while still being able to invalidate.
+ */
+export interface ViewInvalidationBus {
+  emit(kind: ViewInvalidationKind): boolean;
+}
+
+/**
+ * Kind → channel(s) table. Exhaustive over {@link UnifiedEventKind} plus
+ * {@link ViewInvalidationKind}: a kind added to `EventMap`
+ * (`../bus/events.ts`), `TRACE_EVENT_KINDS`
+ * (`../core/lib/trace-events-store.ts`) or {@link VIEW_INVALIDATION_KINDS}
+ * that is missing here fails `tsc`.
+ */
+export const VIEW_CHANNEL_FOR: Record<
+  UnifiedEventKind | ViewInvalidationKind,
+  readonly ViewChannel[]
+> = {
   // --- Task lifecycle → the Kanban/task-list view, and 'progress' for the
   // subset that also move the dashboard's progress/burndown numbers. ---
   'task.created': ['tasks'],
@@ -132,18 +175,14 @@ export const VIEW_CHANNEL_FOR: Record<UnifiedEventKind, readonly ViewChannel[]> 
   'code-retry-attempt': ['live-task'],
   'restart-checkpoint': [],
 
-  // --- View-invalidation-only kinds: the manual-broadcast-removal sweep's
-  // fallback for a call site with no pre-existing domain event to piggyback
-  // on (dispatch resume/pause, signature-storm trip, gate-fix diagnosis,
-  // chat streaming pings, and similar daemon-internal state changes with no
-  // dedicated lifecycle kind). Each maps 1:1 onto the channel it replaced. ---
+  // --- View-invalidation-only kinds (see VIEW_INVALIDATION_KINDS): the
+  // fallback for a mutation with no domain event to piggyback on — dispatch
+  // resume/pause, signature-storm trip, gate-fix diagnosis, chat-thread
+  // rename/archive/delete. Each maps 1:1 onto the channel it names. ---
   'view.tasks-invalidated': ['tasks'],
   'view.action-queue-invalidated': ['action-queue'],
   'view.chat-invalidated': ['chat'],
-  'view.progress-invalidated': ['progress'],
   'view.proposals-invalidated': ['proposals'],
-  'view.kpis-invalidated': ['kpis'],
-  'view.live-task-invalidated': ['live-task'],
 };
 
 /**
@@ -156,7 +195,7 @@ export const VIEW_CHANNEL_FOR: Record<UnifiedEventKind, readonly ViewChannel[]> 
  * construction — see `startDaemon` in `server.ts`.
  */
 export function registerViewInvalidation(bus: EventEmitter, hub: ViewStreamHub): void {
-  for (const kind of Object.keys(VIEW_CHANNEL_FOR) as UnifiedEventKind[]) {
+  for (const kind of Object.keys(VIEW_CHANNEL_FOR) as (UnifiedEventKind | ViewInvalidationKind)[]) {
     const channels = VIEW_CHANNEL_FOR[kind];
     if (channels.length === 0) continue;
     bus.on(kind, () => {
