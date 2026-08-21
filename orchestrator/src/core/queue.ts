@@ -13,6 +13,15 @@ import {
   TERMINAL_VERDICT_PREFIXES,
 } from './lib/failure-signature'
 import { Arc } from './arc'
+import {
+  addBlockerEdges,
+  addPendingReviewBlockerEdges,
+  clearBlockerEdges,
+  failAndClearBlockerEdges,
+  removeBlockerEdge,
+  transferProposalBlockerEdges,
+} from './arc/blockers'
+import { getDefaultDomainTaskStore } from './store/task-store'
 import type { DomainTaskStore as TaskStore } from './store/task-store'
 import { raiseActionQueueItem } from './lib/action-queue'
 import { teardownDeploymentsForTask } from './lib/deployment/teardown'
@@ -1922,7 +1931,7 @@ export const insertReflectionTask = async (corpusSize: number): Promise<string> 
 }
 
 /**
- * Add user-facing blocker edges. Thin wrapper over {@link Arc.addBlocker}
+ * Add user-facing blocker edges. Thin wrapper over {@link addBlockerEdges}
  * (ADR-0052): the existence checks, dedupe, ADR-0040 leaf-node guard, and the
  * `state='confirmed'` batch INSERT all live on the Arc aggregate now. Signature
  * kept byte-identical for the task-store facade and existing call sites
@@ -1932,7 +1941,7 @@ export const addBlockers = async (
   taskId: string,
   blockerIds: readonly string[],
 ): Promise<void> => {
-  await Arc.load(taskId).addBlocker(taskId, blockerIds)
+  await addBlockerEdges(getDefaultDomainTaskStore(), taskId, blockerIds)
 }
 
 /**
@@ -1944,7 +1953,7 @@ export const addBlockers = async (
  */
 /**
  * Write Linker-candidate blocker rows in `'pending-review'` state (ADR-0006).
- * Thin wrapper over {@link Arc.addPendingReviewBlockers} (ADR-0052): the Linker
+ * Thin wrapper over {@link addPendingReviewBlockerEdges} (ADR-0052): the Linker
  * is the sole *deriver* of lexical-overlap edges; Arc is the sole *writer* of
  * `task_blockers` rows. Signature kept for existing call sites.
  */
@@ -1952,11 +1961,11 @@ export const addPendingReviewBlockers = async (
   taskId: string,
   blockerIds: readonly string[],
 ): Promise<void> => {
-  await Arc.load(taskId).addPendingReviewBlockers(taskId, blockerIds)
+  await addPendingReviewBlockerEdges(getDefaultDomainTaskStore(), taskId, blockerIds)
 }
 
 /**
- * Remove a single blocker edge. Thin wrapper over {@link Arc.removeBlocker}
+ * Remove a single blocker edge. Thin wrapper over {@link removeBlockerEdge}
  * (ADR-0052); status is unchanged. Signature kept byte-identical for the
  * task-store facade and existing call sites.
  */
@@ -1964,11 +1973,11 @@ export const removeBlocker = async (
   taskId: string,
   blockerId: string,
 ): Promise<{ removed: boolean }> => {
-  return Arc.load(taskId).removeBlocker(taskId, blockerId)
+  return removeBlockerEdge(getDefaultDomainTaskStore(), taskId, blockerId)
 }
 
 export const clearBlockers = async (taskId: string): Promise<void> => {
-  await Arc.load(taskId).clearBlockers(taskId)
+  await clearBlockerEdges(getDefaultDomainTaskStore(), taskId)
 }
 
 /**
@@ -2110,9 +2119,10 @@ export const transferProposalBlockerToTask = async (
   if (blockerRow.rows.length === 0) {
     throw new Error(`blocker task ${newBlockerTaskId} not found`)
   }
-  // Delegate to Arc (ADR-0052 sole-writer for task_blockers). Arc.transferProposalEdges
-  // re-runs the ADR-0040 leaf-node guard and builds the atomic INSERT+DELETE batch.
-  return Arc.transferProposalEdges(dependents, newBlockerTaskId, proposalId)
+  // Delegate to the blocker-edge module (ADR-0052 sole-writer for
+  // task_blockers). transferProposalBlockerEdges re-runs the ADR-0040 leaf-node
+  // guard and builds the atomic INSERT+DELETE batch.
+  return transferProposalBlockerEdges(dependents, newBlockerTaskId, proposalId)
 }
 
 export interface UnblockTaskResult {
@@ -2128,7 +2138,7 @@ export interface UnblockTaskResult {
  * inconsistent state (stale junction rows after a blocker was purged).
  */
 /**
- * Thin wrapper over {@link Arc.unblockTask} (ADR-0052 sole-writer). The
+ * Thin wrapper over {@link failAndClearBlockerEdges} (ADR-0052 sole-writer). The
  * `blocked|queued → failed` status write + blocker clear + `task.failed` /
  * `task.terminal` emit now live inside the Arc aggregate; this export keeps the
  * historic call surface (`mars unblock <id>`, the daemon RPC, the `TaskStore`
@@ -2137,7 +2147,7 @@ export interface UnblockTaskResult {
 export const unblockTask = async (
   taskId: string,
 ): Promise<UnblockTaskResult> => {
-  return Arc.unblockTask(taskId)
+  return failAndClearBlockerEdges(taskId)
 }
 
 /**

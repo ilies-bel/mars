@@ -25,6 +25,7 @@ import { attachToExistingFixTask } from '../queue-fix-tasks'
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store'
 import { Arc } from '../arc'
 import { spawnMainCommitterRecovery } from '../arc/recovery'
+import { maybeAssertArcInvariant } from '../arc/invariant'
 import type { TraceEventStore } from './trace-events-store'
 import {
   MAIN_COMMITER_RECIPE,
@@ -794,7 +795,7 @@ export const spawnOrAttachMainCommitter = async (
     })
     // The structural assert seam stays on the aggregate (`./arc/recovery.ts`
     // cannot import `../arc.ts`), so the caller runs it after the write.
-    await Arc.maybeAssertArcInvariant(input.sourceTaskId, s)
+    await maybeAssertArcInvariant(input.sourceTaskId, s)
     fixTaskId = spawned.fixTaskId
   } catch (err) {
     if (!isActiveCommitterUniqueViolation(err)) throw err

@@ -4,8 +4,8 @@ import {
   getTask,
   updateTask,
 } from '../queue'
-import { Arc } from '../arc'
-import { getDefaultTaskStore } from '../store/task-store'
+import { removeBlockerEdge } from '../arc/blockers'
+import { getDefaultDomainTaskStore, getDefaultTaskStore } from '../store/task-store'
 import { getDiagnosis, type StoredDiagnosis } from './diagnose'
 import { raiseActionQueueItem } from './action-queue'
 
@@ -53,13 +53,6 @@ const findParentForDiagnoseChore = async (
   })
   if (r.rows.length === 0) return null
   return (r.rows[0] as unknown as { task_id: string }).task_id
-}
-
-const removeBlockerEdge = async (
-  parentTaskId: string,
-  blockerTaskId: string,
-): Promise<void> => {
-  await Arc.load(parentTaskId).removeBlocker(parentTaskId, blockerTaskId)
 }
 
 const buildFixPrompt = (
@@ -163,7 +156,7 @@ export const runDiagnoseFollowup = async (
     // one outstanding task (the fix). Re-stamp 'blocked' explicitly — the
     // generic on-blocker-completed path will otherwise re-queue the parent
     // the moment the diagnose Chore lands done.
-    await removeBlockerEdge(parentTaskId, choreId)
+    await removeBlockerEdge(getDefaultDomainTaskStore(), parentTaskId, choreId)
     await addBlockers(parentTaskId, [fix.id])
     await updateTask(parentTaskId, {
       status: 'blocked',
@@ -179,7 +172,7 @@ export const runDiagnoseFollowup = async (
 
   // Inconclusive OR no-verdict — both deliberately collapse to the same
   // operator-resolution branch (PRD 06e677fb).
-  await removeBlockerEdge(parentTaskId, choreId)
+  await removeBlockerEdge(getDefaultDomainTaskStore(), parentTaskId, choreId)
   await updateTask(parentTaskId, {
     status: 'failed',
     failedPhase: 'code',

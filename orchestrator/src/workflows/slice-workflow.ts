@@ -14,6 +14,7 @@ import {
 import { getDefaultStateStore } from '../core/store/state-store'
 import { enqueueTask, updateTask } from '../core/queue'
 import { Arc } from '../core/arc'
+import { addBlockerEdges } from '../core/arc/blockers'
 import { type DomainTaskStore, getDefaultTaskStore } from '../core/store/task-store'
 import { Workers } from '../core/workers'
 import { parseWorkerJsonResult } from '../core/lib/worker-json'
@@ -1670,7 +1671,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
       }
       // Phase 2: a coordinator owns dependency sequencing internally. Sibling
       // proposals wire blockers using the resolved task ids. Routes through the
-      // Arc aggregate (ADR-0052 sole-writer for task_blockers); Arc.addBlocker
+      // blocker-edge module (ADR-0052 sole-writer for task_blockers); addBlockerEdges
       // carries the ADR-0040 leaf-node guard internally. The provenance map
       // from the auto-linker determines whether each edge is 'file-overlap'
       // (mechanical, forced by shared declared files) or 'inferred' (from
@@ -1680,7 +1681,8 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
           const deps = parsed.slices[i].blockedBy
           for (const dep of deps) {
             const provenance = edgeProvenanceMap.get(`${i}:${dep}`) ?? 'inferred'
-            await Arc.load(taskIds[i], taskStore).addBlocker(
+            await addBlockerEdges(
+              taskStore,
               taskIds[i],
               [taskIds[dep - 1]],
               { provenance },
@@ -1693,10 +1695,9 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
       // the operator confirms the manual step. hitlSliceIndices[j] is the
       // 0-based position in taskIds; subTaskIds[j] is the sub-task id.
       for (let j = 0; j < hitlSliceIndices.length; j += 1) {
-        await Arc.load(taskIds[hitlSliceIndices[j]], taskStore).addBlocker(
-          taskIds[hitlSliceIndices[j]],
-          [subTaskIds[j]],
-        )
+        await addBlockerEdges(taskStore, taskIds[hitlSliceIndices[j]], [
+          subTaskIds[j],
+        ])
       }
       // Phase 3: sliced work dispatches immediately. Keep the lifecycle gate
       // in updateTask: HITL slices and slices with unresolved blockers remain

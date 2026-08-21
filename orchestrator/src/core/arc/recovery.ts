@@ -15,9 +15,10 @@
  * MUST NOT import this file, or the split recreates the very cycle it exists
  * to break. The dependency therefore runs caller → recovery, never
  * arc → recovery: `../queue-fix-tasks.ts` and `../lib/main-dirty.ts` call
- * these functions directly and run `Arc.maybeAssertArcInvariant` themselves
- * afterwards (the debug-assert seam stays on the aggregate — it is shared by
- * every mutating Arc write, not just the recovery ones).
+ * these functions directly and run `maybeAssertArcInvariant` themselves
+ * afterwards. That debug-assert seam lives in `./invariant.ts` — shared by
+ * every mutating Arc write, not just the recovery ones, and importable by a
+ * concern module without pulling in `Arc` (which would cycle).
  *
  * `Arc.propagateRecoveryDone` deliberately did NOT move here: it is a
  * lifecycle transition on the *origin* row (flip to `done`, then unblock its
@@ -173,9 +174,9 @@ const findSharedFixTask = async (
  * here is the canonical attach mechanism; the guard does not apply.
  *
  * Callers (`../queue-fix-tasks.ts`'s `upsertFixTask`) run
- * `Arc.maybeAssertArcInvariant` AFTER this resolves — that debug-assert seam
- * stays on the aggregate rather than moving here, since it is shared by every
- * mutating Arc write method, not just the recovery ones.
+ * `maybeAssertArcInvariant` AFTER this resolves — that debug-assert seam lives
+ * in `./invariant.ts` rather than here, since it is shared by every mutating
+ * Arc write method, not just the recovery ones.
  */
 export const spawnRecovery = async (
   store: DomainTaskStore,

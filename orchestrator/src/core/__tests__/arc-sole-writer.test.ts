@@ -96,11 +96,14 @@ const UPDATE_WRITE_PATTERN = /UPDATE\s+tasks\s+SET\b/i
 const DELETE_PATTERN = /DELETE\s+FROM\s+tasks\b/i
 
 // After path.sep normalization, the ONLY legitimate task-table and
-// task_blockers-table writers. The Arc aggregate spans two files since the
-// recovery concern was split out: `core/arc.ts` (task lifecycle) and
-// `core/arc/recovery.ts` (recovery spawn/attach). Both are the aggregate;
-// nothing else may write these tables.
-const ALLOWLIST = ['core/arc.ts', 'core/arc/recovery.ts'].map((p) =>
+// task_blockers-table writers. The Arc aggregate spans three files since the
+// recovery and blocker-edge concerns were split out: `core/arc.ts` (task
+// lifecycle), `core/arc/recovery.ts` (recovery spawn/attach) and
+// `core/arc/blockers.ts` (the blocker-EDGE half, extracted so the concern is
+// separately readable and testable). All three are the same aggregate, just
+// split across files; nothing else may write these tables.
+// (`core/arc/invariant.ts` is deliberately absent — it only reads.)
+const ALLOWLIST = ['core/arc.ts', 'core/arc/recovery.ts', 'core/arc/blockers.ts'].map((p) =>
   p.split('/').join(sep),
 )
 

@@ -77,6 +77,7 @@ import type {
   TaskTranscriptRow,
 } from '../queue'
 import { Arc } from '../arc'
+import { addBlockerEdges, removeBlockerEdge } from '../arc/blockers'
 
 const execFileAsync = promisify(execFile)
 
@@ -538,11 +539,11 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
 
     // ── Blocker management ─────────────────────────────────────────────────
     addBlockers: (taskId, blockerIds) =>
-      Arc.load(taskId, store).addBlocker(taskId, blockerIds),
+      addBlockerEdges(store, taskId, blockerIds),
     addPendingReviewBlockers: (taskId, blockerIds) =>
       queueAddPendingReviewBlockers(taskId, blockerIds),
     removeBlocker: (taskId, blockerId) =>
-      Arc.load(taskId, store).removeBlocker(taskId, blockerId),
+      removeBlockerEdge(store, taskId, blockerId),
     clearBlockers: (taskId) => queueClearBlockers(taskId),
     listBlockers: (taskId) => queueListBlockers(taskId),
     hasIncompleteBlockers: (taskId) => queueHasIncompleteBlockers(taskId),

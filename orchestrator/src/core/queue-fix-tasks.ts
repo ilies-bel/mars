@@ -16,7 +16,6 @@ import {
   raiseRecoveryExhaustedActionQueue,
 } from './queue-retry'
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/task-store'
-import { Arc } from './arc'
 import {
   attachToRecovery,
   spawnRecovery,
@@ -24,6 +23,8 @@ import {
   type UpsertFixTaskResult,
   type AttachToExistingFixTaskInput,
 } from './arc/recovery'
+import { removeBlockerEdge } from './arc/blockers'
+import { maybeAssertArcInvariant } from './arc/invariant'
 // Every terminal-verdict prefix this file writes comes from the shared
 // vocabulary, never from an inline literal — a literal here is invisible to the
 // guards that read `TERMINAL_VERDICT_PREFIXES`, which is how a self-written
@@ -316,9 +317,8 @@ export const countFixTaskAttempts = async (
  * atomic `task.blocked` event — lives in the Arc aggregate's recovery concern
  * (`./arc/recovery.ts`). This wrapper resolves the store, delegates so the
  * exported signature stays identical for existing callers and tests, and runs
- * the aggregate's structural assert afterwards (the assert seam stays on
- * `Arc`, which `./arc/recovery.ts` cannot import — see the concern manifest
- * in `arc.ts`).
+ * the aggregate's structural assert afterwards (the assert seam lives in
+ * `./arc/invariant.ts` so concern modules can run it without importing `Arc`).
  *
  * Atomically:
  *  - INSERT a new runnable fix-task row (status='queued', skip triage),
@@ -337,7 +337,7 @@ export const upsertFixTask = async (
 ): Promise<UpsertFixTaskResult> => {
   const store = input.store ?? (await getDefaultTaskStore())
   const result = await spawnRecovery(store, input)
-  await Arc.maybeAssertArcInvariant(input.sourceTaskId, store)
+  await maybeAssertArcInvariant(input.sourceTaskId, store)
   return result
 }
 
@@ -368,7 +368,7 @@ export const attachToExistingFixTask = async (
 ): Promise<void> => {
   const store = input.store ?? (await getDefaultTaskStore())
   await attachToRecovery(store, input)
-  await Arc.maybeAssertArcInvariant(input.sourceTaskId, store)
+  await maybeAssertArcInvariant(input.sourceTaskId, store)
 }
 
 const buildRecoveryEscalationBody = (input: {
@@ -828,11 +828,11 @@ export const handleTaskFailureWithFixTask = async (
             failureReason: null,
           }, s)
           // Step 2: remove the origin→fix blocker edge. Routed through the
-          // Arc aggregate — the sole task_blockers writer (ADR-0052) — and
-          // bound to the SAME store seam `s` that steps 1 and 3 use, so all
-          // three mutations stay in one scope rather than fanning out into
-          // separate transactions.
-          await Arc.load(originId, s).removeBlocker(originId, input.taskId)
+          // blocker-edge module — an allowlisted task_blockers writer
+          // (ADR-0052) — and bound to the SAME store seam `s` that steps 1 and
+          // 3 use, so all three mutations stay in one scope rather than fanning
+          // out into separate transactions.
+          await removeBlockerEdge(s, originId, input.taskId)
           // Step 3: drop the fix task as superseded (clear trace)
           await updateTask(input.taskId, {
             status: 'dropped',
