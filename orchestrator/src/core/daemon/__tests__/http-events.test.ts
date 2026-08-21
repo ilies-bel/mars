@@ -326,4 +326,117 @@ describe('GET /events', () => {
       await close()
     }
   })
+
+  // Slice 8 (modular-core): verify output and provider/model attribution moved
+  // onto the durable surface. `verify-attribution-events.test.ts` pins the
+  // producer half (verifyChanges / runWorkerWithSpan → trace_events); this pins
+  // the reader half at the real HTTP boundary, which is what the acceptance
+  // criterion actually names: an operator auditing a finished task gets both
+  // facts, payloads intact, from `GET /events?taskId=<id>` alone — no
+  // transcript table is consulted by this route.
+  it('returns verify output and model attribution for a finished task', async () => {
+    await store.record({
+      kind: 'worker.model.attributed',
+      taskId: 'task-H',
+      phase: 'code',
+      payload: {
+        workerName: 'Coder',
+        stepName: 'run-claude-code',
+        provider: 'claude',
+        model: 'claude-sonnet-4-5',
+        tier: 'balanced',
+      },
+    })
+    await store.record({
+      kind: 'verify.step.completed',
+      taskId: 'task-H',
+      phase: 'verify',
+      payload: {
+        step: 'typecheck',
+        command: 'npm run typecheck',
+        exitCode: 2,
+        stdoutTail: 'error TS2345: Argument of type ...',
+        stderrTail: '',
+      },
+    })
+
+    const { startHttpServer } = await import('../http-server')
+    const { port, close } = await startHttpServer(makeDeps(store))
+    try {
+      const body = (await (
+        await fetch(`http://127.0.0.1:${port}/events?taskId=task-H`)
+      ).json()) as { events: TraceEvent[]; nextCursor: string | null }
+
+      const verify = body.events.find((e) => e.kind === 'verify.step.completed')!
+      expect(verify).toBeDefined()
+      expect(verify.phase).toBe('verify')
+      // The command and what it printed survive the round-trip through the
+      // route — this is the whole point of the slice.
+      expect(verify.payload).toMatchObject({
+        step: 'typecheck',
+        command: 'npm run typecheck',
+        exitCode: 2,
+        stdoutTail: 'error TS2345: Argument of type ...',
+      })
+      // A non-zero verify step is surfaced above the info floor.
+      expect(verify.severity).toBe('warn')
+
+      const attributed = body.events.find(
+        (e) => e.kind === 'worker.model.attributed',
+      )!
+      expect(attributed).toBeDefined()
+      expect(attributed.phase).toBe('code')
+      expect(attributed.payload).toMatchObject({
+        provider: 'claude',
+        model: 'claude-sonnet-4-5',
+        tier: 'balanced',
+      })
+    } finally {
+      await close()
+    }
+  })
+
+  // Both kinds are independently filterable, so the actionQueue detail panel can
+  // ask for "which model ran this" without paging through verify output.
+  it('filters the new kinds independently via ?kind=', async () => {
+    await store.record({
+      kind: 'verify.step.completed',
+      taskId: 'task-I',
+      phase: 'verify',
+      payload: {
+        step: 'test',
+        command: 'npm test',
+        exitCode: 0,
+        stdoutTail: 'ok',
+        stderrTail: '',
+      },
+    })
+    await store.record({
+      kind: 'worker.model.attributed',
+      taskId: 'task-I',
+      phase: 'code',
+      payload: {
+        workerName: 'Coder',
+        stepName: 'run-claude-code',
+        provider: 'codex',
+        model: 'gpt-5.6-terra',
+        tier: 'balanced',
+      },
+    })
+
+    const { startHttpServer } = await import('../http-server')
+    const { port, close } = await startHttpServer(makeDeps(store))
+    try {
+      const body = (await (
+        await fetch(
+          `http://127.0.0.1:${port}/events?taskId=task-I&kind=worker.model.attributed`,
+        )
+      ).json()) as { events: TraceEvent[]; nextCursor: string | null }
+      expect(body.events).toHaveLength(1)
+      expect(body.events[0]!.kind).toBe('worker.model.attributed')
+      expect(body.events[0]!.payload).toMatchObject({ provider: 'codex' })
+    } finally {
+      await close()
+    }
+  })
 })
