@@ -179,18 +179,28 @@ export interface ScoringConfig {
 
 /**
  * Zod schema for the raw `.mars/daemon.json` file on disk (before env/default
- * resolution). This is the shared contract consumed by the "Zod-validate
- * daemon.json instead of asserting its type" slice: swap the manual
- * `JSON.parse(...) as {...}` casts in `readDaemonConfigFile`/`loadDaemonConfig`
- * for `daemonConfigFileSchema.safeParse(...)`. Every field is optional/partial
- * because daemon.json is a merge-patched, hand-editable file — a field absent
- * or malformed must degrade to the built-in default, never throw.
+ * resolution). Every field is optional/partial because daemon.json is a
+ * merge-patched, hand-editable file — a field that is entirely absent must
+ * degrade to the built-in default, never throw.
  *
  * Mirrors every field currently read ad hoc across this file, including the
  * legacy aliases (`selfEvolve.autoTrigger`, `levers`, `caps['setup-install']`)
- * so the migrated reader keeps accepting existing daemon.json files.
+ * so `readDaemonConfigFile` keeps accepting existing daemon.json files.
+ *
+ * `.passthrough()` deliberately preserves top-level keys this schema does not
+ * model (`budget`, `qaStepList`, `health`, …) — several call sites
+ * (`spend-meter.ts`, `qa-step-list-flag.ts`, `server.ts`'s health scheduler)
+ * read those directly off `readDaemonConfigFile()`'s result and merge-preserve
+ * them on write; stripping them here would silently corrupt those flows.
+ *
+ * `readDaemonConfigFile` parses every read through this schema
+ * (`daemonConfigSchema.safeParse`) and throws a descriptive, field-naming
+ * error — instead of an untyped `JSON.parse(...) as {...}` cast that would
+ * explode later somewhere unrelated — when a *present* field has the wrong
+ * shape. A missing/unreadable file or unparseable JSON still degrades to `{}`
+ * (there is no config to validate in that case).
  */
-export const daemonConfigFileSchema = z
+export const daemonConfigSchema = z
   .object({
     caps: z
       .object({
@@ -249,9 +259,10 @@ export const daemonConfigFileSchema = z
     proposalExpiryDays: z.number().optional(),
   })
   .partial()
+  .passthrough()
 
 /** Inferred TS type for the raw persisted daemon.json shape. */
-export type DaemonConfigFile = z.infer<typeof daemonConfigFileSchema>
+export type DaemonConfigFile = z.infer<typeof daemonConfigSchema>
 
 /**
  * Typed view of every env var `loadDaemonConfig` currently reads ad hoc via
@@ -465,7 +476,7 @@ export const daemonConfigPath = (): string =>
  * losing other configured values. Safe to call from the daemon process.
  */
 export const persistSelfEvolveAutoEnqueue = (autoEnqueue: boolean): void => {
-  const existing = readDaemonConfigFile()
+  const existing = readDaemonConfigFileLenient()
   const existingSe =
     existing.selfEvolve !== null &&
     typeof existing.selfEvolve === 'object' &&
@@ -481,7 +492,7 @@ export const persistSelfEvolveAutoEnqueue = (autoEnqueue: boolean): void => {
  * selfEvolve knobs other than `autoEnqueue`.
  */
 export const persistSelfEvolvePatch = (patch: Partial<SelfEvolveConfig>): void => {
-  const existing = readDaemonConfigFile()
+  const existing = readDaemonConfigFileLenient()
   const existingSe =
     existing.selfEvolve !== null &&
     typeof existing.selfEvolve === 'object' &&
@@ -497,7 +508,7 @@ export const persistSelfEvolvePatch = (patch: Partial<SelfEvolveConfig>): void =
  * scoring knobs.
  */
 export const persistScoringPatch = (patch: Partial<ScoringConfig>): void => {
-  const existing = readDaemonConfigFile()
+  const existing = readDaemonConfigFileLenient()
   const existingSc =
     existing.scoring !== null &&
     typeof existing.scoring === 'object' &&
@@ -519,15 +530,60 @@ export const persistLastReflectRanAt = (isoTimestamp: string): void => {
  * Read the raw daemon.json object without applying any env/default
  * resolution. Missing file, unreadable file, or non-object JSON all
  * degrade to `{}` — callers merge-patch on top and write back.
+ *
+ * A *present* object is parsed through `daemonConfigSchema`. A field that
+ * fails validation throws a descriptive error naming the offending field
+ * path and the file path, instead of an untyped cast that would explode
+ * later somewhere unrelated. There is no config to validate for a
+ * missing/unreadable file or unparseable JSON, so those cases still
+ * degrade to `{}` rather than throw.
  */
 export const readDaemonConfigFile = (): Record<string, unknown> => {
+  let raw: string
   try {
-    const raw = readFileSync(daemonConfigPath(), 'utf8')
-    const parsed = JSON.parse(raw) as unknown
-    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>
-    }
+    raw = readFileSync(daemonConfigPath(), 'utf8')
+  } catch {
     return {}
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return {}
+  }
+
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {}
+  }
+
+  const result = daemonConfigSchema.safeParse(parsed)
+  if (!result.success) {
+    const issue = result.error.issues[0]
+    const fieldPath = issue !== undefined && issue.path.length > 0 ? issue.path.join('.') : '(root)'
+    const message = issue?.message ?? result.error.message
+    throw new Error(
+      `daemon.json at '${daemonConfigPath()}' has an invalid field '${fieldPath}': ${message}`,
+    )
+  }
+  return result.data
+}
+
+/**
+ * Lenient wrapper around `readDaemonConfigFile`: degrades to `{}` for a
+ * present-but-invalid field exactly like it already does for a missing file
+ * or unparseable JSON. Every other helper in this module reads/merge-patches
+ * one small slice of daemon.json (`paused`, `steward`, `producerLevers`,
+ * `workerPrompts`, `selfEvolve`, `scoring`, …) and has a long-standing "return
+ * a safe default / preserve what you can, never refuse to operate" contract —
+ * a validation failure in some unrelated field must not brick those call
+ * sites. Only direct callers that want the strict, field-naming failure (e.g.
+ * an operator-facing `daemon.json` linter) should call `readDaemonConfigFile`
+ * itself.
+ */
+const readDaemonConfigFileLenient = (): Record<string, unknown> => {
+  try {
+    return readDaemonConfigFile()
   } catch {
     return {}
   }
@@ -544,7 +600,7 @@ export const readDaemonConfigFile = (): Record<string, unknown> => {
 export const patchDaemonConfigFile = (
   patch: Record<string, unknown>,
 ): Record<string, unknown> => {
-  const current = readDaemonConfigFile()
+  const current = readDaemonConfigFileLenient()
   const next: Record<string, unknown> = { ...current }
   for (const [key, value] of Object.entries(patch)) {
     if (value === null) {
@@ -591,7 +647,7 @@ export const patchDaemonConfigFile = (
  * of uncommitted operator work — ADR-0058).
  */
 export const readPersistedPaused = (): boolean => {
-  const raw = readDaemonConfigFile()
+  const raw = readDaemonConfigFileLenient()
   return raw.paused === true
 }
 
@@ -617,7 +673,7 @@ export const persistPaused = (value: boolean): void => {
  * else is treated as absent.
  */
 export const readAutotuneMaxImplement = (): number | null => {
-  const raw = readDaemonConfigFile()
+  const raw = readDaemonConfigFileLenient()
   const steward = raw.steward
   if (steward === null || typeof steward !== 'object' || Array.isArray(steward)) return null
   const val = (steward as Record<string, unknown>).autotuneMaxImplement
@@ -637,7 +693,7 @@ export const readAutotuneMaxImplement = (): number | null => {
  * Preserves all other keys via `patchDaemonConfigFile`.
  */
 export const persistAutotuneMaxImplement = (n: number | null): void => {
-  const current = readDaemonConfigFile()
+  const current = readDaemonConfigFileLenient()
   const existing =
     current.steward !== null &&
     typeof current.steward === 'object' &&
@@ -663,7 +719,7 @@ export const persistAutotuneMaxImplement = (n: number | null): void => {
  * rewritten by `persistLeverAutonomyLevel`.
  */
 export const readLeverAutonomyLevel = (name: string): AutonomyLevel => {
-  const raw = readDaemonConfigFile()
+  const raw = readDaemonConfigFileLenient()
   // Prefer `producerLevers`; fall back to the legacy `levers` key.
   const leversRaw = raw.producerLevers ?? raw.levers
   if (leversRaw === null || typeof leversRaw !== 'object' || Array.isArray(leversRaw)) {
@@ -691,7 +747,7 @@ export const readLeverAutonomyLevel = (name: string): AutonomyLevel => {
 
 /** Read an operator-/Steward-managed standing Worker prompt block, if any. */
 export const readWorkerPromptOverride = (block: WorkerPromptBlockId): string | null => {
-  const workerPrompts = readDaemonConfigFile().workerPrompts
+  const workerPrompts = readDaemonConfigFileLenient().workerPrompts
   if (workerPrompts === null || typeof workerPrompts !== 'object' || Array.isArray(workerPrompts)) {
     return null
   }
@@ -707,7 +763,7 @@ export const persistWorkerPromptOverride = (
   block: WorkerPromptBlockId,
   text: string | null,
 ): void => {
-  const current = readDaemonConfigFile()
+  const current = readDaemonConfigFileLenient()
   const existing =
     current.workerPrompts !== null &&
     typeof current.workerPrompts === 'object' &&
@@ -729,7 +785,7 @@ export const persistWorkerPromptOverride = (
  * during the migration.
  */
 export const persistLeverAutonomyLevel = (name: string, level: AutonomyLevel): void => {
-  const current = readDaemonConfigFile()
+  const current = readDaemonConfigFileLenient()
   // Merge legacy `levers` entries into `producerLevers` on first write.
   const legacyLevers =
     current.levers !== null &&
@@ -764,9 +820,18 @@ export const persistLeverAutonomyLevel = (name: string, level: AutonomyLevel): v
  *
  * Migrates on read: the old `autoReflect` key is accepted as `memoryCapture`
  * so existing daemon.json files from before the rename continue to work.
+ *
+ * Uses `readDaemonConfigFileLenient` (not `readDaemonConfigFile` directly):
+ * `readControlLevers` is one of `loadDaemonConfig`'s building blocks, and
+ * `loadDaemonConfig` has a long-standing contract — "the file is optional; a
+ * missing/invalid file silently falls back to env+defaults so the daemon
+ * never refuses to start because of a malformed config" — so a validation
+ * failure caused by some other, unrelated field (e.g. a malformed
+ * `selfEvolve` block) must degrade to the defaults here too, exactly like an
+ * absent file, rather than propagate.
  */
 export const readControlLevers = (): ControlLevers => {
-  const file = readDaemonConfigFile()
+  const file = readDaemonConfigFileLenient()
   const cl = file.controlLevers
   const result = { ...DEFAULT_CONTROL_LEVERS }
   if (cl !== null && typeof cl === 'object' && !Array.isArray(cl)) {
