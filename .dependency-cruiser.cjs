@@ -220,6 +220,158 @@ module.exports = {
     },
 
     // =========================================================================
+    // STUB — MODULAR-CORE PORT BOUNDARIES (PRD ae17340a). INTENTIONALLY
+    // DISABLED. DO NOT ENABLE YET.
+    // =========================================================================
+    // Contract slice for ADR-0097 ("every seam is a cordis service Port with
+    // serializable contracts"). Four consumer slices each thicken one of the
+    // rules below by (a) building/finishing the named `core/ports/<name>/`
+    // module — mirroring the existing `core/ports/{code-index,reflector,
+    // verifier}/` shape (types.ts + registry.ts + one file per impl kind +
+    // __tests__/serializable.test.ts) — and (b) migrating the listed current
+    // callers off the internals and onto the port, then uncommenting its rule.
+    //
+    // Each rule is commented out, not just left un-added, because an `error`
+    // rule that starts red the moment it lands would break `npm run arch` on
+    // `main` for every task that branches afterward — the opposite of what an
+    // owner slice landing ahead of its consumers is for. A consumer slice
+    // uncomments its own rule as part of proving its own boundary; it does
+    // NOT touch the other three.
+    //
+    // Do not "fix" this by pre-populating `pathNot` with every current
+    // caller: for CLI (~46 files) and the not-yet-built Executor/VCS ports
+    // that defeats the rule (it would pass by excluding everything it exists
+    // to catch). Verifier is the one exception close enough to activate with
+    // a small, real `pathNot` carve-out today — left commented anyway so all
+    // four land the same way and no rule goes live without its slice's own
+    // verify proving it.
+
+    // {
+    //   name: 'cli-no-orchestrator-internals',
+    //   severity: 'error',
+    //   comment:
+    //     'Consumer slice: "Arch-guard ratchet: CLI must not import orchestrator internals". ' +
+    //     'orchestrator/src/cli/** (cli.ts, cli/dispatch.ts) is already clean; the violations are ' +
+    //     'inside cli/commands/*.ts, which today reach past any port straight into core/workers/*, ' +
+    //     'core/lib/git/* (verify.ts, checkpoint.ts, worktree.ts, merge.ts), and tools/verify/* — ' +
+    //     'roughly 46 files (e.g. cli/commands/worker.ts, verify-gate.ts, install.ts). Because the ' +
+    //     'violation count is too large for a `pathNot` carve-out and too broad for a one-off ' +
+    //     'baseline seed in this owner slice, TO ENABLE: migrate cli/commands/*.ts onto the ' +
+    //     'verifier/executor/vcs ports below (once built) or another stable public surface, THEN ' +
+    //     'either land clean or record residual pre-existing imports as a known-violations ratchet ' +
+    //     'baseline (same mechanism as no-circular above) — never widen this pathNot to hide new ' +
+    //     'ones instead.',
+    //   from: {
+    //     path: '^orchestrator/src/cli/',
+    //     pathNot: ['(^|/)__tests__/', '\\.(test|spec)\\.ts$'],
+    //   },
+    //   to: {
+    //     path: [
+    //       '^orchestrator/src/core/workers/',
+    //       '^orchestrator/src/core/lib/git/',
+    //       '^orchestrator/src/tools/',
+    //     ],
+    //   },
+    // },
+    // {
+    //   name: 'no-direct-verifier-internals',
+    //   severity: 'error',
+    //   comment:
+    //     'Consumer slice: "Arch-guard: no direct imports of the verifier internals". The Verifier ' +
+    //     'port (core/ports/verifier/{types,registry,local-subprocess,remote-http,review-verifier}.ts) ' +
+    //     'already wraps core/lib/git/verify.ts (verifyChanges, loadVerifyScopes, ' +
+    //     'cleanWorktreeIfNoCommitsAhead, selectVerifySteps) and tools/verify/review.ts — reach ' +
+    //     'those directly from anywhere else and a verify strategy swap (e.g. remote-http) silently ' +
+    //     'stops covering that caller. Today\'s real remaining violators — narrow enough to carve out ' +
+    //     'directly instead of a baseline seed — are cli/commands/verify-gate.ts, ' +
+    //     'tools/coder/run-agent.ts, tools/merge/merge.ts, tools/verify/selection.ts, and ' +
+    //     'workflows/primitives/shared.ts. TO ENABLE: migrate each onto core/ports/verifier, then ' +
+    //     'delete this rule\'s temporary pathNot entries one by one as each caller moves.',
+    //   from: {
+    //     path: '^orchestrator/src/',
+    //     pathNot: [
+    //       '^orchestrator/src/core/lib/git/verify\\.ts$',
+    //       '^orchestrator/src/core/ports/verifier/',
+    //       '^orchestrator/src/tools/verify/review\\.ts$',
+    //       '^orchestrator/src/cli/commands/verify-gate\\.ts$', // TODO(consumer slice): migrate, then drop
+    //       '^orchestrator/src/tools/coder/run-agent\\.ts$', // TODO(consumer slice): migrate, then drop
+    //       '^orchestrator/src/tools/merge/merge\\.ts$', // TODO(consumer slice): migrate, then drop
+    //       '^orchestrator/src/tools/verify/selection\\.ts$', // TODO(consumer slice): migrate, then drop
+    //       '^orchestrator/src/workflows/primitives/shared\\.ts$', // TODO(consumer slice): migrate, then drop
+    //       '(^|/)__tests__/',
+    //       '\\.(test|spec)\\.ts$',
+    //     ],
+    //   },
+    //   to: { path: '^orchestrator/src/core/lib/git/verify\\.ts$' },
+    // },
+    // {
+    //   name: 'agent-execution-through-executor-port',
+    //   severity: 'error',
+    //   comment:
+    //     'Consumer slice: "Arch-guard: route all agent execution through the Executor port". No ' +
+    //     'core/ports/executor/ module exists yet — this rule names the internals it will wrap: ' +
+    //     'core/lib/git/claude.ts (runClaudeCode), core/workers/run-pty-session.ts, ' +
+    //     'core/workers/providers.ts + provider-registry.ts + providers/*, core/workers/index.ts. ' +
+    //     'tools/coder/run-agent.ts is today\'s de-facto dispatch shell (the review.ts-equivalent an ' +
+    //     'executor implementation will wrap, per core-no-direct-provider-impl above for the ' +
+    //     'provider-adapter half of this same boundary). TO ENABLE: build core/ports/executor/ ' +
+    //     '(mirror core/ports/verifier/\'s shape), migrate cli/commands/worker.ts, ' +
+    //     'tools/coder/coder-exit.ts, tools/verify/review.ts, and the plan/slice/triage workflows off ' +
+    //     'core/workers directly, then narrow this from/to to the real remaining boundary.',
+    //   from: {
+    //     path: '^orchestrator/src/',
+    //     pathNot: [
+    //       '^orchestrator/src/core/workers/',
+    //       '^orchestrator/src/core/lib/git/claude\\.ts$',
+    //       '^orchestrator/src/core/ports/executor/',
+    //       '^orchestrator/src/tools/coder/run-agent\\.ts$',
+    //       '(^|/)__tests__/',
+    //       '\\.(test|spec)\\.ts$',
+    //     ],
+    //   },
+    //   to: {
+    //     path: [
+    //       '^orchestrator/src/core/lib/git/claude\\.ts$',
+    //       '^orchestrator/src/core/workers/(run-pty-session|providers|provider-registry)\\.ts$',
+    //       '^orchestrator/src/core/workers/providers/',
+    //     ],
+    //   },
+    // },
+    // {
+    //   name: 'vcs-internals-through-port-only',
+    //   severity: 'error',
+    //   comment:
+    //     'Consumer slice: "Arch-guard: VCS internals reachable only through the port". No ' +
+    //     'core/ports/vcs/ module exists yet. Internals under core/lib/git/ this will wrap: ' +
+    //     'checkpoint.ts, worktree.ts, merge.ts, commit-main.ts, commit-message.ts, lock.ts, ' +
+    //     'verify-markers.ts, classify-porcelain.ts, internal.ts (verify.ts and claude.ts are the ' +
+    //     'Verifier and Executor internals above, not this boundary). Today\'s fan-out is the widest ' +
+    //     'of the four (tools/context.ts, tools/merge/merge.ts — the TOOL, distinct from ' +
+    //     'core/lib/git/merge.ts the INTERNAL it calls — tools/coder/{run-agent,setup-worktree,' +
+    //     'coder-exit}.ts, tools/verify/review.ts, tools/qa/finalize-mockup.ts, ' +
+    //     'tools/report/finalize-report.ts, workflows/primitives/behaviour-verify.ts). ' +
+    //     'cli/commands/{worktree,merge}.ts already go through injected CommandDeps rather than ' +
+    //     'importing core/lib/git/* directly, so the CLI side of this boundary may already be clean. ' +
+    //     'TO ENABLE: build core/ports/vcs/, migrate the tools/* + workflows/* callers above, then ' +
+    //     'narrow this from/to to the real remaining boundary.',
+    //   from: {
+    //     path: '^orchestrator/src/',
+    //     pathNot: ['^orchestrator/src/core/lib/git/', '(^|/)__tests__/', '\\.(test|spec)\\.ts$'],
+    //   },
+    //   to: {
+    //     path: [
+    //       '^orchestrator/src/core/lib/git/checkpoint\\.ts$',
+    //       '^orchestrator/src/core/lib/git/worktree\\.ts$',
+    //       '^orchestrator/src/core/lib/git/merge\\.ts$',
+    //       '^orchestrator/src/core/lib/git/commit-main\\.ts$',
+    //       '^orchestrator/src/core/lib/git/commit-message\\.ts$',
+    //       '^orchestrator/src/core/lib/git/verify-markers\\.ts$',
+    //     ],
+    //   },
+    // },
+    // =========================================================================
+
+    // =========================================================================
     // STUB — ADR-0056 LAYER RULES. INTENTIONALLY DISABLED. DO NOT ENABLE YET.
     // =========================================================================
     // ADR-0056 ("One library, three logical layers") specifies a downward-only
