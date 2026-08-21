@@ -10,6 +10,8 @@ import {
   TRACE_EVENT_KINDS,
   type TraceEventKind,
 } from '../trace-events-store'
+import { openDb } from '../db'
+import { emitEvent } from '../../../bus/emit'
 
 const tmpDbPath = (): string => {
   const dir = mkdtempSync(join(tmpdir(), 'mars-trace-events-'))
@@ -289,6 +291,45 @@ describe('openTraceEventStore — record + query roundtrip', () => {
       expect(events[0].taskId).toBeNull()
       expect(events[0].originId).toBeNull()
       expect(events[0].severity).toBe('error')
+    } finally {
+      await store.close()
+    }
+  })
+})
+
+// ── bus-only kinds written via emitEvent ────────────────────────────────────
+//
+// `emitEvent` (bus/emit.ts) writes a `trace_events` row for every
+// UnifiedEventKind, including bus-only `EventName`s (e.g. `task.completed`)
+// that are not in the closed `TRACE_EVENT_KINDS` vocabulary. `query()`'s read
+// path must not throw on those rows — see the regression this guards against
+// in `rowToEvent`.
+
+describe('openTraceEventStore — bus-only kinds written via emitEvent', () => {
+  it('a bus-only kind (task.completed) written via emitEvent is readable through query() without throwing', async () => {
+    const dbPath = tmpDbPath()
+    const store = await openTraceEventStore(dbPath)
+    // Same dbTarget as `store` — `openDb` dedupes onto the same pooled
+    // client, so a write through `emitEvent(dbClient, ...)` lands in the
+    // identical `trace_events` table `store.query()` reads.
+    const dbClient = openDb(dbPath)
+    try {
+      // `emitEvent` opens its own transaction via `withTransaction` when
+      // `opts.tx` is omitted, which bypasses the lazy schema bootstrap —
+      // warm the client with a plain query first so schema is ready.
+      await dbClient.execute('SELECT 1')
+
+      await emitEvent(
+        dbClient,
+        'task.completed',
+        { taskId: 'bus-only-1', result: { ok: true } },
+        { taskId: 'bus-only-1' },
+      )
+
+      const events = await store.query({ taskId: 'bus-only-1' })
+      expect(events).toHaveLength(1)
+      expect(events[0].kind).toBe('task.completed')
+      expect(events[0].payload).toEqual({ taskId: 'bus-only-1', result: { ok: true } })
     } finally {
       await store.close()
     }
