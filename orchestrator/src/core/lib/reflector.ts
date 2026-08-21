@@ -25,6 +25,7 @@ import { loadLeverRegistry, formatRecipeCatalog, formatLeverList } from './lever
 import type { LeverRegistryEntry } from './lever-registry'
 import type { Reflector, ReflectorRunOutcome } from '../ports/reflector/types'
 import { failureSignatureFamily, STEP_ID_RE } from './failure-signature'
+import { recordCandidateLesson } from './candidate-lessons'
 
 // Re-export the shared outcome types so callers importing from 'reflector'
 // continue to get them (deep-reflector.ts, tests, etc.).
@@ -924,6 +925,27 @@ export const deriveRootCauseFamily = (rootCauseKey: string): string =>
     ? failureSignatureFamily(rootCauseKey)
     : rootCauseKey
 
+/**
+ * Deterministic dedup fingerprint for a suggestion: `rootCauseKey` (widened
+ * to its signature family, see {@link deriveRootCauseFamily}) when present,
+ * else a structural key derived from the normalized title and outcome id.
+ * Shared by {@link persistOneSuggestion} (proposal-row dedup) and
+ * {@link applyVerdicts} (corroboration-floor accounting in
+ * `candidate-lessons.ts`) so the same suggestion always maps to the same
+ * fingerprint regardless of which path is accounting for it.
+ */
+const computeSuggestionFingerprint = (
+  s: Pick<ReflectionSuggestion, 'title' | 'rootCauseKey' | 'outcome'>,
+): string => {
+  const outcomeId =
+    s.outcome.type === 'lever' ? s.outcome.lever.id : s.outcome.leverGap.proposedLeverId
+  const normalizedRootCauseKey = deriveRootCauseFamily(s.rootCauseKey)
+  const fingerprintInput = normalizedRootCauseKey
+    ? `reflection:${normalizedRootCauseKey}:`
+    : `reflection-derived:${s.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}:${outcomeId}:`
+  return createHash('sha256').update(fingerprintInput).digest('hex').slice(0, 32)
+}
+
 const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<string | null> => {
   // Build an outcome block for the proposal so `mars proposal show <id>`
   // gives the operator enough context to act without opening the code.
@@ -949,20 +971,7 @@ const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<string | n
   // normalized title and the outcome id — this ensures dedup runs on every
   // suggestion and prevents the 0-absorbed rate observed when the model omits
   // the key (1 of 176 proposals had a fingerprint before this fix).
-  const outcomeId =
-    s.outcome.type === 'lever' ? s.outcome.lever.id : s.outcome.leverGap.proposedLeverId
-  // A signature-shaped rootCauseKey (the model echoed an actual failure
-  // signature instead of minting a slug) is normalised to its family first,
-  // so two suggestions differing only in the signature's step-kind segment
-  // (e.g. `verify:has-diff/no-commits-ahead` vs `verify:typecheck/no-commits-ahead`)
-  // collapse into the same fingerprint instead of forking into near-duplicate
-  // drafts. Non-signature keys (the common snake_case slug case) are hashed
-  // unchanged — no behaviour change there.
-  const normalizedRootCauseKey = deriveRootCauseFamily(s.rootCauseKey)
-  const fingerprintInput = normalizedRootCauseKey
-    ? `reflection:${normalizedRootCauseKey}:`
-    : `reflection-derived:${s.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}:${outcomeId}:`
-  const fingerprint = createHash('sha256').update(fingerprintInput).digest('hex').slice(0, 32)
+  const fingerprint = computeSuggestionFingerprint(s)
 
   const existing = await findOpenReflectionDraftByFingerprint(fingerprint)
   if (existing) {
@@ -1085,6 +1094,15 @@ export interface ApplyVerdictsResult {
   absorbed: number
   dropped: number
   savedSuggestions: VerdictedSuggestion[]
+  /**
+   * Corroboration floor (ADR-0099): count of 'save'-verdicted suggestions
+   * that were withheld from proposal creation because their coverage spans
+   * fewer than {@link MIN_CORROBORATION_INSTANCES} distinct arcs and no
+   * exemption applied. Each is recorded as a `candidate_lessons` row instead
+   * (see {@link recordCandidateLesson}) and re-considered on the arc's next
+   * observation.
+   */
+  heldBelowFloor: number
 }
 
 export const parseVerdict = (raw: unknown): SuggestionVerdict => {
@@ -1095,13 +1113,25 @@ export const parseVerdict = (raw: unknown): SuggestionVerdict => {
 /**
  * ADR-0099 corroboration floor: minimum distinct arcs/instances a
  * deep-reflect suggestion must be observed in before it earns full standing
- * (mirrors the skill-forge ≥3-arc pattern already used for skill induction).
- * Below this, the suggestion is a single-arc (n=1) induction — the consumer
- * verdicting the suggestion is expected to reduce its standing (e.g. lower
- * confidence, or file it as a gap rather than auto-save) rather than
- * treating it as equally trustworthy to a corroborated one.
+ * (mirrors the skill-forge ≥3-arc pattern already used for skill induction,
+ * `skill-forge-detector.ts`'s `group.originIds.size >= 3`). Below this, the
+ * suggestion is a single-arc (n=1) induction — {@link applyVerdicts} records
+ * it as a candidate lesson (`candidate-lessons.ts`) rather than filing a
+ * proposal, unless it carries an exemption (see {@link EXEMPT_TOKEN_BURN}).
  */
 export const MIN_CORROBORATION_INSTANCES = 3
+
+/**
+ * Weighted-token-burn threshold (ADR-0099 exemption): a suggestion induced
+ * from an arc whose total weighted token spend exceeds this is filed
+ * immediately regardless of corroboration count — an arc this expensive is
+ * worth a proposal on its own, independent of how many other arcs echo it.
+ * The other exemption is high-severity dissonance (a `dissonantCalls` entry
+ * with `severity: 'high'`); callers compute both from arc-level data
+ * `applyVerdicts` itself has no access to and pass the combined result as
+ * {@link ApplyVerdictsOptions.exempt}.
+ */
+export const EXEMPT_TOKEN_BURN = 150_000
 
 /**
  * True once a suggestion's {@link VerdictedSuggestion.corroboratingInstanceCount}
@@ -1113,13 +1143,34 @@ export const meetsCorroborationFloor = (corroboratingInstanceCount: number | und
   typeof corroboratingInstanceCount === 'number' &&
   corroboratingInstanceCount >= MIN_CORROBORATION_INSTANCES
 
+export interface ApplyVerdictsOptions {
+  /**
+   * Identity of the arc (or session) this batch of 'save'-verdicted
+   * suggestions was induced from — the unit `candidate-lessons.ts`
+   * accumulates observations against. Two calls sharing the same `arcId`
+   * count as one observation, not two (re-running `arc reflect` on the same
+   * arc is not independent corroboration).
+   */
+  arcId: string
+  /**
+   * ADR-0099 corroboration-floor exemption: when true, every 'save'-verdicted
+   * suggestion in this call bypasses {@link MIN_CORROBORATION_INSTANCES} and
+   * is filed immediately. Computed by the caller from arc-level signals
+   * (high-severity dissonance, or weighted token burn above
+   * {@link EXEMPT_TOKEN_BURN}) that `applyVerdicts` has no access to itself.
+   */
+  exempt?: boolean
+}
+
 export const applyVerdicts = async (
   suggestions: readonly VerdictedSuggestion[],
   _sourceTaskId: string,
+  options: ApplyVerdictsOptions,
 ): Promise<ApplyVerdictsResult> => {
   let saved = 0
   let absorbed = 0
   let dropped = 0
+  let heldBelowFloor = 0
   const savedSuggestions: VerdictedSuggestion[] = []
   for (const s of suggestions) {
     if (s.verdict === 'drop') {
@@ -1132,6 +1183,27 @@ export const applyVerdicts = async (
       absorbed += 1
       continue
     }
+
+    // Corroboration floor (ADR-0099): an n=1 (single-arc) 'save' does not
+    // earn a proposal on its own unless exempted. Record the observation in
+    // candidate-lessons first — that upsert is what lets a suggestion
+    // re-induced from a THIRD distinct arc cross the floor and get promoted
+    // in this very call, on "the next observation" after the floor.
+    if (!options.exempt) {
+      const fingerprint = computeSuggestionFingerprint(s)
+      const lesson = await recordCandidateLesson({
+        fingerprint,
+        title: s.title,
+        body: [s.rationale, s.prompt].filter(Boolean).join('\n\n'),
+        arcId: options.arcId,
+      })
+      s.corroboratingInstanceCount = lesson.observationCount
+      if (!meetsCorroborationFloor(lesson.observationCount)) {
+        heldBelowFloor += 1
+        continue
+      }
+    }
+
     // Route through the same fingerprint dedup as persistSuggestions so that
     // deep-reflection 'save' verdicts also merge into existing open drafts
     // rather than creating duplicates. Write the created/found proposal id back
@@ -1142,7 +1214,7 @@ export const applyVerdicts = async (
     saved += 1
     savedSuggestions.push(s)
   }
-  return { saved, absorbed, dropped, savedSuggestions }
+  return { saved, absorbed, dropped, savedSuggestions, heldBelowFloor }
 }
 
 /**
