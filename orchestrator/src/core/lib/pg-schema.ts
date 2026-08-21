@@ -67,7 +67,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0037'
+export const SCHEMA_VERSION = '0038'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -1723,10 +1723,47 @@ const DDL: readonly string[] = [
      ON auto_recipe_runs(ran_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_auto_recipe_runs_signature
      ON auto_recipe_runs(signature, ran_at DESC)`,
-  // Outcome feedback (ADR-0099): every auto-run is logged as 'pending' and
-  // later resolved to 'success' | 'failure' once the acted-on task's fate is
-  // known, so the recipe's outcome log can be consulted before re-firing.
+  // ADR-0099 "self-improvement loops induce the weakest valid hypothesis":
+  // learned recipes stay exact-match but gain an outcome log consulted
+  // before re-firing — did acting on the recipe actually resolve the
+  // originating failure? Every auto-run is logged 'pending' and resolved
+  // asynchronously to 'success' | 'failure' once the acted-on task settles;
+  // never back-filled by guessing.
+  //
+  // Deliberately no CHECK constraint on `outcome`: the column already
+  // exists (unconstrained) on every database created since v0037, where
+  // `ADD COLUMN IF NOT EXISTS` is a no-op — a CHECK written here would bind
+  // on fresh databases only and silently diverge from existing ones. The
+  // permitted values are enforced by `AutoRecipeOutcome` in
+  // core/lib/learned-recipes.ts, which is the single definition.
   `ALTER TABLE auto_recipe_runs ADD COLUMN IF NOT EXISTS outcome text NOT NULL DEFAULT 'pending'`,
+  `ALTER TABLE auto_recipe_runs ADD COLUMN IF NOT EXISTS outcome_recorded_at bigint`,
+  `ALTER TABLE auto_recipe_runs ADD COLUMN IF NOT EXISTS outcome_note text`,
+  `CREATE INDEX IF NOT EXISTS idx_auto_recipe_runs_signature_outcome
+     ON auto_recipe_runs(signature, outcome)`,
+
+  // ── candidate lessons (under-corroborated inductions, ADR-0099) ──────────
+  // deep-reflect single-arc suggestions need corroboration (the skill-forge
+  // >=3-distinct-arc pattern) or reduced standing. Rather than silently
+  // discarding a lesson cluster that has not yet crossed that bar,
+  // `skill-forge scan` parks it here keyed by its lesson key and keeps
+  // accumulating distinct arc origin ids across runs until it either
+  // crosses the corroboration threshold (promoted, linked to the filed
+  // proposal) or is explicitly dismissed.
+  `CREATE TABLE IF NOT EXISTS candidate_lessons (
+    lesson_key           text   PRIMARY KEY,
+    title                text   NOT NULL,
+    summary              text   NOT NULL,
+    root_cause_key       text   NOT NULL,
+    arc_origin_ids       text   NOT NULL DEFAULT '[]',
+    status               text   NOT NULL DEFAULT 'candidate'
+                                CHECK (status IN ('candidate', 'promoted', 'dismissed')),
+    promoted_proposal_id text   REFERENCES proposals(id),
+    first_seen_at        bigint NOT NULL,
+    last_seen_at         bigint NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_candidate_lessons_status
+     ON candidate_lessons(status)`,
 
   // ── Steward intervention ledger ─────────────────────────────────────────
   // Append-only evidence for every proactive Steward action. The target
@@ -2170,6 +2207,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'workflow_step_runs',
   'learned_recipes',
   'auto_recipe_runs',
+  'candidate_lessons',
   'steward_ledger',
   'merge_jobs',
   'task_deployments',
