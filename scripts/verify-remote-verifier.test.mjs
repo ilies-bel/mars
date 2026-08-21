@@ -72,11 +72,23 @@ async function main() {
   console.log("verify-remote-verifier.test.mjs\n");
 
   // 1. Config: MARS_VERIFIER_KIND unset -> resolves to the default "local",
-  //    never even attempts a network call.
+  //    never even attempts a network call. This is a SKIP, not a failure:
+  //    the script is wired in as an unattended verify command, so a repo
+  //    running the default `local` Verifier must not fail the gate.
   {
     const result = runScriptSync({ MARS_VERIFIER_KIND: "", MARS_VERIFIER_REMOTE_URL: "" });
-    check("no MARS_VERIFIER_KIND set -> exit 1, config diagnosis", result.status === 1, `status=${result.status}`);
-    check("config diagnosis names the resolved kind", /config:.*"local"/.test(result.stderr), result.stderr);
+    check("no MARS_VERIFIER_KIND set -> exit 0, skipped", result.status === 0, `status=${result.status}\n${result.stderr}`);
+    check("skip diagnosis names the resolved kind", /skip:.*"local"/.test(result.stderr), result.stderr);
+    check("skip says no endpoint was contacted", /no remote endpoint was contacted/.test(result.stderr), result.stderr);
+    check("final stdout line is SKIP, not PASS", /verify-remote-verifier: SKIP/.test(result.stdout) && !/verify-remote-verifier: PASS/.test(result.stdout), result.stdout);
+  }
+
+  // 1b. A non-remote kind that was selected explicitly skips the same way —
+  //     selecting `local` on purpose is not a misconfiguration.
+  {
+    const result = runScriptSync({ MARS_VERIFIER_KIND: "local", MARS_VERIFIER_REMOTE_URL: "" });
+    check("explicit MARS_VERIFIER_KIND=local -> exit 0, skipped", result.status === 0, `status=${result.status}\n${result.stderr}`);
+    check("explicit local prints the SKIP line", /verify-remote-verifier: SKIP/.test(result.stdout), result.stdout);
   }
 
   // 2. Config: remote-http selected but the URL env var is unset.

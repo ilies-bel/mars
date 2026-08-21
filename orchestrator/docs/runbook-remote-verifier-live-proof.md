@@ -125,9 +125,27 @@ node scripts/verify-remote-verifier.mjs
 It resolves the Port config through the real registry (never
 hardcoding the env var names), POSTs a synthetic no-op
 `VerifierRunArgs`, and validates the response against
-`VerifierRunResult`. Exit codes: `0` PASS, `1` CONFIG (kind/URL unset),
-`2` TRANSPORT, `3` AUTH (401/403), `4` HTTP (other non-2xx), `5` SCHEMA
-(bad JSON / shape). Do not proceed to §3 until this exits `0`.
+`VerifierRunResult`. Exit codes: `0` PASS **or SKIP**, `1` CONFIG
+(remote-http selected but its URL env var unset), `2` TRANSPORT, `3`
+AUTH (401/403), `4` HTTP (other non-2xx), `5` SCHEMA (bad JSON /
+shape).
+
+**Check the last line of stdout, not just the exit code.** Exit `0`
+covers two different outcomes:
+
+| Last stdout line | Meaning |
+| --- | --- |
+| `verify-remote-verifier: PASS — verdict=…` | The endpoint was contacted and its response matched the contract. |
+| `verify-remote-verifier: SKIP — Verifier Port kind is "local", …` | `MARS_VERIFIER_KIND` did not resolve to `remote-http`, so **nothing was contacted**. |
+
+A `SKIP` almost always means the env vars did not reach the process —
+a typo, a missing `export`, or a shell that dropped them. Re-run with
+the three variables set on the same command, as above.
+
+The skip exists so the script is safe to wire in as an unattended
+verify command on a repo running the default `local` Verifier; it is
+never a valid outcome for this runbook. Do not proceed to §3 until you
+see the `PASS` line.
 
 ---
 

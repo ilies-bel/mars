@@ -33,8 +33,19 @@
  * `remote-http` implementation entry, not spelled out as literals here.)
  *
  * Exit codes:
- *   0  PASS       response received and validates against VerifierRunResult
- *   1  CONFIG     MARS_VERIFIER_KIND isn't remote-http, or its URL is unset
+ *   0  PASS/SKIP  response received and validates against VerifierRunResult,
+ *                 OR the Verifier Port isn't selected as remote-http at all,
+ *                 in which case there is no endpoint to smoke-test and the
+ *                 script skips without contacting anything. Skipping is a
+ *                 SUCCESS on purpose: this script is safe to wire in as an
+ *                 unattended verify command, where the remote Verifier is
+ *                 deliberately not configured, and it must not fail a repo
+ *                 that simply runs the default `local` implementation.
+ *                 Distinguish the two on the final line of stdout:
+ *                 `verify-remote-verifier: PASS` vs `... : SKIP`.
+ *   1  CONFIG     remote-http IS selected but its config is unusable — the
+ *                 registry declares no URL env var, or that var is unset.
+ *                 An explicit opt-in with broken config is a real failure.
  *   2  TRANSPORT  the HTTP request itself failed (DNS, refused, timed out)
  *   3  AUTH       the endpoint responded 401/403
  *   4  HTTP       the endpoint responded with some other non-2xx status
@@ -178,11 +189,18 @@ async function main() {
 
   const { entry, kind } = config
   if (kind !== 'remote-http') {
+    // Not an error: the Verifier Port is running some other implementation
+    // (by default `local`), so there is no remote endpoint to smoke-test.
+    // Exit 0 so this script can sit in an unattended verify command without
+    // failing every repo that hasn't opted into remote-http. The SKIP line
+    // is what an operator following the runbook must not mistake for a PASS.
     console.error(
-      `config: MARS_VERIFIER_KIND resolved to "${kind}", not "remote-http" — ` +
-        `set MARS_VERIFIER_KIND=remote-http to smoke-test the remote endpoint`,
+      `skip: MARS_VERIFIER_KIND resolved to "${kind}", not "remote-http" — ` +
+        `no remote endpoint was contacted; ` +
+        `set MARS_VERIFIER_KIND=remote-http to smoke-test one`,
     )
-    return 1
+    console.log(`verify-remote-verifier: SKIP — Verifier Port kind is "${kind}", not "remote-http"`)
+    return 0
   }
 
   const remoteImpl = entry.implementations.find((impl) => impl.kind === 'remote-http')
