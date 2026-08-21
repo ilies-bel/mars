@@ -25,3 +25,6 @@ regenerates it and fails if this file disagrees.
 | `MARS_SCORING_LOW_TREND_THRESHOLD` | `scoring.lowTrendThreshold` | number | `0.5` | Rolling-median score floor below which the low-trend scoring trigger fires. |
 | `MARS_SCORING_LOW_TREND_WINDOW` | `scoring.lowTrendWindow` | number | `5` | Number of consecutive scored workflow instances the rolling-median score trend is computed over. |
 | `MARS_WORKER_PROVIDER` | `defaultProvider` | string | `"codex"` | Overrides the default agent provider (claude/gemini/codex) for every un-pinned Worker in this daemon process. |
+| `MARS_VERIFIER_REMOTE_URL` | `verifier.remoteUrl` | object | `null` | Endpoint URL the `remote-http` Verifier posts verification requests to. Unset means no remote verifier is configured. |
+| `MARS_VERIFIER_REMOTE_TOKEN` | `verifier.remoteAuthToken` | object | `null` | Bearer token the `remote-http` Verifier sends in the Authorization header. Unset means the endpoint is called unauthenticated. |
+| `MARS_VERIFIER_REMOTE_TIMEOUT_MS` | `verifier.remoteTimeoutMs` | number | `30000` | Milliseconds the `remote-http` Verifier waits for a verification response before aborting the request. |
