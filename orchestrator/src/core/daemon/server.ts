@@ -181,6 +181,8 @@ import {
   type DispatchKind,
   type TaskFlightTracker,
 } from './task-flight-tracker'
+import { startScheduler, type DaemonSemaphores } from './scheduler'
+import { startSweeps } from './sweeps'
 import { registerDispatchHint } from './dispatch-hint'
 import { setWorkerLivenessProbe } from '../lib/worker-liveness'
 import { rpcRegistry, dispatchRpc } from './rpc/registry'
@@ -241,41 +243,6 @@ export interface DaemonOptions {
 }
 
 /**
- * Named type for the daemon's per-kind dispatch semaphores. Pulled out of an
- * inline literal so the modules later slices extract from this file — the
- * scheduling/sweep closures and the HTTP route-registration deps, both of
- * which read `sems` today — can reference the same shape instead of each
- * re-deriving it structurally.
- */
-export type DaemonSemaphores = Record<
-  Exclude<
-    DispatchKind,
-    'merge' | 'arc-verify' | 'glossary-write' | 'adr-add' | 'adr-supersede' | 'vision'
-  >,
-  Semaphore
-> & {
-  arcVerify: Semaphore
-}
-
-/**
- * Shared dependency shape for the daemon's periodic sweep/schedule closures
- * (stale-merge sweep, running-committer lifetime sweep, reflect-detector
- * sweep, proposal expiry, outbox drains, …). Every one of those closures,
- * defined inline in `startDaemon` today, reads exactly this set. Established
- * here as the contract a future "extract scheduling and sweeps" slice
- * targets when it lifts them out into their own module(s) — this list will
- * grow as each sweep is actually moved, but starts scoped to what every
- * sweep already needs so extraction is additive, not a redesign.
- */
-export interface DaemonScheduleDeps {
-  bus: EventEmitter
-  viewStreamHub: ViewStreamHub
-  tracker: TaskFlightTracker
-  sems: DaemonSemaphores
-  log: (line: string) => void
-}
-
-/**
  * Persist a structured-write failure for the operator. Structured writes run
  * fire-and-forget, so their dispatchers must catch failures rather than let an
  * unhandled rejection terminate the daemon; this action-queue row is the
@@ -307,54 +274,6 @@ export const raiseStructuredWriteFailureAction = async (args: {
 }
 
 /**
- * A pending implement candidate captured during the first phase of
- * {@link pickNextImplement}. Exported so the pure comparator can be unit-tested
- * without mounting a live daemon.
- */
-export interface PickCandidate {
-  id: string
-  priority: number
-  createdAt: string
-  /** Arc root id (task.originId). Null is treated as "not started". */
-  originId: string | null
-}
-
-/**
- * Pure comparator used by {@link pickNextImplement} — exported for unit tests.
- *
- * Selection order (earlier rule wins):
- * 1. Higher `priority` wins.
- * 2. At equal priority, a candidate whose `originId` is in `startedOriginIds`
- *    beats one that is not (prefer in-flight arcs over fresh ones).
- * 3. At equal priority and equal started-flag, older `createdAt` wins (FIFO).
- *
- * A null `originId` is never considered started.
- */
-export function selectBestCandidate(
-  candidates: PickCandidate[],
-  startedOriginIds: Set<string>,
-): PickCandidate | null {
-  let best: PickCandidate | null = null
-  for (const c of candidates) {
-    if (best === null) {
-      best = c
-      continue
-    }
-    // Rule 1: higher priority always wins.
-    if (c.priority > best.priority) { best = c; continue }
-    if (c.priority < best.priority) continue
-    // Rule 2: at equal priority, started-origin beats non-started.
-    const cStarted = c.originId !== null && startedOriginIds.has(c.originId)
-    const bStarted = best.originId !== null && startedOriginIds.has(best.originId)
-    if (cStarted && !bStarted) { best = c; continue }
-    if (!cStarted && bStarted) continue
-    // Rule 3: older createdAt wins (FIFO fallback).
-    if (c.createdAt < best.createdAt) best = c
-  }
-  return best
-}
-
-/**
  * Returns `true` when a task must skip the dispatch-time dirty-main check.
  *
  * Two categories are exempt:
@@ -364,7 +283,7 @@ export function selectBestCandidate(
  *   into the integration branch, so a dirty branch cannot block them.
  *
  * Exported so the exemption predicate can be unit-tested without mounting a
- * live daemon (same pattern as {@link selectBestCandidate}).
+ * live daemon (same pattern as `selectBestCandidate` in ./scheduler).
  */
 export function isDispatchDirtyMainExempt(task: {
   kind?: string
@@ -1256,13 +1175,6 @@ export const startDaemon = async (
   /** Live set of in-flight task ids — used to protect their subprocesses. */
   const liveInFlightTaskIds = (): ReadonlySet<string> =>
     new Set(tracker.inFlightSnapshot().map((e) => e.taskId))
-
-  // Drain single-flight gate. While `drainRunning` is true, a second call
-  // sets `drainAgain` and returns; the running drain re-runs once it finishes.
-  // This + the claimed sets together guarantee no task id is ever dispatched
-  // more than once concurrently.
-  let drainRunning = false
-  let drainAgain = false
 
   // Unlike task dispatch, arc verification is best-effort and must shed rather
   // than accumulate a backlog. This set normally holds at most one id: it
@@ -2646,195 +2558,23 @@ export const startDaemon = async (
     }
   }
 
-  // Pick the highest-priority pending task. Ties broken first by whether the
-  // task's arc has already started (a sibling in running/verifying/merging/done),
-  // then by oldest createdAt (FIFO). Returns null if no pending row resolves
-  // to a real task (drained while we looked).
-  const pickNextImplement = async (): Promise<string | null> => {
-    // Phase 1: collect all eligible candidates.
-    const candidates: PickCandidate[] = []
-    for (const id of tracker.drainPending('implement')) {
-      // Skip ids already claimed by an in-flight (or about-to-be-in-flight)
-      // dispatch — without this the same id can be picked by parallel
-      // drains during the gap between pop-from-pending and acquire-slot.
-      if (tracker.isClaimed(id, 'implement') || tracker.isInFlight(id)) continue
-      const t = await getTask(id)
-      if (!t) continue
-      candidates.push({ id, priority: t.priority, createdAt: t.createdAt, originId: t.originId ?? null })
-    }
-    if (candidates.length === 0) return null
-
-    // Phase 2: determine which origins already have started siblings.
-    // An origin is STARTED iff any task with origin_id = <that id> has a
-    // status in ('running','verifying','merging','done').
-    // Guard the empty-candidate case so we never send an empty IN ().
-    const distinctOriginIds = [
-      ...new Set(
-        candidates
-          .map((c) => c.originId)
-          .filter((o): o is string => o !== null),
-      ),
-    ]
-    let startedOriginIds = new Set<string>()
-    if (distinctOriginIds.length > 0) {
-      const placeholders = distinctOriginIds.map(() => '?').join(', ')
-      const { rows: startedRows } = await getCompositionRootClient().execute({
-        sql: `SELECT DISTINCT origin_id
-                FROM tasks
-               WHERE origin_id IN (${placeholders})
-                 AND status IN ('running', 'verifying', 'merging', 'done')`,
-        args: distinctOriginIds,
-      })
-      startedOriginIds = new Set(
-        startedRows.map((r) => r['origin_id'] as string),
-      )
-    }
-
-    // Phase 3: pick the best candidate by the three-level comparator.
-    return selectBestCandidate(candidates, startedOriginIds)?.id ?? null
-  }
-
-  // Drain pulls from the pending sets as semaphore slots free. Bus handlers
-  // and dispatcher finally-blocks both call this. It's idempotent and cheap
-  // when there's nothing to do.
-  // Single-flight: only one drain runs at a time. Concurrent invocations
-  // (from bus events, dispatcher finally-blocks, etc.) flip drainAgain so
-  // the running drain re-enters once it finishes — no double-pick races.
-  drain = async (): Promise<void> => {
-    if (!acceptingWork) return
-    if (pause.isPaused()) return
-    if (drainRunning) {
-      drainAgain = true
-      return
-    }
-    drainRunning = true
-    try {
-      do {
-        drainAgain = false
-        // A throw from any await below (getTask / hasIncompleteBlockers
-        // hitting a transient connection or query error under load)
-        // must not escape: drain() is invoked fire-and-forget
-        // (`void drain()`), so an uncaught rejection silently kills the
-        // loop with no log line and the daemon stops claiming work while
-        // staying alive. Catch per-pass, log, and let the do/while exit
-        // cleanly — the poll-fallback tick (or the next bus event) retries.
-        try {
-          // Arc verification: the outbox subscriber only queues an admitted
-          // origin here. Start it through the same drain-owned acquire/release
-          // lifecycle as other daemon work; excess events were shed on entry.
-          while (sems.arcVerify.inUse < sems.arcVerify.limit) {
-            const originId = pendingArcVerifications.values().next().value
-            if (originId === undefined) break
-            void dispatchArcVerification(originId)
-          }
-
-          // Triage: pick a candidate that isn't already claimed/in-flight,
-          // mark it claimed BEFORE the dispatchTriage call so the next drain
-          // pass can't pick it again. tracker.claim returns false when the id
-          // is already claimed/in-flight, folding the old has-checks in.
-          while (sems.triage.inUse < sems.triage.limit) {
-            let pickedTriage: string | null = null
-            for (const id of tracker.drainPending('triage')) {
-              if (!tracker.claim(id, 'triage')) continue
-              pickedTriage = id
-              break
-            }
-            if (pickedTriage === null) break
-            tracker.removePending(pickedTriage, 'triage')
-            void dispatchTriage(pickedTriage)
-          }
-          // Implement: same guarantee but priority-ordered.
-          while (sems.implement.inUse < sems.implement.limit) {
-            const id = await pickNextImplement()
-            if (id === null) break
-            // Mark claimed BEFORE any further await so concurrent drains
-            // (which we've gated, but belt-and-suspenders) can't double-pick.
-            tracker.claim(id, 'implement')
-            tracker.removePending(id, 'implement')
-            const t = await getTask(id)
-            if (!t || t.status !== 'queued') {
-              tracker.unclaim(id, 'implement')
-              continue
-            }
-            if (await hasIncompleteBlockers(id)) {
-              // Distinguish terminal (failed) blockers so operators know when
-              // manual intervention is required vs. waiting for in-progress work.
-              const { rows: failedBlockerRows } = await getCompositionRootClient().execute({
-                sql: `SELECT b.blocker_task_id
-                        FROM task_blockers b
-                        JOIN tasks t ON t.id = b.blocker_task_id
-                       WHERE b.task_id = ? AND t.status = 'failed'
-                         AND b.state IN ('confirmed', 'pending-review')
-                       LIMIT 1`,
-                args: [id],
-              })
-              if (failedBlockerRows.length > 0) {
-                const failedId = (failedBlockerRows[0] as unknown as { blocker_task_id: string }).blocker_task_id
-                log(`[dispatch] ${id} blocked; blocker ${failedId} is failed and will never complete — needs operator`)
-              } else {
-                log(`[dispatch] ${id} blocked; deferring until blockers complete`)
-              }
-              tracker.unclaim(id, 'implement')
-              continue
-            }
-            // Stale-recovery guard: if this is a fix or rescue task whose
-            // arc root origin has already reached 'done', drop it without
-            // dispatching. Handles the race where the origin succeeds (e.g.
-            // via auto-remerge) between when the recovery was enqueued and
-            // when the dispatch loop picks it up.
-            //
-            // - Fix tasks:    kind='fix'. Use t.originId (the arc root) rather
-            //   than t.fixForTaskId (the immediate target) so that fix tasks
-            //   targeting a rescue-operator are also caught: their
-            //   fixForTaskId points at the rescue task (which may not be
-            //   'done'), but their originId points at the true arc root.
-            // - Rescue tasks: tagged 'rescue-operator', originId != self.
-            {
-              const recoveryOriginId =
-                t.kind === 'fix' && t.fixForTaskId != null
-                  ? t.originId  // arc root; always populated on fix tasks
-                  : t.tags.includes('rescue-operator') && t.originId !== t.id
-                    ? t.originId
-                    : null
-              if (recoveryOriginId !== null) {
-                const origin = await getTask(recoveryOriginId)
-                if (origin?.status === 'done') {
-                  log(
-                    `[dispatch] dropping stale recovery ${t.id} (kind=${t.kind ?? 'task'}): origin ${recoveryOriginId} already done`,
-                  )
-                  await updateTask(t.id, {
-                    status: 'dropped',
-                    dropReason: 'origin-succeeded',
-                    error: `Origin ${recoveryOriginId} reached done; stale recovery dropped at dispatch`,
-                  }).catch((err) =>
-                    log(
-                      `[dispatch] drop stale recovery ${t.id}: ${(err as Error).message}`,
-                    ),
-                  )
-                  tracker.unclaim(id, 'implement')
-                  void drain()
-                  continue
-                }
-              }
-            }
-            void dispatchImplement(t)
-          }
-        } catch (err) {
-          // Log and stop this drain. drainAgain is left as-is so a pending
-          // re-entry request still re-runs; otherwise the poll-fallback
-          // tick picks the queue back up on its next interval.
-          log(
-            `[dispatch] drain pass errored (will retry): ${
-              (err as Error).message
-            }`,
-          )
-          break
-        }
-      } while (drainAgain)
-    } finally {
-      drainRunning = false
-    }
-  }
+  // Dispatch scheduling — the single-flight drain loop plus its two timer
+  // backstops — lives in ./scheduler. Per-task dispatch EXECUTION stays here
+  // and is handed to the scheduler as callbacks.
+  const schedulerHandle = startScheduler({
+    bus,
+    tracker,
+    sems,
+    log,
+    pause,
+    getAcceptingWork: () => acceptingWork,
+    dispatchArcVerification,
+    pendingArcVerifications,
+    dispatchTriage,
+    dispatchImplement,
+    getDispatchUptimeMs: () => heartbeatHandle?.getDispatchUptimeMs(),
+  })
+  drain = schedulerHandle.drain
 
   // Queued tasks only become semaphore waiters after drain selects them. A
   // runtime cap increase must therefore re-drive drain as well as waking any
@@ -6425,377 +6165,17 @@ export const startDaemon = async (
   }, DEV_STALENESS_CHECK_MS)
   devStalenessCheck.unref()
 
-  // ── Poll-fallback tick ────────────────────────────────────────────────────
-  // drain() is otherwise purely event-driven (bus 'task.added'/'task.queued'
-  // and dispatcher finally-blocks). If a drain pass throws and exits, or a
-  // bus emit is missed, nothing re-arms it and the daemon sits idle with a
-  // full queue while staying alive — the failure mode this fixes. This timer
-  // is a safety net: only when the daemon is accepting work, not draining,
-  // and has nothing in flight (i.e. genuinely wedged, not just busy) does it
-  // re-seed the pending sets from the DB and kick drain(). During healthy
-  // operation it is a no-op. .unref() so it never keeps the process alive.
-  //
-  // Re-queue loop defence (mars-c11be862 post-mortem, 2026-07-02): before
-  // re-seeding any queued task, we check its retry duration. A task retrying
-  // longer than MARS_REQUEUE_MAX_RETRY_MS of dispatch uptime (default 2 h)
-  // without completing is
-  // escalated to 'failed' + an operator action-queue item rather than re-seeded.
-  // Retry count and elapsed time are logged for any task that has been attempted
-  // at least once so the state is visible before the bound is reached.
-  // See orchestrator/src/core/daemon/requeue-ceiling.ts for the ceiling logic.
-  const POLL_FALLBACK_MS = Number(process.env.MARS_DRAIN_POLL_MS ?? 30_000)
-  const pollFallback = setInterval(() => {
-    if (!acceptingWork || pause.isPaused() || drainRunning || tracker.inFlightCount() > 0) return
-    void (async () => {
-      try {
-        const [drafts, queued] = await Promise.all([
-          listTasks('draft'),
-          listTasks('queued'),
-        ])
-        const seedable = drafts.length + queued.length
-        if (seedable === 0) return
-        for (const t of drafts) {
-          if (!tracker.isInFlight(t.id)) tracker.enqueuePending(t.id, 'triage')
-        }
-        const { createQueueWorkflowStore: makeWFStore } = await import(
-          '../../workflows/queue-workflow-store'
-        )
-        const { checkAndEscalateRequeueCeiling } = await import('./requeue-ceiling')
-        const wfStore = makeWFStore()
-        for (const t of queued) {
-          if (tracker.isInFlight(t.id)) continue
-          const escalated = await checkAndEscalateRequeueCeiling(
-            t,
-            wfStore,
-            log,
-            Date.now(),
-            heartbeatHandle?.getDispatchUptimeMs(),
-          )
-          if (!escalated) tracker.enqueuePending(t.id, 'implement')
-        }
-        log(
-          `[dispatch] poll-fallback re-seeding ${seedable} task(s) (idle with non-empty queue)`,
-        )
-        await drain()
-      } catch (err) {
-        log(`[dispatch] poll-fallback errored: ${(err as Error).message}`)
-      }
-    })()
-  }, POLL_FALLBACK_MS)
-  pollFallback.unref()
-
-  // ── Queued-dispatch sweep ─────────────────────────────────────────────────
-  // Writers inside the daemon normally call the dispatch-hint seam immediately
-  // after their transaction commits. This periodic DB re-read is the durable
-  // backstop for a missed hint: unlike pollFallback it also runs while other
-  // workers are active, so one forgotten handoff cannot strand a queued row
-  // until the daemon goes idle or restarts. Re-emitting task.queued intentionally
-  // takes the normal bus path, which feeds pendingImplement and invokes drain();
-  // drain then re-reads the row and validates its status and blockers before it
-  // can claim a worker slot.
-  const QUEUED_DISPATCH_SWEEP_MS = Number(
-    process.env.MARS_QUEUED_DISPATCH_SWEEP_MS ?? 30_000,
-  )
-  const queuedDispatchSweep = setInterval(() => {
-    if (!acceptingWork || pause.isPaused()) return
-    void (async () => {
-      try {
-        const queued = await listTasks('queued')
-        for (const task of queued) {
-          if (!tracker.isInFlight(task.id)) {
-            bus.emit('task.queued', { taskId: task.id })
-          }
-        }
-      } catch (err) {
-        log(`[queued-dispatch-sweep] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, QUEUED_DISPATCH_SWEEP_MS)
-  queuedDispatchSweep.unref()
-
-  // ── Stale-worktree sweep ──────────────────────────────────────────────────
-  // Periodically raises `stale-worktree` actionQueue items for tasks whose worktree
-  // has not been updated within MARS_STALE_WORKTREE_HOURS (default 24h). The
-  // actionQueue dedup logic ensures re-detecting the same stale worktree bumps the
-  // existing open item rather than creating a sibling. Auto-close is handled
-  // by dismissAlertsOnStatusChange (wired in queue.ts updateTask). .unref()
-  // so the interval never prevents a clean shutdown.
-  const STALE_SWEEP_MS = Number(process.env.MARS_STALE_SWEEP_MS ?? 5 * 60_000)
-  const { detectAndRaiseStaleWorktrees } = await import('./stale-worktree-sweep')
-  const staleSweep = setInterval(() => {
-    void (async () => {
-      try {
-        const raised = await detectAndRaiseStaleWorktrees(resolveContext().repoRoot)
-        if (raised.length > 0) {
-          log(`[stale-sweep] raised/bumped ${raised.length} stale-worktree actionQueue item(s)`)
-          bus.emit('view.proposals-invalidated')
-          bus.emit('view.action-queue-invalidated')
-        }
-      } catch (err) {
-        log(`[stale-sweep] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, STALE_SWEEP_MS)
-  staleSweep.unref()
-
-  // ── Stale-merge sweep (merging + vega-reconciling) ───────────────────────
-  // Defense-in-depth: periodically re-queues any task whose status is still
-  // 'merging' or 'vega-reconciling' but whose updated_at exceeds the stale
-  // threshold. This handles two residual windows:
-  //   - 'merging': mergeBranch threw (releasing the lock) but the calling
-  //     workflow failed before flipping the task out of 'merging', leaving it
-  //     stranded until the next daemon restart.
-  //   - 'vega-reconciling': the vcs-supervisor (Vega) subprocess was killed or
-  //     crashed without advancing the task status; unlike the boot reconcile
-  //     that catches daemon-restart stranding, this sweep catches a live daemon
-  //     whose Vega session died mid-conflict-resolution without a restart.
-  //
-  // The threshold must comfortably exceed the maximum possible in-flight merge
-  // duration so the sweep never races a legitimately running merge:
-  //   - DEFAULT_WATCHDOG_MS  = VCS_SUPERVISOR_TIMEOUT_MS (default 10 min, env-overridable)
-  //                          + MERGE_GIT_BUDGET_MS       ( 5 min)
-  //                          = 15 min (default)
-  //   + one sweep interval                               = 5 min
-  //   → threshold = 40 min
-  //
-  // IMPORTANT: the sweep identifies stale tasks by age, then passes their ids
-  // explicitly to recoverPhase. Without the taskIds filter, recoverPhase would
-  // scan ALL tasks in the phase — recovering a legitimately in-progress merge
-  // that happens to share the 'merging' status alongside a stale one, which
-  // deletes its worktree mid-flight (root cause of task mars-0c5ffe82).
-  // .unref() so the interval never prevents a clean shutdown.
-  const STALE_MERGING_THRESHOLD_MS = 40 * 60_000
-  const STALE_MERGING_SWEEP_MS = 5 * 60_000
-  const staleMergingSweep = setInterval(() => {
-    void (async () => {
-      try {
-        const { listTasks: listTasksForSweep } = await import('../queue')
-        const now = Date.now()
-        const mergingTasks = await listTasksForSweep('merging')
-        const vegaTasks = await listTasksForSweep('vega-reconciling')
-        const staleMerging = mergingTasks.filter(
-          (t) => now - new Date(t.updatedAt).getTime() > STALE_MERGING_THRESHOLD_MS,
-        )
-        const staleVega = vegaTasks.filter(
-          (t) => now - new Date(t.updatedAt).getTime() > STALE_MERGING_THRESHOLD_MS,
-        )
-        if (staleMerging.length === 0 && staleVega.length === 0) return
-
-        const { recoverPhase } = await import('./phase-recovery')
-        const { getRepoRoot } = await import('../context')
-        const repoRoot = getRepoRoot()
-
-        if (staleMerging.length > 0) {
-          const staleIds = staleMerging.map((t) => t.id)
-          log(
-            `[stale-merging-sweep] found ${staleMerging.length} stale merging task(s) (>40 min); recovering ${staleIds.join(', ')}`,
-          )
-          const r = await recoverPhase('merging', { log, bus, repoRoot, taskIds: staleIds })
-          if (r.requeued.length > 0) {
-            log(
-              `[stale-merging-sweep] requeued ${r.requeued.length} task(s) from stale merging state`,
-            )
-            bus.emit('view.tasks-invalidated')
-          }
-          if (r.finalized > 0) {
-            log(
-              `[stale-merging-sweep] finalized ${r.finalized} task(s) whose FF already landed`,
-            )
-            bus.emit('view.tasks-invalidated')
-          }
-        }
-
-        if (staleVega.length > 0) {
-          const staleVegaIds = staleVega.map((t) => t.id)
-          log(
-            `[stale-merging-sweep] found ${staleVega.length} stale vega-reconciling task(s) (>40 min); recovering ${staleVegaIds.join(', ')}`,
-          )
-          const rv = await recoverPhase('vega-reconciling', {
-            log,
-            bus,
-            repoRoot,
-            taskIds: staleVegaIds,
-          })
-          if (rv.requeued.length > 0) {
-            log(
-              `[stale-merging-sweep] requeued ${rv.requeued.length} vega-reconciling task(s) from stale state`,
-            )
-            bus.emit('view.tasks-invalidated')
-          }
-          if (rv.finalized > 0) {
-            log(
-              `[stale-merging-sweep] finalized ${rv.finalized} vega-reconciling task(s) whose FF already landed`,
-            )
-            bus.emit('view.tasks-invalidated')
-          }
-        }
-      } catch (err) {
-        log(`[stale-merging-sweep] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, STALE_MERGING_SWEEP_MS)
-  staleMergingSweep.unref()
-
-  // ── Stale queued-committer sweep ─────────────────────────────────────────
-  // Periodically re-seeds `main-commiter` fix tasks stuck in `queued` with
-  // `blocked` dependents whose `updated_at` exceeds the 15-minute threshold.
-  // This mirrors the boot-time `queued-committer-reseed` reconciler and covers
-  // the runtime case: the reconciler fires once at boot, but the committer can
-  // be spawned long after boot (e.g. when dirty-main is first detected mid-run).
-  // Emitting `task.queued` on the bus triggers the handler that pushes the id
-  // into `pendingImplement` and calls `drain()`. The primary fix (emitting
-  // `task.queued` immediately on spawn in `dispatchImplement`) eliminates the
-  // gap for new daemons; this sweep is belt-and-suspenders for any race window
-  // or daemon that predates that fix. .unref() so it never prevents shutdown.
-  const STALE_QUEUED_COMMITTER_SWEEP_MS = 5 * 60_000
-  const STALE_QUEUED_COMMITTER_THRESHOLD_MS = 15 * 60_000
-  const staleQueuedCommitterSweep = setInterval(() => {
-    void (async () => {
-      try {
-        const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
-          '../lib/main-dirty'
-        )
-        const { getDefaultDomainTaskStore: getDomainStore } = await import('../store/task-store')
-        const threshold = new Date(Date.now() - STALE_QUEUED_COMMITTER_THRESHOLD_MS).toISOString()
-        const r = await getDomainStore().query(
-          `SELECT DISTINCT t.id AS id, t.recovery_payload AS recovery_payload
-             FROM tasks t
-             JOIN task_blockers tb ON tb.blocker_task_id = t.id
-             JOIN tasks dep ON dep.id = tb.task_id
-            WHERE t.kind = 'fix'
-              AND t.status = 'queued'
-              AND dep.status = 'blocked'
-              AND t.updated_at < ?`,
-          [threshold],
-        )
-        let reseeded = 0
-        for (const row of r.rows as unknown as Array<{
-          id: string
-          recovery_payload: string | null
-        }>) {
-          if (parseMainCommiterPayload(row.recovery_payload)?.recipe !== MAIN_COMMITER_RECIPE) {
-            continue
-          }
-          bus.emit('task.queued', { taskId: row.id })
-          reseeded++
-        }
-        if (reseeded > 0) {
-          log(
-            `[stale-queued-committer-sweep] re-seeded ${reseeded} stale queued main-commiter(s) with blocked dependents`,
-          )
-        }
-      } catch (err) {
-        log(`[stale-queued-committer-sweep] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, STALE_QUEUED_COMMITTER_SWEEP_MS)
-  staleQueuedCommitterSweep.unref()
-
-  // ── Running-committer lifetime sweep ─────────────────────────────────────
-  // A main-committer that is still `running` past its bounded lifetime is
-  // either stuck (agent can't commit) or working on a branch that has since
-  // been cleaned by another means. Two outcomes:
-  //
-  //   (a) Branch is now clean → settle the committer done immediately
-  //       (no further agent action needed) and release blocked dependents.
-  //   (b) Branch still dirty → fail the committer with an operator alert so
-  //       the queue is never held in `blocked` indefinitely.
-  //
-  // Default lifetime: 45 minutes. Override via MARS_COMMITTER_LIFETIME_MS.
-  // Sweep interval: 5 minutes. .unref() so it never prevents shutdown.
-  const RUNNING_COMMITTER_LIFETIME_SWEEP_MS = 5 * 60_000
-  const RUNNING_COMMITTER_LIFETIME_MS = Number(
-    process.env.MARS_COMMITTER_LIFETIME_MS ?? 45 * 60_000,
-  )
-  const runningCommitterLifetimeSweep = setInterval(() => {
-    void (async () => {
-      try {
-        const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE, settleCommitterDoneIfClean } =
-          await import('../lib/main-dirty')
-        const { getDefaultDomainTaskStore: getDomainStore } = await import('../store/task-store')
-        const threshold = new Date(Date.now() - RUNNING_COMMITTER_LIFETIME_MS).toISOString()
-
-        const r = await getDomainStore().query(
-          `SELECT DISTINCT t.id AS id, t.recovery_payload AS recovery_payload
-             FROM tasks t
-             JOIN task_blockers tb ON tb.blocker_task_id = t.id
-             JOIN tasks dep ON dep.id = tb.task_id
-            WHERE t.kind = 'fix'
-              AND t.status = 'running'
-              AND dep.status = 'blocked'
-              AND t.updated_at < ?`,
-          [threshold],
-        )
-
-        for (const row of r.rows as unknown as Array<{
-          id: string
-          recovery_payload: string | null
-        }>) {
-          const payload = parseMainCommiterPayload(row.recovery_payload)
-          if (payload?.recipe !== MAIN_COMMITER_RECIPE) continue
-
-          try {
-            const { settled } = await settleCommitterDoneIfClean(
-              row.id,
-              payload.integrationBranch,
-              resolveContext().repoRoot,
-              traceStore,
-            )
-            if (settled) {
-              const lifetimeMin = Math.round(RUNNING_COMMITTER_LIFETIME_MS / 60_000)
-              log(
-                `[running-committer-sweep] committer ${row.id}: branch '${payload.integrationBranch}' is now clean after ${lifetimeMin}+ min; settled done`,
-              )
-              bus.emit('task.completed', { taskId: row.id, status: 'done' as const })
-            } else {
-              // Branch still dirty but committer has exceeded its lifetime.
-              // Fail it so the operator can investigate and blocked dependents
-              // are eventually released via recovery-spawn or manual intervention.
-              const lifetimeMin = Math.round(RUNNING_COMMITTER_LIFETIME_MS / 60_000)
-              log(
-                `[running-committer-sweep] committer ${row.id} exceeded ${lifetimeMin}-min lifetime with dirty branch '${payload.integrationBranch}'; failing and raising alert`,
-              )
-              await updateTask(row.id, {
-                status: 'failed',
-                failedPhase: 'code',
-                failureReason: 'committer:lifetime-exceeded',
-                failureReasonCode: 'committer:lifetime-exceeded',
-                failureSignature: 'committer:lifetime-exceeded',
-                error: `main-committer exceeded ${lifetimeMin}-minute lifetime; integration branch '${payload.integrationBranch}' is still dirty`,
-              })
-              bus.emit('task.failed', { taskId: row.id, error: 'committer:lifetime-exceeded' })
-              try {
-                const { raiseActionQueueItem: raiseItem } = await import('../lib/action-queue')
-                await raiseItem({
-                  kind: 'failed',
-                  category: 'orchestrator',
-                  priority: 'urgent',
-                  title: `main-commiter ${row.id} exceeded ${lifetimeMin}-min lifetime; integration branch still dirty`,
-                  body: `The main-committer for '${payload.integrationBranch}' has been running over ${lifetimeMin} minutes without completing and the branch is still dirty. Manually clean the integration branch or use \`mars continue ${row.id}\` to retry.`,
-                  payload: { committerTaskId: row.id, integrationBranch: payload.integrationBranch, lifetimeMs: RUNNING_COMMITTER_LIFETIME_MS },
-                  context: {},
-                  raisedBy: 'daemon:running-committer-lifetime-sweep',
-                  signature: `committer:lifetime-exceeded:${row.id}`,
-                })
-                bus.emit('view.action-queue-invalidated')
-              } catch (alertErr) {
-                log(
-                  `[running-committer-sweep] alert raise for ${row.id} failed (non-fatal): ${(alertErr as Error).message}`,
-                )
-              }
-            }
-          } catch (sweepErr) {
-            log(
-              `[running-committer-sweep] check for committer ${row.id} failed (non-fatal): ${(sweepErr as Error).message}`,
-            )
-          }
-        }
-      } catch (err) {
-        log(`[running-committer-sweep] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, RUNNING_COMMITTER_LIFETIME_SWEEP_MS)
-  runningCommitterLifetimeSweep.unref()
+  // Periodic reclamation sweeps (stale worktrees, stale merges, stale/expired
+  // main-committers, orphaned subprocesses) are declared as a list in ./sweeps
+  // and armed here. Adding a sweep means adding a SweepSpec, not another
+  // inline setInterval block.
+  const sweepsHandle = startSweeps({
+    bus,
+    log,
+    repoRoot: () => resolveContext().repoRoot,
+    traceStore,
+    liveInFlightTaskIds,
+  })
 
   // ── Reflect-recommended detector sweep ───────────────────────────────────
   // Periodically evaluates reflect-worthiness (KPI drift, failure clusters,
@@ -6916,33 +6296,6 @@ export const startDaemon = async (
   void runObservationalNotices().catch((err: unknown) => {
     log(`[notice-sweep] startup sweep errored: ${(err as Error).message}`)
   })
-
-  // ── Orphan-subprocess sweep ──────────────────────────────────────────────
-  // Verify/test runners that outlive their task (abort, timeout, or a daemon
-  // that died before it could kill the group) get reparented to init and burn
-  // CPU indefinitely. The Steward reaps them on its own schedule here, in
-  // addition to the boot sweep and the sweep on the autotuner's hold path.
-  // .unref() so the interval never prevents a clean shutdown.
-  const ORPHAN_SWEEP_MS = Number(process.env.MARS_ORPHAN_SWEEP_MS ?? 5 * 60_000)
-  const { sweepOrphans: sweepOrphanProcesses, formatSweepSummary: formatOrphanSweep } =
-    await import('../lib/orphan-reaper')
-  const orphanSweep = setInterval(() => {
-    void (async () => {
-      try {
-        const summary = await sweepOrphanProcesses({
-          repoRoot: resolveContext().repoRoot,
-          inFlightTaskIds: liveInFlightTaskIds(),
-          log,
-        })
-        if (summary.reaped > 0) {
-          log(`[orphan-reaper] periodic sweep: ${formatOrphanSweep(summary)}`)
-        }
-      } catch (err) {
-        log(`[orphan-reaper] periodic sweep errored: ${(err as Error).message}`)
-      }
-    })()
-  }, ORPHAN_SWEEP_MS)
-  orphanSweep.unref()
 
   // ── Steward runtime-knob tuning ──────────────────────────────────────────
   // When the implement queue is backlogged (pending > cap × 0.75) for a
@@ -7652,15 +7005,12 @@ export const startDaemon = async (
   const shutdown = async (force = false): Promise<void> => {
     if (shuttingDown) return
     shuttingDown = true
-    clearInterval(pollFallback)
-    clearInterval(queuedDispatchSweep)
+    schedulerHandle.stop()
+    sweepsHandle.stop()
     clearInterval(githubUpdatePoll)
     clearInterval(devStalenessCheck)
-    clearInterval(staleSweep)
-    clearInterval(staleMergingSweep)
     clearInterval(observabilityWatchdog)
     clearInterval(noticeSweep)
-    clearInterval(orphanSweep)
     clearInterval(dbBusyWatchdog)
     clearInterval(phantomWatchdog)
     clearInterval(observabilitySweep)

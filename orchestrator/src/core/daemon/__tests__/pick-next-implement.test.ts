@@ -5,7 +5,7 @@
  * no need to mount a live daemon or touch a real database.
  */
 import { describe, expect, it } from 'vitest'
-import { selectBestCandidate, type PickCandidate } from '../server'
+import { selectBestCandidate, type PickCandidate } from '../scheduler'
 
 const candidate = (
   id: string,
