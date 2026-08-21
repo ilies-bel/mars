@@ -13,34 +13,55 @@
  * `resolveStateClient()`. The two only land on the same underlying PGlite
  * instance when both resolve through the same `MARS_REPO`-derived target — so,
  * like `matcher-breadth.test.ts`, this file sets `MARS_REPO` explicitly and
- * resolves every client (`resolveStateClient()` / `resolveQueueClient()`)
- * fresh after `vi.resetModules()`, rather than using the `getTestDb()` fixture
- * (which opens an isolated, differently-keyed PGlite instance and would make
- * `wouldHaveFiredOnMany` see an empty `tasks` table).
+ * resolves its client after `vi.resetModules()`, rather than using the
+ * `getTestDb()` fixture (which opens an isolated, differently-keyed PGlite
+ * instance and would make `wouldHaveFiredOnMany` see an empty `tasks` table).
+ *
+ * Cost note: the reset + repo + import happens ONCE for the whole file
+ * (`beforeAll`), not per test. Each test here would otherwise pay a PGlite
+ * cold start (5-25 s under the parallel-verify load the suite is tuned for,
+ * see vitest.config.ts) and — for the two CLI tests — a cold re-import of the
+ * entire `mars` command registry, which is what pushed this file past the
+ * 30 s per-test budget on the merge gate. Sharing one instance is safe
+ * because breadth is counted per signature: every test seeds its own
+ * signature in its own family, so no test can perturb another's counts.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { DbClient } from '../db.js'
+import type { listEnrichments as ListEnrichments } from '../gate-enrichment.js'
+import type { observeFailureSignature as ObserveFailureSignature } from '../gate-enrichment.js'
+import type { runCommandInProcess as RunCommandInProcess } from '../../../cli/test-adapter.js'
 
-/** A registered ENCODABLE signature (FailureKind facet: command family). */
-const ENCODABLE_SIG = 'verify:typecheck/typecheck-cannot-find-name'
-
-const setupRepo = (): string => {
-  const repo = mkdtempSync(resolve(tmpdir(), 'mars-gate-enrichment-breadth-test-'))
-  execFileSync('git', ['init', '-q'], { cwd: repo })
-  mkdirSync(resolve(repo, '.mars'), { recursive: true })
-  return repo
-}
+/**
+ * One signature per test, each in its own family, so the shared DB cannot
+ * leak counts between tests. Family = `<gate>/<error-class>` (see
+ * `failureSignatureFamilySql`), so these five families are all distinct.
+ */
+const SIG_LIST = 'verify:typecheck/typecheck-cannot-find-name'
+const SIG_LIST_SIBLING = 'verify:typecheck-strict/typecheck-cannot-find-name'
+const SIG_UNRELATED = 'verify:lint/lint-unused-var'
+const SIG_UNSEEN = 'merge:preflight/uncommitted-changes'
+const SIG_RENDER = 'verify:has-diff/no-commits-ahead'
+const SIG_RENDER_SIBLING = 'verify:has-diff-strict/no-commits-ahead'
+const SIG_JSON = 'verify:worktree-hygiene/worktree-missing'
 
 let seq = 0
 const nextId = (): string => `task-${(seq += 1)}`
 
+let repo: string
+let client: DbClient
+let listEnrichments: typeof ListEnrichments
+let observeFailureSignature: typeof ObserveFailureSignature
+let runCommandInProcess: typeof RunCommandInProcess
+let cliDeps: Parameters<typeof RunCommandInProcess>[1]
+
 /** Inserts a `failed` task with the given signature, freshly `updated_at`. */
-const seedFailedTask = async (client: DbClient, failureSignature: string): Promise<void> => {
+const seedFailedTask = async (failureSignature: string): Promise<void> => {
   const id = nextId()
   const now = new Date().toISOString()
   await client.execute({
@@ -51,152 +72,112 @@ const seedFailedTask = async (client: DbClient, failureSignature: string): Promi
 }
 
 describe('gate-enrichment breadth (ADR-0099)', () => {
-  let repo: string
+  beforeAll(async () => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-gate-enrichment-breadth-test-'))
+    execFileSync('git', ['init', '-q'], { cwd: repo })
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
 
-  beforeEach(() => {
-    repo = setupRepo()
     vi.resetModules()
     process.env.MARS_REPO = repo
-  })
 
-  afterEach(() => {
+    const { resolveStateClient } = await import('../../store/state-client.js')
+    const { ensureSchema } = await import('../pg-schema.js')
+    client = resolveStateClient()
+    await ensureSchema(client)
+
+    const gateEnrichment = await import('../gate-enrichment.js')
+    gateEnrichment.resetGateEnrichmentSchemaLatchForTests()
+    listEnrichments = gateEnrichment.listEnrichments
+    observeFailureSignature = gateEnrichment.observeFailureSignature
+
+    const testAdapter = await import('../../../cli/test-adapter.js')
+    const { createTaskStore } = await import('../../store/task-store.js')
+    const { resolveContext } = await import('../../context.js')
+    runCommandInProcess = testAdapter.runCommandInProcess
+    cliDeps = {
+      store: createTaskStore(client),
+      daemon: testAdapter.makeFakeDaemon(),
+      ctx: resolveContext(repo),
+    }
+  }, 120_000)
+
+  afterAll(() => {
     delete process.env.MARS_REPO
-    vi.restoreAllMocks()
     rmSync(repo, { recursive: true, force: true })
   })
 
   it('listEnrichments populates breadth from past task failures sharing the signature', async () => {
-    const { resolveStateClient } = await import('../../store/state-client.js')
-    const { ensureSchema } = await import('../pg-schema.js')
-    const client = resolveStateClient()
-    await ensureSchema(client)
-
-    const {
-      observeFailureSignature,
-      listEnrichments,
-      resetGateEnrichmentSchemaLatchForTests,
-    } = await import('../gate-enrichment.js')
-    resetGateEnrichmentSchemaLatchForTests()
-
     // Two exact matches, one differently-worded same-family match.
-    await seedFailedTask(client, ENCODABLE_SIG)
-    await seedFailedTask(client, ENCODABLE_SIG)
-    await seedFailedTask(client, 'verify:typecheck-strict/typecheck-cannot-find-name')
+    await seedFailedTask(SIG_LIST)
+    await seedFailedTask(SIG_LIST)
+    await seedFailedTask(SIG_LIST_SIBLING)
     // An unrelated signature must not pollute the count.
-    await seedFailedTask(client, 'verify:lint/lint-unused-var')
+    await seedFailedTask(SIG_UNRELATED)
 
     await observeFailureSignature(client, {
-      signature: ENCODABLE_SIG,
-      originTaskId: 'origin-1',
+      signature: SIG_LIST,
+      originTaskId: 'origin-list',
       errorOutput: 'TS2304: Cannot find name x',
     })
 
     const entries = await listEnrichments(client)
-    const entry = entries.find((e) => e.signature === ENCODABLE_SIG)
+    const entry = entries.find((e) => e.signature === SIG_LIST)
     expect(entry).toBeDefined()
     expect(entry?.breadth).toEqual({
       exact: 2,
       family: 3,
       windowDays: 30,
     })
-  })
+  }, 60_000)
 
   it('a signature unseen in task history renders 0/0 breadth, not a crash', async () => {
-    const { resolveStateClient } = await import('../../store/state-client.js')
-    const { ensureSchema } = await import('../pg-schema.js')
-    const client = resolveStateClient()
-    await ensureSchema(client)
-
-    const {
-      observeFailureSignature,
-      listEnrichments,
-      resetGateEnrichmentSchemaLatchForTests,
-    } = await import('../gate-enrichment.js')
-    resetGateEnrichmentSchemaLatchForTests()
-
     await observeFailureSignature(client, {
-      signature: ENCODABLE_SIG,
-      originTaskId: 'origin-1',
-      errorOutput: 'TS2304: Cannot find name x',
+      signature: SIG_UNSEEN,
+      originTaskId: 'origin-unseen',
+      errorOutput: 'integration branch has uncommitted changes',
     })
 
     const entries = await listEnrichments(client)
-    const entry = entries.find((e) => e.signature === ENCODABLE_SIG)
+    const entry = entries.find((e) => e.signature === SIG_UNSEEN)
     expect(entry?.breadth).toEqual({ exact: 0, family: 0, windowDays: 30 })
-  })
+  }, 60_000)
 
   it('mars enrich list renders the exact/family breadth column for a seeded enrichment', async () => {
-    const { resolveQueueClient } = await import('../../queue.js')
-    const { ensureSchema } = await import('../pg-schema.js')
-    const client = resolveQueueClient()
-    await ensureSchema(client)
-
-    const { observeFailureSignature, resetGateEnrichmentSchemaLatchForTests } = await import(
-      '../gate-enrichment.js'
-    )
-    resetGateEnrichmentSchemaLatchForTests()
-
-    await seedFailedTask(client, ENCODABLE_SIG)
-    await seedFailedTask(client, ENCODABLE_SIG)
-    await seedFailedTask(client, 'verify:typecheck-strict/typecheck-cannot-find-name')
+    await seedFailedTask(SIG_RENDER)
+    await seedFailedTask(SIG_RENDER)
+    await seedFailedTask(SIG_RENDER_SIBLING)
 
     await observeFailureSignature(client, {
-      signature: ENCODABLE_SIG,
-      originTaskId: 'origin-1',
-      errorOutput: 'TS2304: Cannot find name x',
+      signature: SIG_RENDER,
+      originTaskId: 'origin-render',
+      errorOutput: 'task branch has no commits ahead of integration',
     })
 
-    const { runCommandInProcess, makeFakeDaemon } = await import('../../../cli/test-adapter.js')
-    const { createTaskStore } = await import('../../store/task-store.js')
-    const { resolveContext } = await import('../../context.js')
-
-    const result = await runCommandInProcess(['enrich', 'list'], {
-      store: createTaskStore(client),
-      daemon: makeFakeDaemon(),
-      ctx: resolveContext(repo),
-    })
+    const result = await runCommandInProcess(['enrich', 'list'], cliDeps)
 
     expect(result.code).toBe(0)
-    const line = result.out.find((l) => l.includes(ENCODABLE_SIG))
+    const line = result.out.find((l) => l.includes(SIG_RENDER))
     expect(line).toBeDefined()
     expect(line).toContain('breadth=2/3')
-  })
+  }, 60_000)
 
   it('mars enrich list --json includes the breadth object verbatim', async () => {
-    const { resolveQueueClient } = await import('../../queue.js')
-    const { ensureSchema } = await import('../pg-schema.js')
-    const client = resolveQueueClient()
-    await ensureSchema(client)
-
-    const { observeFailureSignature, resetGateEnrichmentSchemaLatchForTests } = await import(
-      '../gate-enrichment.js'
-    )
-    resetGateEnrichmentSchemaLatchForTests()
-
-    await seedFailedTask(client, ENCODABLE_SIG)
+    await seedFailedTask(SIG_JSON)
 
     await observeFailureSignature(client, {
-      signature: ENCODABLE_SIG,
-      originTaskId: 'origin-1',
-      errorOutput: 'TS2304: Cannot find name x',
+      signature: SIG_JSON,
+      originTaskId: 'origin-json',
+      errorOutput: 'task worktree was pruned before verify could run',
     })
 
-    const { runCommandInProcess, makeFakeDaemon } = await import('../../../cli/test-adapter.js')
-    const { createTaskStore } = await import('../../store/task-store.js')
-    const { resolveContext } = await import('../../context.js')
-
-    const result = await runCommandInProcess(['enrich', 'list', '--json'], {
-      store: createTaskStore(client),
-      daemon: makeFakeDaemon(),
-      ctx: resolveContext(repo),
-    })
+    const result = await runCommandInProcess(['enrich', 'list', '--json'], cliDeps)
 
     expect(result.code).toBe(0)
     const parsed = JSON.parse(result.out.join('\n')) as Array<{
       signature: string
       breadth: { exact: number; family: number; windowDays: number }
     }>
-    const entry = parsed.find((e) => e.signature === ENCODABLE_SIG)
+    const entry = parsed.find((e) => e.signature === SIG_JSON)
     expect(entry?.breadth).toEqual({ exact: 1, family: 1, windowDays: 30 })
-  })
+  }, 60_000)
 })
