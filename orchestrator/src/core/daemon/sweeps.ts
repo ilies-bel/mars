@@ -1,14 +1,21 @@
 import type { EventEmitter } from 'node:events'
+import { resolveDbTarget } from '../context'
+import { listTasks, updateTask } from '../queue'
+import { recycleDbPool } from '../lib/db'
+import { EVENT_RETENTION, pruneEvents } from '../../bus/retention'
+import { getDefaultDomainTaskStore } from '../store/task-store'
 import type { TraceEventStore } from '../lib/trace-events-store'
-import { updateTask } from '../queue'
+import type { TaskFlightTracker } from './task-flight-tracker'
+import type { DaemonSemaphores } from './scheduler'
+import type { PauseController } from './pause-state'
 
 /**
- * Everything a periodic sweep is allowed to reach for. Deliberately narrow:
- * a sweep gets the event bus, the daemon log sink, the repo root, the trace
- * store and a snapshot of in-flight task ids — and nothing else from
- * `startDaemon`'s closure. A sweep that needs more than this is not yet a
- * sweep; leave it inline in `server.ts` until its extra dependency has its
- * own seam.
+ * Everything a periodic sweep is allowed to reach for. Started deliberately
+ * narrow (bus, log, repo root, trace store, in-flight task ids); widened
+ * since, one dependency at a time, only as far as an actual sweep needed —
+ * see the git history of this file for the incremental additions below. A
+ * sweep that needs something not yet here is still not a sweep; leave it
+ * inline in `server.ts` until its extra dependency earns its own field.
  *
  * There is deliberately no `ViewStreamHub` here: SSE invalidation is derived
  * from `bus` events via `bus/view-invalidation.ts`, so a sweep announces a
@@ -23,6 +30,22 @@ export interface SweepDeps {
   traceStore: TraceEventStore
   /** Task ids currently held by an in-flight dispatch. */
   liveInFlightTaskIds: () => ReadonlySet<string>
+  /** The daemon's dispatch-flight bookkeeping (in-flight snapshot, force-release, pending counts). */
+  tracker: TaskFlightTracker
+  /** Per-kind concurrency semaphores (read-only from a sweep's point of view). */
+  sems: DaemonSemaphores
+  /** The daemon's one authoritative dispatch-pause controller. */
+  pause: PauseController
+  /** Triggers a dispatch drain after a sweep frees a slot or requeues work. */
+  drain: () => Promise<void>
+  /** Task ids actively running through the verify phase in this daemon instance. */
+  activeVerifyingTaskIds: () => ReadonlySet<string>
+  /** Timestamp dispatch last resumed from a pause (undefined if never paused). */
+  dispatchResumedAt: () => number | undefined
+  /** True while the baseline health checker considers the integration branch poisoned. */
+  isBaselinePoisoned: () => boolean
+  /** Fires the DB busy-storm watchdog's final escalation stage: a graceful daemon self-restart. */
+  triggerDbRestart: () => void
 }
 
 /**
@@ -35,6 +58,13 @@ export interface SweepSpec {
   /** Read at `startSweeps` time so env overrides apply per daemon boot. */
   intervalMs: () => number
   run: (deps: SweepDeps) => Promise<void>
+  /**
+   * When true, `startSweeps` also runs this sweep once immediately (before
+   * arming its interval) so a freshly started daemon doesn't wait a full
+   * interval before its first pass — matches the pre-extraction inline
+   * blocks that called their body once at startup and then again per tick.
+   */
+  runOnStart?: boolean
 }
 
 const STALE_MERGING_THRESHOLD_MS = 40 * 60_000
@@ -42,6 +72,15 @@ const STALE_QUEUED_COMMITTER_THRESHOLD_MS = 15 * 60_000
 const RUNNING_COMMITTER_LIFETIME_MS = Number(
   process.env.MARS_COMMITTER_LIFETIME_MS ?? 45 * 60_000,
 )
+
+// Escalation stage carried between db-busy-watchdog ticks (null = no storm in
+// progress). Module-scoped rather than SweepDeps-carried: it is this sweep's
+// own private state, not something any other sweep or the daemon reads.
+let dbBusyStage: import('./db-busy-watchdog').BusyEscalationStage | null = null
+
+// Wall-clock the implement queue first crossed the backlog threshold, or null
+// when not currently backlogged. Same rationale as dbBusyStage above.
+let backlogSince: number | null = null
 
 /**
  * The daemon's periodic reclamation sweeps, in one list instead of a run of
@@ -332,6 +371,334 @@ export const SWEEPS: readonly SweepSpec[] = [
       }
     },
   },
+  {
+    // Observability store size watchdog. Checks the trace_events footprint
+    // inside mars.db; when it exceeds 500 MB a single open action-queue item
+    // is raised (re-detection bumps the existing item rather than spawning a
+    // sibling). NEVER prunes the store or alters retention — see
+    // retention-sweep below for that.
+    name: 'observability-watchdog',
+    intervalMs: () => Number(process.env.MARS_OBSERVABILITY_WATCHDOG_MS ?? 5 * 60_000),
+    run: async ({ log, bus }) => {
+      const { checkObservabilityStoreSize } = await import('./observability-watchdog')
+      const itemId = await checkObservabilityStoreSize(resolveDbTarget())
+      if (itemId) {
+        log(`[observability-watchdog] store oversize — raised/bumped action-queue item ${itemId}`)
+        bus.emit('view.action-queue-invalidated')
+      }
+    },
+  },
+  {
+    // DB busy-storm watchdog. Escalates across successive ticks: log loudly →
+    // recycle the connection pool → trigger a graceful daemon self-restart.
+    // See db-busy-watchdog.ts for the full stage rationale; disable the final
+    // restart stage via MARS_DB_BUSY_STORM_RESTART=false.
+    name: 'db-busy-watchdog',
+    intervalMs: () => Number(process.env.MARS_DB_BUSY_WATCHDOG_MS ?? 30_000),
+    run: async ({ log, triggerDbRestart }) => {
+      const { checkAndEscalateDbBusyStorm } = await import('./db-busy-watchdog')
+      const result = await checkAndEscalateDbBusyStorm(
+        resolveDbTarget(),
+        log,
+        recycleDbPool,
+        triggerDbRestart,
+        dbBusyStage,
+      )
+      dbBusyStage = result.nextStage
+    },
+  },
+  {
+    // Outbox sweeper. Prunes aged events from the outbox and raises a
+    // dedup'd action-queue item for any subscriber whose cursor lag exceeds
+    // MARS_OUTBOX_LAG_WARN_THRESHOLD.
+    name: 'outbox-sweep',
+    intervalMs: () => Number(process.env.MARS_OUTBOX_PRUNE_INTERVAL_MS ?? 60_000),
+    run: async () => {
+      const { sweepOutbox } = await import('./outbox-sweeper')
+      await sweepOutbox(resolveDbTarget())
+    },
+  },
+  {
+    // History retention sweeper. Applies EVENT_RETENTION — the single
+    // retention policy for orchestrator history — to trace_events, events and
+    // task_transcripts so the state store stays bounded across multi-day
+    // sessions. Always logs the gauges so drift is visible in watch.log
+    // rather than silent until a deletion threshold is crossed.
+    name: 'retention-sweep',
+    intervalMs: () => Number(process.env.MARS_OBSERVABILITY_SWEEP_MS ?? 60 * 60_000),
+    run: async ({ log }) => {
+      const retention = await pruneEvents(resolveDbTarget())
+      const deleted =
+        retention.traceEventsByAge +
+        retention.traceEventsByCount +
+        retention.eventsByAge +
+        retention.eventsByCount +
+        retention.transcriptsByAge +
+        retention.subscriberProcessedEventsOrphans
+      log(
+        `[retention-sweep] cap ${EVENT_RETENTION.maxRows} rows /` +
+          ` ${EVENT_RETENTION.days} days; deleted ${deleted};` +
+          ` trace_events: ${retention.traceEventsRemaining} rows` +
+          ` (${retention.traceEventsByAge} by age,` +
+          ` ${retention.traceEventsByCount} by count);` +
+          ` events: ${retention.eventsRemaining} rows` +
+          ` (${retention.eventsByAge} by age,` +
+          ` ${retention.eventsByCount} by count);` +
+          ` ${retention.transcriptsByAge} task_transcripts;` +
+          ` ${retention.subscriberProcessedEventsOrphans} subscriber_processed_events orphans`,
+      )
+    },
+  },
+  {
+    // KPI snapshot sweep. Takes a rolling 7-day KPI snapshot once per
+    // interval and persists a row to kpi_snapshots so the /kpis route and UI
+    // tiles always have data. Runs once at startup too so a freshly started
+    // daemon shows data without waiting a full interval.
+    name: 'kpi-snapshot',
+    intervalMs: () => Number(process.env.MARS_KPI_SNAPSHOT_MS ?? 60 * 60_000),
+    runOnStart: true,
+    run: async ({ log }) => {
+      const { takeKpiSnapshot } = await import('../lib/kpi-snapshots.js')
+      await takeKpiSnapshot({
+        surface: getDefaultDomainTaskStore(),
+        now: new Date().toISOString(),
+      })
+      log('[kpi-snapshot] snapshot taken')
+    },
+  },
+  {
+    // Observational Notice sweep. The proactive half of the main thread:
+    // nothing here reacts to an event, so nothing else would ever run it.
+    // Deliberately infrequent — every Notice it can produce describes a
+    // *trend* or a *habit*, and neither changes between one hour and the
+    // next. Delivery still waits for a pause, so a sweep landing mid-grill
+    // queues rather than interrupts. Runs once at startup so a fresh session
+    // opens on something to do rather than on an empty feed.
+    name: 'notice-sweep',
+    intervalMs: () => Number(process.env.MARS_NOTICE_SWEEP_MS ?? 60 * 60_000),
+    runOnStart: true,
+    run: async ({ log, bus, repoRoot }) => {
+      const { runNoticeSweep } = await import('../lib/notices/sweep.js')
+      const { resolveStateClient: stateClient } = await import('../store/state-client.js')
+      const { execFile } = await import('node:child_process')
+      const { promisify } = await import('node:util')
+      const root = repoRoot()
+      const integrationBranch = process.env.INTEGRATION_BRANCH ?? 'main'
+      const result = await runNoticeSweep({
+        client: stateClient(),
+        repoRoot: root,
+        integrationBranch,
+        log,
+        listCommits: async (branch, sinceMs) => {
+          const { stdout } = await promisify(execFile)(
+            'git',
+            ['log', branch, '--format=%H', `--since=${new Date(sinceMs).toISOString()}`],
+            { cwd: root },
+          )
+          return stdout
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+        },
+      })
+      if (result.posted > 0) {
+        log(`[notice-sweep] spoke ${result.posted} Notice(s)`)
+        bus.emit('view.chat-invalidated')
+      }
+    },
+  },
+  {
+    // Steward runtime-knob backlog check. When the implement queue is
+    // backlogged (pending > cap × 0.75) for a sustained window (default
+    // 60s), emits kpi.backlog.degraded so the steward subscriber — wired
+    // separately in server.ts via startStewardRuntimeTune — bumps the cap
+    // autonomously.
+    name: 'backlog-check',
+    intervalMs: () => Number(process.env.MARS_BACKLOG_CHECK_MS ?? 10_000),
+    run: async ({ bus, tracker, sems }) => {
+      const BACKLOG_SUSTAIN_MS = Number(process.env.MARS_BACKLOG_SUSTAIN_MS ?? 60_000)
+      const pending = tracker.pendingCount('implement')
+      const threshold = Math.floor(sems.implement.limit * 0.75)
+      if (pending > threshold) {
+        if (backlogSince === null) backlogSince = Date.now()
+        const elapsed = Date.now() - backlogSince
+        if (elapsed >= BACKLOG_SUSTAIN_MS) {
+          bus.emit('kpi.backlog.degraded', {
+            pending,
+            cap: sems.implement.limit,
+            sustainedMs: elapsed,
+          })
+          backlogSince = null
+        }
+      } else {
+        backlogSince = null
+      }
+    },
+  },
+  {
+    // Reflect-recommended detector sweep. Periodically evaluates
+    // reflect-worthiness (KPI drift, failure clusters, token spikes) and
+    // raises / clears the level-triggered reflect-recommended action-queue
+    // row. When selfEvolve.autoRunReflect is 'on', runs the reflection
+    // pipeline immediately instead of waiting for an operator action.
+    name: 'reflect-detector',
+    intervalMs: () => Number(process.env.MARS_REFLECT_DETECTOR_MS ?? 5 * 60_000),
+    run: async ({ log, bus, pause, isBaselinePoisoned }) => {
+      const { runReflectRecommendedDetector } = await import('../lib/self-evolve-trigger')
+      const result = await runReflectRecommendedDetector()
+      if (result.raised) {
+        log(`[reflect-detector] raised reflect-recommended row (row=${result.rowId})`)
+        bus.emit('view.action-queue-invalidated')
+        // When auto-run-reflect is on, immediately run the reflection pipeline
+        // instead of waiting for an operator action on the row.
+        const { loadDaemonConfig: getLatestCfg } = await import('./config')
+        if (getLatestCfg().controlLevers.autoRunReflect === 'on') {
+          log('[reflect-detector] auto-run-reflect=on — running reflection automatically')
+          try {
+            const { loadRecentTaskCorpus } = await import('../lib/reflect-query')
+            const { persistSuggestions } = await import('../lib/reflector')
+            const { requireReflector } = await import('../ports/reflector/registry')
+            const { closeReflectRecommendedRow: closeRow } = await import(
+              '../lib/self-evolve-trigger'
+            )
+            const { insertReflectionTask } = await import('../queue')
+            const { persistLastReflectRanAt } = await import('./config')
+            // Same baseline-attribution source as runReflect and
+            // getConditionsSource's action-queue derivation.
+            const corpus = await loadRecentTaskCorpus({
+              limit: 10,
+              isBaselinePoisoned,
+              getPauseState: () => pause.get(),
+            })
+            let proposalsRaised = 0
+            if (corpus.entries.length > 0) {
+              const reflResult = await requireReflector<
+                import('../lib/reflector').TokenReflectorPortRequest,
+                import('../lib/reflector').ReflectionResult
+              >('token').reflect(corpus)
+              if (reflResult.suggestions.length > 0) {
+                const sourceTaskId = await insertReflectionTask(corpus.entries.length)
+                await persistSuggestions(reflResult.suggestions, sourceTaskId)
+                proposalsRaised = reflResult.suggestions.length
+                bus.emit('view.proposals-invalidated')
+                bus.emit('view.action-queue-invalidated')
+              }
+            }
+            await closeRow()
+            persistLastReflectRanAt(new Date().toISOString())
+            bus.emit('view.action-queue-invalidated')
+            log(`[reflect-detector] auto-reflect completed (proposals=${proposalsRaised})`)
+          } catch (reflectErr) {
+            log(`[reflect-detector] auto-reflect errored: ${(reflectErr as Error).message}`)
+          }
+        }
+      } else if (result.skipReason === 'auto-enqueue-on') {
+        log(
+          '[reflect-detector] no row raised — selfEvolve.autoEnqueue=true routes mechanical suggestions directly to task queue',
+        )
+      } else {
+        log(
+          '[reflect-detector] no signals: kpiDrift=0 failureClusters=0 tokenSpike=null; reflection not yet needed',
+        )
+      }
+    },
+  },
+  {
+    // Stale-queued watchdog. Scans for tasks sitting in 'queued' past
+    // MARS_STALE_QUEUED_MS (default 10 min) and raises a 'stale-queued'
+    // action-queue alert for each one, so the operator can tell whether the
+    // pool is saturated or the dispatcher is stuck. Shares the phantom-task
+    // watchdog's cadence (MARS_PHANTOM_WATCHDOG_MS).
+    name: 'stale-queued-watchdog',
+    intervalMs: () => Number(process.env.MARS_PHANTOM_WATCHDOG_MS ?? 5 * 60_000),
+    run: async ({ log, bus, tracker, sems, pause, dispatchResumedAt }) => {
+      const { runStaleQueuedSweep } = await import('./stale-queued-watchdog')
+      const activeWorkerCount = tracker.inFlightCount()
+      const queuedTasks = await listTasks('queued')
+      const queueDepth = queuedTasks.length
+      const { alerted } = await runStaleQueuedSweep({
+        activeWorkerCount,
+        implementCap: sems.implement.limit,
+        queueDepth,
+        dispatchDecisionSummary: [],
+        dispatchPauseState: pause.get(),
+        dispatchResumedAt: dispatchResumedAt(),
+      })
+      if (alerted.length > 0) {
+        log(
+          `[stale-queued-watchdog] raised alert for ${alerted.length} stale-queued task(s): ${alerted.join(', ')}`,
+        )
+        bus.emit('view.action-queue-invalidated')
+      }
+    },
+  },
+  {
+    // Awaiting-validation watchdog. Reuses the stale-queued / phantom
+    // cadence: preview-gated tasks are parked deliberately, but a dead
+    // preview must be demoted immediately and expires after 48h so it cannot
+    // pollute the operator queue forever.
+    name: 'awaiting-validation-watchdog',
+    intervalMs: () => Number(process.env.MARS_PHANTOM_WATCHDOG_MS ?? 5 * 60_000),
+    run: async ({ log, bus }) => {
+      const { runAwaitingValidationSweep } = await import('./awaiting-validation-watchdog')
+      const { demoted, failed } = await runAwaitingValidationSweep()
+      if (demoted.length > 0 || failed.length > 0) {
+        log(
+          `[awaiting-validation-watchdog] demoted ${demoted.length} dead preview(s); expired ${failed.length} task(s)`,
+        )
+        bus.emit('view.action-queue-invalidated')
+        bus.emit('view.tasks-invalidated')
+      }
+    },
+  },
+  {
+    // Phantom-task watchdog. Sweeps for tasks stuck in 'running' or
+    // 'verifying' with no live subprocess, preventing a dead worker from
+    // holding an in-flight slot indefinitely (root cause of the
+    // mars-f35b1c7f 12-hour freeze). See phantom-task-watchdog.ts for the
+    // dead-PID / wall-clock-ceiling detection detail. Phantom kills do NOT
+    // spawn a recovery task — the operator receives an action-queue item and
+    // restarts or drops the task explicitly.
+    name: 'phantom-watchdog',
+    intervalMs: () => Number(process.env.MARS_PHANTOM_WATCHDOG_MS ?? 5 * 60_000),
+    run: async ({ log, bus, tracker, drain, activeVerifyingTaskIds }) => {
+      const { sweepPhantomTasks } = await import('./phantom-task-watchdog')
+      const { getDefaultMergeJobStore } = await import('../store/merge-job-store')
+      const { failed, requeued } = await sweepPhantomTasks(
+        tracker.inFlightSnapshot(),
+        (id, _kind) => {
+          // Mirror handleDrop(force=true): force-clear ONLY the tracker entry
+          // and let drain() reclaim the slot once the dispatcher's own
+          // release closure runs — see the original inline comment history
+          // for why double-releasing the semaphore here would silently
+          // defeat the implement cap.
+          tracker.forceRelease(id)
+          void drain()
+        },
+        undefined,
+        undefined,
+        (taskId) => getDefaultMergeJobStore().getActiveMergeJob(taskId).then((j) => j !== null),
+        (taskId) => activeVerifyingTaskIds().has(taskId),
+      )
+      if (failed.length > 0) {
+        log(
+          `[phantom-watchdog] auto-failed ${failed.length} phantom in-flight task(s): ${failed.join(', ')}`,
+        )
+        bus.emit('view.action-queue-invalidated')
+        bus.emit('view.tasks-invalidated')
+        void drain()
+      }
+      if (requeued.length > 0) {
+        log(
+          `[phantom-watchdog] re-queued ${requeued.length} orphaned running task(s) with no in-flight entry: ${requeued.join(', ')}`,
+        )
+        for (const taskId of requeued) {
+          bus.emit('task.queued', { taskId })
+        }
+        void drain()
+      }
+    },
+  },
 ]
 
 export interface SweepsHandle {
@@ -347,11 +714,13 @@ export interface SweepsHandle {
  */
 export const startSweeps = (deps: SweepDeps): SweepsHandle => {
   const handles = SWEEPS.map((spec) => {
-    const handle = setInterval(() => {
+    const tick = () => {
       void spec.run(deps).catch((err: unknown) => {
         deps.log(`[${spec.name}] errored: ${(err as Error).message}`)
       })
-    }, spec.intervalMs())
+    }
+    if (spec.runOnStart) tick()
+    const handle = setInterval(tick, spec.intervalMs())
     handle.unref()
     return handle
   })
