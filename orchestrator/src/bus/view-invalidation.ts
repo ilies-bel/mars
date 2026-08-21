@@ -18,19 +18,19 @@ import type { ViewStreamHub, StreamChannel } from '../core/daemon/view/stream-hu
  *
  * This module inverts that: {@link VIEW_CHANNEL_FOR} is a single table from
  * every {@link UnifiedEventKind} (the full bus ∪ trace union — see
- * `../bus/emit.ts`) to the {@link ViewChannel}s it should invalidate. Because
- * the table type is `Record<UnifiedEventKind, ...>`, adding a new kind to
- * `EventMap` or `TRACE_EVENT_KINDS` without adding a row here is a `tsc`
+ * `../bus/emit.ts`) plus every {@link ViewInvalidationKind} to the
+ * {@link ViewChannel}s it should invalidate. Because the table type is an
+ * exhaustive `Record`, adding a new kind to `EventMap`, `TRACE_EVENT_KINDS`
+ * or {@link VIEW_INVALIDATION_KINDS} without adding a row here is a `tsc`
  * error, not a silently-missing broadcast.
  *
  * {@link registerViewInvalidation} is the one subscriber that reads this
  * table and wires it onto the daemon's in-process event bus (the same
- * `EventEmitter` the existing hand-wired `bus.on(...)` calls in
- * `server.ts` use — see `merge-worker.ts`/`phase-recovery.ts`/
- * `reconcilers.ts` for the same `bus: EventEmitter` convention). A kind
- * mapped to `[]` is a deliberate "no dedicated UI surface yet" decision,
- * not an oversight — the exhaustive type still forces that decision to be
- * made explicitly.
+ * `EventEmitter` the `bus.on(...)` dispatch handlers in `server.ts` use —
+ * see `merge-worker.ts`/`phase-recovery.ts`/`reconcilers.ts` for the same
+ * `bus: EventEmitter` convention). A kind mapped to `[]` is a deliberate
+ * "no dedicated UI surface yet" decision, not an oversight — the exhaustive
+ * type still forces that decision to be made explicitly.
  */
 
 /** Alias kept local to this module so callers don't need to reach into `view/stream-hub.ts` directly. */

@@ -20,6 +20,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { VIEW_INVALIDATION_KINDS } from '../../../bus/view-invalidation'
 
 const SRC_ROOT = fileURLToPath(new URL('../../..', import.meta.url))
 
@@ -63,6 +64,25 @@ describe('no hand-placed view-stream broadcasts', () => {
       })
     }
     expect(offenders).toEqual([])
+  })
+
+  it('emits only `view.*` kinds the invalidation table knows about', () => {
+    // `bus` in server.ts is a bare EventEmitter, so `bus.emit('view.taks-…')`
+    // type-checks and then silently invalidates nothing — exactly the failure
+    // mode the old hand-placed broadcasts had. Catch the typo statically.
+    const known = new Set<string>(VIEW_INVALIDATION_KINDS)
+    const unknown: string[] = []
+    for (const file of sourceFiles(SRC_ROOT)) {
+      const rel = relative(SRC_ROOT, file)
+      if (rel === join('bus', 'view-invalidation.ts')) continue
+      const lines = readFileSync(file, 'utf8').split('\n')
+      lines.forEach((line, i) => {
+        for (const match of line.matchAll(/'(view\.[a-z-]+)'/g)) {
+          if (!known.has(match[1]!)) unknown.push(`${rel}:${i + 1}: ${match[1]}`)
+        }
+      })
+    }
+    expect(unknown).toEqual([])
   })
 
   it('scans a plausible source tree (guards against the walker silently finding nothing)', () => {
