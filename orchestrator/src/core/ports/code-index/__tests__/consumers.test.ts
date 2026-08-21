@@ -1,26 +1,27 @@
 /**
  * Wiring tests for the three CodeIndex consumers (PRD ae17340a, slice 31):
- *   - overlapScoreWithCodeIndex   (../../lib/overlap-scorer.ts)
- *   - buildIndexCardWithCodeIndex (../../lib/index-card/build.ts)
- *   - validateSliceReferencesWithCodeIndex (../../../workflows/slice-reference-validator.ts)
+ *   - overlapScore           (../../lib/overlap-scorer.ts)
+ *   - buildIndexCard         (../../lib/index-card/build.ts)
+ *   - validateSliceReferences (../../../workflows/slice-reference-validator.ts)
  *
  * Each consumer:
  *   1. resolves the `CodeIndex` Port at its own call boundary instead of
  *      doing its own file discovery;
- *   2. with the default `none` implementation, produces byte-identical
- *      output to its pre-CodeIndex sibling function;
+ *   2. with the default `none` implementation, produces the same output as
+ *      it did before this slice;
  *   3. with a stub `CodeIndex` returning real hits, demonstrably uses them;
  *   4. never imports the `codegraph` implementation module directly.
+ *
+ * There is deliberately no `*WithCodeIndex` sibling to compare against — the
+ * Port is wired into the canonical function itself, so the `impl='none'`
+ * assertions below pin the pre-slice behaviour explicitly instead.
  */
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { overlapScore, overlapScoreWithCodeIndex } from '../../../lib/overlap-scorer'
-import { buildIndexCard, buildIndexCardWithCodeIndex } from '../../../lib/index-card/build'
-import {
-  validateSliceReferences,
-  validateSliceReferencesWithCodeIndex,
-} from '../../../../workflows/slice-reference-validator'
+import { overlapScore, tokenize } from '../../../lib/overlap-scorer'
+import { buildIndexCard } from '../../../lib/index-card/build'
+import { validateSliceReferences } from '../../../../workflows/slice-reference-validator'
 import { noneCodeIndex } from '../none'
 import type { CodeIndex, SymbolHit } from '../types'
 
@@ -38,14 +39,14 @@ const hit = (name: string, filePath: string): SymbolHit => ({
 })
 
 /** A stub CodeIndex whose `search`/`symbols` return canned hits keyed by term. */
-function stubCodeIndex(bySearchTerm: Record<string, SymbolHit[]>): CodeIndex {
+function stubCodeIndex(byTerm: Record<string, SymbolHit[]>): CodeIndex {
   return {
     kind: 'stub',
     async symbols(query) {
-      return bySearchTerm[query.term] ?? []
+      return byTerm[query.term] ?? []
     },
     async search(query) {
-      return bySearchTerm[query.term] ?? []
+      return byTerm[query.term] ?? []
     },
     async impact(query) {
       return { symbol: query.symbol, affected: [] }
@@ -54,27 +55,42 @@ function stubCodeIndex(bySearchTerm: Record<string, SymbolHit[]>): CodeIndex {
 }
 
 // ---------------------------------------------------------------------------
-// overlapScoreWithCodeIndex
+// overlapScore
 // ---------------------------------------------------------------------------
 
-describe('overlapScoreWithCodeIndex', () => {
-  it('with impl=none, matches overlapScore exactly', async () => {
+describe('overlapScore', () => {
+  /**
+   * The pre-slice scorer: plain Jaccard over the token sets. `impl='none'`
+   * must still agree with this exactly.
+   */
+  const jaccard = (a: string, b: string): number => {
+    const setA = new Set(tokenize(a))
+    const setB = new Set(tokenize(b))
+    if (setA.size === 0 || setB.size === 0) return 0
+    let shared = 0
+    for (const tok of setA) if (setB.has(tok)) shared++
+    return shared / (setA.size + setB.size - shared)
+  }
+
+  it('with impl=none, matches the pre-slice Jaccard score exactly', async () => {
     const a = 'fix the login form validation bug'
     const b = 'login form validation is broken'
-    const withNone = await overlapScoreWithCodeIndex(a, b, noneCodeIndex)
-    expect(withNone).toBe(overlapScore(a, b))
+    expect(await overlapScore(a, b, noneCodeIndex)).toBe(jaccard(a, b))
+  })
+
+  it('with impl=none, an empty token set still scores 0', async () => {
+    expect(await overlapScore('the and a for with', 'anything at all', noneCodeIndex)).toBe(0)
   })
 
   it('with a stub CodeIndex sharing a file across both terms, boosts above the base score', async () => {
     const a = 'refactor the auth module'
     const b = 'update auth logic'
-    const base = overlapScore(a, b)
     const stub = stubCodeIndex({
       [a]: [hit('login', 'src/auth/login.ts')],
       [b]: [hit('login', 'src/auth/login.ts')],
     })
-    const boosted = await overlapScoreWithCodeIndex(a, b, stub)
-    expect(boosted).toBeGreaterThan(base)
+    const boosted = await overlapScore(a, b, stub)
+    expect(boosted).toBeGreaterThan(jaccard(a, b))
     expect(boosted).toBeLessThanOrEqual(1)
   })
 
@@ -85,19 +101,18 @@ describe('overlapScoreWithCodeIndex', () => {
       [a]: [hit('foo', 'src/foo.ts')],
       [b]: [hit('bar', 'src/bar.ts')],
     })
-    const result = await overlapScoreWithCodeIndex(a, b, stub)
-    expect(result).toBe(overlapScore(a, b))
+    expect(await overlapScore(a, b, stub)).toBe(jaccard(a, b))
   })
 })
 
 // ---------------------------------------------------------------------------
-// buildIndexCardWithCodeIndex
+// buildIndexCard
 // ---------------------------------------------------------------------------
 
-describe('buildIndexCardWithCodeIndex', () => {
-  // 6 glossary terms whose words never substring-match `files`, so the
-  // plain heuristic scores every one of them 0 and MAX_POINTERS=5 selection
-  // falls back to an ascending id tie-break: g-a..g-e survive, g-f is cut.
+describe('buildIndexCard', () => {
+  // 6 glossary terms whose words never substring-match `files`, so the plain
+  // heuristic scores every one of them 0 and MAX_POINTERS=5 selection falls
+  // back to an ascending id tie-break: g-a..g-e survive, g-f is cut.
   const glossary = ['a', 'b', 'c', 'd', 'e', 'f'].map((letter) => ({
     id: `g-${letter}`,
     term: `zzzterm${letter}`,
@@ -113,54 +128,80 @@ describe('buildIndexCardWithCodeIndex', () => {
     coChanges: [],
   }
 
-  it('with impl=none, matches buildIndexCard exactly', async () => {
-    const withNone = await buildIndexCardWithCodeIndex(baseInput, noneCodeIndex)
-    const plain = buildIndexCard(baseInput)
-    expect(withNone).toEqual(plain)
+  it('with impl=none, leaves the shortlist and pointer ranking exactly as before', async () => {
+    const card = await buildIndexCard(baseInput, noneCodeIndex)
+    // The shortlist is untouched — no discovered files joined it.
+    expect(card.text).toContain('files (1):')
+    expect(card.text).toContain('- src/unrelated-file.ts')
     // g-f loses the ascending id tie-break against g-a..g-e and is cut.
-    expect(plain.text).not.toContain('g-f')
-    expect(plain.text).toContain('g-e')
+    expect(card.text).toContain('g-e')
+    expect(card.text).not.toContain('g-f')
   })
 
-  it('with a stub CodeIndex confirming g-f against the file shortlist, it displaces the lowest-ranked tied pointer', async () => {
+  it('with impl=none, the cache key is stable across builds and keyed on the shortlist', async () => {
+    const first = await buildIndexCard(baseInput, noneCodeIndex)
+    const second = await buildIndexCard(baseInput, noneCodeIndex)
+    expect(first.cacheKey).toBe(second.cacheKey)
+
+    const other = await buildIndexCard(
+      { ...baseInput, files: ['src/some-other-file.ts'] },
+      noneCodeIndex,
+    )
+    expect(other.cacheKey).not.toBe(first.cacheKey)
+  })
+
+  it('with a stub CodeIndex, discovered files join the shortlist and re-rank the pointers', async () => {
+    // The shortlist path 'src/unrelated-file.ts' contributes the search term
+    // 'unrelated-file'; the index answers with a file naming glossary term f.
     const stub = stubCodeIndex({
-      zzztermf: [hit('someSymbol', 'src/unrelated-file.ts')],
+      'unrelated-file': [hit('someSymbol', 'src/zzztermf-impl.ts')],
     })
-    const result = await buildIndexCardWithCodeIndex(baseInput, stub)
-    // Boosted above the 0-score ties, g-f now makes the cut...
-    expect(result.text).toContain('g-f')
-    // ...displacing g-e, the last surviving 0-score entry.
-    expect(result.text).not.toContain('g-e')
+    const card = await buildIndexCard(baseInput, stub)
+
+    // The returned symbol's file demonstrably joined `files[]`.
+    expect(card.text).toContain('files (2):')
+    expect(card.text).toContain('- src/zzztermf-impl.ts')
+
+    // And because pointers are scored against the shortlist, g-f now
+    // out-ranks the 0-score ties and displaces g-e.
+    expect(card.text).toContain('g-f')
+    expect(card.text).not.toContain('g-e')
+  })
+
+  it('caps the enriched shortlist so a chatty index cannot crowd out the card', async () => {
+    const stub = stubCodeIndex({
+      'unrelated-file': Array.from({ length: 200 }, (_, i) =>
+        hit(`sym${i}`, `src/discovered-${i}.ts`),
+      ),
+    })
+    const card = await buildIndexCard(baseInput, stub)
+    expect(card.text).toContain('files (40):')
   })
 })
 
 // ---------------------------------------------------------------------------
-// validateSliceReferencesWithCodeIndex
+// validateSliceReferences
 // ---------------------------------------------------------------------------
 
-describe('validateSliceReferencesWithCodeIndex', () => {
+describe('validateSliceReferences', () => {
   const slice = {
     prescriptiveAction: 'Call `someInventedSymbolXyz` to do the thing.',
     readFirst: ['orchestrator/src/workflows/slice-reference-validator.ts'],
   }
 
-  it('with impl=none, matches validateSliceReferences exactly', async () => {
-    const withNone = await validateSliceReferencesWithCodeIndex(slice, REPO_ROOT, noneCodeIndex)
-    const plain = validateSliceReferences(slice, REPO_ROOT)
-    expect(withNone).toEqual(plain)
+  it('with impl=none, the rg fallback is unchanged: the fabricated symbol is still missing', async () => {
+    const result = await validateSliceReferences(slice, REPO_ROOT, noneCodeIndex)
+    expect(result.missingSymbols).toContain('someInventedSymbolXyz')
+    // The readFirst path really exists, so it is not reported missing.
+    expect(result.missingReadFirstPaths).toEqual([])
   })
 
   it('with a stub CodeIndex confirming the symbol, it is no longer missing', async () => {
     const stub = stubCodeIndex({
       someInventedSymbolXyz: [hit('someInventedSymbolXyz', 'src/made-up.ts')],
     })
-    const result = await validateSliceReferencesWithCodeIndex(slice, REPO_ROOT, stub)
+    const result = await validateSliceReferences(slice, REPO_ROOT, stub)
     expect(result.missingSymbols).not.toContain('someInventedSymbolXyz')
-  })
-
-  it('without a code index confirming it, the fabricated symbol is still missing (rg fallback unchanged)', async () => {
-    const result = await validateSliceReferencesWithCodeIndex(slice, REPO_ROOT, noneCodeIndex)
-    expect(result.missingSymbols).toContain('someInventedSymbolXyz')
   })
 })
 

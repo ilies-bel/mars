@@ -621,7 +621,7 @@ export const setupWorktree = async (
       let setupIndexCard: string | null = null
       if (integrationHeadSha && spec !== null && spec.files.length > 0) {
         try {
-          const cardResult = loadOrBuildIndexCard({
+          const cardResult = await loadOrBuildIndexCard({
             taskId,
             commitSha: integrationHeadSha,
             files: spec.files,

@@ -129,11 +129,11 @@ describe('composePrompt — <index_card> section', () => {
 // ---------------------------------------------------------------------------
 
 describe('index-card E2E: disk file matches prompt content', () => {
-  it('prompt <index_card> matches the file at .mars/index-cards/<cacheKey>.txt', () => {
+  it('prompt <index_card> matches the file at .mars/index-cards/<cacheKey>.txt', async () => {
     const files = ['orchestrator/src/core/queue.ts', 'orchestrator/src/workflows/primitives/shared.ts']
     const args = { taskId: 'mars-e2e-01', commitSha: 'deadbeef1234', files }
 
-    const result = loadOrBuildIndexCard(args)
+    const result = await loadOrBuildIndexCard(args)
 
     // Verify the file was written
     const expectedPath = join(repoDir, '.mars', 'index-cards', `${result.cacheKey}.txt`)
@@ -168,11 +168,11 @@ describe('index-card E2E: disk file matches prompt content', () => {
     expect(promptCardContent).toBe(onDisk.trim())
   })
 
-  it('cache hit: second call returns same card text that stays on disk', () => {
+  it('cache hit: second call returns same card text that stays on disk', async () => {
     const args = { taskId: 'mars-e2e-02', commitSha: 'cafebabe', files: ['src/foo.ts'] }
 
-    const first = loadOrBuildIndexCard(args)
-    const second = loadOrBuildIndexCard(args)
+    const first = await loadOrBuildIndexCard(args)
+    const second = await loadOrBuildIndexCard(args)
 
     expect(second.cacheHit).toBe(true)
     expect(second.text).toBe(first.text)
@@ -193,7 +193,7 @@ describe('trace event: index-card.attached', () => {
     // Verify that loadOrBuildIndexCard returns the fields the trace event
     // payload should carry. The actual emission happens inside setupWorktree;
     // here we verify the shape of the data that feeds the event.
-    const result = loadOrBuildIndexCard({
+    const result = await loadOrBuildIndexCard({
       taskId: 'mars-trace-01',
       commitSha: 'abc123',
       files: ['src/a.ts'],
@@ -208,7 +208,7 @@ describe('trace event: index-card.attached', () => {
     expect(result.cacheHit).toBe(false)
 
     // Second call is a hit
-    const second = loadOrBuildIndexCard({
+    const second = await loadOrBuildIndexCard({
       taskId: 'mars-trace-01',
       commitSha: 'abc123',
       files: ['src/a.ts'],

@@ -6,9 +6,9 @@ import { validateSliceReferences } from '../slice-reference-validator'
 const REPO_ROOT = resolve(__dirname, '../../../..')
 
 describe('validateSliceReferences', () => {
-  it('(a) a slice with only real refs → both arrays empty', () => {
+  it('(a) a slice with only real refs → both arrays empty', async () => {
     // `loadWorkflowByName` is exported from queue-workflow-store.ts
-    const result = validateSliceReferences(
+    const result = await validateSliceReferences(
       {
         prescriptiveAction:
           'Call `loadWorkflowByName` to retrieve the workflow definition.',
@@ -20,9 +20,9 @@ describe('validateSliceReferences', () => {
     expect(result.missingReadFirstPaths).toEqual([])
   })
 
-  it('(b) a slice citing `loadWorkflowForKind` → present in missingSymbols', () => {
+  it('(b) a slice citing `loadWorkflowForKind` → present in missingSymbols', async () => {
     // `loadWorkflowForKind` does not exist anywhere in the repo
-    const result = validateSliceReferences(
+    const result = await validateSliceReferences(
       {
         prescriptiveAction:
           'Call `loadWorkflowForKind` to retrieve the workflow definition.',
@@ -34,9 +34,9 @@ describe('validateSliceReferences', () => {
     expect(result.missingReadFirstPaths).toEqual([])
   })
 
-  it('(c) a slice with a fabricated readFirst path → present in missingReadFirstPaths', () => {
+  it('(c) a slice with a fabricated readFirst path → present in missingReadFirstPaths', async () => {
     // The test file `load-workflow-strict.test.ts` does not exist on disk
-    const result = validateSliceReferences(
+    const result = await validateSliceReferences(
       {
         prescriptiveAction:
           'Call `loadWorkflowByName` to retrieve the workflow definition.',
@@ -52,8 +52,8 @@ describe('validateSliceReferences', () => {
     )
   })
 
-  it('(d) empty prescriptiveAction and empty readFirst → both arrays empty', () => {
-    const result = validateSliceReferences(
+  it('(d) empty prescriptiveAction and empty readFirst → both arrays empty', async () => {
+    const result = await validateSliceReferences(
       {
         prescriptiveAction: '',
         readFirst: [],

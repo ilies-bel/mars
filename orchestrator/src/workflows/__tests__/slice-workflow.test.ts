@@ -4256,8 +4256,8 @@ describe('annotateUnresolvedReferences', () => {
     vi.restoreAllMocks()
   })
 
-  it('annotates slices whose references do not resolve', () => {
-    vi.spyOn(sliceRefValidator, 'validateSliceReferences').mockReturnValue({
+  it('annotates slices whose references do not resolve', async () => {
+    vi.spyOn(sliceRefValidator, 'validateSliceReferences').mockResolvedValue({
       missingSymbols: ['loadWorkflowForKind'],
       missingReadFirstPaths: ['src/fake-path.ts'],
     })
@@ -4268,7 +4268,7 @@ describe('annotateUnresolvedReferences', () => {
     })
     const onAnnotated = vi.fn()
 
-    annotateUnresolvedReferences([slice], '/some/root', onAnnotated)
+    await annotateUnresolvedReferences([slice], '/some/root', onAnnotated)
 
     expect(slice.prescriptiveAction).toContain(
       'Spec-vs-reality caveat: the following references could not be resolved in the current tree at slicing time — verify or replace before implementing.',
@@ -4285,8 +4285,8 @@ describe('annotateUnresolvedReferences', () => {
     })
   })
 
-  it('retains last missing path when removal would leave readFirst empty', () => {
-    vi.spyOn(sliceRefValidator, 'validateSliceReferences').mockReturnValue({
+  it('retains last missing path when removal would leave readFirst empty', async () => {
+    vi.spyOn(sliceRefValidator, 'validateSliceReferences').mockResolvedValue({
       missingSymbols: [],
       missingReadFirstPaths: ['src/only-path.ts'],
     })
@@ -4296,7 +4296,7 @@ describe('annotateUnresolvedReferences', () => {
     })
     const onAnnotated = vi.fn()
 
-    annotateUnresolvedReferences([slice], '/some/root', onAnnotated)
+    await annotateUnresolvedReferences([slice], '/some/root', onAnnotated)
 
     // The path is retained (fallback) — readFirst must not be empty.
     expect(slice.readFirst).toEqual(['src/only-path.ts'])
@@ -4305,8 +4305,8 @@ describe('annotateUnresolvedReferences', () => {
     expect(onAnnotated).toHaveBeenCalledTimes(1)
   })
 
-  it('fires onAnnotated exactly once per annotated slice', () => {
-    vi.spyOn(sliceRefValidator, 'validateSliceReferences').mockReturnValue({
+  it('fires onAnnotated exactly once per annotated slice', async () => {
+    vi.spyOn(sliceRefValidator, 'validateSliceReferences').mockResolvedValue({
       missingSymbols: ['sym'],
       missingReadFirstPaths: [],
     })
@@ -4314,15 +4314,15 @@ describe('annotateUnresolvedReferences', () => {
     const slices = [makeSlice({ title: 'A' }), makeSlice({ title: 'B' })]
     const onAnnotated = vi.fn()
 
-    annotateUnresolvedReferences(slices, '/some/root', onAnnotated)
+    await annotateUnresolvedReferences(slices, '/some/root', onAnnotated)
 
     expect(onAnnotated).toHaveBeenCalledTimes(2)
     expect(onAnnotated.mock.calls[0][0].sliceTitle).toBe('A')
     expect(onAnnotated.mock.calls[1][0].sliceTitle).toBe('B')
   })
 
-  it('leaves slices with no missing references untouched and does not fire callback', () => {
-    vi.spyOn(sliceRefValidator, 'validateSliceReferences').mockReturnValue({
+  it('leaves slices with no missing references untouched and does not fire callback', async () => {
+    vi.spyOn(sliceRefValidator, 'validateSliceReferences').mockResolvedValue({
       missingSymbols: [],
       missingReadFirstPaths: [],
     })
@@ -4335,7 +4335,7 @@ describe('annotateUnresolvedReferences', () => {
     })
     const onAnnotated = vi.fn()
 
-    annotateUnresolvedReferences([slice], '/some/root', onAnnotated)
+    await annotateUnresolvedReferences([slice], '/some/root', onAnnotated)
 
     expect(slice.prescriptiveAction).toBe(originalAction)
     expect(slice.readFirst).toEqual(originalReadFirst)

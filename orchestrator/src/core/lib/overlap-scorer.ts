@@ -7,9 +7,9 @@
  * from here — do NOT fork a second scorer.
  *
  * Public API (intentionally small):
- *   tokenize(text)       → string[]   — normalised content tokens, stopwords removed
- *   overlapScore(a, b)   → number     — Jaccard similarity in [0, 1], symmetric, no LLM
- *   CONFIDENT_MATCH_THRESHOLD         — shared threshold for "this is a confident match"
+ *   tokenize(text)       → string[]            — normalised content tokens, stopwords removed
+ *   overlapScore(a, b)   → Promise<number>     — similarity in [0, 1], symmetric, no LLM
+ *   CONFIDENT_MATCH_THRESHOLD                  — shared threshold for "this is a confident match"
  *
  * Algorithm: Jaccard similarity over deduplicated token sets.
  * Reference shape: github.com/Dicklesworthstone/beads_viewer
@@ -82,54 +82,48 @@ export const tokenize = (text: string): string[] => {
 export const CONFIDENT_MATCH_THRESHOLD = 0.35
 
 /**
- * Compute the Jaccard similarity between the meaningful keyword sets of
- * two strings.
+ * Compute the similarity between the meaningful keyword sets of two strings.
  *
- * Returns a value in [0, 1]:
+ * The base score is the Jaccard similarity of the token sets, in [0, 1]:
  *   1 → identical non-empty token sets
  *   0 → disjoint token sets *or* either / both strings have no content tokens
  *
+ * That lexical score is then blended with real symbol data from the
+ * `CodeIndex` Port — resolved here, at this call boundary, via
+ * `resolveCodeIndex` in `../ports/code-index/registry.ts`, never by importing
+ * a concrete implementation (e.g. `codegraph.ts`) directly. When `a` and `b`
+ * both resolve to symbols that live in overlapping files, the score is
+ * boosted toward 1 in proportion to how much of that file set they share:
+ * two differently-worded strings naming the same code are near-duplicates
+ * even when their tokens barely overlap, which is exactly the case pure
+ * Jaccard misses.
+ *
+ * With the default `none` implementation — which always returns zero hits —
+ * this returns the plain Jaccard score, identical to the pre-CodeIndex
+ * behaviour.
+ *
  * Symmetric: overlapScore(a, b) === overlapScore(b, a).
  * Deterministic: no randomness, no LLM calls, no side effects.
- */
-export const overlapScore = (a: string, b: string): number => {
-  const setA = new Set(tokenize(a))
-  const setB = new Set(tokenize(b))
-
-  if (setA.size === 0 || setB.size === 0) return 0
-
-  let intersectionSize = 0
-  for (const tok of setA) {
-    if (setB.has(tok)) intersectionSize++
-  }
-
-  const unionSize = setA.size + setB.size - intersectionSize
-  return intersectionSize / unionSize
-}
-
-/**
- * CodeIndex-aware sibling of {@link overlapScore}. Resolves the active
- * `CodeIndex` implementation at this call boundary — via `resolveCodeIndex`
- * in `../ports/code-index/registry.ts`, never importing a concrete
- * implementation (e.g. `codegraph.ts`) directly — and blends real
- * symbol-search hits into the plain Jaccard score above: when both `a` and
- * `b` resolve to hits that share at least one file, the score is boosted
- * toward 1 proportionally to how many of those files overlap.
  *
- * With the default `none` implementation — or any implementation that
- * returns no hits for `a` or `b` — this returns exactly `overlapScore(a, b)`,
- * so a caller with no code index configured sees identical output to the
- * pre-CodeIndex behaviour.
- *
- * @param codeIndex - Defaults to `resolveCodeIndex()` (real env-selected
+ * @param codeIndex - Defaults to `resolveCodeIndex()` (the env-selected
  *   implementation); tests inject a stub directly.
  */
-export const overlapScoreWithCodeIndex = async (
+export const overlapScore = async (
   a: string,
   b: string,
   codeIndex: CodeIndex = resolveCodeIndex(),
 ): Promise<number> => {
-  const base = overlapScore(a, b)
+  const setA = new Set(tokenize(a))
+  const setB = new Set(tokenize(b))
+
+  let base = 0
+  if (setA.size > 0 && setB.size > 0) {
+    let intersectionSize = 0
+    for (const tok of setA) {
+      if (setB.has(tok)) intersectionSize++
+    }
+    base = intersectionSize / (setA.size + setB.size - intersectionSize)
+  }
 
   const [hitsA, hitsB] = await Promise.all([
     codeIndex.search({ term: a }),
@@ -143,7 +137,6 @@ export const overlapScoreWithCodeIndex = async (
   for (const f of filesA) if (filesB.has(f)) sharedFiles++
   if (sharedFiles === 0) return base
 
-  const unionSize = new Set([...filesA, ...filesB]).size
-  const fileOverlap = sharedFiles / unionSize
+  const fileOverlap = sharedFiles / new Set([...filesA, ...filesB]).size
   return Math.min(1, base + fileOverlap * (1 - base))
 }

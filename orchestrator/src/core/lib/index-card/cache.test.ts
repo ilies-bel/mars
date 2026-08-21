@@ -50,26 +50,26 @@ const sampleArgs = () => ({
 // ---------------------------------------------------------------------------
 
 describe('loadOrBuildIndexCard — cache miss', () => {
-  it('returns cacheHit=false on the first call', () => {
-    const result = loadOrBuildIndexCard(sampleArgs())
+  it('returns cacheHit=false on the first call', async () => {
+    const result = await loadOrBuildIndexCard(sampleArgs())
     expect(result.cacheHit).toBe(false)
   })
 
-  it('writes the card text to .mars/index-cards/<cacheKey>.txt', () => {
-    const result = loadOrBuildIndexCard(sampleArgs())
+  it('writes the card text to .mars/index-cards/<cacheKey>.txt', async () => {
+    const result = await loadOrBuildIndexCard(sampleArgs())
     const expectedPath = join(repoDir, '.mars', 'index-cards', `${result.cacheKey}.txt`)
     expect(existsSync(expectedPath)).toBe(true)
     expect(readFileSync(expectedPath, 'utf8')).toBe(result.text)
   })
 
-  it('returns non-empty text containing the task id', () => {
-    const result = loadOrBuildIndexCard(sampleArgs())
+  it('returns non-empty text containing the task id', async () => {
+    const result = await loadOrBuildIndexCard(sampleArgs())
     expect(result.text.length).toBeGreaterThan(0)
     expect(result.text).toContain('mars-cache-test-01')
   })
 
-  it('returns tokens > 0', () => {
-    const result = loadOrBuildIndexCard(sampleArgs())
+  it('returns tokens > 0', async () => {
+    const result = await loadOrBuildIndexCard(sampleArgs())
     expect(result.tokens).toBeGreaterThan(0)
   })
 })
@@ -79,32 +79,32 @@ describe('loadOrBuildIndexCard — cache miss', () => {
 // ---------------------------------------------------------------------------
 
 describe('loadOrBuildIndexCard — cache hit', () => {
-  it('returns cacheHit=true on the second call with same inputs', () => {
-    loadOrBuildIndexCard(sampleArgs()) // prime the cache
-    const second = loadOrBuildIndexCard(sampleArgs())
+  it('returns cacheHit=true on the second call with same inputs', async () => {
+    await loadOrBuildIndexCard(sampleArgs()) // prime the cache
+    const second = await loadOrBuildIndexCard(sampleArgs())
     expect(second.cacheHit).toBe(true)
   })
 
-  it('does NOT rewrite the cache file on a hit (mtime is unchanged)', () => {
-    const first = loadOrBuildIndexCard(sampleArgs())
+  it('does NOT rewrite the cache file on a hit (mtime is unchanged)', async () => {
+    const first = await loadOrBuildIndexCard(sampleArgs())
     const cachePath = join(repoDir, '.mars', 'index-cards', `${first.cacheKey}.txt`)
     const mtimeBefore = statSync(cachePath).mtimeMs
-    loadOrBuildIndexCard(sampleArgs()) // second call — must be a cache hit
+    await loadOrBuildIndexCard(sampleArgs()) // second call — must be a cache hit
     const mtimeAfter = statSync(cachePath).mtimeMs
     expect(mtimeAfter).toBe(mtimeBefore)
   })
 
-  it('returns the same text as what is in the cache file', () => {
-    const first = loadOrBuildIndexCard(sampleArgs())
-    const second = loadOrBuildIndexCard(sampleArgs())
+  it('returns the same text as what is in the cache file', async () => {
+    const first = await loadOrBuildIndexCard(sampleArgs())
+    const second = await loadOrBuildIndexCard(sampleArgs())
     const cachePath = join(repoDir, '.mars', 'index-cards', `${first.cacheKey}.txt`)
     const onDisk = readFileSync(cachePath, 'utf8')
     expect(second.text).toBe(onDisk)
   })
 
-  it('returns the same cacheKey on hit as on miss', () => {
-    const first = loadOrBuildIndexCard(sampleArgs())
-    const second = loadOrBuildIndexCard(sampleArgs())
+  it('returns the same cacheKey on hit as on miss', async () => {
+    const first = await loadOrBuildIndexCard(sampleArgs())
+    const second = await loadOrBuildIndexCard(sampleArgs())
     expect(second.cacheKey).toBe(first.cacheKey)
   })
 })
@@ -114,15 +114,15 @@ describe('loadOrBuildIndexCard — cache hit', () => {
 // ---------------------------------------------------------------------------
 
 describe('loadOrBuildIndexCard — determinism', () => {
-  it('produces the same cacheKey for identical inputs', () => {
-    const a = loadOrBuildIndexCard(sampleArgs())
+  it('produces the same cacheKey for identical inputs', async () => {
+    const a = await loadOrBuildIndexCard(sampleArgs())
     // Use a fresh repo dir for the second call to avoid a cache hit.
     const repoDir2 = mkdtempSync(join(tmpdir(), 'mars-index-card-cache-det-'))
     mkdirSync(join(repoDir2, '.mars'))
     process.env.MARS_REPO = repoDir2
     __resetContextCacheForTests()
     try {
-      const b = loadOrBuildIndexCard(sampleArgs())
+      const b = await loadOrBuildIndexCard(sampleArgs())
       expect(b.cacheKey).toBe(a.cacheKey)
     } finally {
       process.env.MARS_REPO = repoDir
@@ -131,25 +131,25 @@ describe('loadOrBuildIndexCard — determinism', () => {
     }
   })
 
-  it('produces different cacheKeys when commitSha changes', () => {
-    const a = loadOrBuildIndexCard(sampleArgs())
-    const b = loadOrBuildIndexCard({ ...sampleArgs(), commitSha: 'deadbeef' })
+  it('produces different cacheKeys when commitSha changes', async () => {
+    const a = await loadOrBuildIndexCard(sampleArgs())
+    const b = await loadOrBuildIndexCard({ ...sampleArgs(), commitSha: 'deadbeef' })
     expect(b.cacheKey).not.toBe(a.cacheKey)
   })
 
-  it('produces different cacheKeys when files change', () => {
-    const a = loadOrBuildIndexCard(sampleArgs())
-    const b = loadOrBuildIndexCard({
+  it('produces different cacheKeys when files change', async () => {
+    const a = await loadOrBuildIndexCard(sampleArgs())
+    const b = await loadOrBuildIndexCard({
       ...sampleArgs(),
       files: [...sampleArgs().files, 'orchestrator/src/extra.ts'],
     })
     expect(b.cacheKey).not.toBe(a.cacheKey)
   })
 
-  it('produces the same cacheKey regardless of file order', () => {
+  it('produces the same cacheKey regardless of file order', async () => {
     const files = sampleArgs().files
-    const a = loadOrBuildIndexCard({ ...sampleArgs(), files })
-    const b = loadOrBuildIndexCard({ ...sampleArgs(), files: [...files].reverse() })
+    const a = await loadOrBuildIndexCard({ ...sampleArgs(), files })
+    const b = await loadOrBuildIndexCard({ ...sampleArgs(), files: [...files].reverse() })
     expect(b.cacheKey).toBe(a.cacheKey)
   })
 })
@@ -159,10 +159,10 @@ describe('loadOrBuildIndexCard — determinism', () => {
 // ---------------------------------------------------------------------------
 
 describe('loadOrBuildIndexCard — directory auto-creation', () => {
-  it('creates the index-cards directory when it does not exist', () => {
+  it('creates the index-cards directory when it does not exist', async () => {
     const cardDir = join(repoDir, '.mars', 'index-cards')
     expect(existsSync(cardDir)).toBe(false)
-    loadOrBuildIndexCard(sampleArgs())
+    await loadOrBuildIndexCard(sampleArgs())
     expect(existsSync(cardDir)).toBe(true)
   })
 })

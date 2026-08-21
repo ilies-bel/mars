@@ -980,7 +980,7 @@ export const injectAutoLinkerBlockers = async (
  *
  * Exported for unit testing.
  */
-export function annotateUnresolvedReferences(
+export async function annotateUnresolvedReferences(
   slices: SliceSpec[],
   repoRoot: string,
   onAnnotated: (evt: {
@@ -988,9 +988,9 @@ export function annotateUnresolvedReferences(
     missingSymbols: string[]
     missingReadFirstPaths: string[]
   }) => void,
-): void {
+): Promise<void> {
   for (const slice of slices) {
-    const { missingSymbols, missingReadFirstPaths } = validateSliceReferences(slice, repoRoot)
+    const { missingSymbols, missingReadFirstPaths } = await validateSliceReferences(slice, repoRoot)
     if (missingSymbols.length === 0 && missingReadFirstPaths.length === 0) continue
 
     // Filter missing paths from readFirst, retaining one fallback if needed.
@@ -1445,7 +1445,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
     })
 
     // Reference validation: annotate slices whose symbols/paths don't resolve.
-    annotateUnresolvedReferences(parsed.slices, getRepoRoot(), (evt) => {
+    await annotateUnresolvedReferences(parsed.slices, getRepoRoot(), (evt) => {
       void traceStore
         ?.record({
           kind: 'log_line',

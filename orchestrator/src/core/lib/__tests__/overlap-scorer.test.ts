@@ -6,33 +6,33 @@ import {
 } from '../overlap-scorer'
 
 describe('overlapScore', () => {
-  it('identical strings score 1', () => {
-    expect(overlapScore('add rate limiting to api', 'add rate limiting to api')).toBe(1)
+  it('identical strings score 1', async () => {
+    expect(await overlapScore('add rate limiting to api', 'add rate limiting to api')).toBe(1)
   })
 
-  it('disjoint strings score 0', () => {
-    expect(overlapScore('migrate database schema', 'render ui components')).toBe(0)
+  it('disjoint strings score 0', async () => {
+    expect(await overlapScore('migrate database schema', 'render ui components')).toBe(0)
   })
 
-  it('score is symmetric', () => {
+  it('score is symmetric', async () => {
     const a = 'add rate limiting to api endpoints'
     const b = 'update the caching layer for performance'
-    expect(overlapScore(a, b)).toBe(overlapScore(b, a))
+    expect(await overlapScore(a, b)).toBe(await overlapScore(b, a))
   })
 
-  it('near-duplicate task wording scores above CONFIDENT_MATCH_THRESHOLD', () => {
+  it('near-duplicate task wording scores above CONFIDENT_MATCH_THRESHOLD', async () => {
     const a = 'add rate limiting to the api endpoints'
     const b = 'add rate limiting middleware to api endpoints'
-    expect(overlapScore(a, b)).toBeGreaterThan(CONFIDENT_MATCH_THRESHOLD)
+    expect(await overlapScore(a, b)).toBeGreaterThan(CONFIDENT_MATCH_THRESHOLD)
   })
 
-  it('unrelated task wording scores below CONFIDENT_MATCH_THRESHOLD', () => {
+  it('unrelated task wording scores below CONFIDENT_MATCH_THRESHOLD', async () => {
     const a = 'add rate limiting to api'
     const b = 'migrate database schema to postgresql'
-    expect(overlapScore(a, b)).toBeLessThan(CONFIDENT_MATCH_THRESHOLD)
+    expect(await overlapScore(a, b)).toBeLessThan(CONFIDENT_MATCH_THRESHOLD)
   })
 
-  it('stopwords do not inflate the score for otherwise disjoint strings', () => {
+  it('stopwords do not inflate the score for otherwise disjoint strings', async () => {
     // Only stopwords in common — should score 0 because all shared tokens are stopwords
     const a = 'the and a is'
     const b = 'the and a is'
@@ -41,22 +41,22 @@ describe('overlapScore', () => {
     const onlyStopA = 'the and for with'
     const onlyStopB = 'the and for but'
     // After stripping stopwords both become empty — Jaccard of two empty sets is treated as 0
-    expect(overlapScore(onlyStopA, onlyStopB)).toBe(0)
+    expect(await overlapScore(onlyStopA, onlyStopB)).toBe(0)
   })
 
-  it('score is in [0, 1] range', () => {
-    const s = overlapScore('fix the failing tests in the workflow module', 'refactor database connection pooling')
+  it('score is in [0, 1] range', async () => {
+    const s = await overlapScore('fix the failing tests in the workflow module', 'refactor database connection pooling')
     expect(s).toBeGreaterThanOrEqual(0)
     expect(s).toBeLessThanOrEqual(1)
   })
 
-  it('empty strings both empty score 0 (not 1)', () => {
-    expect(overlapScore('', '')).toBe(0)
+  it('empty strings both empty score 0 (not 1)', async () => {
+    expect(await overlapScore('', '')).toBe(0)
   })
 
-  it('one empty string scores 0', () => {
-    expect(overlapScore('add feature', '')).toBe(0)
-    expect(overlapScore('', 'add feature')).toBe(0)
+  it('one empty string scores 0', async () => {
+    expect(await overlapScore('add feature', '')).toBe(0)
+    expect(await overlapScore('', 'add feature')).toBe(0)
   })
 })
 

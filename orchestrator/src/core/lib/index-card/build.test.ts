@@ -77,15 +77,15 @@ const goldenInput = (): IndexCardInput => ({
 // ---------------------------------------------------------------------------
 
 describe('buildIndexCard — golden fixture', () => {
-  it('produces text that matches the checked-in snapshot exactly', () => {
+  it('produces text that matches the checked-in snapshot exactly', async () => {
     const fixturePath = join(__dirname, '__fixtures__', 'basic.txt')
     const expected = readFileSync(fixturePath, 'utf8')
-    const card = buildIndexCard(goldenInput())
+    const card = await buildIndexCard(goldenInput())
     expect(card.text).toBe(expected)
   })
 
-  it('token count is ≤ 2000 on the golden fixture', () => {
-    const card = buildIndexCard(goldenInput())
+  it('token count is ≤ 2000 on the golden fixture', async () => {
+    const card = await buildIndexCard(goldenInput())
     expect(card.tokens).toBeLessThanOrEqual(2000)
     // Also verify the estimator formula: Math.ceil(text.length / 4)
     expect(card.tokens).toBe(Math.ceil(card.text.length / 4))
@@ -93,30 +93,30 @@ describe('buildIndexCard — golden fixture', () => {
 })
 
 describe('buildIndexCard — cacheKey', () => {
-  it('returns the same cacheKey for identical inputs', () => {
-    const a = buildIndexCard(goldenInput())
-    const b = buildIndexCard(goldenInput())
+  it('returns the same cacheKey for identical inputs', async () => {
+    const a = await buildIndexCard(goldenInput())
+    const b = await buildIndexCard(goldenInput())
     expect(a.cacheKey).toBe(b.cacheKey)
   })
 
-  it('returns a different cacheKey when commitSha changes', () => {
-    const original = buildIndexCard(goldenInput())
-    const changed = buildIndexCard({ ...goldenInput(), commitSha: 'deadbeef' })
+  it('returns a different cacheKey when commitSha changes', async () => {
+    const original = await buildIndexCard(goldenInput())
+    const changed = await buildIndexCard({ ...goldenInput(), commitSha: 'deadbeef' })
     expect(changed.cacheKey).not.toBe(original.cacheKey)
   })
 
-  it('returns a different cacheKey when files change', () => {
-    const original = buildIndexCard(goldenInput())
-    const changed = buildIndexCard({
+  it('returns a different cacheKey when files change', async () => {
+    const original = await buildIndexCard(goldenInput())
+    const changed = await buildIndexCard({
       ...goldenInput(),
       files: [...GOLDEN_FILES, 'orchestrator/src/extra.ts'],
     })
     expect(changed.cacheKey).not.toBe(original.cacheKey)
   })
 
-  it('returns the same cacheKey regardless of input file order', () => {
-    const a = buildIndexCard({ ...goldenInput(), files: [...GOLDEN_FILES] })
-    const b = buildIndexCard({
+  it('returns the same cacheKey regardless of input file order', async () => {
+    const a = await buildIndexCard({ ...goldenInput(), files: [...GOLDEN_FILES] })
+    const b = await buildIndexCard({
       ...goldenInput(),
       files: [...GOLDEN_FILES].reverse(),
     })
@@ -125,18 +125,18 @@ describe('buildIndexCard — cacheKey', () => {
 })
 
 describe('buildIndexCard — staleAsOf', () => {
-  it('equals the commitSha', () => {
-    const card = buildIndexCard(goldenInput())
+  it('equals the commitSha', async () => {
+    const card = await buildIndexCard(goldenInput())
     expect(card.staleAsOf).toBe(GOLDEN_COMMIT)
   })
 })
 
 describe('buildIndexCard — token budget', () => {
-  it('trims large inputs to ≤ 2000 tokens and appends a trim marker', () => {
+  it('trims large inputs to ≤ 2000 tokens and appends a trim marker', async () => {
     // 200 files × ~57 chars per line ≈ 11 400 chars in the files section alone,
     // which is ~2 850 tokens — well over the 2 000-token budget.
     const manyFiles = Array.from({ length: 200 }, (_, i) => `orchestrator/src/core/lib/module-${i}/implementation.ts`)
-    const card = buildIndexCard({
+    const card = await buildIndexCard({
       taskId: 'large-task',
       commitSha: 'def456',
       files: manyFiles,
@@ -148,15 +148,15 @@ describe('buildIndexCard — token budget', () => {
     expect(card.text).toContain('…[trimmed]')
   })
 
-  it('returns a card with tokens ≤ 2000 for the golden fixture (no trim needed)', () => {
-    const card = buildIndexCard(goldenInput())
+  it('returns a card with tokens ≤ 2000 for the golden fixture (no trim needed)', async () => {
+    const card = await buildIndexCard(goldenInput())
     expect(card.text).not.toContain('…[trimmed]')
     expect(card.tokens).toBeLessThanOrEqual(2000)
   })
 })
 
 describe('buildIndexCard — relevance heuristic', () => {
-  it('ranks file-path-matched entries above unmatched ones', () => {
+  it('ranks file-path-matched entries above unmatched ones', async () => {
     const input: IndexCardInput = {
       taskId: 'relevance-test',
       commitSha: 'cafebabe',
@@ -168,7 +168,7 @@ describe('buildIndexCard — relevance heuristic', () => {
       adrs: [],
       coChanges: [],
     }
-    const card = buildIndexCard(input)
+    const card = await buildIndexCard(input)
     // 'queue' matches 'queue.ts'; 'unrelated' does not. 'queue' should appear first.
     const queueIdx = card.text.indexOf('[glossary] queue:')
     const unrelatedIdx = card.text.indexOf('[glossary] unrelated:')
@@ -177,7 +177,7 @@ describe('buildIndexCard — relevance heuristic', () => {
     expect(queueIdx).toBeLessThan(unrelatedIdx)
   })
 
-  it('uses id as a stable tie-breaker when scores are equal', () => {
+  it('uses id as a stable tie-breaker when scores are equal', async () => {
     // All glossary entries have the same (zero) score — none match any file path.
     const input: IndexCardInput = {
       taskId: 'tiebreak-test',
@@ -190,7 +190,7 @@ describe('buildIndexCard — relevance heuristic', () => {
       adrs: [],
       coChanges: [],
     }
-    const card = buildIndexCard(input)
+    const card = await buildIndexCard(input)
     const firstIdx = card.text.indexOf('[glossary] aaa-first:')
     const lastIdx = card.text.indexOf('[glossary] zzz-last:')
     expect(firstIdx).toBeGreaterThanOrEqual(0)
@@ -200,7 +200,7 @@ describe('buildIndexCard — relevance heuristic', () => {
 })
 
 describe('buildIndexCard — pointer cap', () => {
-  it('includes at most 5 pointers even with many candidates', () => {
+  it('includes at most 5 pointers even with many candidates', async () => {
     const manyGlossary: GlossaryEntry[] = Array.from({ length: 8 }, (_, i) => ({
       id: `term-${i}`,
       term: `term ${i}`,
@@ -211,7 +211,7 @@ describe('buildIndexCard — pointer cap', () => {
       title: `ADR ${i} title`,
       body: `Body for ADR ${i}.`,
     }))
-    const card = buildIndexCard({
+    const card = await buildIndexCard({
       taskId: 'cap-test',
       commitSha: 'cafef00d',
       files: ['orchestrator/src/core/misc.ts'],

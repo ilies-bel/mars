@@ -60,14 +60,16 @@ export interface LoadOrBuildResult {
  * @throws When the state directory cannot be created or the file cannot be
  *   written. Callers should treat all errors as non-fatal and swallow them.
  */
-export function loadOrBuildIndexCard(args: LoadOrBuildArgs): LoadOrBuildResult {
+export async function loadOrBuildIndexCard(args: LoadOrBuildArgs): Promise<LoadOrBuildResult> {
   const { taskId, commitSha, files } = args
 
-  // Build the card (pure, no I/O) to obtain the deterministic cacheKey.
-  // The glossary and adrs are intentionally empty: a future slice will enrich
-  // them with real domain content. The key will change then because the id
-  // lists differ, so existing cached files are naturally invalidated.
-  const card = buildIndexCard({
+  // Build the card to obtain the deterministic cacheKey. The build consults
+  // the CodeIndex Port, so the key covers the enriched shortlist rather than
+  // the raw one. The glossary and adrs are intentionally empty: a future
+  // slice will enrich them with real domain content. The key will change
+  // then because the id lists differ, so existing cached files are naturally
+  // invalidated.
+  const card = await buildIndexCard({
     taskId,
     commitSha,
     files: [...files],
