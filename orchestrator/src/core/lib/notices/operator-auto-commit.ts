@@ -16,6 +16,7 @@
  */
 
 import { postConversationNotice } from '../conversation-delivery.js'
+import { raiseActionQueueItem } from '../action-queue.js'
 
 export interface OperatorAutoCommitNoticeInput {
   /** Task whose merge the auto-commit unblocked. */
@@ -51,5 +52,77 @@ export const speakOperatorAutoCommitNotice = async (
     // hunting for edits that are already committed under a name they have
     // never seen.
     priority: 'urgent',
+  })
+}
+
+export interface BrokenAutoCommitAlertInput {
+  /** Task whose merge the auto-commit unblocked. */
+  taskId: string
+  /** The integration branch the commit landed on. */
+  branch: string
+  /** Sha of the `wip(operator)` commit whose typecheck probe failed. */
+  commitSha: string
+  /** Combined typecheck output; only its head is surfaced. */
+  output: string
+}
+
+/** How many lines of typecheck output the Alert carries. */
+const PROBE_OUTPUT_LINES = 20
+
+/**
+ * Raise the "your auto-committed edit broke `main`" Alert (ADR-0100 slice 7).
+ *
+ * The companion to {@link speakOperatorAutoCommitNotice}: that one says a
+ * commit was made, this one says the commit does not compile. It is raised
+ * only when the post-auto-commit typecheck probe positively failed — never on
+ * a probe timeout, which is no signal at all.
+ *
+ * Signed with the auto-commit sha so a re-probe of the SAME commit bumps the
+ * existing open row rather than stacking a second one, while a later
+ * auto-commit that is also broken gets its own Alert.
+ *
+ * `raise` is injectable so the copy can be exercised without a database;
+ * production callers pass nothing.
+ */
+export const raiseBrokenAutoCommitAlert = async (
+  input: BrokenAutoCommitAlertInput,
+  raise: typeof raiseActionQueueItem = raiseActionQueueItem,
+): Promise<void> => {
+  const shortSha = input.commitSha.slice(0, 9)
+  const outputHead = input.output
+    .split('\n')
+    .slice(0, PROBE_OUTPUT_LINES)
+    .join('\n')
+  const message =
+    `The wip(operator) commit ${shortSha} that Mars auto-committed to unblock ` +
+    `the merge of ${input.taskId} does not typecheck on ${input.branch}.`
+
+  await raise({
+    kind: 'health-check-alert',
+    category: 'orchestrator',
+    priority: 'high',
+    title: `typecheck fails on ${input.branch} after auto-commit ${shortSha}`,
+    body: [
+      message,
+      '',
+      'Every task dispatched from here branches off a broken baseline, so fix it',
+      `now: amend ${shortSha} (\`git commit --amend\`) or land a follow-up commit.`,
+      '',
+      'Typecheck output (first lines):',
+      outputHead,
+    ].join('\n'),
+    payload: {
+      conditionKey: 'operator-auto-commit-typecheck',
+      message,
+      checkDetails: {
+        taskId: input.taskId,
+        branch: input.branch,
+        commitSha: input.commitSha,
+        outputHead,
+      },
+    },
+    context: { commitSha: input.commitSha, branch: input.branch },
+    raisedBy: 'merge:operator-auto-commit-probe',
+    signature: `operator-auto-commit-typecheck:${input.commitSha}`,
   })
 }

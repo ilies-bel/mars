@@ -30,6 +30,9 @@
  * committed by pathspec, which takes the working-tree content for exactly
  * those paths and HEAD's content for everything else.
  */
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { exec, execProbe, resolveGitBin } from './internal'
 import type { TraceCtx } from './internal'
 
@@ -161,4 +164,122 @@ export const autoCommitOperatorDirt = async (
 
   const rev = await exec(git, ['rev-parse', 'HEAD'], { cwd: repoRoot }, traceCtx)
   return { committed: true, sha: rev.stdout.trim(), files }
+}
+
+/**
+ * Wall-clock ceiling for {@link probeMainTypecheck}. A typecheck that has not
+ * answered in two minutes is not a cheap detector any more, and the merge lock
+ * is not the place to wait for it.
+ */
+export const PROBE_TIMEOUT_MS = 120_000
+
+/**
+ * Outcome of the post-auto-commit typecheck probe.
+ *
+ * Three states, not two: `'timeout'` is deliberately distinct from `false`
+ * because a probe that never answered is *no signal*, not evidence of a broken
+ * baseline, and must not be reported to the operator as one.
+ */
+export type MainTypecheckProbeResult =
+  | { ok: true }
+  | { ok: false; output: string }
+  | { ok: 'timeout' }
+
+/**
+ * Cheap typecheck of the integration checkout, run immediately after an
+ * operator auto-commit (ADR-0100 slice 7).
+ *
+ * This is a DETECTOR, not a gate: the merge proceeds whatever this returns.
+ * Its whole job is to bound the latency between "Mars committed your
+ * half-finished edit" and "you found out it does not compile" to seconds, so
+ * the operator can amend before anything is built on top of it.
+ *
+ * NEVER throws. Every failure mode that is not "the typecheck said no" —
+ * an unreadable manifest, a missing package manager, no declared typecheck at
+ * all — resolves to `{ ok: true }`, because none of them are evidence that the
+ * auto-commit broke anything.
+ *
+ * The command is the project's own declared `typecheck` npm script, looked up
+ * in the repo root's `package.json` first and then in its immediate
+ * subdirectories (a workspace repo declares the script per package, not at the
+ * root). The first match in alphabetical order wins and it is the ONLY one
+ * run: this executes inside the merge lock, so probing every package would
+ * cost far more than the signal is worth. A repo that wants a different probe
+ * declares a `typecheck` script at its root.
+ */
+export const probeMainTypecheck = async (args: {
+  repoRoot: string
+  timeoutMs?: number
+  traceCtx?: TraceCtx
+}): Promise<MainTypecheckProbeResult> => {
+  const { repoRoot, timeoutMs = PROBE_TIMEOUT_MS, traceCtx } = args
+
+  const candidates = [repoRoot]
+  try {
+    const entries = readdirSync(repoRoot, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
+      .map((e) => e.name)
+      .sort((a, b) => a.localeCompare(b))
+    candidates.push(...entries.map((name) => resolve(repoRoot, name)))
+  } catch {
+    // Unreadable repo root — the root package.json candidate still stands.
+  }
+
+  let probeDir: string | null = null
+  for (const dir of candidates) {
+    const manifestPath = resolve(dir, 'package.json')
+    if (!existsSync(manifestPath)) continue
+    try {
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+        scripts?: Record<string, unknown>
+      }
+      const script = manifest.scripts?.['typecheck']
+      if (typeof script === 'string' && script.trim() !== '') {
+        probeDir = dir
+        break
+      }
+    } catch {
+      // A malformed manifest declares nothing runnable.
+    }
+  }
+  if (probeDir === null) return { ok: true }
+
+  // Same lockfile-based package-manager rule the gate detector uses
+  // (`init/detect-verify-gates.ts`), so the probe runs the script the same way
+  // the project's own verify gates do.
+  const packageManager = existsSync(resolve(repoRoot, 'pnpm-lock.yaml'))
+    ? 'pnpm'
+    : existsSync(resolve(repoRoot, 'yarn.lock'))
+      ? 'yarn'
+      : existsSync(resolve(repoRoot, 'bun.lockb')) || existsSync(resolve(repoRoot, 'bun.lock'))
+        ? 'bun'
+        : 'npm'
+
+  let probe: { stdout: string; stderr: string; exitCode: number }
+  try {
+    probe = await execProbe(
+      packageManager,
+      ['run', 'typecheck'],
+      { cwd: probeDir, timeout: timeoutMs },
+      traceCtx,
+    )
+  } catch {
+    // Spawn failure (package manager not on PATH, directory vanished). Not a
+    // broken baseline — report no signal rather than a false alarm.
+    return { ok: true }
+  }
+
+  // `runTool` suffixes stderr with this marker when it kills a child on
+  // `timeoutMs`; the exit code of a SIGKILLed process is otherwise
+  // indistinguishable from a genuine typecheck failure.
+  if (probe.stderr.includes('[runTool: killed after')) return { ok: 'timeout' }
+  if (probe.exitCode === 0) return { ok: true }
+
+  return {
+    ok: false,
+    output: [probe.stdout, probe.stderr]
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0)
+      .join('\n'),
+  }
 }

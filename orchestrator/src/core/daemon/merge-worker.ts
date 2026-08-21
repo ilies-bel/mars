@@ -35,7 +35,12 @@ import { mergeBranch, MergeAbortedError, DEFAULT_WATCHDOG_MS } from '../lib/git/
 import type { MergeJob, MergeJobStore, EnqueueMergeJobInput } from '../store/merge-job-store.js'
 import type { AgentEvent } from '../lib/claude-stream.js'
 import { isOperatorAutoCommitDisabled, resolveControlLevers } from '../config/levers.js'
-import { speakOperatorAutoCommitNotice } from '../lib/notices/operator-auto-commit.js'
+import {
+  raiseBrokenAutoCommitAlert,
+  speakOperatorAutoCommitNotice,
+} from '../lib/notices/operator-auto-commit.js'
+import { PROBE_TIMEOUT_MS, probeMainTypecheck } from '../lib/git/operator-auto-commit.js'
+import { repoRoot } from '../lib/git/internal.js'
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -305,6 +310,27 @@ async function runMergeJob(
       // operator-auto-commit off` takes effect on the next merge without a
       // restart — the same live-effect guarantee every other control lever has.
       autoCommitOperatorDirt: !isOperatorAutoCommitDisabled(resolveControlLevers()),
+      // ADR-0100 slice 7: a cheap typecheck of the integration checkout right
+      // after the auto-commit. A detector, not a gate — `mergeBranch` reports
+      // the outcome through `onOperatorAutoCommit` and fast-forwards either
+      // way. A timeout is inconclusive (no signal), so it passes: the operator
+      // is told a commit was made regardless, and a false "your edit is
+      // broken" is worse than a missed detection the scheduled baseline health
+      // check will catch anyway.
+      onProbeIntegrationAfterAutoCommit: async ({ commitSha }) => {
+        const probe = await probeMainTypecheck({
+          repoRoot: repoRoot(),
+          timeoutMs: PROBE_TIMEOUT_MS,
+        })
+        if (probe.ok === false) return { passed: false, output: probe.output }
+        if (probe.ok === 'timeout') {
+          log(
+            `[merge-worker] task ${job.taskId}: post-auto-commit typecheck probe of ` +
+              `${commitSha.slice(0, 9)} timed out after ${PROBE_TIMEOUT_MS}ms — no signal`,
+          )
+        }
+        return { passed: true }
+      },
       onOperatorAutoCommit: async (info) => {
         await speakOperatorAutoCommitNotice({
           taskId: job.taskId,
@@ -312,6 +338,21 @@ async function runMergeJob(
           commitSha: info.commitSha,
           files: info.files,
         })
+        if (info.probe && !info.probe.passed) {
+          // Best-effort: the commit and the merge have already landed, so a
+          // raise failure must never surface as a merge failure.
+          await raiseBrokenAutoCommitAlert({
+            taskId: job.taskId,
+            branch: job.integrationBranch,
+            commitSha: info.commitSha,
+            output: info.probe.output,
+          }).catch((raiseErr: unknown) => {
+            log(
+              `[merge-worker] task ${job.taskId}: broken-auto-commit alert raise errored ` +
+                `(non-fatal): ${raiseErr instanceof Error ? raiseErr.message : String(raiseErr)}`,
+            )
+          })
+        }
       },
     })
     result = { status: 'done', result: mergeResult }
