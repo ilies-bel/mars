@@ -42,7 +42,6 @@ import type { RunAgentArgs, RunAgentResult } from '../../lib/git/claude'
 export type {
   AgentEffort,
   AgentPermissionMode,
-  RunAgentArgs,
   RunAgentResult,
   RunSubprocessResult,
 } from '../../lib/git/claude'
