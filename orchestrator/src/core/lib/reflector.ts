@@ -24,6 +24,7 @@ import { insertMemoryPacket } from '../store/memory-packet-store'
 import { loadLeverRegistry, formatRecipeCatalog, formatLeverList } from './lever-registry'
 import type { LeverRegistryEntry } from './lever-registry'
 import type { Reflector, ReflectorRunOutcome } from '../ports/reflector/types'
+import { failureSignatureFamily, STEP_ID_RE } from './failure-signature'
 
 // Re-export the shared outcome types so callers importing from 'reflector'
 // continue to get them (deep-reflector.ts, tests, etc.).
@@ -727,6 +728,24 @@ export const tokenReflector: Reflector<TokenReflectorPortRequest, ReflectionResu
  * null only for the dedup merge path where notes were appended but no new row
  * was created — the existing proposal's id is still returned in that case.
  */
+/**
+ * True when `key` has the `<step>/<errorClass>` grammar that failure
+ * signatures use (see `failure-signature.ts`), as opposed to the free-form
+ * snake_case slug the reflection prompt normally asks for (e.g.
+ * `typecheck_failure`). Reflection suggestions occasionally echo an actual
+ * failure signature back as `rootCauseKey` instead of minting a slug; only
+ * those get routed through {@link failureSignatureFamily} before hashing —
+ * running an arbitrary prose/slug key through it would silently corrupt an
+ * unrelated fingerprint.
+ */
+const isFailureSignatureShapedRootCauseKey = (key: string): boolean => {
+  const slash = key.indexOf('/')
+  if (slash === -1) return false
+  const step = key.slice(0, slash)
+  const errorClass = key.slice(slash + 1)
+  return STEP_ID_RE.test(step) && errorClass.length > 0 && !/\s/.test(errorClass)
+}
+
 const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<string | null> => {
   // Build an outcome block for the proposal so `mars proposal show <id>`
   // gives the operator enough context to act without opening the code.
@@ -754,8 +773,19 @@ const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<string | n
   // the key (1 of 176 proposals had a fingerprint before this fix).
   const outcomeId =
     s.outcome.type === 'lever' ? s.outcome.lever.id : s.outcome.leverGap.proposedLeverId
-  const fingerprintInput = s.rootCauseKey
-    ? `reflection:${s.rootCauseKey}:`
+  // A signature-shaped rootCauseKey (the model echoed an actual failure
+  // signature instead of minting a slug) is normalised to its family first,
+  // so two suggestions differing only in the signature's step-kind segment
+  // (e.g. `verify:has-diff/no-commits-ahead` vs `verify:typecheck/no-commits-ahead`)
+  // collapse into the same fingerprint instead of forking into near-duplicate
+  // drafts. Non-signature keys (the common snake_case slug case) are hashed
+  // unchanged — no behaviour change there.
+  const normalizedRootCauseKey =
+    s.rootCauseKey && isFailureSignatureShapedRootCauseKey(s.rootCauseKey)
+      ? failureSignatureFamily(s.rootCauseKey)
+      : s.rootCauseKey
+  const fingerprintInput = normalizedRootCauseKey
+    ? `reflection:${normalizedRootCauseKey}:`
     : `reflection-derived:${s.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}:${outcomeId}:`
   const fingerprint = createHash('sha256').update(fingerprintInput).digest('hex').slice(0, 32)
 
