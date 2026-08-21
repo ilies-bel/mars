@@ -19,10 +19,10 @@
  *     action-queue distortion. Its trace events and judge usage attach to the
  *     ORIGIN instance's ids so the spend governor sees the overhead.
  *
- * Kill-switches: `mars operator set scoring off` (sets
- * MARS_SCORING_DISABLED=1 in the daemon process, persistently) and
- * MARS_REFLECT_DISABLED=1 (scoring is signal capture; that env var stays the
- * single comprehensive disable).
+ * Kill-switches: `mars operator set scoring off` (the persisted `scoring`
+ * control lever, injected as `opts.levers`) and MARS_REFLECT_DISABLED=1
+ * (scoring is signal capture; that env var stays the single comprehensive
+ * disable).
  */
 
 import { z } from 'zod'
@@ -43,17 +43,23 @@ import {
 } from '../workflow-configs'
 import { resolveStateClient } from '../store/state-client'
 import { isReflectDisabled } from './reflect-signals'
+import { resolveControlLevers } from '../config/levers'
+import type { ControlLevers } from '../daemon/config'
 import { getDefaultTaskStore } from '../store/task-store'
 import type { TraceEventStore } from './trace-events-store'
 import type { ClaudeEvent } from './claude-stream'
 
 /**
- * True when scoring must not run: the operator flipped the in-memory
- * `scoring` daemon flag off, or reflection (signal capture as a whole) is
- * disabled via MARS_REFLECT_DISABLED=1.
+ * True when scoring must not run: the operator set the `scoring` control
+ * lever off, or reflection (signal capture as a whole) is disabled via
+ * MARS_REFLECT_DISABLED=1.
+ *
+ * Takes the levers as a parameter rather than reading them — callers resolve
+ * them once via `resolveControlLevers()` and pass the same value into
+ * {@link runScorersForTask}, so one scoring run cannot straddle a lever flip.
  */
-export const isScoringDisabled = (): boolean =>
-  process.env.MARS_SCORING_DISABLED === '1' || isReflectDisabled()
+export const isScoringDisabled = (levers: ControlLevers): boolean =>
+  levers.scoring === 'off' || isReflectDisabled()
 
 /**
  * The effective workflow kind of an instance — the same resolution the
@@ -98,6 +104,12 @@ export interface RunScorersOptions {
   judge?: ScorerJudge
   /** Trace store for `scorer_result` events + judge Session spans. */
   traceStore?: TraceEventStore
+  /**
+   * The operator control levers governing this run. Injected by the daemon's
+   * scoring pool, which resolves them once per run. Defaults to
+   * `resolveControlLevers()` for direct callers (CLI, tests).
+   */
+  levers?: ControlLevers
 }
 
 export interface RunScorersOutcome {
@@ -414,7 +426,9 @@ export const runScorersForTask = async (
     skipped: 0,
     results: [],
   }
-  if (isScoringDisabled()) return { ...base, outcome: 'disabled' }
+  if (isScoringDisabled(opts.levers ?? resolveControlLevers())) {
+    return { ...base, outcome: 'disabled' }
+  }
   const task = await getTask(taskId)
   if (!task) return { ...base, outcome: 'no-task' }
   if (task.status !== 'done') return { ...base, outcome: 'not-done' }

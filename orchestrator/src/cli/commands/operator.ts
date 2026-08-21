@@ -359,19 +359,10 @@ const operatorSet: Command = {
       leverName === 'memory-capture' ? 'memoryCapture'
       : leverName === 'auto-run-reflect' ? 'autoRunReflect'
       : leverName as 'recovery' | 'scoring'
+    // Every control lever is read dynamically from daemon.json on each use
+    // (`resolveControlLevers()`), so persisting the file IS the live apply —
+    // no follow-up RPC, and no restart, is needed for it to take effect.
     writeControlLever(configLeverName, value)
-    // memory-capture and auto-run-reflect are read dynamically from daemon.json
-    // on every call so no live apply-lever RPC is needed.
-    if (configLeverName !== 'memoryCapture' && configLeverName !== 'autoRunReflect') {
-      try {
-        await deps.daemon.sendRequest({ op: 'apply-lever', name: configLeverName, value })
-      } catch (err) {
-        const msg = errorMessage(err)
-        if (!isDaemonDownError(msg)) {
-          deps.err(`warning: lever written but live apply failed: ${msg}`)
-        }
-      }
-    }
     deps.out(`${leverName}: ${value}`)
     return { code: 0 }
   },

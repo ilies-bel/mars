@@ -180,31 +180,33 @@ describe('mars operator set scoring', () => {
   })
 })
 
-describe('applyControlLevers — scoring persistence (simulated restart)', () => {
-  it('sets MARS_SCORING_DISABLED=1 after write off → re-read → apply', async () => {
-    const { writeControlLever, readControlLevers, applyControlLevers } =
-      await import('../../../core/daemon/config')
+describe('scoring lever persistence (simulated restart)', () => {
+  it('resolves scoring off after write off, with a clean env', async () => {
+    const { writeControlLever } = await import('../../../core/daemon/config')
+    const { resolveControlLevers } = await import('../../../core/config/levers')
 
     writeControlLever('scoring', 'off')
 
     delete process.env.MARS_SCORING_DISABLED
-    const levers = readControlLevers()
-    applyControlLevers(levers)
-
-    expect(process.env.MARS_SCORING_DISABLED).toBe('1')
+    expect(resolveControlLevers().scoring).toBe('off')
   })
 
-  it('clears MARS_SCORING_DISABLED after write on → re-read → apply', async () => {
-    const { writeControlLever, readControlLevers, applyControlLevers } =
-      await import('../../../core/daemon/config')
+  it('resolves scoring on after write off → write on', async () => {
+    const { writeControlLever } = await import('../../../core/daemon/config')
+    const { resolveControlLevers } = await import('../../../core/config/levers')
 
     writeControlLever('scoring', 'off')
     writeControlLever('scoring', 'on')
 
-    process.env.MARS_SCORING_DISABLED = '1'
-    const levers = readControlLevers()
-    applyControlLevers(levers)
+    expect(resolveControlLevers().scoring).toBe('on')
+  })
 
-    expect(process.env.MARS_SCORING_DISABLED).toBeUndefined()
+  it('lets MARS_SCORING_DISABLED=1 force scoring off over a persisted on', async () => {
+    const { writeControlLever } = await import('../../../core/daemon/config')
+    const { resolveControlLevers } = await import('../../../core/config/levers')
+
+    writeControlLever('scoring', 'on')
+
+    expect(resolveControlLevers({ MARS_SCORING_DISABLED: '1' }).scoring).toBe('off')
   })
 })

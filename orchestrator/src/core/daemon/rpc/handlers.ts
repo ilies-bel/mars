@@ -16,7 +16,7 @@
 
 import { existsSync, unlinkSync } from 'node:fs'
 import { DAEMON_KILLED_SIGNATURE } from '../../lib/retry-budget'
-import { applyControlLevers, loadDaemonConfig } from '../config'
+import { loadDaemonConfig } from '../config'
 import { setSemLimit } from '../semaphore'
 import { setInstallSemCap } from '../../lib/worktree-install'
 import { updateTask, getTask, listBlockers } from '../../queue'
@@ -288,9 +288,13 @@ const pingHandler = handler('ping', async (_req, _deps) => {
  * Apply the `dispatch` lever to the running daemon.
  *
  * This leaf owns only the LIVE half of the lever. Durability belongs to the
- * CLI (`mars operator set dispatch` writes daemon.json first, then sends this),
- * exactly as `operator set recovery` writes the lever then sends `apply-lever`
- * — one writer for the file, one for the process.
+ * CLI (`mars operator set dispatch` writes daemon.json first, then sends this).
+ *
+ * `dispatch` is the only lever that still needs a live RPC: it drives the
+ * in-memory `PauseController` and the dispatch loop's guard, which have no
+ * file to re-read. The `controlLevers` block (recovery/scoring/…) needs no
+ * counterpart — `resolveControlLevers()` reads daemon.json at each use, so
+ * the CLI's write IS the live apply.
  */
 const setDispatchHandler = handler('set-dispatch', async (req, deps) => {
   if (req.value !== 'on' && req.value !== 'off') {
@@ -333,27 +337,6 @@ const setDispatchHandler = handler('set-dispatch', async (req, deps) => {
     `set-dispatch: on; dispatch re-enabled (cleared reason=${previous.reason ?? 'none'})`,
   )
   return { ok: true, data: { paused: false, clearedReason: previous.reason } }
-})
-
-const KNOWN_LEVERS = new Set(['recovery', 'scoring'])
-
-const applyLeverHandler = handler('apply-lever', async (req, deps) => {
-  if (!KNOWN_LEVERS.has(req.name)) {
-    return { ok: false, error: `apply-lever: unknown lever '${req.name}'` }
-  }
-  if (req.value !== 'on' && req.value !== 'off') {
-    return {
-      ok: false,
-      error: `apply-lever: value must be 'on' or 'off'; got '${req.value}'`,
-    }
-  }
-  const current = loadDaemonConfig().controlLevers
-  applyControlLevers({ ...current, [req.name]: req.value })
-  const envKey = req.name === 'recovery' ? 'MARS_RECOVERY_DISABLED' : 'MARS_SCORING_DISABLED'
-  deps.log(
-    `apply-lever: ${req.name}=${req.value} (${envKey}=${process.env[envKey] ?? '<unset>'})`,
-  )
-  return { ok: true, data: { name: req.name, value: req.value } }
 })
 
 const investigateHandler = handler('investigate', async (req, deps) => {
@@ -740,6 +723,5 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   mergeCancelHandler,
   spendControlShowHandler,
   spendControlSetHandler,
-  applyLeverHandler,
   resetBreakerHandler,
 ]

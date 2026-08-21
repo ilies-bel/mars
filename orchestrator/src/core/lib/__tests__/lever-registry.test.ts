@@ -617,7 +617,7 @@ describe('wiring state: getWiringState()', () => {
       allowedValues: { type: 'freeform' },
       gesture: null,
       appliesWithoutRestart: false,
-      consumer: { file: 'src/core/daemon/config.ts', symbol: 'applyControlLevers' },
+      consumer: { file: 'src/core/config/levers.ts', symbol: 'resolveControlLevers' },
     }
     expect(getWiringState(synth)).toBe('no-gesture')
   })

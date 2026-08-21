@@ -61,7 +61,6 @@ import {
   loadDaemonConfig,
   persistPaused,
   writeControlLever,
-  applyControlLevers,
   type ControlLevers,
   type DaemonCaps,
 } from './config'
@@ -1336,8 +1335,9 @@ export const startHttpServer = async (
         }
         const { value } = result.data
         try {
+          // Persisting is the whole apply: consumers resolve the lever from
+          // daemon.json on each use, so the change is live immediately.
           writeControlLever('recovery', value)
-          applyControlLevers(readControlLevers())
           sendJson(res, 200, { ok: true, data: { recovery: value } })
         } catch (err: unknown) {
           sendError(res, err)

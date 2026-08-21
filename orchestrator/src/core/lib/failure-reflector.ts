@@ -10,6 +10,8 @@ import { getDefaultTaskStore } from '../store/task-store'
 import { loadLeverRegistry, formatRecipeCatalog } from './lever-registry'
 import { collectAssistantText, extractFirstJsonDocument } from './reflector'
 import type { Reflector, ReflectorRunOutcome } from '../ports/reflector/types'
+import { isRecoveryDisabled, resolveControlLevers } from '../config/levers'
+import type { ControlLevers } from '../daemon/config'
 
 const SYSTEM_PROMPT_TEMPLATE = `You are a harness improvement advisor for the Mars orchestrator.
 A task failed and recovery was exhausted — the fix-task loop could not
@@ -57,6 +59,17 @@ export interface SpawnFailureReflectorOpts {
   recoverySpawnedCount: number
   worktreePath: string | null
   branch: string | null
+  /**
+   * The operator control levers governing this spawn. `recovery: 'off'`
+   * suppresses it entirely.
+   *
+   * The failure handler's own kill-switch check returns early only for origin
+   * tasks (`fixForTaskId === null`); recovery-task failures fall through to
+   * the reflector spawn sites, so the lever is honoured here too and the
+   * incident kill-switch stays comprehensive. Defaults to
+   * `resolveControlLevers()` for callers that reach the Port without one.
+   */
+  levers?: ControlLevers
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -85,19 +98,6 @@ let inFlight = 0
 export const _resetFailureReflectorGateForTests = (): void => {
   inFlight = 0
 }
-
-/**
- * Returns `true` when self-heal is disabled via
- * `mars operator set recovery off` (sets MARS_RECOVERY_DISABLED=1
- * persistently).
- *
- * The failure handler's own kill-switch check returns early only for origin
- * tasks (`fixForTaskId === null`); recovery-task failures fall through to the
- * reflector spawn sites. Checking the flag here too makes the incident
- * kill-switch actually comprehensive.
- */
-const isRecoveryDisabled = (): boolean =>
-  process.env.MARS_RECOVERY_DISABLED === '1'
 
 interface FailureReflectorSuggestion {
   recipe: string | null
@@ -231,7 +231,7 @@ export const spawnFailureReflector = async (
 ): Promise<void> => {
   // ── Admission control ────────────────────────────────────────────────────
   // Checked before any provider work so recurring failures do not saturate it.
-  if (isRecoveryDisabled()) return
+  if (isRecoveryDisabled(opts.levers ?? resolveControlLevers())) return
   if (inFlight >= MAX_CONCURRENT) return
   inFlight += 1
 

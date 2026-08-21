@@ -98,7 +98,9 @@ export type DaemonRequest =
    * signature-storm `tripped` flag, so a later restart does not re-pause a
    * queue the operator deliberately resumed. Durability is the CLI's job:
    * `mars operator set dispatch` writes `paused` to daemon.json BEFORE sending
-   * this, mirroring `operator set <lever>` → `apply-lever`.
+   * this. `dispatch` is the only lever with a live RPC — the `controlLevers`
+   * block is resolved from daemon.json at each use (`resolveControlLevers()`),
+   * so writing the file is already the live apply.
    */
   | { op: 'set-dispatch'; value: 'on' | 'off' }
   | { op: 'sync' }
@@ -168,8 +170,6 @@ export type DaemonRequest =
         rampBackStepPct?: number
       }
     }
-  /** Apply a persisted control lever to the running daemon process env immediately. */
-  | { op: 'apply-lever'; name: 'recovery' | 'scoring'; value: 'on' | 'off' }
   /**
    * Clear the durable signature-storm breaker flag and, if dispatch is paused
    * with reason 'storm', resume dispatch. An operator or quota pause is left

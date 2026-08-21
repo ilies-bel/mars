@@ -1,14 +1,14 @@
 /**
  * Tests for the `mars operator status` and `mars operator set` commands
- * (PRD e9f6f2b9 slice 1) and for the `applyControlLevers` persistence contract.
+ * (PRD e9f6f2b9 slice 1) and for the control-lever persistence contract.
  *
  * Acceptance criteria:
  *   1. `operator status` prints `recovery: on` by default (no daemon.json)
  *   2. `operator set recovery off` persists and prints `recovery: off`
  *   3. `operator set recovery on` persists and prints `recovery: on`
- *   4. write → simulated restart (re-read + applyControlLevers) leaves
- *      MARS_RECOVERY_DISABLED='1' when recovery='off'
- *   5. write → simulated restart with recovery='on' clears MARS_RECOVERY_DISABLED
+ *   4. write → simulated restart resolves recovery disabled with a clean env
+ *   5. write off → write on resolves recovery enabled again
+ *   6. MARS_RECOVERY_DISABLED=1 overrides a persisted `on`
  *
  * Isolation: vi.resetModules() + a fresh temp-dir git repo per test so
  * every test gets a private module-cache and daemon.json path, following
@@ -158,38 +158,47 @@ describe('mars operator set recovery on', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 4. Persistence contract: write 'off' → simulated restart → MARS_RECOVERY_DISABLED='1'
+// 4. Persistence contract: write 'off' → simulated restart → recovery disabled
 // ---------------------------------------------------------------------------
 
-describe('applyControlLevers persistence (simulated daemon restart)', () => {
-  it('leaves MARS_RECOVERY_DISABLED=1 after write off → re-read → applyControlLevers', async () => {
-    const { writeControlLever, readControlLevers, applyControlLevers } =
-      await import('../../../core/daemon/config')
+describe('control-lever persistence (simulated daemon restart)', () => {
+  it('resolves recovery off after write off → restart, with no env involved', async () => {
+    const { writeControlLever } = await import('../../../core/daemon/config')
+    const { resolveControlLevers, isRecoveryDisabled } = await import(
+      '../../../core/config/levers'
+    )
 
     writeControlLever('recovery', 'off')
 
-    // Simulate daemon restart: start with a clean env, re-read the file,
-    // and re-apply. This is exactly what server.ts boot does.
+    // Simulate daemon restart: a brand-new process with a clean env. The
+    // hold survives because it lives in daemon.json, not in process.env.
     delete process.env.MARS_RECOVERY_DISABLED
-    const levers = readControlLevers()
-    applyControlLevers(levers)
-
-    expect(process.env.MARS_RECOVERY_DISABLED).toBe('1')
+    expect(isRecoveryDisabled(resolveControlLevers())).toBe(true)
   })
 
-  it('clears MARS_RECOVERY_DISABLED after write on → re-read → applyControlLevers', async () => {
-    const { writeControlLever, readControlLevers, applyControlLevers } =
-      await import('../../../core/daemon/config')
+  it('resolves recovery on after write off → write on', async () => {
+    const { writeControlLever } = await import('../../../core/daemon/config')
+    const { resolveControlLevers, isRecoveryDisabled } = await import(
+      '../../../core/config/levers'
+    )
 
-    // First disable, then re-enable
     writeControlLever('recovery', 'off')
     writeControlLever('recovery', 'on')
 
-    process.env.MARS_RECOVERY_DISABLED = '1'
-    const levers = readControlLevers()
-    applyControlLevers(levers)
+    expect(isRecoveryDisabled(resolveControlLevers())).toBe(false)
+  })
 
-    expect(process.env.MARS_RECOVERY_DISABLED).toBeUndefined()
+  it('lets MARS_RECOVERY_DISABLED=1 force recovery off over a persisted on', async () => {
+    const { writeControlLever } = await import('../../../core/daemon/config')
+    const { resolveControlLevers, isRecoveryDisabled } = await import(
+      '../../../core/config/levers'
+    )
+
+    writeControlLever('recovery', 'on')
+
+    expect(
+      isRecoveryDisabled(resolveControlLevers({ MARS_RECOVERY_DISABLED: '1' })),
+    ).toBe(true)
   })
 })
 

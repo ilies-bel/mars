@@ -565,7 +565,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['on', 'off'] },
     gesture: 'mars operator set recovery <on|off>',
     appliesWithoutRestart: true,
-    consumer: { file: 'src/core/daemon/config.ts', symbol: 'applyControlLevers' },
+    consumer: { file: 'src/core/config/levers.ts', symbol: 'resolveControlLevers' },
   },
   {
     id: 'operator.dispatch',
@@ -585,7 +585,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['on', 'off'] },
     gesture: 'mars operator set dispatch <on|off>',
     appliesWithoutRestart: true,
-    consumer: { file: 'src/core/daemon/config.ts', symbol: 'applyControlLevers' },
+    consumer: { file: 'src/core/daemon/pause-state.ts', symbol: 'createPauseController' },
   },
   {
     id: 'operator.scoring',
@@ -602,7 +602,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['on', 'off'] },
     gesture: 'mars operator set scoring <on|off>',
     appliesWithoutRestart: true,
-    consumer: { file: 'src/core/daemon/config.ts', symbol: 'applyControlLevers' },
+    consumer: { file: 'src/core/config/levers.ts', symbol: 'resolveControlLevers' },
   },
   {
     id: 'operator.memory-capture',
@@ -619,7 +619,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['on', 'off'] },
     gesture: 'mars operator set memory-capture <on|off>',
     appliesWithoutRestart: true,
-    consumer: { file: 'src/core/daemon/config.ts', symbol: 'applyControlLevers' },
+    consumer: { file: 'src/core/config/levers.ts', symbol: 'resolveControlLevers' },
   },
   {
     id: 'operator.auto-run-reflect',
@@ -636,7 +636,7 @@ const REGISTRY: LeverRegistryEntry[] = [
     allowedValues: { type: 'enum', values: ['on', 'off'] },
     gesture: 'mars operator set auto-run-reflect <on|off>',
     appliesWithoutRestart: true,
-    consumer: { file: 'src/core/daemon/config.ts', symbol: 'applyControlLevers' },
+    consumer: { file: 'src/core/config/levers.ts', symbol: 'resolveControlLevers' },
   },
 
   // ── budget ────────────────────────────────────────────────────────────────

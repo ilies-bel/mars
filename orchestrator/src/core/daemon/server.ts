@@ -141,11 +141,11 @@ import { EVENT_RETENTION, pruneEvents } from '../../bus/retention'
 import { setBusLogSink } from '../../bus/log'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket, waitForProcessExit } from './paths'
 import {
-  applyControlLevers,
   loadDaemonConfig,
   readDaemonConfigFile,
   readPersistedPaused,
 } from './config'
+import { resolveControlLevers } from '../config/levers'
 import { startHealthScheduler } from '../agents/steward'
 import { createPauseController } from './pause-state'
 import {
@@ -1160,10 +1160,11 @@ export const startDaemon = async (
   // because they both contend on the same merge lock downstream — a second
   // slot would just sit waiting on the lock, so default to 1.
   const initialConfig = loadDaemonConfig()
-  // Re-apply persisted operator control levers before dispatch starts so a
-  // hold set before a daemon restart survives it (e.g. recovery='off' holds
-  // across `mars daemon restart`).
-  applyControlLevers(initialConfig.controlLevers)
+  // Persisted operator control levers need no re-application step: every
+  // consumer resolves them from daemon.json on demand via
+  // `resolveControlLevers()`, so a hold set before a daemon restart survives
+  // it (e.g. recovery='off' holds across `mars daemon restart`) by
+  // construction rather than by a startup projection into process.env.
   const initialCaps = initialConfig.caps
   // Document-write dispatch kinds ('glossary-write', 'adr-add',
   // 'adr-supersede', 'vision') are now coordinated by DocumentWriteCoordinator
@@ -3399,7 +3400,7 @@ export const startDaemon = async (
   // The run is NOT a Task (no queue row, no recovery, no KPI distortion) and
   // sits behind its OWN semaphore (MARS_MAX_SCORING, default 2), never
   // competing for implement slots. Kill-switches: `mars operator set scoring
-  // off` (persisted MARS_SCORING_DISABLED) and MARS_REFLECT_DISABLED=1.
+  // off` (the persisted `scoring` control lever) and MARS_REFLECT_DISABLED=1.
   const scoringPool = createScoringPool({
     limit: resolveScoringLimit(),
     log,
@@ -3407,8 +3408,11 @@ export const startDaemon = async (
       const { runScorersForTask, isScoringDisabled } = await import(
         '../lib/scorer-runtime'
       )
-      if (isScoringDisabled()) return
-      const outcome = await runScorersForTask(taskId, { traceStore })
+      // Resolved per run, not captured at boot: `mars operator set scoring
+      // off` persists to daemon.json and must take effect without a restart.
+      const levers = resolveControlLevers()
+      if (isScoringDisabled(levers)) return
+      const outcome = await runScorersForTask(taskId, { traceStore, levers })
       if (outcome.outcome !== 'ran') return
       log(
         `[scorer] ${taskId} (workflow=${outcome.workflow ?? 'n/a'}): scored=${outcome.scored} errored=${outcome.errored} skipped=${outcome.skipped}`,

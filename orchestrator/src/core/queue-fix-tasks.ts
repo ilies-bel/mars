@@ -35,6 +35,8 @@ import {
   SIGNATURE_STORM_PREFIX,
   stripRecoveryFailedPrefixes,
 } from './lib/failure-signature'
+import { isRecoveryDisabled, resolveControlLevers } from './config/levers'
+import type { ControlLevers } from './daemon/config'
 import { isEnvironmentalSignature } from './lib/failure-kinds'
 import { classifyFailure, requiresWorktreeRebuild } from './lib/failure-class'
 import { maybeSpawnRescueOperator, RESCUE_OPERATOR_TAG } from './rescue-operator-spawn'
@@ -421,6 +423,14 @@ export interface HandleTaskFailureViaTaskInput {
    * feedback without querying the database.
    */
   qaNote?: string
+  /**
+   * The operator control levers governing this failure. `recovery: 'off'` is
+   * the incident kill-switch: the task is marked failed and no fix-task or
+   * Investigator is spawned. Defaults to `resolveControlLevers()`, which
+   * reads the persisted `daemon.json` value plus the `MARS_RECOVERY_DISABLED`
+   * env override.
+   */
+  levers?: ControlLevers
 }
 
 export interface HandleTaskFailureViaTaskResult {
@@ -658,18 +668,18 @@ export const handleTaskFailureWithFixTask = async (
       ? buildVerifyReproHint(input.ranVerifySteps)
       : deriveReproCommand(input.failingStep, task.worktreePath)
 
-  // Kill-switch: when MARS_RECOVERY_DISABLED=1, never spawn fix-tasks or
+  // Kill-switch: when the `recovery` lever is off, never spawn fix-tasks or
   // Investigators. Mark the failing task failed and stop. Recovery (fix-
   // tasks already in flight) is escalated to actionQueue as usual so a partial
   // disable doesn't leave them silently dangling.
-  if (process.env.MARS_RECOVERY_DISABLED === '1' && task.fixForTaskId === null) {
+  if (isRecoveryDisabled(input.levers ?? resolveControlLevers()) && task.fixForTaskId === null) {
     await markTaskFailed(
       input.taskId,
       `${RECOVERY_DISABLED_PREFIX}${failureSignature}: ${truncatedError.slice(0, 500)}`,
       undefined,
       { error: truncatedError, failureSignature },
     )
-    // Raise an action-queue row: MARS_RECOVERY_DISABLED goes directly to
+    // Raise an action-queue row: a disabled `recovery` lever goes directly to
     // 'failed' (no task.blocked event), so the outbox subscriber never fires.
     await raiseActionQueueItem({
       kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
@@ -679,8 +689,8 @@ export const handleTaskFailureWithFixTask = async (
       body: [
         `Task ${input.taskId} failed at ${input.failingStep} (signature: ${failureSignature}).`,
         '',
-        'Recovery is disabled (MARS_RECOVERY_DISABLED=1). No fix task was spawned.',
-        `Enable recovery and restart: \`mars restart ${input.taskId}\`.`,
+        'Recovery is disabled (`mars operator set recovery off`). No fix task was spawned.',
+        `Enable recovery and restart: \`mars operator set recovery on\` then \`mars restart ${input.taskId}\`.`,
         '',
         truncatedError,
       ].join('\n'),

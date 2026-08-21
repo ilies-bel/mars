@@ -347,30 +347,6 @@ export const resolveEnvOverrides = (
   }
 }
 
-/**
- * Pure projection of `ControlLevers` onto the env-var effects
- * `applyControlLevers` writes to `process.env`. This is the shared contract
- * for the "Inject config instead of laundering levers through process.env"
- * slice: call sites that currently read `process.env.MARS_RECOVERY_DISABLED
- * === '1'` / `process.env.MARS_SCORING_DISABLED === '1'` directly (see
- * `failure-reflector.ts`, `scorer-runtime.ts`, `queue-fix-tasks.ts`) should
- * take an injected `ControlLevers` (or the predicates below) instead of
- * reaching into `process.env` themselves. A `undefined` value means "leave
- * this env var alone / unset it", matching `applyControlLevers`'s delete branch.
- */
-export const controlLeversToEnv = (
-  levers: ControlLevers,
-): Record<'MARS_RECOVERY_DISABLED' | 'MARS_SCORING_DISABLED', string | undefined> => ({
-  MARS_RECOVERY_DISABLED: levers.recovery === 'off' ? '1' : undefined,
-  MARS_SCORING_DISABLED: levers.scoring === 'off' ? '1' : undefined,
-})
-
-/** Pure predicate mirroring `process.env.MARS_RECOVERY_DISABLED === '1'`. */
-export const isRecoveryDisabled = (levers: ControlLevers): boolean => levers.recovery === 'off'
-
-/** Pure predicate mirroring `process.env.MARS_SCORING_DISABLED === '1'`. */
-export const isScoringDisabled = (levers: ControlLevers): boolean => levers.scoring === 'off'
-
 export interface DaemonConfig {
   caps: DaemonCaps
   selfEvolve: SelfEvolveConfig
@@ -383,10 +359,12 @@ export interface DaemonConfig {
    */
   defaultProvider: ProviderName
   /**
-   * Operator control levers. Written by `mars operator set` and re-applied on
-   * each daemon startup so a hold set before a restart persists across it.
-   * `recovery: 'off'` sets MARS_RECOVERY_DISABLED=1 in the daemon process env;
-   * `recovery: 'on'` (the default) clears it.
+   * Operator control levers. Written by `mars operator set` and read back out
+   * of `daemon.json` by every consumer, so a hold set before a restart
+   * persists across it with no re-application step. Consumers receive the
+   * resolved value from `src/core/config/levers.ts`'s
+   * `resolveControlLevers()` as a parameter — they never read a lever out of
+   * `process.env` themselves.
    */
   controlLevers: ControlLevers
   /**
@@ -825,8 +803,9 @@ export const persistLeverAutonomyLevel = (name: string, level: AutonomyLevel): v
 
 /**
  * Read the persisted `controlLevers` from daemon.json, returning defaults for
- * any absent or invalid fields. Does not apply the levers to process.env —
- * call `applyControlLevers` to do that.
+ * any absent or invalid fields. This is the file half of lever resolution;
+ * `src/core/config/levers.ts`'s `resolveControlLevers()` layers the
+ * `MARS_*_DISABLED` env overrides on top and is what consumers should call.
  *
  * Migrates on read: the old `autoReflect` key is accepted as `memoryCapture`
  * so existing daemon.json files from before the rename continue to work.
@@ -872,29 +851,6 @@ export const readControlLevers = (): ControlLevers => {
 export const writeControlLever = (name: keyof ControlLevers, value: ControlLeverValue): void => {
   const current = readControlLevers()
   patchDaemonConfigFile({ controlLevers: { ...current, [name]: value } })
-}
-
-/**
- * Apply `levers` to `process.env` so the running process reflects the
- * persisted operator choices. Called at daemon startup (before dispatch starts)
- * and by the `apply-lever` RPC (for immediate live effect without restart).
- *
- * Delegates the lever→env-var mapping to `controlLeversToEnv` so that pure
- * mapping stays the single source of truth — this function is now only the
- * side-effecting shell around it. Callers that want the value without
- * mutating `process.env` (the eventual injected-config call sites) should use
- * `controlLeversToEnv`/`isRecoveryDisabled`/`isScoringDisabled` directly
- * instead of reading `process.env` after calling this.
- *
- *   recovery='off' → process.env.MARS_RECOVERY_DISABLED = '1'
- *   recovery='on'  → delete process.env.MARS_RECOVERY_DISABLED
- */
-export const applyControlLevers = (levers: ControlLevers): void => {
-  const env = controlLeversToEnv(levers)
-  for (const [key, value] of Object.entries(env)) {
-    if (value === undefined) delete process.env[key]
-    else process.env[key] = value
-  }
 }
 
 // Resolution order per field: config file > env var > built-in default.
