@@ -404,7 +404,13 @@ export interface DaemonConfig {
   proposalExpiryDays: number
 }
 
-const DEFAULTS: DaemonCaps = {
+/**
+ * Exported (not just module-private) so `src/core/config/registry.ts` can
+ * declare its `MARS_MAX_*` knob defaults from this single source of truth
+ * instead of duplicating the literals — see that module for the typed
+ * env-registry this JSDoc has been foreshadowing.
+ */
+export const DEFAULTS: DaemonCaps = {
   implement: 12,
   triage: 8,
   refine: 6,
@@ -415,20 +421,23 @@ const DEFAULTS: DaemonCaps = {
   verify: 1,
 }
 
-const DEFAULT_SELF_EVOLVE: SelfEvolveConfig = {
+/** Exported for `src/core/config/registry.ts` — see {@link DEFAULTS}. */
+export const DEFAULT_SELF_EVOLVE: SelfEvolveConfig = {
   autoEnqueue: false,
   driftThresholdPct: 10,
   taskConfidenceThreshold: 0.8,
   reflectCooldownDays: 7,
 }
 
-const DEFAULT_SCORING: ScoringConfig = {
+/** Exported for `src/core/config/registry.ts` — see {@link DEFAULTS}. */
+export const DEFAULT_SCORING: ScoringConfig = {
   autoTrigger: false,
   lowTrendThreshold: 0.5,
   lowTrendWindow: 5,
 }
 
-const DEFAULT_PROVIDER: ProviderName = 'codex'
+/** Exported for `src/core/config/registry.ts` — see {@link DEFAULTS}. */
+export const DEFAULT_PROVIDER: ProviderName = 'codex'
 
 const DEFAULT_PROPOSAL_EXPIRY_DAYS = 14
 
@@ -439,7 +448,8 @@ const DEFAULT_CONTROL_LEVERS: ControlLevers = {
   autoRunReflect: 'off',
 }
 
-const VALID_PROVIDER_NAMES = new Set<string>(['claude', 'gemini', 'codex'])
+/** Exported for `src/core/config/registry.ts` — see {@link DEFAULTS}. */
+export const VALID_PROVIDER_NAMES = new Set<string>(['claude', 'gemini', 'codex'])
 
 const envInt = (name: string, fallback: number): number => {
   const raw = process.env[name]
