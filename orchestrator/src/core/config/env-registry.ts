@@ -211,17 +211,23 @@ export const ENV_KNOBS: readonly EnvKnob[] = [
     schema: nonEmptyStringFromEnv,
     path: 'verifier.remoteUrl',
     default: null,
+    description:
+      'Endpoint URL the `remote-http` Verifier posts verification requests to. Unset means no remote verifier is configured.',
   },
   {
     name: 'MARS_VERIFIER_REMOTE_TOKEN',
     schema: nonEmptyStringFromEnv,
     path: 'verifier.remoteAuthToken',
     default: null,
+    description:
+      'Bearer token the `remote-http` Verifier sends in the Authorization header. Unset means the endpoint is called unauthenticated.',
   },
   {
     name: 'MARS_VERIFIER_REMOTE_TIMEOUT_MS',
     schema: positiveIntFromEnv,
     path: 'verifier.remoteTimeoutMs',
     default: 30_000,
+    description:
+      'Milliseconds the `remote-http` Verifier waits for a verification response before aborting the request.',
   },
 ]
