@@ -15,14 +15,31 @@
  * `merge()` now refuses to fast-forward a branch whose TIP carries the
  * `Mars-Checkpoint: salvage` trailer, checked via `isSalvageCheckpointCommit`
  * (a real `git log --format=%(trailers:...)` read) — not a subject-line grep.
+ * A refused branch is further classified via `hasRealCommitAboveBase`
+ * (`base..tip` against `merge-base(branch, integrationBranch)`) into two
+ * distinct shapes so identical-looking refusals don't collapse into one
+ * storm signature:
+ *
+ *  - real progress underneath (some non-checkpoint commit exists between the
+ *    base and the tip): a genuine merge defect, `failedPhase: 'merge'`,
+ *    signature `merge:salvage-checkpoint-tip/resumed-then-died`.
+ *  - no progress at all (every commit above the base is itself a
+ *    checkpoint, across any `--supersede` inheritance): classified as a
+ *    code-phase failure instead, `failedPhase: 'code'`, signature
+ *    `code:salvage-checkpoint-tip/no-progress`.
+ *
  * These tests exercise that guard against a REAL git repository (the trailer
  * parsing is a real git primitive, not something worth mocking) and assert:
  *
- *  1. a branch tipped by a salvage checkpoint is refused, with a message
- *     naming `mars continue` and `--supersede`;
- *  2. a branch with a checkpoint commit in its history, but real commits on
+ *  1. a branch tipped by a checkpoint WITH a real commit underneath is
+ *     refused as a genuine merge defect, with a message naming `mars
+ *     continue` and `--supersede`;
+ *  2. a branch tipped by a checkpoint with NO real commit anywhere above the
+ *     inherited base is refused as a code-phase, no-progress failure,
+ *     pointing at supersede-again-or-split;
+ *  3. a branch with a checkpoint commit in its history, but real commits on
  *     top, is NOT refused — merge proceeds past the guard normally;
- *  3. a human commit whose subject happens to start with `wip(checkpoint):`
+ *  4. a human commit whose subject happens to start with `wip(checkpoint):`
  *     but carries no trailer is NOT refused — the check is structural, not
  *     textual.
  */
@@ -215,14 +232,16 @@ const worktreeOpts = (taskId: string, branch: string) => ({
 })
 
 // ---------------------------------------------------------------------------
-// Suite 1 — salvage checkpoint AT the tip: must be refused
+// Suite 1 — salvage checkpoint AT the tip, real progress underneath: refused
+// as a genuine merge defect
 // ---------------------------------------------------------------------------
 
-describe('merge — salvage-checkpoint-tip guard: refuses a branch tipped by a checkpoint', () => {
+describe('merge — salvage-checkpoint-tip guard: refuses a branch tipped by a checkpoint (real progress underneath)', () => {
   it('throws WorkflowTerminalError with kind merge-salvage-checkpoint-tip', async () => {
     const taskId = 'mars-salvage-tip-01'
     const branch = `task/${taskId}`
     onNewBranch(repo, branch, () => {
+      commitChange(repo, 'feat: real work before the coder died')
       git(repo, 'commit', '-q', '--allow-empty', '-m', salvageCheckpointMessage())
     })
 
@@ -239,6 +258,7 @@ describe('merge — salvage-checkpoint-tip guard: refuses a branch tipped by a c
     const taskId = 'mars-salvage-tip-02'
     const branch = `task/${taskId}`
     onNewBranch(repo, branch, () => {
+      commitChange(repo, 'feat: real work before the coder died')
       git(repo, 'commit', '-q', '--allow-empty', '-m', salvageCheckpointMessage())
     })
 
@@ -255,10 +275,11 @@ describe('merge — salvage-checkpoint-tip guard: refuses a branch tipped by a c
     expect(errorMsg).toContain(`mars task add --supersede ${taskId}`)
   })
 
-  it('marks the task failed with failureSignature merge:salvage-checkpoint-tip', async () => {
+  it('marks the task failed with failedPhase merge and signature merge:salvage-checkpoint-tip/resumed-then-died', async () => {
     const taskId = 'mars-salvage-tip-03'
     const branch = `task/${taskId}`
     onNewBranch(repo, branch, () => {
+      commitChange(repo, 'feat: real work before the coder died')
       git(repo, 'commit', '-q', '--allow-empty', '-m', salvageCheckpointMessage())
     })
 
@@ -273,7 +294,7 @@ describe('merge — salvage-checkpoint-tip guard: refuses a branch tipped by a c
     expect(failedCalls[0][0]).toBe(taskId)
     expect((failedCalls[0][1] as Record<string, unknown>).failedPhase).toBe('merge')
     expect((failedCalls[0][1] as Record<string, unknown>).failureSignature).toBe(
-      'merge:salvage-checkpoint-tip',
+      'merge:salvage-checkpoint-tip/resumed-then-died',
     )
   })
 
@@ -281,6 +302,7 @@ describe('merge — salvage-checkpoint-tip guard: refuses a branch tipped by a c
     const taskId = 'mars-salvage-tip-04'
     const branch = `task/${taskId}`
     onNewBranch(repo, branch, () => {
+      commitChange(repo, 'feat: real work before the coder died')
       git(repo, 'commit', '-q', '--allow-empty', '-m', salvageCheckpointMessage())
     })
 
@@ -295,6 +317,7 @@ describe('merge — salvage-checkpoint-tip guard: refuses a branch tipped by a c
     const taskId = 'mars-salvage-tip-05'
     const branch = `task/${taskId}`
     onNewBranch(repo, branch, () => {
+      commitChange(repo, 'feat: real work before the coder died')
       git(repo, 'commit', '-q', '--allow-empty', '-m', salvageCheckpointMessage())
     })
 
@@ -307,6 +330,83 @@ describe('merge — salvage-checkpoint-tip guard: refuses a branch tipped by a c
     expect(item.raisedBy).toBe('merge:salvage-checkpoint-tip')
     expect(item.body).toContain(`mars continue ${taskId}`)
     expect(item.body).toContain(`mars task add --supersede ${taskId}`)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Suite 1b — salvage checkpoint AT the tip, NO real commit anywhere above the
+// inherited base: refused as a distinct code-phase, no-progress failure so it
+// does not collapse into the same storm signature as a genuine merge defect
+// ---------------------------------------------------------------------------
+
+describe('merge — salvage-checkpoint-tip guard: refuses with a distinct classification when the branch never held real progress', () => {
+  it('throws WorkflowTerminalError with kind merge-salvage-checkpoint-tip-no-progress', async () => {
+    const taskId = 'mars-salvage-noprog-01'
+    const branch = `task/${taskId}`
+    onNewBranch(repo, branch, () => {
+      git(repo, 'commit', '-q', '--allow-empty', '-m', salvageCheckpointMessage())
+    })
+
+    const err = await merge(makeCtx(taskId), {
+      kind: 'task',
+      ...worktreeOpts(taskId, branch),
+    }).catch((e) => e)
+
+    expect(err).toBeInstanceOf(WorkflowTerminalError)
+    expect((err as WorkflowTerminalError).kind).toBe('merge-salvage-checkpoint-tip-no-progress')
+  })
+
+  it('marks the task failed with failedPhase code and signature code:salvage-checkpoint-tip/no-progress', async () => {
+    const taskId = 'mars-salvage-noprog-02'
+    const branch = `task/${taskId}`
+    onNewBranch(repo, branch, () => {
+      git(repo, 'commit', '-q', '--allow-empty', '-m', salvageCheckpointMessage())
+    })
+
+    await merge(makeCtx(taskId), { kind: 'task', ...worktreeOpts(taskId, branch) }).catch(
+      () => {},
+    )
+
+    const failedCalls = mockUpdateTask.mock.calls.filter(
+      (c) => (c[1] as Record<string, unknown>)?.status === 'failed',
+    )
+    expect(failedCalls).toHaveLength(1)
+    expect(failedCalls[0][0]).toBe(taskId)
+    expect((failedCalls[0][1] as Record<string, unknown>).failedPhase).toBe('code')
+    expect((failedCalls[0][1] as Record<string, unknown>).failureSignature).toBe(
+      'code:salvage-checkpoint-tip/no-progress',
+    )
+  })
+
+  it('raises an action-queue item pointing at supersede-again-or-split, distinct raisedBy from the genuine-defect path', async () => {
+    const taskId = 'mars-salvage-noprog-03'
+    const branch = `task/${taskId}`
+    onNewBranch(repo, branch, () => {
+      git(repo, 'commit', '-q', '--allow-empty', '-m', salvageCheckpointMessage())
+    })
+
+    await merge(makeCtx(taskId), { kind: 'task', ...worktreeOpts(taskId, branch) }).catch(
+      () => {},
+    )
+
+    expect(mockRaiseActionQueueItem).toHaveBeenCalledOnce()
+    const [item] = mockRaiseActionQueueItem.mock.calls[0]
+    expect(item.raisedBy).toBe('merge:salvage-checkpoint-tip-no-progress')
+    expect(item.body).toContain(`mars task add --supersede ${taskId}`)
+  })
+
+  it('does not proceed to checkMergeTargetStatus (stops before the normal merge path)', async () => {
+    const taskId = 'mars-salvage-noprog-04'
+    const branch = `task/${taskId}`
+    onNewBranch(repo, branch, () => {
+      git(repo, 'commit', '-q', '--allow-empty', '-m', salvageCheckpointMessage())
+    })
+
+    await merge(makeCtx(taskId), { kind: 'task', ...worktreeOpts(taskId, branch) }).catch(
+      () => {},
+    )
+
+    expect(mockCheckMergeTargetStatus).not.toHaveBeenCalled()
   })
 })
 

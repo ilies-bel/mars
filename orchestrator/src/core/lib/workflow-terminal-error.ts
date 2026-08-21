@@ -90,10 +90,31 @@ export type WorkflowTerminalKind =
    * commit is a safety net for the coder-resume path, not a finished diff, so
    * fast-forwarding it into the integration branch is refused. Identified
    * structurally via the `Mars-Checkpoint: salvage` commit trailer, never by
-   * matching subject text. Resolve with `mars continue <id>` (resume the coder
-   * on the existing worktree) or `mars task add --supersede <id>`.
+   * matching subject text.
+   *
+   * This kind specifically means a REAL commit exists between the branch's
+   * base and the checkpoint tip (`hasRealCommitAboveBase` returned `true`) —
+   * some coder attempt landed genuine work and a LATER attempt still died
+   * mid-run, leaving a checkpoint back on top. That is worth an operator's
+   * attention: `mars continue <id>` (resume the coder on the existing
+   * worktree) or `mars task add --supersede <id>` (hand the branch to a fresh
+   * coder). See {@link 'merge-salvage-checkpoint-tip-no-progress'} for the
+   * sibling case where the branch has never held any real commit.
    */
   | 'merge-salvage-checkpoint-tip'
+  /**
+   * The merge step found the task branch's TIP to be a salvage checkpoint
+   * (same detection as {@link 'merge-salvage-checkpoint-tip'}) but, unlike
+   * that kind, `hasRealCommitAboveBase` found NO real commit anywhere between
+   * the branch's base and the tip — every commit the branch has ever carried,
+   * across any `--supersede` inheritance, is itself an orchestrator checkpoint.
+   * No coder attempt on this branch has ever landed real work, so this is
+   * classified as a code-phase failure (`failedPhase: 'code'`,
+   * `failureSignature` under the `code:` namespace) rather than a merge
+   * defect: the fix is a fresh attempt (`mars task add --supersede <id>`) or
+   * splitting the task, not investigating the merge machinery.
+   */
+  | 'merge-salvage-checkpoint-tip-no-progress'
 
 export interface WorkflowTerminalMeta {
   /** Unix epoch seconds at which the provider quota resets. Only set for `quota-rejected`. */

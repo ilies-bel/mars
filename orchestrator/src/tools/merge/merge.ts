@@ -25,6 +25,7 @@ import {
   checkpointRefFor,
   restoreCheckpoint,
   isSalvageCheckpointCommit,
+  hasRealCommitAboveBase,
   type Checkpoint,
 } from '../../core/lib/git/checkpoint'
 import { resolveContext, getStateDir } from '../../core/context'
@@ -496,7 +497,99 @@ export const merge = async (
             buildPhaseCtx(trace, taskId, 'merge'),
           ))
         ) {
-          const SALVAGE_TIP_SIGNATURE = 'merge:salvage-checkpoint-tip'
+          // Distinguish "some coder attempt landed real work, a later attempt
+          // still died leaving a checkpoint on top" (a genuine defect worth an
+          // operator's attention) from "this branch, across every attempt
+          // including any --supersede inheritance, has NEVER held a real
+          // commit" (nothing to investigate — the fix is a fresh attempt or a
+          // smaller task). Both shapes refuse the merge; only the
+          // classification, failedPhase, and failure signature differ, so the
+          // two never collapse into one signature-storm family (ADR: see the
+          // task that added this branch).
+          let mergeBaseSha: string | null = null
+          try {
+            const mergeBaseR = await runTool(
+              {
+                tool: 'git',
+                argv: ['merge-base', branch, integrationBranch],
+                cwd: mergeRepoRoot,
+                taskId,
+                originId: trace.originId,
+                phase: 'merge',
+              },
+              trace.traceStore,
+            )
+            mergeBaseSha = mergeBaseR.exitCode === 0 ? mergeBaseR.stdout.trim() : null
+          } catch (err) {
+            console.warn(
+              `[merge] task ${taskId}: salvage-checkpoint-tip preflight could not resolve merge-base (${branch}..${integrationBranch}); defaulting to the genuine-defect classification:`,
+              err,
+            )
+          }
+          // Fail open to "real progress exists" (the more conservative,
+          // pre-existing classification) when the merge-base is unknown.
+          const hasRealProgress =
+            mergeBaseSha === null ||
+            (await hasRealCommitAboveBase(
+              mergeRepoRoot,
+              mergeBaseSha,
+              branchTipSha,
+              buildPhaseCtx(trace, taskId, 'merge'),
+            ))
+
+          if (!hasRealProgress) {
+            const NO_PROGRESS_SIGNATURE = 'code:salvage-checkpoint-tip/no-progress'
+            const errorMsg =
+              `branch tip is an unfinished salvage checkpoint (${branchTipSha.slice(0, 9)}) and no coder ` +
+              `attempt on this branch has ever landed a real commit — split the task or start a fresh ` +
+              `attempt with \`mars task add --supersede ${taskId}\` rather than continuing on this worktree`
+            await updateTask(
+              taskId,
+              {
+                status: 'failed',
+                error: errorMsg,
+                failedPhase: 'code',
+                failureReason: NO_PROGRESS_SIGNATURE,
+                failureReasonCode: NO_PROGRESS_SIGNATURE,
+                failureSignature: NO_PROGRESS_SIGNATURE,
+              },
+              store,
+            )
+            await raiseActionQueueItem({
+              kind: 'failed',
+              category: 'orchestrator',
+              priority: 'high',
+              title: `Task ${taskId}: no coder progress — branch never held a real commit`,
+              body: [
+                `Task \`${taskId}\`'s branch \`${branch}\` is tipped by an orchestrator-authored salvage`,
+                `checkpoint commit (\`${branchTipSha.slice(0, 9)}\`), and no commit anywhere on the branch`,
+                `(across any \`--supersede\` inheritance) is real, reviewed work — every commit ahead of`,
+                `\`${integrationBranch}\` is itself a checkpoint. Continuing on the same worktree is unlikely`,
+                `to help; the task itself likely needs a fresh attempt or a smaller scope.`,
+                '',
+                `**To unblock:**`,
+                `1. \`mars task add --supersede ${taskId}\` — hand the branch to a fresh coder attempt.`,
+                `2. Split the task into smaller pieces and re-enqueue.`,
+                `3. \`mars continue ${taskId}\` remains available if you believe the existing worktree just needs one more turn.`,
+              ].join('\n'),
+              payload: { taskId, branch, integrationBranch, branchTipSha },
+              context: { repoRoot: process.env.MARS_REPO ?? null },
+              raisedBy: 'merge:salvage-checkpoint-tip-no-progress',
+              signature: `${taskId}:${NO_PROGRESS_SIGNATURE}`,
+              originTaskId: taskId,
+              occurrence: {
+                at: new Date().toISOString(),
+                taskId,
+                integrationBranch,
+              },
+            })
+            throw new WorkflowTerminalError(
+              'merge-salvage-checkpoint-tip-no-progress',
+              `code:salvage-checkpoint-tip/no-progress: task ${taskId} branch ${branch} tip ${branchTipSha} is an unfinished salvage checkpoint with no real commit above the inherited base`,
+            )
+          }
+
+          const SALVAGE_TIP_SIGNATURE = 'merge:salvage-checkpoint-tip/resumed-then-died'
           const errorMsg =
             `branch tip is an unfinished salvage checkpoint (${branchTipSha.slice(0, 9)}) — resume the coder ` +
             `with \`mars continue ${taskId}\`, or carry it forward with \`mars task add --supersede ${taskId}\``
@@ -540,7 +633,7 @@ export const merge = async (
           })
           throw new WorkflowTerminalError(
             'merge-salvage-checkpoint-tip',
-            `merge:salvage-checkpoint-tip: task ${taskId} branch ${branch} tip ${branchTipSha} is an unfinished salvage checkpoint`,
+            `merge:salvage-checkpoint-tip: task ${taskId} branch ${branch} tip ${branchTipSha} is an unfinished salvage checkpoint with real progress underneath`,
           )
         }
 

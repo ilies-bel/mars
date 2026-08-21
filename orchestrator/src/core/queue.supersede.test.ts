@@ -203,4 +203,59 @@ describe('queue.supersede', () => {
     const replacements = allTasks.filter((t) => t.prompt === 'replacement')
     expect(replacements).toHaveLength(0)
   })
+
+  // ── Salvage-checkpoint-tip briefing ─────────────────────────────────────
+  //
+  // A `--supersede` replacement inherits the superseded task's branch
+  // verbatim. When that branch's tip is itself an orchestrator-authored
+  // salvage checkpoint (the coder was killed mid-run with uncommitted
+  // changes), the coder dispatched onto it otherwise has no signal that the
+  // commit it's looking at is a "do not merge as-is" auto-commit rather than
+  // real progress — and the merge step later refuses to fast-forward the
+  // branch if the new coder just leaves another checkpoint on top. See the
+  // incident writeup that spawned this task: three superseded tasks in a row
+  // died without landing a real commit, tripping the signature-storm breaker.
+
+  const salvageCheckpointMessage = async (): Promise<string> => {
+    const { SALVAGE_CHECKPOINT_SUBJECT_PREFIX, SALVAGE_CHECKPOINT_TRAILER_KEY, SALVAGE_CHECKPOINT_TRAILER_VALUE } =
+      await import('./lib/git/checkpoint')
+    return `${SALVAGE_CHECKPOINT_SUBJECT_PREFIX} coder killed (exit 143) with 1 uncommitted path(s) — do not merge as-is\n\n${SALVAGE_CHECKPOINT_TRAILER_KEY}: ${SALVAGE_CHECKPOINT_TRAILER_VALUE}`
+  }
+
+  it('appends the salvage-tip brief to the new task prompt when the inherited branch tip is a checkpoint', async () => {
+    const q = await loadQueue(repo)
+
+    const superseded = await q.enqueueTask('will die mid-run', undefined, { skipTriage: true })
+    const { worktreePath } = await provisionWorktree(q, repo, superseded.id)
+    execFileSync('git', ['commit', '-q', '--allow-empty', '-m', await salvageCheckpointMessage()], {
+      cwd: worktreePath,
+    })
+
+    const newTask = await q.enqueueTask('finish the work', undefined, {
+      skipTriage: true,
+      supersedes: superseded.id,
+    })
+
+    expect(newTask.prompt).toContain('finish the work')
+    expect(newTask.prompt).toContain('## Inherited salvage checkpoint')
+    expect(newTask.prompt).toContain(`mars task add --blocked-by ${newTask.id}`)
+  })
+
+  it('does NOT append the salvage-tip brief when the inherited branch tip is a real commit', async () => {
+    const q = await loadQueue(repo)
+
+    const superseded = await q.enqueueTask('normal failed task', undefined, { skipTriage: true })
+    const { worktreePath } = await provisionWorktree(q, repo, superseded.id)
+    execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'feat: ordinary real work'], {
+      cwd: worktreePath,
+    })
+
+    const newTask = await q.enqueueTask('continue the work', undefined, {
+      skipTriage: true,
+      supersedes: superseded.id,
+    })
+
+    expect(newTask.prompt).toBe('continue the work')
+    expect(newTask.prompt).not.toContain('Inherited salvage checkpoint')
+  })
 })

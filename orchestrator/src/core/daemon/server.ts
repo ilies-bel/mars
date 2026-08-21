@@ -2253,10 +2253,21 @@ export const startDaemon = async (
             break
           case 'merge-salvage-checkpoint-tip':
             // The merge gate found the branch tip to still be an unfinished
-            // salvage checkpoint; already marked failed + raised an action-queue
-            // item naming `mars continue` / `--supersede`. Suppress the generic
-            // re-update so the operator-facing error is not overwritten.
+            // salvage checkpoint with real coder progress underneath; already
+            // marked failed + raised an action-queue item naming `mars continue`
+            // / `--supersede`. Suppress the generic re-update so the
+            // operator-facing error is not overwritten.
             log(`[implement] ${task.id} merge-salvage-checkpoint-tip abort (exception path); task already marked failed, item raised`)
+            break
+          case 'merge-salvage-checkpoint-tip-no-progress':
+            // The merge gate found the branch tip to be an unfinished salvage
+            // checkpoint with NO real commit anywhere above the inherited base
+            // — no coder attempt on this branch has ever landed real work.
+            // Already marked failed (failedPhase 'code') + raised an
+            // action-queue item pointing at supersede-again-or-split. Suppress
+            // the generic re-update so the operator-facing error is not
+            // overwritten.
+            log(`[implement] ${task.id} merge-salvage-checkpoint-tip-no-progress abort (exception path); task already marked failed, item raised`)
             break
         }
       } else {

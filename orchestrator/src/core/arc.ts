@@ -298,7 +298,7 @@ export class Arc {
     const resolvedStore = store ?? (await getDefaultTaskStore())
     const { prompt, plan, opts } = spec
 
-    const promptText = coerceToString(prompt, 'enqueueTask: prompt')
+    let promptText = coerceToString(prompt, 'enqueueTask: prompt')
     if (opts?.priority !== undefined) validatePriority(opts.priority)
     if (
       opts?.tags !== undefined &&
@@ -386,6 +386,37 @@ export class Arc {
               `but failed to create new worktree: ${cause instanceof Error ? cause.message : String(cause)}. ` +
               `Re-run 'mars task add --supersede ${supersededId}' to retry.`,
           )
+        }
+
+        // Step 4: if the inherited branch's TIP is itself an orchestrator
+        // salvage checkpoint (not a finished diff), brief the coder about it
+        // up front — a coder dispatched onto a superseded branch otherwise has
+        // no signal that the commit it's looking at is a "do not merge as-is"
+        // auto-commit, and the merge step will refuse to fast-forward the
+        // branch if the coder just re-checkpoints instead of landing a real
+        // commit. Best-effort: a git failure here must never block task
+        // creation — the merge-time guard (merge.ts) is the actual
+        // enforcement point, this is purely advisory.
+        if (inheritedBranch !== null) {
+          try {
+            const { stdout: tipShaRaw } = await execFileP(
+              'git',
+              ['rev-parse', inheritedBranch],
+              { cwd: getRepoRoot() },
+            )
+            const { isSalvageCheckpointCommit, buildSupersedeSalvageTipBrief } = await import(
+              './lib/git/checkpoint'
+            )
+            if (await isSalvageCheckpointCommit(getRepoRoot(), tipShaRaw.trim())) {
+              promptText = `${promptText}\n\n${buildSupersedeSalvageTipBrief(id)}`
+            }
+          } catch (err) {
+            console.warn(
+              `supersede: could not check salvage-checkpoint status of inherited branch ` +
+                `${inheritedBranch} (non-fatal, no briefing appended):`,
+              err instanceof Error ? err.message : String(err),
+            )
+          }
         }
       }
     }

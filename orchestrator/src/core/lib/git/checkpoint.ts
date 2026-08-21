@@ -132,6 +132,82 @@ export const isSalvageCheckpointCommit = async (
 }
 
 /**
+ * The per-task briefing `Arc.createOrigin` appends to a `--supersede` task's
+ * prompt when the branch it inherits is tipped by a salvage checkpoint (see
+ * `isSalvageCheckpointCommit`). Without this, a coder dispatched onto a
+ * superseded branch has no signal that the commit at its tip is a "do not
+ * merge as-is" auto-commit, not real progress — and the merge step refuses to
+ * fast-forward a branch left in that state (`merge:salvage-checkpoint-tip[/...]`
+ * / `code:salvage-checkpoint-tip/no-progress`).
+ */
+export const buildSupersedeSalvageTipBrief = (taskId: string): string =>
+  [
+    '## Inherited salvage checkpoint',
+    '',
+    "This task's branch was inherited from a superseded task (`mars task add --supersede`), " +
+      'and the branch is currently tipped by an orchestrator-authored salvage checkpoint commit ' +
+      `(subject starts with \`${SALVAGE_CHECKPOINT_SUBJECT_PREFIX}\`) — not a finished diff. It was ` +
+      'auto-committed when a prior coder was killed mid-run with uncommitted changes. Do not treat it ' +
+      'as done work, and do not just leave another checkpoint on top of it:',
+    '',
+    '1. Inspect it first — `git log -p -1` for what was salvaged, `git log --oneline` for the full history.',
+    '2. Finish the real work and land it as a genuine commit as early as you can. The merge step refuses ' +
+      'to fast-forward a branch whose tip is still a raw checkpoint commit.',
+    '3. Commit in small increments as you go, so a genuine commit is always the most recent one on the branch.',
+    '4. If you are running low on context before finishing, commit what you have and file a ' +
+      `\`mars task add --blocked-by ${taskId}\` follow-up rather than leaving the tip as an unfinished checkpoint.`,
+  ].join('\n')
+
+/**
+ * True when at least one commit in `base..tip` is NOT an orchestrator-authored
+ * salvage checkpoint — i.e. some coder attempt landed real, reviewed work on
+ * this branch, even if a LATER attempt subsequently died leaving a checkpoint
+ * back at the tip. `base` is typically `merge-base(branch, integrationBranch)`,
+ * so the range covers every commit any coder has ever made on the branch,
+ * across every `--supersede` inheritance.
+ *
+ * Used at merge time (alongside {@link isSalvageCheckpointCommit}) to
+ * distinguish two shapes of "tip is a checkpoint" that call for different
+ * responses:
+ *
+ *  - `true` (real commit exists below the tip): a coder made genuine progress
+ *    and a later attempt still died mid-run — worth an operator's attention
+ *    (`mars continue` to finish it, or `mars task add --supersede` to hand it
+ *    to a fresh coder).
+ *  - `false` (every commit above `base` is itself a checkpoint): no coder has
+ *    EVER landed real work on this branch, including through any supersede
+ *    chain — continuing to poke the same worktree is unlikely to help; the
+ *    task itself likely needs to be split or restarted from scratch.
+ *
+ * Fails open to `true` (assume real progress exists) on any git error. That
+ * keeps an unanswerable case in the existing, more conservative "genuine
+ * defect" bucket rather than silently reclassifying it into the machine-
+ * decided "no progress" bucket on an inability to check.
+ */
+export const hasRealCommitAboveBase = async (
+  cwd: string,
+  base: string,
+  tip: string,
+  traceCtx?: TraceCtx,
+): Promise<boolean> => {
+  const git = resolveGitBin()
+  try {
+    const result = await execProbe(git, ['rev-list', `${base}..${tip}`], { cwd }, traceCtx)
+    if (result.exitCode !== 0) return true
+    const shas = result.stdout
+      .split('\n')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+    for (const sha of shas) {
+      if (!(await isSalvageCheckpointCommit(cwd, sha, traceCtx))) return true
+    }
+    return false
+  } catch {
+    return true
+  }
+}
+
+/**
  * Identity used for the checkpoint commit object. Pinned via env so a repo
  * (or CI container) without `user.name` / `user.email` configured cannot make
  * `git commit-tree` fail and lose the work it was asked to preserve.
