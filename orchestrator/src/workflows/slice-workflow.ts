@@ -19,12 +19,81 @@ import { Workers } from '../core/workers'
 import { parseWorkerJsonResult } from '../core/lib/worker-json'
 import { getRepoRoot } from '../core/context'
 import { listActionQueueItems, raiseActionQueueItem } from '../core/lib/action-queue'
+import type { ActionQueueKind } from '../core/lib/action-queue-kinds'
 import { type TraceEventStore } from '../core/lib/trace-events-store'
 import { nullTraceStore } from '../core/lib/run-tool'
 import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
 import { diagnoseClaudeFailure } from '../core/lib/claude-stream'
-import { validateSliceReferences } from './slice-reference-validator'
+import {
+  validateSliceReferences,
+  type SliceReferenceValidationResult,
+} from './slice-reference-validator'
 import type { SliceSpec } from '../core/slice-spec'
+
+/**
+ * `slice-workflow.ts` is also the **shared contract** for two upcoming
+ * consumer slices in PRD ae17340a "Modular-core program: make every Mars
+ * module an isolated, traceable, swappable Port":
+ *
+ *   1. **"Unify the two HITL park paths"** — today two independent
+ *      mechanisms park a task on human input: the slicer-driven hitl slice
+ *      (action-queue kind {@link HITL_SLICE_ACTION_KIND}, completed via
+ *      {@link tryCompleteHitlSlice}) and the live-task `awaiting-human` step
+ *      guide (`implement-workflow.ts` / `tools/human/await-human.ts`).
+ *      {@link HITL_SLICE_ACTION_KIND} and {@link hitlSliceParkSignature} give
+ *      that slice one shared vocabulary for "this task is a human park
+ *      point" to unify around, instead of two independently hardcoded
+ *      string shapes.
+ *   2. **"Wire the three CodeIndex consumers"** — {@link
+ *      annotateUnresolvedReferences} resolves a slice's declared symbols and
+ *      readFirst paths through an injectable {@link SliceReferenceValidator}
+ *      (default: the ripgrep-backed `validateSliceReferences`). That slice
+ *      can swap the default for a `codeIndex` Port-backed validator
+ *      (ADR-0097, see `core/config/registry.ts`) without touching this
+ *      file's call sites.
+ */
+
+// ---------------------------------------------------------------------------
+// HITL park contract — shared with the "Unify the two HITL park paths" slice
+// ---------------------------------------------------------------------------
+
+/**
+ * The action-queue kind raised when a slicer-produced hitl slice parks
+ * waiting on operator confirmation (see the Phase 1 HITL routing inside the
+ * slice workflow and {@link tryCompleteHitlSlice}). Exported as a typed
+ * constant — rather than each call site re-typing the string literal — so a
+ * future consolidation of this park path with the live-task
+ * `awaiting-human` path has one source of truth to import instead of two
+ * independently hardcoded literals.
+ */
+export const HITL_SLICE_ACTION_KIND: ActionQueueKind = 'hitl-slice-needs-operator'
+
+/**
+ * The action-queue item signature used to correlate a raised hitl-park item
+ * back to its slice task. Shared by the raise call in Phase 1 and the
+ * lookup in {@link tryCompleteHitlSlice} so the two stay in lockstep by
+ * construction instead of by copy-pasted template literals.
+ */
+export const hitlSliceParkSignature = (proposalId: string, sliceIndex: number): string =>
+  `${proposalId}:hitl:${sliceIndex}`
+
+// ---------------------------------------------------------------------------
+// CodeIndex validator seam — shared with the "Wire the three CodeIndex
+// consumers" slice
+// ---------------------------------------------------------------------------
+
+/**
+ * Shape of the dependency {@link annotateUnresolvedReferences} uses to
+ * resolve a slice's backtick-cited symbols and readFirst paths. Defaults to
+ * the ripgrep-backed `validateSliceReferences`. Exported as an injection
+ * seam so a future slice can swap in a `codeIndex` Port-backed validator
+ * (ADR-0097, `core/config/registry.ts`) without touching this file's call
+ * sites.
+ */
+export type SliceReferenceValidator = (
+  slice: Pick<SliceSpec, 'prescriptiveAction' | 'readFirst'>,
+  repoRoot: string,
+) => SliceReferenceValidationResult
 
 const sliceInputSchema = z.object({
   proposalId: z.string(),
@@ -978,6 +1047,11 @@ export const injectAutoLinkerBlockers = async (
  * can emit telemetry or trace records without coupling this helper to any
  * particular store.
  *
+ * `validate` defaults to the ripgrep-backed `validateSliceReferences` but is
+ * an injectable {@link SliceReferenceValidator} seam — the "Wire the three
+ * CodeIndex consumers" slice swaps this for a `codeIndex` Port-backed
+ * validator without touching the loop below.
+ *
  * Exported for unit testing.
  */
 export function annotateUnresolvedReferences(
@@ -988,9 +1062,10 @@ export function annotateUnresolvedReferences(
     missingSymbols: string[]
     missingReadFirstPaths: string[]
   }) => void,
+  validate: SliceReferenceValidator = validateSliceReferences,
 ): void {
   for (const slice of slices) {
-    const { missingSymbols, missingReadFirstPaths } = validateSliceReferences(slice, repoRoot)
+    const { missingSymbols, missingReadFirstPaths } = validate(slice, repoRoot)
     if (missingSymbols.length === 0 && missingReadFirstPaths.length === 0) continue
 
     // Filter missing paths from readFirst, retaining one fallback if needed.
@@ -1646,7 +1721,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
 
             const checklist = slice.acceptanceCriteria.map((c) => `- [ ] ${c}`).join('\n')
             await raiseActionQueueItem({
-              kind: 'hitl-slice-needs-operator',
+              kind: HITL_SLICE_ACTION_KIND,
               category: 'orchestrator',
               priority: 'normal',
               title: `HITL: ${slice.title}`,
@@ -1663,7 +1738,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
               },
               context: {},
               raisedBy: 'slicer',
-              signature: `${proposal.id}:hitl:${i + 1}`,
+              signature: hitlSliceParkSignature(proposal.id, i + 1),
             })
           }
         }
@@ -1892,8 +1967,8 @@ export const tryCompleteHitlSlice = async (
   // 3. The operator actionQueue item must be resolved.
   //    The item's signature encodes the proposal id and 1-based slice index,
   //    matching exactly what raiseActionQueueItem sets when slicing.
-  const signature = `${taskRow.origin_id}:hitl:${taskRow.slice_index}`
-  const hitlItems = await listActionQueueItems('all', { kind: 'hitl-slice-needs-operator' })
+  const signature = hitlSliceParkSignature(taskRow.origin_id, taskRow.slice_index)
+  const hitlItems = await listActionQueueItems('all', { kind: HITL_SLICE_ACTION_KIND })
   const actionQueueItem = hitlItems.find((item) => item.signature === signature)
   if (!actionQueueItem) return false
   if (actionQueueItem.status !== 'resolved') return false
