@@ -63,7 +63,6 @@ import {
   parseMainCommiterPayload,
 } from './lib/main-commiter-payload'
 import { internalBus } from '../internal-bus'
-import { getProposal } from './proposals'
 import { markTaskFailed } from './queue-retry'
 import { computeFailureSignature } from './lib/failure-signature'
 import { linkTaskToThread } from './daemon/chat-thread-tasks'
@@ -2205,8 +2204,17 @@ export class Arc {
       if (dep?.originId && dep.originId !== dep.id) {
         const originTask = await getTask(dep.originId)
         if (!originTask) {
-          const originProposal = await getProposal(dep.originId)
-          if (!originProposal) {
+          // Existence probe only — deliberately a direct `proposals` read
+          // rather than `getProposal()` from `proposals.ts`. Importing that
+          // module pulls the whole proposal aggregate into the Arc lifecycle
+          // module and closes an `arc -> proposals -> queue -> arc` import
+          // cycle for a single boolean. `origin_id` always holds a full id
+          // here (never a prefix), so exact match is equivalent.
+          const originProposal = await store.query({
+            sql: `SELECT 1 FROM proposals WHERE id = ? LIMIT 1`,
+            args: [dep.originId],
+          })
+          if (originProposal.rows.length === 0) {
             await raiseOrphanedOriginActionQueue(row.id, dep.originId)
             await markTaskFailed(row.id, ORPHANED_ORIGIN_FAILURE_REASON)
             outcomes.push({
