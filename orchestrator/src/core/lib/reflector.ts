@@ -64,15 +64,22 @@ export interface ReflectionSuggestion {
    */
   outcome: SuggestionOutcome
   /**
-   * Least-specific-valid-rule (mirrors {@link VerdictedSuggestion.coversInstances}):
-   * the task ids the evidence actually demonstrates this pattern in. Defaults
-   * to `affectedTaskIds` when the model omits it.
+   * Least-specific-valid-rule (ADR-0099): the arc/task ids the evidence
+   * actually demonstrates this pattern in. Mirrors
+   * {@link VerdictedSuggestion.coversInstances}, which already carries this
+   * discipline for deep-reflect suggestions — this field brings the same
+   * contract to token-reflect suggestions. Required: every construction site
+   * populates it, and {@link parseReflectionResponse} defaults it to
+   * `affectedTaskIds` when the model omits it, so consumers never have to
+   * handle an absent value.
    */
   coversInstances: string[]
   /**
-   * Least-specific-valid-rule (mirrors {@link VerdictedSuggestion.doesNotClaim}):
-   * what this suggestion explicitly does NOT claim to generalize to. Defaults
-   * to `''` when the model omits it.
+   * Least-specific-valid-rule (ADR-0099): what this suggestion explicitly
+   * does NOT claim to generalize to (e.g. other Workflow kinds, fleet-wide
+   * frequency). Mirrors {@link VerdictedSuggestion.doesNotClaim}. Required —
+   * see {@link ReflectionSuggestion.coversInstances};
+   * {@link parseReflectionResponse} defaults it to `''` when the model omits it.
    */
   doesNotClaim: string
 }
@@ -102,14 +109,42 @@ export interface ReflectionResult extends ReflectorRunOutcome {
 }
 
 /**
+ * Outcome feedback for a suggestion raised in a previous reflect window
+ * (ADR-0099: "Outcome feedback (did acting on the rule help?) is a required
+ * signal, not optional"). Carried forward into the next window's prompt so
+ * the reflector can avoid re-raising a dropped suggestion without new
+ * evidence, and treat a recurring 'save'd one as corroboration rather than a
+ * fresh finding.
+ */
+export interface PredecessorSuggestionOutcome {
+  /** The prior suggestion's `rootCauseKey` (or derived family — see {@link deriveRootCauseFamily}). */
+  rootCauseKey: string
+  /** The prior suggestion's title, for a human-legible prompt section. */
+  title: string
+  /** What happened to the suggestion: the save/absorb/drop verdict, or a post-adoption effect. */
+  outcome: SuggestionVerdict | 'applied-helped' | 'applied-no-effect'
+  /** Proposal id if one was created or matched, so the model can reference it. */
+  proposalId: string | null
+}
+
+/**
  * The Port-legal request for the token/lever reflector: already plain
  * serializable data (a corpus of past task records — no live handles), so
  * no field needs stripping the way `Reflector`'s doc (`../ports/reflector/types.ts`)
  * references `VerifierRunArgs` stripping `VerifyArgs` in
  * `../ports/verifier/types.ts`. Aliased so `tokenReflector` below has a named
  * type to bind `Reflector<TokenReflectorPortRequest, ReflectionResult>`.
+ *
+ * Extends the bare corpus with an optional `predecessorOutcomes` carry-
+ * forward (see {@link PredecessorSuggestionOutcome}) rather than widening
+ * `ReflectCorpus` itself (`./reflect-query.ts`) — the Reflector Port passes a
+ * single `request` argument, so the carry-forward data has to live on the
+ * request type. Optional so every existing caller building a bare
+ * `ReflectCorpus` keeps compiling unchanged.
  */
-export type TokenReflectorPortRequest = ReflectCorpus
+export type TokenReflectorPortRequest = ReflectCorpus & {
+  predecessorOutcomes?: readonly PredecessorSuggestionOutcome[]
+}
 
 const SYNTHESIS_INSTRUCTIONS = `You are a workflow and token optimizer for the Mars task orchestrator. You
 will be given a precomputed token summary and a recent task corpus
@@ -396,6 +431,33 @@ const formatPriorOutcomesSection = (
   return PRIOR_OUTCOMES_INSTRUCTIONS.replace('<PRIOR_OUTCOMES>', lines)
 }
 
+const PREDECESSOR_OUTCOMES_INSTRUCTIONS = `
+
+--- Predecessor Suggestions (outcome feedback from the previous reflect window) ---
+
+The following suggestions were raised in the previous reflect window, along
+with what happened to them. This is required outcome feedback (ADR-0099):
+do NOT re-raise a suggestion whose rootCauseKey below was 'drop'ped unless
+you have new evidence beyond what was already considered. A suggestion that
+recurs and was previously 'save'd is corroboration for the same finding, not
+a fresh one — cite it as such rather than emitting a near-duplicate.
+
+<PREDECESSOR_OUTCOMES>
+--- End Predecessor Suggestions ---`
+
+const formatPredecessorOutcomesSection = (
+  outcomes: readonly PredecessorSuggestionOutcome[],
+): string => {
+  const lines = outcomes
+    .map(
+      (o) =>
+        `[${o.outcome}] ${o.rootCauseKey || '(no rootCauseKey)'} — ${o.title}` +
+        (o.proposalId ? ` (proposal ${o.proposalId})` : ''),
+    )
+    .join('\n')
+  return PREDECESSOR_OUTCOMES_INSTRUCTIONS.replace('<PREDECESSOR_OUTCOMES>', lines)
+}
+
 const formatChatFeedbackSection = (
   chatFeedback: readonly import('./chat-feedback-query').ChatFeedbackEntry[],
   chatSystemPrompt: string,
@@ -419,7 +481,7 @@ const formatChatFeedbackSection = (
     .replace('<EXCHANGES>', exchanges)
 }
 
-export const buildPrompt = (corpus: ReflectCorpus): string => {
+export const buildPrompt = (corpus: TokenReflectorPortRequest): string => {
   const summaryJson = JSON.stringify(corpus.costSummary, null, 2)
   const entriesJson = JSON.stringify(corpus.entries, null, 2)
   const registry = loadLeverRegistry()
@@ -447,12 +509,16 @@ ${entriesJson}`
       : base
 
   const feedback = corpus.chatFeedback
-  if (!feedback || feedback.length === 0) {
-    return withPriorOutcomes
-  }
+  const withFeedback =
+    feedback && feedback.length > 0
+      ? `${withPriorOutcomes}${formatChatFeedbackSection(feedback, corpus.chatSystemPrompt ?? '')}`
+      : withPriorOutcomes
 
-  const systemPrompt = corpus.chatSystemPrompt ?? ''
-  return `${withPriorOutcomes}${formatChatFeedbackSection(feedback, systemPrompt)}`
+  const predecessorOutcomes = corpus.predecessorOutcomes
+  if (!predecessorOutcomes || predecessorOutcomes.length === 0) {
+    return withFeedback
+  }
+  return `${withFeedback}${formatPredecessorOutcomesSection(predecessorOutcomes)}`
 }
 
 interface ParsedDocument {
@@ -739,7 +805,7 @@ export const parseReflectionResponse = (text: string): ParsedReflectionResponse 
 }
 
 export const runReflector = async (
-  corpus: ReflectCorpus,
+  corpus: TokenReflectorPortRequest,
 ): Promise<ReflectionResult> => {
   if (corpus.entries.length === 0) {
     return { tokenAnalysis: null, suggestions: [], rawOutput: '', exitCode: 0 }
@@ -832,13 +898,31 @@ export const tokenReflector: Reflector<TokenReflectorPortRequest, ReflectionResu
  * running an arbitrary prose/slug key through it would silently corrupt an
  * unrelated fingerprint.
  */
-const isFailureSignatureShapedRootCauseKey = (key: string): boolean => {
+export const isFailureSignatureShapedRootCauseKey = (key: string): boolean => {
   const slash = key.indexOf('/')
   if (slash === -1) return false
   const step = key.slice(0, slash)
   const errorClass = key.slice(slash + 1)
   return STEP_ID_RE.test(step) && errorClass.length > 0 && !/\s/.test(errorClass)
 }
+
+/**
+ * Widen a suggestion's `rootCauseKey` to its dedup-relevant family (ADR-0099:
+ * "suggestion dedup move[s] from exact signatures to signature families").
+ *
+ * A signature-shaped key (see {@link isFailureSignatureShapedRootCauseKey})
+ * is normalised through {@link failureSignatureFamily} so two suggestions
+ * differing only in the signature's step-kind segment collapse into the same
+ * family. A plain snake_case slug — the common case — is returned unchanged:
+ * the model is already asked to keep `rootCauseKey` stable across runs for
+ * the same root cause, so widening it further would risk merging unrelated
+ * findings. Exported so other dedup call sites (e.g. failure clustering) can
+ * share this exact family-widening rule instead of re-deriving it.
+ */
+export const deriveRootCauseFamily = (rootCauseKey: string): string =>
+  rootCauseKey && isFailureSignatureShapedRootCauseKey(rootCauseKey)
+    ? failureSignatureFamily(rootCauseKey)
+    : rootCauseKey
 
 const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<string | null> => {
   // Build an outcome block for the proposal so `mars proposal show <id>`
@@ -874,10 +958,7 @@ const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<string | n
   // collapse into the same fingerprint instead of forking into near-duplicate
   // drafts. Non-signature keys (the common snake_case slug case) are hashed
   // unchanged — no behaviour change there.
-  const normalizedRootCauseKey =
-    s.rootCauseKey && isFailureSignatureShapedRootCauseKey(s.rootCauseKey)
-      ? failureSignatureFamily(s.rootCauseKey)
-      : s.rootCauseKey
+  const normalizedRootCauseKey = deriveRootCauseFamily(s.rootCauseKey)
   const fingerprintInput = normalizedRootCauseKey
     ? `reflection:${normalizedRootCauseKey}:`
     : `reflection-derived:${s.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}:${outcomeId}:`
@@ -985,6 +1066,18 @@ export interface VerdictedSuggestion {
    * Defaults to `''` when the analyst omits it.
    */
   doesNotClaim: string
+  /**
+   * Corroboration floor (ADR-0099 §Consequences: "deep-reflect single-arc
+   * suggestions need corroboration ... or reduced standing"): the count of
+   * distinct arcs/instances this suggestion is grounded in, independent of
+   * `frequency` (which the model self-reports and does not gate anything
+   * today). Optional — existing callers that predate this field keep
+   * compiling unchanged; a caller populating it should use
+   * `affectedTaskIds.length` as the natural source of truth, and consult
+   * {@link meetsCorroborationFloor} before saving an n=1 suggestion at full
+   * standing.
+   */
+  corroboratingInstanceCount?: number
 }
 
 export interface ApplyVerdictsResult {
@@ -998,6 +1091,27 @@ export const parseVerdict = (raw: unknown): SuggestionVerdict => {
   if (raw === 'absorb' || raw === 'drop' || raw === 'save') return raw
   return 'save'
 }
+
+/**
+ * ADR-0099 corroboration floor: minimum distinct arcs/instances a
+ * deep-reflect suggestion must be observed in before it earns full standing
+ * (mirrors the skill-forge ≥3-arc pattern already used for skill induction).
+ * Below this, the suggestion is a single-arc (n=1) induction — the consumer
+ * verdicting the suggestion is expected to reduce its standing (e.g. lower
+ * confidence, or file it as a gap rather than auto-save) rather than
+ * treating it as equally trustworthy to a corroborated one.
+ */
+export const MIN_CORROBORATION_INSTANCES = 3
+
+/**
+ * True once a suggestion's {@link VerdictedSuggestion.corroboratingInstanceCount}
+ * clears {@link MIN_CORROBORATION_INSTANCES}. A suggestion with no recorded
+ * count (`undefined`) has not been evaluated against the floor and is
+ * treated as not meeting it — callers must opt in by populating the count.
+ */
+export const meetsCorroborationFloor = (corroboratingInstanceCount: number | undefined): boolean =>
+  typeof corroboratingInstanceCount === 'number' &&
+  corroboratingInstanceCount >= MIN_CORROBORATION_INSTANCES
 
 export const applyVerdicts = async (
   suggestions: readonly VerdictedSuggestion[],
