@@ -44,6 +44,20 @@ export const TRACE_EVENT_KINDS = [
   'merge-heartbeat',
   'code-retry-attempt',
   'restart-checkpoint',
+  // --- View-invalidation-only kinds (modular-core program, manual-broadcast
+  // removal slice). No dedicated domain event exists for these mutations, so
+  // each call site that used to hand-call `viewStreamHub.broadcast(<channel>)`
+  // emits the matching `view.<channel>-invalidated` kind on the local daemon
+  // bus instead, purely to drive `registerViewInvalidation`
+  // (`../../bus/view-invalidation.ts`). Never persisted via `emitEvent` —
+  // these are local-bus-only pings, not durable history worth a trace row. ---
+  'view.tasks-invalidated',
+  'view.action-queue-invalidated',
+  'view.chat-invalidated',
+  'view.progress-invalidated',
+  'view.proposals-invalidated',
+  'view.kpis-invalidated',
+  'view.live-task-invalidated',
 ] as const
 
 export type TraceEventKind = (typeof TRACE_EVENT_KINDS)[number]

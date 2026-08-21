@@ -131,6 +131,19 @@ export const VIEW_CHANNEL_FOR: Record<UnifiedEventKind, readonly ViewChannel[]> 
   'merge-heartbeat': ['live-task'],
   'code-retry-attempt': ['live-task'],
   'restart-checkpoint': [],
+
+  // --- View-invalidation-only kinds: the manual-broadcast-removal sweep's
+  // fallback for a call site with no pre-existing domain event to piggyback
+  // on (dispatch resume/pause, signature-storm trip, gate-fix diagnosis,
+  // chat streaming pings, and similar daemon-internal state changes with no
+  // dedicated lifecycle kind). Each maps 1:1 onto the channel it replaced. ---
+  'view.tasks-invalidated': ['tasks'],
+  'view.action-queue-invalidated': ['action-queue'],
+  'view.chat-invalidated': ['chat'],
+  'view.progress-invalidated': ['progress'],
+  'view.proposals-invalidated': ['proposals'],
+  'view.kpis-invalidated': ['kpis'],
+  'view.live-task-invalidated': ['live-task'],
 };
 
 /**
