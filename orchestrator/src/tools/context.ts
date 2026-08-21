@@ -165,6 +165,27 @@ export interface MarsServices {
     cmd: string
     cwd: string
   }) => Promise<{ pid: number; logPath: string; url?: string }>
+  /**
+   * Optional hook backed by the daemon's `TaskFlightTracker`: true iff a
+   * coder subprocess is CURRENTLY running for `taskId` under the
+   * `'implement'` dispatch kind (`tracker.isInFlight(taskId) &&
+   * tracker.inFlightKind(taskId) === 'implement'`).
+   *
+   * `findLiveWorktreeDependents` (worktree-dependents.ts) only sees OTHER
+   * task ROWS referencing the same worktree/branch — it self-excludes
+   * `taskId` and cannot see a second, stale dispatch of the SAME task id
+   * still running the coder while this run has reached the merge step (the
+   * mars-56b4584f incident: `id != ?` self-exclusion made the live sibling
+   * process invisible to the row-based dependents query). The `merge`
+   * primitive checks this hook in addition to `findLiveWorktreeDependents`
+   * before every `removeWorktree` call, deferring removal when a real
+   * process is still alive for this task id.
+   *
+   * When absent (scaffolded workflows, tests that don't inject the
+   * tracker), the merge primitive falls back to the row-based dependents
+   * check alone — same behaviour as before this hook was added.
+   */
+  isImplementInFlight?: (taskId: string) => boolean
 }
 
 /**

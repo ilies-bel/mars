@@ -133,6 +133,19 @@ export const merge = async (
     opts.integrationBranch ?? input(ctx).integrationBranch ?? 'main'
   const store: TaskStore = ctx.services.store
 
+  // Real coder-process liveness (not just task-row status) for THIS task id.
+  // `findLiveWorktreeDependents` only sees OTHER task rows sharing the same
+  // worktree/branch — it self-excludes `taskId`, so it cannot catch a
+  // stale/duplicate dispatch of the SAME task id still coding while this run
+  // has reached the merge step (mars-56b4584f: a stale dispatch removed a
+  // worktree while an agent subprocess was still alive inside it under the
+  // same task id). Every `removeWorktree` call below also checks this, in
+  // addition to `findLiveWorktreeDependents`, before reclaiming the tree.
+  // Absent hook (scaffolded workflows, tests without a tracker) degrades to
+  // `false` — same behaviour as before this guard was added.
+  const implementStillInFlight = (): boolean =>
+    ctx.services.isImplementInFlight?.(taskId) ?? false
+
   // ── Idempotent terminal short-circuit ──────────────────────────────────────
   // When the task row is already terminal (done/failed/dropped), a re-dispatch
   // after a partial completion (e.g. daemon restart between resolveMergeJob and
@@ -171,13 +184,20 @@ export const merge = async (
   const branch = worktree.branch
 
   if (kind === 'diagnose') {
-    await removeWorktree(
-      { path: worktreePath, branch },
-      true,
-      false,
-      buildPhaseCtx(trace, taskId, 'merge'),
-      { taskId, reason: 'diagnose' },
-    )
+    if (implementStillInFlight()) {
+      console.log(
+        `[merge] task ${taskId}: diagnose complete; PRESERVING worktree ${worktreePath} — ` +
+          `a coder process is still in flight for this task id`,
+      )
+    } else {
+      await removeWorktree(
+        { path: worktreePath, branch },
+        true,
+        false,
+        buildPhaseCtx(trace, taskId, 'merge'),
+        { taskId, reason: 'diagnose' },
+      )
+    }
     await updateTask(taskId, { status: 'done', failedPhase: null }, store)
     return {
       taskId,
@@ -368,13 +388,20 @@ export const merge = async (
             console.log(
               `[merge] task ${taskId}: branch ${branch} has zero commits ahead of ${integrationBranch} — main-committer no-op accepted`,
             )
-            await removeWorktree(
-              { path: worktreePath, branch },
-              true,
-              false,
-              buildPhaseCtx(trace, taskId, 'merge'),
-              { taskId, reason: 'zero-commit-main-committer-noop' },
-            )
+            if (implementStillInFlight()) {
+              console.log(
+                `[merge] task ${taskId}: PRESERVING worktree ${worktreePath} — ` +
+                  `a coder process is still in flight for this task id`,
+              )
+            } else {
+              await removeWorktree(
+                { path: worktreePath, branch },
+                true,
+                false,
+                buildPhaseCtx(trace, taskId, 'merge'),
+                { taskId, reason: 'zero-commit-main-committer-noop' },
+              )
+            }
             await updateTask(taskId, { status: 'done', failedPhase: null }, store)
             return {
               taskId,
@@ -1056,11 +1083,21 @@ export const merge = async (
           branch,
           store,
         })
-        if (dependents.length > 0) {
+        const inFlight = implementStillInFlight()
+        if (dependents.length > 0 || inFlight) {
+          const reasons: string[] = []
+          if (dependents.length > 0) {
+            reasons.push(
+              `still referenced by ${dependents.length} non-terminal task(s): ` +
+                dependents.map((d) => `${d.id}(${d.status})`).join(', '),
+            )
+          }
+          if (inFlight) {
+            reasons.push('a coder process is still in flight for this task id')
+          }
           console.log(
             `[merge] task ${taskId} merged; PRESERVING worktree ${worktreePath} and branch ${branch} — ` +
-              `still referenced by ${dependents.length} non-terminal task(s): ` +
-              dependents.map((d) => `${d.id}(${d.status})`).join(', '),
+              reasons.join('; '),
           )
         } else {
           await removeWorktree(

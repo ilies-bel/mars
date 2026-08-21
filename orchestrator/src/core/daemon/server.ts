@@ -1940,6 +1940,15 @@ export const startDaemon = async (
               releaseMergeTracking = null
               return result
             },
+            // Real coder-process liveness (not just task-row status), backed
+            // by the daemon's own TaskFlightTracker. The merge primitive
+            // checks this before every removeWorktree call, in addition to
+            // findLiveWorktreeDependents, to catch a stale/duplicate dispatch
+            // of the SAME task id still coding while this run reached merge
+            // — a case the row-based dependents query's `id != ?`
+            // self-exclusion can never see (mars-56b4584f incident).
+            isImplementInFlight: (id: string): boolean =>
+              tracker.isInFlight(id) && tracker.inFlightKind(id) === 'implement',
           },
           runId: task.id,
           logger: workflowLogger,
