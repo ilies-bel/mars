@@ -60,7 +60,11 @@ describe('composePrompt — non-empty lessons rendering', () => {
     expect(out).toContain('<lessons>\n  - Prefer async/await\n  - Avoid any type\n</lessons>')
   })
 
-  it('places the <lessons> block BEFORE CODING_DISCIPLINE', () => {
+  it('places the <lessons> block AFTER CODING_DISCIPLINE', () => {
+    // CODING_DISCIPLINE is part of the stable, byte-identical prefix
+    // (COMMIT_EXIT_CONDITION, CODING_DISCIPLINE, COMMIT_FOOTER) pushed first
+    // so providers can cache it across tasks/retries; <lessons> is
+    // task-specific and lands later, in the variable suffix.
     const out = composePrompt(
       'Fix the bug',
       null,
@@ -75,7 +79,7 @@ describe('composePrompt — non-empty lessons rendering', () => {
     const disciplinePos = out.indexOf('## Coding discipline')
     expect(lessonsPos).toBeGreaterThan(-1)
     expect(disciplinePos).toBeGreaterThan(-1)
-    expect(lessonsPos).toBeLessThan(disciplinePos)
+    expect(lessonsPos).toBeGreaterThan(disciplinePos)
   })
 
   it('places the <lessons> block AFTER the structured-task spec block', () => {

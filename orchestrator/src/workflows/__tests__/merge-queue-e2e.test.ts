@@ -40,6 +40,12 @@ vi.mock('../../core/lib/git/merge', () => ({
   MergeAbortedError: class MergeAbortedError extends Error {},
   // DEFAULT_WATCHDOG_MS is imported by merge-worker for the enqueueMergeJobAndAwait timeout.
   DEFAULT_WATCHDOG_MS: 5_000,
+  // MERGE_HARD_TIMEOUT_MS races enqueueMergeJobAndAwait in the merge primitive
+  // (src/tools/merge/merge.ts) — must stay well above the test's own delays so
+  // it never fires and races the real completion.
+  MERGE_HARD_TIMEOUT_MS: 5_000 + 2 * 60 * 1000,
+  MergeHardTimeoutError: class MergeHardTimeoutError extends Error {},
+  isBranchTipInIntegration: async () => false,
 }))
 
 vi.mock('../../core/queue', async (importOriginal) => {

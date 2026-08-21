@@ -151,7 +151,7 @@ export const merge = async (
   // after a partial completion (e.g. daemon restart between resolveMergeJob and
   // step-completion recording) must NOT re-acquire the merge lock or re-run the
   // fast-forward. Return immediately with a synthesized MergeOutput.
-  const _currentTask = await getTask(taskId)
+  const _currentTask = await getTask(taskId, store)
   if (_currentTask !== null && MERGE_IDEMPOTENT_TERMINAL_STATUSES.has(_currentTask.status)) {
     const _priorStatus = _currentTask.status
     const _trace = await resolveTrace(ctx, taskId)
@@ -379,7 +379,7 @@ export const merge = async (
             const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
               '../../core/lib/main-dirty'
             )
-            const taskRow = await getTask(taskId)
+            const taskRow = await getTask(taskId, store)
             isMainCommitter =
               parseMainCommiterPayload(taskRow?.recoveryPayload ?? null)?.recipe ===
               MAIN_COMMITER_RECIPE

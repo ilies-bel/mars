@@ -50,13 +50,17 @@ vi.mock('../../../core/lib/claude-stream', async (importOriginal) => {
   return { ...orig }
 })
 
-vi.mock('../../../core/lib/trace-events-store', () => ({
-  createTraceEventStore: () => ({
-    record: vi.fn().mockResolvedValue(undefined),
-    query: vi.fn().mockResolvedValue([]),
-    close: vi.fn(),
-  }),
-}))
+vi.mock('../../../core/lib/trace-events-store', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../../../core/lib/trace-events-store')>()
+  return {
+    ...orig,
+    createTraceEventStore: () => ({
+      record: vi.fn().mockResolvedValue(undefined),
+      query: vi.fn().mockResolvedValue([]),
+      close: vi.fn(),
+    }),
+  }
+})
 
 vi.mock('../../../core/lib/git/worktree', async (importOriginal) => {
   const orig = await importOriginal<typeof import('../../../core/lib/git/worktree')>()

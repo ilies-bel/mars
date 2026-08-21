@@ -53,13 +53,17 @@ vi.mock('../../../core/arc', () => ({
   Arc: { load: async () => ({ originId: null }) },
 }))
 
-vi.mock('../../../core/lib/trace-events-store', () => ({
-  createTraceEventStore: () => ({
-    record: vi.fn().mockResolvedValue(undefined),
-    query: vi.fn().mockResolvedValue([]),
-    close: vi.fn(),
-  }),
-}))
+vi.mock('../../../core/lib/trace-events-store', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../../../core/lib/trace-events-store')>()
+  return {
+    ...orig,
+    createTraceEventStore: () => ({
+      record: vi.fn().mockResolvedValue(undefined),
+      query: vi.fn().mockResolvedValue([]),
+      close: vi.fn(),
+    }),
+  }
+})
 
 const { review } = await import('../index')
 
