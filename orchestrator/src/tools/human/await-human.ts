@@ -6,10 +6,8 @@
  * `ctx.services.store` (the Arc aggregate, ADR-0052) and raises the
  * action-queue row before throwing the terminal sentinel.
  */
-import { getTask, updateTask } from '../../core/queue'
 import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
-import { raiseActionQueueItem } from '../../core/lib/action-queue'
-import { AWAIT_HUMAN_SENTINEL } from '../../core/lib/sentinels'
+import { parkTaskForHuman } from '../../core/lib/park-for-human'
 import { AWAIT_HUMAN_MESSAGE } from '../../workflows/primitives/shared'
 import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
 import { type MarsCtx, resolveTaskId } from '../context'
@@ -159,82 +157,14 @@ export const awaitHuman = async (
   // 'completed' (~server.ts:1871). handleStepDone Path 2 and handleReleaseLease
   // also patch on re-queue, covering the daemon-restart window.
   const store: TaskStore = ctx.services.store
-  const now = new Date().toISOString()
 
-  // Auto re-lease: `mars step done` keeps the lease identity across the
-  // continuation, so when the pipeline parks at the task's next manual step
-  // the SAME owner gets the lease back without re-attaching — a Foreground
-  // session walks a manual-heavy runbook as one continuous session. The read
-  // is best-effort: if it fails, park under the workflow's own identity and
-  // the operator attaches as before.
-  let priorOwner: string | null = null
-  try {
-    priorOwner = (await getTask(taskId, store))?.leaseOwner ?? null
-  } catch {
-    // fall through — no re-lease
-  }
-  const released =
-    priorOwner !== null && priorOwner !== AWAIT_HUMAN_SENTINEL
-      ? priorOwner
-      : null
-  const leaseOwner = released ?? AWAIT_HUMAN_SENTINEL
-
-  // Transition to 'awaiting-human' through the Arc write funnel (ADR-0052).
-  // Uses the same field set as Arc.parkForHuman so the task row is consistent
-  // with the server's attach/release paths. current_step_name and
-  // current_step_guide are written here so the daemon's handleStepDone can
-  // locate the pending promise on a promise-based park (resolveManualStep).
-  await updateTask(
-    taskId,
-    {
-      status: 'awaiting-human',
-      leaseOwner,
-      leasedAt: now,
-      leaseNote: note,
-      currentStepName: stepName,
-      currentStepGuide: note,
-    },
-    store,
-  )
-
-  // Raise the action-queue row so the operator sees the parked task.
-  // Level-triggered (ADR-0048): if the daemon restarts and re-detects, it
-  // bumps seen_count rather than spawning a sibling row.
-  raiseActionQueueItem({
-    kind: 'awaiting-human',
-    category: 'daemon',
-    priority: 'normal',
-    title: `Task ${taskId} parked at step '${stepName}' — awaiting human`,
-    body:
-      `Task ${taskId} is parked in its worktree at manual step '${stepName}'.` +
-      (note ? ` Step guide: ${note}.` : '') +
-      (released
-        ? ` Lease re-granted to ${released} — continue in the worktree, then \`mars step done ${taskId}\`.`
-        : ` Work in the worktree, then \`mars step done ${taskId}\` (or \`mars release ${taskId} --abort\` to bail).`),
-    payload: {
-      situation: 'lease-park',
-      taskId,
-      leaseOwner,
-      leasedAt: now,
-      leaseNote: note ?? null,
-      stepName,
-      ...(opts.previewUrl != null ? { previewUrl: opts.previewUrl } : {}),
-      ...(opts.logPath != null ? { logPath: opts.logPath } : {}),
-    },
-    context: { taskId },
+  // Auto re-lease + updateTask + raise the action-queue row — the body
+  // shared with server.ts's onManualPark hook (core/lib/park-for-human.ts).
+  await parkTaskForHuman(taskId, stepName, note, store, {
+    variant: 'sentinel',
     raisedBy: 'primitive:await-human',
-    signature: taskId,
-    originTaskId: taskId,
-    occurrence: {
-      leaseOwner,
-      leasedAt: now,
-      parkedAt: now,
-    },
-  }).catch((err) => {
-    console.error(
-      `[await-human] task ${taskId} action-queue raise errored:`,
-      err,
-    )
+    previewUrl: opts.previewUrl,
+    logPath: opts.logPath,
   })
 
   // Throw the sentinel so the daemon can:

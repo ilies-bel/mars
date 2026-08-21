@@ -135,6 +135,7 @@ import {
 } from './main-dirty-action-queue'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { AWAIT_HUMAN_SENTINEL } from '../lib/sentinels'
+import { parkTaskForHuman } from '../lib/park-for-human'
 import { computeFailureSignature } from '../lib/failure-signature'
 import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, type TraceEventPhase } from '../lib/trace-events-store'
 import { EVENT_RETENTION, pruneEvents } from '../../bus/retention'
@@ -1776,56 +1777,15 @@ export const startDaemon = async (
               stepName: string
               guide: string | null
             }): Promise<void> => {
-              const now = new Date().toISOString()
-              // Preserve the prior lease owner across manual steps so the same
-              // Foreground operator re-receives the lease at the next park
-              // without re-attaching ('mars step done' keepLease:true kept it).
-              let leaseOwner: string = AWAIT_HUMAN_SENTINEL
-              try {
-                const t = await getTask(taskId, taskStore)
-                if (t?.leaseOwner && t.leaseOwner !== AWAIT_HUMAN_SENTINEL) {
-                  leaseOwner = t.leaseOwner
-                }
-              } catch { /* fall through — park under sentinel identity */ }
-              await updateTask(
-                taskId,
-                {
-                  status: 'awaiting-human',
-                  leaseOwner,
-                  leasedAt: now,
-                  leaseNote: guide,
-                  currentStepName: stepName,
-                  currentStepGuide: guide,
-                },
-                taskStore,
-              )
-              raiseActionQueueItem({
-                kind: 'awaiting-human',
-                category: 'daemon',
-                priority: 'normal',
-                title: `Task ${taskId} parked at step '${stepName}' — awaiting human`,
-                body:
-                  `Task ${taskId} is parked at manual step '${stepName}'.` +
-                  (guide ? ` Step guide: ${guide}.` : '') +
-                  ` Lease: ${leaseOwner}. Run \`mars step done ${taskId}\` to continue.`,
-                payload: {
-                  situation: 'lease-park',
-                  taskId,
-                  leaseOwner,
-                  leasedAt: now,
-                  leaseNote: guide ?? null,
-                  stepName,
-                },
-                context: { taskId },
+              // updateTask + raise the action-queue row — the body shared
+              // with await-human.ts's sentinel-throw fallback
+              // (core/lib/park-for-human.ts). Preserves the prior lease
+              // owner across manual steps so the same Foreground operator
+              // re-receives the lease at the next park without re-attaching
+              // ('mars step done' keepLease:true kept it).
+              await parkTaskForHuman(taskId, stepName, guide, taskStore, {
+                variant: 'promise',
                 raisedBy: 'primitive:manual-step',
-                signature: taskId,
-                originTaskId: taskId,
-                occurrence: { leaseOwner, leasedAt: now, parkedAt: now },
-              }).catch((err: unknown) => {
-                console.error(
-                  `[manual-park] task ${taskId} action-queue raise errored:`,
-                  err,
-                )
               })
               return awaitManualDone(runId, stepName)
             },
