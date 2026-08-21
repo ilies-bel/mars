@@ -12,7 +12,8 @@ import {
 } from './internal'
 import { acquireLock } from './lock'
 import { captureCheckpoint, discardWorkingTreeChanges } from './checkpoint'
-import { writeLastSyncedSha } from './last-synced-sha'
+import { readLastSyncedSha, writeLastSyncedSha } from './last-synced-sha'
+import { attributeIntegrationDirt } from './stale-tree-attribution'
 import {
   runSubprocessStreaming,
   resolveClaudeBin,
@@ -1362,8 +1363,53 @@ export const mergeBranch = async ({
         )
         if (postStatus.stdout.trim() !== '') {
           output += `\n[mergeBranch] post-merge dirty-tree detected on integration checkout (status:\n${postStatus.stdout.slice(0, 500)}\n)`
-          // The dirt is one of two very different things and they must NOT be
-          // treated alike:
+
+          // Ask the attribution predicate FIRST, rather than branching on the
+          // `didResyncWorkingTree` heuristic directly. `attributeIntegrationDirt`
+          // (ADR-0100 slice 2) answers precisely whether the observed dirt is
+          // EXACTLY the inverse of the range `lastSyncedSha..headSha` — i.e. the
+          // checkout is simply catching up with a ref that already advanced
+          // (this merge's own Step 3 declined to resync, or an earlier merge's
+          // Step 3 never got the chance) — or whether it is anything else, which
+          // must be treated as genuine operator work. See
+          // `./stale-tree-attribution` for the full incident writeup: a 94-line
+          // file the merge just added showing up as a *deletion* in a stale
+          // checkout is exactly this shape, and it must never be checkpointed or
+          // reported as a merge failure.
+          const attribution = await attributeIntegrationDirt({
+            repoRoot: repoRoot(),
+            lastSyncedSha: readLastSyncedSha(),
+            headSha: finalTaskSha,
+            traceCtx: mergeCtx,
+          })
+
+          if (attribution.kind === 'stale-tree-debris') {
+            // Nothing here can be lost: the dirt is provably the inverse of a
+            // range already landed at `finalTaskSha`. Reset outright — no
+            // checkpoint, no Notice, no Alert, no `merge-left-dirty-tree`
+            // failure. The phantom-dirt cascade this predicate exists to stop
+            // is precisely a good merge being mistaken for a bad one here.
+            const reset = await gexec(['reset', '--hard', finalTaskSha], repoRoot())
+            output += reset.stdout + reset.stderr
+            writeLastSyncedSha(finalTaskSha)
+            output += `\n[mergeBranch] stale-tree debris reset to ${finalTaskSha.slice(0, 9)} (range ${attribution.range})`
+            return {
+              merged: true,
+              conflictResolved,
+              aborted: false,
+              output,
+              supervisorConversation,
+              vegaSessionId,
+              retriesAttempted,
+              mergePreSha: finalIntegrationSha,
+              mergePostSha: finalTaskSha,
+            }
+          }
+
+          // attribution.kind === 'operator-dirt' (including attributeIntegrationDirt's
+          // own fail-safe default on an unattributable last-synced sha) — pre-existing
+          // behaviour, unchanged in this slice. The dirt is one of two very
+          // different things and they must NOT be treated alike:
           //
           //   a) merge-attributable dirt — Step 3's `reset --hard` ran to
           //      completion (didResyncWorkingTree === true) but was somehow
