@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { acquire, makeSem, release, setSemLimit, type Semaphore } from './semaphore'
+import { acquire, makeSem, release, setSemLimit } from './semaphore'
 import {
   appendFileSync,
   existsSync,
@@ -16,7 +16,7 @@ import { createServer, type Server, type Socket } from 'node:net'
 import { dirname, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { findExistingMarsDb, resolveContext, resolveDbTarget } from '../context'
-import { openDb, recycleDbPool, type DbClient } from '../lib/db'
+import { openDb, type DbClient } from '../lib/db'
 import { startEmbeddedPg, type EmbeddedPgHandle } from '../lib/pg-server'
 import { importLegacySqlite } from '../../init/import-sqlite'
 import {
@@ -83,7 +83,6 @@ import {
   ensureRecipeConversationNoticeSubscriber,
 } from '../../outbox/subscribers/recipe-conversation-notice'
 import {
-  clearFailureConversationNoticeFlush,
   drainFailureConversationNotices,
   ensureFailureConversationNoticeSubscriber,
   scheduleFailureConversationNoticeFlush,
@@ -138,7 +137,6 @@ import { AWAIT_HUMAN_SENTINEL } from '../lib/sentinels'
 import { parkTaskForHuman } from '../lib/park-for-human'
 import { computeFailureSignature } from '../lib/failure-signature'
 import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, type TraceEventPhase } from '../lib/trace-events-store'
-import { EVENT_RETENTION, pruneEvents } from '../../bus/retention'
 import { setBusLogSink } from '../../bus/log'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket, waitForProcessExit } from './paths'
 import {
@@ -176,13 +174,10 @@ import { registerViewInvalidation } from '../../bus/view-invalidation'
 import { createConditionItemsSource } from './view/derived-conditions'
 import { resolveStateClient } from '../store/state-client'
 import { buildEventInsert, withWriteTx } from '../lib/outbox'
-import {
-  createTaskFlightTracker,
-  type DispatchKind,
-  type TaskFlightTracker,
-} from './task-flight-tracker'
+import { createTaskFlightTracker, type TaskFlightTracker } from './task-flight-tracker'
 import { startScheduler, type DaemonSemaphores } from './scheduler'
 import { startSweeps } from './sweeps'
+import { startDrains } from './drains'
 import { registerDispatchHint } from './dispatch-hint'
 import { setWorkerLivenessProbe } from '../lib/worker-liveness'
 import { rpcRegistry, dispatchRpc } from './rpc/registry'
@@ -6165,146 +6160,37 @@ export const startDaemon = async (
   }, DEV_STALENESS_CHECK_MS)
   devStalenessCheck.unref()
 
-  // Periodic reclamation sweeps (stale worktrees, stale merges, stale/expired
-  // main-committers, orphaned subprocesses) are declared as a list in ./sweeps
-  // and armed here. Adding a sweep means adding a SweepSpec, not another
-  // inline setInterval block.
+  // Periodic reclamation sweeps, watchdogs and detectors are declared as a
+  // list in ./sweeps and armed here. Adding a sweep means adding a SweepSpec,
+  // not another inline setInterval block.
   const sweepsHandle = startSweeps({
     bus,
     log,
     repoRoot: () => resolveContext().repoRoot,
     traceStore,
     liveInFlightTaskIds,
-  })
-
-  // ── Reflect-recommended detector sweep ───────────────────────────────────
-  // Periodically evaluates reflect-worthiness (KPI drift, failure clusters,
-  // token spikes) and raises / clears the level-triggered reflect-recommended
-  // action-queue row. Mirrors the stale-worktree sweep cadence. .unref() so
-  // the interval never prevents a clean shutdown.
-  const REFLECT_DETECTOR_MS = Number(
-    process.env.MARS_REFLECT_DETECTOR_MS ?? 5 * 60_000,
-  )
-  const { runReflectRecommendedDetector } = await import('../lib/self-evolve-trigger')
-  const reflectDetectorSweep = setInterval(() => {
-    void (async () => {
-      try {
-        const result = await runReflectRecommendedDetector()
-        if (result.raised) {
-          log(
-            `[reflect-detector] raised reflect-recommended row (row=${result.rowId})`,
-          )
-          bus.emit('view.action-queue-invalidated')
-          // When auto-run-reflect is on, immediately run the reflection pipeline
-          // instead of waiting for an operator action on the row.
-          const { loadDaemonConfig: getLatestCfg } = await import('./config')
-          if (getLatestCfg().controlLevers.autoRunReflect === 'on') {
-            log('[reflect-detector] auto-run-reflect=on — running reflection automatically')
-            try {
-              const { loadRecentTaskCorpus } = await import('../lib/reflect-query')
-              const { persistSuggestions } = await import('../lib/reflector')
-              const { requireReflector } = await import('../ports/reflector/registry')
-              const { closeReflectRecommendedRow: closeRow } = await import('../lib/self-evolve-trigger')
-              const { insertReflectionTask } = await import('../queue')
-              const { persistLastReflectRanAt } = await import('./config')
-              // Same baseline-attribution source as `runReflect` above and
-              // getConditionsSource's action-queue derivation.
-              const corpus = await loadRecentTaskCorpus({
-                limit: 10,
-                isBaselinePoisoned: () => _baselineHealthChecker?.isBaselinePoisoned() ?? false,
-                getPauseState: () => pause.get(),
-              })
-              let proposalsRaised = 0
-              if (corpus.entries.length > 0) {
-                const reflResult = await requireReflector<
-                  import('../lib/reflector').TokenReflectorPortRequest,
-                  import('../lib/reflector').ReflectionResult
-                >('token').reflect(corpus)
-                if (reflResult.suggestions.length > 0) {
-                  const sourceTaskId = await insertReflectionTask(corpus.entries.length)
-                  await persistSuggestions(reflResult.suggestions, sourceTaskId)
-                  proposalsRaised = reflResult.suggestions.length
-                  bus.emit('view.proposals-invalidated')
-                  bus.emit('view.action-queue-invalidated')
-                }
-              }
-              await closeRow()
-              persistLastReflectRanAt(new Date().toISOString())
-              bus.emit('view.action-queue-invalidated')
-              log(`[reflect-detector] auto-reflect completed (proposals=${proposalsRaised})`)
-            } catch (reflectErr) {
-              log(`[reflect-detector] auto-reflect errored: ${(reflectErr as Error).message}`)
-            }
-          }
-        } else if (result.skipReason === 'auto-enqueue-on') {
-          log(
-            '[reflect-detector] no row raised — selfEvolve.autoEnqueue=true routes mechanical suggestions directly to task queue',
-          )
-        } else {
-          log(
-            '[reflect-detector] no signals: kpiDrift=0 failureClusters=0 tokenSpike=null; reflection not yet needed',
-          )
-        }
-      } catch (err) {
-        log(`[reflect-detector] errored: ${(err as Error).message}; check logs for details`)
-      }
-    })()
-  }, REFLECT_DETECTOR_MS)
-  reflectDetectorSweep.unref()
-
-  // ── Observational Notice sweep ───────────────────────────────────────────
-  // The proactive half of the main thread: nothing here reacts to an event,
-  // so nothing else would ever run it. Deliberately infrequent — every Notice
-  // it can produce describes a *trend* or a *habit*, and neither changes
-  // between one hour and the next. Delivery still waits for a pause, so a
-  // sweep landing mid-grill queues rather than interrupts.
-  const NOTICE_SWEEP_MS = Number(process.env.MARS_NOTICE_SWEEP_MS ?? 60 * 60_000)
-  const runObservationalNotices = async (): Promise<void> => {
-    const { runNoticeSweep } = await import('../lib/notices/sweep.js')
-    const { resolveStateClient: stateClient } = await import('../store/state-client.js')
-    const { execFile } = await import('node:child_process')
-    const { promisify } = await import('node:util')
-    const repoRoot = resolveContext().repoRoot
-    const integrationBranch = process.env.INTEGRATION_BRANCH ?? 'main'
-    const result = await runNoticeSweep({
-      client: stateClient(),
-      repoRoot,
-      integrationBranch,
-      log,
-      listCommits: async (branch, sinceMs) => {
-        const { stdout } = await promisify(execFile)(
-          'git',
-          ['log', branch, '--format=%H', `--since=${new Date(sinceMs).toISOString()}`],
-          { cwd: repoRoot },
+    tracker,
+    sems,
+    pause,
+    drain: () => drain(),
+    activeVerifyingTaskIds: () => activeVerifyingTaskIds,
+    dispatchResumedAt: () => dispatchResumedAt,
+    isBaselinePoisoned: () => baselineHealthChecker.isBaselinePoisoned(),
+    triggerDbRestart: () => {
+      // Mirror the restartDaemon RPC handler: spawn a replacement, then
+      // gracefully shut down this process after a brief flush delay.
+      void spawnReplacementDaemon()
+        .then(() => setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100))
+        .catch((err: unknown) =>
+          log(`[db-busy-watchdog] replacement spawn failed: ${(err as Error).message}`),
         )
-        return stdout.split('\n').map((line) => line.trim()).filter(Boolean)
-      },
-    })
-    if (result.posted > 0) {
-      log(`[notice-sweep] spoke ${result.posted} Notice(s)`)
-      bus.emit('view.chat-invalidated')
-    }
-  }
-  const noticeSweep = setInterval(() => {
-    void runObservationalNotices().catch((err: unknown) => {
-      log(`[notice-sweep] errored: ${(err as Error).message}`)
-    })
-  }, NOTICE_SWEEP_MS)
-  noticeSweep.unref()
-  // Run once at startup so a fresh session opens on something to do rather
-  // than on an empty feed that fills an hour later.
-  void runObservationalNotices().catch((err: unknown) => {
-    log(`[notice-sweep] startup sweep errored: ${(err as Error).message}`)
+    },
   })
 
   // ── Steward runtime-knob tuning ──────────────────────────────────────────
-  // When the implement queue is backlogged (pending > cap × 0.75) for a
-  // sustained window (default 60 s), emit kpi.backlog.degraded so the
-  // steward subscriber bumps the cap autonomously. .unref() so the
-  // interval never prevents a clean shutdown.
-  const BACKLOG_CHECK_MS = Number(process.env.MARS_BACKLOG_CHECK_MS ?? 10_000)
-  const BACKLOG_SUSTAIN_MS = Number(process.env.MARS_BACKLOG_SUSTAIN_MS ?? 60_000)
-  let backlogSince: number | null = null
+  // The backlog detector itself lives in ./sweeps as the `backlog-check`
+  // SweepSpec; what is wired here is the subscriber half — the Steward that
+  // reacts to kpi.backlog.degraded by bumping the implement cap.
   const { startStewardRuntimeTune } = await import('../../outbox/subscribers/steward-runtime-tune')
   startStewardRuntimeTune({
     bus,
@@ -6332,114 +6218,6 @@ export const startDaemon = async (
   // prompt is merely proposed or changed.
   const { startStewardPromptOptimization } = await import('../steward-prompt-optimizer')
   startStewardPromptOptimization(bus)
-  const backlogCheck = setInterval(() => {
-    const pending = tracker.pendingCount('implement')
-    const threshold = Math.floor(sems.implement.limit * 0.75)
-    if (pending > threshold) {
-      if (backlogSince === null) backlogSince = Date.now()
-      const elapsed = Date.now() - backlogSince
-      if (elapsed >= BACKLOG_SUSTAIN_MS) {
-        bus.emit('kpi.backlog.degraded', {
-          pending,
-          cap: sems.implement.limit,
-          sustainedMs: elapsed,
-        })
-        backlogSince = null
-      }
-    } else {
-      backlogSince = null
-    }
-  }, BACKLOG_CHECK_MS)
-  backlogCheck.unref()
-
-  // ── Observability store size watchdog ─────────────────────────────────────
-  // Periodically checks the trace_events footprint inside mars.db. When the
-  // table exceeds 500 MB a single open action-queue item is raised so the
-  // operator notices a runaway daemon or telemetry-capture bug.
-  // Re-detecting the oversize condition bumps the existing item rather than
-  // spawning a sibling. NEVER prunes the store or alters retention.
-  // .unref() so the interval never prevents a clean shutdown.
-  const OBSERVABILITY_WATCHDOG_MS = Number(
-    process.env.MARS_OBSERVABILITY_WATCHDOG_MS ?? 5 * 60_000,
-  )
-  const { checkObservabilityStoreSize } = await import('./observability-watchdog')
-  const observabilityWatchdog = setInterval(() => {
-    void (async () => {
-      try {
-        const itemId = await checkObservabilityStoreSize(resolveDbTarget())
-        if (itemId) {
-          log(
-            `[observability-watchdog] store oversize — raised/bumped action-queue item ${itemId}`,
-          )
-          bus.emit('view.action-queue-invalidated')
-        }
-      } catch (err) {
-        log(`[observability-watchdog] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, OBSERVABILITY_WATCHDOG_MS)
-  observabilityWatchdog.unref()
-
-  // ── DB busy-storm watchdog ────────────────────────────────────────────────
-  // Detects when the database layer is saturated with persistent errors
-  // (deadlock-retry budget exhausted) and escalates in three stages:
-  //   1. Log loudly (STORM DETECTED in watch.log).
-  //   2. Attempt a connection-pool recycle.
-  //   3. Trigger a daemon self-restart (safe since mars-c11be862 landed).
-  // Each stage fires on a separate watchdog tick (default 30 s).
-  // Override cadence via MARS_DB_BUSY_WATCHDOG_MS.
-  // Disable self-restart via MARS_DB_BUSY_STORM_RESTART=false.
-  // .unref() so the interval never prevents a clean shutdown.
-  const MARS_DB_BUSY_WATCHDOG_MS = Number(
-    process.env.MARS_DB_BUSY_WATCHDOG_MS ?? 30_000,
-  )
-  const { checkAndEscalateDbBusyStorm } = await import('./db-busy-watchdog')
-  let dbBusyStage: import('./db-busy-watchdog').BusyEscalationStage | null = null
-  const dbBusyWatchdog = setInterval(() => {
-    void (async () => {
-      try {
-        const result = await checkAndEscalateDbBusyStorm(
-          resolveDbTarget(),
-          log,
-          recycleDbPool,
-          () => {
-            // Mirror the restartDaemon RPC handler: spawn a replacement, then
-            // gracefully shut down this process after a brief flush delay.
-            void spawnReplacementDaemon()
-              .then(() => setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100))
-              .catch((err: unknown) =>
-                log(`[db-busy-watchdog] replacement spawn failed: ${(err as Error).message}`),
-              )
-          },
-          dbBusyStage,
-        )
-        dbBusyStage = result.nextStage
-      } catch (err) {
-        log(`[db-busy-watchdog] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, MARS_DB_BUSY_WATCHDOG_MS)
-  dbBusyWatchdog.unref()
-
-  // ── Outbox sweeper ────────────────────────────────────────────────────────
-  // Periodically prunes aged events from the outbox and raises a dedup'd
-  // action-queue item for any subscriber whose cursor lag exceeds the
-  // configured threshold (MARS_OUTBOX_LAG_WARN_THRESHOLD). .unref() so
-  // the interval never prevents a clean shutdown.
-  const MARS_OUTBOX_PRUNE_INTERVAL_MS = Number(
-    process.env.MARS_OUTBOX_PRUNE_INTERVAL_MS ?? 60_000,
-  )
-  const { sweepOutbox } = await import('./outbox-sweeper')
-  const outboxSweep = setInterval(() => {
-    void (async () => {
-      try {
-        await sweepOutbox(resolveDbTarget())
-      } catch (err) {
-        log(`[outbox-sweep] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, MARS_OUTBOX_PRUNE_INTERVAL_MS)
-  outboxSweep.unref()
 
   // ── Deployment-status sweeper ─────────────────────────────────────────────
   // Periodically polls task_deployments rows with status='pending' and
@@ -6453,543 +6231,19 @@ export const startDaemon = async (
   startDeploymentStatusSweeper()
   log('[deployment-sweep] started')
 
-  // ── Phantom-task watchdog ─────────────────────────────────────────────────
-  // Periodically sweeps for tasks stuck in 'running' or 'verifying' with no
-  // live subprocess, preventing a dead worker from holding an in-flight slot
-  // indefinitely (the root cause of the mars-f35b1c7f 12-hour freeze).
-  //
-  // Two detection mechanisms (belt and suspenders):
-  //  1. PID liveness: if an in-flight entry carries a recorded PID and
-  //     isProcessAlive(pid) returns false, the task is auto-failed immediately
-  //     without waiting for the wall-clock ceiling.
-  //  2. Wall-clock ceiling: applied differently by PID availability:
-  //     a. No PID: checked against task.updatedAt (bare-ceiling backstop).
-  //     b. Alive PID + lastActivityMs set: checked against lastActivityMs so
-  //        a healthy long-running coder is never killed for having a stale row.
-  //        The dispatchImplement onEvent callback keeps lastActivityMs fresh
-  //        (~once per minute) via tracker.recordActivity().
-  //     c. Alive PID + no lastActivityMs: NOT ceiling-killed. Dead-PID is the
-  //        only kill path until the first heartbeat arrives.
-  //
-  // Recovery: phantom kills do NOT spawn a recovery task. The operator receives
-  // an action-queue item and can restart or drop the task explicitly. This is
-  // intentional for both dead-PID kills (the coder is gone; recovery would
-  // start from whatever state the row was in) and alive-PID hung-process kills
-  // (the process is stuck; recovery would likely re-hang). An operator restart
-  // (`mars restart`) is the appropriate resolution in both cases.
-  //
-  // For each phantom: marks the task failed with failedPhase set, calls
-  // forceRelease (tracker-only; the dispatcher's own finally is the sole
-  // semaphore releaser — see the reclaim callback below) to free the slot,
-  // triggers drain() so queued work resumes, and raises exactly one
-  // action-queue item (dedup by taskId prevents a retry storm). .unref() so
-  // the timer never prevents shutdown.
-  const PHANTOM_WATCHDOG_MS = Number(
-    process.env.MARS_PHANTOM_WATCHDOG_MS ?? 5 * 60_000,
-  )
-  const { sweepPhantomTasks } = await import('./phantom-task-watchdog')
-  const phantomWatchdog = setInterval(() => {
-    void (async () => {
-      try {
-        const { getDefaultMergeJobStore } = await import('../store/merge-job-store')
-        const { failed, requeued } = await sweepPhantomTasks(
-          tracker.inFlightSnapshot(),
-          (id, _kind) => {
-            // Mirror handleDrop(force=true): force-clear ONLY the tracker entry
-            // and let drain() reclaim the slot once the dispatcher's own release
-            // closure runs. Do NOT release(sems[kind]) here — the phantom task's
-            // dispatchImplement is (almost always) still awaiting its workflow
-            // (an alive-but-stalled verify, or a dead subprocess whose awaited
-            // runWorkflow will still reject and unwind), and its `finally`
-            // (release(sems.implement)) is the SOLE semaphore releaser. Releasing
-            // here as well double-releases one acquire: each spurious release
-            // either wakes an extra waiter (dispatch past the cap) or drives
-            // inUse below the true in-flight count, permanently defeating the
-            // implement cap. Under overload this is self-reinforcing (more
-            // concurrent verifies -> more 30-min stalls -> more double-releases).
-            tracker.forceRelease(id)
-            void drain()
-          },
-          undefined,
-          undefined,
-          // Provide the merge-job checker so the phantom watchdog can immediately
-          // detect tasks stuck in 'merging' with no live merge_jobs row (the merge
-          // worker has no job to process and cannot self-heal).
-          (taskId) => getDefaultMergeJobStore().getActiveMergeJob(taskId).then((j) => j !== null),
-          // Exempt tasks actively verifying in this daemon from the wall-clock
-          // ceiling so a long remerge re-verify (or any slow test suite) is not
-          // killed just because its updatedAt has grown stale. Orphaned tasks
-          // from a prior daemon are not in this set and still hit the ceiling.
-          (taskId) => activeVerifyingTaskIds.has(taskId),
-        )
-        if (failed.length > 0) {
-          log(
-            `[phantom-watchdog] auto-failed ${failed.length} phantom in-flight task(s): ${failed.join(', ')}`,
-          )
-          bus.emit('view.action-queue-invalidated')
-          bus.emit('view.tasks-invalidated')
-          void drain()
-        }
-        if (requeued.length > 0) {
-          log(
-            `[phantom-watchdog] re-queued ${requeued.length} orphaned running task(s) with no in-flight entry: ${requeued.join(', ')}`,
-          )
-          for (const taskId of requeued) {
-            bus.emit('task.queued', { taskId })
-          }
-          void drain()
-        }
-      } catch (err) {
-        log(`[phantom-watchdog] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, PHANTOM_WATCHDOG_MS)
-  phantomWatchdog.unref()
-
-  // ── Stale-queued watchdog ─────────────────────────────────────────────────
-  // Periodically scans for tasks that have been sitting in 'queued' past
-  // MARS_STALE_QUEUED_MS (default 10 min) and raises a 'stale-queued'
-  // action-queue alert for each one. The alert payload includes the queued age,
-  // active worker count, and total queue depth so the operator can tell whether
-  // the pool is saturated or the dispatcher is stuck.
-  //
-  // Duplicate suppression: raiseActionQueueItem deduplicates on
-  // sha1('stale-queued:<taskId>'), so repeated sweeps while the task remains
-  // queued bump seen_count rather than spawning sibling rows.
-  //
-  // Runs on the same interval as the phantom-task watchdog (MARS_PHANTOM_WATCHDOG_MS).
-  // .unref() so the timer never prevents shutdown.
-  const { runStaleQueuedSweep } = await import('./stale-queued-watchdog')
-  const staleQueuedWatchdog = setInterval(() => {
-    void (async () => {
-      try {
-        const activeWorkerCount = tracker.inFlightCount()
-        const queuedTasks = await listTasks('queued')
-        const queueDepth = queuedTasks.length
-        const { alerted } = await runStaleQueuedSweep({
-          activeWorkerCount,
-          implementCap: sems.implement.limit,
-          queueDepth,
-          dispatchDecisionSummary: [],
-          dispatchPauseState: pause.get(),
-          dispatchResumedAt,
-        })
-        if (alerted.length > 0) {
-          log(
-            `[stale-queued-watchdog] raised alert for ${alerted.length} stale-queued task(s): ${alerted.join(', ')}`,
-          )
-          bus.emit('view.action-queue-invalidated')
-        }
-      } catch (err) {
-        log(`[stale-queued-watchdog] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, PHANTOM_WATCHDOG_MS)
-  staleQueuedWatchdog.unref()
-
-  // ── Awaiting-validation watchdog ─────────────────────────────────────────
-  // Reuse the stale-queued / phantom cadence: preview-gated tasks are parked
-  // deliberately, but a dead preview must be demoted immediately and expires
-  // after 48h so it cannot pollute the operator queue forever.
-  const { runAwaitingValidationSweep } = await import('./awaiting-validation-watchdog')
-  const awaitingValidationWatchdog = setInterval(() => {
-    void (async () => {
-      try {
-        const { demoted, failed } = await runAwaitingValidationSweep()
-        if (demoted.length > 0 || failed.length > 0) {
-          log(
-            `[awaiting-validation-watchdog] demoted ${demoted.length} dead preview(s); expired ${failed.length} task(s)`,
-          )
-          bus.emit('view.action-queue-invalidated')
-          bus.emit('view.tasks-invalidated')
-        }
-      } catch (err) {
-        log(`[awaiting-validation-watchdog] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, PHANTOM_WATCHDOG_MS)
-  awaitingValidationWatchdog.unref()
-
-  // ── History retention sweeper ─────────────────────────────────────────────
-  // Applies EVENT_RETENTION — the single retention policy for orchestrator
-  // history — to trace_events, events and task_transcripts so the state store
-  // stays bounded across multi-day sessions. Always logs the gauges so drift
-  // (e.g. 180k rows vs a 50k cap) is visible in watch.log rather than silent
-  // until a deletion threshold is crossed. .unref() so the timer never keeps
-  // the daemon process alive after shutdown.
-  const OBSERVABILITY_SWEEP_MS = Number(
-    process.env.MARS_OBSERVABILITY_SWEEP_MS ?? 60 * 60_000,
-  )
-  const observabilitySweep = setInterval(() => {
-    void (async () => {
-      try {
-        const retention = await pruneEvents(resolveDbTarget())
-        const deleted =
-          retention.traceEventsByAge +
-          retention.traceEventsByCount +
-          retention.eventsByAge +
-          retention.eventsByCount +
-          retention.transcriptsByAge +
-          retention.subscriberProcessedEventsOrphans
-        log(
-          `[retention-sweep] cap ${EVENT_RETENTION.maxRows} rows /` +
-            ` ${EVENT_RETENTION.days} days; deleted ${deleted};` +
-            ` trace_events: ${retention.traceEventsRemaining} rows` +
-            ` (${retention.traceEventsByAge} by age,` +
-            ` ${retention.traceEventsByCount} by count);` +
-            ` events: ${retention.eventsRemaining} rows` +
-            ` (${retention.eventsByAge} by age,` +
-            ` ${retention.eventsByCount} by count);` +
-            ` ${retention.transcriptsByAge} task_transcripts;` +
-            ` ${retention.subscriberProcessedEventsOrphans} subscriber_processed_events orphans`,
-        )
-      } catch (err) {
-        log(`[retention-sweep] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, OBSERVABILITY_SWEEP_MS)
-  observabilitySweep.unref()
-
-  // ── KPI snapshot sweep ────────────────────────────────────────────────────
-  // Takes a rolling 7-day KPI snapshot once per interval and persists a row
-  // to kpi_snapshots so the /kpis route and UI tiles always have data.
-  // Default: 1 h (60 * 60_000 ms) — the window is 7 days so hourly is
-  // plenty and cheap.  Override via MARS_KPI_SNAPSHOT_MS.  .unref() so the
-  // timer never holds the daemon process alive after shutdown.
-  const KPI_SNAPSHOT_MS = Number(process.env.MARS_KPI_SNAPSHOT_MS ?? 60 * 60_000)
-  const runKpiSnapshot = (): void => {
-    void (async () => {
-      try {
-        const { takeKpiSnapshot } = await import('../lib/kpi-snapshots.js')
-        await takeKpiSnapshot({ surface: getDefaultDomainTaskStore(), now: new Date().toISOString() })
-        log('[kpi-snapshot] snapshot taken')
-      } catch (err) {
-        log(`[kpi-snapshot] errored: ${(err as Error).message}`)
-      }
-    })()
-  }
-  // Take one snapshot immediately on startup so a freshly started daemon
-  // shows data without waiting a full interval.
-  runKpiSnapshot()
-  const kpiSnapshotSweep = setInterval(runKpiSnapshot, KPI_SNAPSHOT_MS)
-  kpiSnapshotSweep.unref()
-
-  // ── Subscriber drain single-flight gate ───────────────────────────────────
-  // Every subscriber drain below runs on a setInterval whose body can outlast
-  // its own period (a drain awaits provider calls and verify commands, each of
-  // which can take minutes). Unguarded, each tick stacks another concurrent
-  // drain of the SAME subscriber on top of the last.
-  //
-  // That is not merely wasteful. `drainWithStall` runs the handler BEFORE
-  // claiming the `subscriber_processed_events` row, so concurrent drains all
-  // pass the "already processed?" check and all execute the side effect; only
-  // the bookkeeping is deduped, not the work. For handlers that spawn agents
-  // this multiplies into a host-melting fan-out — the duplicate-key errors on
-  // `subscriber_processed_events_pkey` in the daemon log are the direct
-  // signature of this race.
-  //
-  // Ticks arriving while a drain is in flight are DROPPED, not queued: a drain
-  // always resumes from the durable cursor, so a skipped tick loses no work —
-  // the next one picks up exactly where this one stopped.
-  const singleFlight = (fn: () => Promise<void>): (() => void) => {
-    let running = false
-    return () => {
-      if (running) return
-      running = true
-      void fn().finally(() => {
-        running = false
-      })
-    }
-  }
-
-  // ── Alert-dismisser drain ─────────────────────────────────────────────────
-  // Polls the outbox for status-transition events and clears the implicated
-  // task's action-queue alert(s). This keeps the "status change clears
-  // alerts" invariant whole for raw-SQL status writes that bypass the
-  // updateTask chokepoint. .unref() so it never holds the process open.
-  const ALERT_DRAIN_MS = Number(process.env.MARS_ALERT_DRAIN_MS ?? 30_000)
-  const alertDrain = setInterval(
-    singleFlight(async () => {
-      try {
-        await drainAlertDismissals(getCompositionRootClient(), log)
-      } catch (err) {
-        log(`[alert-dismisser] drain errored: ${(err as Error).message}`)
-      }
-    }),
-    ALERT_DRAIN_MS,
-  )
-  alertDrain.unref()
-
-  // ── Action queue repopulator drain ───────────────────────────────────────────────
-  // Polls the outbox for task/proposal lifecycle events and applies the
-  // corresponding action_queue_items mutations. .unref() so it never holds the
-  // process open.
-  const ACTION_QUEUE_REPOPULATOR_DRAIN_MS = Number(
-    process.env.MARS_ACTION_QUEUE_REPOPULATOR_DRAIN_MS ?? 30_000,
-  )
-  const actionQueueRepopulatorDrain = setInterval(
-    singleFlight(async () => {
-      try {
-        const { processed } = await drainActionQueueRepopulations(getCompositionRootClient(), log)
-        if (processed > 0) bus.emit('view.action-queue-invalidated')
-      } catch (err) {
-        log(`[action-queue-repopulator] drain errored: ${(err as Error).message}`)
-      }
-    }),
-    ACTION_QUEUE_REPOPULATOR_DRAIN_MS,
-  )
-  actionQueueRepopulatorDrain.unref()
-
-  // ── Blocker-resolution drain ──────────────────────────────────────────────
-  // Polls the outbox for task.terminal { reason: 'done' } events and unblocks
-  // any dependents whose every blocker is now done. .unref() so it never holds
-  // the process open.
-  const BLOCKER_RESOLUTION_DRAIN_MS = Number(
-    process.env.MARS_BLOCKER_RESOLUTION_DRAIN_MS ?? 30_000,
-  )
-  const blockerResolutionDrain = setInterval(
-    singleFlight(async () => {
-      try {
-        const { processed } = await drainBlockerResolution(getCompositionRootClient(), log, {
-          onCancelInFlightRecovery: (taskId) => {
-            if (tracker.abort(taskId)) {
-              void updateTask(taskId, {
-                status: 'failed',
-                error: 'origin succeeded; in-flight recovery cancelled',
-                failureReason: CANCELLED_FAILURE_REASON,
-                failureReasonCode: 'origin-succeeded-cancel',
-              }).catch((err) =>
-                log(
-                  `[blocker-resolution] cancel in-flight recovery ${taskId}: ${(err as Error).message}`,
-                ),
-              )
-            }
-          },
-        })
-        if (processed > 0) {
-          const queued = await listTasks('queued')
-          for (const t of queued) {
-            if (!tracker.isInFlight(t.id)) bus.emit('task.queued', { taskId: t.id })
-          }
-        }
-      } catch (err) {
-        log(`[blocker-resolution] drain errored: ${(err as Error).message}`)
-      }
-    }),
-    BLOCKER_RESOLUTION_DRAIN_MS,
-  )
-  blockerResolutionDrain.unref()
-
-  // ── Recovery-spawner drain ────────────────────────────────────────────────
-  // Polls the outbox for task.failed events and spawns fix tasks for any
-  // regular-task failures not yet handled. This is the durable backstop that
-  // guarantees ADR-0061's "every regular-task failure spawns a fix" even when
-  // the inline dispatch path in the verify primitive is skipped or crashes.
-  // .unref() so it never holds the process open.
-  const RECOVERY_SPAWNER_DRAIN_MS = Number(
-    process.env.MARS_RECOVERY_SPAWNER_DRAIN_MS ?? 30_000,
-  )
-  const recoverySpawnerDrain = setInterval(
-    singleFlight(async () => {
-      try {
-        await drainRecoverySpawner(
-          getCompositionRootClient(),
-          log,
-          handleSignatureStorm,
-          (taskId, failingStep) => {
-            if (!baselineHealthChecker.isBaselinePoisoned()) return null
-            if (!failingStep.startsWith('verify:')) return null
-            return 'verify:poisoned-baseline'
-          },
-        )
-      } catch (err) {
-        log(`[recovery-spawner] drain errored: ${(err as Error).message}`)
-      }
-    }),
-    RECOVERY_SPAWNER_DRAIN_MS,
-  )
-  recoverySpawnerDrain.unref()
-
-  // ── Recovery-abandoned drain ──────────────────────────────────────────────
-  // Polls for task.terminal { reason: 'dropped' } events on fix tasks and
-  // raises a recovery-abandoned action-queue item against the origin so the
-  // operator knows the recovery was manually cancelled.
-  const RECOVERY_ABANDONED_DRAIN_MS = Number(
-    process.env.MARS_RECOVERY_ABANDONED_DRAIN_MS ?? 30_000,
-  )
-  const recoveryAbandonedDrain = setInterval(
-    singleFlight(async () => {
-      try {
-        await drainRecoveryAbandoned(getCompositionRootClient(), log)
-      } catch (err) {
-        log(`[recovery-abandoned] drain errored: ${(err as Error).message}`)
-      }
-    }),
-    RECOVERY_ABANDONED_DRAIN_MS,
-  )
-  recoveryAbandonedDrain.unref()
-
-  // ── Subthread terminal-event drain ────────────────────────────────────────
-  const CLOSE_SUBTHREAD_ON_TERMINAL_EVENT_DRAIN_MS = Number(
-    process.env.MARS_CLOSE_SUBTHREAD_ON_TERMINAL_EVENT_DRAIN_MS ?? 30_000,
-  )
-  const closeSubthreadOnTerminalEventDrain = setInterval(
-    singleFlight(async () => {
-      try {
-        const { processed } = await drainSubthreadCloser(getCompositionRootClient(), log)
-        if (processed > 0) bus.emit('view.chat-invalidated')
-      } catch (err) {
-        log(`[subthread-closer] drain errored: ${(err as Error).message}`)
-      }
-    }),
-    CLOSE_SUBTHREAD_ON_TERMINAL_EVENT_DRAIN_MS,
-  )
-  closeSubthreadOnTerminalEventDrain.unref()
-
-  // ── Subthread archive-prompt drain ────────────────────────────────────────
-  const ARCHIVE_PROMPT_DRAIN_MS = Number(
-    process.env.MARS_ARCHIVE_PROMPT_DRAIN_MS ?? 30_000,
-  )
-  const archivePromptDrain = setInterval(
-    singleFlight(async () => {
-      try {
-        const { processed } = await drainArchivePrompter(getCompositionRootClient(), log)
-        if (processed > 0) bus.emit('view.chat-invalidated')
-      } catch (err) {
-        log(`[archive-prompter] drain errored: ${(err as Error).message}`)
-      }
-    }),
-    ARCHIVE_PROMPT_DRAIN_MS,
-  )
-  archivePromptDrain.unref()
-
-  // ── Recipe conversation Notice drain ────────────────────────────────────
-  const RECIPE_CONVERSATION_NOTICE_DRAIN_MS = Number(
-    process.env.MARS_RECIPE_CONVERSATION_NOTICE_DRAIN_MS ?? 30_000,
-  )
-  const recipeConversationNoticeDrain = setInterval(
-    singleFlight(async () => {
-      try {
-        await drainRecipeConversationNotices(getCompositionRootClient(), log)
-      } catch (err) {
-        log(`[recipe-conversation-notice] drain errored: ${(err as Error).message}`)
-      }
-    }),
-    RECIPE_CONVERSATION_NOTICE_DRAIN_MS,
-  )
-  recipeConversationNoticeDrain.unref()
-
-  // ── Failure conversation Notice drain ───────────────────────────────────
-  // Polling picks up durable outbox events written by another process; the
-  // scheduler above still flushes each batch at its exact opened_at deadline.
-  const FAILURE_CONVERSATION_NOTICE_DRAIN_MS = Number(
-    process.env.MARS_FAILURE_CONVERSATION_NOTICE_DRAIN_MS ?? 1_000,
-  )
-  const failureConversationNoticeDrain = setInterval(
-    singleFlight(async () => {
-      try {
-        await drainFailureConversationNotices(getCompositionRootClient(), Date.now, log)
-        await scheduleFailureConversationNoticeFlush(getCompositionRootClient(), log)
-      } catch (err) {
-        log(`[failure-conversation-notices] drain errored: ${(err as Error).message}`)
-      }
-    }),
-    FAILURE_CONVERSATION_NOTICE_DRAIN_MS,
-  )
-  failureConversationNoticeDrain.unref()
-
-  // ── Arc-verifier drain ───────────────────────────────────────────────────
-  // Polls the outbox for task.terminal { reason: 'done' } events and triggers
-  // arc-outcome verification for any arc that has fully completed with merged
-  // commits. Fire-and-forget: the verifier runs asynchronously and never blocks
-  // the merge path or dispatch loop. .unref() so it never holds the process open.
-  const ARC_VERIFIER_DRAIN_MS = Number(
-    process.env.MARS_ARC_VERIFIER_DRAIN_MS ?? 30_000,
-  )
-  const arcVerifierDrain = setInterval(
-    singleFlight(async () => {
-      try {
-        await drainArcVerifier(
-          getCompositionRootClient(),
-          scheduleArcVerification,
-          log,
-        )
-      } catch (err) {
-        log(`[arc-verifier] drain errored: ${(err as Error).message}`)
-      }
-    }),
-    ARC_VERIFIER_DRAIN_MS,
-  )
-  arcVerifierDrain.unref()
-
-  // ── Archive-entries drain ────────────────────────────────────────────────
-  // Polls the outbox for action-queue.resolved and task.terminal { reason:
-  // 'done' } events and inserts archive_entries. Insertion is always silent.
-  const ARCHIVE_ENTRIES_DRAIN_MS = Number(
-    process.env.MARS_ARCHIVE_ENTRIES_DRAIN_MS ?? 30_000,
-  )
-  const archiveEntriesDrain = setInterval(
-    singleFlight(async () => {
-      try {
-        await drainArchiveEntries(getCompositionRootClient())
-      } catch (err) {
-        log(`[archive-entries] drain errored: ${(err as Error).message}`)
-      }
-    }),
-    ARCHIVE_ENTRIES_DRAIN_MS,
-  )
-  archiveEntriesDrain.unref()
-
-  // ── Worktree reclaim drain ───────────────────────────────────────────────
-  // Periodic cleanup of `.mars/worktrees/`. Three sweeps per tick:
-  //   1. Settled (done/dropped) — reclaim immediately; branch refs retained.
-  //   2. Orphan dirs — directories with no owning task row.
-  //   3. Excess failed — cap the number of retained failed worktrees.
-  //
-  // Rationale: the 2026-07 incident showed that 287 GB accumulated unnoticed
-  // in `.mars/worktrees/` because nothing ever reclaimed them. The startup
-  // sweep above handles the backlog on the first boot; this drain prevents
-  // new accumulation. Default cadence: every 10 minutes.
-  const WORKTREE_RECLAIM_DRAIN_MS = Number(
-    process.env.MARS_WORKTREE_RECLAIM_DRAIN_MS ?? 10 * 60 * 1_000,
-  )
-  const worktreeReclaimDrain = setInterval(
-    singleFlight(async () => {
-      try {
-        const { repoRoot: recRoot } = resolveContext()
-        const orphan = await sweepOrphanWorktrees(recRoot, log)
-        if (orphan.removed.length > 0)
-          log(`[worktree-reclaim] periodic: removed ${orphan.removed.length} orphan dir(s)`)
-
-        const settled = await reclaimSettledWorktrees(recRoot, log)
-        if (settled.removed.length > 0)
-          log(`[worktree-reclaim] periodic: removed ${settled.removed.length} settled worktree(s)`)
-
-        const cap = await reclaimExcessFailedWorktrees(recRoot, log)
-        if (cap.removed.length > 0)
-          log(`[worktree-reclaim] periodic: removed ${cap.removed.length} excess failed worktree(s)`)
-      } catch (err) {
-        log(`[worktree-reclaim] periodic drain errored: ${(err as Error).message}`)
-      }
-    }),
-    WORKTREE_RECLAIM_DRAIN_MS,
-  )
-  worktreeReclaimDrain.unref()
-
-  const GATE_FIX_STEWARD_DRAIN_MS = Number(
-    process.env.MARS_GATE_FIX_STEWARD_DRAIN_MS ?? 30_000,
-  )
-  const gateFixStewardDrain = setInterval(
-    singleFlight(async () => {
-      try {
-        await drainGateFixSteward(getCompositionRootClient(), runGateFixStewardDispatch, undefined, log)
-      } catch (err) {
-        log(`[gate-fix-steward] drain errored: ${(err as Error).message}`)
-      }
-    }),
-    GATE_FIX_STEWARD_DRAIN_MS,
-  )
-  gateFixStewardDrain.unref()
+  // Periodic outbox-subscriber drains are declared as a list in ./drains and
+  // armed here, single-flight gating included. Adding a drain means adding a
+  // DrainSpec, not another inline setInterval block.
+  const drainsHandle = startDrains({
+    bus,
+    log,
+    repoRoot: () => resolveContext().repoRoot,
+    tracker,
+    isBaselinePoisoned: () => baselineHealthChecker.isBaselinePoisoned(),
+    handleSignatureStorm,
+    scheduleArcVerification,
+    runGateFixStewardDispatch,
+  })
 
   // ── Usage snapshot sampler ────────────────────────────────────────────────
   const { startUsageSampler } = await import('./usage-sampler')
@@ -7007,25 +6261,9 @@ export const startDaemon = async (
     shuttingDown = true
     schedulerHandle.stop()
     sweepsHandle.stop()
+    drainsHandle.stop()
     clearInterval(githubUpdatePoll)
     clearInterval(devStalenessCheck)
-    clearInterval(observabilityWatchdog)
-    clearInterval(noticeSweep)
-    clearInterval(dbBusyWatchdog)
-    clearInterval(phantomWatchdog)
-    clearInterval(observabilitySweep)
-    clearInterval(kpiSnapshotSweep)
-    clearInterval(alertDrain)
-    clearInterval(actionQueueRepopulatorDrain)
-    clearInterval(blockerResolutionDrain)
-    clearInterval(recoverySpawnerDrain)
-    clearInterval(closeSubthreadOnTerminalEventDrain)
-    clearInterval(recipeConversationNoticeDrain)
-    clearInterval(failureConversationNoticeDrain)
-    clearFailureConversationNoticeFlush(getCompositionRootClient())
-    clearInterval(arcVerifierDrain)
-    clearInterval(gateFixStewardDrain)
-    clearInterval(worktreeReclaimDrain)
     clearInterval(usageSamplerInterval)
     deferralWakeSweeper.stop()
     healthScheduler.stop()
