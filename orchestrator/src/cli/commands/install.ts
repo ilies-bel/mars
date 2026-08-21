@@ -19,6 +19,21 @@ import {
   type ProviderProbeDeps,
 } from './provider-probe'
 import type { ProviderName } from '../../core/workers/provider-types'
+// Side-effect import: registers the built-in claude/gemini/codex providers.
+// Imported directly (rather than relying on another command module like
+// doctor.ts to pull it in first) so `installableProviderNames()` below sees
+// every registered provider even under `mars init --skip-doctor`.
+import '../../core/workers/providers'
+import { listProviders } from '../../core/workers/provider-registry'
+
+/**
+ * Provider names `mars init --provider <name>` will accept, driven by the
+ * provider registry (`../../core/workers/provider-registry.ts`) rather than
+ * a hardcoded list. A provider registered at runtime (e.g. by a plugin)
+ * shows up here — and in the install flow — with no edit to this file.
+ */
+export const installableProviderNames = (): readonly ProviderName[] =>
+  listProviders().map((p) => p.name)
 
 // ---------------------------------------------------------------------------
 // Probe helpers — exported for unit testing (two call sites each: command +
@@ -138,11 +153,12 @@ const init: Command = {
     // ── Provider selection ────────────────────────────────────────────────
     // --provider <name> selects the default agent CLI for all Worker runs.
     // Defaults to 'codex'. Persisted to .mars/daemon.json after init.
-    const VALID_PROVIDERS = new Set<string>(['claude', 'gemini', 'codex'])
+    const knownProviders = installableProviderNames()
+    const VALID_PROVIDERS = new Set<string>(knownProviders)
     const providerRaw = args.flags['--provider']
     if (providerRaw !== undefined && !VALID_PROVIDERS.has(providerRaw)) {
       deps.err(
-        `[mars init] --provider must be one of: claude, gemini, codex (got '${providerRaw}')`,
+        `[mars init] --provider must be one of: ${knownProviders.join(', ')} (got '${providerRaw}')`,
       )
       return { code: 1 }
     }
@@ -232,7 +248,7 @@ const init: Command = {
       // Show per-provider probe results so users see what's available and
       // can decide whether to re-run with --provider <name>.
       deps.out('  Worker providers detected:')
-      for (const name of ['claude', 'gemini', 'codex'] as const) {
+      for (const name of installableProviderNames()) {
         const probe = probeProvider(name, realProviderProbeDeps)
         deps.out(`    ${formatProviderProbe(probe)}`)
       }
