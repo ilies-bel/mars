@@ -3,8 +3,8 @@
 // lets adapters depend on the contract without depending on their registry.
 
 import type {
-  ClaudeEffort,
-  ClaudePermissionMode,
+  AgentEffort,
+  AgentPermissionMode,
   RunAgentResult,
 } from '../lib/git/claude'
 import type { AgentEvent } from '../lib/claude-stream'
@@ -54,14 +54,23 @@ export interface ConversationMemoryFacts {
 // The `systemPrompt` field carries the fully-resolved prompt string —
 // callers collapse `options.systemPrompt ?? config.systemPrompt ??
 // config.appendSystemPrompt` before calling run().
+//
+// Deliberately Port-legal: every field here is plain data (strings,
+// numbers, booleans, readonly arrays/records) with no function values and
+// no `AbortSignal`. That is what lets this shape cross a serialization
+// boundary (a remote Executor port, a persisted dispatch record) intact.
+// The three fields that are NOT serializable — the event callback, the
+// abort signal, and the PID callback — live on {@link HeadlessRunContext}
+// instead, passed as a separate in-process-only argument. See ADR-0097
+// ("every seam is a cordis service Port with serializable contracts") and
+// the `ExecutorPortRequest`/`RunAgentArgs` split in `../lib/git/claude.ts`.
 export type HeadlessRunOpts = Readonly<{
   cwd: string
   sessionId?: string
-  onEvent?: (event: AgentEvent) => void | Promise<void>
   model?: string
   systemPrompt?: string
-  effort?: ClaudeEffort
-  permissionMode?: ClaudePermissionMode
+  effort?: AgentEffort
+  permissionMode?: AgentPermissionMode
   bare?: boolean
   agent?: string
   disallowedTools?: ReadonlyArray<string>
@@ -90,13 +99,6 @@ export type HeadlessRunOpts = Readonly<{
   forceSandbox?: 'workspace-write' | 'read-only'
   maxContextTokens?: number
   mcpServers?: Readonly<Record<string, unknown>>
-  externalAbort?: AbortSignal
-  /**
-   * Optional callback invoked immediately after the child subprocess is
-   * spawned. Forwarded verbatim to {@link runClaudeCode} so the dispatch
-   * path can record the PID on the in-flight tracker entry.
-   */
-  onPid?: (pid: number) => void
   /**
    * Task id for this dispatch. Forwarded to {@link runClaudeCode} so
    * `MARS_MCP_TASK_ID` is stamped in the worker env and the mars-worker
@@ -104,6 +106,22 @@ export type HeadlessRunOpts = Readonly<{
    */
   taskId?: string
 }>
+
+// Out-of-band extras for a headless run that are meaningful only to an
+// in-process adapter invocation and cannot cross a serialization boundary:
+// a live event callback, an abort signal, and a PID callback. Split out of
+// {@link HeadlessRunOpts} so that type stays Port-legal (see its doc
+// comment). Passed as HeadlessAdapter.run's optional third argument.
+export interface HeadlessRunContext {
+  onEvent?: (event: AgentEvent) => void | Promise<void>
+  externalAbort?: AbortSignal
+  /**
+   * Optional callback invoked immediately after the child subprocess is
+   * spawned. Forwarded verbatim to {@link runClaudeCode} so the dispatch
+   * path can record the PID on the in-flight tracker entry.
+   */
+  onPid?: (pid: number) => void
+}
 
 // Adapter for headless (non-interactive subprocess) dispatch of a Provider's
 // agent CLI. A Provider that supports headless dispatch implements this
@@ -118,7 +136,7 @@ export type HeadlessRunOpts = Readonly<{
 // turn spend (codex) must never have that number read as context occupancy —
 // see ProviderUsageSemantics in ../lib/claude-usage.
 export interface HeadlessAdapter {
-  run(prompt: string, opts: HeadlessRunOpts): Promise<RunAgentResult>
+  run(prompt: string, opts: HeadlessRunOpts, ctx?: HeadlessRunContext): Promise<RunAgentResult>
   /** Decode this provider's complete stdout into normalized stream events. */
   readOutput(stdout: string): AgentEvent[]
   readonly capabilities: {
@@ -128,12 +146,13 @@ export interface HeadlessAdapter {
   }
 }
 
-export type RunHeadlessProviderOpts = Omit<HeadlessRunOpts, 'model'> & {
-  readonly provider?: ProviderName
-  readonly model?: string
-  readonly modelTier?: ProviderModelTier
-  readonly timeoutMs?: number
-}
+export type RunHeadlessProviderOpts = Omit<HeadlessRunOpts, 'model'> &
+  HeadlessRunContext & {
+    readonly provider?: ProviderName
+    readonly model?: string
+    readonly modelTier?: ProviderModelTier
+    readonly timeoutMs?: number
+  }
 
 // Runtime options forwarded to spawnArgv when the orchestrator launches
 // a Provider process. Named fields instead of a plain record so callers
@@ -142,8 +161,8 @@ export type RunHeadlessProviderOpts = Omit<HeadlessRunOpts, 'model'> & {
 export type SpawnOpts = Readonly<{
   model?: string
   sessionId?: string
-  permissionMode?: ClaudePermissionMode
-  effort?: ClaudeEffort
+  permissionMode?: AgentPermissionMode
+  effort?: AgentEffort
   disallowedTools?: readonly string[]
   agent?: string
   appendSystemPrompt?: string
