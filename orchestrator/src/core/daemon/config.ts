@@ -177,6 +177,189 @@ export interface ScoringConfig {
   lowTrendWindow: number
 }
 
+/**
+ * Zod schema for the raw `.mars/daemon.json` file on disk (before env/default
+ * resolution). This is the shared contract consumed by the "Zod-validate
+ * daemon.json instead of asserting its type" slice: swap the manual
+ * `JSON.parse(...) as {...}` casts in `readDaemonConfigFile`/`loadDaemonConfig`
+ * for `daemonConfigFileSchema.safeParse(...)`. Every field is optional/partial
+ * because daemon.json is a merge-patched, hand-editable file — a field absent
+ * or malformed must degrade to the built-in default, never throw.
+ *
+ * Mirrors every field currently read ad hoc across this file, including the
+ * legacy aliases (`selfEvolve.autoTrigger`, `levers`, `caps['setup-install']`)
+ * so the migrated reader keeps accepting existing daemon.json files.
+ */
+export const daemonConfigFileSchema = z
+  .object({
+    caps: z
+      .object({
+        implement: z.number().optional(),
+        triage: z.number().optional(),
+        refine: z.number().optional(),
+        setupInstall: z.number().optional(),
+        'setup-install': z.number().optional(),
+        verify: z.number().optional(),
+      })
+      .partial()
+      .optional(),
+    selfEvolve: z
+      .object({
+        autoEnqueue: z.boolean().optional(),
+        /** Legacy alias for `autoEnqueue`, accepted for migration. */
+        autoTrigger: z.boolean().optional(),
+        driftThresholdPct: z.number().optional(),
+        taskConfidenceThreshold: z.number().optional(),
+        reflectCooldownDays: z.number().optional(),
+      })
+      .partial()
+      .optional(),
+    scoring: z
+      .object({
+        autoTrigger: z.boolean().optional(),
+        lowTrendThreshold: z.number().optional(),
+        lowTrendWindow: z.number().optional(),
+      })
+      .partial()
+      .optional(),
+    defaultProvider: z.string().optional(),
+    controlLevers: z
+      .object({
+        recovery: z.enum(['on', 'off']).optional(),
+        scoring: z.enum(['on', 'off']).optional(),
+        memoryCapture: z.enum(['on', 'off']).optional(),
+        /** Legacy alias for `memoryCapture`, accepted for migration. */
+        autoReflect: z.enum(['on', 'off']).optional(),
+        autoRunReflect: z.enum(['on', 'off']).optional(),
+      })
+      .partial()
+      .optional(),
+    producerLevers: z.record(z.string(), z.unknown()).optional(),
+    /** Legacy alias for `producerLevers`, accepted for migration. */
+    levers: z.record(z.string(), z.unknown()).optional(),
+    workerPrompts: z.record(z.string(), z.string()).optional(),
+    steward: z
+      .object({
+        autotuneMaxImplement: z.number().optional(),
+      })
+      .partial()
+      .optional(),
+    paused: z.boolean().optional(),
+    lastReflectRanAt: z.string().optional(),
+    proposalExpiryDays: z.number().optional(),
+  })
+  .partial()
+
+/** Inferred TS type for the raw persisted daemon.json shape. */
+export type DaemonConfigFile = z.infer<typeof daemonConfigFileSchema>
+
+/**
+ * Typed view of every env var `loadDaemonConfig` currently reads ad hoc via
+ * `envInt`/`envBool`/manual `process.env[...]` lookups, resolved and clamped
+ * to the same defaults it already falls back to. This is the shared contract
+ * for the "Typed env-override layer inside one config loader" slice: replace
+ * the scattered `envInt('MARS_MAX_IMPLEMENT', ...)`-style calls sprinkled
+ * through `loadDaemonConfig` with one `resolveEnvOverrides()` call.
+ *
+ * Every field is always present (never `undefined`) because each already
+ * degrades to a built-in default when its env var is absent or invalid —
+ * callers merge `fileValue ?? envOverrides.<field>` exactly as today.
+ */
+export interface DaemonEnvOverrides {
+  caps: DaemonCaps
+  selfEvolve: Pick<SelfEvolveConfig, 'autoEnqueue' | 'driftThresholdPct' | 'taskConfidenceThreshold'>
+  scoring: Pick<ScoringConfig, 'autoTrigger' | 'lowTrendThreshold' | 'lowTrendWindow'>
+}
+
+/**
+ * Resolve every daemon.json env-var override from `env` (defaults to
+ * `process.env`) into one typed object. Pure function — takes the env map as
+ * a parameter instead of reading `process.env` internally, so it is testable
+ * without mutating global state and so the eventual "Inject config instead of
+ * laundering levers through process.env" work has a template to follow for
+ * the rest of this module.
+ */
+export const resolveEnvOverrides = (
+  env: NodeJS.ProcessEnv = process.env,
+): DaemonEnvOverrides => {
+  const int = (name: string, fallback: number): number => {
+    const raw = env[name]
+    if (raw === undefined || raw === '') return fallback
+    const n = Number.parseInt(raw, 10)
+    return Number.isFinite(n) && n > 0 ? n : fallback
+  }
+  const bool = (name: string, fallback: boolean): boolean => {
+    const raw = env[name]
+    if (raw === undefined || raw === '') return fallback
+    if (raw === '1' || raw === 'true') return true
+    if (raw === '0' || raw === 'false') return false
+    return fallback
+  }
+  const float01 = (name: string, fallback: number): number => {
+    const raw = env[name]
+    const n = raw !== undefined && raw !== '' ? Number(raw) : NaN
+    return Number.isFinite(n) && n >= 0 && n <= 1 ? n : fallback
+  }
+  const positive = (name: string, fallback: number): number => {
+    const raw = env[name]
+    const n = raw !== undefined && raw !== '' ? Number(raw) : NaN
+    return Number.isFinite(n) && n > 0 ? n : fallback
+  }
+
+  return {
+    caps: {
+      implement: int('MARS_MAX_IMPLEMENT', DEFAULTS.implement),
+      triage: int('MARS_MAX_TRIAGE', DEFAULTS.triage),
+      refine: int('MARS_MAX_REFINE', DEFAULTS.refine),
+      setupInstall: int('MARS_MAX_SETUP_INSTALL', DEFAULTS.setupInstall),
+      verify: int('MARS_MAX_VERIFY', DEFAULTS.verify),
+    },
+    selfEvolve: {
+      autoEnqueue: bool('MARS_SELF_EVOLVE_AUTO_TRIGGER', DEFAULT_SELF_EVOLVE.autoEnqueue),
+      driftThresholdPct: positive(
+        'MARS_SELF_EVOLVE_DRIFT_THRESHOLD',
+        DEFAULT_SELF_EVOLVE.driftThresholdPct,
+      ),
+      taskConfidenceThreshold: float01(
+        'MARS_SELF_EVOLVE_TASK_CONFIDENCE_THRESHOLD',
+        DEFAULT_SELF_EVOLVE.taskConfidenceThreshold,
+      ),
+    },
+    scoring: {
+      autoTrigger: bool('MARS_SCORING_AUTO_TRIGGER', DEFAULT_SCORING.autoTrigger),
+      lowTrendThreshold: float01(
+        'MARS_SCORING_LOW_TREND_THRESHOLD',
+        DEFAULT_SCORING.lowTrendThreshold,
+      ),
+      lowTrendWindow: int('MARS_SCORING_LOW_TREND_WINDOW', DEFAULT_SCORING.lowTrendWindow),
+    },
+  }
+}
+
+/**
+ * Pure projection of `ControlLevers` onto the env-var effects
+ * `applyControlLevers` writes to `process.env`. This is the shared contract
+ * for the "Inject config instead of laundering levers through process.env"
+ * slice: call sites that currently read `process.env.MARS_RECOVERY_DISABLED
+ * === '1'` / `process.env.MARS_SCORING_DISABLED === '1'` directly (see
+ * `failure-reflector.ts`, `scorer-runtime.ts`, `queue-fix-tasks.ts`) should
+ * take an injected `ControlLevers` (or the predicates below) instead of
+ * reaching into `process.env` themselves. A `undefined` value means "leave
+ * this env var alone / unset it", matching `applyControlLevers`'s delete branch.
+ */
+export const controlLeversToEnv = (
+  levers: ControlLevers,
+): Record<'MARS_RECOVERY_DISABLED' | 'MARS_SCORING_DISABLED', string | undefined> => ({
+  MARS_RECOVERY_DISABLED: levers.recovery === 'off' ? '1' : undefined,
+  MARS_SCORING_DISABLED: levers.scoring === 'off' ? '1' : undefined,
+})
+
+/** Pure predicate mirroring `process.env.MARS_RECOVERY_DISABLED === '1'`. */
+export const isRecoveryDisabled = (levers: ControlLevers): boolean => levers.recovery === 'off'
+
+/** Pure predicate mirroring `process.env.MARS_SCORING_DISABLED === '1'`. */
+export const isScoringDisabled = (levers: ControlLevers): boolean => levers.scoring === 'off'
+
 export interface DaemonConfig {
   caps: DaemonCaps
   selfEvolve: SelfEvolveConfig
@@ -621,19 +804,21 @@ export const writeControlLever = (name: keyof ControlLevers, value: ControlLever
  * persisted operator choices. Called at daemon startup (before dispatch starts)
  * and by the `apply-lever` RPC (for immediate live effect without restart).
  *
+ * Delegates the lever→env-var mapping to `controlLeversToEnv` so that pure
+ * mapping stays the single source of truth — this function is now only the
+ * side-effecting shell around it. Callers that want the value without
+ * mutating `process.env` (the eventual injected-config call sites) should use
+ * `controlLeversToEnv`/`isRecoveryDisabled`/`isScoringDisabled` directly
+ * instead of reading `process.env` after calling this.
+ *
  *   recovery='off' → process.env.MARS_RECOVERY_DISABLED = '1'
  *   recovery='on'  → delete process.env.MARS_RECOVERY_DISABLED
  */
 export const applyControlLevers = (levers: ControlLevers): void => {
-  if (levers.recovery === 'off') {
-    process.env.MARS_RECOVERY_DISABLED = '1'
-  } else {
-    delete process.env.MARS_RECOVERY_DISABLED
-  }
-  if (levers.scoring === 'off') {
-    process.env.MARS_SCORING_DISABLED = '1'
-  } else {
-    delete process.env.MARS_SCORING_DISABLED
+  const env = controlLeversToEnv(levers)
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
   }
 }
 
