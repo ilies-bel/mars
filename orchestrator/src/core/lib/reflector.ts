@@ -1082,9 +1082,9 @@ export interface VerdictedSuggestion {
    * `frequency` (which the model self-reports and does not gate anything
    * today). Optional — existing callers that predate this field keep
    * compiling unchanged; a caller populating it should use
-   * `affectedTaskIds.length` as the natural source of truth, and consult
-   * {@link meetsCorroborationFloor} before saving an n=1 suggestion at full
-   * standing.
+   * `affectedTaskIds.length` as the natural source of truth, and check it
+   * against {@link MIN_CORROBORATION_INSTANCES} before saving an n=1
+   * suggestion at full standing.
    */
   corroboratingInstanceCount?: number
 }
@@ -1132,16 +1132,6 @@ export const MIN_CORROBORATION_INSTANCES = 3
  * {@link ApplyVerdictsOptions.exempt}.
  */
 export const EXEMPT_TOKEN_BURN = 150_000
-
-/**
- * True once a suggestion's {@link VerdictedSuggestion.corroboratingInstanceCount}
- * clears {@link MIN_CORROBORATION_INSTANCES}. A suggestion with no recorded
- * count (`undefined`) has not been evaluated against the floor and is
- * treated as not meeting it — callers must opt in by populating the count.
- */
-export const meetsCorroborationFloor = (corroboratingInstanceCount: number | undefined): boolean =>
-  typeof corroboratingInstanceCount === 'number' &&
-  corroboratingInstanceCount >= MIN_CORROBORATION_INSTANCES
 
 export interface ApplyVerdictsOptions {
   /**
@@ -1198,7 +1188,7 @@ export const applyVerdicts = async (
         arcId: options.arcId,
       })
       s.corroboratingInstanceCount = lesson.observationCount
-      if (!meetsCorroborationFloor(lesson.observationCount)) {
+      if (lesson.observationCount < MIN_CORROBORATION_INSTANCES) {
         heldBelowFloor += 1
         continue
       }
