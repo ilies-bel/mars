@@ -223,35 +223,40 @@ workspace-write sandbox from the Worker permissions, and relies on Codex's
 cached OAuth session without exposing credentials to Mars. Provider-specific
 environment scrubbing and configuration stay inside each adapter.
 
-### Events outbox retention
+### History retention
 
-The `events` table (events outbox) is pruned on a recurring timer inside the
-daemon. The prune cadence defaults to 60 seconds and is tunable without a
-restart.
+Orchestrator history ages out under exactly one rule. `EVENT_RETENTION` in
+`src/bus/retention.ts` states it — **30 days, 50 000 rows per table** — and
+the single `pruneEvents()` function applies it to every history table:
+`trace_events` (step/tool telemetry), `events` (the bus outbox) and
+`task_transcripts` (streamed transcript chunks). The retention window needs
+no qualification about which table you mean.
 
-**Deletion rule (two-axis, per ADR-0031/ADR-0032).** A row is deleted only
-when **both** conditions hold:
+The daemon applies it on a recurring sweep (`MARS_OBSERVABILITY_SWEEP_MS`,
+default 1 h). `mars observability prune` runs one pass by hand;
+`mars db compact` loops passes until nothing is left to remove, then
+`VACUUM (ANALYZE)`s to reclaim the space. There is deliberately no `<days>`
+override on either — an ad-hoc window per invocation is how the codebase
+ended up with three disagreeing retention numbers.
 
-1. Its `id` is `≤ MIN(cursor)` over the `subscribers` table — i.e. every
-   registered subscriber has already consumed past that event.
-2. Its `ts` is older than `MARS_OUTBOX_MAX_AGE_SECONDS` — i.e. the row is
-   not "freshly landed" regardless of subscriber state.
+**One safety gate, not a second policy.** An `events` row is additionally
+held back until its `id` is `≤ MIN(cursor)` over the `subscribers` table —
+i.e. every registered subscriber has consumed past it. The retention window
+applied is identical to every other table's; the gate only defers deletion.
+With no subscribers registered there is no cursor to protect, so rows age out
+normally.
 
-This two-axis rule prevents: (a) deleting events a slow subscriber hasn't
-seen yet, and (b) accumulating unbounded history when all subscribers are
-caught up.
-
-**Wedged-subscriber guard.** If any subscriber's cursor lag (distance behind
-the latest event id) exceeds `MARS_OUTBOX_LAG_WARN_THRESHOLD`, the prune
-sweep raises exactly one action-queue item (`kind='outbox.subscriber-lagging'`)
-so the operator can investigate before the subscriber is evicted or the
-outbox grows unbounded.
+**Wedged-subscriber guard.** A subscriber that stops advancing therefore
+holds its backlog above the cap. When any subscriber's cursor lag exceeds
+`MARS_OUTBOX_LAG_WARN_THRESHOLD`, the outbox sweep raises exactly one
+action-queue item (`kind='outbox-lag'`) per wedged subscriber so the operator
+can investigate.
 
 **Env knobs** (all reloadable via `mars daemon reload`):
 
-- `MARS_OUTBOX_MAX_AGE_SECONDS` — minimum age before a fully-consumed row is
-  eligible for deletion. Default `604800` (7 days).
-- `MARS_OUTBOX_PRUNE_INTERVAL_MS` — how often the prune sweep fires.
+- `MARS_OBSERVABILITY_SWEEP_MS` — how often the retention sweep fires.
+  Default `3600000` (1 h).
+- `MARS_OUTBOX_PRUNE_INTERVAL_MS` — how often the subscriber-lag sweep fires.
   Default `60000` (60 s).
 - `MARS_OUTBOX_LAG_WARN_THRESHOLD` — subscriber lag (in event ids) that
   triggers an action-queue warning. Default `100000`.

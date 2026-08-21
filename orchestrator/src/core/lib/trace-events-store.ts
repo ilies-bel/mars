@@ -143,15 +143,6 @@ export interface TraceEventStore {
   readTranscriptChunks?: (taskId: string, sessionId?: string) => Promise<unknown[]>
 
   /**
-   * Delete transcript chunk rows whose write timestamp is older than
-   * `beforeMs` (epoch milliseconds). Returns the count of deleted rows.
-   *
-   * Intended for the same periodic-prune job that trims `trace_events`.
-   * Retention constant: {@link TRANSCRIPT_RETENTION_DAYS}.
-   */
-  pruneTranscripts?: (beforeMs: number) => Promise<number>
-
-  /**
    * Store the full conversation transcript for a task as a gzip-compressed
    * bytea in `task_durable_transcripts`. Uses an upsert (ON CONFLICT DO
    * UPDATE) so calling again for the same taskId updates the row with the
@@ -242,12 +233,6 @@ export const deriveSeverity = (
   if (kind === 'worker-model-mismatch') return 'warn'
   return 'info'
 }
-
-/**
- * Number of days to retain `task_transcripts` rows before they are eligible
- * for pruning. Pass this to `pruneTranscripts` at periodic cleanup time.
- */
-export const TRANSCRIPT_RETENTION_DAYS = 30
 
 /**
  * How many streaming events to batch before flushing a `task_transcripts` row.
@@ -365,7 +350,8 @@ export const openTraceEventStore = async (
       const severity = deriveSeverity(event.kind, payload)
       // Info-level log_line rows are not persisted: they duplicate watch.log
       // and dominated trace_events volume (≈163 k rows / 14 h in production).
-      // warn/error log_lines are kept (with a tighter 2-day age cap in prune).
+      // warn/error log_lines are kept, and age out under EVENT_RETENTION like
+      // every other kind (the old 2-day log_line-only cap is gone).
       if (event.kind === 'log_line' && severity === 'info') return
       await client.execute({
         sql: `INSERT INTO trace_events
@@ -504,14 +490,6 @@ export const openTraceEventStore = async (
         }
       }
       return events
-    },
-
-    pruneTranscripts: async (beforeMs: number): Promise<number> => {
-      const result = await client.execute({
-        sql: `DELETE FROM task_transcripts WHERE ts < ?`,
-        args: [beforeMs],
-      })
-      return result.rowsAffected ?? 0
     },
 
     appendDurableTranscript: async (

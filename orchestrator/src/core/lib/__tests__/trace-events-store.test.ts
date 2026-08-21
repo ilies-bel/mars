@@ -8,7 +8,6 @@ import {
   deriveSeverity,
   openTraceEventStore,
   TRACE_EVENT_KINDS,
-  TRANSCRIPT_RETENTION_DAYS,
   type TraceEventKind,
 } from '../trace-events-store'
 
@@ -529,48 +528,6 @@ describe('openTraceEventStore — appendTranscriptChunk + readTranscriptChunks',
     }
   })
 
-  it('TRANSCRIPT_RETENTION_DAYS is exported and reasonable', () => {
-    expect(typeof TRANSCRIPT_RETENTION_DAYS).toBe('number')
-    expect(TRANSCRIPT_RETENTION_DAYS).toBeGreaterThan(0)
-  })
-})
-
-describe('openTraceEventStore — pruneTranscripts', () => {
-  it('deletes chunk rows whose ts is before the cutoff', async () => {
-    const store = await openTraceEventStore(tmpDbPath())
-    try {
-      // Insert a chunk — ts will be ~now
-      await store.appendTranscriptChunk!('task-p', 'sess-p', 0, [{ type: 'assistant' }])
-
-      // A cutoff in the future covers all currently-written rows
-      const futureCutoff = Date.now() + 60_000
-      const deleted = await store.pruneTranscripts!(futureCutoff)
-      expect(deleted).toBe(1)
-
-      // Row is gone
-      const remaining = await store.readTranscriptChunks!('task-p')
-      expect(remaining).toHaveLength(0)
-    } finally {
-      await store.close()
-    }
-  })
-
-  it('returns 0 when no rows are older than the cutoff', async () => {
-    const store = await openTraceEventStore(tmpDbPath())
-    try {
-      await store.appendTranscriptChunk!('task-q', 'sess-q', 0, [{ type: 'assistant' }])
-      // A cutoff in the past does not match any row written now
-      const pastCutoff = Date.now() - 60_000
-      const deleted = await store.pruneTranscripts!(pastCutoff)
-      expect(deleted).toBe(0)
-
-      // Row is still there
-      const remaining = await store.readTranscriptChunks!('task-q')
-      expect(remaining).toHaveLength(1)
-    } finally {
-      await store.close()
-    }
-  })
 })
 
 // ── log_line volume filtering ─────────────────────────────────────────────────

@@ -1,12 +1,13 @@
 import { openDb, type DbClient } from '../core/lib/db.js'
 
 /**
- * The single retention policy for orchestrator event history: `trace_events`
- * (structured step/tool telemetry) and `events` (the bus outbox) age out
- * under the same day window and row-count cap. An operator states "the
- * retention window" once, without qualifying which table they mean.
+ * The single retention policy for orchestrator history. `trace_events`
+ * (structured step/tool telemetry), `events` (the bus outbox) and
+ * `task_transcripts` (streamed transcript chunks) all age out under the same
+ * day window and row-count cap, so an operator can state "the retention
+ * window" without qualifying which table they mean.
  *
- * Supersedes three previously-separate mechanisms, all deleted in favour of
+ * Supersedes four previously-separate mechanisms, all deleted in favour of
  * this module:
  *
  *  - `RETENTION_DAYS_DEFAULT` / `RETENTION_MAX_ROWS_DEFAULT` /
@@ -16,16 +17,25 @@ import { openDb, type DbClient } from '../core/lib/db.js'
  *    the row-count cap remains the backstop against high `log_line` volume.
  *  - `OBSERVABILITY_RETENTION_DAYS` and `pruneObservability`
  *    (formerly `core/lib/observability-prune.ts`), a second, differently
- *    windowed (3-day) sweep over the same `trace_events` table.
+ *    windowed (3-day) sweep over the same `trace_events` table. Because that
+ *    sweep ran first in the daemon, 3 days — not 30 — was the window actually
+ *    in force. Consolidating restores the documented 30-day window, so a live
+ *    daemon now retains substantially more telemetry than before.
+ *  - `TRANSCRIPT_RETENTION_DAYS` and the `pruneTranscripts` store method
+ *    (formerly `core/lib/trace-events-store.ts`), a retention constant no
+ *    sweep ever applied — `task_transcripts` grew without bound.
  *  - The age-based half of `pruneOutbox` (formerly `core/lib/outbox-prune.ts`).
  *    Its cursor-safety gate — never delete an `events` row a registered
  *    Subscriber has not yet consumed — is preserved below as a per-table
  *    correctness rule, not a second retention policy: the day/row-count
- *    window applied is identical to `trace_events`'s. The one behaviour
- *    change is deliberate: when zero Subscribers are registered, `events`
- *    rows now age out under the normal policy instead of never being pruned
- *    at all — that unconditional "no subscribers ⇒ no pruning" case was the
- *    unbounded-growth hole this consolidation closes.
+ *    window applied is identical to `trace_events`'s. Two behaviour changes
+ *    are deliberate. When zero Subscribers are registered, `events` rows now
+ *    age out under the normal policy instead of never being pruned at all.
+ *    And the age comparison is done in epoch milliseconds, matching how
+ *    `events.ts` is actually written (`pruneOutbox` compared the millisecond
+ *    column against a second-denominated cutoff, so it never deleted
+ *    anything) — that unit mismatch was the unbounded-growth hole this
+ *    consolidation closes.
  */
 export const EVENT_RETENTION = {
   /** Days of history to retain before a row is eligible for pruning. */
@@ -49,8 +59,10 @@ export const RETENTION_BATCH_SIZE = 1_000
  */
 const RETENTION_SWEEP_BUDGET_MS = 500
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000
+
 export interface PruneEventsOptions {
-  /** Days of history to retain. Defaults to EVENT_RETENTION.days. Set to 0 to skip the age pass. */
+  /** Days of history to retain. Defaults to EVENT_RETENTION.days. Set to 0 to skip the age passes. */
   days?: number
   /** Row-count cap per table. Defaults to EVENT_RETENTION.maxRows. */
   maxRows?: number
@@ -73,6 +85,8 @@ export interface PruneEventsResult {
   eventsByCount: number
   /** events row count after pruning — a gauge for sweep logging. */
   eventsRemaining: number
+  /** task_transcripts rows deleted because they exceeded the day window. */
+  transcriptsByAge: number
   /**
    * subscriber_processed_events rows deleted because their event_id is no
    * longer present in `events`. A dedup-ledger hygiene pass, not itself
@@ -82,17 +96,65 @@ export interface PruneEventsResult {
   subscriberProcessedEventsOrphans: number
 }
 
+type PrunableTable = 'trace_events' | 'events'
+
 async function countRows(
   client: DbClient,
-  table: 'trace_events' | 'events',
+  table: PrunableTable,
 ): Promise<number> {
   const r = await client.execute(`SELECT COUNT(*) AS n FROM ${table}`)
   return Number((r.rows[0] as unknown as { n: number | bigint }).n)
 }
 
 /**
- * Prune orchestrator event history — `trace_events` and `events` — to
- * {@link EVENT_RETENTION} (overridable via `opts`). Four bounded passes:
+ * Trim `table` down to `maxRows` by repeatedly deleting the oldest rows in
+ * `batchSize`-sized DELETEs, stopping when the table is under the cap, when
+ * `sweepBudgetMs` is spent, or when a DELETE removes nothing.
+ *
+ * `floor` is the `events` consumption gate: when non-null only rows with
+ * `id <= floor` are eligible, so a lagging Subscriber's unconsumed backlog is
+ * never trimmed. That backlog can therefore hold the table above the cap —
+ * the DELETE returning zero is what ends the loop in that case, and the
+ * outbox sweeper's lag alert is what tells the operator why.
+ */
+async function trimToCap(
+  client: DbClient,
+  table: PrunableTable,
+  orderBy: string,
+  opts: {
+    maxRows: number
+    batchSize: number
+    sweepBudgetMs: number
+    floor: number | null
+  },
+): Promise<number> {
+  const budgetDeadline = Date.now() + opts.sweepBudgetMs
+  const floorClause = opts.floor !== null ? 'WHERE id <= ?' : ''
+  let deleted = 0
+  let currentCount = await countRows(client, table)
+
+  while (currentCount > opts.maxRows && Date.now() < budgetDeadline) {
+    const toDelete = Math.min(currentCount - opts.maxRows, opts.batchSize)
+    const r = await client.execute({
+      sql: `DELETE FROM ${table}
+            WHERE id IN (
+              SELECT id FROM ${table} ${floorClause}
+              ORDER BY ${orderBy} ASC LIMIT ?
+            )`,
+      args: opts.floor !== null ? [opts.floor, toDelete] : [toDelete],
+    })
+    if (r.rowsAffected === 0) break
+    deleted += r.rowsAffected
+    currentCount = await countRows(client, table)
+  }
+
+  return deleted
+}
+
+/**
+ * Prune orchestrator history — `trace_events`, `events` and
+ * `task_transcripts` — to {@link EVENT_RETENTION} (overridable via `opts`).
+ * Bounded passes, in order:
  *
  *   1. trace_events by age   — delete rows older than `days`.
  *   2. trace_events by count — loop batchSize-sized DELETEs until the table
@@ -102,9 +164,15 @@ async function countRows(
  *      (id <= MIN(subscribers.cursor)); with zero Subscribers registered
  *      there is nothing to protect, so the gate is a no-op and the normal
  *      window applies.
- *   4. subscriber_processed_events — delete dedup-ledger rows whose
+ *   4. task_transcripts by age — delete chunk rows older than `days`. No
+ *      row-count cap: transcripts are bounded per task and the day window is
+ *      the whole policy for them.
+ *   5. subscriber_processed_events — delete dedup-ledger rows whose
  *      event_id no longer exists in `events` (safe: if the event is gone,
  *      no Subscriber will ever be asked to process it again).
+ *
+ * Every timestamp column involved (`trace_events.timestamp`, `events.ts`,
+ * `task_transcripts.ts`) is epoch **milliseconds**; the cutoffs below are too.
  *
  * Space reclamation after the DELETEs is autovacuum's job — no explicit
  * VACUUM here (`mars db compact` does that deliberately after looping this).
@@ -117,13 +185,13 @@ export async function pruneEvents(
   const maxRows = opts?.maxRows ?? EVENT_RETENTION.maxRows
   const batchSize = opts?.batchSize ?? RETENTION_BATCH_SIZE
   const sweepBudgetMs = opts?.sweepBudgetMs ?? RETENTION_SWEEP_BUDGET_MS
+  const cutoffMs = Date.now() - days * MS_PER_DAY
 
   const client = openDb(dbTarget)
   try {
     // ── trace_events: age ────────────────────────────────────────────────
     let traceEventsByAge = 0
     if (days > 0) {
-      const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000
       const r = await client.execute({
         sql: `DELETE FROM trace_events
               WHERE id IN (
@@ -134,28 +202,16 @@ export async function pruneEvents(
       traceEventsByAge = r.rowsAffected
     }
 
-    // ── trace_events: row-count cap (looping) ──────────────────────────────
-    let traceEventsByCount = 0
-    {
-      const budgetDeadline = Date.now() + sweepBudgetMs
-      let currentCount = await countRows(client, 'trace_events')
-      while (currentCount > maxRows && Date.now() < budgetDeadline) {
-        const toDelete = Math.min(currentCount - maxRows, batchSize)
-        const r = await client.execute({
-          sql: `DELETE FROM trace_events
-                WHERE id IN (
-                  SELECT id FROM trace_events ORDER BY timestamp ASC LIMIT ?
-                )`,
-          args: [toDelete],
-        })
-        if (r.rowsAffected === 0) break
-        traceEventsByCount += r.rowsAffected
-        currentCount = await countRows(client, 'trace_events')
-      }
-    }
+    // ── trace_events: row-count cap ───────────────────────────────────────
+    const traceEventsByCount = await trimToCap(client, 'trace_events', 'timestamp', {
+      maxRows,
+      batchSize,
+      sweepBudgetMs,
+      floor: null,
+    })
     const traceEventsRemaining = await countRows(client, 'trace_events')
 
-    // ── events: consumption floor ───────────────────────────────────────────
+    // ── events: consumption floor ─────────────────────────────────────────
     // MIN(subscribers.cursor) when at least one Subscriber is registered;
     // null (no floor — nothing to protect) when none are.
     const subInfo = await client.execute(
@@ -171,12 +227,11 @@ export async function pruneEvents(
     // ── events: age ──────────────────────────────────────────────────────
     let eventsByAge = 0
     if (days > 0) {
-      const cutoffSec = Math.floor(Date.now() / 1000) - days * 24 * 60 * 60
       const floorClause = subscriberFloor !== null ? 'AND id <= ?' : ''
       const args: number[] =
         subscriberFloor !== null
-          ? [cutoffSec, subscriberFloor, batchSize]
-          : [cutoffSec, batchSize]
+          ? [cutoffMs, subscriberFloor, batchSize]
+          : [cutoffMs, batchSize]
       const r = await client.execute({
         sql: `DELETE FROM events
               WHERE id IN (
@@ -189,32 +244,28 @@ export async function pruneEvents(
       eventsByAge = r.rowsAffected
     }
 
-    // ── events: row-count cap (looping, same consumption floor) ───────────
-    let eventsByCount = 0
-    {
-      const budgetDeadline = Date.now() + sweepBudgetMs
-      let currentCount = await countRows(client, 'events')
-      while (currentCount > maxRows && Date.now() < budgetDeadline) {
-        const toDelete = Math.min(currentCount - maxRows, batchSize)
-        const floorClause = subscriberFloor !== null ? 'WHERE id <= ?' : ''
-        const args: number[] =
-          subscriberFloor !== null
-            ? [subscriberFloor, toDelete]
-            : [toDelete]
-        const r = await client.execute({
-          sql: `DELETE FROM events
-                WHERE id IN (
-                  SELECT id FROM events ${floorClause}
-                  ORDER BY id ASC LIMIT ?
-                )`,
-          args,
-        })
-        if (r.rowsAffected === 0) break
-        eventsByCount += r.rowsAffected
-        currentCount = await countRows(client, 'events')
-      }
-    }
+    // ── events: row-count cap (same consumption floor) ────────────────────
+    const eventsByCount = await trimToCap(client, 'events', 'id', {
+      maxRows,
+      batchSize,
+      sweepBudgetMs,
+      floor: subscriberFloor,
+    })
     const eventsRemaining = await countRows(client, 'events')
+
+    // ── task_transcripts: age ─────────────────────────────────────────────
+    let transcriptsByAge = 0
+    if (days > 0) {
+      const r = await client.execute({
+        sql: `DELETE FROM task_transcripts
+              WHERE (task_id, session_id, seq) IN (
+                SELECT task_id, session_id, seq FROM task_transcripts
+                WHERE ts < ? LIMIT ?
+              )`,
+        args: [cutoffMs, batchSize],
+      })
+      transcriptsByAge = r.rowsAffected
+    }
 
     // ── subscriber_processed_events: orphan dedup-ledger cleanup ──────────
     const orphanResult = await client.execute({
@@ -234,6 +285,7 @@ export async function pruneEvents(
       eventsByAge,
       eventsByCount,
       eventsRemaining,
+      transcriptsByAge,
       subscriberProcessedEventsOrphans: orphanResult.rowsAffected,
     }
   } finally {

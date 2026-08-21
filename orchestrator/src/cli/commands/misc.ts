@@ -294,27 +294,27 @@ const projectGroup: Command = {
 
 const observabilityPrune: Command = {
   path: 'observability prune',
-  summary: 'prune old telemetry rows',
-  usage: 'usage: mars observability prune [<days>]',
-  run: async (args, deps) => {
-    const ageArg = args.positional[0]
-    let maxAgeDays = 3
-    if (ageArg !== undefined) {
-      const parsed = Number(ageArg)
-      if (!Number.isFinite(parsed) || parsed < 0) {
-        deps.err(
-          `usage: mars observability prune [<days>]\n\n<days> must be a non-negative number (0 = wipe all); got '${ageArg}'`,
-        )
-        return { code: 1 }
-      }
-      maxAgeDays = parsed
-    }
-    const { pruneObservability } = await import(
-      '../../core/lib/observability-prune'
-    )
+  summary: 'apply the history retention policy once',
+  usage: 'usage: mars observability prune',
+  run: async (_args, deps) => {
+    // No `<days>` override: EVENT_RETENTION is the one window, and letting an
+    // operator pass an ad-hoc one here is what produced three disagreeing
+    // retention numbers in the first place. Use `mars db compact` to loop this
+    // to completion and reclaim the space.
+    const { pruneEvents, EVENT_RETENTION } = await import('../../bus/retention')
     const { resolveDbTarget } = await import('../../core/context')
-    const deleted = await pruneObservability(resolveDbTarget(), maxAgeDays)
-    deps.out(`pruned ${deleted} telemetry row${deleted === 1 ? '' : 's'}`)
+    const r = await pruneEvents(resolveDbTarget())
+    const deleted =
+      r.traceEventsByAge +
+      r.traceEventsByCount +
+      r.eventsByAge +
+      r.eventsByCount +
+      r.transcriptsByAge +
+      r.subscriberProcessedEventsOrphans
+    deps.out(
+      `pruned ${deleted} history row${deleted === 1 ? '' : 's'}` +
+        ` (retention: ${EVENT_RETENTION.days} days / ${EVENT_RETENTION.maxRows} rows per table)`,
+    )
     return { code: 0 }
   },
 }
@@ -322,9 +322,9 @@ const observabilityPrune: Command = {
 const observabilityGroup: Command = {
   path: 'observability',
   summary: 'observability subcommands',
-  usage: 'usage: mars observability prune [<days>]',
+  usage: 'usage: mars observability prune',
   run: (_args, deps) => {
-    deps.err('usage: mars observability prune [<days>]')
+    deps.err('usage: mars observability prune')
     return { code: 2 }
   },
 }
@@ -336,8 +336,8 @@ const dbCompact: Command = {
   summary: 'prune all high-volume tables, then VACUUM (ANALYZE)',
   usage: 'usage: mars db compact',
   run: async (_args, deps) => {
-    const { pruneRetention, RETENTION_BATCH_SIZE } = await import(
-      '../../core/lib/retention-prune'
+    const { pruneEvents, RETENTION_BATCH_SIZE } = await import(
+      '../../bus/retention'
     )
     const { openDb } = await import('../../core/lib/db')
     const { resolveDbTarget } = await import('../../core/context')
@@ -347,34 +347,46 @@ const dbCompact: Command = {
 
     // Run repeated batched passes until a full pass produces no deletions so
     // large DBs are fully cleaned without any single pass exceeding the
-    // batch ceiling.
-    let totalTraceByAge = 0
-    let totalTraceByCount = 0
-    let totalSPE = 0
+    // batch ceiling. Every counter must be in the break test — a pass that
+    // only cleared, say, stale transcripts still has work left to do.
+    let traceByAge = 0
+    let traceByCount = 0
+    let eventsByAge = 0
+    let eventsByCount = 0
+    let transcripts = 0
+    let orphans = 0
 
     while (true) {
-      const r = await pruneRetention(dbTarget, {
-        batchSize: RETENTION_BATCH_SIZE,
-      })
-      totalTraceByAge += r.traceEventsByAge
-      totalTraceByCount += r.traceEventsByCount
-      totalSPE += r.subscriberProcessedEvents
+      const r = await pruneEvents(dbTarget, { batchSize: RETENTION_BATCH_SIZE })
+      traceByAge += r.traceEventsByAge
+      traceByCount += r.traceEventsByCount
+      eventsByAge += r.eventsByAge
+      eventsByCount += r.eventsByCount
+      transcripts += r.transcriptsByAge
+      orphans += r.subscriberProcessedEventsOrphans
       if (
         r.traceEventsByAge === 0 &&
         r.traceEventsByCount === 0 &&
-        r.subscriberProcessedEvents === 0
+        r.eventsByAge === 0 &&
+        r.eventsByCount === 0 &&
+        r.transcriptsByAge === 0 &&
+        r.subscriberProcessedEventsOrphans === 0
       ) {
         break
       }
     }
 
-    const totalTrace = totalTraceByAge + totalTraceByCount
     deps.out(
-      `  trace_events:               ${totalTrace} row(s) removed` +
-        ` (by-age: ${totalTraceByAge}, by-count: ${totalTraceByCount})`,
+      `  trace_events:                ${traceByAge + traceByCount} row(s) removed` +
+        ` (by-age: ${traceByAge}, by-count: ${traceByCount})`,
     )
     deps.out(
-      `  subscriber_processed_events: ${totalSPE} orphaned row(s) removed`,
+      `  events:                      ${eventsByAge + eventsByCount} row(s) removed` +
+        ` (by-age: ${eventsByAge}, by-count: ${eventsByCount})`,
+    )
+    deps.out(`  task_transcripts:            ${transcripts} row(s) removed`)
+    deps.out(
+      `  subscriber_processed_events: ${orphans} orphaned row(s) removed`,
     )
 
     // VACUUM (ANALYZE): reclaim dead tuples from the prune above and refresh

@@ -137,7 +137,7 @@ import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { AWAIT_HUMAN_SENTINEL } from '../lib/sentinels'
 import { computeFailureSignature } from '../lib/failure-signature'
 import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, type TraceEventPhase } from '../lib/trace-events-store'
-import { RETENTION_MAX_ROWS_DEFAULT } from '../lib/retention-prune'
+import { EVENT_RETENTION, pruneEvents } from '../../bus/retention'
 import { setBusLogSink } from '../../bus/log'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket, waitForProcessExit } from './paths'
 import {
@@ -7255,52 +7255,41 @@ export const startDaemon = async (
   }, PHANTOM_WATCHDOG_MS)
   awaitingValidationWatchdog.unref()
 
-  // ── Observability telemetry sweeper ───────────────────────────────────────
-  // Periodically deletes trace_events rows older than three days so the
-  // state store stays bounded across multi-day sessions. The sweep reuses
-  // the same pruneObservability routine that `mars observability prune` calls —
-  // the retention window is always 3 days and is never shortened by the sweeper.
-  // Logs the row count when any rows are removed. .unref() so the timer never
-  // keeps the daemon process alive after shutdown.
+  // ── History retention sweeper ─────────────────────────────────────────────
+  // Applies EVENT_RETENTION — the single retention policy for orchestrator
+  // history — to trace_events, events and task_transcripts so the state store
+  // stays bounded across multi-day sessions. Always logs the gauges so drift
+  // (e.g. 180k rows vs a 50k cap) is visible in watch.log rather than silent
+  // until a deletion threshold is crossed. .unref() so the timer never keeps
+  // the daemon process alive after shutdown.
   const OBSERVABILITY_SWEEP_MS = Number(
     process.env.MARS_OBSERVABILITY_SWEEP_MS ?? 60 * 60_000,
   )
-  const { sweepObservability, sweepRetention } = await import('./observability-sweeper')
   const observabilitySweep = setInterval(() => {
     void (async () => {
       try {
-        const dbTarget = resolveDbTarget()
-
-        // Primary time-based telemetry prune (3-day window).
-        const deleted = await sweepObservability(dbTarget)
-        if (deleted > 0) {
-          log(
-            `[observability-sweep] pruned ${deleted} telemetry row(s) older than 3 days`,
-          )
-        }
-
-        // Secondary retention sweep: row-count cap on trace_events (50 000
-        // rows / 30 days) and orphan prune of subscriber_processed_events.
-        // Runs in the same interval so no extra timer is needed.
-        const retention = await sweepRetention(dbTarget)
-        const retentionDeleted =
+        const retention = await pruneEvents(resolveDbTarget())
+        const deleted =
           retention.traceEventsByAge +
-          retention.traceEventsByLogLineAge +
           retention.traceEventsByCount +
-          retention.subscriberProcessedEvents
-        // Always log the gauge so drift (e.g. 180k rows vs 50k cap) is visible
-        // in watch.log rather than silent until a deletion threshold is crossed.
+          retention.eventsByAge +
+          retention.eventsByCount +
+          retention.transcriptsByAge +
+          retention.subscriberProcessedEventsOrphans
         log(
-          `[retention-sweep] trace_events: ${retention.traceEventsRemaining} rows` +
-            ` (cap ${RETENTION_MAX_ROWS_DEFAULT}),` +
-            ` deleted ${retentionDeleted}` +
+          `[retention-sweep] cap ${EVENT_RETENTION.maxRows} rows /` +
+            ` ${EVENT_RETENTION.days} days; deleted ${deleted};` +
+            ` trace_events: ${retention.traceEventsRemaining} rows` +
             ` (${retention.traceEventsByAge} by age,` +
-            ` ${retention.traceEventsByLogLineAge} log_line age,` +
             ` ${retention.traceEventsByCount} by count);` +
-            ` ${retention.subscriberProcessedEvents} subscriber_processed_events orphans`,
+            ` events: ${retention.eventsRemaining} rows` +
+            ` (${retention.eventsByAge} by age,` +
+            ` ${retention.eventsByCount} by count);` +
+            ` ${retention.transcriptsByAge} task_transcripts;` +
+            ` ${retention.subscriberProcessedEventsOrphans} subscriber_processed_events orphans`,
         )
       } catch (err) {
-        log(`[observability-sweep] errored: ${(err as Error).message}`)
+        log(`[retention-sweep] errored: ${(err as Error).message}`)
       }
     })()
   }, OBSERVABILITY_SWEEP_MS)

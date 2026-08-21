@@ -1,11 +1,7 @@
-import { pruneOutbox } from '../lib/outbox-prune.js'
 import { openDb } from '../lib/db.js'
 import { raiseActionQueueItem } from '../lib/action-queue.js'
 
 const OUTBOX_LAG_WARN_THRESHOLD_DEFAULT = 100_000
-
-/** Seconds of event retention kept even after all cursors have passed. */
-const OUTBOX_MAX_AGE_SECONDS = 86_400 // 24 hours
 
 /**
  * Query the events outbox at `dbTarget` and return the overall lag
@@ -60,9 +56,14 @@ const detectOutboxLag = async (
 }
 
 /**
- * Sweep the events outbox: prune aged events, then raise a per-subscriber
- * action-queue item for any subscriber whose lag exceeds
- * `MARS_OUTBOX_LAG_WARN_THRESHOLD` (default: 100 000).
+ * Sweep the events outbox: raise a per-subscriber action-queue item for any
+ * subscriber whose lag exceeds `MARS_OUTBOX_LAG_WARN_THRESHOLD`
+ * (default: 100 000).
+ *
+ * Retention is not this sweeper's job. `events` ages out under the single
+ * history policy in `bus/retention.ts` alongside `trace_events`; a wedged
+ * subscriber holds its unconsumed backlog above the cap, which is exactly
+ * what the alert below is for.
  *
  * The raise is idempotent: a second sweep with the same wedged subscriber
  * and an unresolved item bumps `seen_count` on the existing row rather than
@@ -76,8 +77,6 @@ export const sweepOutbox = async (dbTarget: string): Promise<void> => {
   const threshold = Number.isFinite(rawThreshold)
     ? rawThreshold
     : OUTBOX_LAG_WARN_THRESHOLD_DEFAULT
-
-  await pruneOutbox(dbTarget, OUTBOX_MAX_AGE_SECONDS)
 
   const { lag, wedged } = await detectOutboxLag(dbTarget, threshold)
 

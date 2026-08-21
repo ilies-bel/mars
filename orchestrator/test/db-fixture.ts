@@ -1,6 +1,13 @@
 import { __truncateAllForTests, openDb, type DbClient } from '../src/core/lib/db.js'
 
-const sharedTarget = `test:shared-pglite:${process.pid}`
+/**
+ * The per-fork database key. Exported for tests that drive production code
+ * taking a `dbTarget` string rather than a `DbClient` — passing this reaches
+ * the same instance `getTestDb()` returns, via db.ts's client registry.
+ */
+export const TEST_DB_TARGET = `test:shared-pglite:${process.pid}`
+
+const sharedTarget = TEST_DB_TARGET
 
 /**
  * Return the per-fork PGlite database in its empty, schema-ready state.
