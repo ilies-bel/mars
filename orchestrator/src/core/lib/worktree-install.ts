@@ -1,7 +1,7 @@
 import { stat, rm, readFile, lstat, readlink, writeFile } from 'node:fs/promises'
 import { isAbsolute, resolve, relative } from 'node:path'
 import { acquireLock } from './git/lock'
-import { type RunSubprocessResult } from './git/claude'
+import { type RunSubprocessResult } from '../ports/executor/types'
 import { getStateDir } from '../context'
 import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
 import { provisionWorktreeDeps } from './worktree-deps'

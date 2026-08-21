@@ -33,7 +33,7 @@ import type {
 } from './trace-events-store'
 import { tierForModel } from '../workers/provider-registry'
 import type { Worker, RunOptions } from '../workers'
-import type { RunAgentResult } from './git/claude'
+import type { RunAgentResult } from '../ports/executor/types'
 import type { AgentEvent } from './claude-stream'
 
 export interface RunWorkerWithSpanOptions {

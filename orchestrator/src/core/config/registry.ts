@@ -20,6 +20,9 @@
  *      `none` and `codegraph` implementation kinds.
  *   4. **"VCS port: interface plus local git implementation"** — registers
  *      the `vcs` Port entry with its `local-git` implementation kind.
+ *   5. **"Arch-guard: route all agent execution through the Executor port"** —
+ *      registers the `executor` Port entry with its `local` (subprocess)
+ *      implementation kind.
  *
  * Each consumer slice owns its Port's actual TypeScript interface (the
  * method-level contract, e.g. `CodeIndexPort.query(...)`) and the
@@ -39,7 +42,7 @@ import { z } from 'zod'
  * literal here (and a matching {@link PORT_REGISTRY} entry) the same change
  * a Port lands — never leave a Port undeclared "for now".
  */
-export const PORT_NAMES = ['verifier', 'codeIndex', 'vcs'] as const
+export const PORT_NAMES = ['verifier', 'codeIndex', 'vcs', 'executor'] as const
 export type PortName = (typeof PORT_NAMES)[number]
 
 /** One selectable implementation of a Port. */
@@ -149,6 +152,18 @@ const REGISTRY: readonly PortRegistryEntry[] = [
       {
         kind: 'local-git',
         description: 'Shells out to the local git binary.',
+      },
+    ],
+  },
+  {
+    port: 'executor',
+    description: 'Runs one agent CLI invocation and reports its transcript, session id and exit.',
+    envVar: 'MARS_EXECUTOR_KIND',
+    defaultKind: 'local',
+    implementations: [
+      {
+        kind: 'local',
+        description: 'Spawns the agent CLI as a local subprocess in the task worktree.',
       },
     ],
   },

@@ -6,7 +6,7 @@ import type {
   AgentEffort,
   AgentPermissionMode,
   RunAgentResult,
-} from '../lib/git/claude'
+} from '../ports/executor/types'
 import type { AgentEvent } from '../lib/claude-stream'
 import type { ProviderUsageSemantics } from '../lib/claude-usage'
 

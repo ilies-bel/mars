@@ -2965,7 +2965,7 @@ export const startDaemon = async (
     const { StewardEventSchema, renderStewardStormBrief, stewardAgent, STEWARD_STORM_TIMEOUT_MS } =
       await import('../agents/steward')
     const { createWorktree } = await import('../lib/git/worktree')
-    const { runClaudeCode } = await import('../lib/git/claude')
+    const { resolveExecutor } = await import('../ports/executor/registry')
     const {
       findOpenActionQueueItemIdBySignature,
       patchActionQueuePayloadById,
@@ -3018,7 +3018,7 @@ export const startDaemon = async (
       }).catch(() => false)
     }
 
-    const result = await runClaudeCode({
+    const result = await resolveExecutor().run({
       cwd: worktree.path,
       prompt: renderStewardStormBrief(brief),
       systemPrompt: stewardAgent.systemPrompt,
@@ -3165,20 +3165,20 @@ export const startDaemon = async (
   // or proposal-approval authority. The durable subscriber below owns when it
   // is called; this callback owns only one provider invocation.
   const runGateFixStewardDispatch = async (event: import('../agents/steward').GateSystemicFailureEvent) => {
-    const [{ runGateFixSteward }, { stewardAgent, STEWARD_GATE_FIX_TOOLS }, { runClaudeCode }] = await Promise.all([
+    const [{ runGateFixSteward }, { stewardAgent, STEWARD_GATE_FIX_TOOLS }, { resolveExecutor }] = await Promise.all([
       import('../gate-fix-steward'),
       import('../agents/steward'),
-      import('../lib/git/claude'),
+      import('../ports/executor/registry'),
     ])
     const outcome = await runGateFixSteward(event, {
       worker: async (prompt) => {
-        const result = await runClaudeCode({
+        const result = await resolveExecutor().run({
           cwd: resolveContext().repoRoot,
           prompt,
           systemPrompt: stewardAgent.systemPrompt,
           model: stewardAgent.model,
           permissionMode: 'bypassPermissions',
-          // `runClaudeCode` exposes denials rather than an allow-list. Keep
+          // The Executor exposes denials rather than an allow-list. Keep
           // the useful repository-read tools while closing every repair/apply
           // route; the prompt independently names the same boundary.
           disallowedTools: [

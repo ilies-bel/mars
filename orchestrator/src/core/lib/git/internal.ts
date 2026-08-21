@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { isAbsolute, join, dirname } from 'node:path'
 import { access } from 'node:fs/promises'
 import { statSync, constants as fsConstants, accessSync } from 'node:fs'
@@ -189,6 +190,39 @@ export const WORKTREE_GIT_TIMEOUT_MS = Number(
 
 export const repoRoot = (): string => getRepoRoot()
 export const moduleDir = (): string => dirname(fileURLToPath(import.meta.url))
+
+// Resolve the main checkout root for a worker `cwd`. A dispatched worker runs
+// inside a worktree (`.mars/worktrees/<id>/`), but codegraph's index lives in
+// the MAIN checkout's `.codegraph/` (built once over the integration branch).
+// `git rev-parse --git-common-dir` from a worktree points at the main repo's
+// `.git`; its parent is the main checkout root that holds `.codegraph/`.
+// Falls back to `cwd` when git resolution fails (non-git dir, missing git) so
+// the caller still gets a usable path rather than throwing.
+//
+// Lives here, in the shared git internals, rather than in one of its two
+// callers: it is a plain `git rev-parse` question, and both the CodeIndex
+// Port's codegraph implementation (`../../ports/code-index/codegraph.ts`) and
+// the Executor Port's agent wrapper (`./claude.ts`) need the answer. Keeping
+// it in either one would force the other Port to import across a seam it has
+// no business reaching through.
+export const resolveCodegraphRoot = (cwd: string): string => {
+  try {
+    const res = spawnSync(
+      'git',
+      ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+      { encoding: 'utf8' },
+    )
+    if (res.status === 0) {
+      const commonDir = res.stdout.trim()
+      // .../<repo>/.git -> .../<repo>; a bare or detached layout that does not
+      // end in `.git` is left to its own parent, which is still the repo root.
+      if (commonDir.length > 0) return dirname(commonDir)
+    }
+  } catch {
+    // git absent or spawn failed — fall through to cwd.
+  }
+  return cwd
+}
 
 // Default search path for the `claude` binary when it is not on the daemon's
 // PATH (e.g. detached / launchd contexts strip everything but a minimal PATH).

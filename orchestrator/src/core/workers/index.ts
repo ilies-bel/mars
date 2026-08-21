@@ -23,7 +23,7 @@ import {
   type AgentEffort,
   type AgentPermissionMode,
   type RunAgentResult,
-} from '../lib/git/claude'
+} from '../ports/executor/types'
 import type { AgentEvent } from '../lib/claude-stream'
 import { PROVIDER_MODELS, tierForModel, type ProviderModelTier, type ProviderName } from './provider-types'
 export { tierForModel } from './provider-types'

@@ -443,7 +443,7 @@ const killHandler = handler('kill', async (_req, deps) => {
   // safely signal our process group (foreground daemons share the
   // user's terminal pgid). killAllChildren() is a no-op if nothing
   // is in flight.
-  const { killAllChildren } = await import('../../lib/git/claude')
+  const { killAllChildren } = await import('../../ports/executor/executor-helpers')
   const killedPids = killAllChildren()
   if (killedPids.length > 0) {
     deps.log(`SIGKILL'd ${killedPids.length} child pid(s): ${killedPids.join(', ')}`)

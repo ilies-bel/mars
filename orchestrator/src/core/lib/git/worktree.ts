@@ -1046,7 +1046,7 @@ const reconcileWithSupervisor = async (args: {
 }): Promise<{ to: string; vegaSessionId: string | null } | null> => {
   const { git, taskId, path, branch, integrationBranch, from, ctx } = args
   const { invokeVcsSupervisor, VCS_SUPERVISOR_TIMEOUT_MS } = await import('./merge')
-  const { extractSessionIdFromConversation } = await import('./claude')
+  const { extractSessionIdFromConversation } = await import('../../ports/executor/executor-helpers')
 
   console.log(
     `[worktree-sync] task ${taskId}: ${branch} conflicts with ${integrationBranch}; ` +

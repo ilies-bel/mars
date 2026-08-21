@@ -1,8 +1,8 @@
 /**
  * `codegraph` CodeIndex implementation — shells out to the `codegraph` CLI
  * (https://github.com/… see `resolveCodegraphRoot`'s doc comment in
- * `../../lib/git/claude.ts` for why the index root differs from `cwd` inside
- * a worktree).
+ * `../../lib/git/internal.ts` for why the index root differs from `cwd`
+ * inside a worktree).
  *
  * Degrades to `none` semantics (empty results, never throws) whenever:
  *   - the `codegraph` binary is absent from PATH (`spawnSync` reports ENOENT);
@@ -15,7 +15,7 @@
  * never fail a caller that merely wanted code-intelligence data.
  */
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
-import { resolveCodegraphRoot } from '../../lib/git/claude'
+import { resolveCodegraphRoot } from '../../lib/git/internal'
 import { noneCodeIndex } from './none'
 import type { CodeIndex, ImpactQuery, ImpactResult, SymbolHit, SymbolQuery } from './types'
 

@@ -17,7 +17,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import type { AgentEffort, AgentPermissionMode } from '../lib/git/claude'
+import type { AgentEffort, AgentPermissionMode } from '../ports/executor/types'
 import {
   WORKER_PROVIDER,
   createWorker,

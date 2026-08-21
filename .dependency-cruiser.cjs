@@ -255,6 +255,40 @@ module.exports = {
     },
 
     {
+      name: 'executor-port-only',
+      severity: 'error',
+      comment:
+        'Agent execution is reachable only through the Executor Port ' +
+        '(core/ports/executor/*, ADR-0097). `core/lib/git/claude.ts` is the concrete local ' +
+        'implementation the port fronts: the `claude`-CLI subprocess wrapper (`runClaudeCode`) ' +
+        'plus the shared spawn/env/blank-prompt plumbing every other provider adapter builds a ' +
+        'run out of. Importing it directly from outside core/ports/executor/ lets a caller bypass ' +
+        'the swappable seam — a future sandboxed or remote Executor binding would silently stop ' +
+        'covering that caller, which is exactly the eleven-edits-instead-of-one problem this ' +
+        'boundary exists to remove. Resolve an Executor through registry.ts ' +
+        '(`resolveExecutor`/`requireExecutor`) to run an agent, or — for the non-`run()` agent ' +
+        'vocabulary (result/effort/permission types, the subprocess and env helpers) — through ' +
+        "the port's `types.ts`/`executor-helpers.ts` re-exports. Unlike `verifier-port-only` " +
+        'above this rule needs NO carve-out for a second wrapped module: `core/lib/git/merge.ts` ' +
+        'and `worktree.ts`, which used to reach into `claude.ts` as siblings, now go through the ' +
+        'port like everyone else. Test files are excepted the same way every other rule in this ' +
+        "section excepts them: a unit test's `vi.mock('.../core/lib/git/claude', ...)` must name " +
+        "the concrete module's real resolved path to intercept what the port's `local` " +
+        'implementation actually calls — mocking the port re-export instead would not intercept ' +
+        'anything.',
+      from: {
+        path: '^orchestrator/src/',
+        pathNot: [
+          '^orchestrator/src/core/ports/executor/',
+          '^orchestrator/src/core/lib/git/claude\\.ts$',
+          '(^|/)__tests__/',
+          '\\.(test|spec)\\.ts$',
+        ],
+      },
+      to: { path: '^orchestrator/src/core/lib/git/claude\\.ts$' },
+    },
+
+    {
       name: 'no-cli-to-core',
       severity: 'error',
       comment:
@@ -283,8 +317,8 @@ module.exports = {
     // DISABLED. DO NOT ENABLE YET.
     // =========================================================================
     // Contract slice for ADR-0097 ("every seam is a cordis service Port with
-    // serializable contracts"). Three consumer slices each thicken one of the
-    // rules below by (a) building/finishing the named `core/ports/<name>/`
+    // serializable contracts"). Each remaining consumer slice thickens one of
+    // the rules below by (a) building/finishing the named `core/ports/<name>/`
     // module — mirroring the existing `core/ports/{code-index,reflector,
     // verifier}/` shape (types.ts + registry.ts + one file per impl kind +
     // __tests__/serializable.test.ts) — and (b) migrating the listed current
@@ -298,19 +332,31 @@ module.exports = {
     // NOT touch the others.
     //
     // Do not "fix" this by pre-populating `pathNot` with every current
-    // caller: for CLI (~46 files) and the not-yet-built Executor/VCS ports
-    // that defeats the rule (it would pass by excluding everything it exists
-    // to catch).
+    // caller: for CLI (~46 files) and the not-yet-built VCS port that defeats
+    // the rule (it would pass by excluding everything it exists to catch).
     //
-    // The fourth rule this stub used to describe, `no-direct-verifier-
-    // internals`, is DONE and lives above as the active `verifier-port-only`
-    // rule (not here, and not disabled) — its consumer slice migrated every
-    // real caller (cli/commands/verify-gate.ts, tools/coder/run-agent.ts,
-    // tools/merge/merge.ts, tools/verify/selection.ts,
-    // workflows/primitives/shared.ts, plus one test that drove verifyChanges
-    // directly) onto core/ports/verifier and landed the rule clean, with no
-    // baseline seed and no pathNot carve-outs beyond the port dir, verify.ts's
-    // own tests, and review.ts's documented self-import exception.
+    // Two of the four rules this stub used to describe are DONE and live
+    // above as active, non-disabled rules:
+    //
+    //   - `no-direct-verifier-internals`, now `verifier-port-only` — its
+    //     consumer slice migrated every real caller (cli/commands/
+    //     verify-gate.ts, tools/coder/run-agent.ts, tools/merge/merge.ts,
+    //     tools/verify/selection.ts, workflows/primitives/shared.ts, plus one
+    //     test that drove verifyChanges directly) onto core/ports/verifier and
+    //     landed the rule clean, with no baseline seed and no pathNot
+    //     carve-outs beyond the port dir, verify.ts's own tests, and
+    //     review.ts's documented self-import exception.
+    //   - `agent-execution-through-executor-port`, now `executor-port-only` —
+    //     its consumer slice built core/ports/executor/ (types.ts +
+    //     executor-helpers.ts + local-subprocess.ts + registry.ts) and moved
+    //     all eleven direct `core/lib/git/claude.ts` importers onto it
+    //     (core/workers/{index,provider-types,persisted-registry,
+    //     run-pty-session,providers}.ts, core/workers/providers/
+    //     {codex,gemini}-headless.ts, core/lib/{reflector,worktree-install,
+    //     run-worker-with-span}.ts, core/lib/git/{merge,worktree}.ts,
+    //     core/daemon/{server,rpc/handlers}.ts, core/ports/code-index/
+    //     codegraph.ts). It also landed clean, with no baseline seed and no
+    //     pathNot carve-out beyond the port dir and claude.ts's own tests.
 
     // {
     //   name: 'cli-no-orchestrator-internals',
@@ -336,39 +382,6 @@ module.exports = {
     //       '^orchestrator/src/core/workers/',
     //       '^orchestrator/src/core/lib/git/',
     //       '^orchestrator/src/tools/',
-    //     ],
-    //   },
-    // },
-    // {
-    //   name: 'agent-execution-through-executor-port',
-    //   severity: 'error',
-    //   comment:
-    //     'Consumer slice: "Arch-guard: route all agent execution through the Executor port". No ' +
-    //     'core/ports/executor/ module exists yet — this rule names the internals it will wrap: ' +
-    //     'core/lib/git/claude.ts (runClaudeCode), core/workers/run-pty-session.ts, ' +
-    //     'core/workers/providers.ts + provider-registry.ts + providers/*, core/workers/index.ts. ' +
-    //     'tools/coder/run-agent.ts is today\'s de-facto dispatch shell (the review.ts-equivalent an ' +
-    //     'executor implementation will wrap, per core-no-direct-provider-impl above for the ' +
-    //     'provider-adapter half of this same boundary). TO ENABLE: build core/ports/executor/ ' +
-    //     '(mirror core/ports/verifier/\'s shape), migrate cli/commands/worker.ts, ' +
-    //     'tools/coder/coder-exit.ts, tools/verify/review.ts, and the plan/slice/triage workflows off ' +
-    //     'core/workers directly, then narrow this from/to to the real remaining boundary.',
-    //   from: {
-    //     path: '^orchestrator/src/',
-    //     pathNot: [
-    //       '^orchestrator/src/core/workers/',
-    //       '^orchestrator/src/core/lib/git/claude\\.ts$',
-    //       '^orchestrator/src/core/ports/executor/',
-    //       '^orchestrator/src/tools/coder/run-agent\\.ts$',
-    //       '(^|/)__tests__/',
-    //       '\\.(test|spec)\\.ts$',
-    //     ],
-    //   },
-    //   to: {
-    //     path: [
-    //       '^orchestrator/src/core/lib/git/claude\\.ts$',
-    //       '^orchestrator/src/core/workers/(run-pty-session|providers|provider-registry)\\.ts$',
-    //       '^orchestrator/src/core/workers/providers/',
     //     ],
     //   },
     // },

@@ -5,7 +5,7 @@ import '../workers'
 import { requireWorker } from '../workers/worker-registry'
 import { runWorkerWithSpan } from './run-worker-with-span'
 import { openTraceEventStore, type TraceEventStore } from './trace-events-store'
-import type { RunAgentResult } from './git/claude'
+import type { RunAgentResult } from '../ports/executor/types'
 import { getRepoRoot, resolveDbTarget } from '../context'
 import { createHash, randomUUID } from 'node:crypto'
 import {

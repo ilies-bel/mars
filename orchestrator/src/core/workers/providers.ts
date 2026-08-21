@@ -3,12 +3,9 @@
 // builder, the prompt-feed method, and an optional done-signal hook.
 
 import { installClaudeStopHook, waitForClaudeDone } from './claude-done-signal'
-import {
-  runClaudeCode,
-  AGENT_TO_USER_DENIED_TOOLS,
-  toClaudeSessionId,
-  type RunAgentResult,
-} from '../lib/git/claude'
+import { AGENT_TO_USER_DENIED_TOOLS, toClaudeSessionId } from '../ports/executor/executor-helpers'
+import { resolveExecutor } from '../ports/executor/registry'
+import type { RunAgentResult } from '../ports/executor/types'
 import { readClaudeOutput } from '../lib/claude-stream'
 import type { ProviderUsageSemantics } from '../lib/claude-usage'
 import { codexHeadless } from './providers/codex-headless'
@@ -197,11 +194,17 @@ const CLAUDE_PROVIDER: ProviderDescriptor = {
     isReady: (buf: string): boolean =>
       buf.includes('❯') &&
       /bypass permissions|shift\+tab to cycle|Haiku|Sonnet|Opus/i.test(buf),
-    // Headless adapter: delegates directly to runClaudeCode so the headless
-    // dispatch path is bit-identical to the pre-seam behaviour. runClaudeCode
+    // Headless adapter: delegates to the Executor Port, whose default `local`
+    // binding is the `runClaudeCode` wrapper — so the headless dispatch path
+    // is bit-identical to the pre-port behaviour while the execution backend
+    // stays swappable from one place (`MARS_EXECUTOR_KIND`). The wrapper
     // extracts the session_id and detects quota-rejection, and Claude Code
     // stamps per-request usage on every assistant event — so the latest one is
     // genuine context occupancy ('per-request').
+    //
+    // `opts` is already the Port-legal (serializable) half and `ctx` the
+    // in-process-only half — the exact `ExecutorRunArgs`/`ExecutorRunContext`
+    // split — so they pass straight through instead of being merged.
     headless: {
       capabilities: {
         usageSemantics: 'per-request',
@@ -212,7 +215,7 @@ const CLAUDE_PROVIDER: ProviderDescriptor = {
         prompt: string,
         opts: HeadlessRunOpts,
         ctx?: HeadlessRunContext,
-      ): Promise<RunAgentResult> => runClaudeCode({ prompt, ...opts, ...ctx }),
+      ): Promise<RunAgentResult> => resolveExecutor().run({ prompt, ...opts }, ctx),
       readOutput: readClaudeOutput,
     },
 }

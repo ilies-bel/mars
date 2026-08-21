@@ -4,9 +4,9 @@ import {
   buildWorkerEnv,
   claudeStreamArgs,
   codegraphMcpConfigJson,
-  resolveCodegraphRoot,
   toClaudeSessionId,
 } from '../git/claude'
+import { resolveCodegraphRoot } from '../git/internal'
 
 describe('claudeStreamArgs isolation flags', () => {
   it('includes --strict-mcp-config', () => {

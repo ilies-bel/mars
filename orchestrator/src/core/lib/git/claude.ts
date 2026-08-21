@@ -9,7 +9,7 @@ import {
   type AgentEvent,
 } from '../claude-stream'
 import { getLatestContextSize } from '../claude-usage'
-import { FALLBACK_CLAUDE_PATH_DIRS, isExecutableFile } from './internal'
+import { FALLBACK_CLAUDE_PATH_DIRS, isExecutableFile, resolveCodegraphRoot } from './internal'
 import { apiCircuitBreaker } from '../api-circuit-breaker'
 
 export interface RunSubprocessResult {
@@ -283,45 +283,16 @@ export interface RunAgentResult extends RunSubprocessResult {
   transportDropped?: boolean
 }
 
-/**
- * The Port-legal request shape for an {@link ExecutorPort} (ADR-0097: "Every
- * seam is a cordis service Port with serializable contracts"). Identical to
- * {@link RunAgentArgs} minus the fields that fail the Port acceptance test —
- * the streaming callback (`onEvent`), a live `AbortSignal` (`externalAbort`),
- * and a process-artifact callback (`onPid`) — so the request can cross a
- * remote adapter (HTTP/webhook/queue) unchanged, not just an in-process call.
- *
- * A local implementation still wants streaming, cancellation, and PID
- * tracking; it may accept them as an out-of-band second argument to
- * `run()` rather than on the request itself, the same way a remote adapter
- * would accept a deadline instead of a signal. That reshaping is the
- * consumer slice's job — this type only fixes the wire-crossing request
- * shape all implementations share.
+/*
+ * NOTE: the Executor Port's own contract types (`ExecutorRunArgs`, the
+ * `ExecutorRunArgs`/`ExecutorRunContext` serializable split, and the
+ * `Executor` interface) used to live here as `ExecutorPortRequest` /
+ * `ExecutorPort`. They now live in `../../ports/executor/types.ts`, which
+ * owns them alongside the registry and the `local` implementation that wraps
+ * {@link runClaudeCode}. This module is that implementation's internals: per
+ * the `executor-port-only` rule in `.dependency-cruiser.cjs`, nothing outside
+ * `core/ports/executor/` imports it any more (ADR-0097).
  */
-export type ExecutorPortRequest = Omit<RunAgentArgs, 'onEvent' | 'externalAbort' | 'onPid'>
-
-/**
- * The Port contract for an agent executor (ADR-0097). Callers resolve this
- * through the cordis context (`ctx.get(...)` / a sealed accessor), never by
- * importing a concrete implementation. The local subprocess implementation
- * wraps {@link runClaudeCode} (and its codex/gemini siblings); a remote
- * implementation (e.g. "run the agent in a managed sandbox") fills the same
- * slot behind one adapter file, invisible to callers.
- *
- * This interface is the shared contract the "Arch-guard: route all agent
- * execution through the Executor port" consumer slice builds on: it still
- * needs to add `src/core/ports/executor/` (mirroring the existing
- * `ports/verifier/` and `ports/code-index/` local/registry pair), reroute
- * the two remaining direct `runClaudeCode` call sites
- * (`core/daemon/server.ts`, `core/workers/providers.ts`) through it, and
- * generalize the direct-import guard already proven in
- * `src/workflows/__tests__/worker-stage-bindings.test.ts` into a repo-wide
- * check. None of that wiring belongs in this file — only the request/result
- * shape does.
- */
-export interface ExecutorPort {
-  run(request: ExecutorPortRequest): Promise<RunAgentResult>
-}
 
 /**
  * First line of the synthetic stderr every headless adapter emits when it is
@@ -402,32 +373,6 @@ interface ClaudeStreamArgsOptions {
   // `codegraph_*` tools (see codegraphMcpConfigJson / runClaudeCode). Omitted
   // when empty so unit tests that build args without a cwd stay flag-free.
   mcpConfig?: string
-}
-
-// Resolve the main checkout root for a worker `cwd`. A dispatched worker runs
-// inside a worktree (`.mars/worktrees/<id>/`), but codegraph's index lives in
-// the MAIN checkout's `.codegraph/` (built once over the integration branch).
-// `git rev-parse --git-common-dir` from a worktree points at the main repo's
-// `.git`; its parent is the main checkout root that holds `.codegraph/`.
-// Falls back to `cwd` when git resolution fails (non-git dir, missing git) so
-// the caller still gets a usable path rather than throwing.
-export const resolveCodegraphRoot = (cwd: string): string => {
-  try {
-    const res = spawnSync(
-      'git',
-      ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
-      { encoding: 'utf8' },
-    )
-    if (res.status === 0) {
-      const commonDir = res.stdout.trim()
-      // .../<repo>/.git -> .../<repo>; a bare or detached layout that does not
-      // end in `.git` is left to its own parent, which is still the repo root.
-      if (commonDir.length > 0) return dirname(commonDir)
-    }
-  } catch {
-    // git absent or spawn failed — fall through to cwd.
-  }
-  return cwd
 }
 
 // Build the inline `--mcp-config` JSON for the codegraph stdio server.

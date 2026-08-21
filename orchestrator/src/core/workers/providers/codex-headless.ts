@@ -16,8 +16,8 @@ import {
   buildWorkerEnv,
   emptyPromptResult,
   isBlankPrompt,
-  type RunAgentResult,
-} from '../../lib/git/claude'
+} from '../../ports/executor/executor-helpers'
+import type { RunAgentResult } from '../../ports/executor/types'
 import type { AgentEvent } from '../../lib/claude-stream'
 import type { HeadlessAdapter, HeadlessRunContext, HeadlessRunOpts } from '../provider-types'
 import { providerBinPath } from '../provider-bin'

@@ -18,8 +18,8 @@ import {
   claudeStreamArgs,
   buildWorkerEnv,
   extractSessionIdFromConversation,
-  type RunSubprocessResult,
-} from './claude'
+} from '../../ports/executor/executor-helpers'
+import type { RunSubprocessResult } from '../../ports/executor/types'
 
 export type MergeTargetStatus =
   | { kind: 'clean' }
