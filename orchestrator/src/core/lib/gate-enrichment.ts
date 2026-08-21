@@ -12,6 +12,7 @@ import {
 import { raiseActionQueueItem } from './action-queue'
 import type { RanVerifyStep } from './derive-repro-command'
 import { makeFixture, type GateReplayFixture } from './gate-replay'
+import { wouldHaveFiredOnMany, type MatcherBreadth } from './matcher-breadth'
 
 /**
  * Gate-enrichment registry (PRD 745f33e0): the static verify gate
@@ -292,12 +293,21 @@ export const getEnrichment = async (
 export interface EnrichmentListEntry extends EnrichmentRecord {
   /** Clean parses recorded so far (shadow rows only advance this). */
   burnInParseCount: number
+  /**
+   * ADR-0099 breadth: how many past recorded task failures this signature
+   * would have fired on, at both the exact-string and family level (see
+   * {@link import('./matcher-breadth').wouldHaveFiredOnMany}). Surfaces a
+   * gate promoted off a single motivating failure (`exact: 1`) even when its
+   * family count shows the same underlying problem recurred under differently
+   * worded signatures.
+   */
+  breadth: MatcherBreadth
 }
 
 /**
  * List the whole registry with burn-in progress — the maintainer surface
  * (PRD user story 6): signature, status, origin task, seen_count, burn-in
- * progress, plus every signature marked non-encodable so the gate's
+ * progress, breadth, plus every signature marked non-encodable so the gate's
  * monotonic-coverage boundary is enumerable instead of silent.
  */
 export const listEnrichments = async (
@@ -308,14 +318,27 @@ export const listEnrichments = async (
     sql: `SELECT * FROM gate_enrichment ORDER BY created_at ASC`,
     args: [],
   })
+  const records = (r.rows as unknown as EnrichmentRow[]).map(rowToRecord)
+  // One batched breadth query over every listed signature rather than one
+  // query per row (ADR-0099's wouldHaveFiredOnMany is built for exactly this).
+  const breadthBySignature = await wouldHaveFiredOnMany(
+    records.map((rec) => rec.signature),
+  ).catch(() => new Map<string, MatcherBreadth>())
   const out: EnrichmentListEntry[] = []
-  for (const raw of r.rows) {
-    const rec = rowToRecord(raw as unknown as EnrichmentRow)
+  for (const rec of records) {
     const burnIn = await getGateBurnInStatus(
       client,
       enrichStepName(rec.signature),
     ).catch(() => ({ inShadow: true, parseCount: 0 }))
-    out.push({ ...rec, burnInParseCount: burnIn.parseCount })
+    out.push({
+      ...rec,
+      burnInParseCount: burnIn.parseCount,
+      breadth: breadthBySignature.get(rec.signature) ?? {
+        exact: 0,
+        family: 0,
+        windowDays: 0,
+      },
+    })
   }
   return out
 }

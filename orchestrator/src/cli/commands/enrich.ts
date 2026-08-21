@@ -22,6 +22,7 @@
  */
 
 import type { Command, CommandDeps } from '../command'
+import { hasFlag } from '../args'
 import {
   approveEnrichment,
   getEnrichment,
@@ -89,10 +90,14 @@ const clearApprovalRow = async (signature: string): Promise<void> => {
 
 const enrichList: Command = {
   path: 'enrich list',
-  summary: 'list the gate-enrichment registry (status, seen count, burn-in)',
-  usage: 'usage: mars enrich list',
-  run: async (_args, deps) => {
+  summary: 'list the gate-enrichment registry (status, seen count, burn-in, breadth)',
+  usage: 'usage: mars enrich list [--json]',
+  run: async (args, deps) => {
     const entries = await listEnrichments(deps.store)
+    if (hasFlag(args, '--json')) {
+      deps.out(JSON.stringify(entries, null, 2))
+      return { code: 0 }
+    }
     if (entries.length === 0) {
       deps.out('(gate-enrichment registry is empty — no failure signature has been observed yet)')
       return { code: 0 }
@@ -104,8 +109,11 @@ const enrichList: Command = {
           : e.status === 'shadow'
             ? `family=${e.encodableFamily ?? '?'} burn-in=${e.burnInParseCount}/${SHADOW_BURN_IN_COUNT}`
             : `family=${e.encodableFamily ?? '?'}`
+      // Breadth (ADR-0099): how many past task failures this signature would
+      // have fired on, exact-string vs. same-family — surfaces a gate
+      // promoted off a single motivating failure.
       deps.out(
-        `${e.signature}  [${e.status}]  seen=${e.seenCount}  ${detail}  origin=${e.originTaskId}`,
+        `${e.signature}  [${e.status}]  seen=${e.seenCount}  ${detail}  origin=${e.originTaskId}\tbreadth=${e.breadth.exact}/${e.breadth.family}`,
       )
     }
     return { code: 0 }
