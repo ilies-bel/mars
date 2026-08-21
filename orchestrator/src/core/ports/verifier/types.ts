@@ -43,21 +43,15 @@ import type { VerifyArgs, VerifyResult } from '../../lib/git/verify'
 
 /**
  * Re-exported verify vocabulary that callers outside this port still need to
- * *build* a {@link VerifierRunArgs} — a step spec, a scope, or a worktree-
- * cleanup request/result — as opposed to the `Verifier.run` contract above,
- * which *executes* one. Re-exported here (rather than left as direct
- * `core/lib/git/verify` imports) so the `verifier-port-only` arch-guard rule
- * holds: every outside caller reaches `verify.ts`'s types through this port
- * directory, never around it (ADR-0097). See `./verify-helpers.ts` for the
- * function-level counterpart of this re-export.
+ * *build* a {@link VerifierRunArgs} — a step, a step spec, or a scope — as
+ * opposed to the `Verifier.run` contract above, which *executes* one.
+ * Re-exported here (rather than left as direct `core/lib/git/verify`
+ * imports) so the `verifier-port-only` arch-guard rule holds: every outside
+ * caller reaches `verify.ts`'s types through this port directory, never
+ * around it (ADR-0097). See `./verify-helpers.ts` for the function-level
+ * counterpart of this re-export.
  */
-export type {
-  VerifyStep,
-  VerifyStepSpec,
-  VerifyScope,
-  CleanWorktreeArgs,
-  CleanWorktreeResult,
-} from '../../lib/git/verify'
+export type { VerifyStep, VerifyStepSpec, VerifyScope } from '../../lib/git/verify'
 
 /**
  * The Port-legal request shape for a {@link Verifier}. Identical to
