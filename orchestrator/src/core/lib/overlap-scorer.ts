@@ -17,6 +17,8 @@
  * The LabelOverlapBonus path from the reference is intentionally omitted
  * (Mars has no labels).
  */
+import { resolveCodeIndex } from '../ports/code-index/registry'
+import type { CodeIndex } from '../ports/code-index/types'
 
 /**
  * Common English stopwords. Stored as a Set for O(1) lookup.
@@ -103,4 +105,45 @@ export const overlapScore = (a: string, b: string): number => {
 
   const unionSize = setA.size + setB.size - intersectionSize
   return intersectionSize / unionSize
+}
+
+/**
+ * CodeIndex-aware sibling of {@link overlapScore}. Resolves the active
+ * `CodeIndex` implementation at this call boundary — via `resolveCodeIndex`
+ * in `../ports/code-index/registry.ts`, never importing a concrete
+ * implementation (e.g. `codegraph.ts`) directly — and blends real
+ * symbol-search hits into the plain Jaccard score above: when both `a` and
+ * `b` resolve to hits that share at least one file, the score is boosted
+ * toward 1 proportionally to how many of those files overlap.
+ *
+ * With the default `none` implementation — or any implementation that
+ * returns no hits for `a` or `b` — this returns exactly `overlapScore(a, b)`,
+ * so a caller with no code index configured sees identical output to the
+ * pre-CodeIndex behaviour.
+ *
+ * @param codeIndex - Defaults to `resolveCodeIndex()` (real env-selected
+ *   implementation); tests inject a stub directly.
+ */
+export const overlapScoreWithCodeIndex = async (
+  a: string,
+  b: string,
+  codeIndex: CodeIndex = resolveCodeIndex(),
+): Promise<number> => {
+  const base = overlapScore(a, b)
+
+  const [hitsA, hitsB] = await Promise.all([
+    codeIndex.search({ term: a }),
+    codeIndex.search({ term: b }),
+  ])
+  if (hitsA.length === 0 || hitsB.length === 0) return base
+
+  const filesA = new Set(hitsA.map((hit) => hit.filePath))
+  const filesB = new Set(hitsB.map((hit) => hit.filePath))
+  let sharedFiles = 0
+  for (const f of filesA) if (filesB.has(f)) sharedFiles++
+  if (sharedFiles === 0) return base
+
+  const unionSize = new Set([...filesA, ...filesB]).size
+  const fileOverlap = sharedFiles / unionSize
+  return Math.min(1, base + fileOverlap * (1 - base))
 }

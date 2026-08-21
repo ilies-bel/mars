@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { resolveCodeIndex } from '../../ports/code-index/registry'
+import type { CodeIndex } from '../../ports/code-index/types'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -122,11 +124,17 @@ interface Pointer {
 /**
  * Select at most {@link MAX_POINTERS} glossary/ADR pointers ranked by relevance
  * to the file shortlist. Ties are broken by id (lexicographic, stable).
+ *
+ * `scoreTerm` defaults to the plain substring heuristic ({@link
+ * scoreTermAgainstFiles}); {@link buildIndexCardWithCodeIndex} passes a
+ * CodeIndex-boosted scorer instead so the two callers share this selection
+ * and rendering logic exactly.
  */
 function selectPointers(
   files: string[],
   glossary: GlossaryEntry[],
   adrs: AdrEntry[],
+  scoreTerm: (term: string, files: string[]) => number = scoreTermAgainstFiles,
 ): Pointer[] {
   const candidates: Pointer[] = []
 
@@ -135,7 +143,7 @@ function selectPointers(
       kind: 'glossary',
       id: entry.id,
       snippet: entry.definition.slice(0, SNIPPET_MAX_CHARS).replace(/\n/g, ' '),
-      score: scoreTermAgainstFiles(entry.term, files),
+      score: scoreTerm(entry.term, files),
     })
   }
 
@@ -144,7 +152,7 @@ function selectPointers(
       kind: 'adr',
       id: entry.id,
       snippet: entry.body.slice(0, SNIPPET_MAX_CHARS).replace(/\n/g, ' '),
-      score: scoreTermAgainstFiles(entry.title, files),
+      score: scoreTerm(entry.title, files),
     })
   }
 
@@ -196,8 +204,38 @@ function renderCard(
   return lines.join('\n') + '\n'
 }
 
+/**
+ * Render + trim to the token budget, shared by {@link buildIndexCard} and
+ * {@link buildIndexCardWithCodeIndex} so the two entry points can never drift
+ * on trimming behaviour.
+ */
+function finalizeCard(
+  taskId: string,
+  commitSha: string,
+  files: string[],
+  pointers: Pointer[],
+  coChanges: CoChange[],
+  cacheKey: string,
+): IndexCard {
+  let text = renderCard(taskId, commitSha, files, pointers, coChanges)
+  let tokens = countTokens(text)
+
+  if (tokens > TOKEN_BUDGET) {
+    // Trim to exactly TOKEN_BUDGET * 4 chars: slice + fixed-length marker.
+    text = text.slice(0, TOKEN_BUDGET * 4 - TRIM_MARKER.length) + TRIM_MARKER
+    tokens = countTokens(text)
+    if (tokens > TOKEN_BUDGET) {
+      throw new Error(
+        `buildIndexCard: card cannot be trimmed to the ${TOKEN_BUDGET}-token budget (${tokens} tokens after trim)`,
+      )
+    }
+  }
+
+  return { text, tokens, cacheKey, staleAsOf: commitSha }
+}
+
 // ---------------------------------------------------------------------------
-// Public function
+// Public functions
 // ---------------------------------------------------------------------------
 
 /**
@@ -216,22 +254,46 @@ function renderCard(
  */
 export function buildIndexCard(input: IndexCardInput): IndexCard {
   const { taskId, commitSha, files, glossary, adrs, coChanges } = input
-
   const cacheKey = computeCacheKey(commitSha, files, glossary, adrs)
   const pointers = selectPointers(files, glossary, adrs)
-  let text = renderCard(taskId, commitSha, files, pointers, coChanges)
-  let tokens = countTokens(text)
+  return finalizeCard(taskId, commitSha, files, pointers, coChanges, cacheKey)
+}
 
-  if (tokens > TOKEN_BUDGET) {
-    // Trim to exactly TOKEN_BUDGET * 4 chars: slice + fixed-length marker.
-    text = text.slice(0, TOKEN_BUDGET * 4 - TRIM_MARKER.length) + TRIM_MARKER
-    tokens = countTokens(text)
-    if (tokens > TOKEN_BUDGET) {
-      throw new Error(
-        `buildIndexCard: card cannot be trimmed to the ${TOKEN_BUDGET}-token budget (${tokens} tokens after trim)`,
-      )
-    }
+/**
+ * CodeIndex-aware sibling of {@link buildIndexCard}. Resolves the active
+ * `CodeIndex` implementation at this call boundary — via `resolveCodeIndex`
+ * in `../../ports/code-index/registry.ts`, never importing a concrete
+ * implementation (e.g. `codegraph.ts`) directly — and uses its real
+ * symbol-search hits to boost glossary/ADR pointer relevance beyond the
+ * plain substring heuristic `scoreTermAgainstFiles` applies.
+ *
+ * For each distinct glossary term / ADR title, queries
+ * `codeIndex.search({ term })` once and adds the number of returned hits
+ * whose `filePath` is in the card's file shortlist to that term's heuristic
+ * score. With the default `none` implementation — or any implementation
+ * that returns no hits for a term — every boost is 0, so this produces
+ * output identical to `buildIndexCard(input)`.
+ *
+ * @param codeIndex - Defaults to `resolveCodeIndex()` (real env-selected
+ *   implementation); tests inject a stub directly.
+ */
+export async function buildIndexCardWithCodeIndex(
+  input: IndexCardInput,
+  codeIndex: CodeIndex = resolveCodeIndex(),
+): Promise<IndexCard> {
+  const { taskId, commitSha, files, glossary, adrs, coChanges } = input
+  const cacheKey = computeCacheKey(commitSha, files, glossary, adrs)
+
+  const fileSet = new Set(files)
+  const boosts = new Map<string, number>()
+  for (const term of [...glossary.map((g) => g.term), ...adrs.map((a) => a.title)]) {
+    if (boosts.has(term)) continue
+    const hits = await codeIndex.search({ term })
+    boosts.set(term, hits.filter((hit) => fileSet.has(hit.filePath)).length)
   }
 
-  return { text, tokens, cacheKey, staleAsOf: commitSha }
+  const pointers = selectPointers(files, glossary, adrs, (term, fs) =>
+    scoreTermAgainstFiles(term, fs) + (boosts.get(term) ?? 0),
+  )
+  return finalizeCard(taskId, commitSha, files, pointers, coChanges, cacheKey)
 }
