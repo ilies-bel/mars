@@ -28,9 +28,8 @@ const reflect: Command = {
     }
     const sinceIso = args.flags['--since']
     const { loadRecentTaskCorpus } = await import('../../core/lib/reflect-query')
-    const { runReflector, persistSuggestions } = await import(
-      '../../core/lib/reflector'
-    )
+    const { persistSuggestions } = await import('../../core/lib/reflector')
+    const { requireReflector } = await import('../../core/ports/reflector/registry')
     // Best-effort baseline-attribution wiring: `findBaselineCaughtTaskIds`
     // (mars-dccf9bf0's shared helper) only fires when `pauseState.reason ===
     // 'baseline'`, so deriving `isBaselinePoisoned` from that same field is
@@ -84,7 +83,10 @@ const reflect: Command = {
         )
       }
     }
-    const result = await runReflector(corpus)
+    const result = await requireReflector<
+      import('../../core/lib/reflector').TokenReflectorPortRequest,
+      import('../../core/lib/reflector').ReflectionResult
+    >('token').reflect(corpus)
     if (result.tokenAnalysis) {
       const ta = result.tokenAnalysis
       deps.out('\nToken analysis')
@@ -248,7 +250,7 @@ const arcReflect: Command = {
     const { loadDeepReflectArc, resolveOriginIdForTaskOrSelf } = await import(
       '../../core/lib/deep-reflect-query'
     )
-    const { runDeepReflectorArc } = await import('../../core/lib/deep-reflector')
+    const { requireReflector } = await import('../../core/ports/reflector/registry')
     const { applyVerdicts, applyScorerVerdicts, applyCapabilityGapVerdicts } =
       await import('../../core/lib/reflector')
 
@@ -278,7 +280,10 @@ const arcReflect: Command = {
       }
     }
 
-    const result = await runDeepReflectorArc(arc)
+    const result = await requireReflector<
+      import('../../core/lib/deep-reflect-query').DeepReflectArc,
+      import('../../core/lib/deep-reflector').DeepReflectionResult
+    >('deep-arc').reflect(arc)
     const report = result.report
 
     // Compute the report path BEFORE applying scorer verdicts: the persisted
@@ -536,7 +541,7 @@ const sessionReflect: Command = {
     const { resolveSessionId, loadSessionArcs } = await import(
       '../../core/lib/deep-reflect-query'
     )
-    const { runSessionReflector } = await import('../../core/lib/deep-reflector')
+    const { requireReflector } = await import('../../core/ports/reflector/registry')
     const { applyVerdicts } = await import('../../core/lib/reflector')
 
     const sessionId = await resolveSessionId(rawInput)
@@ -588,7 +593,10 @@ const sessionReflect: Command = {
       }
     }
 
-    const result = await runSessionReflector(sessionResult)
+    const result = await requireReflector<
+      import('../../core/lib/deep-reflect-query').SessionArcsResult,
+      import('../../core/lib/deep-reflector').DeepReflectionResult
+    >('deep-session').reflect(sessionResult)
     const report = result.report
 
     const { mkdir, writeFile } = await import('node:fs/promises')

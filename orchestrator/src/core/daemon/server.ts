@@ -5654,7 +5654,8 @@ export const startDaemon = async (
       // Run the same reflect pipeline as `mars reflect` and close the level-triggered
       // reflect-recommended action-queue row when done.
       const { loadRecentTaskCorpus } = await import('../lib/reflect-query')
-      const { runReflector, persistSuggestions } = await import('../lib/reflector')
+      const { persistSuggestions } = await import('../lib/reflector')
+      const { requireReflector } = await import('../ports/reflector/registry')
       const { closeReflectRecommendedRow } = await import('../lib/self-evolve-trigger')
       const { insertReflectionTask } = await import('../queue')
       const { persistLastReflectRanAt } = await import('./config')
@@ -5669,7 +5670,10 @@ export const startDaemon = async (
       })
       let proposalsRaised = 0
       if (corpus.entries.length > 0) {
-        const result = await runReflector(corpus)
+        const result = await requireReflector<
+          import('../lib/reflector').TokenReflectorPortRequest,
+          import('../lib/reflector').ReflectionResult
+        >('token').reflect(corpus)
         if (result.suggestions.length > 0) {
           const sourceTaskId = await insertReflectionTask(corpus.entries.length)
           await persistSuggestions(result.suggestions, sourceTaskId)
@@ -6815,7 +6819,8 @@ export const startDaemon = async (
             log('[reflect-detector] auto-run-reflect=on — running reflection automatically')
             try {
               const { loadRecentTaskCorpus } = await import('../lib/reflect-query')
-              const { runReflector, persistSuggestions } = await import('../lib/reflector')
+              const { persistSuggestions } = await import('../lib/reflector')
+              const { requireReflector } = await import('../ports/reflector/registry')
               const { closeReflectRecommendedRow: closeRow } = await import('../lib/self-evolve-trigger')
               const { insertReflectionTask } = await import('../queue')
               const { persistLastReflectRanAt } = await import('./config')
@@ -6828,7 +6833,10 @@ export const startDaemon = async (
               })
               let proposalsRaised = 0
               if (corpus.entries.length > 0) {
-                const reflResult = await runReflector(corpus)
+                const reflResult = await requireReflector<
+                  import('../lib/reflector').TokenReflectorPortRequest,
+                  import('../lib/reflector').ReflectionResult
+                >('token').reflect(corpus)
                 if (reflResult.suggestions.length > 0) {
                   const sourceTaskId = await insertReflectionTask(corpus.entries.length)
                   await persistSuggestions(reflResult.suggestions, sourceTaskId)

@@ -18,6 +18,7 @@ import { digestArc } from './arc-digest'
 import { insertMemoryPacket } from '../store/memory-packet-store'
 import { getTask } from '../queue'
 import { isMemoryCaptureDisabled } from './auto-reflect-gate'
+import type { Reflector } from '../ports/reflector/types'
 
 interface DissonantCall {
   taskId: string | null
@@ -1077,6 +1078,19 @@ export const runDeepReflectorArc = async (
   }
 }
 
+/**
+ * The `deep-arc` Reflector Port implementation — binds
+ * {@link runDeepReflectorArc} to the `Reflector<DeepReflectArc,
+ * DeepReflectionResult>` contract (`../ports/reflector/types.ts`).
+ * Registered under kind `'deep-arc'` in `../ports/reflector/registry.ts`;
+ * CLI/daemon entry points resolve it via `requireReflector('deep-arc')`
+ * instead of importing `runDeepReflectorArc` directly.
+ */
+export const deepArcReflector: Reflector<DeepReflectArc, DeepReflectionResult> = {
+  kind: 'deep-arc',
+  reflect: (arc) => runDeepReflectorArc(arc),
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Session-scoped reflection
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1311,4 +1325,17 @@ export const runSessionReflector = async (
     rawOutput: text,
     exitCode: r.exitCode,
   }
+}
+
+/**
+ * The `deep-session` Reflector Port implementation — binds
+ * {@link runSessionReflector} to the `Reflector<SessionArcsResult,
+ * DeepReflectionResult>` contract (`../ports/reflector/types.ts`).
+ * Registered under kind `'deep-session'` in `../ports/reflector/registry.ts`;
+ * CLI/daemon entry points resolve it via `requireReflector('deep-session')`
+ * instead of importing `runSessionReflector` directly.
+ */
+export const deepSessionReflector: Reflector<SessionArcsResult, DeepReflectionResult> = {
+  kind: 'deep-session',
+  reflect: (result) => runSessionReflector(result),
 }

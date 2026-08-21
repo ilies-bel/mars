@@ -16,6 +16,7 @@ import { isMemoryCaptureDisabled } from './auto-reflect-gate'
 import { insertMemoryPacket } from '../store/memory-packet-store'
 import { loadLeverRegistry, formatRecipeCatalog, formatLeverList } from './lever-registry'
 import type { LeverRegistryEntry } from './lever-registry'
+import type { Reflector, ReflectorRunOutcome } from '../ports/reflector/types'
 
 // Re-export the shared outcome types so callers importing from 'reflector'
 // continue to get them (deep-reflector.ts, tests, etc.).
@@ -75,21 +76,10 @@ interface TokenAnalysis {
   notes: string
 }
 
-/**
- * Shared envelope every reflector's result carries: the raw provider text
- * and its exit code, alongside a kind-specific parsed payload (ADR-0097's
- * Port acceptance test — plain serializable data, no live handles). All
- * three reflectors already produce this shape today — this module's
- * token/lever synthesis ({@link ReflectionResult}), deep-reflector.ts's
- * arc/session post-mortems (`DeepReflectionResult`), and
- * failure-reflector.ts's harness-improvement analysis — so naming it here
- * lets each conform to {@link ReflectorPort} without reshaping its own
- * result type.
- */
-export interface ReflectorRunOutcome {
-  rawOutput: string
-  exitCode: number
-}
+// Re-export the shared Port envelope/kind so existing importers of
+// `./reflector` (tests, deep-reflector.ts) keep working without reaching
+// into `../ports/reflector/types` directly.
+export type { ReflectorRunOutcome, ReflectorKind, Reflector } from '../ports/reflector/types'
 
 export interface ReflectionResult extends ReflectorRunOutcome {
   tokenAnalysis: TokenAnalysis | null
@@ -97,50 +87,12 @@ export interface ReflectionResult extends ReflectorRunOutcome {
 }
 
 /**
- * Discriminates the three reflector implementations that bind to
- * {@link ReflectorPort} (the "Reflector port over the three reflectors"
- * slice): token/lever reflection (this module), arc- and session-scoped
- * deep reflection (`deep-reflector.ts`), and failure-triggered harness
- * reflection (`failure-reflector.ts`). A cordis registry keyed on this
- * literal is how a caller resolves "the reflector for this corpus" without
- * importing a concrete module.
- */
-export type ReflectorKind = 'token' | 'deep-arc' | 'deep-session' | 'failure'
-
-/**
- * The Port contract for a reflector (ADR-0097: "Every seam is a cordis
- * service Port with serializable contracts"). Callers resolve an
- * implementation through the cordis context (`ctx.get(...)` / a sealed
- * accessor) keyed by {@link ReflectorKind}, never by importing
- * `runReflector` / `runDeepReflectorArc` / `spawnFailureReflector` directly
- * — that indirection is what the "Route reflector.ts through the Worker
- * layer" slice uses to move each reflector's persistence side effects
- * (proposal writes, task enqueues, memory-packet inserts — see
- * {@link persistSuggestions} and {@link applyVerdicts}) out of the reflector
- * module and into the Worker layer that calls the Port, so a reflector
- * implementation only computes.
- *
- * `TRequest` is intentionally per-kind rather than one shared shape: the
- * three corpora ({@link ReflectCorpus}, an arc/session digest, and
- * `SpawnFailureReflectorOpts`) are structurally unrelated. Every
- * implementation's request and result MUST still pass the Port acceptance
- * test that {@link ReflectorRunOutcome} anchors: plain serializable data, no
- * `AbortSignal`, no PID/stream callbacks, no live process handles — the same
- * test `VerifierPort` (`git/verify.ts`) applies.
- */
-export interface ReflectorPort<TRequest, TResult extends ReflectorRunOutcome> {
-  readonly kind: ReflectorKind
-  reflect(request: TRequest): Promise<TResult>
-}
-
-/**
  * The Port-legal request for the token/lever reflector: already plain
  * serializable data (a corpus of past task records — no live handles), so
- * no field needs stripping the way {@link ReflectorPort}'s doc references
- * `VerifyPortRequest` stripping `VerifyArgs` in `git/verify.ts`. Aliased so
- * the "Reflector port over the three reflectors" slice has a named type to
- * bind `runReflector` to
- * `ReflectorPort<TokenReflectorPortRequest, ReflectionResult>`.
+ * no field needs stripping the way `Reflector`'s doc (`../ports/reflector/types.ts`)
+ * references `VerifyPortRequest` stripping `VerifyArgs` in `git/verify.ts`.
+ * Aliased so `tokenReflector` below has a named type to bind
+ * `Reflector<TokenReflectorPortRequest, ReflectionResult>`.
  */
 export type TokenReflectorPortRequest = ReflectCorpus
 
@@ -713,6 +665,18 @@ export const runReflector = async (
     rawOutput: text,
     exitCode: r.exitCode,
   }
+}
+
+/**
+ * The `token` Reflector Port implementation — binds {@link runReflector} to
+ * the `Reflector<TokenReflectorPortRequest, ReflectionResult>` contract
+ * (`../ports/reflector/types.ts`). Registered under kind `'token'` in
+ * `../ports/reflector/registry.ts`; CLI/daemon entry points resolve it via
+ * `requireReflector('token')` instead of importing `runReflector` directly.
+ */
+export const tokenReflector: Reflector<TokenReflectorPortRequest, ReflectionResult> = {
+  kind: 'token',
+  reflect: runReflector,
 }
 
 /**

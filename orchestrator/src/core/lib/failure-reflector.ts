@@ -9,6 +9,7 @@ import {
 import { getDefaultTaskStore } from '../store/task-store'
 import { loadLeverRegistry, formatRecipeCatalog } from './lever-registry'
 import { collectAssistantText, extractFirstJsonDocument } from './reflector'
+import type { Reflector, ReflectorRunOutcome } from '../ports/reflector/types'
 
 const SYSTEM_PROMPT_TEMPLATE = `You are a harness improvement advisor for the Mars orchestrator.
 A task failed and recovery was exhausted — the fix-task loop could not
@@ -262,4 +263,26 @@ export const spawnFailureReflector = async (
   } finally {
     inFlight -= 1
   }
+}
+
+/**
+ * The `failure` Reflector Port implementation — binds
+ * {@link spawnFailureReflector} to the `Reflector<SpawnFailureReflectorOpts,
+ * ReflectorRunOutcome>` contract (`../ports/reflector/types.ts`). Registered
+ * under kind `'failure'` in `../ports/reflector/registry.ts`; CLI/daemon
+ * entry points resolve it via `requireReflector('failure')` instead of
+ * importing `spawnFailureReflector` directly.
+ *
+ * `spawnFailureReflector` is fire-and-forget by design (admission-controlled,
+ * never throws, persists suggestions as a side effect) and reports no
+ * provider output of its own once suppressed by admission control — the
+ * Port's `ReflectorRunOutcome` envelope is satisfied with a neutral outcome
+ * rather than inventing data the underlying function never produced.
+ */
+export const failureReflector: Reflector<SpawnFailureReflectorOpts, ReflectorRunOutcome> = {
+  kind: 'failure',
+  reflect: async (opts) => {
+    await spawnFailureReflector(opts)
+    return { rawOutput: '', exitCode: 0 }
+  },
 }
