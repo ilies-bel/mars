@@ -12,6 +12,7 @@ import {
 } from './internal'
 import { acquireLock } from './lock'
 import { captureCheckpoint, discardWorkingTreeChanges } from './checkpoint'
+import { writeLastSyncedSha } from './last-synced-sha'
 import {
   runSubprocessStreaming,
   resolveClaudeBin,
@@ -1274,6 +1275,10 @@ export const mergeBranch = async ({
           const reset = await gexec(['reset', '--hard', finalTaskSha], repoRoot())
           output += reset.stdout + reset.stderr
           didResyncWorkingTree = true
+          // Record the sha the primary checkout was just synced to, so a
+          // later process (or a later merge) can tell attributable re-sync
+          // debris apart from genuinely unrelated dirt instead of guessing.
+          writeLastSyncedSha(finalTaskSha)
         } else {
           output += `\n[mergeBranch] merge target checkout has local changes vs ${finalIntegrationSha.slice(0, 9)}; left as-is to avoid clobbering (HEAD ref advanced).`
         }
