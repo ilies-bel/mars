@@ -174,6 +174,12 @@ export const VIEW_CHANNEL_FOR: Record<
   'merge-heartbeat': ['live-task'],
   'code-retry-attempt': ['live-task'],
   'restart-checkpoint': [],
+  // Each verify step's command/exit/output lands as it completes, so a live
+  // task view refreshes gate-by-gate instead of only at step_ended.
+  'verify.step.completed': ['live-task'],
+  // Attribution is emitted once, before the provider CLI starts — the same
+  // moment step_started fires, and onto the same surface.
+  'worker.model.attributed': ['live-task'],
 
   // --- View-invalidation-only kinds (see VIEW_INVALIDATION_KINDS): the
   // fallback for a mutation with no domain event to piggyback on — dispatch

@@ -14,6 +14,10 @@ import {
   planVerifyRetry,
 } from '../../../registries/verify-heuristics'
 import { VERIFY_TIMEOUT_MARKER } from './verify-markers'
+import {
+  tailForTrace,
+  type VerifyStepCompletedPayload,
+} from '../trace-events-store'
 
 /**
  * The runner's output contract. Re-exported (not redefined) from the leaf
@@ -252,6 +256,45 @@ export interface VerifyResult {
  * (`resolveVerifier`) rather than importing this runner directly (ADR-0097).
  */
 
+/**
+ * Persist one verify step's command, exit code and truncated output as a
+ * durable `verify.step.completed` trace event, then hand the step back
+ * unchanged so callers can `return recordVerifyStepCompleted(ctx, step)`.
+ *
+ * This is the durable half of ADR-0097's "verify output lives only in an
+ * ephemeral transcript" gap: `GET /events?taskId=<id>` can now answer "what
+ * did the verify gate actually run, and what did it print?" without opening a
+ * transcript, which ages out on its own schedule.
+ *
+ * Best-effort by construction — a trace-store write must never fail a verify
+ * run, so a rejected `record` is swallowed exactly as `tool_invoked` emission
+ * already is. Emitted only when a trace context is present; without one there
+ * is no store and no task id to attribute the row to.
+ */
+const recordVerifyStepCompleted = async (
+  traceCtx: TraceCtx | undefined,
+  step: VerifyStep,
+): Promise<VerifyStep> => {
+  if (!traceCtx) return step
+  const payload: VerifyStepCompletedPayload = {
+    step: step.name,
+    command: step.commandLine ?? '',
+    exitCode: step.exitCode ?? null,
+    stdoutTail: tailForTrace(step.stdout ?? ''),
+    stderrTail: tailForTrace(step.stderr ?? ''),
+  }
+  await traceCtx.store
+    .record({
+      kind: 'verify.step.completed',
+      taskId: traceCtx.taskId ?? null,
+      originId: traceCtx.originId ?? null,
+      phase: traceCtx.phase ?? 'verify',
+      payload,
+    })
+    .catch(() => {})
+  return step
+}
+
 const runVerifyStep = async (
   name: string,
   gateId: string | undefined,
@@ -291,7 +334,7 @@ const runVerifyStep = async (
   )
   const commandLine = [cmd, ...args].join(' ')
   if (r.exitCode === 0) {
-    return {
+    return recordVerifyStepCompleted(verifyCtx, {
       name,
       ...(gateId !== undefined ? { gateId } : {}),
       passed: true,
@@ -303,7 +346,7 @@ const runVerifyStep = async (
       args,
       stepDir: cwd,
       commandLine,
-    }
+    })
   }
   // Determine what caused the failure and prefix the output accordingly so
   // post-mortems and `computeFailureSignature` can distinguish:
@@ -335,7 +378,7 @@ const runVerifyStep = async (
         : r.exitCode === 137
           ? `verify child killed by SIGKILL (exit 137)\n${rawOutput}`
           : rawOutput
-  return {
+  return recordVerifyStepCompleted(verifyCtx, {
     name,
     ...(gateId !== undefined ? { gateId } : {}),
     passed: false,
@@ -349,7 +392,7 @@ const runVerifyStep = async (
     args,
     stepDir: cwd,
     commandLine,
-  }
+  })
 }
 
 // Best-effort capture of the worktree state at the moment has-diff failed.

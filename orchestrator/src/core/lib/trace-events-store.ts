@@ -44,9 +44,65 @@ export const TRACE_EVENT_KINDS = [
   'merge-heartbeat',
   'code-retry-attempt',
   'restart-checkpoint',
+  'verify.step.completed',
+  'worker.model.attributed',
 ] as const
 
 export type TraceEventKind = (typeof TRACE_EVENT_KINDS)[number]
+
+/**
+ * How many bytes of a verify step's stdout/stderr are kept on a
+ * `verify.step.completed` payload. Verify output is unbounded (a failing test
+ * suite can emit megabytes) and `trace_events.payload` is read on every
+ * `GET /events` page, so both streams are truncated to their TAIL — the end of
+ * a failing run is where the error lives.
+ */
+export const VERIFY_OUTPUT_TAIL_BYTES = 4096
+
+/**
+ * Payload of a `verify.step.completed` event: one verify step's command, its
+ * exit code and the tail of what it printed. The owning task id, origin id and
+ * phase (`'verify'`) stay on the {@link TraceEventInput} envelope — they are
+ * indexed columns, not payload keys.
+ *
+ * `exitCode` is `null` when the step was killed (per-step timeout or abort
+ * signal) rather than exiting on its own.
+ */
+export interface VerifyStepCompletedPayload extends Record<string, unknown> {
+  step: string
+  command: string
+  exitCode: number | null
+  stdoutTail: string
+  stderrTail: string
+}
+
+/**
+ * Payload of a `worker.model.attributed` event: which provider, model and tier
+ * actually ran a worker step. Emitted once per worker run, before the provider
+ * CLI is invoked, so attribution survives even a killed run. The task id and
+ * phase stay on the {@link TraceEventInput} envelope.
+ *
+ * `tier` is `null` when the resolved model id does not appear in the provider's
+ * tier table (an operator-pinned model outside flagship/balanced/fast).
+ */
+export interface WorkerModelAttributedPayload extends Record<string, unknown> {
+  workerName: string
+  stepName: string
+  provider: string
+  model: string
+  tier: string | null
+}
+
+/**
+ * Keep the last {@link VERIFY_OUTPUT_TAIL_BYTES} bytes of `text`, prefixed with
+ * a marker naming how much was dropped so a reader never mistakes a truncated
+ * tail for the whole output.
+ */
+export const tailForTrace = (text: string): string => {
+  if (text.length <= VERIFY_OUTPUT_TAIL_BYTES) return text
+  const dropped = text.length - VERIFY_OUTPUT_TAIL_BYTES
+  return `…[${dropped} bytes truncated]\n${text.slice(-VERIFY_OUTPUT_TAIL_BYTES)}`
+}
 
 export type TraceEventSeverity = 'info' | 'warn' | 'error'
 
@@ -219,6 +275,8 @@ export interface TraceEventStore {
  * - `log_line` → reads `payload.level` ('info'|'warn'|'error'); falls back to 'info'
  * - `worker-model-mismatch` → `warn` (the subprocess is running a different model
  *   than the Worker pin; budget drift risk, needs investigation)
+ * - `verify.step.completed` with non-zero (or null, i.e. killed) `payload.exitCode`
+ *   → `warn` (a failing verify step; `error` stays reserved for task-level failures)
  * - everything else → `info`
  *
  * `log_line` payload shape:
@@ -247,6 +305,9 @@ export const deriveSeverity = (
     return 'info'
   }
   if (kind === 'worker-model-mismatch') return 'warn'
+  if (kind === 'verify.step.completed') {
+    return payload.exitCode === 0 ? 'info' : 'warn'
+  }
   return 'info'
 }
 

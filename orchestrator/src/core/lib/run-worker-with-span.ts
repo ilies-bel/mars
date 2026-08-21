@@ -26,7 +26,12 @@ import { recordUsageEvent } from '../daemon/usage-accumulator'
 import { isReflectDisabled } from './reflect-signals'
 import { evaluateStep } from './step-evaluators'
 import { TRANSCRIPT_CHUNK_BATCH } from './trace-events-store'
-import type { TraceEventStore, TraceEventPhase } from './trace-events-store'
+import type {
+  TraceEventStore,
+  TraceEventPhase,
+  WorkerModelAttributedPayload,
+} from './trace-events-store'
+import { tierForModel } from '../workers/provider-registry'
 import type { Worker, RunOptions } from '../workers'
 import type { RunAgentResult } from './git/claude'
 import type { AgentEvent } from './claude-stream'
@@ -138,6 +143,34 @@ export const runWorkerWithSpan = async (
   // The tier recorded on the span: the caller's override when present,
   // otherwise the Worker's own configured tier (or null if unset).
   const declaredTier: ProviderModelTier | null = modelTier ?? worker.config.modelTier ?? null
+
+  // Durable provider/model attribution, separate from the step_started span.
+  // step_started's payload is a grab-bag an operator has to know how to read;
+  // this row answers exactly one question — "which provider/model/tier ran
+  // this phase?" — and is filterable on its own kind via
+  // `GET /events?taskId=<id>&kind=worker.model.attributed`. Emitted BEFORE the
+  // provider CLI is invoked so a killed or crashed run still has attribution
+  // on record (ADR-0097: attribution must outlive the transcript, which is
+  // written only on step_ended and is pruned on its own schedule).
+  //
+  // The tier is re-derived from the model actually dispatched rather than
+  // echoing `declaredTier`: an operator-pinned `worker.config.model` carries
+  // no declared tier, and a tier override that no longer matches the provider
+  // tier table should show the truth, not the request.
+  const attribution: WorkerModelAttributedPayload = {
+    workerName: worker.config.name,
+    stepName,
+    provider: worker.config.provider,
+    model: resolvedModel,
+    tier: tierForModel(resolvedModel, worker.config.provider) ?? declaredTier,
+  }
+  await safeRecord(traceStore, {
+    kind: 'worker.model.attributed',
+    taskId,
+    originId,
+    phase: phase ?? null,
+    payload: attribution,
+  })
 
   // How this Worker's Provider reports usage, and therefore whether its
   // maxContextTokens ceiling can be enforced in-run at all. Both are stamped on
