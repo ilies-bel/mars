@@ -335,7 +335,7 @@ until the user hits Ctrl-C. There is no wall-clock timeout and no
 **Deep, arc-level post-mortem.** `mars arc reflect <originId>` runs a
 transcript-aware analysis across every task in a Mars arc (the origin
 task plus any recovery / fix tasks that share its `originId`). The
-implement workflow persists the full trimmed `ClaudeEvent[]`
+implement workflow persists the full trimmed `AgentEvent[]`
 conversation (and the concatenated typecheck/test/lint output) into a
 `task_transcripts` row in the Mars database after each run. `arc reflect`
 walks every transcript event-by-event and surfaces:

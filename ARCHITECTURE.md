@@ -71,10 +71,6 @@ between them right now:
 
 - The service container lives in `packages/workflow/src/ctx/`, not
   `orchestrator/src/container/`. It works; it just wasn't moved.
-- Neutral agent contracts (`AgentEvent`, `AgentInvocationResult`) exist
-  alongside their Claude-named originals (`ClaudeEvent` in
-  `core/lib/claude-stream.ts`, `RunAgentResult` in `core/lib/git/claude.ts`)
-  rather than fully replacing them — both still compile and both are used.
 - `orchestrator/src/registries/` holds only `verify-heuristics.ts`. Provider
   and worker registries live at `core/workers/{provider,worker}-registry.ts`
   instead of moving under `registries/`.

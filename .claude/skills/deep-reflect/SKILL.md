@@ -62,7 +62,7 @@ To prevent large arcs from overflowing the model's context window:
    full test runs). An inline `…[N chars elided]…` marker records what
    was dropped.
 2. **Per-task conversation cap (150 KB)** — after truncation, each task's
-   `ClaudeEvent[]` is capped at 150 KB via binary-search head+tail
+   `AgentEvent[]` is capped at 150 KB via binary-search head+tail
    retention. A cap note in the prompt states how many events were elided.
 3. **Total prompt cap (400 KB)** — the assembled prompt is hard-capped at
    400 KB. When the cap triggers, a `[PROMPT TRUNCATED]` note is appended
