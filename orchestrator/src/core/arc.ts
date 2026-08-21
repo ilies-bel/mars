@@ -248,6 +248,17 @@ export interface AcceptanceEntry {
 // Everything else on `Arc` (origin creation, status-write primitives,
 // lease/progress/acceptance bookkeeping, drop/supersede) is core and stays
 // on the aggregate — do not fold it into either extraction.
+//
+// **Cycle status.** The recovery split plus two edge cuts made alongside it
+// (`-> proposals`, `-> lib/diagnose-followup`) took the architecture baseline
+// from 176 to 169 accepted violations, 25 to 18 import cycles; arc.ts is down
+// from 22 cycle entries to 15. The 15 that remain are dominated by two INBOUND
+// facade delegations — `queue.ts -> arc.ts` (10 cycles) and
+// `store/task-store.ts -> arc.ts` (8) — which exist because both modules are
+// thin facades over this aggregate while it imports ~20 symbols back out of
+// `queue.ts`. Untangling that is a facade/aggregate re-layering with its own
+// slice (task mars-6c94eba5), not something to do opportunistically here.
+// Do NOT add a new `arc.ts` import without checking `npm run arch` first.
 export class Arc {
   /**
    * Private — construct an Arc only via {@link Arc.load} or
