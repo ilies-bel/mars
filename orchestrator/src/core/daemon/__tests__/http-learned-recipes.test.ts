@@ -164,7 +164,7 @@ describe('GET /failure-kinds/learned-recipes', () => {
       const recipe = body.learnedRecipes.find(
         (r) => r.failureSignature === 'verify:typecheck/type-mismatch',
       )
-      expect(recipe?.breadth).toEqual({ exact: 0, family: 0 })
+      expect(recipe?.breadth).toEqual({ exact: 0, family: 0, windowDays: 30 })
     } finally {
       await close()
     }

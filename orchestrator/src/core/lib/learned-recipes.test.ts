@@ -6,6 +6,9 @@
  */
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
 import { __resetDbRegistryForTests } from './db.js'
 import { ensureSchema } from './pg-schema.js'
 
@@ -13,8 +16,18 @@ beforeAll(() => {
   process.env.MARS_DB_BACKEND = 'pglite'
 })
 
-let keyCounter = 0
-const freshKey = (): string => `learned-recipes-test-${process.pid}-${(keyCounter += 1)}`
+// The module under test resolves its DB target via `resolveStateClient()` →
+// `resolveContext()`, which does `resolve(process.env.MARS_REPO)` and then
+// `mkdirSync`s a `.mars` dir under it. A bare (non-absolute) key resolves
+// relative to `process.cwd()` — inside a worktree, that cwd is itself nested
+// under the real repo's `.mars/`, so a relative key trips the hermetic-repo
+// guard in test/setup-env.ts. Use a real isolated tmpdir instead, matching
+// the convention in matcher-breadth/learned-recipes-breadth tests.
+let currentRepoDir: string | undefined
+const freshKey = (): string => {
+  currentRepoDir = mkdtempSync(resolve(tmpdir(), `learned-recipes-test-${process.pid}-`))
+  return currentRepoDir
+}
 
 // Each test gets a fresh DB via a unique key. Module-level singletons (db,
 // stateClient) are reset between tests so modules pick up the fresh key.
@@ -30,6 +43,10 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await __resetDbRegistryForTests()
+  if (currentRepoDir) {
+    rmSync(currentRepoDir, { recursive: true, force: true })
+    currentRepoDir = undefined
+  }
 })
 
 // Dynamically import the module under test so it binds to the fresh DB.
@@ -138,7 +155,7 @@ describe('learned-recipes — listLearnedRecipes', () => {
     const list = await m.listLearnedRecipes()
     expect(list).toHaveLength(2)
     for (const recipe of list) {
-      expect(recipe.breadth).toEqual({ exact: 0, family: 0 })
+      expect(recipe.breadth).toEqual({ exact: 0, family: 0, windowDays: 30 })
     }
   })
 })

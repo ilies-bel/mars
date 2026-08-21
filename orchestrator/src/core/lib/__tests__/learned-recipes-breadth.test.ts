@@ -96,7 +96,7 @@ describe('wouldHaveFiredOnMany', () => {
   it('reports zero exact and zero family breadth for a signature with no past matches', async () => {
     const { mb } = await loadModules(repo)
     const result = await mb.wouldHaveFiredOnMany(['no-such/signature'])
-    expect(result.get('no-such/signature')).toEqual({ exact: 0, family: 0 })
+    expect(result.get('no-such/signature')).toEqual({ exact: 0, family: 0, windowDays: 30 })
   })
 
   it('counts exact matches and family matches separately, in one batched call', async () => {
@@ -110,7 +110,7 @@ describe('wouldHaveFiredOnMany', () => {
     await seedFailedTask(q, 'verify:typecheck/unrelated-error')
 
     const result = await mb.wouldHaveFiredOnMany([FINE_SIGNATURE])
-    expect(result.get(FINE_SIGNATURE)).toEqual({ exact: 2, family: 3 })
+    expect(result.get(FINE_SIGNATURE)).toEqual({ exact: 2, family: 3, windowDays: 30 })
   })
 
   it('resolves multiple signatures in a single call', async () => {
@@ -123,9 +123,13 @@ describe('wouldHaveFiredOnMany', () => {
       'setup:install/install-frozen-lockfile',
       'no-such/signature',
     ])
-    expect(result.get(FINE_SIGNATURE)).toEqual({ exact: 1, family: 1 })
-    expect(result.get('setup:install/install-frozen-lockfile')).toEqual({ exact: 1, family: 1 })
-    expect(result.get('no-such/signature')).toEqual({ exact: 0, family: 0 })
+    expect(result.get(FINE_SIGNATURE)).toEqual({ exact: 1, family: 1, windowDays: 30 })
+    expect(result.get('setup:install/install-frozen-lockfile')).toEqual({
+      exact: 1,
+      family: 1,
+      windowDays: 30,
+    })
+    expect(result.get('no-such/signature')).toEqual({ exact: 0, family: 0, windowDays: 30 })
   })
 })
 
@@ -162,6 +166,6 @@ describe('listLearnedRecipes — breadth end-to-end', () => {
 
     const list = await lr.listLearnedRecipes()
     const recipe = list.find((r) => r.failureSignature === FINE_SIGNATURE)
-    expect(recipe!.breadth).toEqual({ exact: 1, family: 1 })
+    expect(recipe!.breadth).toEqual({ exact: 1, family: 1, windowDays: 30 })
   })
 })
