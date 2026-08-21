@@ -171,6 +171,7 @@ import {
   type DaemonStatusPayload,
 } from './protocol'
 import { ViewStreamHub } from './view/stream-hub'
+import { registerViewInvalidation } from '../../bus/view-invalidation'
 import { createConditionItemsSource } from './view/derived-conditions'
 import { resolveStateClient } from '../store/state-client'
 import {
@@ -1001,6 +1002,15 @@ export const startDaemon = async (
   // whenever it mutates the corresponding store. Connected UI clients
   // re-fetch the relevant view endpoint on receipt.
   const viewStreamHub = new ViewStreamHub()
+
+  // Derive most SSE invalidation from `bus` events via the single
+  // kind→channel table in `bus/view-invalidation.ts`, so a new event kind
+  // gets UI invalidation without a hand-wired `bus.on(...)` call here.
+  // Additive: the hand-wired `bus.on('task.*'|'proposal.*', ...)` blocks
+  // further below stay in place for now (a later slice retires them);
+  // registering both just means an event kind covered by both fires an
+  // extra, harmless broadcast to the same channel.
+  registerViewInvalidation(bus, viewStreamHub)
 
   // The TaskFlightTracker owns the four dispatch-bookkeeping collections
   // (inFlight + the two pending sets + the two claimed sets) and the
