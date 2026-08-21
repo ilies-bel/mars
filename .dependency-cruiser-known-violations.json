@@ -150,6 +150,50 @@
   {
     "type": "cycle",
     "from": "orchestrator/src/core/arc.ts",
+    "to": "orchestrator/src/core/lib/git/worktree.ts",
+    "unresolvedTo": "./lib/git/worktree",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/lib/git/worktree.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/action-queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/arc.ts",
     "to": "orchestrator/src/core/lib/main-dirty.ts",
     "unresolvedTo": "./lib/main-dirty",
     "dependencyTypes": [
@@ -196,13 +240,6 @@
         "dependencyTypes": [
           "local",
           "import"
-        ]
-      },
-      {
-        "name": "orchestrator/src/core/lib/action-queue.ts",
-        "dependencyTypes": [
-          "local",
-          "dynamic-import"
         ]
       },
       {
@@ -337,6 +374,43 @@
         "dependencyTypes": [
           "local",
           "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/blocker-resolution.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/blocker-resolution.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "./queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
         ]
       },
       {
@@ -511,6 +585,338 @@
         "dependencyTypes": [
           "local",
           "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/daemon/restart-task.ts",
+    "to": "orchestrator/src/core/blocker-resolution.ts",
+    "unresolvedTo": "../blocker-resolution",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/blocker-resolution.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/action-queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/daemon/restart-task.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/daemon/restart-task.ts",
+    "to": "orchestrator/src/core/lib/action-queue.ts",
+    "unresolvedTo": "../lib/action-queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/lib/action-queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/daemon/restart-task.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/daemon/restart-task.ts",
+    "to": "orchestrator/src/core/lib/git/worktree.ts",
+    "unresolvedTo": "../lib/git/worktree",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/lib/git/worktree.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/action-queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/daemon/restart-task.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/daemon/restart-task.ts",
+    "to": "orchestrator/src/core/lib/sweep.ts",
+    "unresolvedTo": "../lib/sweep",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/lib/sweep.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/daemon/restart-task.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/daemon/restart-task.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "../queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/daemon/restart-task.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
         ]
       }
     ]
@@ -783,6 +1189,194 @@
   },
   {
     "type": "cycle",
+    "from": "orchestrator/src/core/lib/deep-reflector.ts",
+    "to": "orchestrator/src/core/lib/reflector.ts",
+    "unresolvedTo": "./reflector",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/lib/reflector.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/proposals.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/ports/reflector/registry.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/deep-reflector.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/lib/deep-reflector.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "../queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/ports/reflector/registry.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/deep-reflector.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/lib/diagnose-followup.ts",
+    "to": "orchestrator/src/core/lib/action-queue.ts",
+    "unresolvedTo": "./action-queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/lib/action-queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/diagnose-followup.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
     "from": "orchestrator/src/core/lib/diagnose-followup.ts",
     "to": "orchestrator/src/core/lib/diagnose.ts",
     "unresolvedTo": "./diagnose",
@@ -804,6 +1398,43 @@
       },
       {
         "name": "orchestrator/src/core/store/task-store.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/diagnose-followup.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/lib/diagnose-followup.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "../queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/queue.ts",
         "dependencyTypes": [
           "local",
           "import"
@@ -865,6 +1496,143 @@
   {
     "type": "cycle",
     "from": "orchestrator/src/core/lib/failure-reflector.ts",
+    "to": "orchestrator/src/core/lib/reflector.ts",
+    "unresolvedTo": "./reflector",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/lib/reflector.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/proposals.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/failure-reflector.ts",
+        "dependencyTypes": [
+          "local",
+          "type-import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/lib/failure-reflector.ts",
+    "to": "orchestrator/src/core/proposals.ts",
+    "unresolvedTo": "../proposals",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/proposals.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/failure-reflector.ts",
+        "dependencyTypes": [
+          "local",
+          "type-import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/lib/failure-reflector.ts",
     "to": "orchestrator/src/core/store/task-store.ts",
     "unresolvedTo": "../store/task-store",
     "dependencyTypes": [
@@ -915,6 +1683,129 @@
         "name": "orchestrator/src/core/lib/failure-reflector.ts",
         "dependencyTypes": [
           "local",
+          "type-import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/lib/gate-enrichment.ts",
+    "to": "orchestrator/src/core/lib/action-queue.ts",
+    "unresolvedTo": "./action-queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/lib/action-queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/gate-enrichment.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/lib/gate-enrichment.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "../queue",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/gate-enrichment.ts",
+        "dependencyTypes": [
+          "local",
           "dynamic-import"
         ]
       }
@@ -953,6 +1844,43 @@
         "dependencyTypes": [
           "local",
           "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/lib/main-dirty.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "../queue",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
         ]
       },
       {
@@ -1061,9 +1989,9 @@
   },
   {
     "type": "cycle",
-    "from": "orchestrator/src/core/lib/reflector.ts",
-    "to": "orchestrator/src/core/lib/reflect-signals.ts",
-    "unresolvedTo": "./reflect-signals",
+    "from": "orchestrator/src/core/lib/reflect-signals.ts",
+    "to": "orchestrator/src/core/store/task-store.ts",
+    "unresolvedTo": "../store/task-store",
     "dependencyTypes": [
       "local",
       "import"
@@ -1073,13 +2001,6 @@
       "name": "no-circular"
     },
     "cycle": [
-      {
-        "name": "orchestrator/src/core/lib/reflect-signals.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
       {
         "name": "orchestrator/src/core/store/task-store.ts",
         "dependencyTypes": [
@@ -1119,7 +2040,79 @@
         "name": "orchestrator/src/core/lib/failure-reflector.ts",
         "dependencyTypes": [
           "local",
+          "type-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/reflector.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/reflect-signals.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/lib/reflector.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "../queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
           "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/failure-reflector.ts",
+        "dependencyTypes": [
+          "local",
+          "type-import"
         ]
       },
       {
@@ -1191,7 +2184,7 @@
         "name": "orchestrator/src/core/lib/failure-reflector.ts",
         "dependencyTypes": [
           "local",
-          "dynamic-import"
+          "type-import"
         ]
       },
       {
@@ -1199,6 +2192,352 @@
         "dependencyTypes": [
           "local",
           "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/lib/run-worker-with-span.ts",
+    "to": "orchestrator/src/core/lib/reflect-signals.ts",
+    "unresolvedTo": "./reflect-signals",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/lib/reflect-signals.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/store/task-store.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/failure-reflector.ts",
+        "dependencyTypes": [
+          "local",
+          "type-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/reflector.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/run-worker-with-span.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/lib/signature-storm-monitor.ts",
+    "to": "orchestrator/src/core/lib/action-queue.ts",
+    "unresolvedTo": "./action-queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/lib/action-queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/signature-storm-monitor.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/lib/sweep.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "../queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/sweep.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/ports/reflector/registry.ts",
+    "to": "orchestrator/src/core/lib/failure-reflector.ts",
+    "unresolvedTo": "../../lib/failure-reflector",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/lib/failure-reflector.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/proposals.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/ports/reflector/registry.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/ports/reflector/registry.ts",
+    "to": "orchestrator/src/core/lib/reflector.ts",
+    "unresolvedTo": "../../lib/reflector",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/lib/reflector.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/proposals.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/ports/reflector/registry.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
         ]
       }
     ]
@@ -1280,6 +2619,129 @@
   {
     "type": "cycle",
     "from": "orchestrator/src/core/queue-fix-tasks.ts",
+    "to": "orchestrator/src/core/blocker-resolution.ts",
+    "unresolvedTo": "./blocker-resolution",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/blocker-resolution.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/action-queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/queue-fix-tasks.ts",
+    "to": "orchestrator/src/core/lib/action-queue.ts",
+    "unresolvedTo": "./lib/action-queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/lib/action-queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/queue-fix-tasks.ts",
     "to": "orchestrator/src/core/queue-retry.ts",
     "unresolvedTo": "./queue-retry",
     "dependencyTypes": [
@@ -1303,6 +2765,57 @@
         "dependencyTypes": [
           "local",
           "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/queue-fix-tasks.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "./queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
         ]
       },
       {
@@ -1439,6 +2952,210 @@
   },
   {
     "type": "cycle",
+    "from": "orchestrator/src/core/queue-retry.ts",
+    "to": "orchestrator/src/core/lib/action-queue.ts",
+    "unresolvedTo": "./lib/action-queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/lib/action-queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-retry.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/queue-retry.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "./queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-retry.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/rescue-operator-spawn.ts",
+    "to": "orchestrator/src/core/lib/action-queue.ts",
+    "unresolvedTo": "./lib/action-queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/lib/action-queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/rescue-operator-spawn.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "orchestrator/src/core/rescue-operator-spawn.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "./queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/arc.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/blocker-invariant.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/main-dirty.ts",
+        "dependencyTypes": [
+          "local",
+          "dynamic-import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/queue-fix-tasks.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/rescue-operator-spawn.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
     "from": "orchestrator/src/core/rescue-operator-spawn.ts",
     "to": "orchestrator/src/core/store/task-store.ts",
     "unresolvedTo": "./store/task-store",
@@ -1553,6 +3270,15 @@
     "type": "module",
     "from": "packages/workflow/tsup.config.ts",
     "to": "packages/workflow/tsup.config.ts",
+    "rule": {
+      "severity": "warn",
+      "name": "no-orphans"
+    }
+  },
+  {
+    "type": "module",
+    "from": "packages/workflow/vitest.config.ts",
+    "to": "packages/workflow/vitest.config.ts",
     "rule": {
       "severity": "warn",
       "name": "no-orphans"
