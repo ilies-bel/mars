@@ -254,6 +254,30 @@ module.exports = {
       },
     },
 
+    {
+      name: 'no-cli-to-core',
+      severity: 'error',
+      comment:
+        'Tracer-bullet ratchet for the "CLI must not import orchestrator internals" boundary ' +
+        '(PRD ae17340a, ADR-0056 adapter/domain split). orchestrator/src/cli/** renders output ' +
+        'and parses args; importing orchestrator/src/core/** directly couples argument parsing to ' +
+        'daemon/store internals that a future Port is meant to front. Unlike the disabled ' +
+        'cli-no-orchestrator-internals stub below (which waits on the verifier/executor/vcs ' +
+        'ports to migrate every caller before landing clean), this rule is active NOW: today\'s ' +
+        'offenders are frozen in .dependency-cruiser-known-violations.json via the same ' +
+        '--ignore-known baseline mechanism no-circular uses above, and scripts/arch-guard.mjs ' +
+        'additionally enforces that baseline count EXACTLY (see checkCliToCoreExactRatchet there) ' +
+        '— not just as a ceiling — so fixing an offender without regenerating the baseline also ' +
+        'fails the guard, the same discipline the env-reads allowlist already uses. The baseline ' +
+        'may only ever shrink; do not widen `to` or add path exclusions to hide a new import ' +
+        'instead of routing it through a Port.',
+      from: {
+        path: '^orchestrator/src/cli/',
+        pathNot: ['(^|/)__tests__/', '\\.(test|spec)\\.ts$'],
+      },
+      to: { path: '^orchestrator/src/core/' },
+    },
+
     // =========================================================================
     // STUB — MODULAR-CORE PORT BOUNDARIES (PRD ae17340a). INTENTIONALLY
     // DISABLED. DO NOT ENABLE YET.

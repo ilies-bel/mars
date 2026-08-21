@@ -3213,6 +3213,2023 @@
     ]
   },
   {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/action-queue-raise-schema.ts",
+    "to": "orchestrator/src/core/lib/action-queue-kinds.ts",
+    "unresolvedTo": "../core/lib/action-queue-kinds",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/action-queue-watch.tsx",
+    "to": "orchestrator/src/core/context.ts",
+    "unresolvedTo": "../core/context",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/action-queue-watch.tsx",
+    "to": "orchestrator/src/core/daemon/view/action-queue.ts",
+    "unresolvedTo": "../core/daemon/view/action-queue",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/command.ts",
+    "to": "orchestrator/src/core/context.ts",
+    "unresolvedTo": "../core/context",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/command.ts",
+    "to": "orchestrator/src/core/daemon/protocol.ts",
+    "unresolvedTo": "../core/daemon/protocol",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/command.ts",
+    "to": "orchestrator/src/core/store/task-store.ts",
+    "unresolvedTo": "../core/store/task-store",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/action-queue.ts",
+    "to": "orchestrator/src/core/daemon/lifecycle-reconcile.ts",
+    "unresolvedTo": "../../core/daemon/lifecycle-reconcile",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/action-queue.ts",
+    "to": "orchestrator/src/core/daemon/view/action-queue.ts",
+    "unresolvedTo": "../../core/daemon/view/action-queue",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/action-queue.ts",
+    "to": "orchestrator/src/core/health/routes/fix.ts",
+    "unresolvedTo": "../../core/health/routes/fix.js",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/action-queue.ts",
+    "to": "orchestrator/src/core/lib/action-queue-kinds.ts",
+    "unresolvedTo": "../../core/lib/action-queue-kinds",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/action-queue.ts",
+    "to": "orchestrator/src/core/lib/action-queue.ts",
+    "unresolvedTo": "../../core/lib/action-queue",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/action-queue.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "../../core/queue",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/action-queue.ts",
+    "to": "orchestrator/src/core/store/state-client.ts",
+    "unresolvedTo": "../../core/store/state-client",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/adr.ts",
+    "to": "orchestrator/src/core/lib/adr.ts",
+    "unresolvedTo": "../../core/lib/adr",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/alert.ts",
+    "to": "orchestrator/src/core/lib/alert.ts",
+    "unresolvedTo": "../../core/lib/alert",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/chat-feedback.ts",
+    "to": "orchestrator/src/core/lib/chat-feedback-query.ts",
+    "unresolvedTo": "../../core/lib/chat-feedback-query",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/credentials.ts",
+    "to": "orchestrator/src/core/lib/credential-store.ts",
+    "unresolvedTo": "../../core/lib/credential-store",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/daemon.ts",
+    "to": "orchestrator/src/core/daemon/config.ts",
+    "unresolvedTo": "../../core/daemon/config",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/daemon.ts",
+    "to": "orchestrator/src/core/daemon/paths.ts",
+    "unresolvedTo": "../../core/daemon/paths",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/daemon.ts",
+    "to": "orchestrator/src/core/daemon/pause-state.ts",
+    "unresolvedTo": "../../core/daemon/pause-state",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/daemon.ts",
+    "to": "orchestrator/src/core/daemon/server.ts",
+    "unresolvedTo": "../../core/daemon/server",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/daemon.ts",
+    "to": "orchestrator/src/core/levers/store.ts",
+    "unresolvedTo": "../../core/levers/store",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/daemon.ts",
+    "to": "orchestrator/src/core/lib/repo-root-branch-warning.ts",
+    "unresolvedTo": "../../core/lib/repo-root-branch-warning",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/daemon.ts",
+    "to": "orchestrator/src/core/lib/usage-snapshot-store.ts",
+    "unresolvedTo": "../../core/lib/usage-snapshot-store",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/daemon.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "../../core/queue",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/diagnose.ts",
+    "to": "orchestrator/src/core/lib/diagnose.ts",
+    "unresolvedTo": "../../core/lib/diagnose",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/doctor.ts",
+    "to": "orchestrator/src/core/daemon/codex-api.ts",
+    "unresolvedTo": "../../core/daemon/codex-api",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/doctor.ts",
+    "to": "orchestrator/src/core/daemon/config.ts",
+    "unresolvedTo": "../../core/daemon/config",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/doctor.ts",
+    "to": "orchestrator/src/core/health/index.ts",
+    "unresolvedTo": "../../core/health/index.js",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/doctor.ts",
+    "to": "orchestrator/src/core/lib/lever-registry.ts",
+    "unresolvedTo": "../../core/lib/lever-registry",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/doctor.ts",
+    "to": "orchestrator/src/core/lib/worktree-install.ts",
+    "unresolvedTo": "../../core/lib/worktree-install",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/doctor.ts",
+    "to": "orchestrator/src/core/verify-gates.ts",
+    "unresolvedTo": "../../core/verify-gates",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/doctor.ts",
+    "to": "orchestrator/src/core/workers/index.ts",
+    "unresolvedTo": "../../core/workers/index",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/doctor.ts",
+    "to": "orchestrator/src/core/workers/provider-types.ts",
+    "unresolvedTo": "../../core/workers/provider-types",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/doctor.ts",
+    "to": "orchestrator/src/core/workers/providers.ts",
+    "unresolvedTo": "../../core/workers/providers",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/enrich.ts",
+    "to": "orchestrator/src/core/lib/action-queue.ts",
+    "unresolvedTo": "../../core/lib/action-queue",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/enrich.ts",
+    "to": "orchestrator/src/core/lib/gate-burn-in.ts",
+    "unresolvedTo": "../../core/lib/gate-burn-in",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/enrich.ts",
+    "to": "orchestrator/src/core/lib/gate-enrichment.ts",
+    "unresolvedTo": "../../core/lib/gate-enrichment",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/enter.ts",
+    "to": "orchestrator/src/core/lib/live-briefing.ts",
+    "unresolvedTo": "../../core/lib/live-briefing",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/glossary.ts",
+    "to": "orchestrator/src/core/lib/glossary.ts",
+    "unresolvedTo": "../../core/lib/glossary",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/health.ts",
+    "to": "orchestrator/src/core/health/posture.ts",
+    "unresolvedTo": "../../core/health/posture.js",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/health.ts",
+    "to": "orchestrator/src/core/store/state-client.ts",
+    "unresolvedTo": "../../core/store/state-client.js",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/install.ts",
+    "to": "orchestrator/src/core/daemon/config.ts",
+    "unresolvedTo": "../../core/daemon/config",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/install.ts",
+    "to": "orchestrator/src/core/workers/provider-registry.ts",
+    "unresolvedTo": "../../core/workers/provider-registry",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/install.ts",
+    "to": "orchestrator/src/core/workers/provider-types.ts",
+    "unresolvedTo": "../../core/workers/provider-types",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/install.ts",
+    "to": "orchestrator/src/core/workers/providers.ts",
+    "unresolvedTo": "../../core/workers/providers",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/kpi-compare.ts",
+    "to": "orchestrator/src/core/lib/kpi-compute.ts",
+    "unresolvedTo": "../../core/lib/kpi-compute.js",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/kpi-compare.ts",
+    "to": "orchestrator/src/core/lib/kpi/cost-per-merged-task.ts",
+    "unresolvedTo": "../../core/lib/kpi/cost-per-merged-task.js",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/kpi-compare.ts",
+    "to": "orchestrator/src/core/store/task-store.ts",
+    "unresolvedTo": "../../core/store/task-store",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/lever.ts",
+    "to": "orchestrator/src/core/daemon/config.ts",
+    "unresolvedTo": "../../core/daemon/config",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/lever.ts",
+    "to": "orchestrator/src/core/lib/conversation-copy.ts",
+    "unresolvedTo": "../../core/lib/conversation-copy",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/lever.ts",
+    "to": "orchestrator/src/core/lib/lever-registry.ts",
+    "unresolvedTo": "../../core/lib/lever-registry",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/lifecycle.ts",
+    "to": "orchestrator/src/core/daemon/paths.ts",
+    "unresolvedTo": "../../core/daemon/paths",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/lifecycle.ts",
+    "to": "orchestrator/src/core/daemon/startup-reconcile.ts",
+    "unresolvedTo": "../../core/daemon/startup-reconcile",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/lifecycle.ts",
+    "to": "orchestrator/src/core/land-task.ts",
+    "unresolvedTo": "../../core/land-task",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/lifecycle.ts",
+    "to": "orchestrator/src/core/proposals.ts",
+    "unresolvedTo": "../../core/proposals",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/lifecycle.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "../../core/queue",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/mcp-worker.ts",
+    "to": "orchestrator/src/core/mcp/worker-server.ts",
+    "unresolvedTo": "../../core/mcp/worker-server.js",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/memory.ts",
+    "to": "orchestrator/src/core/store/memory-packet-store.ts",
+    "unresolvedTo": "../../core/store/memory-packet-store",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/misc.ts",
+    "to": "orchestrator/src/core/context.ts",
+    "unresolvedTo": "../../core/context",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/misc.ts",
+    "to": "orchestrator/src/core/lib/db.ts",
+    "unresolvedTo": "../../core/lib/db",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/misc.ts",
+    "to": "orchestrator/src/core/lib/kpi-snapshots.ts",
+    "unresolvedTo": "../../core/lib/kpi-snapshots.js",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/misc.ts",
+    "to": "orchestrator/src/core/lib/sweep.ts",
+    "unresolvedTo": "../../core/lib/sweep",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/misc.ts",
+    "to": "orchestrator/src/core/lib/worktree-clean.ts",
+    "unresolvedTo": "../../core/lib/worktree-clean",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/misc.ts",
+    "to": "orchestrator/src/core/lib/worktree-prune.ts",
+    "unresolvedTo": "../../core/lib/worktree-prune",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/misc.ts",
+    "to": "orchestrator/src/core/store/task-store.ts",
+    "unresolvedTo": "../../core/store/task-store.js",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/notice.ts",
+    "to": "orchestrator/src/core/lib/action-queue-kinds.ts",
+    "unresolvedTo": "../../core/lib/action-queue-kinds",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/notice.ts",
+    "to": "orchestrator/src/core/lib/notice-store.ts",
+    "unresolvedTo": "../../core/lib/notice-store",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/notifications.ts",
+    "to": "orchestrator/src/core/store/state-client.ts",
+    "unresolvedTo": "../../core/store/state-client",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/notifications.ts",
+    "to": "orchestrator/src/core/store/state-store.ts",
+    "unresolvedTo": "../../core/store/state-store",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/operator.ts",
+    "to": "orchestrator/src/core/daemon/config.ts",
+    "unresolvedTo": "../../core/daemon/config",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/operator.ts",
+    "to": "orchestrator/src/core/daemon/paths.ts",
+    "unresolvedTo": "../../core/daemon/paths",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/operator.ts",
+    "to": "orchestrator/src/core/daemon/pause-state.ts",
+    "unresolvedTo": "../../core/daemon/pause-state",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/operator.ts",
+    "to": "orchestrator/src/core/lib/qa-step-list-flag.ts",
+    "unresolvedTo": "../../core/lib/qa-step-list-flag.js",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/operator.ts",
+    "to": "orchestrator/src/core/lib/settings.ts",
+    "unresolvedTo": "../../core/lib/settings",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/operator.ts",
+    "to": "orchestrator/src/core/lib/spend-meter.ts",
+    "unresolvedTo": "../../core/lib/spend-meter",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/operator.ts",
+    "to": "orchestrator/src/core/store/state-client.ts",
+    "unresolvedTo": "../../core/store/state-client",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/operator.ts",
+    "to": "orchestrator/src/core/store/state-store.ts",
+    "unresolvedTo": "../../core/store/state-store",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/proposal.ts",
+    "to": "orchestrator/src/core/author.ts",
+    "unresolvedTo": "../../core/author",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/proposal.ts",
+    "to": "orchestrator/src/core/daemon/paths.ts",
+    "unresolvedTo": "../../core/daemon/paths",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/proposal.ts",
+    "to": "orchestrator/src/core/proposals.ts",
+    "unresolvedTo": "../../core/proposals",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/proposal.ts",
+    "to": "orchestrator/src/core/store/task-store.ts",
+    "unresolvedTo": "../../core/store/task-store",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/propose.ts",
+    "to": "orchestrator/src/core/lib/chat-mars-verbs.ts",
+    "unresolvedTo": "../../core/lib/chat-mars-verbs",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/provider-probe.ts",
+    "to": "orchestrator/src/core/workers/provider-types.ts",
+    "unresolvedTo": "../../core/workers/provider-types",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/reflect.ts",
+    "to": "orchestrator/src/core/context.ts",
+    "unresolvedTo": "../../core/context",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/reflect.ts",
+    "to": "orchestrator/src/core/daemon/pause-state.ts",
+    "unresolvedTo": "../../core/daemon/pause-state",
+    "dependencyTypes": [
+      "local",
+      "type-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/reflect.ts",
+    "to": "orchestrator/src/core/lib/arc-qa-manifest.ts",
+    "unresolvedTo": "../../core/lib/arc-qa-manifest",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/reflect.ts",
+    "to": "orchestrator/src/core/lib/deep-reflect-query.ts",
+    "unresolvedTo": "../../core/lib/deep-reflect-query",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/reflect.ts",
+    "to": "orchestrator/src/core/lib/deep-reflector.ts",
+    "unresolvedTo": "../../core/lib/deep-reflector",
+    "dependencyTypes": [
+      "local",
+      "type-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/reflect.ts",
+    "to": "orchestrator/src/core/lib/kpi-snapshots.ts",
+    "unresolvedTo": "../../core/lib/kpi-snapshots.js",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/reflect.ts",
+    "to": "orchestrator/src/core/lib/reflect-query.ts",
+    "unresolvedTo": "../../core/lib/reflect-query",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/reflect.ts",
+    "to": "orchestrator/src/core/lib/reflector.ts",
+    "unresolvedTo": "../../core/lib/reflector",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/reflect.ts",
+    "to": "orchestrator/src/core/ports/reflector/registry.ts",
+    "unresolvedTo": "../../core/ports/reflector/registry",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/reflect.ts",
+    "to": "orchestrator/src/core/proposals.ts",
+    "unresolvedTo": "../../core/proposals",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/reflect.ts",
+    "to": "orchestrator/src/core/reflect-workflow-fit.ts",
+    "unresolvedTo": "../../core/reflect-workflow-fit",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/release-notes.ts",
+    "to": "orchestrator/src/core/daemon/view/release-notes.ts",
+    "unresolvedTo": "../../core/daemon/view/release-notes",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/run.ts",
+    "to": "orchestrator/src/core/daemon/http-server.ts",
+    "unresolvedTo": "../../core/daemon/http-server",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/scorer.ts",
+    "to": "orchestrator/src/core/daemon/paths.ts",
+    "unresolvedTo": "../../core/daemon/paths",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/scorer.ts",
+    "to": "orchestrator/src/core/scorer-results.ts",
+    "unresolvedTo": "../../core/scorer-results",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/scorer.ts",
+    "to": "orchestrator/src/core/scorers.ts",
+    "unresolvedTo": "../../core/scorers",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/skill-forge.ts",
+    "to": "orchestrator/src/core/lib/deep-reflect-query.ts",
+    "unresolvedTo": "../../core/lib/deep-reflect-query",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/skill-forge.ts",
+    "to": "orchestrator/src/core/lib/skill-forge-detector.ts",
+    "unresolvedTo": "../../core/lib/skill-forge-detector",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/skill-forge.ts",
+    "to": "orchestrator/src/core/lib/skill-forge-synthesizer.ts",
+    "unresolvedTo": "../../core/lib/skill-forge-synthesizer",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/skill-forge.ts",
+    "to": "orchestrator/src/core/lib/skill-forge-validate.ts",
+    "unresolvedTo": "../../core/lib/skill-forge-validate",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/skill-forge.ts",
+    "to": "orchestrator/src/core/proposals.ts",
+    "unresolvedTo": "../../core/proposals",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/steward.ts",
+    "to": "orchestrator/src/core/steward-prompt-optimizer.ts",
+    "unresolvedTo": "../../core/steward-prompt-optimizer",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/task.ts",
+    "to": "orchestrator/src/core/arc.ts",
+    "unresolvedTo": "../../core/arc",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/task.ts",
+    "to": "orchestrator/src/core/author.ts",
+    "unresolvedTo": "../../core/author",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/task.ts",
+    "to": "orchestrator/src/core/daemon/client.ts",
+    "unresolvedTo": "../../core/daemon/client",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/task.ts",
+    "to": "orchestrator/src/core/lib/failure-signature.ts",
+    "unresolvedTo": "../../core/lib/failure-signature",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/task.ts",
+    "to": "orchestrator/src/core/lib/no-commit-marker.ts",
+    "unresolvedTo": "../../core/lib/no-commit-marker",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/task.ts",
+    "to": "orchestrator/src/core/proposals.ts",
+    "unresolvedTo": "../../core/proposals",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/tool-forge.ts",
+    "to": "orchestrator/src/core/lib/tool-benchmark.ts",
+    "unresolvedTo": "../../core/lib/tool-benchmark",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/tool-forge.ts",
+    "to": "orchestrator/src/core/lib/tool-forge-scanner.ts",
+    "unresolvedTo": "../../core/lib/tool-forge-scanner",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/tool-forge.ts",
+    "to": "orchestrator/src/core/queue.ts",
+    "unresolvedTo": "../../core/queue",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/tool-forge.ts",
+    "to": "orchestrator/src/core/store/state-client.ts",
+    "unresolvedTo": "../../core/store/state-client",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/tool-forge.ts",
+    "to": "orchestrator/src/core/store/tool-promotion-store.ts",
+    "unresolvedTo": "../../core/store/tool-promotion-store",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/tool-promotion.ts",
+    "to": "orchestrator/src/core/lib/action-queue.ts",
+    "unresolvedTo": "../../core/lib/action-queue",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/tool-promotion.ts",
+    "to": "orchestrator/src/core/store/state-client.ts",
+    "unresolvedTo": "../../core/store/state-client",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/tool-promotion.ts",
+    "to": "orchestrator/src/core/store/tool-promotion-store.ts",
+    "unresolvedTo": "../../core/store/tool-promotion-store",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/verify-gate.ts",
+    "to": "orchestrator/src/core/lib/failure-signature.ts",
+    "unresolvedTo": "../../core/lib/failure-signature",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/verify-gate.ts",
+    "to": "orchestrator/src/core/lib/gate-args-validation.ts",
+    "unresolvedTo": "../../core/lib/gate-args-validation",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/verify-gate.ts",
+    "to": "orchestrator/src/core/ports/verifier/registry.ts",
+    "unresolvedTo": "../../core/ports/verifier/registry",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/verify-gate.ts",
+    "to": "orchestrator/src/core/ports/verifier/verify-helpers.ts",
+    "unresolvedTo": "../../core/ports/verifier/verify-helpers",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/verify-gate.ts",
+    "to": "orchestrator/src/core/verify-gates.ts",
+    "unresolvedTo": "../../core/verify-gates",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/verify.ts",
+    "to": "orchestrator/src/core/lib/gate-args-validation.ts",
+    "unresolvedTo": "../../core/lib/gate-args-validation",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/verify.ts",
+    "to": "orchestrator/src/core/verify-gates.ts",
+    "unresolvedTo": "../../core/verify-gates",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/vision.ts",
+    "to": "orchestrator/src/core/lib/vision.ts",
+    "unresolvedTo": "../../core/lib/vision",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/worker.ts",
+    "to": "orchestrator/src/core/workers/index.ts",
+    "unresolvedTo": "../../core/workers",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/worker.ts",
+    "to": "orchestrator/src/core/workers/persisted-registry.ts",
+    "unresolvedTo": "../../core/workers/persisted-registry",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/worker.ts",
+    "to": "orchestrator/src/core/workers/provider-types.ts",
+    "unresolvedTo": "../../core/workers/provider-types",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/workflow.ts",
+    "to": "orchestrator/src/core/lib/action-queue.ts",
+    "unresolvedTo": "../../core/lib/action-queue",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/worktree.ts",
+    "to": "orchestrator/src/core/lib/worktree-reclaim.ts",
+    "unresolvedTo": "../../core/lib/worktree-reclaim",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/cut-verify.ts",
+    "to": "orchestrator/src/core/context.ts",
+    "unresolvedTo": "../core/context",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/cut-verify.ts",
+    "to": "orchestrator/src/core/lib/db.ts",
+    "unresolvedTo": "../core/lib/db",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/dispatch.ts",
+    "to": "orchestrator/src/core/context.ts",
+    "unresolvedTo": "../core/context",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/dispatch.ts",
+    "to": "orchestrator/src/core/daemon/client.ts",
+    "unresolvedTo": "../core/daemon/client",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/dispatch.ts",
+    "to": "orchestrator/src/core/store/task-store.ts",
+    "unresolvedTo": "../core/store/task-store",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/release-notes-watch.tsx",
+    "to": "orchestrator/src/core/daemon/view/release-notes.ts",
+    "unresolvedTo": "../core/daemon/view/release-notes",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/statusline.ts",
+    "to": "orchestrator/src/core/context.ts",
+    "unresolvedTo": "../core/context.js",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/test-adapter.ts",
+    "to": "orchestrator/src/core/context.ts",
+    "unresolvedTo": "../core/context",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/test-adapter.ts",
+    "to": "orchestrator/src/core/store/task-store.ts",
+    "unresolvedTo": "../core/store/task-store",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/ui.ts",
+    "to": "orchestrator/src/core/context.ts",
+    "unresolvedTo": "../core/context",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
     "type": "module",
     "from": "orchestrator/scripts/fix-pty-perms.mjs",
     "to": "orchestrator/scripts/fix-pty-perms.mjs",

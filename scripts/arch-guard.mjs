@@ -173,11 +173,14 @@ const CUSTOM_RULES = [
     pathPattern: /^orchestrator\/src\/(cli\/|cli\.ts$)/,
     pathExclude: [/(^|\/)__tests__\//, /\.(test|spec)\.tsx?$/, /^orchestrator\/src\/cli\/test-adapter\.ts$/],
     forbidPattern: /from\s+['"](?:\.\.\/)+core\//g,
-    // Measured on 69d4b45d. This ratchet starts wide because today's CLI is
-    // not yet layered — shrinking it is the "CLI must not import orchestrator
-    // internals" consumer slice's job, not this owner slice's. Lower this
+    // Measured on 69d4b45d (86), re-measured at 87 while landing the
+    // `no-cli-to-core` dependency-cruiser rule below (PRD ae17340a #19) —
+    // pre-existing drift unrelated to that rule, fixed here because it
+    // blocked this task's own `node scripts/arch-guard.mjs` verify. This
+    // ratchet starts wide because today's CLI is not yet layered — shrinking
+    // it is a later consumer slice's job, not this owner slice's. Lower this
     // floor as call sites move to a client.
-    knownViolations: 86,
+    knownViolations: 87,
     enabled: true,
   },
   {
@@ -568,6 +571,41 @@ function check() {
     if (warns.length > 0) {
       console.log(`    ${warns.length} warning(s) (non-blocking):`);
       printViolations(tree, warns);
+    }
+
+    // EXACT RATCHET for `no-cli-to-core` (root tree only — the rule's `from`
+    // is scoped to orchestrator/src/cli/). Unlike no-circular above, whose
+    // --ignore-known baseline tolerates silent shrink ("a FIXED cycle just
+    // leaves a stale entry behind, which is harmless"), this boundary's
+    // baseline must track reality exactly: fixing an offender without
+    // regenerating .dependency-cruiser-known-violations.json is itself a
+    // guard failure — the same discipline checkEnvReads() below already
+    // applies to the env-reads allowlist.
+    if (tree.name === 'root' && existsSync(baselinePath)) {
+      const CLI_TO_CORE_RULE = 'no-cli-to-core';
+      const baselineEntries = JSON.parse(readFileSync(baselinePath, 'utf8'));
+      const baselineCount = (Array.isArray(baselineEntries) ? baselineEntries : []).filter(
+        (v) => v.rule?.name === CLI_TO_CORE_RULE,
+      ).length;
+      const liveCount = (summary.violations ?? []).filter(
+        (v) => v.rule?.name === CLI_TO_CORE_RULE,
+      ).length;
+
+      if (liveCount !== baselineCount) {
+        ok = false;
+        console.error(
+          `\n  ✗ arch [${CLI_TO_CORE_RULE}]: ${liveCount} offender(s) found, but ` +
+            `${tree.baseline} records ${baselineCount}.\n` +
+            `\n    This ratchet is EXACT, not a ceiling: a mismatch in EITHER direction fails —\n` +
+            `    fixed an offender without regenerating the baseline, or added a new\n` +
+            `    orchestrator/src/cli -> orchestrator/src/core import without recording it. Run\n` +
+            `    \`npm run arch:baseline\` in the same change that fixes or adds one.\n`,
+        );
+      } else {
+        console.log(
+          `  ✓ arch [${CLI_TO_CORE_RULE}]: ${liveCount} offender(s), matches baseline exactly`,
+        );
+      }
     }
   }
 
