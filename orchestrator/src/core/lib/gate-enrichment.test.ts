@@ -724,6 +724,7 @@ const makeStaleEffects = (): ShadowRunEffects & {
     raiseStaleRow: async (signature: string, passCount: number) => {
       state.calls.push({ signature, passCount })
     },
+    replayBeforePromotion: () => true,
   }
   return state
 }

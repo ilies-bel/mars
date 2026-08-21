@@ -1325,8 +1325,15 @@ const DDL: readonly string[] = [
     updated_at           bigint NOT NULL,
     approved_by          text,
     approved_at          bigint,
-    retired_at           bigint
+    retired_at           bigint,
+    motivating_failures  text
   )`,
+  // ADR-0099 (self-improvement loops induce the weakest valid hypothesis):
+  // captured GateReplayFixture[] (JSON) for the failures that motivated this
+  // signature's check, so shadow -> enforcing promotion can replay against
+  // them instead of relying on clean-parse count alone. Migration for
+  // pre-existing installs; the CREATE TABLE above covers greenfield ones.
+  `ALTER TABLE gate_enrichment ADD COLUMN IF NOT EXISTS motivating_failures text`,
   `CREATE TABLE IF NOT EXISTS gate_burn_in (
     gate_name   text   PRIMARY KEY,
     parse_count bigint NOT NULL DEFAULT 0,
