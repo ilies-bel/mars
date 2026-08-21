@@ -16,8 +16,8 @@ interface ArcModule {
   Arc: typeof import('./arc').Arc
 }
 
-interface ActionQueueModule {
-  listActionQueueItems: typeof import('./lib/action-queue').listActionQueueItems
+interface ConditionsModule {
+  createConditionItemsSource: typeof import('./daemon/view/derived-conditions').createConditionItemsSource
 }
 
 interface BlockerResolutionModule {
@@ -35,15 +35,15 @@ const setupRepo = (): string => {
 
 const loadModules = async (
   repo: string,
-): Promise<{ q: QueueModule; arc: ArcModule; actionQueue: ActionQueueModule; br: BlockerResolutionModule }> => {
+): Promise<{ q: QueueModule; arc: ArcModule; conditions: ConditionsModule; br: BlockerResolutionModule }> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('./queue')) as unknown as QueueModule
   await q.ensureQueueSchema()
   const arc = (await import('./arc')) as unknown as ArcModule
-  const actionQueue = (await import('./lib/action-queue')) as unknown as ActionQueueModule
+  const conditions = (await import('./daemon/view/derived-conditions')) as unknown as ConditionsModule
   const br = (await import('./blocker-resolution')) as unknown as BlockerResolutionModule
-  return { q, arc, actionQueue, br }
+  return { q, arc, conditions, br }
 }
 
 const blockTask = async (
@@ -82,7 +82,7 @@ describe('Arc.drop — purge cascade orphan guard', () => {
     // Step 2: B completes + unblockByCompletion runs → no task.unblocked for D.
 
     process.env.MARS_FIX_RETRY_BUDGET = '5'
-    const { q, arc, actionQueue, br } = await loadModules(repo)
+    const { q, arc, conditions, br } = await loadModules(repo)
 
     // Create P (origin of D) and B (second blocker).
     const P = await q.enqueueTask('origin task to purge', undefined, { skipTriage: true })
@@ -111,15 +111,21 @@ describe('Arc.drop — purge cascade orphan guard', () => {
     expect(afterDrop?.status).toBe('failed')
     expect(afterDrop?.failureReason).toBe(br.ORPHANED_ORIGIN_FAILURE_REASON)
 
-    // Exactly one action-queue item naming D and P must be open.
-    const open = await actionQueue.listActionQueueItems('open')
-    const orphanItems = open.filter(
-      (i) =>
-        i.kind === 'orphaned-origin' &&
-        (i.payload as Record<string, unknown>).taskId === D.id &&
-        (i.payload as Record<string, unknown>).originId === P.id,
+    // Per ADR-0094, 'orphaned-origin' is a condition kind: no row is ever
+    // stored for it (raiseOrphanedOriginActionQueue in blocker-resolution.ts
+    // is a documented no-op). The task is set to status='failed' before that
+    // call, so the actionable surface is the derived 'failed' condition row —
+    // computed live from `tasks WHERE status = 'failed'`, the same surface
+    // exercised by derived-conditions-failed-recovery.test.ts. Exactly one
+    // such row naming D must be present.
+    const condSource = conditions.createConditionItemsSource({
+      getClient: () => q.resolveQueueClient(),
+    })
+    const rows = await condSource.derive({ kinds: new Set(['failed']) })
+    const failedForD = rows.filter(
+      (r) => r.kind === 'failed' && (r.payload as Record<string, unknown>).taskId === D.id,
     )
-    expect(orphanItems).toHaveLength(1)
+    expect(failedForD).toHaveLength(1)
 
     // No task.unblocked event for D must exist after the drop.
     const eventsAfterDrop = await q.resolveQueueClient().execute({
@@ -166,14 +172,14 @@ describe('Arc.drop — purge cascade orphan guard', () => {
     })
     expect(unblockedForDAfterB).toHaveLength(0)
 
-    // The action-queue item count must remain exactly one (no duplicate raised).
-    const openAfterB = await actionQueue.listActionQueueItems('open')
-    const orphanItemsAfterB = openAfterB.filter(
-      (i) =>
-        i.kind === 'orphaned-origin' &&
-        (i.payload as Record<string, unknown>).taskId === D.id,
+    // The derived 'failed' row count must remain exactly one (still computed
+    // live from tasks.status='failed'; no duplicate can be "raised" for a
+    // condition kind since nothing is ever stored).
+    const rowsAfterB = await condSource.derive({ kinds: new Set(['failed']) })
+    const failedForDAfterB = rowsAfterB.filter(
+      (r) => r.kind === 'failed' && (r.payload as Record<string, unknown>).taskId === D.id,
     )
-    expect(orphanItemsAfterB).toHaveLength(1)
+    expect(failedForDAfterB).toHaveLength(1)
   })
 
   it('does not fail a self-origin dependent when its origin task is purged by a different purge', async () => {
