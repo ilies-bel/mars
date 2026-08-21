@@ -23,17 +23,19 @@ export const initActionQueue = async (): Promise<void> => {
  * database (consolidated per ADR-0034). This emits in a separate write
  * transaction after the action-queue write has committed. Emission failures
  * are non-fatal: the actionQueue operation succeeds regardless.
+ *
+ * Uses this module's own state client rather than the task store: the insert is
+ * a single statement, `batch` already wraps it in a transaction, and the two
+ * resolvers hand back handles onto the same pool. Reaching for the task store
+ * here gave `lib/action-queue.ts` an edge up into `core/` that closed several
+ * import cycles in the architecture baseline.
  */
 async function emitActionQueueBusEvent<T extends EventName>(
   type: T,
   payload: EventPayload<T>,
 ): Promise<void> {
   try {
-    const { getDefaultTaskStore } = await import('../store/task-store')
-    const store = await getDefaultTaskStore()
-    await store.atomic(async (scope) => {
-      await scope.execute(buildEventInsert(type, payload))
-    })
+    await stateClient().batch([buildEventInsert(type, payload)])
   } catch {
     // Non-fatal: actionQueue state change already committed.
   }
@@ -50,8 +52,9 @@ export type ActionQueueState = 'open' | 'resolved'
  * task was not found (deleted or DB unavailable); `liveTaskStatus` will be
  * `null` in that case.
  *
- * The default implementation calls `getTask` from `../queue`. Pass your own
- * implementation in tests or any context where the queue DB is unavailable.
+ * The default implementation reads `tasks.status` directly off this module's
+ * state client. Pass your own implementation in tests or any context where the
+ * queue DB is unavailable.
  */
 export type LiveTaskLookup = (
   taskId: string,
@@ -674,16 +677,25 @@ export const findOpenActionQueueItemIdBySignature = async (
 }
 
 /**
- * Default live-task lookup: dynamically imports `getTask` from the queue
- * module and returns `{ status }` for the task. Returns `null` when the task
- * is not found or when the queue DB is unavailable (non-fatal degradation).
+ * Default live-task lookup: reads `tasks.status` for the id straight off this
+ * module's own state client. Returns `null` when the task is not found or when
+ * the DB is unavailable (non-fatal degradation).
+ *
+ * This deliberately does NOT go through `getTask` from `../queue`. Only the one
+ * `status` column is needed, `tasks` lives in the same Mars database as
+ * `action_queue_items` (ADR-0034 consolidation) and is already queried directly
+ * elsewhere in this file, and importing the queue module — even dynamically —
+ * gave `lib/action-queue.ts` an edge back up into `core/queue.ts` that closed
+ * five import cycles in the architecture baseline.
  */
 const defaultLiveTaskLookup: LiveTaskLookup = async (taskId) => {
   try {
-    const { getTask } = await import('../queue')
-    const task = await getTask(taskId)
-    if (!task) return null
-    return { status: task.status }
+    const r = await stateClient().execute({
+      sql: `SELECT status FROM tasks WHERE id = ?`,
+      args: [taskId],
+    })
+    if (r.rows.length === 0) return null
+    return { status: (r.rows[0] as unknown as { status: string }).status }
   } catch {
     return null
   }

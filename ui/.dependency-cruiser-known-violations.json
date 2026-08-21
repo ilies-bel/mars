@@ -16,14 +16,5 @@
       "severity": "warn",
       "name": "no-orphans"
     }
-  },
-  {
-    "type": "module",
-    "from": "src/components/ui/sonner.tsx",
-    "to": "src/components/ui/sonner.tsx",
-    "rule": {
-      "severity": "warn",
-      "name": "no-orphans"
-    }
   }
 ]

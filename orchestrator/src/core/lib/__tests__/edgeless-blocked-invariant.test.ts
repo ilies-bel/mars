@@ -33,6 +33,7 @@ interface QueueModule {
   updateTask: typeof import('../../queue').updateTask
   getTask: typeof import('../../queue').getTask
   migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
 }
 
 interface BlockerInvariantModule {
@@ -106,7 +107,7 @@ describe('edgeless-blocked invariant (mars-ba9f3af0 regression)', () => {
     const { q, inv } = await loadModules(repo)
     const task = await q.enqueueTask('no blockers task', undefined, { skipTriage: true })
 
-    await expect(inv.assertHasBlockerEdge(task.id)).rejects.toBeInstanceOf(
+    await expect(inv.assertHasBlockerEdge(task.id, { client: q.resolveQueueClient() })).rejects.toBeInstanceOf(
       inv.BlockerInvariantViolation,
     )
   })
@@ -115,7 +116,7 @@ describe('edgeless-blocked invariant (mars-ba9f3af0 regression)', () => {
     const { q, inv } = await loadModules(repo)
     const task = await q.enqueueTask('no blockers task', undefined, { skipTriage: true })
 
-    const err = await inv.assertHasBlockerEdge(task.id).catch((e) => e)
+    const err = await inv.assertHasBlockerEdge(task.id, { client: q.resolveQueueClient() }).catch((e) => e)
     expect(err).toBeInstanceOf(inv.BlockerInvariantViolation)
     expect((err as Error).message).toContain(task.id)
   })

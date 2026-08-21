@@ -58,8 +58,8 @@ describe('blocker-invariant', () => {
   it('countBlockerEdges returns 0 for a task with no blockers', async () => {
     const { q, inv } = await loadModules(repo)
     const t = await q.enqueueTask('lonely', undefined, { skipTriage: true })
-    expect(await inv.countBlockerEdges(t.id)).toBe(0)
-    expect(await inv.hasBlockerEdge(t.id)).toBe(false)
+    expect(await inv.countBlockerEdges(t.id, { client: q.resolveQueueClient() })).toBe(0)
+    expect(await inv.hasBlockerEdge(t.id, { client: q.resolveQueueClient() })).toBe(false)
   })
 
   it('countBlockerEdges returns the count once edges exist', async () => {
@@ -68,14 +68,14 @@ describe('blocker-invariant', () => {
     const b1 = await q.enqueueTask('blocker1', undefined, { skipTriage: true })
     const b2 = await q.enqueueTask('blocker2', undefined, { skipTriage: true })
     await q.addBlockers(t.id, [b1.id, b2.id])
-    expect(await inv.countBlockerEdges(t.id)).toBe(2)
-    expect(await inv.hasBlockerEdge(t.id)).toBe(true)
+    expect(await inv.countBlockerEdges(t.id, { client: q.resolveQueueClient() })).toBe(2)
+    expect(await inv.hasBlockerEdge(t.id, { client: q.resolveQueueClient() })).toBe(true)
   })
 
   it('assertHasBlockerEdge throws BlockerInvariantViolation when zero edges', async () => {
     const { q, inv } = await loadModules(repo)
     const t = await q.enqueueTask('edgeless', undefined, { skipTriage: true })
-    await expect(inv.assertHasBlockerEdge(t.id)).rejects.toBeInstanceOf(
+    await expect(inv.assertHasBlockerEdge(t.id, { client: q.resolveQueueClient() })).rejects.toBeInstanceOf(
       inv.BlockerInvariantViolation,
     )
   })
@@ -85,14 +85,14 @@ describe('blocker-invariant', () => {
     const t = await q.enqueueTask('parent', undefined, { skipTriage: true })
     const b = await q.enqueueTask('blocker', undefined, { skipTriage: true })
     await q.addBlockers(t.id, [b.id])
-    await expect(inv.assertHasBlockerEdge(t.id)).resolves.toBeUndefined()
+    await expect(inv.assertHasBlockerEdge(t.id, { client: q.resolveQueueClient() })).resolves.toBeUndefined()
   })
 
   it('BlockerInvariantViolation carries the taskId for callers to route to failed', async () => {
     const { q, inv } = await loadModules(repo)
     const t = await q.enqueueTask('edgeless', undefined, { skipTriage: true })
     try {
-      await inv.assertHasBlockerEdge(t.id)
+      await inv.assertHasBlockerEdge(t.id, { client: q.resolveQueueClient() })
       throw new Error('expected throw')
     } catch (err: unknown) {
       expect(err).toBeInstanceOf(inv.BlockerInvariantViolation)
@@ -202,7 +202,7 @@ describe('ADR-0040 recovery-leaf guard', () => {
     const t = await q.enqueueTask('parent', undefined, { skipTriage: true })
     const b = await q.enqueueTask('blocker', undefined, { skipTriage: true })
     await q.addBlockers(t.id, [b.id])
-    expect(await inv.countBlockerEdges(t.id)).toBe(1)
+    expect(await inv.countBlockerEdges(t.id, { client: q.resolveQueueClient() })).toBe(1)
   })
 
   it('addPendingReviewBlockers rejects recovery endpoints', async () => {
@@ -249,7 +249,7 @@ describe('ADR-0040 recovery-leaf guard', () => {
     const t = await q.enqueueTask('parent', undefined, { skipTriage: true })
     const b = await q.enqueueTask('blocker', undefined, { skipTriage: true })
     await q.addBlockers(t.id, [b.id])
-    const violations = await inv.scanRecoveryBlockerEdges()
+    const violations = await inv.scanRecoveryBlockerEdges({ client: q.resolveQueueClient() })
     expect(violations).toEqual([])
   })
 
@@ -265,7 +265,7 @@ describe('ADR-0040 recovery-leaf guard', () => {
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
       args: [fixId, other.id, now],
     })
-    const violations = await inv.scanRecoveryBlockerEdges()
+    const violations = await inv.scanRecoveryBlockerEdges({ client: q.resolveQueueClient() })
     expect(violations).toHaveLength(1)
     expect(violations[0].taskId).toBe(fixId)
     expect(violations[0].taskIsRecovery).toBe(true)
@@ -284,7 +284,7 @@ describe('ADR-0040 recovery-leaf guard', () => {
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
       args: [origin.id, fixId, now],
     })
-    const violations = await inv.scanRecoveryBlockerEdges()
+    const violations = await inv.scanRecoveryBlockerEdges({ client: q.resolveQueueClient() })
     expect(violations).toEqual([])
   })
 
@@ -301,7 +301,7 @@ describe('ADR-0040 recovery-leaf guard', () => {
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
       args: [unrelated.id, fixId, now],
     })
-    const violations = await inv.scanRecoveryBlockerEdges()
+    const violations = await inv.scanRecoveryBlockerEdges({ client: q.resolveQueueClient() })
     expect(violations).toHaveLength(1)
     expect(violations[0].taskId).toBe(unrelated.id)
     expect(violations[0].blockerTaskId).toBe(fixId)
@@ -347,7 +347,7 @@ describe('ADR-0040 recovery-leaf guard', () => {
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
       args: [sibling.id, committerId, nowMs],
     })
-    const violations = await inv.scanRecoveryBlockerEdges()
+    const violations = await inv.scanRecoveryBlockerEdges({ client: q.resolveQueueClient() })
     expect(violations).toEqual([])
   })
 })

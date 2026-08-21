@@ -1,5 +1,4 @@
 import type { DbStatement, DbResultSet } from './db.js'
-import { getDefaultTaskStore } from '../store/task-store'
 import { MAIN_COMMITER_RECIPE, parseMainCommiterPayload } from './main-commiter-payload'
 
 /**
@@ -57,15 +56,18 @@ export interface StatementRunner {
 
 export interface BlockerInvariantOptions {
   /**
-   * Optional statement runner (a TaskStore `Scope` inside an `atomic`
-   * callback, or the store itself) to count against. When provided, the
-   * caller is responsible for ensuring the count happens in the same
-   * transaction as the status write — that closes the obvious race where
-   * the edge is inserted, the count runs, then the edge is rolled back.
+   * Statement runner (a TaskStore `Scope` inside an `atomic` callback, or the
+   * store itself) to count against. Required — the caller is responsible for
+   * ensuring the count happens in the same transaction as the status write —
+   * that closes the obvious race where the edge is inserted, the count runs,
+   * then the edge is rolled back.
    *
-   * When omitted, the count runs against the default TaskStore.
+   * This module intentionally does NOT fall back to a default TaskStore: that
+   * fallback used to require importing `store/task-store.ts`, which imports
+   * `Arc` (`core/arc.ts`), which imports this module — a runtime cycle. Every
+   * caller already has a store or scope in hand; pass it explicitly.
    */
-  client?: StatementRunner
+  client: StatementRunner
 }
 
 /**
@@ -74,9 +76,9 @@ export interface BlockerInvariantOptions {
  */
 export const countBlockerEdges = async (
   taskId: string,
-  opts: BlockerInvariantOptions = {},
+  opts: BlockerInvariantOptions,
 ): Promise<number> => {
-  const c = opts.client ?? (await getDefaultTaskStore())
+  const c = opts.client
   const r = await c.execute({
     sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
     args: [taskId],
@@ -91,7 +93,7 @@ export const countBlockerEdges = async (
  */
 export const hasBlockerEdge = async (
   taskId: string,
-  opts: BlockerInvariantOptions = {},
+  opts: BlockerInvariantOptions,
 ): Promise<boolean> => {
   return (await countBlockerEdges(taskId, opts)) > 0
 }
@@ -105,7 +107,7 @@ export const hasBlockerEdge = async (
  */
 export const assertHasBlockerEdge = async (
   taskId: string,
-  opts: BlockerInvariantOptions = {},
+  opts: BlockerInvariantOptions,
 ): Promise<void> => {
   const n = await countBlockerEdges(taskId, opts)
   if (n === 0) {
@@ -204,9 +206,9 @@ const probeRecoveryMarker = async (
 export const assertNotRecoveryEdge = async (
   taskId: string,
   blockerTaskId: string,
-  opts: BlockerInvariantOptions = {},
+  opts: BlockerInvariantOptions,
 ): Promise<void> => {
-  const c = opts.client ?? (await getDefaultTaskStore())
+  const c = opts.client
   const task = await probeRecoveryMarker(c, taskId)
   if (task && isRecoveryTask(task)) {
     throw new RecoveryTaskBlockerError(taskId, 'task')
@@ -250,9 +252,9 @@ export interface RecoveryEdgeViolation {
  * operator-driven via `mars unblock <id>`.
  */
 export const scanRecoveryBlockerEdges = async (
-  opts: BlockerInvariantOptions = {},
+  opts: BlockerInvariantOptions,
 ): Promise<RecoveryEdgeViolation[]> => {
-  const c = opts.client ?? (await getDefaultTaskStore())
+  const c = opts.client
   const r = await c.execute({
     sql: `SELECT b.task_id AS task_id,
                  b.blocker_task_id AS blocker_task_id,

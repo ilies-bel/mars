@@ -384,7 +384,9 @@ const removeLegacyMastraDb = (
 const scanRecoveryLeafViolations = async (
   log: (line: string) => void,
 ): Promise<void> => {
-  const violations = await scanRecoveryBlockerEdges()
+  const violations = await scanRecoveryBlockerEdges({
+    client: await getDefaultTaskStore(),
+  })
   if (violations.length === 0) return
   log(
     `[adr-0040] found ${violations.length} task_blockers row(s) involving a recovery task (pre-leaf-guard residue). ` +
