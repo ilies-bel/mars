@@ -251,7 +251,7 @@ const arcReflect: Command = {
       '../../core/lib/deep-reflect-query'
     )
     const { requireReflector } = await import('../../core/ports/reflector/registry')
-    const { applyVerdicts, applyScorerVerdicts, applyCapabilityGapVerdicts } =
+    const { applyVerdicts, applyScorerVerdicts, applyCapabilityGapVerdicts, EXEMPT_TOKEN_BURN } =
       await import('../../core/lib/reflector')
 
     const originId = await resolveOriginIdForTaskOrSelf(chosenOriginInput)
@@ -321,7 +321,17 @@ const arcReflect: Command = {
     }
 
     const sourceTaskId = await deps.store.insertReflectionTask(1)
-    const verdictResult = await applyVerdicts(report.suggestions, sourceTaskId)
+    // ADR-0099 corroboration-floor exemption: an arc carrying high-severity
+    // dissonance, or weighted token burn above EXEMPT_TOKEN_BURN, files its
+    // 'save'-verdicted suggestions immediately regardless of how many other
+    // arcs have echoed the same finding.
+    const corroborationExempt =
+      report.dissonantCalls.some((d) => d.severity === 'high') ||
+      arc.totals.totalWeightedTokens > EXEMPT_TOKEN_BURN
+    const verdictResult = await applyVerdicts(report.suggestions, sourceTaskId, {
+      arcId: originId,
+      exempt: corroborationExempt,
+    })
     const scorerVerdictResult = await applyScorerVerdicts(
       report.scorerSuggestions,
       { originArcId: originId, reportPath: outPath },
@@ -344,6 +354,7 @@ const arcReflect: Command = {
             saved: verdictResult.saved,
             absorbed: verdictResult.absorbed,
             dropped: verdictResult.dropped,
+            heldBelowFloor: verdictResult.heldBelowFloor,
           },
           scorerVerdictResult: {
             suggested: scorerVerdictResult.suggested,
@@ -396,7 +407,7 @@ const arcReflect: Command = {
     }
     if (report.rootCause) deps.out(`Root cause: ${report.rootCause}`)
     deps.out(
-      `Suggestions: ${verdictResult.saved} saved, ${verdictResult.absorbed} absorbed, ${verdictResult.dropped} dropped`,
+      `Suggestions: ${verdictResult.saved} saved, ${verdictResult.absorbed} absorbed, ${verdictResult.dropped} dropped, ${verdictResult.heldBelowFloor} held below corroboration floor`,
     )
     deps.out(
       `Scorer suggestions: ${scorerVerdictResult.suggested} suggested, ${scorerVerdictResult.absorbed} absorbed, ${scorerVerdictResult.dropped} dropped`,
@@ -542,7 +553,9 @@ const sessionReflect: Command = {
       '../../core/lib/deep-reflect-query'
     )
     const { requireReflector } = await import('../../core/ports/reflector/registry')
-    const { applyVerdicts } = await import('../../core/lib/reflector')
+    const { applyVerdicts, EXEMPT_TOKEN_BURN, MIN_CORROBORATION_INSTANCES } = await import(
+      '../../core/lib/reflector'
+    )
 
     const sessionId = await resolveSessionId(rawInput)
     if (!sessionId) {
@@ -636,7 +649,17 @@ const sessionReflect: Command = {
     }
 
     const sourceTaskId = await deps.store.insertReflectionTask(arcs.length)
-    const verdictResult = await applyVerdicts(report.suggestions, sourceTaskId)
+    // ADR-0099 corroboration-floor exemption — see the `arc reflect` command
+    // for the rationale. A session already spanning >= MIN_CORROBORATION_INSTANCES
+    // arcs is corroborated by construction.
+    const corroborationExempt =
+      arcs.length >= MIN_CORROBORATION_INSTANCES ||
+      report.dissonantCalls.some((d) => d.severity === 'high') ||
+      totalWeightedTokens > EXEMPT_TOKEN_BURN
+    const verdictResult = await applyVerdicts(report.suggestions, sourceTaskId, {
+      arcId: sessionId,
+      exempt: corroborationExempt,
+    })
 
     await writeFile(
       outPath,
@@ -652,6 +675,7 @@ const sessionReflect: Command = {
             saved: verdictResult.saved,
             absorbed: verdictResult.absorbed,
             dropped: verdictResult.dropped,
+            heldBelowFloor: verdictResult.heldBelowFloor,
           },
           rawOutput: result.rawOutput,
         },
@@ -671,7 +695,7 @@ const sessionReflect: Command = {
       }
     }
     deps.out(
-      `Suggestions: ${verdictResult.saved} saved, ${verdictResult.absorbed} absorbed, ${verdictResult.dropped} dropped`,
+      `Suggestions: ${verdictResult.saved} saved, ${verdictResult.absorbed} absorbed, ${verdictResult.dropped} dropped, ${verdictResult.heldBelowFloor} held below corroboration floor`,
     )
     deps.out(`Full report: ${outPath}`)
     if (verdictResult.saved > 0) {

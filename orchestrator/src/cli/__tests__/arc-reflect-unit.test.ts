@@ -42,6 +42,7 @@ vi.mock('../../core/lib/reflector', () => ({
   applyVerdicts: vi.fn(),
   applyScorerVerdicts: vi.fn(),
   applyCapabilityGapVerdicts: vi.fn(),
+  EXEMPT_TOKEN_BURN: 150_000,
 }))
 
 vi.mock('node:fs/promises', () => ({

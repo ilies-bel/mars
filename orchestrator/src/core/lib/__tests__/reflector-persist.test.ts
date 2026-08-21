@@ -273,7 +273,10 @@ describe('reflector persist dedup', () => {
       outcome: baseOutcome,
     }
 
-    const result = await applyVerdicts([suggestion], 'src-task')
+    const result = await applyVerdicts([suggestion], 'src-task', {
+      arcId: 'arc-overlap-task',
+      exempt: true,
+    })
     expect(result.saved).toBe(1)
 
     // The proposal's notes should mention the matching task id
@@ -306,7 +309,10 @@ describe('reflector persist dedup', () => {
       outcome: baseOutcome,
     }
 
-    const first = await applyVerdicts([verdictedSuggestion], 'src-task-1')
+    const first = await applyVerdicts([verdictedSuggestion], 'src-task-1', {
+      arcId: 'arc-1',
+      exempt: true,
+    })
     expect(first.saved).toBe(1)
     expect(await countProposals()).toBe(1)
 
@@ -321,6 +327,7 @@ describe('reflector persist dedup', () => {
         },
       ],
       'src-task-2',
+      { arcId: 'arc-2', exempt: true },
     )
     // Still counts as "saved" from applyVerdicts perspective (dedup is transparent)
     expect(second.saved).toBe(1)
@@ -356,7 +363,10 @@ describe('reflector persist dedup', () => {
       },
     }
 
-    const result = await applyVerdicts([leverSuggestion], 'src-task-lever')
+    const result = await applyVerdicts([leverSuggestion], 'src-task-lever', {
+      arcId: 'arc-lever',
+      exempt: true,
+    })
     expect(result.saved).toBe(1)
     // The suggestion object should have a non-null targetId after persistence.
     expect(result.savedSuggestions[0]?.targetId).not.toBeNull()
