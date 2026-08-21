@@ -58,9 +58,17 @@ const setupRepo = (): TestRepos => {
   execFileSync(GIT, ['config', 'user.email', 'test@mars.test'], { cwd: repo })
   execFileSync(GIT, ['config', 'user.name', 'Mars Test'], { cwd: repo })
 
-  // Initial commit on main
+  // Initial commit on main. `.mars/` MUST be gitignored: mergeBranch
+  // materialises the merge lock and the last-synced-sha file inside
+  // `getStateDir()`, so after the first merge in this file an untracked
+  // `.mars/` is left behind. That trips the pre-rebase dirty-worktree guard on
+  // every subsequent merge, which then returns `{ aborted: true }` long before
+  // reaching the hook under test — every assertion below failed for that
+  // unrelated reason. The sibling suites under `git/__tests__` carry the same
+  // ignore for the same reason.
   writeFileSync(resolve(repo, 'README'), 'hello\n')
-  execFileSync(GIT, ['add', 'README'], { cwd: repo })
+  writeFileSync(resolve(repo, '.gitignore'), '.mars/\n')
+  execFileSync(GIT, ['add', 'README', '.gitignore'], { cwd: repo })
   execFileSync(GIT, ['commit', '-q', '-m', 'init'], { cwd: repo })
   const mainSha = git(['rev-parse', 'main'], repo)
 

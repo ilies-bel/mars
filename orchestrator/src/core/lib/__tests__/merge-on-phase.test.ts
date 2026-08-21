@@ -37,8 +37,14 @@ const setupRepo = (dir: string): TestRepo => {
   execFileSync(GIT, ['config', 'user.email', 'test@mars.test'], { cwd: repo })
   execFileSync(GIT, ['config', 'user.name', 'Mars Test'], { cwd: repo })
 
+  // `MARS_STATE_DIR` points at the repo itself in this suite, so mergeBranch's
+  // own state artifacts (`.merge.lock`, and `.mars/` when the state dir is not
+  // overridden) land in the working tree. Untracked, they trip the pre-rebase
+  // dirty-worktree guard and every merge after the first aborts before
+  // reaching the phases under test.
   writeFileSync(resolve(repo, 'README'), 'hello\n')
-  execFileSync(GIT, ['add', 'README'], { cwd: repo })
+  writeFileSync(resolve(repo, '.gitignore'), '.mars/\n.merge.lock\n')
+  execFileSync(GIT, ['add', 'README', '.gitignore'], { cwd: repo })
   execFileSync(GIT, ['commit', '-q', '-m', 'init'], { cwd: repo })
   const mainSha = git(['rev-parse', 'main'], repo)
 
@@ -96,7 +102,7 @@ const resetRepo = (repo: string, mainSha: string): void => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('mergeBranch – onPhase callback', () => {
-  it('fires acquire-lock, rebase, fast-forward in order for a clean fast-forward', async () => {
+  it('fires rebase, acquire-lock, fast-forward in order for a clean fast-forward', async () => {
     const { repo, mainSha } = testRepo
     resetRepo(repo, mainSha)
 
@@ -115,12 +121,15 @@ describe('mergeBranch – onPhase callback', () => {
     expect(phases).toContain('acquire-lock')
     expect(phases).toContain('rebase')
     expect(phases).toContain('fast-forward')
-    // Verify ordering: acquire-lock must come before rebase, rebase before fast-forward
+    // Ordering: since ADR-0100 step 2 the lock is acquired LAZILY, so the
+    // rebase (which happens in the task's own worktree and touches no shared
+    // state) precedes acquire-lock, and the lock is held only from there
+    // through the fast-forward.
     const lockIdx = phases.indexOf('acquire-lock')
     const rebaseIdx = phases.indexOf('rebase')
     const ffIdx = phases.indexOf('fast-forward')
-    expect(lockIdx).toBeLessThan(rebaseIdx)
-    expect(rebaseIdx).toBeLessThan(ffIdx)
+    expect(rebaseIdx).toBeLessThan(lockIdx)
+    expect(lockIdx).toBeLessThan(ffIdx)
   })
 
   it('fires integration-gate after fast-forward when onAfterFastForward is provided', async () => {
