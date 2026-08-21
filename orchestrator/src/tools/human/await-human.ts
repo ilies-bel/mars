@@ -47,8 +47,8 @@ export interface AwaitHumanOpts {
  * slice 27 collapsed the two park paths into one: `awaitHuman` delegates to
  * `ctx.services.onManualPark`, which is required and always present (the
  * daemon injects its lease/re-dispatch-wired version; every other services bag
- * gets `createDefaultManualPark(store)`). The sentinel-throw fallback and its
- * `AWAIT_HUMAN_MESSAGE` are deleted.
+ * gets `createDefaultManualPark(store)`). The sentinel-throw fallback is
+ * deleted entirely.
  *
  * Note: `AWAIT_HUMAN_SENTINEL` is NOT that throw sentinel despite the name —
  * it is the *lease-owner* value the park writes, and it survives.

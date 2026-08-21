@@ -250,22 +250,30 @@ The outer `try/catch` stamps any genuinely-unhandled `mergeBranch` throw
 as a crash (`updateTask` failed + handler + **throw**) so the row never
 strands at `merging`.
 
-### 5. `awaitHuman` → `void` (throws, then short-circuits on resume)
+### 5. `awaitHuman` → `void` (delegates to `onManualPark`, returns on resume)
 
 An optional human-in-the-loop gate that parks the pipeline for live human
 work and resumes automatically once the operator releases the lease.
+
+Since PRD ae17340a slice 27 there is exactly **one** park mechanism:
+`awaitHuman` is a thin delegation to the required `ctx.services.onManualPark`
+(the daemon injects its lease/re-dispatch-wired version; every other services
+bag gets `createDefaultManualPark(store)`). The previous sentinel-throw
+fallback is deleted — there is no second path to keep in sync.
 
 1. `updateTask({ status: 'awaiting-human', leaseOwner: 'workflow:await-human',
    leasedAt, leaseNote })` through the Arc write funnel (ADR-0052).
 2. `raiseActionQueueItem({ kind: 'awaiting-human', ... })` — level-triggered
    (ADR-0048): bumps `seen_count` on re-detection rather than spawning siblings.
-3. Throws `AWAIT_HUMAN_MESSAGE(taskId, stepName)`. The sentinel embeds the
-   step name so the daemon can locate the matching `workflow_step_runs` row.
+3. Suspends in-process on `awaitManualDone(runId, stepName)` until the
+   operator runs `mars step done`, which calls `resolveManualStep`. The step
+   then returns normally and `runStep` checkpoints it `'completed'` itself —
+   no thrown sentinel, no step-record patch from a daemon-level catch.
 
-The daemon catches `isAwaitHumanError`, calls
-`wfStore.putStep({ status: 'completed', resultJson: { parkedForHuman: true } })`
-on the failing step record, then returns without emitting `task.completed`.
-After this patch:
+If the daemon restarts while parked, the in-memory promise is gone;
+`handleStepDone` Path 2 and `handleReleaseLease` patch the step to
+`'completed'` before re-queuing, so the engine short-circuits it on
+re-dispatch without re-parking or double-notifying. After this patch:
 
 - **Daemon restart** — step record is already `'completed'`; the engine
   short-circuits it on any future re-dispatch. No double-park, no double-notify.

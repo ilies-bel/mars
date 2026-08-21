@@ -4594,7 +4594,7 @@ export const startDaemon = async (
   //    The task status is updated to 'running' here so the UI reflects the
   //    correct state while the in-process workflow resumes to the next step.
   //
-  // 2. Sentinel fallback (legacy / after daemon restart): no in-memory promise
+  // 2. Re-queue fallback (after a daemon restart): no in-memory promise
   //    exists; fall back to releaseLease(keepLease:true) + bus.emit so the
   //    task is re-queued and the engine re-enters past the parked step.
   //
@@ -4632,15 +4632,14 @@ export const startDaemon = async (
       await updateTask(id, { status: 'running' })
       return { degraded: false, anchorRef: null }
     }
-    // Path 2: sentinel fallback — re-queue for engine re-entry.
+    // Path 2: no in-process promise to resolve — re-queue for engine re-entry.
     // Patch the step record to 'completed' before re-queuing so the engine
-    // short-circuits it on re-dispatch. This covers two cases:
-    //   (a) Promise path with daemon restart: step status is 'running' (the
-    //       in-process workflow was suspended but the daemon died before it
-    //       resumed to write 'completed').
-    //   (b) Sentinel path with daemon crash: the daemon died between runWorkflow
-    //       returning and the 'await-human' result-handler patch at ~server.ts:1871,
-    //       leaving step status as 'failed'.
+    // short-circuits it on re-dispatch. This is the daemon-restart case: step
+    // status is 'running' (the in-process workflow was suspended on
+    // `awaitManualDone` but the daemon died before it resumed to write
+    // 'completed'). Since slice 27 there is only the single onManualPark park
+    // path (Path 1); this is not a second park mechanism, only the recovery
+    // for a park whose in-memory promise did not survive a restart.
     // Without this patch the engine re-executes the step on re-dispatch, calling
     // awaitHuman again and creating an infinite re-park loop.
     if (stepName !== 'unknown') {
@@ -4690,7 +4689,7 @@ export const startDaemon = async (
           if (anchored !== null) {
             anchorRef = anchored.ref
             log(
-              `[step-done] ${id}: anchored branch tip ${anchored.sha.slice(0, 9)} on ${anchored.ref} before sentinel-fallback re-queue`,
+              `[step-done] ${id}: anchored branch tip ${anchored.sha.slice(0, 9)} on ${anchored.ref} before fallback re-queue`,
             )
           }
         }
