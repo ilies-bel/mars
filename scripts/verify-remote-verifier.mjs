@@ -8,17 +8,17 @@
  * flipping `MARS_VERIFIER_KIND=remote-http` in production, and again any
  * time the remote CI runner's contract changes.
  *
- * It POSTs a synthetic VerifierPortRequest (see
- * orchestrator/src/core/lib/git/verify.ts: VerifyPortRequest) to the
+ * It POSTs a synthetic VerifierRunArgs (see
+ * orchestrator/src/core/ports/verifier/types.ts: VerifierRunArgs) to the
  * configured endpoint and validates the JSON response against the
- * VerifierRunResult contract — the wire shape of
- * orchestrator/src/core/lib/git/verify.ts: VerifyResult, the Port's
- * documented return type ({passed, verdict, steps[], modelAttribution?}).
- * (Neither `VerifierRunResult` nor a remote-http adapter module exists yet
- * in this repo as of this script's authoring — this script defines the
- * wire contract inline pending that adapter landing; see the module doc on
- * orchestrator/src/core/config/registry.ts for the four consumer slices
- * that are expected to fill it in.)
+ * VerifierRunResult contract — orchestrator/src/core/ports/verifier/types.ts:
+ * VerifierRunResult, the Port's documented return type
+ * ({passed, verdict, steps[], modelAttribution?}).
+ * (The Port's types and its default `local` implementation now exist; a
+ * remote-http adapter module does not yet — this script defines that
+ * adapter's wire contract inline pending its landing. See the module doc on
+ * orchestrator/src/core/config/registry.ts for the consumer slices that are
+ * expected to fill it in.)
  *
  * Usage:
  *   node scripts/verify-remote-verifier.mjs
