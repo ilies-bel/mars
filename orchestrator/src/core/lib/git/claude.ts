@@ -197,7 +197,7 @@ export interface RunAgentArgs {
   model?: string
   systemPrompt?: string
   sessionId?: string
-  onEvent?: (event: ClaudeEvent) => void | Promise<void>
+  onEvent?: (event: AgentEvent) => void | Promise<void>
   // Per-Worker pinned config (claude -p flags). All optional; the wrapper
   // applies them on top of the existing argv. Agent-to-user denials always
   // remain in --disallowedTools regardless of caller-supplied disallowedTools.
@@ -269,7 +269,7 @@ export type ClaudePermissionMode = AgentPermissionMode
 
 export interface RunAgentResult extends RunSubprocessResult {
   sessionId: string | null
-  conversation: ClaudeEvent[]
+  conversation: AgentEvent[]
   /**
    * Non-null when the provider rejected this run due to rate/spend limits.
    * `resetsAt` is the Unix-second timestamp when limits are expected to lift
@@ -368,7 +368,7 @@ export const isBlankPrompt = (prompt: string | undefined): boolean =>
   prompt === undefined || prompt.trim().length === 0
 
 export const extractSessionIdFromConversation = (
-  conversation: ClaudeEvent[],
+  conversation: AgentEvent[],
 ): string | null => {
   for (const event of conversation) {
     const sid = (event as { session_id?: unknown }).session_id
@@ -800,7 +800,7 @@ export const runClaudeCode = async ({
   // is /dev/null for dispatched workers. See EMPTY_PROMPT_REFUSAL.
   if (isBlankPrompt(prompt)) return emptyPromptResult('claude')
 
-  const conversation: ClaudeEvent[] = []
+  const conversation: AgentEvent[] = []
   const budget = resolveContextTokenBudget(maxContextTokens)
   const budgetEnabled = budget > 0
   const ctxWarnAt = budgetEnabled ? Math.floor(budget * 0.8) : Number.POSITIVE_INFINITY
