@@ -549,8 +549,20 @@ describe('blocker-resolution (task_blockers)', () => {
       const q = (await import('../../queue')) as unknown as QueueModule
       await q.migrateQueueSchema()
       const { Arc } = await import('../../arc')
+      const { runDiagnoseFollowup } = await import('../diagnose-followup')
       const br: BlockerModule = {
-        onBlockerTaskCompleted: (id) => Arc.unblockByCompletion(id),
+        // Mirrors what the outbox blocker-resolution subscriber does on a
+        // `task.terminal { reason: 'done' }` event: the Arc aggregate bypasses
+        // the generic unblock loop for a done diagnose Chore and reports the
+        // bypass via `diagnoseVerdictPending`; the CALLER runs the
+        // verdict-driven branch.
+        onBlockerTaskCompleted: async (id) => {
+          const result = await Arc.unblockByCompletion(id)
+          if (result.diagnoseVerdictPending) {
+            await runDiagnoseFollowup(id)
+          }
+          return result
+        },
         onBlockerTaskFailed: (id) => Arc.blockByTaskFailure(id),
         markOriginDoneFromRecovery: (originTaskId) =>
           Arc.load(originTaskId).propagateRecoveryDone(),
@@ -592,9 +604,11 @@ describe('blocker-resolution (task_blockers)', () => {
 
       const r = await br.onBlockerTaskCompleted(choreId)
 
-      // The intercept returns an empty outcome list — the verdict-driven
-      // branch owns the state transitions, not the generic unblock loop.
+      // The intercept returns an empty outcome list and flags the bypass —
+      // the verdict-driven branch owns the state transitions, not the
+      // generic unblock loop.
       expect(r.outcomes).toHaveLength(0)
+      expect(r.diagnoseVerdictPending).toBe(true)
 
       // Exactly one fix attempt was enqueued, seeded with the recorded diagnosis.
       const all = await q.resolveQueueClient().execute({ sql: `SELECT * FROM tasks`, args: [] })

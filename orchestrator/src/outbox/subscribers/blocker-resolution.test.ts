@@ -110,6 +110,48 @@ describe('blocker-resolution outbox subscriber', () => {
     expect((await q.getTask(dep.id))?.status).toBe('queued')
   })
 
+  it('runs the diagnose verdict branch for a done diagnose Chore instead of re-queuing the parent', async () => {
+    // The Arc aggregate bypasses the generic unblock loop for a done diagnose
+    // Chore and only reports `diagnoseVerdictPending`; running the
+    // verdict-driven branch is this subscriber's job. Observable proof: the
+    // parent is parked failed with exactly one actionable action-queue item,
+    // never blindly re-queued.
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, sub, pub } = await loadModules(repo)
+    const { setDiagnosis } = await import('../../core/lib/diagnose')
+    const { listActionQueueItems } = await import('../../core/lib/action-queue')
+
+    const parent = await q.enqueueTask('do the original work', undefined, {
+      skipTriage: true,
+    })
+    const chore = await q.enqueueTask(`# Diagnose-only Chore for ${parent.id}`, undefined, {
+      skipTriage: true,
+      kind: 'diagnose',
+      originId: parent.id,
+    })
+    await setDiagnosis(chore.id, {
+      kind: 'inconclusive',
+      whatChecked: 'walked src/foo, src/bar, looked for the missing helper',
+      whyUnscoped: 'task references a module that does not exist in the repo',
+    })
+    await blockTask(q, parent.id, chore.id)
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+      args: [chore.id],
+    })
+
+    await sub.ensureBlockerResolutionSubscriber(q.resolveQueueClient())
+    await pub.publishWithRetry(q.resolveQueueClient(), 'task.terminal', {
+      taskId: chore.id,
+      reason: 'done',
+    })
+    await sub.drainBlockerResolution(q.resolveQueueClient())
+
+    expect((await q.getTask(parent.id))?.status).toBe('failed')
+    const open = await listActionQueueItems('open')
+    expect(open.filter((i) => i.kind === 'diagnose-inconclusive')).toHaveLength(1)
+  })
+
   it('records blocker ordering timestamps as epoch milliseconds', async () => {
     const { q } = await loadModules(repo)
     const dependent = await q.enqueueTask('dependent', undefined, { skipTriage: true })
