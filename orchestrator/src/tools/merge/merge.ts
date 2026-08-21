@@ -30,7 +30,7 @@ import {
 } from '../../core/lib/git/checkpoint'
 import { resolveContext, getStateDir } from '../../core/context'
 import { type AgentEvent } from '../../core/lib/claude-stream'
-import { IllegalTransitionError, updateTask } from '../../core/queue'
+import { IllegalTransitionError, getTask, updateTask } from '../../core/queue'
 import { unlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks'
@@ -151,7 +151,7 @@ export const merge = async (
   // after a partial completion (e.g. daemon restart between resolveMergeJob and
   // step-completion recording) must NOT re-acquire the merge lock or re-run the
   // fast-forward. Return immediately with a synthesized MergeOutput.
-  const _currentTask = await store.getTask(taskId)
+  const _currentTask = await getTask(taskId)
   if (_currentTask !== null && MERGE_IDEMPOTENT_TERMINAL_STATUSES.has(_currentTask.status)) {
     const _priorStatus = _currentTask.status
     const _trace = await resolveTrace(ctx, taskId)
@@ -379,7 +379,7 @@ export const merge = async (
             const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
               '../../core/lib/main-dirty'
             )
-            const taskRow = await store.getTask(taskId)
+            const taskRow = await getTask(taskId)
             isMainCommitter =
               parseMainCommiterPayload(taskRow?.recoveryPayload ?? null)?.recipe ===
               MAIN_COMMITER_RECIPE
