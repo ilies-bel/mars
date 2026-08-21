@@ -2098,10 +2098,12 @@ export class Arc {
    *
    * Diagnose Chore intercept (PRD 06e677fb): when the completing task is a
    * diagnose Chore (kind='diagnose'), the generic unblock path is bypassed
-   * entirely. Instead the verdict-driven branch fires via `runDiagnoseFollowup`,
-   * which reads the structured verdict and either dispatches a fix (root-cause)
-   * or escalates to the actionQueue (inconclusive / no-verdict). A diagnose Chore's
-   * parent is NEVER re-queued blindly — the verdict owns that decision.
+   * entirely and `diagnoseVerdictPending` is returned instead. A diagnose
+   * Chore's parent is NEVER re-queued blindly — the recorded verdict owns that
+   * decision, and running the verdict-driven branch (`runDiagnoseFollowup`,
+   * which dispatches a fix or escalates to the action queue) is the CALLER's
+   * job. That routing is self-heal, not lifecycle, and invoking it from here
+   * closed an `arc -> diagnose-followup -> arc` import cycle.
    */
   static async unblockByCompletion(
     blockerTaskId: string,
@@ -2114,15 +2116,7 @@ export class Arc {
     // parent instead of consulting a verdict that does not exist).
     const completingTask = await getTask(blockerTaskId)
     if (completingTask?.kind === 'diagnose' && completingTask.status === 'done') {
-      // Dynamic import breaks the potential cycle with diagnose-followup.
-      // Best-effort: a followup failure must not mask the Chore's done event.
-      try {
-        const { runDiagnoseFollowup } = await import('./lib/diagnose-followup')
-        await runDiagnoseFollowup(blockerTaskId)
-      } catch {
-        /* best-effort: logged by caller */
-      }
-      return { blockerTaskId, outcomes: [] }
+      return { blockerTaskId, outcomes: [], diagnoseVerdictPending: true }
     }
 
     const store = await getDefaultTaskStore()

@@ -228,6 +228,19 @@ export interface UnblockOutcome {
 export interface UnblockByTaskResult {
   blockerTaskId: string
   outcomes: UnblockOutcome[]
+  /**
+   * Set when the completing task was a diagnose Chore that reached `done`
+   * (PRD 06e677fb). The generic unblock loop is bypassed for such a Chore —
+   * its parent is NEVER re-queued blindly, because the recorded verdict owns
+   * that decision — so `outcomes` is empty and the caller must run the
+   * verdict-driven branch (`runDiagnoseFollowup`) instead.
+   *
+   * The Arc aggregate reports the need rather than acting on it: dispatching
+   * a fix task and raising action-queue rows is self-heal routing, not a task
+   * lifecycle transition, and calling it from `arc.ts` closed an
+   * `arc -> diagnose-followup -> arc` import cycle.
+   */
+  diagnoseVerdictPending?: boolean
 }
 
 export interface BlockedDependentRow {

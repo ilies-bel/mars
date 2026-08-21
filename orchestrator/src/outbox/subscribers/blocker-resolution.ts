@@ -5,6 +5,7 @@ import { Arc } from '../../core/arc.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
 import { registerSubscriberName } from '../registry.js'
 import { updateTask } from '../../core/queue.js'
+import { runDiagnoseFollowup } from '../../core/lib/diagnose-followup.js'
 import { RESCUE_OPERATOR_TAG } from '../../core/rescue-operator-spawn.js'
 
 /**
@@ -137,6 +138,12 @@ async function cancelStaleRecoveriesForOrigin(
  *    raises no action-queue row to resolve (ADR-0028 closes rows on `dropped`),
  *    so parking dependents would give the operator nothing to act on; the
  *    row-deleting sibling `Arc.drop` already releases dependents inline.
+ *  - `reason: 'done'` on a diagnose Chore → the generic unblock loop is
+ *    bypassed by the Arc aggregate (`diagnoseVerdictPending`) and the
+ *    verdict-driven branch runs here instead (`runDiagnoseFollowup`): read the
+ *    recorded verdict and either dispatch exactly one fix attempt (root-cause)
+ *    or raise exactly one action-queue item (inconclusive / no-verdict). The
+ *    Chore's parent is never re-queued blindly — the verdict owns that call.
  *  - `reason: 'purged'` → ignored. `Arc.drop` emits it immediately before
  *    `DELETE FROM tasks` and has already released dependents in that same
  *    transaction.
@@ -196,6 +203,30 @@ export async function drainBlockerResolution(
       if (payload.reason !== 'done' && payload.reason !== 'dropped') return false
 
       const result = await Arc.unblockByCompletion(payload.taskId)
+
+      // Diagnose Chore verdict branch (PRD 06e677fb). The Arc aggregate
+      // bypasses the generic unblock loop for a `done` diagnose Chore and
+      // reports the bypass; running the verdict-driven branch — which reads
+      // the structured verdict and either dispatches exactly one fix attempt
+      // or raises exactly one action-queue item — is this subscriber's job.
+      // Best-effort: a follow-up failure must not mask the Chore's done event
+      // or block the cursor.
+      if (result.diagnoseVerdictPending) {
+        try {
+          const outcome = await runDiagnoseFollowup(payload.taskId)
+          log?.(
+            `[diagnose] chore ${payload.taskId}: ${outcome.verdictKind} verdict -> ${outcome.action}`,
+          )
+          return outcome.action !== 'noop'
+        } catch (err) {
+          log?.(
+            `[diagnose] chore ${payload.taskId}: follow-up errored (non-fatal): ${
+              (err as Error).message
+            }`,
+          )
+          return false
+        }
+      }
 
       // When an origin itself reaches `done`, cancel any queued or running
       // fix/rescue tasks that were spawned for it. This handles the race where

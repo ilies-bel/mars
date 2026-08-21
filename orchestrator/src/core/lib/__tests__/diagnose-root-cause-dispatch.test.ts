@@ -10,8 +10,10 @@
  *  - The original task is re-parked blocked behind the fix attempt.
  *  - Non-root-cause verdicts (inconclusive / no-verdict) produce no fix
  *    attempt and park the parent failed with one actionable actionQueue item.
- *  - onBlockerTaskCompleted delegates to verdict-driven dispatch for any
- *    task with kind='diagnose', never running the generic re-queue path.
+ *  - onBlockerTaskCompleted reports `diagnoseVerdictPending` for any task with
+ *    kind='diagnose' instead of running the generic re-queue path, and its
+ *    caller (the outbox blocker-resolution subscriber) runs the verdict-driven
+ *    dispatch.
  *  - A failing diagnose Chore never spawns a fix task or investigator
  *    (the terminality invariant; prevents recursion).
  */
@@ -95,8 +97,18 @@ const loadModules = async (repo: string) => {
     '../diagnose-followup'
   )) as unknown as FollowupModule
   const { Arc } = await import('../../arc')
+  // Mirrors what the outbox blocker-resolution subscriber does on a
+  // `task.terminal { reason: 'done' }` event: the Arc aggregate bypasses the
+  // generic unblock loop for a done diagnose Chore and reports the bypass via
+  // `diagnoseVerdictPending`; the CALLER runs the verdict-driven branch.
   const br: BlockerModule = {
-    onBlockerTaskCompleted: (id) => Arc.unblockByCompletion(id),
+    onBlockerTaskCompleted: async (id) => {
+      const result = await Arc.unblockByCompletion(id)
+      if (result.diagnoseVerdictPending) {
+        await followup.runDiagnoseFollowup(id)
+      }
+      return result
+    },
   }
   const ft = (await import(
     '../../queue-fix-tasks'
@@ -377,6 +389,11 @@ describe('diagnose root-cause dispatch', () => {
     // Trigger through the public blocker-resolution entry point
     const completion = await br.onBlockerTaskCompleted(chore.id)
     expect(completion.blockerTaskId).toBe(chore.id)
+    // The Arc aggregate must have bypassed the generic unblock loop and
+    // handed the decision to the verdict branch rather than producing
+    // outcomes of its own.
+    expect(completion.diagnoseVerdictPending).toBe(true)
+    expect(completion.outcomes).toEqual([])
 
     // Parent must NOT have been re-queued — verdict-driven path parks it
     // blocked behind the new fix task instead.
