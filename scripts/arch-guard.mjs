@@ -2,9 +2,10 @@
 /**
  * Mars static architecture guard.
  *
- *   node scripts/arch-guard.mjs            # check   -> `npm run arch`
- *   node scripts/arch-guard.mjs --baseline # freeze   -> `npm run arch:baseline`
- *   node scripts/arch-guard.mjs --graph    # diagram  -> `npm run arch:graph`
+ *   node scripts/arch-guard.mjs                # check   -> `npm run arch`
+ *   node scripts/arch-guard.mjs --baseline     # freeze  -> `npm run arch:baseline`
+ *   node scripts/arch-guard.mjs --env-baseline # freeze the process.env allowlist (see below)
+ *   node scripts/arch-guard.mjs --graph        # diagram -> `npm run arch:graph`
  *
  * WHY A WRAPPER INSTEAD OF CALLING `depcruise` TWICE FROM package.json
  * --------------------------------------------------------------------
@@ -111,7 +112,12 @@ const TREES = [
 // or an import ratchet scoped to one folder pair:
 //
 //   1. "no `process.env` reads outside the config loader"
-//      (orchestrator/src/core/config/) is a TEXT pattern.
+//      (orchestrator/src/core/config/) is a TEXT pattern. Unlike the two
+//      rules below, it is NOT a CUSTOM_RULES entry — it has its own EXACT
+//      ratchet (see ENV READS CHECK below) backed by a per-file allowlist
+//      file (`.arch-guard-env-allowlist.json`) instead of a single inline
+//      count, so a maintainer who FIXES a read but forgets to update the
+//      allowlist also fails the guard, not just one who adds a new read.
 //   2. "CLI must not import orchestrator internals" is an import RATCHET:
 //      orchestrator/src/cli/ already reaches into orchestrator/src/core/
 //      directly in dozens of places, so the rule must start from today's
@@ -155,25 +161,6 @@ const CUSTOM_RULE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts'];
 const CUSTOM_RULE_SKIP_DIRS = new Set(['node_modules', 'dist', 'coverage', '.mastra']);
 
 const CUSTOM_RULES = [
-  {
-    name: 'no-process-env-outside-config-loader',
-    severity: 'error',
-    comment:
-      'Reading `process.env` directly scatters environment-variable knowledge across the ' +
-      'codebase and makes every read un-injectable in tests. `orchestrator/src/core/config/` ' +
-      '(load.ts, levers.ts, env-registry.ts) is the one place allowed to read it; everywhere ' +
-      'else receives config as a value (ControlLevers, a loaded config object, an injected ' +
-      '`opts.env`). Route a new read through the config loader instead of adding another one.',
-    pathPattern: /^orchestrator\/src\//,
-    pathExclude: [/^orchestrator\/src\/core\/config\//, /(^|\/)__tests__\//, /\.(test|spec)\.tsx?$/],
-    forbidPattern: /\bprocess\.env\b/g,
-    // Measured on 69d4b45d, the commit the config loader (03443b70) landed on
-    // (occurrence count, not file/line count — a line with two reads counts
-    // twice). Fix a read down into the loader and lower this floor in the
-    // same change.
-    knownViolations: 256,
-    enabled: true,
-  },
   {
     name: 'cli-no-orchestrator-internals',
     severity: 'error',
@@ -302,6 +289,147 @@ function runCustomRules() {
   return ok;
 }
 
+// =============================================================================
+// ENV READS CHECK — `process.env` reads outside the config loader.
+// =============================================================================
+// Consumer slice for CUSTOM_RULES item 1 above. Reuses the CUSTOM_RULE_*
+// scan scaffolding (walkFiles/toRelPosix) but is NOT a CUSTOM_RULES entry:
+// its ratchet is EXACT (per-file counts must match the allowlist exactly in
+// BOTH directions), not a ceiling, so fixing a read down without updating the
+// allowlist fails the guard just as adding a new one does. That is the only
+// way the allowlist stays a trustworthy map of where the remaining 103-file
+// sprawl actually lives, instead of a stale number nobody drains.
+const ENV_ALLOWLIST_PATH = join(REPO_ROOT, '.arch-guard-env-allowlist.json');
+const ENV_READ_RULE = {
+  pathPattern: /^orchestrator\/src\//,
+  pathExclude: [/^orchestrator\/src\/core\/config\//, /(^|\/)__tests__\//, /\.(test|spec)\.tsx?$/],
+  forbidPattern: /\bprocess\.env\b/g,
+};
+
+/** Occurrence count of `process.env` per repo-relative file, outside the config loader. */
+function scanEnvReadsByFile() {
+  const files = CUSTOM_RULE_SCAN_ROOTS.flatMap((root) => walkFiles(join(REPO_ROOT, root)));
+  const counts = {};
+  for (const abs of files) {
+    const rel = toRelPosix(abs);
+    if (!ENV_READ_RULE.pathPattern.test(rel)) continue;
+    if (ENV_READ_RULE.pathExclude.some((p) => p.test(rel))) continue;
+    const content = readFileSync(abs, 'utf8');
+    const matches = content.match(ENV_READ_RULE.forbidPattern);
+    if (matches && matches.length > 0) counts[rel] = matches.length;
+  }
+  return counts;
+}
+
+function loadEnvAllowlist() {
+  if (!existsSync(ENV_ALLOWLIST_PATH)) return null;
+  const parsed = JSON.parse(readFileSync(ENV_ALLOWLIST_PATH, 'utf8'));
+  return parsed.violations ?? {};
+}
+
+/**
+ * Compare today's `process.env` reads (outside the config loader) against
+ * `.arch-guard-env-allowlist.json`. Unlike `runCustomRules()`, this is an
+ * EXACT ratchet: a file whose actual count is LOWER than the recorded count
+ * fails just as one whose count is HIGHER does — so shrinking the sprawl
+ * without updating the allowlist is caught, not silently accepted.
+ */
+function checkEnvReads() {
+  const recorded = loadEnvAllowlist();
+  if (recorded === null) {
+    console.error(
+      `\n  ✗ arch [env-reads]: missing ${relative(REPO_ROOT, ENV_ALLOWLIST_PATH)}.\n` +
+        `\n    This file is the ratchet for \`process.env\` reads outside ` +
+        `orchestrator/src/core/config/. Regenerate it with ` +
+        `\`node scripts/arch-guard.mjs --env-baseline\` if this is a first setup.\n`,
+    );
+    return false;
+  }
+
+  const actual = scanEnvReadsByFile();
+  const allFiles = new Set([...Object.keys(recorded), ...Object.keys(actual)]);
+  const newSites = [];
+  const staleSites = [];
+  let recordedTotal = 0;
+  let actualTotal = 0;
+
+  for (const file of allFiles) {
+    const rec = recorded[file] ?? 0;
+    const act = actual[file] ?? 0;
+    recordedTotal += rec;
+    actualTotal += act;
+    if (act > rec) newSites.push({ file, recorded: rec, actual: act });
+    else if (act < rec) staleSites.push({ file, recorded: rec, actual: act });
+  }
+
+  const head = `arch [env-reads]: ${actualTotal} occurrence(s) (allowlist total ${recordedTotal})`;
+
+  if (newSites.length === 0 && staleSites.length === 0) {
+    console.log(`  ✓ ${head}`);
+    return true;
+  }
+
+  console.error(`\n  ✗ ${head}:\n`);
+  for (const s of newSites) {
+    console.error(`      NEW      ${s.file}: ${s.actual} occurrence(s), allowlist says ${s.recorded}`);
+  }
+  for (const s of staleSites) {
+    console.error(`      STALE    ${s.file}: ${s.actual} occurrence(s), allowlist says ${s.recorded}`);
+  }
+  console.error(
+    `\n    Reading \`process.env\` directly scatters environment-variable knowledge across the ` +
+      `codebase and makes every read un-injectable in tests. \`orchestrator/src/core/config/\` ` +
+      `(load.ts, levers.ts, env-registry.ts) is the one place allowed to read it; everywhere else ` +
+      `receives config as a value (ControlLevers, a loaded config object, an injected \`opts.env\`).\n` +
+      `\n    NEW sites are reads not yet in the allowlist — route them through the config loader ` +
+      `instead of adding another one.\n` +
+      `    STALE sites are recorded at a HIGHER count than what's actually there — this ratchet is ` +
+      `EXACT, not a ceiling: regenerate the allowlist with ` +
+      `\`node scripts/arch-guard.mjs --env-baseline\` to lock the shrink in.\n`,
+  );
+  return false;
+}
+
+/** Regenerate `.arch-guard-env-allowlist.json` from today's actual `process.env` reads. */
+function envBaseline() {
+  const before = loadEnvAllowlist() ?? {};
+  const beforeTotal = Object.values(before).reduce((a, b) => a + b, 0);
+
+  const actual = scanEnvReadsByFile();
+  const afterTotal = Object.values(actual).reduce((a, b) => a + b, 0);
+
+  const sortedViolations = Object.fromEntries(
+    Object.keys(actual)
+      .sort()
+      .map((file) => [file, actual[file]]),
+  );
+
+  writeFileSync(
+    ENV_ALLOWLIST_PATH,
+    JSON.stringify(
+      {
+        _comment:
+          'Ratchet for `process.env` reads outside orchestrator/src/core/config/ ' +
+          '(scripts/arch-guard.mjs checkEnvReads()). EXACT match, not a ceiling: `arch` fails if ' +
+          'any file\'s actual count differs from what is recorded here, in EITHER direction — fix a ' +
+          'read and regenerate this file (`node scripts/arch-guard.mjs --env-baseline`) in the same ' +
+          'change. Counts are occurrences, not lines — a line with two reads counts twice.',
+        totalViolations: afterTotal,
+        violations: sortedViolations,
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+
+  const delta = afterTotal - beforeTotal;
+  const arrow = delta > 0 ? `GREW by ${delta}  <-- REVIEW THIS` : delta < 0 ? `shrank by ${-delta}` : 'unchanged';
+  console.log(
+    `  env-reads: ${beforeTotal} -> ${afterTotal} occurrences (${arrow})\n` +
+      `  wrote ${relative(REPO_ROOT, ENV_ALLOWLIST_PATH)}\n`,
+  );
+}
+
 function runDepcruise(tree, extraArgs) {
   if (!existsSync(DEPCRUISE)) {
     console.error(
@@ -427,6 +555,7 @@ function check() {
   }
 
   if (!runCustomRules()) ok = false;
+  if (!checkEnvReads()) ok = false;
 
   if (!ok) {
     console.error('\narch: FAILED\n');
@@ -529,8 +658,11 @@ function graph() {
 const mode = process.argv[2];
 if (mode === '--baseline') baseline();
 else if (mode === '--graph') graph();
+else if (mode === '--env-baseline') envBaseline();
 else if (mode === undefined || mode === '--check') check();
 else {
-  console.error(`arch-guard: unknown mode "${mode}". Use --check (default), --baseline, or --graph.`);
+  console.error(
+    `arch-guard: unknown mode "${mode}". Use --check (default), --baseline, --env-baseline, or --graph.`,
+  );
   process.exit(2);
 }
