@@ -103,11 +103,21 @@ const enrichList: Command = {
       return { code: 0 }
     }
     for (const e of entries) {
+      // Replay verdict (ADR-0099): a shadow check only promotes once it
+      // re-catches the failures that motivated it, so the pending verdict is
+      // what explains a check that has burnt in but is still in shadow.
+      // `none` = no replay recorded yet (burn-in threshold not reached, or no
+      // replayable motivating-failure fixture captured).
+      const replay = e.burnInReplay
+      const replayVerdict =
+        replay === null
+          ? 'none'
+          : `${replay.caught}/${replay.total} caught, ${replay.missed} missed`
       const detail =
         e.status === 'non-encodable'
           ? `reason=${e.nonEncodableReason ?? 'unclassified'}`
           : e.status === 'shadow'
-            ? `family=${e.encodableFamily ?? '?'} burn-in=${e.burnInParseCount}/${SHADOW_BURN_IN_COUNT}`
+            ? `family=${e.encodableFamily ?? '?'} burn-in=${e.burnInParseCount}/${SHADOW_BURN_IN_COUNT} replay=${replayVerdict}`
             : `family=${e.encodableFamily ?? '?'}`
       // Breadth (ADR-0099): how many past task failures this signature would
       // have fired on, exact-string vs. same-family — surfaces a gate
