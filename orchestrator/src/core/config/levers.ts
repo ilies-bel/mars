@@ -59,3 +59,13 @@ export const resolveControlLevers = (env: NodeJS.ProcessEnv = process.env): Cont
 
 /** True when self-heal (fix-task and Investigator spawning) must not run. */
 export const isRecoveryDisabled = (levers: ControlLevers): boolean => levers.recovery === 'off'
+
+/**
+ * True when the operator has disabled auto-commit of dirty operator edits on
+ * `main` before a merge fast-forward. No env override — `operatorAutoCommit`
+ * is absent from `LEVER_ENV_OVERRIDES`. Nothing consumes this yet (lever
+ * surface only, PRD ce46f01e-concurrent-writing-on-main-rebase-verify
+ * slice 9); a later slice wires the behaviour in.
+ */
+export const isOperatorAutoCommitDisabled = (levers: ControlLevers): boolean =>
+  levers.operatorAutoCommit === 'off'

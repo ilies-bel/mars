@@ -99,6 +99,7 @@ describe('consumers decide from the levers they are handed', () => {
         scoring: 'on',
         memoryCapture: 'on',
         autoRunReflect: 'off',
+        operatorAutoCommit: 'on',
       }),
     ).toBe(false)
     expect(
@@ -107,6 +108,7 @@ describe('consumers decide from the levers they are handed', () => {
         scoring: 'on',
         memoryCapture: 'on',
         autoRunReflect: 'off',
+        operatorAutoCommit: 'on',
       }),
     ).toBe(true)
   })
@@ -122,6 +124,7 @@ describe('consumers decide from the levers they are handed', () => {
         scoring: 'on',
         memoryCapture: 'on',
         autoRunReflect: 'off',
+        operatorAutoCommit: 'on',
       }),
     ).toBe(false)
     expect(
@@ -130,6 +133,7 @@ describe('consumers decide from the levers they are handed', () => {
         scoring: 'off',
         memoryCapture: 'on',
         autoRunReflect: 'off',
+        operatorAutoCommit: 'on',
       }),
     ).toBe(true)
   })

@@ -64,6 +64,16 @@ export interface ControlLevers {
    * Gesture: `mars operator set auto-run-reflect <on|off>`.
    */
   autoRunReflect: ControlLeverValue
+  /**
+   * Lever surface only — nothing reads this yet (PRD
+   * ce46f01e-concurrent-writing-on-main-rebase-verify slice 9). It will
+   * eventually gate whether the daemon may auto-commit dirty operator edits
+   * on `main` before a merge fast-forward. Default 'on' (current
+   * auto-commit-on-merge behaviour, unchanged, until a later slice wires
+   * this in). No env override.
+   * Gesture: `mars operator set operator-auto-commit <on|off>`.
+   */
+  operatorAutoCommit: ControlLeverValue
 }
 
 export interface DaemonCaps {
@@ -241,6 +251,7 @@ export const daemonConfigSchema = z
         /** Legacy alias for `memoryCapture`, accepted for migration. */
         autoReflect: z.enum(['on', 'off']).optional(),
         autoRunReflect: z.enum(['on', 'off']).optional(),
+        operatorAutoCommit: z.enum(['on', 'off']).optional(),
       })
       .partial()
       .optional(),
@@ -424,6 +435,7 @@ const DEFAULT_CONTROL_LEVERS: ControlLevers = {
   scoring: 'on',
   memoryCapture: 'on',
   autoRunReflect: 'off',
+  operatorAutoCommit: 'on',
 }
 
 /** Exported for `src/core/config/registry.ts` — see {@link DEFAULTS}. */
@@ -839,6 +851,9 @@ export const readControlLevers = (): ControlLevers => {
     }
     if (record.autoRunReflect === 'on' || record.autoRunReflect === 'off') {
       result.autoRunReflect = record.autoRunReflect
+    }
+    if (record.operatorAutoCommit === 'on' || record.operatorAutoCommit === 'off') {
+      result.operatorAutoCommit = record.operatorAutoCommit
     }
   }
   return result

@@ -95,6 +95,7 @@ const operatorStatus: Command = {
     deps.out(`scoring-low-trend-threshold: ${cfg.scoring.lowTrendThreshold}`)
     deps.out(`scoring-low-trend-window: ${cfg.scoring.lowTrendWindow}`)
     deps.out(`auto-run-reflect: ${levers.autoRunReflect}`)
+    deps.out(`operator-auto-commit: ${levers.operatorAutoCommit}`)
     // Reflection history: derive from arc files on disk so manual `mars arc reflect`
     // invocations are counted too (daemon.json only records auto-run completions).
     // This is the same source viewDeepReflections uses, so the CLI and the
@@ -206,7 +207,7 @@ const operatorSet: Command = {
   path: 'operator set',
   summary: 'set a control lever and apply it immediately',
   usage:
-    'usage: mars operator set <dispatch|recovery|scoring|memory-capture|auto-run-reflect|auto-enqueue|scoring-auto-trigger|qa-step-list> <on|off>\n' +
+    'usage: mars operator set <dispatch|recovery|scoring|memory-capture|auto-run-reflect|operator-auto-commit|auto-enqueue|scoring-auto-trigger|qa-step-list> <on|off>\n' +
     '       mars operator set <drift-threshold-pct|task-confidence-threshold|scoring-low-trend-threshold|scoring-low-trend-window> <n>\n' +
     '       mars operator set <budget-window|budget-window-tokens|budget-arc-tokens> <value>',
   run: async (args, deps) => {
@@ -289,7 +290,7 @@ const operatorSet: Command = {
       deps.out(`qa-step-list: ${value}`)
       return { code: 0 }
     }
-    const validLevers = ['dispatch', 'recovery', 'scoring', 'memory-capture', 'auto-run-reflect', 'auto-enqueue', 'scoring-auto-trigger'] as const
+    const validLevers = ['dispatch', 'recovery', 'scoring', 'memory-capture', 'auto-run-reflect', 'operator-auto-commit', 'auto-enqueue', 'scoring-auto-trigger'] as const
     type LeverName = (typeof validLevers)[number]
     if (!validLevers.includes(lever as LeverName)) {
       deps.err(
@@ -358,6 +359,7 @@ const operatorSet: Command = {
     const configLeverName: keyof import('../../core/daemon/config').ControlLevers =
       leverName === 'memory-capture' ? 'memoryCapture'
       : leverName === 'auto-run-reflect' ? 'autoRunReflect'
+      : leverName === 'operator-auto-commit' ? 'operatorAutoCommit'
       : leverName as 'recovery' | 'scoring'
     // Every control lever is read dynamically from daemon.json on each use
     // (`resolveControlLevers()`), so persisting the file IS the live apply —
