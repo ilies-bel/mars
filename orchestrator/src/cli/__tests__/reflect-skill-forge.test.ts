@@ -29,8 +29,17 @@ vi.mock('../../core/lib/reflect-query', () => ({
 }))
 
 vi.mock('../../core/lib/reflector', () => ({
-  runReflector: vi.fn(),
   persistSuggestions: vi.fn(),
+}))
+
+// `mars reflect` resolves its reflector through the Port registry
+// (`requireReflector('token')`), so the registry is the seam to stub. The
+// hoisted `vi.fn` survives `vi.resetModules()`, so it is configured in
+// `beforeEach` alongside the other stubs.
+const { tokenReflect } = vi.hoisted(() => ({ tokenReflect: vi.fn() }))
+
+vi.mock('../../core/ports/reflector/registry', () => ({
+  requireReflector: (kind: string) => ({ kind, reflect: tokenReflect }),
 }))
 
 vi.mock('../../core/lib/kpi-snapshots.js', () => ({
@@ -98,8 +107,8 @@ beforeEach(async () => {
     costSummary: { totalWeightedTokens: 100, successCount: 1, failureCount: 0 },
   } as never)
 
-  const { runReflector, persistSuggestions } = await import('../../core/lib/reflector')
-  vi.mocked(runReflector).mockResolvedValue({
+  const { persistSuggestions } = await import('../../core/lib/reflector')
+  tokenReflect.mockResolvedValue({
     suggestions: [{ title: 'Default suggestion', rationale: 'reason' }],
     exitCode: 0,
     tokenAnalysis: null,

@@ -1352,18 +1352,23 @@ export const handleTaskFailureWithFixTask = async (
       branch,
       worktreePath: task.worktreePath,
     })
-    import('./lib/failure-reflector').then(({ spawnFailureReflector }) =>
-      spawnFailureReflector({
-        taskId: input.taskId,
-        lastStep: input.failingStep,
-        lastErrorSignature: failureSignature,
-        recoverySpawnedCount: task.recoverySpawnedCount,
-        worktreePath: task.worktreePath,
-        branch,
-      }).catch((err) =>
-        // eslint-disable-next-line no-console
-        console.warn('[failure-reflector] spawn failed (non-fatal):', err),
-      ),
+    import('./ports/reflector/registry').then(({ requireReflector }) =>
+      requireReflector<
+        import('./lib/failure-reflector').SpawnFailureReflectorOpts,
+        import('./ports/reflector/types').ReflectorRunOutcome
+      >('failure')
+        .reflect({
+          taskId: input.taskId,
+          lastStep: input.failingStep,
+          lastErrorSignature: failureSignature,
+          recoverySpawnedCount: task.recoverySpawnedCount,
+          worktreePath: task.worktreePath,
+          branch,
+        })
+        .catch((err) =>
+          // eslint-disable-next-line no-console
+          console.warn('[failure-reflector] spawn failed (non-fatal):', err),
+        ),
     )
     return {
       outcome: 'failed',

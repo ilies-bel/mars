@@ -76,11 +76,6 @@ interface TokenAnalysis {
   notes: string
 }
 
-// Re-export the shared Port envelope/kind so existing importers of
-// `./reflector` (tests, deep-reflector.ts) keep working without reaching
-// into `../ports/reflector/types` directly.
-export type { ReflectorRunOutcome, ReflectorKind, Reflector } from '../ports/reflector/types'
-
 export interface ReflectionResult extends ReflectorRunOutcome {
   tokenAnalysis: TokenAnalysis | null
   suggestions: ReflectionSuggestion[]

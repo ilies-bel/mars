@@ -4,7 +4,7 @@
  * These tests drive the command in-process through the Command seam
  * (ADR-0023) — no binary spawned, no process.exit.
  *
- * Key invariant under test: when `runDeepReflectorArc` exits non-zero,
+ * Key invariant under test: when the `deep-arc` reflector exits non-zero,
  * the command must:
  *   1. Return a non-zero exit code.
  *   2. NOT call `applyVerdicts` or `insertReflectionTask`.
@@ -21,8 +21,15 @@ import type { DeepReflectArc } from '../../core/lib/deep-reflect-query'
 
 // ─── module mocks (hoisted by Vitest before any imports) ──────────────────────
 
-vi.mock('../../core/lib/deep-reflector', () => ({
-  runDeepReflectorArc: vi.fn(),
+// The command resolves its reflector through the Port registry
+// (`requireReflector('deep-arc')`), so the registry — not
+// `lib/deep-reflector` — is the seam to stub. Mocking the registry also keeps
+// the real `lib/deep-reflector` module (and its provider imports) out of the
+// test's module graph entirely.
+const { deepArcReflect } = vi.hoisted(() => ({ deepArcReflect: vi.fn() }))
+
+vi.mock('../../core/ports/reflector/registry', () => ({
+  requireReflector: (kind: string) => ({ kind, reflect: deepArcReflect }),
 }))
 
 vi.mock('../../core/lib/deep-reflect-query', () => ({
@@ -48,7 +55,7 @@ vi.mock('../../core/context', () => ({
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-/** Minimal arc that satisfies every field the command reads before/after calling runDeepReflectorArc. */
+/** Minimal arc that satisfies every field the command reads before/after calling the reflector. */
 const makeMinimalArc = (): DeepReflectArc => ({
   originId: 'test-origin-abc',
   taskCount: 1,
@@ -114,13 +121,12 @@ beforeEach(async () => {
 
 /** Wire all stubs so the reflector path is reached, then return exitCode 124. */
 const wireReflectorTimeout = async () => {
-  const { runDeepReflectorArc } = await import('../../core/lib/deep-reflector')
   const { loadDeepReflectArc, resolveOriginIdForTaskOrSelf } = await import(
     '../../core/lib/deep-reflect-query'
   )
   vi.mocked(resolveOriginIdForTaskOrSelf).mockResolvedValue('test-origin-abc')
   vi.mocked(loadDeepReflectArc).mockResolvedValue(makeMinimalArc())
-  vi.mocked(runDeepReflectorArc).mockResolvedValue({
+  deepArcReflect.mockResolvedValue({
     exitCode: 124,
     report: makeEmptyReport() as never,
     rawOutput: '',
