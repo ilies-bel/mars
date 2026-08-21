@@ -25,6 +25,23 @@ import { attachToExistingFixTask } from '../queue-fix-tasks'
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store'
 import { Arc } from '../arc'
 import type { TraceEventStore } from './trace-events-store'
+import {
+  MAIN_COMMITER_RECIPE,
+  parseMainCommiterPayload,
+  serialiseMainCommiterPayload,
+  SOURCE_ERROR_SUMMARY,
+} from './main-commiter-payload'
+
+// Re-exported for existing consumers (`import { MAIN_COMMITER_RECIPE, ... }
+// from '../lib/main-dirty'`): the definitions themselves live in
+// `main-commiter-payload.ts`, a leaf module with no dependency on `../arc` or
+// `../queue`, so `arc.ts` can depend on them without depending on this file
+// (which does depend on `../arc`) — see that module's header comment.
+// `SOURCE_ERROR_SUMMARY` is used only internally below, so it is imported
+// but not re-exported; `VERIFY_MAIN_DIRTY_CODE` and `MainCommiterPayload`
+// have no consumer of this file's re-export, so they are imported directly
+// from `./main-commiter-payload` by `arc.ts` instead and not repeated here.
+export { MAIN_COMMITER_RECIPE, parseMainCommiterPayload, serialiseMainCommiterPayload }
 
 /**
  * Narrow check: is `err` a PostgreSQL unique-violation (SQLSTATE 23505) on the
@@ -454,80 +471,6 @@ export const checkIntegrationBranchDirty = async (
 }
 
 /**
- * Failure code emitted whenever dirty-main detection parks a task. Aligns
- * with the failure-reason catalog entry in `failure-reasons/built-in.ts`.
- * Kept as a module constant so the dispatch-time and verify-time call sites
- * cannot drift.
- */
-export const VERIFY_MAIN_DIRTY_CODE = 'verify:main-dirty'
-
-/**
- * Recipe name that resolves the committer agent (see
- * `recipes/built-in/main-commiter.md`). Stored on the recovery task's
- * `recovery_payload` so future actionQueue / UI code can render which recipe a
- * given recovery is running.
- */
-export const MAIN_COMMITER_RECIPE = 'main-commiter'
-
-/**
- * Shape of the JSON blob persisted on `tasks.recovery_payload` for a
- * `main-commiter` recovery. Other recipes that adopt the same column will
- * use their own shape; the column is opaque at the persistence layer.
- */
-export interface MainCommiterPayload {
-  recipe: typeof MAIN_COMMITER_RECIPE
-  /**
-   * Integration branch the committer is parked on. This is the active-committer
-   * dedup key: parallel integration branches each get their own independent
-   * committer, and all tasks on the same branch share one committer regardless
-   * of what files are dirty or where HEAD is.
-   */
-  integrationBranch: string
-  /**
-   * Dirty paths the committer was checkpointed to clean, parsed from
-   * `git status --porcelain` at spawn time. Optional — absent on legacy rows.
-   *
-   * Used by the verify post-check to scope the still-dirty invariant: only
-   * paths in this set count as a genuine committer failure; dirt that appeared
-   * after the checkpoint is handled by the next dispatch-time dirty-main check.
-   */
-  checkpointedPaths?: string[]
-}
-
-/**
- * Parse a recovery_payload string into a typed MainCommiterPayload, returning
- * null when the payload is missing, malformed, or for a different recipe.
- * Used by the catalog auto-resolve and aggregated-actionQueue-row paths.
- */
-export const parseMainCommiterPayload = (
-  raw: string | null,
-): MainCommiterPayload | null => {
-  if (raw === null || raw.length === 0) return null
-  try {
-    const parsed = JSON.parse(raw) as Partial<MainCommiterPayload>
-    if (parsed.recipe !== MAIN_COMMITER_RECIPE) return null
-    if (typeof parsed.integrationBranch !== 'string') return null
-    const checkpointedPaths =
-      Array.isArray(parsed.checkpointedPaths) &&
-      parsed.checkpointedPaths.every((p) => typeof p === 'string')
-        ? (parsed.checkpointedPaths as string[])
-        : undefined
-    return {
-      recipe: MAIN_COMMITER_RECIPE,
-      integrationBranch: parsed.integrationBranch,
-      ...(checkpointedPaths !== undefined ? { checkpointedPaths } : {}),
-    }
-  } catch {
-    return null
-  }
-}
-
-/** Serialise a payload for the `recovery_payload` column. */
-export const serialiseMainCommiterPayload = (
-  payload: MainCommiterPayload,
-): string => JSON.stringify(payload)
-
-/**
  * Status set `resolveActiveMainCommitter` uses to locate a committer that can
  * still accept new sources (i.e. an in-flight committer). 'done' is NOT
  * included here — a done committer can no longer unblock dependents (done
@@ -706,17 +649,6 @@ const reapZombieCommitter = async (
     `[main-dirty] reaped zombie main-commiter ${committerTaskId} (status=${status}, no worker process) on ${integrationBranch}`,
   )
 }
-
-/**
- * Title surfaced on the `tasks.error` column of the source task when it
- * parks on a `main-commiter`. Kept short — the bulk of the context is on
- * the recovery task itself.
- */
-export const SOURCE_ERROR_SUMMARY = (
-  integrationBranch: string,
-  dispatchPhase: 'dispatch' | 'verify' | 'merge',
-): string =>
-  `dirty integration branch (${integrationBranch}) detected at ${dispatchPhase}; parked behind main-commiter recovery`
 
 export interface MainCommitterResolution {
   /** The recovery task id the source is now blocked on. */

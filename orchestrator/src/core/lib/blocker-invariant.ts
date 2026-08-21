@@ -1,5 +1,6 @@
 import type { DbStatement, DbResultSet } from './db.js'
 import { getDefaultTaskStore } from '../store/task-store'
+import { MAIN_COMMITER_RECIPE, parseMainCommiterPayload } from './main-commiter-payload'
 
 /**
  * Minimal statement-runner the invariant checks depend on. Satisfied by the
@@ -252,9 +253,6 @@ export const scanRecoveryBlockerEdges = async (
   opts: BlockerInvariantOptions = {},
 ): Promise<RecoveryEdgeViolation[]> => {
   const c = opts.client ?? (await getDefaultTaskStore())
-  const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
-    './main-dirty.js'
-  )
   const r = await c.execute({
     sql: `SELECT b.task_id AS task_id,
                  b.blocker_task_id AS blocker_task_id,

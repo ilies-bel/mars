@@ -67,7 +67,7 @@ import {
   VERIFY_MAIN_DIRTY_CODE,
   serialiseMainCommiterPayload,
   type MainCommiterPayload,
-} from './lib/main-dirty'
+} from './lib/main-commiter-payload'
 import type { TraceEventStore } from './lib/trace-events-store'
 import { internalBus } from '../internal-bus'
 import { hintDispatch } from './daemon/dispatch-hint'
