@@ -190,6 +190,63 @@ describe('awaitHuman primitive', () => {
 })
 
 // ---------------------------------------------------------------------------
+// 2a. Promise-based path (onManualPark) — previewUrl/logPath forwarding
+// ---------------------------------------------------------------------------
+
+describe('awaitHuman: promise-based onManualPark path', () => {
+  beforeEach(() => {
+    mockUpdateTask.mockClear()
+    mockRaiseActionQueueItem.mockClear()
+  })
+
+  /** MarsCtx stub with an onManualPark hook wired, mirroring the daemon. */
+  const makeCtxWithOnManualPark = (onManualPark: ReturnType<typeof vi.fn>) => ({
+    ...makeCtx('await-human'),
+    services: { store: makeStubStore(), traceStore: null, onManualPark },
+  })
+
+  it('takes the promise path (not the sentinel throw) whenever onManualPark is present', async () => {
+    const onManualPark = vi.fn().mockResolvedValue(undefined)
+    const ctx = makeCtxWithOnManualPark(onManualPark)
+    await awaitHuman(ctx as never, { note: 'QA this' })
+    expect(onManualPark).toHaveBeenCalledTimes(1)
+    // No sentinel throw: park + updateTask happen inside the daemon's own
+    // hook, not in await-human.ts's fallback body.
+    expect(mockUpdateTask).not.toHaveBeenCalled()
+    expect(mockRaiseActionQueueItem).not.toHaveBeenCalled()
+  })
+
+  it('forwards previewUrl and logPath into the onManualPark call (the preview/QA gate)', async () => {
+    const onManualPark = vi.fn().mockResolvedValue(undefined)
+    const ctx = makeCtxWithOnManualPark(onManualPark)
+    await awaitHuman(ctx as never, {
+      note: 'QA this',
+      previewUrl: 'http://localhost:3000',
+      logPath: '/fake/.mars/previews/test-task-id.log',
+    })
+    expect(onManualPark).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'test-task-id',
+        taskId: 'test-task-id',
+        stepName: 'await-human',
+        guide: 'QA this',
+        previewUrl: 'http://localhost:3000',
+        logPath: '/fake/.mars/previews/test-task-id.log',
+      }),
+    )
+  })
+
+  it('defaults previewUrl/logPath to null when not provided', async () => {
+    const onManualPark = vi.fn().mockResolvedValue(undefined)
+    const ctx = makeCtxWithOnManualPark(onManualPark)
+    await awaitHuman(ctx as never)
+    expect(onManualPark).toHaveBeenCalledWith(
+      expect.objectContaining({ previewUrl: null, logPath: null }),
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
 // 2b. Manual reviewType on review (workflow-declared)
 // ---------------------------------------------------------------------------
 

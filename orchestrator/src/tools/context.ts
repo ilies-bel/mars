@@ -56,6 +56,18 @@ export interface MarsServices {
     taskId: string
     stepName: string
     guide: string | null
+    /**
+     * Preview URL for a manual-QA row (the local-preview review gate).
+     * Null when no preview was started. Forwarded into the raised
+     * action-queue row's payload — see `LeaseParkPayload.previewUrl`.
+     */
+    previewUrl?: string | null
+    /**
+     * Preview process log path for a manual-QA row. Null when no preview
+     * was started. Forwarded into the raised action-queue row's payload —
+     * see `LeaseParkPayload.logPath`.
+     */
+    logPath?: string | null
   }) => Promise<void>
   /**
    * Optional callback invoked immediately after the coder/fixer child subprocess

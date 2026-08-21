@@ -1678,21 +1678,29 @@ export const startDaemon = async (
               taskId,
               stepName,
               guide,
+              previewUrl,
+              logPath,
             }: {
               runId: string
               taskId: string
               stepName: string
               guide: string | null
+              previewUrl?: string | null
+              logPath?: string | null
             }): Promise<void> => {
               // updateTask + raise the action-queue row — the body shared
               // with await-human.ts's sentinel-throw fallback
               // (core/lib/park-for-human.ts). Preserves the prior lease
               // owner across manual steps so the same Foreground operator
               // re-receives the lease at the next park without re-attaching
-              // ('mars step done' keepLease:true kept it).
+              // ('mars step done' keepLease:true kept it). previewUrl/logPath
+              // (the local-preview QA gate) land in the raised row's payload
+              // exactly as the sentinel-throw path builds it.
               await parkTaskForHuman(taskId, stepName, guide, taskStore, {
                 variant: 'promise',
                 raisedBy: 'primitive:manual-step',
+                previewUrl,
+                logPath,
               })
               return awaitManualDone(runId, stepName)
             },

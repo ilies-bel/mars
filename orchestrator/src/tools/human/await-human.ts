@@ -61,11 +61,12 @@ export interface AwaitHumanOpts {
  *   1. `mars-f19f0ecd` — extract the duplicated `updateTask` +
  *      `raiseActionQueueItem` park body shared by the sentinel branch below
  *      and the daemon's `onManualPark` hook into one helper. No behaviour
- *      change, no dispatch change.
+ *      change, no dispatch change. DONE.
  *   2. `mars-18e6e0b5` — carry `previewUrl`/`logPath` through `onManualPark`
  *      so the guard at the promise-path branch below can collapse to a bare
- *      `ctx.services.onManualPark != null`. The preview payload gap is the
- *      only reason a daemon-backed run still takes the sentinel path.
+ *      `ctx.services.onManualPark != null`. The preview payload gap was the
+ *      only reason a daemon-backed run still took the sentinel path. DONE —
+ *      the guard below is now the bare check.
  *   3. `mars-9dd152c7` — delete the sentinel-throw fallback and
  *      `AWAIT_HUMAN_MESSAGE`, and make `onManualPark` required (test and
  *      scaffolded contexts get a default implementation rather than an
@@ -126,32 +127,32 @@ export const awaitHuman = async (
   const stepName = ctx.currentStep?.name ?? 'await-human'
 
   // ── Promise-based path (preferred) ────────────────────────────────────────
-  // When the daemon injects an onManualPark hook AND no preview opts are set,
-  // delegate to it so the workflow suspends in-process until `mars step done`
-  // calls resolveManualStep(). The step record is then written as 'completed'
-  // by runStep when the step fn returns — no sentinel throw needed, no patch.
+  // When the daemon injects an onManualPark hook, delegate to it so the
+  // workflow suspends in-process until `mars step done` calls
+  // resolveManualStep(). The step record is then written as 'completed' by
+  // runStep when the step fn returns — no sentinel throw needed, no patch.
+  // previewUrl/logPath (the local-preview QA gate) are forwarded so the hook
+  // raises the same richer action-queue payload the sentinel path below
+  // builds — see `LeaseParkPayload.previewUrl` / `.logPath`.
   //
   // If the daemon restarts while parked, the in-memory promise is gone.
   // handleStepDone Path 2 and handleReleaseLease patch the step to 'completed'
   // before re-queuing, so the engine short-circuits on re-dispatch without
   // re-parking.
-  //
-  // Fall through to the sentinel path when previewUrl/logPath are set (the
-  // local-preview QA path calls awaitHuman with those opts; onManualPark's
-  // action-queue row doesn't carry them, so the richer payload below is needed).
-  if (ctx.services.onManualPark != null && opts.previewUrl == null && opts.logPath == null) {
+  if (ctx.services.onManualPark != null) {
     return ctx.services.onManualPark({
       runId: ctx.runId,
       taskId,
       stepName,
       guide: note,
+      previewUrl: opts.previewUrl ?? null,
+      logPath: opts.logPath ?? null,
     })
   }
 
   // ── Sentinel-throw fallback ─────────────────────────────────────────────────
-  // No onManualPark hook (standalone workflow, test context without daemon), or
-  // preview opts are set (local-preview QA gate needs previewUrl/logPath in
-  // the action-queue payload). Park manually and throw the sentinel.
+  // No onManualPark hook (standalone workflow, test context without daemon).
+  // Park manually and throw the sentinel.
   //
   // The daemon's 'await-human' result handler patches this step's record to
   // 'completed' (~server.ts:1871). handleStepDone Path 2 and handleReleaseLease
