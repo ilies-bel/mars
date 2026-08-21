@@ -85,9 +85,9 @@ export interface ReflectionResult extends ReflectorRunOutcome {
  * The Port-legal request for the token/lever reflector: already plain
  * serializable data (a corpus of past task records — no live handles), so
  * no field needs stripping the way `Reflector`'s doc (`../ports/reflector/types.ts`)
- * references `VerifyPortRequest` stripping `VerifyArgs` in `git/verify.ts`.
- * Aliased so `tokenReflector` below has a named type to bind
- * `Reflector<TokenReflectorPortRequest, ReflectionResult>`.
+ * references `VerifierRunArgs` stripping `VerifyArgs` in
+ * `../ports/verifier/types.ts`. Aliased so `tokenReflector` below has a named
+ * type to bind `Reflector<TokenReflectorPortRequest, ReflectionResult>`.
  */
 export type TokenReflectorPortRequest = ReflectCorpus
 

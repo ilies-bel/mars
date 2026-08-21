@@ -15,13 +15,18 @@ import {
   type WorktreeRef,
 } from '../../core/lib/git/worktree'
 import {
-  verifyChanges,
   selectVerifySteps,
   getChangedFiles,
   SPEC_VERIFY_CMD_STEP,
   VERIFY_TIMEOUT_MARKER,
   type VerifyStepSpec,
 } from '../../core/lib/git/verify'
+// The verify gates run through the Verifier Port, not the runner module
+// (ADR-0097). `resolveVerifier` returns the implementation selected by
+// `MARS_VERIFIER_KIND`; the default `local` binding wraps `verifyChanges`,
+// so behaviour here is unchanged.
+import { resolveVerifier } from '../../core/ports/verifier/registry'
+import type { VerifierRunArgs, VerifierRunContext } from '../../core/ports/verifier/types'
 // The suite-level infra retry asks the heuristic registry, not a hard-coded
 // pattern list (TARGET §4.5). `infra-failure-patterns` is the built-in that
 // answers today; a repo can register its own ahead of it.
@@ -760,16 +765,26 @@ export const review = async (
         : null
       const steps = specVerifyStep ? [...gateSteps, specVerifyStep] : gateSteps
 
-      let r = await verifyChanges({
+      // The serializable half of the request (ADR-0097): everything a remote
+      // Verifier implementation would receive over the wire.
+      const verifierRunArgs: VerifierRunArgs = {
         cwd: verifyCwd,
         steps,
         branch,
         integrationBranch,
         changedFiles: isMainCommitter ? [] : changedFiles,
+      }
+      // The in-process-only half: trace emission, PID tracking and the gate
+      // abort signal, passed out of band so `verifierRunArgs` stays
+      // wire-crossable. The `local` implementation honours all three.
+      const verifierRunCtx: VerifierRunContext = {
         traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
         onChildPid: ctx.services.onVerifyChildPid,
         signal: ctx.services.verifyGateSignal,
-      })
+      }
+      const verifier = resolveVerifier()
+
+      let r = await verifier.run(verifierRunArgs, verifierRunCtx)
 
       // Infra-failure retry (once only): if any failed step output matches an
       // infrastructure-failure pattern (embedded-PG shutdown mid-suite, Spring
@@ -784,16 +799,7 @@ export const review = async (
             `[verify] task ${taskId}: infra failure detected in ${failedSteps.length} step(s) ` +
               `(embedded-PG shutdown or Spring context init); retrying once`,
           )
-          r = await verifyChanges({
-            cwd: verifyCwd,
-            steps,
-            branch,
-            integrationBranch,
-            changedFiles: isMainCommitter ? [] : changedFiles,
-            traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
-            onChildPid: ctx.services.onVerifyChildPid,
-            signal: ctx.services.verifyGateSignal,
-          })
+          r = await verifier.run(verifierRunArgs, verifierRunCtx)
         }
       }
 

@@ -20,7 +20,7 @@
  * the Port acceptance test {@link ReflectorRunOutcome} anchors: plain
  * serializable data, no `AbortSignal`, no PID/stream callbacks, no live
  * process handles — the same test `CodeIndex` (`ports/code-index/types.ts`)
- * and `VerifierPort` (`git/verify.ts`) apply.
+ * and `Verifier` (`ports/verifier/types.ts`) apply.
  */
 
 /**

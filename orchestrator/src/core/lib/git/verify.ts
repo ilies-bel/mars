@@ -244,34 +244,13 @@ export interface VerifyResult {
 }
 
 /**
- * The Port-legal request shape for a {@link VerifierPort} (ADR-0097: "Every
- * seam is a cordis service Port with serializable contracts"). Identical to
- * {@link VerifyArgs} minus the fields that fail the Port acceptance test —
- * a live `AbortSignal`, a process-artifact callback (`onChildPid`), and the
- * in-process-only `traceCtx` — so the request can cross a remote adapter
- * (HTTP/webhook/queue) unchanged, not just an in-process call.
- *
- * A local implementation still wants cancellation and PID tracking; it may
- * accept them as an out-of-band second argument to `verify()` rather than on
- * the request itself, the same way a remote adapter would accept a deadline
- * instead of a signal. That reshaping is the consumer slice's job — this
- * type only fixes the wire-crossing request shape all implementations share.
+ * The Verifier Port contract that used to be declared here — `VerifierPort`
+ * and `VerifyPortRequest` — now lives in `../../ports/verifier/types.ts` as
+ * `Verifier` / `VerifierRunArgs` / `VerifierRunResult`, next to its registry
+ * and its `local` implementation (which wraps {@link verifyChanges}).
+ * Callers resolve a verifier through `ports/verifier/registry.ts`
+ * (`resolveVerifier`) rather than importing this runner directly (ADR-0097).
  */
-export type VerifyPortRequest = Omit<
-  VerifyArgs,
-  'traceCtx' | 'signal' | 'onChildPid'
->
-
-/**
- * The Port contract for a verifier (ADR-0097). Callers resolve this through
- * the cordis context (`ctx.get(...)` / a sealed accessor), never by
- * importing a concrete implementation. The local subprocess implementation
- * wraps {@link verifyChanges}; a remote implementation (e.g. "verify in CI")
- * fills the same slot behind one adapter file, invisible to callers.
- */
-export interface VerifierPort {
-  verify(request: VerifyPortRequest): Promise<VerifyResult>
-}
 
 const runVerifyStep = async (
   name: string,
