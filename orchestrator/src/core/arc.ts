@@ -268,6 +268,51 @@ export interface AcceptanceEntry {
   updatedAt: number
 }
 
+// ── Concern manifest (modular-core program, ADR-0052 follow-on) ───────────
+//
+// `Arc` currently bundles every arc-shaped write behind one class. Two
+// downstream slices peel concerns off it into their own modules (mirroring
+// how blocker-resolution.ts already holds the pure blocker-cascade helpers
+// `Arc`'s methods delegate to); this manifest is the shared contract those
+// slices split against, so both branch off a `main` that already names the
+// boundary instead of re-deriving it independently.
+//
+// **Blocker concern** ("Split arc.ts: extract the blocker concern") — every
+// method that reads or writes `task_blockers` / `task_proposal_blockers`, or
+// cascades a status change across blocked dependents:
+//   unblockTask, addBlocker, removeBlocker, clearBlockers,
+//   addPendingReviewBlockers, transferProposalEdges, unblockByCompletion,
+//   blockByTaskFailure, failStrandedOriginOnRecoveryFailure,
+//   cascadeCancellation, recoverBlocked, recoverAllBlocked,
+//   releaseMainCommitterDependentsAfterSuccess,
+//   reparentStrandedDependentsOntoNewCommitter.
+//   Types: {@link UnblockTaskResult} (from ./queue) plus the
+//   `BlockByFailureOutcome` / `BlockByFailureResult` / `BlockedDependentRow` /
+//   `FailStrandedOriginOutcome` / `FailStrandedOriginResult` /
+//   `RecoverAllBlockedTasksResult` / `RecoverBlockedTaskOutcome` /
+//   `UnblockByTaskResult` / `UnblockOutcome` family already imported from
+//   ./blocker-resolution above — the extraction moves call sites, not
+//   ownership; ./blocker-resolution stays the type source of truth.
+//
+// **Recovery concern** ("Split arc.ts: extract the recovery concern") —
+// every method that spawns, attaches to, or reconciles a fix/recovery task:
+//   spawnRecovery, attachToRecovery, spawnMainCommitterRecovery,
+//   propagateRecoveryDone.
+//   Types: {@link UpsertFixTaskInput}, {@link UpsertFixTaskResult},
+//   {@link AttachToExistingFixTaskInput} (defined below — the recovery
+//   extraction's module is their new home) and the imported
+//   `PropagateRecoveryDoneResult`.
+//   Known external consumer: `src/core/queue-fix-tasks.ts` imports `Arc`,
+//   `UpsertFixTaskInput`, `UpsertFixTaskResult`, and
+//   `AttachToExistingFixTaskInput` directly from this file and re-exports
+//   them for its own callers — the recovery slice MUST keep those three
+//   names resolvable from `./arc` (either by re-exporting from the new
+//   module here, or by updating queue-fix-tasks.ts's import path in the same
+//   change) so it never re-derives that dependency from scratch.
+//
+// Everything else on `Arc` (origin creation, status-write primitives,
+// lease/progress/acceptance bookkeeping, drop/supersede) is core and stays
+// on the aggregate — do not fold it into either extraction.
 export class Arc {
   /**
    * Private — construct an Arc only via {@link Arc.load} or
