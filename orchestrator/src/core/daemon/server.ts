@@ -174,6 +174,7 @@ import { ViewStreamHub } from './view/stream-hub'
 import { registerViewInvalidation } from '../../bus/view-invalidation'
 import { createConditionItemsSource } from './view/derived-conditions'
 import { resolveStateClient } from '../store/state-client'
+import { buildEventInsert, withWriteTx } from '../lib/outbox'
 import {
   createTaskFlightTracker,
   type DispatchKind,
@@ -5807,6 +5808,17 @@ export const startDaemon = async (
       const { snoozeActionQueueItem } = await import('../lib/action-queue')
       await snoozeActionQueueItem(id, until)
       viewStreamHub.broadcast('action-queue')
+    },
+    // Daemon-owned counterpart to the CLI's `mars task ask` (ADR "Every seam
+    // is a cordis service Port" — modular-core slice: move the CLI's outbox
+    // publish behind a daemon API). Backs `POST /tasks/:id/question`. Same
+    // write this route replaces: a `task.question` outbox event, previously
+    // inserted directly from the CLI process via a dynamic import of outbox
+    // internals.
+    raiseTaskQuestion: async (id: string, question: string) => {
+      await withWriteTx(resolveStateClient(), async (tx) => {
+        await tx.execute(buildEventInsert('task.question', { taskId: id, question }))
+      })
     },
     recipeCatalog,
     traceStore,

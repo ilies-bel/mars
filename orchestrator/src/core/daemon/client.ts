@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createConnection } from 'node:net'
+import { readFileSync } from 'node:fs'
 import {
   daemonPaths,
   isDaemonAlive,
@@ -113,4 +114,60 @@ export const sendRequest = async (
       if (!settled) fail(new Error('daemon closed connection without responding'))
     })
   })
+}
+
+const NO_DAEMON_QUESTION_MSG =
+  'task ask: daemon not running — run `mars daemon start` (questions are raised through the daemon)'
+
+export interface RaiseTaskQuestionOptions {
+  /** Repo root override — resolves the http.port file under `<repo>/.mars/`
+   *  rather than the CWD/MARS_REPO default. */
+  repo?: string
+}
+
+/**
+ * Raise a `task.question` outbox event for `taskId` via the daemon's HTTP API
+ * (`POST /tasks/:id/question`). Backs `mars task ask`.
+ *
+ * This replaces the CLI process opening its own write transaction on the
+ * state client via a dynamic import of outbox internals — the daemon is the
+ * single writer; the CLI is purely an HTTP client of it (modular-core:
+ * "move the CLI's outbox publish behind a daemon API").
+ */
+export const raiseTaskQuestion = async (
+  taskId: string,
+  question: string,
+  opts: RaiseTaskQuestionOptions = {},
+): Promise<void> => {
+  const { httpPortFile } = daemonPaths(opts.repo)
+  let port: number | null = null
+  try {
+    const raw = readFileSync(httpPortFile, 'utf8').trim()
+    const parsed = Number(raw)
+    port = Number.isInteger(parsed) && parsed > 0 ? parsed : null
+  } catch {
+    port = null
+  }
+  if (port === null) {
+    throw new Error(NO_DAEMON_QUESTION_MSG)
+  }
+
+  let res: Response
+  try {
+    res = await fetch(
+      `http://127.0.0.1:${port}/tasks/${encodeURIComponent(taskId)}/question`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ question }),
+      },
+    )
+  } catch {
+    throw new Error(NO_DAEMON_QUESTION_MSG)
+  }
+
+  if (res.ok) return
+
+  const body = (await res.json().catch(() => ({}))) as { error?: string }
+  throw new Error(body.error ?? `daemon returned ${res.status}`)
 }

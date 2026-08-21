@@ -710,10 +710,16 @@ Stops at the first error.`,
  * `task ask` — raise a question to the operator from within a worker task run.
  *
  * Workers (Coder/Fixer) call this via `Bash(mars task ask <taskId> "<question>")`.
- * The command emits a `task.question` event to the outbox; the question-raise
- * subscriber converts it to a `coder-question` action-queue item the operator
- * resolves. Read-only workers (Planner, Slicer, Triager, BehaviourVerifier,
- * Scorer) have this Bash pattern in their disallowedTools and cannot use it.
+ * The command calls the daemon's `POST /tasks/:id/question` HTTP route (via
+ * `core/daemon/client`'s `raiseTaskQuestion`), which emits a `task.question`
+ * event to the outbox server-side; the question-raise subscriber converts it
+ * to a `coder-question` action-queue item the operator resolves. Read-only
+ * workers (Planner, Slicer, Triager, BehaviourVerifier, Scorer) have this
+ * Bash pattern in their disallowedTools and cannot use it.
+ *
+ * The CLI process never opens its own write transaction on the outbox — the
+ * daemon is the single writer (modular-core: "move the CLI's outbox publish
+ * behind a daemon API").
  */
 const taskAsk: Command = {
   path: 'task ask',
@@ -727,12 +733,8 @@ const taskAsk: Command = {
       return { code: 1 }
     }
     try {
-      const { resolveStateClient } = await import('../../core/store/state-client')
-      const { buildEventInsert, withWriteTx } = await import('../../core/lib/outbox')
-      const client = resolveStateClient()
-      await withWriteTx(client, async (tx) => {
-        await tx.execute(buildEventInsert('task.question', { taskId, question }))
-      })
+      const { raiseTaskQuestion } = await import('../../core/daemon/client')
+      await raiseTaskQuestion(taskId, question, { repo: deps.ctx.repoRoot })
       deps.out(`[mars] question raised for task ${taskId} — visible in action queue`)
     } catch (error: unknown) {
       deps.err(errorMessage(error))
