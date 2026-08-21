@@ -176,6 +176,7 @@ export const merge = async (
       true,
       false,
       buildPhaseCtx(trace, taskId, 'merge'),
+      { taskId, reason: 'diagnose' },
     )
     await updateTask(taskId, { status: 'done', failedPhase: null }, store)
     return {
@@ -372,6 +373,7 @@ export const merge = async (
               true,
               false,
               buildPhaseCtx(trace, taskId, 'merge'),
+              { taskId, reason: 'zero-commit-main-committer-noop' },
             )
             await updateTask(taskId, { status: 'done', failedPhase: null }, store)
             return {
@@ -1066,6 +1068,11 @@ export const merge = async (
             true,
             false,
             buildPhaseCtx(trace, taskId, 'merge'),
+            {
+              taskId,
+              reason: 'merged',
+              mergeCommitSha: capturedMergeShas?.mergePostSha ?? null,
+            },
           )
         }
         await updateTask(taskId, { status: 'done', failedPhase: null }, store)

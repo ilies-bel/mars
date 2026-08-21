@@ -508,6 +508,29 @@ recovery-spawn path itself.
   hits the wrong DB. Use `git -C <path>`, tool `--cwd` flags, absolute
   paths, or `mars --repo <root> …`. If a one-off subshell is unavoidable,
   spell it `(cd <abs-path> && …)` so the parent shell never moves.
+- **A worktree can be removed out from under a running agent — trust
+  `git -C <path>` only after confirming the path is still a worktree
+  root.** The merge step's cleanup can fast-forward a task's branch and
+  `git worktree remove` its directory while an agent is still working
+  inside it (observed on `fix-041a02fd`/`mars-56b4584f`: the recovery
+  agent kept running for ~15 minutes against a deleted worktree with no
+  signal). Once the directory is gone, `git -C <worktree-path> …`
+  silently resolves UPWARD to the shared main checkout instead of
+  erroring — `git -C <worktree> status` printed `On branch main …
+  working tree clean`, reading as "your work vanished" rather than
+  "this path is gone", and a `git add -A && git commit` at that point
+  would land directly on `main`. Before trusting any `git -C <path>`
+  answer you are about to act on, confirm the path is still a live
+  worktree root:
+  `git -C <path> rev-parse --show-toplevel` must equal `<path>`
+  (realpath-compare if either side may be symlinked, e.g. macOS
+  `/tmp` → `/private/tmp`) — a mismatch or error means the worktree is
+  gone. A removed worktree also leaves a tombstone one level up, e.g.
+  `.mars/worktrees/<task-id>.removed.json` (written by `removeWorktree`
+  in `orchestrator/src/core/lib/git/worktree.ts` before the directory is
+  deleted), naming why it was removed (`merged`, `diagnose`, …) and, for
+  a merge, the commit the work landed as — `ls .mars/worktrees/` for it
+  before assuming an empty directory means lost work.
 - The daemon's HTTP server binds an OS-assigned ephemeral port
   (`listen(0, '127.0.0.1', ...)` in
   `orchestrator/src/core/daemon/http-server.ts`) and publishes it to

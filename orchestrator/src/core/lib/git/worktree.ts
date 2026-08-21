@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { mkdir, rm, realpath } from 'node:fs/promises'
+import { mkdir, rm, realpath, writeFile } from 'node:fs/promises'
 import { getStateDir } from '../../context'
 import {
   exec,
@@ -1372,11 +1372,45 @@ export const describeUncommittedWork = async (args: {
   )
 }
 
+/**
+ * Explains a {@link removeWorktree} call to anyone who later finds the
+ * directory gone. Written to disk (see {@link removeWorktree}) BEFORE the
+ * directory is removed, as a sibling file that survives the removal.
+ *
+ * WHY THIS EXISTS. Incident 2026-08-2x: a recovery agent was still running
+ * inside a worktree when an unrelated dispatch fast-forwarded that task's
+ * branch and removed the directory out from under it. The agent got no
+ * signal — `git -C <removed-path> status` silently resolved UPWARD to the
+ * shared main checkout and reported a clean tree on `main`, reading as "your
+ * work vanished" rather than "this path is gone". `ls` on the worktree root
+ * was the only thing that made the state legible, and even that only showed
+ * an empty directory with no explanation. A tombstone turns that same `ls`
+ * into an answer: which task, why, and (when known) which commit the work
+ * landed as.
+ */
+export interface WorktreeRemovalTombstone {
+  /** The task whose worktree this was. */
+  taskId: string
+  /** Why the worktree was removed, e.g. `'merged'`, `'diagnose'`. */
+  reason: string
+  /** The integration-branch SHA the task's work landed as, when known. */
+  mergeCommitSha?: string | null
+}
+
+/**
+ * Path of the tombstone {@link removeWorktree} writes for `ref`. Sibling to
+ * the worktree directory (not inside it) so it survives `git worktree
+ * remove` deleting the directory wholesale.
+ */
+const worktreeTombstonePath = (worktreePath: string): string =>
+  `${worktreePath}.removed.json`
+
 export const removeWorktree = async (
   ref: WorktreeRef,
   force = true,
   keepBranch = false,
   traceCtx?: TraceCtx,
+  tombstone?: WorktreeRemovalTombstone,
 ): Promise<void> => {
   // Before removing the worktree, repair any cross-worktree node_modules
   // symlinks that pnpm may have left in the parent repo. This prevents
@@ -1386,6 +1420,29 @@ export const removeWorktree = async (
   await repairNodeModulesAfterWorktreeRemoval(repoRoot(), ref.path).catch((err) =>
     console.warn(`[removeWorktree] repair-node-modules failed (non-fatal):`, err),
   )
+
+  // Write the tombstone BEFORE the directory disappears — best-effort, never
+  // blocks the actual removal. See WorktreeRemovalTombstone for why this
+  // exists.
+  if (tombstone) {
+    await writeFile(
+      worktreeTombstonePath(ref.path),
+      JSON.stringify(
+        {
+          taskId: tombstone.taskId,
+          branch: ref.branch,
+          reason: tombstone.reason,
+          mergeCommitSha: tombstone.mergeCommitSha ?? null,
+          removedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ) + '\n',
+      'utf8',
+    ).catch((err: unknown) =>
+      console.warn(`[removeWorktree] tombstone write failed (non-fatal):`, err),
+    )
+  }
 
   const args = ['worktree', 'remove']
   if (force) args.push('--force')
