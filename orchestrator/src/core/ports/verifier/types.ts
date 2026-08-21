@@ -10,15 +10,33 @@
  * redesign. `__tests__/serializable.test.ts` pins that property with a
  * `JSON.parse(JSON.stringify(args))` round-trip.
  *
- * Two implementations exist today (see `registry.ts`):
+ * Three kinds are registered today (see `registry.ts`):
  *   - `local` — wraps `verifyChanges` (`../../lib/git/verify`), spawning each
  *     verify step as a local subprocess. This is the default binding, so
- *     behaviour is identical to calling the runner directly.
+ *     behaviour is identical to calling the runner directly. Selected by
+ *     `MARS_VERIFIER_KIND` (see `../../config/registry.ts`'s `verifier`
+ *     Port entry) via {@link resolveVerifier}.
  *   - `remote-http` (`./remote-http.ts`) — POSTs the args to a configured
  *     HTTP endpoint (e.g. CI) and reports back its `VerifierRunResult`.
+ *     Shares `local`'s request/result shapes, so it is env-selectable
+ *     through the same `MARS_VERIFIER_KIND` knob.
+ *   - `review` (`review-verifier.ts`) — wraps the `review` workflow
+ *     primitive (`../../../tools/verify/review.ts`): worktree/dirty-main
+ *     preflight, gate selection *and* execution (delegating to the `local`
+ *     kind internally for the actual subprocess run), fix-task dispatch, the
+ *     LLM full-review path, and the manual-QA park. Its request/result shape
+ *     (`ReviewOpts`/`ReviewResult`) is structurally unrelated to `local`'s —
+ *     like the Reflector Port's four kinds (`../reflector/types.ts`), a
+ *     caller already knows it wants `review` and resolves it directly via
+ *     `requireVerifier<ReviewOpts, ReviewResult, ReviewVerifierContext>('review')`
+ *     rather than through env-driven resolution.
  *
- * The active implementation is selected by `MARS_VERIFIER_KIND`
- * (see `../../config/registry.ts`'s `verifier` Port entry).
+ * `Verifier` is generic over its request/result/context shapes (default type
+ * parameters bind to the `local` kind's shapes, so every existing bare
+ * `Verifier` reference keeps working unchanged) precisely so a second,
+ * structurally-unrelated kind like `review` can implement the same Port
+ * contract without warping `local`'s types — the same reasoning
+ * `Reflector<TRequest, TResult>` documents for its four kinds.
  */
 import type { TraceCtx } from '../../lib/git/internal'
 import type { VerifyArgs, VerifyResult } from '../../lib/git/verify'
@@ -66,12 +84,22 @@ export interface VerifierRunContext {
 
 /**
  * The Verifier Port contract. Callers resolve an implementation through
- * `registry.ts` (`resolveVerifier`), never by importing a concrete
- * implementation module (ADR-0097).
+ * `registry.ts` (`resolveVerifier` for the env-selected `local` kind,
+ * `requireVerifier(kind)` for a directly-named kind like `review`), never by
+ * importing a concrete implementation module (ADR-0097).
+ *
+ * Generic so a structurally-unrelated kind (`review`) can implement this
+ * same contract with its own request/result/context shapes; the default
+ * type parameters keep every existing bare `Verifier` reference (the `local`
+ * kind, `__tests__/serializable.test.ts`'s fakes) unchanged.
  */
-export interface Verifier {
+export interface Verifier<
+  TArgs = VerifierRunArgs,
+  TResult = VerifierRunResult,
+  TContext = VerifierRunContext,
+> {
   /** Stable identifier of this implementation (matches its registry.ts `kind`). */
   readonly kind: string
   /** Run the verify gates described by `args` and report the verdict. */
-  run(args: VerifierRunArgs, ctx?: VerifierRunContext): Promise<VerifierRunResult>
+  run(args: TArgs, ctx?: TContext): Promise<TResult>
 }

@@ -8,6 +8,13 @@
  * write below goes through
  * `ctx.services.store` (the Arc aggregate, ADR-0052) inside this shell. A
  * plugin that swaps the gates cannot change whether the outcome is recorded.
+ *
+ * This module itself now sits behind the Verifier Port as the `review` kind
+ * (`../../core/ports/verifier/review-verifier.ts`, registered alongside the
+ * gate-execution-level `local` kind) — that is the only module allowed to
+ * import `review` from here directly. Every other caller resolves it via
+ * `requireVerifier('review')` (or the `review` re-export from `../index.ts`,
+ * which already goes through the Port).
  */
 import { runTool } from '../../core/lib/run-tool'
 import {

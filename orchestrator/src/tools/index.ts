@@ -38,9 +38,15 @@
  *  - The QA leaves (`primitives/{behaviour-verify,browser-check,
  *    app-boot-discovery}.ts`) and `primitives/opts-descriptors.ts` still live
  *    under `workflows/`; their homes are `tools/qa/` and `tools/`.
- *  - `verify/review.ts` is still ~1,150 LOC. It is one primitive with three
- *    review types; the cut belongs to the Phase-F `VerifyTool` extraction, not
- *    to an arbitrary line-count split.
+ *  - `verify/review.ts` is still ~1,150 LOC — it is one primitive with three
+ *    review types and that internal shape is unchanged. What *did* move (the
+ *    Phase-F `VerifyTool` extraction): the primitive now sits behind the
+ *    Verifier Port as the `review` kind (`../core/ports/verifier/
+ *    review-verifier.ts`, registered next to the gate-execution-level
+ *    `local` kind), and this barrel re-exports that Port-resolved wrapper
+ *    under the `review` name rather than importing `verify/review.ts`
+ *    directly. A further line-count split of `verify/review.ts` itself is
+ *    still owed.
  */
 
 export { buildSessionKey } from './coder/session-key'
@@ -73,8 +79,14 @@ export type { RunAgentOpts, RunAgentResult } from './coder/run-agent'
 export { runAgent } from './coder/run-agent'
 
 export { buildSpecVerifyCmdStep } from './verify/selection'
-export type { ReviewOpts, VerifyGateOutcome, ReviewResult } from './verify/review'
-export { review } from './verify/review'
+// `review` is resolved through the Verifier Port registry (ADR-0097) rather
+// than imported from `./verify/review` directly — see
+// `../core/ports/verifier/review-verifier.ts`. `runReview` is re-exported
+// under the `review` name so every existing `review(ctx, opts)` call site
+// (the bundled pipelines, scaffolded `.mars/workflows/*.js` templates) keeps
+// working unchanged.
+export type { ReviewOpts, VerifyGateOutcome, ReviewResult } from '../core/ports/verifier/review-verifier'
+export { runReview as review } from '../core/ports/verifier/review-verifier'
 
 export type { MergeOpts, MergeOutput } from './merge/merge'
 export { merge } from './merge/merge'
