@@ -36,8 +36,8 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -98,6 +98,209 @@ const TREES = [
     graphOut: 'docs/architecture/dependency-graph-ui.md',
   },
 ];
+
+// =============================================================================
+// CUSTOM TEXT-PATTERN RULES — the shared contract for the modular-core
+// boundary rules (PRD ae17340a).
+// =============================================================================
+// dependency-cruiser reasons about IMPORT EDGES only. It cannot see a bare
+// property read like `process.env.FOO` (not an import at all), and its
+// baseline mechanism ratchets ONE whole-tree `no-circular` count, not an
+// arbitrary from/to pair scoped to a single boundary rule. Three boundary
+// rules the modular-core program needs are shaped that way — a text pattern,
+// or an import ratchet scoped to one folder pair:
+//
+//   1. "no `process.env` reads outside the config loader"
+//      (orchestrator/src/core/config/) is a TEXT pattern.
+//   2. "CLI must not import orchestrator internals" is an import RATCHET:
+//      orchestrator/src/cli/ already reaches into orchestrator/src/core/
+//      directly in dozens of places, so the rule must start from today's
+//      count and only ever shrink — the same shape as the `no-circular`
+//      ratchet above, scoped to this one from/to pair instead of the whole
+//      tree.
+//   3. "VCS internals reachable only through the port" polices a Port
+//      (ADR-0097) that does not exist on `main` yet — see the DISABLED
+//      entry below, which follows the ADR-0056 stub convention already used
+//      in .dependency-cruiser.cjs: the rule's shape is defined now so the
+//      consumer slice only has to flip `enabled: true` once the port lands.
+//
+// CUSTOM_RULES is the shared contract: each of the three consumer slices
+// edits (or enables) exactly one entry here and nowhere else in this file,
+// so none of them collide with each other or with the runner below.
+//
+// Rule shape:
+//   name             short id, used in output and nowhere else
+//   severity         'error' (fails the build) — every rule here is a hard
+//                    boundary; a text/import rule with no enforcement teeth
+//                    isn't worth carrying
+//   comment          printed on failure; explain WHY the boundary exists
+//   pathPattern      RegExp tested against the repo-relative, forward-slash
+//                    path of every scanned file — the `from` side
+//   pathExclude      RegExp[] — files matching pathPattern are still skipped
+//                    if any of these also match (the loader/port/tests
+//                    themselves)
+//   forbidPattern    RegExp (global) — occurrences in a scanned file's text
+//                    are violations
+//   knownViolations  ratchet floor: today's occurrence count. Omit (or 0)
+//                    for a zero-tolerance rule. NEW occurrences beyond the
+//                    floor fail the build; fixing occurrences down is
+//                    encouraged but never required by this script — lower
+//                    the floor yourself once you've shrunk it, the same
+//                    discipline as the dependency-cruiser baseline.
+//   enabled          false = defined but not yet enforced (the ADR-0056
+//                    stub shape) — used by rule 3 above until its port
+//                    exists.
+const CUSTOM_RULE_SCAN_ROOTS = ['orchestrator/src'];
+const CUSTOM_RULE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts'];
+const CUSTOM_RULE_SKIP_DIRS = new Set(['node_modules', 'dist', 'coverage', '.mastra']);
+
+const CUSTOM_RULES = [
+  {
+    name: 'no-process-env-outside-config-loader',
+    severity: 'error',
+    comment:
+      'Reading `process.env` directly scatters environment-variable knowledge across the ' +
+      'codebase and makes every read un-injectable in tests. `orchestrator/src/core/config/` ' +
+      '(load.ts, levers.ts, env-registry.ts) is the one place allowed to read it; everywhere ' +
+      'else receives config as a value (ControlLevers, a loaded config object, an injected ' +
+      '`opts.env`). Route a new read through the config loader instead of adding another one.',
+    pathPattern: /^orchestrator\/src\//,
+    pathExclude: [/^orchestrator\/src\/core\/config\//, /(^|\/)__tests__\//, /\.(test|spec)\.tsx?$/],
+    forbidPattern: /\bprocess\.env\b/g,
+    // Measured on 69d4b45d, the commit the config loader (03443b70) landed on
+    // (occurrence count, not file/line count — a line with two reads counts
+    // twice). Fix a read down into the loader and lower this floor in the
+    // same change.
+    knownViolations: 256,
+    enabled: true,
+  },
+  {
+    name: 'cli-no-orchestrator-internals',
+    severity: 'error',
+    comment:
+      'orchestrator/src/cli/ is the adapter layer (ADR-0056 vocabulary): it renders output and ' +
+      'parses args, then hands off. Importing orchestrator/src/core/ directly from a CLI command ' +
+      'couples argument parsing to daemon/store internals and is exactly the coupling the ' +
+      'adapter boundary exists to prevent. Reach the daemon through its HTTP client/RPC surface ' +
+      'instead of the module that implements the other side of that call.',
+    pathPattern: /^orchestrator\/src\/(cli\/|cli\.ts$)/,
+    pathExclude: [/(^|\/)__tests__\//, /\.(test|spec)\.tsx?$/, /^orchestrator\/src\/cli\/test-adapter\.ts$/],
+    forbidPattern: /from\s+['"](?:\.\.\/)+core\//g,
+    // Measured on 69d4b45d. This ratchet starts wide because today's CLI is
+    // not yet layered — shrinking it is the "CLI must not import orchestrator
+    // internals" consumer slice's job, not this owner slice's. Lower this
+    // floor as call sites move to a client.
+    knownViolations: 86,
+    enabled: true,
+  },
+  {
+    name: 'vcs-internals-only-through-port',
+    severity: 'error',
+    comment:
+      'orchestrator/src/core/lib/git/ (worktree, merge, checkpoint, verify, claude) is the ' +
+      'concrete VCS implementation. Per ADR-0097 every swappable seam is a Port; once the VCS ' +
+      'Port lands at orchestrator/src/core/ports/vcs/, everything outside these two folders must ' +
+      'go through it instead of importing core/lib/git/* directly, the same shape as the ' +
+      'core-no-direct-provider-impl rule in .dependency-cruiser.cjs.',
+    pathPattern: /^orchestrator\/src\//,
+    pathExclude: [
+      /^orchestrator\/src\/core\/lib\/git\//,
+      /^orchestrator\/src\/core\/ports\/vcs\//,
+      /(^|\/)__tests__\//,
+      /\.(test|spec)\.tsx?$/,
+    ],
+    forbidPattern: /from\s+['"](?:\.\.\/)*core\/lib\/git\//g,
+    // No known-violations floor: the VCS Port does not exist on `main` yet
+    // (orchestrator/src/core/ports/ has code-index, reflector, verifier —
+    // no vcs/). DISABLED until the "VCS internals reachable only through the
+    // port" consumer slice creates the port; flip `enabled: true` there and
+    // record the real floor at that time (today's call sites all import
+    // core/lib/git/* directly, so the floor will not be zero on day one).
+    enabled: false,
+  },
+];
+
+/** Repo-relative, forward-slash path — the shape every CUSTOM_RULES pattern is written against. */
+function toRelPosix(absPath) {
+  return relative(REPO_ROOT, absPath).split('\\').join('/');
+}
+
+function walkFiles(rootDir) {
+  const out = [];
+  const stack = [rootDir];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (!CUSTOM_RULE_SKIP_DIRS.has(entry.name)) stack.push(join(dir, entry.name));
+        continue;
+      }
+      if (CUSTOM_RULE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) {
+        out.push(join(dir, entry.name));
+      }
+    }
+  }
+  return out;
+}
+
+/** Find every occurrence of `rule.forbidPattern` across files matching `rule.pathPattern`. */
+function scanCustomRule(rule, files) {
+  const violations = [];
+  for (const abs of files) {
+    const rel = toRelPosix(abs);
+    if (!rule.pathPattern.test(rel)) continue;
+    if (rule.pathExclude?.some((p) => p.test(rel))) continue;
+    const content = readFileSync(abs, 'utf8');
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const matches = lines[i].match(rule.forbidPattern);
+      if (!matches) continue;
+      for (let m = 0; m < matches.length; m++) violations.push({ file: rel, line: i + 1 });
+    }
+  }
+  return violations;
+}
+
+/** Run every enabled CUSTOM_RULES entry. Returns false if any rule has NEW violations. */
+function runCustomRules() {
+  const enabledRules = CUSTOM_RULES.filter((r) => r.enabled);
+  if (enabledRules.length === 0) return true;
+
+  const files = CUSTOM_RULE_SCAN_ROOTS.flatMap((root) => walkFiles(join(REPO_ROOT, root)));
+  let ok = true;
+
+  for (const rule of enabledRules) {
+    const violations = scanCustomRule(rule, files);
+    const floor = rule.knownViolations ?? 0;
+    const head = `arch [custom:${rule.name}]: ${violations.length} occurrence(s) (ratchet floor ${floor})`;
+
+    if (violations.length > floor) {
+      ok = false;
+      console.error(`\n  ✗ ${head}:\n`);
+      for (const v of violations.slice(0, 40)) console.error(`      ${v.file}:${v.line}`);
+      if (violations.length > 40) console.error(`      ... and ${violations.length - 40} more`);
+      console.error(
+        `\n    ${rule.comment}\n` +
+          `\n    This is a RATCHET — it may only ever shrink. If you added occurrences on ` +
+          `purpose, that is the bug to fix, not this floor.\n`,
+      );
+    } else if (violations.length < floor) {
+      console.log(
+        `  ✓ ${head} — shrank from ${floor}; lower knownViolations in scripts/arch-guard.mjs`,
+      );
+    } else {
+      console.log(`  ✓ ${head}`);
+    }
+  }
+
+  return ok;
+}
 
 function runDepcruise(tree, extraArgs) {
   if (!existsSync(DEPCRUISE)) {
@@ -222,6 +425,8 @@ function check() {
     );
     ok = false;
   }
+
+  if (!runCustomRules()) ok = false;
 
   if (!ok) {
     console.error('\narch: FAILED\n');
