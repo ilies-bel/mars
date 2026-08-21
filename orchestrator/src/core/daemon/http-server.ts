@@ -70,6 +70,7 @@ import {
   assembleDelta,
   clampWywaDeltaLimit,
 } from './view/wywa-delta'
+import { wouldHaveFiredOnMany, type MatcherBreadth } from '../lib/matcher-breadth'
 import { listStewardLedgerFor, listStewardLedgerSince } from '../steward-ledger'
 import type { ChatRunner, AttachmentInfo } from './chat-runner'
 import type { ChatStreamHub, SeqChunk } from './chat-contracts'
@@ -2114,7 +2115,7 @@ export const startHttpServer = async (
         ),
         listStewardLedgerSince(since ?? '0001-01-01T00:00:00.000Z'),
       ])
-        .then(([releaseNotes, recoveryEvents, autoRuns, [closedRaw, allThreads], stewardLedger]) => {
+        .then(async ([releaseNotes, recoveryEvents, autoRuns, [closedRaw, allThreads], stewardLedger]) => {
           const throttledThreads = allThreads
             .filter((t) => t.status === 'throttled')
             .map((t) => ({ id: t.id, updatedAt: new Date(t.updated_at).toISOString() }))
@@ -2122,6 +2123,13 @@ export const startHttpServer = async (
           const closedSubthreads = closedRaw
             .filter((t): t is typeof t & { closed_at: number } => t.closed_at !== null)
             .map((t) => ({ id: t.id, closedAt: new Date(t.closed_at).toISOString() }))
+
+          // ADR-0099 breadth: one batched query over the distinct auto-recipe
+          // signatures in this page, rather than one query per row.
+          const distinctSignatures = [...new Set(autoRuns.map((run) => run.signature))]
+          const autoRunBreadth = await wouldHaveFiredOnMany(distinctSignatures).catch(
+            () => new Map<string, MatcherBreadth>(),
+          )
 
           const delta = assembleDelta({
             releaseNotes: releaseNotes.entries,
@@ -2134,6 +2142,7 @@ export const startHttpServer = async (
             throttledThreads,
             closedSubthreads,
             stewardLedger,
+            autoRunBreadth,
             since,
             limit,
           })

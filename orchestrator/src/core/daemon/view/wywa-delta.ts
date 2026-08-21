@@ -17,6 +17,7 @@
  */
 
 import type { StewardLedgerRow } from '../../steward-ledger'
+import type { MatcherBreadth } from '../../lib/matcher-breadth'
 
 type WywaEventKind =
   | 'merge'
@@ -37,6 +38,16 @@ export interface WywaEvent {
   summary: string
   /** ISO-8601 timestamp used for newest-first ordering. */
   at: string
+  /**
+   * ADR-0099 matcher breadth: how many past recorded failures the
+   * auto-recipe run's signature would have fired on (see
+   * {@link import('../../lib/matcher-breadth').wouldHaveFiredOnMany}). Makes
+   * a narrow rule acting autonomously visible at a glance — `exact: 1` on a
+   * key applied automatically is the tell that it was minted too specific.
+   * Populated only for `kind: 'auto-recipe'` items; `null` when breadth
+   * lookup failed or was not supplied. Absent on every other event kind.
+   */
+  breadth?: MatcherBreadth | null
 }
 
 export interface WywaDeltaInput {
@@ -55,6 +66,13 @@ export interface WywaDeltaInput {
   throttledThreads: ReadonlyArray<{ id: string; updatedAt: string }>
   closedSubthreads: ReadonlyArray<{ id: string; closedAt: string }>
   stewardLedger: ReadonlyArray<StewardLedgerRow>
+  /**
+   * ADR-0099 breadth per auto-recipe-run signature, pre-fetched by the route
+   * handler with a single batched `wouldHaveFiredOnMany` call over the
+   * distinct signatures in `autoRuns` (this module performs no DB I/O
+   * itself — see the module doc-comment). Missing entries map to `null`.
+   */
+  autoRunBreadth?: ReadonlyMap<string, MatcherBreadth>
   /** ISO-8601 lower bound (exclusive). Null means no lower bound. */
   since: string | null
   /** Maximum events to return (already clamped by the caller). */
@@ -113,6 +131,7 @@ export const assembleDelta = (
       kind: 'auto-recipe',
       summary: `Auto-${run.actionOp}${task} (${run.signature})`,
       at: run.ranAt,
+      breadth: input.autoRunBreadth?.get(run.signature) ?? null,
     })
   }
 
