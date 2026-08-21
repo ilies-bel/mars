@@ -1,0 +1,50 @@
+{
+  "name": "basic-slice",
+  "taskPrompt": "Add a getWidgetCount() helper to src/widgets.ts and export it.",
+  "repoSnapshot": {
+    "ref": "6dc0594be949165fa7593e0e57ff682bbd7dd03a",
+    "description": "Captured against the mars-9fc40c8c worktree tip that introduced the eval harness itself."
+  },
+  "stubs": {
+    "codeIndex": {
+      "kind": "fixture",
+      "symbols": [
+        {
+          "name": "getWidgetCount",
+          "kind": "function",
+          "filePath": "src/widgets.ts",
+          "startLine": 12
+        }
+      ],
+      "search": [
+        {
+          "name": "getWidgetCount",
+          "kind": "function",
+          "filePath": "src/widgets.ts",
+          "startLine": 12
+        }
+      ],
+      "impactAffected": []
+    },
+    "verifier": {
+      "kind": "fixture",
+      "passed": true,
+      "verdict": "PASS",
+      "steps": [
+        { "name": "typecheck", "passed": true, "output": "tsc --noEmit: 0 errors" },
+        { "name": "test", "passed": true, "output": "1 passed, 0 failed" }
+      ]
+    },
+    "executor": {
+      "kind": "fixture",
+      "success": true,
+      "filesChanged": ["src/widgets.ts"],
+      "commitMessage": "feat(widgets): add getWidgetCount() helper"
+    }
+  },
+  "expectedDecisions": {
+    "executorSuccess": true,
+    "verifierPassed": true,
+    "finalVerdict": "done"
+  }
+}
