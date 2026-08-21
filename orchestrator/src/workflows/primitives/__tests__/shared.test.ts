@@ -55,3 +55,26 @@ describe('DEVIATION_RULES — pre-existing-failure baseline', () => {
     expect(DEVIATION_RULES).toContain('pre-existing by construction')
   })
 })
+
+// ---------------------------------------------------------------------------
+// DEVIATION_RULES — incremental commits + low-context handoff (Rules 7 & 8)
+// ---------------------------------------------------------------------------
+
+describe('DEVIATION_RULES — incremental commits + low-context handoff', () => {
+  it('requires committing incrementally in small units, starting early', () => {
+    // Coders that accumulate a large uncommitted working set lose it all when
+    // the process is killed on context exhaustion (exit 138) — this brief
+    // must tell them to commit one coherent unit at a time and commit early.
+    expect(DEVIATION_RULES).toContain('Commit incrementally')
+    expect(DEVIATION_RULES.toLowerCase()).toContain('commit early')
+    expect(DEVIATION_RULES.toLowerCase()).toContain('uncommitted')
+  })
+
+  it('instructs the agent to stop at a clean commit and hand off the remainder when budget runs low', () => {
+    // Rather than pushing until killed mid-edit, a coder that sees remaining
+    // scope exceed remaining budget should stop cleanly and enqueue the rest.
+    expect(DEVIATION_RULES).toContain('mars task add --blocked-by $TASK_ID')
+    expect(DEVIATION_RULES.toLowerCase()).toContain('remaining scope')
+    expect(DEVIATION_RULES.toLowerCase()).toContain('remaining context budget')
+  })
+})
