@@ -6,8 +6,8 @@ import { describe, expect, it } from 'vitest'
 import { openTraceEventStore } from '../trace-events-store'
 import { runWorkerWithSpan, runNonLlmStepWithSpan } from '../run-worker-with-span'
 import type { Worker, WorkerConfig, RunOptions } from '../../workers'
-import type { RunClaudeResult } from '../git/claude'
-import type { ClaudeEvent } from '../claude-stream'
+import type { RunAgentResult } from '../git/claude'
+import type { AgentEvent } from '../claude-stream'
 
 const tmpDbPath = (): string => {
   const dir = mkdtempSync(join(tmpdir(), 'mars-worker-span-'))
@@ -33,15 +33,15 @@ const makeWorkerConfig = (name: WorkerConfig['name']): WorkerConfig => ({
 // forks `claude -p`; we replace that boundary with a deterministic stub).
 const makeWorker = (
   name: WorkerConfig['name'],
-  result: RunClaudeResult,
+  result: RunAgentResult,
 ): Worker => ({
   config: makeWorkerConfig(name),
   runtime: 'headless',
-  run: async (_prompt: string, _options: RunOptions): Promise<RunClaudeResult> => result,
+  run: async (_prompt: string, _options: RunOptions): Promise<RunAgentResult> => result,
 })
 
-// A RunClaudeResult for a successful zero-message run.
-const successResult = (sessionId: string | null = null): RunClaudeResult => ({
+// A RunAgentResult for a successful zero-message run.
+const successResult = (sessionId: string | null = null): RunAgentResult => ({
   exitCode: 0,
   stdout: '',
   stderr: '',
@@ -50,8 +50,8 @@ const successResult = (sessionId: string | null = null): RunClaudeResult => ({
   quotaRejected: null,
 })
 
-// A RunClaudeResult that simulates a non-zero exit.
-const failedResult = (): RunClaudeResult => ({
+// A RunAgentResult that simulates a non-zero exit.
+const failedResult = (): RunAgentResult => ({
   exitCode: 1,
   stdout: '',
   stderr: 'something went wrong',
@@ -60,8 +60,8 @@ const failedResult = (): RunClaudeResult => ({
   quotaRejected: null,
 })
 
-// A RunClaudeResult that simulates a watchdog kill (exit code 138).
-const killedResult = (sessionId: string | null = null): RunClaudeResult => ({
+// A RunAgentResult that simulates a watchdog kill (exit code 138).
+const killedResult = (sessionId: string | null = null): RunAgentResult => ({
   exitCode: 138,
   stdout: '',
   stderr: 'claude -p aborted by caller (read/grep span watcher)',
@@ -1094,7 +1094,7 @@ describe('runWorkerWithSpan — failure-path partial usage capture', () => {
     const worker: Worker = {
       config: makeWorkerConfig('Coder'),
       runtime: 'headless',
-      run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
+      run: async (_prompt: string, options: RunOptions): Promise<RunAgentResult> => {
         // Simulate: model produces output then the process crashes
         await options.onEvent?.({
           type: 'assistant',
@@ -1102,7 +1102,7 @@ describe('runWorkerWithSpan — failure-path partial usage capture', () => {
             usage: { input_tokens: 100, output_tokens: 25 },
             content: [],
           },
-        } as ClaudeEvent)
+        } as AgentEvent)
         throw new Error('subprocess died after partial work')
       },
     }
@@ -1135,7 +1135,7 @@ describe('runWorkerWithSpan — failure-path partial usage capture', () => {
     const worker: Worker = {
       config: makeWorkerConfig('Coder'),
       runtime: 'headless',
-      run: async (): Promise<RunClaudeResult> => {
+      run: async (): Promise<RunAgentResult> => {
         throw new Error('immediate failure')
       },
     }
@@ -1165,15 +1165,15 @@ describe('runWorkerWithSpan — failure-path partial usage capture', () => {
 
   it('still calls the caller-supplied onEvent callback on accumulation', async () => {
     const traceStore = await openTraceEventStore(tmpDbPath())
-    const received: ClaudeEvent[] = []
+    const received: AgentEvent[] = []
     const worker: Worker = {
       config: makeWorkerConfig('Coder'),
       runtime: 'headless',
-      run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
+      run: async (_prompt: string, options: RunOptions): Promise<RunAgentResult> => {
         await options.onEvent?.({
           type: 'assistant',
           message: { usage: { input_tokens: 10, output_tokens: 5 }, content: [] },
-        } as ClaudeEvent)
+        } as AgentEvent)
         return { exitCode: 0, stdout: '', stderr: '', sessionId: null, conversation: [], quotaRejected: null }
       },
     }
@@ -1318,15 +1318,15 @@ describe('runWorkerWithSpan — incremental transcript chunk streaming', () => {
     const worker: Worker = {
       config: makeWorkerConfig('Coder'),
       runtime: 'headless',
-      run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
+      run: async (_prompt: string, options: RunOptions): Promise<RunAgentResult> => {
         await options.onEvent?.({
           type: 'assistant',
           message: { content: [{ type: 'text', text: '# Progress' }] },
-        } as ClaudeEvent)
+        } as AgentEvent)
         await options.onEvent?.({
           type: 'result',
           result: 'task done',
-        } as unknown as ClaudeEvent)
+        } as unknown as AgentEvent)
         throw new Error('watchdog kill')
       },
     }
@@ -1359,11 +1359,11 @@ describe('runWorkerWithSpan — incremental transcript chunk streaming', () => {
     const worker: Worker = {
       config: makeWorkerConfig('Coder'),
       runtime: 'headless',
-      run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
+      run: async (_prompt: string, options: RunOptions): Promise<RunAgentResult> => {
         await options.onEvent?.({
           type: 'assistant',
           message: { content: [{ type: 'text', text: 'starting...' }] },
-        } as ClaudeEvent)
+        } as AgentEvent)
         return { exitCode: 0, stdout: '', stderr: '', sessionId: 'sess-ok-456', conversation: [], quotaRejected: null }
       },
     }
@@ -1390,8 +1390,8 @@ describe('runWorkerWithSpan — incremental transcript chunk streaming', () => {
     const worker: Worker = {
       config: makeWorkerConfig('Slicer'),
       runtime: 'headless',
-      run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
-        await options.onEvent?.({ type: 'assistant', message: { content: [] } } as ClaudeEvent)
+      run: async (_prompt: string, options: RunOptions): Promise<RunAgentResult> => {
+        await options.onEvent?.({ type: 'assistant', message: { content: [] } } as AgentEvent)
         return { exitCode: 0, stdout: '', stderr: '', sessionId: null, conversation: [], quotaRejected: null }
       },
     }
@@ -1466,14 +1466,14 @@ describe('runWorkerWithSpan — worker-model-mismatch guard', () => {
     const fixerWorker: Worker = {
       config: makeWorkerConfig('Fixer'), // model: 'claude-sonnet-5'
       runtime: 'headless',
-      run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
+      run: async (_prompt: string, options: RunOptions): Promise<RunAgentResult> => {
         // Simulate the claude CLI's system/init event reporting the WRONG model
         await options.onEvent?.({
           type: 'system',
           subtype: 'init',
           session_id: 'sess-mismatch-fixer',
           model: 'claude-opus-5', // diverges from worker.config.model
-        } as ClaudeEvent)
+        } as AgentEvent)
         return successResult('sess-mismatch-fixer')
       },
     }
@@ -1505,13 +1505,13 @@ describe('runWorkerWithSpan — worker-model-mismatch guard', () => {
     const fixerWorker: Worker = {
       config: makeWorkerConfig('Fixer'), // model: 'claude-sonnet-5'
       runtime: 'headless',
-      run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
+      run: async (_prompt: string, options: RunOptions): Promise<RunAgentResult> => {
         await options.onEvent?.({
           type: 'system',
           subtype: 'init',
           session_id: 'sess-match',
           model: 'claude-sonnet-5', // matches worker.config.model exactly
-        } as ClaudeEvent)
+        } as AgentEvent)
         return successResult('sess-match')
       },
     }
@@ -1539,12 +1539,12 @@ describe('runWorkerWithSpan — worker-model-mismatch guard', () => {
     const fixerWorker: Worker = {
       config: makeWorkerConfig('Fixer'), // model: 'claude-sonnet-5'
       runtime: 'headless',
-      run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
+      run: async (_prompt: string, options: RunOptions): Promise<RunAgentResult> => {
         await options.onEvent?.({
           type: 'system',
           subtype: 'result', // not 'init' — must not trigger guard
           model: 'claude-opus-5',
-        } as ClaudeEvent)
+        } as AgentEvent)
         return successResult()
       },
     }
@@ -1570,13 +1570,13 @@ describe('runWorkerWithSpan — worker-model-mismatch guard', () => {
     const fixerWorker: Worker = {
       config: makeWorkerConfig('Fixer'), // model: 'claude-sonnet-5'
       runtime: 'headless',
-      run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
+      run: async (_prompt: string, options: RunOptions): Promise<RunAgentResult> => {
         await options.onEvent?.({
           type: 'system',
           subtype: 'init',
           session_id: 'sess-nonfatal',
           model: 'claude-opus-5', // mismatch
-        } as ClaudeEvent)
+        } as AgentEvent)
         return successResult('sess-nonfatal')
       },
     }

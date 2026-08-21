@@ -34,7 +34,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { extractTransportDropped } from '../claude-stream'
 import { runClaudeCode } from '../git/claude'
-import type { ClaudeEvent } from '../claude-stream'
+import type { AgentEvent } from '../claude-stream'
 
 // ---------------------------------------------------------------------------
 // Pure unit tests: extractTransportDropped
@@ -46,7 +46,7 @@ describe('extractTransportDropped', () => {
   })
 
   it('returns false for a normal successful conversation', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       { type: 'system', subtype: 'init', session_id: 'abc' },
       {
         type: 'assistant',
@@ -58,7 +58,7 @@ describe('extractTransportDropped', () => {
   })
 
   it('detects the phrase in a result event\'s result string', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       { type: 'system', subtype: 'init', session_id: 'abc' },
       {
         type: 'result',
@@ -70,7 +70,7 @@ describe('extractTransportDropped', () => {
   })
 
   it('detects the phrase in a synthetic assistant message text block', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       {
         type: 'assistant',
         message: {
@@ -91,14 +91,14 @@ describe('extractTransportDropped', () => {
   })
 
   it('is case-insensitive', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       { type: 'result', is_error: true, result: 'connection CLOSED mid-response' },
     ]
     expect(extractTransportDropped(conversation)).toBe(true)
   })
 
   it('does not trigger on an unrelated error message', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       { type: 'result', is_error: true, result: 'SyntaxError: Unexpected token' },
     ]
     expect(extractTransportDropped(conversation)).toBe(false)
@@ -108,7 +108,7 @@ describe('extractTransportDropped', () => {
     // ConnectionRefused (unreachable at connect time) is the pre-existing
     // api-unreachable / apiCircuitBreaker signal — a distinct failure mode
     // from a mid-stream drop. Must not collapse into the same detector.
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       { type: 'result', is_error: true, result: 'API Error: Unable to connect to API (ConnectionRefused)' },
     ]
     expect(extractTransportDropped(conversation)).toBe(false)

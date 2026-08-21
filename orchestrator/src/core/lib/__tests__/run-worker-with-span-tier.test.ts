@@ -15,7 +15,7 @@ import { openTraceEventStore } from '../trace-events-store'
 import { runWorkerWithSpan } from '../run-worker-with-span'
 import { PROVIDER_MODELS, type ProviderModelTier } from '../../workers/provider-types'
 import type { Worker, WorkerConfig, RunOptions } from '../../workers'
-import type { RunClaudeResult } from '../git/claude'
+import type { RunAgentResult } from '../git/claude'
 
 const tmpDbPath = (): string => {
   const dir = mkdtempSync(join(tmpdir(), 'mars-tier-test-'))
@@ -47,7 +47,7 @@ const makeCapturingWorker = (
 ): Worker => ({
   config,
   runtime: 'headless',
-  run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
+  run: async (_prompt: string, options: RunOptions): Promise<RunAgentResult> => {
     capturedModel.value = options.model
     return {
       exitCode: 0,

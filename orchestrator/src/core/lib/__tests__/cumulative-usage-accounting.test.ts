@@ -20,13 +20,13 @@ import {
   resetAccumulatedTotals,
 } from '../../daemon/usage-accumulator'
 import type { Worker, WorkerConfig, RunOptions } from '../../workers'
-import type { RunClaudeResult } from '../git/claude'
-import type { ClaudeEvent } from '../claude-stream'
+import type { RunAgentResult } from '../git/claude'
+import type { AgentEvent } from '../claude-stream'
 import type { TraceEventStore } from '../trace-events-store'
 
 // A real codex-cli 0.145.0 `turn.completed`, as parseCodexEventLine normalises
 // it: the ONLY usage-bearing event on the whole stream.
-const codexTurnCompleted: ClaudeEvent = {
+const codexTurnCompleted: AgentEvent = {
   type: 'result',
   is_error: false,
   usage: {
@@ -39,7 +39,7 @@ const codexTurnCompleted: ClaudeEvent = {
 }
 
 // Codex agent messages carry TEXT ONLY — no usage anywhere.
-const codexAgentMessage: ClaudeEvent = {
+const codexAgentMessage: AgentEvent = {
   type: 'assistant',
   message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
 }
@@ -63,12 +63,12 @@ const workerConfig = (
 /** A Worker that streams `events` through onEvent, then returns them. */
 const streamingWorker = (
   provider: WorkerConfig['provider'],
-  events: readonly ClaudeEvent[],
+  events: readonly AgentEvent[],
   maxContextTokens = 200_000,
 ): Worker => ({
   config: workerConfig(provider, maxContextTokens),
   runtime: 'headless',
-  run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
+  run: async (_prompt: string, options: RunOptions): Promise<RunAgentResult> => {
     for (const event of events) await options.onEvent?.(event)
     return {
       exitCode: 0,
@@ -153,7 +153,7 @@ describe('cumulative-provider token accounting', () => {
 
   it('reports the ceiling as enforced for a per-request provider', async () => {
     const sink: Recorded[] = []
-    const claudeAssistant: ClaudeEvent = {
+    const claudeAssistant: AgentEvent = {
       type: 'assistant',
       message: { usage: { input_tokens: 900, output_tokens: 100 }, content: [] },
     }
@@ -239,7 +239,7 @@ describe('the inapplicable ceiling is announced, not silently withheld', () => {
     const { createWorker, WORKER_CONFIGS } = await import('../../workers')
     const { PROVIDERS } = await import('../../workers/providers')
 
-    const stub = async (): Promise<RunClaudeResult> => {
+    const stub = async (): Promise<RunAgentResult> => {
       throw new Error('stop')
     }
     const originals = {

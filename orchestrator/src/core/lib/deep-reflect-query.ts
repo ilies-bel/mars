@@ -2,7 +2,7 @@ import { gunzip } from 'node:zlib'
 import { promisify } from 'node:util'
 import { getDefaultTaskStore } from '../store/task-store'
 import { getRepoRoot, getStateDir } from '../context'
-import type { ClaudeEvent } from './claude-stream'
+import type { AgentEvent } from './claude-stream'
 import { isReflectDisabled, listTaskSignals, type TaskSignalRow } from './reflect-signals'
 import {
   readAllTranscriptsForTask,
@@ -35,7 +35,7 @@ export interface OperatorContext {
    * Conversation events from the operator session, trimmed to the time
    * window or message-count cap. Empty when the transcript file is absent.
    */
-  messages: ClaudeEvent[]
+  messages: AgentEvent[]
   /**
    * How the time anchor was derived:
    * - `'cli-invocation'` — anchored on the matching `cli-invocation`
@@ -50,17 +50,17 @@ export interface OperatorContext {
 }
 
 /**
- * Coerce a raw JSONL payload into a {@link ClaudeEvent} if it satisfies
+ * Coerce a raw JSONL payload into a {@link AgentEvent} if it satisfies
  * the loose `{ type: string, ... }` shape. Returns null otherwise so
  * downstream stats reflect "events Mars can reason about" rather than
  * every line in the file (some Claude versions also emit summary or
  * metadata lines without a `type`).
  */
-const coerceClaudeEvent = (raw: unknown): ClaudeEvent | null => {
+const coerceAgentEvent = (raw: unknown): AgentEvent | null => {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const o = raw as Record<string, unknown>
   if (typeof o.type !== 'string') return null
-  return o as unknown as ClaudeEvent
+  return o as unknown as AgentEvent
 }
 
 /**
@@ -69,7 +69,7 @@ const coerceClaudeEvent = (raw: unknown): ClaudeEvent | null => {
  * `tool_use` blocks inside `message.content` on assistant turns, or as
  * top-level `{ type: 'tool_use', name }` events on some versions.
  */
-const countToolCalls = (event: ClaudeEvent, counts: Record<string, number>): void => {
+const countToolCalls = (event: AgentEvent, counts: Record<string, number>): void => {
   if (event.type === 'tool_use' && typeof event.name === 'string') {
     counts[event.name] = (counts[event.name] ?? 0) + 1
     return
@@ -92,13 +92,13 @@ const countToolCalls = (event: ClaudeEvent, counts: Record<string, number>): voi
 }
 
 interface TranscriptStreamResult {
-  conversation: ClaudeEvent[]
+  conversation: AgentEvent[]
   toolCallCounts: Record<string, number>
   notes: string[]
 }
 
 /**
- * Stream every JSONL event for a task, coerce to ClaudeEvent[], and
+ * Stream every JSONL event for a task, coerce to AgentEvent[], and
  * tally per-tool counts. Also reports any missing-on-disk transcripts
  * so the caller can surface them in the report without a stack trace.
  */
@@ -117,10 +117,10 @@ const loadTranscriptStream = async (
       notes.push(`transcript ${loc.sessionId} not found on disk: ${loc.path}`)
     }
   }
-  const conversation: ClaudeEvent[] = []
+  const conversation: AgentEvent[] = []
   const toolCallCounts: Record<string, number> = {}
   for await (const evt of readAllTranscriptsForTask(taskId)) {
-    const claudeEvent = coerceClaudeEvent(evt.raw)
+    const claudeEvent = coerceAgentEvent(evt.raw)
     if (!claudeEvent) continue
     conversation.push(claudeEvent)
     countToolCalls(claudeEvent, toolCallCounts)
@@ -214,7 +214,7 @@ export interface ArcTaskEntry {
     cacheReadTokens: number
     cacheHitRatio: number
   }
-  conversation: ClaudeEvent[]
+  conversation: AgentEvent[]
   verifyOutput: string | null
   /** True when at least one JSONL transcript file resolved to disk. */
   hasTranscript: boolean
@@ -327,7 +327,7 @@ const fetchArcTaskRows = async (
 }
 
 interface LoadedTaskTranscript {
-  conversation: ClaudeEvent[]
+  conversation: AgentEvent[]
   verifyOutput: string | null
   hasTranscript: boolean
   toolCallCounts: Record<string, number>
@@ -402,7 +402,7 @@ const loadTaskTranscript = async (
 }
 
 interface DurableTranscript {
-  conversation: ClaudeEvent[]
+  conversation: AgentEvent[]
   toolCallCounts: Record<string, number>
 }
 
@@ -431,7 +431,7 @@ const loadTranscriptChunks = async (
     return null
   }
   if (r.rows.length === 0) return null
-  const conversation: ClaudeEvent[] = []
+  const conversation: AgentEvent[] = []
   const toolCallCounts: Record<string, number> = {}
   for (const row of r.rows) {
     const rawRow = row as unknown as { chunk: string }
@@ -439,7 +439,7 @@ const loadTranscriptChunks = async (
       const parsed = JSON.parse(rawRow.chunk) as unknown
       if (!Array.isArray(parsed)) continue
       for (const raw of parsed) {
-        const event = coerceClaudeEvent(raw)
+        const event = coerceAgentEvent(raw)
         if (!event) continue
         conversation.push(event)
         countToolCalls(event, toolCallCounts)
@@ -492,10 +492,10 @@ const loadDurableTranscript = async (
     return null
   }
   if (!Array.isArray(parsed)) return null
-  const conversation: ClaudeEvent[] = []
+  const conversation: AgentEvent[] = []
   const toolCallCounts: Record<string, number> = {}
   for (const raw of parsed) {
-    const event = coerceClaudeEvent(raw)
+    const event = coerceAgentEvent(raw)
     if (!event) continue
     conversation.push(event)
     countToolCalls(event, toolCallCounts)
@@ -588,12 +588,12 @@ const loadForegroundSlice = async (
   const windowStart = anchorMs - FOREGROUND_WINDOW_BEFORE_MS
   const windowEnd = anchorMs + FOREGROUND_WINDOW_AFTER_MS
 
-  const windowedMessages: ClaudeEvent[] = []
-  const allMessages: ClaudeEvent[] = []
+  const windowedMessages: AgentEvent[] = []
+  const allMessages: AgentEvent[] = []
   let hasTimestamps = false
 
   for await (const evt of readTranscript(loc.path)) {
-    const event = coerceClaudeEvent(evt.raw)
+    const event = coerceAgentEvent(evt.raw)
     if (!event) continue
     allMessages.push(event)
     if (typeof event.timestamp === 'string') {

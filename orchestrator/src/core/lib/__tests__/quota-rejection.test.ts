@@ -6,7 +6,7 @@
  * `result` event with is_error:true and api_error_status:429, then exits 1.
  *
  * Required behaviour (three acceptance criteria):
- * 1. `quotaRejected` is surfaced on the RunClaudeResult parsed from those events.
+ * 1. `quotaRejected` is surfaced on the RunAgentResult parsed from those events.
  * 2. The code step re-queues the task with its worktree intact — no failed
  *    status, no recovery fix-task row inserted, no recovery slot consumed.
  * 3. Dispatch pauses until resetsAt and raises exactly one
@@ -16,7 +16,7 @@
  *  - extractQuotaRejected: pure-function unit tests (no IO).
  *  - isQuotaRejectedAbortError / extractQuotaResetsAt: sentinel unit tests (no IO).
  *  - runClaudeCode integration: stub `claude` binary emits the exact event
- *    sequence and exits 1; assert RunClaudeResult.quotaRejected is non-null
+ *    sequence and exits 1; assert RunAgentResult.quotaRejected is non-null
  *    and resetsAt matches.
  */
 import {
@@ -33,7 +33,7 @@ import { extractQuotaRejected } from '../claude-stream'
 import { QUOTA_REJECTED_ABORT_MESSAGE } from '../../../workflows/primitives/shared'
 import { WorkflowTerminalError } from '../workflow-terminal-error'
 import { runClaudeCode } from '../git/claude'
-import type { ClaudeEvent } from '../claude-stream'
+import type { AgentEvent } from '../claude-stream'
 
 // ---------------------------------------------------------------------------
 // Pure unit tests: extractQuotaRejected
@@ -45,7 +45,7 @@ describe('extractQuotaRejected', () => {
   })
 
   it('returns null when no rate_limit_event or 429 result is present', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       { type: 'system', subtype: 'init', session_id: 'abc' },
       {
         type: 'result',
@@ -59,7 +59,7 @@ describe('extractQuotaRejected', () => {
   })
 
   it('detects a rate_limit_event with status=rejected and captures resetsAt', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       { type: 'system', subtype: 'init', session_id: 's1' },
       {
         type: 'rate_limit_event',
@@ -69,7 +69,7 @@ describe('extractQuotaRejected', () => {
           rateLimitType: 'five_hour',
           overageStatus: 'rejected',
         },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
       {
         type: 'result',
         subtype: 'error_api_error',
@@ -85,37 +85,37 @@ describe('extractQuotaRejected', () => {
   })
 
   it('uses the LAST rate_limit_event when multiple appear', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       {
         type: 'rate_limit_event',
         rate_limit_info: { status: 'rejected', resetsAt: 100, rateLimitType: 'five_hour' },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
       {
         type: 'rate_limit_event',
         rate_limit_info: { status: 'rejected', resetsAt: 9999, rateLimitType: 'monthly' },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
     ]
     const result = extractQuotaRejected(conversation)
     expect(result?.resetsAt).toBe(9999)
   })
 
   it('returns null when rate_limit_event has status != rejected', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       {
         type: 'rate_limit_event',
         rate_limit_info: { status: 'throttled', resetsAt: 1783081200 },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
     ]
     // status is not 'rejected', so not a quota rejection
     expect(extractQuotaRejected(conversation)).toBeNull()
   })
 
   it('falls back to resetsAt=0 when rate_limit_event has no resetsAt', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       {
         type: 'rate_limit_event',
         rate_limit_info: { status: 'rejected' },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
     ]
     const result = extractQuotaRejected(conversation)
     expect(result).not.toBeNull()
@@ -123,7 +123,7 @@ describe('extractQuotaRejected', () => {
   })
 
   it('detects 429 result event alone (secondary signal) with resetsAt=0', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       {
         type: 'result',
         subtype: 'error_api_error',
@@ -139,7 +139,7 @@ describe('extractQuotaRejected', () => {
   })
 
   it('does not trigger on non-429 api_error_status', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       {
         type: 'result',
         subtype: 'error_api_error',

@@ -11,7 +11,7 @@
  * production, a mock in tests) to avoid circular-import issues.
  */
 
-import type { ClaudeEvent } from '../lib/claude-stream'
+import type { AgentEvent } from '../lib/claude-stream'
 import { readWorkerOutputText } from '../lib/worker-json'
 import type { Task } from '../queue'
 import type { Worker } from '.'
@@ -303,7 +303,7 @@ export const runRescueOperator = async (
 
   const result = await worker.run(task.prompt, {
     cwd,
-    onEvent: (event: ClaudeEvent) => {
+    onEvent: (event: AgentEvent) => {
       if (event.type !== 'assistant') return
       const msg = (event as Record<string, unknown>).message
       if (typeof msg !== 'object' || msg === null) return

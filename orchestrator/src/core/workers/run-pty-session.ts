@@ -1,6 +1,6 @@
 // pty runtime dispatcher — drives an agent CLI under node-pty so interactive
 // harnesses (e.g. Claude Code's native TTY mode) run without -p headless
-// mode. The returned RunClaudeResult is shape-compatible with runClaudeCode so
+// mode. The returned RunAgentResult is shape-compatible with runClaudeCode so
 // the verify/merge pipeline sees no difference.
 //
 // See PRD 4cf68f4f — slice 7/13.
@@ -10,8 +10,8 @@ import path from 'node:path'
 import { spawnPty } from '../lib/pty/spawn'
 import type { Provider } from './provider-types'
 import { buildWorkerEnv } from '../lib/git/claude'
-import type { ClaudeEffort, ClaudePermissionMode, RunClaudeResult } from '../lib/git/claude'
-import type { ClaudeEvent } from '../lib/claude-stream'
+import type { AgentEffort, AgentPermissionMode, RunAgentResult } from '../lib/git/claude'
+import type { AgentEvent } from '../lib/claude-stream'
 import { watchPromptScan } from './prompt-scan-done'
 
 export interface RunPtySessionArgs {
@@ -36,7 +36,7 @@ export interface RunPtySessionArgs {
    * These events give the UI/trace stream a coarse progress signal (far better
    * than silence) but do not carry token counts, tool calls, or assistant text.
    */
-  readonly onEvent?: (event: ClaudeEvent) => void | Promise<void>
+  readonly onEvent?: (event: AgentEvent) => void | Promise<void>
   /**
    * Soft context-token budget forwarded from the worker config.
    *
@@ -60,8 +60,8 @@ export interface RunPtySessionArgs {
   readonly maxContextTokens?: number
   // Security/behaviour posture forwarded to provider.spawnArgv so interactive
   // sessions honour the same Worker-level constraints as headless runs.
-  readonly permissionMode?: ClaudePermissionMode
-  readonly effort?: ClaudeEffort
+  readonly permissionMode?: AgentPermissionMode
+  readonly effort?: AgentEffort
   readonly disallowedTools?: readonly string[]
   readonly agent?: string
   readonly appendSystemPrompt?: string
@@ -70,7 +70,7 @@ export interface RunPtySessionArgs {
 /**
  * Spawns the Provider's agent CLI under node-pty, feeds the prompt, awaits
  * the Provider's done-signal (or process exit when no done-signal is
- * registered), kills the pty, and returns a RunClaudeResult-shaped object.
+ * registered), kills the pty, and returns a RunAgentResult-shaped object.
  *
  * Exit codes follow the same conventions as runClaudeCode:
  *   0   — clean completion (done-signal fired)
@@ -81,7 +81,7 @@ export interface RunPtySessionArgs {
  *   <sessionId>.log          — raw pty byte stream (appended on every onData)
  *   <sessionId>.events.jsonl — lifecycle events with ISO timestamps
  */
-export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeResult> => {
+export const runPtySession = async (args: RunPtySessionArgs): Promise<RunAgentResult> => {
   const {
     provider,
     prompt,

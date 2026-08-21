@@ -5,7 +5,7 @@ import '../workers'
 import { requireWorker } from '../workers/worker-registry'
 import { runWorkerWithSpan } from './run-worker-with-span'
 import { openTraceEventStore, type TraceEventStore } from './trace-events-store'
-import type { RunClaudeResult } from './git/claude'
+import type { RunAgentResult } from './git/claude'
 import { getRepoRoot, resolveDbTarget } from '../context'
 import { createHash, randomUUID } from 'node:crypto'
 import {
@@ -833,7 +833,7 @@ export const runReflector = async (
   } catch {
     traceStore = undefined
   }
-  let r: RunClaudeResult
+  let r: RunAgentResult
   try {
     r = await runWorkerWithSpan({
       worker: requireWorker('Reflector'),

@@ -17,7 +17,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import type { ClaudeEffort, ClaudePermissionMode } from '../lib/git/claude'
+import type { AgentEffort, AgentPermissionMode } from '../lib/git/claude'
 import {
   WORKER_PROVIDER,
   createWorker,
@@ -64,8 +64,8 @@ export interface WorkerDeclaration {
   // provider — surfaces as a conflict warning in mars worker list.
   readonly modelOverride?: string
   readonly fallbackModel?: string
-  readonly effort: ClaudeEffort
-  readonly permissionMode: ClaudePermissionMode
+  readonly effort: AgentEffort
+  readonly permissionMode: AgentPermissionMode
   readonly bare: boolean
   readonly disallowedTools: readonly string[]
   readonly outputFormat: ClaudeOutputFormat

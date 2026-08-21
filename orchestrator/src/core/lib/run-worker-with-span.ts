@@ -28,8 +28,8 @@ import { evaluateStep } from './step-evaluators'
 import { TRANSCRIPT_CHUNK_BATCH } from './trace-events-store'
 import type { TraceEventStore, TraceEventPhase } from './trace-events-store'
 import type { Worker, RunOptions } from '../workers'
-import type { RunClaudeResult } from './git/claude'
-import type { ClaudeEvent } from './claude-stream'
+import type { RunAgentResult } from './git/claude'
+import type { AgentEvent } from './claude-stream'
 
 export interface RunWorkerWithSpanOptions {
   worker: Worker
@@ -99,13 +99,13 @@ const safeRecord = async (
  * Trace capture is best-effort: errors from `record` are swallowed so a
  * DB hiccup can never fail the task.
  *
- * Returns the raw {@link RunClaudeResult} unchanged so callers can use
+ * Returns the raw {@link RunAgentResult} unchanged so callers can use
  * `r.exitCode`, `r.stdout`, `r.sessionId`, and `r.conversation` exactly as
  * they would after a direct {@link Worker.run} call.
  */
 export const runWorkerWithSpan = async (
   options: RunWorkerWithSpanOptions,
-): Promise<RunClaudeResult> => {
+): Promise<RunAgentResult> => {
   const {
     worker,
     prompt,
@@ -182,13 +182,13 @@ export const runWorkerWithSpan = async (
   // throws before returning. For PTY workers onEvent is never called — they
   // emit nothing to this path — so accumulatedEvents will be empty and the
   // failure payload carries zeros, which is the same as the prior behaviour.
-  const accumulatedEvents: ClaudeEvent[] = []
+  const accumulatedEvents: AgentEvent[] = []
 
   // Incremental transcript streaming: flush every TRANSCRIPT_CHUNK_BATCH events
   // to task_transcripts so a watchdog-killed session's partial transcript is
   // readable before step_ended is written. Best-effort — a DB hiccup must never
   // fail the task.
-  const pendingChunkEvents: ClaudeEvent[] = []
+  const pendingChunkEvents: AgentEvent[] = []
   let chunkSeq = 0
   const sessionIdForChunks = runOptions.sessionId ?? null
   const chunkTaskId = taskId
@@ -258,7 +258,7 @@ export const runWorkerWithSpan = async (
     },
   }
 
-  let result: RunClaudeResult
+  let result: RunAgentResult
   try {
     result = await worker.run(prompt, runOptionsWithAccum)
   } catch (err) {

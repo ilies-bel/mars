@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { digestTask, digestArc } from '../arc-digest'
-import type { ClaudeEvent } from '../claude-stream'
+import type { AgentEvent } from '../claude-stream'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers to construct synthetic ClaudeEvent fixtures
+// Helpers to construct synthetic AgentEvent fixtures
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** One assistant event containing a single tool_use block. */
@@ -11,7 +11,7 @@ const assistantWithTool = (
   toolUseId: string,
   name: string,
   input: Record<string, unknown>,
-): ClaudeEvent => ({
+): AgentEvent => ({
   type: 'assistant',
   message: {
     role: 'assistant',
@@ -24,7 +24,7 @@ const userWithResult = (
   toolUseId: string,
   content: string,
   isError = false,
-): ClaudeEvent => ({
+): AgentEvent => ({
   type: 'user',
   message: {
     role: 'user',
@@ -50,7 +50,7 @@ const bashResult = (id: string, out = '', isError = false) =>
 
 describe('digestTask — repeated reads', () => {
   it('reports no repeated reads when each file is Read once', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       readEvent('r1', 'a.ts'),
       readResult('r1'),
       readEvent('r2', 'b.ts'),
@@ -61,7 +61,7 @@ describe('digestTask — repeated reads', () => {
   })
 
   it('reports repeated reads when the same path appears multiple times', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       readEvent('r1', 'foo.ts'),
       readResult('r1'),
       readEvent('r2', 'foo.ts'),
@@ -77,7 +77,7 @@ describe('digestTask — repeated reads', () => {
   })
 
   it('sorts repeated reads by descending count', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       readEvent('r1', 'b.ts'), readResult('r1'),
       readEvent('r2', 'b.ts'), readResult('r2'),
       readEvent('r3', 'a.ts'), readResult('r3'),
@@ -93,7 +93,7 @@ describe('digestTask — repeated reads', () => {
 
 describe('digestTask — edit-revert pairs', () => {
   it('returns 0 when each file is edited at most once', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       editEvent('e1', 'a.ts'), editResult('e1'),
       editEvent('e2', 'b.ts'), editResult('e2'),
     ]
@@ -102,7 +102,7 @@ describe('digestTask — edit-revert pairs', () => {
   })
 
   it('counts one pair per extra edit beyond the first for each file', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       editEvent('e1', 'a.ts'), editResult('e1'),
       editEvent('e2', 'a.ts'), editResult('e2'),  // 2 edits → 1 pair
       editEvent('e3', 'a.ts'), editResult('e3'),  // 3 edits → 2 pairs total
@@ -114,7 +114,7 @@ describe('digestTask — edit-revert pairs', () => {
   })
 
   it('counts Write calls alongside Edit calls per path', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       editEvent('e1', 'a.ts'), editResult('e1'),
       assistantWithTool('w1', 'Write', { file_path: 'a.ts', content: 'new' }),
       userWithResult('w1', 'ok'),
@@ -126,7 +126,7 @@ describe('digestTask — edit-revert pairs', () => {
 
 describe('digestTask — repeated bash invocations', () => {
   it('returns empty when each command is unique', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       bashEvent('b1', 'ls -la'), bashResult('b1'),
       bashEvent('b2', 'npm test'), bashResult('b2'),
     ]
@@ -136,7 +136,7 @@ describe('digestTask — repeated bash invocations', () => {
 
   it('reports commands invoked more than once', () => {
     const cmd = 'npm run typecheck'
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       bashEvent('b1', cmd), bashResult('b1'),
       bashEvent('b2', cmd), bashResult('b2'),
       bashEvent('b3', cmd), bashResult('b3'),
@@ -149,7 +149,7 @@ describe('digestTask — repeated bash invocations', () => {
 
 describe('digestTask — tool error count', () => {
   it('counts tool_result blocks with is_error=true', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       bashEvent('b1', 'npm test'),
       bashResult('b1', 'FAIL', true),     // error
       bashEvent('b2', 'npm test'),
@@ -164,7 +164,7 @@ describe('digestTask — tool error count', () => {
 
 describe('digestTask — first tool call failure', () => {
   it('sets firstToolCallFailed=false when first call succeeds', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       readEvent('r1', 'foo.ts'),
       readResult('r1', 'content', false), // success
     ]
@@ -174,7 +174,7 @@ describe('digestTask — first tool call failure', () => {
   })
 
   it('sets firstToolCallFailed=true and captures the tool name on first-call error', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       assistantWithTool('b1', 'Bash', { command: 'pnpm install' }),
       userWithResult('b1', 'ENOENT pnpm: command not found', true), // error
       readEvent('r1', 'foo.ts'),
@@ -187,7 +187,7 @@ describe('digestTask — first tool call failure', () => {
 
   it('sets firstToolCallFailed=false when first call id has no matching result yet', () => {
     // Tool use without matching result → no error recorded yet
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       readEvent('r1', 'foo.ts'),
     ]
     const d = digestTask('task-1', conversation)
@@ -198,11 +198,11 @@ describe('digestTask — first tool call failure', () => {
 describe('digestTask — environmental failure markers', () => {
   it('treats an allowed rate_limit_event as non-environmental (no false positive)', () => {
     // An allowed event is informational — the task ran fine despite the limit event.
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       {
         type: 'rate_limit_event',
         rate_limit_info: { status: 'allowed', overageStatus: 'allowed' },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
     ]
     const d = digestTask('task-1', conversation)
     expect(d.environmentalFailure).toBe(false)
@@ -210,11 +210,11 @@ describe('digestTask — environmental failure markers', () => {
   })
 
   it('detects a rejected rate_limit_event as environmental failure', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       {
         type: 'rate_limit_event',
         rate_limit_info: { status: 'rejected', resetsAt: 1000 },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
     ]
     const d = digestTask('task-1', conversation)
     expect(d.environmentalFailure).toBe(true)
@@ -222,11 +222,11 @@ describe('digestTask — environmental failure markers', () => {
   })
 
   it('detects synthetic assistant messages (model="<synthetic>")', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       {
         type: 'assistant',
         message: { role: 'assistant', model: '<synthetic>', content: [] },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
     ]
     const d = digestTask('task-1', conversation)
     expect(d.environmentalFailure).toBe(true)
@@ -235,13 +235,13 @@ describe('digestTask — environmental failure markers', () => {
 
   it('detects result events with is_error=true and api_error_status=429', () => {
     // Secondary signal: no rate_limit_event, but a hard 429 result.
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       {
         type: 'result',
         subtype: 'error_during_execution',
         is_error: true,
         api_error_status: 429,
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
     ]
     const d = digestTask('task-1', conversation)
     expect(d.environmentalFailure).toBe(true)
@@ -250,15 +250,15 @@ describe('digestTask — environmental failure markers', () => {
 
   it('combines multiple environmental markers in a single reason string', () => {
     // Rejected rate_limit_event + synthetic assistant → two separate markers.
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       {
         type: 'rate_limit_event',
         rate_limit_info: { status: 'rejected', resetsAt: 0 },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
       {
         type: 'assistant',
         message: { role: 'assistant', model: '<synthetic>', content: [] },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
     ]
     const d = digestTask('task-1', conversation)
     expect(d.environmentalFailure).toBe(true)
@@ -287,11 +287,11 @@ describe('digestTask — environmental failure markers', () => {
   it('combines branch-contaminated task error with conversation markers', () => {
     // When both a synthetic assistant and a branch-contaminated error are present,
     // both reasons should appear in the combined reason string.
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       {
         type: 'assistant',
         message: { role: 'assistant', model: '<synthetic>', content: [] },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
     ]
     const contaminationError = 'verify:branch-contaminated: branch HEAD abc is ancestor of main'
     const d = digestTask('task-1', conversation, contaminationError)
@@ -301,7 +301,7 @@ describe('digestTask — environmental failure markers', () => {
   })
 
   it('returns environmentalFailure=false for a normal conversation', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       readEvent('r1', 'foo.ts'),
       readResult('r1', 'content'),
     ]
@@ -313,12 +313,12 @@ describe('digestTask — environmental failure markers', () => {
 
 describe('digestTask — turn count', () => {
   it('counts assistant + user events as turns', () => {
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       readEvent('r1', 'foo.ts'),   // assistant → 1
       readResult('r1'),             // user → 2
       readEvent('r2', 'bar.ts'),   // assistant → 3
       readResult('r2'),             // user → 4
-      { type: 'result', subtype: 'success' } as ClaudeEvent, // not counted
+      { type: 'result', subtype: 'success' } as AgentEvent, // not counted
     ]
     const d = digestTask('task-1', conversation)
     expect(d.turnCount).toBe(4)
@@ -359,7 +359,7 @@ describe('digestArc', () => {
           {
             type: 'rate_limit_event',
             rate_limit_info: { status: 'rejected', resetsAt: 0 },
-          } as unknown as ClaudeEvent,
+          } as unknown as AgentEvent,
         ],
       },
     ]

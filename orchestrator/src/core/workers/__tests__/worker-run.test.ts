@@ -11,7 +11,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { WorkerConfig } from '..'
-import type { ClaudeEvent } from '../../lib/claude-stream'
+import type { AgentEvent } from '../../lib/claude-stream'
 
 // This suite exercises Claude-specific session-id behaviour. Pin its provider
 // explicitly now that the framework-wide default is Codex.
@@ -71,7 +71,7 @@ for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
       cwd: process.cwd(),
     })
     expect(r.conversation).toHaveLength(3)
-    expect(r.conversation.map((e: ClaudeEvent) => e.type)).toEqual([
+    expect(r.conversation.map((e: AgentEvent) => e.type)).toEqual([
       'system',
       'assistant',
       'result',
@@ -160,6 +160,6 @@ for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
         fromHook.push(event.type)
       },
     })
-    expect(fromHook).toEqual(r.conversation.map((e: ClaudeEvent) => e.type))
+    expect(fromHook).toEqual(r.conversation.map((e: AgentEvent) => e.type))
   })
 })

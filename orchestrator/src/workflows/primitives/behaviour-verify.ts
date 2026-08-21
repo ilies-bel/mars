@@ -58,7 +58,7 @@ import type { WorktreeRef } from '../../core/lib/git/worktree'
 import { getTask, type Task } from '../../core/queue'
 import { createProposal, findOpenDraftByKpiTag } from '../../core/proposals'
 import { raiseActionQueueItem } from '../../core/lib/action-queue'
-import type { ClaudeEvent } from '../../core/lib/claude-stream'
+import type { AgentEvent } from '../../core/lib/claude-stream'
 import {
   runNonLlmStepWithSpan,
 } from '../../core/lib/run-worker-with-span'
@@ -141,7 +141,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
 /** Pull every candidate text that might carry the verdict block, newest first. */
-const collectCandidateTexts = (events: readonly ClaudeEvent[]): string[] => {
+const collectCandidateTexts = (events: readonly AgentEvent[]): string[] => {
   const texts: string[] = []
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const ev = events[i]
@@ -181,7 +181,7 @@ const tryParseReport = (raw: string): BehaviourVerdictReport | null => {
  * inferred pass: the parser is the guard against LLM optimism.
  */
 export const extractVerdictReport = (
-  events: readonly ClaudeEvent[],
+  events: readonly AgentEvent[],
 ): BehaviourVerdictReport | null => {
   for (const text of collectCandidateTexts(events)) {
     const openIdx = text.lastIndexOf(VERDICT_OPEN_TAG)

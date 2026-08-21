@@ -47,7 +47,7 @@ import { resolveControlLevers } from '../config/levers'
 import type { ControlLevers } from '../daemon/config'
 import { getDefaultTaskStore } from '../store/task-store'
 import type { TraceEventStore } from './trace-events-store'
-import type { ClaudeEvent } from './claude-stream'
+import type { AgentEvent } from './claude-stream'
 
 /**
  * True when scoring must not run: the operator set the `scoring` control
@@ -284,7 +284,7 @@ const buildScorerPrompt = (
     `The score is continuous (0.0–1.0). The rationale is a single sentence naming the decisive evidence.`,
   ].join('\n')
 
-const collectCandidateTexts = (events: readonly ClaudeEvent[]): string[] => {
+const collectCandidateTexts = (events: readonly AgentEvent[]): string[] => {
   const texts: string[] = []
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const ev = events[i] as unknown as Record<string, unknown>
@@ -328,7 +328,7 @@ const tryParseVerdict = (raw: string): ScorerVerdict | null => {
  * `error` row, never an inferred score: the parser guards against optimism.
  */
 const extractScorerVerdict = (
-  events: readonly ClaudeEvent[],
+  events: readonly AgentEvent[],
 ): ScorerVerdict | null => {
   for (const text of collectCandidateTexts(events)) {
     const openIdx = text.lastIndexOf(SCORER_VERDICT_OPEN_TAG)

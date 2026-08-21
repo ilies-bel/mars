@@ -7,7 +7,7 @@ import {
   allocateConversationBudgets,
 } from '../deep-reflector'
 import type { DeepReflectArc } from '../deep-reflect-query'
-import type { ClaudeEvent } from '../claude-stream'
+import type { AgentEvent } from '../claude-stream'
 
 describe('parseDeepReflectionReport', () => {
   it('parses a well-formed reflector output', () => {
@@ -343,8 +343,8 @@ describe('runDeepReflectorArc', () => {
 
 describe('capConversation', () => {
   it('passes through a conversation that fits within the cap', () => {
-    const events: ClaudeEvent[] = [
-      { type: 'assistant', message: { content: 'hello' } } as unknown as ClaudeEvent,
+    const events: AgentEvent[] = [
+      { type: 'assistant', message: { content: 'hello' } } as unknown as AgentEvent,
     ]
     const { events: out, elisionNote } = capConversation(events, 1024 * 1024)
     expect(out).toBe(events) // same reference — no copy needed
@@ -354,13 +354,13 @@ describe('capConversation', () => {
   it('reduces a large conversation to fit within the cap and reports elision', () => {
     // Create 100 events each ~2 KB (200 KB total)
     const big = 'x'.repeat(2000)
-    const events: ClaudeEvent[] = Array.from({ length: 100 }, (_, i) => ({
+    const events: AgentEvent[] = Array.from({ length: 100 }, (_, i) => ({
       type: 'user',
       message: {
         role: 'user',
         content: [{ type: 'tool_result', tool_use_id: `r${i}`, content: big }],
       },
-    } as unknown as ClaudeEvent))
+    } as unknown as AgentEvent))
 
     const maxBytes = 10 * 1024 // 10 KB cap — well below the 200 KB input
     const { events: out, elisionNote } = capConversation(events, maxBytes)
@@ -379,7 +379,7 @@ describe('capConversation', () => {
 /** Minimal valid ArcTaskEntry fixture. */
 const makeTaskEntry = (
   taskId: string,
-  conversation: ClaudeEvent[],
+  conversation: AgentEvent[],
 ): DeepReflectArc['tasks'][number] => ({
   taskId,
   status: 'done',
@@ -427,7 +427,7 @@ const makeArc = (tasks: DeepReflectArc['tasks']): DeepReflectArc => ({
 })
 
 /** Build a single user event containing a large tool_result body. */
-const largeResultEvent = (id: string, bodyLength: number): ClaudeEvent => ({
+const largeResultEvent = (id: string, bodyLength: number): AgentEvent => ({
   type: 'user',
   message: {
     role: 'user',
@@ -440,21 +440,21 @@ const largeResultEvent = (id: string, bodyLength: number): ClaudeEvent => ({
       },
     ],
   },
-} as unknown as ClaudeEvent)
+} as unknown as AgentEvent)
 
 /** Build an assistant event with a single Read tool_use. */
-const readCallEvent = (id: string, path = 'src/foo.ts'): ClaudeEvent => ({
+const readCallEvent = (id: string, path = 'src/foo.ts'): AgentEvent => ({
   type: 'assistant',
   message: {
     role: 'assistant',
     content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: path } }],
   },
-} as unknown as ClaudeEvent)
+} as unknown as AgentEvent)
 
 describe('buildArcPrompt — tool_result body truncation', () => {
   it('truncates large tool_result bodies to head+tail', () => {
     // 5000 chars > 400+200 = 600 chars → should be truncated
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       readCallEvent('r1'),
       largeResultEvent('r1', 5000),
     ]
@@ -469,7 +469,7 @@ describe('buildArcPrompt — tool_result body truncation', () => {
 
   it('does not modify small tool_result bodies', () => {
     const small = 'hello world'
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       readCallEvent('r1'),
       {
         type: 'user',
@@ -477,7 +477,7 @@ describe('buildArcPrompt — tool_result body truncation', () => {
           role: 'user',
           content: [{ type: 'tool_result', tool_use_id: 'r1', content: small }],
         },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
     ]
     const arc = makeArc([makeTaskEntry('task-1', conversation)])
     const prompt = buildArcPrompt(arc)
@@ -488,7 +488,7 @@ describe('buildArcPrompt — tool_result body truncation', () => {
 describe('buildArcPrompt — prompt size cap and elision markers', () => {
   it('keeps total prompt under 400 KB for a single task with a 4 MB conversation', () => {
     // 800 read+result pairs; each result body is 5000 chars → ~4 MB total
-    const conversation: ClaudeEvent[] = []
+    const conversation: AgentEvent[] = []
     for (let i = 0; i < 800; i++) {
       conversation.push(readCallEvent(`r${i}`, `file-${i % 10}.ts`))
       conversation.push(largeResultEvent(`r${i}`, 5000))
@@ -503,7 +503,7 @@ describe('buildArcPrompt — prompt size cap and elision markers', () => {
 
   it('emits an elision note when the per-task conversation cap triggers', () => {
     // 500 pairs at 1000 chars each → ~500 KB before truncation, > 150 KB cap
-    const conversation: ClaudeEvent[] = []
+    const conversation: AgentEvent[] = []
     for (let i = 0; i < 500; i++) {
       conversation.push(readCallEvent(`r${i}`))
       conversation.push(largeResultEvent(`r${i}`, 1000))
@@ -516,8 +516,8 @@ describe('buildArcPrompt — prompt size cap and elision markers', () => {
   })
 
   it('sets environmentalFailure in digest when conversation contains rate_limit_event', () => {
-    const conversation: ClaudeEvent[] = [
-      { type: 'rate_limit_event', retry_after: 30, rate_limit_info: { status: 'rejected', resetsAt: 0 } } as unknown as ClaudeEvent,
+    const conversation: AgentEvent[] = [
+      { type: 'rate_limit_event', retry_after: 30, rate_limit_info: { status: 'rejected', resetsAt: 0 } } as unknown as AgentEvent,
       readCallEvent('r1'),
       largeResultEvent('r1', 500),
     ]
@@ -532,8 +532,8 @@ describe('buildArcPrompt — prompt size cap and elision markers', () => {
   it('does not set environmentalFailure when rate_limit_event has status=allowed', () => {
     // An 'allowed' rate_limit_event is informational — the task ran fine.
     // It must not cause environmentalFailure:true in the embedded digest.
-    const conversation: ClaudeEvent[] = [
-      { type: 'rate_limit_event', rate_limit_info: { status: 'allowed', overageStatus: 'allowed' } } as unknown as ClaudeEvent,
+    const conversation: AgentEvent[] = [
+      { type: 'rate_limit_event', rate_limit_info: { status: 'allowed', overageStatus: 'allowed' } } as unknown as AgentEvent,
       readCallEvent('r1'),
       largeResultEvent('r1', 500),
     ]
@@ -547,7 +547,7 @@ describe('buildArcPrompt — prompt size cap and elision markers', () => {
   it('sets environmentalFailure in digest for secondary 429 result signal (no rate_limit_event)', () => {
     // Secondary path: a result event with is_error=true and api_error_status=429
     // must also trigger environmentalFailure:true even when no rate_limit_event is present.
-    const conversation: ClaudeEvent[] = [
+    const conversation: AgentEvent[] = [
       readCallEvent('r1'),
       largeResultEvent('r1', 100),
       {
@@ -555,7 +555,7 @@ describe('buildArcPrompt — prompt size cap and elision markers', () => {
         is_error: true,
         api_error_status: 429,
         subtype: 'error',
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
     ]
     const arc = makeArc([makeTaskEntry('task-1', conversation)])
     const prompt = buildArcPrompt(arc)
@@ -578,7 +578,7 @@ const extractConversationJson = (prompt: string): string[] => {
   const lines = prompt.split('\n')
   const out: string[] = []
   for (let i = 0; i < lines.length; i++) {
-    if (/^Conversation for .+ \(ClaudeEvent\[\] JSON;/.test(lines[i])) {
+    if (/^Conversation for .+ \(AgentEvent\[\] JSON;/.test(lines[i])) {
       out.push(lines[i + 1] ?? '')
     }
   }
@@ -601,7 +601,7 @@ const extractMetadataJson = (prompt: string): string[] => {
 describe('buildArcPrompt — capping never emits invalid JSON', () => {
   it('keeps the embedded conversation JSON parseable for an oversized transcript', () => {
     // ~8 MB of raw transcript for a single task — far past the 400 KB cap.
-    const conversation: ClaudeEvent[] = []
+    const conversation: AgentEvent[] = []
     for (let i = 0; i < 1600; i++) {
       conversation.push(readCallEvent(`r${i}`, `file-${i % 10}.ts`))
       conversation.push(largeResultEvent(`r${i}`, 5000))
@@ -646,13 +646,13 @@ describe('buildArcPrompt — capping never emits invalid JSON', () => {
 
   it('gives every task a share of the budget instead of letting one transcript take it all', () => {
     // One pathological transcript alongside four ordinary ones.
-    const fat: ClaudeEvent[] = []
+    const fat: AgentEvent[] = []
     for (let i = 0; i < 1600; i++) {
       fat.push(readCallEvent(`f${i}`))
       fat.push(largeResultEvent(`f${i}`, 5000))
     }
-    const modest = (seed: string): ClaudeEvent[] => {
-      const evts: ClaudeEvent[] = []
+    const modest = (seed: string): AgentEvent[] => {
+      const evts: AgentEvent[] = []
       for (let i = 0; i < 40; i++) {
         evts.push(readCallEvent(`${seed}${i}`))
         evts.push(largeResultEvent(`${seed}${i}`, 400))

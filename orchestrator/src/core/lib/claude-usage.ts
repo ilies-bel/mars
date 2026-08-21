@@ -1,4 +1,4 @@
-import type { ClaudeEvent } from './claude-stream'
+import type { AgentEvent } from './claude-stream'
 
 export interface UsageTotals {
   inputTokens: number
@@ -22,7 +22,7 @@ export const emptyUsageTotals = (): UsageTotals => ({
   messageCount: 0,
 })
 
-export const summarizeUsage = (events: readonly ClaudeEvent[]): UsageTotals => {
+export const summarizeUsage = (events: readonly AgentEvent[]): UsageTotals => {
   const totals = emptyUsageTotals()
   for (const event of events) {
     if (event.type === 'assistant') {
@@ -72,7 +72,7 @@ export type ProviderUsageSemantics = 'per-request' | 'cumulative' | 'none'
 // event picked up Codex's turn.completed usage — which is cumulative turn
 // SPEND — and reported it as occupancy; that is the source of the
 // `289216/50000` readouts and the ctx% figures above 300%.
-export const getLatestContextSize = (events: readonly ClaudeEvent[]): number => {
+export const getLatestContextSize = (events: readonly AgentEvent[]): number => {
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i]
     if (event.type !== 'assistant') continue
@@ -113,7 +113,7 @@ export const getLatestContextSize = (events: readonly ClaudeEvent[]): number => 
  * `inputTokens` so the four buckets stay disjoint and summing them (or
  * weighting them, as the spend meter does) never counts a token twice.
  */
-export const extractCumulativeUsage = (events: readonly ClaudeEvent[]): UsageTotals => {
+export const extractCumulativeUsage = (events: readonly AgentEvent[]): UsageTotals => {
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i]
     if (event.type !== 'result') continue
@@ -149,7 +149,7 @@ export const extractCumulativeUsage = (events: readonly ClaudeEvent[]): UsageTot
 //
 // This is money spent, NOT context occupancy — it must never be compared
 // against a context window. Returns 0 when no result event carries usage.
-export const getCumulativeTokenSpend = (events: readonly ClaudeEvent[]): number => {
+export const getCumulativeTokenSpend = (events: readonly AgentEvent[]): number => {
   const totals = extractCumulativeUsage(events)
   return (
     totals.inputTokens +
@@ -172,7 +172,7 @@ export const getCumulativeTokenSpend = (events: readonly ClaudeEvent[]): number 
  */
 export const summarizeUsageForSemantics = (
   semantics: ProviderUsageSemantics,
-  events: readonly ClaudeEvent[],
+  events: readonly AgentEvent[],
 ): UsageTotals => {
   switch (semantics) {
     case 'per-request':
@@ -233,7 +233,7 @@ export const contextGuardMode = (
 
 export const buildContextTokenSignals = (
   semantics: ProviderUsageSemantics,
-  events: readonly ClaudeEvent[],
+  events: readonly AgentEvent[],
 ): ContextTokenSignals => {
   switch (semantics) {
     case 'per-request':

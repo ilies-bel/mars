@@ -4,7 +4,7 @@
 // Each describe block corresponds to one acceptance criterion.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import type { ClaudeEvent } from '../../lib/claude-stream'
+import type { AgentEvent } from '../../lib/claude-stream'
 
 // vi.mock is hoisted by vitest above all imports so the mock factory runs
 // before any module that imports '../../lib/git/claude' loads its real
@@ -30,7 +30,7 @@ import { runSubprocessStreaming, resolveClaudeBin } from '../../lib/git/claude'
 // ---------------------------------------------------------------------------
 
 describe('parseGeminiEventLine — normalisation', () => {
-  it('wraps a plain text line as an assistant ClaudeEvent', () => {
+  it('wraps a plain text line as an assistant AgentEvent', () => {
     const ev = parseGeminiEventLine('hello from gemini')
     expect(ev).not.toBeNull()
     expect(ev?.type).toBe('assistant')
@@ -136,7 +136,7 @@ describe('geminiHeadless.run — (b) resolveClaudeBin not called', () => {
 
 describe('geminiHeadless.run — (c) event normalisation and onEvent forwarding', () => {
   it('forwards stdout text lines as assistant events (ignores stderr)', async () => {
-    const received: ClaudeEvent[] = []
+    const received: AgentEvent[] = []
     await geminiHeadless.run(
       'task',
       { cwd: '/tmp', model: 'gemini-2.5-pro' },
@@ -153,7 +153,7 @@ describe('geminiHeadless.run — (c) event normalisation and onEvent forwarding'
   })
 
   it('conversation in the returned result matches events forwarded to onEvent', async () => {
-    const fromHook: ClaudeEvent[] = []
+    const fromHook: AgentEvent[] = []
     const result = await geminiHeadless.run(
       'task',
       { cwd: '/tmp', model: 'gemini-2.5-pro' },
@@ -173,7 +173,7 @@ describe('geminiHeadless.run — (c) event normalisation and onEvent forwarding'
       stderr: 'gemini: command failed',
     })
 
-    const received: ClaudeEvent[] = []
+    const received: AgentEvent[] = []
     await geminiHeadless.run(
       'task',
       { cwd: '/tmp', model: 'gemini-2.5-pro' },

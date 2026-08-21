@@ -262,21 +262,6 @@ export type AgentPermissionMode =
   | 'dontAsk'
   | 'plan'
 
-/**
- * @deprecated Use {@link AgentEffort}. Retained only until the "Delete the
- * Claude-named dual types" consumer slice migrates every remaining
- * `ClaudeEffort` import (provider-types.ts, run-pty-session.ts,
- * workers/index.ts, persisted-registry.ts) to the neutral name and deletes
- * this alias — not a general backward-compatibility guarantee.
- */
-export type ClaudeEffort = AgentEffort
-/**
- * @deprecated Use {@link AgentPermissionMode}. Same removal path as
- * {@link ClaudeEffort} — deleted by the "Delete the Claude-named dual
- * types" consumer slice, not kept for external compatibility.
- */
-export type ClaudePermissionMode = AgentPermissionMode
-
 export interface RunAgentResult extends RunSubprocessResult {
   sessionId: string | null
   conversation: AgentEvent[]
@@ -297,22 +282,6 @@ export interface RunAgentResult extends RunSubprocessResult {
    */
   transportDropped?: boolean
 }
-
-/**
- * @deprecated Use {@link RunAgentResult}. Retained only until the "Delete
- * the Claude-named dual types" consumer slice migrates its remaining
- * production consumers (run-worker-with-span.ts, codex-headless.ts,
- * gemini-headless.ts, run-pty-session.ts) to the neutral name and deletes
- * this alias — not a general backward-compatibility guarantee.
- */
-export type RunClaudeResult = RunAgentResult
-
-/**
- * @deprecated Use {@link RunAgentArgs}. Same removal path as
- * {@link RunClaudeResult} — deleted by the "Delete the Claude-named dual
- * types" consumer slice, not kept for external compatibility.
- */
-export type RunClaudeArgs = RunAgentArgs
 
 /**
  * The Port-legal request shape for an {@link ExecutorPort} (ADR-0097: "Every

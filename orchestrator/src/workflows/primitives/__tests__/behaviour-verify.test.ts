@@ -45,7 +45,7 @@ import {
 import { __resetContextCacheForTests } from '../../../core/context'
 import type { Task } from '../../../core/queue'
 import type { Proposal } from '../../../core/proposals'
-import type { ClaudeEvent } from '../../../core/lib/claude-stream'
+import type { AgentEvent } from '../../../core/lib/claude-stream'
 import type { TraceEventStore } from '../../../core/lib/trace-events-store'
 
 // ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ beforeAll(() => {
 // Verdict extraction (the parser is the guard against LLM optimism)
 // ---------------------------------------------------------------------------
 
-const resultEvent = (text: string): ClaudeEvent => ({ type: 'result', result: text })
+const resultEvent = (text: string): AgentEvent => ({ type: 'result', result: text })
 
 describe('extractVerdictReport', () => {
   it('parses the sentinel-tagged block from the result event', () => {

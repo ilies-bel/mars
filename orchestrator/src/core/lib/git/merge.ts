@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { readFile, stat } from 'node:fs/promises'
 import { getStateDir } from '../../context'
-import { parseClaudeStreamLine, type ClaudeEvent } from '../claude-stream'
+import { parseClaudeStreamLine, type AgentEvent } from '../claude-stream'
 import {
   exec,
   execProbe,
@@ -167,7 +167,7 @@ export interface MergeArgs {
   watchdogMs?: number
   /** Optional trace context. Default phase is `merge` when omitted. */
   traceCtx?: TraceCtx
-  onSupervisorEvent?: (event: ClaudeEvent) => void | Promise<void>
+  onSupervisorEvent?: (event: AgentEvent) => void | Promise<void>
   /**
    * Fired exactly once, the moment the deterministic fast-forward path fails
    * and Vega (the vcs-supervisor) is about to be spawned to reconcile
@@ -227,7 +227,7 @@ export interface MergeResult {
   conflictResolved: boolean
   aborted: boolean
   output: string
-  supervisorConversation: ClaudeEvent[]
+  supervisorConversation: AgentEvent[]
   /**
    * Claude session id from the vcs-supervisor run, or null when no supervisor
    * was invoked (fast-forward merge) or when the supervisor conversation
@@ -343,7 +343,7 @@ End with the Completion Report block exactly as specified above.`
 }
 
 export interface InvokeSupervisorResult extends RunSubprocessResult {
-  conversation: ClaudeEvent[]
+  conversation: AgentEvent[]
 }
 
 /**
@@ -381,10 +381,10 @@ export const invokeVcsSupervisor = async (
   integrationBranch: string,
   cwd: string,
   timeoutMs: number,
-  onEvent?: (event: ClaudeEvent) => void | Promise<void>,
+  onEvent?: (event: AgentEvent) => void | Promise<void>,
 ): Promise<InvokeSupervisorResult> => {
   const prompt = await buildSupervisorPrompt(branch, integrationBranch)
-  const conversation: ClaudeEvent[] = []
+  const conversation: AgentEvent[] = []
   // AbortController used to kill the subprocess when the timeout fires.
   // Without this, the old Promise.race approach resolved the caller's promise
   // but left the subprocess running in the background — it could still be
@@ -712,7 +712,7 @@ export const mergeBranch = async ({
     let output = ''
     let conflictResolved = false
     let vegaSessionId: string | null = null
-    const supervisorConversation: ClaudeEvent[] = []
+    const supervisorConversation: AgentEvent[] = []
     let retriesAttempted = 0
 
     // finalTaskSha / finalIntegrationSha are written on CAS success inside the

@@ -20,8 +20,8 @@
 // See PRD 948691d0-stop-dispatched-implement-workers-from-c.
 
 import {
-  type ClaudeEffort,
-  type ClaudePermissionMode,
+  type AgentEffort,
+  type AgentPermissionMode,
   type RunAgentResult,
 } from '../lib/git/claude'
 import type { AgentEvent } from '../lib/claude-stream'
@@ -156,8 +156,8 @@ export interface WorkerConfig {
   // directly may omit it; built-in WORKER_CONFIGS always set it. When absent,
   // callers that need the tier can reverse-map via tierForModel().
   readonly modelTier?: ProviderModelTier
-  readonly effort: ClaudeEffort
-  readonly permissionMode: ClaudePermissionMode
+  readonly effort: AgentEffort
+  readonly permissionMode: AgentPermissionMode
   readonly bare: boolean
   // Pinned --agent value for this Worker, if any. Optional — most Workers
   // run with the default agent.

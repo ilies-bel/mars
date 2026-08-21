@@ -39,7 +39,7 @@
  * per-process object. Do NOT "clean this up" back into module-scoped `let`s.
  */
 
-import type { ClaudeEvent } from '../lib/claude-stream.js'
+import type { AgentEvent } from '../lib/claude-stream.js'
 import { summarizeUsageForSemantics } from '../lib/claude-usage.js'
 import type { ProviderUsageSemantics } from '../lib/claude-usage.js'
 
@@ -94,7 +94,7 @@ const state = (): AccumulatedTotals => {
  * Provider and therefore its semantics.
  */
 export function recordUsageEvent(
-  event: ClaudeEvent,
+  event: AgentEvent,
   semantics: ProviderUsageSemantics,
 ): void {
   const totals = summarizeUsageForSemantics(semantics, [event])

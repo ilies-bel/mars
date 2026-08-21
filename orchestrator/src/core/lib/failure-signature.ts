@@ -128,7 +128,7 @@ export const errorClassRules: readonly ErrorClassRule[] = [
   },
   {
     // A provider rejected the run on rate/spend limits. The code step
-    // normally intercepts this earlier via RunClaudeResult.quotaRejected and
+    // normally intercepts this earlier via RunAgentResult.quotaRejected and
     // re-queues without ever failing the task, so reaching classification at
     // all means the sentinel was missed — name it anyway so the gap is
     // visible instead of being buried in `unclassified`.

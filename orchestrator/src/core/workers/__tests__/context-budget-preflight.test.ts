@@ -26,7 +26,7 @@ import {
   reportsContextOccupancy,
 } from '../providers'
 import { PROVIDER_MODELS, type HeadlessRunOpts } from '../provider-types'
-import type { RunClaudeResult } from '../../lib/git/claude'
+import type { RunAgentResult } from '../../lib/git/claude'
 
 const workerNames = Object.keys(WORKER_CONFIGS) as WorkerName[]
 
@@ -120,7 +120,7 @@ describe('in-run context-overflow handling skips providers without occupancy', (
     const restore: Array<() => void> = []
     const stub = (providerName: 'claude' | 'codex'): void => {
       const adapter = PROVIDERS[providerName].headless as {
-        run: (prompt: string, opts: HeadlessRunOpts) => Promise<RunClaudeResult>
+        run: (prompt: string, opts: HeadlessRunOpts) => Promise<RunAgentResult>
       }
       const original = adapter.run
       adapter.run = async (_prompt, opts) => {
@@ -168,7 +168,7 @@ describe('Triager is pinned as a cheap classification call', () => {
     // Stub whichever provider the daemon actually runs the Triager on —
     // Codex by default — not a hardcoded one.
     const adapter = PROVIDERS[WORKER_PROVIDER].headless as {
-      run: (prompt: string, opts: HeadlessRunOpts) => Promise<RunClaudeResult>
+      run: (prompt: string, opts: HeadlessRunOpts) => Promise<RunAgentResult>
     }
     const original = adapter.run
     let seenTaskId: string | undefined = 'unset'

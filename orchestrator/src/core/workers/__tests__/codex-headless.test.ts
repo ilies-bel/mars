@@ -4,7 +4,7 @@
 // Each describe block corresponds to one acceptance criterion.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import type { ClaudeEvent } from '../../lib/claude-stream'
+import type { AgentEvent } from '../../lib/claude-stream'
 
 // vi.mock is hoisted by vitest above all imports so the mock factory runs
 // before any module that imports '../../lib/git/claude' loads its real
@@ -37,7 +37,7 @@ import { extractLastStreamText } from '../../lib/claude-stream'
 // ---------------------------------------------------------------------------
 
 describe('parseCodexEventLine — normalisation', () => {
-  it('maps item.completed(agent_message) to an assistant ClaudeEvent', () => {
+  it('maps item.completed(agent_message) to an assistant AgentEvent', () => {
     const line = JSON.stringify({
       type: 'item.completed',
       item: { type: 'agent_message', text: 'hello from codex' },
@@ -60,7 +60,7 @@ describe('parseCodexEventLine — normalisation', () => {
     expect(parseCodexEventLine(line)).toBeNull()
   })
 
-  it('maps turn.completed (no error) to a result ClaudeEvent with is_error: false', () => {
+  it('maps turn.completed (no error) to a result AgentEvent with is_error: false', () => {
     const line = JSON.stringify({
       type: 'turn.completed',
       usage: { input_tokens: 100, output_tokens: 50 },
@@ -71,7 +71,7 @@ describe('parseCodexEventLine — normalisation', () => {
     expect((ev as unknown as { is_error: boolean }).is_error).toBe(false)
   })
 
-  it('maps turn.completed (with error field) to a result ClaudeEvent with is_error: true', () => {
+  it('maps turn.completed (with error field) to a result AgentEvent with is_error: true', () => {
     const line = JSON.stringify({
       type: 'turn.completed',
       error: { message: 'something went wrong' },
@@ -297,7 +297,7 @@ describe('codexHeadless.run — (b) resolveClaudeBin not called', () => {
 
 describe('codexHeadless.run — (c) JSONL normalisation and onEvent forwarding', () => {
   it('forwards only stdout lines (not stderr) through parseCodexEventLine to onEvent', async () => {
-    const received: ClaudeEvent[] = []
+    const received: AgentEvent[] = []
     await codexHeadless.run(
       'task',
       { cwd: '/tmp', model: 'gpt-5.5' },
@@ -311,7 +311,7 @@ describe('codexHeadless.run — (c) JSONL normalisation and onEvent forwarding',
   })
 
   it('normalises agent_message to assistant event with the correct text', async () => {
-    const received: ClaudeEvent[] = []
+    const received: AgentEvent[] = []
     await codexHeadless.run(
       'task',
       { cwd: '/tmp', model: 'gpt-5.5' },
@@ -327,7 +327,7 @@ describe('codexHeadless.run — (c) JSONL normalisation and onEvent forwarding',
   })
 
   it('normalises turn.completed to result event with is_error: false', async () => {
-    const received: ClaudeEvent[] = []
+    const received: AgentEvent[] = []
     await codexHeadless.run(
       'task',
       { cwd: '/tmp', model: 'gpt-5.5' },
@@ -339,7 +339,7 @@ describe('codexHeadless.run — (c) JSONL normalisation and onEvent forwarding',
   })
 
   it('conversation in the returned result matches events forwarded to onEvent', async () => {
-    const fromHook: ClaudeEvent[] = []
+    const fromHook: AgentEvent[] = []
     const result = await codexHeadless.run(
       'task',
       { cwd: '/tmp', model: 'gpt-5.5' },
@@ -398,7 +398,7 @@ describe('codexHeadless capabilities', () => {
     // that number as context occupancy.
     expect(capabilities.usageSemantics).toBe('cumulative')
     // Codex DOES report rate/spend rejections — as an error/turn.failed pair
-    // on stdout. The adapter recovers them into RunClaudeResult.quotaRejected.
+    // on stdout. The adapter recovers them into RunAgentResult.quotaRejected.
     expect(capabilities.quotaRejected).toBe(true)
     expect(capabilities.sessionId).toBe(false)
   })

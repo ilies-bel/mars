@@ -129,7 +129,7 @@ vi.mock('../action-queue', () => ({
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 
-/** Minimal RunClaudeResult returned by mocked provider calls. */
+/** Minimal RunAgentResult returned by mocked provider calls. */
 const makeProviderResult = () => ({
   stdout: '',
   stderr: '',
@@ -139,7 +139,7 @@ const makeProviderResult = () => ({
   quotaRejected: null as { resetsAt: number } | null,
 })
 
-/** Minimal RunClaudeResult for coder (runWorkerWithSpan) calls. */
+/** Minimal RunAgentResult for coder (runWorkerWithSpan) calls. */
 const makeCoderResult = () => ({
   ...makeProviderResult(),
   sessionId: 'sess-test',

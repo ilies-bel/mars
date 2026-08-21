@@ -95,7 +95,7 @@ import {
 } from '../lib/arc-verifier'
 import { buildTranscriptAppendSubscriber } from '../../outbox/subscribers/transcript-append'
 import { readAllTranscriptsForTask } from '../lib/claude-transcript'
-import type { ClaudeEvent } from '../lib/claude-stream'
+import type { AgentEvent } from '../lib/claude-stream'
 import { createHash } from 'node:crypto'
 import type { Logger, WorkflowEvent } from '@mars/workflow'
 import { resolveManualStep, awaitManualDone } from '@mars/workflow'
@@ -3350,14 +3350,14 @@ export const startDaemon = async (
   const transcriptAppendSubscriber = buildTranscriptAppendSubscriber(
     compositionClient,
     async (taskId: string): Promise<string | null> => {
-      const events: ClaudeEvent[] = []
+      const events: AgentEvent[] = []
       for await (const evt of readAllTranscriptsForTask(taskId)) {
         if (!evt.raw || typeof evt.raw !== 'object' || Array.isArray(evt.raw)) {
           continue
         }
         const o = evt.raw as Record<string, unknown>
         if (typeof o.type !== 'string') continue
-        events.push(o as unknown as ClaudeEvent)
+        events.push(o as unknown as AgentEvent)
       }
       return events.length > 0 ? JSON.stringify(events) : null
     },

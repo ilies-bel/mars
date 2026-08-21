@@ -1,5 +1,5 @@
 // Codex headless adapter — normalises the `codex exec --json` JSONL stream
-// into the orchestrator's legacy ClaudeEvent shape so downstream readers work
+// into the orchestrator's legacy AgentEvent shape so downstream readers work
 // unchanged. Authentication is deliberately delegated to Codex CLI: a local
 // `codex login` ChatGPT OAuth session (or another CLI-supported auth method) is
 // reused automatically and MARS never reads or copies credential material.
@@ -16,9 +16,9 @@ import {
   buildWorkerEnv,
   emptyPromptResult,
   isBlankPrompt,
-  type RunClaudeResult,
+  type RunAgentResult,
 } from '../../lib/git/claude'
-import type { ClaudeEvent } from '../../lib/claude-stream'
+import type { AgentEvent } from '../../lib/claude-stream'
 import type { HeadlessAdapter, HeadlessRunContext, HeadlessRunOpts } from '../provider-types'
 import { providerBinPath } from '../provider-bin'
 
@@ -95,7 +95,7 @@ const parseCodexResetsAt = (message: string): number => {
  * for any other reason.
  */
 const extractCodexQuotaRejected = (
-  conversation: readonly ClaudeEvent[],
+  conversation: readonly AgentEvent[],
 ): { resetsAt: number } | null => {
   for (let i = conversation.length - 1; i >= 0; i--) {
     const event = conversation[i]
@@ -119,7 +119,7 @@ export const composeCodexPrompt = (prompt: string, systemPrompt?: string): strin
 
 /**
  * Parse a single JSONL line from the `codex exec --json` stream into a
- * ClaudeEvent-shaped record, or `null` when the line should be discarded.
+ * AgentEvent-shaped record, or `null` when the line should be discarded.
  *
  * Recognised mappings:
  *   item.completed(agent_message) → assistant event with text content block
@@ -157,7 +157,7 @@ export const composeCodexPrompt = (prompt: string, systemPrompt?: string): strin
  * adapter declares 'cumulative' semantics and why no mid-run ceiling can exist
  * on this provider — see ContextGuardMode in ../../lib/claude-usage.
  */
-export const parseCodexEventLine = (line: string): ClaudeEvent | null => {
+export const parseCodexEventLine = (line: string): AgentEvent | null => {
   const trimmed = line.trim()
   if (!trimmed || !trimmed.startsWith('{')) return null
   let parsed: unknown
@@ -229,18 +229,18 @@ export const stripBenignCodexStderr = (stderr: string): string => {
 }
 
 /** Read Codex's NDJSON stdout, ignoring blank and incomplete trailing lines. */
-export const readCodexOutput = (stdout: string): ClaudeEvent[] =>
+export const readCodexOutput = (stdout: string): AgentEvent[] =>
   stdout
     .split(/\r?\n/)
     .map((line) => parseCodexEventLine(line))
-    .filter((event): event is ClaudeEvent => event !== null)
+    .filter((event): event is AgentEvent => event !== null)
 
 export const codexHeadless: HeadlessAdapter = {
   capabilities: {
     usageSemantics: 'cumulative',
     // Codex DOES surface rate/spend rejections — as an `error` / `turn.failed`
     // pair on stdout rather than a dedicated field. extractCodexQuotaRejected
-    // recovers them, so this adapter populates RunClaudeResult.quotaRejected.
+    // recovers them, so this adapter populates RunAgentResult.quotaRejected.
     quotaRejected: true,
     sessionId: false,
   },
@@ -250,14 +250,14 @@ export const codexHeadless: HeadlessAdapter = {
     prompt: string,
     opts: HeadlessRunOpts,
     ctx?: HeadlessRunContext,
-  ): Promise<RunClaudeResult> => {
+  ): Promise<RunAgentResult> => {
     // Refuse before spawning: `codex exec` with no prompt argument falls back
     // to reading stdin, which is /dev/null for dispatched workers, so it reads
     // EOF and exits 1 with no usable diagnostic. See EMPTY_PROMPT_REFUSAL.
     const composedPrompt = composeCodexPrompt(prompt, opts.systemPrompt)
     if (isBlankPrompt(composedPrompt)) return emptyPromptResult('codex')
 
-    const conversation: ClaudeEvent[] = []
+    const conversation: AgentEvent[] = []
     const abort = new AbortController()
     let externalAborted = false
 

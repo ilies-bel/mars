@@ -14,14 +14,14 @@ import { existsSync, readdirSync, createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { ClaudeEvent } from './claude-stream'
+import type { AgentEvent } from './claude-stream'
 import { emptyUsageTotals, summarizeUsage, summarizeUsageForSemantics } from './claude-usage'
 import type { UsageTotals, ProviderUsageSemantics } from './claude-usage'
 import type { ProviderName } from '../workers/provider-types'
 
 export interface UsageSourceContext {
   /** In-memory conversation events. Non-empty for any headless run. */
-  readonly conversation: readonly ClaudeEvent[]
+  readonly conversation: readonly AgentEvent[]
   /** Session ID for this run, used to locate persisted logs. */
   readonly sessionId: string | null
   /** Working directory where .mars/pty/ traces are persisted. */
@@ -89,12 +89,12 @@ export const claudeSessionJsonlAdapter = async (
     }
   }
   if (filePath === null) return null
-  const events: ClaudeEvent[] = []
+  const events: AgentEvent[] = []
   const rl = createInterface({ input: createReadStream(filePath), crlfDelay: Infinity })
   for await (const line of rl) {
     if (!line.trim()) continue
     try {
-      events.push(JSON.parse(line) as ClaudeEvent)
+      events.push(JSON.parse(line) as AgentEvent)
     } catch {
       // skip malformed lines — the JSONL may be partially written
     }

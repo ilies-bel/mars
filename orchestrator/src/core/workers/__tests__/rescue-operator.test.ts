@@ -28,14 +28,14 @@ import {
   type WorkerName,
 } from '..'
 import type { Task } from '../../queue'
-import type { RunClaudeResult } from '../../lib/git/claude'
-import type { ClaudeEvent } from '../../lib/claude-stream'
+import type { RunAgentResult } from '../../lib/git/claude'
+import type { AgentEvent } from '../../lib/claude-stream'
 
 // ---------------------------------------------------------------------------
 // Helper: build a minimal mock Worker that emits a fixed assistant-message
-// event then returns a clean RunClaudeResult.
+// event then returns a clean RunAgentResult.
 // ---------------------------------------------------------------------------
-const makeAssistantEvent = (text: string): ClaudeEvent => ({
+const makeAssistantEvent = (text: string): AgentEvent => ({
   type: 'assistant',
   message: {
     role: 'assistant',
@@ -49,7 +49,7 @@ const makeWorkerStub = (
 ): Worker => ({
   config: WORKER_CONFIGS.RescueOperator,
   runtime: 'headless',
-  run: async (_prompt, options): Promise<RunClaudeResult> => {
+  run: async (_prompt, options): Promise<RunAgentResult> => {
     if (options.onEvent) {
       await options.onEvent(makeAssistantEvent(agentOutput))
     }
@@ -352,7 +352,7 @@ describe('runRescueOperator — integration', () => {
     const worker: Worker = {
       config: { ...WORKER_CONFIGS.RescueOperator, provider: 'codex' as const },
       runtime: 'headless',
-      run: async (): Promise<RunClaudeResult> => ({
+      run: async (): Promise<RunAgentResult> => ({
         exitCode: 0,
         stdout: JSON.stringify({
           type: 'item.completed',
@@ -384,7 +384,7 @@ describe('runRescueOperator — integration', () => {
     const worker: Worker = {
       config: WORKER_CONFIGS.RescueOperator,
       runtime: 'headless',
-      run: async (_prompt, options): Promise<RunClaudeResult> => {
+      run: async (_prompt, options): Promise<RunAgentResult> => {
         capturedCwd = options.cwd
         if (options.onEvent) {
           await options.onEvent(makeAssistantEvent('{"action":"restart","reasoning":"ok"}'))
@@ -404,7 +404,7 @@ describe('runRescueOperator — integration', () => {
     const worker: Worker = {
       config: WORKER_CONFIGS.RescueOperator,
       runtime: 'headless',
-      run: async (_prompt, options): Promise<RunClaudeResult> => {
+      run: async (_prompt, options): Promise<RunAgentResult> => {
         capturedCwd = options.cwd
         if (options.onEvent) {
           await options.onEvent(makeAssistantEvent('{"action":"restart","reasoning":"ok"}'))

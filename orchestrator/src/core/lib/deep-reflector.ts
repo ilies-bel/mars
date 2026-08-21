@@ -13,7 +13,7 @@ import {
 } from './reflector'
 import { loadLeverRegistry, formatLeverList } from './lever-registry'
 import type { DeepReflectArc, SessionArcsResult } from './deep-reflect-query'
-import type { ClaudeEvent } from './claude-stream'
+import type { AgentEvent } from './claude-stream'
 import { digestArc } from './arc-digest'
 import { insertMemoryPacket } from '../store/memory-packet-store'
 import { getTask } from '../queue'
@@ -384,7 +384,7 @@ const truncateBody = (body: unknown): unknown => {
  * has been truncated to head TOOL_RESULT_HEAD_CHARS + tail TOOL_RESULT_TAIL_CHARS.
  * Events that carry no tool_results are returned unchanged (same reference).
  */
-const truncateConversationToolResults = (conversation: ClaudeEvent[]): ClaudeEvent[] =>
+const truncateConversationToolResults = (conversation: AgentEvent[]): AgentEvent[] =>
   conversation.map((event) => {
     if (event.type !== 'user') return event
     const msg = event.message
@@ -478,7 +478,7 @@ const capBlocksByJoinedSize = (
  * Reduce a conversation array to fit within `maxBytes` of serialized JSON.
  *
  * Strategy: keep equal portions from the head and tail of the conversation.
- * Only whole ClaudeEvents are dropped, so `JSON.stringify` of the result is
+ * Only whole AgentEvents are dropped, so `JSON.stringify` of the result is
  * always parseable — the analyst can never be handed a half-written object.
  * The middle events are replaced with an elision note returned alongside the
  * events so the analyst knows what was dropped.
@@ -486,9 +486,9 @@ const capBlocksByJoinedSize = (
  * Exported for unit testing.
  */
 export const capConversation = (
-  events: ClaudeEvent[],
+  events: AgentEvent[],
   maxBytes: number,
-): { events: ClaudeEvent[]; elisionNote: string | null } => {
+): { events: AgentEvent[]; elisionNote: string | null } => {
   if (Buffer.byteLength(JSON.stringify(events), 'utf8') <= maxBytes) {
     return { events, elisionNote: null }
   }
@@ -622,7 +622,7 @@ ${metaJson}
 Mechanical digest (LLM-free) for ${t.taskId}:
 ${JSON.stringify(taskDigest)}
 
-Conversation for ${t.taskId} (ClaudeEvent[] JSON; index into this array for eventIndex):
+Conversation for ${t.taskId} (AgentEvent[] JSON; index into this array for eventIndex):
 `
     const tail = `${verifyBlock}${transcriptNotes}${transcriptNote}`
 
@@ -680,7 +680,7 @@ Conversation for ${t.taskId} (ClaudeEvent[] JSON; index into this array for even
   // 4. Assemble the prompt within the total size cap.
   //
   //    The cap is enforced STRUCTURALLY, never by slicing the assembled
-  //    string: the prompt embeds one serialized ClaudeEvent[] per task, and a
+  //    string: the prompt embeds one serialized AgentEvent[] per task, and a
   //    byte-offset cut lands inside that blob and hands the analyst invalid
   //    JSON. Instead the budget is spent on whole conversation events, and —
   //    as a last resort — whole task blocks.

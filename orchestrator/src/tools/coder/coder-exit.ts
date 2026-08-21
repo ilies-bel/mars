@@ -993,7 +993,7 @@ export interface CoderRunOutcome {
   stderr: string
   /**
    * Non-null when the provider rejected this run due to rate/spend limits.
-   * Mirrors `RunClaudeResult.quotaRejected`.
+   * Mirrors `RunAgentResult.quotaRejected`.
    */
   quotaRejected: { resetsAt: number } | null
   /**

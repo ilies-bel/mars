@@ -1,7 +1,7 @@
-import { type ClaudeEvent, extractQuotaRejected } from './claude-stream'
+import { type AgentEvent, extractQuotaRejected } from './claude-stream'
 
 /**
- * Mechanical, LLM-free digest of one task's ClaudeEvent[] conversation.
+ * Mechanical, LLM-free digest of one task's AgentEvent[] conversation.
  * All metrics are computed from the event array with no external calls or I/O.
  */
 export interface TaskDigest {
@@ -61,14 +61,14 @@ const getBashCommand = (input: Record<string, unknown>): string | null =>
   typeof input.command === 'string' ? input.command : null
 
 /**
- * Extract all tool_use calls from a ClaudeEvent.
+ * Extract all tool_use calls from a AgentEvent.
  *
  * Handles two shapes:
  * 1. A top-level `{ type: 'tool_use', id, name, input }` event (older CLI versions).
  * 2. `tool_use` blocks inside `message.content` on `assistant` events (current format).
  */
 const extractToolUses = (
-  event: ClaudeEvent,
+  event: AgentEvent,
 ): Array<{ id: string; name: string; input: Record<string, unknown> }> => {
   if (event.type === 'tool_use') {
     const id = typeof event.id === 'string' ? event.id : null
@@ -105,11 +105,11 @@ const extractToolUses = (
 }
 
 /**
- * Extract all tool_result blocks from a ClaudeEvent (user messages).
+ * Extract all tool_result blocks from a AgentEvent (user messages).
  * Tool results live in `message.content[i].type === 'tool_result'`.
  */
 const extractToolResults = (
-  event: ClaudeEvent,
+  event: AgentEvent,
 ): Array<{ toolUseId: string; isError: boolean }> => {
   if (event.type !== 'user') return []
   const msg = event.message
@@ -129,7 +129,7 @@ const extractToolResults = (
 }
 
 /**
- * Compute a mechanical, LLM-free digest for one task's ClaudeEvent[] conversation.
+ * Compute a mechanical, LLM-free digest for one task's AgentEvent[] conversation.
  * No I/O, no external calls. Safe to call on an empty conversation.
  *
  * @param taskId - The task identifier.
@@ -138,11 +138,11 @@ const extractToolResults = (
  *   Used to detect orchestrator-level environmental failures that leave no trace
  *   in the conversation — specifically `verify:branch-contaminated`, which fires
  *   in the verify phase after Claude exits and therefore never appears as a
- *   ClaudeEvent.
+ *   AgentEvent.
  */
 export const digestTask = (
   taskId: string,
-  conversation: ClaudeEvent[],
+  conversation: AgentEvent[],
   taskError?: string | null,
 ): TaskDigest => {
   const readCounts = new Map<string, number>()
@@ -169,7 +169,7 @@ export const digestTask = (
 
   // ── Environmental failure: branch-contamination guard (orchestrator-side) ─
   // The verify:branch-contaminated failure is detected by the orchestrator's
-  // verify step AFTER Claude exits — it never appears as a ClaudeEvent.
+  // verify step AFTER Claude exits — it never appears as a AgentEvent.
   // The signal lives in the task's error field (tasks.error in the DB), which
   // contains the literal "verify:branch-contaminated" when the contamination
   // guard fires. This classifies the parallel-recovery/restart-race condition
@@ -262,13 +262,13 @@ export const digestTask = (
  *
  * Each task entry may optionally carry an `error` string (the tasks.error
  * database column) so that orchestrator-level failures such as
- * `verify:branch-contaminated` — which leave no trace in the ClaudeEvent[]
+ * `verify:branch-contaminated` — which leave no trace in the AgentEvent[]
  * conversation — can be classified as environmental rather than coding
  * failures. The field is optional; existing callers that omit it are
  * unaffected.
  */
 export const digestArc = (
-  tasks: ReadonlyArray<{ taskId: string; conversation: ClaudeEvent[]; error?: string | null }>,
+  tasks: ReadonlyArray<{ taskId: string; conversation: AgentEvent[]; error?: string | null }>,
 ): ArcDigest => ({
   tasks: tasks.map((t) => digestTask(t.taskId, t.conversation, t.error)),
 })

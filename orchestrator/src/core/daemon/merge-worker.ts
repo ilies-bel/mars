@@ -33,7 +33,7 @@ import type { EventEmitter } from 'node:events'
 import type { MergeArgs, MergeResult } from '../lib/git/merge.js'
 import { mergeBranch, MergeAbortedError, DEFAULT_WATCHDOG_MS } from '../lib/git/merge.js'
 import type { MergeJob, MergeJobStore, EnqueueMergeJobInput } from '../store/merge-job-store.js'
-import type { ClaudeEvent } from '../lib/claude-stream.js'
+import type { AgentEvent } from '../lib/claude-stream.js'
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -76,7 +76,7 @@ export interface MergeWorkerDeps {
    * Errors thrown by this callback are silently swallowed — a reporting
    * failure must never abort or slow a merge.
    */
-  onSupervisorEvent?: (taskId: string, event: ClaudeEvent) => void
+  onSupervisorEvent?: (taskId: string, event: AgentEvent) => void
 }
 
 export interface MergeWorkerHandle {
@@ -249,7 +249,7 @@ async function runMergeJob(
   log: (msg: string) => void,
   mergeFn: (args: MergeArgs) => Promise<MergeResult>,
   signal: AbortSignal,
-  onSupervisorEvent?: (taskId: string, event: ClaudeEvent) => void,
+  onSupervisorEvent?: (taskId: string, event: AgentEvent) => void,
 ): Promise<void> {
   log(
     `[merge-worker] executing job ${job.id} for task ${job.taskId} branch=${job.branch}`,
@@ -289,7 +289,7 @@ async function runMergeJob(
       // A swallowed-error wrapper here so a reporting failure can never
       // abort or slow a merge.
       onSupervisorEvent: onSupervisorEvent
-        ? (event: ClaudeEvent) => {
+        ? (event: AgentEvent) => {
             try {
               onSupervisorEvent(job.taskId, event)
             } catch {

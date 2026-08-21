@@ -9,9 +9,9 @@ import {
   buildContextTokenSignals,
   contextGuardMode,
 } from '../claude-usage'
-import type { ClaudeEvent } from '../claude-stream'
+import type { AgentEvent } from '../claude-stream'
 
-const assistant = (usage: Record<string, unknown>): ClaudeEvent => ({
+const assistant = (usage: Record<string, unknown>): AgentEvent => ({
   type: 'assistant',
   message: { usage, content: [] },
 })
@@ -20,7 +20,7 @@ const assistantWithContext = (
   input: number,
   cacheRead = 0,
   cacheCreate = 0,
-): ClaudeEvent => ({
+): AgentEvent => ({
   type: 'assistant',
   message: {
     usage: {
@@ -127,7 +127,7 @@ describe('getLatestContextSize', () => {
   })
 
   it('returns 0 when no assistant events are present', () => {
-    const events: ClaudeEvent[] = [
+    const events: AgentEvent[] = [
       { type: 'system', subtype: 'init' },
       { type: 'user', message: { content: [] } },
     ]
@@ -141,7 +141,7 @@ describe('getLatestContextSize', () => {
     // Treating it as occupancy produced `289216/50000` and ctx% above 300%,
     // and tripped context-overflow handling on runs nowhere near a limit.
     // Cumulative spend is read by getCumulativeTokenSpend instead.
-    const events: ClaudeEvent[] = [
+    const events: AgentEvent[] = [
       { type: 'assistant', message: { content: [] } },
       {
         type: 'result',
@@ -168,7 +168,7 @@ describe('getLatestContextSize', () => {
 
   it('returns the LATEST assistant event, not a cumulative sum', () => {
     // Cumulative would be 100 + 500 = 600; latest is 500.
-    const events: ClaudeEvent[] = [
+    const events: AgentEvent[] = [
       assistantWithContext(100),
       assistantWithContext(500),
     ]
@@ -176,7 +176,7 @@ describe('getLatestContextSize', () => {
   })
 
   it('skips non-assistant events after the latest assistant event', () => {
-    const events: ClaudeEvent[] = [
+    const events: AgentEvent[] = [
       assistantWithContext(300),
       { type: 'user', message: { content: [] } },
       { type: 'system', subtype: 'init' },
@@ -185,7 +185,7 @@ describe('getLatestContextSize', () => {
   })
 
   it('treats missing usage fields as zero in the latest event', () => {
-    const events: ClaudeEvent[] = [
+    const events: AgentEvent[] = [
       assistantWithContext(1000),
       { type: 'assistant', message: {} },
     ]
@@ -197,7 +197,7 @@ describe('getLatestContextSize', () => {
   it('does not double-count context across turns (cumulative vs latest contrast)', () => {
     // With 3 turns, cumulative input would be 100+200+300=600.
     // Latest context size is just 300 (what the model currently holds).
-    const events: ClaudeEvent[] = [
+    const events: AgentEvent[] = [
       assistantWithContext(100),
       assistantWithContext(200),
       assistantWithContext(300),
@@ -212,7 +212,7 @@ describe('getLatestContextSize', () => {
 
 // A `codex exec --json` turn.completed event as parseCodexEventLine normalises
 // it: a single result event whose usage is CUMULATIVE spend for the whole turn.
-const codexTurnCompleted = (usage: Record<string, unknown>): ClaudeEvent => ({
+const codexTurnCompleted = (usage: Record<string, unknown>): AgentEvent => ({
   type: 'result',
   is_error: false,
   usage,
@@ -230,7 +230,7 @@ describe('getCumulativeTokenSpend', () => {
     // `cached_input_tokens` as the share of it served from cache (upstream
     // codex derives non_cached_input = input_tokens - cached_input_tokens the
     // same way). Adding both inflates every codex run's spend.
-    const events: ClaudeEvent[] = [
+    const events: AgentEvent[] = [
       codexTurnCompleted({
         input_tokens: 200_000,
         cached_input_tokens: 80_000,
@@ -278,7 +278,7 @@ describe('getCumulativeTokenSpend', () => {
   })
 
   it('also accepts the Anthropic cache_* spelling', () => {
-    const events: ClaudeEvent[] = [
+    const events: AgentEvent[] = [
       codexTurnCompleted({
         input_tokens: 100,
         cache_read_input_tokens: 20,
@@ -290,7 +290,7 @@ describe('getCumulativeTokenSpend', () => {
   })
 
   it('reads the LATEST result event', () => {
-    const events: ClaudeEvent[] = [
+    const events: AgentEvent[] = [
       codexTurnCompleted({ input_tokens: 10 }),
       codexTurnCompleted({ input_tokens: 40 }),
     ]

@@ -381,6 +381,3 @@ export const diagnoseClaudeFailure = (stdout: string, stderr: string): string =>
   const tail = fallback.slice(-3).join('\n').trim()
   return tail.length > 0 ? tail : 'claude -p produced no diagnostic output'
 }
-
-/** @deprecated Use AgentEvent. Kept for backward compatibility. */
-export type ClaudeEvent = AgentEvent

@@ -30,7 +30,7 @@ const setupRepo = (): string => {
   return repo
 }
 
-/** Craft a minimal RunClaudeResult with controlled suggestion output. */
+/** Craft a minimal RunAgentResult with controlled suggestion output. */
 const makeClaudeResult = (suggestions: unknown[]) => ({
   stdout: JSON.stringify({ suggestions }),
   stderr: '',

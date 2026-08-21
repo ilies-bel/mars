@@ -5,7 +5,7 @@ import {
   recordUsageEvent,
   resetAccumulatedTotals,
 } from '../usage-accumulator.js'
-import type { ClaudeEvent } from '../../lib/claude-stream.js'
+import type { AgentEvent } from '../../lib/claude-stream.js'
 
 const ZERO = {
   inputTokens: 0,
@@ -35,7 +35,7 @@ describe('usage-accumulator', () => {
             cache_read_input_tokens: 10,
           },
         },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
       'per-request',
     )
 
@@ -58,7 +58,7 @@ describe('usage-accumulator', () => {
           cache_read_input_tokens: 0,
         },
       },
-    } as unknown as ClaudeEvent)
+    } as unknown as AgentEvent)
 
     recordUsageEvent(makeEvent(100, 50), 'per-request')
     recordUsageEvent(makeEvent(200, 75), 'per-request')
@@ -70,7 +70,7 @@ describe('usage-accumulator', () => {
 
   it('ignores non-assistant events', () => {
     recordUsageEvent(
-      { type: 'tool_use', id: 'x', name: 'Bash', input: {} } as unknown as ClaudeEvent,
+      { type: 'tool_use', id: 'x', name: 'Bash', input: {} } as unknown as AgentEvent,
       'per-request',
     )
 
@@ -79,7 +79,7 @@ describe('usage-accumulator', () => {
 
   it('ignores events with missing usage block', () => {
     recordUsageEvent(
-      { type: 'assistant', message: { content: [] } } as unknown as ClaudeEvent,
+      { type: 'assistant', message: { content: [] } } as unknown as AgentEvent,
       'per-request',
     )
 
@@ -97,7 +97,7 @@ describe('usage-accumulator', () => {
       {
         type: 'assistant',
         message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
       'cumulative',
     )
     recordUsageEvent(
@@ -111,7 +111,7 @@ describe('usage-accumulator', () => {
           output_tokens: 118,
           reasoning_output_tokens: 0,
         },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
       'cumulative',
     )
 
@@ -132,14 +132,14 @@ describe('usage-accumulator', () => {
       {
         type: 'assistant',
         message: { usage: { input_tokens: 100, output_tokens: 50 } },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
       'per-request',
     )
     recordUsageEvent(
       {
         type: 'result',
         usage: { input_tokens: 100, output_tokens: 50 },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
       'per-request',
     )
 
@@ -156,7 +156,7 @@ describe('usage-accumulator', () => {
       {
         type: 'result',
         usage: { input_tokens: 100, output_tokens: 50 },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
       'none',
     )
     expect(getAccumulatedTotals()).toEqual(ZERO)
@@ -187,7 +187,7 @@ describe('accumulator state survives a second module instantiation', () => {
         type: 'result',
         is_error: false,
         usage: { input_tokens: 31_864, cached_input_tokens: 25_088, output_tokens: 118 },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
       'cumulative',
     )
 
@@ -214,7 +214,7 @@ describe('accumulator state survives a second module instantiation', () => {
         type: 'result',
         is_error: false,
         usage: { input_tokens: 1_000, cached_input_tokens: 0, output_tokens: 40 },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
       'cumulative',
     )
 
@@ -229,7 +229,7 @@ describe('accumulator state survives a second module instantiation', () => {
       {
         type: 'assistant',
         message: { usage: { input_tokens: 7, output_tokens: 3 } },
-      } as unknown as ClaudeEvent,
+      } as unknown as AgentEvent,
       'per-request',
     )
     const slot = (globalThis as Record<symbol, unknown>)[ACCUMULATOR_STATE_KEY]
