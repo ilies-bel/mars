@@ -64,11 +64,14 @@ export type AutoCommitOperatorDirtResult =
   | { committed: true; sha: string; files: string[] }
   | { committed: false; reason: string }
 
+/**
+ * Split a `--name-only -z` path list. NUL-terminated rather than newline:
+ * without `-z`, git quotes any path with a non-ASCII or special character
+ * ("caf\303\251.txt"), and a quoted path handed back to `git commit --` does
+ * not name the file it came from.
+ */
 const namesFrom = (stdout: string): string[] =>
-  stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
+  stdout.split('\0').filter((path) => path.length > 0)
 
 /**
  * Commit the operator's uncommitted tracked changes on the integration
@@ -100,7 +103,7 @@ export const autoCommitOperatorDirt = async (
   // importantly — the stale index's phantom deletions never appear here.
   const operatorDiff = await execProbe(
     git,
-    ['diff', '--name-only', baseSha, '--'],
+    ['diff', '--name-only', '-z', baseSha, '--'],
     { cwd: repoRoot },
     traceCtx,
   )
@@ -119,7 +122,7 @@ export const autoCommitOperatorDirt = async (
   // let the caller's checkpoint path preserve the edit instead.
   const mergedDiff = await execProbe(
     git,
-    ['diff', '--name-only', baseSha, headSha, '--'],
+    ['diff', '--name-only', '-z', baseSha, headSha, '--'],
     { cwd: repoRoot },
     traceCtx,
   )
