@@ -11,7 +11,6 @@ import {
   type TraceCtx,
 } from './internal'
 import { acquireLock } from './lock'
-import { captureCheckpoint, discardWorkingTreeChanges } from './checkpoint'
 import { readLastSyncedSha, writeLastSyncedSha } from './last-synced-sha'
 import { attributeIntegrationDirt } from './stale-tree-attribution'
 import { autoCommitOperatorDirt as autoCommitOperatorDirtGit } from './operator-auto-commit'
@@ -152,7 +151,9 @@ export const checkMergeTargetStatus = async (
 //        → {@link MergeResult.retriesAttempted} (the ADR's "redo"),
 //          {@link MergeFailureReason}
 //   5. Delete the Step 3 re-sync / dirty-classification / checkpoint machinery
-//        → retires `'merge-left-dirty-tree'` from {@link MergeFailureReason}
+//        → done: `'merge-left-dirty-tree'` retired from {@link MergeFailureReason};
+//          Step 3 is now a plain `reset --hard` gated only by
+//          `attributeIntegrationDirt` + the operator auto-commit (slice 6)
 //   6. Auto-commit genuine operator dirt as a wip(operator) commit + Notice
 //        → {@link MergeArgs.autoCommitOperatorDirt},
 //          {@link MergeArgs.onOperatorAutoCommit},
@@ -236,19 +237,17 @@ export interface OperatorAutoCommitInfo {
  * Machine-readable reason for a `merged: false` {@link MergeResult} that is
  * neither an abort nor an integration-gate failure.
  *
- * - `'merge-left-dirty-tree'` — the post-merge working-tree assertion found
- *   the integration checkout dirty. **Retired by slice 5**: once the Step 3
- *   re-sync / dirty-classification / checkpoint machinery is deleted, dirt is
- *   attributed (stale-tree debris → reset, operator dirt → auto-commit) rather
- *   than reported as a merge failure. Kept in the union until that slice lands
- *   so the deletion is a single, legible change.
+ * `'merge-left-dirty-tree'` was retired by slice 5: the Step 3 re-sync /
+ * dirty-classification / checkpoint machinery that used to report it is gone.
+ * Dirt is now attributed (stale-tree debris → reset, operator dirt →
+ * auto-commit) rather than ever reported as a merge failure, so a dirty
+ * integration checkout post-merge is no longer representable here.
+ *
  * - `'rebased-verify-failed'` — {@link MergeArgs.onVerifyRebasedTree} rejected
  *   the rebased tree, so nothing was fast-forwarded. `main` is untouched and
  *   the failure belongs to the task branch, not to the merge target.
  */
-export type MergeFailureReason =
-  | 'merge-left-dirty-tree'
-  | 'rebased-verify-failed'
+export type MergeFailureReason = 'rebased-verify-failed'
 
 /**
  * Interval (ms) at which {@link MergeArgs.onHeartbeat} fires while the merge
@@ -942,6 +941,10 @@ export const mergeBranch = async ({
     let finalTaskSha = ''
     let finalIntegrationSha = ''
 
+    // Set when ADR-0100 slice 6's auto-commit swept genuine operator dirt off
+    // the integration checkout into a `wip(operator)` commit during Step 3.
+    let operatorAutoCommitSha: string | undefined
+
     // The rebased task-branch sha that `onVerifyRebasedTree` passed, carried
     // from the verify (outside the lock) into the CAS step (inside it) so the
     // two can be compared: only a tree that was actually verified may land.
@@ -1352,55 +1355,107 @@ export const mergeBranch = async ({
       break
     }
 
-    // Step 3: re-sync the merge target's checkout to the advanced ref.
-    // `update-ref` moved refs/heads/<integrationBranch> without touching any
-    // working tree — by design, so a dirty/other-branch checkout cannot block
-    // the merge. But when the main repo IS checked out on integrationBranch,
-    // its index + working tree still reflect the OLD HEAD, so every file the
-    // merge introduced now shows as a phantom staged change. That dirty index
-    // then trips the dispatch-time `verify:main-dirty` guard and mass-parks
-    // the whole queue behind a `main-commiter` recovery (one success poisons
+    // Step 3 (ADR-0100 slice 5): re-sync the merge target's checkout to the
+    // advanced ref with a plain `reset --hard`. `update-ref` moved
+    // refs/heads/<integrationBranch> without touching any working tree — by
+    // design, so a dirty/other-branch checkout cannot block the merge. But
+    // when the main repo IS checked out on integrationBranch, its index +
+    // working tree still reflect the OLD HEAD, so every file the merge
+    // introduced now shows as a phantom staged change. That dirty index then
+    // trips the dispatch-time `verify:main-dirty` guard and mass-parks the
+    // whole queue behind a `main-commiter` recovery (one success poisons
     // every subsequent dispatch).
     //
-    // Re-sync ONLY when both hold:
-    //   1. HEAD is the integration branch (otherwise update-ref left the
-    //      checkout legitimately untouched — see the non-integration test), and
-    //   2. the working tree + index are clean *relative to the OLD integration
-    //      SHA* the checkout still reflects. We must compare against
-    //      finalIntegrationSha, NOT current HEAD: the ref already advanced, so a
-    //      plain `git status` would report the just-merged files as "dirty"
-    //      even on a pristine checkout and wrongly skip the re-sync.
-    // When clean, `git reset --hard <finalTaskSha>` materialises the merged content
-    // and leaves `git status` empty. When the operator has real uncommitted
-    // edits (a diff vs finalIntegrationSha) we leave the tree as-is rather than
-    // clobber them — rare for the daemon's own checkout, and a dirty tree is
-    // recoverable where lost edits are not. Failure here is non-fatal: the
+    // Only touch the checkout when HEAD is the integration branch (otherwise
+    // update-ref left the checkout legitimately untouched — see the
+    // non-integration test). When it is, dirt is handled ONLY by
+    // `attributeIntegrationDirt` (ADR-0100 slice 2) BEFORE the reset:
+    //   - 'stale-tree-debris' — provably the inverse of the range this merge
+    //     itself just landed (this merge's own re-sync, or an earlier merge's,
+    //     never got the chance). Nothing of the operator's; skip straight to
+    //     the reset.
+    //   - 'operator-dirt' — genuine local work. Attempt to sweep it into a
+    //     `wip(operator)` commit (ADR-0100 slice 6) so nothing is lost before
+    //     the reset makes it unrecoverable. A declined auto-commit (disabled,
+    //     nothing to commit, or a path the merge itself also touched) is NOT
+    //     preserved any other way — the reset below still runs. There is no
+    //     checkpoint fallback: main is a live checkout the merge is always
+    //     entitled to resync, not a scratch space for uncommitted operator
+    //     edits.
+    // `reset --hard <finalTaskSha>` then materialises the merged content and
+    // leaves `git status` empty either way. Failure here is non-fatal: the
     // merge already landed via the ref update; log and continue.
     lastStep = 'resync-working-tree'
-    let didResyncWorkingTree = false
+    let resyncedWorkingTree = false
     try {
       const headBranch = (
         await gexec(['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot())
       ).stdout.trim()
       if (headBranch === integrationBranch) {
-        // `git diff --quiet <sha>` exits 0 when the working tree + index match
-        // <sha> exactly (no genuine local work), non-zero otherwise. Probe form.
-        const diffProbe = await gprobe(
-          ['diff', '--quiet', finalIntegrationSha],
+        const status = await gprobe(
+          ['status', '--porcelain', '--untracked-files=no'],
           repoRoot(),
         )
-        const cleanVsOldHead = diffProbe.exitCode === 0
-        if (cleanVsOldHead) {
-          const reset = await gexec(['reset', '--hard', finalTaskSha], repoRoot())
-          output += reset.stdout + reset.stderr
-          didResyncWorkingTree = true
-          // Record the sha the primary checkout was just synced to, so a
-          // later process (or a later merge) can tell attributable re-sync
-          // debris apart from genuinely unrelated dirt instead of guessing.
-          writeLastSyncedSha(finalTaskSha)
-        } else {
-          output += `\n[mergeBranch] merge target checkout has local changes vs ${finalIntegrationSha.slice(0, 9)}; left as-is to avoid clobbering (HEAD ref advanced).`
+        if (status.stdout.trim() !== '') {
+          const attribution = await attributeIntegrationDirt({
+            repoRoot: repoRoot(),
+            lastSyncedSha: readLastSyncedSha(),
+            headSha: finalTaskSha,
+            traceCtx: mergeCtx,
+          })
+          if (attribution.kind === 'operator-dirt' && autoCommitOperatorDirtEnabled !== false) {
+            const autoCommit = await autoCommitOperatorDirtGit({
+              repoRoot: repoRoot(),
+              taskId: traceCtx?.taskId ?? branch,
+              // The checkout's content is based on the sha it was last synced
+              // to; without a recorded one, on the integration sha this merge
+              // just advanced away from. Anything the working tree differs
+              // from THAT by is the operator's own work.
+              baseSha: readLastSyncedSha() ?? finalIntegrationSha,
+              headSha: finalTaskSha,
+              traceCtx: mergeCtx,
+            })
+            if (autoCommit.committed) {
+              operatorAutoCommitSha = autoCommit.sha
+              output +=
+                `\n[mergeBranch] auto-committed operator dirt as ${autoCommit.sha.slice(0, 9)} ` +
+                `(${autoCommit.files.length} path(s)): ${autoCommit.files.join(', ').slice(0, 200)}`
+
+              let probe: MergeGateOutcome | null = null
+              if (onProbeIntegrationAfterAutoCommit) {
+                try {
+                  probe = await onProbeIntegrationAfterAutoCommit({ commitSha: autoCommit.sha })
+                } catch (probeErr: unknown) {
+                  const m = probeErr instanceof Error ? probeErr.message : String(probeErr)
+                  output += `\n[mergeBranch] post-auto-commit probe threw: ${m.slice(0, 300)}`
+                }
+              }
+              if (onOperatorAutoCommit) {
+                try {
+                  const reported = onOperatorAutoCommit({
+                    commitSha: autoCommit.sha,
+                    files: autoCommit.files,
+                    probe,
+                  })
+                  if (reported instanceof Promise) await reported
+                } catch {
+                  // Best-effort per MergeArgs.onOperatorAutoCommit's contract —
+                  // the commit already landed; a reporting failure must never
+                  // undo the merge.
+                }
+              }
+            } else {
+              output += `\n[mergeBranch] auto-commit declined: ${autoCommit.reason}`
+            }
+          }
         }
+        const reset = await gexec(['reset', '--hard', finalTaskSha], repoRoot())
+        output += reset.stdout + reset.stderr
+        resyncedWorkingTree = true
+        // Record the sha the primary checkout was just synced to, so a
+        // later process (or a later merge) can tell attributable re-sync
+        // debris apart from genuinely unrelated dirt instead of guessing.
+        writeLastSyncedSha(finalTaskSha)
       }
     } catch (resyncError: unknown) {
       const e = resyncError as { stdout?: string; stderr?: string; message?: string }
@@ -1429,7 +1484,7 @@ export const mergeBranch = async ({
         }
         // If Step 3 performed a `git reset --hard`, undo it so the working
         // tree matches the reverted integration branch.
-        if (didResyncWorkingTree) {
+        if (resyncedWorkingTree) {
           try {
             await gexec(['reset', '--hard', finalIntegrationSha], repoRoot())
           } catch (resetBackErr: unknown) {
@@ -1451,276 +1506,6 @@ export const mergeBranch = async ({
       }
     }
 
-    // Belt-and-braces: assert the integration checkout is clean after the merge.
-    // `git update-ref` is working-tree-free by design, but Step 3's
-    // `git reset --hard` or the gate-revert path can leave the tree dirty when
-    // they fail silently or are interrupted. Reporting success over a dirty tree
-    // causes every subsequent dispatch to park behind a main-committer Chore
-    // (the dirty-main guard fires at dispatch time) and requires operator
-    // intervention to unblock the queue.
-    //
-    // We only assert when the primary checkout is on the integration branch —
-    // that is the only checkout we touch in Step 3. Pre-existing dirt on any
-    // other branch is the operator's concern, not a merge-step defect.
-    //
-    // If the tree IS dirty after a successful merge:
-    //   1. Attempt `git reset --hard HEAD` to restore it (the branch work is
-    //      already in commits — HEAD has advanced to finalTaskSha, so the reset
-    //      just materialises what the ref already points at).
-    //   2. Fail the step with reason `'merge-left-dirty-tree'` so the normal
-    //      failure path handles it. Never report step success over a dirty tree.
-    lastStep = 'post-merge-assert'
-    try {
-      const headBranchPost = (
-        await gexec(['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot())
-      ).stdout.trim()
-      if (headBranchPost === integrationBranch) {
-        const postStatus = await gprobe(
-          ['status', '--porcelain', '--untracked-files=no'],
-          repoRoot(),
-        )
-        if (postStatus.stdout.trim() !== '') {
-          output += `\n[mergeBranch] post-merge dirty-tree detected on integration checkout (status:\n${postStatus.stdout.slice(0, 500)}\n)`
-
-          // Ask the attribution predicate FIRST, rather than branching on the
-          // `didResyncWorkingTree` heuristic directly. `attributeIntegrationDirt`
-          // (ADR-0100 slice 2) answers precisely whether the observed dirt is
-          // EXACTLY the inverse of the range `lastSyncedSha..headSha` — i.e. the
-          // checkout is simply catching up with a ref that already advanced
-          // (this merge's own Step 3 declined to resync, or an earlier merge's
-          // Step 3 never got the chance) — or whether it is anything else, which
-          // must be treated as genuine operator work. See
-          // `./stale-tree-attribution` for the full incident writeup: a 94-line
-          // file the merge just added showing up as a *deletion* in a stale
-          // checkout is exactly this shape, and it must never be checkpointed or
-          // reported as a merge failure.
-          const attribution = await attributeIntegrationDirt({
-            repoRoot: repoRoot(),
-            lastSyncedSha: readLastSyncedSha(),
-            headSha: finalTaskSha,
-            traceCtx: mergeCtx,
-          })
-
-          if (attribution.kind === 'stale-tree-debris') {
-            // Nothing here can be lost: the dirt is provably the inverse of a
-            // range already landed at `finalTaskSha`. Reset outright — no
-            // checkpoint, no Notice, no Alert, no `merge-left-dirty-tree`
-            // failure. The phantom-dirt cascade this predicate exists to stop
-            // is precisely a good merge being mistaken for a bad one here.
-            const reset = await gexec(['reset', '--hard', finalTaskSha], repoRoot())
-            output += reset.stdout + reset.stderr
-            writeLastSyncedSha(finalTaskSha)
-            output += `\n[mergeBranch] stale-tree debris reset to ${finalTaskSha.slice(0, 9)} (range ${attribution.range})`
-            return {
-              merged: true,
-              conflictResolved,
-              aborted: false,
-              output,
-              supervisorConversation,
-              vegaSessionId,
-              retriesAttempted,
-              mergePreSha: finalIntegrationSha,
-              mergePostSha: finalTaskSha,
-            }
-          }
-
-          // attribution.kind === 'operator-dirt' (including attributeIntegrationDirt's
-          // own fail-safe default on an unattributable last-synced sha).
-          //
-          // ADR-0100 slice 6: when the operatorAutoCommit lever is on (the
-          // caller resolves it via `isOperatorAutoCommitDisabled(resolveControlLevers())`
-          // and passes the answer as `autoCommitOperatorDirt`; omitted/`true`
-          // both mean "attempt it" — see the field's doc comment), sweep the
-          // dirt into a single `wip(operator)` commit rather than running the
-          // checkpoint-and-continue dance below. This unblocks the merge
-          // without a checkpoint ref the operator has to know to go recover.
-          if (autoCommitOperatorDirtEnabled !== false) {
-            const autoCommit = await autoCommitOperatorDirtGit({
-              repoRoot: repoRoot(),
-              taskId: traceCtx?.taskId ?? branch,
-              // The checkout's content is based on the sha it was last synced
-              // to; without a recorded one, on the integration sha this merge
-              // just advanced away from. Anything the working tree differs
-              // from THAT by is the operator's own work.
-              baseSha: readLastSyncedSha() ?? finalIntegrationSha,
-              headSha: finalTaskSha,
-              traceCtx: mergeCtx,
-            })
-            if (autoCommit.committed) {
-              // The operator's work is a commit now, so materialising the
-              // merged content over the stale checkout can no longer lose
-              // anything — and it has to happen, or the merge returns success
-              // over a dirty tree and the dirty-main guard parks the queue.
-              // The wip(operator) commit is then the tree's true state, so
-              // record it as the new last-synced sha; and because `git commit`
-              // advanced `integrationBranch`'s own ref in the ordinary way,
-              // any concurrent merge's CAS fast-forward check observes this
-              // commit and redoes its rebase rather than clobbering it — no
-              // special handling needed beyond doing a normal commit here.
-              const resync = await gprobe(['reset', '--hard', autoCommit.sha], repoRoot())
-              if (resync.exitCode === 0) {
-                writeLastSyncedSha(autoCommit.sha)
-              } else {
-                output += `\n[mergeBranch] post-auto-commit resync failed: ${resync.stderr.trim().slice(0, 300)}`
-              }
-              output +=
-                `\n[mergeBranch] auto-committed operator dirt as ${autoCommit.sha.slice(0, 9)} ` +
-                `(${autoCommit.files.length} path(s)): ${autoCommit.files.join(', ').slice(0, 200)}`
-
-              let probe: MergeGateOutcome | null = null
-              if (onProbeIntegrationAfterAutoCommit) {
-                try {
-                  probe = await onProbeIntegrationAfterAutoCommit({ commitSha: autoCommit.sha })
-                } catch (probeErr: unknown) {
-                  const m = probeErr instanceof Error ? probeErr.message : String(probeErr)
-                  output += `\n[mergeBranch] post-auto-commit probe threw: ${m.slice(0, 300)}`
-                }
-              }
-              if (onOperatorAutoCommit) {
-                try {
-                  const reported = onOperatorAutoCommit({
-                    commitSha: autoCommit.sha,
-                    files: autoCommit.files,
-                    probe,
-                  })
-                  if (reported instanceof Promise) await reported
-                } catch {
-                  // Best-effort per MergeArgs.onOperatorAutoCommit's contract —
-                  // the commit already landed; a reporting failure must never
-                  // undo the merge.
-                }
-              }
-
-              return {
-                merged: true,
-                conflictResolved,
-                aborted: false,
-                output,
-                supervisorConversation,
-                vegaSessionId,
-                retriesAttempted,
-                mergePreSha: finalIntegrationSha,
-                mergePostSha: finalTaskSha,
-                operatorAutoCommitSha: autoCommit.sha,
-              }
-            }
-            // Auto-commit declined (nothing-to-commit, a transient git
-            // failure) — fall through to the pre-existing handling below
-            // unchanged, exactly as the lever-off path does.
-            output += `\n[mergeBranch] auto-commit declined: ${autoCommit.reason}`
-          }
-
-          // Lever off, or the auto-commit attempt above declined — pre-existing
-          // behaviour, unchanged in this slice. The dirt is one of two very
-          // different things and they must NOT be treated alike:
-          //
-          //   a) merge-attributable dirt — Step 3's `reset --hard` ran to
-          //      completion (didResyncWorkingTree === true) but was somehow
-          //      interrupted before the working tree fully settled. HEAD
-          //      already points at finalTaskSha, so resetting to HEAD only
-          //      materialises content that is already committed. Nothing can
-          //      be lost.
-          //
-          //   b) everything else — the operator's uncommitted work (Step 3 saw
-          //      it and explicitly declined to clobber it: "a dirty tree is
-          //      recoverable where lost edits are not"), OR Step 3 never got a
-          //      chance to classify the tree at all (its own HEAD/diff probes
-          //      threw, or the primary checkout was transiently not reporting
-          //      as `integrationBranch`). A probe failure leaves
-          //      `didResyncWorkingTree` at its initial `false` — indistinguishable,
-          //      if we branch on the absence of a separate "operator edits seen"
-          //      flag, from "genuinely nothing to worry about". Branching on the
-          //      ABSENCE of such a flag is exactly the bug that shipped once
-          //      already: a `reset --hard HEAD` here silently destroys
-          //      whatever is actually dirty and undoes Step 3's decision (or
-          //      papers over the fact Step 3 never got to make one). This
-          //      really happened: edits made directly on the integration
-          //      checkout vanished mid-session, twice.
-          //
-          //      So only (a) — positively confirmed by `didResyncWorkingTree`
-          //      — takes the plain-reset path. Every other case, including an
-          //      unclassified Step 3, defaults to (b): checkpoint first.
-          //
-          // For (b) we checkpoint instead of resetting. That still leaves a
-          // clean tree — so the dispatch-time dirty-main guard does not park the
-          // queue — but the work survives as a commit object on this merge's own
-          // `refs/mars/checkpoint/<key>` ref, recoverable by name.
-          //
-          // NOT `git stash`: `refs/stash` is shared by every linked worktree and
-          // addressed by shifting positions, so a parallel task's `stash pop`
-          // could swallow the operator's edits. A checkpoint ref is per-merge and
-          // is restored by object id.
-          let preservedByCheckpoint = false
-          if (!didResyncWorkingTree) {
-            try {
-              const key = `merge/${traceCtx?.taskId ?? branch}`
-              const checkpoint = await captureCheckpoint({
-                cwd: repoRoot(),
-                key,
-                message: `mars: preserved operator edits displaced by merge of ${finalTaskSha.slice(0, 9)}`,
-                traceCtx: mergeCtx,
-              })
-              if (checkpoint === null) {
-                // Nothing capturable (ignored-only dirt): leave the tree alone.
-                output += `\n[mergeBranch] operator edits are ignored-only; leaving tree untouched`
-              } else {
-                await discardWorkingTreeChanges({ cwd: repoRoot(), traceCtx: mergeCtx })
-                preservedByCheckpoint = true
-                output +=
-                  `\n[mergeBranch] PRESERVED operator edits on ${integrationBranch} as checkpoint ref ${checkpoint.ref} ` +
-                  `(${checkpoint.sha.slice(0, 9)}). Recover them with: ` +
-                  `git -C ${repoRoot()} cherry-pick -n ${checkpoint.ref}; git -C ${repoRoot()} cherry-pick --quit ` +
-                  `(the --quit clears the sequencer state left by -n; index and worktree are kept). Files: ` +
-                  `${checkpoint.files.join(', ').slice(0, 200)}`
-              }
-            } catch (checkpointErr: unknown) {
-              const m =
-                checkpointErr instanceof Error ? checkpointErr.message : String(checkpointErr)
-              // Could not checkpoint — leave the tree exactly as it is. A dirty
-              // tree parks the queue, which is annoying; destroying the edits is
-              // worse.
-              output += `\n[mergeBranch] could not checkpoint operator edits, leaving tree untouched: ${m.slice(0, 300)}`
-            }
-          } else {
-            // didResyncWorkingTree === true: Step 3 positively confirmed it
-            // already reset this exact checkout to finalTaskSha. Any dirt
-            // found here can only be debris from that same reset being
-            // interrupted, so restoring to the current HEAD (== finalTaskSha,
-            // already landed via update-ref) cannot lose anything.
-            try {
-              const restored = await gexec(['reset', '--hard', 'HEAD'], repoRoot())
-              output += `\n[mergeBranch] restored integration checkout to HEAD: ${restored.stdout.trim().slice(0, 200)}`
-            } catch (restoreErr: unknown) {
-              const m = restoreErr instanceof Error ? restoreErr.message : String(restoreErr)
-              output += `\n[mergeBranch] restore-to-HEAD failed: ${m.slice(0, 300)}`
-            }
-          }
-          // A successful checkpoint leaves the tree clean and the merge already
-          // landed via update-ref, so there is nothing left to report as a
-          // failure. Every other path still returns 'merge-left-dirty-tree' so
-          // the normal failure handling runs and we never claim success over a
-          // tree we could not clean.
-          if (!preservedByCheckpoint) {
-            return {
-              merged: false,
-              conflictResolved,
-              aborted: false,
-              reason: 'merge-left-dirty-tree',
-              output,
-              supervisorConversation,
-              vegaSessionId,
-              retriesAttempted,
-            }
-          }
-        }
-      }
-    } catch (assertErr: unknown) {
-      // Non-fatal: the merge already landed. Log and continue so we report
-      // merged:true rather than swallowing a spurious assertion error.
-      const m = assertErr instanceof Error ? assertErr.message : String(assertErr)
-      output += `\n[mergeBranch] post-merge tree assertion failed to run: ${m.slice(0, 300)}`
-    }
-
     return {
       merged: true,
       conflictResolved,
@@ -1733,6 +1518,7 @@ export const mergeBranch = async ({
       // reconstructs the merged diff after the worktree is removed.
       mergePreSha: finalIntegrationSha,
       mergePostSha: finalTaskSha,
+      ...(operatorAutoCommitSha !== undefined ? { operatorAutoCommitSha } : {}),
     }
     })(),
     abortPromise,
