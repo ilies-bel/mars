@@ -60,21 +60,12 @@ import { attributeIntegrationDirt } from '../lib/git/stale-tree-attribution'
 import { readLastSyncedSha } from '../lib/git/last-synced-sha'
 import { execProbe, resolveGitBin, type TraceCtx } from '../lib/git/internal'
 import { resolveControlLevers, isOperatorAutoCommitDisabled } from '../config/levers'
+import { staleTreeRewindSearchDepth } from '../config/tuning'
 import type { RecipeCatalog } from '../lib/recipes'
 import type { TraceEventStore } from '../lib/trace-events-store'
 import type { Task } from '../queue'
 
-/**
- * How many of HEAD's most recent ancestors to check when looking for an
- * exact working-tree match. Bounded because a rewind by definition happened
- * recently (the checkout fell behind, it did not travel back in time to the
- * initial commit); unbounded history walking would make every dirty dispatch
- * pay for a full-repo scan. Override via `MARS_STALE_TREE_REWIND_DEPTH` for
- * repos where merges land in unusually large bursts.
- */
-const STALE_TREE_REWIND_SEARCH_DEPTH = Number(
-  process.env.MARS_STALE_TREE_REWIND_DEPTH ?? 50,
-)
+const STALE_TREE_REWIND_SEARCH_DEPTH = staleTreeRewindSearchDepth()
 
 /**
  * Structural rewind check, independent of `.mars/last-synced-sha`.
