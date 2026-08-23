@@ -27,6 +27,22 @@
  * parking dispatch behind a fresh committer, `attributeIntegrationDirt`
  * classifies which of those it is; only dirt it cannot explain (operator-dirt)
  * with the lever off is the genuine residual that still needs to block.
+ *
+ * Incident 2026-08-23 (fix-a2c0a8ef): `attributeIntegrationDirt` only compares
+ * the observed dirt against the inverse of the single `lastSyncedSha..headSha`
+ * range. When the primary checkout falls MULTIPLE merges behind its own HEAD
+ * (observed: three merges) and/or `.mars/last-synced-sha` is stale or unset,
+ * that comparison fails safe to `operator-dirt` even though the working tree
+ * is still just a rewind — byte-identical to some earlier commit already
+ * reachable from HEAD, never a forward operator edit. A naive committer would
+ * have happily "cleaned" that tree by committing the inverse of three good
+ * commits (an ADR-0100 slice and a diagnosed test-hang fix) straight onto
+ * `main`. Before trusting an `operator-dirt` verdict, this module now runs a
+ * second, unconditional, structural check (`findRewoundAncestorSha` below):
+ * does the working tree exactly match ANY recent ancestor of HEAD, not just
+ * `lastSyncedSha`? A match is a rewind, full stop — commit or discard is
+ * never the right call, only proceeding to dispatch and letting the merge
+ * path's normal re-sync catch the checkout up.
  */
 import { resolveContext } from '../context'
 import {
@@ -42,11 +58,85 @@ import {
 import { resolveOriginIdForTask } from '../lib/origin'
 import { attributeIntegrationDirt } from '../lib/git/stale-tree-attribution'
 import { readLastSyncedSha } from '../lib/git/last-synced-sha'
-import { execProbe, resolveGitBin } from '../lib/git/internal'
+import { execProbe, resolveGitBin, type TraceCtx } from '../lib/git/internal'
 import { resolveControlLevers, isOperatorAutoCommitDisabled } from '../config/levers'
 import type { RecipeCatalog } from '../lib/recipes'
 import type { TraceEventStore } from '../lib/trace-events-store'
 import type { Task } from '../queue'
+
+/**
+ * How many of HEAD's most recent ancestors to check when looking for an
+ * exact working-tree match. Bounded because a rewind by definition happened
+ * recently (the checkout fell behind, it did not travel back in time to the
+ * initial commit); unbounded history walking would make every dirty dispatch
+ * pay for a full-repo scan. Override via `MARS_STALE_TREE_REWIND_DEPTH` for
+ * repos where merges land in unusually large bursts.
+ */
+const STALE_TREE_REWIND_SEARCH_DEPTH = Number(
+  process.env.MARS_STALE_TREE_REWIND_DEPTH ?? 50,
+)
+
+/**
+ * Structural rewind check, independent of `.mars/last-synced-sha`.
+ *
+ * `attributeIntegrationDirt` only proves staleness against ONE specific
+ * range (`lastSyncedSha..headSha`). This check asks a cheaper, more general
+ * question: is the working tree byte-identical to ANY of HEAD's recent
+ * ancestors? If so, the dirt is provably a rewind — never a forward operator
+ * edit — regardless of whether `lastSyncedSha` was recorded correctly. See
+ * the module doc comment (incident 2026-08-23 / fix-a2c0a8ef) for the
+ * failure this closes.
+ *
+ * Untracked (`??`) paths are excluded from consideration up front: a
+ * fast-forward re-sync never leaves untracked files behind, so their
+ * presence means this is not a pure rewind no matter what `git diff`
+ * reports for the tracked files.
+ *
+ * Returns the matching ancestor SHA, or `null` when the tree does not match
+ * any of the searched ancestors (including when git itself fails — fail
+ * safe by reporting no match rather than risk a false positive).
+ */
+export const findRewoundAncestorSha = async (input: {
+  repoRoot: string
+  headSha: string
+  traceCtx?: TraceCtx
+}): Promise<string | null> => {
+  const { repoRoot, headSha, traceCtx } = input
+  const git = resolveGitBin()
+
+  const status = await execProbe(
+    git,
+    ['status', '--porcelain', '--untracked-files=all'],
+    { cwd: repoRoot },
+    traceCtx,
+  )
+  if (status.exitCode !== 0) return null
+  const hasUntracked = status.stdout
+    .split('\n')
+    .some((line) => line.slice(0, 2) === '??')
+  if (hasUntracked) return null
+
+  const log = await execProbe(
+    git,
+    ['log', '--format=%H', '-n', String(STALE_TREE_REWIND_SEARCH_DEPTH), headSha],
+    { cwd: repoRoot },
+    traceCtx,
+  )
+  if (log.exitCode !== 0) return null
+
+  const candidates = log.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((sha) => sha.length > 0 && sha !== headSha)
+
+  for (const candidate of candidates) {
+    // `git diff --quiet <sha>` exits 0 when the working tree (index included)
+    // matches <sha> exactly, non-zero on any difference (content or mode).
+    const diff = await execProbe(git, ['diff', '--quiet', candidate], { cwd: repoRoot }, traceCtx)
+    if (diff.exitCode === 0) return candidate
+  }
+  return null
+}
 
 export interface MainDirtyDispatchInput {
   task: Task
@@ -145,7 +235,23 @@ export const runMainDirtyDispatchCheck = async (
     }
 
     // attribution.kind === 'operator-dirt' — including its own fail-safe
-    // default when lastSyncedSha is unknown/unattributable.
+    // default when lastSyncedSha is unknown/unattributable. Before trusting
+    // that verdict, run the structural rewind check: it catches the shape
+    // attributeIntegrationDirt cannot (a checkout multiple merges behind
+    // HEAD, or a stale/unset lastSyncedSha) by comparing against every
+    // recent ancestor of HEAD instead of just lastSyncedSha..headSha.
+    const rewoundAncestor = await findRewoundAncestorSha({
+      repoRoot,
+      headSha,
+      traceCtx: { taskId: task.id, originId, phase: 'setup', store: traceStore },
+    })
+    if (rewoundAncestor !== null) {
+      log(
+        `[main-dirty] dispatch-time: integration branch ${integrationBranch} working tree is byte-identical to ancestor ${rewoundAncestor} of HEAD for task ${task.id}; classifying as a rewind (stale-tree debris), proceeding to dispatch without a committer`,
+      )
+      return { parked: false }
+    }
+
     const levers = resolveControlLevers()
     if (!isOperatorAutoCommitDisabled(levers)) {
       log(

@@ -22,7 +22,15 @@ const setupRepo = (): string => {
   execFileSync('git', ['config', 'user.email', 'test@example'], { cwd: repo })
   execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
   writeFileSync(resolve(repo, 'README.md'), 'hi\n')
-  execFileSync('git', ['add', 'README.md'], { cwd: repo })
+  // Mirrors the real repo: `.mars/` is gitignored there (CLAUDE.md: "Never
+  // commit .env, .mars/, or node_modules"), so writes to .mars/daemon.json
+  // in these tests never show up as `??` untracked dirt in `git status` —
+  // matching production, where a control-lever write can never accidentally
+  // masquerade as operator dirt. `.mars.pglite/` is this suite's own
+  // embedded-Postgres data dir (created by `queue.migrateQueueSchema()`
+  // against `MARS_REPO`) — also test infrastructure, not operator dirt.
+  writeFileSync(resolve(repo, '.gitignore'), '.mars/\n.mars.pglite/\n')
+  execFileSync('git', ['add', 'README.md', '.gitignore'], { cwd: repo })
   execFileSync('git', ['commit', '-q', '-m', 'init', '--allow-empty'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   return repo
@@ -242,6 +250,100 @@ describe('runMainDirtyDispatchCheck', () => {
         await queue.resolveQueueClient().execute(`SELECT COUNT(*) AS n FROM tasks WHERE kind = 'fix'`)
       ).rows[0] as unknown as { n: number }
       expect(Number(fixTasksAfter.n)).toBe(Number(fixTasksBefore.n))
+    },
+    30_000,
+  )
+
+  it(
+    'a working tree byte-identical to an ancestor of HEAD is a rewind, not operator dirt — proceeds without parking or spawning a committer',
+    async () => {
+      // Regression test for the 2026-08-23 incident (fix-a2c0a8ef): the
+      // primary checkout fell THREE merges behind its own HEAD, and
+      // .mars/last-synced-sha was never written, so attributeIntegrationDirt
+      // fell straight through to its operator-dirt fail-safe default even
+      // though the tree was provably a rewind (byte-identical to an earlier
+      // commit already reachable from HEAD). Pin the operatorAutoCommit
+      // lever OFF so this test would hit the block-and-raise path if the
+      // structural rewind check did not intervene first.
+      writeFileSync(
+        resolve(repo, '.mars', 'daemon.json'),
+        JSON.stringify({ controlLevers: { operatorAutoCommit: 'off' } }),
+      )
+
+      // Capture the ancestor SHA the working tree will end up matching —
+      // this is the "3bbf8513" of the incident report.
+      const ancestorSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: repo,
+        encoding: 'utf8',
+      }).trim()
+
+      // Advance main through several commits (simulating multiple merges
+      // landing while the primary checkout wasn't looking).
+      for (const name of ['a', 'b', 'c']) {
+        writeFileSync(resolve(repo, `${name}.txt`), `${name}\n`)
+        execFileSync('git', ['add', `${name}.txt`], { cwd: repo })
+        execFileSync('git', ['commit', '-q', '-m', `advance ${name}`], { cwd: repo })
+      }
+
+      // Deliberately do NOT write .mars/last-synced-sha — this is the
+      // "stale/unset" half of the incident. Roll the working tree back to
+      // look exactly like `ancestorSha`: remove the three files the
+      // "merges" added. `git diff --quiet <ancestorSha>` will now report a
+      // clean match against that commit even though HEAD has moved on.
+      unlinkSync(resolve(repo, 'a.txt'))
+      unlinkSync(resolve(repo, 'b.txt'))
+      unlinkSync(resolve(repo, 'c.txt'))
+
+      const queue = await import('../../queue')
+      await queue.migrateQueueSchema()
+      const { nullTraceStore } = await import('../../lib/run-tool')
+      const { MAIN_COMMITER_RECIPE } = await import('../../lib/main-dirty')
+
+      const sourceTask = await queue.enqueueTask('source task', undefined, { skipTriage: true })
+
+      const mockCatalog = {
+        get: (name: string) =>
+          name === MAIN_COMMITER_RECIPE
+            ? { name: MAIN_COMMITER_RECIPE, description: 'test', prompt: 'fake prompt', tools: [] as const, source: 'built-in' as const }
+            : null,
+        list: () => [],
+      }
+
+      const fixTasksBefore = (
+        await queue.resolveQueueClient().execute(`SELECT COUNT(*) AS n FROM tasks WHERE kind = 'fix'`)
+      ).rows[0] as unknown as { n: number }
+
+      const { runMainDirtyDispatchCheck, findRewoundAncestorSha } = await import('../main-dirty-dispatch')
+
+      // Sanity-check the structural predicate directly: it must name the
+      // exact ancestor the working tree now matches.
+      const headSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: repo,
+        encoding: 'utf8',
+      }).trim()
+      const rewoundAncestor = await findRewoundAncestorSha({ repoRoot: repo, headSha })
+      expect(rewoundAncestor).toBe(ancestorSha)
+
+      const result = await runMainDirtyDispatchCheck({
+        task: sourceTask,
+        integrationBranch: 'main',
+        traceStore: nullTraceStore,
+        recipeCatalog: mockCatalog as import('../../lib/recipes').RecipeCatalog,
+        log: () => {},
+      })
+
+      // Must proceed to dispatch — NOT park behind a committer. A committer
+      // that ran against this tree would commit the inverse of three good
+      // commits (a real revert) straight onto main.
+      expect(result).toEqual({ parked: false })
+
+      const fixTasksAfter = (
+        await queue.resolveQueueClient().execute(`SELECT COUNT(*) AS n FROM tasks WHERE kind = 'fix'`)
+      ).rows[0] as unknown as { n: number }
+      expect(Number(fixTasksAfter.n)).toBe(Number(fixTasksBefore.n))
+
+      const sourceTaskAfter = await queue.getTask(sourceTask.id)
+      expect(sourceTaskAfter?.status).not.toBe('blocked')
     },
     30_000,
   )
