@@ -307,7 +307,18 @@ describe('failed main-committer source cohort', () => {
     vi.resetModules()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Close all PGlite handles opened during this test BEFORE deleting the repo
+    // directory. Unlike the other describes in this file, this one builds a
+    // fresh repo AND calls vi.resetModules() per test, so every `it()` opens its
+    // own PGlite instance. Deleting the repo without closing it first leaves an
+    // orphaned WASM instance holding I/O on deleted files; the next test's
+    // instance can then block indefinitely on it, which is what made
+    // 'leaves a task blocked when other active blockers remain' hang (it passes
+    // in ~5s alone, but hung past both the 30s and 60s timeouts when run after
+    // its siblings). Same guard, same reason as main-dirty-dispatch.test.ts.
+    const { __resetDbRegistryForTests } = await import('../../lib/db')
+    await __resetDbRegistryForTests()
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -475,15 +486,16 @@ describe('failed main-committer source cohort', () => {
     expect(rows[0]!.body).toContain(src2.id)
   }, 60_000)
 
-  // mars-c8f32367: every test in this describe pays the same per-`it()` PGlite
-  // cold-start as the daemon test above — `beforeEach` calls `vi.resetModules()`
-  // and each test re-imports `../../queue` + `migrateQueueSchema()`. That cost
-  // is 1-3s idle but 5-25s under full-suite load (see vitest.config.ts), so the
-  // 30s global `testTimeout` is not headroom, it is a coin flip: this test was
-  // observed timing out at 30s on the merge gate while passing in ~2.8s in
-  // isolation. The sanctioned move is the same local override the daemon test
-  // already carries — the global is a guarded merge-gate constraint and must
-  // not be raised.
+  // mars-c8f32367: this test was the one that timed out on the merge gate. The
+  // cause was NOT cold-start cost — its siblings here finish in ~2.2s and it
+  // passes in ~5s when run alone. It was hanging on an orphaned PGlite instance
+  // left behind by the preceding test, because this describe's `afterEach` used
+  // to delete the repo directory without closing the DB registry first (see the
+  // `afterEach` above). Raising the timeout only made it hang for longer, so the
+  // fix is the teardown, not the budget. The local overrides below remain purely
+  // as headroom for the genuine per-`it()` PGlite cold-start under parallel load
+  // — the global `testTimeout` in vitest.config.ts is a guarded merge-gate
+  // constraint and must not be raised.
   it('leaves a task blocked when other active blockers remain', async () => {
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
