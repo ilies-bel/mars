@@ -1,6 +1,6 @@
 {
   "_comment": "Ratchet for `process.env` reads outside orchestrator/src/core/config/ (scripts/arch-guard.mjs checkEnvReads()). EXACT match, not a ceiling: `arch` fails if any file's actual count differs from what is recorded here, in EITHER direction — fix a read and regenerate this file (`node scripts/arch-guard.mjs --env-baseline`) in the same change. Counts are occurrences, not lines — a line with two reads counts twice.",
-  "totalViolations": 258,
+  "totalViolations": 230,
   "violations": {
     "orchestrator/src/bus/log.ts": 1,
     "orchestrator/src/cli.ts": 2,
@@ -43,7 +43,7 @@
     "orchestrator/src/core/daemon/requeue-ceiling.ts": 4,
     "orchestrator/src/core/daemon/requeue-diagnostics.ts": 2,
     "orchestrator/src/core/daemon/scoring-pool.ts": 1,
-    "orchestrator/src/core/daemon/server.ts": 40,
+    "orchestrator/src/core/daemon/server.ts": 11,
     "orchestrator/src/core/daemon/startup-reconcile.ts": 1,
     "orchestrator/src/core/daemon/storm-breaker.ts": 1,
     "orchestrator/src/core/daemon/usage-sampler.ts": 1,
@@ -102,7 +102,7 @@
     "orchestrator/src/tools/coder/coder-exit.ts": 3,
     "orchestrator/src/tools/coder/setup-worktree.ts": 1,
     "orchestrator/src/tools/coder/worktree-currency.ts": 1,
-    "orchestrator/src/tools/merge/merge.ts": 6,
+    "orchestrator/src/tools/merge/merge.ts": 7,
     "orchestrator/src/workflows/init-workflow.ts": 1,
     "orchestrator/src/workflows/primitives/behaviour-verify.ts": 1
   }

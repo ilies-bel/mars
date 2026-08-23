@@ -4,6 +4,7 @@ import { getCompositionRootClient } from '../store/task-store'
 import { getTask, hasIncompleteBlockers, listTasks, updateTask, type Task } from '../queue'
 import type { PauseController } from './pause-state'
 import type { DispatchKind, TaskFlightTracker } from './task-flight-tracker'
+import { resolveSchedulerIntervalsMs } from '../config/daemon-intervals'
 
 /**
  * Named type for the daemon's per-kind dispatch semaphores. Pulled out of an
@@ -127,6 +128,10 @@ export const startScheduler = (deps: SchedulerDeps): SchedulerHandle => {
     dispatchImplement,
     getDispatchUptimeMs,
   } = deps
+  // Read once per `startScheduler` call (per daemon boot) — see
+  // ../config/daemon-intervals.ts for why this is the one place the
+  // underlying env is read.
+  const schedulerIntervalsMs = resolveSchedulerIntervalsMs()
 
   // Pick the highest-priority pending task. Ties broken first by whether the
   // task's arc has already started (a sibling in running/verifying/merging/done),
@@ -341,7 +346,7 @@ export const startScheduler = (deps: SchedulerDeps): SchedulerHandle => {
   // Retry count and elapsed time are logged for any task that has been attempted
   // at least once so the state is visible before the bound is reached.
   // See orchestrator/src/core/daemon/requeue-ceiling.ts for the ceiling logic.
-  const POLL_FALLBACK_MS = Number(process.env.MARS_DRAIN_POLL_MS ?? 30_000)
+  const POLL_FALLBACK_MS = schedulerIntervalsMs.pollFallback
   const pollFallback = setInterval(() => {
     if (!getAcceptingWork() || pause.isPaused() || drainRunning || tracker.inFlightCount() > 0) return
     void (async () => {
@@ -391,9 +396,7 @@ export const startScheduler = (deps: SchedulerDeps): SchedulerHandle => {
   // takes the normal bus path, which feeds pendingImplement and invokes drain();
   // drain then re-reads the row and validates its status and blockers before it
   // can claim a worker slot.
-  const QUEUED_DISPATCH_SWEEP_MS = Number(
-    process.env.MARS_QUEUED_DISPATCH_SWEEP_MS ?? 30_000,
-  )
+  const QUEUED_DISPATCH_SWEEP_MS = schedulerIntervalsMs.queuedDispatchSweep
   const queuedDispatchSweep = setInterval(() => {
     if (!getAcceptingWork() || pause.isPaused()) return
     void (async () => {

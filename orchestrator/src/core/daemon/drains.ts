@@ -18,6 +18,7 @@ import {
   type GateFixStewardDispatch,
 } from '../../outbox/subscribers/gate-fix-steward'
 import { drainArchiveEntries } from '../archive/insert.js'
+import { resolveDrainIntervalsMs } from '../config/daemon-intervals'
 import { drainRecipeConversationNotices } from '../../outbox/subscribers/recipe-conversation-notice'
 import {
   clearFailureConversationNoticeFlush,
@@ -65,12 +66,21 @@ export interface DrainSpec {
 }
 
 /**
+ * Cadences for the drains below. Resolved once at import time — the
+ * underlying env is stable for the process's lifetime and every consumer
+ * here (`intervalMs`) is itself only invoked once, when `startDrains` arms
+ * the interval. See `../config/daemon-intervals.ts`.
+ */
+const INTERVALS_MS = resolveDrainIntervalsMs()
+
+/**
  * The daemon's periodic outbox-subscriber drains, in one list instead of a
  * run of inline `setInterval(singleFlight(...))` blocks in `server.ts`. Each
  * polls the outbox for events its subscriber cares about and applies the
  * corresponding mutation — see the individual subscriber modules for the
  * durable-cursor semantics that make a dropped tick lose no work.
  */
+
 export const DRAINS: readonly DrainSpec[] = [
   {
     // Polls the outbox for status-transition events and clears the
@@ -78,7 +88,7 @@ export const DRAINS: readonly DrainSpec[] = [
     // clears alerts" invariant whole for raw-SQL status writes that bypass
     // the updateTask chokepoint.
     name: 'alert-dismisser',
-    intervalMs: () => Number(process.env.MARS_ALERT_DRAIN_MS ?? 30_000),
+    intervalMs: () => INTERVALS_MS.alertDismisser,
     run: async ({ log }) => {
       await drainAlertDismissals(getCompositionRootClient(), log)
     },
@@ -87,7 +97,7 @@ export const DRAINS: readonly DrainSpec[] = [
     // Polls the outbox for task/proposal lifecycle events and applies the
     // corresponding action_queue_items mutations.
     name: 'action-queue-repopulator',
-    intervalMs: () => Number(process.env.MARS_ACTION_QUEUE_REPOPULATOR_DRAIN_MS ?? 30_000),
+    intervalMs: () => INTERVALS_MS.actionQueueRepopulator,
     run: async ({ bus, log }) => {
       const { processed } = await drainActionQueueRepopulations(getCompositionRootClient(), log)
       if (processed > 0) bus.emit('view.action-queue-invalidated')
@@ -97,7 +107,7 @@ export const DRAINS: readonly DrainSpec[] = [
     // Polls the outbox for task.terminal { reason: 'done' } events and
     // unblocks any dependents whose every blocker is now done.
     name: 'blocker-resolution',
-    intervalMs: () => Number(process.env.MARS_BLOCKER_RESOLUTION_DRAIN_MS ?? 30_000),
+    intervalMs: () => INTERVALS_MS.blockerResolution,
     run: async ({ bus, log, tracker }) => {
       const { processed } = await drainBlockerResolution(getCompositionRootClient(), log, {
         onCancelInFlightRecovery: (taskId) => {
@@ -128,7 +138,7 @@ export const DRAINS: readonly DrainSpec[] = [
     // when the inline dispatch path in the verify primitive is skipped or
     // crashes.
     name: 'recovery-spawner',
-    intervalMs: () => Number(process.env.MARS_RECOVERY_SPAWNER_DRAIN_MS ?? 30_000),
+    intervalMs: () => INTERVALS_MS.recoverySpawner,
     run: async ({ log, handleSignatureStorm, isBaselinePoisoned }) => {
       await drainRecoverySpawner(
         getCompositionRootClient(),
@@ -147,15 +157,14 @@ export const DRAINS: readonly DrainSpec[] = [
     // raises a recovery-abandoned action-queue item against the origin so
     // the operator knows the recovery was manually cancelled.
     name: 'recovery-abandoned',
-    intervalMs: () => Number(process.env.MARS_RECOVERY_ABANDONED_DRAIN_MS ?? 30_000),
+    intervalMs: () => INTERVALS_MS.recoveryAbandoned,
     run: async ({ log }) => {
       await drainRecoveryAbandoned(getCompositionRootClient(), log)
     },
   },
   {
     name: 'subthread-closer',
-    intervalMs: () =>
-      Number(process.env.MARS_CLOSE_SUBTHREAD_ON_TERMINAL_EVENT_DRAIN_MS ?? 30_000),
+    intervalMs: () => INTERVALS_MS.subthreadCloser,
     run: async ({ bus, log }) => {
       const { processed } = await drainSubthreadCloser(getCompositionRootClient(), log)
       if (processed > 0) bus.emit('view.chat-invalidated')
@@ -163,7 +172,7 @@ export const DRAINS: readonly DrainSpec[] = [
   },
   {
     name: 'archive-prompter',
-    intervalMs: () => Number(process.env.MARS_ARCHIVE_PROMPT_DRAIN_MS ?? 30_000),
+    intervalMs: () => INTERVALS_MS.archivePrompter,
     run: async ({ bus, log }) => {
       const { processed } = await drainArchivePrompter(getCompositionRootClient(), log)
       if (processed > 0) bus.emit('view.chat-invalidated')
@@ -171,7 +180,7 @@ export const DRAINS: readonly DrainSpec[] = [
   },
   {
     name: 'recipe-conversation-notice',
-    intervalMs: () => Number(process.env.MARS_RECIPE_CONVERSATION_NOTICE_DRAIN_MS ?? 30_000),
+    intervalMs: () => INTERVALS_MS.recipeConversationNotice,
     run: async ({ log }) => {
       await drainRecipeConversationNotices(getCompositionRootClient(), log)
     },
@@ -181,7 +190,7 @@ export const DRAINS: readonly DrainSpec[] = [
     // scheduler still flushes each batch at its exact opened_at deadline —
     // scheduleFailureConversationNoticeFlush re-arms that per-tick.
     name: 'failure-conversation-notices',
-    intervalMs: () => Number(process.env.MARS_FAILURE_CONVERSATION_NOTICE_DRAIN_MS ?? 1_000),
+    intervalMs: () => INTERVALS_MS.failureConversationNotice,
     run: async ({ log }) => {
       await drainFailureConversationNotices(getCompositionRootClient(), Date.now, log)
       await scheduleFailureConversationNoticeFlush(getCompositionRootClient(), log)
@@ -193,7 +202,7 @@ export const DRAINS: readonly DrainSpec[] = [
     // with merged commits. Fire-and-forget: the verifier runs asynchronously
     // and never blocks the merge path or dispatch loop.
     name: 'arc-verifier',
-    intervalMs: () => Number(process.env.MARS_ARC_VERIFIER_DRAIN_MS ?? 30_000),
+    intervalMs: () => INTERVALS_MS.arcVerifier,
     run: async ({ log, scheduleArcVerification }) => {
       await drainArcVerifier(getCompositionRootClient(), scheduleArcVerification, log)
     },
@@ -203,7 +212,7 @@ export const DRAINS: readonly DrainSpec[] = [
     // 'done' } events and inserts archive_entries. Insertion is always
     // silent.
     name: 'archive-entries',
-    intervalMs: () => Number(process.env.MARS_ARCHIVE_ENTRIES_DRAIN_MS ?? 30_000),
+    intervalMs: () => INTERVALS_MS.archiveEntries,
     run: async () => {
       await drainArchiveEntries(getCompositionRootClient())
     },
@@ -214,7 +223,7 @@ export const DRAINS: readonly DrainSpec[] = [
     // incident showed 287 GB accumulated unnoticed because nothing ever
     // reclaimed them; this drain prevents new accumulation between boots.
     name: 'worktree-reclaim',
-    intervalMs: () => Number(process.env.MARS_WORKTREE_RECLAIM_DRAIN_MS ?? 10 * 60 * 1_000),
+    intervalMs: () => INTERVALS_MS.worktreeReclaim,
     run: async ({ log, repoRoot }) => {
       const recRoot = repoRoot()
       const orphan = await sweepOrphanWorktrees(recRoot, log)
@@ -232,7 +241,7 @@ export const DRAINS: readonly DrainSpec[] = [
   },
   {
     name: 'gate-fix-steward',
-    intervalMs: () => Number(process.env.MARS_GATE_FIX_STEWARD_DRAIN_MS ?? 30_000),
+    intervalMs: () => INTERVALS_MS.gateFixSteward,
     run: async ({ log, runGateFixStewardDispatch }) => {
       await drainGateFixSteward(
         getCompositionRootClient(),
