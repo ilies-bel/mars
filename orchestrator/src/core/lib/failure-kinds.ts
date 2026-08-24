@@ -33,6 +33,7 @@
 
 import {
   firstNonBlankLine,
+  isContextExhaustedSignature,
   stripRecoveryFailedPrefixes,
 } from './failure-signature'
 import { hasRecipe } from './fix-recipes'
@@ -972,7 +973,7 @@ export const isSignatureStormExempt = (signature: string): boolean => {
   if (signature === 'verify:killed/sigterm' || signature === 'verify:killed/sigkill') return true
   // Known-capacity failure with a reliable `mars continue` recovery path —
   // a per-task ceiling, not a systemic cause. See reason (3) above.
-  if (prefix === 'code:context-exhausted') return true
+  if (isContextExhaustedSignature(signature)) return true
   return false
 }
 

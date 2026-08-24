@@ -40,6 +40,7 @@ import type { ControlLevers } from './daemon/config'
 import { isEnvironmentalSignature } from './lib/failure-kinds'
 import { classifyFailure, requiresWorktreeRebuild } from './lib/failure-class'
 import { maybeSpawnRescueOperator, RESCUE_OPERATOR_TAG } from './rescue-operator-spawn'
+import { maybeSupersedeOnContextExhaustedRecovery } from './context-exhausted-supersede'
 import { integrationBranchName } from './blocker-resolution'
 import { getRepoRoot } from './context'
 import { listUniqueCommitsAhead } from './lib/sweep'
@@ -453,6 +454,12 @@ export interface HandleTaskFailureViaTaskResult {
     | 'requeued-for-remerge'
     | 'signature-storm-tripped'
     | 'steward-repeat'
+    /**
+     * A recovery task exhausted its context budget and the arc was carried
+     * forward onto a fresh task via `--supersede` instead of being parked.
+     * `supersedingTaskId` names that task.
+     */
+    | 'superseded-on-context-exhaustion'
   fixTaskId?: string
   failureSignature?: string
   recoverySpawnedCount?: number
@@ -461,9 +468,11 @@ export interface HandleTaskFailureViaTaskResult {
   /** Streak count when the signature-storm circuit breaker first trips. */
   stormStreak?: number
   /**
-   * When outcome is 'noop' and a rescue or fix task for the same origin
-   * arc is already in flight, this field carries that task's id so the
-   * caller can surface a supersession trace without querying the database.
+   * The task the arc continues through, so the caller can surface a
+   * supersession trace without querying the database. Set for two outcomes:
+   * `'noop'` (a rescue or fix task for the same origin arc is already in
+   * flight) and `'superseded-on-context-exhaustion'` (the freshly spawned
+   * `--supersede` task).
    */
   supersedingTaskId?: string
 }
@@ -783,6 +792,47 @@ export const handleTaskFailureWithFixTask = async (
       }
       // Cap exhausted: fall through to the normal escalation so the operator
       // gets an action-queue item.
+    }
+
+    // ── Supersede-on-context-exhausted-recovery ─────────────────────────────
+    // A recovery killed for exhausting its context budget did not fail because
+    // it was wrong — it failed because it ran out of room. The operator's move
+    // here has always been the same manual gesture (`mars task add --supersede
+    // <origin>`), so run it automatically: inherit the branch onto a fresh task
+    // with a fresh context window instead of parking the arc.
+    //
+    // Ordered BEFORE the auto-remerge branch-tip check below, and that ordering
+    // is load-bearing. A context-exhaustion kill almost always leaves a salvage
+    // CHECKPOINT commit on the branch, so `commitsAhead.length > 0` holds and
+    // auto-remerge would route the origin into a merge step that then refuses
+    // the checkpoint tip (`code:salvage-checkpoint-tip/no-progress`) — the exact
+    // dead-end loop this replaces. The module declines when the branch holds
+    // REAL commits, so the auto-remerge path below still owns that case.
+    //
+    // Exactly one per arc (a durable `followup_dedup_key`); a superseding task
+    // that itself exhausts parks the arc as today. Best-effort: any error must
+    // not block the escalation below from running.
+    try {
+      const superseded = await maybeSupersedeOnContextExhaustedRecovery({
+        failedRecovery: task,
+        failureSignature,
+        store: s,
+      })
+      if (superseded.spawned) {
+        return {
+          outcome: 'superseded-on-context-exhaustion',
+          failureSignature,
+          recoverySpawnedCount: task.recoverySpawnedCount,
+          supersedingTaskId: superseded.supersedeTaskId,
+        }
+      }
+    } catch (supersedeErr) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[failure-handler] fix task ${input.taskId}: context-exhausted supersede check failed ` +
+          '(non-fatal), escalating:',
+        supersedeErr,
+      )
     }
 
     // Fix 3: Re-verify branch tip before declaring the arc dead.

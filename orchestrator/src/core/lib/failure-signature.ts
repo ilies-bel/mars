@@ -934,6 +934,27 @@ export const isUnclassifiedSignature = (signature: string): boolean =>
   signature.endsWith(`/${UNCLASSIFIED_ERROR_CLASS}`)
 
 /**
+ * The failing-step half of every signature produced when a coder process is
+ * killed because it exhausted its context budget (`maxContextTokens`). Written
+ * by `tools/coder/coder-exit.ts`; the error class is normally `unclassified`,
+ * so consumers must match on the STEP, never the whole signature.
+ */
+export const CONTEXT_EXHAUSTED_STEP_ID = 'code:context-exhausted'
+
+/**
+ * True when `signature` describes a coder killed for running out of context.
+ *
+ * Matches on the failing-step half only (`code:context-exhausted/<anything>`),
+ * because the error class is whatever `classifyError` made of the kill message
+ * and is not part of the identity of this condition. Every consumer that has to
+ * recognise a context-exhaustion — the signature-storm exemption and the
+ * supersede-on-exhausted-recovery handoff — shares this predicate so the two
+ * cannot drift apart on the exact spelling of the step id.
+ */
+export const isContextExhaustedSignature = (signature: string): boolean =>
+  signature.split('/', 1)[0] === CONTEXT_EXHAUSTED_STEP_ID
+
+/**
  * The FAMILY of a failure signature: `<gate>/<errorClass>` — the signature with
  * every KIND segment of the failing step dropped.
  *
