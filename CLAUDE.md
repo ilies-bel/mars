@@ -343,9 +343,15 @@ recovery-spawn path itself.
 - Create edges at enqueue with `mars task add ... --blocked-by <id>`
   (repeatable; each id must already exist) or after the fact with
   `mars block <task-id> <blocker-id> [<blocker-id> ...]`.
-- `mars unblock <id> <blocker-id> ...` removes specific edges (status
-  unchanged). `mars unblock <id>` with no blocker ids is phantom-recovery:
-  it clears all edges and flips the task to `failed` so it can be
+- `mars unblock <id> <blocker-id> ...` removes specific edges, then
+  re-evaluates the task's status: if no unsettled blocker edges remain
+  afterward, it flips the task from `blocked` straight to `queued` so it
+  dispatches without waiting for a restart or the next
+  `orphanedBlockedScan` sweep (`Arc.recoverBlocked()` in
+  `orchestrator/src/core/arc.ts`, invoked from `handleRemoveBlockers` in
+  `orchestrator/src/core/daemon/server.ts`). This is distinct from `mars
+  unblock <id>` with no blocker ids, which is phantom-recovery: it clears
+  all edges unconditionally and flips the task to `failed` so it can be
   `mars continue`d, `mars purge`d or `mars restart`ed.
 - A blocker that ends in `failed` leaves its dependents waiting in
   `blocked`; resolve the chain via the action queue item on the failed blocker
