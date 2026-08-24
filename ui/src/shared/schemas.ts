@@ -456,22 +456,19 @@ const staleWorktreeDetailSchema = z.object({
 // list is a hand-maintained mirror of that complement, so task-failure rows
 // retain their raw wire kind.
 //
-// It is an INCOMPLETE mirror, and nothing enforces otherwise: as of 2026-08-24
-// eleven kinds the daemon does treat as task failures are absent here
-// (slice-failed, verify-uncovered, arc-superseded-on-main, e2e-tooling-missing,
-// low-disk-space, baseline-broken, dirty-integration, fragmented-repo-layout,
-// mockup-ready, qa-step-list-opt-in, qa-step-list-promote). Do not read an
-// absence from this list as "the daemon deliberately excludes that kind" — it
-// almost certainly means the mirror simply drifted. That misreading is what
-// produced the EXTRA_GROUPABLE_CONDITION_KINDS carve-out in
-// entities/actionQueue/clusterRows.ts, which papered over the missing
-// `recovery-abandoned` entry rather than fixing the drift.
+// `taskFailureKinds.driftGate.test.ts` recomputes the complement directly
+// from the orchestrator sources and fails if this list disagrees — that is
+// what keeps this mirror honest now. It has drifted before (eleven kinds
+// were missing as of 2026-08-24, following an earlier drift that omitted
+// `recovery-abandoned` and produced the EXTRA_GROUPABLE_CONDITION_KINDS
+// carve-out in entities/actionQueue/clusterRows.ts before that carve-out was
+// replaced by fixing the mirror directly) — if the drift gate ever starts
+// failing, fix this list, do not loosen the gate.
 //
 // Adding a kind here is not free: this list is also the `z.enum` backing
 // `taskFailureItemSchema` below, so it changes how rows parse, not just how
-// they group. Closing the remaining drift — and adding the gate that keeps it
-// closed — is tracked as its own task.
-const taskFailureKinds = [
+// they group.
+export const taskFailureKinds = [
   'failed',
   'steward-repeat',
   'cancelled-blocker-cascade',
@@ -482,6 +479,7 @@ const taskFailureKinds = [
   'worktree-ahead',
   'prerequisite-failed',
   'slices-dropped',
+  'slice-failed',
   'behaviour-unverified',
   'subscriber-stalled',
   'observability-store-oversize',
@@ -495,6 +493,7 @@ const taskFailureKinds = [
   'workflow-install-drift',
   'provider-rate-limited',
   'gate-broken',
+  'verify-uncovered',
   'gate-enrichment',
   'budget-window',
   'budget-arc',
@@ -508,6 +507,15 @@ const taskFailureKinds = [
   'spend-control-notice',
   'scheduling-decision',
   'requeue-warning',
+  'arc-superseded-on-main',
+  'e2e-tooling-missing',
+  'low-disk-space',
+  'baseline-broken',
+  'dirty-integration',
+  'fragmented-repo-layout',
+  'mockup-ready',
+  'qa-step-list-opt-in',
+  'qa-step-list-promote',
 ] as const
 
 /** Mirrors the daemon's task-failure classification for persisted kinds. */

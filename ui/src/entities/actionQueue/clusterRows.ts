@@ -60,8 +60,9 @@ export function countNeedsYou(items: readonly ActionQueueItem[]): number {
  * to a recovery-exhausted `failed` row warning that Restart would discard
  * real work. That entry is restored now, so no carve-out is needed.
  *
- * The mirror is still incomplete for other kinds — see the note on
- * `taskFailureKinds` in ui/src/shared/schemas.ts. If a per-task condition
+ * `taskFailureKinds` (ui/src/shared/schemas.ts) is now checked against the
+ * daemon's own complement by a drift-gate test
+ * (ui/src/shared/taskFailureKinds.driftGate.test.ts). If a per-task condition
  * fails to group here, fix the mirror; do not reintroduce a local carve-out.
  */
 const isGroupableConditionKind = (kind: string): boolean => isTaskFailureActionQueueKind(kind)
