@@ -93,6 +93,14 @@ const loadModules = async (
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
   await q.migrateQueueSchema()
+  // Register the outbox subscriber up front, before any task/event activity
+  // in the test body, so a later `drainBlockerResolution` call (ADR-0101
+  // edge 3) observes every `task.terminal` event the test goes on to
+  // produce rather than throwing "Subscriber not registered".
+  const { ensureBlockerResolutionSubscriber } = await import(
+    '../../../outbox/subscribers/blocker-resolution'
+  )
+  await ensureBlockerResolutionSubscriber(q.resolveQueueClient())
   const { Arc } = await import('../../arc')
   // Adapter: the six writers relocated into the Arc aggregate (ADR-0052).
   // The historic free-function names map onto Arc static/instance methods so
