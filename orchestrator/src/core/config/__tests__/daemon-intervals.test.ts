@@ -10,8 +10,10 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  resolveCodeCheckpointIntervalMs,
   resolveDrainIntervalsMs,
   resolveIntegrationBranch,
+  resolveNpmViewTimeoutMs,
   resolveSchedulerIntervalsMs,
   resolveSweepIntervalsMs,
 } from '../daemon-intervals'
@@ -106,5 +108,41 @@ describe('resolveIntegrationBranch', () => {
 
   it('follows an explicit INTEGRATION_BRANCH override', () => {
     expect(resolveIntegrationBranch({ INTEGRATION_BRANCH: 'release' })).toBe('release')
+  })
+})
+
+describe('resolveCodeCheckpointIntervalMs', () => {
+  it('defaults to three minutes when MARS_CODE_CHECKPOINT_INTERVAL_MS is unset', () => {
+    expect(resolveCodeCheckpointIntervalMs({})).toBe(3 * 60 * 1_000)
+  })
+
+  it('follows an explicit MARS_CODE_CHECKPOINT_INTERVAL_MS override', () => {
+    expect(resolveCodeCheckpointIntervalMs({ MARS_CODE_CHECKPOINT_INTERVAL_MS: '5000' })).toBe(5_000)
+  })
+})
+
+describe('resolveNpmViewTimeoutMs', () => {
+  it('defaults to 15s when MARS_BASELINE_REPAIR_NPM_VIEW_TIMEOUT_MS is unset', () => {
+    expect(resolveNpmViewTimeoutMs({})).toBe(15_000)
+  })
+
+  it('follows an explicit MARS_BASELINE_REPAIR_NPM_VIEW_TIMEOUT_MS override', () => {
+    expect(resolveNpmViewTimeoutMs({ MARS_BASELINE_REPAIR_NPM_VIEW_TIMEOUT_MS: '3000' })).toBe(3_000)
+  })
+
+  /**
+   * This resolver deliberately does NOT share {@link resolveDrainIntervalsMs}'s
+   * `Number(env[x] ?? fallback)` shape. It bounds a network call the baseline
+   * repairer blocks on, so a garbage override must land on the default rather
+   * than on `NaN` — `NaN` would silently remove the bound entirely.
+   */
+  it('falls back to the default rather than NaN on a non-numeric override', () => {
+    expect(resolveNpmViewTimeoutMs({ MARS_BASELINE_REPAIR_NPM_VIEW_TIMEOUT_MS: 'soon' })).toBe(
+      15_000,
+    )
+  })
+
+  it('treats a zero override as unset, since a 0ms timeout would abort every lookup', () => {
+    expect(resolveNpmViewTimeoutMs({ MARS_BASELINE_REPAIR_NPM_VIEW_TIMEOUT_MS: '0' })).toBe(15_000)
   })
 })
