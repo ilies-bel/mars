@@ -9,6 +9,28 @@
  *
  * Every kind in ACTION_QUEUE_KINDS must have a registered recipe — the
  * exhaustiveness test enforces this.
+ *
+ * ## Typing the still-`unaudited` kinds
+ *
+ * PRD `2d84a65a-shrink-the-unaudited-list-in-action-queu` is typing the
+ * still-`unaudited` kinds in `action-queue-payloads.ts` incrementally, one
+ * family at a time. Each family's consumer slice touches this file too —
+ * once its kinds' payload contracts land, its recipe entries below trade
+ * `ctx.payload['field']` bracket access for the typed contract's fields.
+ *
+ * `UNAUDITED_KIND_FAMILY` in `action-queue-payloads.ts` is the single source
+ * of truth for which family owns which kind — not a kind list re-copied into
+ * a consumer slice's own prompt. This file mirrors that assignment with a
+ * `// family: <name>` comment directly above every still-unaudited kind's
+ * entry in `RECIPE_DEFINITIONS`, so a consumer slice can locate every entry
+ * it owns (they are not grouped together below — the sections predate the
+ * family split) without re-deriving the mapping by hand.
+ *
+ * The mirror is not decoration: `__tests__/action-queue-recipe-family-markers.test.ts`
+ * fails if a marker is missing, names the wrong family, or is left behind on a
+ * kind that has since been typed. A slice that finishes its family therefore
+ * deletes its markers here in the same change that removes its kinds from
+ * `UNAUDITED_KIND_FAMILY`.
  */
 
 import type { ActionQueueKind } from './action-queue-kinds'
@@ -215,6 +237,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [{ op: 'investigate', label: 'Investigate', style: 'primary' }],
   },
 
+  // family: task-lifecycle
   'cancelled-blocker-cascade': {
     humanSummary: () =>
       'A blocker task was cancelled and Mars cancelled its dependents too — review which tasks were affected.',
@@ -227,6 +250,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [{ op: 'restart', label: 'Restart chain', style: 'primary' }],
   },
 
+  // family: task-lifecycle
   'diagnose-inconclusive': {
     humanSummary: () =>
       'Mars tried to diagnose a failure but could not find a clear root cause — manual investigation is needed.',
@@ -241,6 +265,7 @@ const RECIPE_DEFINITIONS = {
 
   // ── Worker questions ──────────────────────────────────────────────────────
 
+  // family: scheduling-workflow-drift
   'coder-question': {
     humanSummary: (ctx) => {
       const taskId = str(ctx.payload['taskId']) || ctx.entityId
@@ -255,6 +280,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  // family: daemon-health
   'daemon-killed': {
     humanSummary: () =>
       'The background engine was stopped while tasks were running — those tasks need to be restarted.',
@@ -290,6 +316,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [{ op: 'dismiss-daemon-died', label: 'Dismiss', style: 'primary' }],
   },
 
+  // family: daemon-health
   'daemon-outage': {
     humanSummary: (ctx) => {
       const outageMs = typeof ctx.payload['outageMs'] === 'number' ? ctx.payload['outageMs'] : null
@@ -365,6 +392,7 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
+  // family: task-lifecycle
   'prerequisite-failed': {
     humanSummary: () =>
       'A prerequisite check failed before a task could start — fix the underlying issue first.',
@@ -377,6 +405,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [{ op: 'restart', label: 'Retry', style: 'primary' }],
   },
 
+  // family: task-lifecycle
   'done-with-unmerged-commits': {
     humanSummary: (ctx) =>
       `A task was marked done but its code was never merged into main — investigate and re-merge (${ctx.entityId}).`,
@@ -394,6 +423,7 @@ const RECIPE_DEFINITIONS = {
 
   // ── Proposals and planning ─────────────────────────────────────────────────
 
+  // family: proposal-promotion
   'draft-proposal': {
     humanSummary: (ctx) => {
       const title = str(ctx.payload['title']) || ctx.title
@@ -412,6 +442,7 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
+  // family: slice-workflow
   'slices-dropped': {
     humanSummary: () =>
       'Some tasks were removed from the plan because they were out of scope or redundant — check what was dropped.',
@@ -424,6 +455,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  // family: slice-workflow
   'slice-failed': {
     humanSummary: () =>
       'Mars could not turn this PRD into tasks — inspect the failure, then explicitly slice it again when ready.',
@@ -435,6 +467,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  // family: slice-workflow
   'hitl-slice-needs-operator': {
     humanSummary: () =>
       'A task in the plan requires a human to take over — attach to it and do the work manually.',
@@ -449,6 +482,7 @@ const RECIPE_DEFINITIONS = {
 
   // ── Human-in-the-loop ──────────────────────────────────────────────────────
 
+  // family: validation-qa
   'awaiting-validation': {
     humanSummary: () =>
       'A task finished and its preview is ready for you to check — validate it to merge, or reject to restart.',
@@ -464,6 +498,7 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
+  // family: validation-qa
   'awaiting-validation-preview-gone': {
     humanSummary: () =>
       'A task still needs a validation decision, but its preview is no longer reachable.',
@@ -547,6 +582,7 @@ const RECIPE_DEFINITIONS = {
 
   // ── Verification ──────────────────────────────────────────────────────────
 
+  // family: validation-qa
   'behaviour-unverified': {
     humanSummary: () =>
       'A task was merged but Mars could not check it actually works — follow the linked proposal to verify manually.',
@@ -560,6 +596,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  // family: verify-gate
   'arc-verification-failed': {
     humanSummary: () =>
       "Post-merge verification found that an arc's goals were not satisfied — investigate and fix the output or mark it resolved.",
@@ -607,6 +644,7 @@ const RECIPE_DEFINITIONS = {
     },
   },
 
+  // family: scheduling-workflow-drift
   'workflow-install-drift': {
     humanSummary: (ctx) => {
       const missing = Array.isArray(ctx.payload['missingKinds'])
@@ -638,6 +676,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  // family: daemon-health
   'observability-store-oversize': {
     humanSummary: () =>
       'The observability database has grown past 500 MB — prune it to free disk space.',
@@ -675,6 +714,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [{ op: 'restart', label: 'Restart', style: 'primary' }],
   },
 
+  // family: daemon-health
   'outbox-lag': {
     humanSummary: () =>
       'An event queue is backed up — a subscriber may be wedged. Check the subscriber status.',
@@ -690,6 +730,7 @@ const RECIPE_DEFINITIONS = {
 
   // ── Reflection and evolution ───────────────────────────────────────────────
 
+  // family: proposal-promotion
   'reflect-recommended': {
     humanSummary: () =>
       'Mars spotted patterns worth reflecting on — run a reflection to surface improvement proposals.',
@@ -704,6 +745,7 @@ const RECIPE_DEFINITIONS = {
 
   // ── API and rate limits ────────────────────────────────────────────────────
 
+  // family: spend-provider
   'api-outage': {
     humanSummary: () =>
       'The Claude API is down — tasks are paused automatically and will resume once the API recovers.',
@@ -716,6 +758,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  // family: spend-provider
   'provider-rate-limited': {
     humanSummary: (ctx) => {
       const resetsAt = str(ctx.payload['resetsAtIso'])
@@ -774,6 +817,7 @@ const RECIPE_DEFINITIONS = {
     },
   },
 
+  // family: verify-gate
   'verify-uncovered': {
     humanSummary: (ctx) => {
       const scope = str(ctx.payload['scope']) || ctx.entityId
@@ -844,6 +888,7 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
+  // family: verify-gate
   'gate-enrichment-stale': {
     humanSummary: (ctx) => {
       const sig = str(ctx.payload['signature'])
@@ -865,6 +910,7 @@ const RECIPE_DEFINITIONS = {
 
   // ── Budget ────────────────────────────────────────────────────────────────
 
+  // family: spend-provider
   'budget-window': {
     humanSummary: () =>
       "Spending in the current time window has crossed the warning threshold — no tasks are paused, but keep an eye on it.",
@@ -878,6 +924,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  // family: spend-provider
   'budget-arc': {
     humanSummary: (ctx) => {
       const arcId = str(ctx.payload['arcId']) || ctx.entityId
@@ -895,6 +942,7 @@ const RECIPE_DEFINITIONS = {
 
   // ── Quality and workflows ─────────────────────────────────────────────────
 
+  // family: proposal-promotion
   'scorer-suggested': {
     humanSummary: (ctx) => {
       const workflow = str(ctx.payload['workflowName']) || ctx.entityId
@@ -913,6 +961,7 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
+  // family: proposal-promotion
   'promotion-decision': {
     humanSummary: (ctx) => {
       const verdict = str(ctx.payload['verdict'])
@@ -938,6 +987,7 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
+  // family: scheduling-workflow-drift
   'workflow-draft-pending': {
     humanSummary: (ctx) => {
       const name = str(ctx.payload['workflowName']) || ctx.entityId
@@ -955,6 +1005,7 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
+  // family: proposal-promotion
   'tool-promotion': {
     humanSummary: (ctx) => {
       const helperKey = str(ctx.payload['helperKey']) || ctx.entityId
@@ -974,6 +1025,7 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
+  // family: verify-gate
   'env-incident': {
     humanSummary: (ctx) => {
       const sig = str(ctx.payload['signature'])
@@ -1053,6 +1105,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  // family: spend-provider
   'spend-control-notice': {
     humanSummary: (ctx) => {
       const direction = str(ctx.payload['direction'])
@@ -1068,6 +1121,7 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [],
   },
+  // family: scheduling-workflow-drift
   'scheduling-decision': {
     humanSummary: (ctx) => {
       const taskId = str(ctx.payload['taskId']) || ctx.entityId
@@ -1086,6 +1140,7 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [],
   },
+  // family: scheduling-workflow-drift
   'requeue-warning': {
     humanSummary: (ctx) => {
       const diag = ctx.payload['diagnostics'] as Record<string, unknown> | undefined
@@ -1105,6 +1160,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  // family: task-lifecycle
   'arc-superseded-on-main': {
     humanSummary: (ctx) => {
       const originId = str(ctx.payload['originId']) || ctx.entityId
@@ -1140,6 +1196,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  // family: daemon-health
   'low-disk-space': {
     humanSummary: (ctx) => {
       const freeMiB = typeof ctx.payload['freeBytes'] === 'number'
@@ -1187,6 +1244,7 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
+  // family: verify-gate
   'dirty-integration': {
     humanSummary: (ctx) => {
       const branch = str(ctx.payload['integrationBranch']) || 'integration branch'
@@ -1212,6 +1270,7 @@ const RECIPE_DEFINITIONS = {
    * The `conditionKey` payload field identifies which check raised this row
    * so the Steward can close it when the condition resolves.
    */
+  // family: daemon-health
   'health-check-alert': {
     humanSummary: (ctx) => {
       const checkId = str(ctx.payload['conditionKey']) || ctx.entityId
@@ -1230,6 +1289,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  // family: scheduling-workflow-drift
   'fragmented-repo-layout': {
     humanSummary: (ctx) => {
       const workspace = str(ctx.payload['workspace']) || 'a workspace'
@@ -1244,6 +1304,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  // family: task-lifecycle
   'recovery-abandoned': {
     humanSummary: (ctx) => {
       const fixTaskId = str(ctx.payload['fixTaskId']) || 'unknown'
@@ -1261,6 +1322,7 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
+  // family: validation-qa
   'mockup-ready': {
     humanSummary: (ctx) => {
       const proposalId = str(ctx.payload['proposalId']) || 'unknown'
@@ -1275,6 +1337,7 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
+  // family: validation-qa
   'qa-step-list-opt-in': {
     humanSummary: (_ctx) =>
       'Enable QA step list generation for this project?',
@@ -1289,6 +1352,7 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
+  // family: validation-qa
   'qa-step-list-promote': {
     humanSummary: (_ctx) =>
       'Promote QA step list to project documentation?',
