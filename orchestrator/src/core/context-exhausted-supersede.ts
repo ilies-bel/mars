@@ -54,7 +54,13 @@
  * In every one of those cases the caller falls through to the unchanged
  * escalation path.
  */
-import { getTask, MAX_PRIORITY, updateTask, type Task } from './queue'
+import {
+  getTask,
+  MAX_PRIORITY,
+  reopenTerminalTask,
+  updateTask,
+  type Task,
+} from './queue'
 import { getDefaultTaskStore, type DomainTaskStore } from './store/task-store'
 import { removeBlockerEdge } from './arc/blockers'
 import { hintDispatch } from './daemon/dispatch-hint'
@@ -393,6 +399,19 @@ export const maybeSupersedeOnContextExhaustedRecovery = async (
   // 'superseded' with its worktree_path cleared — the directory it named was
   // removed by the supersede preamble.
   await removeBlockerEdge(store, originId, failedRecovery.id)
+  // The row is usually ALREADY 'failed' by the time the failure handler runs
+  // (`coder-exit.ts` stamps the failure before dispatching to it), and 'failed'
+  // is terminal — a plain status write from it throws IllegalTransitionError.
+  // Route through the audited reopen seam first, exactly as `Arc.createOrigin`
+  // does for the superseded task itself, so the drop lands instead of being
+  // swallowed as a "non-fatal" error and leaving a stale in-flight recovery.
+  if (failedRecovery.status === 'failed') {
+    await reopenTerminalTask(
+      failedRecovery.id,
+      `superseded by ${supersedeTask.id} after context exhaustion`,
+      store,
+    )
+  }
   await updateTask(
     failedRecovery.id,
     { status: 'dropped', dropReason: 'superseded', worktreePath: null },
