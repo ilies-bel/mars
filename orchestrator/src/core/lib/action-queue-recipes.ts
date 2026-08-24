@@ -305,16 +305,28 @@ const RECIPE_DEFINITIONS = {
   // ── Worktree issues ────────────────────────────────────────────────────────
 
   'stale-worktree': {
+    // This condition is age-based, not dirty-tree-based: it fires when a
+    // task's worktree directory hasn't been touched (mtime) past
+    // MARS_STALE_WORKTREE_HOURS, regardless of whether it holds uncommitted
+    // changes. See deriveStaleWorktreeConditions in
+    // core/daemon/view/derived-conditions.ts, the only place that raises
+    // this kind, for the payload keys this recipe may rely on.
     humanSummary: (ctx) => {
       const taskId = ctx.entityId
-      return `A task's working copy has uncommitted changes that are just sitting there — clean it up or resume it (${taskId}).`
+      const ageHours = ctx.payload['ageHours']
+      const status = str(ctx.payload['status'])
+      const ageText = typeof ageHours === 'number' ? `${ageHours}h` : 'a while'
+      const statusText = status ? ` (status: ${status})` : ''
+      return `A task's worktree has sat untouched for ${ageText}${statusText} — clean it up or resume it (${taskId}).`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
-      worktree: str(ctx.payload['worktree']),
+      status: str(ctx.payload['status']),
+      prompt: str(ctx.payload['prompt']),
       branch: str(ctx.payload['branch']),
-      uncommittedFiles: ctx.payload['uncommittedFiles'],
+      ageHours: ctx.payload['ageHours'],
+      updatedAt: str(ctx.payload['updatedAt']),
     }),
     verbs: [
       { op: 'prune-worktree', label: 'Clean up worktree', style: 'destructive' },

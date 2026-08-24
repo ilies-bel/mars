@@ -24,17 +24,19 @@
  * `stale-worktree` were found to *already* have drifted payload/recipe
  * contracts while writing this test (subscriber-stalled's recipe reads
  * `subscriberName`/`errorExcerpt`/`failCount`, none of which the derivation
- * emits; stale-worktree's derivation emits an empty payload against a
- * recipe expecting `worktree`/`branch`/`uncommittedFiles`). Both are
- * pre-existing, unrelated to daemon-code-drift, and non-trivial to fix
- * correctly (the latter needs real git-status plumbing, not a rename) — they
- * are intentionally excluded here and tracked as separate proposals rather
- * than folded into this change.
+ * emits). `stale-worktree` has since been fixed (its derivation now emits
+ * `status`/`prompt`/`branch`/`ageHours`/`updatedAt`, and the recipe was
+ * rewritten to match — the *condition* itself is age-based, not dirty-tree
+ * based, so `uncommittedFiles` was dropped rather than computed: populating
+ * it would mean a `git status` probe per candidate worktree on every
+ * action-queue read, a separate, scoped-out design call) and is covered
+ * below like any other kind. `subscriber-stalled` remains excluded, tracked
+ * as a separate proposal rather than folded into this change.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { DbClient } from '../../lib/db.js'
@@ -89,7 +91,7 @@ function keysReadByHumanDetail(row: PersistedActionQueueRow): Set<string> {
 }
 
 /** Kinds this test excludes — see the file-header scope note for why. */
-const KNOWN_DRIFTED_KINDS = new Set(['subscriber-stalled', 'stale-worktree'])
+const KNOWN_DRIFTED_KINDS = new Set(['subscriber-stalled'])
 
 describe('derived condition payload / recipe contract', { timeout: 60_000 }, () => {
   let repo: string
@@ -145,6 +147,18 @@ describe('derived condition payload / recipe contract', { timeout: 60_000 }, () 
         'contract-failed',
       ],
     })
+
+    // stale-worktree — a non-terminal task whose worktree directory's mtime
+    // is older than the (default 24h) threshold.
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, branch, created_at, updated_at)
+            VALUES (?, ?, 'running', ?, NOW() - INTERVAL '30 hours', NOW() - INTERVAL '30 hours')`,
+      args: ['contract-stale-worktree', 'task contract-stale-worktree', 'task/contract-stale-worktree'],
+    })
+    const staleWorktreeDir = join(repo, '.mars', 'worktrees', 'contract-stale-worktree')
+    mkdirSync(staleWorktreeDir, { recursive: true })
+    const agedMs = Date.now() - 30 * 3_600_000
+    utimesSync(staleWorktreeDir, agedMs / 1000, agedMs / 1000)
   })
 
   afterEach(async () => {
@@ -158,6 +172,7 @@ describe('derived condition payload / recipe contract', { timeout: 60_000 }, () 
     const group1 = await createConditionItemsSource({
       getClient: () => client,
       crashMarkerPath,
+      repoRoot: repo,
       getCodeDrift: () => ({
         sourceSha: 'a'.repeat(40),
         currentSha: 'b'.repeat(40),
@@ -167,7 +182,14 @@ describe('derived condition payload / recipe contract', { timeout: 60_000 }, () 
       isBaselinePoisoned: () => true,
       baselineDetail: () => ({ failingGateName: 'contract-gate', output: 'gate output' }),
     }).derive({
-      kinds: new Set(['failed', 'gate-broken', 'daemon-died', 'daemon-code-drift', 'baseline-broken']),
+      kinds: new Set([
+        'failed',
+        'gate-broken',
+        'daemon-died',
+        'daemon-code-drift',
+        'baseline-broken',
+        'stale-worktree',
+      ]),
     })
 
     // Group 2 — stale-queued requires dispatch NOT paused.
@@ -195,7 +217,7 @@ describe('derived condition payload / recipe contract', { timeout: 60_000 }, () 
     // Sanity: this test is only useful while it actually exercises every
     // kind it claims to — if a derivation stops producing a row, the
     // contract check below silently stops covering it.
-    for (const kind of ['failed', 'stale-queued', 'gate-broken', 'daemon-died', 'daemon-code-drift', 'baseline-broken', 'signature-storm']) {
+    for (const kind of ['failed', 'stale-queued', 'gate-broken', 'daemon-died', 'daemon-code-drift', 'baseline-broken', 'signature-storm', 'stale-worktree']) {
       expect(derivedKinds.has(kind), `expected a '${kind}' row to be derivable in this fixture`).toBe(true)
     }
 

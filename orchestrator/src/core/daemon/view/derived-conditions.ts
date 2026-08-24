@@ -654,14 +654,20 @@ async function deriveStaleWorktreeConditions(
   const thresholdMs = thresholdHours * 3_600_000
 
   const result = await client.execute(
-    `SELECT id, status, prompt, updated_at FROM tasks
+    `SELECT id, status, prompt, branch, updated_at FROM tasks
        WHERE status NOT IN ('done', 'failed', 'dropped')
        ORDER BY updated_at ASC`,
   )
 
   const rows: PersistedActionQueueRow[] = []
   for (const r of result.rows) {
-    const task = r as { id: string; status: string; prompt: string; updated_at: string }
+    const task = r as {
+      id: string
+      status: string
+      prompt: string
+      branch: string | null
+      updated_at: string
+    }
     const worktreePath = join(repoRoot, '.mars', 'worktrees', task.id)
     if (!existsSync(worktreePath)) continue
     let mtimeMs: number
@@ -678,7 +684,25 @@ async function deriveStaleWorktreeConditions(
       priority: 'normal',
       title: `Task ${task.id} has a stale worktree (${ageHours}h)`,
       body: `Task ${task.id} has a stale worktree (status: ${task.status}, last updated ${ageHours}h ago).`,
-      payload: {},
+      // Keys here MUST match what the `stale-worktree` recipe in
+      // action-queue-recipes.ts reads. This kind's payload used to be `{}`
+      // while the recipe read `worktree`/`branch`/`uncommittedFiles` — none
+      // of which this age-based derivation ever computed (that recipe copy
+      // described a different, dirty-tree condition entirely). The recipe
+      // was rewritten to match what this derivation actually knows: task
+      // status/prompt/branch plus the computed age. `uncommittedFiles` is
+      // deliberately dropped, not computed — populating it would mean a
+      // `git status` probe per candidate worktree on every action-queue
+      // read, which is new I/O on a read path and a separate design call
+      // (see the row-level `empty` git probe in view/action-queue.ts, which
+      // already does this per-row at render time instead of in bulk here).
+      payload: {
+        status: task.status,
+        prompt: task.prompt,
+        branch: task.branch,
+        ageHours,
+        updatedAt: task.updated_at,
+      },
       context: { taskId: task.id },
       raisedAt: mtimeMs,
       lastSeenAt: nowMs,

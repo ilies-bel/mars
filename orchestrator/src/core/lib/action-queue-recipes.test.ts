@@ -333,6 +333,39 @@ describe('compound verb mapping', () => {
     expect(recipe.humanSummary(ctx)).toContain('mars-abc123')
   })
 
+  it('stale-worktree humanSummary and humanDetail render the age-based payload the derivation actually emits', () => {
+    // deriveStaleWorktreeConditions (core/daemon/view/derived-conditions.ts)
+    // emits status/prompt/branch/ageHours/updatedAt — this recipe used to
+    // read worktree/branch/uncommittedFiles instead, none of which the
+    // derivation ever computed, so the alert's detail panel always rendered
+    // empty. Assert the recipe reads what the derivation actually produces.
+    const recipe = lookupRecipe('stale-worktree')
+    const ctx = makeCtx({
+      kind: 'stale-worktree',
+      entityId: 'mars-abc123',
+      payload: {
+        status: 'running',
+        prompt: 'do the thing',
+        branch: 'task/mars-abc123',
+        ageHours: 30,
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    })
+    const summary = recipe.humanSummary(ctx)
+    expect(summary).toContain('30h')
+    expect(summary).toContain('running')
+    expect(summary).toContain('mars-abc123')
+
+    const detail = recipe.humanDetail(ctx)
+    expect(detail).toMatchObject({
+      status: 'running',
+      prompt: 'do the thing',
+      branch: 'task/mars-abc123',
+      ageHours: 30,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+  })
+
   it('scorer-suggested humanSummary uses workflowName from payload', () => {
     const recipe = lookupRecipe('scorer-suggested')
     const ctx = makeCtx({
