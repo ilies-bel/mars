@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { readFile, stat } from 'node:fs/promises'
+import { readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { getStateDir } from '../../context'
 import { parseClaudeStreamLine, type AgentEvent } from '../claude-stream'
 import {
@@ -789,6 +789,57 @@ export class MergeAbortedError extends Error {
 }
 
 /**
+ * Path of the rebase-in-progress marker file written beside a task worktree
+ * while {@link mergeBranch} has a `git rebase` in flight inside it. Sibling
+ * to the worktree directory (not inside it) so the marker never appears in
+ * `git status` inside the worktree.
+ *
+ * WHY THIS EXISTS. Incident 2026-08-24: a recovery agent was running inside
+ * a task worktree when something started a `git rebase` in that same worktree
+ * (the merge step's Step 1 rebase runs OUTSIDE the merge lock, so it can
+ * race a coder that is still running). The rebase hit a conflict and was left
+ * stopped — the agent detected it only because an edited file silently rolled
+ * back to its pre-edit content. `git rev-parse --show-toplevel` (the
+ * worktree-removal probe) returned the correct path throughout, so the
+ * documented check passed while the tree was actively unsafe. The marker
+ * turns a stopped rebase from an invisible hazard into a detectable condition:
+ * an agent that finds `rebase-merge/` or `rebase-apply/` in its worktree can
+ * check for this file to learn whether the orchestrator started the rebase
+ * and is responsible for cleaning it up.
+ *
+ * Exported so tests can assert on the path formula without duplicating it.
+ */
+export const rebaseMarkerPath = (worktreePath: string): string =>
+  `${worktreePath}.rebase-in-progress.json`
+
+const writeRebaseMarker = async (
+  worktreePath: string,
+  info: { taskId: string; branch: string; integrationBranch: string },
+): Promise<void> => {
+  await writeFile(
+    rebaseMarkerPath(worktreePath),
+    JSON.stringify(
+      {
+        taskId: info.taskId,
+        branch: info.branch,
+        integrationBranch: info.integrationBranch,
+        worktreePath,
+        startedAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    ) + '\n',
+    'utf8',
+  ).catch((err: unknown) =>
+    console.warn('[mergeBranch] rebase-in-progress marker write failed (non-fatal):', err),
+  )
+}
+
+const removeRebaseMarker = async (worktreePath: string): Promise<void> => {
+  await unlink(rebaseMarkerPath(worktreePath)).catch(() => {})
+}
+
+/**
  * Best-effort teardown of any in-progress rebase/merge left behind by an
  * aborted merge. Both calls are bounded by their own short timeout (NOT the
  * already-aborted merge signal) and swallow every error — a wedged worktree
@@ -1045,6 +1096,15 @@ export const mergeBranch = async ({
 
       lastStep = 'rebase'
       firePhase('rebase')
+      // Write the marker BEFORE git hands the worktree to the rebase engine.
+      // If the process is killed mid-rebase the marker survives, so an agent
+      // that later finds a stopped rebase in this worktree can distinguish
+      // "the orchestrator started this" from an unrelated abandoned rebase.
+      await writeRebaseMarker(worktreePath, {
+        taskId: traceCtx?.taskId ?? branch,
+        branch,
+        integrationBranch,
+      })
       const rebaseResult = await gprobe(['rebase', integrationBranch], worktreePath)
       output += rebaseResult.stdout + rebaseResult.stderr
       if (rebaseResult.exitCode !== 0) {
@@ -1576,6 +1636,9 @@ export const mergeBranch = async ({
       // releaseMergeLock is a no-op there.
       if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer)
       await releaseMergeLock()
+      // Remove the rebase-in-progress marker. Idempotent — safe to call even
+      // when no rebase was started (marker was never written).
+      await removeRebaseMarker(worktreePath)
     }
   } catch (err: unknown) {
     // Convert an abort (watchdog OR caller signal) into a MergeAbortedError.
