@@ -1362,6 +1362,14 @@ const DDL: readonly string[] = [
   )`,
   `ALTER TABLE failure_signature_streak
      ALTER COLUMN updated_at TYPE timestamptz USING updated_at::timestamptz`,
+  `CREATE TABLE IF NOT EXISTS signature_storm_events (
+    id          bigserial PRIMARY KEY,
+    signature   text    NOT NULL,
+    task_id     text    NOT NULL,
+    recorded_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_storm_events_sig_time
+     ON signature_storm_events (signature, recorded_at)`,
   `CREATE TABLE IF NOT EXISTS verify_gates (
     id         text PRIMARY KEY,
     scope      text NOT NULL DEFAULT '.',
@@ -2227,6 +2235,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'gate_enrichment',
   'gate_burn_in',
   'failure_signature_streak',
+  'signature_storm_events',
   'failure_reflection_signatures',
   'verify_gates',
   'verify_gate_failure_streaks',
