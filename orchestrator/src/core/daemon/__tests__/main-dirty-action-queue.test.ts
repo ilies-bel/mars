@@ -79,7 +79,12 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
     await truncateQueueState(queue)
   })
 
-  afterAll(() => {
+  afterAll(async () => {
+    // Close the shared PGlite instance before removing its backing directory.
+    // Without this, the WASM instance lingers with I/O open on deleted files
+    // and can block the 4th describe's cold-start PGlite initialisation.
+    const { __resetDbRegistryForTests } = await import('../../lib/db')
+    await __resetDbRegistryForTests()
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -180,7 +185,12 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
     await truncateQueueState(queue)
   })
 
-  afterAll(() => {
+  afterAll(async () => {
+    // Close the shared PGlite instance before removing its backing directory.
+    // Without this, the WASM instance lingers with I/O open on deleted files
+    // and can block the 4th describe's cold-start PGlite initialisation.
+    const { __resetDbRegistryForTests } = await import('../../lib/db')
+    await __resetDbRegistryForTests()
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -302,7 +312,12 @@ describe('main-committer done: source task re-queued, not marked done (mars-4d66
     await truncateQueueState(queue)
   })
 
-  afterAll(() => {
+  afterAll(async () => {
+    // Close the shared PGlite instance before removing its backing directory.
+    // Without this, the WASM instance lingers with I/O open on deleted files
+    // and can block the 4th describe's cold-start PGlite initialisation.
+    const { __resetDbRegistryForTests } = await import('../../lib/db')
+    await __resetDbRegistryForTests()
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
@@ -438,10 +453,14 @@ describe('failed main-committer source cohort', () => {
     // fresh repo AND calls vi.resetModules() per test, so every `it()` opens its
     // own PGlite instance. Deleting the repo without closing it first leaves an
     // orphaned WASM instance holding I/O on deleted files; the next test's
-    // instance can then block indefinitely on it, which is what made
-    // 'leaves a task blocked when other active blockers remain' hang (it passes
-    // in ~5s alone, but hung past both the 30s and 60s timeouts when run after
-    // its siblings). Same guard, same reason as main-dirty-dispatch.test.ts.
+    // instance can then block indefinitely on it. Same guard, same reason as
+    // main-dirty-dispatch.test.ts.
+    //
+    // The first 3 describes in this file now also call __resetDbRegistryForTests
+    // in their afterAll (mars-ccc602da). Without that, their shared PGlite
+    // instances would be left open when this describe's first test runs,
+    // contending for WASM resources and causing intermittent 60s timeouts on
+    // 'leaves a task blocked when other active blockers remain'.
     const { __resetDbRegistryForTests } = await import('../../lib/db')
     await __resetDbRegistryForTests()
     delete process.env.MARS_REPO
