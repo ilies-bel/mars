@@ -558,6 +558,20 @@ recovery-spawn path itself.
   deleted), naming why it was removed (`merged`, `diagnose`, …) and, for
   a merge, the commit the work landed as — `ls .mars/worktrees/` for it
   before assuming an empty directory means lost work.
+- **When tests start failing in files your diff does not touch, or collect
+  zero tests, confirm the worktree is still live BEFORE investigating.**
+  A worktree merged away mid-run produces exactly this pattern: an unrelated
+  test file reports dozens of failures, a re-run of the same batch collects
+  zero tests, and `npx vitest` suddenly runs a version that differs from the
+  project's pinned one (the `node_modules` version-flip is the tell — a
+  different major means `node_modules` is gone because `npx` fell back to a
+  registry download). Every symptom reads as "my change broke something" when
+  the actual cause is "the worktree directory no longer exists."
+  Confirm liveness first: `git -C <worktree-path> rev-parse --show-toplevel`
+  must equal `<worktree-path>` (realpath-compare on macOS). A mismatch means
+  the worktree is gone — check `.mars/worktrees/<task-id>.removed.json` for
+  the reason and the landed commit sha. Only investigate test failures after
+  confirming the worktree is present.
 - The daemon's HTTP server binds an OS-assigned ephemeral port
   (`listen(0, '127.0.0.1', ...)` in
   `orchestrator/src/core/daemon/http-server.ts`) and publishes it to
