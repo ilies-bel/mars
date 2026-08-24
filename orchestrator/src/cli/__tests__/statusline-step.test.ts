@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
 import { buildLeaseSegment } from '../statusline.js'
 import { fileURLToPath } from 'node:url'
@@ -22,14 +22,28 @@ const projectRoot = resolve(here, '..', '..', '..')
 const cliEntry = resolve(projectRoot, 'src', 'cli.ts')
 const tsxBin = resolve(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs')
 
+// IMPORTANT: this must be an ASYNC spawn, not spawnSync. The CLI tests below
+// stand up a stub daemon HTTP server in THIS process; spawnSync would block
+// the event loop, so the stub could never answer the CLI's `/view/tasks`
+// fetch and the lease segment would silently time out (rendering bare "mars").
 const runCli = (
   args: readonly string[],
   opts: { input?: string; env?: Record<string, string> } = {},
-): SpawnSyncReturns<string> =>
-  spawnSync(process.execPath, [tsxBin, cliEntry, ...args], {
-    encoding: 'utf8',
-    input: opts.input ?? '',
-    env: { ...process.env, ...opts.env },
+): Promise<{ status: number | null; stdout: string; stderr: string }> =>
+  new Promise((resolveRun, rejectRun) => {
+    const child = spawn(process.execPath, [tsxBin, cliEntry, ...args], {
+      env: { ...process.env, ...opts.env },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (d: string) => (stdout += d))
+    child.stderr.on('data', (d: string) => (stderr += d))
+    child.on('error', rejectRun)
+    child.on('close', (status) => resolveRun({ status, stdout, stderr }))
+    child.stdin.end(opts.input ?? '')
   })
 
 // ── Unit tests for buildLeaseSegment step branches ────────────────────────────
@@ -156,7 +170,7 @@ describe('mars statusline CLI — step rendering', () => {
     ])
 
     try {
-      const result = runCli(['statusline'], {
+      const result = await runCli(['statusline'], {
         input: JSON.stringify({ workspace: { current_dir: worktreeDir } }),
         env: { MARS_REPO: tmpRepo },
       })
@@ -188,7 +202,7 @@ describe('mars statusline CLI — step rendering', () => {
     ])
 
     try {
-      const result = runCli(['statusline'], {
+      const result = await runCli(['statusline'], {
         input: JSON.stringify({ workspace: { current_dir: worktreeDir } }),
         env: { MARS_REPO: tmpRepo },
       })
@@ -220,7 +234,7 @@ describe('mars statusline CLI — step rendering', () => {
     ])
 
     try {
-      const result = runCli(['statusline'], {
+      const result = await runCli(['statusline'], {
         input: JSON.stringify({ workspace: { current_dir: worktreeDir } }),
         env: { MARS_REPO: tmpRepo },
       })

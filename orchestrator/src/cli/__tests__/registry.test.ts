@@ -52,6 +52,7 @@ describe('grouping is computed routing, not a unit', () => {
       'task check',
       'task note',
       'task priority',
+      'task set-verify',
       'task show',
       'task stop',
     ])

@@ -43,7 +43,10 @@ describe('mars deep-reflect — removed verb', () => {
   it('is not listed in top-level help', () => {
     const result = runCli(['--help'])
     expect(result.status).toBe(0)
-    expect(result.stdout).not.toMatch(/^\s*deep-reflect/m)
+    // Command lines are indented exactly two spaces; description lines are
+    // indented further (and one legitimately begins with "deep-reflect over
+    // a whole task arc" under `arc reflect`). Match only command lines.
+    expect(result.stdout).not.toMatch(/^ {2}deep-reflect/m)
   })
 })
 

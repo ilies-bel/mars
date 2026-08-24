@@ -92,7 +92,7 @@ describe('routing', () => {
   it('falls back to the group fallback for a bare ladder command', async () => {
     const r = await runCommandInProcess(['task'], await baseOpts())
     expect(r.code).toBe(2)
-    expect(r.err.join('\n')).toContain('usage: mars task <add|show|priority|note|check>')
+    expect(r.err.join('\n')).toContain('usage: mars task <add|ask|show|priority|note|check|set-verify|stop>')
   })
 
   it('returns unknown for a command not in the registry', async () => {
@@ -135,7 +135,9 @@ describe('task add (daemon-routed)', () => {
     expect(fake.calls).toHaveLength(0)
   })
 
-  it('builds a structured spec from --files/--verify/--done/--type', async () => {
+  it('builds a structured spec from --files/--verify/--done', async () => {
+    // `--type` was removed from the `task add` surface; the structured spec
+    // is now built from --files/--verify/--done alone.
     const fake = makeFakeDaemon(() => ({ id: 'mars-task-9999', status: 'queued' }))
     const { store, ctx } = await loadStoreAndCtx()
     const r = await runCommandInProcess(
@@ -144,7 +146,6 @@ describe('task add (daemon-routed)', () => {
         '--files', 'a.ts',
         '--done', 'compiles',
         '--verify', 'npx vitest run src/foo.test.ts',
-        '--type', 'checkpoint',
       ],
       { store, ctx, daemon: fake },
     )
@@ -155,7 +156,6 @@ describe('task add (daemon-routed)', () => {
         files: ['a.ts'],
         verifyCmd: 'npx vitest run src/foo.test.ts',
         doneCriteria: ['compiles'],
-        taskType: 'checkpoint',
       },
     })
   })
@@ -554,7 +554,9 @@ describe('worker (store-dir-backed)', () => {
   it('`worker add` writes the registry and `worker list` reads it back', async () => {
     const { store, ctx } = await loadStoreAndCtx()
     const add = await runCommandInProcess(
-      ['worker', 'add', 'SeamWorker', '--model', 'claude-sonnet-5'],
+      // --model accepts a tier name or a model id from the ACTIVE provider
+      // (codex by default), so use a provider-neutral tier here.
+      ['worker', 'add', 'SeamWorker', '--model', 'balanced'],
       { store, ctx, daemon: makeFakeDaemon() },
     )
     expect(add.code).toBe(0)

@@ -317,9 +317,10 @@ describe('mars proposal take — command coverage', () => {
   // Seed helper — creates a prd-ready proposal for CLI seam tests
   // ---------------------------------------------------------------------------
 
-  const seedPrdReadyProposal = async (): Promise<string> => {
-    vi.resetModules()
-    process.env.MARS_REPO = repo
+  // Seeds using the CURRENT module graph (no vi.resetModules) so the seeded
+  // proposal is visible to a dispatch performed from the same graph. Call
+  // loadStoreAndCtx() (which resets modules) BEFORE this helper, never after.
+  const seedProposalInCurrentModules = async (): Promise<string> => {
     const { createProposal, addProposalUserStory, promoteProposal, initProposals } =
       await import('../../../core/proposals')
     const { migrateQueueSchema } = await import('../../../core/queue')
@@ -341,20 +342,28 @@ describe('mars proposal take — command coverage', () => {
 
   describe('mars proposal take — CLI seam', () => {
     it('sends op=proposal.take with the proposal id and prints the task id', async () => {
-      const proposalId = await seedPrdReadyProposal()
-      const fake = makeFakeDaemon((req) => {
+      // Order matters: loadStoreAndCtx resets the module cache, so it must run
+      // BEFORE seeding, and the dispatch must come from the same (fresh) module
+      // graph as the seeded proposals module — otherwise the command resolves
+      // the proposal against a different state-client instance and reports
+      // "not found".
+      const { store, ctx } = await loadStoreAndCtx()
+      const proposalId = await seedProposalInCurrentModules()
+      const { runCommandInProcess: runFresh, makeFakeDaemon: makeFreshDaemon } =
+        await import('../../test-adapter')
+      const fake = makeFreshDaemon((req) => {
         if (req.op === 'proposal.take') {
           return { proposalId: req.proposalId, taskId: 'mars-live-task-001' }
         }
         return {}
       })
-      const { store, ctx } = await loadStoreAndCtx()
-      const r = await runCommandInProcess(['proposal', 'take', proposalId], {
+      const r = await runFresh(['proposal', 'take', proposalId], {
         store,
         ctx,
         daemon: fake,
       })
 
+      expect(r.err).toEqual([])
       expect(r.code).toBe(0)
       expect(fake.calls).toHaveLength(1)
       expect(fake.calls[0]).toMatchObject({ op: 'proposal.take', proposalId })
@@ -363,15 +372,17 @@ describe('mars proposal take — command coverage', () => {
     })
 
     it('never sends op=proposal.slice (slicer not invoked)', async () => {
-      const proposalId = await seedPrdReadyProposal()
-      const fake = makeFakeDaemon((req) => {
+      const { store, ctx } = await loadStoreAndCtx()
+      const proposalId = await seedProposalInCurrentModules()
+      const { runCommandInProcess: runFresh, makeFakeDaemon: makeFreshDaemon } =
+        await import('../../test-adapter')
+      const fake = makeFreshDaemon((req) => {
         if (req.op === 'proposal.take') {
           return { proposalId: req.proposalId, taskId: 'mars-live-task-001' }
         }
         return {}
       })
-      const { store, ctx } = await loadStoreAndCtx()
-      await runCommandInProcess(['proposal', 'take', proposalId], {
+      await runFresh(['proposal', 'take', proposalId], {
         store,
         ctx,
         daemon: fake,

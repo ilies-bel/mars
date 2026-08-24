@@ -89,8 +89,22 @@ const noticeUnsilence: Command = {
   },
 }
 
+// Bare-group fallback: `mars notice` (or an unknown subcommand) prints usage.
+// Every ladder-bearing group carries one of these so the router stays a pure
+// prefix match (see registry.test.ts invariant).
+const noticeGroup: Command = {
+  path: 'notice',
+  summary: 'notice subcommands',
+  usage: 'usage: mars notice <add|silence|unsilence> ...',
+  run: (_args, deps) => {
+    deps.err('usage: mars notice <add|silence|unsilence> ...')
+    return { code: 2 }
+  },
+}
+
 export const noticeCommands: readonly Command[] = [
   noticeAdd,
   noticeSilence,
   noticeUnsilence,
+  noticeGroup,
 ]

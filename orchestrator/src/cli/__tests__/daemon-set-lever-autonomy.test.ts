@@ -32,10 +32,14 @@ vi.mock('../../core/daemon/paths', () => ({
   })),
 }))
 
-vi.mock('../../core/daemon/config', () => ({
-  AUTONOMY_LEVELS: ['off', 'ask', 'tell'] as const,
+// Partial mock: keep every real export (the config module's export surface
+// keeps growing — loadDaemonConfig, VALID_PROVIDER_NAMES, …) and override
+// only the seams these tests control.
+vi.mock('../../core/daemon/config', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../core/daemon/config')>()),
   readDaemonConfigFile: vi.fn(),
   patchDaemonConfigFile: vi.fn(),
+  loadDaemonConfig: vi.fn(() => ({ defaultProvider: 'codex' })),
   persistLeverAutonomyLevel: vi.fn(),
   readLeverAutonomyLevel: vi.fn(),
   daemonConfigPath: vi.fn(() => '/fake/.mars/daemon.json'),

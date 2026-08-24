@@ -95,6 +95,7 @@ describe('mars operator status when the daemon is down', () => {
       'scoring-low-trend-threshold: 0.5',
       'scoring-low-trend-window: 5',
       'auto-run-reflect: off',
+      'operator-auto-commit: on',
       'reflection last ran: never',
       'next reflection: operator action required (reflect-recommended row raised when conditions are met)',
       'dispatch: paused  in-flight: unavailable (daemon down)',
