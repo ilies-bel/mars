@@ -32,6 +32,7 @@ export const makeHttpServerDeps = (
   enableAutoReflect: async () => {},
   disableAutoReflect: async () => {},
   restartTask: async () => {},
+  continueTask: async () => {},
   remergeTask: async () => {},
   unblockTask: async () => {},
   snoozeItem: async () => {},
