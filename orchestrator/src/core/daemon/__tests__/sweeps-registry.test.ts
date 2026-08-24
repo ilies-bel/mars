@@ -36,3 +36,17 @@ describe.each(REGISTRIES)('$label registry', ({ entries }) => {
     }
   })
 })
+
+// The per-registry uniqueness check above cannot see a collision ACROSS the
+// two registries, and both `startSweeps` and `startDrains` funnel a throwing
+// body into the same daemon log under a bare `[<name>]` prefix. A sweep and a
+// drain sharing a name therefore produce log lines an operator cannot
+// attribute to either one — the exact ambiguity the within-registry check
+// exists to prevent, just one level up.
+it('keeps sweep and drain names disjoint', () => {
+  const sweepNames = new Set(SWEEPS.map((spec) => spec.name))
+  const collisions = DRAINS.map((spec) => spec.name).filter((name) => sweepNames.has(name))
+  expect(collisions, `names claimed by both SWEEPS and DRAINS: ${collisions.join(', ')}`).toEqual(
+    [],
+  )
+})
