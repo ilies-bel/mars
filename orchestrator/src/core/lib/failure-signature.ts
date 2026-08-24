@@ -939,7 +939,7 @@ export const isUnclassifiedSignature = (signature: string): boolean =>
  * by `tools/coder/coder-exit.ts`; the error class is normally `unclassified`,
  * so consumers must match on the STEP, never the whole signature.
  */
-export const CONTEXT_EXHAUSTED_STEP_ID = 'code:context-exhausted'
+const CONTEXT_EXHAUSTED_STEP_ID = 'code:context-exhausted'
 
 /**
  * True when `signature` describes a coder killed for running out of context.

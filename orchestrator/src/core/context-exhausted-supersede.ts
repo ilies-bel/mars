@@ -75,10 +75,10 @@ import type { OrphanCommit } from './lib/sweep'
  * Prefix of the `followup_dedup_key` written on an automatically spawned
  * supersede task. The full key is `<prefix><arcOriginId>` — one per arc.
  */
-export const CONTEXT_EXHAUSTED_SUPERSEDE_DEDUP_PREFIX = 'context-exhausted-supersede:'
+const CONTEXT_EXHAUSTED_SUPERSEDE_DEDUP_PREFIX = 'context-exhausted-supersede:'
 
 /** Tag carried by every task this module spawns, for trace/telemetry queries. */
-export const CONTEXT_EXHAUSTED_SUPERSEDE_TAG = 'context-exhausted-supersede'
+const CONTEXT_EXHAUSTED_SUPERSEDE_TAG = 'context-exhausted-supersede'
 
 /** Upper bound on the inlined origin prompt, so one huge prompt cannot dominate. */
 const ORIGIN_PROMPT_LIMIT = 12_000
@@ -94,24 +94,18 @@ export interface ContextExhaustedSupersedeInput {
   store?: DomainTaskStore
 }
 
-/**
- * Why a spawn was declined. `'spawned'` is not a member — a successful spawn is
- * reported through {@link ContextExhaustedSupersedeResult.supersedeTaskId}.
- */
-export type ContextExhaustedSupersedeSkipReason =
-  | 'not-context-exhausted'
-  | 'no-origin'
-  | 'origin-terminal'
-  | 'already-superseded'
-  | 'real-commits-ahead'
-  | 'enqueue-failed'
-
 export interface ContextExhaustedSupersedeResult {
   spawned: boolean
   /** Set when `spawned` is true. */
   supersedeTaskId?: string
-  /** Set when `spawned` is false. */
-  skipReason?: ContextExhaustedSupersedeSkipReason
+  /** Why the spawn was declined. Set when `spawned` is false. */
+  skipReason?:
+    | 'not-context-exhausted'
+    | 'no-origin'
+    | 'origin-terminal'
+    | 'already-superseded'
+    | 'real-commits-ahead'
+    | 'enqueue-failed'
 }
 
 const truncateForPrompt = (text: string, limit: number): string =>
