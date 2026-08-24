@@ -58,10 +58,17 @@
         ]
       },
       {
+        "name": "orchestrator/src/core/queue.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
         "name": "orchestrator/src/core/arc.ts",
         "dependencyTypes": [
           "local",
-          "dynamic-import"
+          "import"
         ]
       }
     ]
@@ -269,43 +276,6 @@
       },
       {
         "name": "orchestrator/src/core/lib/db.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      }
-    ]
-  },
-  {
-    "type": "cycle",
-    "from": "orchestrator/src/core/queue-retry.ts",
-    "to": "orchestrator/src/core/queue.ts",
-    "unresolvedTo": "./queue",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-circular"
-    },
-    "cycle": [
-      {
-        "name": "orchestrator/src/core/queue.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "orchestrator/src/core/arc.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "orchestrator/src/core/queue-retry.ts",
         "dependencyTypes": [
           "local",
           "import"
@@ -2358,6 +2328,610 @@
     "rule": {
       "severity": "error",
       "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/arc.ts",
+    "to": "orchestrator/src/core/lib/git/checkpoint.ts",
+    "unresolvedTo": "./lib/git/checkpoint",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/baseline-repair-wiring.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "../lib/git/internal",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/continue-task.ts",
+    "to": "orchestrator/src/core/lib/git/checkpoint.ts",
+    "unresolvedTo": "../lib/git/checkpoint",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/continue-task.ts",
+    "to": "orchestrator/src/core/lib/git/merge.ts",
+    "unresolvedTo": "../lib/git/merge",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/dev-staleness.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "../lib/git/internal",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/main-dirty-dispatch.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "../lib/git/internal",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/main-dirty-dispatch.ts",
+    "to": "orchestrator/src/core/lib/git/last-synced-sha.ts",
+    "unresolvedTo": "../lib/git/last-synced-sha",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/main-dirty-dispatch.ts",
+    "to": "orchestrator/src/core/lib/git/stale-tree-attribution.ts",
+    "unresolvedTo": "../lib/git/stale-tree-attribution",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/merge-worker.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "../lib/git/internal.js",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/merge-worker.ts",
+    "to": "orchestrator/src/core/lib/git/merge.ts",
+    "unresolvedTo": "../lib/git/merge.js",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/merge-worker.ts",
+    "to": "orchestrator/src/core/lib/git/operator-auto-commit.ts",
+    "unresolvedTo": "../lib/git/operator-auto-commit.js",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/phase-recovery.ts",
+    "to": "orchestrator/src/core/lib/git/merge.ts",
+    "unresolvedTo": "../lib/git/merge",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/remerge-task.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "../lib/git/internal",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/remerge-task.ts",
+    "to": "orchestrator/src/core/lib/git/merge.ts",
+    "unresolvedTo": "../lib/git/merge",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/server.ts",
+    "to": "orchestrator/src/core/lib/git/checkpoint.ts",
+    "unresolvedTo": "../lib/git/checkpoint",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/server.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "../lib/git/internal",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/daemon/server.ts",
+    "to": "orchestrator/src/core/lib/git/worktree-lease.ts",
+    "unresolvedTo": "../lib/git/worktree-lease",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/land-task.ts",
+    "to": "orchestrator/src/core/lib/git/lock.ts",
+    "unresolvedTo": "./lib/git/lock",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/lib/arc-verifier.ts",
+    "to": "orchestrator/src/core/lib/git/lock.ts",
+    "unresolvedTo": "./git/lock.js",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/lib/repo-root-branch-warning.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "./git/internal",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/lib/scorer-runtime.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "./git/internal",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/lib/steward-workflow-patch.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "./git/internal.js",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/lib/structured-write.ts",
+    "to": "orchestrator/src/core/lib/git/merge.ts",
+    "unresolvedTo": "./git/merge",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/lib/verify.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "./git/internal",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/lib/worktree-clean.ts",
+    "to": "orchestrator/src/core/lib/git/merge.ts",
+    "unresolvedTo": "./git/merge",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/lib/worktree-deps.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "./git/internal",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/lib/worktree-install.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "./git/internal",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/lib/worktree-install.ts",
+    "to": "orchestrator/src/core/lib/git/lock.ts",
+    "unresolvedTo": "./git/lock",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/lib/worktree-prune.ts",
+    "to": "orchestrator/src/core/lib/git/merge.ts",
+    "unresolvedTo": "./git/merge",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/lib/worktree-reclaim.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "./git/internal",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/ports/code-index/codegraph.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "../../lib/git/internal",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/ports/verifier/types.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "../../lib/git/internal",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/core/workers/provider-bin.ts",
+    "to": "orchestrator/src/core/lib/git/internal.ts",
+    "unresolvedTo": "../lib/git/internal",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/tools/coder/coder-exit.ts",
+    "to": "orchestrator/src/core/lib/git/checkpoint.ts",
+    "unresolvedTo": "../../core/lib/git/checkpoint",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/tools/coder/coder-exit.ts",
+    "to": "orchestrator/src/core/lib/git/commit-main.ts",
+    "unresolvedTo": "../../core/lib/git/commit-main",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/tools/coder/run-agent.ts",
+    "to": "orchestrator/src/core/lib/git/checkpoint.ts",
+    "unresolvedTo": "../../core/lib/git/checkpoint",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/tools/coder/run-agent.ts",
+    "to": "orchestrator/src/core/lib/git/worktree-lease.ts",
+    "unresolvedTo": "../../core/lib/git/worktree-lease",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/tools/coder/setup-worktree.ts",
+    "to": "orchestrator/src/core/lib/git/checkpoint.ts",
+    "unresolvedTo": "../../core/lib/git/checkpoint",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/tools/coder/setup-worktree.ts",
+    "to": "orchestrator/src/core/lib/git/classify-porcelain.ts",
+    "unresolvedTo": "../../core/lib/git/classify-porcelain",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/tools/context.ts",
+    "to": "orchestrator/src/core/lib/git/merge.ts",
+    "unresolvedTo": "../core/lib/git/merge",
+    "dependencyTypes": [
+      "local",
+      "type-only",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/tools/merge/merge.ts",
+    "to": "orchestrator/src/core/lib/git/checkpoint.ts",
+    "unresolvedTo": "../../core/lib/git/checkpoint",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/tools/merge/merge.ts",
+    "to": "orchestrator/src/core/lib/git/merge.ts",
+    "unresolvedTo": "../../core/lib/git/merge",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/tools/verify/heuristics/infra-failure-patterns.ts",
+    "to": "orchestrator/src/core/lib/git/verify-markers.ts",
+    "unresolvedTo": "../../../core/lib/git/verify-markers",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "vcs-port-only"
     }
   },
   {

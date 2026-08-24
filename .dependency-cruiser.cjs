@@ -289,6 +289,46 @@ module.exports = {
     },
 
     {
+      name: 'vcs-port-only',
+      severity: 'error',
+      comment:
+        'VCS internals are reachable only through the Vcs Port (core/ports/vcs/*, ADR-0097). ' +
+        'core/lib/git/{worktree,merge,checkpoint,commit-main,commit-message,lock,classify-porcelain,' +
+        'internal,last-synced-sha,operator-auto-commit,stale-tree-attribution,worktree-lease,' +
+        'verify-markers}.ts are the concrete implementations the port fronts (`core/ports/vcs/' +
+        'local-git.ts` wraps worktree.ts/merge.ts/commit-main.ts today; the rest are still reached ' +
+        'directly by callers this tracer-bullet slice records as accepted baseline debt rather than ' +
+        'migrating — see the DONE bullet above). `core/lib/git/verify.ts` and `claude.ts` are the ' +
+        'Verifier and Executor Port internals covered by verifier-port-only/executor-port-only above, ' +
+        'not this boundary, so both are excepted from `to` the same way this rule\'s own two wrapped ' +
+        'files are excepted from `from` by the sibling rules. core/lib/git/ is also excepted from ' +
+        '`from`: modules inside that folder legitimately import each other directly (e.g. ' +
+        'checkpoint.ts -> internal.ts) — only callers OUTSIDE core/lib/git/ must go through the port. ' +
+        'Importing a core/lib/git/* module directly from outside core/ports/vcs/ (and outside ' +
+        'core/lib/git/ itself) lets a caller bypass the swappable seam — resolve a Vcs through ' +
+        'registry.ts (resolveVcs/requireVcs) instead. Test files are excepted the same way every ' +
+        'other rule in this section excepts them.',
+      from: {
+        path: '^orchestrator/src/',
+        pathNot: [
+          '^orchestrator/src/core/ports/vcs/',
+          '^orchestrator/src/core/lib/git/',
+          '(^|/)__tests__/',
+          '\\.(test|spec)\\.ts$',
+        ],
+      },
+      to: {
+        path: '^orchestrator/src/core/lib/git/',
+        pathNot: [
+          '^orchestrator/src/core/lib/git/verify\\.ts$',
+          '^orchestrator/src/core/lib/git/claude\\.ts$',
+          '(^|/)__tests__/',
+          '\\.(test|spec)\\.ts$',
+        ],
+      },
+    },
+
+    {
       name: 'no-cli-to-core',
       severity: 'error',
       comment:
@@ -335,7 +375,7 @@ module.exports = {
     // caller: for CLI (~46 files) and the not-yet-built VCS port that defeats
     // the rule (it would pass by excluding everything it exists to catch).
     //
-    // Two of the four rules this stub used to describe are DONE and live
+    // Three of the four rules this stub used to describe are DONE and live
     // above as active, non-disabled rules:
     //
     //   - `no-direct-verifier-internals`, now `verifier-port-only` — its
@@ -357,6 +397,24 @@ module.exports = {
     //     core/daemon/{server,rpc/handlers}.ts, core/ports/code-index/
     //     codegraph.ts). It also landed clean, with no baseline seed and no
     //     pathNot carve-out beyond the port dir and claude.ts's own tests.
+    //   - `vcs-internals-through-port-only`, now `vcs-port-only` — this is
+    //     the tracer-bullet closing slice (PRD ae17340a #39), NOT a full
+    //     migration like the two above: core/ports/vcs/ (types.ts +
+    //     local-git.ts + registry.ts + errors.ts) already exists and already
+    //     fronts worktree.ts/merge.ts/commit-main.ts, but ~25 other call
+    //     sites (tools/coder/*, tools/merge/merge.ts, core/arc.ts,
+    //     core/daemon/*, core/land-task.ts, core/workers/provider-bin.ts,
+    //     core/ports/{verifier/types.ts,code-index/codegraph.ts},
+    //     tools/verify/heuristics/infra-failure-patterns.ts) still import
+    //     checkpoint.ts/merge.ts/commit-main.ts/lock.ts/classify-porcelain.ts/
+    //     internal.ts/last-synced-sha.ts/stale-tree-attribution.ts/
+    //     worktree-lease.ts/verify-markers.ts directly — the port's method
+    //     surface does not yet cover several of those (lock, porcelain
+    //     classification, staleness attribution, leases). Migrating all of
+    //     them is a later thickening slice; this slice lands the rule with
+    //     today's real violations recorded in the known-violations baseline
+    //     (the same ratchet `no-circular` uses), so NEW direct imports fail
+    //     immediately while existing ones are accepted debt.
 
     // {
     //   name: 'cli-no-orchestrator-internals',
@@ -382,38 +440,6 @@ module.exports = {
     //       '^orchestrator/src/core/workers/',
     //       '^orchestrator/src/core/lib/git/',
     //       '^orchestrator/src/tools/',
-    //     ],
-    //   },
-    // },
-    // {
-    //   name: 'vcs-internals-through-port-only',
-    //   severity: 'error',
-    //   comment:
-    //     'Consumer slice: "Arch-guard: VCS internals reachable only through the port". No ' +
-    //     'core/ports/vcs/ module exists yet. Internals under core/lib/git/ this will wrap: ' +
-    //     'checkpoint.ts, worktree.ts, merge.ts, commit-main.ts, commit-message.ts, lock.ts, ' +
-    //     'verify-markers.ts, classify-porcelain.ts, internal.ts (verify.ts and claude.ts are the ' +
-    //     'Verifier and Executor internals above, not this boundary). Today\'s fan-out is the widest ' +
-    //     'of the four (tools/context.ts, tools/merge/merge.ts — the TOOL, distinct from ' +
-    //     'core/lib/git/merge.ts the INTERNAL it calls — tools/coder/{run-agent,setup-worktree,' +
-    //     'coder-exit}.ts, tools/verify/review.ts, tools/qa/finalize-mockup.ts, ' +
-    //     'tools/report/finalize-report.ts, workflows/primitives/behaviour-verify.ts). ' +
-    //     'cli/commands/{worktree,merge}.ts already go through injected CommandDeps rather than ' +
-    //     'importing core/lib/git/* directly, so the CLI side of this boundary may already be clean. ' +
-    //     'TO ENABLE: build core/ports/vcs/, migrate the tools/* + workflows/* callers above, then ' +
-    //     'narrow this from/to to the real remaining boundary.',
-    //   from: {
-    //     path: '^orchestrator/src/',
-    //     pathNot: ['^orchestrator/src/core/lib/git/', '(^|/)__tests__/', '\\.(test|spec)\\.ts$'],
-    //   },
-    //   to: {
-    //     path: [
-    //       '^orchestrator/src/core/lib/git/checkpoint\\.ts$',
-    //       '^orchestrator/src/core/lib/git/worktree\\.ts$',
-    //       '^orchestrator/src/core/lib/git/merge\\.ts$',
-    //       '^orchestrator/src/core/lib/git/commit-main\\.ts$',
-    //       '^orchestrator/src/core/lib/git/commit-message\\.ts$',
-    //       '^orchestrator/src/core/lib/git/verify-markers\\.ts$',
     //     ],
     //   },
     // },

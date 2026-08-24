@@ -607,6 +607,40 @@ function check() {
         );
       }
     }
+
+    // PROGRAM-LEVEL CEILING for `no-circular` (root tree only). The
+    // modular-core Port program (PRD ae17340a) started at 41 recorded
+    // cycles; each Port slice (verifier-port-only, executor-port-only,
+    // vcs-port-only) shrinks this as callers move off a swappable internal
+    // and onto the Port. Unlike the `--ignore-known` softening above — which
+    // only ever protects against NEW cycles, and happily tolerates the count
+    // creeping back up toward 41 one small regression at a time — this is a
+    // hard ceiling recorded once so the program's net reduction can never
+    // silently erode back to its starting point.
+    if (tree.name === 'root' && existsSync(baselinePath)) {
+      const NO_CIRCULAR_PROGRAM_CEILING = 41;
+      const baselineEntries = JSON.parse(readFileSync(baselinePath, 'utf8'));
+      const noCircularCount = (Array.isArray(baselineEntries) ? baselineEntries : []).filter(
+        (v) => v.rule?.name === 'no-circular',
+      ).length;
+
+      if (noCircularCount >= NO_CIRCULAR_PROGRAM_CEILING) {
+        ok = false;
+        console.error(
+          `\n  ✗ arch [no-circular ceiling]: ${tree.baseline} records ${noCircularCount} ` +
+            `no-circular cycle(s), at or above the modular-core program's starting ceiling of ` +
+            `${NO_CIRCULAR_PROGRAM_CEILING}.\n` +
+            `\n    The Port program (PRD ae17340a) exists to shrink this number. A regenerated\n` +
+            `    baseline that grows back toward the ceiling means a Port migration was undone,\n` +
+            `    not merely that a new pre-existing cycle was accepted.\n`,
+        );
+      } else {
+        console.log(
+          `  ✓ arch [no-circular ceiling]: ${noCircularCount} cycle(s), below the ` +
+            `program-start ceiling of ${NO_CIRCULAR_PROGRAM_CEILING}`,
+        );
+      }
+    }
   }
 
   if (totalModules < 1000) {
