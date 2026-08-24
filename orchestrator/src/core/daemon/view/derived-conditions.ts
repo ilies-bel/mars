@@ -427,13 +427,14 @@ async function deriveSubscriberStalledConditions(
   nowMs: number,
 ): Promise<PersistedActionQueueRow[]> {
   const result = await client.execute(
-    `SELECT subscriber_id, event_id, last_error, raised_at FROM subscriber_stalls`,
+    `SELECT subscriber_id, event_id, last_error, fail_count, raised_at FROM subscriber_stalls`,
   )
   return result.rows.map((r) => {
     const row = r as {
       subscriber_id: string
       event_id: string | number
       last_error: string
+      fail_count: string | number
       raised_at: number
     }
     const key = `${row.subscriber_id}:${row.event_id}`
@@ -443,10 +444,16 @@ async function deriveSubscriberStalledConditions(
       priority: 'high',
       title: `Subscriber ${row.subscriber_id} is stalled`,
       body: row.last_error,
+      // Keys here MUST match what the `subscriber-stalled` recipe in
+      // action-queue-recipes.ts reads. They drifted once already: this row
+      // emitted `subscriberId`/`lastError` (no `failCount` at all) while the
+      // recipe read `subscriberName`/`errorExcerpt`/`failCount`, so the
+      // alert's detail panel always rendered empty.
       payload: {
         subscriberId: row.subscriber_id,
         eventId: row.event_id,
-        lastError: row.last_error,
+        errorExcerpt: row.last_error,
+        failCount: Number(row.fail_count),
       },
       context: {},
       raisedAt: typeof row.raised_at === 'number' ? row.raised_at : nowMs,

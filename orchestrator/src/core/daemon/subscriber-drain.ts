@@ -167,11 +167,11 @@ export async function drainWithStall(
       if (count >= STALL_THRESHOLD) {
         await client
           .execute({
-            sql: `INSERT INTO subscriber_stalls (subscriber_id, event_id, last_error)
-                  VALUES (?, ?, ?)
+            sql: `INSERT INTO subscriber_stalls (subscriber_id, event_id, last_error, fail_count)
+                  VALUES (?, ?, ?, ?)
                   ON CONFLICT (subscriber_id, event_id)
-                    DO UPDATE SET last_error = EXCLUDED.last_error`,
-            args: [subscriberId, event.id, lastError],
+                    DO UPDATE SET last_error = EXCLUDED.last_error, fail_count = EXCLUDED.fail_count`,
+            args: [subscriberId, event.id, lastError, count],
           })
           .catch((writeErr) => {
             log?.(

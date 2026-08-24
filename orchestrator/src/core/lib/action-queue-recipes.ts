@@ -618,7 +618,7 @@ const RECIPE_DEFINITIONS = {
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
-      subscriberName: str(ctx.payload['subscriberName']),
+      subscriberId: str(ctx.payload['subscriberId']),
       errorExcerpt: str(ctx.payload['errorExcerpt']),
       failCount: ctx.payload['failCount'],
     }),

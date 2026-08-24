@@ -22,16 +22,27 @@
  * `e2e-tooling-missing`, `stale-queued-summary` — are derived elsewhere, out
  * of this file's join surface). Of those 9, `subscriber-stalled` and
  * `stale-worktree` were found to *already* have drifted payload/recipe
- * contracts while writing this test (subscriber-stalled's recipe reads
+ * contracts while writing this test (subscriber-stalled's recipe read
  * `subscriberName`/`errorExcerpt`/`failCount`, none of which the derivation
- * emits). `stale-worktree` has since been fixed (its derivation now emits
- * `status`/`prompt`/`branch`/`ageHours`/`updatedAt`, and the recipe was
- * rewritten to match — the *condition* itself is age-based, not dirty-tree
- * based, so `uncommittedFiles` was dropped rather than computed: populating
- * it would mean a `git status` probe per candidate worktree on every
- * action-queue read, a separate, scoped-out design call) and is covered
- * below like any other kind. `subscriber-stalled` remains excluded, tracked
- * as a separate proposal rather than folded into this change.
+ * emitted; stale-worktree's derivation emitted an empty payload against a
+ * recipe expecting `worktree`/`branch`/`uncommittedFiles`). Both have since
+ * been fixed and are now covered below like any other kind:
+ *
+ * - `stale-worktree`: its derivation now emits
+ *   `status`/`prompt`/`branch`/`ageHours`/`updatedAt`, and the recipe was
+ *   rewritten to match — the *condition* itself is age-based, not dirty-tree
+ *   based, so `uncommittedFiles` was dropped rather than computed: populating
+ *   it would mean a `git status` probe per candidate worktree on every
+ *   action-queue read, a separate, scoped-out design call.
+ * - `subscriber-stalled`: the recipe's `subscriberName` field was renamed to
+ *   `subscriberId` to match the derivation (it's an id, not a human name),
+ *   the derivation was renamed to emit `errorExcerpt` instead of `lastError`
+ *   to match the recipe, and a new `subscriber_stalls.fail_count` column now
+ *   backs `failCount` end-to-end.
+ *
+ * The exclusion set below is consequently empty; it is kept as the seam for
+ * any future kind that has to be quarantined while its drift is tracked
+ * separately.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -91,7 +102,7 @@ function keysReadByHumanDetail(row: PersistedActionQueueRow): Set<string> {
 }
 
 /** Kinds this test excludes — see the file-header scope note for why. */
-const KNOWN_DRIFTED_KINDS = new Set(['subscriber-stalled'])
+const KNOWN_DRIFTED_KINDS = new Set<string>()
 
 describe('derived condition payload / recipe contract', { timeout: 60_000 }, () => {
   let repo: string
@@ -159,6 +170,13 @@ describe('derived condition payload / recipe contract', { timeout: 60_000 }, () 
     mkdirSync(staleWorktreeDir, { recursive: true })
     const agedMs = Date.now() - 30 * 3_600_000
     utimesSync(staleWorktreeDir, agedMs / 1000, agedMs / 1000)
+
+    // subscriber-stalled
+    await client.execute({
+      sql: `INSERT INTO subscriber_stalls (subscriber_id, event_id, last_error, fail_count)
+            VALUES (?, ?, ?, ?)`,
+      args: ['contract-subscriber', 42, 'boom', 3],
+    })
   })
 
   afterEach(async () => {
@@ -189,6 +207,7 @@ describe('derived condition payload / recipe contract', { timeout: 60_000 }, () 
         'daemon-code-drift',
         'baseline-broken',
         'stale-worktree',
+        'subscriber-stalled',
       ]),
     })
 
@@ -217,7 +236,17 @@ describe('derived condition payload / recipe contract', { timeout: 60_000 }, () 
     // Sanity: this test is only useful while it actually exercises every
     // kind it claims to — if a derivation stops producing a row, the
     // contract check below silently stops covering it.
-    for (const kind of ['failed', 'stale-queued', 'gate-broken', 'daemon-died', 'daemon-code-drift', 'baseline-broken', 'signature-storm', 'stale-worktree']) {
+    for (const kind of [
+      'failed',
+      'stale-queued',
+      'gate-broken',
+      'daemon-died',
+      'daemon-code-drift',
+      'baseline-broken',
+      'signature-storm',
+      'stale-worktree',
+      'subscriber-stalled',
+    ]) {
       expect(derivedKinds.has(kind), `expected a '${kind}' row to be derivable in this fixture`).toBe(true)
     }
 

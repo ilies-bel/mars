@@ -2097,6 +2097,14 @@ const DDL: readonly string[] = [
     dismissed_at bigint NOT NULL,
     dismissed_by text
   )`,
+
+  // mars-ea16c3ea: subscriber_stalls.fail_count — the `subscriber-stalled`
+  // recipe reads payload['failCount'] but nothing populated it (the derived
+  // row's payload didn't carry it and no column backed it). subscriber-drain.ts
+  // already computes the consecutive-failure count in memory at the moment it
+  // crosses STALL_THRESHOLD and writes the stall row — persist that same value
+  // instead of dropping the recipe field.
+  `ALTER TABLE subscriber_stalls ADD COLUMN IF NOT EXISTS fail_count bigint NOT NULL DEFAULT 0`,
 ]
 
 // ADR-0057 (now ADR-0094): pure derived/condition kinds that were previously
