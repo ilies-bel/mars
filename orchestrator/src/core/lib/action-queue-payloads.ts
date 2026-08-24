@@ -37,7 +37,25 @@
  */
 
 import type { ActionQueueKind } from './action-queue-kinds'
-import type { VerifyStepSpec } from '../ports/verifier/types'
+
+// ── Family modules ────────────────────────────────────────────────────────────
+
+export type { OccurrenceTrail } from './payload-contracts/shared'
+export type {
+  AwaitingHumanSituation,
+  LeaseParkPayload,
+  LeaseExpiredPayload,
+  AwaitingHumanPayload,
+  AwaitingHumanContracts,
+} from './payload-contracts/awaiting-human'
+export { awaitingHumanSituation } from './payload-contracts/awaiting-human'
+export type {
+  GateEnrichmentPayload,
+  GateEnrichmentContracts,
+} from './payload-contracts/gate-enrichment'
+
+import type { AwaitingHumanContracts } from './payload-contracts/awaiting-human'
+import type { GateEnrichmentContracts } from './payload-contracts/gate-enrichment'
 
 // ── Shared shapes ─────────────────────────────────────────────────────────────
 
@@ -50,120 +68,13 @@ import type { VerifyStepSpec } from '../ports/verifier/types'
  */
 export type UnauditedPayload = Record<string, unknown>
 
-/**
- * `raiseActionQueueItem` appends each repeat sighting's `occurrence` object to
- * `payload.occurrences`. Raisers never write this key themselves, so it is
- * optional on every contract that can be deduped.
- */
-interface OccurrenceTrail {
-  occurrences?: readonly Record<string, unknown>[]
-}
-
-// ── awaiting-human ────────────────────────────────────────────────────────────
-
-/**
- * `awaiting-human` is raised for three structurally different situations. The
- * recipe used to assume the first one unconditionally, so a row raised for
- * either of the other two rendered a summary that contradicted its own title.
- * Discriminate on `situation` instead of guessing.
- */
-export type AwaitingHumanSituation = 'lease-park' | 'lease-expired' | 'escalation'
-
-/** A task parked at a manual step; a human holds the lease and is expected to work. */
-export interface LeaseParkPayload extends OccurrenceTrail {
-  situation: 'lease-park'
-  taskId: string
-  leaseOwner: string
-  leasedAt: string
-  leaseNote: string | null
-  /** Manual step the task parked at. Absent on the interactive-park path. */
-  stepName?: string
-  previewUrl?: string
-  logPath?: string
-}
-
-/** A lease nobody released; the watchdog noticed it has gone stale. */
-export interface LeaseExpiredPayload extends OccurrenceTrail {
-  situation: 'lease-expired'
-  taskId: string
-  leaseOwner: string | null
-  leasedAt: string | null
-  leaseNote: string | null
-  /** Minutes the lease has been held past its expiry. */
-  ageMinutes: number
-}
-
-/**
- * An agent stopped and escalated to a human rather than bailing silently —
- * e.g. a recovery that found its arc already done. Raised through
- * `mars action-queue raise`, so the payload is agent-authored free-form
- * content; the recipe renders whatever scalar fields it carries rather than
- * looking for fixed key names.
- *
- * `situation` is **required** so a built-in raiser cannot land here by
- * accident: falling into the open branch has to be a deliberate declaration.
- */
-interface HumanEscalationPayload {
-  situation: 'escalation'
-  [key: string]: unknown
-}
-
-export type AwaitingHumanPayload =
-  | LeaseParkPayload
-  | LeaseExpiredPayload
-  | HumanEscalationPayload
-
-/**
- * Recover the situation for a row whose payload predates the `situation`
- * discriminator, or that was authored by an agent through the CLI.
- *
- * Structural, not nominal: rows already in the database carry no `situation`
- * key at all, and they must still render the right summary.
- */
-export const awaitingHumanSituation = (
-  payload: AwaitingHumanPayload,
-): AwaitingHumanSituation => {
-  const declared = (payload as { situation?: unknown }).situation
-  if (declared === 'lease-park' || declared === 'lease-expired' || declared === 'escalation') {
-    return declared
-  }
-  // Legacy rows: infer from the keys the historical raisers emitted.
-  if ('ageMinutes' in payload && payload.ageMinutes != null) return 'lease-expired'
-  if ('leaseOwner' in payload && payload.leaseOwner) return 'lease-park'
-  return 'escalation'
-}
-
-// ── gate-enrichment ───────────────────────────────────────────────────────────
-
-/**
- * The operator is asked to approve or retire a candidate verify check.
- *
- * The candidate check lives in `stepSpec` — an **object**, which is why the
- * recipe's old `candidateCheck` string read rendered empty even once the key
- * name was right. Recipes must format it, not stringify it.
- */
-export interface GateEnrichmentPayload extends OccurrenceTrail {
-  /** Failure signature the candidate check would guard against. */
-  signature: string
-  /** Static-encodability family, e.g. `'command'`. Null when unclassified. */
-  encodableFamily: string | null
-  /** Task whose failure produced this candidate. */
-  originTaskId: string | null
-  /** Verify step that failed, e.g. `verify:build`. */
-  failingStep: string
-  /** Task that authored the candidate check, if one was spawned. */
-  writerTaskId: string | null
-  /** The candidate check itself. `null` when no runnable spec was encodable. */
-  stepSpec: VerifyStepSpec | null
-}
-
 // ── The map ───────────────────────────────────────────────────────────────────
 
-/** Kinds with a hand-written payload contract. Everything else is unaudited. */
-interface AuditedPayloads {
-  'awaiting-human': AwaitingHumanPayload
-  'gate-enrichment': GateEnrichmentPayload
-}
+/**
+ * Kinds with a hand-written payload contract. Everything else is unaudited.
+ * Each family adds exactly one intersection term here.
+ */
+type AuditedPayloads = AwaitingHumanContracts & GateEnrichmentContracts
 
 /**
  * The payload type for one action-queue kind.

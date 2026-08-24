@@ -31,44 +31,10 @@ import {
   type AwaitingHumanPayload,
   type GateEnrichmentPayload,
 } from '../action-queue-payloads'
+import { ALL_REPRESENTATIVE_PAYLOADS } from '../payload-contracts/index'
 import { lookupRecipe, type RecipeContext } from '../action-queue-recipes'
 
 const RAISED_AT = '2026-08-20T09:00:00.000Z'
-
-// ── Representative payloads for typed kinds ───────────────────────────────────
-
-/**
- * Representative payloads used by the self-maintaining `typed kinds` test.
- *
- * **Extending this registry:** when a consumer slice flips a family of kinds
- * from `'unaudited'` to `'typed'` in {@link ACTION_QUEUE_PAYLOAD_AUDIT},
- * it must also add a representative payload here for each newly-typed kind.
- * The test below asserts that every typed kind has an entry, so adding a kind
- * to the audit map without adding one here produces a failing test with an
- * actionable message rather than a silent coverage gap.
- *
- * The entry need not be the most complex possible payload — it must be complete
- * enough for the kind's recipe to render a non-empty detail panel from it,
- * proving that the raiser/recipe join is correctly wired.
- */
-const TYPED_KIND_REPRESENTATIVE: Partial<Record<ActionQueueKind, Record<string, unknown>>> = {
-  'awaiting-human': {
-    situation: 'lease-park',
-    taskId: 'mars-1',
-    leaseOwner: 'alice',
-    leasedAt: RAISED_AT,
-    leaseNote: 'note',
-    stepName: 'code',
-  },
-  'gate-enrichment': {
-    signature: 'sig',
-    encodableFamily: 'command',
-    originTaskId: 'mars-2',
-    failingStep: 'verify:build',
-    writerTaskId: 'mars-3',
-    stepSpec: { name: 'n', cmd: 'npm', args: ['test'], required: true },
-  },
-}
 
 const ctxFor = <K extends ActionQueueKind>(
   kind: K,
@@ -289,11 +255,11 @@ describe('payload/recipe join is checkable for every kind', () => {
     expect(typedKinds.length).toBeGreaterThanOrEqual(2)
 
     for (const kind of typedKinds) {
-      const payload = TYPED_KIND_REPRESENTATIVE[kind]
+      const payload = ALL_REPRESENTATIVE_PAYLOADS[kind]
       expect(
         payload,
         `${kind} is 'typed' in ACTION_QUEUE_PAYLOAD_AUDIT but has no entry in ` +
-          `TYPED_KIND_REPRESENTATIVE — add one so the raiser/recipe join is verified`,
+          `ALL_REPRESENTATIVE_PAYLOADS — add one so the raiser/recipe join is verified`,
       ).toBeDefined()
       if (!payload) continue
 

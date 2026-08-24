@@ -1,0 +1,23 @@
+/**
+ * Aggregates representative payloads from every kind-family module.
+ *
+ * Import `ALL_REPRESENTATIVE_PAYLOADS` in the contract test to get a
+ * self-maintaining registry: adding a new typed family only requires adding
+ * its `REPRESENTATIVE_PAYLOADS` spread here.
+ */
+
+import type { ActionQueueKind } from '../action-queue-kinds'
+import { REPRESENTATIVE_PAYLOADS as awaitingHuman } from './awaiting-human'
+import { REPRESENTATIVE_PAYLOADS as gateEnrichment } from './gate-enrichment'
+
+/**
+ * One representative payload per typed action-queue kind.
+ *
+ * Typed as `Partial` because not every `ActionQueueKind` is typed yet — only
+ * those with a family module entry are covered. The contract test asserts that
+ * every kind marked `'typed'` in `ACTION_QUEUE_PAYLOAD_AUDIT` appears here.
+ */
+export const ALL_REPRESENTATIVE_PAYLOADS: Partial<Record<ActionQueueKind, Record<string, unknown>>> = {
+  ...awaitingHuman,
+  ...gateEnrichment,
+}
