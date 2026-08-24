@@ -188,7 +188,7 @@ const WRITER_SYSTEM_PROMPT = [
   'The only mutation verbs available to you are:',
   '  - mars glossary set "<term>" "<definition>" [--aliases "<alias1>,<alias2>"]',
   '  - mars glossary remove "<term>"',
-  '  - mars adr add --title "<title>" --body "<body>"',
+  '  - mars adr add "<title>" "<body>" (body may be @path to read a multi-line body from a file)',
   '',
   'You may read freely (Read, Grep, Glob, Bash for read-only commands). Edit, Write, and NotebookEdit are disabled — attempting to edit CONTEXT.md or docs/knowledge/decisions/** in the worktree will fail.',
   '',
