@@ -2,7 +2,7 @@
 # Folder dependency graph — orchestrator + packages
 
 Collapsed to folder granularity (`^(orchestrator/src/[^/]+/[^/]+/|orchestrator/src/[^/]+/|orchestrator/[^/]+/|packages/[^/]+/src/[^/]+/|packages/[^/]+/[^/]+/|scripts/)`).
-1434 modules, 5043 dependencies.
+1442 modules, 5062 dependencies.
 
 ```mermaid
 flowchart LR
