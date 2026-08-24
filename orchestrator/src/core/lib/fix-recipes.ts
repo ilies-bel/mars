@@ -1451,8 +1451,29 @@ const behaviourDodUnmetRecipe: FixRecipe = {
  * `merge:crashed/watchdog-*` — the merge step was terminated by the watchdog
  * before it could complete. The coding work on the task branch is fully
  * committed and has already passed the verify gate — this is a merge-side
- * timeout, not a code or verify failure. The recovery is a single
- * `mars continue <taskId>` invocation; no application code must be touched.
+ * timeout, not a code or verify failure. No application code must be touched.
+ *
+ * This recovery is a `kind='fix'` task, and `setupWorktree` (see
+ * `src/tools/coder/setup-worktree.ts`, `attachOriginWorktreeForFix`) attaches
+ * every non-main-commiter fix task to its ORIGIN's existing worktree and
+ * branch — it does not carve a fresh one. That means this recovery's own
+ * pipeline (code → verify → merge) already runs on `ctx.targetBranch`, the
+ * exact branch whose merge just timed out. The recovery agent therefore does
+ * not need to, and MUST NOT, invoke `mars continue <originId>` itself: the
+ * orchestrator advances this recovery task to verify+merge the moment the
+ * code step exits, which re-attempts the interrupted merge on the same
+ * branch without any CLI action from the agent.
+ *
+ * `mars continue <originId>` would in fact always be rejected if the agent
+ * ran it: `spawnRecovery` parks the origin at `status='blocked'` (not
+ * `'failed'`) for as long as this recovery is outstanding, and separately
+ * `mars continue`'s in-flight-recovery guard refuses any call while a
+ * non-terminal `fixForTaskId`-linked row exists — which this very recovery
+ * task always is, from the moment it starts running. Both refusals are
+ * structural, not transient, so instructing the agent to "retry if it fails"
+ * can never succeed; see the postmortem in
+ * docs/knowledge/decisions (recovery-brief / in-flight-recovery-guard
+ * contradiction, task mars-76d1123a).
  *
  * The wildcard suffix (`*`) matches every lastStep value the watchdog records
  * (e.g. `vega-supervisor`, `integration-gate`, `fast-forward-lock`, etc.) so
@@ -1464,7 +1485,7 @@ const mergeWatchdogContinueRecipe: FixRecipe = {
   signature: 'merge:crashed/watchdog-*',
   title: (ctx) => {
     const taskId = ctx.targetBranch.replace(/^task\//, '')
-    return `Continue watchdog-killed merge: run mars continue ${taskId}`
+    return `Resume watchdog-killed merge for ${taskId} (no code changes)`
   },
   buildPrompt: (ctx) => {
     const taskId = ctx.targetBranch.replace(/^task\//, '')
@@ -1473,31 +1494,21 @@ const mergeWatchdogContinueRecipe: FixRecipe = {
       '',
       `The merge step for branch \`${ctx.targetBranch}\` was terminated by the watchdog before it could complete. **The coding work on \`${ctx.targetBranch}\` is fully committed and correct** — this is a merge-side timeout, not a code or verify failure. Do NOT touch application code.`,
       '',
-      `Your single action is:`,
+      `Your single action is: **do nothing, and exit immediately.**`,
       '',
-      '```bash',
-      `mars continue ${taskId}`,
-      '```',
-      '',
-      `This resumes the origin task on its existing worktree at \`${ctx.targetPath}\`, reusing every commit already landed on \`${ctx.targetBranch}\`. The orchestrator re-runs the merge step from where it left off.`,
+      `This recovery task is already attached to the origin task's own worktree at \`${ctx.targetPath}\` on branch \`${ctx.targetBranch}\` — every commit that was on the branch when the merge timed out is right here. Once you exit, the orchestrator automatically runs this recovery's own verify and merge steps against this same branch, which re-attempts the merge that the watchdog interrupted. No CLI command from you is needed or wanted to trigger that.`,
       '',
       ...renderReproSection(ctx.reproCommand),
       `## What you MUST NOT do`,
       '',
       ` - Do NOT edit any application source file — the implementation is complete and has already passed verify.`,
       ` - Do NOT stage, commit, or otherwise modify any file in the worktree at \`${ctx.targetPath}\`.`,
-      ` - Do NOT attempt to run the merge manually — \`mars continue\` drives the correct pipeline.`,
+      ` - Do NOT run \`mars continue ${taskId}\` (or any other \`mars\` mutation) against the origin task. It will always be rejected — this recovery task is itself the origin's in-flight recovery, so the guard that exists to stop a second concurrent recovery rejects it every time, and separately the origin sits in \`blocked\` status (not \`failed\`) for as long as this recovery runs. Retrying the command cannot change either fact.`,
       ` - Do NOT spawn a follow-up coder task — the code is done.`,
       '',
-      `## If mars continue fails`,
+      `## If the worktree is not clean`,
       '',
-      `If \`mars continue ${taskId}\` is rejected (e.g. the task is not in \`failed\` status, or it already has an in-flight recovery), check the current state:`,
-      '',
-      '```bash',
-      `mars list`,
-      '```',
-      '',
-      `Then raise a high-priority action-queue item via \`mars action-queue raise --from -\` naming the task ID, the current status, and the error from \`mars continue\`. Do not make any worktree changes.`,
+      `Run \`git status --porcelain\` in \`${ctx.targetPath}\`. If it reports anything other than a clean tree, do not touch it — raise a high-priority action-queue item via \`mars action-queue raise --from -\` describing exactly what \`git status\` showed, then exit without making any changes.`,
       '',
       `Origin branch: \`${ctx.targetBranch}\``,
       `Origin worktree: \`${ctx.targetPath}\``,

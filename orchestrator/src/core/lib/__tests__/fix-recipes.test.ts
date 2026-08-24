@@ -94,11 +94,11 @@ const RECIPE_CONTRACT_TABLE = [
   },
   {
     signature: 'merge:crashed/watchdog-*',
-    expectedTitle: 'Continue watchdog-killed merge: run mars continue recipe-contract',
+    expectedTitle: 'Resume watchdog-killed merge for recipe-contract (no code changes)',
     // The origin's code is already committed; inlining the original prompt would
     // mislead the recovery into thinking it needs to re-implement committed work.
     originalPromptExemption:
-      'watchdog-killed merge recovery runs mars continue only — the origin prompt is irrelevant and inlining it could mislead the recovery into touching committed code',
+      'watchdog-killed merge recovery is a no-op-and-exit — the origin prompt is irrelevant and inlining it could mislead the recovery into touching committed code',
   },
 ].map((recipe) => ({ ...recipe, ctx: RECIPE_CONTRACT_CONTEXT }))
 
@@ -1571,16 +1571,22 @@ describe('merge:crashed/watchdog-* recipe (wildcard family)', () => {
     )
   })
 
-  it('watchdog-vega-supervisor prompt contains mars continue and no code-editing directives', () => {
+  it('watchdog-vega-supervisor prompt forbids mars continue and code-editing directives', () => {
     const recipe = getRecipe('merge:crashed/watchdog-vega-supervisor')
     const prompt = recipe.buildPrompt(ctx)
-    // Must instruct the agent to run mars continue with the derived task ID
-    expect(prompt).toContain('mars continue')
+    // Must instruct the agent NOT to run mars continue against the origin —
+    // it is always rejected from inside the origin's own in-flight recovery
+    // (guard rejection + origin parked 'blocked', not 'failed'). The recovery
+    // resolves the merge by doing nothing and letting its own pipeline
+    // (attached to the origin's branch/worktree) re-run verify+merge.
+    expect(prompt).toMatch(/do not run `?mars continue/i)
     expect(prompt).toContain('mars-abc123') // task ID extracted from branch
     // Must document that the code is already committed and correct
     expect(prompt).toMatch(/committed and correct|fully committed/i)
+    // Must instruct the agent to do nothing / exit rather than act
+    expect(prompt).toMatch(/do nothing|exit immediately/i)
     // Must NOT contain any code-editing or patch-applying directives —
-    // the recovery is a single CLI invocation, not a code change
+    // the recovery makes no changes at all
     expect(prompt).not.toMatch(/git apply/i)
     expect(prompt).not.toMatch(/implement the (original|following|task)/i)
     expect(prompt).not.toMatch(/write.*(code|function|implementation)/i)
@@ -1589,10 +1595,10 @@ describe('merge:crashed/watchdog-* recipe (wildcard family)', () => {
     expect(prompt).toContain(ctx.targetPath)
   })
 
-  it('watchdog-integration-gate prompt contains mars continue', () => {
+  it('watchdog-integration-gate prompt forbids mars continue', () => {
     const recipe = getRecipe('merge:crashed/watchdog-integration-gate')
     const prompt = recipe.buildPrompt(ctx)
-    expect(prompt).toContain('mars continue')
+    expect(prompt).toMatch(/do not run `?mars continue/i)
     expect(prompt).toMatch(/committed and correct|fully committed/i)
     // No code-editing directives for the integration-gate variant either
     expect(prompt).not.toMatch(/git apply/i)
