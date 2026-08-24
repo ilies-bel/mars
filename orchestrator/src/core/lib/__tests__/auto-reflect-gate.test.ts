@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { DeepReflectArc } from '../deep-reflect-query'
 
-vi.mock('../../workers/providers', () => ({
+vi.mock('../../workers/providers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../workers/providers')>()),
   runHeadlessProvider: vi.fn(),
   usageSemanticsOf: vi.fn().mockReturnValue('none' as const),
 }))
@@ -19,6 +20,7 @@ vi.mock('../../proposals', () => ({
   findOpenReflectionDraftByFingerprint: vi.fn().mockResolvedValue(null),
   appendProposalNotes: vi.fn().mockResolvedValue(undefined),
   findOpenTasksMatchingTitle: vi.fn().mockResolvedValue([]),
+  addProposalUserStory: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../../queue', () => ({

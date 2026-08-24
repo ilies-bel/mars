@@ -17,7 +17,8 @@ import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
 // Mock the provider-neutral system boundary (subprocess call).
-vi.mock('../../workers/providers', () => ({
+vi.mock('../../workers/providers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../workers/providers')>()),
   runHeadlessProvider: vi.fn(),
 }))
 
@@ -60,6 +61,12 @@ describe('spawnFailureReflector', () => {
     process.env.MARS_REPO = repo
     vi.resetAllMocks()
     vi.resetModules()
+    // vi.resetModules() wipes the provider-registry module instance, but the
+    // mocked '../../workers/providers' factory (which re-registers providers
+    // via importOriginal) is NOT re-run for mocked modules. Re-execute the
+    // real module so the fresh registry is populated before workers/index
+    // resolves PROVIDER_MODELS at import time.
+    await vi.importActual('../../workers/providers')
     const { __resetContextCacheForTests } = await import('../../context')
     const { __resetStateClientForTests } = await import('../../store/state-client')
     __resetContextCacheForTests()

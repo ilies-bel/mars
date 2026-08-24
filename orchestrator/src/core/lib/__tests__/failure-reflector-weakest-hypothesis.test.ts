@@ -17,7 +17,8 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
-vi.mock('../../workers/providers', () => ({
+vi.mock('../../workers/providers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../workers/providers')>()),
   runHeadlessProvider: vi.fn(),
 }))
 

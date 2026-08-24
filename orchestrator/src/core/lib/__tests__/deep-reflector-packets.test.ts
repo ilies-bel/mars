@@ -16,7 +16,8 @@ import type { DeepReflectArc } from '../deep-reflect-query'
 
 // ── module mocks (hoisted by Vitest before imports) ───────────────────────────
 
-vi.mock('../../workers/providers', () => ({
+vi.mock('../../workers/providers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../workers/providers')>()),
   runHeadlessProvider: vi.fn(),
 }))
 
@@ -61,6 +62,14 @@ const FAKE_REPORT_WITH_TWO_SAVES = JSON.stringify({
       confidence: 0.9,
       target_id: null,
       dup_of: null,
+      outcome: {
+        type: 'leverGap',
+        leverGap: {
+          proposedLeverId: 'test.lever',
+          family: 'verify',
+          whatItWouldControl: 'test control',
+        },
+      },
     },
     {
       title: 'Save lesson B',
@@ -70,6 +79,14 @@ const FAKE_REPORT_WITH_TWO_SAVES = JSON.stringify({
       confidence: 0.8,
       target_id: null,
       dup_of: null,
+      outcome: {
+        type: 'leverGap',
+        leverGap: {
+          proposedLeverId: 'test.lever',
+          family: 'verify',
+          whatItWouldControl: 'test control',
+        },
+      },
     },
     {
       title: 'Skip lesson',
@@ -79,6 +96,14 @@ const FAKE_REPORT_WITH_TWO_SAVES = JSON.stringify({
       confidence: 0.2,
       target_id: null,
       dup_of: null,
+      outcome: {
+        type: 'leverGap',
+        leverGap: {
+          proposedLeverId: 'test.lever',
+          family: 'verify',
+          whatItWouldControl: 'test control',
+        },
+      },
     },
   ],
   scorerSuggestions: [],
