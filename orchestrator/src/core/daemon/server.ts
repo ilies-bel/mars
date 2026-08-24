@@ -5218,6 +5218,9 @@ export const startDaemon = async (
         bus.emit('task.queued', { taskId: id })
       }
     },
+    continueTask: async (id) => {
+      await handleContinue(id)
+    },
     remergeTask: async (id) => {
       const result = await coreRemerge(id, new Set(['failed', 'done', 'vega-reconciling', 'merging', 'verifying']), makeWorkflowStore())
       // Same guard as handleRemerge above: the already-landed path settles

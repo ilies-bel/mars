@@ -305,6 +305,7 @@ describe('GET /view/action-queue/history via HTTP server', () => {
 
     httpServer = await startHttpServer({
       restartTask: async () => {},
+      continueTask: async () => {},
   remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
@@ -377,6 +378,7 @@ describe('GET /view/action-queue/history via HTTP server', () => {
 
     const serverEmptyHistory = await startHttpServer({
       restartTask: async () => {},
+      continueTask: async () => {},
   remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},

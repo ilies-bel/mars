@@ -192,6 +192,7 @@ describe('daemon HTTP route inventory — live responses', () => {
       pruneWorktree: async () => {},
       dismissProposal: async () => {},
       promoteProposal: async () => ({ taskIds: [] }),
+      continueTask: async () => {},
       validateTask: async () => {},
       rejectTask: async () => {},
       landWork: async () => {},

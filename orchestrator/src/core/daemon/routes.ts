@@ -191,6 +191,7 @@ const sendError = (
  */
 type EntityOp =
   | 'restart'
+  | 'continue'
   | 'remerge'
   | 'unblock'
   | 'purge'
@@ -307,6 +308,8 @@ const handleEventsRequest = async (
  *   POST /alerts/:arcId/thread   → pull an Alert into a chat thread ({ threadId })
  *   POST /tasks/:id/question     → raise a task.question outbox event ({ question })
  *   POST /actions/restart/:id    → re-queue a failed/daemon-killed task
+ *   POST /actions/continue/:id   → resume a failed task on its existing worktree
+ *   POST /actions/resume-dispatch → resume dispatch (process-level, no entity id)
  *   POST /actions/unblock/:id    → phantom-recover a blocked task
  *   POST /actions/purge/:id      → drop a task + worktree
  *   POST /actions/prune-worktree/:id → remove a stale worktree
@@ -346,6 +349,7 @@ export const registerRoutes = (
 ): { listener: HttpRequestListener; openSockets: Set<import('node:net').Socket> } => {
   const entityHandlers: Record<EntityOp, (id: string) => Promise<void>> = {
     restart: deps.restartTask,
+    continue: deps.continueTask,
     remerge: deps.remergeTask,
     unblock: deps.unblockTask,
     purge: deps.purgeTask,
@@ -2981,6 +2985,18 @@ export const registerRoutes = (
         .disableAutoReflect()
         .then(() => sendJson(res, 200, { ok: true }))
         .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // POST /actions/resume-dispatch — resume dispatch regardless of pause
+    // reason (operator, storm, or quota). Process-level: no entity id.
+    if (req.url === '/actions/resume-dispatch') {
+      if (!deps.resumeDispatch) {
+        sendJson(res, 501, { ok: false, error: 'resume-dispatch not implemented' })
+        return
+      }
+      deps.resumeDispatch()
+      sendJson(res, 200, { ok: true })
       return
     }
 

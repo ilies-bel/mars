@@ -564,6 +564,7 @@ describe('GET /view/action-queue via HTTP server', () => {
 
     httpServer = await startHttpServer({
       restartTask: async () => {},
+      continueTask: async () => {},
   remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},

@@ -96,7 +96,7 @@ export const TEACHABLE_OPS = new Set(['restart', 'purge'])
  * daemon. The proxy builds `/actions/<op>` (no id segment) for these; any
  * other op gets `/actions/<op>/<entityId>`.
  */
-export const PROCESS_LEVEL_OPS = new Set(['restart-daemon', 'continue-all-daemon-killed'])
+export const PROCESS_LEVEL_OPS = new Set(['restart-daemon', 'continue-all-daemon-killed', 'resume-dispatch'])
 
 /**
  * Maps a mutation error to a human-readable message. Delegates to

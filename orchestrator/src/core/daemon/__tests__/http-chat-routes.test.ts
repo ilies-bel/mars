@@ -34,7 +34,8 @@ describe('GET /view/chat/conversation', () => {
     const { startHttpServer } = await import('../http-server')
     server = await startHttpServer({
       chatRunner: new ChatRunner(),
-      restartTask: async () => {}, remergeTask: async () => {}, unblockTask: async () => {},
+      restartTask: async () => {},
+      continueTask: async () => {}, remergeTask: async () => {}, unblockTask: async () => {},
       purgeTask: async () => {}, pruneWorktree: async () => {}, dismissProposal: async () => {},
       promoteProposal: async () => ({ taskIds: [] }), validateTask: async () => {}, rejectTask: async () => {},
       landWork: async () => {}, investigateWorktree: async () => ({ explanation: '' }),
@@ -243,6 +244,7 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+      continueTask: async () => {},
   remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
@@ -306,6 +308,7 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+      continueTask: async () => {},
   remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
@@ -370,6 +373,7 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+      continueTask: async () => {},
   remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
@@ -418,6 +422,7 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+      continueTask: async () => {},
       remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
@@ -479,6 +484,7 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+      continueTask: async () => {},
       remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
@@ -532,6 +538,7 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+      continueTask: async () => {},
   remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
@@ -583,6 +590,7 @@ describe('POST /chat/threads/:id/stop — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+      continueTask: async () => {},
   remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
@@ -637,6 +645,7 @@ describe('POST /chat/threads/:id/stop — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+      continueTask: async () => {},
   remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
@@ -720,6 +729,7 @@ describe('POST /chat/threads/:id/stop — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+      continueTask: async () => {},
   remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
@@ -772,6 +782,7 @@ const startFeedbackServer = async () => {
   return startHttpServer({
     chatRunner: new ChatRunner(),
     restartTask: async () => {},
+      continueTask: async () => {},
   remergeTask: async () => {},
     unblockTask: async () => {},
     snoozeItem: async () => {},
@@ -932,6 +943,7 @@ describe('GET /view/chat/config — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner: new ChatRunner(),
       restartTask: async () => {},
+      continueTask: async () => {},
       remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},

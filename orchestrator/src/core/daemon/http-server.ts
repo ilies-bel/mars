@@ -368,6 +368,8 @@ export interface DeepReflectionsListResult {
 export interface HttpServerDeps {
   /** Tear down + re-queue a task from setup (the `restart`/`requeue` verb). */
   restartTask: (id: string) => Promise<void>
+  /** Resume a failed task on its existing worktree (the `continue` verb). */
+  continueTask: (id: string) => Promise<void>
   /**
    * Re-verify and merge a task's existing branch without re-running the coder.
    * The branch must exist and be ahead of the integration branch; otherwise

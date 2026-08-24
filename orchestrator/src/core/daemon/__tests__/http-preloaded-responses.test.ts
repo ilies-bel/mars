@@ -102,7 +102,8 @@ describe('POST /chat/messages/:messageId/responses/:responseId', () => {
     const { startHttpServer } = await import('../http-server')
     server = await startHttpServer({
       chatRunner: { sendMessage } as unknown as ChatRunner,
-      restartTask: async () => {}, remergeTask: async () => {}, unblockTask: async () => {},
+      restartTask: async () => {},
+      continueTask: async () => {}, remergeTask: async () => {}, unblockTask: async () => {},
       purgeTask: async () => {}, pruneWorktree: async () => {}, dismissProposal: async () => {},
       promoteProposal: async () => ({ taskIds: [] }), validateTask: async () => {}, rejectTask: async () => {},
       landWork: async () => {}, investigateWorktree: async () => ({ explanation: '' }),

@@ -269,8 +269,15 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
   )
 
   const handleVerb = useCallback(
-    async (op: string) => {
+    async (op: string, hint?: string) => {
       if (pending !== null) return
+      if (op === 'copy') {
+        const text = hint || op
+        void navigator.clipboard.writeText(text)
+        setPending(op)
+        setTimeout(() => setPending(null), 600)
+        return
+      }
       setPending(op)
       setError(null)
       try {
@@ -421,9 +428,9 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                 Styled per verb.style so destructive ops are visually distinct. */}
             {verbs.map((verb) => (
               <button
-                key={verb.op}
+                key={verb.op === 'copy' ? `copy-${verb.label}` : verb.op}
                 disabled={pending !== null}
-                onClick={() => void handleVerb(verb.op)}
+                onClick={() => void handleVerb(verb.op, verb.hint)}
                 className={
                   verb.style === 'destructive'
                     ? 'rounded border border-error/40 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/10 disabled:opacity-50'

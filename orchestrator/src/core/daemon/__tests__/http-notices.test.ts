@@ -39,7 +39,8 @@ beforeAll(async () => {
 })
 
 const makeDeps = (): HttpServerDeps => ({
-  restartTask: async () => {}, remergeTask: async () => {}, unblockTask: async () => {},
+  restartTask: async () => {},
+      continueTask: async () => {}, remergeTask: async () => {}, unblockTask: async () => {},
   purgeTask: async () => {}, pruneWorktree: async () => {}, dismissProposal: async () => {},
   promoteProposal: async () => ({ taskIds: [] }), validateTask: async () => {}, rejectTask: async () => {},
   landWork: async () => {}, investigateWorktree: async () => ({ explanation: '' }),

@@ -56,6 +56,7 @@ describe('GET /view/action-queue with real conditionsSource (integration)', () =
 
     httpServer = await startHttpServer({
       restartTask: async () => {},
+      continueTask: async () => {},
       remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
@@ -147,6 +148,7 @@ describe('GET /view/action-queue with real conditionsSource (integration)', () =
     try {
       server2 = await startHttpServer({
         restartTask: async () => {},
+      continueTask: async () => {},
         remergeTask: async () => {},
         unblockTask: async () => {},
         purgeTask: async () => {},

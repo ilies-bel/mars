@@ -39,6 +39,7 @@ const pausedState: DispatchPauseState = {
 
 const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   restartTask: async () => {},
+      continueTask: async () => {},
   remergeTask: async () => {},
   unblockTask: async () => {},
   purgeTask: async () => {},
