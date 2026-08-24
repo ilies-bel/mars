@@ -15,8 +15,9 @@ const filters: SidebarFiltersValue = {
 }
 
 // Use a recent date so threads appear in the live rail (not the archived fold).
-// Threads older than 7 days are hidden behind the archive toggle by default.
-const RECENT_DATE = '2026-08-15T12:00:00.000Z'
+// Threads older than 7 days are hidden behind the archive toggle by default —
+// computed relative to now so the fixture never ages into the fold.
+const RECENT_DATE = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString()
 
 const thread = (overrides: Partial<ChatThread>): ChatThread => ({
   id: 'thread-1',
