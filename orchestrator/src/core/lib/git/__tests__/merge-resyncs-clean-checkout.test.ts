@@ -1,19 +1,15 @@
 /**
- * Real-git regression test: the counterpart to
- * `merge-preserves-operator-edits.test.ts`.
- *
- * That test pins the "dirty integration checkout" half — the operator's
- * uncommitted work must survive a background merge, on a checkpoint ref.
- * `post-merge-assert` reaches that preservation path by DEFAULT: it takes the
- * plain `git reset --hard HEAD` path only when Step 3 (`resync-working-tree`)
- * positively confirmed it already reset this exact checkout itself.
- *
- * Defaulting to "checkpoint" is the safe direction, but it has an obvious
- * failure mode in the other direction: over-triggering. A merge into a clean
- * integration checkout must stay boring — resync the tree to the merged
- * content, leave `git status` empty, and create NO checkpoint ref. Otherwise
- * every ordinary merge litters `refs/mars/checkpoint/*` with empty preservation
- * commits and the refs stop meaning "someone's work was displaced here".
+ * Real-git regression test for `mergeBranch`'s Step 3 resync (ADR-0100
+ * slice 5): after a successful CAS fast-forward, a clean integration
+ * checkout must stay boring — resync the tree to the merged content, leave
+ * `git status` empty, and record the new `lastSyncedSha`. There is no
+ * checkpoint machinery left to over-trigger: Step 3 is a plain
+ * `git reset --hard <newHead>`, gated only by `attributeIntegrationDirt` for
+ * any dirt found beforehand (covered separately by
+ * `stale-tree-attribution.test.ts` and `operator-auto-commit`'s own tests).
+ * This test pins the trivial, all-clean case so a future change to that
+ * gating cannot silently start leaving debris — or a checkpoint ref — behind
+ * on an ordinary merge.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'

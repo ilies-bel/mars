@@ -4,9 +4,11 @@
  * When the operator has genuine uncommitted edits on the integration checkout
  * and a merge needs to land, Mars commits them for the operator as
  * `wip(operator): auto-committed to unblock merge of <task>` and the queue
- * keeps moving. With the `operatorAutoCommit` lever off, the pre-existing
- * behaviour stands: nothing is committed and the edits are preserved on a
- * checkpoint ref for the operator to recover.
+ * keeps moving. With the `operatorAutoCommit` lever off, ADR-0100 slice 5
+ * deleted the checkpoint fallback: nothing is committed and the edits are
+ * simply discarded by Step 3's plain `reset --hard` — main is a live
+ * checkout the merge is always entitled to resync, not a scratch space for
+ * uncommitted operator edits.
  *
  * Everything runs against a real temp repo with a real task worktree, because
  * the whole hazard here is git's own behaviour: the fast-forward moves
@@ -141,7 +143,7 @@ describe('mergeBranch — operator dirt with the auto-commit lever ON', () => {
 })
 
 describe('mergeBranch — operator dirt with the auto-commit lever OFF', () => {
-  it('commits nothing and preserves the edits on a checkpoint ref instead', async () => {
+  it('commits nothing, writes no checkpoint ref, and resyncs the checkout anyway', async () => {
     writeFileSync(resolve(repoDir, 'operator.txt'), 'PRECIOUS UNCOMMITTED WORK')
 
     const reported: OperatorAutoCommitInfo[] = []
@@ -157,6 +159,7 @@ describe('mergeBranch — operator dirt with the auto-commit lever OFF', () => {
       traceCtx: { taskId: TASK_ID, store: nullTraceStore },
     })
 
+    expect(result.merged).toBe(true)
     expect(result.aborted).toBe(false)
     expect(result.operatorAutoCommitSha).toBeUndefined()
     expect(reported).toEqual([])
@@ -165,14 +168,16 @@ describe('mergeBranch — operator dirt with the auto-commit lever OFF', () => {
     expect(git('rev-parse', 'main')).toBe(git('rev-parse', 'task/feat'))
     expect(git('log', '-1', '--format=%s', 'main')).not.toBe(operatorWipCommitMessage(TASK_ID))
 
-    // The pre-existing behaviour stands: the edit survives on a checkpoint ref.
-    const refs = git('for-each-ref', '--format=%(refname)', 'refs/mars/checkpoint')
-      .split('\n')
-      .filter((line) => line.length > 0)
-    expect(refs).toHaveLength(1)
-    git('cherry-pick', '-n', refs[0] as string)
-    expect(readFileSync(resolve(repoDir, 'operator.txt'), 'utf8')).toBe(
-      'PRECIOUS UNCOMMITTED WORK',
-    )
+    // ADR-0100 slice 5 deleted the checkpoint fallback: with the lever off
+    // there is nowhere for the edit to be preserved, and the merge does not
+    // pretend otherwise by leaving a ref behind.
+    expect(git('for-each-ref', '--format=%(refname)', 'refs/mars/checkpoint')).toBe('')
+
+    // The merge still finishes with a plain `reset --hard` to the merged tip,
+    // so the dirty-main guard cannot park the queue afterwards: the checkout
+    // is clean, carries the merged file, and the declined edit is gone.
+    expect(git('status', '--porcelain', '--untracked-files=no')).toBe('')
+    expect(readFileSync(resolve(repoDir, 'b.txt'), 'utf8')).toBe('merged content')
+    expect(readFileSync(resolve(repoDir, 'operator.txt'), 'utf8')).toBe('original')
   }, 60_000)
 })
