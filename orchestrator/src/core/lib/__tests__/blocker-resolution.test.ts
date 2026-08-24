@@ -33,6 +33,10 @@ interface ActionQueueModule {
   listActionQueueItems: typeof import('../action-queue').listActionQueueItems
 }
 
+interface OutboxSubscriberModule {
+  drainBlockerResolution: typeof import('../../../outbox/subscribers/blocker-resolution').drainBlockerResolution
+}
+
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-blocker-test-'))
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
@@ -260,6 +264,18 @@ describe('blocker-resolution (task_blockers)', () => {
       }
       await queueRetry.markTaskFailed(a.id, 'verify_failed')
 
+      // ADR-0101: markTaskFailed no longer blocks downstream dependents
+      // synchronously (that call moved out of queue-retry.ts to close the
+      // queue-retry.ts <-> arc.ts import cycle). It durably emits
+      // `task.terminal { reason: 'failed' }` in the same transaction as the
+      // status write; draining the outbox subscriber is what now reacts to
+      // that event and performs the block, matching production wiring (the
+      // daemon drains this subscriber after every published event).
+      const outboxSub = (await import(
+        '../../../outbox/subscribers/blocker-resolution'
+      )) as unknown as OutboxSubscriberModule
+      await outboxSub.drainBlockerResolution(q.resolveQueueClient())
+
       // Per AC: B must be blocked because its prerequisite failed.
       const reloaded = await q.getTask(b.id)
       expect(reloaded?.status).toBe('blocked')
@@ -321,6 +337,14 @@ describe('blocker-resolution (task_blockers)', () => {
         markTaskFailed: typeof import('../../queue-retry').markTaskFailed
       }
       await queueRetry.markTaskFailed(a.id, 'some_other_failure_mode')
+
+      // ADR-0101: the block now happens via the outbox subscriber reacting
+      // to markTaskFailed's `task.terminal { reason: 'failed' }` event —
+      // see the comment on the sibling test above.
+      const outboxSub = (await import(
+        '../../../outbox/subscribers/blocker-resolution'
+      )) as unknown as OutboxSubscriberModule
+      await outboxSub.drainBlockerResolution(q.resolveQueueClient())
 
       expect((await q.getTask(b.id))?.status).toBe('blocked')
     })

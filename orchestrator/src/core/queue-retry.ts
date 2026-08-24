@@ -136,16 +136,15 @@ export const markTaskFailed = async (
   })
   // Clear outbound blocker edges through the Arc aggregate (ADR-0052 sole-writer).
   await clearBlockers(taskId)
-  // Block downstream queued tasks whose only path to running was this
-  // failed prerequisite. Dynamic import breaks the queue-retry <->
-  // blocker-resolution module cycle. Best-effort: a cascade failure
-  // must not mask the original markTaskFailed success.
-  try {
-    const { Arc } = await import('./arc')
-    await Arc.blockByTaskFailure(taskId)
-  } catch {
-    // best-effort
-  }
+  // Blocking downstream queued tasks whose only path to running was this
+  // failed prerequisite (Arc.blockByTaskFailure) used to happen here via a
+  // dynamic `./arc` import, best-effort. That created a genuine mutual-
+  // recursion cycle with arc.ts (ADR-0101 edge 3). `updateTask` above
+  // already durably emits `task.terminal { taskId, reason: 'failed' }` in
+  // the same transaction as the status write, so the cascade now runs from
+  // `blocker-resolution.ts`'s outbox subscriber in reaction to that event
+  // instead — same pattern already used for
+  // `Arc.failStrandedOriginOnRecoveryFailure` on the same event.
 }
 
 export interface RecoveryExhaustedActionQueueInput {

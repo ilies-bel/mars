@@ -197,7 +197,23 @@ export async function drainBlockerResolution(
             `origin ${o.originTaskId} failed: its recovery ${o.recoveryTaskId} failed (ADR-0040 leaf)`,
           )
         }
-        return failed.length > 0
+
+        // Block downstream queued tasks whose only path to running was this
+        // failed prerequisite (ADR-0101 edge 3: this cascade used to run
+        // synchronously and best-effort inside `markTaskFailed` via a dynamic
+        // `./arc` import, which created a genuine cycle with arc.ts). Reacting
+        // to the same `task.terminal { reason: 'failed' }` event here keeps
+        // the cascade off the hot write path and gives it the ADR-0032 stall
+        // contract instead of a swallowed exception.
+        const blocked = await Arc.blockByTaskFailure(payload.taskId)
+        const flipped = blocked.outcomes.filter((o) => o.outcome === 'blocked')
+        for (const o of flipped) {
+          log?.(
+            `task ${o.taskId} blocked: prerequisite ${payload.taskId} failed`,
+          )
+        }
+
+        return failed.length > 0 || flipped.length > 0
       }
 
       if (payload.reason !== 'done' && payload.reason !== 'dropped') return false
