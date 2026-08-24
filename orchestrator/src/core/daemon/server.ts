@@ -6068,60 +6068,19 @@ export const startDaemon = async (
   })
   log('[merge-worker] started')
 
-  // ── GitHub release update poller ─────────────────────────────────────────
-  // Fetches https://api.github.com/repos/ilies-bel/mars/releases/latest once
-  // on startup and then every UPDATE_POLL_INTERVAL_MS (6 h). Writes the result
-  // to .mars/update.json; on any failure it leaves the cache untouched and
-  // logs at debug level. .unref() so the interval never prevents shutdown.
-  const { pollGithubRelease, UPDATE_POLL_INTERVAL_MS } = await import('./github-update-poller')
-  const runUpdatePoll = (): void => {
-    void (async () => {
-      try {
-        await pollGithubRelease(resolveContext().stateDir, {
-          debug: (msg) => log(msg),
-        })
-      } catch (err) {
-        log(`[github-update-poller] unexpected error: ${(err as Error).message}`)
-      }
-    })()
-  }
-  // One-shot on startup (fire-and-forget; errors already swallowed inside).
-  runUpdatePoll()
-  const githubUpdatePoll = setInterval(runUpdatePoll, UPDATE_POLL_INTERVAL_MS)
-  githubUpdatePoll.unref()
-
-  // ── Daily proposal expiry sweep ──────────────────────────────────────────
-  // The startup reconciler already expires stale agent-authored drafts on
-  // boot; this interval keeps the sweep running daily so a long-lived daemon
-  // does not accumulate new stale rows between restarts. .unref() so the
-  // interval never prevents shutdown.
-  const PROPOSAL_EXPIRY_INTERVAL_MS = 24 * 60 * 60 * 1000
-  const runProposalExpiry = (): void => {
-    void (async () => {
-      try {
-        const { expireProposals } = await import('../proposals')
-        const { supersedeActionQueueItemsForOrigin } = await import('../lib/action-queue')
-        const expiryMs = loadDaemonConfig().proposalExpiryDays * 24 * 60 * 60 * 1000
-        const { count, ids } = await expireProposals(expiryMs)
-        if (count > 0) {
-          log(`[proposal-expiry] expired ${count} stale auto-generated draft(s)`)
-          for (const id of ids) {
-            await supersedeActionQueueItemsForOrigin(
-              id,
-              'origin-dropped',
-              'proposal-expiry-sweep',
-            ).catch(() => { /* non-fatal */ })
-          }
-        }
-      } catch (err) {
-        log(`[proposal-expiry] daily sweep failed: ${(err as Error).message}`)
-      }
-    })()
-  }
-  const proposalExpiryInterval = setInterval(runProposalExpiry, PROPOSAL_EXPIRY_INTERVAL_MS)
-  proposalExpiryInterval.unref()
+  // The GitHub release update poller and the daily proposal-expiry sweep are
+  // now SweepSpecs in ./sweeps ('github-update-poller' and 'proposal-expiry'),
+  // armed by the startSweeps call below.
 
   // ── Dev-install staleness check ──────────────────────────────────────────
+  // NOT a SweepSpec: unlike every entry in ./sweeps this body reads and
+  // WRITES four pieces of per-daemon-instance state declared in this closure
+  // (currentSha, isStale, lastDependencyDrift, lastBehindBy) plus the install
+  // identity captured at boot (sourceSha, sourceDir, sourceRepoDir,
+  // installRoute). Per the SweepDeps doc comment, a body that needs
+  // dependencies the interface does not carry stays inline until one of them
+  // earns its own field — moving it would mean threading eight setters
+  // through SweepDeps for a single caller.
   // Periodically compares the git HEAD at startup against the current HEAD.
   // Relevant local code drift only ever raises an operator-facing nudge — the
   // daemon never restarts itself on code drift; restarting is an operator
@@ -6278,7 +6237,6 @@ export const startDaemon = async (
     schedulerHandle.stop()
     sweepsHandle.stop()
     drainsHandle.stop()
-    clearInterval(githubUpdatePoll)
     clearInterval(devStalenessCheck)
     clearInterval(usageSamplerInterval)
     deferralWakeSweeper.stop()

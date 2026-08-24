@@ -1,5 +1,5 @@
 import type { EventEmitter } from 'node:events'
-import { resolveDbTarget } from '../context'
+import { getStateDir, resolveDbTarget } from '../context'
 import { listTasks, updateTask } from '../queue'
 import { recycleDbPool } from '../lib/db'
 import { EVENT_RETENTION, pruneEvents } from '../../bus/retention'
@@ -9,6 +9,8 @@ import type { TaskFlightTracker } from './task-flight-tracker'
 import type { DaemonSemaphores } from './scheduler'
 import type { PauseController } from './pause-state'
 import { resolveIntegrationBranch, resolveSweepIntervalsMs } from '../config/daemon-intervals'
+import { UPDATE_POLL_INTERVAL_MS, pollGithubRelease } from './github-update-poller'
+import { loadDaemonConfig } from './config'
 
 /**
  * Everything a periodic sweep is allowed to reach for. Started deliberately
@@ -697,6 +699,46 @@ export const SWEEPS: readonly SweepSpec[] = [
           bus.emit('task.queued', { taskId })
         }
         void drain()
+      }
+    },
+  },
+  {
+    // GitHub release update poller. Fetches the repo's latest release once on
+    // startup (`runOnStart`) and every UPDATE_POLL_INTERVAL_MS (6 h) after
+    // that, writing the result to `.mars/update.json`. On any failure it
+    // leaves the cache untouched and logs at debug level, so a rate-limited or
+    // offline daemon degrades to a stale cache rather than a noisy one.
+    name: 'github-update-poller',
+    intervalMs: () => UPDATE_POLL_INTERVAL_MS,
+    runOnStart: true,
+    run: async ({ log }) => {
+      await pollGithubRelease(getStateDir(), { debug: (msg) => log(msg) })
+    },
+  },
+  {
+    // Daily proposal expiry sweep. The startup reconciler already expires
+    // stale agent-authored drafts on boot; this keeps the sweep running daily
+    // so a long-lived daemon does not accumulate new stale rows between
+    // restarts. Each expired draft also supersedes any action-queue item that
+    // pointed at it, so the queue never offers a row whose proposal is gone.
+    name: 'proposal-expiry',
+    intervalMs: () => 24 * 60 * 60 * 1000,
+    run: async ({ log }) => {
+      const { expireProposals } = await import('../proposals')
+      const { supersedeActionQueueItemsForOrigin } = await import('../lib/action-queue')
+      const expiryMs = loadDaemonConfig().proposalExpiryDays * 24 * 60 * 60 * 1000
+      const { count, ids } = await expireProposals(expiryMs)
+      if (count === 0) return
+      log(`[proposal-expiry] expired ${count} stale auto-generated draft(s)`)
+      for (const id of ids) {
+        await supersedeActionQueueItemsForOrigin(
+          id,
+          'origin-dropped',
+          'proposal-expiry-sweep',
+        ).catch(() => {
+          // Non-fatal: a superseded-row write failure must not abort the sweep
+          // and strand the remaining expired ids.
+        })
       }
     },
   },
