@@ -8,10 +8,7 @@
  */
 import { access, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-
-const execFileAsync = promisify(execFile)
+import { resolveVcs } from '../../core/ports/vcs/registry'
 
 type IntegrityOk = { ok: true }
 type IntegrityFail = {
@@ -26,16 +23,14 @@ export type IntegrityResult = IntegrityOk | IntegrityFail
  *
  * Checks performed in order:
  * 1. Directory exists on disk.
- * 2. `git -C <root> rev-parse --is-inside-work-tree` exits 0 (confirms it is
- *    a real git working tree, linked or main).
- * 3. `git -C <root> rev-parse --abbrev-ref HEAD` returns the expected branch
- *    name.
+ * 2. `Vcs.repoRoot()` resolves (confirms it is a real git working tree,
+ *    linked or main).
+ * 3. `Vcs.currentBranch()` returns the expected branch name.
  * 4. If a `package.json` exists at the root, `node_modules` must also exist
  *    (a missing modules dir means an install is required before any code can
  *    run).
  *
- * All git invocations use `git -C <root>` rather than `cd`, per repo
- * conventions.
+ * Every git invocation goes through the Vcs Port, never a raw subprocess.
  */
 export async function checkWorktreeIntegrity(
   worktreeRoot: string,
@@ -49,14 +44,9 @@ export async function checkWorktreeIntegrity(
   }
 
   // 2. Is it a git working tree?
+  const vcs = resolveVcs()
   try {
-    const { stdout } = await execFileAsync('git', [
-      '-C',
-      worktreeRoot,
-      'rev-parse',
-      '--is-inside-work-tree',
-    ])
-    if (stdout.trim() !== 'true') {
+    if ((await vcs.repoRoot({ cwd: worktreeRoot })) === null) {
       return { ok: false, reason: 'not-a-worktree' }
     }
   } catch {
@@ -65,15 +55,7 @@ export async function checkWorktreeIntegrity(
 
   // 3. HEAD on the expected branch?
   try {
-    const { stdout } = await execFileAsync('git', [
-      '-C',
-      worktreeRoot,
-      'rev-parse',
-      '--abbrev-ref',
-      'HEAD',
-    ])
-    const currentBranch = stdout.trim()
-    if (currentBranch !== expectedBranch) {
+    if ((await vcs.currentBranch({ cwd: worktreeRoot })) !== expectedBranch) {
       return { ok: false, reason: 'wrong-branch' }
     }
   } catch {

@@ -27,6 +27,7 @@ import {
   type ProviderProbeDeps,
 } from './provider-probe'
 import { loadDaemonConfig } from '../../core/daemon/config'
+import { resolveVcs } from '../../core/ports/vcs/registry'
 import { resolveCodexAuthFilePath } from '../../core/daemon/codex-api'
 import {
   resolveProviderName,
@@ -809,10 +810,11 @@ const doctor: Command = {
     // can satisfy.  Checks whose prereqs are absent are printed as skipped.
     const prereqs = new Set<Prereq>()
     if (existsSync(deps.ctx.stateDir)) prereqs.add('fs')
-    const gitArgs = deps.ctx.repoRoot
-      ? ['-C', deps.ctx.repoRoot, 'rev-parse', '--show-toplevel']
-      : ['rev-parse', '--show-toplevel']
-    if (spawnSync('git', gitArgs, { stdio: 'ignore', timeout: 3_000 }).status === 0) prereqs.add('git')
+    const gitProbeCwd = deps.ctx.repoRoot ?? process.cwd()
+    const gitRoot = await resolveVcs()
+      .repoRoot({ cwd: gitProbeCwd })
+      .catch(() => null)
+    if (gitRoot !== null) prereqs.add('git')
     if (existsSync(pgDsnPath)) prereqs.add('db')
     const httpPortPath = resolve(deps.ctx.stateDir, 'http.port')
     if (existsSync(httpPortPath)) {

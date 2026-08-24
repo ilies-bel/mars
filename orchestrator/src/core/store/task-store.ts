@@ -32,10 +32,8 @@ import { withTransaction } from '../lib/db.js'
 import { ensureSchema } from '../lib/pg-schema.js'
 import { ReviewPacketSchema } from '../lib/review-packet.js'
 import type { ReviewPacket } from '../lib/review-packet.js'
-import { execFile } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { resolve, sep } from 'node:path'
-import { promisify } from 'node:util'
 import {
   resolveQueueClient,
   getTask as queueGetTask,
@@ -77,9 +75,9 @@ import type {
   TaskTranscriptRow,
 } from '../queue'
 import { Arc } from '../arc'
+import { resolveVcs } from '../ports/vcs/registry'
 import { addBlockerEdges, removeBlockerEdge } from '../arc/blockers'
 
-const execFileAsync = promisify(execFile)
 
 /** Patch shape for `updateTask`, matching queue.ts's parameter exactly. */
 export type UpdateTaskPatch = Parameters<typeof queueUpdateTask>[1]
@@ -436,22 +434,12 @@ const readLandedCommits = async (
   if (!cwd) return []
   const integrationBranch = opts?.integrationBranch ?? 'main'
   try {
-    const { stdout } = await execFileAsync(
-      'git',
-      [
-        'log',
-        integrationBranch,
-        `--grep=${originId}`,
-        '--fixed-strings',
-        '--format=%H',
-      ],
-      { cwd },
-    )
-    const shas = stdout
-      .split('\n')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0)
-    return shas.reverse()
+    const commits = await resolveVcs().searchCommits({
+      cwd,
+      rev: integrationBranch,
+      grep: originId,
+    })
+    return commits.map((c) => c.sha).reverse()
   } catch {
     return []
   }

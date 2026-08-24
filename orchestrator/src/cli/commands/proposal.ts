@@ -31,15 +31,12 @@ import {
 } from '../../core/proposals'
 import { isDaemonReachable } from '../../core/daemon/paths'
 import { getDefaultTaskStore } from '../../core/store/task-store'
-import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { promisify } from 'node:util'
+import { resolveVcs } from '../../core/ports/vcs/registry'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
 import { hasFlag, parsePriority, readMaybeFile, resolvePromptSource } from '../args'
-
-const execFileAsync = promisify(execFile)
 
 /** Render a proposal detail body (shared by `proposal show` and `show`). */
 export const renderProposalDetail = async (
@@ -763,27 +760,17 @@ const proposalShipSummary: Command = {
         let commitSubject: string | null = null
 
         if (t.status === 'done') {
-          try {
-            const { stdout } = await execFileAsync(
-              'git',
-              [
-                'log',
-                'main',
-                `--grep=${t.id}`,
-                '--fixed-strings',
-                '--format=%H\t%s',
-                '-1',
-              ],
-              { cwd: deps.ctx.repoRoot },
-            )
-            const line = stdout.trim()
-            if (line) {
-              const tab = line.indexOf('\t')
-              sha = tab >= 0 ? line.slice(0, tab) : line
-              commitSubject = tab >= 0 ? line.slice(tab + 1) : ''
-            }
-          } catch {
-            // best-effort: no commit found for this task id
+          // best-effort: `searchCommits` answers `[]` when no commit carries
+          // this task id, or when the git read fails outright.
+          const [landed] = await resolveVcs().searchCommits({
+            cwd: deps.ctx.repoRoot,
+            rev: 'main',
+            grep: t.id,
+            limit: 1,
+          })
+          if (landed !== undefined) {
+            sha = landed.sha
+            commitSubject = landed.subject
           }
         }
 

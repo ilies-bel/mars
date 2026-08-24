@@ -14,10 +14,8 @@
  * all persistence routes through the store rather than a raw DB client.
  */
 
-import { execFile } from 'node:child_process'
 import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { type DbStatement } from './lib/db'
 import {
@@ -102,7 +100,6 @@ import type {
   UnblockOutcome,
 } from './blocker-resolution'
 
-const execFileP = promisify(execFile)
 
 // `ArcInvariantError` + the assert seam moved to ./arc/invariant.ts, and
 // `truncate` / the FIX_TASK_AUTHOR_* constants moved to ./arc/recovery.ts
@@ -375,11 +372,11 @@ export class Arc {
         const newWorktreePath = resolve(getStateDir(), 'worktrees', id)
         await mkdir(resolve(newWorktreePath, '..'), { recursive: true })
         try {
-          await execFileP(
-            'git',
-            ['worktree', 'add', newWorktreePath, superseded.branch],
-            { cwd: getRepoRoot() },
-          )
+          await resolveVcs().addWorktreeForBranch({
+            cwd: getRepoRoot(),
+            path: newWorktreePath,
+            branch: superseded.branch,
+          })
           await provisionWorktreeDeps({ worktreeRoot: newWorktreePath })
           inheritedBranch = superseded.branch
           inheritedWorktreePath = newWorktreePath
@@ -402,15 +399,14 @@ export class Arc {
         // enforcement point, this is purely advisory.
         if (inheritedBranch !== null) {
           try {
-            const { stdout: tipShaRaw } = await execFileP(
-              'git',
-              ['rev-parse', inheritedBranch],
-              { cwd: getRepoRoot() },
-            )
+            const tipSha = await resolveVcs().revParse({
+              cwd: getRepoRoot(),
+              rev: inheritedBranch,
+            })
             const { isSalvageCheckpointCommit, buildSupersedeSalvageTipBrief } = await import(
               './lib/git/checkpoint'
             )
-            if (await isSalvageCheckpointCommit(getRepoRoot(), tipShaRaw.trim())) {
+            if (tipSha !== null && (await isSalvageCheckpointCommit(getRepoRoot(), tipSha))) {
               promptText = `${promptText}\n\n${buildSupersedeSalvageTipBrief(id)}`
             }
           } catch (err) {

@@ -1,7 +1,7 @@
-import { execFile } from 'node:child_process'
 import { gzip } from 'node:zlib'
 import { promisify } from 'node:util'
 import { resolveContext } from './context'
+import { resolveVcs } from './ports/vcs/registry'
 import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
 import { type DbClient, type DbInValue, type DbStatement } from './lib/db'
@@ -27,7 +27,6 @@ import { raiseActionQueueItem } from './lib/action-queue'
 import { teardownDeploymentsForTask } from './lib/deployment/teardown'
 import type { SliceSpec, SubDeliverableSpec } from './slice-spec'
 
-const execFileP = promisify(execFile)
 const gzipAsyncQ = promisify(gzip)
 
 export type TaskStatus =
@@ -1307,18 +1306,13 @@ export const updateTask = async (
   ) {
     const integration = process.env.INTEGRATION_BRANCH ?? 'main'
     const repoRoot = resolveContext().repoRoot
-    let aheadCount = 0
-    try {
-      const { stdout } = await execFileP(
-        'git',
-        ['rev-list', '--count', `${integration}..${taskBranch}`],
-        { cwd: repoRoot },
-      )
-      aheadCount = parseInt(stdout.trim(), 10) || 0
-    } catch {
-      // Branch deleted or git error — treat as already merged (0 ahead).
-      aheadCount = 0
-    }
+    // Branch deleted or git error — `revListCount` answers null, which we
+    // treat as already merged (0 ahead).
+    const aheadCount =
+      (await resolveVcs().revListCount({
+        cwd: repoRoot,
+        range: `${integration}..${taskBranch}`,
+      })) ?? 0
     if (aheadCount > 0) {
       doneWithUnmergedCommits = true
       patch = {

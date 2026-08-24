@@ -41,8 +41,6 @@
  * with zero schema migration.
  */
 import { z } from 'zod'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { extname, isAbsolute, join, resolve } from 'node:path'
 
 import { discoverAppBoot, type BootPlan } from './app-boot-discovery'
@@ -52,7 +50,6 @@ import {
   type VerificationOutcome,
 } from '../../core/lib/verification-outcome'
 
-const execFileAsync = promisify(execFile)
 
 import type { WorktreeResult as WorktreeRef } from '../../core/ports/vcs/types'
 import { getTask, type Task } from '../../core/queue'
@@ -63,6 +60,7 @@ import {
   runNonLlmStepWithSpan,
 } from '../../core/lib/run-worker-with-span'
 import { resolveContext } from '../../core/context'
+import { resolveVcs } from '../../core/ports/vcs/registry'
 import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
 import {
   handleTaskFailureWithFixTask,
@@ -387,14 +385,14 @@ export interface BehaviourVerifyDeps {
 
 const defaultGetDiff = async (worktreePath: string, integrationBranch: string): Promise<string> => {
   try {
-    const { stdout } = await execFileAsync(
-      'git',
-      ['-C', worktreePath, 'diff', `${integrationBranch}...HEAD`, '--name-only'],
-      { maxBuffer: 1_048_576 },
-    )
-    return stdout
+    // Not a git repo, or git not available — `changedFiles` answers `[]`,
+    // which reads downstream as "no UI files touched".
+    const files = await resolveVcs().changedFiles({
+      cwd: worktreePath,
+      range: `${integrationBranch}...HEAD`,
+    })
+    return files.length === 0 ? '' : files.join('\n') + '\n'
   } catch {
-    // Not a git repo, or git not available — treat as no UI files touched.
     return ''
   }
 }

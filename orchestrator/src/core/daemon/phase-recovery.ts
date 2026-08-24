@@ -229,15 +229,13 @@ export const recoverPhase = async (
   const { log, bus, repoRoot, silent = false } = opts
 
   const { existsSync: exists } = await import('node:fs')
-  const { execFile } = await import('node:child_process')
-  const { promisify } = await import('node:util')
-  const exec = promisify(execFile)
   const { resolveVcs } = await import('../ports/vcs/registry')
+  const vcs = resolveVcs()
   const removeWorktree = (
     ref: { path: string; branch: string },
     force = true,
     keepBranch = false,
-  ) => resolveVcs().removeWorktree({ path: ref.path, branch: ref.branch, force, keepBranch })
+  ) => vcs.removeWorktree({ path: ref.path, branch: ref.branch, force, keepBranch })
   const { isBranchMergedIntoMain } = await import('../lib/git/merge')
 
   const probeCtx: ProbeCtx = { exists, isBranchMergedIntoMain, repoRoot }
@@ -337,7 +335,7 @@ export const recoverPhase = async (
           true,
         ).catch(() => {})
       }
-      await exec('git', ['branch', '-D', cancelledBranch], { cwd: repoRoot }).catch(() => {})
+      await vcs.deleteBranch({ cwd: repoRoot, branch: cancelledBranch }).catch(() => {})
       const { createQueueWorkflowStore: cancelledWorkflowStore } = await import(
         '../../workflows/queue-workflow-store'
       )
@@ -414,7 +412,7 @@ export const recoverPhase = async (
         // worktree-ahead is now a derived kind (ADR-0057) — no stored row raised.
         // The log message above already surfaces the preserved branch to the operator.
       } else {
-        await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})
+        await vcs.deleteBranch({ cwd: repoRoot, branch }).catch(() => {})
       }
       const { createQueueWorkflowStore } = await import(
         '../../workflows/queue-workflow-store'

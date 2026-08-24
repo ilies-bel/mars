@@ -529,9 +529,8 @@ const sweep: Command = {
       listUniqueCommitsAhead,
       applyCommitsCherryPick,
     } = await import('../../core/lib/sweep')
-    const { execFile: cpExecFile } = await import('node:child_process')
-    const { promisify: cpPromisify } = await import('node:util')
-    const cpExec = cpPromisify(cpExecFile)
+    const { resolveVcs } = await import('../../core/ports/vcs/registry')
+    const vcs = resolveVcs()
     const { createInterface } = await import('node:readline')
     const rl = createInterface({ input: process.stdin, output: process.stdout })
 
@@ -568,11 +567,7 @@ const sweep: Command = {
         listUniqueCommits: (branch, integration) =>
           listUniqueCommitsAhead(branch, integration, deps.ctx.repoRoot),
         prompt: (orphan) => askAction(orphan.branch),
-        deleteBranch: async (branch) => {
-          await cpExec('git', ['branch', '-D', branch], {
-            cwd: deps.ctx.repoRoot,
-          })
-        },
+        deleteBranch: (branch) => vcs.deleteBranch({ cwd: deps.ctx.repoRoot, branch }),
         cherryPickCommits: (commits) =>
           applyCommitsCherryPick(commits, integrationBranch, deps.ctx.repoRoot),
       },

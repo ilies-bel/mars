@@ -357,6 +357,73 @@ export interface DescribeUncommittedWorkSpec {
   worktreePath: string | null | undefined
 }
 
+/** A single commit as reported by {@link Vcs.commitsInRange} / {@link Vcs.searchCommits}. */
+export interface VcsCommitSummary {
+  /** Abbreviated when the request asked for it, full-length otherwise. */
+  sha: string
+  /** The commit's subject line (`%s`). */
+  subject: string
+}
+
+/** Args for {@link Vcs.commitsInRange}. */
+export interface VcsCommitsInRangeSpec {
+  cwd: string
+  /** A `git log` range expression, e.g. `"<base>..HEAD"`. */
+  range: string
+  /** Report abbreviated shas (`%h`) instead of full ones (`%H`). */
+  abbrev?: boolean
+}
+
+/** Args for {@link Vcs.searchCommits}. */
+export interface VcsSearchCommitsSpec {
+  cwd: string
+  /** Revision to walk, e.g. an integration branch name. */
+  rev: string
+  /** Literal substring to match against commit messages (`--grep` + `--fixed-strings`). */
+  grep: string
+  /** Cap on the number of commits returned (`-n`). Unbounded when omitted. */
+  limit?: number
+}
+
+/** Args for {@link Vcs.changedFiles}. */
+export interface VcsChangedFilesSpec {
+  cwd: string
+  /** A `git diff` range expression, e.g. `"<base>...HEAD"`. */
+  range: string
+}
+
+/** Args for {@link Vcs.fetch}. */
+export interface VcsFetchSpec {
+  cwd: string
+  remote: string
+  /** Single refspec to fetch. Fetches the remote's default set when omitted. */
+  branch?: string
+}
+
+/** Args for {@link Vcs.resetHard}. */
+export interface VcsResetHardSpec {
+  cwd: string
+  /** Revision to reset onto, e.g. an integration branch name. */
+  rev: string
+}
+
+/** Args for {@link Vcs.isAncestor}. */
+export interface VcsIsAncestorSpec {
+  cwd: string
+  ancestor: string
+  descendant: string
+}
+
+/** Args for {@link Vcs.addWorktreeForBranch}. */
+export interface VcsAddWorktreeForBranchSpec {
+  /** Directory the `git worktree add` runs from — any path inside the repo. */
+  cwd: string
+  /** Absolute path the new worktree is created at. */
+  path: string
+  /** Existing branch to check out into it. */
+  branch: string
+}
+
 /**
  * The VCS Port contract. Every method is async and every arg/result is
  * serializable — see the module doc comment above.
@@ -434,4 +501,18 @@ export interface Vcs {
   recentShas(spec: VcsRecentShasSpec): Promise<string[]>
   /** Force-delete a local branch (`branch -D`). Throws on failure — callers that treat deletion as best-effort catch it themselves. */
   deleteBranch(spec: VcsDeleteBranchSpec): Promise<void>
+  /** Commits in `spec.range`, newest first (`log --format=%H %s`). Returns `[]` on failure. */
+  commitsInRange(spec: VcsCommitsInRangeSpec): Promise<VcsCommitSummary[]>
+  /** Commits reachable from `spec.rev` whose message contains `spec.grep` literally. Returns `[]` on failure. */
+  searchCommits(spec: VcsSearchCommitsSpec): Promise<VcsCommitSummary[]>
+  /** Paths that differ across `spec.range` (`diff --name-only`). Returns `[]` on failure. */
+  changedFiles(spec: VcsChangedFilesSpec): Promise<string[]>
+  /** Fetch from a remote. Throws on failure — callers that treat the network as optional catch it themselves. */
+  fetch(spec: VcsFetchSpec): Promise<void>
+  /** Hard-reset `spec.cwd` onto `spec.rev` (`reset --hard`). Throws on failure. */
+  resetHard(spec: VcsResetHardSpec): Promise<void>
+  /** True when `spec.ancestor` is an ancestor of `spec.descendant` (`merge-base --is-ancestor`). */
+  isAncestor(spec: VcsIsAncestorSpec): Promise<boolean>
+  /** Check an existing branch out into a new worktree (`worktree add <path> <branch>`). Throws on failure. */
+  addWorktreeForBranch(spec: VcsAddWorktreeForBranchSpec): Promise<void>
 }

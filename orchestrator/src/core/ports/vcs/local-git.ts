@@ -40,22 +40,30 @@ import type {
   StatusSpec,
   SyncWorktreeSpec,
   Vcs,
+  VcsAddWorktreeForBranchSpec,
   VcsCaptureCheckpointSpec,
+  VcsChangedFilesSpec,
   VcsCheckpoint,
+  VcsCommitSummary,
+  VcsCommitsInRangeSpec,
   VcsCurrentBranchSpec,
   VcsDeleteBranchSpec,
   VcsDiffTextSpec,
   VcsDiscardChangesSpec,
+  VcsFetchSpec,
   VcsGitPathSpec,
   VcsHasCommitTrailerSpec,
+  VcsIsAncestorSpec,
   VcsPathsChangedInRangeSpec,
   VcsRecentShasSpec,
   VcsRepoRootSpec,
+  VcsResetHardSpec,
   VcsRestoreCheckpointResult,
   VcsRestoreCheckpointSpec,
   VcsRevListCountSpec,
   VcsRevListRangeSpec,
   VcsRevParseSpec,
+  VcsSearchCommitsSpec,
   VcsStatus,
   VcsUpdateRefSpec,
   VcsWorkingTreeMatchesSpec,
@@ -369,5 +377,79 @@ export const localGitVcs: Vcs = {
   async describeUncommittedWork(spec: DescribeUncommittedWorkSpec): Promise<string | null> {
     return describeUncommittedWork(spec)
   },
+
+  async commitsInRange(spec: VcsCommitsInRangeSpec): Promise<VcsCommitSummary[]> {
+    const { cwd, range, abbrev } = spec
+    const r = await execProbe(
+      resolveGitBin(),
+      ['log', `--format=${abbrev === true ? '%h' : '%H'} %s`, range],
+      { cwd },
+    )
+    if (r.exitCode !== 0) return []
+    return parseCommitSummaries(r.stdout)
+  },
+
+  async searchCommits(spec: VcsSearchCommitsSpec): Promise<VcsCommitSummary[]> {
+    const { cwd, rev, grep, limit } = spec
+    const args = ['log', rev, `--grep=${grep}`, '--fixed-strings', '--format=%H %s']
+    if (limit !== undefined) args.push('-n', String(limit))
+    const r = await execProbe(resolveGitBin(), args, { cwd })
+    if (r.exitCode !== 0) return []
+    return parseCommitSummaries(r.stdout)
+  },
+
+  async changedFiles(spec: VcsChangedFilesSpec): Promise<string[]> {
+    const { cwd, range } = spec
+    const r = await execProbe(resolveGitBin(), ['diff', range, '--name-only'], { cwd })
+    if (r.exitCode !== 0) return []
+    return r.stdout
+      .split('\n')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+  },
+
+  async fetch(spec: VcsFetchSpec): Promise<void> {
+    const { cwd, remote, branch } = spec
+    const args = ['fetch', remote]
+    if (branch !== undefined) args.push(branch)
+    await exec(resolveGitBin(), args, { cwd })
+  },
+
+  async resetHard(spec: VcsResetHardSpec): Promise<void> {
+    const { cwd, rev } = spec
+    await exec(resolveGitBin(), ['reset', '--hard', rev], { cwd })
+  },
+
+  async isAncestor(spec: VcsIsAncestorSpec): Promise<boolean> {
+    const { cwd, ancestor, descendant } = spec
+    const r = await execProbe(
+      resolveGitBin(),
+      ['merge-base', '--is-ancestor', ancestor, descendant],
+      { cwd },
+    )
+    return r.exitCode === 0
+  },
+
+  async addWorktreeForBranch(spec: VcsAddWorktreeForBranchSpec): Promise<void> {
+    const { cwd, path, branch } = spec
+    await exec(resolveGitBin(), ['worktree', 'add', path, branch], { cwd })
+  },
 }
+
+/**
+ * Split `git log --format=<sha> %s` output into typed rows. The sha runs to the
+ * first space; everything after it is the subject (which may itself contain
+ * spaces, and may be empty).
+ */
+const parseCommitSummaries = (stdout: string): VcsCommitSummary[] =>
+  stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const spaceIdx = line.indexOf(' ')
+      return spaceIdx === -1
+        ? { sha: line, subject: '' }
+        : { sha: line.slice(0, spaceIdx), subject: line.slice(spaceIdx + 1) }
+    })
 
