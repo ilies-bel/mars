@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { mkdir, open, readFile, unlink } from 'node:fs/promises'
 
-const isPidAlive = (pid: number): boolean => {
+export const isPidAlive = (pid: number): boolean => {
   try {
     process.kill(pid, 0)
     return true

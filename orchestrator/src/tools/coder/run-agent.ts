@@ -13,6 +13,11 @@ import {
   ResumeWorktreeUnrecoverable,
   type WorktreeRef,
 } from '../../core/lib/git/worktree'
+import {
+  acquireWorktreeLease,
+  readLiveWorktreeLease,
+  WorktreeLeaseHeldError,
+} from '../../core/lib/git/worktree-lease'
 import { cleanWorktreeIfNoCommitsAhead, selectVerifySteps } from '../../core/ports/verifier/verify-helpers'
 import { createWorker, pickWorkerForTags, Workers, type Worker } from '../../core/workers'
 import { resolveContext } from '../../core/context'
@@ -237,6 +242,49 @@ export const runAgent = async (
 
   const worktreePath = worktree.path
   const branch = worktree.branch
+
+  // ── Occupancy preflight: one coder per worktree ───────────────────────────
+  // A worktree is a single-writer resource — the coder commits with `git add
+  // -A`, and the preflights below `git clean` and rebase the same tree. Two
+  // agents sharing one `.mars/worktrees/<id>` cross-contaminate by
+  // construction: observed during `fix-2b98a126`, where the second coder's
+  // `git add -A` swept the first coder's throwaway probe file into a real
+  // commit and HEAD moved under a running agent mid-run.
+  //
+  // The dispatch-time guard in the daemon catches the common case (a
+  // re-dispatch onto a worktree already recorded on the task row) and defers
+  // rather than failing. This is the backstop for the case dispatch cannot
+  // see: a recovery task that only learns it shares the ORIGIN's worktree
+  // once `setup` has attached it. Refusing here — before the clean sweep
+  // below touches anything — is what keeps that attach from clobbering the
+  // origin's live tree.
+  const failWorktreeLeaseHeld = async (summary: string): Promise<never> => {
+    const leaseSignature = computeFailureSignature('code:worktree-lease-held', summary)
+    await updateTask(
+      taskId,
+      {
+        status: 'failed',
+        error: summary,
+        failedPhase: 'code',
+        failureReason: 'code:worktree-lease-held',
+        failureSignature: leaseSignature,
+        failureReasonCode: leaseSignature,
+      },
+      store,
+    )
+    throw new WorkflowTerminalError('worktree-lease-held', summary)
+  }
+
+  const occupant = await readLiveWorktreeLease(worktreePath)
+  if (occupant !== null && occupant.taskId !== taskId) {
+    await failWorktreeLeaseHeld(
+      `worktree ${worktreePath} is already occupied by a live coder for task ` +
+        `${occupant.taskId} (pid ${occupant.pid}, held since ` +
+        `${new Date(occupant.acquiredAt).toISOString()}). Refusing to run a second ` +
+        `agent in the same tree. Let ${occupant.taskId} finish, or stop it with ` +
+        `\`mars stop ${occupant.taskId}\`, then re-dispatch this task.`,
+    )
+  }
 
   // ── Resume preflight: the worktree must actually exist ────────────────────
   // On a checkpoint-resume (a watchdog-killed task being retried, `mars
@@ -530,151 +578,176 @@ export const runAgent = async (
     messagePrefix: `mars: periodic code-phase checkpoint (task ${taskId})`,
     traceCtx: buildPhaseCtx(trace, taskId, 'code'),
   })
+  // ── Take the exclusive worktree lease ────────────────────────────────────
+  // Held across the whole span that mutates this worktree: the coder spawn
+  // itself AND the post-coder commit contract, which runs `git add -A`. That
+  // second half is the actual contamination vector, so releasing at the end of
+  // the spawn loop would leave the dangerous window unguarded.
+  //
+  // The lease refuses rather than waits: a coder run lasts minutes to hours,
+  // and blocking here would pin an implement semaphore slot for the duration.
+  let releaseWorktreeLease: (() => Promise<void>) | null = null
   try {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      if (attempt > 1) sessionKey = buildSessionKey(taskId)
-      r = await runWorkerWithSpan({
-        worker,
-        prompt: fullPrompt,
-        runOptions: {
-          cwd: worktreePath,
-          sessionId: sessionKey,
-          // A Worker that pins its own `config.systemPrompt` (currently only
-          // RescueOperator) must receive it verbatim — resolveWorkerSystemPrompt
-          // always returns the generic Coder standing instructions (ADR-0019),
-          // which would otherwise silently displace it. Without this, a
-          // RescueOperator dispatch never sees RESCUE_OPERATOR_SYSTEM_PROMPT
-          // (its pinned "choose one of restart/continue/supersede, emit a JSON
-          // verdict, never commit" brief) and instead runs under the generic
-          // deviation-rules brief, which tells it to write and commit code —
-          // exactly the behaviour that brief exists to forbid.
-          systemPrompt: worker.config.systemPrompt ?? resolveWorkerSystemPrompt(primaryTag),
-          onEvent: async (event) => {
-            emit?.(event)
+    releaseWorktreeLease = await acquireWorktreeLease({ worktreePath, taskId, branch })
+  } catch (leaseErr) {
+    if (!(leaseErr instanceof WorktreeLeaseHeldError)) throw leaseErr
+    await failWorktreeLeaseHeld(
+      `${leaseErr.message}. Refusing to run a second coder in the same tree; ` +
+        `let the holder finish or stop it, then re-dispatch this task.`,
+    )
+  }
+
+  try {
+    try {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        if (attempt > 1) sessionKey = buildSessionKey(taskId)
+        r = await runWorkerWithSpan({
+          worker,
+          prompt: fullPrompt,
+          runOptions: {
+            cwd: worktreePath,
+            sessionId: sessionKey,
+            // A Worker that pins its own `config.systemPrompt` (currently only
+            // RescueOperator) must receive it verbatim — resolveWorkerSystemPrompt
+            // always returns the generic Coder standing instructions (ADR-0019),
+            // which would otherwise silently displace it. Without this, a
+            // RescueOperator dispatch never sees RESCUE_OPERATOR_SYSTEM_PROMPT
+            // (its pinned "choose one of restart/continue/supersede, emit a JSON
+            // verdict, never commit" brief) and instead runs under the generic
+            // deviation-rules brief, which tells it to write and commit code —
+            // exactly the behaviour that brief exists to forbid.
+            systemPrompt: worker.config.systemPrompt ?? resolveWorkerSystemPrompt(primaryTag),
+            onEvent: async (event) => {
+              emit?.(event)
+            },
+            // Wire the spawn-time PID callback so the phantom-task watchdog can
+            // switch from the bare wall-clock ceiling (no-PID path, case a) to the
+            // alive-PID + heartbeat path (case b/c), preventing false ceiling kills
+            // of legitimately long-running coders.
+            onPid: ctx.services.onPid,
+            externalAbort: ctx.signal,
           },
-          // Wire the spawn-time PID callback so the phantom-task watchdog can
-          // switch from the bare wall-clock ceiling (no-PID path, case a) to the
-          // alive-PID + heartbeat path (case b/c), preventing false ceiling kills
-          // of legitimately long-running coders.
-          onPid: ctx.services.onPid,
-          externalAbort: ctx.signal,
-        },
-        traceStore: spanStore(trace),
-        stepName: 'run-agent',
-        workflowInstanceId: trace.workflowInstanceId,
-        originId,
+          traceStore: spanStore(trace),
+          stepName: 'run-agent',
+          workflowInstanceId: trace.workflowInstanceId,
+          originId,
+          taskId,
+          phase: 'code',
+          // Fix (recovery) tasks run flagship so high-risk repair has the
+          // strongest model available. Regular coder tasks inherit whatever
+          // modelTier the caller declared (opts.modelTier); when absent the
+          // Worker's own pinned tier applies.
+          modelTier: kind === 'fix' ? 'flagship' : undefined,
+        })
+
+        // A task stop is an operator decision, not a coder failure. Bail out before
+        // the ordinary non-zero-exit recovery path can stamp or recover the task;
+        // the daemon already marked it failed with failureReason='cancelled'.
+        if (ctx.signal.aborted) throw new Error(`task ${taskId} stopped by operator`)
+
+        // Classify the exit. Operator abort is already handled above so `aborted`
+        // is always false here — pass it explicitly for clarity and purity.
+        const disposition = classifyCoderExitDisposition({ r, aborted: false })
+        if (disposition.kind === 'retryable-transient' && attempt === 1) {
+          // Environmental kill or startup failure before any provider contact. The
+          // worktree is untouched so a single re-dispatch on a fresh session key is
+          // safe. Record a trace event so the action-queue and reflect signals can
+          // observe the retry before it happens.
+          trace.traceStore
+            .record({
+              kind: 'code-retry-attempt',
+              taskId,
+              originId,
+              phase: 'code',
+              payload: { reason: disposition.reason, attempt: 2, sessionKey },
+            })
+            .catch(() => {
+              // Telemetry is best-effort — a DB hiccup must never change the result.
+            })
+          continue
+        }
+
+        // Any other disposition (success, terminal-recovery on attempt 1, any exit
+        // on attempt 2) falls through to the existing handlers below.
+        break
+      }
+    } finally {
+      // Stop the timer and await any in-flight capture before anything below
+      // reads or commits this worktree (classifyCoderExit, the commit-contract
+      // enforcement) — a periodic checkpoint never touches the branch or the
+      // working tree, but a still-running capture and a fast-following
+      // `git status`/`git commit` should never be allowed to race regardless.
+      await periodicCheckpoint.stop()
+    }
+
+    await classifyCoderExit({
+      r,
+      taskId,
+      store,
+      branch,
+      worktreePath,
+      integrationBranch,
+      trace,
+      originId,
+      sessionKey,
+    })
+
+    // Post-condition on a clean exit: the coder must hand over a committed,
+    // clean worktree. Both the empty-diff guard and the two-stage dirty-tree
+    // escalation live in `./coder-exit`; every task-state write they make still
+    // goes through the `store` this shell owns (ADR-0052).
+    const commitSource = await enforceCoderCommitContract({
+      ctx,
+      taskId,
+      store,
+      branch,
+      worktreePath,
+      integrationBranch,
+      trace,
+      originId,
+      fullTask,
+      worker,
+      primaryTag,
+      emit,
+    })
+
+
+    // Emitted only for runs that survive every post-coder gate above, matching
+    // the existing terminal-failure branches (auto-commit-failed, commit
+    // contract), which throw before reaching this point.
+    await trace.traceStore
+      .record({
+        kind: 'post-coder-commit',
         taskId,
+        originId,
         phase: 'code',
-        // Fix (recovery) tasks run flagship so high-risk repair has the
-        // strongest model available. Regular coder tasks inherit whatever
-        // modelTier the caller declared (opts.modelTier); when absent the
-        // Worker's own pinned tier applies.
-        modelTier: kind === 'fix' ? 'flagship' : undefined,
+        payload: {
+          provider: worker.config.provider,
+          commitSource,
+          // Occupancy for a per-request provider, cumulative spend for a
+          // cumulative one, and NEITHER field for a provider that reports no
+          // usage — a hardcoded `contextTokens` read the assistant shape on
+          // every provider and stamped a fabricated 0 on every Codex run.
+          ...buildContextTokenSignals(coderSemantics, r.conversation),
+        },
+      })
+      .catch(() => {
+        // Telemetry must never change the completion result.
       })
 
-      // A task stop is an operator decision, not a coder failure. Bail out before
-      // the ordinary non-zero-exit recovery path can stamp or recover the task;
-      // the daemon already marked it failed with failureReason='cancelled'.
-      if (ctx.signal.aborted) throw new Error(`task ${taskId} stopped by operator`)
-
-      // Classify the exit. Operator abort is already handled above so `aborted`
-      // is always false here — pass it explicitly for clarity and purity.
-      const disposition = classifyCoderExitDisposition({ r, aborted: false })
-      if (disposition.kind === 'retryable-transient' && attempt === 1) {
-        // Environmental kill or startup failure before any provider contact. The
-        // worktree is untouched so a single re-dispatch on a fresh session key is
-        // safe. Record a trace event so the action-queue and reflect signals can
-        // observe the retry before it happens.
-        trace.traceStore
-          .record({
-            kind: 'code-retry-attempt',
-            taskId,
-            originId,
-            phase: 'code',
-            payload: { reason: disposition.reason, attempt: 2, sessionKey },
-          })
-          .catch(() => {
-            // Telemetry is best-effort — a DB hiccup must never change the result.
-          })
-        continue
-      }
-
-      // Any other disposition (success, terminal-recovery on attempt 1, any exit
-      // on attempt 2) falls through to the existing handlers below.
-      break
+    const usage = summarizeUsageForSemantics(coderSemantics, r.conversation)
+    if (r.sessionId) {
+      handle?.setTranscriptKey(r.sessionId)
+      await updateTask(taskId, { claudeSessionId: r.sessionId }, store)
     }
+    await recordSignals(taskId, 'run-agent', usage, store).catch(() => {
+      // signal capture must never fail the task
+    })
+
+    return { sessionId: r.sessionId ?? null }
   } finally {
-    // Stop the timer and await any in-flight capture before anything below
-    // reads or commits this worktree (classifyCoderExit, the commit-contract
-    // enforcement) — a periodic checkpoint never touches the branch or the
-    // working tree, but a still-running capture and a fast-following
-    // `git status`/`git commit` should never be allowed to race regardless.
-    await periodicCheckpoint.stop()
+    // Release on every exit path — a leaked lease would refuse every later
+    // dispatch onto this worktree until the daemon process itself died.
+    if (releaseWorktreeLease !== null) await releaseWorktreeLease()
   }
-
-  await classifyCoderExit({
-    r,
-    taskId,
-    store,
-    branch,
-    worktreePath,
-    integrationBranch,
-    trace,
-    originId,
-    sessionKey,
-  })
-
-  // Post-condition on a clean exit: the coder must hand over a committed,
-  // clean worktree. Both the empty-diff guard and the two-stage dirty-tree
-  // escalation live in `./coder-exit`; every task-state write they make still
-  // goes through the `store` this shell owns (ADR-0052).
-  const commitSource = await enforceCoderCommitContract({
-    ctx,
-    taskId,
-    store,
-    branch,
-    worktreePath,
-    integrationBranch,
-    trace,
-    originId,
-    fullTask,
-    worker,
-    primaryTag,
-    emit,
-  })
-
-
-  // Emitted only for runs that survive every post-coder gate above, matching
-  // the existing terminal-failure branches (auto-commit-failed, commit
-  // contract), which throw before reaching this point.
-  await trace.traceStore
-    .record({
-      kind: 'post-coder-commit',
-      taskId,
-      originId,
-      phase: 'code',
-      payload: {
-        provider: worker.config.provider,
-        commitSource,
-        // Occupancy for a per-request provider, cumulative spend for a
-        // cumulative one, and NEITHER field for a provider that reports no
-        // usage — a hardcoded `contextTokens` read the assistant shape on
-        // every provider and stamped a fabricated 0 on every Codex run.
-        ...buildContextTokenSignals(coderSemantics, r.conversation),
-      },
-    })
-    .catch(() => {
-      // Telemetry must never change the completion result.
-    })
-
-  const usage = summarizeUsageForSemantics(coderSemantics, r.conversation)
-  if (r.sessionId) {
-    handle?.setTranscriptKey(r.sessionId)
-    await updateTask(taskId, { claudeSessionId: r.sessionId }, store)
-  }
-  await recordSignals(taskId, 'run-agent', usage, store).catch(() => {
-    // signal capture must never fail the task
-  })
-
-  return { sessionId: r.sessionId ?? null }
 }

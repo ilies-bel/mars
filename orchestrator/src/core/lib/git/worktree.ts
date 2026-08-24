@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
-import { mkdir, rm, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, rm, realpath, unlink, writeFile } from 'node:fs/promises'
 import { getStateDir } from '../../context'
+import { worktreeLeasePath } from './worktree-lease'
 import {
   exec,
   execProbe,
@@ -1443,6 +1444,12 @@ export const removeWorktree = async (
       console.warn(`[removeWorktree] tombstone write failed (non-fatal):`, err),
     )
   }
+
+  // The coder lease is a sibling of the directory, so `git worktree remove`
+  // leaves it behind. A lease with a dead pid is already treated as free, but
+  // dropping it here keeps a pid the OS later recycles from reading as a live
+  // holder and permanently refusing dispatch onto a rebuilt worktree.
+  await unlink(worktreeLeasePath(ref.path)).catch(() => {})
 
   const args = ['worktree', 'remove']
   if (force) args.push('--force')

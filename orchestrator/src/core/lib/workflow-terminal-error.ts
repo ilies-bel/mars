@@ -30,6 +30,14 @@ export type WorkflowTerminalKind =
    * a code defect, so no recovery fixer is spawned.
    */
   | 'worktree-rebase-conflict'
+  /**
+   * The worktree this run would code in is already held by a live coder for a
+   * different task. A worktree is a single-writer resource (`git add -A`,
+   * `git clean`, rebase), so a second agent in the same tree corrupts both
+   * runs. Operator-owned scheduling condition, not a code defect: the holder
+   * has to finish or be stopped before this task can be re-dispatched.
+   */
+  | 'worktree-lease-held'
   | 'origin-terminal'
   | 'coder-exit-nonzero'
   | 'coder-uncommitted'

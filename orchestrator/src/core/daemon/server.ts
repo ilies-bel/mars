@@ -1331,6 +1331,43 @@ export const startDaemon = async (
       )
     }
 
+    // ── Worktree-occupancy guard ──────────────────────────────────────────
+    // A worktree is a single-writer resource: the coder commits with `git add
+    // -A`, and the code step `git clean`s and rebases the same tree. Two
+    // agents in one `.mars/worktrees/<id>` cross-contaminate by construction —
+    // observed during `fix-2b98a126`, where the second coder's `git add -A`
+    // swept the first's throwaway probe file into a real commit while HEAD
+    // moved under the running agent.
+    //
+    // `tracker.isInFlight` above only excludes a second dispatch of the SAME
+    // task id inside THIS daemon process. It says nothing about a different
+    // task id sharing the tree (a recovery attached to its origin's worktree)
+    // or about a second process. The lease does, because it is a file keyed on
+    // the worktree path and validated by pid liveness.
+    //
+    // Deferring, not failing: the holder will finish, and a queued task is
+    // re-drained by the poll-fallback tick. Only the code step's own preflight
+    // — which runs after `setup` has resolved the real path — fails the task,
+    // and only because there is nowhere left to defer to by then.
+    if (task.worktreePath !== null && task.worktreePath !== undefined) {
+      const { readLiveWorktreeLease } = await import('../lib/git/worktree-lease')
+      const holder = await readLiveWorktreeLease(task.worktreePath).catch(
+        // A lease that cannot be read is not a reason to stall the queue; the
+        // code step re-checks before it touches the tree.
+        () => null,
+      )
+      if (holder !== null && holder.taskId !== task.id) {
+        log(
+          `[worktree-lease] dispatch deferred for task ${task.id}: worktree ` +
+            `${task.worktreePath} is held by task ${holder.taskId} (pid ${holder.pid}). ` +
+            `Task stays queued and re-dispatches once that coder exits; ` +
+            `\`mars stop ${holder.taskId}\` releases it now.`,
+        )
+        tracker.unclaim(task.id, 'implement')
+        return
+      }
+    }
+
     const usageSnapshot = await getLatestUsageSnapshot(dbClient)
     const deferral = shouldDeferDispatch(
       task,
@@ -2078,6 +2115,12 @@ export const startDaemon = async (
             // {setup,code}:worktree-rebase-conflict signature and raised an
             // operator item. The rebase was aborted; the worktree is intact.
             log(`[implement] ${task.id} worktree-rebase-conflict abort (exception path); task already marked failed, item raised`)
+            break
+          case 'worktree-lease-held':
+            // The code step's occupancy preflight already marked this task
+            // failed with the code:worktree-lease-held signature. The holding
+            // task's coder is still running in that tree and was left alone.
+            log(`[implement] ${task.id} worktree-lease-held abort (exception path); task already marked failed`)
             break
           case 'origin-terminal':
             log(`[implement] ${task.id} origin-terminal abort (exception path); Chore already dropped`)
