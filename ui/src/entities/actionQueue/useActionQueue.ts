@@ -7,6 +7,14 @@ interface State {
   items: ActionQueueItem[]
   error: Error | null
   /**
+   * True while the query's first fetch is still in flight (no cached data
+   * yet). Callers that render an empty-vs-error distinction from `items`
+   * and `error` alone conflate "still loading" with "genuinely empty" —
+   * this lets them show a loading state instead. Optional so existing
+   * mocks that predate this field keep compiling.
+   */
+  isPending?: boolean
+  /**
    * The error thrown by GET /api/projects, if the projects query failed.
    * null while loading or when projects loaded successfully.
    * When this is an ApiError with kind='stale-daemon', the UI server predates
@@ -45,6 +53,7 @@ export const useActionQueue = (): State => {
   return {
     items: query.data ?? [],
     error: (query.error as Error | null) ?? null,
+    isPending: enabled && query.isPending,
     projectsError,
     projectsEmpty,
   }

@@ -630,6 +630,26 @@ const UnreachableState = () => (
   </div>
 )
 
+/**
+ * Shown for the brief window between mount and the first successful (or
+ * failed) response. Without this, the page rendered `EmptyState` — "All
+ * quiet" — while the request was still in flight, which is the same
+ * false-empty failure mode as swallowing a fetch error: the operator reads
+ * a transient loading frame as "nothing to do".
+ */
+const LoadingState = () => (
+  <div
+    className="flex flex-col items-center justify-center py-24 text-center"
+    data-testid="triage-loading"
+    aria-busy="true"
+  >
+    <span className="mb-3 text-4xl text-muted-foreground opacity-30" aria-hidden="true">
+      ◌
+    </span>
+    <p className="font-mono text-label text-muted-foreground">Loading…</p>
+  </div>
+)
+
 const EmptyState = ({ running, doneToday }: EmptyStateProps) => (
   <div className="flex flex-col items-center justify-center py-24 text-center">
     <span
@@ -650,7 +670,7 @@ const EmptyState = ({ running, doneToday }: EmptyStateProps) => (
 // ── TriagePage ────────────────────────────────────────────────────────────────
 
 export const TriagePage = () => {
-  const { items, error: queueError } = useActionQueue()
+  const { items, error: queueError, isPending: queuePending } = useActionQueue()
   const { isDown } = useDaemonHealth()
   const { byCluster, aggregates } = useProgress()
   // Proposals is a third independent feed. Its error is surfaced as an inline
@@ -684,6 +704,11 @@ export const TriagePage = () => {
   // announced "All quiet".
   const hasAnyError = queueError !== null || proposalsError !== null
   const hasContent = renderedRows.length > 0 || hasAnyError
+  // The action-queue query's first fetch hasn't settled yet (no cached data,
+  // no error). Without this check the page fell through to EmptyState during
+  // that window and showed "All quiet" — indistinguishable from a genuinely
+  // clear queue, the same false-empty failure this page exists to avoid.
+  const isLoading = queuePending === true && !hasContent && !isDown
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
@@ -716,6 +741,8 @@ export const TriagePage = () => {
       <div className="flex-1 overflow-y-auto">
         {isDown && renderedRows.length === 0 ? (
           <UnreachableState />
+        ) : isLoading ? (
+          <LoadingState />
         ) : !hasContent ? (
           <EmptyState running={running} doneToday={doneToday} />
         ) : (

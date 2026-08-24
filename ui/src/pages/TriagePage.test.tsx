@@ -70,8 +70,13 @@ vi.mock('@/shared/useFocusedProject', () => ({
 
 const mockItems = vi.fn<[], ActionQueueItem[]>().mockReturnValue([])
 const mockQueueError = vi.fn<[], Error | null>().mockReturnValue(null)
+const mockQueuePending = vi.fn<[], boolean>().mockReturnValue(false)
 vi.mock('@/entities/actionQueue/useActionQueue', () => ({
-  useActionQueue: () => ({ items: mockItems(), error: mockQueueError() }),
+  useActionQueue: () => ({
+    items: mockItems(),
+    error: mockQueueError(),
+    isPending: mockQueuePending(),
+  }),
 }))
 
 const mockProposalsError = vi.fn<[], string | null>().mockReturnValue(null)
@@ -161,6 +166,7 @@ afterEach(() => {
   vi.clearAllMocks()
   mockItems.mockReturnValue([])
   mockQueueError.mockReturnValue(null)
+  mockQueuePending.mockReturnValue(false)
   mockProposalsError.mockReturnValue(null)
   mockFocusedProjectId.mockReturnValue(null)
   window.location.hash = ''
@@ -817,6 +823,43 @@ describe('TriageRow – Chat control opens a thread and navigates', () => {
     const errorEl = container.querySelector('[data-testid="triage-error"]')
     expect(errorEl).not.toBeNull()
     expect(errorEl?.textContent).toContain('Daemon unreachable')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Loading state — the first fetch in flight must render as "loading", never
+// as "All quiet". Before this, an empty `items` array during the initial
+// request was indistinguishable from a genuinely settled empty queue.
+// ---------------------------------------------------------------------------
+
+describe('TriagePage – first fetch still pending', () => {
+  beforeEach(() => {
+    mockItems.mockReturnValue([])
+    mockQueueError.mockReturnValue(null)
+    mockQueuePending.mockReturnValue(true)
+  })
+
+  it('renders the loading state, not "All quiet"', () => {
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-loading"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('All quiet')
+  })
+
+  it('yields to the error card once the fetch settles with an error', () => {
+    mockQueuePending.mockReturnValue(false)
+    mockQueueError.mockReturnValue(new Error('Cannot reach daemon'))
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-loading"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-feed-error-action-queue"]')).not.toBeNull()
+  })
+
+  it('yields to rendered rows once items arrive, even if isPending lags', () => {
+    // Belt-and-suspenders: real items in hand must win over a stale pending
+    // flag rather than hiding already-fetched content behind a spinner.
+    mockItems.mockReturnValue([makeItem('failed')])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-loading"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-continue"]')).not.toBeNull()
   })
 })
 
