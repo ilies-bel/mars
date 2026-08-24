@@ -70,6 +70,30 @@ describe('ensureSchema', () => {
     expect(r.rows).toEqual([{ version: SCHEMA_VERSION }])
   })
 
+  it('takes fast path when schema is already at version (skips DDL, preserves data)', async () => {
+    const c = await freshSchemaClient()
+
+    // Insert a sentinel task to prove DDL is not re-run (which would be fine
+    // since all DDL is IF NOT EXISTS, but this confirms the table stays intact).
+    await c.execute(
+      `INSERT INTO tasks (id, prompt, status, merge_mode, created_at, updated_at)
+       VALUES ('sentinel', 'fast-path probe', 'queued', 'auto', now(), now())`,
+    )
+
+    // Second ensureSchema call should take the fast path (schema already at
+    // SCHEMA_VERSION) and leave the sentinel row intact.
+    await ensureSchema(c)
+
+    const rows = await c.execute(`SELECT id FROM tasks WHERE id = 'sentinel'`)
+    expect(rows.rows).toEqual([{ id: 'sentinel' }])
+
+    // schema_migrations still has exactly one version row.
+    const migRows = await c.execute('SELECT version FROM schema_migrations')
+    expect(migRows.rows).toEqual([{ version: SCHEMA_VERSION }])
+
+    await c.close()
+  })
+
   it('renames the legacy merge-gate column and maps its retired value in place', async () => {
     const c = await freshSchemaClient()
     try {
@@ -81,6 +105,10 @@ describe('ensureSchema', () => {
         },
       ])
 
+      // Simulate upgrading from the previous schema version: remove the current
+      // version record so ensureSchema sees "not yet at SCHEMA_VERSION" and
+      // replays the full DDL (which contains the conditional rename migration).
+      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [SCHEMA_VERSION])
       await ensureSchema(c)
 
       const columns = await columnsOf(c, 'tasks')
@@ -303,6 +331,10 @@ describe('ensureSchema', () => {
         },
       ])
 
+      // Simulate upgrading from the previous schema version: remove the version
+      // record so ensureSchema replays the full DDL (which contains the fold
+      // migration for evaporated_at).
+      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [SCHEMA_VERSION])
       await expect(ensureSchema(c)).resolves.toBeUndefined()
 
       const columns = await columnsOf(c, 'chat_threads')
@@ -340,11 +372,17 @@ describe('ensureSchema', () => {
         },
       ])
 
+      // Simulate upgrading from the previous schema version: remove the version
+      // record so ensureSchema replays the full DDL (which contains the
+      // conflict-detecting migration for evaporated_at).
+      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [SCHEMA_VERSION])
       // The refusal is loud and names the ambiguity rather than picking a
       // winner. The DDL batch is one transaction, so nothing is half-applied:
       // the operator reconciles the two columns by hand and boots again.
       await expect(ensureSchema(c)).rejects.toThrow(/different timestamps/)
       // And it stays a refusal on every retry rather than eroding into a drop.
+      // (Each retry also needs the version row absent to force full DDL.)
+      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [SCHEMA_VERSION])
       await expect(ensureSchema(c)).rejects.toThrow(/different timestamps/)
     } finally {
       await c.close()
@@ -437,6 +475,10 @@ describe('ensureSchema', () => {
        VALUES ('legacy-rejected', 'rejected', 1, 1)`,
     )
 
+    // Simulate upgrading from the previous schema version: remove the version
+    // record so ensureSchema replays the full DDL (which contains the
+    // rejected → dismissed normalization UPDATE).
+    await c.execute('DELETE FROM schema_migrations WHERE version = ?', [SCHEMA_VERSION])
     await ensureSchema(c)
 
     const r = await c.execute(`SELECT status FROM proposals WHERE id = 'legacy-rejected'`)
@@ -893,6 +935,10 @@ describe('ensureSchema', () => {
         },
       ])
 
+      // Simulate upgrading from the previous schema version: remove the version
+      // record so ensureSchema replays the full DDL (which contains the
+      // timestamp-type migration for task_progress and task_transcripts).
+      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [SCHEMA_VERSION])
       await ensureSchema(c)
 
       expect((await c.execute(`SELECT created_at FROM task_progress WHERE id = 'legacy-progress'`)).rows[0].created_at).toBe(1234)

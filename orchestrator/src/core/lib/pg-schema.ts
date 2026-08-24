@@ -2374,16 +2374,51 @@ export async function ensureSchema(client: DbClient): Promise<void> {
     return
   }
   const runConditionKindPurge = !conditionKindPurgeDone.has(client)
-  await __execSchemaBatch(client, [
-    // Serialize concurrent callers: DDL takes AccessExclusiveLock on
-    // `tasks`, so two interleaved ensureSchema batches deadlock. This
-    // advisory lock makes the second caller wait until the first commits.
-    // pg_advisory_xact_lock auto-releases on COMMIT/ROLLBACK.
-    { sql: 'SELECT pg_advisory_xact_lock(?)', args: [SCHEMA_ADVISORY_LOCK_KEY] },
-    ...DDL,
-    ...(runConditionKindPurge ? CONDITION_KIND_PURGE_ONCE : []),
-    ...schemaSeedStatements(new Date().toISOString()),
-  ])
+
+  // Fast path: if schema_migrations already records SCHEMA_VERSION, skip
+  // replaying the entire DDL array (~200 idempotent `CREATE TABLE IF NOT
+  // EXISTS` / `ALTER TABLE ADD COLUMN IF NOT EXISTS` statements). Each of
+  // those statements is correct but costs a round-trip to Postgres on every
+  // daemon boot for no effect once the schema is current.
+  //
+  // First-boot case: schema_migrations does not exist yet, so the SELECT
+  // throws "relation does not exist". We catch that and fall through to the
+  // full DDL path below.
+  //
+  // The fast path still runs the condition-kind purge (once per process per
+  // client) and the idempotent seed statements — their semantics are
+  // boot-time, not schema-version-time.
+  let skipDdl = false
+  try {
+    const { rows } = await client.execute(
+      'SELECT 1 FROM schema_migrations WHERE version = ?',
+      [SCHEMA_VERSION],
+    )
+    skipDdl = rows.length > 0
+  } catch {
+    // schema_migrations does not exist yet — first boot; run full DDL below.
+  }
+
+  if (skipDdl) {
+    // Schema is already at SCHEMA_VERSION. No advisory lock needed — none of
+    // these statements take an AccessExclusiveLock on `tasks`.
+    await __execSchemaBatch(client, [
+      ...(runConditionKindPurge ? CONDITION_KIND_PURGE_ONCE : []),
+      ...schemaSeedStatements(new Date().toISOString()),
+    ])
+  } else {
+    await __execSchemaBatch(client, [
+      // Serialize concurrent callers: DDL takes AccessExclusiveLock on
+      // `tasks`, so two interleaved ensureSchema batches deadlock. This
+      // advisory lock makes the second caller wait until the first commits.
+      // pg_advisory_xact_lock auto-releases on COMMIT/ROLLBACK.
+      { sql: 'SELECT pg_advisory_xact_lock(?)', args: [SCHEMA_ADVISORY_LOCK_KEY] },
+      ...DDL,
+      ...(runConditionKindPurge ? CONDITION_KIND_PURGE_ONCE : []),
+      ...schemaSeedStatements(new Date().toISOString()),
+    ])
+  }
+
   // Only record success once the batch has actually committed — a failed
   // ensureSchema call (e.g. advisory-lock timeout) must not mark the purge
   // as done, or a legitimate retry would silently skip it forever.
