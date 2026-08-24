@@ -44,12 +44,11 @@ const loadModules = async (repo: string) => {
   const queue = await import('../../queue')
   await queue.migrateQueueSchema()
   const mainDirty = await import('../../lib/main-dirty')
-  const { nullTraceStore } = await import('../../lib/run-tool')
   const { RECONCILERS } = await import('../reconcilers')
   const reconciler = RECONCILERS.find(
     (r) => r.name === 'failed-committer-action-queue',
   )
-  return { queue, mainDirty, nullTraceStore, reconciler }
+  return { queue, mainDirty, reconciler }
 }
 
 describe('failed-committer-action-queue reconciler', () => {
@@ -70,7 +69,7 @@ describe('failed-committer-action-queue reconciler', () => {
   })
 
   it('keeps every dependent blocked and restores one aggregated alert when main is clean', async () => {
-    const { queue, mainDirty, nullTraceStore, reconciler } = await loadModules(repo)
+    const { queue, mainDirty, reconciler } = await loadModules(repo)
 
     const src1 = await queue.enqueueTask('recon-one', undefined, { skipTriage: true })
     const src2 = await queue.enqueueTask('recon-two', undefined, { skipTriage: true })
@@ -82,7 +81,6 @@ describe('failed-committer-action-queue reconciler', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     await mainDirty.spawnOrAttachMainCommitter({
       sourceTaskId: src2.id,
@@ -91,7 +89,6 @@ describe('failed-committer-action-queue reconciler', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
 
     // Committer fails. Startup must preserve the parked cohort rather than
@@ -119,7 +116,7 @@ describe('failed-committer-action-queue reconciler', () => {
   })
 
   it('keeps dependents blocked while main is still dirty', async () => {
-    const { queue, mainDirty, nullTraceStore, reconciler } = await loadModules(repo)
+    const { queue, mainDirty, reconciler } = await loadModules(repo)
 
     const src = await queue.enqueueTask('dirty-recon', undefined, { skipTriage: true })
     const res = await mainDirty.spawnOrAttachMainCommitter({
@@ -129,7 +126,6 @@ describe('failed-committer-action-queue reconciler', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src.id,
-      traceStore: nullTraceStore,
     })
     await queue.updateTask(res.fixTaskId, { status: 'failed', error: 'verify failed' })
 

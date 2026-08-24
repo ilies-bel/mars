@@ -556,7 +556,6 @@ export const review = async (
                 dispatchPhase: 'verify',
                 recipePrompt: recipe.prompt,
                 sourceOriginId: trace.originId,
-                traceStore: trace.traceStore,
                 store,
               })
               console.log(

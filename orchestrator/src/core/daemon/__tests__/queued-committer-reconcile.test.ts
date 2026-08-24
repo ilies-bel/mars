@@ -49,10 +49,9 @@ const loadModules = async (repo: string) => {
   const queue = await import('../../queue')
   await queue.migrateQueueSchema()
   const mainDirty = await import('../../lib/main-dirty')
-  const { nullTraceStore } = await import('../../lib/run-tool')
   const { RECONCILERS } = await import('../reconcilers')
   const reconciler = RECONCILERS.find((r) => r.name === 'queued-committer-reseed')
-  return { queue, mainDirty, nullTraceStore, reconciler }
+  return { queue, mainDirty, reconciler }
 }
 
 describe('queued-committer-reseed reconciler', () => {
@@ -73,7 +72,7 @@ describe('queued-committer-reseed reconciler', () => {
   })
 
   it('emits task.queued for a stale queued main-commiter with blocked dependents', async () => {
-    const { queue, mainDirty, nullTraceStore, reconciler } = await loadModules(repo)
+    const { queue, mainDirty, reconciler } = await loadModules(repo)
 
     const src1 = await queue.enqueueTask('stale-src-one', undefined, { skipTriage: true })
     const src2 = await queue.enqueueTask('stale-src-two', undefined, { skipTriage: true })
@@ -86,7 +85,6 @@ describe('queued-committer-reseed reconciler', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     await mainDirty.spawnOrAttachMainCommitter({
       sourceTaskId: src2.id,
@@ -95,7 +93,6 @@ describe('queued-committer-reseed reconciler', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
 
     // Committer is still queued — the dispatch loop never picked it up.
@@ -122,7 +119,7 @@ describe('queued-committer-reseed reconciler', () => {
   })
 
   it('does NOT emit task.queued for a fresh queued committer (under threshold)', async () => {
-    const { queue, mainDirty, nullTraceStore, reconciler } = await loadModules(repo)
+    const { queue, mainDirty, reconciler } = await loadModules(repo)
 
     const src = await queue.enqueueTask('fresh-src', undefined, { skipTriage: true })
     const res = await mainDirty.spawnOrAttachMainCommitter({
@@ -132,7 +129,6 @@ describe('queued-committer-reseed reconciler', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src.id,
-      traceStore: nullTraceStore,
     })
 
     // Leave updated_at at the default (just now) — under the 15-min threshold.

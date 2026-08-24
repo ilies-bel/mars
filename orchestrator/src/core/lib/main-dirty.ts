@@ -680,8 +680,6 @@ export interface SpawnOrAttachInput {
   recipePrompt: string
   /** Origin id of the source, so the recovery row inherits it. */
   sourceOriginId: string
-  /** Trace event store for step spans and diagnostic trace kinds. */
-  traceStore: TraceEventStore
   store?: TaskStore
 }
 

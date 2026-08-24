@@ -156,7 +156,6 @@ describe('spawnOrAttachMainCommitter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'fake prompt body',
       sourceOriginId: src.id,
-      traceStore: nullTraceStore,
     })
     expect(resolution.spawned).toBe(true)
     expect(resolution.fixTaskId).toMatch(/^fix-[0-9a-f]{8}$/)
@@ -218,7 +217,6 @@ describe('spawnOrAttachMainCommitter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     expect(first.spawned).toBe(true)
 
@@ -229,7 +227,6 @@ describe('spawnOrAttachMainCommitter', () => {
       dispatchPhase: 'verify',
       recipePrompt: 'p',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
     expect(second.spawned).toBe(false)
     expect(second.fixTaskId).toBe(first.fixTaskId)
@@ -280,7 +277,6 @@ describe('spawnOrAttachMainCommitter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     expect(first.spawned).toBe(true)
 
@@ -292,7 +288,6 @@ describe('spawnOrAttachMainCommitter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
     expect(second.spawned).toBe(true)
     expect(second.fixTaskId).not.toBe(first.fixTaskId)
@@ -325,7 +320,6 @@ describe('spawnOrAttachMainCommitter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     await queue.updateTask(first.fixTaskId, {
       status: 'failed',
@@ -339,7 +333,6 @@ describe('spawnOrAttachMainCommitter', () => {
       dispatchPhase: 'verify',
       recipePrompt: 'p',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
     // Must spawn fresh — never block behind a failed (dead) committer.
     expect(second.spawned).toBe(true)
@@ -372,7 +365,6 @@ describe('spawnOrAttachMainCommitter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     await queue.updateTask(first.fixTaskId, { status: 'done' })
 
@@ -383,7 +375,6 @@ describe('spawnOrAttachMainCommitter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
     // Done committer does NOT satisfy dedup → fresh committer spawned.
     expect(second.spawned).toBe(true)
@@ -433,7 +424,6 @@ describe('spawnOrAttachMainCommitter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     expect(first.spawned).toBe(true)
     await queue.updateTask(first.fixTaskId, { status: 'done' })
@@ -462,7 +452,6 @@ describe('spawnOrAttachMainCommitter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
     // Done committer never satisfies dedup → fresh spawn regardless of HEAD.
     expect(second.spawned).toBe(true)
@@ -521,7 +510,6 @@ describe('spawnOrAttachMainCommitter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
     expect(second.spawned).toBe(true)
     const committer2 = second.fixTaskId
@@ -582,7 +570,6 @@ describe('spawnOrAttachMainCommitter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     expect(first.spawned).toBe(true)
     // The committer is still ACTIVE (not done, not failed) — it's running.
@@ -609,7 +596,6 @@ describe('spawnOrAttachMainCommitter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
     // MUST attach to the still-active committer — NOT spawn a fresh one.
     expect(second.spawned).toBe(false)
@@ -664,7 +650,6 @@ describe('spawnOrAttachMainCommitter with dispatchPhase merge', () => {
       dispatchPhase: 'merge',
       recipePrompt: 'merge-phase committer prompt',
       sourceOriginId: src.id,
-      traceStore: nullTraceStore,
     })
 
     expect(resolution.spawned).toBe(true)
@@ -711,7 +696,6 @@ describe('spawnOrAttachMainCommitter with dispatchPhase merge', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     expect(first.spawned).toBe(true)
 
@@ -723,7 +707,6 @@ describe('spawnOrAttachMainCommitter with dispatchPhase merge', () => {
       dispatchPhase: 'merge',
       recipePrompt: 'p',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
     expect(second.spawned).toBe(false)
     expect(second.fixTaskId).toBe(first.fixTaskId)
@@ -761,7 +744,6 @@ describe('attachToExistingFixTask preserves the ADR-0040 leaf invariant', () => 
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src.id,
-      traceStore: nullTraceStore,
     })
     // Add another source to act as a would-be edge target.
     const other = await queue.enqueueTask('other', undefined, {
@@ -860,7 +842,6 @@ describe('main-committer verify: integration-clean check', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     expect(first.spawned).toBe(true)
 
@@ -874,7 +855,6 @@ describe('main-committer verify: integration-clean check', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
 
     // Must spawn fresh — done committer never absorbs new detections.

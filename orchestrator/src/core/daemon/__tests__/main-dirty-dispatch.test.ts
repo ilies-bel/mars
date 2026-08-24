@@ -133,7 +133,6 @@ describe('runMainDirtyDispatchCheck', () => {
         dispatchPhase: 'dispatch',
         recipePrompt: 'fake prompt',
         sourceOriginId: seedTask.id,
-        traceStore: nullTraceStore,
       })
       expect(committerRes.spawned).toBe(true)
 

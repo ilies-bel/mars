@@ -58,7 +58,6 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
   let repo: string
   let queue: typeof import('../../queue')
   let spawnOrAttachMainCommitter: typeof import('../../lib/main-dirty').spawnOrAttachMainCommitter
-  let nullTraceStore: typeof import('../../lib/run-tool').nullTraceStore
   let raiseAggregatedMainCommiterFailureRow: typeof import('../main-dirty-action-queue').raiseAggregatedMainCommiterFailureRow
   let actionQueue: typeof import('../../lib/action-queue')
 
@@ -69,9 +68,7 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
     queue = await import('../../queue')
     await queue.migrateQueueSchema()
     const m = await import('../../lib/main-dirty')
-    const r = await import('../../lib/run-tool')
     spawnOrAttachMainCommitter = m.spawnOrAttachMainCommitter
-    nullTraceStore = r.nullTraceStore
     raiseAggregatedMainCommiterFailureRow = (
       await import('../main-dirty-action-queue')
     ).raiseAggregatedMainCommiterFailureRow
@@ -103,7 +100,6 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     await spawnOrAttachMainCommitter({
       sourceTaskId: src2.id,
@@ -112,7 +108,6 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
       dispatchPhase: 'verify',
       recipePrompt: 'p',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
 
     const actionQueueItemId = await raiseAggregatedMainCommiterFailureRow(
@@ -141,7 +136,6 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src.id,
-      traceStore: nullTraceStore,
     })
     // Simulate the dependent being unblocked by another path: drop the edge.
     const c = queue.resolveQueueClient()
@@ -164,7 +158,6 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
   let repo: string
   let queue: typeof import('../../queue')
   let spawnOrAttachMainCommitter: typeof import('../../lib/main-dirty').spawnOrAttachMainCommitter
-  let nullTraceStore: typeof import('../../lib/run-tool').nullTraceStore
   let raiseAggregatedMainCommiterFailureRow: typeof import('../main-dirty-action-queue').raiseAggregatedMainCommiterFailureRow
   let sweepStaleFailedMainCommiterActionQueue: typeof import('../main-dirty-action-queue').sweepStaleFailedMainCommiterActionQueue
   let actionQueue: typeof import('../../lib/action-queue')
@@ -176,9 +169,7 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
     queue = await import('../../queue')
     await queue.migrateQueueSchema()
     const m = await import('../../lib/main-dirty')
-    const r = await import('../../lib/run-tool')
     spawnOrAttachMainCommitter = m.spawnOrAttachMainCommitter
-    nullTraceStore = r.nullTraceStore
     const mainDirtyActionQueue = await import('../main-dirty-action-queue')
     raiseAggregatedMainCommiterFailureRow = mainDirtyActionQueue.raiseAggregatedMainCommiterFailureRow
     sweepStaleFailedMainCommiterActionQueue = mainDirtyActionQueue.sweepStaleFailedMainCommiterActionQueue
@@ -204,7 +195,6 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     await queue.updateTask(old1.fixTaskId, { status: 'failed', error: 'first committer failed' })
     const oldId1 = await raiseAggregatedMainCommiterFailureRow(old1.fixTaskId, noopLog)
@@ -219,7 +209,6 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
     await queue.updateTask(old2.fixTaskId, { status: 'failed', error: 'second committer failed' })
     const oldId2 = await raiseAggregatedMainCommiterFailureRow(old2.fixTaskId, noopLog)
@@ -234,7 +223,6 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src3.id,
-      traceStore: nullTraceStore,
     })
 
     await sweepStaleFailedMainCommiterActionQueue('main', fresh.fixTaskId, noopLog)
@@ -255,7 +243,6 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: releaseSrc.id,
-      traceStore: nullTraceStore,
     })
     await queue.updateTask(releaseCommitter.fixTaskId, { status: 'failed', error: 'release committer failed' })
     const releaseActionQueueId = await raiseAggregatedMainCommiterFailureRow(
@@ -273,7 +260,6 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: mainSrc.id,
-      traceStore: nullTraceStore,
     })
 
     // Sweep only main — must not touch the release-2026-01 row.
@@ -342,11 +328,7 @@ describe('failed main-committer source cohort', () => {
   it('keeps every source blocked and raises one deduplicated cohort action when a running committer fails on clean main', async () => {
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
-      const m = await import('../../lib/main-dirty')
-      const r = await import('../../lib/run-tool')
-      return { ...m, nullTraceStore: r.nullTraceStore }
-    })()
+    const { spawnOrAttachMainCommitter } = await import('../../lib/main-dirty')
 
     const src1 = await queue.enqueueTask('task-one', undefined, { skipTriage: true })
     const src2 = await queue.enqueueTask('task-two', undefined, { skipTriage: true })
@@ -359,7 +341,6 @@ describe('failed main-committer source cohort', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit the mess',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     await spawnOrAttachMainCommitter({
       sourceTaskId: src2.id,
@@ -368,7 +349,6 @@ describe('failed main-committer source cohort', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit the mess',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
 
     // Both tasks are now blocked on the committer.
@@ -499,11 +479,7 @@ describe('failed main-committer source cohort', () => {
   it('leaves a task blocked when other active blockers remain', async () => {
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
-      const m = await import('../../lib/main-dirty')
-      const r = await import('../../lib/run-tool')
-      return { ...m, nullTraceStore: r.nullTraceStore }
-    })()
+    const { spawnOrAttachMainCommitter } = await import('../../lib/main-dirty')
 
     // One task blocked on the committer AND an independent prerequisite.
     const src = await queue.enqueueTask('depends-on-two', undefined, { skipTriage: true })
@@ -516,7 +492,6 @@ describe('failed main-committer source cohort', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: src.id,
-      traceStore: nullTraceStore,
     })
     // Add a second blocker directly.
     const c = queue.resolveQueueClient()
@@ -553,11 +528,7 @@ describe('failed main-committer source cohort', () => {
     // A failed committer must not poison-pill fresh tasks at dispatch time.
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
-      const m = await import('../../lib/main-dirty')
-      const r = await import('../../lib/run-tool')
-      return { ...m, nullTraceStore: r.nullTraceStore }
-    })()
+    const { spawnOrAttachMainCommitter } = await import('../../lib/main-dirty')
 
     const detection = { dirty: true as const, statusOutput: '' }
 
@@ -570,7 +541,6 @@ describe('failed main-committer source cohort', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: t1.id,
-      traceStore: nullTraceStore,
     })
 
     // C1 fails.
@@ -585,7 +555,6 @@ describe('failed main-committer source cohort', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
       sourceOriginId: t2.id,
-      traceStore: nullTraceStore,
     })
 
     // T2 must NOT be blocked on the failed committer C1.
@@ -608,11 +577,7 @@ describe('failed main-committer source cohort', () => {
   it('keeps dependents blocked after committer failure regardless of checkout dirt', async () => {
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
-      const m = await import('../../lib/main-dirty')
-      const r = await import('../../lib/run-tool')
-      return { ...m, nullTraceStore: r.nullTraceStore }
-    })()
+    const { spawnOrAttachMainCommitter } = await import('../../lib/main-dirty')
 
     const src = await queue.enqueueTask('task-waiting-on-dirty-main', undefined, { skipTriage: true })
     const detection = { dirty: true as const, statusOutput: 'M leftover.ts' }
@@ -623,7 +588,6 @@ describe('failed main-committer source cohort', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit leftover',
       sourceOriginId: src.id,
-      traceStore: nullTraceStore,
     })
 
     expect((await queue.getTask(src.id))?.status).toBe('blocked')
@@ -666,7 +630,6 @@ describe('main-committer done: source task re-queued, not marked done (mars-4d66
   let repo: string
   let queue: typeof import('../../queue')
   let spawnOrAttachMainCommitter: typeof import('../../lib/main-dirty').spawnOrAttachMainCommitter
-  let nullTraceStore: typeof import('../../lib/run-tool').nullTraceStore
   let RECONCILERS: typeof import('../reconcilers').RECONCILERS
 
   beforeAll(async () => {
@@ -678,9 +641,7 @@ describe('main-committer done: source task re-queued, not marked done (mars-4d66
     queue = await import('../../queue')
     await queue.migrateQueueSchema()
     const m = await import('../../lib/main-dirty')
-    const r = await import('../../lib/run-tool')
     spawnOrAttachMainCommitter = m.spawnOrAttachMainCommitter
-    nullTraceStore = r.nullTraceStore
     RECONCILERS = (await import('../reconcilers')).RECONCILERS
   })
 
@@ -704,7 +665,6 @@ describe('main-committer done: source task re-queued, not marked done (mars-4d66
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit the dirty files',
       sourceOriginId: src.id,
-      traceStore: nullTraceStore,
     })
     expect((await queue.getTask(src.id))?.status).toBe('blocked')
 
@@ -746,7 +706,6 @@ describe('main-committer done: source task re-queued, not marked done (mars-4d66
       dispatchPhase: 'dispatch',
       recipePrompt: 'clean the branch',
       sourceOriginId: src.id,
-      traceStore: nullTraceStore,
     })
 
     // Committer completes

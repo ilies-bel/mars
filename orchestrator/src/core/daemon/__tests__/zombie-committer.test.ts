@@ -68,8 +68,7 @@ const loadModules = async (repo: string) => {
   await queue.migrateQueueSchema()
   const mainDirty = await import('../../lib/main-dirty')
   const liveness = await import('../../lib/worker-liveness')
-  const { nullTraceStore } = await import('../../lib/run-tool')
-  return { queue, mainDirty, liveness, nullTraceStore }
+  return { queue, mainDirty, liveness }
 }
 
 /** Detection payload every call site passes once the branch is known dirty. */
@@ -93,7 +92,7 @@ describe('zombie main-commiter', () => {
   // ── the boot reap has no committer carve-out ─────────────────────────────
 
   it('requeue-stale-running reaps a running main-commiter like any other task', async () => {
-    const { queue, mainDirty, nullTraceStore } = await loadModules(repo)
+    const { queue, mainDirty } = await loadModules(repo)
     const { RECONCILERS } = await import('../reconcilers')
 
     const src = await queue.enqueueTask('carve-out-src', undefined, { skipTriage: true })
@@ -104,7 +103,6 @@ describe('zombie main-commiter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src.id,
-      traceStore: nullTraceStore,
     })
     await queue.updateTask(fixTaskId, { status: 'running' })
 
@@ -125,7 +123,7 @@ describe('zombie main-commiter', () => {
   // ── the attach path ──────────────────────────────────────────────────────
 
   it('does not park behind a committer whose worker is gone; reaps and replaces it', async () => {
-    const { queue, mainDirty, liveness, nullTraceStore } = await loadModules(repo)
+    const { queue, mainDirty, liveness } = await loadModules(repo)
 
     // First source spawns the committer and parks behind it.
     const src1 = await queue.enqueueTask('zombie-src-one', undefined, { skipTriage: true })
@@ -136,7 +134,6 @@ describe('zombie main-commiter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     expect(first.spawned).toBe(true)
     expect((await queue.getTask(src1.id))?.status).toBe('blocked')
@@ -163,7 +160,6 @@ describe('zombie main-commiter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
 
     // A fresh committer took over instead of a second corpse-attachment.
@@ -189,7 +185,7 @@ describe('zombie main-commiter', () => {
   })
 
   it('still attaches to a genuinely alive committer and keeps serialising dependents', async () => {
-    const { queue, mainDirty, liveness, nullTraceStore } = await loadModules(repo)
+    const { queue, mainDirty, liveness } = await loadModules(repo)
 
     const src1 = await queue.enqueueTask('alive-src-one', undefined, { skipTriage: true })
     const first = await mainDirty.spawnOrAttachMainCommitter({
@@ -199,7 +195,6 @@ describe('zombie main-commiter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     await queue.updateTask(first.fixTaskId, { status: 'running' })
 
@@ -222,7 +217,6 @@ describe('zombie main-commiter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
 
     // Attached, not replaced: one committer per dirty branch is the point.
@@ -238,7 +232,7 @@ describe('zombie main-commiter', () => {
   })
 
   it('attaches when liveness is unknown (no daemon installed the probe)', async () => {
-    const { queue, mainDirty, nullTraceStore } = await loadModules(repo)
+    const { queue, mainDirty } = await loadModules(repo)
 
     const src1 = await queue.enqueueTask('unknown-src-one', undefined, { skipTriage: true })
     const first = await mainDirty.spawnOrAttachMainCommitter({
@@ -248,7 +242,6 @@ describe('zombie main-commiter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     await queue.updateTask(first.fixTaskId, { status: 'running' })
     await queue.resolveQueueClient().execute({
@@ -266,7 +259,6 @@ describe('zombie main-commiter', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src2.id,
-      traceStore: nullTraceStore,
     })
     expect(second.spawned).toBe(false)
     expect(second.fixTaskId).toBe(first.fixTaskId)

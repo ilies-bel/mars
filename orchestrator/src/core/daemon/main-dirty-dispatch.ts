@@ -281,7 +281,6 @@ export const runMainDirtyDispatchCheck = async (
     dispatchPhase: 'dispatch',
     recipePrompt: recipe.prompt,
     sourceOriginId: originId,
-    traceStore,
   })
   log(
     `[main-dirty] dispatch-time: task ${task.id} parked blocked on main-commiter ${resolution.fixTaskId} (${

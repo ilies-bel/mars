@@ -86,7 +86,6 @@ describe('committer liveness', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src.id,
-      traceStore: nullTraceStore,
     })
 
     expect((await queue.getTask(fixTaskId))?.status).toBe('queued')
@@ -116,7 +115,6 @@ describe('committer liveness', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src.id,
-      traceStore: nullTraceStore,
     })
 
     expect((await queue.getTask(src.id))?.status).toBe('blocked')
@@ -154,7 +152,6 @@ describe('committer liveness', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src.id,
-      traceStore: nullTraceStore,
     })
 
     // Branch is dirty — the committer should NOT be settled.
@@ -186,7 +183,6 @@ describe('committer liveness', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src.id,
-      traceStore: nullTraceStore,
     })
 
     // Transition the committer to `running` (simulating an in-flight agent).

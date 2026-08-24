@@ -61,7 +61,6 @@ describe('branch-keyed main-committer singleton (ADR-0071)', () => {
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
     const mainDirty = await import('../../lib/main-dirty')
-    const { nullTraceStore } = await import('../../lib/run-tool')
 
     const N = 6
     const DIRTY = { dirty: true as const, statusOutput: ' M src/thing.ts\n' }
@@ -83,7 +82,6 @@ describe('branch-keyed main-committer singleton (ADR-0071)', () => {
           dispatchPhase: 'dispatch',
           recipePrompt: 'commit',
           sourceOriginId: src.id,
-          traceStore: nullTraceStore,
         }),
       ),
     )
@@ -141,7 +139,6 @@ describe('branch-keyed main-committer singleton (ADR-0071)', () => {
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
     const mainDirty = await import('../../lib/main-dirty')
-    const { nullTraceStore } = await import('../../lib/run-tool')
 
     const DIRTY = { dirty: true as const, statusOutput: ' M src/thing.ts\n' }
     const BRANCHES = ['main', 'staging']
@@ -161,7 +158,6 @@ describe('branch-keyed main-committer singleton (ADR-0071)', () => {
           dispatchPhase: 'dispatch',
           recipePrompt: 'commit',
           sourceOriginId: src.id,
-          traceStore: nullTraceStore,
         }),
       ),
     )
@@ -201,7 +197,6 @@ describe('branch-keyed main-committer singleton (ADR-0071)', () => {
     await queue.migrateQueueSchema()
     const mainDirty = await import('../../lib/main-dirty')
     const liveness = await import('../../lib/worker-liveness')
-    const { nullTraceStore } = await import('../../lib/run-tool')
 
     const DIRTY = { dirty: true as const, statusOutput: ' M src/thing.ts\n' }
 
@@ -214,7 +209,6 @@ describe('branch-keyed main-committer singleton (ADR-0071)', () => {
       dispatchPhase: 'dispatch',
       recipePrompt: 'commit',
       sourceOriginId: src1.id,
-      traceStore: nullTraceStore,
     })
     expect(first.spawned).toBe(true)
 
@@ -239,7 +233,6 @@ describe('branch-keyed main-committer singleton (ADR-0071)', () => {
         dispatchPhase: 'dispatch',
         recipePrompt: 'commit',
         sourceOriginId: src2.id,
-        traceStore: nullTraceStore,
       }),
       mainDirty.spawnOrAttachMainCommitter({
         sourceTaskId: src3.id,
@@ -248,7 +241,6 @@ describe('branch-keyed main-committer singleton (ADR-0071)', () => {
         dispatchPhase: 'dispatch',
         recipePrompt: 'commit',
         sourceOriginId: src3.id,
-        traceStore: nullTraceStore,
       }),
     ])
 
