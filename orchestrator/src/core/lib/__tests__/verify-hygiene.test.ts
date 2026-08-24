@@ -6,14 +6,17 @@ vi.mock('node:fs/promises', () => ({
   stat: vi.fn(),
 }))
 
-vi.mock('../git/internal', () => ({
-  exec: vi.fn(),
-  resolveGitBin: vi.fn(),
+// The module under test reaches git only through the Vcs Port, so the Port is
+// the boundary this suite stubs.
+const currentBranch = vi.fn<() => Promise<string | null>>()
+const gitPath = vi.fn<(spec: { name: string }) => Promise<string>>()
+
+vi.mock('../../ports/vcs/registry', () => ({
+  resolveVcs: () => ({ currentBranch, gitPath }),
 }))
 
 import { assertWorktreeHygieneForVerify } from '../verify'
 import { stat } from 'node:fs/promises'
-import { exec, resolveGitBin } from '../git/internal'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -30,23 +33,14 @@ const enoent = (): Error =>
 const fakeStats = (isDir = false): Stats =>
   ({ isDirectory: () => isDir }) as unknown as Stats
 
-// exec implementation for a healthy worktree on the expected branch.
-const healthyExec = (_git: string, args: readonly string[]) => {
-  if (args.includes('--abbrev-ref')) {
-    return Promise.resolve({ stdout: BRANCH + '\n', stderr: '' })
-  }
-  if (args.includes('rebase-merge')) {
-    return Promise.resolve({ stdout: REBASE_MERGE + '\n', stderr: '' })
-  }
-  if (args.includes('rebase-apply')) {
-    return Promise.resolve({ stdout: REBASE_APPLY + '\n', stderr: '' })
-  }
-  return Promise.resolve({ stdout: '', stderr: '' })
-}
-
 beforeEach(() => {
   vi.resetAllMocks()
-  vi.mocked(resolveGitBin).mockReturnValue('/usr/bin/git')
+  // Default: a healthy worktree sitting on the expected branch. Individual
+  // tests override `currentBranch` to describe drift.
+  currentBranch.mockResolvedValue(BRANCH)
+  gitPath.mockImplementation(({ name }) =>
+    Promise.resolve(name === 'rebase-merge' ? REBASE_MERGE : REBASE_APPLY),
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -75,12 +69,7 @@ describe('assertWorktreeHygieneForVerify', () => {
   describe('branch drift', () => {
     it('throws with branch-drift sentinel when a different branch is checked out', async () => {
       vi.mocked(stat).mockResolvedValue(fakeStats())
-      vi.mocked(exec).mockImplementation((_git, args) => {
-        if (args.includes('--abbrev-ref')) {
-          return Promise.resolve({ stdout: 'some-other-branch\n', stderr: '' })
-        }
-        return Promise.resolve({ stdout: '', stderr: '' })
-      })
+      currentBranch.mockResolvedValue('some-other-branch')
 
       await expect(
         assertWorktreeHygieneForVerify(WORKTREE, BRANCH),
@@ -91,12 +80,7 @@ describe('assertWorktreeHygieneForVerify', () => {
 
     it('includes drift line with observed=wrong-branch:<name>', async () => {
       vi.mocked(stat).mockResolvedValue(fakeStats())
-      vi.mocked(exec).mockImplementation((_git, args) => {
-        if (args.includes('--abbrev-ref')) {
-          return Promise.resolve({ stdout: 'some-other-branch\n', stderr: '' })
-        }
-        return Promise.resolve({ stdout: '', stderr: '' })
-      })
+      currentBranch.mockResolvedValue('some-other-branch')
 
       await expect(
         assertWorktreeHygieneForVerify(WORKTREE, BRANCH),
@@ -113,8 +97,6 @@ describe('assertWorktreeHygieneForVerify', () => {
       // Second stat call: rebase-merge dir exists as a directory.
       vi.mocked(stat).mockResolvedValueOnce(fakeStats(true))
 
-      vi.mocked(exec).mockImplementation(healthyExec)
-
       await expect(
         assertWorktreeHygieneForVerify(WORKTREE, BRANCH),
       ).rejects.toThrow(`verify hygiene: stale rebase state present at ${REBASE_MERGE}`)
@@ -123,7 +105,6 @@ describe('assertWorktreeHygieneForVerify', () => {
     it('includes drift line with observed=stale-rebase-state', async () => {
       vi.mocked(stat).mockResolvedValueOnce(fakeStats())
       vi.mocked(stat).mockResolvedValueOnce(fakeStats(true))
-      vi.mocked(exec).mockImplementation(healthyExec)
 
       await expect(
         assertWorktreeHygieneForVerify(WORKTREE, BRANCH),
@@ -136,8 +117,6 @@ describe('assertWorktreeHygieneForVerify', () => {
       vi.mocked(stat).mockRejectedValueOnce(enoent())
       // rebase-apply: present
       vi.mocked(stat).mockResolvedValueOnce(fakeStats(true))
-
-      vi.mocked(exec).mockImplementation(healthyExec)
 
       await expect(
         assertWorktreeHygieneForVerify(WORKTREE, BRANCH),
@@ -153,8 +132,6 @@ describe('assertWorktreeHygieneForVerify', () => {
       vi.mocked(stat).mockRejectedValueOnce(enoent())
       // stat for rebase-apply: absent
       vi.mocked(stat).mockRejectedValueOnce(enoent())
-
-      vi.mocked(exec).mockImplementation(healthyExec)
 
       await expect(
         assertWorktreeHygieneForVerify(WORKTREE, BRANCH),

@@ -11,7 +11,7 @@
 
 import { readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { execProbe } from './git/internal'
+import { resolveVcs } from '../ports/vcs/registry'
 import type { Task } from '../queue'
 
 export type ReclaimCategory =
@@ -50,16 +50,22 @@ export const probeWorktreeGitState = async (
   path: string,
   integrationBranch: string,
 ): Promise<WorktreeGitState | null> => {
-  const porcelain = await execProbe('git', ['status', '--porcelain'], { cwd: path })
-  if (porcelain.exitCode !== 0) return null
-  const dirty = porcelain.stdout.trim().length > 0
+  const vcs = resolveVcs()
 
-  const revList = await execProbe(
-    'git',
-    ['rev-list', '--count', `${integrationBranch}..HEAD`],
-    { cwd: path },
-  )
-  const ahead = revList.exitCode === 0 ? Number(revList.stdout.trim()) || 0 : 0
+  // `repoRoot` answers `null` for a directory that is not inside a git
+  // repository, and throws when the directory is absent altogether — both
+  // are "not a valid git worktree" for this probe's purposes.
+  let root: string | null
+  try {
+    root = await vcs.repoRoot({ cwd: path })
+  } catch {
+    return null
+  }
+  if (root === null) return null
+
+  const dirty = !(await vcs.status({ cwd: path })).clean
+  const ahead =
+    (await vcs.revListCount({ cwd: path, range: `${integrationBranch}..HEAD` })) ?? 0
 
   return { dirty, ahead }
 }
