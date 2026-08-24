@@ -19,6 +19,7 @@
  * Empty state: "No drafts — proposals appear here when agents or the slicer file them."
  */
 
+import { useState } from 'react'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { proposalHash } from '@/shared/routing'
 import { relativeTime } from '@/shared/time'
@@ -56,13 +57,15 @@ interface ProposalRowProps {
 }
 
 const ProposalRow = ({ draft }: ProposalRowProps) => {
+  const [expanded, setExpanded] = useState(false)
   const age = relativeTime(draft.createdAt)
   const sourceLabel = SOURCE_LABEL[draft.source] ?? draft.source
   const chipClass =
     SOURCE_CHIP_CLASS[draft.source] ?? 'text-muted-foreground border-border'
-  // Body preview — collapse newlines to spaces and clamp with CSS. Legacy
+  // Body preview — collapse newlines to spaces for the clamped view. Legacy
   // (pre-split) rows may still carry a multi-paragraph `problem`; collapsing
   // newlines keeps the preview readable instead of jamming lines together.
+  // When expanded, show the original text with whitespace preserved.
   const preview = draft.problem.replace(/\s*\n\s*/g, ' ').trim()
   const grillCmd = `/mars:grill ${draft.id}`
 
@@ -93,11 +96,28 @@ const ProposalRow = ({ draft }: ProposalRowProps) => {
         {draft.title}
       </a>
 
-      {/* Body preview — subordinate to the title, 3 lines max */}
+      {/* Body preview — 3 lines max when collapsed; full text when expanded */}
       {preview && (
-        <p className="mb-2 line-clamp-3 font-mono text-micro text-muted-foreground">
-          {preview}
-        </p>
+        <div className="mb-2">
+          <p
+            className={[
+              'font-mono text-micro text-muted-foreground',
+              expanded ? 'whitespace-pre-wrap' : 'line-clamp-3',
+            ].join(' ')}
+          >
+            {expanded ? draft.problem.trim() : preview}
+          </p>
+          {draft.problem.trim().length > 0 && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-0.5 font-mono text-micro text-muted-foreground/60 hover:text-muted-foreground focus:outline-none"
+              aria-expanded={expanded}
+            >
+              {expanded ? 'less ↑' : 'more ↓'}
+            </button>
+          )}
+        </div>
       )}
 
       {/* Footer: open drawer link + grill command copy */}
