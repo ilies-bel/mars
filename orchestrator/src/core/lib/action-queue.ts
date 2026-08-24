@@ -1165,21 +1165,29 @@ export const dismissAlertsOnStatusChange = async (
 ): Promise<string[]> => {
   const c = stateClient()
   const fingerprint = await resolvedOriginFingerprint(taskId)
-  // Two predicates cover both row shapes for this task:
+  // Three predicates cover all known row shapes for this task:
   //   - fingerprint = origin-keyed hash — the normal path for rows that were
   //     raised with originTaskId (the vast majority of current rows).
   //   - kind IN ('failed','diagnose-inconclusive') AND signature = taskId
   //     AND origin_task_id IS NULL — signature-keyed rows created by pre-fix
   //     raise sites. Those sites used the task id directly as the signature
   //     value, so this predicate is safe and specific to task-owned rows.
+  //   - kind = 'recovery-abandoned' AND signature = 'recovery-abandoned:' || taskId
+  //     AND origin_task_id IS NULL — legacy rows raised before originTaskId was
+  //     populated in drainRecoveryAbandoned. These outlived their arc when the
+  //     fingerprint predicate missed them (fingerprint is derived from originTaskId,
+  //     which is NULL for these rows).
   const rows = await c.execute({
     sql: `SELECT id FROM action_queue_items
            WHERE (fingerprint = ?
                   OR (kind IN ('failed', 'diagnose-inconclusive')
                       AND signature = ?
+                      AND origin_task_id IS NULL)
+                  OR (kind = 'recovery-abandoned'
+                      AND signature = 'recovery-abandoned:' || ?
                       AND origin_task_id IS NULL))
              AND status = 'open'`,
-    args: [fingerprint, taskId],
+    args: [fingerprint, taskId, taskId],
   })
   const ids: string[] = []
   const note = `status-changed → ${newStatus}`
@@ -1362,7 +1370,7 @@ export const snoozeActionQueueItem = async (
  * `task.dropped` to ensure no orphaned row survives after a task ends
  * cleanly (ADR-0028/0030).
  *
- * Three predicates cover the known row shapes:
+ * Four predicates cover the known row shapes:
  *   - `origin_task_id = :taskId` — the normal path (task is its own arc root)
  *   - `payload::jsonb ->> 'taskId' = :taskId` — the arc-resolved path
  *     (where `origin_task_id` holds the proposal/origin id while the actual
@@ -1373,6 +1381,13 @@ export const snoozeActionQueueItem = async (
  *     task id directly as the `signature` value, so matching on it is safe and
  *     specific. Without this arm such rows never matched either of the first two
  *     predicates and stayed open forever even after their task reached done.
+ *   - `kind = 'recovery-abandoned' AND signature = 'recovery-abandoned:' || :taskId
+ *      AND origin_task_id IS NULL` — legacy `recovery-abandoned` rows raised
+ *     before `originTaskId` was populated in the raiser. The signature encodes
+ *     the origin task id as `recovery-abandoned:<originId>`, so this is safe
+ *     and specific. Without this arm such rows outlive the arc's settlement
+ *     (observed 2026-08-24: three rows stayed open after their origins reached
+ *     done/dropped, requiring manual `mars action-queue resolve`).
  *
  * Idempotent — rows that are already resolved/dismissed are untouched.
  */
@@ -1388,9 +1403,12 @@ export const resolveAllRowsForTask = async (
                   OR payload::jsonb ->> 'taskId' = ?
                   OR (kind IN ('failed', 'diagnose-inconclusive')
                       AND signature = ?
+                      AND origin_task_id IS NULL)
+                  OR (kind = 'recovery-abandoned'
+                      AND signature = 'recovery-abandoned:' || ?
                       AND origin_task_id IS NULL))
              AND status = 'open'`,
-    args: [Date.now(), taskId, taskId, taskId],
+    args: [Date.now(), taskId, taskId, taskId, taskId],
   })
 }
 
