@@ -119,7 +119,17 @@ export interface ContinueResult {
  *
  * Refusal set:
  *   - task is not in `'failed'` status
- *   - in-flight recovery exists                — wait for it to complete first
+ *   - in-flight recovery exists                — wait for it to complete, or use one
+ *                                               of the named escapes. The message
+ *                                               classifies the branch first, so
+ *                                               `mars restart` is never offered alone:
+ *                                               `mars remerge` (real commits ahead),
+ *                                               `mars task add --supersede` (checkpoint-
+ *                                               only), and `mars unblock` (phantom-
+ *                                               recovery) are named alongside it. It also
+ *                                               states that the refusal is structural for
+ *                                               a caller that IS the recovery, so that
+ *                                               caller never burns retries on it.
  *   - recovery budget exhausted (`recovery_exhausted:` prefix on failureReason)
  *                                             — the message reports whether the
  *                                               branch holds salvageable commits and
@@ -165,8 +175,57 @@ export const coreContinueTask = async (
   })
   if (inflightRows.rows.length > 0) {
     const recoveryId = (inflightRows.rows[0] as unknown as { id: string }).id
+
+    // Name every escape verb, not just the destructive one. This refusal is
+    // structural for the most important caller: the recovery task IS the
+    // in-flight recovery being complained about, so it can never satisfy the
+    // guard by waiting. Historically the message offered only `mars restart`,
+    // which discards the origin's verify-passed commits — the exact opposite
+    // of what a merge-side watchdog timeout calls for. Classify the branch
+    // first so the destructive verb is always accompanied by what it would
+    // throw away, and by the non-destructive alternatives.
+    let salvageNote = ''
+    const alternatives: string[] = []
+    if (task.branch) {
+      const { getRepoRoot } = await import('../context')
+      const integrationBranch = process.env.INTEGRATION_BRANCH ?? 'main'
+      const { realCommits, checkpointCommits } = await classifyCommitsAheadForBranch(
+        task.branch,
+        integrationBranch,
+        getRepoRoot(),
+      )
+      if (realCommits.length > 0) {
+        salvageNote =
+          `Branch ${task.branch} has ${realCommits.length} commit(s) ahead of ${integrationBranch} ` +
+          `with committed work — 'mars restart' would discard them:\n` +
+          `${formatCommitList(realCommits)}\n`
+        alternatives.push(
+          `  mars remerge ${id}   # re-verify and merge the committed work without re-running the coder`,
+        )
+      } else if (checkpointCommits.length > 0) {
+        salvageNote =
+          `Branch ${task.branch} holds ${checkpointCommits.length} salvage checkpoint commit(s) capturing ` +
+          `uncommitted work from the failed run — 'mars restart' would discard them:\n` +
+          `${formatCommitList(checkpointCommits)}\n`
+        alternatives.push(
+          `  mars task add --supersede ${id} --prompt-file <path>   # inherit ${task.branch} onto a new task ` +
+            `so a fresh coder can finish the salvaged work`,
+        )
+      }
+    }
+    alternatives.push(
+      `  mars unblock ${id}   # phantom-recovery: clear the blocker edges and flip ${id} to 'failed' so continue is legal again`,
+    )
+    alternatives.push(
+      `  mars restart ${id}   # DESTRUCTIVE: discard the branch and re-run from setup`,
+    )
+
     throw new Error(
-      `task ${id} already has an in-flight recovery ${recoveryId}; wait for it to complete or use 'mars restart' to discard and re-run`,
+      `mars continue: task ${id} already has an in-flight recovery ${recoveryId}.\n` +
+        `If you ARE ${recoveryId}, this refusal is structural and will never clear — do not retry it.\n` +
+        `${salvageNote}` +
+        `To proceed, wait for ${recoveryId} to complete, or:\n` +
+        `${alternatives.join('\n')}`,
     )
   }
 
