@@ -50,6 +50,7 @@ import type {
   VcsHasCommitTrailerSpec,
   VcsPathsChangedInRangeSpec,
   VcsRecentShasSpec,
+  VcsRepoRootSpec,
   VcsRestoreCheckpointResult,
   VcsRestoreCheckpointSpec,
   VcsRevListCountSpec,
@@ -208,11 +209,18 @@ export const localGitVcs: Vcs = {
   },
 
   async revParse(spec: VcsRevParseSpec): Promise<string | null> {
-    const { cwd, rev } = spec
-    const r = await execProbe(resolveGitBin(), ['rev-parse', rev], { cwd })
+    const { cwd, rev, timeoutMs } = spec
+    const r = await execProbe(resolveGitBin(), ['rev-parse', rev], { cwd, timeout: timeoutMs })
     if (r.exitCode !== 0) return null
     const sha = r.stdout.trim()
     return sha.length === 0 ? null : sha
+  },
+
+  async repoRoot(spec: VcsRepoRootSpec): Promise<string | null> {
+    const r = await execProbe(resolveGitBin(), ['rev-parse', '--show-toplevel'], { cwd: spec.cwd })
+    if (r.exitCode !== 0) return null
+    const root = r.stdout.trim()
+    return root.length === 0 ? null : root
   },
 
   async updateRef(spec: VcsUpdateRefSpec): Promise<void> {

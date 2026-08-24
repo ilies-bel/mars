@@ -196,6 +196,12 @@ export interface VcsCurrentBranchSpec {
   cwd: string
 }
 
+/** Args for {@link Vcs.repoRoot}. */
+export interface VcsRepoRootSpec {
+  /** Any directory inside the repository (or worktree) to resolve from. */
+  cwd: string
+}
+
 /** Args for {@link Vcs.gitPath}. */
 export interface VcsGitPathSpec {
   cwd: string
@@ -412,6 +418,8 @@ export interface Vcs {
   ensureAvailable(): Promise<void>
   /** Current branch name for `spec.cwd` (`rev-parse --abbrev-ref HEAD`). Returns `null` when unresolvable (e.g. detached HEAD reports `"HEAD"`, an error returns `null`). */
   currentBranch(spec: VcsCurrentBranchSpec): Promise<string | null>
+  /** Top-level directory of the repository containing `spec.cwd` (`rev-parse --show-toplevel`). Returns `null` when `spec.cwd` is not inside a repository. */
+  repoRoot(spec: VcsRepoRootSpec): Promise<string | null>
   /** Resolve a `.git`-relative admin path (`rev-parse --git-path <name>`), absolute even inside a linked worktree. */
   gitPath(spec: VcsGitPathSpec): Promise<string>
   /** Count commits in `spec.range` (`rev-list --count`). Returns `null` on failure or a non-numeric result. */

@@ -725,7 +725,7 @@ export const verifyChanges = async (
   // test sub-checks below would either produce misleading output or crash.
   if (args.branch) {
     try {
-      await assertWorktreeHygieneForVerify(args.cwd, args.branch, verifyCtx)
+      await assertWorktreeHygieneForVerify(args.cwd, args.branch)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       // Report under its OWN name, not `has-diff`. Labelling every hygiene

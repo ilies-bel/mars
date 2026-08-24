@@ -163,13 +163,13 @@ const loadMergedDiff = async (taskId: string): Promise<string | null> => {
   }
   try {
     const { resolveContext } = await import('../context')
-    const { exec, resolveGitBin } = await import('./git/internal')
-    const { stdout } = await exec(
-      resolveGitBin(),
-      ['diff', '--no-color', pre, post],
-      { cwd: resolveContext().repoRoot, timeout: 30_000 },
-    )
-    return stdout.length > 0 ? stdout : null
+    const { resolveVcs } = await import('../ports/vcs/registry')
+    return resolveVcs().diffText({
+      cwd: resolveContext().repoRoot,
+      from: pre,
+      to: post,
+      timeoutMs: 30_000,
+    })
   } catch {
     return null
   }

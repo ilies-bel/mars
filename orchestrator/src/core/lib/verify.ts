@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { exec, resolveGitBin, type TraceCtx } from './git/internal'
+import { resolveVcs } from '../ports/vcs/registry'
 
 /**
  * Validates the health of a task worktree before the verify step runs its
@@ -23,7 +23,6 @@ import { exec, resolveGitBin, type TraceCtx } from './git/internal'
 export const assertWorktreeHygieneForVerify = async (
   worktreePath: string,
   branch: string,
-  traceCtx?: TraceCtx,
 ): Promise<void> => {
   // 1. Worktree directory still exists?
   try {
@@ -40,16 +39,12 @@ export const assertWorktreeHygieneForVerify = async (
     throw err
   }
 
-  const git = resolveGitBin()
+  const vcs = resolveVcs()
 
   // 2. Expected branch is checked out?
-  const { stdout: headRaw } = await exec(
-    git,
-    ['rev-parse', '--abbrev-ref', 'HEAD'],
-    { cwd: worktreePath },
-    traceCtx,
-  )
-  const observed = headRaw.trim()
+  // A `null` here means git could not answer at all — still a hygiene failure,
+  // reported as an unresolved branch rather than swallowed.
+  const observed = (await vcs.currentBranch({ cwd: worktreePath })) ?? '<unresolved>'
   if (observed !== branch) {
     throw new Error(
       [
@@ -76,20 +71,10 @@ export const assertWorktreeHygieneForVerify = async (
   //
   // Resolve against `worktreePath` (a no-op for an already-absolute path), and
   // treat ENOTDIR exactly like ENOENT: both mean "no rebase state here".
-  const { stdout: mergePathRaw } = await exec(
-    git,
-    ['rev-parse', '--git-path', 'rebase-merge'],
-    { cwd: worktreePath },
-    traceCtx,
-  )
-  const { stdout: applyPathRaw } = await exec(
-    git,
-    ['rev-parse', '--git-path', 'rebase-apply'],
-    { cwd: worktreePath },
-    traceCtx,
-  )
+  const mergePathRaw = await vcs.gitPath({ cwd: worktreePath, name: 'rebase-merge' })
+  const applyPathRaw = await vcs.gitPath({ cwd: worktreePath, name: 'rebase-apply' })
 
-  for (const rawPath of [mergePathRaw.trim(), applyPathRaw.trim()]) {
+  for (const rawPath of [mergePathRaw, applyPathRaw]) {
     const rebasePath = resolve(worktreePath, rawPath)
     let isDir = false
     try {

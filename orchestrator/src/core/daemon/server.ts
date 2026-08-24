@@ -486,7 +486,7 @@ export const startDaemon = async (
     }
   }
 
-  warnWhenRepoRootDiffersFromIntegration(
+  await warnWhenRepoRootDiffersFromIntegration(
     resolveContext().repoRoot,
     integrationBranch,
     log,
@@ -1004,12 +1004,9 @@ export const startDaemon = async (
   let sourceRepoDir: string | null = null
   if (installRoute === 'dev') {
     try {
-      const { stdout: root } = await exec(resolveGitBin(), ['rev-parse', '--show-toplevel'], {
-        cwd: sourceDir,
-      })
-      sourceRepoDir = root.trim() || null
-      const { stdout } = await exec(resolveGitBin(), ['rev-parse', 'HEAD'], { cwd: sourceDir })
-      sourceSha = stdout.trim() || null
+      const vcs = resolveVcs()
+      sourceRepoDir = await vcs.repoRoot({ cwd: sourceDir })
+      sourceSha = await vcs.revParse({ cwd: sourceDir, rev: 'HEAD' })
     } catch {
       // git unavailable or not a git repo — leave null, never warn
     }
@@ -2845,23 +2842,15 @@ export const startDaemon = async (
     worktreePath: string,
   ): Promise<{ commits: number; headSha: string | null }> => {
     try {
-      const { execProbe, resolveGitBin } = await import('../lib/git/internal')
-      const counted = await execProbe(
-        resolveGitBin(),
-        ['rev-list', '--count', `${integrationBranch}..HEAD`],
-        { cwd: worktreePath, timeout: 15_000 },
-      )
-      if (counted.exitCode !== 0) return { commits: 0, headSha: null }
-      const commits = Number.parseInt(counted.stdout.trim(), 10)
-      if (!Number.isFinite(commits) || commits <= 0) return { commits: 0, headSha: null }
-      const head = await execProbe(resolveGitBin(), ['rev-parse', 'HEAD'], {
+      const vcs = resolveVcs()
+      const commits = await vcs.revListCount({
         cwd: worktreePath,
-        timeout: 15_000,
+        range: `${integrationBranch}..HEAD`,
+        timeoutMs: 15_000,
       })
-      return {
-        commits,
-        headSha: head.exitCode === 0 ? head.stdout.trim() || null : null,
-      }
+      if (commits === null || commits <= 0) return { commits: 0, headSha: null }
+      const headSha = await vcs.revParse({ cwd: worktreePath, rev: 'HEAD', timeoutMs: 15_000 })
+      return { commits, headSha }
     } catch (err) {
       log(
         `[signature-storm] steward commit probe failed (treated as no-op): ${
@@ -6140,8 +6129,8 @@ export const startDaemon = async (
   const devStalenessCheck = setInterval(() => {
     void (async () => {
       try {
-        const { stdout } = await exec(resolveGitBin(), ['rev-parse', 'HEAD'], { cwd: sourceDir })
-        const head = stdout.trim() || null
+        const vcs = resolveVcs()
+        const head = await vcs.revParse({ cwd: sourceDir, rev: 'HEAD' })
         if (!(await hasRelevantDevDrift(sourceSha, head, installRoute, sourceRepoDir))) {
           return
         }
@@ -6150,17 +6139,10 @@ export const startDaemon = async (
         isStale = true
         const dependencyDrift = await hasDevDependencyDrift(sourceSha, head, sourceRepoDir)
         lastDependencyDrift = dependencyDrift
-        try {
-          const { stdout: countOut } = await exec(
-            resolveGitBin(),
-            ['rev-list', '--count', `${sourceSha}..${head}`],
-            { cwd: sourceRepoDir ?? sourceDir },
-          )
-          const parsedCount = Number(countOut.trim())
-          lastBehindBy = Number.isFinite(parsedCount) ? parsedCount : null
-        } catch {
-          lastBehindBy = null
-        }
+        lastBehindBy = await vcs.revListCount({
+          cwd: sourceRepoDir ?? sourceDir,
+          range: `${sourceSha}..${head}`,
+        })
         const action = decideDevStalenessAction({
           sourceSha,
           currentSha: head,

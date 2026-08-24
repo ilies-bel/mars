@@ -25,6 +25,15 @@ import type {
   StatusSpec,
   SyncWorktreeSpec,
   Vcs,
+  VcsCaptureCheckpointSpec,
+  VcsCheckpoint,
+  VcsDiffTextSpec,
+  VcsHasCommitTrailerSpec,
+  VcsPathsChangedInRangeSpec,
+  VcsRestoreCheckpointResult,
+  VcsRestoreCheckpointSpec,
+  VcsRevListCountSpec,
+  VcsRevParseSpec,
   VcsStatus,
   WorktreeResult,
   WorktreeSpec,
@@ -86,11 +95,68 @@ const mergeResult: MergeResult = {
 
 const statusSpec: StatusSpec = {
   cwd: '/repo/.mars/worktrees/mars-c71db6a9',
+  untrackedFiles: 'all',
 }
 
 const statusResult: VcsStatus = {
   clean: false,
-  statusOutput: ' M src/core/ports/vcs/types.ts\n',
+  statusOutput: ' M src/core/ports/vcs/types.ts\n?? .mars/scratch\n',
+  orchestratorOwned: ['.mars/scratch'],
+  userOwned: ['src/core/ports/vcs/types.ts'],
+}
+
+const captureCheckpointSpec: VcsCaptureCheckpointSpec = {
+  cwd: '/repo/.mars/worktrees/mars-c71db6a9',
+  ref: 'refs/mars/checkpoint/mars-c71db6a9',
+  message: 'wip(checkpoint): salvage',
+}
+
+const checkpoint: VcsCheckpoint = {
+  ref: 'refs/mars/checkpoint/mars-c71db6a9',
+  sha: '1a2b3c4d5e6f7890',
+  files: ['src/core/ports/vcs/types.ts'],
+}
+
+const restoreCheckpointSpec: VcsRestoreCheckpointSpec = {
+  cwd: '/repo',
+  sha: '1a2b3c4d5e6f7890',
+}
+
+const restoreCheckpointResult: VcsRestoreCheckpointResult = {
+  ok: false,
+  detail: 'unmerged paths after apply: src/core/ports/vcs/types.ts',
+}
+
+const revParseSpec: VcsRevParseSpec = {
+  cwd: '/repo',
+  rev: 'HEAD',
+  timeoutMs: 15_000,
+}
+
+const revListCountSpec: VcsRevListCountSpec = {
+  cwd: '/repo',
+  range: 'main..task/mars-c71db6a9',
+  timeoutMs: 15_000,
+}
+
+const diffTextSpec: VcsDiffTextSpec = {
+  cwd: '/repo',
+  from: 'abc123',
+  to: 'def456',
+  timeoutMs: 30_000,
+}
+
+const pathsChangedInRangeSpec: VcsPathsChangedInRangeSpec = {
+  cwd: '/repo',
+  range: 'abc123..def456',
+  paths: ['orchestrator/src', 'packages/workflow'],
+}
+
+const hasCommitTrailerSpec: VcsHasCommitTrailerSpec = {
+  cwd: '/repo',
+  sha: 'abc123',
+  trailerKey: 'Mars-Checkpoint',
+  trailerValue: 'salvage',
 }
 
 const attachSpec: AttachToOriginWorktreeSpec = {
@@ -149,6 +215,15 @@ describe('Vcs Port args/results are serializable', () => {
     ['WorktreeSyncOutcome', syncOutcome],
     ['RestoreWorktreeSpec', restoreSpec],
     ['DescribeUncommittedWorkSpec', describeSpec],
+    ['VcsCaptureCheckpointSpec', captureCheckpointSpec],
+    ['VcsCheckpoint', checkpoint],
+    ['VcsRestoreCheckpointSpec', restoreCheckpointSpec],
+    ['VcsRestoreCheckpointResult', restoreCheckpointResult],
+    ['VcsRevParseSpec', revParseSpec],
+    ['VcsRevListCountSpec', revListCountSpec],
+    ['VcsDiffTextSpec', diffTextSpec],
+    ['VcsPathsChangedInRangeSpec', pathsChangedInRangeSpec],
+    ['VcsHasCommitTrailerSpec', hasCommitTrailerSpec],
   ] as const)('%s round-trips through JSON.parse(JSON.stringify(...)) without loss', (_label, value) => {
     const roundTripped = JSON.parse(JSON.stringify(value)) as typeof value
     expect(roundTripped).toEqual(value)
@@ -177,48 +252,14 @@ describe('built-in registration', () => {
 
 describe('registerVcs()', () => {
   it('registers a new implementation and the returned disposer withdraws it', async () => {
+    // Built on the built-in so the fake stays a complete `Vcs` as the Port
+    // grows; only the one method this test actually calls is overridden, so
+    // no real git is ever invoked.
     const fake: Vcs = {
+      ...localGitVcs,
       kind: 'test-fake',
       async createWorktree(spec: WorktreeSpec) {
         return { path: `/tmp/${spec.taskId}`, branch: `task/${spec.taskId}` }
-      },
-      async removeWorktree() {},
-      async branchExists() {
-        return false
-      },
-      async commit() {
-        return { sha: 'deadbeef' }
-      },
-      async merge() {
-        return {
-          merged: true,
-          conflictResolved: false,
-          aborted: false,
-          output: '',
-          retriesAttempted: 0,
-          vegaSessionId: null,
-        }
-      },
-      async status() {
-        return { clean: true, statusOutput: '' }
-      },
-      async attachToOriginWorktree(spec) {
-        return { path: spec.originWorktreePath, branch: spec.originBranch }
-      },
-      async provisionCommitterWorktree(spec) {
-        return { path: `/tmp/${spec.recoveryTaskId}`, branch: `task/${spec.recoveryTaskId}` }
-      },
-      async syncWorktreeToIntegration() {
-        return { kind: 'already-current' }
-      },
-      async restoreWorktreeIfMissing() {
-        return 'present'
-      },
-      async listUncommittedPaths() {
-        return null
-      },
-      async describeUncommittedWork() {
-        return null
       },
     }
     const dispose = registerVcs(fake)

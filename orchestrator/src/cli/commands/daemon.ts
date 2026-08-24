@@ -239,7 +239,7 @@ const daemonStatus: Command = {
   summary: 'print daemon pid, counts, and in-flight tasks',
   usage: 'usage: mars daemon status',
   run: async (_args, deps) => {
-    warnWhenRepoRootDiffersFromIntegration(
+    await warnWhenRepoRootDiffersFromIntegration(
       deps.ctx.repoRoot,
       process.env.INTEGRATION_BRANCH ?? 'main',
       deps.out,
