@@ -10,11 +10,8 @@ import { raiseActionQueueItem } from './lib/action-queue'
 import type { ActionQueueKind } from './lib/action-queue-kinds'
 import { truncateFailure } from './lib/truncate-failure'
 import { getTask, reopenTerminalTask, updateTask, type Task } from './queue'
-import {
-  getRetryBudget,
-  markTaskFailed,
-  raiseRecoveryExhaustedActionQueue,
-} from './queue-retry'
+import { raiseRecoveryExhaustedActionQueue } from './lib/recovery-exhausted-action-queue'
+import { getRetryBudget, markTaskFailed } from './queue-retry'
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/task-store'
 import {
   attachToRecovery,

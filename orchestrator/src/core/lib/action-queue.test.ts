@@ -3,7 +3,7 @@ import {
   RECOVERY_FAILED_ACTION_QUEUE_KIND,
   UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
 } from '../queue-fix-tasks'
-import { TASK_BLOCKED_ACTION_QUEUE_KIND } from '../queue-retry'
+import { TASK_BLOCKED_ACTION_QUEUE_KIND } from './recovery-exhausted-action-queue'
 import { DAEMON_KILLED_ACTION_QUEUE_KIND } from '../daemon/daemon-killed-sweep'
 import {
   WORKTREE_AHEAD_ACTION_QUEUE_KIND,

@@ -746,8 +746,8 @@ describe('queue-fix-tasks', () => {
     // (seen_count bumps, NOT a second row).
     // markTaskFailed already removed the task_blockers; re-call the
     // helper directly to simulate the same exhaustion firing again.
-    const retry = (await import('../../queue-retry')) as unknown as {
-      raiseRecoveryExhaustedActionQueue: typeof import('../../queue-retry').raiseRecoveryExhaustedActionQueue
+    const retry = (await import('../recovery-exhausted-action-queue')) as unknown as {
+      raiseRecoveryExhaustedActionQueue: typeof import('../recovery-exhausted-action-queue').raiseRecoveryExhaustedActionQueue
     }
     await retry.raiseRecoveryExhaustedActionQueue({
       taskId: t.id,

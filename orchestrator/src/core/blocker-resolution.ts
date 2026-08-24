@@ -2,9 +2,7 @@ import { execFile } from 'node:child_process'
 import { access } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
 import { promisify } from 'node:util'
-import {
-  raiseRecoveryExhaustedActionQueue,
-} from './queue-retry'
+import { raiseRecoveryExhaustedActionQueue } from './lib/recovery-exhausted-action-queue'
 import { getTask } from './queue'
 import type { ActionQueueKind } from './lib/action-queue-kinds'
 import { ORIGIN_RECOVERY_FAILED_PREFIX } from './lib/failure-signature'
