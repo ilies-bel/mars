@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { readFile } from 'node:fs/promises'
+import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import {
   exec,
   execProbe,
@@ -18,6 +18,7 @@ import {
   tailForTrace,
   type VerifyStepCompletedPayload,
 } from '../trace-events-store'
+import { getStateDir } from '../../context'
 
 /**
  * The runner's output contract. Re-exported (not redefined) from the leaf
@@ -86,6 +87,16 @@ export interface VerifyStep {
    * built-in gates that do not shell out.
    */
   commandLine?: string
+  /**
+   * Absolute path to a persisted `.mars/verify-logs/<task-id>-<gate>.log`
+   * file holding this step's full, untruncated stdout+stderr. Written by
+   * {@link persistVerifyStepLog} best-effort — absent when no `taskId` was
+   * available on the trace context or the write failed. Exists so a
+   * recovery coder can `cat` the real diagnostics instead of whatever
+   * shell-truncated excerpt survived into the failure prompt (see
+   * `truncateFailure` / `failureExcerpt`, both of which drop content).
+   */
+  logPath?: string
 }
 
 export interface VerifyStepSpec {
@@ -295,6 +306,54 @@ const recordVerifyStepCompleted = async (
   return step
 }
 
+/**
+ * Sanitize a verify step/gate name for use as a filesystem path segment.
+ * Gate names carry colons (`typecheck:orchestrator`) and other characters
+ * that are fine in a trace payload but not in a filename.
+ */
+const sanitizeLogSegment = (s: string): string =>
+  s.replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 200)
+
+/**
+ * Persist one verify step's full, untruncated stdout+stderr to a per-task
+ * log file under `.mars/verify-logs/<task-id>-<gate>.log`.
+ *
+ * Every downstream consumer of verify output — `task.error`,
+ * `capturedVerifyOutput`/`commandOutput` (the `mars continue` resume
+ * banner), and the fix-task prompt built from `truncateFailure`/
+ * `failureExcerpt` — keeps only a truncated excerpt. A full-suite `tsc` or
+ * `vitest` run can produce output an order of magnitude larger than any of
+ * those caps, so the failure signal a recovery coder actually needs (e.g.
+ * an import-cycle diagnostic mid-output) can be the exact bytes truncation
+ * drops. This file is the untruncated source of truth those excerpts point
+ * back to.
+ *
+ * Best-effort by construction, same as {@link recordVerifyStepCompleted}: a
+ * write failure (missing taskId, permissions, disk full) must never fail a
+ * verify run. Returns the absolute log path on success, `undefined`
+ * otherwise.
+ */
+const persistVerifyStepLog = async (
+  traceCtx: TraceCtx | undefined,
+  stepName: string,
+  output: string,
+): Promise<string | undefined> => {
+  const taskId = traceCtx?.taskId
+  if (!taskId) return undefined
+  try {
+    const dir = resolve(getStateDir(), 'verify-logs')
+    await mkdir(dir, { recursive: true })
+    const logPath = resolve(
+      dir,
+      `${sanitizeLogSegment(taskId)}-${sanitizeLogSegment(stepName)}.log`,
+    )
+    await writeFile(logPath, output, 'utf8')
+    return logPath
+  } catch {
+    return undefined
+  }
+}
+
 const runVerifyStep = async (
   name: string,
   gateId: string | undefined,
@@ -334,11 +393,13 @@ const runVerifyStep = async (
   )
   const commandLine = [cmd, ...args].join(' ')
   if (r.exitCode === 0) {
+    const passOutput = r.stdout + r.stderr
+    const logPath = await persistVerifyStepLog(verifyCtx, name, passOutput)
     return recordVerifyStepCompleted(verifyCtx, {
       name,
       ...(gateId !== undefined ? { gateId } : {}),
       passed: true,
-      output: r.stdout + r.stderr,
+      output: passOutput,
       exitCode: r.exitCode,
       stdout: r.stdout,
       stderr: r.stderr,
@@ -346,6 +407,7 @@ const runVerifyStep = async (
       args,
       stepDir: cwd,
       commandLine,
+      ...(logPath !== undefined ? { logPath } : {}),
     })
   }
   // Determine what caused the failure and prefix the output accordingly so
@@ -378,6 +440,10 @@ const runVerifyStep = async (
         : r.exitCode === 137
           ? `verify child killed by SIGKILL (exit 137)\n${rawOutput}`
           : rawOutput
+  // Persist the RAW stdout+stderr (not the marker-prefixed `output`) so the
+  // log file is exactly what the subprocess printed, with no orchestrator
+  // annotation mixed in.
+  const logPath = await persistVerifyStepLog(verifyCtx, name, rawOutput)
   return recordVerifyStepCompleted(verifyCtx, {
     name,
     ...(gateId !== undefined ? { gateId } : {}),
@@ -392,6 +458,7 @@ const runVerifyStep = async (
     args,
     stepDir: cwd,
     commandLine,
+    ...(logPath !== undefined ? { logPath } : {}),
   })
 }
 

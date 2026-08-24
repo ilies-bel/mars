@@ -1039,6 +1039,10 @@ export const review = async (
         // fall back to the step's combined output for those.
         const gateFailureDiags = failed
           .map((s) => {
+            // Full, untruncated stdout+stderr for this step lives on disk
+            // (see `persistVerifyStepLog` in `core/lib/git/verify.ts`) —
+            // point the reader at it since every excerpt below is capped.
+            const logPathPart = s.logPath ? `\nfull log: ${s.logPath}` : ''
             if (s.cmd !== undefined && s.stepDir !== undefined) {
               const cmdPart = `${s.cmd}${s.args?.length ? ' ' + s.args.join(' ') : ''}`
               const stdoutPart = s.stdout ? `\nstdout:\n${failureExcerpt(s.stdout)}` : ''
@@ -1049,10 +1053,11 @@ export const review = async (
                 `cwd: ${s.stepDir}\n` +
                 `exitCode: ${s.exitCode ?? 'null'}` +
                 stdoutPart +
-                stderrPart
+                stderrPart +
+                logPathPart
               )
             }
-            return `--- diagnostics: ${s.name} ---\n${failureExcerpt(s.output)}`
+            return `--- diagnostics: ${s.name} ---\n${failureExcerpt(s.output)}${logPathPart}`
           })
           .join('\n\n')
         // Re-assign capturedVerifyOutput to include the diagnostics block
@@ -1091,6 +1096,10 @@ export const review = async (
                   ...(firstFailed.stdout
                     ? [`stdout:\n${failureExcerpt(firstFailed.stdout)}`]
                     : []),
+                  // Last line, deliberately: `truncateFailure` keeps the TAIL
+                  // of this string when the recovery prompt caps it, so the
+                  // pointer to the untruncated log survives truncation.
+                  ...(firstFailed.logPath ? [`full log: ${firstFailed.logPath}`] : []),
                 ].join('\n'),
               )
             : failureExcerpt(firstFailed.output)
