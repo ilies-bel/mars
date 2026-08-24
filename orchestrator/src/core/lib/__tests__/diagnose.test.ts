@@ -51,7 +51,9 @@ describe('diagnose verdict store', () => {
     expect(got.involvedFiles).toEqual(['src/foo.ts', 'src/bar.ts'])
     expect(got.fixDirection).toContain('optional-chain')
     expect(got.taskId).toBe('mars-aaaaaaaa')
-    expect(got.recordedAt).toMatch(/\d{4}-\d{2}-\d{2}T/)
+    // recordedAt is epoch milliseconds (bigint in the DB, number in JS).
+    expect(typeof got.recordedAt).toBe('number')
+    expect(got.recordedAt).toBeGreaterThan(Date.UTC(2024, 0, 1))
   })
 
   it('round-trips an inconclusive verdict', async () => {

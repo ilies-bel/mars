@@ -65,7 +65,10 @@ describe('store-layer worktree cross-boundary guard', () => {
 
   it('getDefaultTaskStore() refuses when CWD is inside .mars/worktrees/<id>/ with NO explicit MARS_REPO (implicit CWD-derived path)', async () => {
     // No MARS_REPO set — the stateDir is inferred from CWD, which is the
-    // implicit foot-gun the guard exists to prevent.
+    // implicit foot-gun the guard exists to prevent. The global hermetic
+    // setup (test/setup-env.ts) exports MARS_REPO for every fork, so clear
+    // it here to model the implicit-resolution path the guard protects.
+    delete process.env.MARS_REPO
     cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(worktreeCwd)
 
     vi.resetModules()

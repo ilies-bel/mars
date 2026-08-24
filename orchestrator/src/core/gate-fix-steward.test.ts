@@ -99,7 +99,10 @@ describe('stewardProposeGateFix', () => {
     expect(thread?.messages[0]).toMatchObject({ kind: 'validation', backing_entity_id: proposal.proposalId })
   })
 
-  it('raises an actionable diagnostic instead of fabricating an invalid repair', async () => {
+  it('keeps the gate quarantined without storing a row for an invalid repair (gate-broken is derived)', async () => {
+    // ADR-0057/ADR-0094: `gate-broken` is a condition kind derived on read
+    // from `verify_gates WHERE state='quarantined'` — the Steward writes NO
+    // stored action-queue row when it refuses to fabricate an invalid repair.
     vi.resetModules()
     process.env.MARS_REPO = repo
     const { ensureQueueSchema } = await import('./queue.js')
@@ -107,13 +110,10 @@ describe('stewardProposeGateFix', () => {
     const { listActionQueueItems } = await import('./lib/action-queue.js')
     const { runGateFixSteward } = await import('./gate-fix-steward.js')
 
-    await runGateFixSteward(event, { worker: async () => '{"cmd":""}' })
+    const result = await runGateFixSteward(event, { worker: async () => '{"cmd":""}' })
 
-    expect(await listActionQueueItems('open')).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        kind: 'gate-broken',
-        signature: 'gate-fix-steward:gate-1:verify:typecheck/exit-1',
-      }),
-    ]))
+    expect(result.outcome).toBe('invalid')
+    const stored = await listActionQueueItems('open')
+    expect(stored.filter((i) => i.kind === 'gate-broken')).toEqual([])
   })
 })

@@ -21,6 +21,7 @@ interface QueueModule {
   getTask: typeof import('../../queue').getTask
   migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   updateTask: typeof import('../../queue').updateTask
+  reopenTerminalTask: typeof import('../../queue').reopenTerminalTask
 }
 
 interface RetryBudgetModule {
@@ -135,13 +136,11 @@ describe('daemon-killed failure signature', () => {
       error: 'killed by `mars daemon kill`',
       failureSignature: DAEMON_KILLED_SIGNATURE,
     })
-    // Requeue (mirrors what coreRestartTask now does — clears signature too).
-    await q.updateTask(task.id, {
-      status: 'queued',
-      error: null,
-      failureSignature: null,
-      failureReasonCode: null,
-    })
+    // Requeue (mirrors what coreRestartTask now does): terminal statuses are
+    // immutable via updateTask, so leave 'failed' through the audited
+    // reopenTerminalTask seam — it flips the row to 'queued' and clears the
+    // error / failure_signature / failure_reason_code markers in-tx.
+    await q.reopenTerminalTask(task.id, 'test requeue')
 
     const { detectAndRaiseDaemonKilled } = (await import(
       '../daemon-killed-sweep'

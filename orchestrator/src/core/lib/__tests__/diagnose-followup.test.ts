@@ -207,8 +207,8 @@ describe('runDiagnoseFollowup', () => {
     // crash/restart, the dedup must still hold. Simulate that by
     // re-adding the edge and re-running.
     await q.resolveQueueClient().execute({
-      sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
-      args: [parentId, choreId, new Date().toISOString()],
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+      args: [parentId, choreId, Date.now()],
     })
     const second = await f.runDiagnoseFollowup(choreId)
 

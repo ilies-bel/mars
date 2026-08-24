@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createClient } from '@libsql/client'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -35,20 +34,18 @@ describe('Triaging status + Blocker state schema', () => {
   })
 
   it('initialises the tasks schema with no `actionable` column and no `reason` column', async () => {
-    const { migrateQueueSchema } = await import('../../queue')
+    const { migrateQueueSchema, resolveQueueClient } = await import('../../queue')
     await migrateQueueSchema()
 
-    const c = createClient({ url: `file:${repo}/.mars/mars.db` })
-    try {
-      const cols = await c.execute(`PRAGMA table_info(tasks)`)
-      const names = new Set(
-        cols.rows.map((row) => (row as unknown as { name: string }).name),
-      )
-      expect(names.has('actionable')).toBe(false)
-      expect(names.has('reason')).toBe(false)
-    } finally {
-      c.close()
-    }
+    const c = resolveQueueClient()
+    const cols = await c.execute(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'tasks'`,
+    )
+    const names = new Set(
+      cols.rows.map((row) => (row as unknown as { column_name: string }).column_name),
+    )
+    expect(names.has('actionable')).toBe(false)
+    expect(names.has('reason')).toBe(false)
   })
 
   it('treats `triaging` as a valid status that is NOT dispatchable', async () => {
@@ -233,50 +230,31 @@ describe('Triaging status + Blocker state schema', () => {
     expect(ideaBlocker?.state).toBe('confirmed')
   })
 
-  it('migrates a legacy task_blockers row (no state column) into state=confirmed', async () => {
-    // Set up a legacy queue.db that predates the `state` column.
-    const queueDb = `file:${repo}/.mars/mars.db`
-    const q = createClient({ url: queueDb })
-    await q.execute(`CREATE TABLE tasks (
-      id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
-      recovery_spawned_count INTEGER NOT NULL DEFAULT 0, origin_id TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    )`)
-    await q.execute(`CREATE TABLE task_blockers (
-      task_id TEXT NOT NULL,
-      blocker_task_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (task_id, blocker_task_id)
-    )`)
+  it('defaults a task_blockers row written without a state to state=confirmed', async () => {
+    // The PostgreSQL schema owns this invariant directly (`state text NOT NULL
+    // DEFAULT 'confirmed'`), replacing the SQLite-era column-add migration: a
+    // legacy-shaped write that omits `state` still lands as 'confirmed'.
+    const { migrateQueueSchema, resolveQueueClient } = await import('../../queue')
+    await migrateQueueSchema()
+    const c = resolveQueueClient()
     const now = new Date().toISOString()
-    await q.execute({
+    await c.execute({
       sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at) VALUES ('a', 'a', 'blocked', 'a', ?, ?)`,
       args: [now, now],
     })
-    await q.execute({
+    await c.execute({
       sql: `INSERT INTO tasks (id, prompt, status, origin_id, created_at, updated_at) VALUES ('b', 'b', 'queued', 'b', ?, ?)`,
       args: [now, now],
     })
-    await q.execute({
+    await c.execute({
       sql: `INSERT INTO task_blockers (task_id, blocker_task_id, created_at) VALUES ('a', 'b', ?)`,
-      args: [now],
+      args: [Date.now()],
     })
-    q.close()
 
-    const { migrateQueueSchema } = await import('../../queue')
-    await migrateQueueSchema()
-
-    const c = createClient({ url: queueDb })
-    try {
-      const r = await c.execute(
-        `SELECT state FROM task_blockers WHERE task_id = 'a' AND blocker_task_id = 'b'`,
-      )
-      expect((r.rows[0] as unknown as { state: string }).state).toBe(
-        'confirmed',
-      )
-    } finally {
-      c.close()
-    }
+    const r = await c.execute(
+      `SELECT state FROM task_blockers WHERE task_id = 'a' AND blocker_task_id = 'b'`,
+    )
+    expect((r.rows[0] as unknown as { state: string }).state).toBe('confirmed')
   })
 
   it('promoteDraftToTriaging advances a draft task into triaging', async () => {

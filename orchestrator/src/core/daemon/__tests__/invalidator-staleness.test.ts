@@ -135,8 +135,9 @@ describe('Invalidator staleness guarantees (PRD 12fdef39)', () => {
     const itemId = await raiseOpenItemFor(actionQueue, taskId)
 
     await ad.ensureAlertDismisser(client)
-    // updateTask through the seam emits task.queued in-tx.
-    await q.updateTask(taskId, { status: 'queued' })
+    // reopenTerminalTask is the sole audited seam that may leave a terminal
+    // status; it flips the row to 'queued' and emits task.queued in-tx.
+    await q.reopenTerminalTask(taskId, 'test requeue')
 
     const { processed } = await ad.drainAlertDismissals(client)
     expect(processed).toBeGreaterThan(0)

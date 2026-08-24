@@ -3,13 +3,13 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { createClient } from '@libsql/client'
 
 interface Queue {
   enqueueTask: typeof import('../../queue').enqueueTask
   getTask: typeof import('../../queue').getTask
   updateTask: typeof import('../../queue').updateTask
   migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
 }
 
 const setupRepo = (): string => {
@@ -91,35 +91,36 @@ describe('tasks.claude_session_ids (append-only history)', () => {
     expect(fetched?.claudeSessionIds).toEqual(['sess-a'])
   })
 
-  it('backfills claude_session_ids from a legacy row with only claude_session_id set', async () => {
-    // Lay down a row before the new column exists, then run the
-    // migration via migrateQueueSchema() and confirm the array gets seeded.
-    const queueDb = `file:${repo}/.mars/mars.db`
-    const c = createClient({ url: queueDb })
-    await c.execute(`CREATE TABLE tasks (
-      id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
-      plan_functional TEXT, plan_technical TEXT, branch TEXT, worktree_path TEXT,
-      claude_session_id TEXT, error TEXT, drop_reason TEXT,
-      recovery_spawned_count INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    )`)
+  it('a legacy row with only claude_session_id set keeps its pointer and derives history from the junction table', async () => {
+    // The history array is derived entirely from `task_claude_sessions`
+    // (see TASK_SEL) — there is no column-to-junction backfill any more.
+    // A legacy row whose only trace is the `claude_session_id` pointer
+    // therefore keeps the pointer but starts with an empty history, and the
+    // junction is populated from the next `updateTask` write onward.
+    const q = await loadQueue(repo)
+    const c = q.resolveQueueClient()
     const now = new Date().toISOString()
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, claude_session_id, created_at, updated_at)
-            VALUES ('legacy-1', 'old', 'done', 'legacy-sess', ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, claude_session_id, author_kind, author_name, origin_id, created_at, updated_at)
+            VALUES ('legacy-1', 'old', 'done', 'legacy-sess', 'human', 'test', 'legacy-1', ?, ?)`,
       args: [now, now],
     })
     await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, claude_session_id, created_at, updated_at)
-            VALUES ('legacy-2', 'old', 'done', NULL, ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, claude_session_id, author_kind, author_name, origin_id, created_at, updated_at)
+            VALUES ('legacy-2', 'old', 'queued', NULL, 'human', 'test', 'legacy-2', ?, ?)`,
       args: [now, now],
     })
-    c.close()
 
-    const q = await loadQueue(repo)
     const t1 = await q.getTask('legacy-1')
-    expect(t1?.claudeSessionIds).toEqual(['legacy-sess'])
+    expect(t1?.claudeSessionId).toBe('legacy-sess')
+    expect(t1?.claudeSessionIds).toEqual([])
     const t2 = await q.getTask('legacy-2')
     expect(t2?.claudeSessionIds).toEqual([])
+
+    // History starts accruing from the first post-migration session write.
+    await q.updateTask('legacy-2', { claudeSessionId: 'sess-new' })
+    const after = await q.getTask('legacy-2')
+    expect(after?.claudeSessionId).toBe('sess-new')
+    expect(after?.claudeSessionIds).toEqual(['sess-new'])
   })
 })

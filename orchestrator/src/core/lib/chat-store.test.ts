@@ -45,7 +45,9 @@ const setupRepo = (): string => {
 const loadModule = async (repo: string): Promise<ChatStoreModule> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
-  return (await import('./chat-store')) as unknown as ChatStoreModule
+  const m = (await import('./chat-store')) as unknown as ChatStoreModule
+  await m.initChatStore()
+  return m
 }
 
 describe('chat-store', () => {

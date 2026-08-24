@@ -140,6 +140,23 @@ const { runArcVerification, triggerArcVerification, _clearTriggeredForTests } =
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The arc-verifier now also runs a live-E2E leg: when the target cwd has no
+ * Playwright tooling (as the bare '/tmp' fixture cwd never does) it raises one
+ * global `e2e-tooling-missing` item. That raise is orthogonal to the
+ * reachability chain under test here, so assertions filter by kind instead of
+ * counting raw spy calls.
+ */
+const raisedOfKind = (kind: string): RaiseActionQueueItem[] =>
+  raiseSpy.mock.calls
+    .map((c) => c[0] as RaiseActionQueueItem)
+    .filter((i) => i.kind === kind)
+
+const raisedReachabilityKinds = (): string[] =>
+  raiseSpy.mock.calls
+    .map((c) => (c[0] as RaiseActionQueueItem).kind)
+    .filter((k) => k !== 'e2e-tooling-missing')
+
 describe('arc-verifier reachability — end-to-end chain (integration)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -215,9 +232,10 @@ describe('arc-verifier reachability — end-to-end chain (integration)', () => {
     expect(verdict.ok).toBe(false)
 
     // Exactly one Action queue item of the failing-verdict kind
-    expect(raiseSpy).toHaveBeenCalledTimes(1)
-    const raised = raiseSpy.mock.calls[0][0] as RaiseActionQueueItem
-    expect(raised.kind).toBe('arc-verification-failed')
+    const failures = raisedOfKind('arc-verification-failed')
+    expect(failures).toHaveLength(1)
+    expect(raisedReachabilityKinds()).toEqual(['arc-verification-failed'])
+    const raised = failures[0]
 
     // Body names at least one of the four user stories verbatim
     const bodyText = raised.body
@@ -275,8 +293,8 @@ describe('arc-verifier reachability — end-to-end chain (integration)', () => {
 
     // Done-criteria pass + no unsatisfied stories → verdict ok
     expect(verdict.ok).toBe(true)
-    // Zero Action queue items
-    expect(raiseSpy).not.toHaveBeenCalled()
+    // Zero reachability-related Action queue items
+    expect(raisedReachabilityKinds()).toEqual([])
   })
 
   // ── Fixture C ───────────────────────────────────────────────────────────────
@@ -318,7 +336,7 @@ describe('arc-verifier reachability — end-to-end chain (integration)', () => {
     expect(verdict.ok).toBe(true)
     // Provider called exactly once — reachability check was skipped
     expect(runHeadlessProviderMock).toHaveBeenCalledTimes(1)
-    // Zero Action queue items
-    expect(raiseSpy).not.toHaveBeenCalled()
+    // Zero reachability-related Action queue items
+    expect(raisedReachabilityKinds()).toEqual([])
   })
 })
