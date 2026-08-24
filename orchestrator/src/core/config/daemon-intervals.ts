@@ -112,3 +112,24 @@ export const resolveSweepIntervalsMs = (env: NodeJS.ProcessEnv = process.env): S
  */
 export const resolveIntegrationBranch = (env: NodeJS.ProcessEnv = process.env): string =>
   env.INTEGRATION_BRANCH ?? 'main'
+
+/**
+ * Cadence for `lib/git/checkpoint.ts`'s periodic coder-checkpoint timer.
+ * Same category as the drain/sweep knobs above: an ad hoc `MARS_*_MS` timer
+ * override with no `daemon.json` counterpart.
+ * @param env injectable for hermetic tests; defaults to `process.env`.
+ */
+export const resolveCodeCheckpointIntervalMs = (env: NodeJS.ProcessEnv = process.env): number =>
+  msFromEnv(env, 'MARS_CODE_CHECKPOINT_INTERVAL_MS', 3 * 60 * 1_000)
+
+/**
+ * Timeout for the `npm view <pkg> versions --json` registry lookup in
+ * `daemon/baseline-repair-wiring.ts`.
+ *
+ * Unlike {@link msFromEnv}, a non-numeric override falls back to the default
+ * rather than yielding `NaN` — a `NaN` timeout would silently disable the
+ * bound on a network call the baseline repairer blocks on.
+ * @param env injectable for hermetic tests; defaults to `process.env`.
+ */
+export const resolveNpmViewTimeoutMs = (env: NodeJS.ProcessEnv = process.env): number =>
+  Number(env.MARS_BASELINE_REPAIR_NPM_VIEW_TIMEOUT_MS) || 15_000

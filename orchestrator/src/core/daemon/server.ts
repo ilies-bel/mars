@@ -142,6 +142,7 @@ import {
   readDaemonConfigFile,
   readPersistedPaused,
 } from './config'
+import { resolveIntegrationBranch } from '../config/daemon-intervals'
 import { resolveControlLevers } from '../config/levers'
 import { startHealthScheduler } from '../agents/steward'
 import { createPauseController } from './pause-state'
@@ -425,7 +426,8 @@ export const startDaemon = async (
   opts: DaemonOptions = {},
 ): Promise<DaemonHandle> => {
   const env = opts.env ?? process.env
-  const integrationBranch = opts.integrationBranch ?? integrationBranchName()
+  const integrationBranch =
+    opts.integrationBranch ?? resolveIntegrationBranch()
   const { socket: socketPath, pidFile, logFile, httpPortFile, runningMarker, crashMarker, lockFile } = daemonPaths()
 
   // ── Unclean-exit detection (before any file mutations) ───────────────────
