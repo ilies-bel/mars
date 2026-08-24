@@ -85,8 +85,13 @@ export const resolveThreadForItem = async (
   qc: QueryClient,
 ): Promise<string> => {
   if (item.kind === 'arc-failed' || item.kind === 'failed') {
-    const result = await startThreadFromAlert(item.fixForTaskId ?? item.entityId)
-    return result.threadId
+    try {
+      const result = await startThreadFromAlert(item.fixForTaskId ?? item.entityId)
+      return result.threadId
+    } catch {
+      // The entity may not be an arc (e.g. a HITL or plan-level failed row) —
+      // fall through to the generic queue-item thread path.
+    }
   }
   const thread = await startThreadForQueueItem(
     item.id,
