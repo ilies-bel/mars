@@ -68,7 +68,7 @@ import { isContextExhaustedSignature } from './lib/failure-signature'
 import { integrationBranchName } from './lib/blocker-resolution-primitives'
 import { getRepoRoot } from './context'
 import { listUniqueCommitsAhead } from './lib/sweep'
-import { SALVAGE_CHECKPOINT_SUBJECT_PREFIX } from './lib/git/checkpoint'
+import { SALVAGE_CHECKPOINT_SUBJECT_PREFIX } from './lib/salvage-checkpoint-subjects'
 import type { OrphanCommit } from './lib/sweep'
 
 /**

@@ -74,8 +74,13 @@ export const CHECKPOINT_REF_PREFIX = 'refs/mars/checkpoint'
  *
  * Reuse this constant wherever the subject is read back (e.g. `mars continue`
  * branch-classification) so the two sites cannot drift apart.
+ *
+ * Defined in `lib/salvage-checkpoint-subjects.ts` (outside lib/git/) so
+ * domain code can import it without crossing the vcs-port-only boundary
+ * (ADR-0097). Re-exported here for callers already importing from checkpoint.ts.
  */
-export const SALVAGE_CHECKPOINT_SUBJECT_PREFIX = 'wip(checkpoint):'
+import { SALVAGE_CHECKPOINT_SUBJECT_PREFIX } from '../salvage-checkpoint-subjects'
+export { SALVAGE_CHECKPOINT_SUBJECT_PREFIX }
 
 /**
  * Git trailer key/value written in the BODY of every salvage checkpoint
