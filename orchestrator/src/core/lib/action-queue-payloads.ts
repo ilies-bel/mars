@@ -27,6 +27,13 @@
  * there, which is the moment to decide whether it needs a typed contract. That
  * is deliberate: the previous guard was a test someone had to remember, and
  * forgetting it is exactly what let this recur three times.
+ *
+ * ## Typing the still-`unaudited` kinds
+ *
+ * The remaining `'unaudited'` kinds are being typed incrementally, one family
+ * at a time. {@link UNAUDITED_KIND_FAMILY} assigns each of them to its family
+ * — that assignment, not a kind list re-typed in each consumer's prompt, is
+ * the source of truth for which kinds a given family slice owns.
  */
 
 import type { ActionQueueKind } from './action-queue-kinds'
@@ -248,3 +255,101 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'qa-step-list-opt-in': 'unaudited',
   'qa-step-list-promote': 'unaudited',
 } as const satisfies Record<ActionQueueKind, 'typed' | 'derived-condition' | 'unaudited'>
+
+// ── Kind families ─────────────────────────────────────────────────────────────
+
+/**
+ * Kinds still classified `'unaudited'` above. Derived from
+ * {@link ACTION_QUEUE_PAYLOAD_AUDIT} rather than hand-listed, so this stays in
+ * sync automatically as consumer slices flip entries to `'typed'`.
+ */
+type UnauditedKind = {
+  [K in ActionQueueKind]: (typeof ACTION_QUEUE_PAYLOAD_AUDIT)[K] extends 'unaudited' ? K : never
+}[ActionQueueKind]
+
+/**
+ * The eight families the remaining unaudited kinds are typed in, one family
+ * per consumer slice of PRD `2d84a65a-shrink-the-unaudited-list-in-action-queu`.
+ */
+export type UnauditedKindFamily =
+  | 'slice-workflow'
+  | 'validation-qa'
+  | 'spend-provider'
+  | 'daemon-health'
+  | 'task-lifecycle'
+  | 'verify-gate'
+  | 'proposal-promotion'
+  | 'scheduling-workflow-drift'
+
+/**
+ * Assigns every still-unaudited kind to the family that will type it.
+ *
+ * This is the seam the eight consumer slices key off, instead of each
+ * hand-copying a kind list from its own prompt into this file. `satisfies
+ * Record<UnauditedKind, UnauditedKindFamily>` makes the assignment **total**
+ * (every unaudited kind lands in exactly one family — TypeScript rejects a
+ * missing key) and **exact** (an excess key, e.g. one a consumer slice forgot
+ * to remove after flipping its kind to `'typed'`, is a compile error too).
+ *
+ * One entry corrects a drift already found at slicing time: the
+ * validation/QA consumer slice's prompt names a kind `preview-gone`, which
+ * does not exist — the real kind is `awaiting-validation-preview-gone`,
+ * listed under `validation-qa` below.
+ *
+ * `unaudited` classification is temporary scaffolding for this PRD — once
+ * every kind above reads `'typed'` or `'derived-condition'`, `UnauditedKind`
+ * is `never` and this map (along with `UnauditedKindFamily`) is dead code to
+ * delete, which is exactly what "Retire the `unaudited` classification once
+ * the list is empty" does.
+ */
+export const UNAUDITED_KIND_FAMILY = {
+  'slices-dropped': 'slice-workflow',
+  'slice-failed': 'slice-workflow',
+  'hitl-slice-needs-operator': 'slice-workflow',
+
+  'awaiting-validation': 'validation-qa',
+  'awaiting-validation-preview-gone': 'validation-qa',
+  'behaviour-unverified': 'validation-qa',
+  'mockup-ready': 'validation-qa',
+  'qa-step-list-opt-in': 'validation-qa',
+  'qa-step-list-promote': 'validation-qa',
+
+  'budget-window': 'spend-provider',
+  'budget-arc': 'spend-provider',
+  'spend-control-notice': 'spend-provider',
+  'provider-rate-limited': 'spend-provider',
+  'api-outage': 'spend-provider',
+
+  'low-disk-space': 'daemon-health',
+  'daemon-outage': 'daemon-health',
+  'daemon-killed': 'daemon-health',
+  'health-check-alert': 'daemon-health',
+  'observability-store-oversize': 'daemon-health',
+  'outbox-lag': 'daemon-health',
+
+  'cancelled-blocker-cascade': 'task-lifecycle',
+  'prerequisite-failed': 'task-lifecycle',
+  'recovery-abandoned': 'task-lifecycle',
+  'arc-superseded-on-main': 'task-lifecycle',
+  'done-with-unmerged-commits': 'task-lifecycle',
+  'diagnose-inconclusive': 'task-lifecycle',
+
+  'verify-uncovered': 'verify-gate',
+  'gate-enrichment-stale': 'verify-gate',
+  'arc-verification-failed': 'verify-gate',
+  'env-incident': 'verify-gate',
+  'dirty-integration': 'verify-gate',
+
+  'draft-proposal': 'proposal-promotion',
+  'scorer-suggested': 'proposal-promotion',
+  'promotion-decision': 'proposal-promotion',
+  'tool-promotion': 'proposal-promotion',
+  'reflect-recommended': 'proposal-promotion',
+
+  'scheduling-decision': 'scheduling-workflow-drift',
+  'requeue-warning': 'scheduling-workflow-drift',
+  'workflow-install-drift': 'scheduling-workflow-drift',
+  'workflow-draft-pending': 'scheduling-workflow-drift',
+  'fragmented-repo-layout': 'scheduling-workflow-drift',
+  'coder-question': 'scheduling-workflow-drift',
+} as const satisfies Record<UnauditedKind, UnauditedKindFamily>
