@@ -188,6 +188,50 @@
   },
   {
     "type": "cycle",
+    "from": "orchestrator/src/core/lib/git/checkpoint.ts",
+    "to": "orchestrator/src/core/ports/vcs/registry.ts",
+    "unresolvedTo": "../../ports/vcs/registry",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "orchestrator/src/core/ports/vcs/registry.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/ports/vcs/local-git.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/git/worktree.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "orchestrator/src/core/lib/git/checkpoint.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
     "from": "orchestrator/src/core/queue.ts",
     "to": "orchestrator/src/core/store/task-store.ts",
     "unresolvedTo": "./store/task-store",
@@ -647,6 +691,20 @@
     "from": "orchestrator/src/cli/commands/doctor.ts",
     "to": "orchestrator/src/core/lib/worktree-install.ts",
     "unresolvedTo": "../../core/lib/worktree-install",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/doctor.ts",
+    "to": "orchestrator/src/core/ports/vcs/registry.ts",
+    "unresolvedTo": "../../core/ports/vcs/registry",
     "dependencyTypes": [
       "local",
       "import"
@@ -1138,6 +1196,20 @@
   {
     "type": "dependency",
     "from": "orchestrator/src/cli/commands/misc.ts",
+    "to": "orchestrator/src/core/ports/vcs/registry.ts",
+    "unresolvedTo": "../../core/ports/vcs/registry",
+    "dependencyTypes": [
+      "local",
+      "dynamic-import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/misc.ts",
     "to": "orchestrator/src/core/store/task-store.ts",
     "unresolvedTo": "../../core/store/task-store.js",
     "dependencyTypes": [
@@ -1336,6 +1408,20 @@
     "from": "orchestrator/src/cli/commands/proposal.ts",
     "to": "orchestrator/src/core/daemon/paths.ts",
     "unresolvedTo": "../../core/daemon/paths",
+    "dependencyTypes": [
+      "local",
+      "import"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "no-cli-to-core"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "orchestrator/src/cli/commands/proposal.ts",
+    "to": "orchestrator/src/core/ports/vcs/registry.ts",
+    "unresolvedTo": "../../core/ports/vcs/registry",
     "dependencyTypes": [
       "local",
       "import"
@@ -2291,25 +2377,12 @@
   },
   {
     "type": "dependency",
-    "from": "orchestrator/src/core/daemon/dev-staleness.ts",
-    "to": "orchestrator/src/core/lib/git/internal.ts",
-    "unresolvedTo": "../lib/git/internal",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "vcs-port-only"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "orchestrator/src/core/daemon/main-dirty-dispatch.ts",
     "to": "orchestrator/src/core/lib/git/internal.ts",
     "unresolvedTo": "../lib/git/internal",
     "dependencyTypes": [
       "local",
+      "type-only",
       "import"
     ],
     "rule": {
@@ -2450,7 +2523,7 @@
     "unresolvedTo": "../lib/git/internal",
     "dependencyTypes": [
       "local",
-      "import"
+      "dynamic-import"
     ],
     "rule": {
       "severity": "error",
@@ -2501,34 +2574,6 @@
   },
   {
     "type": "dependency",
-    "from": "orchestrator/src/core/lib/repo-root-branch-warning.ts",
-    "to": "orchestrator/src/core/lib/git/internal.ts",
-    "unresolvedTo": "./git/internal",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "vcs-port-only"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "orchestrator/src/core/lib/scorer-runtime.ts",
-    "to": "orchestrator/src/core/lib/git/internal.ts",
-    "unresolvedTo": "./git/internal",
-    "dependencyTypes": [
-      "local",
-      "dynamic-import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "vcs-port-only"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "orchestrator/src/core/lib/steward-workflow-patch.ts",
     "to": "orchestrator/src/core/lib/git/internal.ts",
     "unresolvedTo": "./git/internal.js",
@@ -2546,20 +2591,6 @@
     "from": "orchestrator/src/core/lib/structured-write.ts",
     "to": "orchestrator/src/core/lib/git/merge.ts",
     "unresolvedTo": "./git/merge",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "vcs-port-only"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "orchestrator/src/core/lib/verify.ts",
-    "to": "orchestrator/src/core/lib/git/internal.ts",
-    "unresolvedTo": "./git/internal",
     "dependencyTypes": [
       "local",
       "import"
@@ -2630,20 +2661,6 @@
     "from": "orchestrator/src/core/lib/worktree-prune.ts",
     "to": "orchestrator/src/core/lib/git/merge.ts",
     "unresolvedTo": "./git/merge",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "vcs-port-only"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "orchestrator/src/core/lib/worktree-reclaim.ts",
-    "to": "orchestrator/src/core/lib/git/internal.ts",
-    "unresolvedTo": "./git/internal",
     "dependencyTypes": [
       "local",
       "import"
