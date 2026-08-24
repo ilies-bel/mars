@@ -166,7 +166,7 @@ export const localGitVcs: Vcs = {
       const sha = (
         await exec(git, ['commit-tree', tree, '-p', head, '-m', message], {
           cwd,
-          env: { ...process.env, ...CHECKPOINT_IDENTITY } as Record<string, string>,
+          env: CHECKPOINT_IDENTITY,
         })
       ).stdout.trim()
 
