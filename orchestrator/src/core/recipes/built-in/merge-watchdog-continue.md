@@ -27,8 +27,8 @@ interrupted. No CLI command from you is needed or wanted to trigger it.
 
 - Edit any application source file — the implementation is complete.
 - Stage, commit, or otherwise modify any file in the origin worktree.
-- Run `mars continue <taskId>` (or any other `mars` mutation) against the
-  origin task. It is **always** rejected: you are the origin's in-flight
+- Do NOT run `mars continue <taskId>` (or any other `mars` mutation) against
+  the origin task. It is **always** rejected: you are the origin's in-flight
   recovery, so the guard that stops a second concurrent recovery refuses the
   call every time, and separately the origin sits in `blocked` status (not
   `failed`) for as long as this recovery runs. Both refusals are structural —

@@ -196,6 +196,79 @@ describe('continue degrades to restart for pre-setup failures', () => {
     await expect(continueTask.coreContinueTask(source.id)).rejects.toThrow(recoveryId)
   })
 
+  /**
+   * The merge-watchdog case: the origin's merge was killed after the coder's
+   * work was committed and verified, a recovery spawned, and the recovery was
+   * briefed to run `mars continue <origin>`. That call can never succeed — the
+   * recovery IS the in-flight recovery the guard names. Historically the
+   * refusal offered only `mars restart`, whose effect is to discard exactly
+   * the verify-passed commits the timeout did not touch.
+   *
+   * The message must therefore name the non-destructive escapes alongside
+   * restart, say what restart would throw away, and tell a caller that is
+   * itself the recovery not to retry.
+   */
+  it('names remerge and unblock alongside restart when the branch is ahead of main', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const source = await queue.enqueueTask('merge-timeout task', undefined, { skipTriage: true })
+    const branch = `task/${source.id}`
+    const worktreePath = resolve(repo, '.mars', 'worktrees', source.id)
+
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    writeFileSync(resolve(worktreePath, 'feature.ts'), 'export const feature = true\n')
+    execFileSync('git', ['add', 'feature.ts'], { cwd: worktreePath })
+    execFileSync('git', [
+      '-c', 'user.email=coder@test', '-c', 'user.name=Coder',
+      'commit', '-m', 'feat: the work the merge never landed',
+    ], { cwd: worktreePath })
+
+    await queue.updateTask(source.id, {
+      status: 'failed',
+      error: 'merge:crashed/watchdog-vega-supervisor',
+      failedPhase: 'merge',
+      branch,
+      worktreePath,
+    })
+
+    const { getDefaultTaskStore } = (await import('../../store/task-store')) as typeof import('../../store/task-store')
+    const store = await getDefaultTaskStore()
+    const recoveryId = 'mars-fix-watchdog'
+    const now = new Date().toISOString()
+    await store.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, origin_id, priority, tag, kind, created_at, updated_at)
+            VALUES (?, ?, 'running', ?, ?, 0, 'coder', 'fix', ?, ?)`,
+      args: [recoveryId, 'resume the watchdog-killed merge', source.id, source.id, now, now],
+    })
+
+    let thrown: Error | null = null
+    try {
+      await continueTask.coreContinueTask(source.id)
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    const message = thrown!.message
+
+    // Still identifies the blocking recovery.
+    expect(message).toContain(recoveryId)
+    // Non-destructive escapes are named, not just restart.
+    expect(message).toContain(`mars remerge ${source.id}`)
+    expect(message).toContain(`mars unblock ${source.id}`)
+    expect(message).toContain(`mars restart ${source.id}`)
+    // Restart is explicitly marked as the destructive one, and the commits it
+    // would discard are named so the operator can see the cost.
+    expect(message).toMatch(/DESTRUCTIVE/)
+    expect(message).toContain('feat: the work the merge never landed')
+    // A caller that IS the recovery must be told retrying is pointless.
+    expect(message).toMatch(/structural/i)
+
+    // Refusal is read-only: the task keeps its status.
+    const after = await queue.getTask(source.id)
+    expect(after?.status).toBe('failed')
+  })
+
   // ── Normal resume path is unaffected ──────────────────────────────────────
 
   it('refreshes a failed task branch with a fix that landed on main before resuming', async () => {

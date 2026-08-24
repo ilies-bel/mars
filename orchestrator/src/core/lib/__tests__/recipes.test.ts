@@ -118,6 +118,45 @@ describe('recipe catalog', () => {
       }
     })
 
+    /**
+     * A recovery recipe runs as the origin task's own in-flight recovery. In
+     * that position `mars continue <origin>` is rejected unconditionally: the
+     * guard exists to stop a second concurrent recovery, and the caller IS the
+     * first one. The origin is also parked in `blocked`, not `failed`. Both
+     * refusals are structural, so a recipe that prescribes the command hands
+     * the agent an action that can never succeed — and whose only advertised
+     * escape, `mars restart`, discards the origin's verify-passed commits.
+     *
+     * The assertion targets *invocations*, so prose explaining the ban
+     * ("Do NOT run `mars continue <taskId>`") still passes.
+     */
+    it('no built-in recipe instructs an agent to invoke mars continue', async () => {
+      const cat = await loadRecipeCatalog(stateDir)
+      const invocation = /(^|\n)\s*(```bash\n)?\s*mars continue\b/
+      for (const recipe of cat.list()) {
+        expect(
+          recipe.prompt,
+          `built-in recipe '${recipe.name}' invokes mars continue`,
+        ).not.toMatch(invocation)
+      }
+    })
+
+    it('merge-watchdog-continue tells the agent to make no changes and exit', async () => {
+      const cat = await loadRecipeCatalog(stateDir)
+      const prompt = cat.get('merge-watchdog-continue')?.prompt ?? ''
+      expect(prompt).not.toBe('')
+      // The action is a no-op-and-exit; the recovery's own verify+merge steps
+      // re-run against the same branch once the agent exits.
+      expect(prompt).toMatch(/do nothing, and exit immediately/i)
+      // The ban on `mars continue` is stated, with the reason.
+      expect(prompt).toMatch(/do not run `?mars continue/i)
+      expect(prompt).toMatch(/structural/i)
+      // Still documents that the code is already committed and correct.
+      expect(prompt).toMatch(/fully committed/i)
+      // No code-editing directives — the recovery makes no changes at all.
+      expect(prompt).not.toMatch(/git apply/i)
+    })
+
     it('main-commiter commits ordinary dirty changes and refuses only danger signals', async () => {
       const cat = await loadRecipeCatalog(stateDir)
       const prompt = cat.get('main-commiter')?.prompt ?? ''
