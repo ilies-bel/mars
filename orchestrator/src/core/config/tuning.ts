@@ -52,3 +52,33 @@ export const usesInProcSemaphoreMock = (env: NodeJS.ProcessEnv = process.env): b
  */
 export const baselineRepairNpmViewTimeoutMs = (env: NodeJS.ProcessEnv = process.env): number =>
   Number(env.MARS_BASELINE_REPAIR_NPM_VIEW_TIMEOUT_MS) || 15_000
+
+/**
+ * Minimum distinct-task failure count (within the rolling window) that trips
+ * the signature-storm circuit breaker in `../lib/signature-storm-monitor.ts`.
+ * Override via `MARS_SIGNATURE_STORM_THRESHOLD`.
+ *
+ * @param env injectable for hermetic tests; defaults to `process.env`.
+ */
+export const signatureStormTripThreshold = (env: NodeJS.ProcessEnv = process.env): number => {
+  const raw = env.MARS_SIGNATURE_STORM_THRESHOLD
+  if (!raw) return 3
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 1) return 3
+  return Math.floor(n)
+}
+
+/**
+ * Rolling window (in ms) over which the signature-storm circuit breaker in
+ * `../lib/signature-storm-monitor.ts` counts distinct-task failures.
+ * Override via `MARS_SIGNATURE_STORM_WINDOW_MS`.
+ *
+ * @param env injectable for hermetic tests; defaults to `process.env`.
+ */
+export const signatureStormWindowMs = (env: NodeJS.ProcessEnv = process.env): number => {
+  const raw = env.MARS_SIGNATURE_STORM_WINDOW_MS
+  if (!raw) return 10 * 60 * 1000
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 1000) return 10 * 60 * 1000
+  return Math.floor(n)
+}

@@ -2,6 +2,7 @@ import type { DbResultSet, DbStatement } from './db.js'
 import { raiseActionQueueItem } from './action-queue'
 import { isSameFailureFamily } from './failure-signature.js'
 import { isSignatureStormExempt } from './failure-kinds.js'
+import { signatureStormTripThreshold, signatureStormWindowMs } from '../config/tuning'
 
 /**
  * Minimal write/read seam the monitor needs. Satisfied structurally by both a
@@ -30,21 +31,8 @@ export interface MonitorDb {
  * Non-diagnostic signatures ({@link isDiagnosticSignature}) are also skipped.
  */
 
-export const SIGNATURE_STORM_TRIP_THRESHOLD = (() => {
-  const raw = process.env.MARS_SIGNATURE_STORM_THRESHOLD
-  if (!raw) return 3
-  const n = Number(raw)
-  if (!Number.isFinite(n) || n < 1) return 3
-  return Math.floor(n)
-})()
-
-export const SIGNATURE_STORM_WINDOW_MS = (() => {
-  const raw = process.env.MARS_SIGNATURE_STORM_WINDOW_MS
-  if (!raw) return 10 * 60 * 1000
-  const n = Number(raw)
-  if (!Number.isFinite(n) || n < 1000) return 10 * 60 * 1000
-  return Math.floor(n)
-})()
+export const SIGNATURE_STORM_TRIP_THRESHOLD = signatureStormTripThreshold()
+export const SIGNATURE_STORM_WINDOW_MS = signatureStormWindowMs()
 
 /** Action-queue kind for the level-triggered "signature storm" row. */
 export const SIGNATURE_STORM_ACTION_QUEUE_KIND = 'signature-storm' as const

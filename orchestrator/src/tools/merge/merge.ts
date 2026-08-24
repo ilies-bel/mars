@@ -226,6 +226,14 @@ export const merge = async (
   // taken at all, so a failure leaves the integration branch untouched. This
   // runner stays inside the lock on purpose — integration-tier steps test the
   // merged composition of `main` itself, which only exists post-fast-forward.
+  //
+  // DECISION (mars-03181828): `npm run arch` (the env-reads ratchet) should run
+  // here so the task that breaks the ratchet is the one reported, not a later
+  // unrelated task. The correct shape is to register `npm run arch` as an
+  // **integration-tier gate** in the project's verify-gates config, NOT to
+  // hard-code it in this function — that keeps the framework generic, bounds the
+  // gate via INTEGRATION_GATE_TIMEOUT_MS, and requires no change here.
+  // A follow-up task should add that integration-tier gate entry.
   const integrationGateRunner = async (info: {
     finalTaskSha: string
     finalIntegrationSha: string

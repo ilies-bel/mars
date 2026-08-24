@@ -1,6 +1,6 @@
 {
   "_comment": "Ratchet for `process.env` reads outside orchestrator/src/core/config/ (scripts/arch-guard.mjs checkEnvReads()). EXACT match, not a ceiling: `arch` fails if any file's actual count differs from what is recorded here, in EITHER direction — fix a read and regenerate this file (`node scripts/arch-guard.mjs --env-baseline`) in the same change. Counts are occurrences, not lines — a line with two reads counts twice.",
-  "totalViolations": 217,
+  "totalViolations": 216,
   "violations": {
     "orchestrator/src/bus/log.ts": 1,
     "orchestrator/src/cli.ts": 2,
@@ -74,7 +74,6 @@
     "orchestrator/src/core/lib/reflect-signals.ts": 1,
     "orchestrator/src/core/lib/run-tool.ts": 2,
     "orchestrator/src/core/lib/semaphore.ts": 2,
-    "orchestrator/src/core/lib/signature-storm-monitor.ts": 1,
     "orchestrator/src/core/lib/structured-write.ts": 2,
     "orchestrator/src/core/lib/sweep.ts": 1,
     "orchestrator/src/core/lib/tool-forge-scanner.ts": 1,
