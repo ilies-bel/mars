@@ -229,8 +229,14 @@ Each task prompt must stand alone. Include:
   Mars worktree shares one stack addressed by shifting positions
   (`stash@{0}`, `stash@{1}`) — a `pop` in one worktree can restore an entry
   pushed by a different task and silently move its uncommitted work into your
-  tree. Park changes with `git checkout <ref> -- <paths>`, a wip commit on your
-  own branch, or a scratch clone instead.
+  tree. To park changes temporarily, **commit a wip commit on your own
+  branch first**, then restore individual paths with
+  `git checkout <ref> -- <paths>` — that command overwrites both the
+  working tree AND the index with no warning and no reflog entry, so
+  running it before committing silently destroys any staged-but-uncommitted
+  edits to those paths. Committing first makes a later
+  `git checkout HEAD -- <paths>` recover your real work instead of nothing.
+  A scratch clone is the other safe alternative.
 - Never `cd` between Mars worktrees. Bash CWD persists across tool
   calls, and `mars` resolves the repo from CWD upward — once shifted
   into `.mars/worktrees/<id>/`, every later `mars` call silently binds
