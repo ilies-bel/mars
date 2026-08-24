@@ -11,9 +11,11 @@
  *   (c) The superseded task's `status` is `dropped` after the operation.
  *   (d) The superseded task's worktree registration is removed before the
  *       new worktree is created (never two live worktrees on the same branch).
- *   (e) Mid-way failure: if new-worktree creation fails after the old worktree
- *       was released, the superseded task remains `dropped`, no new task row is
- *       created, and the error surfaces with the branch name.
+ *   (e) Mid-way failure: if new-worktree creation fails, the superseded task
+ *       remains `failed` (atomicity guarantee — the origin drop and new task
+ *       INSERT commit together; no partial drop is possible), no new task row
+ *       is created, and the error surfaces with the branch name. A subsequent
+ *       retry with --supersede <oldId> is therefore possible.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -163,15 +165,15 @@ describe('queue.supersede', () => {
 
   // ── (e): Mid-way failure path ───────────────────────────────────────────
 
-  it('mid-way failure: superseded task stays dropped, no new row created, error names the branch', async () => {
+  it('mid-way failure: superseded task stays failed (atomic), no new row created, error names the branch', async () => {
     const q = await loadQueue(repo)
 
     // Create a task whose branch doesn't actually exist in git.
-    // This forces `git worktree add` to fail.
+    // This forces `git worktree add` to fail during supersede.
     const superseded = await q.enqueueTask('will fail rescue', undefined, { skipTriage: true })
     const fakeBranch = 'task/nonexistent-branch-xyz'
     await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET branch = ? WHERE id = ?`,
+      sql: `UPDATE tasks SET status = 'failed', error = 'timed out', branch = ? WHERE id = ?`,
       args: [fakeBranch, superseded.id],
     })
 
@@ -194,9 +196,12 @@ describe('queue.supersede', () => {
     // Error message must suggest the retry incantation.
     expect(caughtError!.message).toContain('Re-run')
 
-    // (e-i) Superseded task is dropped (step 2 completed before step 3 failed).
-    const droppedTask = await q.getTask(superseded.id)
-    expect(droppedTask?.status).toBe('dropped')
+    // (e-i) Atomicity guarantee: the origin drop only happens in the same
+    // transaction as the new task INSERT. Since worktree creation failed before
+    // the atomic block, the origin must remain 'failed' — not 'dropped'.
+    // This preserves the ability to retry with --supersede <oldId>.
+    const originAfter = await q.getTask(superseded.id)
+    expect(originAfter?.status).toBe('failed')
 
     // (e-ii) No new task row was created.
     const allTasks = await q.listTasks()
