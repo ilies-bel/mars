@@ -41,6 +41,19 @@ export interface WorktreeResult {
   branch: string
 }
 
+/**
+ * Explanation written alongside a removed worktree so anyone who later finds
+ * the directory gone can tell which task it was and why — see
+ * `../../lib/git/worktree.ts`'s `WorktreeRemovalTombstone` doc comment.
+ */
+export interface WorktreeRemovalTombstone {
+  taskId: string
+  /** Why the worktree was removed, e.g. `'merged'`, `'diagnose'`. */
+  reason: string
+  /** The integration-branch SHA the task's work landed as, when known. */
+  mergeCommitSha?: string | null
+}
+
 /** Args for {@link Vcs.removeWorktree}. */
 export interface RemoveWorktreeSpec {
   path: string
@@ -49,6 +62,8 @@ export interface RemoveWorktreeSpec {
   force?: boolean
   /** Skip deleting the branch after the worktree is removed. Defaults to `false`. */
   keepBranch?: boolean
+  /** When provided, a tombstone file is written before the directory is removed. */
+  tombstone?: WorktreeRemovalTombstone
 }
 
 /** Args for {@link Vcs.branchExists}. */
@@ -108,6 +123,87 @@ export interface VcsStatus {
   statusOutput: string
 }
 
+/** Args for {@link Vcs.attachToOriginWorktree}. */
+export interface AttachToOriginWorktreeSpec {
+  /** The origin (recovered) task's id — used only for diagnostics. */
+  originTaskId: string
+  /** The origin task's branch, as recorded on its row (`task/<origin-id>`). */
+  originBranch: string
+  /** The origin task's worktree path, as recorded on its row. */
+  originWorktreePath: string
+}
+
+/** Args for {@link Vcs.provisionCommitterWorktree}. */
+export interface CommitterWorktreeSpec {
+  /** Recovery task id used for path + branch naming. */
+  recoveryTaskId: string
+  integrationBranch: string
+}
+
+/**
+ * What to do when replaying a task branch onto the integration tip conflicts.
+ * See `../../lib/git/worktree.ts`'s `WorktreeConflictPolicy` doc comment for
+ * the full reasoning behind each value; re-declared here (rather than
+ * imported) to keep this module's types self-contained and serializable.
+ */
+export type WorktreeConflictPolicy = 'escalate' | 'recreate' | 'reconcile'
+
+/** Args for {@link Vcs.syncWorktreeToIntegration}. */
+export interface SyncWorktreeSpec {
+  taskId: string
+  ref: WorktreeResult
+  integrationBranch: string
+  /** Conflict policy. Defaults to `'escalate'` — the caller opts into recreate/reconcile. */
+  onConflict?: WorktreeConflictPolicy
+}
+
+/** A single commit parked off a recreated branch — `<shortSha> <subject>`. */
+export interface ParkedCommit {
+  shortSha: string
+  subject: string
+}
+
+/** Result of {@link Vcs.syncWorktreeToIntegration}. */
+export type WorktreeSyncOutcome =
+  | { kind: 'already-current' }
+  | {
+      kind: 'rebased'
+      from: string
+      to: string
+      checkpointRef: string | null
+    }
+  | {
+      kind: 'reconciled'
+      from: string
+      to: string
+      checkpointRef: string | null
+      vegaSessionId: string | null
+    }
+  | {
+      kind: 'recreated'
+      from: string
+      to: string
+      parkedRef: string
+      parkedCommits: ParkedCommit[]
+      checkpointRef: string | null
+    }
+
+/** Args for {@link Vcs.restoreWorktreeIfMissing}. */
+export interface RestoreWorktreeSpec {
+  taskId: string
+  ref: WorktreeResult
+}
+
+/** Result of {@link Vcs.restoreWorktreeIfMissing}. */
+export type RestoreWorktreeOutcome = 'present' | 'rebuilt'
+
+/** Args for {@link Vcs.describeUncommittedWork}. */
+export interface DescribeUncommittedWorkSpec {
+  verb: 'restart' | 'drop'
+  taskId: string
+  worktreePath: string | null | undefined
+}
+
 /**
  * The VCS Port contract. Every method is async and every arg/result is
  * serializable — see the module doc comment above.
@@ -127,4 +223,16 @@ export interface Vcs {
   merge(spec: MergeSpec): Promise<MergeResult>
   /** Report whether `spec.cwd` has a clean tracked working tree. */
   status(spec: StatusSpec): Promise<VcsStatus>
+  /** Attach a recovery (kind=fix) dispatch to its origin task's existing worktree+branch. */
+  attachToOriginWorktree(spec: AttachToOriginWorktreeSpec): Promise<WorktreeResult>
+  /** Provision the worktree a main-commiter recovery runs inside. */
+  provisionCommitterWorktree(spec: CommitterWorktreeSpec): Promise<WorktreeResult>
+  /** Guarantee a task's worktree contains the current integration tip. */
+  syncWorktreeToIntegration(spec: SyncWorktreeSpec): Promise<WorktreeSyncOutcome>
+  /** Guarantee a resumed run's worktree directory actually exists on disk. */
+  restoreWorktreeIfMissing(spec: RestoreWorktreeSpec): Promise<RestoreWorktreeOutcome>
+  /** List uncommitted paths in a worktree, or `null` when unknown (missing/not-a-worktree). */
+  listUncommittedPaths(worktreePath: string | null | undefined): Promise<string[] | null>
+  /** Build the refusal message for a destructive verb, or `null` when nothing would be lost. */
+  describeUncommittedWork(spec: DescribeUncommittedWorkSpec): Promise<string | null>
 }

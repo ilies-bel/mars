@@ -36,7 +36,7 @@ import { resolveAllRowsForTask } from './lib/action-queue'
 import { getChangedFiles, selectVerifySteps } from './ports/verifier/verify-helpers'
 import { resolveVerifier } from './ports/verifier/registry'
 import { loadVerifyGates } from './verify-gates'
-import { removeWorktree } from './lib/git/worktree'
+import { resolveVcs } from './ports/vcs/registry'
 import { provisionWorktreeDeps } from './lib/worktree-deps'
 
 const execFileP = promisify(execFile)
@@ -225,7 +225,7 @@ export const landTask = async (
 
   // ── 8. Clean up worktree/branch (best-effort) ─────────────────────────────
   try {
-    await removeWorktree({ path: worktreePath, branch }, /* force */ true, /* keepBranch */ false)
+    await resolveVcs().removeWorktree({ path: worktreePath, branch, force: true, keepBranch: false })
   } catch {
     // Non-fatal: the land already succeeded; leave the cleanup for 'mars worktree clean'.
   }

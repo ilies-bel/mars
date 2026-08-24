@@ -53,7 +53,7 @@ import {
   type DomainTaskStore,
 } from './store/task-store'
 import { getStateDir, getRepoRoot } from './context'
-import { removeWorktree } from './lib/git/worktree'
+import { resolveVcs } from './ports/vcs/registry'
 import { provisionWorktreeDeps } from './lib/worktree-deps'
 import { buildEventInsert, publish, withWriteTx } from './lib/outbox'
 import { maybeAssertArcInvariant } from './arc/invariant'
@@ -330,14 +330,17 @@ export class Arc {
 
       // Step 1: release the old worktree (keep branch — we reuse it).
       if (superseded.worktreePath !== null && superseded.branch !== null) {
-        await removeWorktree(
-          { path: superseded.worktreePath, branch: superseded.branch },
-          true,  // force
-          true,  // keepBranch — reuse branch for new task
-        ).catch(() => {
-          // worktree already gone on disk — continue; the git pruning in
-          // createWorktree / git worktree add would surface a real error.
-        })
+        await resolveVcs()
+          .removeWorktree({
+            path: superseded.worktreePath,
+            branch: superseded.branch,
+            force: true, // force
+            keepBranch: true, // keepBranch — reuse branch for new task
+          })
+          .catch(() => {
+            // worktree already gone on disk — continue; the git pruning in
+            // createWorktree / git worktree add would surface a real error.
+          })
       }
 
       // Step 2: mark superseded task dropped + clear its worktree_path.

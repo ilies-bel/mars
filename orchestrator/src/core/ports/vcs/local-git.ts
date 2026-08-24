@@ -7,22 +7,38 @@
  * signatures those helpers already expose, so nothing about today's
  * operational behaviour changes.
  */
-import { createWorktree, removeWorktree } from '../../lib/git/worktree'
+import {
+  createWorktree,
+  removeWorktree,
+  attachToOriginWorktree,
+  provisionCommitterWorktree,
+  syncWorktreeToIntegration,
+  restoreWorktreeIfMissing,
+  listUncommittedPaths,
+  describeUncommittedWork,
+} from '../../lib/git/worktree'
 import { mergeBranch } from '../../lib/git/merge'
 import { commitMain } from '../../lib/git/commit-main'
 import { resolveGitBin, execProbe, branchExists } from '../../lib/git/internal'
 import type {
+  AttachToOriginWorktreeSpec,
   BranchExistsSpec,
   CommitResult,
   CommitSpec,
+  CommitterWorktreeSpec,
+  DescribeUncommittedWorkSpec,
   MergeResult,
   MergeSpec,
   RemoveWorktreeSpec,
+  RestoreWorktreeOutcome,
+  RestoreWorktreeSpec,
   StatusSpec,
+  SyncWorktreeSpec,
   Vcs,
   VcsStatus,
   WorktreeResult,
   WorktreeSpec,
+  WorktreeSyncOutcome,
 } from './types'
 
 export const localGitVcs: Vcs = {
@@ -42,6 +58,8 @@ export const localGitVcs: Vcs = {
       { path: spec.path, branch: spec.branch },
       spec.force ?? true,
       spec.keepBranch ?? false,
+      undefined,
+      spec.tombstone,
     )
   },
 
@@ -74,6 +92,42 @@ export const localGitVcs: Vcs = {
   async status(spec: StatusSpec): Promise<VcsStatus> {
     const r = await execProbe(resolveGitBin(), ['status', '--porcelain'], { cwd: spec.cwd })
     return { clean: r.stdout.trim().length === 0, statusOutput: r.stdout }
+  },
+
+  async attachToOriginWorktree(spec: AttachToOriginWorktreeSpec): Promise<WorktreeResult> {
+    return attachToOriginWorktree({
+      originTaskId: spec.originTaskId,
+      originBranch: spec.originBranch,
+      originWorktreePath: spec.originWorktreePath,
+    })
+  },
+
+  async provisionCommitterWorktree(spec: CommitterWorktreeSpec): Promise<WorktreeResult> {
+    return provisionCommitterWorktree({
+      recoveryTaskId: spec.recoveryTaskId,
+      integrationBranch: spec.integrationBranch,
+    })
+  },
+
+  async syncWorktreeToIntegration(spec: SyncWorktreeSpec): Promise<WorktreeSyncOutcome> {
+    return syncWorktreeToIntegration({
+      taskId: spec.taskId,
+      ref: spec.ref,
+      integrationBranch: spec.integrationBranch,
+      onConflict: spec.onConflict,
+    })
+  },
+
+  async restoreWorktreeIfMissing(spec: RestoreWorktreeSpec): Promise<RestoreWorktreeOutcome> {
+    return restoreWorktreeIfMissing({ taskId: spec.taskId, ref: spec.ref })
+  },
+
+  async listUncommittedPaths(worktreePath: string | null | undefined): Promise<string[] | null> {
+    return listUncommittedPaths(worktreePath)
+  },
+
+  async describeUncommittedWork(spec: DescribeUncommittedWorkSpec): Promise<string | null> {
+    return describeUncommittedWork(spec)
   },
 }
 

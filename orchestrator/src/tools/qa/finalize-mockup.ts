@@ -3,7 +3,8 @@
  * Split out of `workflows/primitives/index.ts` (TARGET §2.1); the terminal
  * status write goes through `ctx.services.store` (ADR-0052).
  */
-import { removeWorktree, type WorktreeRef } from '../../core/lib/git/worktree'
+import { resolveVcs } from '../../core/ports/vcs/registry'
+import { type WorktreeResult as WorktreeRef } from '../../core/ports/vcs/types'
 import { getStateDir } from '../../core/context'
 import { updateTask } from '../../core/queue'
 import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
@@ -76,7 +77,10 @@ export const finalizeMockup = async (
   const taskId = resolveTaskId(ctx, opts.taskId)
   const store: TaskStore = ctx.services.store
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
-  const trace = await resolveTrace(ctx, taskId)
+  // Populate the per-ctx trace cache for any downstream step; the trace
+  // context itself is no longer threaded into removeWorktree (the Vcs port
+  // narrows out non-serializable options — see core/ports/vcs/types.ts).
+  await resolveTrace(ctx, taskId)
 
   // Resolve the proposalId from opts or from the task's parent_proposal_id column.
   let proposalId: string | null = opts.proposalId ?? null
@@ -125,12 +129,12 @@ export const finalizeMockup = async (
     })
   }
 
-  await removeWorktree(
-    { path: worktree.path, branch: worktree.branch },
-    true,
-    false,
-    buildPhaseCtx(trace, taskId, 'merge'),
-  )
+  await resolveVcs().removeWorktree({
+    path: worktree.path,
+    branch: worktree.branch,
+    force: true,
+    keepBranch: false,
+  })
   await updateTask(taskId, { status: 'done', failedPhase: null }, store)
 
   return { taskId, proposalId, success: true, message: 'mockup complete' }

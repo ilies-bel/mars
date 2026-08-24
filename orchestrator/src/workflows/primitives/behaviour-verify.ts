@@ -54,7 +54,7 @@ import {
 
 const execFileAsync = promisify(execFile)
 
-import type { WorktreeRef } from '../../core/lib/git/worktree'
+import type { WorktreeResult as WorktreeRef } from '../../core/ports/vcs/types'
 import { getTask, type Task } from '../../core/queue'
 import { createProposal, findOpenDraftByKpiTag } from '../../core/proposals'
 import { raiseActionQueueItem } from '../../core/lib/action-queue'

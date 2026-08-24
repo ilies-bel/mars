@@ -7,10 +7,8 @@
  * through `ctx.services.store` (the Arc aggregate, ADR-0052) inside this shell.
  */
 import { runTool } from '../../core/lib/run-tool'
-import {
-  removeWorktree,
-  type WorktreeRef,
-} from '../../core/lib/git/worktree'
+import { resolveVcs } from '../../core/ports/vcs/registry'
+import { type WorktreeResult as WorktreeRef } from '../../core/ports/vcs/types'
 import { resolveVerifier } from '../../core/ports/verifier/registry'
 import {
   checkMergeTargetStatus,
@@ -190,13 +188,13 @@ export const merge = async (
           `a coder process is still in flight for this task id`,
       )
     } else {
-      await removeWorktree(
-        { path: worktreePath, branch },
-        true,
-        false,
-        buildPhaseCtx(trace, taskId, 'merge'),
-        { taskId, reason: 'diagnose' },
-      )
+      await resolveVcs().removeWorktree({
+        path: worktreePath,
+        branch,
+        force: true,
+        keepBranch: false,
+        tombstone: { taskId, reason: 'diagnose' },
+      })
     }
     await updateTask(taskId, { status: 'done', failedPhase: null }, store)
     return {
@@ -400,13 +398,13 @@ export const merge = async (
                   `a coder process is still in flight for this task id`,
               )
             } else {
-              await removeWorktree(
-                { path: worktreePath, branch },
-                true,
-                false,
-                buildPhaseCtx(trace, taskId, 'merge'),
-                { taskId, reason: 'zero-commit-main-committer-noop' },
-              )
+              await resolveVcs().removeWorktree({
+                path: worktreePath,
+                branch,
+                force: true,
+                keepBranch: false,
+                tombstone: { taskId, reason: 'zero-commit-main-committer-noop' },
+              })
             }
             await updateTask(taskId, { status: 'done', failedPhase: null }, store)
             return {
@@ -1106,17 +1104,17 @@ export const merge = async (
               reasons.join('; '),
           )
         } else {
-          await removeWorktree(
-            { path: worktreePath, branch },
-            true,
-            false,
-            buildPhaseCtx(trace, taskId, 'merge'),
-            {
+          await resolveVcs().removeWorktree({
+            path: worktreePath,
+            branch,
+            force: true,
+            keepBranch: false,
+            tombstone: {
               taskId,
               reason: 'merged',
               mergeCommitSha: capturedMergeShas?.mergePostSha ?? null,
             },
-          )
+          })
         }
         await updateTask(taskId, { status: 'done', failedPhase: null }, store)
 

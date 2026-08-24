@@ -12,17 +12,23 @@ import { describe, expect, it } from 'vitest'
 import { getVcs, listVcses, registerVcs, requireVcs, resolveVcs } from '../registry'
 import { localGitVcs } from '../local-git'
 import type {
+  AttachToOriginWorktreeSpec,
   BranchExistsSpec,
   CommitResult,
   CommitSpec,
+  CommitterWorktreeSpec,
+  DescribeUncommittedWorkSpec,
   MergeResult,
   MergeSpec,
   RemoveWorktreeSpec,
+  RestoreWorktreeSpec,
   StatusSpec,
+  SyncWorktreeSpec,
   Vcs,
   VcsStatus,
   WorktreeResult,
   WorktreeSpec,
+  WorktreeSyncOutcome,
 } from '../types'
 
 // Every optional member is populated so each round-trip below is a real test
@@ -87,6 +93,44 @@ const statusResult: VcsStatus = {
   statusOutput: ' M src/core/ports/vcs/types.ts\n',
 }
 
+const attachSpec: AttachToOriginWorktreeSpec = {
+  originTaskId: 'mars-c71db6a9',
+  originBranch: 'task/mars-c71db6a9',
+  originWorktreePath: '/repo/.mars/worktrees/mars-c71db6a9',
+}
+
+const committerSpec: CommitterWorktreeSpec = {
+  recoveryTaskId: 'fix-c71db6a9',
+  integrationBranch: 'main',
+}
+
+const syncSpec: SyncWorktreeSpec = {
+  taskId: 'mars-c71db6a9',
+  ref: worktreeResult,
+  integrationBranch: 'main',
+  onConflict: 'recreate',
+}
+
+const syncOutcome: WorktreeSyncOutcome = {
+  kind: 'recreated',
+  from: 'abc123',
+  to: 'def456',
+  parkedRef: 'refs/mars/parked/mars-c71db6a9-abc123def',
+  parkedCommits: [{ shortSha: 'abc1234', subject: 'wip' }],
+  checkpointRef: 'refs/mars/checkpoint/setup-mars-c71db6a9',
+}
+
+const restoreSpec: RestoreWorktreeSpec = {
+  taskId: 'mars-c71db6a9',
+  ref: worktreeResult,
+}
+
+const describeSpec: DescribeUncommittedWorkSpec = {
+  verb: 'drop',
+  taskId: 'mars-c71db6a9',
+  worktreePath: '/repo/.mars/worktrees/mars-c71db6a9',
+}
+
 describe('Vcs Port args/results are serializable', () => {
   it.each([
     ['WorktreeSpec', worktreeSpec],
@@ -99,6 +143,12 @@ describe('Vcs Port args/results are serializable', () => {
     ['MergeResult', mergeResult],
     ['StatusSpec', statusSpec],
     ['VcsStatus', statusResult],
+    ['AttachToOriginWorktreeSpec', attachSpec],
+    ['CommitterWorktreeSpec', committerSpec],
+    ['SyncWorktreeSpec', syncSpec],
+    ['WorktreeSyncOutcome', syncOutcome],
+    ['RestoreWorktreeSpec', restoreSpec],
+    ['DescribeUncommittedWorkSpec', describeSpec],
   ] as const)('%s round-trips through JSON.parse(JSON.stringify(...)) without loss', (_label, value) => {
     const roundTripped = JSON.parse(JSON.stringify(value)) as typeof value
     expect(roundTripped).toEqual(value)
@@ -151,6 +201,24 @@ describe('registerVcs()', () => {
       },
       async status() {
         return { clean: true, statusOutput: '' }
+      },
+      async attachToOriginWorktree(spec) {
+        return { path: spec.originWorktreePath, branch: spec.originBranch }
+      },
+      async provisionCommitterWorktree(spec) {
+        return { path: `/tmp/${spec.recoveryTaskId}`, branch: `task/${spec.recoveryTaskId}` }
+      },
+      async syncWorktreeToIntegration() {
+        return { kind: 'already-current' }
+      },
+      async restoreWorktreeIfMissing() {
+        return 'present'
+      },
+      async listUncommittedPaths() {
+        return null
+      },
+      async describeUncommittedWork() {
+        return null
       },
     }
     const dispose = registerVcs(fake)

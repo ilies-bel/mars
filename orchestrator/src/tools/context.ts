@@ -18,7 +18,7 @@ import type { WorkflowCtx } from '@mars/workflow'
 
 import { nullTraceStore, type TraceCtx } from '../core/lib/run-tool'
 import { type ManualParkArgs } from '../core/lib/park-for-human'
-import { type WorktreeRef } from '../core/lib/git/worktree'
+import { type WorktreeResult as WorktreeRef } from '../core/ports/vcs/types'
 import { type MergeResult } from '../core/lib/git/merge'
 import { getTask, type TaskTag, type TaskSpec } from '../core/queue'
 import { resolveOriginIdForTask } from '../core/lib/origin'

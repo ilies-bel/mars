@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { createWorktree, removeWorktree } from './git/worktree'
+import { resolveVcs } from '../ports/vcs/registry'
 import {
   checkMergeTargetStatus,
   type MergeResult,
@@ -180,7 +180,7 @@ export const runStructuredWrite = async (
   const { Arc } = await import('../arc')
   await Arc.recordStructuredWrite(writeId, `Structured ${args.kind} write bookkeeping`)
 
-  const worktree = await createWorktree({
+  const worktree = await resolveVcs().createWorktree({
     taskId: writeId,
     integrationBranch: integration,
     branchSuffix: args.kind,
@@ -257,7 +257,9 @@ export const runStructuredWrite = async (
     }
   } finally {
     if (existsSync(worktree.path)) {
-      await removeWorktree(worktree, true).catch(() => {})
+      await resolveVcs()
+        .removeWorktree({ path: worktree.path, branch: worktree.branch, force: true })
+        .catch(() => {})
     }
   }
 }
