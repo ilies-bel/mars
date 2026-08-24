@@ -224,7 +224,7 @@ describe('readCurrent() against seeded daemon.json', () => {
   it('caps.verify returns default when no file exists', () => {
     // No daemon.json written — should fall back to default
     const e = loadLeverRegistry().find((x) => x.id === 'caps.verify')!
-    expect(e.readCurrent()).toBe('2') // DEFAULTS.verify = 2
+    expect(e.readCurrent()).toBe('1') // DEFAULTS.verify = 1 (verify runs serialised by default)
   })
 
   it('operator.recovery returns persisted control lever value', () => {

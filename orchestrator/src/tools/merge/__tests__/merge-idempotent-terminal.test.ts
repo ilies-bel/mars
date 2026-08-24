@@ -182,6 +182,9 @@ describe('merge — idempotent terminal short-circuit', () => {
   it('returns success:true with "already terminal" when task is already done, without calling enqueueMergeJobAndAwait', async () => {
     const taskId = 'mars-idempotent-done-01'
     const enqueueFn = vi.fn()
+    // The short-circuit reads the row via the free getTask() from core/queue
+    // (not a store method), so the terminal status must come from mockGetTask.
+    mockGetTask.mockResolvedValue({ id: taskId, status: 'done' })
     const storeGetTask = vi.fn().mockResolvedValue({ id: taskId, status: 'done' })
 
     const result = await merge(makeCtx(taskId, enqueueFn, storeGetTask), {
@@ -204,6 +207,7 @@ describe('merge — idempotent terminal short-circuit', () => {
   it('returns success:false with "already failed" when task is already failed, without calling enqueueMergeJobAndAwait', async () => {
     const taskId = 'mars-idempotent-failed-01'
     const enqueueFn = vi.fn()
+    mockGetTask.mockResolvedValue({ id: taskId, status: 'failed' })
     const storeGetTask = vi.fn().mockResolvedValue({ id: taskId, status: 'failed' })
 
     const result = await merge(makeCtx(taskId, enqueueFn, storeGetTask), {

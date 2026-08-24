@@ -664,7 +664,11 @@ describe('mergeBranch — working-tree-free fast-forward (update-ref)', () => {
     execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
     execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
-    // Both README.md and src.ts committed on main
+    // Both README.md and src.ts committed on main. `.mars/` is gitignored as
+    // in every real consumer repo — the merge step records
+    // `.mars/last-synced-sha` after its Step 3 re-sync, and that state file
+    // must never show up as untracked dirt in the integration checkout.
+    writeFileSync(resolve(repo, '.gitignore'), '.mars/\n')
     writeFileSync(resolve(repo, 'README.md'), '# original\n')
     writeFileSync(resolve(repo, 'src.ts'), 'const x = 1\n')
     execFileSync('git', ['add', '.'], { cwd: repo })

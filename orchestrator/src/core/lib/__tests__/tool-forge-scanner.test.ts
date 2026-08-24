@@ -61,9 +61,9 @@ const insertFailedTask = async (
   opts: { originId?: string } = {},
 ): Promise<void> => {
   await db.execute({
-    sql: `INSERT INTO tasks (id, status, error, origin_id)
-          VALUES (?, 'failed', ?, ?)`,
-    args: [id, errorText, opts.originId ?? null],
+    sql: `INSERT INTO tasks (id, status, prompt, error, origin_id, created_at, updated_at)
+          VALUES (?, 'failed', ?, ?, ?, now(), now())`,
+    args: [id, `prompt for ${id}`, errorText, opts.originId ?? null],
   })
 }
 
@@ -82,8 +82,8 @@ const makeEnqueueStub = (
   const enqueue = async (prompt: string, _arcIds: string[]): Promise<string> => {
     const id = `forge-task-${ids.length + 1}`
     await client.execute({
-      sql: `INSERT INTO tasks (id, status, prompt, workflow)
-            VALUES (?, 'queued', ?, 'tool-forge')`,
+      sql: `INSERT INTO tasks (id, status, prompt, workflow, created_at, updated_at)
+            VALUES (?, 'queued', ?, 'tool-forge', now(), now())`,
       args: [id, prompt],
     })
     ids.push(id)

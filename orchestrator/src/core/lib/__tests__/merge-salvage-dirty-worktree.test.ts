@@ -1,31 +1,24 @@
 /**
- * Regression test: `mergeBranch` salvage-commits a dirty worktree instead of
- * aborting with `rebase-dirty-worktree`.
+ * Tests for `mergeBranch`'s pre-rebase dirty-worktree hygiene guard.
  *
- * Incident (agent-infrastructure): a task failed at merge with signature
- * `merge:vcs-supervisor-aborted/rebase-dirty-worktree` because the verify
- * step's `npm install` dirtied `package-lock.json`. Running `mars continue`
- * re-queued the task but could not proceed — it emitted git's own
- * "Please commit your changes or stash them" and the operator had to manually
- * `git add && git commit` the lockfile inside the worktree first.
- *
- * Fix: before entering the rebase loop, `mergeBranch` detects a dirty
- * worktree and auto-commits the outstanding changes under the message
- * `chore(mars): salvage uncommitted verify artifacts`. The rebase then
- * proceeds on a clean tree.
+ * History: mergeBranch briefly salvage-committed a dirty task worktree
+ * (`chore(mars): salvage uncommitted verify artifacts`) before rebasing.
+ * That behaviour was deliberately REVERSED (commit 2a68d8ec, "fix(merge):
+ * abort on dirty worktree before rebase"): silently committing whatever a
+ * verify step or a crashed coder left behind could land unreviewed artifacts
+ * on `main`. The merge now detects the dirty worktree BEFORE `git rebase`
+ * runs and aborts with a distinct `worktree dirty before rebase` output, so
+ * the failure-signature classifier routes to `rebase-dirty-worktree`
+ * (resolution: the salvage/checkpoint machinery on the recovery path — see
+ * `checkpoint.ts` — not an in-merge auto-commit) instead of spawning Vega
+ * with a false-premise prompt.
  *
  * Tests (all use real git — no mocks):
  *
- *  1. Dirty worktree is salvage-committed and merge succeeds — the canonical
- *     regression guard: `mars continue` after a verify-dirtied worktree must
- *     not require manual git.
+ *  1. Dirty worktree aborts the merge before the rebase, naming the dirty
+ *     path; `main` is not advanced.
  *
- *  2. The salvage commit's content is correct — `package-lock.json` (the
- *     archetypal artifact from `npm install`) is present on `main` after the
- *     merge.
- *
- *  3. A fully clean worktree still merges without an extra salvage commit —
- *     the happy path is unaffected.
+ *  2. A clean worktree still merges normally.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -47,8 +40,7 @@ const git = (args: string[], cwd: string): string =>
 //   main:       A → B
 //   task/feat:  A → C   (rebased to A → B → C' during the merge)
 //
-// Between tests we reset main → B and task/feat → C, simulating a fresh
-// `mars continue` attempt.
+// Between tests we reset main → B and task/feat → C.
 // ──────────────────────────────────────────────────────────────────────────────
 
 interface Fixture {
@@ -66,9 +58,9 @@ const resetBranches = (f: Fixture): void => {
   execFileSync(GIT, ['checkout', '-q', 'main'], { cwd: f.primaryRepo })
   execFileSync(GIT, ['reset', '--hard', f.mainExtraSha], { cwd: f.primaryRepo })
   execFileSync(GIT, ['reset', '--hard', f.taskOrigSha], { cwd: f.taskWorktree })
-  // Remove untracked files and directories from the task worktree so salvage
-  // commits from a prior test (e.g. package-lock.json) don't contaminate the
-  // next test's dirty-worktree check.
+  // Remove untracked files and directories from the task worktree so dirt
+  // from a prior test (e.g. package-lock.json) doesn't contaminate the next
+  // test's dirty-worktree check.
   execFileSync(GIT, ['clean', '-fdq'], { cwd: f.taskWorktree })
 }
 
@@ -81,9 +73,11 @@ beforeAll(() => {
   g(['config', 'user.email', 'test@mars.test'])
   g(['config', 'user.name', 'Mars Test'])
 
-  // Commit A — shared base
+  // Commit A — shared base. `.mars/` gitignored as in every real consumer
+  // repo (the merge step records `.mars/last-synced-sha` after its re-sync).
+  writeFileSync(resolve(primaryRepo, '.gitignore'), '.mars/\n')
   writeFileSync(resolve(primaryRepo, 'README'), 'base\n')
-  g(['add', 'README'])
+  g(['add', '.gitignore', 'README'])
   g(['commit', '-q', '-m', 'base'])
   const baseSha = git(['rev-parse', 'main'], primaryRepo)
 
@@ -143,15 +137,13 @@ afterAll(() => {
 // Tests
 // ──────────────────────────────────────────────────────────────────────────────
 
-describe('mergeBranch — dirty worktree salvage commit', () => {
-  it('salvage-commits a dirty worktree and merges successfully', async () => {
-    // Simulate the `mars continue` scenario: the verify step dirtied the
-    // worktree (npm install wrote package-lock.json) and the merge is
-    // re-attempted with that file still uncommitted.
+describe('mergeBranch — pre-rebase dirty-worktree guard', () => {
+  it('aborts before the rebase when the task worktree is dirty, naming the dirty path', async () => {
+    // The verify step (npm install) dirtied the worktree with an untracked
+    // package-lock.json; the merge must refuse rather than silently
+    // committing an unreviewed artifact.
     resetBranches(fix)
 
-    // Dirty the task worktree with an untracked file — mirrors npm install
-    // writing package-lock.json after the verify step.
     writeFileSync(resolve(fix.taskWorktree, 'package-lock.json'), '{"version":1}\n')
 
     const result = await mergeBranch({
@@ -161,55 +153,23 @@ describe('mergeBranch — dirty worktree salvage commit', () => {
       lockTimeoutMs: 30_000,
     })
 
-    // Must succeed — no manual git needed.
-    expect(result.merged, `merge output:\n${result.output}`).toBe(true)
-    expect(result.aborted).toBe(false)
-
-    // Salvage log line must appear in the output.
-    expect(result.output).toContain('[merge:salvage]')
+    expect(result.merged, `merge output:\n${result.output}`).toBe(false)
+    expect(result.aborted).toBe(true)
+    // The abort output names the guard and the offending path so the
+    // failure-signature classifier can route to rebase-dirty-worktree.
+    expect(result.output).toContain('worktree dirty before rebase')
     expect(result.output).toContain('package-lock.json')
+    // No salvage commit is ever created by the merge itself.
+    expect(result.output).not.toContain('[merge:salvage]')
 
-    // Primary checkout is clean after merge.
-    const statusOutput = git(['status', '--porcelain'], fix.primaryRepo)
-    expect(statusOutput).toBe('')
+    // main did NOT advance — nothing was rebased or fast-forwarded.
+    expect(git(['rev-parse', 'main'], fix.primaryRepo)).toBe(fix.mainExtraSha)
+    // The dirty file is left in place for the recovery path to handle.
+    const wtStatus = git(['status', '--porcelain'], fix.taskWorktree)
+    expect(wtStatus).toContain('package-lock.json')
   })
 
-  it('lands the salvage-committed file on main', async () => {
-    // Verify that the auto-committed artifact (package-lock.json) is actually
-    // present in the merged commit on main — it was not silently dropped.
-    resetBranches(fix)
-
-    writeFileSync(
-      resolve(fix.taskWorktree, 'package-lock.json'),
-      '{"lockfileVersion":3}\n',
-    )
-
-    const result = await mergeBranch({
-      branch: 'task/feat',
-      worktreePath: fix.taskWorktree,
-      integrationBranch: 'main',
-      lockTimeoutMs: 30_000,
-    })
-
-    expect(result.merged, `merge output:\n${result.output}`).toBe(true)
-
-    const mainSha = git(['rev-parse', 'main'], fix.primaryRepo)
-    const filePresent = (() => {
-      try {
-        execFileSync(GIT, ['cat-file', '-e', `${mainSha}:package-lock.json`], {
-          cwd: fix.primaryRepo,
-        })
-        return true
-      } catch {
-        return false
-      }
-    })()
-    expect(filePresent, 'package-lock.json must be reachable from main after merge').toBe(true)
-  })
-
-  it('clean worktree still merges without a salvage commit', async () => {
-    // Happy path: when the worktree is already clean no salvage commit should
-    // be created (the merge log must NOT contain the salvage line).
+  it('clean worktree still merges normally', async () => {
     resetBranches(fix)
 
     const result = await mergeBranch({
@@ -221,6 +181,12 @@ describe('mergeBranch — dirty worktree salvage commit', () => {
 
     expect(result.merged, `merge output:\n${result.output}`).toBe(true)
     expect(result.aborted).toBe(false)
-    expect(result.output).not.toContain('[merge:salvage]')
+
+    // The feature commit landed on main and the primary checkout is clean.
+    const mainSha = git(['rev-parse', 'main'], fix.primaryRepo)
+    execFileSync(GIT, ['cat-file', '-e', `${mainSha}:feature.ts`], {
+      cwd: fix.primaryRepo,
+    })
+    expect(git(['status', '--porcelain'], fix.primaryRepo)).toBe('')
   })
 })

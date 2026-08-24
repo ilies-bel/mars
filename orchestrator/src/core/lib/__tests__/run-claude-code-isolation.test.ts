@@ -23,29 +23,27 @@ describe('claudeStreamArgs isolation flags', () => {
     )
   })
 
-  it('drops the user setting source with --setting-sources project,local', () => {
-    const args = claudeStreamArgs('hi')
-    const i = args.indexOf('--setting-sources')
-    expect(i).toBeGreaterThanOrEqual(0)
-    expect(args[i + 1]).toBe('project,local')
+  it('omits --setting-sources entirely (dispatched workers must not load the primary checkout CLAUDE.md)', () => {
+    // Loading project/local settings pulled the primary checkout's CLAUDE.md
+    // into worker context, which sent workers cd-ing out of their worktrees
+    // (see the cross-worktree-contamination investigation). The flag is now
+    // intentionally absent — the worktree's own CLAUDE.md still loads via CWD.
+    expect(claudeStreamArgs('hi')).not.toContain('--setting-sources')
   })
 
   it('orders the new isolation flags after --dangerously-skip-permissions and before --disallowedTools', () => {
     const args = claudeStreamArgs('hi')
     const dsp = args.indexOf('--dangerously-skip-permissions')
     const strictMcp = args.indexOf('--strict-mcp-config')
-    const settingSources = args.indexOf('--setting-sources')
     const noPersist = args.indexOf('--no-session-persistence')
     const exclDyn = args.indexOf('--exclude-dynamic-system-prompt-sections')
     const disallowed = args.indexOf('--disallowedTools')
     expect(dsp).toBeGreaterThanOrEqual(0)
     expect(disallowed).toBeGreaterThan(dsp)
     expect(strictMcp).toBeGreaterThan(dsp)
-    expect(settingSources).toBeGreaterThan(dsp)
     expect(noPersist).toBeGreaterThan(dsp)
     expect(exclDyn).toBeGreaterThan(dsp)
     expect(strictMcp).toBeLessThan(disallowed)
-    expect(settingSources).toBeLessThan(disallowed)
     expect(noPersist).toBeLessThan(disallowed)
     expect(exclDyn).toBeLessThan(disallowed)
   })

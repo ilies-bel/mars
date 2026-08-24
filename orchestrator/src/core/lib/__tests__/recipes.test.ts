@@ -30,6 +30,7 @@ const BUILT_IN_RECIPE_NAMES = [
   'lint-autofix',
   'main-commiter',
   'merge-aborter',
+  'merge-watchdog-continue',
   'prompt-tightener',
   'scope-narrower',
   'test-repairer',
@@ -121,24 +122,23 @@ describe('recipe catalog', () => {
       const cat = await loadRecipeCatalog(stateDir)
       const prompt = cat.get('main-commiter')?.prompt ?? ''
       expect(prompt).not.toBe('')
-      expect(prompt).toContain('Commit unless danger')
       expect(prompt).toContain('git add -A && git commit -m')
       // The refusal boundary is closed: orchestrator state, secret-looking
-      // material, explicit unfinished-work markers, and large pure-deletion
-      // diffs are danger signals.
+      // material, large pure-deletion diffs, and stale reverts of landed
+      // commits are the danger signals; everything else commits.
+      expect(prompt).toContain('Refuse (exit non-zero, print why) on exactly these danger signals')
       expect(prompt).toContain('.mars/')
-      expect(prompt).toContain('exit with a non-zero command immediately')
-      expect(prompt).toContain(
-        'Do not stage, commit, delete, reset, or otherwise modify that path',
-      )
-      expect(prompt).toContain('secret-looking')
-      expect(prompt).toContain('TODO, FIXME, or XXX')
-      expect(prompt).toContain('exit non-zero without committing')
+      expect(prompt).toContain('never stage, commit, or modify it')
+      expect(prompt).toContain('Secret-looking')
       // Deletion-only guard: a pure-deletion diff above 50 files is a danger
       // signal (the fc56b07d incident pattern — 1,908 deletions committed).
-      expect(prompt).toContain('pure deletion')
+      expect(prompt).toContain('pure-deletion')
       expect(prompt).toContain('50')
       expect(prompt).toContain('git diff --diff-filter=D --name-only HEAD')
+      // Stale-revert guard (the fix-c4d59e78 incident pattern).
+      expect(prompt).toContain('stale revert')
+      // Ordinary work is committed, not second-guessed.
+      expect(prompt).toContain('Do not second-guess them')
       // Broad diffs and scratch files are ordinary changes, not ambiguity.
       expect(prompt).not.toContain('Safe to park')
       expect(prompt).not.toContain('refs/mars/parked/')

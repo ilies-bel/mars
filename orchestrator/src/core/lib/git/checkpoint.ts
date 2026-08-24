@@ -305,7 +305,7 @@ export const captureCheckpoint = async (
       await exec(
         git,
         ['commit-tree', tree, '-p', head, '-m', message],
-        { cwd, env: CHECKPOINT_IDENTITY },
+        { cwd, env: { ...process.env, ...CHECKPOINT_IDENTITY } as Record<string, string> },
         traceCtx,
       )
     ).stdout.trim()

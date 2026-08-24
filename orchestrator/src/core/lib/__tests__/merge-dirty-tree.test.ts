@@ -6,10 +6,12 @@
  * historical HEAD. Every subsequent dispatch parked behind a main-committer
  * Chore fix until an operator manually cleaned up.
  *
- * Fix: `mergeBranch` now asserts `git status --porcelain` is empty on the
- * integration checkout before returning success. If dirty it attempts a
- * `git reset --hard HEAD` restore and returns `{ merged: false,
- * reason: 'merge-left-dirty-tree' }`.
+ * Fix: `mergeBranch` asserts `git status --porcelain` is empty on the
+ * integration checkout before returning success. Under ADR-0100, dirt found
+ * there is ATTRIBUTED: stale-tree debris is reset outright, and genuine
+ * operator dirt is swept into a `wip(operator)` auto-commit (slice 6) so the
+ * merge still succeeds — the old `'merge-left-dirty-tree'` failure only
+ * remains for trees that could not be cleaned.
  *
  * Tests:
  *
@@ -17,17 +19,18 @@
  *     successful rebase + fast-forward merge. This is the primary regression
  *     guard for the incident: Step 3 must leave no phantom staged changes.
  *
- *  2. Dirty-tree detection — when the integration checkout is dirty after the
- *     fast-forward (simulated via `onBeforeFastForward` leaving working-tree
- *     changes that cause Step 3 to skip), the post-merge assertion detects it,
- *     restores the tree, and returns the distinct reason `'merge-left-dirty-tree'`.
+ *  2. Operator-dirt auto-commit — when the integration checkout is dirty after
+ *     the fast-forward (simulated via `onBeforeFastForward` leaving working-tree
+ *     changes that cause Step 3 to skip), the post-merge assertion attributes
+ *     the dirt as operator work, auto-commits it, and the merge succeeds with
+ *     a clean tree and `operatorAutoCommitSha` set.
  *
  * All tests use real git repos — no git operations are mocked.
  * They do NOT touch the DB or the task store.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { mergeBranch } from '../git/merge'
@@ -89,9 +92,12 @@ beforeAll(() => {
   g(['config', 'user.email', 'test@mars.test'])
   g(['config', 'user.name', 'Mars Test'])
 
-  // Commit A — shared base
+  // Commit A — shared base. `.mars/` is gitignored as in every real consumer
+  // repo: the merge step records `.mars/last-synced-sha` after its re-sync,
+  // and that state file must never register as untracked dirt.
+  writeFileSync(resolve(primaryRepo, '.gitignore'), '.mars/\n')
   writeFileSync(resolve(primaryRepo, 'README'), 'base\n')
-  g(['add', 'README'])
+  g(['add', '.gitignore', 'README'])
   g(['commit', '-q', '-m', 'base'])
   const baseSha = git(['rev-parse', 'main'], primaryRepo)
 
@@ -219,23 +225,22 @@ describe('mergeBranch — post-merge clean-tree invariant', () => {
     expect(hasExtra).toBe(true)
   })
 
-  it('detects a dirty integration checkout after merge and returns merge-left-dirty-tree', async () => {
+  it('auto-commits genuine operator dirt as a wip(operator) commit and still merges (ADR-0100 slice 6)', async () => {
     // Simulate a scenario where the integration checkout ends up dirty after
     // the fast-forward: we use `onBeforeFastForward` to modify a tracked file
     // in the primary checkout's working tree without staging it.
     //
-    // Sequence inside mergeBranch:
+    // Sequence inside mergeBranch (ADR-0100 behaviour):
     //   Step 1  rebase succeeds → task/feat → C'
     //   Step 2  onBeforeFastForward: README is dirtied in primary checkout
     //           update-ref advances main to C'
     //   Step 3  git diff --quiet mainExtraSha → non-zero (README is dirty)
-    //           → cleanVsOldHead = false → Step 3 SKIPPED to avoid clobbering
-    //   Assert  git status --porcelain → dirty → restore + return
-    //             { merged: false, reason: 'merge-left-dirty-tree' }
-    //
-    // NOTE: main's ref IS advanced by update-ref before the assertion fires.
-    // The 'merge-left-dirty-tree' reason signals a tree-sync problem, not a
-    // lost merge — the commit has landed.
+    //           → cleanVsOldHead = false → re-sync SKIPPED to avoid clobbering
+    //   Assert  git status --porcelain → dirty → attributed as operator dirt
+    //           (no last-synced sha recorded) → auto-committed as a
+    //           `wip(operator)` commit; merge reports SUCCESS. The old
+    //           'merge-left-dirty-tree' failure is retired by slice 5/6:
+    //           dirt is attributed and swept, not reported as a merge failure.
 
     resetBranches(fix)
 
@@ -252,20 +257,22 @@ describe('mergeBranch — post-merge clean-tree invariant', () => {
       },
     })
 
-    // The post-merge assertion must have fired.
-    expect(result.merged).toBe(false)
+    // The dirt was swept into an auto-commit and the merge succeeded.
+    expect(result.merged, `merge output:\n${result.output}`).toBe(true)
     expect(result.aborted).toBe(false)
     expect(result.integrationGateFailed).toBeFalsy()
-    expect(result.reason).toBe('merge-left-dirty-tree')
-    expect(result.output).toContain('dirty-tree detected')
+    expect(result.reason).toBeUndefined()
+    expect(result.operatorAutoCommitSha).toBeDefined()
+    expect(result.output).toContain('auto-committed operator dirt')
 
-    // The restoration attempt must leave the tree clean so dispatches can resume.
+    // The auto-commit must leave the tree clean so dispatches can resume.
     const statusAfter = git(['status', '--porcelain'], fix.primaryRepo)
     expect(statusAfter).toBe('')
 
-    // Even though merged:false, main's ref was advanced by update-ref — the
-    // 'merge-left-dirty-tree' outcome is a tree-sync failure, not a lost commit.
+    // main's ref advanced past the pre-merge tip (fast-forward + auto-commit).
     const currentMain = git(['rev-parse', 'main'], fix.primaryRepo)
-    expect(currentMain).not.toBe(fix.mainExtraSha) // ref DID advance
+    expect(currentMain).not.toBe(fix.mainExtraSha)
+    // The operator's edit survives as committed content on main.
+    expect(readFileSync(resolve(fix.primaryRepo, 'README'), 'utf8')).toBe('locally modified\n')
   })
 })
