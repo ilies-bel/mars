@@ -100,6 +100,27 @@ interface CliArgs {
   srcDir?: string
 }
 
+const presetToIso = (preset: string): string | null => {
+  const now = Date.now()
+  switch (preset) {
+    case '1h': return new Date(now + 60 * 60 * 1000).toISOString()
+    case '4h': return new Date(now + 4 * 60 * 60 * 1000).toISOString()
+    case 'tomorrow-morning': {
+      const d = new Date(now)
+      d.setDate(d.getDate() + 1)
+      d.setHours(9, 0, 0, 0)
+      return d.toISOString()
+    }
+    case 'next-week': {
+      const d = new Date(now)
+      d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7))
+      d.setHours(9, 0, 0, 0)
+      return d.toISOString()
+    }
+    default: return null
+  }
+}
+
 /**
  * Injectable seams for {@link startServer}. Production passes nothing and the
  * real {@link realProxyGet} (forwarding to the running daemon) is used. Tests
@@ -578,6 +599,8 @@ export const startServer = async (
         // POST /api/actions/snooze/:id — proxy the daemon's snooze endpoint.
         // Body: { preset: '1h' | '4h' | 'tomorrow-morning' | 'next-week' }
         // or   { restore: true } to un-snooze.
+        // The daemon expects { until: ISO-timestamp }, so the server converts
+        // the preset to an absolute timestamp before proxying.
         if (path.startsWith('/api/actions/snooze/') && req.method === 'POST') {
           const rawId = path.slice('/api/actions/snooze/'.length)
           const id = decodeURIComponent(rawId)
@@ -586,10 +609,24 @@ export const startServer = async (
           }
           try {
             const body = (await req.json()) as Record<string, unknown>
+            let daemonBody: Record<string, unknown>
+            if (typeof body.preset === 'string') {
+              const until = presetToIso(body.preset)
+              if (!until) {
+                return jsonResponse(400, { error: `unknown snooze preset: ${body.preset}` })
+              }
+              daemonBody = { until }
+            } else if (body.restore === true) {
+              daemonBody = { restore: true }
+            } else if (typeof body.until === 'string') {
+              daemonBody = body
+            } else {
+              return jsonResponse(400, { error: 'Body must be { preset } or { until } or { restore: true }' })
+            }
             const result = await proxyPost(
               ctx.stateDir,
               `/actions/snooze/${encodeURIComponent(id)}`,
-              body,
+              daemonBody,
             )
             return jsonResponse(result.status, result.body)
           } catch (err) {
