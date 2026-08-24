@@ -35,6 +35,41 @@ import { lookupRecipe, type RecipeContext } from '../action-queue-recipes'
 
 const RAISED_AT = '2026-08-20T09:00:00.000Z'
 
+// ── Representative payloads for typed kinds ───────────────────────────────────
+
+/**
+ * Representative payloads used by the self-maintaining `typed kinds` test.
+ *
+ * **Extending this registry:** when a consumer slice flips a family of kinds
+ * from `'unaudited'` to `'typed'` in {@link ACTION_QUEUE_PAYLOAD_AUDIT},
+ * it must also add a representative payload here for each newly-typed kind.
+ * The test below asserts that every typed kind has an entry, so adding a kind
+ * to the audit map without adding one here produces a failing test with an
+ * actionable message rather than a silent coverage gap.
+ *
+ * The entry need not be the most complex possible payload — it must be complete
+ * enough for the kind's recipe to render a non-empty detail panel from it,
+ * proving that the raiser/recipe join is correctly wired.
+ */
+const TYPED_KIND_REPRESENTATIVE: Partial<Record<ActionQueueKind, Record<string, unknown>>> = {
+  'awaiting-human': {
+    situation: 'lease-park',
+    taskId: 'mars-1',
+    leaseOwner: 'alice',
+    leasedAt: RAISED_AT,
+    leaseNote: 'note',
+    stepName: 'code',
+  },
+  'gate-enrichment': {
+    signature: 'sig',
+    encodableFamily: 'command',
+    originTaskId: 'mars-2',
+    failingStep: 'verify:build',
+    writerTaskId: 'mars-3',
+    stepSpec: { name: 'n', cmd: 'npm', args: ['test'], required: true },
+  },
+}
+
 const ctxFor = <K extends ActionQueueKind>(
   kind: K,
   payload: RecipeContext<K>['payload'],
@@ -242,36 +277,28 @@ describe('payload/recipe join is checkable for every kind', () => {
     // Types already forbid reading an undeclared key. This catches the other
     // half — reading a *declared* key that the representative payload does not
     // actually carry a usable value for.
-    const representative: {
-      [K in 'awaiting-human' | 'gate-enrichment']: RecipeContext<K>['payload']
-    } = {
-      'awaiting-human': {
-        situation: 'lease-park',
-        taskId: 'mars-1',
-        leaseOwner: 'alice',
-        leasedAt: RAISED_AT,
-        leaseNote: 'note',
-        stepName: 'code',
-      },
-      'gate-enrichment': {
-        signature: 'sig',
-        encodableFamily: 'command',
-        originTaskId: 'mars-2',
-        failingStep: 'verify:build',
-        writerTaskId: 'mars-3',
-        stepSpec: { name: 'n', cmd: 'npm', args: ['test'], required: true },
-      },
-    }
-
+    //
+    // Self-maintaining: this test iterates every kind the audit map marks
+    // 'typed', not a hardcoded list. When a consumer slice flips a family
+    // from 'unaudited' to 'typed', it must also add a representative payload
+    // to TYPED_KIND_REPRESENTATIVE above — the assertion below enforces this.
     const typedKinds = ACTION_QUEUE_KINDS.filter(
       (k) => ACTION_QUEUE_PAYLOAD_AUDIT[k] === 'typed',
     )
-    expect(typedKinds.sort()).toEqual(['awaiting-human', 'gate-enrichment'])
+    // Floor: at minimum the two kinds this file was originally written for.
+    expect(typedKinds.length).toBeGreaterThanOrEqual(2)
 
-    for (const kind of typedKinds as ('awaiting-human' | 'gate-enrichment')[]) {
-      const payload = representative[kind]
+    for (const kind of typedKinds) {
+      const payload = TYPED_KIND_REPRESENTATIVE[kind]
+      expect(
+        payload,
+        `${kind} is 'typed' in ACTION_QUEUE_PAYLOAD_AUDIT but has no entry in ` +
+          `TYPED_KIND_REPRESENTATIVE — add one so the raiser/recipe join is verified`,
+      ).toBeDefined()
+      if (!payload) continue
+
       const read: string[] = []
-      const probe = new Proxy(payload as Record<string, unknown>, {
+      const probe = new Proxy(payload, {
         get(target, prop) {
           if (typeof prop === 'string') read.push(prop)
           return Reflect.get(target, prop)
@@ -284,7 +311,7 @@ describe('payload/recipe join is checkable for every kind', () => {
       recipe.humanSummary(ctx)
 
       const missing = read.filter(
-        (key) => !(key in (payload as object)) && key !== 'occurrences',
+        (key) => !(key in payload) && key !== 'occurrences',
       )
       expect(missing, `${kind}: recipe read keys absent from its payload`).toEqual([])
       expect(
@@ -293,6 +320,13 @@ describe('payload/recipe join is checkable for every kind', () => {
       ).toBeGreaterThan(0)
     }
   })
+
+  // Retirement gate — un-skip this once every kind in ACTION_QUEUE_PAYLOAD_AUDIT
+  // reads 'typed' or 'derived-condition'. At that point also:
+  //   • remove the `'unaudited'` branch from the `satisfies` in action-queue-payloads.ts
+  //   • delete `UnauditedKind`, `UnauditedKindFamily`, and `UNAUDITED_KIND_FAMILY`
+  //   • remove the `UnauditedPayload` export (or keep as a tombstone comment)
+  it.todo('retire unaudited: every kind is typed or derived-condition')
 
   it('every kind renders a non-empty summary from an empty payload', () => {
     // A row with a payload the recipe cannot use must still say something.
