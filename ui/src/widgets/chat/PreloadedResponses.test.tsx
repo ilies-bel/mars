@@ -19,7 +19,7 @@ describe('PreloadedResponses', () => {
         resolved={false}
         responses={[
           { id: 'first', label: 'First choice', target: { type: 'verb', op: 'restart', entityId: 'task-1' } },
-          { id: 'second', label: 'Open a Subthread', target: { type: 'subthread', title: 'Investigate task' } },
+          { id: 'second', label: 'Open a Subthread', target: { type: 'subject', title: 'Investigate task' } },
         ]}
       />,
     )
@@ -56,7 +56,7 @@ describe('PreloadedResponses', () => {
           id: 'notice-1', seq: 1, threadId: 'subthread-1', subthreadId: 'subthread-1', subthreadTitle: 'Subthread', subthreadClosed: false,
           role: 'assistant', content: 'Choose.', segments: [{
             type: 'preloaded_responses',
-            responses: [{ id: 'open', label: 'Open it', target: { type: 'subthread', title: 'Investigate' } }],
+            responses: [{ id: 'open', label: 'Open it', target: { type: 'subject', title: 'Investigate' } }],
           }],
           createdAt: '2026-01-01T00:00:00.000Z', kind: 'notice', backingEntityId: null, resolution: null,
         },

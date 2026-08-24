@@ -82,7 +82,7 @@ export type PreloadedResponse = {
   label: string
   target:
     | { type: 'verb'; op: string; entityId: string }
-    | { type: 'subthread'; title: string }
+    | { type: 'subject'; title: string }
 }
 
 /**

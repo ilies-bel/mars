@@ -1256,8 +1256,8 @@ const preloadedVerbTargetSchema = z.object({
   entityId: z.string().optional(),
 })
 
-const preloadedSubthreadTargetSchema = z.object({
-  type: z.literal('subthread'),
+const preloadedSubjectTargetSchema = z.object({
+  type: z.literal('subject'),
   title: z.string(),
 })
 
@@ -1299,7 +1299,7 @@ export const preloadedResponseSchema = z.object({
   label: z.string(),
   target: z.discriminatedUnion('type', [
     preloadedVerbTargetSchema,
-    preloadedSubthreadTargetSchema,
+    preloadedSubjectTargetSchema,
     preloadedClientTargetSchema,
     preloadedLeverTargetSchema,
     preloadedReferenceTargetSchema,

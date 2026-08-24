@@ -49,7 +49,7 @@ must stay in lockstep.
 ```ts
 target =
   | { type: 'verb';      op: string; entityId?: string }
-  | { type: 'subthread'; title: string }
+  | { type: 'subject';   title: string }
   | { type: 'client';    op: 'open-proposal-subject'; entityId: string }
   | { type: 'lever';     name: string; level: 'off' | 'ask' | 'tell' }
   | { type: 'reference'; url: string }

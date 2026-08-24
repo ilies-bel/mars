@@ -116,7 +116,7 @@ describe('conversation notice delivery', () => {
           type: 'preloaded_responses',
           responses: [
             { id: 'restart', label: 'Restart', target: { type: 'verb', op: 'restart', entityId: 'task-1' } },
-            { id: 'review', label: 'Review', target: { type: 'subthread', title: 'Review task-1' } },
+            { id: 'review', label: 'Review', target: { type: 'subject', title: 'Review task-1' } },
           ],
         },
       ],
