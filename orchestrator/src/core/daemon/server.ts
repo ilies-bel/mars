@@ -16,6 +16,7 @@ import { createServer, type Server, type Socket } from 'node:net'
 import { dirname, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { findExistingMarsDb, resolveContext, resolveDbTarget } from '../context'
+import { integrationBranchName } from '../blocker-resolution'
 import { openDb, type DbClient } from '../lib/db'
 import { startEmbeddedPg, type EmbeddedPgHandle } from '../lib/pg-server'
 import { importLegacySqlite } from '../../init/import-sqlite'
@@ -235,6 +236,8 @@ export interface DaemonHandle {
 export interface DaemonOptions {
   integrationBranch?: string
   log?: (line: string) => void
+  /** Defaults to the ambient environment. Injectable so tests can supply env values without touching the real one. */
+  env?: NodeJS.ProcessEnv
 }
 
 /**
@@ -262,7 +265,7 @@ export const raiseStructuredWriteFailureAction = async (args: {
       'The daemon is still running. Review the failure and retry the original command after resolving it.',
     ].join('\n'),
     payload: { kind: args.kind, target: args.target, error: message },
-    context: { repoRoot: process.env.MARS_REPO ?? null },
+    context: { repoRoot: resolveContext().repoRoot ?? null },
     raisedBy: 'structured-write:dispatch',
     signature: `structured-write:failed:${args.kind}:${args.target}`,
   })
@@ -423,8 +426,8 @@ const writeLog = (logFile: string, line: string): void => {
 export const startDaemon = async (
   opts: DaemonOptions = {},
 ): Promise<DaemonHandle> => {
-  const integrationBranch =
-    opts.integrationBranch ?? process.env.INTEGRATION_BRANCH ?? 'main'
+  const env = opts.env ?? process.env
+  const integrationBranch = opts.integrationBranch ?? integrationBranchName()
   const { socket: socketPath, pidFile, logFile, httpPortFile, runningMarker, crashMarker, lockFile } = daemonPaths()
 
   // ── Unclean-exit detection (before any file mutations) ───────────────────
@@ -579,7 +582,7 @@ export const startDaemon = async (
   // gets one clear message at startup instead of every implement step
   // failing with "Could not set lock on file". Stale fds (PID gone) are
   // tolerated: DuckDB will reclaim them on open.
-  if (process.env.MARS_DISABLE_DUCKDB !== '1') {
+  if (env.MARS_DISABLE_DUCKDB !== '1') {
     const { observabilityDbPath } = resolveContext()
     const probe = probeDuckDBLock(observabilityDbPath)
     if (probe.status === 'held') {
@@ -603,7 +606,7 @@ export const startDaemon = async (
   // server and no published files.
   let pgHandle: EmbeddedPgHandle | null = null
   let mergeWorkerHandle: MergeWorkerHandle | null = null
-  if (process.env.MARS_DB_BACKEND !== 'pglite') {
+  if (env.MARS_DB_BACKEND !== 'pglite') {
     try {
       pgHandle = await startEmbeddedPg({
         stateDir: resolveContext().stateDir,
@@ -760,13 +763,9 @@ export const startDaemon = async (
   {
     const { checkProviderBin } = await import('../workers/provider-bin')
     const { WORKER_PROVIDER } = await import('../workers/index')
-    // MARS_WORKER_PROVIDER (already folded into WORKER_PROVIDER) wins over the
-    // persisted defaultProvider.
-    const effectiveProvider =
-      process.env.MARS_WORKER_PROVIDER !== undefined
-        ? WORKER_PROVIDER
-        : loadDaemonConfig().defaultProvider
-    const probe = checkProviderBin(effectiveProvider)
+    // WORKER_PROVIDER already folds in MARS_WORKER_PROVIDER (wins over the
+    // persisted defaultProvider) — see resolveProviderName() in workers/providers.ts.
+    const probe = checkProviderBin(WORKER_PROVIDER)
     if (!probe.ok) {
       log(probe.message)
       process.exit(1)
@@ -1118,7 +1117,7 @@ export const startDaemon = async (
   // consumer resolves them from daemon.json on demand via
   // `resolveControlLevers()`, so a hold set before a daemon restart survives
   // it (e.g. recovery='off' holds across `mars daemon restart`) by
-  // construction rather than by a startup projection into process.env.
+  // construction rather than by a startup projection into the environment.
   const initialCaps = initialConfig.caps
   // Document-write dispatch kinds ('glossary-write', 'adr-add',
   // 'adr-supersede', 'vision') are now coordinated by DocumentWriteCoordinator
@@ -1194,7 +1193,7 @@ export const startDaemon = async (
     log(`[arc-verifier] ${originId} dispatching`)
     try {
       await runArcVerification(originId, {
-        cwd: process.env.MARS_REPO ?? process.cwd(),
+        cwd: resolveContext().repoRoot ?? process.cwd(),
       })
     } catch (err) {
       // Best-effort post-merge analysis must never destabilize the daemon.
@@ -1316,7 +1315,7 @@ export const startDaemon = async (
             '3. Remove unneeded worktrees with `mars prune <id>`.',
           ].join('\n'),
           payload: { freeBytes: diskCheck.freeBytes, thresholdBytes: diskCheck.thresholdBytes },
-          context: { repoRoot: process.env.MARS_REPO ?? null },
+          context: { repoRoot: resolveContext().repoRoot ?? null },
           raisedBy: 'daemon:disk-guard',
           signature: 'low-disk-space:worktrees',
         })
@@ -1624,7 +1623,7 @@ export const startDaemon = async (
       // phantom-task watchdog detects the runner as hung (runner-hung).
       // Configurable via MARS_VERIFY_CHILD_GONE_GRACE_MS.
       const VERIFY_CHILD_GONE_GRACE_MS = Number(
-        process.env.MARS_VERIFY_CHILD_GONE_GRACE_MS ?? 5 * 60_000,
+        env.MARS_VERIFY_CHILD_GONE_GRACE_MS ?? 5 * 60_000,
       )
       const onEvent = (evt: WorkflowEvent): void => {
         if (evt.event === 'agent-event' || evt.event === 'claude-event') {
@@ -5682,9 +5681,10 @@ export const startDaemon = async (
   // ledger (ADR-0040 leaf-node rule) lives for the daemon's whole lifetime.
   const baselineRepairer = createRealBaselineRepairer({
     repoRoot: resolveContext().repoRoot,
-    integrationBranch: process.env.INTEGRATION_BRANCH ?? 'main',
+    integrationBranch,
     pause,
     log,
+    npmViewTimeoutMs: Number(env.MARS_BASELINE_REPAIR_NPM_VIEW_TIMEOUT_MS) || undefined,
   })
 
   // Guard against two concurrent triggers (startup racing a same-tick
@@ -5792,7 +5792,7 @@ export const startDaemon = async (
   // .unref() inside startApiEndpointProbe ensures the interval never prevents
   // a clean shutdown. The stop handle is called in shutdown() below.
   const ENDPOINT_PROBE_INTERVAL_MS = Number(
-    process.env.MARS_API_PROBE_INTERVAL_MS ?? 30_000,
+    env.MARS_API_PROBE_INTERVAL_MS ?? 30_000,
   )
   const stopEndpointProbe = startApiEndpointProbe({ intervalMs: ENDPOINT_PROBE_INTERVAL_MS })
   log(`[api-probe] started (intervalMs=${ENDPOINT_PROBE_INTERVAL_MS})`)
@@ -6138,7 +6138,7 @@ export const startDaemon = async (
   // never prevents a clean shutdown. Override cadence via
   // MARS_DEV_STALENESS_CHECK_MS. The startup reconciler
   // (code-drift-clear-sweep) resolves open drift rows after a restart.
-  const DEV_STALENESS_CHECK_MS = Number(process.env.MARS_DEV_STALENESS_CHECK_MS ?? 60_000)
+  const DEV_STALENESS_CHECK_MS = Number(env.MARS_DEV_STALENESS_CHECK_MS ?? 60_000)
   const devStalenessCheck = setInterval(() => {
     void (async () => {
       try {

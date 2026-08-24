@@ -70,7 +70,7 @@ export interface AcquireSemaphoreOptions {
   pid?: number
   /** Override the path to sem.mjs. Defaults to `~/.claude/bin/sem.mjs`. Test seam. */
   binPath?: string
-  /** Extra env vars merged over `process.env`. Test seam for redirecting `SEM_ROOT`. */
+  /** Extra env vars merged over the ambient environment. Test seam for redirecting `SEM_ROOT`. */
   env?: NodeJS.ProcessEnv
 }
 

@@ -28,9 +28,6 @@ import type { BaselineRepairDeps, BaselineRepairer } from '../lib/baseline-repai
 import { createBaselineRepairer } from '../lib/baseline-repair'
 import { baselineRepairNpmViewTimeoutMs } from '../config/tuning'
 
-/** Timeout for the `npm view <pkg> versions --json` registry lookup. */
-const NPM_VIEW_TIMEOUT_MS = baselineRepairNpmViewTimeoutMs()
-
 export interface CreateRealBaselineRepairerOptions {
   /** The integration-branch checkout the repair runs in. Never a worktree. */
   repoRoot: string
@@ -39,6 +36,16 @@ export interface CreateRealBaselineRepairerOptions {
   /** The daemon's shared dispatch-pause controller. */
   pause: PauseController
   log?: (msg: string) => void
+  /**
+   * Timeout for the `npm view <pkg> versions --json` registry lookup.
+   * Defaults to {@link baselineRepairNpmViewTimeoutMs} (the
+   * `MARS_BASELINE_REPAIR_NPM_VIEW_TIMEOUT_MS` knob, resolved in
+   * `../config/tuning.ts` — the one directory allowed to read environment
+   * variables directly), so this module never touches the ambient
+   * environment itself. `server.ts` passes an explicit value resolved off
+   * its own injected env.
+   */
+  npmViewTimeoutMs?: number
 }
 
 /**
@@ -50,6 +57,7 @@ export const createRealBaselineRepairer = (
   opts: CreateRealBaselineRepairerOptions,
 ): BaselineRepairer => {
   const { repoRoot, integrationBranch, pause, log } = opts
+  const npmViewTimeoutMs = opts.npmViewTimeoutMs ?? baselineRepairNpmViewTimeoutMs()
 
   const deps: BaselineRepairDeps = {
     repoRoot,
@@ -105,7 +113,7 @@ export const createRealBaselineRepairer = (
       try {
         result = await execProbe('npm', ['view', packageName, 'versions', '--json'], {
           cwd: repoRoot,
-          timeout: NPM_VIEW_TIMEOUT_MS,
+          timeout: npmViewTimeoutMs,
         })
       } catch {
         return []

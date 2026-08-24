@@ -306,7 +306,9 @@ export const captureCheckpoint = async (
       await exec(
         git,
         ['commit-tree', tree, '-p', head, '-m', message],
-        { cwd, env: { ...process.env, ...CHECKPOINT_IDENTITY } as Record<string, string> },
+        // exec() → run-tool.ts's runTool() already merges this onto the
+        // ambient environment itself, so no need to spread it here too.
+        { cwd, env: CHECKPOINT_IDENTITY },
         traceCtx,
       )
     ).stdout.trim()
@@ -481,9 +483,15 @@ export interface PeriodicCheckpointArgs {
    * Cadence in ms. Defaults to {@link codeCheckpointIntervalMs} (the
    * `MARS_CODE_CHECKPOINT_INTERVAL_MS` knob, resolved in
    * `../../config/tuning.ts` — the one directory allowed to read
-   * environment variables directly).
+   * environment variables directly), read off {@link env}.
    */
   intervalMs?: number
+  /**
+   * Environment the `MARS_CODE_CHECKPOINT_INTERVAL_MS` default is resolved
+   * against. Defaults to the ambient environment. Injectable so tests can
+   * supply env values without touching the real one.
+   */
+  env?: NodeJS.ProcessEnv
   traceCtx?: TraceCtx
   /**
    * Fired after each successful (non-null) capture. Best-effort — a throw
@@ -540,7 +548,7 @@ export const startPeriodicCheckpoint = (
   args: PeriodicCheckpointArgs,
 ): PeriodicCheckpointHandle => {
   const { cwd, key, messagePrefix, traceCtx, onCheckpoint, onError } = args
-  const intervalMs = args.intervalMs ?? codeCheckpointIntervalMs()
+  const intervalMs = args.intervalMs ?? codeCheckpointIntervalMs(args.env)
 
   let stopped = false
   let tick = 0
