@@ -33,13 +33,13 @@ import { taskHash, proposalHash } from '@/shared/routing'
 // ---------------------------------------------------------------------------
 
 const KIND_ICON: Record<string, string> = {
-  failed: '⚠️',
-  'daemon-killed': '⛔',
-  'stale-queued': '⏳',
-  'stale-worktree': '🗑️',
-  'draft-proposal': '💡',
-  'awaiting-validation': '🔍',
-  'arc-failed': '⛓️',
+  failed: '⚠',
+  'daemon-killed': '⊘',
+  'stale-queued': '◔',
+  'stale-worktree': '⌧',
+  'draft-proposal': '◇',
+  'awaiting-validation': '◎',
+  'arc-failed': '⊗',
 }
 
 /** Left accent-bar + border tint per kind. */
@@ -414,7 +414,7 @@ export const AlertCard = ({
         data-testid="alert-card-snoozed"
       >
         <div className="flex items-center gap-2">
-          <span className="text-body" aria-hidden="true">{KIND_ICON[kind] ?? '🔔'}</span>
+          <span className="text-body" aria-hidden="true">{KIND_ICON[kind] ?? '•'}</span>
           <span className="flex-1 font-mono text-label text-primary/60 line-clamp-1">{goal?.split('\n')[0] ?? summary}</span>
           <span className="font-mono text-micro text-primary/40">
             reappears in {reappearsIn(snoozedUntil)}
@@ -451,7 +451,7 @@ export const AlertCard = ({
     >
       {/* Header: icon + headline + resolved badge */}
       <div className="mb-1 flex items-start gap-2">
-        <span className="text-body shrink-0 mt-0.5" aria-hidden="true">{KIND_ICON[kind] ?? '🔔'}</span>
+        <span className="text-body shrink-0 mt-0.5" aria-hidden="true">{KIND_ICON[kind] ?? '•'}</span>
         <div className="flex-1 min-w-0">
           {goal ? (
             <>

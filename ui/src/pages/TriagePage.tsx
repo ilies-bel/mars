@@ -51,18 +51,18 @@ import type { Decision } from '@/shared/schemas'
 
 const KIND_ICON: Record<string, string> = {
   failed: '⚠',
-  'daemon-killed': '⛔',
-  'stale-queued': '⏳',
-  'stale-worktree': '🗑',
-  'draft-proposal': '💡',
-  'awaiting-validation': '🔍',
-  'arc-failed': '⛓',
-  'awaiting-human': '👤',
-  'coder-question': '❓',
-  'diagnose-inconclusive': '🔬',
+  'daemon-killed': '⊘',
+  'stale-queued': '◔',
+  'stale-worktree': '⌧',
+  'draft-proposal': '◇',
+  'awaiting-validation': '◎',
+  'arc-failed': '⊗',
+  'awaiting-human': '▸',
+  'coder-question': '?',
+  'diagnose-inconclusive': '◌',
   'reflect-recommended': '✦',
   'scorer-suggested': '◈',
-  'gate-broken': '⛔',
+  'gate-broken': '⊘',
   'recovery-abandoned': '↩',
 }
 
@@ -179,7 +179,7 @@ const TriageClusterRow = ({ kind, count, latestAt }: TriageClusterRowProps) => {
       </div>
 
       {/* Cluster headline */}
-      <p className="mb-1 text-body font-medium leading-snug text-foreground">
+      <p className="mb-1 text-title font-medium leading-snug text-foreground">
         {isDraftProposal
           ? `${count} draft proposals await review`
           : `${count} ${kindLabel} items`}
@@ -380,19 +380,19 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
            - Otherwise: humanSummary || title is the headline. */}
       {goal ? (
         <>
-          <p className="mb-0.5 text-body font-medium leading-snug text-foreground line-clamp-2">
+          <p className="mb-0.5 text-title font-medium leading-snug text-foreground line-clamp-2">
             {goal.split('\n')[0]?.trim()}
           </p>
           {cause && (
             <p className="font-mono text-micro text-muted-foreground">{cause}</p>
           )}
           {item.humanSummary && (
-            <p className="font-mono text-micro text-muted-dark line-clamp-1">{item.humanSummary}</p>
+            <p className="mt-0.5 font-mono text-micro text-muted-foreground/70 line-clamp-1">{item.humanSummary}</p>
           )}
         </>
       ) : (
         headline && (
-          <p className="mb-0.5 text-body font-medium leading-snug text-foreground">
+          <p className="mb-0.5 text-title font-medium leading-snug text-foreground">
             {headline}
           </p>
         )
@@ -448,6 +448,10 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                 className={
                   verb.style === 'destructive'
                     ? 'rounded border border-error/40 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/10 disabled:opacity-50'
+                    : verb.op === 'copy'
+                    ? 'rounded border border-border px-1.5 py-0.5 font-mono text-micro text-muted-foreground transition-colors hover:bg-border/40 hover:text-foreground disabled:opacity-50'
+                    : verb.style === 'snooze'
+                    ? 'rounded border border-border px-2 py-1 font-mono text-micro text-muted-foreground transition-colors hover:bg-border/40 hover:text-foreground disabled:opacity-50'
                     : 'rounded border border-primary/40 px-2 py-1 font-mono text-micro text-foreground transition-colors hover:bg-primary/20 disabled:opacity-50'
                 }
                 data-testid={`triage-verb-${verb.op}`}
@@ -463,12 +467,11 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                 hints instead (Continue/Restart would just error). */}
             {isTaskRecovery && isRecoveryExhausted && (
               <div
-                className="flex w-full flex-col gap-1.5 rounded border border-warn/40 bg-warn/5 px-2 py-1.5"
+                className="mt-1 flex w-full flex-col gap-2 rounded border border-warn/30 bg-warn/5 px-3 py-2"
                 data-testid="triage-recovery-exhausted"
               >
                 <p className="font-mono text-micro text-warn">
-                  Recovery already spent — Continue/Restart won&rsquo;t help. Carry the
-                  work forward instead:
+                  Recovery spent — carry the work forward:
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
                   <code className="rounded bg-warn/10 px-1.5 py-0.5 font-mono text-micro text-warn">
@@ -498,7 +501,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                 <button
                   disabled={pending !== null}
                   onClick={() => void handleVerb('continue')}
-                  className="rounded border border-primary/40 px-2 py-1 font-mono text-micro text-foreground transition-colors hover:bg-primary/20 disabled:opacity-50"
+                  className="rounded border border-highlight/60 bg-highlight/10 px-2.5 py-1 font-mono text-micro font-medium text-highlight transition-colors hover:bg-highlight/20 disabled:opacity-50"
                   data-testid="triage-continue"
                 >
                   {pending === 'continue' ? '…' : 'Continue'}
@@ -734,8 +737,8 @@ export const TriagePage = () => {
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
       {/* Header strip */}
-      <div className="flex shrink-0 items-center border-b border-border px-5 py-3">
-        <h1 className="font-mono text-body font-semibold text-foreground">
+      <div className="flex shrink-0 items-center border-b border-border px-5 py-3.5">
+        <h1 className="font-mono text-title font-semibold text-foreground">
           Action Queue
         </h1>
         {needsYouCount > 0 && (
@@ -745,7 +748,7 @@ export const TriagePage = () => {
                 ? '1 item needs attention'
                 : `${needsYouCount} items need attention`
             }
-            className="ml-2 rounded-full bg-primary/20 px-2 py-0.5 font-mono text-micro leading-none text-primary"
+            className="ml-2.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary/20 px-1.5 font-mono text-micro font-medium leading-none text-primary"
           >
             {needsYouCount}
           </span>
@@ -767,7 +770,7 @@ export const TriagePage = () => {
         ) : !hasContent ? (
           <EmptyState running={running} doneToday={doneToday} />
         ) : (
-          <div className="flex flex-col gap-2 p-4">
+          <div className="flex flex-col gap-3 p-4">
             {/* Inline error cards — one per failing feed, never blanking the page */}
             {queueError && <FeedErrorCard label="action queue" error={queueError} />}
             {proposalsError && <FeedErrorCard label="proposals" error={proposalsError} />}

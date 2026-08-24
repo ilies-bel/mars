@@ -5221,6 +5221,14 @@ export const startDaemon = async (
     continueTask: async (id) => {
       await handleContinue(id)
     },
+    supersedeTask: async (id) => {
+      const old = await getTask(id)
+      if (!old) throw Object.assign(new Error(`task ${id} not found`), { code: 'NOT_FOUND' })
+      if (old.status !== 'failed') throw Object.assign(new Error(`task ${id} must be failed (was ${old.status})`), { code: 'WRONG_STATUS' })
+      const task = await handleAdd(old.prompt, undefined, true, undefined, undefined, undefined, undefined, undefined, old.intent ?? undefined, undefined, undefined, undefined, undefined, id)
+      bus.emit('task.queued', { taskId: task.id })
+      return { taskId: task.id }
+    },
     remergeTask: async (id) => {
       const result = await coreRemerge(id, new Set(['failed', 'done', 'vega-reconciling', 'merging', 'verifying']), makeWorkflowStore())
       // Same guard as handleRemerge above: the already-landed path settles

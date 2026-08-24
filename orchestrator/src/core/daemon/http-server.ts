@@ -370,6 +370,8 @@ export interface HttpServerDeps {
   restartTask: (id: string) => Promise<void>
   /** Resume a failed task on its existing worktree (the `continue` verb). */
   continueTask: (id: string) => Promise<void>
+  /** Create a new task inheriting the superseded task's branch and prompt. */
+  supersedeTask?: (id: string) => Promise<{ taskId: string }>
   /**
    * Re-verify and merge a task's existing branch without re-running the coder.
    * The branch must exist and be ahead of the integration branch; otherwise

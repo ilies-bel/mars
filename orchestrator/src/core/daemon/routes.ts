@@ -3113,6 +3113,18 @@ export const registerRoutes = (
       return
     }
 
+    if (op === 'supersede') {
+      if (!deps.supersedeTask) {
+        sendJson(res, 501, { ok: false, error: 'supersede not implemented' })
+        return
+      }
+      deps
+        .supersedeTask(id)
+        .then(({ taskId }) => sendJson(res, 200, { ok: true, taskId }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // promote returns task ids — handled separately so the ids are surfaced in
     // the response body. Errors propagate via sendError so the UI drawer shows
     // them instead of silently swallowing them.
