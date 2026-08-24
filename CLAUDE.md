@@ -59,25 +59,32 @@ is never silent and never implied. The bar is all of:
 When in doubt, enqueue. A redundant task is cheap; a silent commit on
 `main` is not.
 
-**Direct edits on `main` race the merge step.** The merge step
-fast-forwards into `main` — the same working tree you are editing — and
-it can fire at any moment, on a background task you enqueued minutes
-ago and forgot about. Two things follow:
+**Direct edits on `main` race the merge step.** Every merge is a
+rebase→verify→ff loop: the landing task branch is rebased onto
+`main` and verified in its own worktree, then fast-forwarded in under
+`.merge.lock`. `main` itself stays a live checkout the whole time — it
+is never reset out from under you — and an in-flight merge simply
+rebases over any commit you land on `main` while it is running, the
+same as it would over any other task's landing.
 
-- Your uncommitted edits make the merge target dirty, which fails the
-  merge (`merge/uncommitted-changes`) and parks the queue behind the
-  dispatch-time dirty-main guard.
-- The merge step will not destroy those edits. When it finds the
-  integration checkout dirty after a merge it cannot positively
-  attribute to its own re-sync, it commits the tree to a per-merge
-  `refs/mars/checkpoint/merge/<task-id>` ref before cleaning it, and
-  the merge output names the ref plus the recovery command
-  (`git cherry-pick -n <ref>` then `git cherry-pick --quit`). Never
-  `git stash` — `refs/stash` is shared by every worktree in this repo.
+That means everything on `main` must be a commit; uncommitted edits are
+not a stable unit the merge can rebase over. What happens to them
+depends on the operator auto-commit lever:
 
-A checkpoint ref is a safety net, not a workflow. **Commit early** while
-editing `main` directly: a commit is durable and legible, a checkpoint
-ref is something you have to know to go looking for.
+- **Lever on (default):** the merge step auto-commits your tracked
+  modifications on `main` as `wip(operator): auto-committed to unblock
+  merge of <task>`, then continues. You get a Notice that this happened
+  (with how to disable the lever) — not a failure. A cheap typecheck
+  probe runs afterward and raises an Alert if the auto-commit broke the
+  baseline; the merge itself proceeds either way.
+- **Lever off:** the merge step declines to touch your uncommitted
+  edits at all — you get an Alert and the queue parks behind the
+  dirty-main guard until you commit or clean up by hand.
+
+Either way, **commit early** while editing `main` directly: a real
+commit is durable, legible, and rebases cleanly; uncommitted edits are
+just something to clean up later. Never `git stash` — `refs/stash` is
+shared by every worktree in this repo.
 
 ## Tasks
 
