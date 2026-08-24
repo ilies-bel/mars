@@ -30,6 +30,12 @@
  *
  * A holder whose pid is dead is stale: the daemon that owned it (and therefore
  * the coder child it spawned) is gone, so the lease is reclaimed on read.
+ *
+ * NOT to be confused with the OPERATOR lease (`leaseOwner`/`leasedAt` on the
+ * task row, `core/arc.ts` + `tools/human/await-human.ts`). That one records a
+ * human owning a task parked at a manual step, is measured in hours, expires
+ * into an alert, and never blocks anything. This one is machine-scoped,
+ * measured in the length of one coder run, and its entire purpose is to block.
  */
 import { open, readFile, unlink } from 'node:fs/promises'
 import { isPidAlive } from './lock'
