@@ -44,6 +44,7 @@ import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { usesInProcSemaphoreMock } from '../config/tuning'
 
 const execFileAsync = promisify(execFile)
 
@@ -102,7 +103,7 @@ const IN_PROC_BIN_PATH = '<in-proc-test-semaphore>'
  *    opts out of the mock and keeps exercising its own explicit target.
  */
 const usesInProcMock = (opts: AcquireSemaphoreOptions): boolean =>
-  process.env.MARS_TEST_SEMAPHORE === 'inproc' &&
+  usesInProcSemaphoreMock() &&
   opts.binPath === undefined &&
   opts.env === undefined
 

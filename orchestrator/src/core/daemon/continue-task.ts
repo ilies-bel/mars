@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { resolveIntegrationBranch } from '../config/daemon-intervals'
 import { getTask, IN_FLIGHT_RECOVERY_STATUSES, updateTask } from '../queue'
 import { getDefaultTaskStore } from '../store/task-store'
 import { raiseActionQueueItem } from '../lib/action-queue'
@@ -188,7 +189,7 @@ export const coreContinueTask = async (
     const alternatives: string[] = []
     if (task.branch) {
       const { getRepoRoot } = await import('../context')
-      const integrationBranch = process.env.INTEGRATION_BRANCH ?? 'main'
+      const integrationBranch = resolveIntegrationBranch()
       const { realCommits, checkpointCommits } = await classifyCommitsAheadForBranch(
         task.branch,
         integrationBranch,
@@ -279,7 +280,7 @@ export const coreContinueTask = async (
     let escapeVerb: string
     if (task.branch) {
       const { getRepoRoot } = await import('../context')
-      const integrationBranch = process.env.INTEGRATION_BRANCH ?? 'main'
+      const integrationBranch = resolveIntegrationBranch()
       const repoRoot = getRepoRoot()
       const { realCommits, checkpointCommits } = await classifyCommitsAheadForBranch(
         task.branch,
@@ -347,7 +348,7 @@ export const coreContinueTask = async (
     // restart would discard that work — and 'mars remerge' is the right path.
     // This situation arises when the daemon is restarted mid-task (no
     // failedPhase recorded) but the coder had already landed commits.
-    const integrationBranchForCheck = process.env.INTEGRATION_BRANCH ?? 'main'
+    const integrationBranchForCheck = resolveIntegrationBranch()
     if (task.branch) {
       const { getRepoRoot } = await import('../context')
       const repoRoot = getRepoRoot()
@@ -452,7 +453,7 @@ export const coreContinueTask = async (
   // phase against the exact stale branch that failed before main advanced.
   // Merge rather than rebase: worker commits retain their object ids and a
   // conflict leaves no rewritten history for an operator to untangle.
-  const integrationBranch = process.env.INTEGRATION_BRANCH ?? 'main'
+  const integrationBranch = resolveIntegrationBranch()
   try {
     execFileSync('git', ['merge', '--no-edit', integrationBranch], {
       cwd: task.worktreePath as string,

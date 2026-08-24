@@ -26,9 +26,10 @@
 import type { PauseController } from './pause-state'
 import type { BaselineRepairDeps, BaselineRepairer } from '../lib/baseline-repair'
 import { createBaselineRepairer } from '../lib/baseline-repair'
+import { baselineRepairNpmViewTimeoutMs } from '../config/tuning'
 
 /** Timeout for the `npm view <pkg> versions --json` registry lookup. */
-const NPM_VIEW_TIMEOUT_MS = Number(process.env.MARS_BASELINE_REPAIR_NPM_VIEW_TIMEOUT_MS) || 15_000
+const NPM_VIEW_TIMEOUT_MS = baselineRepairNpmViewTimeoutMs()
 
 export interface CreateRealBaselineRepairerOptions {
   /** The integration-branch checkout the repair runs in. Never a worktree. */

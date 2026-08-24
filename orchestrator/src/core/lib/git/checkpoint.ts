@@ -59,6 +59,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { codeCheckpointIntervalMs } from '../../config/tuning'
 import { exec, execProbe, resolveGitBin, type TraceCtx } from './internal'
 
 /** Ref namespace every checkpoint lives under. Never `refs/stash`. */
@@ -464,15 +465,6 @@ export const discardWorkingTreeChanges = async (
   await exec(git, ['clean', '-fd'], { cwd }, traceCtx)
 }
 
-/**
- * Cadence for {@link startPeriodicCheckpoint} below. Three minutes balances
- * "durable soon enough that a hard kill loses little" against "don't shell
- * out to `git` every few seconds for every in-flight coder". Override via
- * `MARS_CODE_CHECKPOINT_INTERVAL_MS` (used by tests and available for a
- * tighter recovery SLA in production).
- */
-const DEFAULT_CODE_CHECKPOINT_INTERVAL_MS = 3 * 60 * 1000
-
 export interface PeriodicCheckpointArgs {
   /** Working tree to snapshot on a cadence. May be the primary checkout or
    *  any worktree. */
@@ -486,8 +478,10 @@ export interface PeriodicCheckpointArgs {
    */
   messagePrefix: string
   /**
-   * Cadence in ms. Defaults to `MARS_CODE_CHECKPOINT_INTERVAL_MS` or
-   * {@link DEFAULT_CODE_CHECKPOINT_INTERVAL_MS}.
+   * Cadence in ms. Defaults to {@link codeCheckpointIntervalMs} (the
+   * `MARS_CODE_CHECKPOINT_INTERVAL_MS` knob, resolved in
+   * `../../config/tuning.ts` — the one directory allowed to read
+   * environment variables directly).
    */
   intervalMs?: number
   traceCtx?: TraceCtx
@@ -546,9 +540,7 @@ export const startPeriodicCheckpoint = (
   args: PeriodicCheckpointArgs,
 ): PeriodicCheckpointHandle => {
   const { cwd, key, messagePrefix, traceCtx, onCheckpoint, onError } = args
-  const intervalMs =
-    args.intervalMs ??
-    Number(process.env.MARS_CODE_CHECKPOINT_INTERVAL_MS ?? DEFAULT_CODE_CHECKPOINT_INTERVAL_MS)
+  const intervalMs = args.intervalMs ?? codeCheckpointIntervalMs()
 
   let stopped = false
   let tick = 0
