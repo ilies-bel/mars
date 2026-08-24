@@ -4,7 +4,7 @@ import { resolveContext } from './context'
 import { resolveVcs } from './ports/vcs/registry'
 import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
-import { type DbClient, type DbInValue, type DbStatement } from './lib/db'
+import { type DbInValue, type DbStatement } from './lib/db'
 import { ensureQueueSchema, resolveQueueClient } from './lib/queue-client'
 import { buildEventInsert, emitEvent, withWriteTx } from './lib/outbox'
 import {
