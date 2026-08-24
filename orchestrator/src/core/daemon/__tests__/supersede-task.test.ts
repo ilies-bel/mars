@@ -121,3 +121,45 @@ describe('coreSupersedeTask', () => {
     expect((await q.getTask(stale.id))?.status).toBe('failed')
   })
 })
+
+describe('createOrigin supersede atomicity', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    vi.resetModules()
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('leaves origin in failed status when git worktree add fails during supersede', async () => {
+    // Regression: before the fix, the origin was marked 'dropped' before the
+    // worktree creation step. When that step failed, the origin was left in
+    // 'dropped' status — making a retry with --supersede impossible (the CLI
+    // only accepts 'failed' tasks). After the fix, the drop is deferred into
+    // the same transaction as the new task INSERT, so any pre-atomic failure
+    // leaves the origin in 'failed'.
+    const { q } = await loadModules(repo)
+
+    // Create a task and move it to 'failed'. Set branch to a name that does
+    // NOT exist in the git repo, so git worktree add fails during supersede.
+    const origin = await q.enqueueTask('original work', undefined, { skipTriage: true })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed', error = 'code error', branch = ? WHERE id = ?`,
+      args: [`task/${origin.id}`, origin.id],
+    })
+
+    // Attempt to supersede: git worktree add for the nonexistent branch fails.
+    await expect(
+      q.enqueueTask('retry work', undefined, { skipTriage: true, supersedes: origin.id }),
+    ).rejects.toThrow()
+
+    // Origin must remain 'failed', not 'dropped'. A subsequent --supersede retry
+    // would be rejected if the status were 'dropped'.
+    const originAfter = await q.getTask(origin.id)
+    expect(originAfter?.status).toBe('failed')
+  })
+})

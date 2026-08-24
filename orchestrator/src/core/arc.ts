@@ -321,11 +321,11 @@ export class Arc {
 
     // ── Supersede preamble ────────────────────────────────────────────────
     // When opts.supersedes is set: release the superseded task's worktree,
-    // mark it dropped, and inherit its branch + originId for the new task.
-    // Sequence is guarded so a mid-way failure (worktree creation fails)
-    // leaves an explicit, recoverable state: superseded task stays dropped,
-    // no new task row is created, and the error surfaces with the branch
-    // name so the operator can retry with --supersede <oldId>.
+    // create a new worktree on the same branch, and inherit that branch +
+    // originId for the new task. The origin drop happens atomically inside
+    // resolvedStore.atomic() together with the new task INSERT — so any
+    // failure before the atomic commits leaves the origin in its current
+    // status ('failed') and the operator can retry with --supersede <oldId>.
     let inheritedBranch: string | null = null
     let inheritedWorktreePath: string | null = null
     let supersedeDerivedOriginId: string | null = null
@@ -354,27 +354,14 @@ export class Arc {
           })
       }
 
-      // Step 2: mark superseded task dropped + clear its worktree_path.
-      // `superseded` is required to be 'failed' by the CLI's --supersede
-      // validation, and 'failed' is a TERMINAL_TASK_STATUSES member (ADR-0052
-      // terminal-immutability guard): a plain `updateTask` status write from a
-      // terminal status throws IllegalTransitionError. Route through the sole
-      // audited reopen seam first (mirrors the `mars restart` pattern in
-      // restart-task.ts) so the subsequent updateTask lands on a non-terminal
-      // previousStatus and the dropped transition is legal.
-      if (TERMINAL_TASK_STATUSES.has(superseded.status)) {
-        await Arc.reopenTerminalTask(supersededId, `superseded by new task ${id}`)
-      }
-      await updateTask(supersededId, {
-        status: 'dropped',
-        dropReason: 'superseded',
-        worktreePath: null,
-        failureReason: `superseded by new task ${id}`,
-      })
+      // Step 2 (deferred — atomic): the origin drop is committed in the same
+      // transaction as the new task INSERT below. Any failure between here and
+      // that atomic commit leaves the origin in its pre-supersede status so the
+      // operator can retry with --supersede <oldId>.
 
       // Step 3: create new worktree on superseded branch at new task's path.
-      // If this fails, the superseded task remains dropped, no new row is
-      // created, and the caller gets a descriptive error with the branch name.
+      // If this fails, the deferred drop has not yet executed, so the origin
+      // stays in its current status and the operator can retry.
       if (superseded.branch !== null) {
         const newWorktreePath = resolve(getStateDir(), 'worktrees', id)
         await mkdir(resolve(newWorktreePath, '..'), { recursive: true })
@@ -388,9 +375,16 @@ export class Arc {
           inheritedBranch = superseded.branch
           inheritedWorktreePath = newWorktreePath
         } catch (cause) {
+          // Fall back to String(cause) when .message is empty — some git errors
+          // produce an Error with an empty message, resulting in ". Re-run..."
+          // with nothing before the period.
+          const causeMsg =
+            cause instanceof Error && cause.message
+              ? cause.message
+              : String(cause)
           throw new Error(
-            `supersede: released worktree for ${supersededId} on branch ${superseded.branch} ` +
-              `but failed to create new worktree: ${cause instanceof Error ? cause.message : String(cause)}. ` +
+            `supersede: failed to create new worktree for ${supersededId} on branch ` +
+              `${superseded.branch}: ${causeMsg}. ` +
               `Re-run 'mars task add --supersede ${supersededId}' to retry.`,
           )
         }
@@ -489,9 +483,25 @@ export class Arc {
     const findingKey = opts?.findingKey ?? null
     const qa: 'auto' | 'manual' = opts?.qa === 'manual' ? 'manual' : 'auto'
     const deferrable = opts?.deferrable === true ? 1 : 0
-    await resolvedStore.atomic(async (tx) => {
-      await tx.execute({
-        sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, merge_mode, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, intent, origin_session_id, workflow, compensates_arc_id, followup_dedup_key, finding_key, qa, "deferrable", created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    // Atomicity invariant: the origin drop and new task INSERT commit in one
+    // transaction. If the INSERT fails the origin stays in its pre-supersede
+    // status ('failed') and the operator can retry with --supersede <oldId>.
+    // If a worktree was created above but the atomic block fails, we remove
+    // it best-effort so the retry finds a clean state.
+    try {
+      await resolvedStore.atomic(async (tx) => {
+        // Drop the superseded origin atomically with the new task INSERT.
+        // Raw SQL bypasses the application-level terminal-status immutability
+        // guard — that guard protects external callers, not this internal
+        // atomic sequence where both mutations must commit or roll back together.
+        if (opts?.supersedes) {
+          await tx.execute({
+            sql: `UPDATE tasks SET status = 'dropped', drop_reason = 'superseded', worktree_path = NULL, failure_reason = ?, updated_at = ? WHERE id = ?`,
+            args: [`superseded by new task ${id}`, now, opts.supersedes],
+          })
+        }
+        await tx.execute({
+          sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, merge_mode, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, intent, origin_session_id, workflow, compensates_arc_id, followup_dedup_key, finding_key, qa, "deferrable", created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
           id,
           promptText,
@@ -553,7 +563,22 @@ export class Arc {
         }
       }
       if (opts?.chatThreadId) await linkTaskToThread(opts.chatThreadId, id, tx)
-    })
+      }) // end resolvedStore.atomic
+    } catch (atomicErr) {
+      // Atomic failed: origin stays in its pre-supersede status. Remove the
+      // orphaned worktree (if one was created) so a retry finds a clean slate.
+      if (inheritedWorktreePath !== null && inheritedBranch !== null) {
+        await resolveVcs()
+          .removeWorktree({
+            path: inheritedWorktreePath,
+            branch: inheritedBranch,
+            force: true,
+            keepBranch: true, // retain branch so --supersede <oldId> can retry
+          })
+          .catch(() => {})
+      }
+      throw atomicErr
+    }
     // Supersede: if we inherited a branch + worktree from the superseded task,
     // stamp them onto the new task row so the dispatcher sees a ready worktree.
     if (inheritedBranch !== null && inheritedWorktreePath !== null) {
