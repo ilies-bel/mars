@@ -35,7 +35,7 @@ import { useProposals } from '@/entities/proposals/useProposals'
 import { useDaemonHealth } from '@/entities/daemon/useDaemonHealth'
 import { DAEMON_DOWN_MESSAGE } from '@/widgets/DaemonDownBanner'
 import { describeFeedFailure } from '@/shared/feedFailure'
-import { postDecision } from '@/shared/api'
+import { postDecision, snoozeActionQueueItem } from '@/shared/api'
 import { relativeTime } from '@/shared/time'
 import { dispatchAlertVerb, resolveThreadForItem } from '@/widgets/chat/alertVerbs'
 import { deriveCause } from '@/shared/alertCause'
@@ -276,6 +276,20 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
         void navigator.clipboard.writeText(text)
         setPending(op)
         setTimeout(() => setPending(null), 600)
+        return
+      }
+      if (op === 'snooze') {
+        setPending(op)
+        setError(null)
+        try {
+          await snoozeActionQueueItem(item.id, '1h')
+          setResolved(true)
+          void qc.invalidateQueries({ queryKey: ['action-queue'] })
+        } catch (err) {
+          setError(err instanceof Error ? err.message : String(err))
+        } finally {
+          setPending(null)
+        }
         return
       }
       setPending(op)
