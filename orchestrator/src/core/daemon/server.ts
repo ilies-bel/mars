@@ -1361,7 +1361,7 @@ export const startDaemon = async (
           `[worktree-lease] dispatch deferred for task ${task.id}: worktree ` +
             `${task.worktreePath} is held by task ${holder.taskId} (pid ${holder.pid}). ` +
             `Task stays queued and re-dispatches once that coder exits; ` +
-            `\`mars stop ${holder.taskId}\` releases it now.`,
+            `\`mars task stop ${holder.taskId}\` releases it now.`,
         )
         tracker.unclaim(task.id, 'implement')
         return

@@ -26,7 +26,8 @@
  * 2. **Refuse, do not wait.** A coder run lasts minutes to hours. Blocking on
  *    the lease would pin an implement semaphore slot for the duration, so a
  *    contended acquire throws {@link WorktreeLeaseHeldError} immediately and
- *    the caller reports which task holds the tree.
+ *    the caller reports which task holds the tree (`mars task stop <id>`
+ *    releases it early).
  *
  * A holder whose pid is dead is stale: the daemon that owned it (and therefore
  * the coder child it spawned) is gone, so the lease is reclaimed on read.

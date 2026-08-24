@@ -282,7 +282,7 @@ export const runAgent = async (
         `${occupant.taskId} (pid ${occupant.pid}, held since ` +
         `${new Date(occupant.acquiredAt).toISOString()}). Refusing to run a second ` +
         `agent in the same tree. Let ${occupant.taskId} finish, or stop it with ` +
-        `\`mars stop ${occupant.taskId}\`, then re-dispatch this task.`,
+        `\`mars task stop ${occupant.taskId}\`, then re-dispatch this task.`,
     )
   }
 
