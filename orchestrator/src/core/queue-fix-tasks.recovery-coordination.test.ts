@@ -9,6 +9,9 @@
  * Fix 3: When a fix task fails but its branch has commits ahead of the
  *        integration branch, the origin is re-queued via the remerge workflow
  *        instead of escalating to the action queue.
+ * Fix 4: When the branch tip has advanced past the salvage checkpoint since the
+ *        failure was recorded, the recovery brief must not assert the stale
+ *        "unfinished salvage checkpoint" claim with the outdated sha.
  */
 
 import {
@@ -27,10 +30,16 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
+import {
+  SALVAGE_CHECKPOINT_SUBJECT_PREFIX,
+  SALVAGE_CHECKPOINT_TRAILER_KEY,
+  SALVAGE_CHECKPOINT_TRAILER_VALUE,
+} from './lib/git/checkpoint'
 
 interface QueueModule {
   enqueueTask: typeof import('./queue').enqueueTask
@@ -77,6 +86,54 @@ const setupRepoWithBranchAhead = (branchName: string): string => {
   // Return to main so the worktree default HEAD is main.
   execFileSync('git', ['checkout', 'main'], { cwd: repo })
   return repo
+}
+
+/**
+ * Repo for Fix 4: `branchName` carries a salvage-checkpoint commit followed by
+ * a real commit (simulating a coder that resumed and landed genuine work on top
+ * of the checkpoint). The branch tip is therefore NOT a checkpoint, even though
+ * an earlier checkpoint sha exists in the history.
+ *
+ * Returns both the repo path and the sha of the checkpoint commit so the test
+ * can embed it into the stored (stale) `errorOutput`.
+ */
+const setupRepoWithCheckpointThenRealWork = (
+  branchName: string,
+): { repo: string; checkpointSha: string } => {
+  const repo = mkdtempSync(resolve(tmpdir(), 'mars-rc-stale-sha-test-'))
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+  execFileSync('git', ['config', 'user.email', 'test@mars.local'], { cwd: repo })
+  execFileSync('git', ['config', 'user.name', 'Mars Test'], { cwd: repo })
+  execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: repo })
+  mkdirSync(resolve(repo, '.mars'), { recursive: true })
+  // Initial commit on main so the integration branch exists.
+  writeFileSync(resolve(repo, 'README.md'), 'hi\n')
+  execFileSync('git', ['add', '-A'], { cwd: repo })
+  execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+  // Create the task branch.
+  execFileSync('git', ['checkout', '-b', branchName], { cwd: repo })
+  // Add a salvage checkpoint commit — structurally correct (has the trailer).
+  const checkpointMsg = [
+    `${SALVAGE_CHECKPOINT_SUBJECT_PREFIX} coder killed (exit 143) with 1 path — do not merge as-is`,
+    '',
+    `${SALVAGE_CHECKPOINT_TRAILER_KEY}: ${SALVAGE_CHECKPOINT_TRAILER_VALUE}`,
+  ].join('\n')
+  writeFileSync(resolve(repo, 'partial.ts'), 'const x = 1\n')
+  execFileSync('git', ['add', '-A'], { cwd: repo })
+  execFileSync('git', ['commit', '-q', '-m', checkpointMsg], { cwd: repo })
+  const checkpointSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repo,
+    encoding: 'utf8',
+  }).trim()
+  // Add a real commit on top (branch advances past the checkpoint).
+  writeFileSync(resolve(repo, 'partial.ts'), 'export const x = 1\n')
+  execFileSync('git', ['add', '-A'], { cwd: repo })
+  execFileSync('git', ['commit', '-q', '-m', 'feat: real work landed by resumed coder'], {
+    cwd: repo,
+  })
+  // Return to main so the worktree default HEAD is main.
+  execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+  return { repo, checkpointSha }
 }
 
 // ── Template DB pattern (mirrors queue-fix-tasks.test.ts) ──────────────────
@@ -329,6 +386,54 @@ describe('queue-fix-tasks: recovery coordination', () => {
     expect(Number((blockerRows[0] as unknown as { n: number }).n)).toBe(0)
 
     cleanup()
+    rmSync(repoWithHistory, { recursive: true, force: true })
+  })
+
+  // ── Fix 4 ────────────────────────────────────────────────────────────────
+
+  it('Fix 4: recovery brief does not contain stale salvage-checkpoint claim when branch tip has advanced', async () => {
+    // Simulate the incident: the merge step recorded a failure with a checkpoint
+    // sha in the error text, but a later coder attempt then landed a real commit
+    // on top of that checkpoint (advancing the branch tip). The recovery brief
+    // must NOT repeat the stale "branch tip is an unfinished salvage checkpoint
+    // (OLDSHA)" claim, which names a sha that is no longer the branch tip.
+    const branch = 'task/mars-stale-sha-rc-test-01'
+    const { repo: repoWithHistory, checkpointSha } = setupRepoWithCheckpointThenRealWork(branch)
+
+    const { q, ft } = await loadModules(repoWithHistory)
+
+    // The stored error text embeds the checkpoint sha that was captured when the
+    // failure was originally recorded — the "branch tip was a checkpoint" claim.
+    // By the time recovery runs, the branch has advanced past that sha.
+    const storedError =
+      `branch tip is an unfinished salvage checkpoint (${checkpointSha.slice(0, 9)}) and no coder ` +
+      `attempt on this branch has ever landed a real commit — split the task or start a fresh ` +
+      `attempt with \`mars task add --supersede origin-id\` rather than continuing on this worktree`
+
+    const origin = await q.enqueueTask('do some work', undefined, { skipTriage: true })
+
+    // Call the failure handler with the stale errorOutput. Pass branch explicitly
+    // (mirrors what the recovery subscriber does after reading task.branch).
+    const result = await ft.handleTaskFailureWithFixTask({
+      taskId: origin.id,
+      failingStep: 'code',
+      errorOutput: storedError,
+      branch,
+    })
+
+    expect(result.outcome).toBe('blocked')
+    const fixTaskId = result.fixTaskId
+    expect(fixTaskId).toBeTruthy()
+
+    const fixTask = await q.getTask(fixTaskId!)
+    expect(fixTask).not.toBeNull()
+
+    // The fix task prompt must NOT contain the stale salvage-checkpoint claim.
+    // The stale sha (checkpointSha) and the distinctive phrase must both be absent.
+    expect(fixTask!.prompt).not.toContain('unfinished salvage checkpoint')
+    // It must acknowledge that the branch has since advanced.
+    expect(fixTask!.prompt).toContain('stale at recovery time')
+
     rmSync(repoWithHistory, { recursive: true, force: true })
   })
 })

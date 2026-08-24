@@ -3,8 +3,12 @@ import {
   buildVerifyReproHint,
   type RanVerifyStep,
 } from './lib/derive-repro-command'
+import { execFile } from 'node:child_process'
 import { constants as fsConstants } from 'node:fs'
 import { access } from 'node:fs/promises'
+import { promisify } from 'node:util'
+
+const execAsync = promisify(execFile)
 import type { FixRecipeContext } from './lib/fix-recipes'
 import { raiseActionQueueItem } from './lib/action-queue'
 import type { ActionQueueKind } from './lib/action-queue-kinds'
@@ -1534,6 +1538,57 @@ export const handleTaskFailureWithFixTask = async (
         : task.prompt ?? '',
   }
 
+  // Stale-sha guard for salvage-checkpoint-tip failures.
+  //
+  // The merge step embeds the branch-tip sha in the stored error message (e.g.
+  // "branch tip is an unfinished salvage checkpoint (8850804a7) — …"). When a
+  // later coder attempt has since landed real commits on the same branch, that
+  // sha is stale and the salvage-checkpoint claim is wrong — the brief would
+  // point the recovery agent at `--supersede` or `restart` based on outdated
+  // information. Re-resolve the live branch tip before building the recovery
+  // brief; if the tip is no longer a checkpoint commit, replace the stale claim
+  // with a note so the agent works from actual current state instead.
+  //
+  // Detection: the `failureSignature` computed here is re-derived from the
+  // coarse `failed_phase` column (the full `code:salvage-checkpoint-tip/no-progress`
+  // signature fails `asStepId`'s grammar and falls back to `code`), so it does
+  // not reliably identify the salvage-checkpoint case. Instead, detect by the
+  // distinctive text that merge.ts writes into `task.error` — the string
+  // "unfinished salvage checkpoint" is unique to that code path.
+  //
+  // Best-effort: any git or import error leaves the stored text unchanged
+  // (fail open — the existing behaviour is preserved on any transient failure).
+  let effectiveTruncatedError = truncatedError
+  let effectiveRecipeContext = recipeContext
+  if (branch && input.errorOutput.includes('unfinished salvage checkpoint')) {
+    try {
+      const repoRoot = getRepoRoot()
+      const { stdout } = await execAsync('git', ['rev-parse', branch], { cwd: repoRoot })
+      const liveTipSha = stdout.trim()
+      const { isSalvageCheckpointCommit } = await import('./lib/git/checkpoint')
+      const isStillCheckpoint = await isSalvageCheckpointCommit(repoRoot, liveTipSha)
+      if (!isStillCheckpoint) {
+        // The branch has advanced past the checkpoint since the failure was
+        // recorded. The "branch tip is an unfinished salvage checkpoint (…)"
+        // claim names a sha that is no longer the tip, and any destructive
+        // recommendation it contains (--supersede, restart) is unsafe to act on.
+        // Replace the stale text with a factual note so the recovery agent
+        // inspects the live branch state rather than following stale advice.
+        const staleNote =
+          `[Salvage-checkpoint claim in the original failure was stale at recovery time. ` +
+          `The failure was recorded when the branch tip was a salvage checkpoint, but the branch ` +
+          `(${branch}) tip has since advanced to ${liveTipSha.slice(0, 9)}, which is NOT a ` +
+          `checkpoint commit — real work was landed on top. Do not take any destructive action ` +
+          `(--supersede, restart) based solely on the original failure message. ` +
+          `Inspect the live branch state to determine what work was done and what remains.]`
+        effectiveTruncatedError = staleNote
+        effectiveRecipeContext = { ...recipeContext, statusOutput: staleNote }
+      }
+    } catch {
+      // Fail open: any git or import error — use the stored text unchanged.
+    }
+  }
+
   const stewardTarget = {
     kind: 'task',
     id: input.taskId,
@@ -1567,9 +1622,9 @@ export const handleTaskFailureWithFixTask = async (
     sourceTaskId: input.taskId,
     failureSignature,
     failingStep: input.failingStep,
-    truncatedError,
+    truncatedError: effectiveTruncatedError,
     branch,
-    recipeContext,
+    recipeContext: effectiveRecipeContext,
     store: s,
     qaNote: input.qaNote,
   })
