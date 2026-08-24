@@ -572,6 +572,57 @@ recovery-spawn path itself.
   the worktree is gone — check `.mars/worktrees/<task-id>.removed.json` for
   the reason and the landed commit sha. Only investigate test failures after
   confirming the worktree is present.
+- **A stopped `git rebase` in your worktree is a sibling hazard to the
+  removal case — check for it before committing or aborting.** The merge
+  step's Step 1 rebase (`mergeBranch` in
+  `orchestrator/src/core/lib/git/merge.ts`) runs the rebase INSIDE the
+  task's own worktree BEFORE acquiring `.merge.lock`. If the daemon is
+  killed or the merge step is aborted after the rebase starts but before
+  cleanup, the rebase state (`.git/rebase-merge/` directory) is left
+  behind. The agent running inside the worktree gets no signal — the
+  `git rev-parse --show-toplevel` probe (above) still returns the correct
+  path — but the on-disk files have been silently replaced by the
+  partially-replayed commits (observed on `fix-82ba05a3`/`mars-46032137`:
+  an already-committed file reappeared with its pre-edit contents).
+
+  **Before any `git add`, `git commit`, or `git rebase --abort` inside a
+  task worktree, probe for an in-progress git operation:**
+
+  ```bash
+  # Is a rebase stopped?
+  git -C <path> rev-parse --git-path rebase-merge   # exits 0; check dir exists
+  git -C <path> rev-parse --git-path rebase-apply   # same
+
+  # Is a merge stopped?
+  ls <path>/.git/MERGE_HEAD 2>/dev/null && echo "merge in progress"
+  ```
+
+  If any of those indicate an operation in progress, **STOP**. Do NOT
+  commit (commits land in the detached rebase HEAD and are lost when the
+  rebase is completed or aborted later). Do NOT run `git rebase --abort`
+  or `git merge --abort` without first reading `git status` and
+  understanding which side each file belongs to.
+
+  **Ownership probe:** check for the orchestrator's rebase marker —
+  `.mars/worktrees/<task-id>.rebase-in-progress.json` (a sibling of the
+  worktree directory, NOT inside it). Its presence means the orchestrator
+  started the rebase and is responsible for cleaning it up. Its absence
+  with a rebase-merge directory present means the rebase was started by
+  something else (another session, a manual git command) — treat as
+  unknown and STOP regardless.
+
+  **`--ours` / `--theirs` reversal under rebase.** During a `git rebase`,
+  `--ours` is the UPSTREAM side (the tip of `main` being rebased onto) and
+  `--theirs` is the commit being REPLAYED. This is the REVERSE of a merge
+  conflict, where `--ours` is your branch. Never blindly apply either
+  option without first reading both sides with `git show :2:<file>` (ours)
+  and `git show :3:<file>` (theirs) and reconciling intent manually.
+
+  **Rebase conflict markers in both sides being identical** means both
+  branches applied the same change independently — the rebase will drop
+  the replayed commit as already-applied once the conflict is resolved to
+  `--ours`. This is safe; use `git rebase --skip` if `git status` shows
+  "nothing to commit" after staging.
 - The daemon's HTTP server binds an OS-assigned ephemeral port
   (`listen(0, '127.0.0.1', ...)` in
   `orchestrator/src/core/daemon/http-server.ts`) and publishes it to
