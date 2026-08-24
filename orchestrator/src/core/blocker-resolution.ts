@@ -1,18 +1,14 @@
 /**
- * Blocker-resolution result types. The worktree/vocabulary primitives this
- * file used to own moved to `lib/blocker-resolution-primitives.ts` so
- * `core/arc.ts` can reach them without importing this module (ADR-0101).
+ * Result shapes for the blocker-resolution cascade.
  *
- * `raiseActionQueueForBlockedTask(taskId)` was also deleted here (ADR-0101
- * item 1). It had no caller anywhere in the tree — the live
- * recovery-exhausted raise is in `queue-fix-tasks.ts`, which calls
- * `raiseRecoveryExhaustedActionQueue` directly with the task it already
- * holds. That dead function's `getTask` import was the ONLY value-level
- * edge from this module to `core/queue.ts`, and `queue.ts` imports the
- * `Arc` aggregate for its facade verbs — so a dead read closed the
- * `arc.ts -> blocker-resolution.ts -> queue.ts -> arc.ts` cycle. If a
- * caller ever needs this again, take the already-loaded `Task` as a
- * parameter rather than re-importing `getTask` here.
+ * This module is types-only. The worktree/vocabulary primitives it used to own
+ * moved to `lib/blocker-resolution-primitives.ts` so `core/arc.ts` can reach
+ * them without importing this module (ADR-0101), and every consumer of the
+ * shapes below imports them with `import type` — `no-circular` excludes
+ * type-only edges because they vanish at compile time.
+ *
+ * Adding a runtime export here re-opens that edge. Put it in
+ * `lib/blocker-resolution-primitives.ts` instead.
  */
 
 export interface BlockByFailureOutcome {
