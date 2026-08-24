@@ -19,11 +19,15 @@
  * `Arc` instance, so the concern is testable without constructing an aggregate.
  */
 import { type DbStatement } from '../lib/db'
-import { ensureQueueSchema, resolveQueueClient, type UnblockTaskResult } from '../queue'
-import {
-  getDefaultDomainTaskStore,
-  type DomainTaskStore,
-} from '../store/task-store'
+// ADR-0101 item 1: the raw client + schema guarantee come from the
+// dependency-free leaf `lib/queue-client`, NOT from the `../queue` facade.
+// `../queue` imports the `Arc` aggregate for its facade verbs, so a value
+// import from it here closed an `arc/blockers.ts -> queue.ts` cycle. Only the
+// `UnblockTaskResult` type still comes from the facade, and a type-only edge
+// vanishes at compile time (dependency-cruiser's `no-circular` excludes it).
+import { ensureQueueSchema, resolveQueueClient } from '../lib/queue-client'
+import type { UnblockTaskResult } from '../queue'
+import type { DomainTaskStore } from '../store/task-store'
 import { buildEventInsert, withWriteTx } from '../lib/outbox'
 import { assertNotRecoveryEdge } from '../lib/blocker-invariant'
 import { maybeAssertArcInvariant } from './invariant'
@@ -179,16 +183,20 @@ export const clearBlockerEdges = async (
  * preserving the never-observably-zero-blockers invariant via
  * insert-before-delete ordering within the batch.
  *
- * Spans multiple task IDs, so no single Arc instance owns it: it uses the
+ * Spans multiple task IDs, so no single Arc instance owns it — but like every
+ * other writer in this module it takes its store explicitly (ADR-0101 item 1:
+ * reaching for `getDefaultDomainTaskStore()` here was the last value-level
+ * import of `store/task-store.ts`, which imports `Arc`, so it closed an
+ * `arc/blockers.ts -> store/task-store.ts` cycle). The caller supplies the
  * process-wide default store.
  */
 export const transferProposalBlockerEdges = async (
+  store: DomainTaskStore,
   dependents: string[],
   newBlockerTaskId: string,
   proposalId: string,
 ): Promise<{ transferred: string[] }> => {
   if (dependents.length === 0) return { transferred: [] }
-  const store = getDefaultDomainTaskStore()
   // ADR-0040 leaf-node guard: refuse the transfer if any endpoint is a
   // recovery task. dependents are tasks waiting on a proposal — they are
   // origin work by construction, so practical violations are unlikely, but

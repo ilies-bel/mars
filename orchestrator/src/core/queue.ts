@@ -1,11 +1,11 @@
 import { execFile } from 'node:child_process'
 import { gzip } from 'node:zlib'
 import { promisify } from 'node:util'
-import { resolveContext, resolveDbTarget } from './context'
+import { resolveContext } from './context'
 import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
-import { markSchemaReady, openDb, type DbClient, type DbInValue, type DbStatement } from './lib/db'
-import { ensureSchema } from './lib/pg-schema'
+import { type DbClient, type DbInValue, type DbStatement } from './lib/db'
+import { ensureQueueSchema, resolveQueueClient } from './lib/queue-client'
 import { buildEventInsert, emitEvent, withWriteTx } from './lib/outbox'
 import {
   asStepId,
@@ -646,48 +646,15 @@ export const validatePriority = (value: number): void => {
   }
 }
 
-let clientSingleton: DbClient | null = null
-
 /**
- * Seam-internal DB client resolver for the shared task+state database
- * (ADR-0034: tasks and proposals share one store; migration 0002: the store
- * is embedded PostgreSQL, resolved via `resolveDbTarget`). NOT part of the
- * public surface (ADR-0021): the only sanctioned importer is the TaskStore
- * seam (`store/task-store.ts`), which threads it to callers via the injected
- * store. No live module outside the store may import this — `getClient` is
- * gone.
+ * `resolveQueueClient` / `ensureQueueSchema` now live in the dependency-free
+ * leaf `core/lib/queue-client.ts` (ADR-0101 item 1) so that modules inside the
+ * Arc aggregate can reach the raw client without importing this facade — which
+ * imports `Arc` and therefore closed a cycle. They are re-exported here because
+ * this module is their public surface for the ~200 call sites outside the
+ * aggregate; new call sites in `core/arc*` must import the leaf directly.
  */
-export const resolveQueueClient = (): DbClient => {
-  if (!clientSingleton) {
-    clientSingleton = openDb(resolveDbTarget())
-  }
-  return clientSingleton
-}
-
-/**
- * Seam-internal, memoized schema guarantee (ADR-0021: schema management lives
- * behind the store). The canonical DDL is `ensureSchema` in
- * `core/lib/pg-schema.ts` (migration 0002) — the old ~1300-line imperative
- * `migrateQueueSchema` introspection engine is gone. Queue's domain
- * functions call this defensively before touching tables; the TaskStore runs
- * `ensureSchema` itself on its own init path.
- */
-let schemaReady: Promise<void> | null = null
-
-export const ensureQueueSchema = (): Promise<void> => {
-  if (!schemaReady) {
-    // Call markSchemaReady after the DDL completes so that the first
-    // execute() / batch() call on this client doesn't re-run ensureSchema.
-    // Direct ensureSchema callers bypass ensureClientSchema and therefore
-    // never update schemaReadyByTarget; without this, every test that calls
-    // migrateQueueSchema() followed by a resolveStateClient().execute() pays
-    // an extra ~10 s DDL pass on PGlite-backed databases.
-    schemaReady = ensureSchema(resolveQueueClient()).then(() => {
-      markSchemaReady(resolveQueueClient())
-    })
-  }
-  return schemaReady
-}
+export { resolveQueueClient, ensureQueueSchema }
 
 /**
  * Compatibility name retained while callers migrate from the SQLite-era
@@ -2122,7 +2089,12 @@ export const transferProposalBlockerToTask = async (
   // Delegate to the blocker-edge module (ADR-0052 sole-writer for
   // task_blockers). transferProposalBlockerEdges re-runs the ADR-0040 leaf-node
   // guard and builds the atomic INSERT+DELETE batch.
-  return transferProposalBlockerEdges(dependents, newBlockerTaskId, proposalId)
+  return transferProposalBlockerEdges(
+    getDefaultDomainTaskStore(),
+    dependents,
+    newBlockerTaskId,
+    proposalId,
+  )
 }
 
 export interface UnblockTaskResult {
