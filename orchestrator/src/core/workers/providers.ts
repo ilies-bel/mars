@@ -46,9 +46,8 @@ const conversationMemoryFor = (
 }
 
 const CLAUDE_CONVERSATION_MEMORY: Readonly<Record<string, ConversationMemoryFacts>> = {
-  'claude-opus-5': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
-  'claude-sonnet-5': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
-  'claude-haiku-4-5-20251001': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
+  'claude-opus-4-6': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
+  'claude-sonnet-4-6': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
 }
 
 const GEMINI_CONVERSATION_MEMORY: Readonly<Record<string, ConversationMemoryFacts>> = {
@@ -86,9 +85,9 @@ export const usageSemanticsOf = (provider: ProviderName): ProviderUsageSemantics
 
 /** Provider-native model ids behind MARS's semantic worker tiers. */
 const CLAUDE_MODELS: ProviderDescriptor['models'] = {
-  flagship: 'claude-opus-5',
-  balanced: 'claude-sonnet-5',
-  fast: 'claude-haiku-4-5-20251001',
+  flagship: 'claude-opus-4-6',
+  balanced: 'claude-sonnet-4-6',
+  fast: 'claude-sonnet-4-6',
 }
 
 const GEMINI_MODELS: ProviderDescriptor['models'] = {
