@@ -40,7 +40,11 @@ const thread = (overrides: Partial<ChatThread>): ChatThread => ({
 // ---------------------------------------------------------------------------
 
 describe('isArchived', () => {
-  const NOW = new Date('2026-08-16T00:00:00.000Z').getTime()
+  // RECENT/OLD above are computed relative to the real Date.now(), so the
+  // anchor compared against them must be too — a fixed calendar date here
+  // would drift out of sync with them as real time passes (the OLD fixture
+  // is only "more than 7 days old" relative to the current instant).
+  const NOW = Date.now()
 
   it('returns false for a thread created 1 day ago (under 7-day threshold)', () => {
     expect(isArchived(thread({ createdAt: RECENT }), NOW)).toBe(false)
