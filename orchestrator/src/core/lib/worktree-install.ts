@@ -4,6 +4,7 @@ import { acquireLock } from './git/lock'
 import { type RunSubprocessResult } from '../ports/executor/types'
 import { getStateDir } from '../context'
 import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
+import { execProbe } from './git/internal'
 import { provisionWorktreeDeps } from './worktree-deps'
 
 export const DEFAULT_INSTALL_TIMEOUT_MS = 8 * 60_000
@@ -782,6 +783,50 @@ export const regenInstallCommand = (
     case 'bun':
       return ['bun', ['install']]
   }
+}
+
+/** Result of {@link probeFrozenInstall} — a raw exec result, never thrown. */
+export interface FrozenInstallProbeResult {
+  exitCode: number
+  stdout: string
+  stderr: string
+}
+
+/**
+ * Cheap, non-mutating probe of a directory's dependency install state: runs
+ * the detected package manager's frozen-install command with its own
+ * "don't touch node_modules" flag (npm/yarn `--dry-run`, pnpm
+ * `--lockfile-only`) so a caller can detect a broken manifest/lockfile pin
+ * (e.g. an unsatisfiable version pin) without paying for, or risking, a real
+ * install.
+ *
+ * Returns a synthetic `exitCode=0` result when no manifest/lockfile is found
+ * at `dir` (nothing to probe) — never throws on a probe-shaped failure since
+ * it goes through {@link execProbe}.
+ *
+ * Shared by the daemon's baseline-health checker (detects a poisoned
+ * integration branch before dispatch) and the baseline repairer (probes
+ * before and after a repair attempt) — see `baseline-health.ts` and
+ * `baseline-repair.ts`.
+ */
+export const probeFrozenInstall = async (
+  dir: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<FrozenInstallProbeResult> => {
+  const [site] = await detectInstallSites(dir, 0, ['.'])
+  if (!site) return { exitCode: 0, stdout: '', stderr: '' }
+  const [cmd, frozenArgs] = installCommand(site.manager)
+  const noMutateArgs: Record<PackageManager, readonly string[]> = {
+    npm: ['--dry-run'],
+    // pnpm has no --dry-run; --lockfile-only never touches node_modules, and
+    // combined with --frozen-lockfile it refuses to rewrite the lockfile
+    // too, so a broken pin surfaces without any mutation.
+    pnpm: ['--lockfile-only'],
+    yarn: ['--dry-run'],
+    bun: ['--dry-run'],
+  }
+  const args = [...frozenArgs, ...noMutateArgs[site.manager]]
+  return execProbe(cmd, args, { cwd: dir, timeout: opts.timeoutMs })
 }
 
 export class WorktreeInstallError extends Error {

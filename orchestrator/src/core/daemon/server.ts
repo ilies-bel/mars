@@ -155,6 +155,7 @@ import {
 } from './storm-breaker'
 import { collectStormEvidence, type StormEvidence } from './storm-evidence'
 import { createBaselineHealthChecker } from './baseline-health'
+import { createRealBaselineRepairer } from './baseline-repair-wiring'
 import { setInstallSemCap } from '../lib/worktree-install'
 import { probeDuckDBLock } from './duckdb-lock'
 import {
@@ -2984,6 +2985,7 @@ export const startDaemon = async (
         const { poisoned } = await baselineHealthChecker.check()
         if (poisoned) {
           log(`[baseline-health] integration branch poisoned after task ${e.taskId} merged — dispatch paused`)
+          triggerBaselineRepair(`post-merge:${e.taskId}`)
         }
       } catch (err) {
         log(
@@ -5613,25 +5615,8 @@ export const startDaemon = async (
     // (installCommand in worktree-install.ts), adding each manager's
     // dry-run/lockfile-only equivalent so node_modules is never mutated.
     runInstallProbe: async (root) => {
-      const { execProbe } = await import('../lib/git/internal')
-      const { detectInstallSites, installCommand } = await import('../lib/worktree-install')
-      const [site] = await detectInstallSites(root, 0, ['.'])
-      if (!site) {
-        // No manifest/lockfile at the repo root — nothing to probe.
-        return { exitCode: 0, stdout: '', stderr: '' }
-      }
-      const [cmd, frozenArgs] = installCommand(site.manager)
-      const noMutateArgs: Record<typeof site.manager, readonly string[]> = {
-        npm: ['--dry-run'],
-        // pnpm has no --dry-run; --lockfile-only never touches node_modules,
-        // and combined with --frozen-lockfile it refuses to rewrite the
-        // lockfile too, so a broken pin surfaces without any mutation.
-        pnpm: ['--lockfile-only'],
-        yarn: ['--dry-run'],
-        bun: ['--dry-run'],
-      }
-      const args = [...frozenArgs, ...noMutateArgs[site.manager]]
-      return execProbe(cmd, args, { cwd: root })
+      const { probeFrozenInstall } = await import('../lib/worktree-install')
+      return probeFrozenInstall(root)
     },
     pause,
     log,
@@ -5640,12 +5625,79 @@ export const startDaemon = async (
   // (wired into appServices above) can access it once it is ready.
   _baselineHealthChecker = baselineHealthChecker
 
+  // ── Baseline repairer ──────────────────────────────────────────────────
+  // The privileged actor that can actually FIX a poisoned integration
+  // branch (currently: an unsatisfiable manifest version pin, or any other
+  // manifest/lockfile-only defect a Fixer run in place can resolve), rather
+  // than only pausing dispatch on it. Constructed once here, mirroring
+  // baselineHealthChecker above; its internal one-attempt-per-signature
+  // ledger (ADR-0040 leaf-node rule) lives for the daemon's whole lifetime.
+  const baselineRepairer = createRealBaselineRepairer({
+    repoRoot: resolveContext().repoRoot,
+    integrationBranch: process.env.INTEGRATION_BRANCH ?? 'main',
+    pause,
+    log,
+  })
+
+  // Guard against two concurrent triggers (startup racing a same-tick
+  // post-merge event, or two merges completing close together) calling
+  // .repair() at once — createBaselineRepairer's one-attempt ledger reads
+  // then writes its `attempted` set across an await, so overlapping calls
+  // could both pass the check for the same signature. A single in-flight
+  // flag is enough here: baseline repairs are rare (one per poisoning
+  // incident) and never need to run in parallel, so this does not warrant
+  // its own entry in the daemon's per-kind worker-pool semaphores.
+  let baselineRepairInFlight = false
+  const triggerBaselineRepair = (reason: string): void => {
+    if (baselineRepairInFlight) return
+    baselineRepairInFlight = true
+    void (async () => {
+      try {
+        const outcome = await baselineRepairer.repair()
+        if (outcome.status === 'repaired') {
+          log(
+            `[baseline-repair] repaired integration branch (trigger=${reason}): commit ${outcome.commit} (${outcome.files.join(', ')})`,
+          )
+          // The repairer already resumed the pause; re-run the health
+          // checker so its own _poisoned flag and dep fingerprint are
+          // resynced too — otherwise isBaselinePoisoned() (read by the
+          // recovery-spawner's verify-failure override) would keep
+          // reporting poisoned=true after dispatch has already resumed.
+          try {
+            await baselineHealthChecker.check()
+          } catch (err) {
+            log(
+              `[baseline-health] post-repair recheck failed (non-fatal): ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            )
+          }
+        } else if (outcome.status === 'escalated') {
+          log(
+            `[baseline-repair] escalated (trigger=${reason}, refusal=${outcome.refusal}): ${outcome.detail}`,
+          )
+        } else {
+          log(`[baseline-repair] probe clean (trigger=${reason}) — nothing to repair`)
+        }
+      } catch (err) {
+        log(
+          `[baseline-repair] attempt failed (non-fatal): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        )
+      } finally {
+        baselineRepairInFlight = false
+      }
+    })()
+  }
+
   // Run the baseline check at startup — before reconcile() triggers the first
   // drain() — so a broken baseline is detected before any task is dispatched.
   try {
     const { poisoned } = await baselineHealthChecker.check()
     if (poisoned) {
       log('[baseline-health] integration branch poisoned at startup — dispatch paused')
+      triggerBaselineRepair('startup')
     }
   } catch (err) {
     log(
