@@ -26,7 +26,7 @@
  * the page says so instead (see UnreachableState).
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { sortItems, buildRenderedRows, countNeedsYou } from '@/entities/actionQueue/clusterRows'
@@ -663,6 +663,15 @@ export const TriagePage = () => {
   const sorted = sortItems(items)
   const renderedRows = buildRenderedRows(sorted)
   const needsYouCount = countNeedsYou(items)
+
+  // Surface the pending count in the browser tab so the queue is glanceable
+  // from the tab bar without switching to it.
+  useEffect(() => {
+    document.title =
+      needsYouCount > 0
+        ? `(${needsYouCount}) Action Queue — mars`
+        : 'Action Queue — mars'
+  }, [needsYouCount])
 
   // Only show the empty state when every feed succeeded AND there is genuinely
   // nothing to act on. A feed error is itself something to surface, so the

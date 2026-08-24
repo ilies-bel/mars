@@ -76,15 +76,23 @@ describe('action-queue recipe registry — exhaustiveness', () => {
     expect(detail.raisedAt).toBe('2026-06-01T12:00:00.000Z')
   })
 
-  it.each(ACTION_QUEUE_KINDS)('kind "%s" getRecipeVerbs always ends with Dismiss and Snooze', (kind) => {
+  it.each(ACTION_QUEUE_KINDS)('kind "%s" getRecipeVerbs always ends with Snooze', (kind) => {
     const recipe = lookupRecipe(kind)
     const ctx = makeCtx({ kind })
     const verbs = getRecipeVerbs(recipe, ctx)
-    expect(verbs.length).toBeGreaterThanOrEqual(2)
+    expect(verbs.length).toBeGreaterThanOrEqual(1)
     const last = verbs[verbs.length - 1]
-    const secondLast = verbs[verbs.length - 2]
-    expect(secondLast).toMatchObject({ op: 'dismiss', label: 'Dismiss' })
     expect(last).toMatchObject({ op: 'snooze', label: 'Snooze' })
+  })
+
+  it.each(ACTION_QUEUE_KINDS)('kind "%s" carries the generic dismiss verb only when the daemon can act on it', (kind) => {
+    // The daemon's entity handler maps the generic `dismiss` op to proposal
+    // dismissal and nothing else; on any other kind the button would 500.
+    const recipe = lookupRecipe(kind)
+    const ctx = makeCtx({ kind })
+    const verbs = getRecipeVerbs(recipe, ctx)
+    const hasGenericDismiss = verbs.some((v) => v.op === 'dismiss')
+    expect(hasGenericDismiss).toBe(kind === 'draft-proposal')
   })
 })
 
@@ -401,11 +409,13 @@ describe('buildAlertSegment — registered kinds use recipe verbs', () => {
     })
   })
 
-  it('daemon-died alert segment has generic Dismiss appended after dismiss-daemon-died', () => {
+  it('daemon-died alert segment renders exactly one Dismiss (no broken generic dismiss)', () => {
+    // The generic `dismiss` op only functions on proposals; on daemon-died it
+    // would sit next to the working dismiss-daemon-died with the same label
+    // and 500 when clicked.
     const segment = buildAlertSegment(makeDaemonDiedItem(), 'test-item-id')
-    const dismissAction = segment.actions.find((a) => a.op === 'dismiss')
-    expect(dismissAction).toBeDefined()
-    expect(dismissAction).toMatchObject({ op: 'dismiss', label: 'Dismiss', style: 'default' })
+    expect(segment.actions.find((a) => a.op === 'dismiss')).toBeUndefined()
+    expect(segment.actions.filter((a) => a.label === 'Dismiss')).toHaveLength(1)
   })
 
   it('daemon-died alert segment has Snooze appended last', () => {

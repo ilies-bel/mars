@@ -130,8 +130,19 @@ const DISMISS: RecipeVerb = { op: 'dismiss', label: 'Dismiss', style: 'default' 
 const SNOOZE: RecipeVerb = { op: 'snooze', label: 'Snooze', style: 'default' }
 
 /**
- * Return the full verb list for a recipe: kind-specific verbs then Dismiss,
- * then Snooze. Every kind always gets both tail verbs.
+ * Kinds whose rows the generic `dismiss` op can actually act on. The daemon's
+ * entity handler maps `dismiss` to proposal dismissal and nothing else, so
+ * appending Dismiss to any other kind produces a button that 500s
+ * ("proposal <id> not found"). Derived condition kinds clear through their own
+ * operation (e.g. `dismiss-daemon-died` deletes the crash marker) or by the
+ * condition ceasing to hold; stored operator-decision kinds resolve atomically
+ * through their own verbs. Snooze remains the universal suppression verb.
+ */
+const GENERIC_DISMISS_KINDS = new Set<string>(['draft-proposal'])
+
+/**
+ * Return the full verb list for a recipe: kind-specific verbs, then Dismiss
+ * only where the generic dismiss op can function, then Snooze for every kind.
  */
 export const getRecipeVerbs = (
   recipe: Recipe,
@@ -139,7 +150,9 @@ export const getRecipeVerbs = (
 ): RecipeVerb[] => {
   const base =
     typeof recipe.verbs === 'function' ? recipe.verbs(ctx) : recipe.verbs
-  return [...base, DISMISS, SNOOZE]
+  return GENERIC_DISMISS_KINDS.has(ctx.kind)
+    ? [...base, DISMISS, SNOOZE]
+    : [...base, SNOOZE]
 }
 
 /** Return the daemon operations available as preloaded Notice response chips. */

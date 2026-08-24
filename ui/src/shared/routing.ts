@@ -462,32 +462,33 @@ export const actionQueueCount = (payload: StaleWorktreesPayload): number =>
   payload.staleWorktrees.length
 
 /**
- * Returns the document.title string for the given page route.
+ * Returns the document.title string for the given page route. Page name
+ * first so the distinctive part survives tab-width truncation.
  */
 export const pageTitle = (route: RouteName): string => {
   switch (route) {
     case 'triage':
-      return 'mars — action queue'
+      return 'Action Queue — mars'
     case 'chat':
-      return 'mars — chat'
+      return 'Chat — mars'
     case 'progress':
-      return 'mars — progress'
+      return 'Progress — mars'
     case 'events':
-      return 'mars — events'
+      return 'Events — mars'
     case 'kpi':
-      return 'mars — kpis'
+      return 'KPIs — mars'
     case 'studio':
-      return 'mars — studio'
+      return 'Studio — mars'
     case 'steward':
-      return 'mars — steward'
+      return 'Steward — mars'
     case 'reflections':
-      return 'mars — reflections'
+      return 'Reflections — mars'
     case 'control':
-      return 'mars — control'
+      return 'Control Room — mars'
     case 'proposals':
-      return 'mars — proposals'
+      return 'Proposals — mars'
     case 'arc-qa':
-      return 'mars — arc qa'
+      return 'Arc QA — mars'
   }
 }
 

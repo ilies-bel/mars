@@ -457,32 +457,32 @@ describe('parseReleaseNotesRoute', () => {
 // ---------------------------------------------------------------------------
 
 describe('pageTitle', () => {
-  it('returns "mars — action queue" for the triage route', () => {
-    expect(pageTitle('triage')).toBe('mars — action queue')
+  it('returns "Action Queue — mars" for the triage route', () => {
+    expect(pageTitle('triage')).toBe('Action Queue — mars')
   })
 
-  it('returns "mars — chat" for the chat route', () => {
-    expect(pageTitle('chat')).toBe('mars — chat')
+  it('returns "Chat — mars" for the chat route', () => {
+    expect(pageTitle('chat')).toBe('Chat — mars')
   })
 
-  it('returns "mars — progress" for the progress route', () => {
-    expect(pageTitle('progress')).toBe('mars — progress')
+  it('returns "Progress — mars" for the progress route', () => {
+    expect(pageTitle('progress')).toBe('Progress — mars')
   })
 
-  it('returns "mars — events" for the events route', () => {
-    expect(pageTitle('events')).toBe('mars — events')
+  it('returns "Events — mars" for the events route', () => {
+    expect(pageTitle('events')).toBe('Events — mars')
   })
 
-  it('returns "mars — kpis" for the kpi route', () => {
-    expect(pageTitle('kpi')).toBe('mars — kpis')
+  it('returns "KPIs — mars" for the kpi route', () => {
+    expect(pageTitle('kpi')).toBe('KPIs — mars')
   })
 
-  it('returns "mars — steward" for the steward route', () => {
-    expect(pageTitle('steward')).toBe('mars — steward')
+  it('returns "Steward — mars" for the steward route', () => {
+    expect(pageTitle('steward')).toBe('Steward — mars')
   })
 
-  it('returns "mars — control" for the control route', () => {
-    expect(pageTitle('control')).toBe('mars — control')
+  it('returns "Control Room — mars" for the control route', () => {
+    expect(pageTitle('control')).toBe('Control Room — mars')
   })
 })
 
@@ -570,8 +570,8 @@ describe('studio route integration', () => {
     expect(resolvePageRoute('#/studio/mars-abc')).toBe('studio')
   })
 
-  it('pageTitle returns "mars — studio" for the studio route', () => {
-    expect(pageTitle('studio')).toBe('mars — studio')
+  it('pageTitle returns "Studio — mars" for the studio route', () => {
+    expect(pageTitle('studio')).toBe('Studio — mars')
   })
 })
 
