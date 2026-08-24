@@ -114,6 +114,12 @@ export interface MergeResult {
 /** Args for {@link Vcs.status}. */
 export interface StatusSpec {
   cwd: string
+  /**
+   * When `'all'`, passes `--untracked-files=all` so a wholly-new directory is
+   * reported file-by-file instead of collapsed to a single `dir/` entry.
+   * Omit for the default (collapsed) porcelain behaviour.
+   */
+  untrackedFiles?: 'all'
 }
 
 /** Result of {@link Vcs.status}. */
@@ -121,6 +127,147 @@ export interface VcsStatus {
   /** True when `git status --porcelain` reported nothing. */
   clean: boolean
   statusOutput: string
+  /**
+   * Paths from `statusOutput` classified via `classifyPorcelainLines`
+   * (`../../lib/git/classify-porcelain.ts`): paths beginning with `.mars/`
+   * are orchestrator-owned artifacts, safe to auto-stash; everything else is
+   * user-owned and requires operator attention.
+   */
+  orchestratorOwned: string[]
+  userOwned: string[]
+}
+
+/** Args for {@link Vcs.captureCheckpoint}. */
+export interface VcsCaptureCheckpointSpec {
+  /** Working tree to capture. May be the primary checkout or any worktree. */
+  cwd: string
+  /** Fully-qualified ref the resulting commit object is anchored under. */
+  ref: string
+  /** Commit message stored on the checkpoint object. */
+  message: string
+}
+
+/**
+ * A checkpoint commit captured by {@link Vcs.captureCheckpoint} — the
+ * orchestrator's replacement for a `git stash` entry (see
+ * `../../lib/git/checkpoint.ts` for the full rationale).
+ */
+export interface VcsCheckpoint {
+  /** Ref anchoring the commit object (keeps it from being GC'd). */
+  ref: string
+  /** The checkpoint commit's sha. Restores name this, never a stack position. */
+  sha: string
+  /** Paths the checkpoint captured. */
+  files: string[]
+}
+
+/** Args for {@link Vcs.restoreCheckpoint}. */
+export interface VcsRestoreCheckpointSpec {
+  /** Working tree the checkpoint is applied into. Must be clean. */
+  cwd: string
+  /** The checkpoint commit's sha (see {@link VcsCheckpoint.sha}). */
+  sha: string
+}
+
+/** Result of {@link Vcs.restoreCheckpoint}. */
+export interface VcsRestoreCheckpointResult {
+  ok: boolean
+  /** Populated when `ok` is `false` — human-readable failure detail. */
+  detail?: string
+}
+
+/** Args for {@link Vcs.discardWorkingTreeChanges}. */
+export interface VcsDiscardChangesSpec {
+  /** Working tree to reset. */
+  cwd: string
+}
+
+/** Args for {@link Vcs.revParse}. */
+export interface VcsRevParseSpec {
+  cwd: string
+  /** Any revision expression `git rev-parse` accepts, e.g. `"HEAD"`. */
+  rev: string
+  /** Optional hard timeout (ms) for the underlying git invocation. */
+  timeoutMs?: number
+}
+
+/** Args for {@link Vcs.currentBranch}. */
+export interface VcsCurrentBranchSpec {
+  cwd: string
+}
+
+/** Args for {@link Vcs.gitPath}. */
+export interface VcsGitPathSpec {
+  cwd: string
+  /** The `git rev-parse --git-path <name>` argument, e.g. `"rebase-merge"`. */
+  name: string
+}
+
+/** Args for {@link Vcs.revListCount}. */
+export interface VcsRevListCountSpec {
+  cwd: string
+  /** A `git rev-list --count` range expression, e.g. `"<base>..<tip>"`. */
+  range: string
+  timeoutMs?: number
+}
+
+/** Args for {@link Vcs.diffText}. */
+export interface VcsDiffTextSpec {
+  cwd: string
+  from: string
+  to: string
+  timeoutMs?: number
+}
+
+/** Args for {@link Vcs.pathsChangedInRange}. */
+export interface VcsPathsChangedInRangeSpec {
+  cwd: string
+  /** A `git diff` range expression, e.g. `"<from>..<to>"`. */
+  range: string
+  /** Pathspecs passed after `--`. */
+  paths: string[]
+}
+
+/** Args for {@link Vcs.workingTreeMatches}. */
+export interface VcsWorkingTreeMatchesSpec {
+  cwd: string
+  rev: string
+}
+
+/** Args for {@link Vcs.recentShas}. */
+export interface VcsRecentShasSpec {
+  cwd: string
+  rev: string
+  count: number
+}
+
+/** Args for {@link Vcs.deleteBranch}. */
+export interface VcsDeleteBranchSpec {
+  cwd: string
+  branch: string
+}
+
+/** Args for {@link Vcs.updateRef}. */
+export interface VcsUpdateRefSpec {
+  cwd: string
+  /** Fully-qualified ref to update, e.g. `"refs/mars/checkpoint/<key>"`. */
+  ref: string
+  sha: string
+}
+
+/** Args for {@link Vcs.hasCommitTrailer}. */
+export interface VcsHasCommitTrailerSpec {
+  cwd: string
+  sha: string
+  trailerKey: string
+  trailerValue: string
+}
+
+/** Args for {@link Vcs.revListRange}. */
+export interface VcsRevListRangeSpec {
+  cwd: string
+  /** A `git rev-list` range expression, e.g. `"<base>..<tip>"`. */
+  range: string
 }
 
 /** Args for {@link Vcs.attachToOriginWorktree}. */
@@ -235,4 +382,48 @@ export interface Vcs {
   listUncommittedPaths(worktreePath: string | null | undefined): Promise<string[] | null>
   /** Build the refusal message for a destructive verb, or `null` when nothing would be lost. */
   describeUncommittedWork(spec: DescribeUncommittedWorkSpec): Promise<string | null>
+  /**
+   * Capture `spec.cwd`'s uncommitted state as a commit object anchored under
+   * `spec.ref`, without touching the working tree. Returns `null` when there
+   * is nothing to capture (the tree matches HEAD once ignored files are
+   * discounted).
+   */
+  captureCheckpoint(spec: VcsCaptureCheckpointSpec): Promise<VcsCheckpoint | null>
+  /** Apply the checkpoint commit `spec.sha` onto `spec.cwd` via a three-way cherry-pick. */
+  restoreCheckpoint(spec: VcsRestoreCheckpointSpec): Promise<VcsRestoreCheckpointResult>
+  /**
+   * Drop every uncommitted change in `spec.cwd` (hard-reset tracked paths,
+   * clean untracked ones). Ignored files are left alone.
+   */
+  discardWorkingTreeChanges(spec: VcsDiscardChangesSpec): Promise<void>
+  /** Resolve `spec.rev` in `spec.cwd`. Returns `null` when it cannot be resolved. */
+  revParse(spec: VcsRevParseSpec): Promise<string | null>
+  /** Point `spec.ref` at `spec.sha`. */
+  updateRef(spec: VcsUpdateRefSpec): Promise<void>
+  /** True when commit `spec.sha` carries a `spec.trailerKey: spec.trailerValue` trailer. Fails open to `false`. */
+  hasCommitTrailer(spec: VcsHasCommitTrailerSpec): Promise<boolean>
+  /**
+   * List commit shas in `spec.range`. Returns `null` on failure — callers
+   * that treat an unanswerable check as "assume real progress exists"
+   * pass the `null` straight through.
+   */
+  revListRange(spec: VcsRevListRangeSpec): Promise<string[] | null>
+  /** Throws with the standard "git binary not found on PATH" message when no git binary can be resolved. */
+  ensureAvailable(): Promise<void>
+  /** Current branch name for `spec.cwd` (`rev-parse --abbrev-ref HEAD`). Returns `null` when unresolvable (e.g. detached HEAD reports `"HEAD"`, an error returns `null`). */
+  currentBranch(spec: VcsCurrentBranchSpec): Promise<string | null>
+  /** Resolve a `.git`-relative admin path (`rev-parse --git-path <name>`), absolute even inside a linked worktree. */
+  gitPath(spec: VcsGitPathSpec): Promise<string>
+  /** Count commits in `spec.range` (`rev-list --count`). Returns `null` on failure or a non-numeric result. */
+  revListCount(spec: VcsRevListCountSpec): Promise<number | null>
+  /** Full diff text between two revisions (`diff --no-color`). Returns `null` on failure. */
+  diffText(spec: VcsDiffTextSpec): Promise<string | null>
+  /** True when any of `spec.paths` differ across `spec.range` (`diff --quiet <range> -- <paths>`, exit code 1). */
+  pathsChangedInRange(spec: VcsPathsChangedInRangeSpec): Promise<boolean>
+  /** True when `spec.cwd`'s working tree (index included) is byte-identical to `spec.rev` (`diff --quiet <rev>`, exit code 0). */
+  workingTreeMatches(spec: VcsWorkingTreeMatchesSpec): Promise<boolean>
+  /** Up to `spec.count` commit shas starting at `spec.rev`, newest first (`log --format=%H -n <count> <rev>`). */
+  recentShas(spec: VcsRecentShasSpec): Promise<string[]>
+  /** Force-delete a local branch (`branch -D`). Throws on failure — callers that treat deletion as best-effort catch it themselves. */
+  deleteBranch(spec: VcsDeleteBranchSpec): Promise<void>
 }

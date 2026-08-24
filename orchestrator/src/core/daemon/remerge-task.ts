@@ -159,8 +159,8 @@ export const coreRemergeTask = async (
     // missing branch reads as 0-ahead there). removeWorktree above already
     // deletes the branch when a worktree was present; this covers the case
     // where there was none (or its removal silently failed).
-    const { execProbe, resolveGitBin } = await import('../lib/git/internal')
-    await execProbe(resolveGitBin(), ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})
+    const { resolveVcs } = await import('../ports/vcs/registry')
+    await resolveVcs().deleteBranch({ cwd: repoRoot, branch }).catch(() => {})
     if (TERMINAL_TASK_STATUSES.has(task.status)) {
       await reopenTerminalTask(id, 'mars remerge: branch already landed')
     }

@@ -7,6 +7,10 @@
  * signatures those helpers already expose, so nothing about today's
  * operational behaviour changes.
  */
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import {
   createWorktree,
   removeWorktree,
@@ -19,7 +23,8 @@ import {
 } from '../../lib/git/worktree'
 import { mergeBranch } from '../../lib/git/merge'
 import { commitMain } from '../../lib/git/commit-main'
-import { resolveGitBin, execProbe, branchExists } from '../../lib/git/internal'
+import { resolveGitBin, exec, execProbe, branchExists } from '../../lib/git/internal'
+import { classifyPorcelainLines } from '../../lib/git/classify-porcelain'
 import type {
   AttachToOriginWorktreeSpec,
   BranchExistsSpec,
@@ -35,11 +40,41 @@ import type {
   StatusSpec,
   SyncWorktreeSpec,
   Vcs,
+  VcsCaptureCheckpointSpec,
+  VcsCheckpoint,
+  VcsCurrentBranchSpec,
+  VcsDeleteBranchSpec,
+  VcsDiffTextSpec,
+  VcsDiscardChangesSpec,
+  VcsGitPathSpec,
+  VcsHasCommitTrailerSpec,
+  VcsPathsChangedInRangeSpec,
+  VcsRecentShasSpec,
+  VcsRestoreCheckpointResult,
+  VcsRestoreCheckpointSpec,
+  VcsRevListCountSpec,
+  VcsRevListRangeSpec,
+  VcsRevParseSpec,
   VcsStatus,
+  VcsUpdateRefSpec,
+  VcsWorkingTreeMatchesSpec,
   WorktreeResult,
   WorktreeSpec,
   WorktreeSyncOutcome,
 } from './types'
+
+/**
+ * Identity used for checkpoint commit objects (see {@link Vcs.captureCheckpoint}).
+ * Pinned via env so a repo (or CI container) without `user.name` /
+ * `user.email` configured cannot make `git commit-tree` fail and lose the
+ * work it was asked to preserve.
+ */
+const CHECKPOINT_IDENTITY: Record<string, string> = {
+  GIT_AUTHOR_NAME: 'Mars Orchestrator',
+  GIT_AUTHOR_EMAIL: 'mars@localhost',
+  GIT_COMMITTER_NAME: 'Mars Orchestrator',
+  GIT_COMMITTER_EMAIL: 'mars@localhost',
+}
 
 export const localGitVcs: Vcs = {
   kind: 'local-git',
@@ -90,8 +125,205 @@ export const localGitVcs: Vcs = {
   },
 
   async status(spec: StatusSpec): Promise<VcsStatus> {
-    const r = await execProbe(resolveGitBin(), ['status', '--porcelain'], { cwd: spec.cwd })
-    return { clean: r.stdout.trim().length === 0, statusOutput: r.stdout }
+    const args = ['status', '--porcelain']
+    if (spec.untrackedFiles === 'all') args.push('--untracked-files=all')
+    const r = await execProbe(resolveGitBin(), args, { cwd: spec.cwd })
+    const lines = r.stdout.split('\n').filter((l) => l.length > 0)
+    const { orchestratorOwned, userOwned } = classifyPorcelainLines(lines)
+    return { clean: r.stdout.trim().length === 0, statusOutput: r.stdout, orchestratorOwned, userOwned }
+  },
+
+  async captureCheckpoint(spec: VcsCaptureCheckpointSpec): Promise<VcsCheckpoint | null> {
+    const { cwd, ref, message } = spec
+    const git = resolveGitBin()
+
+    const head = (await exec(git, ['rev-parse', 'HEAD'], { cwd })).stdout.trim()
+    const headTree = (await exec(git, ['rev-parse', 'HEAD^{tree}'], { cwd })).stdout.trim()
+
+    const indexDir = await mkdtemp(join(tmpdir(), 'mars-checkpoint-'))
+    const indexFile = join(indexDir, 'index')
+    const env = { GIT_INDEX_FILE: indexFile }
+    try {
+      // Seed the temporary index from HEAD, then stage everything the working
+      // tree carries. `git add -A` honours .gitignore, so ignored files stay out.
+      await exec(git, ['read-tree', 'HEAD'], { cwd, env })
+      await exec(git, ['add', '-A'], { cwd, env })
+      const tree = (await exec(git, ['write-tree'], { cwd, env })).stdout.trim()
+      if (tree === headTree) return null
+
+      const sha = (
+        await exec(git, ['commit-tree', tree, '-p', head, '-m', message], {
+          cwd,
+          env: { ...process.env, ...CHECKPOINT_IDENTITY } as Record<string, string>,
+        })
+      ).stdout.trim()
+
+      // Anchor the object under the per-task ref BEFORE reporting success: an
+      // unreferenced commit-tree object is GC-eligible.
+      await exec(git, ['update-ref', ref, sha], { cwd })
+
+      const files = (await exec(git, ['diff', '--name-only', head, sha], { cwd })).stdout
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0)
+
+      return { ref, sha, files }
+    } finally {
+      await rm(indexDir, { recursive: true, force: true }).catch(() => {})
+    }
+  },
+
+  async restoreCheckpoint(spec: VcsRestoreCheckpointSpec): Promise<VcsRestoreCheckpointResult> {
+    const { cwd, sha } = spec
+    const git = resolveGitBin()
+
+    const pick = await execProbe(git, ['cherry-pick', '-n', sha], { cwd })
+    // Clear the sequencer/AUTO_MERGE state left by `-n`; keeps index + worktree.
+    await execProbe(git, ['cherry-pick', '--quit'], { cwd }).catch(() => {})
+
+    if (pick.exitCode !== 0) {
+      return { ok: false, detail: `git cherry-pick exited ${pick.exitCode}: ${pick.stderr.trim().slice(0, 300)}` }
+    }
+
+    const status = await exec(git, ['status', '--porcelain', '--untracked-files=all'], { cwd })
+    const lines = status.stdout.split('\n').filter((l) => l.trim().length > 0)
+    if (lines.length === 0) {
+      return { ok: false, detail: 'the target tree is still clean after the apply' }
+    }
+    const conflicted = lines.filter((l) => l[0] === 'U' || l[1] === 'U')
+    if (conflicted.length > 0) {
+      return {
+        ok: false,
+        detail: `unmerged paths after apply: ${conflicted.map((l) => l.slice(3)).join(', ').slice(0, 300)}`,
+      }
+    }
+    return { ok: true }
+  },
+
+  async discardWorkingTreeChanges(spec: VcsDiscardChangesSpec): Promise<void> {
+    const { cwd } = spec
+    const git = resolveGitBin()
+    await exec(git, ['reset', '--hard', 'HEAD'], { cwd })
+    await exec(git, ['clean', '-fd'], { cwd })
+  },
+
+  async revParse(spec: VcsRevParseSpec): Promise<string | null> {
+    const { cwd, rev } = spec
+    const r = await execProbe(resolveGitBin(), ['rev-parse', rev], { cwd })
+    if (r.exitCode !== 0) return null
+    const sha = r.stdout.trim()
+    return sha.length === 0 ? null : sha
+  },
+
+  async updateRef(spec: VcsUpdateRefSpec): Promise<void> {
+    const { cwd, ref, sha } = spec
+    await exec(resolveGitBin(), ['update-ref', ref, sha], { cwd })
+  },
+
+  async hasCommitTrailer(spec: VcsHasCommitTrailerSpec): Promise<boolean> {
+    const { cwd, sha, trailerKey, trailerValue } = spec
+    const git = resolveGitBin()
+    try {
+      const result = await execProbe(
+        git,
+        ['log', '-1', `--format=%(trailers:key=${trailerKey},valueonly)`, sha],
+        { cwd },
+      )
+      if (result.exitCode !== 0) return false
+      return result.stdout.trim() === trailerValue
+    } catch {
+      // A spawn-level failure (e.g. `cwd` no longer exists) fails open to
+      // "not a match" rather than propagating and aborting an unrelated caller.
+      return false
+    }
+  },
+
+  async revListRange(spec: VcsRevListRangeSpec): Promise<string[] | null> {
+    const { cwd, range } = spec
+    const git = resolveGitBin()
+    try {
+      const result = await execProbe(git, ['rev-list', range], { cwd })
+      if (result.exitCode !== 0) return null
+      return result.stdout
+        .split('\n')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+    } catch {
+      return null
+    }
+  },
+
+  async ensureAvailable(): Promise<void> {
+    resolveGitBin()
+  },
+
+  async currentBranch(spec: VcsCurrentBranchSpec): Promise<string | null> {
+    const { cwd } = spec
+    const r = await execProbe(resolveGitBin(), ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd })
+    if (r.exitCode !== 0) return null
+    const branch = r.stdout.trim()
+    return branch.length === 0 ? null : branch
+  },
+
+  async gitPath(spec: VcsGitPathSpec): Promise<string> {
+    const { cwd, name } = spec
+    const r = await exec(resolveGitBin(), ['rev-parse', '--git-path', name], { cwd })
+    return r.stdout.trim()
+  },
+
+  async revListCount(spec: VcsRevListCountSpec): Promise<number | null> {
+    const { cwd, range, timeoutMs } = spec
+    const r = await execProbe(resolveGitBin(), ['rev-list', '--count', range], {
+      cwd,
+      timeout: timeoutMs,
+    })
+    if (r.exitCode !== 0) return null
+    const count = Number.parseInt(r.stdout.trim(), 10)
+    return Number.isFinite(count) ? count : null
+  },
+
+  async diffText(spec: VcsDiffTextSpec): Promise<string | null> {
+    const { cwd, from, to, timeoutMs } = spec
+    try {
+      const r = await exec(resolveGitBin(), ['diff', '--no-color', from, to], {
+        cwd,
+        timeout: timeoutMs,
+      })
+      return r.stdout.length > 0 ? r.stdout : null
+    } catch {
+      return null
+    }
+  },
+
+  async pathsChangedInRange(spec: VcsPathsChangedInRangeSpec): Promise<boolean> {
+    const { cwd, range, paths } = spec
+    const r = await execProbe(resolveGitBin(), ['diff', '--quiet', range, '--', ...paths], { cwd })
+    return r.exitCode === 1
+  },
+
+  async workingTreeMatches(spec: VcsWorkingTreeMatchesSpec): Promise<boolean> {
+    const { cwd, rev } = spec
+    const r = await execProbe(resolveGitBin(), ['diff', '--quiet', rev], { cwd })
+    return r.exitCode === 0
+  },
+
+  async recentShas(spec: VcsRecentShasSpec): Promise<string[]> {
+    const { cwd, rev, count } = spec
+    const r = await execProbe(
+      resolveGitBin(),
+      ['log', '--format=%H', '-n', String(count), rev],
+      { cwd },
+    )
+    if (r.exitCode !== 0) return []
+    return r.stdout
+      .split('\n')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+  },
+
+  async deleteBranch(spec: VcsDeleteBranchSpec): Promise<void> {
+    const { cwd, branch } = spec
+    await exec(resolveGitBin(), ['branch', '-D', branch], { cwd })
   },
 
   async attachToOriginWorktree(spec: AttachToOriginWorktreeSpec): Promise<WorktreeResult> {

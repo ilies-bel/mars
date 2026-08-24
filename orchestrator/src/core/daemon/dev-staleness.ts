@@ -1,4 +1,4 @@
-import { execProbe, resolveGitBin } from '../lib/git/internal'
+import { resolveVcs } from '../ports/vcs/registry'
 
 /** Paths whose committed contents can alter daemon behaviour after startup. */
 const DAEMON_CODE_PATHS = ['orchestrator/src', 'packages/workflow', '.mars/workflows']
@@ -99,11 +99,9 @@ const hasChangedPaths = async (
   currentSha: string,
   repoDir: string,
   paths: string[],
-): Promise<boolean> => {
-  const result = await execProbe(
-    resolveGitBin(),
-    ['diff', '--quiet', `${sourceSha}..${currentSha}`, '--', ...paths],
-    { cwd: repoDir },
-  )
-  return result.exitCode === 1
-}
+): Promise<boolean> =>
+  resolveVcs().pathsChangedInRange({
+    cwd: repoDir,
+    range: `${sourceSha}..${currentSha}`,
+    paths,
+  })

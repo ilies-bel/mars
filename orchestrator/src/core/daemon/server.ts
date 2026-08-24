@@ -101,7 +101,7 @@ import type { Logger, WorkflowEvent } from '@mars/workflow'
 import { resolveManualStep } from '@mars/workflow'
 import { scanRecoveryBlockerEdges } from '../lib/blocker-invariant'
 import { createScoringPool, resolveScoringLimit } from './scoring-pool'
-import { exec, resolveGitBin } from '../lib/git/internal'
+import { resolveVcs } from '../ports/vcs/registry'
 import { warnWhenRepoRootDiffersFromIntegration } from '../lib/repo-root-branch-warning'
 import { classifyInstallRoute } from './install-route'
 import {
@@ -716,7 +716,7 @@ export const startDaemon = async (
   // exits immediately with a clear message instead of letting the first
   // git call fail mid-task as a retry-budget-exhausted ENOENT.
   try {
-    resolveGitBin()
+    await resolveVcs().ensureAvailable()
   } catch {
     log('git binary not found on PATH; refusing to start')
     process.exit(1)

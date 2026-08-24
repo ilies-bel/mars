@@ -58,7 +58,8 @@ import {
 import { resolveOriginIdForTask } from '../lib/origin'
 import { attributeIntegrationDirt } from '../lib/git/stale-tree-attribution'
 import { readLastSyncedSha } from '../lib/git/last-synced-sha'
-import { execProbe, resolveGitBin, type TraceCtx } from '../lib/git/internal'
+import type { TraceCtx } from '../lib/git/internal'
+import { resolveVcs } from '../ports/vcs/registry'
 import { resolveControlLevers, isOperatorAutoCommitDisabled } from '../config/levers'
 import { staleTreeRewindSearchDepth } from '../config/tuning'
 import type { RecipeCatalog } from '../lib/recipes'
@@ -92,39 +93,23 @@ export const findRewoundAncestorSha = async (input: {
   headSha: string
   traceCtx?: TraceCtx
 }): Promise<string | null> => {
-  const { repoRoot, headSha, traceCtx } = input
-  const git = resolveGitBin()
+  const { repoRoot, headSha } = input
+  const vcs = resolveVcs()
 
-  const status = await execProbe(
-    git,
-    ['status', '--porcelain', '--untracked-files=all'],
-    { cwd: repoRoot },
-    traceCtx,
-  )
-  if (status.exitCode !== 0) return null
-  const hasUntracked = status.stdout
+  const status = await vcs.status({ cwd: repoRoot, untrackedFiles: 'all' })
+  const hasUntracked = status.statusOutput
     .split('\n')
     .some((line) => line.slice(0, 2) === '??')
   if (hasUntracked) return null
 
-  const log = await execProbe(
-    git,
-    ['log', '--format=%H', '-n', String(STALE_TREE_REWIND_SEARCH_DEPTH), headSha],
-    { cwd: repoRoot },
-    traceCtx,
-  )
-  if (log.exitCode !== 0) return null
-
-  const candidates = log.stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((sha) => sha.length > 0 && sha !== headSha)
+  const candidates = (
+    await vcs.recentShas({ cwd: repoRoot, rev: headSha, count: STALE_TREE_REWIND_SEARCH_DEPTH })
+  ).filter((sha) => sha !== headSha)
 
   for (const candidate of candidates) {
-    // `git diff --quiet <sha>` exits 0 when the working tree (index included)
-    // matches <sha> exactly, non-zero on any difference (content or mode).
-    const diff = await execProbe(git, ['diff', '--quiet', candidate], { cwd: repoRoot }, traceCtx)
-    if (diff.exitCode === 0) return candidate
+    // `workingTreeMatches` is true when the working tree (index included)
+    // matches <candidate> exactly, false on any difference (content or mode).
+    if (await vcs.workingTreeMatches({ cwd: repoRoot, rev: candidate })) return candidate
   }
   return null
 }
@@ -203,14 +188,8 @@ export const runMainDirtyDispatchCheck = async (
   // Before parking behind a committer, ask whether this dirt is the residual
   // the guard exists for, or one of the two shapes the system now handles on
   // its own (see the module doc comment, ADR-0100 slice 12).
-  const headShaProbe = await execProbe(
-    resolveGitBin(),
-    ['rev-parse', 'HEAD'],
-    { cwd: repoRoot },
-    { taskId: task.id, originId, phase: 'setup', store: traceStore },
-  )
-  if (headShaProbe.exitCode === 0) {
-    const headSha = headShaProbe.stdout.trim()
+  const headSha = await resolveVcs().revParse({ cwd: repoRoot, rev: 'HEAD' })
+  if (headSha !== null) {
     const attribution = await attributeIntegrationDirt({
       repoRoot,
       lastSyncedSha: readLastSyncedSha(repoRoot),
@@ -252,8 +231,8 @@ export const runMainDirtyDispatchCheck = async (
     }
     // Lever off: fall through to the existing block-and-raise path below.
   }
-  // headShaProbe failure is unattributable — fail safe by falling through to
-  // the existing block-and-raise path, same as an off lever.
+  // headSha resolution failure is unattributable — fail safe by falling
+  // through to the existing block-and-raise path, same as an off lever.
 
   const recipe = recipeCatalog.get(MAIN_COMMITER_RECIPE)
   if (!recipe) {

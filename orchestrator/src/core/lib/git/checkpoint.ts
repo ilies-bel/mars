@@ -55,12 +55,18 @@
  * unexpected, and one ref per task is cheap. Prune them with
  * `git for-each-ref --format='%(refname)' refs/mars/checkpoint | xargs -n1 git update-ref -d`.
  */
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { resolveVcs } from '../../ports/vcs/registry'
+import type { TraceCtx } from './internal'
 
 import { codeCheckpointIntervalMs } from '../../config/tuning'
-import { exec, execProbe, resolveGitBin, type TraceCtx } from './internal'
+
+// Every git invocation behind these functions now runs through the Vcs Port
+// (`../../ports/vcs/local-git.ts`, ADR-0097) rather than shelling out here
+// directly. `traceCtx` is accepted on every args shape below purely for
+// source compatibility with existing callers (`worktree.ts`, `merge.ts`,
+// `arc.ts`, `daemon/server.ts`, …) — the Port's arg/result shapes are
+// serializable and deliberately do not carry trace context through, the same
+// trade-off already made for `Vcs.commit`/`Vcs.merge` in slice 36.
 
 /** Ref namespace every checkpoint lives under. Never `refs/stash`. */
 export const CHECKPOINT_REF_PREFIX = 'refs/mars/checkpoint'
@@ -110,32 +116,14 @@ export const SALVAGE_CHECKPOINT_TRAILER_VALUE = 'salvage'
 export const isSalvageCheckpointCommit = async (
   cwd: string,
   sha: string,
-  traceCtx?: TraceCtx,
-): Promise<boolean> => {
-  const git = resolveGitBin()
-  try {
-    const result = await execProbe(
-      git,
-      [
-        'log',
-        '-1',
-        `--format=%(trailers:key=${SALVAGE_CHECKPOINT_TRAILER_KEY},valueonly)`,
-        sha,
-      ],
-      { cwd },
-      traceCtx,
-    )
-    if (result.exitCode !== 0) return false
-    return result.stdout.trim() === SALVAGE_CHECKPOINT_TRAILER_VALUE
-  } catch {
-    // `execProbe` throws (rather than returning a non-zero exit) on a
-    // spawn-level failure — e.g. `cwd` no longer exists. That is exactly the
-    // kind of "cannot answer" this function's contract already promises to
-    // fail open on, so a thrown spawn error is caught here too rather than
-    // propagating and aborting an unrelated merge.
-    return false
-  }
-}
+  _traceCtx?: TraceCtx,
+): Promise<boolean> =>
+  resolveVcs().hasCommitTrailer({
+    cwd,
+    sha,
+    trailerKey: SALVAGE_CHECKPOINT_TRAILER_KEY,
+    trailerValue: SALVAGE_CHECKPOINT_TRAILER_VALUE,
+  })
 
 /**
  * The per-task briefing `Arc.createOrigin` appends to a `--supersede` task's
@@ -196,33 +184,12 @@ export const hasRealCommitAboveBase = async (
   tip: string,
   traceCtx?: TraceCtx,
 ): Promise<boolean> => {
-  const git = resolveGitBin()
-  try {
-    const result = await execProbe(git, ['rev-list', `${base}..${tip}`], { cwd }, traceCtx)
-    if (result.exitCode !== 0) return true
-    const shas = result.stdout
-      .split('\n')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0)
-    for (const sha of shas) {
-      if (!(await isSalvageCheckpointCommit(cwd, sha, traceCtx))) return true
-    }
-    return false
-  } catch {
-    return true
+  const shas = await resolveVcs().revListRange({ cwd, range: `${base}..${tip}` })
+  if (shas === null) return true
+  for (const sha of shas) {
+    if (!(await isSalvageCheckpointCommit(cwd, sha, traceCtx))) return true
   }
-}
-
-/**
- * Identity used for the checkpoint commit object. Pinned via env so a repo
- * (or CI container) without `user.name` / `user.email` configured cannot make
- * `git commit-tree` fail and lose the work it was asked to preserve.
- */
-const CHECKPOINT_IDENTITY: Record<string, string> = {
-  GIT_AUTHOR_NAME: 'Mars Orchestrator',
-  GIT_AUTHOR_EMAIL: 'mars@localhost',
-  GIT_COMMITTER_NAME: 'Mars Orchestrator',
-  GIT_COMMITTER_EMAIL: 'mars@localhost',
+  return false
 }
 
 /**
@@ -287,52 +254,9 @@ export interface CaptureCheckpointArgs {
 export const captureCheckpoint = async (
   args: CaptureCheckpointArgs,
 ): Promise<Checkpoint | null> => {
-  const { cwd, key, message, traceCtx } = args
-  const git = resolveGitBin()
+  const { cwd, key, message } = args
   const ref = checkpointRefFor(key)
-
-  const head = (await exec(git, ['rev-parse', 'HEAD'], { cwd }, traceCtx)).stdout.trim()
-  const headTree = (
-    await exec(git, ['rev-parse', 'HEAD^{tree}'], { cwd }, traceCtx)
-  ).stdout.trim()
-
-  const indexDir = await mkdtemp(join(tmpdir(), 'mars-checkpoint-'))
-  const indexFile = join(indexDir, 'index')
-  const env = { GIT_INDEX_FILE: indexFile }
-  try {
-    // Seed the temporary index from HEAD, then stage everything the working
-    // tree carries. `git add -A` honours .gitignore, so ignored files stay out.
-    await exec(git, ['read-tree', 'HEAD'], { cwd, env }, traceCtx)
-    await exec(git, ['add', '-A'], { cwd, env }, traceCtx)
-    const tree = (await exec(git, ['write-tree'], { cwd, env }, traceCtx)).stdout.trim()
-    if (tree === headTree) return null
-
-    const sha = (
-      await exec(
-        git,
-        ['commit-tree', tree, '-p', head, '-m', message],
-        // exec() → run-tool.ts's runTool() already merges this onto the
-        // ambient environment itself, so no need to spread it here too.
-        { cwd, env: CHECKPOINT_IDENTITY },
-        traceCtx,
-      )
-    ).stdout.trim()
-
-    // Anchor the object under the per-task ref BEFORE reporting success: an
-    // unreferenced commit-tree object is GC-eligible.
-    await exec(git, ['update-ref', ref, sha], { cwd }, traceCtx)
-
-    const files = (
-      await exec(git, ['diff', '--name-only', head, sha], { cwd }, traceCtx)
-    ).stdout
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0)
-
-    return { ref, sha, files }
-  } finally {
-    await rm(indexDir, { recursive: true, force: true }).catch(() => {})
-  }
+  return resolveVcs().captureCheckpoint({ cwd, ref, message })
 }
 
 export interface AnchorBranchTipArgs {
@@ -372,14 +296,12 @@ export interface AnchorBranchTipResult {
 export const anchorBranchTip = async (
   args: AnchorBranchTipArgs,
 ): Promise<AnchorBranchTipResult | null> => {
-  const { worktreePath, key, traceCtx } = args
-  const git = resolveGitBin()
-  const head = await execProbe(git, ['rev-parse', 'HEAD'], { cwd: worktreePath }, traceCtx)
-  if (head.exitCode !== 0) return null
-  const sha = head.stdout.trim()
-  if (sha.length === 0) return null
+  const { worktreePath, key } = args
+  const vcs = resolveVcs()
+  const sha = await vcs.revParse({ cwd: worktreePath, rev: 'HEAD' })
+  if (sha === null || sha.length === 0) return null
   const ref = checkpointRefFor(`${key}-${sha.slice(0, 9)}`)
-  await exec(git, ['update-ref', ref, sha], { cwd: worktreePath }, traceCtx)
+  await vcs.updateRef({ cwd: worktreePath, ref, sha })
   return { ref, sha }
 }
 
@@ -403,47 +325,10 @@ export interface RestoreCheckpointArgs {
 export const restoreCheckpoint = async (
   args: RestoreCheckpointArgs,
 ): Promise<void> => {
-  const { cwd, checkpoint, traceCtx } = args
-  const git = resolveGitBin()
-
-  const pick = await execProbe(
-    git,
-    ['cherry-pick', '-n', checkpoint.sha],
-    { cwd },
-    traceCtx,
-  )
-  // Clear the sequencer/AUTO_MERGE state left by `-n`; keeps index + worktree.
-  await execProbe(git, ['cherry-pick', '--quit'], { cwd }, traceCtx).catch(() => {})
-
-  if (pick.exitCode !== 0) {
-    throw new CheckpointRestoreError(
-      checkpoint,
-      cwd,
-      `git cherry-pick exited ${pick.exitCode}: ${pick.stderr.trim().slice(0, 300)}`,
-    )
-  }
-
-  const status = await exec(
-    git,
-    ['status', '--porcelain', '--untracked-files=all'],
-    { cwd },
-    traceCtx,
-  )
-  const lines = status.stdout.split('\n').filter((l) => l.trim().length > 0)
-  if (lines.length === 0) {
-    throw new CheckpointRestoreError(
-      checkpoint,
-      cwd,
-      'the target tree is still clean after the apply',
-    )
-  }
-  const conflicted = lines.filter((l) => l[0] === 'U' || l[1] === 'U')
-  if (conflicted.length > 0) {
-    throw new CheckpointRestoreError(
-      checkpoint,
-      cwd,
-      `unmerged paths after apply: ${conflicted.map((l) => l.slice(3)).join(', ').slice(0, 300)}`,
-    )
+  const { cwd, checkpoint } = args
+  const result = await resolveVcs().restoreCheckpoint({ cwd, sha: checkpoint.sha })
+  if (!result.ok) {
+    throw new CheckpointRestoreError(checkpoint, cwd, result.detail ?? 'unknown failure')
   }
 }
 
@@ -466,10 +351,8 @@ export interface DiscardWorkingTreeChangesArgs {
 export const discardWorkingTreeChanges = async (
   args: DiscardWorkingTreeChangesArgs,
 ): Promise<void> => {
-  const { cwd, traceCtx } = args
-  const git = resolveGitBin()
-  await exec(git, ['reset', '--hard', 'HEAD'], { cwd }, traceCtx)
-  await exec(git, ['clean', '-fd'], { cwd }, traceCtx)
+  const { cwd } = args
+  await resolveVcs().discardWorkingTreeChanges({ cwd })
 }
 
 export interface PeriodicCheckpointArgs {
