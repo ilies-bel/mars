@@ -17,11 +17,9 @@
  * which already goes through the Port).
  */
 import { runTool } from '../../core/lib/run-tool'
-import {
-  restoreWorktreeIfMissing,
-  ResumeWorktreeUnrecoverable,
-  type WorktreeRef,
-} from '../../core/lib/git/worktree'
+import { resolveVcs } from '../../core/ports/vcs/registry'
+import { ResumeWorktreeUnrecoverable } from '../../core/ports/vcs/errors'
+import { type WorktreeResult as WorktreeRef } from '../../core/ports/vcs/types'
 import {
   selectVerifySteps,
   getChangedFiles,
@@ -500,10 +498,9 @@ export const review = async (
       // ONCE with a named, orchestration-classified signature instead of
       // looping on a misleading one.
       try {
-        const restored = await restoreWorktreeIfMissing({
+        const restored = await resolveVcs().restoreWorktreeIfMissing({
           taskId,
           ref: { path: worktreePath, branch },
-          traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
         })
         if (restored === 'rebuilt') {
           console.log(

@@ -8,9 +8,6 @@
  */
 export {
   OriginWorktreeMissingError,
-  RecoveryNeedsOriginRestart,
   WorktreeRebaseConflictError,
   ResumeWorktreeUnrecoverable,
-  CommitterTransferMismatchError,
-  CommitterDeletionOnlyError,
 } from '../../lib/git/worktree'

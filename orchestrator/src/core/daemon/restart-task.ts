@@ -227,16 +227,7 @@ export const coreRestartTask = async (
   const { promisify } = await import('node:util')
   const exec = promisify(execFile)
   const { resolveVcs } = await import('../ports/vcs/registry')
-  const removeWorktree = (
-    ref: { path: string; branch: string },
-    force = true,
-    keepBranch = false,
-  ) => resolveVcs().removeWorktree({ path: ref.path, branch: ref.branch, force, keepBranch })
-  const describeUncommittedWork = (spec: {
-    verb: 'restart' | 'drop'
-    taskId: string
-    worktreePath: string | null | undefined
-  }) => resolveVcs().describeUncommittedWork(spec)
+  const vcs = resolveVcs()
   const { getRepoRoot } = await import('../context')
   const { listUniqueCommitsAhead } = await import('../lib/sweep')
   const { integrationBranchName } = await import('../blocker-resolution')
@@ -272,7 +263,7 @@ export const coreRestartTask = async (
   // 2026-08-20 three such tasks were one `mars restart` away from losing 145,
   // 8 and 4 files respectively, and nothing in this path would have said so.
   if (!force) {
-    const refusal = await describeUncommittedWork({
+    const refusal = await vcs.describeUncommittedWork({
       verb: 'restart',
       taskId: id,
       worktreePath: task.worktreePath,
@@ -284,13 +275,13 @@ export const coreRestartTask = async (
   // removal so this function, rather than the helper, performs the authorized
   // final deletion immediately below.
   if (task.worktreePath && exists(task.worktreePath)) {
-    await removeWorktree({ path: task.worktreePath, branch }, true, true).catch(
-      (err: unknown) => {
+    await vcs
+      .removeWorktree({ path: task.worktreePath, branch, force: true, keepBranch: true })
+      .catch((err: unknown) => {
         console.warn(
           `[restart-cleanup] worktree remove failed for task ${id} at ${task.worktreePath}: ${String(err)}`,
         )
-      },
-    )
+      })
   }
 
   await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})

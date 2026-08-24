@@ -8,11 +8,12 @@
  * never whether the task row is updated.
  */
 import { type StepHandle } from '@mars/workflow'
-import {
-  restoreWorktreeIfMissing,
-  ResumeWorktreeUnrecoverable,
-  type WorktreeRef,
-} from '../../core/lib/git/worktree'
+import { resolveVcs } from '../../core/ports/vcs/registry'
+import { ResumeWorktreeUnrecoverable } from '../../core/ports/vcs/errors'
+import { type WorktreeResult as WorktreeRef } from '../../core/ports/vcs/types'
+// The worktree LEASE is deliberately not part of the Vcs port: it is coder
+// occupancy bookkeeping, not a version-control operation, so it keeps its own
+// module (`daemon/server.ts` imports it directly for the same reason).
 import {
   acquireWorktreeLease,
   readLiveWorktreeLease,
@@ -297,10 +298,9 @@ export const runAgent = async (
   // Re-attach the worktree from its branch when possible so the retry gets a
   // real working directory; fail with a NAMED signature when it cannot be.
   try {
-    const restored = await restoreWorktreeIfMissing({
+    const restored = await resolveVcs().restoreWorktreeIfMissing({
       taskId,
       ref: { path: worktreePath, branch },
-      traceCtx: buildPhaseCtx(trace, taskId, 'code'),
     })
     if (restored === 'rebuilt') {
       console.log(
@@ -345,7 +345,6 @@ export const runAgent = async (
     integrationBranch,
     phase: 'code',
     onConflict: 'reconcile',
-    traceCtx: buildPhaseCtx(trace, taskId, 'code'),
     store,
   })
 

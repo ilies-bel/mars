@@ -224,13 +224,14 @@ async function deriveFailedConditions(
   // Bounded, because each probe is a git subprocess and this runs on every
   // action-queue read. Rows are ordered newest-first, so the cap keeps the
   // freshest failures — the ones an operator is actually about to act on.
-  const { listUncommittedPaths } = await import('../../lib/git/worktree')
+  const { resolveVcs } = await import('../../ports/vcs/registry')
+  const vcs = resolveVcs()
   const probeTargets = rows.slice(0, MAX_DIRTY_PROBES)
   for (let i = 0; i < probeTargets.length; i += DIRTY_PROBE_CONCURRENCY) {
     const batch = probeTargets.slice(i, i + DIRTY_PROBE_CONCURRENCY)
     await Promise.all(
       batch.map(async (queueRow) => {
-        const paths = await listUncommittedPaths(
+        const paths = await vcs.listUncommittedPaths(
           typeof queueRow.payload.worktree === 'string' ? queueRow.payload.worktree : null,
         ).catch(() => null)
         if (paths !== null) queueRow.payload.worktreeDirtyCount = paths.length

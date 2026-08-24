@@ -2711,12 +2711,6 @@ export const startDaemon = async (
     const { StewardEventSchema, renderStewardStormBrief, stewardAgent, STEWARD_STORM_TIMEOUT_MS } =
       await import('../agents/steward')
     const { resolveVcs } = await import('../ports/vcs/registry')
-    const createWorktree = (spec: {
-      taskId: string
-      integrationBranch: string
-      baseSha?: string
-      branchSuffix?: string
-    }) => resolveVcs().createWorktree(spec)
     const { resolveExecutor } = await import('../ports/executor/registry')
     const {
       findOpenActionQueueItemIdBySignature,
@@ -2754,7 +2748,7 @@ export const startDaemon = async (
     }
 
     const stewardId = `steward-storm-${Date.now().toString(36)}`
-    const worktree = await createWorktree({ taskId: stewardId, integrationBranch })
+    const worktree = await resolveVcs().createWorktree({ taskId: stewardId, integrationBranch })
     log(
       `[signature-storm] steward ${stewardId} dispatched write-capable on ${worktree.branch} for "${signature}"`,
     )
@@ -3748,7 +3742,8 @@ export const startDaemon = async (
     const { execFile } = await import('node:child_process')
     const { promisify } = await import('node:util')
     const exec = promisify(execFile)
-    const { removeWorktree } = await import('../lib/git/worktree')
+    const { resolveVcs } = await import('../ports/vcs/registry')
+    const vcs = resolveVcs()
     const { getRepoRoot } = await import('../context')
 
     const branch = task.branch ?? `task/${task.id}`
@@ -3773,8 +3768,7 @@ export const startDaemon = async (
       // Commits ahead are only half the exposure — see the matching guard in
       // restart-task.ts. A worktree at ahead=0 can still hold every line the
       // coder wrote before it was killed.
-      const { describeUncommittedWork } = await import('../lib/git/worktree')
-      const refusal = await describeUncommittedWork({
+      const refusal = await vcs.describeUncommittedWork({
         verb: 'drop',
         taskId: id,
         worktreePath: task.worktreePath,
@@ -3795,7 +3789,7 @@ export const startDaemon = async (
     let worktreeRemoved = false
     if (!worktreeOrBranchShared && task.worktreePath && exists(task.worktreePath)) {
       try {
-        await removeWorktree({ path: task.worktreePath, branch }, true)
+        await vcs.removeWorktree({ path: task.worktreePath, branch, force: true })
         worktreeRemoved = true
       } catch {
         // best-effort — the row still gets dropped; logged below
@@ -5277,13 +5271,18 @@ export const startDaemon = async (
           { code: 'WRONG_STATUS' as const },
         )
       }
-      const { removeWorktree } = await import('../lib/git/worktree')
+      const { resolveVcs } = await import('../ports/vcs/registry')
       const { getRepoRoot } = await import('../context')
       const { join } = await import('node:path')
       const path = join(getRepoRoot(), '.mars', 'worktrees', id)
       // keepBranch=true: leave the branch ref for post-mortem; ignoreMissing
       // so a half-gone worktree still prunes cleanly.
-      await removeWorktree({ path, branch: `task/${id}` }, true, true)
+      await resolveVcs().removeWorktree({
+        path,
+        branch: `task/${id}`,
+        force: true,
+        keepBranch: true,
+      })
     },
     dismissProposal: async (id) => {
       const { dismissProposal } = await import('../proposals')

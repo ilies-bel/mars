@@ -8,15 +8,12 @@
  */
 import { type StepHandle } from '@mars/workflow'
 import { runTool } from '../../core/lib/run-tool'
+import { resolveVcs } from '../../core/ports/vcs/registry'
+import { OriginWorktreeMissingError } from '../../core/ports/vcs/errors'
 import {
-  createWorktree,
-  provisionCommitterWorktree,
-  attachToOriginWorktree,
-  OriginWorktreeMissingError,
-  syncWorktreeToIntegration,
   type WorktreeConflictPolicy,
-  type WorktreeRef,
-} from '../../core/lib/git/worktree'
+  type WorktreeResult as WorktreeRef,
+} from '../../core/ports/vcs/types'
 import { captureCheckpoint, discardWorkingTreeChanges } from '../../core/lib/git/checkpoint'
 import { classifyPorcelainLines } from '../../core/lib/git/classify-porcelain'
 import { resolveContext } from '../../core/context'
@@ -212,11 +209,10 @@ export const setupWorktree = async (
           expectedBranch: originBranch ?? '(unrecorded)',
         })
       }
-      return await attachToOriginWorktree({
+      return await resolveVcs().attachToOriginWorktree({
         originTaskId,
         originBranch,
         originWorktreePath,
-        traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
       })
     } catch (err) {
       if (!(err instanceof OriginWorktreeMissingError)) throw err
@@ -472,10 +468,9 @@ export const setupWorktree = async (
       if (attachesToOrigin) {
         ref = await attachOriginWorktreeForFix()
       } else if (isMainCommiterFix) {
-        ref = await provisionCommitterWorktree({
+        ref = await resolveVcs().provisionCommitterWorktree({
           recoveryTaskId: taskId,
           integrationBranch,
-          traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
         })
       } else {
         // Check whether the existing linked worktree for this task is
@@ -512,10 +507,9 @@ export const setupWorktree = async (
           ref = { path: expectedPath, branch: expectedBranch }
           worktreeReused = true
         } else {
-          ref = await createWorktree({
+          ref = await resolveVcs().createWorktree({
             taskId,
             integrationBranch,
-            traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
           })
         }
       }
@@ -586,7 +580,6 @@ export const setupWorktree = async (
         integrationBranch,
         phase: 'setup',
         onConflict: _effectiveOnConflict,
-        traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
         store,
       })
 

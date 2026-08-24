@@ -6,13 +6,12 @@
  * `setupWorktree` and `runAgent`; the second call is a
  * `merge-base --is-ancestor` no-op whenever the first ran.
  */
-import { type TraceCtx } from '../../core/lib/run-tool'
+import { resolveVcs } from '../../core/ports/vcs/registry'
+import { WorktreeRebaseConflictError } from '../../core/ports/vcs/errors'
 import {
-  syncWorktreeToIntegration,
-  WorktreeRebaseConflictError,
   type WorktreeConflictPolicy,
-  type WorktreeRef,
-} from '../../core/lib/git/worktree'
+  type WorktreeResult as WorktreeRef,
+} from '../../core/ports/vcs/types'
 import { updateTask } from '../../core/queue'
 import { computeFailureSignature } from '../../core/lib/failure-signature'
 import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
@@ -93,17 +92,15 @@ export const ensureWorktreeCurrent = async (args: {
   integrationBranch: string
   phase: 'setup' | 'code'
   onConflict: WorktreeConflictPolicy
-  traceCtx?: TraceCtx
   store: TaskStore
 }): Promise<void> => {
   const { taskId, ref, integrationBranch, phase, onConflict, store } = args
   try {
-    const outcome = await syncWorktreeToIntegration({
+    const outcome = await resolveVcs().syncWorktreeToIntegration({
       taskId,
       ref,
       integrationBranch,
       onConflict,
-      traceCtx: args.traceCtx,
     })
     if (outcome.kind === 'rebased') {
       console.log(
