@@ -117,6 +117,29 @@ const loadModules = async (
   return { q, br, actionQueue }
 }
 
+/**
+ * ADR-0101 item 3: `markTaskFailed` no longer runs the queued→blocked cascade
+ * itself (that dynamic `import('./arc')` made `queue-retry.ts` and `arc.ts`
+ * mutually recursive). The cascade now fires from the `blocker-resolution`
+ * outbox subscriber reacting to the `task.terminal { reason: 'failed' }` event
+ * `markTaskFailed` already emits in the same transaction as the status write.
+ *
+ * Tests that drive `markTaskFailed` directly and then assert on downstream
+ * dependents must therefore register the subscriber BEFORE the event exists
+ * (first registration parks the cursor at the current outbox head, so a
+ * later registration would skip replaying it) and drain AFTER — which is
+ * exactly how the daemon drives it in production.
+ */
+const withBlockerResolutionSubscriber = async (
+  q: QueueModule,
+  run: () => Promise<void>,
+): Promise<void> => {
+  const sub = await import('../../../outbox/subscribers/blocker-resolution')
+  await sub.ensureBlockerResolutionSubscriber(q.resolveQueueClient())
+  await run()
+  await sub.drainBlockerResolution(q.resolveQueueClient())
+}
+
 const blockTask = async (
   q: QueueModule,
   taskId: string,
@@ -266,11 +289,14 @@ describe('blocker-resolution (task_blockers)', () => {
         args: [b.id],
       })
 
-      // Run the helper directly (verb under test).
-      const queueRetry = (await import('../../queue-retry')) as unknown as {
-        markTaskFailed: typeof import('../../queue-retry').markTaskFailed
-      }
-      await queueRetry.markTaskFailed(a.id, 'verify_failed')
+      // Run the helper directly (verb under test). Per ADR-0101 item 3 the
+      // cascade is outbox-driven, so drive it through the subscriber.
+      await withBlockerResolutionSubscriber(q, async () => {
+        const queueRetry = (await import('../../queue-retry')) as unknown as {
+          markTaskFailed: typeof import('../../queue-retry').markTaskFailed
+        }
+        await queueRetry.markTaskFailed(a.id, 'verify_failed')
+      })
 
       // ADR-0101: markTaskFailed no longer blocks downstream dependents
       // synchronously (that call moved out of queue-retry.ts to close the
@@ -341,10 +367,12 @@ describe('blocker-resolution (task_blockers)', () => {
         args: [b.id],
       })
 
-      const queueRetry = (await import('../../queue-retry')) as unknown as {
-        markTaskFailed: typeof import('../../queue-retry').markTaskFailed
-      }
-      await queueRetry.markTaskFailed(a.id, 'some_other_failure_mode')
+      await withBlockerResolutionSubscriber(q, async () => {
+        const queueRetry = (await import('../../queue-retry')) as unknown as {
+          markTaskFailed: typeof import('../../queue-retry').markTaskFailed
+        }
+        await queueRetry.markTaskFailed(a.id, 'some_other_failure_mode')
+      })
 
       // ADR-0101: the block now happens via the outbox subscriber reacting
       // to markTaskFailed's `task.terminal { reason: 'failed' }` event —
