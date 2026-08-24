@@ -42,7 +42,6 @@ import { deriveCause } from '@/shared/alertCause'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { defaultAqUrlState, encodeAqState } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
-import { CopyButton } from '@/components/CopyButton'
 import { hasResolvableTask } from '@/shared/schemas'
 import type { ActionQueueItem } from '@/shared/schemas'
 import type { Decision } from '@/shared/schemas'
@@ -64,6 +63,10 @@ const KIND_ICON: Record<string, string> = {
   'scorer-suggested': '◈',
   'gate-broken': '⊘',
   'recovery-abandoned': '↩',
+  'baseline-broken': '⊘',
+  'daemon-code-drift': '↻',
+  'signature-storm': '⚡',
+  'dirty-integration': '⊘',
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -474,22 +477,22 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                   Recovery spent — carry the work forward:
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
-                  <code className="rounded bg-warn/10 px-1.5 py-0.5 font-mono text-micro text-warn">
-                    mars remerge {item.entityId}
-                  </code>
-                  <CopyButton
-                    text={`mars remerge ${item.entityId}`}
-                    data-testid="triage-copy-remerge"
-                    className="shrink-0 rounded border border-warn/40 px-1.5 py-0.5 font-mono text-micro text-warn hover:bg-warn/10"
-                  />
-                  <code className="rounded bg-warn/10 px-1.5 py-0.5 font-mono text-micro text-warn">
-                    mars task add --supersede {item.entityId}
-                  </code>
-                  <CopyButton
-                    text={`mars task add --supersede ${item.entityId}`}
-                    data-testid="triage-copy-supersede"
-                    className="shrink-0 rounded border border-warn/40 px-1.5 py-0.5 font-mono text-micro text-warn hover:bg-warn/10"
-                  />
+                  <button
+                    disabled={pending !== null}
+                    onClick={() => void handleVerb('remerge')}
+                    className="rounded border border-warn/60 bg-warn/10 px-2 py-1 font-mono text-micro text-warn transition-colors hover:bg-warn/20 disabled:opacity-50"
+                    data-testid="triage-remerge"
+                  >
+                    {pending === 'remerge' ? '…' : 'Remerge'}
+                  </button>
+                  <button
+                    disabled={pending !== null}
+                    onClick={() => void handleVerb('supersede')}
+                    className="rounded border border-warn/40 px-2 py-1 font-mono text-micro text-warn transition-colors hover:bg-warn/10 disabled:opacity-50"
+                    data-testid="triage-supersede"
+                  >
+                    {pending === 'supersede' ? '…' : 'Supersede'}
+                  </button>
                 </div>
               </div>
             )}
