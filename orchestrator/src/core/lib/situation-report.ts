@@ -50,11 +50,12 @@ const plural = (count: number, singular: string, pluralNoun = `${singular}s`): s
  * (ADR-0057 condition kinds are derived independently, with no
  * reconciliation between them, so one failed task can raise several open
  * rows at once). Manually mirrors the UI's `taskFailureKinds` (in
- * ui/src/shared/schemas.ts) plus `recovery-abandoned` (which is deliberately
- * absent from that list — see clusterRows.ts's EXTRA_GROUPABLE_CONDITION_KINDS
- * for why) — the same duplication pattern that list itself already uses to
- * mirror the daemon's own classification. Kept in lockstep by hand, not by
- * import, because the UI and orchestrator are separate packages.
+ * ui/src/shared/schemas.ts), which itself mirrors this file's own
+ * `NON_TASK_FAILURE_KINDS` complement (in
+ * `orchestrator/src/core/daemon/view/action-queue.ts`) — including
+ * `recovery-abandoned`, which the UI mirror omitted until that drift was
+ * fixed. Kept in lockstep by hand, not by import, because the UI and
+ * orchestrator are separate packages.
  */
 const GROUPABLE_CONDITION_KINDS: ReadonlySet<string> = new Set([
   'failed',

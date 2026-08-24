@@ -49,24 +49,18 @@ export function countNeedsYou(items: readonly ActionQueueItem[]): number {
  * Whether a kind is a per-TASK condition that can co-occur with other
  * conditions for the same task, and so must be collapsed onto one card.
  *
- * Almost all of these are already carried by the daemon's task-failure
- * classification (`isTaskFailureActionQueueKind`), but `recovery-abandoned`
- * is NOT in that list — it is a distinct condition the daemon raises from
- * `orchestrator/src/outbox/subscribers/recovery-abandoned.ts`, and
- * `taskFailureKinds` deliberately mirrors the daemon's own classification
- * byte-for-byte, so it must not be edited to paper over a UI grouping need.
- * The extra kinds are therefore listed here, local to the triage view.
- *
- * This gap is the whole bug: `recovery-abandoned` is precisely the kind that
- * was rendering a live Restart button next to a recovery-exhausted `failed`
- * row telling the operator that Restart would discard real work. Gating
- * grouping on `isTaskFailureActionQueueKind` alone silently excludes it and
- * leaves the contradiction on screen.
+ * A plain alias over the daemon's task-failure classification
+ * (`isTaskFailureActionQueueKind`). This used to need a local
+ * `EXTRA_GROUPABLE_CONDITION_KINDS` carve-out for `recovery-abandoned`: the
+ * daemon's own complement (`NON_TASK_FAILURE_KINDS` in
+ * `orchestrator/src/core/daemon/view/action-queue.ts`) already classified it
+ * as a task failure, but the UI's `taskFailureKinds` mirror
+ * (ui/src/shared/schemas.ts) had simply drifted and omitted it — silently
+ * excluding it from grouping and leaving a live Restart button standing next
+ * to a recovery-exhausted `failed` row warning that Restart would discard
+ * real work. The mirror is fixed now, so no carve-out is needed.
  */
-const EXTRA_GROUPABLE_CONDITION_KINDS: ReadonlySet<string> = new Set(['recovery-abandoned'])
-
-const isGroupableConditionKind = (kind: string): boolean =>
-  isTaskFailureActionQueueKind(kind) || EXTRA_GROUPABLE_CONDITION_KINDS.has(kind)
+const isGroupableConditionKind = (kind: string): boolean => isTaskFailureActionQueueKind(kind)
 
 // ── Sort ──────────────────────────────────────────────────────────────────────
 

@@ -80,10 +80,10 @@ describe('buildRenderedRows — entity grouping', () => {
     expect([...row.badgeKinds].sort()).toEqual(['gate-broken', 'recovery-abandoned'])
   })
 
-  it('groups recovery-abandoned even though it is not a task-failure kind', () => {
-    // recovery-abandoned is absent from the daemon's `taskFailureKinds`
-    // mirror, so gating grouping on isTaskFailureActionQueueKind alone would
-    // silently leave this row standing on its own with a live Restart button.
+  it('groups recovery-abandoned together with a failed row for the same task', () => {
+    // recovery-abandoned is a task-failure kind (isTaskFailureActionQueueKind),
+    // so grouping it alongside `failed` collapses both onto one entity card
+    // instead of leaving a live Restart button standing on its own.
     const rows = buildRenderedRows(
       sortItems([
         makeItem('failed', { id: 'a', entityId: 'mars-bff7e039' }),
