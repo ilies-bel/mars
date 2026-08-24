@@ -451,9 +451,26 @@ const staleWorktreeDetailSchema = z.object({
   investigation: z.string().nullable(),
 })
 
-// The daemon classifies every ActionQueueKind outside NON_TASK_FAILURE_KINDS as
-// a task failure. This is that finite complement, copied from the daemon's
-// ActionQueueKind vocabulary so task-failure rows retain their raw wire kind.
+// The daemon classifies every ActionQueueKind outside NON_TASK_FAILURE_KINDS
+// (orchestrator/src/core/daemon/view/action-queue.ts) as a task failure. This
+// list is a hand-maintained mirror of that complement, so task-failure rows
+// retain their raw wire kind.
+//
+// It is an INCOMPLETE mirror, and nothing enforces otherwise: as of 2026-08-24
+// eleven kinds the daemon does treat as task failures are absent here
+// (slice-failed, verify-uncovered, arc-superseded-on-main, e2e-tooling-missing,
+// low-disk-space, baseline-broken, dirty-integration, fragmented-repo-layout,
+// mockup-ready, qa-step-list-opt-in, qa-step-list-promote). Do not read an
+// absence from this list as "the daemon deliberately excludes that kind" — it
+// almost certainly means the mirror simply drifted. That misreading is what
+// produced the EXTRA_GROUPABLE_CONDITION_KINDS carve-out in
+// entities/actionQueue/clusterRows.ts, which papered over the missing
+// `recovery-abandoned` entry rather than fixing the drift.
+//
+// Adding a kind here is not free: this list is also the `z.enum` backing
+// `taskFailureItemSchema` below, so it changes how rows parse, not just how
+// they group. Closing the remaining drift — and adding the gate that keeps it
+// closed — is tracked as its own task.
 const taskFailureKinds = [
   'failed',
   'steward-repeat',

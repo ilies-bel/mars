@@ -58,7 +58,11 @@ export function countNeedsYou(items: readonly ActionQueueItem[]): number {
  * (ui/src/shared/schemas.ts) had simply drifted and omitted it — silently
  * excluding it from grouping and leaving a live Restart button standing next
  * to a recovery-exhausted `failed` row warning that Restart would discard
- * real work. The mirror is fixed now, so no carve-out is needed.
+ * real work. That entry is restored now, so no carve-out is needed.
+ *
+ * The mirror is still incomplete for other kinds — see the note on
+ * `taskFailureKinds` in ui/src/shared/schemas.ts. If a per-task condition
+ * fails to group here, fix the mirror; do not reintroduce a local carve-out.
  */
 const isGroupableConditionKind = (kind: string): boolean => isTaskFailureActionQueueKind(kind)
 
