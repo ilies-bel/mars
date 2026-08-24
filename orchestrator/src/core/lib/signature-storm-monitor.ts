@@ -63,6 +63,24 @@ export interface MonitorDb {
  * the Steward lands a fix, when the daemon's bounded fallback timer fires, or
  * when the operator clears the pause — all three clear this flag and
  * the pause together.
+ *
+ * Exemptions ({@link isSignatureStormExempt}): a handful of signatures are
+ * excluded from the streak entirely rather than merely capped — see that
+ * function's docblock for the full list and rationale. One exemption worth
+ * calling out explicitly here because it was a real misfire, not a
+ * hypothetical: `code:context-exhausted/unclassified` (the coder ran out of
+ * context mid-task) does NOT count toward the streak. Three unrelated tasks
+ * each independently hitting a context ceiling is a capacity symptom, not a
+ * systemic / environmental cause — the thing this breaker exists to catch —
+ * and `mars continue` already salvages that work reliably. Counting it
+ * tripped the breaker three times (2026-08-20..23) on three UNRELATED tasks
+ * per episode, pausing the whole queue over per-task capacity rather than a
+ * shared defect. The failure stays fully visible (the per-task `failed`
+ * action-queue alert is untouched by this exemption) — only the storm-streak
+ * counter ignores it. The durable fix for coders going too long without
+ * committing (which is what makes a context-exhaustion death expensive to
+ * recover from) is tracked separately as mars-06ea6417; this exemption is
+ * the policy call for the breaker itself, made independently of that fix.
  */
 
 /**

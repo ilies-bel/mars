@@ -927,7 +927,7 @@ export const isEnvironmentalSignature = (signature: string): boolean => {
 
 /**
  * Returns true for signatures that must never contribute to the signature-storm
- * streak counter.  There are two distinct reasons a signature belongs here:
+ * streak counter.  There are three distinct reasons a signature belongs here:
  *
  *  1. **Operator-owned systemic conditions** — they already raise their own
  *     actionable alert and pausing all dispatch adds nothing.
@@ -941,6 +941,23 @@ export const isEnvironmentalSignature = (signature: string): boolean => {
  *     otherwise produce a streak of identical `verify:killed/sigterm` signatures
  *     and pause dispatch for what is a transient pressure problem.
  *     Example: `verify:killed/sigterm`, `verify:killed/sigkill`.
+ *
+ *  3. **Known-capacity failures with a reliable, cheap recovery path** — the
+ *     failure is a per-task resource-ceiling symptom (this coder ran long),
+ *     not evidence of a shared systemic cause, and `mars continue` already
+ *     salvages the in-progress work reliably. Streaking it groups N unrelated
+ *     tasks that each independently ran out of context into one false "storm"
+ *     and pauses the whole queue over a capacity condition rather than a
+ *     defect. Observed 2026-08-20..23: three separate breaker trips on
+ *     `code:context-exhausted/unclassified`, each streak built from three
+ *     UNRELATED tasks that had all written good work and were subsequently
+ *     salvaged via `mars continue`. The real fix for the underlying "coders
+ *     go too long without committing" pattern is tracked separately
+ *     (mars-06ea6417); this exemption keeps the breaker from mistaking that
+ *     capacity symptom for a systemic fault in the meantime. The failure
+ *     stays fully visible — the per-task `failed` action-queue row is
+ *     unaffected — only the storm-streak counter ignores it.
+ *     Example: `code:context-exhausted/unclassified`.
  */
 export const isSignatureStormExempt = (signature: string): boolean => {
   // Operator-owned conditions — several tasks observing one systemic condition
@@ -953,6 +970,9 @@ export const isSignatureStormExempt = (signature: string): boolean => {
   // Infrastructure kills — resource-pressure kills must not trip the storm
   // breaker or cause the queue to pause as if it were a test regression.
   if (signature === 'verify:killed/sigterm' || signature === 'verify:killed/sigkill') return true
+  // Known-capacity failure with a reliable `mars continue` recovery path —
+  // a per-task ceiling, not a systemic cause. See reason (3) above.
+  if (prefix === 'code:context-exhausted') return true
   return false
 }
 

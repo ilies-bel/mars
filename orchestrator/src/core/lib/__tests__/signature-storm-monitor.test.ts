@@ -187,6 +187,31 @@ describe('signature-storm-monitor — unit', () => {
     expect(r.tripped).toBe(false)
   })
 
+  it('code:context-exhausted/unclassified does not increment the storm streak', async () => {
+    // A coder running out of context is a per-task capacity ceiling reliably
+    // salvaged via `mars continue`, not a systemic cause. Three unrelated
+    // tasks each independently hitting the ceiling must not read as one
+    // storm and pause dispatch — see the module docblock.
+    const { sm, client } = await loadModules(repo)
+
+    const r1 = await sm.recordFailureSignature(client, 'task-1', 'code:context-exhausted/unclassified')
+    expect(r1.streak).toBe(0)
+    expect(r1.tripped).toBe(false)
+
+    // Multiple unrelated occurrences must not accumulate a streak.
+    const r2 = await sm.recordFailureSignature(client, 'task-2', 'code:context-exhausted/unclassified')
+    expect(r2.streak).toBe(0)
+    expect(r2.tripped).toBe(false)
+
+    const r3 = await sm.recordFailureSignature(client, 'task-3', 'code:context-exhausted/unclassified')
+    expect(r3.streak).toBe(0)
+    expect(r3.tripped).toBe(false)
+
+    // A genuine failure afterward starts a fresh streak at 1, not N.
+    const r4 = await sm.recordFailureSignature(client, 'task-4', 'verify:test/unclassified')
+    expect(r4.streak).toBe(1)
+  })
+
   it('resets streak to 1 when a different signature appears', async () => {
     const { sm, client } = await loadModules(repo)
 

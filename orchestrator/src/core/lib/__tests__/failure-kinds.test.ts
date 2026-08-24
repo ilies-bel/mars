@@ -122,6 +122,16 @@ describe('FAILURE_KINDS registry', () => {
     expect(isSignatureStormExempt('orchestration:main-committer-still-dirty/unclassified')).toBe(true)
     expect(isSignatureStormExempt('merge:preflight/uncommitted-changes')).toBe(false)
   })
+
+  it('exempts context-exhausted failures from the global storm breaker', () => {
+    // A per-task capacity ceiling, reliably salvaged via `mars continue` —
+    // not a systemic cause. Three unrelated tasks each independently hitting
+    // the same ceiling must not read as one storm and pause the queue.
+    expect(isSignatureStormExempt('code:context-exhausted/unclassified')).toBe(true)
+    expect(isSignatureStormExempt('code:context-exhausted')).toBe(true)
+    // A different code-step signature must still streak normally.
+    expect(isSignatureStormExempt('code:over-budget/unclassified')).toBe(false)
+  })
 })
 
 describe('warmTitle values match the PRD-agreed copy', () => {
