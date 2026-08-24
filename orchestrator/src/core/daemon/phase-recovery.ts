@@ -232,7 +232,12 @@ export const recoverPhase = async (
   const { execFile } = await import('node:child_process')
   const { promisify } = await import('node:util')
   const exec = promisify(execFile)
-  const { removeWorktree } = await import('../lib/git/worktree')
+  const { resolveVcs } = await import('../ports/vcs/registry')
+  const removeWorktree = (
+    ref: { path: string; branch: string },
+    force = true,
+    keepBranch = false,
+  ) => resolveVcs().removeWorktree({ path: ref.path, branch: ref.branch, force, keepBranch })
   const { isBranchMergedIntoMain } = await import('../lib/git/merge')
 
   const probeCtx: ProbeCtx = { exists, isBranchMergedIntoMain, repoRoot }

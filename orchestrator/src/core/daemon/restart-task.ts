@@ -226,7 +226,17 @@ export const coreRestartTask = async (
   const { execFile } = await import('node:child_process')
   const { promisify } = await import('node:util')
   const exec = promisify(execFile)
-  const { removeWorktree, describeUncommittedWork } = await import('../lib/git/worktree')
+  const { resolveVcs } = await import('../ports/vcs/registry')
+  const removeWorktree = (
+    ref: { path: string; branch: string },
+    force = true,
+    keepBranch = false,
+  ) => resolveVcs().removeWorktree({ path: ref.path, branch: ref.branch, force, keepBranch })
+  const describeUncommittedWork = (spec: {
+    verb: 'restart' | 'drop'
+    taskId: string
+    worktreePath: string | null | undefined
+  }) => resolveVcs().describeUncommittedWork(spec)
   const { getRepoRoot } = await import('../context')
   const { listUniqueCommitsAhead } = await import('../lib/sweep')
   const { integrationBranchName } = await import('../blocker-resolution')

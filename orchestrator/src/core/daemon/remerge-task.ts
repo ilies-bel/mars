@@ -103,7 +103,12 @@ export const coreRemergeTask = async (
   const { listUniqueCommitsAhead } = await import('../lib/sweep')
   const { integrationBranchName } = await import('../blocker-resolution')
   const { getRepoRoot } = await import('../context')
-  const { removeWorktree } = await import('../lib/git/worktree')
+  const { resolveVcs } = await import('../ports/vcs/registry')
+  const removeWorktree = (
+    ref: { path: string; branch: string },
+    force = true,
+    keepBranch = false,
+  ) => resolveVcs().removeWorktree({ path: ref.path, branch: ref.branch, force, keepBranch })
 
   const branch = task.branch ?? `task/${id}`
   const repoRoot = getRepoRoot()

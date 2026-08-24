@@ -176,7 +176,12 @@ export const corePurgeTask = async (
     evidence = await collectIntegrationEvidence(branch, integrationBranch, repoRoot)
   }
 
-  const { removeWorktree } = await import('../lib/git/worktree')
+  const { resolveVcs } = await import('../ports/vcs/registry')
+  const removeWorktree = (
+    ref: { path: string; branch: string },
+    force = true,
+    keepBranch = false,
+  ) => resolveVcs().removeWorktree({ path: ref.path, branch: ref.branch, force, keepBranch })
 
   // Guard: skip worktree+branch removal when another non-terminal task shares
   // the same path or branch. Fix/rescue tasks that operate on their origin's

@@ -2710,7 +2710,13 @@ export const startDaemon = async (
     const { signature, streak, lastTaskId } = trip
     const { StewardEventSchema, renderStewardStormBrief, stewardAgent, STEWARD_STORM_TIMEOUT_MS } =
       await import('../agents/steward')
-    const { createWorktree } = await import('../lib/git/worktree')
+    const { resolveVcs } = await import('../ports/vcs/registry')
+    const createWorktree = (spec: {
+      taskId: string
+      integrationBranch: string
+      baseSha?: string
+      branchSuffix?: string
+    }) => resolveVcs().createWorktree(spec)
     const { resolveExecutor } = await import('../ports/executor/registry')
     const {
       findOpenActionQueueItemIdBySignature,
