@@ -1,6 +1,10 @@
 import { type DbInValue } from './lib/db'
 import { ensureQueueSchema, resolveQueueClient } from './lib/queue-client'
-import { Arc, updateTask } from './arc'
+// `Arc` itself is deliberately NOT imported here: every Arc write below goes
+// through the `getArcWriter()` port seam in `lib/queue-primitives.ts`. Only
+// `updateTask` — which ADR-0101 relocated into arc.ts — is still imported
+// directly, for the two local call sites and the back-compat re-export below.
+import { updateTask } from './arc'
 import {
   addBlockerEdges,
   addPendingReviewBlockerEdges,
@@ -47,6 +51,11 @@ export {
   ORDINARY_TASK_SQL,
   rowToTask,
   getTask,
+  // Arc writer port. Re-exported so `store/task-store.ts` and other existing
+  // `from '../queue'` importers reach the seam without a new import boundary.
+  type ArcWriterPort,
+  registerArcWriter,
+  getArcWriter,
 } from './lib/queue-primitives'
 
 // Local imports for functions that remain in this file
@@ -61,6 +70,7 @@ import {
   TASK_SEL,
   ORDINARY_TASK_SQL,
   rowToTask,
+  getArcWriter,
 } from './lib/queue-primitives'
 
 /**
@@ -265,7 +275,7 @@ export const enqueueTask = async (
   plan?: TaskPlan,
   opts?: EnqueueTaskOptions,
 ): Promise<Task> => {
-  return Arc.createOrigin({ prompt, plan, opts })
+  return getArcWriter().createOrigin({ prompt, plan, opts })
 }
 
 /**
@@ -296,7 +306,7 @@ export const reopenTerminalTask = async (
   id: string,
   reason: string,
   store?: TaskStore,
-): Promise<void> => Arc.reopenTerminalTask(id, reason, store)
+): Promise<void> => getArcWriter().reopenTerminalTask(id, reason, store)
 
 export const listTasks = async (status?: TaskStatus): Promise<Task[]> => {
   await ensureQueueSchema()
@@ -400,7 +410,7 @@ export const listTasksPaged = async (
 export const setTaskPriority = async (
   id: string,
   priority: number,
-): Promise<Task> => Arc.load(id).reprioritize(priority)
+): Promise<Task> => getArcWriter().reprioritize(id, priority)
 
 /**
  * Update the verify command for a task. Thin wrapper over
@@ -419,7 +429,7 @@ export const setTaskPriority = async (
 export const setTaskVerifyCmd = async (
   id: string,
   verifyCmd: string | null,
-): Promise<{ id: string; verifyCmd: string | null }> => Arc.setVerifyCmd(id, verifyCmd)
+): Promise<{ id: string; verifyCmd: string | null }> => getArcWriter().setVerifyCmd(id, verifyCmd)
 
 /**
  * Database-level drop. Thin wrapper over {@link Arc.drop} (ADR-0052): the full
@@ -433,7 +443,7 @@ export const setTaskVerifyCmd = async (
  * worktree+branch on disk before invoking this.
  */
 export const dropTask = async (id: string): Promise<DropTaskResult> => {
-  return Arc.load(id).drop()
+  return getArcWriter().drop(id)
 }
 
 /**
@@ -488,7 +498,7 @@ export const isWorktreeSharedWithLiveTask = async (
  * sites (`mars reflect`).
  */
 export const insertReflectionTask = async (corpusSize: number): Promise<string> => {
-  return Arc.load('reflect').insertReflection(corpusSize)
+  return getArcWriter().insertReflection(corpusSize)
 }
 
 /**
@@ -922,7 +932,7 @@ export const promoteDraftToTriaging = async (
   // ADR-0052 sole-writer: the guarded 'draft' → 'triaging' status UPDATE now
   // lives inside the Arc aggregate; this export keeps the historic call surface
   // (the dispatcher, the triaging tests) green by delegating verbatim.
-  return Arc.promoteDraftToTriaging(taskId)
+  return getArcWriter().promoteDraftToTriaging(taskId)
 }
 
 /**
@@ -935,5 +945,5 @@ export const promoteDraftToTriaging = async (
 export const promoteDraftToQueued = async (
   taskId: string,
 ): Promise<Task | null> => {
-  return Arc.promoteDraftToQueued(taskId)
+  return getArcWriter().promoteDraftToQueued(taskId)
 }

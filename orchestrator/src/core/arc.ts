@@ -32,6 +32,8 @@ import {
   IllegalTransitionError,
   TERMINAL_TASK_STATUSES,
   UNSETTLED_BLOCKER_SQL,
+  registerArcWriter,
+  type ArcWriterPort,
   type Task,
   type TaskPlan,
   type TaskStatus,
@@ -3620,3 +3622,24 @@ export const markTaskFailed = async (
   // instead — same pattern already used for
   // `Arc.failStrandedOriginOnRecoveryFailure` on the same event.
 }
+
+// ── Arc writer port — self-registration ───────────────────────────────────
+// Register the Arc implementation for the ArcWriterPort seam defined in
+// lib/queue-primitives.ts.  This runs once at module-load time (a side effect
+// of importing arc.ts) and breaks the queue.ts → arc.ts and task-store.ts →
+// arc.ts import cycles: those modules now import `getArcWriter` (re-exported
+// by queue.ts) instead of importing `Arc` from arc.ts.
+const arcWriterImpl: ArcWriterPort = {
+  createOrigin: (spec, store?) => Arc.createOrigin(spec, store),
+  applyStatusWrite: (input) => Arc.applyStatusWrite(input),
+  reopenTerminalTask: (id, reason, store?) => Arc.reopenTerminalTask(id, reason, store),
+  reprioritize: (id, priority) => Arc.load(id).reprioritize(priority),
+  setVerifyCmd: (id, verifyCmd) => Arc.setVerifyCmd(id, verifyCmd),
+  drop: (id, store?) => Arc.load(id, store).drop(),
+  insertReflection: (corpusSize, store?) => Arc.load('reflect', store).insertReflection(corpusSize),
+  promoteDraftToTriaging: (taskId) => Arc.promoteDraftToTriaging(taskId),
+  promoteDraftToQueued: (taskId, store?) => Arc.promoteDraftToQueued(taskId, store),
+  setReviewPacket: (taskId, packet, store) => Arc.load(taskId, store).setReviewPacket(packet),
+  setQaReport: (taskId, report, store) => Arc.load(taskId, store).setQaReport(report),
+}
+registerArcWriter(arcWriterImpl)

@@ -60,6 +60,7 @@ import {
   listTasksForProposal as queueListTasksForProposal,
   upsertTranscript as queueUpsertTranscript,
   getTranscript as queueGetTranscript,
+  getArcWriter,
   TASK_SEL,
   rowToTask,
 } from '../queue'
@@ -74,7 +75,6 @@ import type {
   UpsertTranscriptInput,
   TaskTranscriptRow,
 } from '../queue'
-import { Arc } from '../arc'
 import { resolveVcs } from '../ports/vcs/registry'
 import { addBlockerEdges, removeBlockerEdge } from '../arc/blockers'
 
@@ -510,7 +510,7 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
     // Arc.createOrigin is the origin write funnel; pass `store` so persistence
     // routes through this seam rather than the process-wide default.
     enqueueTask: (prompt, plan, opts) =>
-      Arc.createOrigin({ prompt, plan, opts }, store),
+      getArcWriter().createOrigin({ prompt, plan, opts }, store),
     // updateTask is the transition primitive *inside* the aggregate (ADR-0052):
     // Arc.transition wraps it. The facade keeps delegating to the primitive so
     // non-status PATCH columns (branch, worktreePath, sessionId, …) and the
@@ -518,10 +518,10 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
     // preserved; a status-only patch is exactly Arc.transition's funnel.
     updateTask: (id, patch) => queueUpdateTask(id, patch),
     reopenTerminalTask: (id, reason) => queueReopenTerminalTask(id, reason, store),
-    dropTask: (id) => Arc.load(id, store).drop(),
+    dropTask: (id) => getArcWriter().drop(id, store),
     setTaskPriority: (id, priority) => queueSetTaskPriority(id, priority),
     insertReflectionTask: (corpusSize) =>
-      Arc.load('reflect', store).insertReflection(corpusSize),
+      getArcWriter().insertReflection(corpusSize, store),
     promoteDraftToQueued: (taskId) => queuePromoteDraftToQueued(taskId),
     unblockTask: (taskId) => queueUnblockTask(taskId),
 
@@ -749,7 +749,7 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
     // The `review_packet_json` write funnels through the Arc aggregate — the
     // sole task-table writer (ADR-0052 is column-agnostic, so a payload
     // column counts) — bound to THIS store so a test store hits its own DB.
-    setReviewPacket: (taskId, packet) => Arc.load(taskId, store).setReviewPacket(packet),
+    setReviewPacket: (taskId, packet) => getArcWriter().setReviewPacket(taskId, packet, store),
 
     // ── QA report ─────────────────────────────────────────────────────────
 
@@ -767,7 +767,7 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
 
     // Same funnel as setReviewPacket: `qa_report_json` is a payload column,
     // still covered by the column-agnostic ADR-0052 sole-writer rule.
-    setQaReport: (taskId, report) => Arc.load(taskId, store).setQaReport(report),
+    setQaReport: (taskId, report) => getArcWriter().setQaReport(taskId, report, store),
 
     // ── Generic SQL escape hatches ─────────────────────────────────────────
 

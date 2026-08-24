@@ -17,6 +17,12 @@ import { ensureQueueSchema, resolveQueueClient } from './queue-client'
 import type { DbStatement, DbResultSet } from './db'
 import type { Author, AuthorKind } from '../author'
 import type { SliceSpec, SubDeliverableSpec } from '../slice-spec'
+// Type-only, deliberately: see the module header. A value-import of either of
+// these would close a runtime cycle; as `import type` they are erased at
+// compile time and `no-circular`'s `viaOnly: { dependencyTypesNot:
+// ['type-only'] }` does not report the edge.
+import type { ReviewPacket } from './review-packet'
+import type { DomainTaskStore as TaskStore } from '../store/task-store'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -491,4 +497,78 @@ export const getTask = async (id: string, store?: ReadStore): Promise<Task | nul
   }
   if (r.rows.length === 0) return null
   return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+}
+
+// ---------------------------------------------------------------------------
+// Arc writer port
+// ---------------------------------------------------------------------------
+//
+// Breaks the `queue.ts` → `arc.ts` and `store/task-store.ts` → `arc.ts`
+// back-edges. `arc.ts` self-registers at module-init time via
+// `registerArcWriter()`; every call site that previously called `Arc.xxx()`
+// now goes through `getArcWriter().xxx()` instead.
+//
+// The seam lives in this leaf rather than in `queue.ts` because ADR-0101 moved
+// `updateTask` into `arc.ts`, so `queue.ts` is itself a runtime importer of
+// `arc.ts` now — hosting the port there would make `arc.ts` → `queue.ts` a new
+// runtime cycle. This module has no runtime edge to either, so `arc.ts` can
+// import the registrar without closing one. `queue.ts` re-exports all three
+// symbols, which is how `store/task-store.ts` reaches `getArcWriter`.
+
+/**
+ * Port interface for the Arc write operations that `queue.ts` and
+ * `store/task-store.ts` need. `arc.ts` is the sole implementor; it registers
+ * itself at module-load time so callers only need `getArcWriter`.
+ */
+export interface ArcWriterPort {
+  createOrigin(
+    spec: { prompt: string; plan?: TaskPlan; opts?: EnqueueTaskOptions },
+    store?: TaskStore,
+  ): Promise<Task>
+  applyStatusWrite(input: {
+    id: string
+    fields: string[]
+    args: unknown[]
+    eventStmts: DbStatement[]
+    store?: TaskStore
+    appendSessionId?: boolean
+    sessionIdStmt?: DbStatement
+  }): Promise<void>
+  reopenTerminalTask(id: string, reason: string, store?: TaskStore): Promise<void>
+  reprioritize(id: string, priority: number): Promise<Task>
+  setVerifyCmd(
+    id: string,
+    verifyCmd: string | null,
+  ): Promise<{ id: string; verifyCmd: string | null }>
+  drop(id: string, store?: TaskStore): Promise<DropTaskResult>
+  insertReflection(corpusSize: number, store?: TaskStore): Promise<string>
+  promoteDraftToTriaging(taskId: string): Promise<Task | null>
+  promoteDraftToQueued(taskId: string, store?: TaskStore): Promise<Task | null>
+  setReviewPacket(taskId: string, packet: ReviewPacket, store: TaskStore): Promise<void>
+  setQaReport(taskId: string, report: QaReport, store: TaskStore): Promise<void>
+}
+
+let _arcWriter: ArcWriterPort | null = null
+
+/**
+ * Called once by `arc.ts` at module-load time to register the implementation.
+ * Any call to {@link getArcWriter} before this throws a clear error.
+ */
+export const registerArcWriter = (impl: ArcWriterPort): void => {
+  _arcWriter = impl
+}
+
+/**
+ * Returns the registered Arc writer. Throws if `arc.ts` has not been imported
+ * yet — ensure the module graph reaches `arc.ts` before calling queue
+ * operations that need the Arc aggregate.
+ */
+export const getArcWriter = (): ArcWriterPort => {
+  if (_arcWriter === null) {
+    throw new Error(
+      '[mars] Arc writer not registered — import core/arc.ts before calling ' +
+        'queue operations that route through the Arc aggregate.',
+    )
+  }
+  return _arcWriter
 }
