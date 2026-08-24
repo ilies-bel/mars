@@ -561,28 +561,15 @@ export const runAgent = async (
   // any post-loop read.
   let r!: Awaited<ReturnType<typeof runWorkerWithSpan>>
 
-  // Snapshot the worktree's uncommitted state on a fixed cadence while the
-  // coder subprocess runs, independent of how (or whether) it ever exits
-  // cleanly. A hard kill (watchdog timeout, context exhaustion, OOM) never
-  // reaches an exit-time recovery hook, so without this the only work that
-  // survives is whatever the coder itself already committed — observed
-  // 2026-08-20: three `code:context-exhausted` failures in a row each left
-  // 100+ uncommitted lines with zero commits ahead, recoverable only because
-  // an operator happened to inspect the worktree by hand. This makes that
-  // recovery automatic: see `startPeriodicCheckpoint` for the full rationale
-  // and the no-op-on-clean-tree guarantee that keeps a normally-committing
-  // coder unaffected.
-  const periodicCheckpoint = startPeriodicCheckpoint({
-    cwd: worktreePath,
-    key: `${taskId}-code-periodic`,
-    messagePrefix: `mars: periodic code-phase checkpoint (task ${taskId})`,
-    traceCtx: buildPhaseCtx(trace, taskId, 'code'),
-  })
   // ── Take the exclusive worktree lease ────────────────────────────────────
   // Held across the whole span that mutates this worktree: the coder spawn
   // itself AND the post-coder commit contract, which runs `git add -A`. That
   // second half is the actual contamination vector, so releasing at the end of
   // the spawn loop would leave the dangerous window unguarded.
+  //
+  // Taken BEFORE the periodic checkpointer below starts: that timer commits
+  // into this worktree on a cadence, so acquiring after it would leave a
+  // refused run's interval running inside the holder's tree.
   //
   // The lease refuses rather than waits: a coder run lasts minutes to hours,
   // and blocking here would pin an implement semaphore slot for the duration.
@@ -598,6 +585,24 @@ export const runAgent = async (
   }
 
   try {
+    // Snapshot the worktree's uncommitted state on a fixed cadence while the
+    // coder subprocess runs, independent of how (or whether) it ever exits
+    // cleanly. A hard kill (watchdog timeout, context exhaustion, OOM) never
+    // reaches an exit-time recovery hook, so without this the only work that
+    // survives is whatever the coder itself already committed — observed
+    // 2026-08-20: three `code:context-exhausted` failures in a row each left
+    // 100+ uncommitted lines with zero commits ahead, recoverable only because
+    // an operator happened to inspect the worktree by hand. This makes that
+    // recovery automatic: see `startPeriodicCheckpoint` for the full rationale
+    // and the no-op-on-clean-tree guarantee that keeps a normally-committing
+    // coder unaffected.
+    const periodicCheckpoint = startPeriodicCheckpoint({
+      cwd: worktreePath,
+      key: `${taskId}-code-periodic`,
+      messagePrefix: `mars: periodic code-phase checkpoint (task ${taskId})`,
+      traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+    })
+
     try {
       for (let attempt = 1; attempt <= 2; attempt++) {
         if (attempt > 1) sessionKey = buildSessionKey(taskId)
