@@ -291,10 +291,24 @@ export const maybeSpawnRescueOperator = async (
   // Queued rows, by contrast, are re-seeded by the boot reconciler, the
   // blocker-resolution drain, and the poll-fallback — the same treatment the
   // recovery fix tasks this module sits beside already rely on.
+  // `workflow: 'report'` routes the rescue task through the read-only report
+  // pipeline (setup -> code -> finalize; no verify, no merge — see
+  // `.mars/workflows/report-workflow.js` / ADR-0056) instead of the default
+  // implement pipeline. A rescue-operator's deliverable is a JSON verdict plus
+  // whatever `mars restart`/`mars continue`/`mars task add --supersede` it ran
+  // against the ARC it is rescuing — never a commit on ITS OWN branch (its
+  // denied-tools list forbids `git commit` outright, see
+  // RESCUE_OPERATOR_DENIED_TOOLS). Dispatching it through the coder/implement
+  // pipeline forced it through an unrelated verify gate (e.g. a project-wide
+  // `npm run knip`) and a hard "commit before you exit" contract it has no way
+  // to satisfy legitimately — observed on fix-97ffa41d, where the only way to
+  // reach a green exit was to physically carry the arc's branch forward
+  // instead of executing one of its three permitted verbs.
   const rescueTask = await store.enqueueTask(prompt, undefined, {
     skipTriage: true,
     tags: [RESCUE_OPERATOR_TAG],
     originId,
+    workflow: 'report',
   })
   await recordStewardIntervention({
     targetKind: 'arc',

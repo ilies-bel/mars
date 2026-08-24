@@ -191,6 +191,74 @@ describe('composePrompt — diagnose Chore short-circuit', () => {
   })
 })
 
+describe('composePrompt — report workflow (read-only pipeline, ADR 0056)', () => {
+  it("omits the commit-mandate blocks when workflow is 'report'", () => {
+    // A report-workflow task (e.g. a rescue-operator triage) never runs
+    // verify or merge — nothing downstream checks for a commit — and some
+    // Workers dispatched through it are denied `git commit` outright. Telling
+    // the agent it "must commit before exiting" is both false and, for those
+    // Workers, actively contradictory.
+    const out = composePrompt(
+      'do the thing',
+      null,
+      'coder',
+      null,
+      'mars-aaaaaaaa',
+      '/tmp/worktree',
+      'task',
+      [],
+      [],
+      null,
+      false,
+      null,
+      'report',
+    )
+    expect(out).not.toContain(COMMIT_EXIT_CONDITION)
+    expect(out).not.toContain(COMMIT_FOOTER)
+    expect(out).not.toContain('git rev-list --count')
+  })
+
+  it("still includes CODING_DISCIPLINE and the task body when workflow is 'report'", () => {
+    const out = composePrompt(
+      'do the thing',
+      null,
+      'coder',
+      null,
+      'mars-aaaaaaaa',
+      '/tmp/worktree',
+      'task',
+      [],
+      [],
+      null,
+      false,
+      null,
+      'report',
+    )
+    expect(out).toContain('## Coding discipline')
+    expect(out).toContain('do the thing')
+  })
+
+  it("keeps the commit-mandate blocks when workflow is not 'report' (default)", () => {
+    const out = composePrompt(
+      'do the thing',
+      null,
+      'coder',
+      null,
+      'mars-aaaaaaaa',
+      '/tmp/worktree',
+      'task',
+      [],
+      [],
+      null,
+      false,
+      null,
+      null,
+    )
+    expect(out).toContain(COMMIT_EXIT_CONDITION)
+    expect(out).toContain(COMMIT_FOOTER)
+  })
+})
+
 describe('resolveWorkerSystemPrompt — uniform Coder standing instructions (ADR 0019)', () => {
   it('standing instructions contain the full deviation-rules text', () => {
     const prompt = resolveWorkerSystemPrompt('coder')

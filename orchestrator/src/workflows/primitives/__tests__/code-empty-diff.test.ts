@@ -348,3 +348,56 @@ describe('code/empty-diff guard — main-committer exception', () => {
     expect(emptyDiffCalls).toHaveLength(0)
   })
 })
+
+describe('code/empty-diff guard — report-workflow exemption (ADR 0056)', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = initRepo()
+    vi.clearAllMocks()
+    mockUpdateTask.mockResolvedValue(undefined)
+    mockHandleTaskFailureWithFixTask.mockResolvedValue({ outcome: 'fix-task-spawned' })
+    mockResolveOriginIdForTask.mockImplementation(async (id: string) => id)
+    mockCleanWorktreeIfNoCommitsAhead.mockResolvedValue({
+      cleaned: false,
+      reason: 'skipped for test',
+      output: '',
+    })
+    mockFetchLessonsForTask.mockResolvedValue([])
+    mockListMergedWorkers.mockReturnValue([])
+    mockRecordSignals.mockResolvedValue(undefined)
+    mockRaiseActionQueueItem.mockResolvedValue(undefined)
+    mockRestoreWorktreeIfMissing.mockResolvedValue('present')
+    mockParseMainCommiterPayload.mockReturnValue(null)
+  })
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('does NOT fail with code/empty-diff when task.workflow is "report"', async () => {
+    // A report-workflow task (e.g. a rescue-operator triage, PRD 94e2a82a) is
+    // read-only by design: no verify runs, no merge is attempted, and some
+    // Workers dispatched through it (RescueOperator) are denied `git commit`
+    // outright. Zero commits is the correct, expected end state — not a
+    // silent-bail defect the empty-diff guard should catch.
+    mockRunWorkerWithSpan.mockResolvedValue(cleanCoderResult())
+
+    const store = makeStore({ id: 'test-report', workflow: 'report' })
+
+    const ctx = makeCtx('test-report', store)
+    const result = await runAgent(ctx, {
+      worktree: { path: repo, branch: 'task/test-empty' },
+    })
+
+    // Completes (returns a result, doesn't throw)
+    expect(result).toHaveProperty('sessionId')
+
+    // Must NOT have stamped code/empty-diff, and the branch stays untouched
+    const emptyDiffCalls = mockUpdateTask.mock.calls.filter(
+      (c) => (c[1] as Record<string, unknown>)?.failureSignature === 'code/empty-diff',
+    )
+    expect(emptyDiffCalls).toHaveLength(0)
+    expect(commitsAhead(repo)).toBe(0)
+  })
+})

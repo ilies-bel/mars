@@ -404,6 +404,9 @@ export const runAgent = async (
     lessons,
     gateSteps,
     indexCard,
+    false,
+    null,
+    fullTask?.workflow ?? null,
   )
   // Compose and render the restart checkpoint when this is a resume dispatch.
   // Best-effort: a composition failure must never block dispatch.
@@ -536,7 +539,16 @@ export const runAgent = async (
         runOptions: {
           cwd: worktreePath,
           sessionId: sessionKey,
-          systemPrompt: resolveWorkerSystemPrompt(primaryTag),
+          // A Worker that pins its own `config.systemPrompt` (currently only
+          // RescueOperator) must receive it verbatim — resolveWorkerSystemPrompt
+          // always returns the generic Coder standing instructions (ADR-0019),
+          // which would otherwise silently displace it. Without this, a
+          // RescueOperator dispatch never sees RESCUE_OPERATOR_SYSTEM_PROMPT
+          // (its pinned "choose one of restart/continue/supersede, emit a JSON
+          // verdict, never commit" brief) and instead runs under the generic
+          // deviation-rules brief, which tells it to write and commit code —
+          // exactly the behaviour that brief exists to forbid.
+          systemPrompt: worker.config.systemPrompt ?? resolveWorkerSystemPrompt(primaryTag),
           onEvent: async (event) => {
             emit?.(event)
           },

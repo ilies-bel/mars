@@ -537,13 +537,33 @@ export const composePrompt = (
    * Defaults to `null` (backward-compatible).
    */
   verifyFailureOutput: string | null = null,
+  /**
+   * The dispatching task's pipeline selection (`task.workflow`), when known.
+   * `'report'` marks the read-only report pipeline (ADR-0056: no commit is
+   * required, no verify runs, no merge is attempted — see
+   * `enforceCoderCommitContract`'s matching exemption in `tools/coder/
+   * coder-exit.ts`). Telling that agent it "must commit before exiting" is
+   * both false (nothing downstream checks for a commit) and, for a Worker
+   * whose tool config denies `git commit` outright (RescueOperator), actively
+   * contradictory — see rescue-operator-spawn.ts.
+   *
+   * Defaults to `null` (backward-compatible: every existing caller keeps the
+   * commit-mandate prefix unchanged).
+   */
+  workflow: string | null = null,
 ): string => {
   // Diagnose Chore short-circuit: the prompt arrives fully composed.
   if (kind === 'diagnose') return prompt.trim()
 
   // Stable prefix — byte-identical across tasks and retries so the provider
-  // can cache it. Push these FIRST, before any task-specific content.
-  const sections: string[] = [COMMIT_EXIT_CONDITION, CODING_DISCIPLINE, workerPromptBlock('COMMIT_FOOTER')]
+  // can cache it. Push these FIRST, before any task-specific content. The
+  // commit-mandate blocks are omitted for the read-only report pipeline (see
+  // the `workflow` param doc above); CODING_DISCIPLINE stays — it is generic
+  // engineering guidance, not a commit instruction.
+  const sections: string[] =
+    workflow === 'report'
+      ? [CODING_DISCIPLINE]
+      : [COMMIT_EXIT_CONDITION, CODING_DISCIPLINE, workerPromptBlock('COMMIT_FOOTER')]
 
   // Task-specific suffix — all content that varies per task follows here.
   sections.push(prompt.trim())

@@ -524,6 +524,30 @@ describe('rescue-operator-spawn', () => {
     expect(rescueTask!.tags).toContain('rescue-operator')
   })
 
+  it('rescue-operator task is routed through the read-only report pipeline', async () => {
+    // Regression test: a rescue task previously dispatched through the
+    // default coder/implement pipeline, which forces a verify gate and a
+    // "commit before you exit" contract the rescue-operator has no legitimate
+    // way to satisfy (it is denied `git commit` — RESCUE_OPERATOR_DENIED_TOOLS
+    // — and its job is to mutate OTHER tasks via `mars restart`/`continue`/
+    // `task add --supersede`, never to commit on its own branch). Routing
+    // through `workflow: 'report'` (ADR-0056) skips verify and merge entirely.
+    const { q, rescue } = await loadModules(repo)
+    const task = await q.enqueueTask('do a thing', undefined, { skipTriage: true })
+
+    const loaded = await q.getTask(task.id)
+    if (!loaded) throw new Error('task not found')
+    const result = await rescue.maybeSpawnRescueOperator({
+      failedTask: loaded,
+      failureSignature: 'code/unclassified',
+    })
+
+    expect(result.spawned).toBe(true)
+    const rescueTask = await q.getTask(result.rescueTaskId!)
+    expect(rescueTask).not.toBeNull()
+    expect(rescueTask!.workflow).toBe('report')
+  })
+
   // ── (e) Supersession: checker says superseded → origin dropped, no rescue ──
 
   it('(e) supersession: origin dropped and action-queue row raised when checker says superseded, no rescue spawned', async () => {

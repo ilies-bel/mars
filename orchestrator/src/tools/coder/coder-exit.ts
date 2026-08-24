@@ -623,6 +623,22 @@ export const enforceCoderCommitContract = async (args: {
     )
   }
 
+  // Report-workflow tasks (ADR-0056) are read-only by design: the pipeline
+  // never runs verify or merge, so there is nothing downstream for a commit
+  // to feed into, and a Worker like RescueOperator is explicitly denied
+  // `git commit` (see RESCUE_OPERATOR_DENIED_TOOLS). Exempt them from every
+  // check below — mirrors the existing main-committer exemption just below,
+  // but for the whole contract rather than only the empty-diff guard. Zero
+  // commits (or an untouched/dirty worktree the agent was never meant to
+  // clean up) is the correct, expected end state here, not a defect to
+  // escalate through a corrective turn or the auto-commit net.
+  if (fullTask?.workflow === 'report') {
+    console.log(
+      `[post-coder] task ${taskId}: workflow=report — commit contract not enforced (postState=${postState?.kind ?? 'unknown'})`,
+    )
+    return commitSource
+  }
+
   // --- Empty-diff guard -------------------------------------------------------
   // `clean-no-work` (0 commits ahead, worktree clean) after a coder exit 0
   // almost always means the worker bailed silently — it printed something,
@@ -722,7 +738,10 @@ export const enforceCoderCommitContract = async (args: {
       prompt: `${alreadyCommittedLine}Your previous pass left uncommitted changes in these paths:\n  ${dirtyList}\n\nCommit them now. Do not make unrelated changes.`,
       runOptions: {
         cwd: worktreePath,
-        systemPrompt: resolveWorkerSystemPrompt(primaryTag),
+        // See the matching comment in tools/coder/run-agent.ts: a Worker with
+        // its own pinned `config.systemPrompt` must keep it on this corrective
+        // turn too, or it silently reverts to the generic Coder brief.
+        systemPrompt: worker.config.systemPrompt ?? resolveWorkerSystemPrompt(primaryTag),
         onEvent: async (event) => emit?.(event),
         onPid: ctx.services.onPid,
         externalAbort: ctx.signal,
