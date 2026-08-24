@@ -2,8 +2,6 @@ import { execFile } from 'node:child_process'
 import { access } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
 import { promisify } from 'node:util'
-import { raiseRecoveryExhaustedActionQueue } from './lib/recovery-exhausted-action-queue'
-import { getTask } from './queue'
 import type { ActionQueueKind } from './lib/action-queue-kinds'
 import { ORIGIN_RECOVERY_FAILED_PREFIX } from './lib/failure-signature'
 import { raiseActionQueueItem } from './lib/action-queue'
@@ -302,27 +300,15 @@ export const raiseOrphanedOriginActionQueue = async (
   // orphaned-origin is derived from tasks.status='failed'; no stored row needed.
 }
 
-export const raiseActionQueueForBlockedTask = async (taskId: string): Promise<void> => {
-  const task = await getTask(taskId)
-  if (!task) return
-  const error = task.error ?? ''
-  // Step names can be compound (e.g. "verify:test"), so split on ": " (colon-space)
-  // rather than just ":" to get the full step name including sub-step.
-  const colonSpace = error.indexOf(': ')
-  const lastStep =
-    colonSpace > 0 ? error.slice(0, colonSpace).trim() : 'blocked-dependent'
-  const lastErrorSummary =
-    colonSpace > 0 ? error.slice(colonSpace + 2).trim() : error
-  await raiseRecoveryExhaustedActionQueue({
-    taskId,
-    lastStep,
-    recoverySpawnedCount: task.recoverySpawnedCount,
-    lastErrorSignature: task.failureSignature,
-    lastErrorSummary: lastErrorSummary || null,
-    branch: task.branch,
-    worktreePath: task.worktreePath,
-  })
-}
+// `raiseActionQueueForBlockedTask(taskId)` was deleted here (ADR-0101 item 1).
+// It had no caller anywhere in the tree — the live recovery-exhausted raise is
+// `queue-fix-tasks.ts:1364`, which calls `raiseRecoveryExhaustedActionQueue`
+// directly with the task it already holds. This dead function's `getTask`
+// import was the ONLY value-level edge from this module to `core/queue.ts`,
+// and `queue.ts` imports the `Arc` aggregate for its facade verbs — so a dead
+// read closed the `arc.ts -> blocker-resolution.ts -> queue.ts -> arc.ts`
+// cycle. If a caller ever needs this again, take the already-loaded `Task` as
+// a parameter rather than re-importing `getTask` here.
 
 export interface PropagateRecoveryDoneResult {
   originTaskId: string
