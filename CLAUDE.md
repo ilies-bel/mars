@@ -585,6 +585,21 @@ recovery-spawn path itself.
   attribution silently comes out wrong. Treat a backgrounded vitest run that
   returns exit 0 with an empty or truncated log as UNKNOWN, not a pass —
   re-run in the foreground with `--outputFile`.
+- **The RTK shell hook silently drops the `run` subcommand from `npx vitest
+  run` (no file arguments given).** It rewrites `npx vitest run
+  --reporter=json --outputFile=...` to `rtk vitest --reporter=json
+  --outputFile=...`, losing `run` and starting vitest in **watch mode**
+  instead — the process never exits and never writes `--outputFile`, which
+  is indistinguishable from a slow-but-progressing suite (empty log, no
+  summary, no exit code) until you notice the output file is zero bytes
+  after many minutes. The rewrite is not uniform: `npx vitest run <file>
+  --reporter=json --outputFile=...` with an explicit file argument is
+  rewritten correctly and exits normally — only the no-file-argument
+  full-suite form loses `run`. Work around it with
+  `rtk proxy npx vitest run --reporter=json --outputFile=<path>`, which
+  bypasses the hook's rewrite entirely. Treat a full-suite vitest run that
+  hasn't written its `--outputFile` after a few minutes as a watch-mode
+  hang, not a slow suite.
 - A 404 on a daemon route that exists in source usually means the running
   daemon predates that route — restart with `mars daemon restart` rather
   than scoping a code task. The same applies to a `mars ui` Bun-server 404
