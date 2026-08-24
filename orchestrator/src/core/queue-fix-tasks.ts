@@ -880,7 +880,20 @@ export const handleTaskFailureWithFixTask = async (
           // 3 use, so all three mutations stay in one scope rather than fanning
           // out into separate transactions.
           await removeBlockerEdge(s, originId, input.taskId)
-          // Step 3: drop the fix task as superseded (clear trace)
+          // Step 3: drop the fix task as superseded (clear trace).
+          //
+          // The row is usually ALREADY 'failed' here — `coder-exit.ts` stamps
+          // the failure before dispatching to this handler — and 'failed' is
+          // terminal, so a plain status write from it throws
+          // IllegalTransitionError. That throw was caught by this block's own
+          // `catch (remergeCheckErr)` and logged as "non-fatal, escalating",
+          // AFTER step 1 had already flipped the origin to `queued`/remerge:
+          // the arc both remerged AND escalated to the action queue. Route
+          // through the audited reopen seam first (the same thing
+          // `Arc.createOrigin` does for a superseded task) so the drop lands.
+          if (task.status === 'failed') {
+            await reopenTerminalTask(input.taskId, `superseded by remerge of ${originId}`, s)
+          }
           await updateTask(input.taskId, {
             status: 'dropped',
             dropReason: 'superseded',

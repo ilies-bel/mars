@@ -399,6 +399,12 @@ export const maybeSupersedeOnContextExhaustedRecovery = async (
   // Route through the audited reopen seam first, exactly as `Arc.createOrigin`
   // does for the superseded task itself, so the drop lands instead of being
   // swallowed as a "non-fatal" error and leaving a stale in-flight recovery.
+  //
+  // The reopen parks the row in 'queued' for the two awaits it takes to drop
+  // it, so the dispatch loop could in principle claim it. That race is benign:
+  // a claimed recovery runs `attachOriginWorktreeForFix`, which sees the origin
+  // is already 'dropped' (the supersede just dropped it) and drops the recovery
+  // itself as 'arc-rescued' before touching any worktree.
   if (failedRecovery.status === 'failed') {
     await reopenTerminalTask(
       failedRecovery.id,

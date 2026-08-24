@@ -288,8 +288,18 @@ describe('supersede on context-exhausted recovery', () => {
     await q.updateTask(origin.id, { branch })
     const recoveryId = await spawnRecoveryFor(ft, origin.id, originPrompt)
     // The recovery runs on the origin's branch, which is what the remerge
-    // check below reads.
+    // check below reads. It is also already 'failed' by the time the handler
+    // runs — `coder-exit.ts` stamps the failure before dispatching here — and
+    // 'failed' is terminal, so the remerge path's own drop of this row has to
+    // go through the reopen seam or it throws and the arc both remerges AND
+    // escalates.
     await q.updateTask(recoveryId, { branch })
+    await q.updateTask(recoveryId, {
+      status: 'failed',
+      failedPhase: 'code',
+      failureReason: 'context-exhausted',
+      error: EXHAUSTION_OUTPUT,
+    })
 
     const r = await ft.handleTaskFailureWithFixTask({
       taskId: recoveryId,
@@ -305,6 +315,20 @@ describe('supersede on context-exhausted recovery', () => {
       `SELECT COUNT(*) AS n FROM tasks WHERE followup_dedup_key LIKE 'context-exhausted-supersede:%'`,
     )
     expect(Number(spawned[0]!.n)).toBe(0)
+
+    // The arc continues through the origin's remerge, and the dead recovery is
+    // retired rather than left 'failed' for the drain to re-escalate.
+    const originAfter = await q.getTask(origin.id)
+    expect(originAfter?.status).toBe('queued')
+    expect(originAfter?.workflow).toBe('remerge')
+    expect((await q.getTask(recoveryId))?.status).toBe('dropped')
+
+    // ...and no action-queue escalation was raised alongside the remerge.
+    const alerts = await rowsOf<{ n: number | bigint }>(
+      q,
+      `SELECT COUNT(*) AS n FROM action_queue_items WHERE kind = 'failed' AND status = 'open'`,
+    )
+    expect(Number(alerts[0]!.n)).toBe(0)
   })
 
   it('leaves non-context-exhausted recovery failures on the unchanged escalation path', async () => {
