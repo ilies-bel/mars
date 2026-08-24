@@ -1,7 +1,7 @@
 import type { EventEmitter } from 'node:events'
 import { getCompositionRootClient } from '../store/task-store'
 import { listTasks, updateTask } from '../queue'
-import { CANCELLED_FAILURE_REASON } from '../blocker-resolution'
+import { CANCELLED_FAILURE_REASON } from '../lib/blocker-resolution-primitives'
 import { drainAlertDismissals } from './alert-dismisser'
 import { drainActionQueueRepopulations } from './action-queue-repopulator'
 import { drainBlockerResolution } from '../../outbox/subscribers/blocker-resolution'

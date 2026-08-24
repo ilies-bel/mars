@@ -9,7 +9,7 @@ import {
   WORKTREE_AHEAD_ACTION_QUEUE_KIND,
   PREREQUISITE_FAILED_ACTION_QUEUE_KIND,
   CANCELLED_CASCADE_ACTION_QUEUE_KIND,
-} from '../blocker-resolution'
+} from './blocker-resolution-primitives'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'

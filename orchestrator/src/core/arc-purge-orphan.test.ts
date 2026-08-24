@@ -21,7 +21,7 @@ interface ConditionsModule {
 }
 
 interface BlockerResolutionModule {
-  ORPHANED_ORIGIN_FAILURE_REASON: typeof import('./blocker-resolution').ORPHANED_ORIGIN_FAILURE_REASON
+  ORPHANED_ORIGIN_FAILURE_REASON: typeof import('./lib/blocker-resolution-primitives').ORPHANED_ORIGIN_FAILURE_REASON
 }
 
 const setupRepo = (): string => {
@@ -42,7 +42,7 @@ const loadModules = async (
   await q.ensureQueueSchema()
   const arc = (await import('./arc')) as unknown as ArcModule
   const conditions = (await import('./daemon/view/derived-conditions')) as unknown as ConditionsModule
-  const br = (await import('./blocker-resolution')) as unknown as BlockerResolutionModule
+  const br = (await import('./lib/blocker-resolution-primitives')) as unknown as BlockerResolutionModule
   return { q, arc, conditions, br }
 }
 

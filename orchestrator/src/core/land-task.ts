@@ -22,7 +22,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { dirname, resolve } from 'node:path'
 import { access, constants as fsConstants, mkdir } from 'node:fs/promises'
-import { integrationBranchName } from './blocker-resolution'
+import { integrationBranchName } from './lib/blocker-resolution-primitives'
 import {
   getTask,
   updateTask,

@@ -873,7 +873,7 @@ describe('blocker-resolution (task_blockers)', () => {
       process.env.MARS_REPO = repo
       const q2 = (await import('../../queue')) as unknown as QueueModule
       await q2.migrateQueueSchema()
-      const { raiseWorktreeAheadActionQueue } = await import('../../blocker-resolution')
+      const { raiseWorktreeAheadActionQueue } = await import('../blocker-resolution-primitives')
       const { listActionQueueItems } = (await import('../action-queue')) as unknown as ActionQueueModule
 
       const taskId = 'lean-purge-test'
@@ -912,7 +912,7 @@ describe('blocker-resolution (task_blockers)', () => {
       process.env.MARS_REPO = repo
       const q2 = (await import('../../queue')) as unknown as QueueModule
       await q2.migrateQueueSchema()
-      const { raiseWorktreeAheadActionQueue } = await import('../../blocker-resolution')
+      const { raiseWorktreeAheadActionQueue } = await import('../blocker-resolution-primitives')
       const { listActionQueueItems } = (await import('../action-queue')) as unknown as ActionQueueModule
 
       const taskId = 'lean-restart-test'
@@ -945,7 +945,7 @@ describe('blocker-resolution (task_blockers)', () => {
       process.env.MARS_REPO = repo
       const q2 = (await import('../../queue')) as unknown as QueueModule
       await q2.migrateQueueSchema()
-      const { raiseWorktreeAheadActionQueue } = await import('../../blocker-resolution')
+      const { raiseWorktreeAheadActionQueue } = await import('../blocker-resolution-primitives')
       const { listActionQueueItems } = (await import('../action-queue')) as unknown as ActionQueueModule
 
       const taskId = 'lean-unknown-test'

@@ -116,10 +116,8 @@ import {
   runCompositionRootMigrations,
 } from '../store/task-store'
 import { promoteProposal } from '../proposals'
-import {
-  CANCELLED_FAILURE_REASON,
-  type RecoverAllBlockedTasksResult,
-} from '../blocker-resolution'
+import { CANCELLED_FAILURE_REASON } from '../lib/blocker-resolution-primitives'
+import type { RecoverAllBlockedTasksResult } from '../blocker-resolution'
 import { Arc, type ProgressEntry } from '../arc'
 import { WorkflowTerminalError } from '../lib/workflow-terminal-error'
 import {
@@ -3753,7 +3751,7 @@ export const startDaemon = async (
     // is not set, tell the operator how many commits are at risk.
     if (!force) {
       const { listUniqueCommitsAhead } = await import('../lib/sweep')
-      const { integrationBranchName } = await import('../blocker-resolution')
+      const { integrationBranchName } = await import('../lib/blocker-resolution-primitives')
       const integrationBranch = integrationBranchName()
       const commitsAhead = await listUniqueCommitsAhead(branch, integrationBranch, repoRoot)
       if (commitsAhead.length > 0) {

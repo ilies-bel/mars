@@ -12,7 +12,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { getTask } from '../queue'
 import { listUniqueCommitsAhead } from '../lib/sweep'
-import { integrationBranchName } from '../blocker-resolution'
+import { integrationBranchName } from '../lib/blocker-resolution-primitives'
 import { getRepoRoot } from '../context'
 import { resolveAllRowsForTask } from '../lib/action-queue'
 

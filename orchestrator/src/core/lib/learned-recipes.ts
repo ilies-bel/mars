@@ -490,7 +490,7 @@ export async function executeLearnedOp(
 
   if (op === 'purge') {
     const { corePurgeTask } = await import('../daemon/purge-task.js')
-    const { integrationBranchName } = await import('../blocker-resolution.js')
+    const { integrationBranchName } = await import('./blocker-resolution-primitives.js')
     const { getRepoRoot } = await import('../context.js')
     await corePurgeTask(
       taskId,

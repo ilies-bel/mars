@@ -83,16 +83,23 @@ import {
   raiseOrphanedOriginActionQueue,
   raiseWorktreeAheadActionQueue,
   resetDependentWorktreeToIntegration,
-  type BlockByFailureOutcome,
-  type BlockByFailureResult,
-  type BlockedDependentRow,
-  type FailStrandedOriginOutcome,
-  type FailStrandedOriginResult,
-  type PropagateRecoveryDoneResult,
-  type RecoverAllBlockedTasksResult,
-  type RecoverBlockedTaskOutcome,
-  type UnblockByTaskResult,
-  type UnblockOutcome,
+} from './lib/blocker-resolution-primitives'
+// Type-only: `no-circular` excludes type-only edges (they vanish at compile
+// time), so the aggregate may still name blocker-resolution's result shapes
+// without re-opening the `arc -> blocker-resolution -> queue -> arc` cycle.
+// Keep this import `import type` — widening it to a value import restores the
+// cycle (ADR-0101).
+import type {
+  BlockByFailureOutcome,
+  BlockByFailureResult,
+  BlockedDependentRow,
+  FailStrandedOriginOutcome,
+  FailStrandedOriginResult,
+  PropagateRecoveryDoneResult,
+  RecoverAllBlockedTasksResult,
+  RecoverBlockedTaskOutcome,
+  UnblockByTaskResult,
+  UnblockOutcome,
 } from './blocker-resolution'
 
 const execFileP = promisify(execFile)

@@ -28,7 +28,7 @@
 
 import type { EventEmitter } from 'node:events'
 import { hasIncompleteBlockers, listTasks, updateTask, type Task } from '../queue'
-import { CANCELLED_FAILURE_REASON } from '../blocker-resolution'
+import { CANCELLED_FAILURE_REASON } from '../lib/blocker-resolution-primitives'
 
 /** The in-flight statuses that a prior daemon can strand a task in. */
 export type RecoverablePhase = 'verifying' | 'merging' | 'running' | 'vega-reconciling'

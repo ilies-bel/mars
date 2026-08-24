@@ -230,7 +230,7 @@ export const coreRestartTask = async (
   const vcs = resolveVcs()
   const { getRepoRoot } = await import('../context')
   const { listUniqueCommitsAhead } = await import('../lib/sweep')
-  const { integrationBranchName } = await import('../blocker-resolution')
+  const { integrationBranchName } = await import('../lib/blocker-resolution-primitives')
 
   const branch = task.branch ?? `task/${task.id}`
   const repoRoot = getRepoRoot()

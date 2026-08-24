@@ -27,7 +27,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
-import { integrationBranchName } from '../blocker-resolution'
+import { integrationBranchName } from '../lib/blocker-resolution-primitives'
 import { createProposal } from '../proposals'
 import { enqueueTask, getTask, updateTask } from '../queue'
 import { ChatMcpManager, type McpToolInfo } from './chat-mcp'

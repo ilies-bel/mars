@@ -17,7 +17,7 @@ interface ArcModule {
 }
 
 interface BlockerResolutionModule {
-  ORPHANED_ORIGIN_FAILURE_REASON: typeof import('./blocker-resolution').ORPHANED_ORIGIN_FAILURE_REASON
+  ORPHANED_ORIGIN_FAILURE_REASON: typeof import('./lib/blocker-resolution-primitives').ORPHANED_ORIGIN_FAILURE_REASON
 }
 
 const setupRepo = (): string => {
@@ -37,7 +37,7 @@ const loadModules = async (
   const q = (await import('./queue')) as unknown as QueueModule
   await q.ensureQueueSchema()
   const arc = (await import('./arc')) as unknown as ArcModule
-  const br = (await import('./blocker-resolution')) as unknown as BlockerResolutionModule
+  const br = (await import('./lib/blocker-resolution-primitives')) as unknown as BlockerResolutionModule
   return { q, arc, br }
 }
 
