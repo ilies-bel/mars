@@ -1471,9 +1471,10 @@ const behaviourDodUnmetRecipe: FixRecipe = {
  * non-terminal `fixForTaskId`-linked row exists — which this very recovery
  * task always is, from the moment it starts running. Both refusals are
  * structural, not transient, so instructing the agent to "retry if it fails"
- * can never succeed; see the postmortem in
- * docs/knowledge/decisions (recovery-brief / in-flight-recovery-guard
- * contradiction, task mars-76d1123a).
+ * can never succeed. `coreContinueTask`'s refusal message
+ * (`src/core/daemon/continue-task.ts`) is the operator-facing half of this
+ * contract: it names the non-destructive escapes so `mars restart` — which
+ * would discard the verify-passed commits — is never the only way out.
  *
  * The wildcard suffix (`*`) matches every lastStep value the watchdog records
  * (e.g. `vega-supervisor`, `integration-gate`, `fast-forward-lock`, etc.) so
