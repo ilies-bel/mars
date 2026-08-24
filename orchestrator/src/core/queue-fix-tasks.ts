@@ -5,7 +5,7 @@ import {
 } from './lib/derive-repro-command'
 import { constants as fsConstants } from 'node:fs'
 import { access } from 'node:fs/promises'
-import { type FixRecipeContext, hasRecipe } from './lib/fix-recipes'
+import type { FixRecipeContext } from './lib/fix-recipes'
 import { raiseActionQueueItem } from './lib/action-queue'
 import type { ActionQueueKind } from './lib/action-queue-kinds'
 import { truncateFailure } from './lib/truncate-failure'
@@ -1522,24 +1522,19 @@ export const handleTaskFailureWithFixTask = async (
     outcome: result.created ? 'recovery-created' : 'recovery-reused',
   })
 
-  // No registered fix recipe → the Arc has no targeted recovery playbook, so
-  // offer a rescue-operator agent as a second opinion. `maybeSpawnRescueOperator`
-  // itself is the gate on redundancy: it no-ops whenever the arc already carries
-  // a non-terminal recovery/fix task — including the one `upsertFixTask` just
-  // created above — since that task's own in-flight-recovery guard already
-  // covers the arc and a parallel rescue could only ever no-op against it. A
-  // rescue therefore only actually spawns once every prior recovery attempt on
-  // this arc has gone terminal. Recipe-backed failures (hasRecipe = true) have
-  // a known playbook and must NOT trigger a rescue on their first attempt.
-  // Best-effort: a rescue spawn error must not block the blocked outcome.
-  if (!hasRecipe(failureSignature)) {
-    try {
-      await maybeSpawnRescueOperator({ failedTask: task, failureSignature, store: s })
-    } catch (rescueErr) {
-      // eslint-disable-next-line no-console
-      console.error('[rescue-operator] spawn failed (non-fatal):', rescueErr)
-    }
-  }
+  // No rescue-operator call here (deliberately removed — see
+  // rescue-operator-spawn.ts's header for the audit). `upsertFixTask` above
+  // always leaves a fix task in an in-flight status (created → 'queued';
+  // reused → `findExistingFixTask` only matches in-flight statuses), and
+  // `maybeSpawnRescueOperator`'s in-flight-recovery guard (`arcMembers.find`
+  // over `listArcMembers(originId)`) always finds that same row, since the
+  // fix task's `origin_id` is written from the source task's `originId` and
+  // its `fix_for_task_id` is never null. A rescue spawned here would
+  // therefore always no-op against the fix task `upsertFixTask` just
+  // created, so the call site was guaranteed dead code. Rescue coverage for
+  // the no-recipe path is unaffected: when that fix task itself later fails,
+  // the recovery-Chore-failure branch above (`task.fixForTaskId !== null`)
+  // still fires the rescue.
 
   return {
     outcome: 'blocked',

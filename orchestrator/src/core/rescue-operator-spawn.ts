@@ -97,7 +97,12 @@ export interface MaybeSpawnRescueOperatorResult {
  *
  * Call sites:
  *  - `queue-fix-tasks.ts` recovery-chore-failed branch (`task.fixForTaskId !== null`)
- *  - `queue-fix-tasks.ts` after upsertFixTask when `!hasRecipe(failureSignature)`
+ *
+ * (The no-recipe path in `queue-fix-tasks.ts`, after `upsertFixTask`, used to
+ * call this too, but that call was guaranteed dead: `upsertFixTask` always
+ * leaves an in-flight fix task visible to `listArcMembers(originId)`, which
+ * this function's in-flight-recovery guard below always matches. Removed —
+ * see the comment left in its place in `queue-fix-tasks.ts`.)
  *
  * No other code path should call `store.getArcRescueAttempts` or
  * `store.incrementArcRescueAttempts`.
