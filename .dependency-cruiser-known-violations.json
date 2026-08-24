@@ -188,43 +188,6 @@
   },
   {
     "type": "cycle",
-    "from": "orchestrator/src/core/blocker-resolution.ts",
-    "to": "orchestrator/src/core/queue-retry.ts",
-    "unresolvedTo": "./queue-retry",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-circular"
-    },
-    "cycle": [
-      {
-        "name": "orchestrator/src/core/queue-retry.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "orchestrator/src/core/arc.ts",
-        "dependencyTypes": [
-          "local",
-          "dynamic-import"
-        ]
-      },
-      {
-        "name": "orchestrator/src/core/blocker-resolution.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      }
-    ]
-  },
-  {
-    "type": "cycle",
     "from": "orchestrator/src/core/daemon/reconcilers.ts",
     "to": "orchestrator/src/core/daemon/startup-reconcile.ts",
     "unresolvedTo": "./startup-reconcile",
