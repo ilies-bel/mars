@@ -692,7 +692,9 @@ export const transferProposalBlockerToTask = async (
   }
   // Delegate to the blocker-edge module (ADR-0052 sole-writer for
   // task_blockers). transferProposalBlockerEdges re-runs the ADR-0040 leaf-node
-  // guard and builds the atomic INSERT+DELETE batch.
+  // guard and builds the atomic INSERT+DELETE batch. It takes the store
+  // explicitly (rather than resolving its own default) so arc/blockers.ts
+  // does not import store/task-store.ts at runtime.
   return transferProposalBlockerEdges(
     getDefaultDomainTaskStore(),
     dependents,

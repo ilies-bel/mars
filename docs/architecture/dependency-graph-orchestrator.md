@@ -2,7 +2,7 @@
 # Folder dependency graph — orchestrator + packages
 
 Collapsed to folder granularity (`^(orchestrator/src/[^/]+/[^/]+/|orchestrator/src/[^/]+/|orchestrator/[^/]+/|packages/[^/]+/src/[^/]+/|packages/[^/]+/[^/]+/|scripts/)`).
-1035 modules, 3434 dependencies.
+1434 modules, 5043 dependencies.
 
 ```mermaid
 flowchart LR
@@ -42,244 +42,458 @@ end
 subgraph N["agents"]
 O[" "]
 end
-subgraph P["daemon"]
+subgraph P["arc"]
 Q[" "]
 end
-subgraph R["lib"]
+subgraph R["archive"]
 S[" "]
 end
-subgraph T["mcp"]
+subgraph T["coder"]
 U[" "]
 end
-subgraph V["recipes"]
+subgraph V["config"]
 W[" "]
 end
-subgraph X["reflector"]
+subgraph X["daemon"]
 Y[" "]
 end
-subgraph Z["store"]
+subgraph Z["health"]
 10[" "]
 end
-subgraph 11["sweeper"]
+subgraph 11["levers"]
 12[" "]
 end
-subgraph 13["workers"]
+subgraph 13["lib"]
 14[" "]
 end
-end
-subgraph 15["ideas"]
+subgraph 15["mainthread"]
 16[" "]
 end
-subgraph 17["init"]
+subgraph 17["mcp"]
 18[" "]
-subgraph 19["__tests__"]
+end
+subgraph 19["ports"]
 1A[" "]
 end
-end
-subgraph 1B["internal-bus"]
+subgraph 1B["presence"]
 1C[" "]
 end
-subgraph 1D["mars-id"]
+subgraph 1D["recipes"]
 1E[" "]
 end
-subgraph 1F["outbox"]
+subgraph 1F["reflector"]
 1G[" "]
-subgraph 1H["__tests__"]
+end
+subgraph 1H["store"]
 1I[" "]
 end
-subgraph 1J["subscribers"]
+subgraph 1J["subject"]
 1K[" "]
 end
-end
-subgraph 1L["registry"]
+subgraph 1L["subscribers"]
 1M[" "]
 end
-subgraph 1N["stubs"]
+subgraph 1N["sweeper"]
 1O[" "]
 end
-subgraph 1P["test"]
+subgraph 1P["workers"]
 1Q[" "]
 end
-subgraph 1R["util"]
-1S[" "]
 end
-subgraph 1T["workflows"]
+subgraph 1R["eval"]
+1S[" "]
+subgraph 1T["__tests__"]
 1U[" "]
-subgraph 1V["__tests__"]
+end
+end
+subgraph 1V["growth"]
 1W[" "]
 end
-subgraph 1X["primitives"]
+subgraph 1X["ideas"]
 1Y[" "]
 end
-end
-end
-subgraph 1Z["test"]
+subgraph 1Z["init"]
 20[" "]
-end
-21["vitest.config.ts"]
-end
-subgraph 22["packages"]
-subgraph 23["claude-session"]
-subgraph 24["src"]
-25[" "]
-end
-subgraph 26["test"]
-27[" "]
-end
-28["tsup.config.ts"]
-end
-subgraph 29["workflow"]
-subgraph 2A["src"]
-2B[" "]
-end
-subgraph 2C["test"]
-2D[" "]
-end
-2E["tsup.config.ts"]
+subgraph 21["__tests__"]
+22[" "]
 end
 end
-subgraph 2F["scripts"]
+subgraph 23["internal-bus"]
+24[" "]
+end
+subgraph 25["mars-id"]
+26[" "]
+end
+subgraph 27["narration"]
+28[" "]
+end
+subgraph 29["outbox"]
+2A[" "]
+subgraph 2B["__tests__"]
+2C[" "]
+end
+subgraph 2D["subscribers"]
+2E[" "]
+end
+end
+subgraph 2F["registries"]
 2G[" "]
 end
-4-->S
+subgraph 2H["registry"]
+2I[" "]
+end
+subgraph 2J["test"]
+2K[" "]
+end
+subgraph 2L["tools"]
+2M[" "]
+subgraph 2N["coder"]
+2O[" "]
+end
+subgraph 2P["human"]
+2Q[" "]
+end
+subgraph 2R["merge"]
+2S[" "]
+end
+subgraph 2T["qa"]
+2U[" "]
+end
+subgraph 2V["report"]
+2W[" "]
+end
+subgraph 2X["verify"]
+2Y[" "]
+end
+end
+subgraph 2Z["util"]
+30[" "]
+end
+subgraph 31["workflows"]
+32[" "]
+subgraph 33["__tests__"]
+34[" "]
+end
+subgraph 35["lib"]
+36[" "]
+end
+subgraph 37["primitives"]
+38[" "]
+end
+end
+end
+subgraph 39["test"]
+3A[" "]
+end
+3B["vitest.config.ts"]
+end
+subgraph 3C["packages"]
+subgraph 3D["claude-session"]
+subgraph 3E["src"]
+3F[" "]
+end
+subgraph 3G["test"]
+3H[" "]
+end
+3I["tsup.config.ts"]
+end
+subgraph 3J["workflow"]
+subgraph 3K["src"]
+3L[" "]
+subgraph 3M["ctx"]
+3N[" "]
+end
+end
+subgraph 3O["test"]
+3P[" "]
+end
+3Q["tsup.config.ts"]
+3R["vitest.config.ts"]
+end
+end
+subgraph 3S["scripts"]
+3T[" "]
+end
+4-->14
 6-->C
 6-->G
 6-->K
-6-->S
-6-->1E
-8-->S
+6-->14
+6-->26
+8-->14
 8-->K
-8-->10
+8-->Y
+A-->3A
+A-->14
 A-->8
-A-->S
+A-->Y
 C-->K
-C-->Q
-C-->10
-C-->S
-C-->1M
+C-->Y
+C-->1I
+C-->14
+C-->2I
 C-->G
 E-->K
-E-->Q
-E-->10
+E-->Y
+E-->1I
 E-->G
 E-->C
-E-->S
+E-->14
+E-->10
 E-->4
 G-->C
-G-->Q
-G-->S
-G-->K
+G-->Y
 G-->10
 G-->14
+G-->K
+G-->1I
+G-->12
+G-->1Q
+G-->1S
 G-->I
-G-->18
+G-->20
 G-->6
-G-->1U
-G-->U
-G-->1Y
-K-->1U
-K-->S
-K-->10
-K-->1C
+G-->32
+G-->18
+G-->8
+G-->1A
+G-->38
+G-->3A
+G-->W
 K-->Q
-K-->O
-K-->8
 K-->14
-K-->18
+K-->1I
+K-->24
+K-->Y
+K-->O
+K-->1A
+K-->8
+K-->1Q
+K-->32
+K-->W
 K-->6
-K-->1Y
+K-->38
 M-->K
-M-->S
-M-->10
+M-->14
+M-->G
+M-->Y
+M-->1I
 M-->8
-M-->1U
-M-->Q
-O-->S
-Q-->S
-Q-->10
-Q-->K
+M-->32
+O-->10
+O-->14
+Q-->1I
 Q-->14
-Q-->1U
-Q-->8
-Q-->18
-Q-->1K
-Q-->1M
-Q-->O
-Q-->1G
-Q-->6
-S-->K
-S-->10
-S-->Q
+Q-->K
+Q-->24
+Q-->Y
 S-->8
+S-->2A
 S-->14
-S-->1U
-S-->1Y
-S-->O
-S-->1K
-S-->C
-U-->Q
-W-->S
-10-->K
-10-->S
-10-->16
-12-->S
+S-->3A
+U-->K
+U-->14
+W-->Y
+W-->1Q
+W-->14
+W-->C
+W-->K
+W-->1I
+Y-->14
+Y-->1I
+Y-->K
+Y-->1Q
+Y-->32
+Y-->8
+Y-->20
+Y-->2E
+Y-->2I
+Y-->36
+Y-->O
+Y-->S
+Y-->W
+Y-->1A
+Y-->16
+Y-->1C
+Y-->2A
+Y-->6
+10-->14
+10-->Y
+10-->G
+12-->Y
 12-->K
-12-->10
-14-->S
+14-->8
+14-->1I
+14-->1A
 14-->K
-14-->1Y
-16-->S
-16-->10
-16-->1E
-18-->K
-18-->S
-1A-->18
-1A-->S
-1A-->C
-1A-->K
-1A-->10
-1C-->1G
-1G-->Q
-1G-->S
-1G-->8
-1G-->1K
-1I-->8
-1I-->S
-1I-->1G
+14-->2G
+14-->Y
+14-->Q
+14-->1Q
+14-->W
+14-->32
+14-->38
+14-->2E
+14-->1K
+14-->O
+14-->3A
+14-->C
+14-->G
+14-->2Y
+16-->14
+18-->Y
+1A-->14
+1A-->W
+1A-->Y
+1A-->2M
+1A-->2Y
+1A-->32
+1A-->1Q
+1C-->8
+1C-->14
+1E-->14
+1I-->K
 1I-->Q
-1I-->1K
-1K-->8
-1K-->Q
+1I-->14
+1I-->1Y
 1K-->S
-1K-->10
-1K-->1G
+1K-->14
 1K-->K
-1K-->O
-1K-->W
-1Q-->S
-1U-->K
-1U-->Q
-1U-->S
-1U-->10
-1U-->14
-1U-->I
-1U-->18
-1U-->1M
-1U-->1Y
-1W-->S
-1W-->1U
-1W-->1Y
-1W-->Q
+1K-->1I
+1K-->8
+1K-->12
+1K-->2A
+1K-->Y
+1M-->8
+1M-->28
+1M-->14
+1M-->2A
+1M-->Y
+1O-->14
+1O-->K
+1O-->1I
+1Q-->14
+1Q-->1A
+1Q-->K
+1Q-->Y
+1Q-->38
+1S-->1A
+1U-->1S
+1W-->14
 1W-->K
-1W-->10
-1Y-->Q
-1Y-->S
-1Y-->K
+1W-->32
 1Y-->14
-1Y-->1U
-1Y-->10
-20-->4
-20-->S
-27-->25
-2D-->2B
+1Y-->1I
+1Y-->26
+20-->K
+20-->14
+20-->1I
+22-->20
+22-->C
+22-->K
+22-->14
+22-->1I
+22-->32
+24-->2A
+2A-->Y
+2A-->14
+2A-->8
+2A-->3A
+2A-->2E
+2C-->3A
+2C-->8
+2C-->14
+2C-->2A
+2C-->Y
+2C-->2E
+2E-->8
+2E-->Y
+2E-->14
+2E-->1I
+2E-->2A
+2E-->K
+2E-->O
+2E-->1E
+2E-->3A
+2G-->2Y
+2K-->14
+2M-->1A
+2M-->2O
+2M-->2Q
+2M-->2S
+2M-->2U
+2M-->2W
+2M-->2Y
+2M-->14
+2M-->K
+2M-->1I
+2O-->U
+2O-->K
+2O-->14
+2O-->1A
+2O-->1I
+2O-->1Q
+2O-->38
+2O-->2M
+2O-->36
+2Q-->2M
+2S-->K
+2S-->14
+2S-->1A
+2S-->1I
+2S-->38
+2S-->2M
+2U-->K
+2U-->14
+2U-->1I
+2U-->2M
+2W-->14
+2W-->K
+2W-->1I
+2W-->2M
+2Y-->14
+2Y-->8
+2Y-->K
+2Y-->Y
+2Y-->1A
+2Y-->1I
+2Y-->1Q
+2Y-->2G
+2Y-->38
+2Y-->2O
+2Y-->2M
+2Y-->2Q
+32-->I
+32-->K
+32-->20
+32-->2I
+32-->14
+32-->1I
+32-->1Q
+32-->Q
+32-->1A
+32-->38
+32-->1W
+34-->38
+34-->20
+34-->32
+34-->14
+34-->K
+34-->Y
+34-->1I
+38-->14
+38-->Y
+38-->1A
+38-->K
+38-->1Q
+38-->32
+38-->2M
+38-->1I
+3A-->14
+3A-->4
+3H-->3F
+3L-->3N
+3P-->3L
+3P-->3N
+3T-->W
 ```

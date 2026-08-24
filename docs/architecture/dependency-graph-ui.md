@@ -2,7 +2,7 @@
 # Folder dependency graph — ui
 
 Collapsed to folder granularity (`^(src/[^/]+/[^/]+/|src/[^/]+/|server/|scripts/)`).
-324 modules, 751 dependencies.
+399 modules, 983 dependencies.
 
 ```mermaid
 flowchart LR
@@ -11,148 +11,180 @@ subgraph 0["server"]
 1[" "]
 end
 subgraph 2["src"]
-subgraph 3["app"]
-4[" "]
+3["__val.mts"]
+subgraph 4["app"]
+5[" "]
 end
-5["bun-test-compat.ts"]
-subgraph 6["components"]
-7[" "]
-subgraph 8["ai-elements"]
-9[" "]
+6["bun-test-compat.ts"]
+subgraph 7["components"]
+8[" "]
+subgraph 9["ai-elements"]
+A[" "]
 end
-subgraph A["glossary"]
-B[" "]
+subgraph B["glossary"]
+C[" "]
 end
-subgraph C["ui"]
-D[" "]
-end
-end
-subgraph E["entities"]
-subgraph F["actionQueue"]
-G[" "]
-end
-subgraph H["alerts"]
-I[" "]
-end
-subgraph J["frameworkUpdate"]
-K[" "]
-end
-subgraph L["kpi"]
-M[" "]
-end
-subgraph N["notifications"]
-O[" "]
-end
-subgraph P["primitive"]
-Q[" "]
-end
-subgraph R["proposals"]
-S[" "]
-end
-subgraph T["stale-worktrees"]
-U[" "]
-end
-subgraph V["studio"]
-W[" "]
-end
-subgraph X["watchtower"]
-Y[" "]
+subgraph D["ui"]
+E[" "]
 end
 end
-subgraph Z["hooks"]
-10[" "]
+subgraph F["entities"]
+subgraph G["actionQueue"]
+H[" "]
 end
-subgraph 11["lib"]
-12[" "]
+subgraph I["alerts"]
+J[" "]
 end
-13["main.tsx"]
-subgraph 14["pages"]
+subgraph K["daemon"]
+L[" "]
+end
+subgraph M["frameworkUpdate"]
+N[" "]
+end
+subgraph O["kpi"]
+P[" "]
+end
+subgraph Q["notifications"]
+R[" "]
+end
+subgraph S["operator"]
+T[" "]
+end
+subgraph U["primitive"]
+V[" "]
+end
+subgraph W["proposals"]
+X[" "]
+end
+subgraph Y["stale-worktrees"]
+Z[" "]
+end
+subgraph 10["studio"]
+11[" "]
+end
+subgraph 12["watchtower"]
+13[" "]
+end
+end
+subgraph 14["hooks"]
 15[" "]
-subgraph 16["__fixtures__"]
+end
+subgraph 16["lib"]
 17[" "]
 end
-end
-subgraph 18["shared"]
-19[" "]
-subgraph 1A["notifications"]
-1B[" "]
-end
-end
-subgraph 1C["styles"]
-1D[" "]
-end
-subgraph 1E["widgets"]
-1F[" "]
-subgraph 1G["chat"]
-1H[" "]
+18["main.tsx"]
+subgraph 19["pages"]
+1A[" "]
+subgraph 1B["__fixtures__"]
+1C[" "]
 end
 end
+subgraph 1D["shared"]
+1E[" "]
+subgraph 1F["notifications"]
+1G[" "]
 end
-1-->19
-4-->7
-4-->G
-4-->S
-4-->10
-4-->15
-4-->1B
-4-->19
-4-->1F
-7-->19
-7-->K
-7-->D
-7-->1F
-9-->D
-9-->12
-B-->D
-B-->19
-D-->12
-G-->19
-G-->15
-K-->19
-M-->19
-S-->19
-U-->19
-W-->1F
-10-->19
-13-->1D
-13-->4
-13-->19
-15-->9
-15-->B
-15-->7
-15-->G
-15-->I
-15-->10
-15-->19
-15-->1H
-15-->1F
-15-->M
-15-->W
-15-->17
-19-->1H
-19-->Q
-19-->15
-19-->B
-19-->7
-1B-->G
-1B-->19
-1F-->7
-1F-->19
-1F-->M
-1F-->Y
-1F-->K
-1F-->Q
-1F-->W
-1F-->O
-1F-->U
-1F-->10
-1F-->I
-1F-->1H
-1H-->15
-1H-->19
-1H-->9
-1H-->7
-1H-->1F
-1H-->G
-1H-->10
+end
+subgraph 1H["styles"]
+1I[" "]
+end
+subgraph 1J["widgets"]
+1K[" "]
+subgraph 1L["__tests__"]
+1M[" "]
+end
+subgraph 1N["chat"]
+1O[" "]
+end
+subgraph 1P["primitives"]
+1Q[" "]
+end
+end
+end
+1-->1E
+3-->1E
+5-->8
+5-->E
+5-->X
+5-->15
+5-->1A
+5-->1G
+5-->1E
+5-->1K
+8-->1E
+8-->N
+8-->E
+A-->E
+A-->17
+C-->E
+C-->1E
+E-->17
+H-->1E
+H-->1A
+H-->1K
+H-->1O
+L-->1E
+N-->1E
+P-->1E
+T-->1E
+X-->1E
+Z-->1E
+11-->1E
+11-->1K
+13-->1E
+15-->1E
+18-->1I
+18-->5
+18-->1E
+1A-->8
+1A-->A
+1A-->C
+1A-->H
+1A-->X
+1A-->15
+1A-->1E
+1A-->1O
+1A-->E
+1A-->T
+1A-->1Q
+1A-->P
+1A-->1K
+1A-->L
+1A-->11
+1A-->1C
+1E-->1O
+1E-->V
+1E-->1K
+1E-->1A
+1E-->C
+1E-->8
+1G-->H
+1G-->1E
+1K-->8
+1K-->1E
+1K-->P
+1K-->13
+1K-->N
+1K-->T
+1K-->V
+1K-->11
+1K-->L
+1K-->H
+1K-->1A
+1K-->1O
+1K-->J
+1K-->Z
+1K-->15
+1M-->1K
+1M-->P
+1M-->1E
+1O-->1A
+1O-->1E
+1O-->A
+1O-->J
+1O-->8
+1O-->1K
+1O-->H
+1O-->L
+1O-->15
 ```
