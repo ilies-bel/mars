@@ -2,13 +2,14 @@
  * Acceptance tests for slice 12 of PRD
  * `6c93eb31-per-step-execution-mode-auto-manual-on-w`:
  *
- * - The bundled `workflow-author` skill exists at the expected path.
- * - It has the required SKILL frontmatter: `name: workflow-author` and a description.
+ * - The bundled `workflow` skill exists at the expected path.
+ * - It has the required SKILL frontmatter: `name: workflow` and a description.
  * - The skill body instructs the operator to run `mars workflow validate <kind>`
  *   after every edit.
- * - The skill body instructs to render with `mars workflow render <kind> --json`
- *   to confirm per-step execution modes.
- * - The skill references `runbook-workflow.js` as the starter template.
+ * - The skill body shows the rendered runbook (with per-step [auto]/[MANUAL]
+ *   modes) for user confirmation.
+ * - The skill references the bundled `task-workflow.js` / `live-workflow.js`
+ *   bases as starter templates.
  */
 
 import { existsSync, readFileSync } from 'node:fs'
@@ -25,11 +26,11 @@ const SKILL_PATH = resolve(
   'templates',
   'claude',
   'skills',
-  'workflow-author',
+  'workflow',
   'SKILL.md',
 )
 
-describe('workflow-author skill: bundled SKILL.md', () => {
+describe('workflow skill: bundled SKILL.md', () => {
   it('exists at the expected bundled path', () => {
     expect(existsSync(SKILL_PATH)).toBe(true)
   })
@@ -37,8 +38,8 @@ describe('workflow-author skill: bundled SKILL.md', () => {
   describe('frontmatter', () => {
     const content = readFileSync(SKILL_PATH, 'utf8')
 
-    it('declares name: workflow-author', () => {
-      expect(content).toMatch(/^name:\s+workflow-author\s*$/m)
+    it('declares name: workflow', () => {
+      expect(content).toMatch(/^name:\s+workflow\s*$/m)
     })
 
     it('has a non-empty description field', () => {
@@ -61,13 +62,14 @@ describe('workflow-author skill: bundled SKILL.md', () => {
       expect(content).toContain('mars workflow validate')
     })
 
-    it('instructs to run mars workflow render --json to confirm step modes', () => {
-      expect(content).toContain('mars workflow render')
-      expect(content).toContain('--json')
+    it('shows the rendered runbook so the user can confirm step modes', () => {
+      expect(content).toContain('rendered runbook')
+      expect(content).toContain('[MANUAL]')
     })
 
-    it('references runbook-workflow.js as the starter template', () => {
-      expect(content).toContain('runbook-workflow.js')
+    it('references the bundled workflow bases as starter templates', () => {
+      expect(content).toContain('task-workflow.js')
+      expect(content).toContain('live-workflow.js')
     })
 
     it('asks for a kind name (step 0)', () => {
