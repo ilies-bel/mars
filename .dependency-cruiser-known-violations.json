@@ -283,34 +283,6 @@
   {
     "type": "dependency",
     "from": "orchestrator/src/cli/commands/action-queue.ts",
-    "to": "orchestrator/src/core/health/routes/fix.ts",
-    "unresolvedTo": "../../core/health/routes/fix.js",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-cli-to-core"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "orchestrator/src/cli/commands/action-queue.ts",
-    "to": "orchestrator/src/core/lib/action-queue-kinds.ts",
-    "unresolvedTo": "../../core/lib/action-queue-kinds",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-cli-to-core"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "orchestrator/src/cli/commands/action-queue.ts",
     "to": "orchestrator/src/core/lib/action-queue.ts",
     "unresolvedTo": "../../core/lib/action-queue",
     "dependencyTypes": [

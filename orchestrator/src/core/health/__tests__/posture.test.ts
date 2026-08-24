@@ -18,9 +18,9 @@ import { createInMemoryPostureStore } from '../posture.js'
 import { createInMemoryAlertStore } from '../pass.js'
 import type { HealthPassDeps } from '../pass.js'
 import type { AlertRouteDeps } from '../routes/alert.js'
+import { routeFixFinding } from '../routes/fix.js'
 import type { FixRouteDeps } from '../routes/fix.js'
 import type { CheckDef } from '../registry.js'
-import { enactHealthOffer } from '../../../cli/commands/action-queue.js'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -258,7 +258,11 @@ describe('health check posture', () => {
 
       // Simulate the operator taking the offer
       const offer = raisedItems[0]!
-      const result = await enactHealthOffer(offer.params.offerPayload!, fixDeps)
+      const offerPayload = offer.params.offerPayload!
+      const result = await routeFixFinding(
+        { findingKey: offerPayload.findingKey, detail: offerPayload.detail, checkId: offerPayload.checkId },
+        fixDeps,
+      )
 
       // One task enqueued — the same task the automatic path would have created
       expect(result.action).toBe('enqueued')

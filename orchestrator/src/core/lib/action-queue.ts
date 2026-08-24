@@ -10,6 +10,11 @@ import { classifyMarsVerb } from './chat-mars-verbs'
 import { isActionQueueKind, type ActionQueueKind } from './action-queue-kinds'
 import type { PayloadFor, UnauditedPayload } from './action-queue-payloads'
 
+// Re-exported so callers that already import from this module don't need a
+// separate action-queue-kinds import, keeping the cli/ adapter boundary at
+// 1 import statement per boundary crossing (ADR-0056 / cli-no-orchestrator-internals).
+export { ACTION_QUEUE_KINDS, isActionQueueKind } from './action-queue-kinds'
+
 /** Idempotent PostgreSQL schema bootstrap retained for existing callers. */
 export const initActionQueue = async (): Promise<void> => {
   const { ensureSchema } = await import('./pg-schema.js')
