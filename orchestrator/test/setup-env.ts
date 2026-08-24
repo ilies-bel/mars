@@ -41,6 +41,17 @@ process.env.MARS_DB_BACKEND = 'pglite'
 // in SQLite syntax. Production code never sets this flag.
 process.env.MARS_DB_SQLITE_FIXTURE_COMPAT = '1'
 
+// MARS_TEST_SEMAPHORE=inproc — force core/lib/semaphore.ts's acquire/release
+// into an in-process mock for the whole suite, so any test that reaches it
+// through a real code path (rather than mocking '../semaphore' at the module
+// level, as dev-server.test.ts and behaviour-verify-browser.test.ts already
+// do) can never contend for, block on, or time out waiting on the real
+// user-level lock at ~/.claude/semaphores/. A caller that explicitly passes
+// `binPath`/`env` opts back out of the mock (see semaphore.ts's
+// usesInProcMock) — that is how semaphore.test.ts's real-binary round trip,
+// sandboxed to its own temp SEM_ROOT, keeps exercising the genuine binary.
+process.env.MARS_TEST_SEMAPHORE = 'inproc'
+
 // MARS_PROJECTS_FILE — redirect the project registry away from the developer's
 // real ~/.mars/projects.json. Without this, every daemon or UI server boot
 // inside a mkdtempSync temp repo writes a permanent row into the registry,

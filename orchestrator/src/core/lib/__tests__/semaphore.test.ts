@@ -1,9 +1,12 @@
 /**
  * Tests for the semaphore.ts wrapper around `~/.claude/bin/sem.mjs`.
  *
- * Two boundaries are covered:
+ * Three boundaries are covered:
  *  - The degrade-to-no-op path when the binary is absent (a fabricated
  *    nonexistent binPath — must not throw, must return a null token).
+ *  - The MARS_TEST_SEMAPHORE=inproc mock (what test/setup-env.ts sets for the
+ *    whole vitest suite) and its opt-out via an explicit binPath/env — the
+ *    seam that keeps every *other* suite off the real machine-global lock.
  *  - A real round trip against the actual sem.mjs binary, sandboxed to a
  *    temp SEM_ROOT so it never touches the operator's real
  *    ~/.claude/semaphores state. Skipped automatically when the binary
@@ -41,6 +44,68 @@ describe('acquireSemaphore — degrade to no-op when the binary is absent', () =
     })
     // Must resolve cleanly — nothing was ever held, nothing to release.
     await expect(releaseSemaphore(permit)).resolves.toBeUndefined()
+  })
+})
+
+describe('acquireSemaphore — in-process mock (MARS_TEST_SEMAPHORE=inproc)', () => {
+  const ORIGINAL = process.env.MARS_TEST_SEMAPHORE
+
+  afterEach(() => {
+    if (ORIGINAL === undefined) delete process.env.MARS_TEST_SEMAPHORE
+    else process.env.MARS_TEST_SEMAPHORE = ORIGINAL
+  })
+
+  it('grants a permit immediately without touching the binary when no binPath/env override is passed', async () => {
+    process.env.MARS_TEST_SEMAPHORE = 'inproc'
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const permit = await acquireSemaphore('inproc-resource', { holder: 'test-holder' })
+      expect(permit.resource).toBe('inproc-resource')
+      expect(permit.token).not.toBeNull()
+      // Never touched sem.mjs, so none of its warn paths (missing binary,
+      // wait-elapsed holder line) were reached.
+      expect(warnSpy).not.toHaveBeenCalled()
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it('releaseSemaphore on an in-process mock permit is a no-op', async () => {
+    process.env.MARS_TEST_SEMAPHORE = 'inproc'
+    const permit = await acquireSemaphore('inproc-resource', { holder: 'test-holder' })
+    await expect(releaseSemaphore(permit)).resolves.toBeUndefined()
+  })
+
+  it('opts out of the mock when the caller explicitly passes binPath, even with the flag set', async () => {
+    process.env.MARS_TEST_SEMAPHORE = 'inproc'
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const permit = await acquireSemaphore('browser', {
+        holder: 'test-holder',
+        binPath: '/definitely/does/not/exist/sem.mjs',
+      })
+      // Fell through to the real (missing-binary degrade) path, not the
+      // mock: the mock always grants a non-null token, this must be null.
+      expect(permit.token).toBeNull()
+      expect(permit.binPath).toBe('/definitely/does/not/exist/sem.mjs')
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it('does not apply when MARS_TEST_SEMAPHORE is unset', async () => {
+    delete process.env.MARS_TEST_SEMAPHORE
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const permit = await acquireSemaphore('browser', {
+        holder: 'test-holder',
+        binPath: '/definitely/does/not/exist/sem.mjs',
+      })
+      expect(permit.token).toBeNull()
+      expect(permit.binPath).toBe('/definitely/does/not/exist/sem.mjs')
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 })
 
