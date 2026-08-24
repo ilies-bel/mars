@@ -2904,14 +2904,26 @@ export const registerRoutes = (
 
     // POST /step/done/:id — complete the current manual step of a live task.
     // Idempotent: if the task has already advanced past awaiting-human, returns
-    // {ok:true,next:null} without mutating anything.
+    // {ok:true,next:null,degraded:false,anchorRef:null} without mutating anything.
+    // `degraded`/`anchorRef` mirror the CLI's `mars step done` surface: when
+    // `degraded` is true the step closed via the Path 2 re-queue fallback
+    // (the daemon restarted between park and this call) rather than resuming
+    // the in-process workflow, and `anchorRef` — when non-null — names the
+    // branch-tip ref anchored as a precaution before re-queuing.
     {
       const stepDoneMatch = req.url?.match(/^\/step\/done\/([^/?]+)(?:\?.*)?$/)
       if (stepDoneMatch && stepDoneMatch[1]) {
         const id = decodeURIComponent(stepDoneMatch[1])
         deps
           .stepDone(id)
-          .then(({ next }) => sendJson(res, 200, { ok: true, next }))
+          .then(({ next, degraded, anchorRef }) =>
+            sendJson(res, 200, {
+              ok: true,
+              next,
+              degraded: degraded ?? false,
+              anchorRef: anchorRef ?? null,
+            }),
+          )
           .catch((err: unknown) => sendError(res, err))
         return
       }

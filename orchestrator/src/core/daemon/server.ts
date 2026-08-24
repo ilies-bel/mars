@@ -5419,7 +5419,9 @@ export const startDaemon = async (
         }),
       )
     },
-    stepDone: async (id: string): Promise<{ next: string | null }> => {
+    stepDone: async (
+      id: string,
+    ): Promise<{ next: string | null; degraded: boolean; anchorRef: string | null }> => {
       const task = await getTask(id)
       if (!task) {
         throw Object.assign(new Error(`task ${id} not found`), {
@@ -5435,7 +5437,7 @@ export const startDaemon = async (
         task.status === 'merging' ||
         task.status === 'done'
       ) {
-        return { next: null }
+        return { next: null, degraded: false, anchorRef: null }
       }
       if (task.status !== 'awaiting-human') {
         throw Object.assign(
@@ -5451,8 +5453,15 @@ export const startDaemon = async (
           { code: 'WRONG_STATUS' as const },
         )
       }
-      await handleStepDone(id)
-      return { next: null }
+      // Forward handleStepDone's degraded/anchorRef result instead of
+      // discarding it (mars-c19ec2cf) — this is the resolver the action
+      // queue / `mars ui` calls when an operator resolves an
+      // `awaiting-human` row from the UI, and it must not report the same
+      // undifferentiated success as a Path 2 re-queue fallback (see
+      // handleStepDone's comment above, and mars-a98bec46 which fixed the
+      // equivalent CLI surface in `mars step done`).
+      const { degraded, anchorRef } = await handleStepDone(id)
+      return { next: null, degraded, anchorRef }
     },
     snoozeItem: async (id: string, until: string) => {
       const { snoozeActionQueueItem } = await import('../lib/action-queue')

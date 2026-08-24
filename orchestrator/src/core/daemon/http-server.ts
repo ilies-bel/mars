@@ -498,8 +498,18 @@ export interface HttpServerDeps {
    * `{next: null}` without mutating anything. Throws with `code='NOT_FOUND'`
    * when the task does not exist, or `code='WRONG_STATUS'` when it is in a
    * terminal or incompatible state.
+   *
+   * `degraded`/`anchorRef` mirror the CLI's `mars step done` surface (see
+   * `handleStepDone` in server.ts): `degraded: true` means the step closed
+   * via the Path 2 re-queue fallback (the daemon restarted between park and
+   * this call) rather than resuming the in-process workflow, and
+   * `anchorRef` — when non-null — names the branch-tip ref the fallback
+   * anchored as a precaution before re-queuing. Both are optional so
+   * existing stubs that only return `{next: null}` keep type-checking.
    */
-  stepDone: (id: string) => Promise<{ next: string | null }>
+  stepDone: (
+    id: string,
+  ) => Promise<{ next: string | null; degraded?: boolean; anchorRef?: string | null }>
   /**
    * Snooze an action-queue item until the given ISO-8601 timestamp.
    * While snoozed the item is excluded from the open view and chat segments.
