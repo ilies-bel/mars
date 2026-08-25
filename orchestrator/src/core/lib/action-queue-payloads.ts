@@ -56,6 +56,7 @@ export type {
 
 import type { AwaitingHumanContracts } from './payload-contracts/awaiting-human'
 import type { GateEnrichmentContracts } from './payload-contracts/gate-enrichment'
+import type { SliceWorkflowContracts } from './payload-contracts/slice-workflow'
 
 // ── Shared shapes ─────────────────────────────────────────────────────────────
 
@@ -74,7 +75,7 @@ export type UnauditedPayload = Record<string, unknown>
  * Kinds with a hand-written payload contract. Everything else is unaudited.
  * Each family adds exactly one intersection term here.
  */
-type AuditedPayloads = AwaitingHumanContracts & GateEnrichmentContracts
+type AuditedPayloads = AwaitingHumanContracts & GateEnrichmentContracts & SliceWorkflowContracts
 
 /**
  * The payload type for one action-queue kind.
@@ -129,9 +130,9 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'coder-question': 'unaudited',
   'prerequisite-failed': 'unaudited',
   'draft-proposal': 'unaudited',
-  'slices-dropped': 'unaudited',
-  'slice-failed': 'unaudited',
-  'hitl-slice-needs-operator': 'unaudited',
+  'slices-dropped': 'typed',
+  'slice-failed': 'typed',
+  'hitl-slice-needs-operator': 'typed',
   'awaiting-validation': 'unaudited',
   'awaiting-validation-preview-gone': 'unaudited',
   'behaviour-unverified': 'unaudited',
@@ -214,10 +215,6 @@ export type UnauditedKindFamily =
  * the list is empty" does.
  */
 export const UNAUDITED_KIND_FAMILY = {
-  'slices-dropped': 'slice-workflow',
-  'slice-failed': 'slice-workflow',
-  'hitl-slice-needs-operator': 'slice-workflow',
-
   'awaiting-validation': 'validation-qa',
   'awaiting-validation-preview-gone': 'validation-qa',
   'behaviour-unverified': 'validation-qa',

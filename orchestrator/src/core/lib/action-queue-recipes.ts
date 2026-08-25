@@ -471,8 +471,8 @@ const RECIPE_DEFINITIONS = {
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
-      droppedSlices: ctx.payload['droppedSlices'],
-      reason: str(ctx.payload['reason']),
+      droppedCount: ctx.payload['droppedCount'],
+      survivorCount: ctx.payload['survivorCount'],
     }),
     verbs: [],
   },
@@ -496,8 +496,8 @@ const RECIPE_DEFINITIONS = {
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
-      sliceId: str(ctx.payload['sliceId']),
-      instructions: str(ctx.payload['instructions']),
+      sliceIndex: ctx.payload['sliceIndex'],
+      subTaskId: ctx.payload['subTaskId'],
     }),
     verbs: [],
   },
