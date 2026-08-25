@@ -91,9 +91,9 @@ describe('buildActionQueueView — failed-task row', () => {
     expect(row.entityId).toBe('task-1')
     expect(row.priority).toBe('high')
     // With failureSignature: null the registry can only produce the generic
-    // label, so the raiser's persisted copy is kept — and tagged with the
-    // failed task's id so the row is still identifiable.
-    expect(row.title).toBe('Task failed [task task-1]')
+    // label, so the raiser's persisted copy is kept unchanged. The [task …]
+    // suffix is no longer appended — arcGoal carries the disambiguating context.
+    expect(row.title).toBe('Task failed')
     expect(row.body).toBe('Some error occurred')
     expect(row.errorKind).toBe('failed-task')
     expect(row.staleWorktreeDetail).toBeNull()
@@ -776,6 +776,7 @@ describe('GET /view/action-queue via HTTP server', () => {
             humanSummary: 'Test alert',
             humanDetail: {},
             verbs: [],
+            arcGoal: null,
             class: 'decision',
             noticeKey: null,
             recoveryExhausted: false,

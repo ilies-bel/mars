@@ -25,7 +25,6 @@ import {
   type RecipeVerb,
 } from '../../lib/action-queue-recipes'
 import { isActionQueueKind, classifyKind, KIND_CLASS, DERIVED_KINDS, type ActionQueueKind, type ActionQueueClass } from '../../lib/action-queue-kinds'
-import { shortId } from '../../lib/short-id'
 import type { DispatchPauseState } from '../pause-state'
 
 /**
@@ -171,14 +170,20 @@ export interface ActionQueueRow {
    */
   verbs: RecipeVerb[]
   /**
-   * The main intent of the arc that raised this action-queue item. For origin
-   * failed-task rows, this is the task's own prompt (truncated to 80 chars).
-   * For recovery/fix task rows, this is the origin task's prompt so the
-   * operator sees what was being attempted, not just that recovery failed.
-   * Null on non-task-backed rows (stale-worktree, draft-proposal, etc.) and
-   * when the referenced task cannot be found.
+   * Operator-facing goal sentence for this action-queue card — the primary
+   * headline in the inverted card hierarchy (§7). For origin failed-task rows,
+   * derived from the task's own `intent` (preferred) or `prompt`. For
+   * recovery/fix task rows, derived from the **origin** task's intent/prompt
+   * so the operator sees what was being attempted, not just that recovery
+   * failed. Null on non-task-backed rows (stale-worktree, draft-proposal, etc.)
+   * and when the referenced task cannot be found.
+   *
+   * Required (not optional): the daemon always populates this field. Callers
+   * that assemble synthetic rows (e.g. the daemon-killed batch row) set it to
+   * null explicitly. Consumer slices may refine the derivation algorithm but
+   * must never drop the field.
    */
-  arcGoal?: string | null
+  arcGoal: string | null
   /**
    * Live preview URL for an `awaiting-human` manual-QA row. Present when the
    * `review(ctx, { reviewType: 'manual' })` primitive successfully spawned a
@@ -722,12 +727,6 @@ export const getActionQueueEntityId = (row: PersistedActionQueueRow): string => 
 }
 
 /**
- * Append ` [task <id8>]` to a purpose-built title when the row is backed by a
- * task and does not already name it, so two rows of the same kind stay
- * distinguishable. Non-task-backed rows (daemon-code-drift, signature-storm)
- * are returned untouched — their entity id is not a task id.
- */
-/**
  * The persisted kinds that ARE a task's structured failure row, and whose
  * operator copy therefore belongs to the failure-kind registry rather than to
  * whoever raised the row. Every other kind that lands in the `failed-task`
@@ -737,14 +736,6 @@ const REGISTRY_TITLED_KINDS: ReadonlySet<string> = new Set([
   'failed',
   'daemon-killed',
 ])
-
-const tagWithTask = (title: string, taskId: string | null): string => {
-  if (taskId === null || taskId.length === 0) return title
-  // `shortId`, not a slice — see its doc comment. A slice rendered two
-  // different recovery drops as the identical `[task mars-bff]`.
-  const short = shortId(taskId)
-  return title.includes(short) ? title : `${title} [task ${short}]`
-}
 
 /**
  * Derive the operator-facing title and body of a row that lands in the
@@ -781,12 +772,14 @@ const failedRowCopy = (
     row.title.trim().length === 0 || isGenericFailureLabel(row.title)
 
   // Keep the raiser's copy unless it says nothing the derived copy would not.
+  // The [task mars-…] suffix is intentionally absent: arcGoal now serves as
+  // the operator-facing headline that disambiguates rows of the same kind.
   if (
     !REGISTRY_TITLED_KINDS.has(row.kind) ||
     (signature === null && !persistedIsGeneric)
   ) {
     return {
-      title: tagWithTask(row.title, task === undefined ? null : entityId),
+      title: row.title,
       body: row.body,
     }
   }
@@ -1530,6 +1523,8 @@ export const buildActionQueueView = async ({
       diagnosis: null,
       failureReasonCode: null,
       recoveryExhausted: false,
+      // Synthetic aggregate row — no single arc goal applies.
+      arcGoal: null,
       class: 'alert',
       noticeKey: null,
       humanSummary: daemonKilledRecipe.humanSummary(batchRecipeCtx),

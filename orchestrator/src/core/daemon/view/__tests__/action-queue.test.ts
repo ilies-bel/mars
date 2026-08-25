@@ -290,7 +290,8 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
   it('keeps a purpose-built persisted title on a failed row with no signature', async () => {
     // The merge-preflight raiser writes specific operator copy. With no
     // structured signature the registry can only produce the generic label,
-    // so the raiser's title must survive — only the task tag is added.
+    // so the raiser's title must survive unchanged. The [task …] suffix is no
+    // longer appended — arcGoal carries the disambiguating context.
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeRow({ title: 'Merge blocked: main has uncommitted changes' }),
@@ -300,9 +301,7 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe(
-      'Merge blocked: main has uncommitted changes [task task-1]',
-    )
+    expect(rows[0]!.title).toBe('Merge blocked: main has uncommitted changes')
     expect(rows[0]!.body).toBe('Legacy persisted body')
   })
 })
@@ -359,7 +358,8 @@ describe('buildActionQueueView — non-failure kinds keep their raiser copy', ()
     expect(rows[0]!.title).not.toContain('dispatch is paused')
   })
 
-  it('a task-backed non-failure kind is tagged with its task but not retitled', async () => {
+  it('a task-backed non-failure kind keeps its raiser title without a task suffix', async () => {
+    // [task …] suffix is no longer appended — arcGoal carries the context.
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeRow({
@@ -375,7 +375,7 @@ describe('buildActionQueueView — non-failure kinds keep their raiser copy', ()
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe('Re-queue ceiling exceeded [task task-1]')
+    expect(rows[0]!.title).toBe('Re-queue ceiling exceeded')
   })
 
   it('non-failed-task rows (stale-worktree) still use the persisted title/body', async () => {

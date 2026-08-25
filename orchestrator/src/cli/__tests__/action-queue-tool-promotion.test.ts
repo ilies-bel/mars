@@ -279,6 +279,7 @@ const makeToolPromotionRow = (
   humanDetail: { helperKey: detail.helperKey },
   verbs: [],
   toolPromotionDetail: detail,
+  arcGoal: null,
   class: 'decision',
   noticeKey: null,
   recoveryExhausted: false,
