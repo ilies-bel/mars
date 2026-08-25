@@ -20,6 +20,8 @@
  * verifies every declared consumer reference actually exists in the codebase.
  */
 
+import { existsSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   loadDaemonConfig,
   readAutotuneMaxImplement,
@@ -27,6 +29,7 @@ import {
   readLeverAutonomyLevel,
   readPersistedPaused,
 } from '../daemon/config'
+import { getStateDir } from '../context'
 import { STEWARD_RUNTIME_TUNE_LEVER } from './conversation-copy'
 import { readBudgetConfig } from './spend-meter'
 
@@ -234,21 +237,27 @@ const REGISTRY: LeverRegistryEntry[] = [
   },
   {
     id: 'workflow.steps',
-    label: 'Workflow step definitions (user-owned .mars/workflows/*.js files)',
+    label: 'User-owned workflow step definitions',
     family: 'workflow',
     scope: 'per-workflow',
     // Workflow definitions live in `.mars/workflows/<name>.js` — user-owned files
-    // that the operator can author and edit. The sentinel here reflects that there
-    // is no single "current value" persisted in daemon.json; the consumer slice
-    // "Fix workflow.steps lever readCurrent and metadata" will improve this to
-    // enumerate the actual workflow files on disk.
-    readCurrent: () => '(see .mars/workflows/*.js — user-owned, editable)',
+    // that the operator can author and edit. Returns a comma-separated list of
+    // kind names derived from filenames (stripping the `-workflow.js` suffix), or
+    // '(none)' when the directory is empty or absent.
+    readCurrent: () => {
+      const dir = join(getStateDir(), 'workflows')
+      if (!existsSync(dir)) return '(none)'
+      const kinds = readdirSync(dir)
+        .filter((n) => n.endsWith('.js'))
+        .map((n) => n.replace(/-workflow\.js$/, ''))
+      return kinds.length > 0 ? kinds.join(', ') : '(none)'
+    },
     allowedValues: { type: 'freeform' },
     // Workflow step definitions live in .mars/workflows/<name>.js. The
-    // `mars workflow author <name> --from <-|path>` command creates or revises
-    // a workflow definition as an agent-authored draft (body via stdin or file),
-    // which must then be approved with `mars workflow approve <name>` before it
-    // becomes dispatch-eligible.
+    // `mars workflow author <name> --from <-|path>` command creates (create-only;
+    // refuses to overwrite) a workflow definition as an agent-authored draft
+    // (body via stdin or file), which must then be approved with
+    // `mars workflow approve <name>` before it becomes dispatch-eligible.
     gesture: 'mars workflow author <name> --from <-|path>',
     appliesWithoutRestart: true,
     // The real consumer of workflow step definitions is the workflow loader —

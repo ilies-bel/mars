@@ -384,6 +384,36 @@ describe('readCurrent() against seeded daemon.json', () => {
       expect(current, `${e.id}: expected sentinel`).toContain('per-task')
     }
   })
+
+  it('workflow.steps readCurrent returns (none) when .mars/workflows/ is absent', () => {
+    // No workflows directory created — just the bare .mars dir from beforeEach
+    const e = loadLeverRegistry().find((x) => x.id === 'workflow.steps')!
+    const current = e.readCurrent()
+    expect(typeof current).toBe('string')
+    expect(current).not.toBe('(see .mars/workflows/*.js)')
+    expect(current).toBe('(none)')
+    expect(e.label).toContain('User-owned')
+  })
+
+  it('workflow.steps readCurrent lists kind names from .mars/workflows/*.js filenames', () => {
+    mkdirSync(join(tmpDir, '.mars', 'workflows'), { recursive: true })
+    writeFileSync(join(tmpDir, '.mars', 'workflows', 'custom-workflow.js'), '// stub')
+    writeFileSync(join(tmpDir, '.mars', 'workflows', 'report-workflow.js'), '// stub')
+    const e = loadLeverRegistry().find((x) => x.id === 'workflow.steps')!
+    const current = e.readCurrent()
+    expect(typeof current).toBe('string')
+    expect(current).not.toBe('(see .mars/workflows/*.js)')
+    // Both kinds should appear in the comma-separated list
+    expect(current).toContain('custom')
+    expect(current).toContain('report')
+  })
+
+  it('workflow.steps readCurrent returns (none) when directory exists but has no .js files', () => {
+    mkdirSync(join(tmpDir, '.mars', 'workflows'), { recursive: true })
+    writeFileSync(join(tmpDir, '.mars', 'workflows', 'README.md'), '# Workflows')
+    const e = loadLeverRegistry().find((x) => x.id === 'workflow.steps')!
+    expect(e.readCurrent()).toBe('(none)')
+  })
 })
 
 describe('noGestureEntries()', () => {
