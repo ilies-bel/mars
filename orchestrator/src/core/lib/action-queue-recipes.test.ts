@@ -275,20 +275,20 @@ describe('compound verb mapping', () => {
     expect(verbs[0]).toMatchObject({ op: 'dismiss-daemon-died', label: 'Dismiss', style: 'primary' })
   })
 
-  it('gate-broken offers a restore-gate primary verb', () => {
+  it('gate-broken offers a gate-restore primary verb', () => {
     const recipe = lookupRecipe('gate-broken')
     const ctx = makeCtx({ kind: 'gate-broken', payload: { gate: 'gate-abc123' } })
     const verbs = getRecipeVerbs(recipe, ctx)
     const primary = verbs.find((v) => v.style === 'primary')
-    expect(primary).toMatchObject({ op: 'restore-gate', label: 'Restore gate' })
+    expect(primary).toMatchObject({ op: 'gate-restore', label: 'Restore gate' })
   })
 
   it('every gate-broken verb op is one the daemon actually handles', () => {
-    // restore-gate POSTs to /actions/restore-gate/:id — the handler runs the
+    // gate-restore POSTs to /actions/gate-restore/:id — the handler runs the
     // gate's command asynchronously via restoreVerifyGate (app-service).
     const recipe = lookupRecipe('gate-broken')
     const ctx = makeCtx({ kind: 'gate-broken', payload: { gate: 'gate-abc123' } })
-    const handled = new Set(['restore-gate', 'dismiss', 'snooze'])
+    const handled = new Set(['gate-restore', 'dismiss', 'snooze'])
     for (const verb of getRecipeVerbs(recipe, ctx)) {
       expect(handled).toContain(verb.op)
     }
