@@ -402,6 +402,55 @@ const buildRecoveryEscalationBody = (input: {
     .join('\n')
 }
 
+/**
+ * Structured output captured from a failing test run, parsed by the verify
+ * step before calling {@link handleTaskFailureWithFixTask}.
+ *
+ * When passed via {@link HandleTaskFailureViaTaskInput.verifyTestOutput}, the
+ * handler serialises this into the source task's `recovery_payload` column so
+ * the fix-task brief can include precise reproduction context (file path, test
+ * name, assertion diff) without re-parsing the stored `error` column.
+ *
+ * Consumed by:
+ *   - "Persist verify test output into recovery_payload on the source task"
+ *     — writes this blob to `tasks.recovery_payload` via `updateTask`.
+ */
+export interface VerifyTestOutput {
+  /** Worktree-relative path of the failing test file. */
+  testFile: string
+  /** Full test name as reported by the test runner (suite + case). */
+  testName: string
+  /** Assertion message / diff as printed by the runner. */
+  assertionOutput: string
+  /** Full raw stdout+stderr of the failing test-runner invocation. */
+  rawOutput: string
+}
+
+/**
+ * Result of probing the failing test against the integration branch, computed
+ * by the caller before invoking {@link handleTaskFailureWithFixTask}.
+ *
+ * When `failsOnMain` is true the test was ALREADY broken on the integration
+ * branch — the failure is a pre-existing baseline regression, not a
+ * regression authored by this task.  In that case the handler returns
+ * `'baseline-failure'` and does NOT spawn a fix task, preserving the
+ * code-recovery slot for a genuine task-authored regression.
+ *
+ * Consumed by:
+ *   - "Probe failing test against main before spawning fix task"
+ *     — executes the probe and passes the result here.
+ */
+export interface BaselineProbeResult {
+  /** Whether the same test file also fails on the integration branch. */
+  failsOnMain: boolean
+  /** The exact command executed to probe the integration branch. */
+  probeCommand: string
+  /** Exit code returned by the probe run (0 = all tests pass, non-zero = fail). */
+  exitCode: number
+  /** Captured stdout+stderr from the probe invocation (may be truncated). */
+  output: string
+}
+
 export interface HandleTaskFailureViaTaskInput {
   taskId: string
   failingStep: string
@@ -444,6 +493,26 @@ export interface HandleTaskFailureViaTaskInput {
    * env override.
    */
   levers?: ControlLevers
+  /**
+   * Structured test output parsed by the verify step from the test runner's
+   * output.  When present and the step is a test-assertion failure, the
+   * handler persists this data in the source task's `recovery_payload` column
+   * so the fix-task brief can include precise reproduction context without
+   * re-parsing the `error` column.
+   *
+   * Produced by the "Persist verify test output" slice; see {@link VerifyTestOutput}.
+   */
+  verifyTestOutput?: VerifyTestOutput | null
+  /**
+   * Pre-computed result of probing the failing test against the integration
+   * branch.  When `failsOnMain` is true the failure is a pre-existing
+   * baseline regression and the handler returns `'baseline-failure'` without
+   * consuming the code-recovery slot.
+   *
+   * Produced by the "Probe failing test against main" slice; see
+   * {@link BaselineProbeResult}.
+   */
+  baselineProbeResult?: BaselineProbeResult | null
 }
 
 export interface HandleTaskFailureViaTaskResult {
@@ -464,6 +533,16 @@ export interface HandleTaskFailureViaTaskResult {
      * `supersedingTaskId` names that task.
      */
     | 'superseded-on-context-exhaustion'
+    /**
+     * The failing test was also failing on the integration branch at the time
+     * this task branched — it is a pre-existing baseline regression, NOT
+     * authored by this task.  No fix-task was spawned; the code-recovery slot
+     * is preserved.  An action-queue item is raised for operator attention.
+     *
+     * Set only when {@link HandleTaskFailureViaTaskInput.baselineProbeResult}
+     * is provided with `failsOnMain: true`.
+     */
+    | 'baseline-failure'
   fixTaskId?: string
   failureSignature?: string
   recoverySpawnedCount?: number
@@ -1591,6 +1670,89 @@ export const handleTaskFailureWithFixTask = async (
       }
     } catch {
       // Fail open: any git or import error — use the stored text unchanged.
+    }
+  }
+
+  // ── Persist structured test output into recovery_payload (PRD 3b00ccd0) ────
+  // When the caller provides parsed test output, write it into the source
+  // task's `recovery_payload` column so the fix-task brief can include
+  // precise reproduction context (file path, test name, assertion diff)
+  // without re-parsing the potentially-truncated `error` column.
+  //
+  // This write happens ONLY at the point where a fix task is about to be
+  // spawned — every earlier-returning path (environmental restart, non-code
+  // re-queue, budget gate, etc.) exits before reaching here, so the payload
+  // is never persisted for failures that do not produce a fix task.
+  //
+  // Implemented by: "Persist verify test output into recovery_payload on the
+  // source task" (consumer slice of PRD 3b00ccd0).
+  if (input.verifyTestOutput != null) {
+    await updateTask(
+      input.taskId,
+      { recoveryPayload: JSON.stringify(input.verifyTestOutput) },
+      s,
+    )
+  }
+
+  // ── Baseline probe gate (PRD 3b00ccd0) ────────────────────────────────────
+  // When the caller has already probed the failing test against the
+  // integration branch and the test also fails there, the failure is a
+  // pre-existing baseline regression — NOT a regression authored by this task.
+  // Skip the fix-task spawn so the code-recovery slot is NOT consumed; raise
+  // an action-queue item so the operator is aware.
+  //
+  // Ordered BEFORE the steward gate and the upsertFixTask call so a baseline
+  // failure exits cleanly without minting a steward intervention record for a
+  // failure the task did not cause.
+  //
+  // Implemented by: "Probe failing test against main before spawning fix task"
+  // (consumer slice of PRD 3b00ccd0).
+  if (input.baselineProbeResult?.failsOnMain) {
+    await markTaskFailed(
+      input.taskId,
+      `baseline-failure:${failureSignature}`,
+      undefined,
+      { error: truncatedError, failureSignature },
+    )
+    await raiseActionQueueItem({
+      kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
+      category: 'orchestrator',
+      priority: 'high',
+      title: capTitle(
+        `Task ${input.taskId} failed on a pre-existing baseline regression (${failureSignature})`,
+      ),
+      body: [
+        `Task ${input.taskId} failed at ${input.failingStep}, but the same test also fails on the integration branch.`,
+        '',
+        'This is a pre-existing baseline regression — not a regression authored by this task.',
+        'No fix-task was spawned; the code-recovery slot is preserved.',
+        '',
+        `Probe command: ${input.baselineProbeResult.probeCommand}`,
+        `Probe exit code: ${input.baselineProbeResult.exitCode}`,
+        '',
+        'Fix the baseline regression on the integration branch, then restart this task with `mars restart`.',
+      ].join('\n'),
+      payload: {
+        taskId: input.taskId,
+        failingStep: input.failingStep,
+        failureSignature,
+        probeCommand: input.baselineProbeResult.probeCommand,
+        probeExitCode: input.baselineProbeResult.exitCode,
+      },
+      context: { repoRoot: process.env.MARS_REPO ?? null },
+      raisedBy: 'agent:fail-fix-handler',
+      signature: `baseline-failure:${input.taskId}:${failureSignature}`,
+      originTaskId: task.originId,
+      occurrence: {
+        at: new Date().toISOString(),
+        taskId: input.taskId,
+        failingStep: input.failingStep,
+      },
+    })
+    return {
+      outcome: 'baseline-failure',
+      failureSignature,
+      recoverySpawnedCount: task.recoverySpawnedCount,
     }
   }
 
