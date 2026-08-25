@@ -287,7 +287,6 @@ const RECIPE_DEFINITIONS = {
 
   // ── Worker questions ──────────────────────────────────────────────────────
 
-  // family: scheduling-workflow-drift
   'coder-question': {
     humanSummary: (ctx) => {
       const taskId = str(ctx.payload['taskId']) || ctx.entityId
@@ -666,7 +665,6 @@ const RECIPE_DEFINITIONS = {
     },
   },
 
-  // family: scheduling-workflow-drift
   'workflow-install-drift': {
     humanSummary: (ctx) => {
       const missing = Array.isArray(ctx.payload['missingKinds'])
@@ -1027,7 +1025,6 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
-  // family: scheduling-workflow-drift
   'workflow-draft-pending': {
     humanSummary: (ctx) => {
       const name = str(ctx.payload['workflowName']) || ctx.entityId
@@ -1161,7 +1158,6 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [],
   },
-  // family: scheduling-workflow-drift
   'scheduling-decision': {
     humanSummary: (ctx) => {
       const taskId = str(ctx.payload['taskId']) || ctx.entityId
@@ -1180,7 +1176,6 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [],
   },
-  // family: scheduling-workflow-drift
   'requeue-warning': {
     humanSummary: (_ctx) =>
       'Mars is monitoring a task approaching its retry limit — no action needed from you.',
@@ -1333,7 +1328,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
-  // family: scheduling-workflow-drift
   'fragmented-repo-layout': {
     humanSummary: (ctx) => {
       const workspace = str(ctx.payload['workspace']) || 'a workspace'

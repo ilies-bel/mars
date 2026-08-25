@@ -53,9 +53,19 @@ export type {
   GateEnrichmentPayload,
   GateEnrichmentContracts,
 } from './payload-contracts/gate-enrichment'
+export type {
+  SchedulingDecisionPayload,
+  RequeueWarningPayload,
+  WorkflowInstallDriftPayload,
+  WorkflowDraftPendingPayload,
+  FragmentedRepoLayoutPayload,
+  CoderQuestionPayload,
+  SchedulingContracts,
+} from './payload-contracts/scheduling'
 
 import type { AwaitingHumanContracts } from './payload-contracts/awaiting-human'
 import type { GateEnrichmentContracts } from './payload-contracts/gate-enrichment'
+import type { SchedulingContracts } from './payload-contracts/scheduling'
 import type { SliceWorkflowContracts } from './payload-contracts/slice-workflow'
 
 // ── Shared shapes ─────────────────────────────────────────────────────────────
@@ -75,7 +85,10 @@ export type UnauditedPayload = Record<string, unknown>
  * Kinds with a hand-written payload contract. Everything else is unaudited.
  * Each family adds exactly one intersection term here.
  */
-type AuditedPayloads = AwaitingHumanContracts & GateEnrichmentContracts & SliceWorkflowContracts
+type AuditedPayloads = AwaitingHumanContracts &
+  GateEnrichmentContracts &
+  SchedulingContracts &
+  SliceWorkflowContracts
 
 /**
  * The payload type for one action-queue kind.
@@ -127,7 +140,7 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'cancelled-blocker-cascade': 'unaudited',
   'diagnose-inconclusive': 'unaudited',
   'daemon-killed': 'unaudited',
-  'coder-question': 'unaudited',
+  'coder-question': 'typed',
   'prerequisite-failed': 'unaudited',
   'draft-proposal': 'unaudited',
   'slices-dropped': 'typed',
@@ -141,10 +154,10 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'reflect-recommended': 'unaudited',
   'done-with-unmerged-commits': 'unaudited',
   'api-outage': 'unaudited',
-  'workflow-install-drift': 'unaudited',
+  'workflow-install-drift': 'typed',
   'provider-rate-limited': 'unaudited',
   'verify-uncovered': 'unaudited',
-  'workflow-draft-pending': 'unaudited',
+  'workflow-draft-pending': 'typed',
   'budget-window': 'unaudited',
   'budget-arc': 'unaudited',
   'scorer-suggested': 'unaudited',
@@ -154,14 +167,14 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'gate-enrichment-stale': 'unaudited',
   'env-incident': 'unaudited',
   'spend-control-notice': 'unaudited',
-  'scheduling-decision': 'unaudited',
-  'requeue-warning': 'unaudited',
+  'scheduling-decision': 'typed',
+  'requeue-warning': 'typed',
   'arc-superseded-on-main': 'unaudited',
   'low-disk-space': 'unaudited',
   'daemon-outage': 'unaudited',
   'dirty-integration': 'unaudited',
   'health-check-alert': 'unaudited',
-  'fragmented-repo-layout': 'unaudited',
+  'fragmented-repo-layout': 'typed',
   'recovery-abandoned': 'unaudited',
   'mockup-ready': 'unaudited',
   'qa-step-list-opt-in': 'unaudited',
@@ -254,10 +267,4 @@ export const UNAUDITED_KIND_FAMILY = {
   'tool-promotion': 'proposal-promotion',
   'reflect-recommended': 'proposal-promotion',
 
-  'scheduling-decision': 'scheduling-workflow-drift',
-  'requeue-warning': 'scheduling-workflow-drift',
-  'workflow-install-drift': 'scheduling-workflow-drift',
-  'workflow-draft-pending': 'scheduling-workflow-drift',
-  'fragmented-repo-layout': 'scheduling-workflow-drift',
-  'coder-question': 'scheduling-workflow-drift',
 } as const satisfies Record<UnauditedKind, UnauditedKindFamily>

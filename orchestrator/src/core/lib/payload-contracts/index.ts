@@ -9,6 +9,7 @@
 import type { ActionQueueKind } from '../action-queue-kinds'
 import { REPRESENTATIVE_PAYLOADS as awaitingHuman } from './awaiting-human'
 import { REPRESENTATIVE_PAYLOADS as gateEnrichment } from './gate-enrichment'
+import { REPRESENTATIVE_PAYLOADS as scheduling } from './scheduling'
 import { REPRESENTATIVE_PAYLOADS as sliceWorkflow } from './slice-workflow'
 
 /**
@@ -21,5 +22,6 @@ import { REPRESENTATIVE_PAYLOADS as sliceWorkflow } from './slice-workflow'
 export const ALL_REPRESENTATIVE_PAYLOADS: Partial<Record<ActionQueueKind, Record<string, unknown>>> = {
   ...awaitingHuman,
   ...gateEnrichment,
+  ...scheduling,
   ...sliceWorkflow,
 }
