@@ -20,9 +20,9 @@ const entry = (over: Partial<ChatConversationEntry> = {}): ChatConversationEntry
   id: 'notice-1',
   seq: 1,
   threadId: 'main',
-  subthreadId: 'main',
-  subthreadTitle: 'Main thread',
-  subthreadClosed: false,
+  subjectId: 'main',
+  subjectTitle: 'Main thread',
+  subjectClosed: false,
   role: 'assistant',
   content: 'I reduced implement workers.',
   segments: [

@@ -201,7 +201,7 @@ const renderSidebarPending = (): string => {
 }
 
 const makeBoundary = (id: string, closedAt: string | null = null): SubthreadBoundary => ({
-  subthreadId: id,
+  subjectId: id,
   startedAt: '2024-01-01T00:00:00.000Z',
   closedAt,
   producedTokens: 10,
@@ -565,17 +565,17 @@ describe('ChatPage – handleOpenSubthread: chip opens Subthread inline', () => 
     mockFetchChatConversation.mockResolvedValue({
       entries: [
         {
-          id: 'past-first-message', seq: 1, threadId: 'past-first', subthreadId: 'past-first', subthreadTitle: 'First past Subthread', subthreadClosed: true,
+          id: 'past-first-message', seq: 1, threadId: 'past-first', subjectId: 'past-first', subjectTitle: 'First past Subthread', subjectClosed: true,
           role: 'assistant', content: 'First past message.', segments: [], createdAt: '2026-07-31T08:00:00.000Z', kind: 'situation', backingEntityId: null, resolution: null,
         },
         {
-          id: 'past-second-message', seq: 2, threadId: 'past-second', subthreadId: 'past-second', subthreadTitle: 'Second past Subthread', subthreadClosed: true,
+          id: 'past-second-message', seq: 2, threadId: 'past-second', subjectId: 'past-second', subjectTitle: 'Second past Subthread', subjectClosed: true,
           role: 'assistant', content: 'Second past message.', segments: [], createdAt: '2026-07-31T09:00:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
         },
       ],
       boundaries: [
-        { subthreadId: 'past-first', startedAt: '2026-07-31T08:00:00.000Z', closedAt: '2026-07-31T08:01:00.000Z', producedTokens: 10, carriedTokens: 5 },
-        { subthreadId: 'past-second', startedAt: '2026-07-31T09:00:00.000Z', closedAt: '2026-07-31T09:01:00.000Z', producedTokens: 20, carriedTokens: 10 },
+        { subjectId: 'past-first', startedAt: '2026-07-31T08:00:00.000Z', closedAt: '2026-07-31T08:01:00.000Z', producedTokens: 10, carriedTokens: 5 },
+        { subjectId: 'past-second', startedAt: '2026-07-31T09:00:00.000Z', closedAt: '2026-07-31T09:01:00.000Z', producedTokens: 20, carriedTokens: 10 },
       ],
       memoryStartsAfterSeq: 0, memoryCutAt: null, memoryCutReason: null,
     })

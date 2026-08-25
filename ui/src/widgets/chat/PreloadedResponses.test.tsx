@@ -53,7 +53,7 @@ describe('PreloadedResponses', () => {
     const html = renderToStaticMarkup(
       <ConversationTimeline entries={[
         {
-          id: 'notice-1', seq: 1, threadId: 'subthread-1', subthreadId: 'subthread-1', subthreadTitle: 'Subthread', subthreadClosed: false,
+          id: 'notice-1', seq: 1, threadId: 'subthread-1', subjectId: 'subthread-1', subjectTitle: 'Subthread', subjectClosed: false,
           role: 'assistant', content: 'Choose.', segments: [{
             type: 'preloaded_responses',
             responses: [{ id: 'open', label: 'Open it', target: { type: 'subject', title: 'Investigate' } }],
@@ -61,7 +61,7 @@ describe('PreloadedResponses', () => {
           createdAt: '2026-01-01T00:00:00.000Z', kind: 'notice', backingEntityId: null, resolution: null,
         },
         {
-          id: 'coder-1', seq: 2, threadId: 'subthread-1', subthreadId: 'subthread-1', subthreadTitle: 'Subthread', subthreadClosed: false,
+          id: 'coder-1', seq: 2, threadId: 'subthread-1', subjectId: 'subthread-1', subjectTitle: 'Subthread', subjectClosed: false,
           role: 'assistant', content: 'Plain narration.', segments: [],
           createdAt: '2026-01-01T00:01:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
         },
