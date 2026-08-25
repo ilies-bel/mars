@@ -160,6 +160,53 @@ export interface SelfEvolveConfig {
 }
 
 /**
+ * Operator-tunable parameters for the verify step. Read by lever-registry.ts
+ * entries 'verify.scope' and 'verify.gate-timeout'. Default values are used
+ * when the block is absent from daemon.json.
+ */
+export interface VerifyParamsConfig {
+  /**
+   * File-glob pattern forwarded to the verify command to scope which test
+   * files are executed. Default `'*'` (all files matched by the verify command
+   * as written). Gesture: `mars operator set verify.scope <glob>`.
+   */
+  scope: string
+  /**
+   * Per-gate timeout in milliseconds. The verify step aborts and reports
+   * failure when the verify command does not complete within this window.
+   * Default 120 000 ms (2 min). Gesture: `mars operator set verify.gate-timeout <ms>`.
+   */
+  gateTimeoutMs: number
+}
+
+/**
+ * Operator-tunable parameters for the code step. Read by lever-registry.ts
+ * entries 'code.context-strategy', 'code.tool-exposure', and
+ * 'code.prompt-prefix'. Default values are used when the block is absent
+ * from daemon.json.
+ */
+export interface CodeParamsConfig {
+  /**
+   * Controls how much repository context the code step assembles for the
+   * agent. `'full'` sends all indexed symbols; `'filtered'` limits to the
+   * files named in the task spec; `'minimal'` sends only the task prompt.
+   * Default `'full'`. Gesture: `mars operator set code.context-strategy <full|filtered|minimal>`.
+   */
+  contextStrategy: 'full' | 'filtered' | 'minimal'
+  /**
+   * Selects the tool set exposed to the coding agent. Default `'default'`.
+   * Gesture: `mars operator set code.tool-exposure <tool-set>`.
+   */
+  toolExposure: string
+  /**
+   * Free-text prefix injected at the top of every code-step prompt, e.g. a
+   * house-style reminder or a project-specific constraint. Default `''`
+   * (no prefix). Gesture: `mars operator set code.prompt-prefix @<path>`.
+   */
+  promptPrefix: string
+}
+
+/**
  * Scorer optimization fold-in (PRD 6cf85bc9). Only the low-trend trigger is
  * configurable; scoring itself is controlled by the in-memory
  * `set-flag scoring` kill-switch and MARS_REFLECT_DISABLED.
@@ -291,6 +338,34 @@ export const daemonConfigSchema = z
     /** Legacy alias for `producerLevers`, accepted for migration. */
     levers: z.record(z.string(), z.unknown()).optional(),
     workerPrompts: z.record(z.string(), z.string()).optional(),
+    /**
+     * Operator-tunable verify-step parameters. Persisted by lever-apply for
+     * 'verify.scope' and 'verify.gate-timeout'. Fields are individually
+     * optional so a partial patch (writing only `scope`) preserves
+     * `gateTimeoutMs`. The resolved config's defaults are applied by
+     * `loadDaemonConfig()`.
+     */
+    verify: z
+      .object({
+        scope: z.string().optional(),
+        gateTimeoutMs: z.number().int().min(5000).optional(),
+      })
+      .partial()
+      .optional(),
+    /**
+     * Operator-tunable code-step parameters. Persisted by lever-apply for
+     * 'code.context-strategy', 'code.tool-exposure', and 'code.prompt-prefix'.
+     * Fields are individually optional for the same reason as `verify`.
+     * The resolved config's defaults are applied by `loadDaemonConfig()`.
+     */
+    code: z
+      .object({
+        contextStrategy: z.enum(['full', 'filtered', 'minimal']).optional(),
+        toolExposure: z.string().optional(),
+        promptPrefix: z.string().optional(),
+      })
+      .partial()
+      .optional(),
     steward: z
       .object({
         autotuneMaxImplement: z.number().optional(),
@@ -443,6 +518,20 @@ export interface DaemonConfig {
    * Set via `mars lever set code.*`.
    */
   codeStep: CodeStepConfig
+  /**
+   * Operator-tunable verify-step parameters. Always fully resolved — never
+   * `undefined`. Defaults from {@link DEFAULT_VERIFY_PARAMS} when the
+   * `verify` block is absent from daemon.json. Consumers read this via
+   * `loadDaemonConfig().verify.*` — they never touch daemon.json directly.
+   */
+  verify: VerifyParamsConfig
+  /**
+   * Operator-tunable code-step parameters. Always fully resolved — never
+   * `undefined`. Defaults from {@link DEFAULT_CODE_PARAMS} when the
+   * `code` block is absent from daemon.json. Consumers read this via
+   * `loadDaemonConfig().code.*`.
+   */
+  code: CodeParamsConfig
 }
 
 /**
@@ -489,6 +578,19 @@ export const DEFAULT_CODE_STEP: CodeStepConfig = {
 
 /** Exported for `src/core/config/registry.ts` — see {@link DEFAULTS}. */
 export const DEFAULT_PROVIDER: ProviderName = 'codex'
+
+/** Default verify-step configuration used when daemon.json omits the `verify` block. */
+export const DEFAULT_VERIFY_PARAMS: VerifyParamsConfig = {
+  scope: '*',
+  gateTimeoutMs: 120_000,
+}
+
+/** Default code-step configuration used when daemon.json omits the `code` block. */
+export const DEFAULT_CODE_PARAMS: CodeParamsConfig = {
+  contextStrategy: 'full',
+  toolExposure: 'default',
+  promptPrefix: '',
+}
 
 const DEFAULT_PROPOSAL_EXPIRY_DAYS = 14
 
@@ -1000,6 +1102,8 @@ export const loadDaemonConfig = (): DaemonConfig => {
   let fileVerifyStepTimeoutMin: number | undefined
   let fileVerifyStepRetryBudget: number | undefined
   let fileCodeStepCheckpointIntervalMs: number | undefined
+  let fileVerify: Partial<VerifyParamsConfig> = {}
+  let fileCode: Partial<CodeParamsConfig> = {}
 
   try {
     const raw = readFileSync(daemonConfigPath(), 'utf8')
@@ -1008,6 +1112,8 @@ export const loadDaemonConfig = (): DaemonConfig => {
       selfEvolve?: Record<string, unknown>
       scoring?: Record<string, unknown>
       lastReflectRanAt?: unknown
+      verify?: Record<string, unknown>
+      code?: Record<string, unknown>
     }
     const c = parsed.caps ?? {}
     fileCaps = {
@@ -1093,6 +1199,32 @@ export const loadDaemonConfig = (): DaemonConfig => {
         fileCodeStepCheckpointIntervalMs = cs.checkpointIntervalMs
       }
     }
+    const vBlock = parsed.verify ?? {}
+    if (typeof vBlock.scope === 'string') {
+      fileVerify.scope = vBlock.scope
+    }
+    if (
+      typeof vBlock.gateTimeoutMs === 'number' &&
+      Number.isFinite(vBlock.gateTimeoutMs) &&
+      Number.isInteger(vBlock.gateTimeoutMs) &&
+      vBlock.gateTimeoutMs >= 5000
+    ) {
+      fileVerify.gateTimeoutMs = vBlock.gateTimeoutMs
+    }
+    const cBlock = parsed.code ?? {}
+    if (
+      cBlock.contextStrategy === 'full' ||
+      cBlock.contextStrategy === 'filtered' ||
+      cBlock.contextStrategy === 'minimal'
+    ) {
+      fileCode.contextStrategy = cBlock.contextStrategy
+    }
+    if (typeof cBlock.toolExposure === 'string') {
+      fileCode.toolExposure = cBlock.toolExposure
+    }
+    if (typeof cBlock.promptPrefix === 'string') {
+      fileCode.promptPrefix = cBlock.promptPrefix
+    }
   } catch {
     // No file, unreadable, or invalid JSON — fall back to env+defaults.
   }
@@ -1125,6 +1257,15 @@ export const loadDaemonConfig = (): DaemonConfig => {
     },
     codeStep: {
       checkpointIntervalMs: fileCodeStepCheckpointIntervalMs ?? DEFAULT_CODE_STEP.checkpointIntervalMs,
+    },
+    verify: {
+      scope: fileVerify.scope ?? DEFAULT_VERIFY_PARAMS.scope,
+      gateTimeoutMs: fileVerify.gateTimeoutMs ?? DEFAULT_VERIFY_PARAMS.gateTimeoutMs,
+    },
+    code: {
+      contextStrategy: fileCode.contextStrategy ?? DEFAULT_CODE_PARAMS.contextStrategy,
+      toolExposure: fileCode.toolExposure ?? DEFAULT_CODE_PARAMS.toolExposure,
+      promptPrefix: fileCode.promptPrefix ?? DEFAULT_CODE_PARAMS.promptPrefix,
     },
   }
 }
