@@ -23,7 +23,7 @@
 import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai'
 import { ApiError, chatUiStreamUrl, postChatMessage, stopChatThread } from './api'
 import type { AttachmentInfo } from './api'
-import type { ChatFeedback, ChatSegmentAlert, ChatSegmentAttachment, ChatSegmentCompaction } from './schemas'
+import type { ChatFeedback, ChatSegmentAttachment, ChatSegmentCompaction } from './schemas'
 
 /** Usage stats carried on the terminal `finish` chunk's metadata. */
 export interface MarsMessageMetadata {
@@ -47,11 +47,13 @@ export interface MarsMessageMetadata {
 /**
  * Mars-specific `data-*` parts. The live stream never emits these — they are
  * produced only by the persisted-history normaliser (`chatMessageMapping.ts`)
- * for segment kinds that have no first-class AI-SDK part (`alert`, `attachment`,
+ * for segment kinds that have no first-class AI-SDK part (`attachment`,
  * `error`). Rendering narrows on the `data-<name>` discriminant.
+ *
+ * Note: `alert` segments are silently dropped by the normaliser — they no
+ * longer produce a `data-alert` part and have no rendering path in ChatPage.
  */
 export type MarsDataParts = {
-  alert: ChatSegmentAlert
   /** Marks where the idle sweeper folded a span of history into a checkpoint. */
   compaction: ChatSegmentCompaction
   attachment: ChatSegmentAttachment

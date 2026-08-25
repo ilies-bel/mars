@@ -13,7 +13,8 @@
  *     `tool_use_id`, else the last tool),
  *   - empty `thinking` / empty `text` segments are dropped,
  *   - `result` usage stats ride as message metadata (not a part),
- *   - `alert` / `attachment` / `error` become typed `data-*` parts.
+ *   - `alert` segments are dropped (they no longer have a rendering path),
+ *   - `attachment` / `error` become typed `data-*` parts.
  */
 import type { ChatMessage } from './schemas'
 import type { MarsMessageMetadata, MarsUIMessage } from './marsChatTransport'
@@ -94,7 +95,7 @@ export function chatMessageToUIMessage(msg: ChatMessage): MarsUIMessage {
         break
       }
       case 'alert': {
-        parts.push({ type: 'data-alert', data: seg })
+        // Alert segments have no rendering path in the transcript — dropped silently.
         break
       }
       case 'compaction': {
