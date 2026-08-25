@@ -86,6 +86,7 @@ export default defineConfig({
             'src/widgets/TopologyView.test.tsx',
             'src/pages/ProgressPage.test.tsx',
             'src/widgets/ProposalDetailDrawer.grill.test.tsx',
+            'src/widgets/BellMenu.test.tsx',
           ],
         },
       },
@@ -157,6 +158,8 @@ export default defineConfig({
             'src/pages/ProgressPage.test.tsx',
             // Grill-button navigation: tests window.location.hash mutation.
             'src/widgets/ProposalDetailDrawer.grill.test.tsx',
+            // Bell popover uses createRoot+act, needs DOM.
+            'src/widgets/BellMenu.test.tsx',
           ],
         },
       },
