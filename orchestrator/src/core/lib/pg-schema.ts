@@ -1399,6 +1399,9 @@ const DDL: readonly string[] = [
   // Per-step wall-clock timeout (minutes). Added in 7091bbcc. Must live here
   // so a restarted daemon migrates the column before any verify_gates SELECT.
   `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS timeout_min REAL`,
+  // Free-text observation that justified adding this gate. Must live here so
+  // a restarted daemon migrates the column before any verify_gates INSERT.
+  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS evidence TEXT`,
 
   // ── quarantined verify-gate repair proposals ─────────────────────────────
   // The unique quarantine episode key is the durable idempotency boundary for

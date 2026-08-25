@@ -88,7 +88,7 @@ type AllowedValues = AllowedEnum | AllowedRange | AllowedFreeform
  * Recipe metadata for verify-family levers, folded in from the former
  * improvement-recipes.ts. Only verify-family entries carry this field.
  */
-interface RecipeMetadata {
+export interface RecipeMetadata {
   triggerPattern: string
   problem: string
   solution: string
@@ -855,6 +855,23 @@ const REGISTRY: LeverRegistryEntry[] = [
 ]
 
 // ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Returns all lever registry entries that carry a `verifyGate` spec, paired
+ * with their lever id.
+ *
+ * This is the only accessor `propose-gates-from-levers.ts` needs — it avoids
+ * reaching into the internal REGISTRY array directly and keeps the coupling
+ * to the data structure inside this module.
+ */
+export function getLeversWithVerifyGate(): Array<{ leverId: string; recipe: RecipeMetadata }> {
+  return REGISTRY
+    .filter(
+      (e): e is LeverRegistryEntry & { recipe: RecipeMetadata } =>
+        e.recipe !== undefined && e.recipe.verifyGate !== undefined,
+    )
+    .map((e) => ({ leverId: e.id, recipe: e.recipe }))
+}
 
 /**
  * Returns the full lever registry. Returns a shallow copy so callers cannot
